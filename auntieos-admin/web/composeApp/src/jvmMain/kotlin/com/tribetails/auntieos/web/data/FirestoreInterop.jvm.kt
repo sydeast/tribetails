@@ -107,7 +107,12 @@ data class RestWrite(
     val op: String,
     val collection: String,
     val id: String,
-    /** Field names carried by a PATCH; empty for a DELETE. */
+    /**
+     * Field names carried by a field-level PATCH (`patchFields`). Empty for a
+     * DELETE, and since #825 also empty for a whole-document PATCH (`setDoc`)
+     * and a POST (`addDoc`), which send a body rather than an updateMask: what
+     * those two record is WHICH document was addressed, not which fields moved.
+     */
     val fields: Set<String> = emptySet(),
 )
 
@@ -454,8 +459,31 @@ internal actual suspend fun platformUpdateKinTaleTemplate(template: KinTaleTempl
 // delete. Android has always done exactly this (`AuntieRepository.kt`).
 internal actual suspend fun platformDeleteKinTaleTemplate(templateId: String): WriteResult<Unit> =
     if (JvmFirestoreRest.deleteDoc("kintale_templates", templateId)) WriteResult.Ok(Unit) else WriteResult.Err("delete failed")
-internal actual suspend fun platformRecordPayment(payment: Payment): WriteResult<String> =
-    runCatching { WriteResult.Ok(JvmFirestoreRest.addDoc("payments", jsonOut.encodeToString(payment))) }.getOrElse { WriteResult.Err(it.message ?: "record failed") }
+// ISSUE #825. `addDoc` POSTs to the collection and lets Firestore mint the id,
+// so the SAME payment submitted twice became two rows in `payments` -- two
+// records of money that arrived once. With a key the write becomes a PATCH at
+// `payments/{key}`, which is the id the `recordPayment` callable would have used
+// for that key, so a second attempt overwrites the first attempt's row rather
+// than adding to it.
+//
+// This is an upsert, not a create-once claim: the second write succeeds and
+// replaces identical values. That is deliberate and it is enough here. The
+// hazard #825 is about is two ROWS, and the operator whose first press reported
+// an error this console cannot classify (see MoneyIdempotency.kt) needs the
+// second press to land somewhere, not to be refused. "Refuse the replay and
+// answer with what the first attempt did" lives in the server's transaction;
+// this direct REST write has no server half to ask.
+//
+// The unkeyed branch is untouched. It is the path every caller took before #825
+// and the one a caller with no key still takes.
+internal actual suspend fun platformRecordPayment(payment: Payment, idempotencyKey: String?): WriteResult<String> =
+    runCatching {
+        val json = jsonOut.encodeToString(payment)
+        WriteResult.Ok(
+            if (idempotencyKey.isNullOrBlank()) JvmFirestoreRest.addDoc("payments", json)
+            else JvmFirestoreRest.setDoc("payments", idempotencyKey, json),
+        )
+    }.getOrElse { WriteResult.Err(it.message ?: "record failed") }
 /**
  * Always write the canonical doc id `business_settings`, and write ONLY the
  * fields that changed since this console read the document.

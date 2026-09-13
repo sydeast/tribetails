@@ -74,11 +74,23 @@ import type {
  * overwriting the caller's figure, so both must come from the same
  * `lib/invoiceMath.ts` computation the composer already runs to show a live
  * total while the operator types. Never hand-enter a total beside line items.
+ *
+ * ── #825: THE RETRY, AND WHAT EARNS IT ────────────────────────────────────
+ *
+ * `idempotencyKey` is OPTIONAL on the wire and the automatic retry is switched
+ * on ONLY when one is present. `CallOptions.idempotent` in `lib/fns.ts` is a
+ * claim about the SERVER — "this callable either changes nothing, or dedupes
+ * the second attempt itself" — and without a key this callable dedupes nothing,
+ * so turning the retry on unconditionally would be the claim made falsely. The
+ * key is minted by the SCREEN, once per submission, never per click: see
+ * `lib/moneyIdempotency.ts`.
  */
 export async function createInvoice(
   input: CreateInvoiceArgs,
 ): Promise<Pick<CreateInvoiceResult, 'invoiceId'>> {
-  const res = await call<CreateInvoiceArgs, CreateInvoiceResult>('createInvoice', input);
+  const res = await call<CreateInvoiceArgs, CreateInvoiceResult>('createInvoice', input, {
+    idempotent: input.idempotencyKey !== undefined,
+  });
   return { invoiceId: res.invoiceId };
 }
 
@@ -93,11 +105,23 @@ export async function createInvoice(
  * total that disagrees is refused (`invoice_total_mismatch`) rather than
  * silently overwritten. Use the same `lib/invoiceMath.ts` computation the
  * composer runs to show a live total while the operator types.
+ *
+ * ── #825: THE RETRY, AND WHAT EARNS IT ────────────────────────────────────
+ *
+ * `idempotencyKey` is OPTIONAL on the wire and the automatic retry is switched
+ * on ONLY when one is present. `CallOptions.idempotent` in `lib/fns.ts` is a
+ * claim about the SERVER — "this callable either changes nothing, or dedupes
+ * the second attempt itself" — and without a key this callable dedupes nothing,
+ * so turning the retry on unconditionally would be the claim made falsely. The
+ * key is minted by the SCREEN, once per submission, never per click: see
+ * `lib/moneyIdempotency.ts`.
  */
 export async function createQuote(
   input: CreateQuoteArgs,
 ): Promise<Pick<CreateQuoteResult, 'invoiceId'>> {
-  const res = await call<CreateQuoteArgs, CreateQuoteResult>('createQuote', input);
+  const res = await call<CreateQuoteArgs, CreateQuoteResult>('createQuote', input, {
+    idempotent: input.idempotencyKey !== undefined,
+  });
   return { invoiceId: res.invoiceId };
 }
 
@@ -147,12 +171,26 @@ export async function generateReceipt(invoiceId: string): Promise<void> {
  * wrong. The `invoice.payment.applied` notification is dispatched by the
  * backend's `onInvoicesWrite` trigger off the resulting write, not by this
  * callable, and it does not fire for a partial because the invoice is not paid.
+ *
+ * ── #825: THE RETRY, AND WHAT EARNS IT ────────────────────────────────────
+ *
+ * `idempotencyKey` is OPTIONAL on the wire and the automatic retry is switched
+ * on ONLY when one is present. `CallOptions.idempotent` in `lib/fns.ts` is a
+ * claim about the SERVER — "this callable either changes nothing, or dedupes
+ * the second attempt itself" — and without a key this callable dedupes nothing,
+ * so turning the retry on unconditionally would be the claim made falsely. The
+ * key is minted by the SCREEN, once per submission, never per click: see
+ * `lib/moneyIdempotency.ts`.
  */
 export async function markInvoicePaid(
   invoiceId: string,
   input: Omit<MarkInvoicePaidArgs, 'invoiceId'> = {},
 ): Promise<MarkInvoicePaidResult> {
-  return call<MarkInvoicePaidArgs, MarkInvoicePaidResult>('markInvoicePaid', { invoiceId, ...input });
+  return call<MarkInvoicePaidArgs, MarkInvoicePaidResult>(
+    'markInvoicePaid',
+    { invoiceId, ...input },
+    { idempotent: input.idempotencyKey !== undefined },
+  );
 }
 
 /**
@@ -200,11 +238,23 @@ export async function markInvoicePaid(
  * EXISTING account credit the portal already shows, and the invoice trigger
  * spends it on the next bill. `sendConfirmationEmail` enqueues the existing
  * `invoice.payment.applied` notification. Both default off.
+ *
+ * ── #825: THE RETRY, AND WHAT EARNS IT ────────────────────────────────────
+ *
+ * `idempotencyKey` is OPTIONAL on the wire and the automatic retry is switched
+ * on ONLY when one is present. `CallOptions.idempotent` in `lib/fns.ts` is a
+ * claim about the SERVER — "this callable either changes nothing, or dedupes
+ * the second attempt itself" — and without a key this callable dedupes nothing,
+ * so turning the retry on unconditionally would be the claim made falsely. The
+ * key is minted by the SCREEN, once per submission, never per click: see
+ * `lib/moneyIdempotency.ts`.
  */
 export async function recordPayment(
   input: RecordPaymentArgs,
 ): Promise<RecordPaymentResult> {
-  return call<RecordPaymentArgs, RecordPaymentResult>('recordPayment', input);
+  return call<RecordPaymentArgs, RecordPaymentResult>('recordPayment', input, {
+    idempotent: input.idempotencyKey !== undefined,
+  });
 }
 /**
  * runAutoApply (admin): spends a household's account credit on ONE named

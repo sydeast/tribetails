@@ -17,8 +17,15 @@ import {
   SignedCentsSchema,
 } from '../lib/invoiceResponseSchema';
 import { TIP_BASES, dollarsToCents, paymentMoneyOf } from '../lib/paymentMoney';
-import { planApply, readInvoiceForApply, stageApply, type ApplyOutcome } from '../lib/paymentApply';
+import {
+  planApply,
+  readInvoiceForApply,
+  stageApply,
+  type ApplyOutcome,
+  type ApplyStep,
+} from '../lib/paymentApply';
 import { creditAccount } from '../lib/accountCredit';
+import { PaymentIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 
@@ -99,6 +106,30 @@ import { enqueueNotification } from '../notifications/dispatcher';
  * recorded" to "the GROSS tip". That is only safe because `tipBasis` is written
  * beside it saying which convention the row follows; see paymentMoney.ts for
  * why an unmarked legacy row reads as `unknown` rather than as `net`.
+ *
+ * ── #825: WHY THIS CALLABLE IS THE ONE THAT HAD TO BE FIXED FIRST ─────────
+ *
+ * It wrote an auto-id row with no dedupe of any kind, and with `autoApply` it
+ * ALSO incremented `families/{id}.accountBalanceCents`. A replayed call
+ * therefore recorded the payment twice AND credited the household twice, and by
+ * standing ruling account balance is the only destination this business has for
+ * money owed back — so the second credit is spendable money made from nothing,
+ * in a direction nothing can claw back.
+ *
+ * A replay is not hypothetical. `functions/internal` is what the SDK reports
+ * for any transport failure, so the client cannot tell "never arrived" from
+ * "committed, reply lost"; this callable is the SECOND step of the admin's own
+ * record-payment sequence, which is the position most likely to be retried; and
+ * a cold start here measures up to nine seconds, which is how long a person
+ * waits before pressing the button again.
+ *
+ * THE FIX IS `idempotencyKey`, AND THE KEY IS THE ROW'S ID. `payments/{key}`
+ * is the idempotency record — there is no second collection to keep in step.
+ * The existence check, the payment row, the apply and the balance increment all
+ * happen in ONE TRANSACTION, so a replay does none of them and a half-commit
+ * cannot leave a credited balance whose payment row never landed.
+ * `lib/moneyIdempotency.ts` carries the argument for a transaction rather than
+ * #814's bare `create()` claim.
  */
 
 // Exported so the callable-contract drift guard can freeze this request shape.
@@ -192,6 +223,18 @@ export const Args = z.object({
    * box, never because the server inferred she probably meant to.
    */
   sendConfirmationEmail: z.boolean().default(false),
+  /**
+   * #825: mint one of these per SUBMISSION, not per press, and this call
+   * becomes safe to retry. It becomes the id of the `payments/{key}` row, so a
+   * second attempt at the same payment finds the first attempt's row and is
+   * answered from it instead of recording a second payment and a second
+   * credit.
+   *
+   * OPTIONAL. Omitted, the row gets a server-minted auto id and there is no
+   * dedupe, exactly as before — which is what keeps the frozen legacy payload
+   * valid while the three admin clients adopt this one at a time.
+   */
+  idempotencyKey: PaymentIdempotencyKeyArg,
 });
 
 /**
@@ -307,6 +350,38 @@ export async function recordPaymentHandler(
 
   const kinfolkId = scopedKinfolkId(actor.testMode, args.kinfolkId);
 
+  // ── THE FAST PATH (#825), AND IT IS NOT AN OPTIMISATION ─────────────────
+  //
+  // A key whose row already exists is answered from that row, BEFORE any guard
+  // runs. Re-running the guards on a retry is the hazard, not the cost: attempt
+  // 1 with an `apply` can settle the invoice, and attempt 2 re-planning the
+  // same apply hits `alreadySettledRefusal` and reports `failed-precondition`
+  // for a payment that is already stored and entirely fine. A retry must never
+  // be able to turn a success into an error message.
+  //
+  // The in-transaction check below is the RACE backstop, for the second attempt
+  // that arrives while the first is still running. This is the one that makes a
+  // retry deterministic.
+  const ref =
+    args.idempotencyKey !== undefined
+      ? db().collection('payments').doc(args.idempotencyKey)
+      : db().collection('payments').doc();
+  if (args.idempotencyKey !== undefined) {
+    const existing = await ref.get();
+    if (existing.exists) {
+      const stored = (existing.data() ?? {}) as Record<string, unknown>;
+      assertSameCaller(stored, actor.uid, 'recordedBy');
+      logEvent({
+        severity: 'info',
+        function: 'recordPayment',
+        event: 'admin.payment.recorded.replay',
+        uid: actor.uid,
+        extra: { paymentId: ref.id, kinfolkId: stored['kinfolkId'], idempotencyKey: args.idempotencyKey },
+      });
+      return replayResult(ref.id, stored);
+    }
+  }
+
   // EVERY FIGURE IN INTEGER CENTS, ONCE, HERE. The dollar floats the request
   // carries are the collection's legacy shape and are still stored verbatim
   // below; nothing downstream re-derives cents from them, so no two readers can
@@ -336,14 +411,17 @@ export async function recordPaymentHandler(
       { code: 'tip_exceeds_amount' },
     );
   }
-  const ref = db().collection('payments').doc();
   const paidAtIso = new Date().toISOString();
-  const batch = db().batch();
-  let application: ApplyOutcome | null = null;
   // THE APPLY, PLANNED BEFORE ANYTHING IS WRITTEN. Refusing here means no
   // payment row either: an operator who mis-keyed the Apply box gets the whole
   // form back to correct, not a stored payment whose apply silently did not
   // happen.
+  //
+  // The plan is still read and refused OUTSIDE the transaction (#825). These
+  // are reads of an invoice this call does not own, the refusal they produce is
+  // about the request rather than about the stored state, and pulling them in
+  // would make every transaction retry re-read the whole subcollection.
+  let plannedStep: ApplyStep | null = null;
   if (args.apply) {
     const plan = planApply({
       invoice: await readInvoiceForApply(db(), args.apply.invoiceId),
@@ -358,80 +436,143 @@ export async function recordPaymentHandler(
         code: plan.refusal.code,
       });
     }
-    // THE APPLY AND THE PAYMENT ROW LAND IN ONE BATCH. `markInvoicePaid` and
-    // this callable were two steps on purpose (the money first, the display row
-    // second and best-effort), and that stays true for the flow that calls them
-    // in sequence. But when THIS call is the one doing the applying, a
-    // half-commit would leave an invoice balance moved by a payment with no
-    // record, which is precisely the "marked paid with no payment record" state
-    // `markInvoicePaid` exists to make impossible.
-    application = stageApply(db(), batch, {
-      step: plan.step,
-      sourcePaymentId: ref.id,
-      method: args.paymentMethod || null,
-      reference: args.referenceNumber || null,
-      paidAtIso,
-      uid: actor.uid,
-    });
+    plannedStep = plan.step;
   }
   // THE LEFTOVER BECOMES ACCOUNT CREDIT, in the ledger this repo already has.
   // Her label says "apply any Unapplied amount to FUTURE invoices", so the
   // remainder is HELD rather than spread across today's bills, and
   // `triggers/onInvoiceAutoApply.ts` spends it on the next invoice that becomes
-  // collectable. Staged on the SAME batch as the payment: a credited balance
-  // whose payment row failed to write is money from nowhere.
+  // collectable.
   const creditedToAccountCents =
     args.autoApply && money.unappliedCents > 0 && kinfolkId !== '' ? money.unappliedCents : 0;
-  creditAccount(db(), batch, { kinfolkId, cents: creditedToAccountCents });
 
-  // No `id` field inside the doc: Android's `@DocumentId` property is excluded
-  // from serialization, so the direct write never stored one either.
-  batch.set(ref, {
-    kinfolkId,
-    kinfolkName: args.kinfolkName,
-    client: args.client,
-    address: args.address,
-    date: args.date,
-    paymentMethod: args.paymentMethod,
-    referenceNumber: args.referenceNumber,
-    email: args.email,
-    amount: args.amount,
-    tip: args.tip,
-    notes: args.notes,
-    invoiceId: args.invoiceId,
-    invoiceNumber: args.invoiceNumber,
-    // ── NEW, AND ALL ADDITIVE ──────────────────────────────────────────────
-    // BOTH DENOMINATIONS, the same rule `markInvoicePaid` writes its
-    // subcollection row by: the cents are the truth every sum reads, and the
-    // dollar float is the projection the legacy PDF and Android joins read.
-    // Written from the one cents figure in one pass, so they cannot disagree.
-    fee: args.fee,
-    feeCents,
-    tipCents,
-    amountCents,
-    // WHICH CONVENTION THE TIP ABOVE FOLLOWS. Absent on every row written
-    // before today, and absent reads as 'unknown', never as 'net'. See
-    // lib/paymentMoney.ts.
-    tipBasis: 'gross',
-    // WHICH INVOICE THIS PAYMENT WAS APPLIED TO, and how much of it. Two flat
-    // fields rather than a list: one payment, one invoice (operator ruling,
-    // 2026-08-04). `''` means no invoice balance was touched.
-    appliedInvoiceId: application?.invoiceId ?? '',
-    appliedInvoiceNumber: application?.invoiceNumber ?? '',
-    // PROJECTIONS of the figures above, written in the same pass from the same
-    // cents, so no reader has to re-derive them and no two readers can round
-    // the same dollar differently.
-    appliedCents: money.appliedCents,
-    unappliedCents: money.unappliedCents,
-    proceedsCents: money.proceedsCents,
-    autoApply: args.autoApply,
-    // What of the leftover actually reached the household's account credit.
-    creditedToAccountCents,
-    recordedBy: actor.uid,
-    createdAt: FieldValue.serverTimestamp(),
+  // ── ONE TRANSACTION: THE DEDUPE, THE APPLY, THE CREDIT, THE ROW ─────────
+  //
+  // This was a `WriteBatch`, which was already atomic. What it could not do is
+  // make any of those writes CONDITIONAL on what is already stored, and that is
+  // the whole of #825: the second attempt at one payment has to find the first
+  // attempt's row and do nothing. The read that finds it and the writes it
+  // cancels now share one snapshot, and Firestore's lock on `payments/{key}`
+  // serialises two attempts that overlap, so the loser sees the winner's row
+  // rather than racing a check-then-write.
+  //
+  // A credited balance whose payment row failed to write would be money from
+  // nowhere, which is why the increment was already staged beside the row; it
+  // still is, and now a replay stages neither.
+  const committed = await db().runTransaction(async (tx) => {
+    // FIRESTORE REQUIRES EVERY READ BEFORE EVERY WRITE, which happens to be the
+    // order the guard needs anyway.
+    if (args.idempotencyKey !== undefined) {
+      const snap = await tx.get(ref);
+      if (snap.exists) {
+        const stored = (snap.data() ?? {}) as Record<string, unknown>;
+        assertSameCaller(stored, actor.uid, 'recordedBy');
+        return { replayed: stored, application: null as ApplyOutcome | null };
+      }
+    }
+    // THE APPLY AND THE PAYMENT ROW LAND TOGETHER. `markInvoicePaid` and this
+    // callable were two steps on purpose (the money first, the display row
+    // second and best-effort), and that stays true for the flow that calls them
+    // in sequence. But when THIS call is the one doing the applying, a
+    // half-commit would leave an invoice balance moved by a payment with no
+    // record, which is precisely the "marked paid with no payment record" state
+    // `markInvoicePaid` exists to make impossible.
+    const staged = plannedStep
+      ? stageApply(db(), tx, {
+          step: plannedStep,
+          sourcePaymentId: ref.id,
+          method: args.paymentMethod || null,
+          reference: args.referenceNumber || null,
+          paidAtIso,
+          uid: actor.uid,
+        })
+      : null;
+    creditAccount(db(), tx, { kinfolkId, cents: creditedToAccountCents });
+    // No `id` field inside the doc: Android's `@DocumentId` property is
+    // excluded from serialization, so the direct write never stored one either.
+    const row: Record<string, unknown> = {
+      kinfolkId,
+      kinfolkName: args.kinfolkName,
+      client: args.client,
+      address: args.address,
+      date: args.date,
+      paymentMethod: args.paymentMethod,
+      referenceNumber: args.referenceNumber,
+      email: args.email,
+      amount: args.amount,
+      tip: args.tip,
+      notes: args.notes,
+      invoiceId: args.invoiceId,
+      invoiceNumber: args.invoiceNumber,
+      // ── THE 2026-08-04 FEE TRANCHE, ALL ADDITIVE ─────────────────────────
+      // BOTH DENOMINATIONS, the same rule `markInvoicePaid` writes its
+      // subcollection row by: the cents are the truth every sum reads, and the
+      // dollar float is the projection the legacy PDF and Android joins read.
+      // Written from the one cents figure in one pass, so they cannot disagree.
+      fee: args.fee,
+      feeCents,
+      tipCents,
+      amountCents,
+      // WHICH CONVENTION THE TIP ABOVE FOLLOWS. Absent on every row written
+      // before today, and absent reads as 'unknown', never as 'net'. See
+      // lib/paymentMoney.ts.
+      tipBasis: 'gross',
+      // WHICH INVOICE THIS PAYMENT WAS APPLIED TO, and how much of it. Two flat
+      // fields rather than a list: one payment, one invoice (operator ruling,
+      // 2026-08-04). `''` means no invoice balance was touched.
+      appliedInvoiceId: staged?.invoiceId ?? '',
+      appliedInvoiceNumber: staged?.invoiceNumber ?? '',
+      // PROJECTIONS of the figures above, written in the same pass from the same
+      // cents, so no reader has to re-derive them and no two readers can round
+      // the same dollar differently.
+      appliedCents: money.appliedCents,
+      unappliedCents: money.unappliedCents,
+      proceedsCents: money.proceedsCents,
+      autoApply: args.autoApply,
+      // What of the leftover actually reached the household's account credit.
+      creditedToAccountCents,
+      recordedBy: actor.uid,
+      createdAt: FieldValue.serverTimestamp(),
+      // ── #825, DENORMALIZED SO A REPLAY CAN BE ANSWERED FROM ONE READ ─────
+      //
+      // The two fields below are the parts of this call's answer that cannot be
+      // recovered from the row's other fields: which `invoices/{id}/payments`
+      // row the apply wrote, and where the invoice stood afterwards. #644
+      // denormalized `visitIds` onto a booking envelope for exactly this
+      // reason, and the alternative is worse — recomputing the settlement on a
+      // retry reports where the invoice stands NOW, which is a different claim
+      // from what this call did.
+      //
+      // Written on every row, with or without a key. A stored shape that
+      // depended on whether the caller sent a key would be two shapes.
+      application: staged,
+      // Stamped `false` here and updated after the commit, because whether the
+      // household's confirmation went out is not known until it has been tried,
+      // and it is tried only once the money has landed. A replay reports what
+      // is stored and sends nothing: this callable's own header says a
+      // confirmation is sent because the operator ticked a box, and "the reply
+      // to her first attempt was lost" is not her ticking it twice.
+      confirmationEmailSent: false,
+    };
+    // `create` WHEN THERE IS A KEY, so two attempts that somehow reach the
+    // write together are refereed by the server rather than by the read above.
+    // A keyless call keeps `set`: its id is server-minted and cannot collide.
+    if (args.idempotencyKey !== undefined) tx.create(ref, row);
+    else tx.set(ref, row);
+    return { replayed: null, application: staged };
   });
 
-  await batch.commit();
+  if (committed.replayed !== null) {
+    logEvent({
+      severity: 'info',
+      function: 'recordPayment',
+      event: 'admin.payment.recorded.replay',
+      uid: actor.uid,
+      extra: { paymentId: ref.id, kinfolkId, idempotencyKey: args.idempotencyKey, raced: true },
+    });
+    return replayResult(ref.id, committed.replayed);
+  }
+  const application = committed.application;
 
   await writeAuditEntry({
     status: 'SUCCESS',
@@ -468,6 +609,10 @@ export async function recordPaymentHandler(
       method: args.paymentMethod,
       reference: args.referenceNumber,
       testMode: actor.testMode.active,
+      // WHICH SUBMISSION THIS ROW BELONGS TO. An audit trail that cannot tell a
+      // second payment from a second attempt at one payment is the trail that
+      // would have had to answer #825 after the fact.
+      idempotencyKey: args.idempotencyKey ?? null,
     },
   }).catch((err) => {
     logEvent({
@@ -494,6 +639,23 @@ export async function recordPaymentHandler(
       paymentId: ref.id,
       uid: actor.uid,
     });
+    // STAMPED ON THE ROW, so a replay can report it (#825). Outside the
+    // transaction because it is not known inside one: the send is attempted
+    // only after the money has landed. Best-effort like the send itself — a
+    // failed stamp must not throw away a payment that is already recorded, and
+    // the only cost is that a replay then reports `false` for a confirmation
+    // that did go out, which is the safe direction to be wrong in.
+    if (args.idempotencyKey !== undefined && confirmationEmailSent) {
+      await ref.update({ confirmationEmailSent: true }).catch((err) => {
+        logEvent({
+          severity: 'warn',
+          function: 'recordPayment',
+          event: 'payment.confirmation.stamp.failed',
+          uid: actor.uid,
+          extra: { paymentId: ref.id, err: (err as Error)?.message },
+        });
+      });
+    }
   }
 
   logEvent({
@@ -541,6 +703,58 @@ export async function recordPaymentHandler(
 /** "$36.00" from integer cents, for a refusal an operator has to read. */
 function dollars(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
+}
+
+/** A stored number, or 0. Absent reads as zero, never as a guess. */
+function storedCents(stored: Record<string, unknown>, field: string): number {
+  const v = stored[field];
+  return typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : 0;
+}
+
+/**
+ * THE ANSWER A RETRY GETS: what the FIRST attempt did, rebuilt from the row it
+ * wrote.
+ *
+ * Not a recomputation of where things stand now. A client that retries is
+ * asking what happened to ITS submission, and between the two attempts another
+ * payment can legitimately have landed on the same invoice; reporting today's
+ * settlement would answer a question nobody asked, and would make the same call
+ * return two different figures depending on how many times it was retried.
+ *
+ * Everything here comes off the stored row. The derived money figures go back
+ * through `paymentMoneyOf` rather than being read field by field, so a replayed
+ * answer and a first answer are produced by the same arithmetic.
+ */
+function replayResult(paymentId: string, stored: Record<string, unknown>): z.infer<typeof Result> {
+  const money = paymentMoneyOf({
+    amountCents: storedCents(stored, 'amountCents'),
+    tipCents: storedCents(stored, 'tipCents'),
+    feeCents: storedCents(stored, 'feeCents'),
+    appliedCents: storedCents(stored, 'appliedCents'),
+    tipBasis: 'gross',
+  });
+  const rawApplication = stored['application'];
+  const application =
+    rawApplication !== null && typeof rawApplication === 'object'
+      ? (rawApplication as z.infer<typeof PaymentApplicationSchema>)
+      : null;
+  return validateResponse('recordPayment', Result, {
+    ok: true,
+    paymentId,
+    kinfolkId: typeof stored['kinfolkId'] === 'string' ? stored['kinfolkId'] : '',
+    amountCents: money.amountCents,
+    tipCents: money.tipCents,
+    feeCents: money.feeCents,
+    tipBasis: 'gross',
+    appliedCents: money.appliedCents,
+    unappliedCents: money.unappliedCents,
+    proceedsCents: money.proceedsCents,
+    tipNetCents: money.tipNetCents ?? 0,
+    autoApply: stored['autoApply'] === true,
+    application,
+    creditedToAccountCents: storedCents(stored, 'creditedToAccountCents'),
+    confirmationEmailSent: stored['confirmationEmailSent'] === true,
+  });
 }
 
 /**

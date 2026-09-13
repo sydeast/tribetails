@@ -44,7 +44,9 @@
  * settling another's bill, and no screen would ever show why.
  */
 import { FieldValue } from 'firebase-admin/firestore';
-import type { Firestore, WriteBatch } from 'firebase-admin/firestore';
+import type { Firestore } from 'firebase-admin/firestore';
+
+import type { StagedWriter } from './moneyIdempotency';
 
 import {
   alreadySettledRefusal,
@@ -233,7 +235,14 @@ export async function readInvoiceForApply(
 }
 
 /**
- * Stages the application onto a batch, and reports what it did.
+ * Stages the application onto a batch OR a transaction, and reports what it did.
+ *
+ * #825 widened `batch` from `WriteBatch` to `StagedWriter`, which is the one
+ * `set` both of Firestore's writers carry. `recordPayment` now commits through
+ * a transaction, because the idempotency read that decides whether to write at
+ * all has to share a snapshot with the writes it authorises
+ * (`lib/moneyIdempotency.ts` has the argument). Nothing about what is staged
+ * changed, and the batch callers that remain are unaffected.
  *
  * THE SUBCOLLECTION ROW IS `markInvoicePaid`'s ROW, field for field, plus
  * `sourcePaymentId`. Both denominations are written for the same reason it
@@ -247,7 +256,7 @@ export async function readInvoiceForApply(
  */
 export function stageApply(
   firestore: Firestore,
-  batch: WriteBatch,
+  batch: StagedWriter,
   input: {
     step: ApplyStep;
     /** The root `payments` row this money arrived on. The link back. */

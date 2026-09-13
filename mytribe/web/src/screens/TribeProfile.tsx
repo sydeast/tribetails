@@ -4,16 +4,23 @@ import { getBusinessContact } from '../api/portal';
 import { SecretField } from '../components/SecretField';
 import {
   addSecondaryContact,
+  CONTACT_LABEL_MAX,
+  CONTACT_NAME_MAX,
+  CONTACT_PHONE_MAX,
+  contactMetaLine,
   getFormSchema,
   getMyTribeProfile,
   getVetClinics,
   HOME_RESERVED_KEYS,
   isDisplayableField,
+  listHouseholdContacts,
   listMembers,
   memberStatusLabel,
   mergeReservedFields,
   PROFILE_RESERVED_KEYS,
+  removeHouseholdContact,
   saveHomeAccess,
+  saveHouseholdContact,
   saveTribeProfile,
   submitVetClinic,
   type ClinicCandidateDto,
@@ -21,6 +28,7 @@ import {
   type CustomFieldDto,
   type FormFieldDto,
   type FormSchemaDto,
+  type HouseholdContactDto,
   type MemberDto,
 } from '../api/tribeApi';
 import { useSignOut } from '../lib/auth';
@@ -31,7 +39,20 @@ import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { BusyLabel } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
-import { usePortalMutation } from '../lib/mutationState';
+import { errorLine, usePortalMutation } from '../lib/mutationState';
+
+/**
+ * True for a Firebase callable rejection the server raised as permission-denied.
+ *
+ * Duplicated from `screens/Account.tsx` on purpose rather than lifted into a
+ * lib: there it decides a BILLING sentence and here it decides whether a card
+ * renders at all, and one shared helper that both screens' copy hangs off is a
+ * thing a later edit silently changes for both. Three lines is cheaper.
+ */
+function isPermissionDenied(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === 'functions/permission-denied' || code === 'permission-denied';
+}
 
 
 /**
@@ -635,6 +656,11 @@ export function TribeProfile() {
               {/* INVITE A KINFOLK — no mockup coverage; ported from SecondaryInviteCard in TribeScreen.kt */}
               <InviteKinfolkCard kinfolkId={kinfolkId} />
 
+              {/* CONTACTS WITHOUT AN ACCOUNT — directly under the invite, because the
+                  difference between the two is the whole point of #818 and it reads
+                  fastest side by side. */}
+              <HouseholdContactsCard kinfolkId={kinfolkId} />
+
               {/* SAVE BAR */}
               <section style={{ marginTop: 6 }}>
                 <div className="savebar">
@@ -929,6 +955,334 @@ function InviteKinfolkCard(props: { kinfolkId: string | undefined }) {
       {invite.isSuccess && <p className="sub" style={{ color: 'var(--teal)', marginTop: 8 }}>Invite sent.</p>}
       <OfflineMutationNotice phase={invite.phase} what="this invite" check="your Members list" />
       {invite.phase === 'failed' && <p className="sub" style={{ color: 'var(--coral)', marginTop: 8 }}>Invite failed. Try again.</p>}
+    </section>
+  );
+}
+
+/** Blank contact form. One object so opening and cancelling are single writes. */
+const EMPTY_CONTACT_FORM = { name: '', label: '', phone: '', email: '' };
+
+/**
+ * The household's own contacts: people it can be reached through who hold no
+ * portal account at all.
+ *
+ * WHY THIS CARD EXISTS (#818). PR #817 settled the ruling — "a secondary
+ * contact does not have to be a portal user. primary kinfolk user will invite a
+ * second kinfolk to the household to manage and receive notifications" — and
+ * built `listHouseholdContacts` / `saveHouseholdContact` /
+ * `removeHouseholdContact` for it, then wired only the admin. The card above
+ * this one is an invite and is right to be: it hands somebody a sign-in. The
+ * other pet parent who does not use apps, the neighbour with the key, the
+ * daughter who answers the phone had nowhere in the portal to be written down,
+ * so the office was told by phone and typed it in.
+ *
+ * THE TITLE CARRIES THE DISTINCTION, because nothing else may. The 2026-09-11
+ * ruling took explanatory copy out from under panel titles, so there is no
+ * `sub` here to say "these people have no account" in a sentence — the heading
+ * says it, and the rest of the difference lives where a household is actually
+ * deciding something: the field hint under Email, the empty hint, and the line
+ * that comes back after a save.
+ *
+ * NO NEW BACKEND. All three callables shipped in #817 and are unchanged; this
+ * card sends `kinfolkId` only when the portal is holding one, and the server
+ * resolves the household from `clients/{uid}.kinfolkIds` otherwise.
+ *
+ * PRIMARY ONLY, AND THE GATE IS THE SERVER'S. `requireKinfolkPrimary` denies an
+ * ACTIVE SECONDARY on all three, exactly as it does for the members roster, and
+ * that was not widened for this. A SECONDARY manages nobody on this household
+ * today, and a contact is a record about the household rather than about
+ * themselves, so there is no reading of the existing permission set that
+ * already covers it — granting it would mean a new permission key and a ruling
+ * nobody has made. The portal cannot know the caller's role before it asks
+ * (`getMyAccess` returns ids and an operator flag, no role), so the card asks,
+ * reads `permission-denied` for what it is, and says who does keep the list
+ * instead of printing "couldn't load" over a working server.
+ */
+function HouseholdContactsCard(props: { kinfolkId: string | undefined }) {
+  const { kinfolkId } = props;
+  const queryClient = useQueryClient();
+  const contactsQ = useQuery({
+    queryKey: ['householdContacts', kinfolkId],
+    queryFn: () => listHouseholdContacts(kinfolkId),
+    // A SECONDARY is denied every time. Retrying a settled "no" is two more
+    // doomed round-trips and a slower message.
+    retry: false,
+  });
+  const contactsView = viewOfQuery(contactsQ, { isEmpty: (rows) => rows.length === 0 });
+
+  /** Open form: 'new', an existing contact, or null for closed. */
+  const [editing, setEditing] = useState<'new' | HouseholdContactDto | null>(null);
+  const [form, setForm] = useState(EMPTY_CONTACT_FORM);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<HouseholdContactDto | null>(null);
+
+  function openForm(contact: HouseholdContactDto | null) {
+    setEditing(contact ?? 'new');
+    setForm(
+      contact === null
+        ? EMPTY_CONTACT_FORM
+        : { name: contact.name, label: contact.label, phone: contact.phone ?? '', email: contact.email ?? '' },
+    );
+    setFormError(null);
+    setStatus(null);
+  }
+
+  function closeForm() {
+    setEditing(null);
+    setForm(EMPTY_CONTACT_FORM);
+    setFormError(null);
+  }
+
+  /**
+   * ABANDON. The create half is a bare `collection.add(...)`: no idempotency
+   * key, no `overwriteIds`, nothing on the server that recognises the second
+   * attempt — so a write held on this phone and re-sent after the household
+   * gave up and typed it again is two Ada Riveras on the household. The
+   * decision table in `lib/mutationState.ts` settles it in one line ("a create
+   * with no key abandons"), and one policy covers the edit path too rather than
+   * changing under a field's presence: the household is standing at the form
+   * either way, so "nothing was sent, try again with signal" is both true and
+   * actionable.
+   */
+  const save = usePortalMutation({
+    mutationFn: () => {
+      const target = editing;
+      return saveHouseholdContact(
+        {
+          ...(target !== null && target !== 'new' ? { contactId: target.contactId } : {}),
+          name: form.name,
+          label: form.label,
+          phone: form.phone,
+          email: form.email,
+        },
+        kinfolkId,
+      );
+    },
+    onSuccess: (res) => {
+      setStatus(
+        res.created
+          ? `${form.name.trim()} is a contact on your Tribe. No portal account was created.`
+          : `Saved ${form.name.trim()}.`,
+      );
+      closeForm();
+      void queryClient.invalidateQueries({ queryKey: ['householdContacts', kinfolkId] });
+    },
+  }, { policy: 'abandon', what: 'this contact' });
+
+  /**
+   * HOLD. `removeHouseholdContact` reads the document and answers `not-found`
+   * when it is already gone, so a replay deletes nothing twice. It charges
+   * nothing, navigates nowhere, and its `onSuccess` only invalidates a cache —
+   * which is safe to run after this card unmounts, per the note on held writes
+   * in `lib/mutationState.ts`.
+   */
+  const remove = usePortalMutation({
+    mutationFn: (contactId: string) => removeHouseholdContact(contactId, kinfolkId),
+    onSuccess: () => {
+      setRemoveTarget(null);
+      void queryClient.invalidateQueries({ queryKey: ['householdContacts', kinfolkId] });
+    },
+  }, { policy: 'hold', what: 'this removal' });
+
+  const deniedToCaller = contactsView.kind === 'error' && isPermissionDenied(contactsQ.error);
+  const rows = contactsView.kind === 'data' ? contactsView.data : [];
+
+  return (
+    <section className="glass card d4">
+      <div className="cardhead">
+        <div className="ic orange">{'\u{1F4C7}'}</div>
+        <div className="htxt">
+          <h3 className="title">Contacts Without an Account</h3>
+        </div>
+      </div>
+
+      {deniedToCaller ? (
+        <p className="sub">Your primary kinfolk keeps this list. Ask them to add or change a contact.</p>
+      ) : (
+        <>
+          {contactsView.kind === 'offline' ? (
+            <OfflineNotice what="your contacts" compact />
+          ) : contactsView.kind === 'error' ? (
+            <p className="sub" style={{ color: 'var(--coral)' }}>Couldn&rsquo;t load your contacts right now.</p>
+          ) : contactsView.kind === 'empty' ? (
+            <p className="sub">
+              Nobody is written down yet. A contact is somebody we can phone when we can&rsquo;t reach you. They get no
+              sign-in and see nothing.
+            </p>
+          ) : contactsView.kind !== 'data' ? (
+            <p className="sub">Loading your contacts…</p>
+          ) : (
+            <div>
+              {rows.map((contact) => (
+                <div className="memberrow" key={contact.contactId}>
+                  <div className="mname">{contact.name}</div>
+                  <div className="msub">{contactMetaLine(contact)}</div>
+                  {removeTarget?.contactId === contact.contactId ? (
+                    <div className="contactconfirm">
+                      <p className="sub">
+                        Remove {contact.name}? There is no account to suspend, so the row is gone.
+                      </p>
+                      <div className="contactactions">
+                        <button
+                          className="btn ghost"
+                          type="button"
+                          onClick={() => remove.mutate(contact.contactId)}
+                          disabled={remove.isPending}
+                        >
+                          <MutationLabel mutation={remove} busy="Removing…">
+                            Remove
+                          </MutationLabel>
+                        </button>
+                        <button className="btn ghost" type="button" onClick={() => setRemoveTarget(null)} disabled={remove.isPending}>
+                          Keep
+                        </button>
+                      </div>
+                      <OfflineMutationNotice phase={remove.phase} what="this removal" check="this list" />
+                      {errorLine(remove, 'That did not work. Try again.') !== null && (
+                        <p className="sub" style={{ color: 'var(--coral)' }}>{errorLine(remove, 'That did not work. Try again.')}</p>
+                      )}
+                    </div>
+                  ) : (
+                    // Both are dead while ANY removal is in flight. `remove` is
+                    // one mutation shared by every row, so opening a second
+                    // row's confirm calls `reset()`, which detaches the observer
+                    // and hides the queued notice — while a HELD delete of the
+                    // first row still fires on reconnect. A household would be
+                    // watching the wrong row.
+                    <div className="contactactions">
+                      <button
+                        className="btn ghost"
+                        type="button"
+                        onClick={() => openForm(contact)}
+                        disabled={remove.isPending}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="btn ghost"
+                        type="button"
+                        onClick={() => {
+                          remove.reset();
+                          setRemoveTarget(contact);
+                        }}
+                        disabled={remove.isPending}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {editing === null ? (
+            <button
+              className="btn ghost block"
+              type="button"
+              style={{ marginTop: 14 }}
+              onClick={() => openForm(null)}
+              disabled={contactsView.kind === 'offline'}
+            >
+              Add a contact
+            </button>
+          ) : (
+            <>
+              <hr className="divider" />
+              <div className="sectlabel">{editing === 'new' ? 'New contact' : 'Edit contact'}</div>
+              <div className="grid2">
+                {/* Label, control and hint are SIBLINGS: a <label> wrapping its own
+                    hint folds the hint into the control's accessible name, so the
+                    field announces a sentence instead of a field. */}
+                <div className="field full">
+                  <label htmlFor="hc-name">Name</label>
+                  <input
+                    id="hc-name"
+                    className="inp"
+                    type="text"
+                    maxLength={CONTACT_NAME_MAX}
+                    value={form.name}
+                    onChange={(e) => {
+                      setForm({ ...form, name: e.target.value });
+                      setFormError(null);
+                    }}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="hc-label">What they are to your Tribe</label>
+                  <input
+                    id="hc-label"
+                    className="inp"
+                    type="text"
+                    maxLength={CONTACT_LABEL_MAX}
+                    placeholder="Folk"
+                    aria-describedby="hc-label-hint"
+                    value={form.label}
+                    onChange={(e) => setForm({ ...form, label: e.target.value })}
+                  />
+                  <span id="hc-label-hint" className="hint">Sister, Co-parent, Neighbour. Left empty it reads Folk.</span>
+                </div>
+                <div className="field">
+                  <label htmlFor="hc-phone">Phone</label>
+                  <input
+                    id="hc-phone"
+                    className="inp mono"
+                    type="tel"
+                    maxLength={CONTACT_PHONE_MAX}
+                    value={form.phone}
+                    onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                  />
+                </div>
+                <div className="field full">
+                  <label htmlFor="hc-email">Email</label>
+                  <input
+                    id="hc-email"
+                    className="inp"
+                    type="email"
+                    aria-describedby="hc-email-hint"
+                    value={form.email}
+                    onChange={(e) => setForm({ ...form, email: e.target.value })}
+                  />
+                  <span id="hc-email-hint" className="hint">
+                    Optional, and it invites nobody. An address here is somewhere to reach this person.
+                  </span>
+                </div>
+              </div>
+              <div className="contactactions" style={{ marginTop: 12 }}>
+                <button
+                  className="btn grad"
+                  type="button"
+                  onClick={() => {
+                    if (form.name.trim() === '') {
+                      setFormError('A contact needs a name.');
+                      return;
+                    }
+                    save.mutate();
+                  }}
+                  disabled={save.isPending}
+                >
+                  <MutationLabel mutation={save} busy="Saving…">
+                    Save contact
+                  </MutationLabel>
+                </button>
+                <button className="btn ghost" type="button" onClick={closeForm} disabled={save.isPending}>
+                  Cancel
+                </button>
+              </div>
+              {formError !== null && <p className="sub" style={{ color: 'var(--coral)', marginTop: 8 }}>{formError}</p>}
+              <OfflineMutationNotice phase={save.phase} what="this contact" check="this list" />
+              {errorLine(save, 'The contact was not saved. Try again.') !== null && (
+                <p className="sub" style={{ color: 'var(--coral)', marginTop: 8 }}>
+                  {errorLine(save, 'The contact was not saved. Try again.')}
+                </p>
+              )}
+            </>
+          )}
+
+          {status !== null && <p className="sub" style={{ color: 'var(--teal)', marginTop: 8 }}>{status}</p>}
+        </>
+      )}
     </section>
   );
 }

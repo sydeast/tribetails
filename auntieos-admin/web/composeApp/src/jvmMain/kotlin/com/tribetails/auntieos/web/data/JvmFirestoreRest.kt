@@ -361,6 +361,13 @@ internal object JvmFirestoreRest {
 
     /** PATCH (upsert) a document at collection/id from a serialized model. Returns the id. */
     suspend fun setDoc(collection: String, id: String, modelJson: String): String {
+        // #825: recorded BEFORE the token fetch, exactly as #616 does for
+        // `deleteDoc` and `patchFields` below, so a test with no credentials can
+        // still assert WHICH write was attempted. That matters here because the
+        // whole of #825 on this surface is the difference between a POST to a
+        // collection and a PATCH at a caller-chosen id, and no assertion on a
+        // return value can tell those apart.
+        JvmFirestoreFixtures.lastWrite = RestWrite("PATCH", collection, id)
         val token = jvmFirebaseIdToken() ?: error("Not signed in")
         val plain = codec.parseToJsonElement(modelJson).jsonObject
         val resp = http.patch("$BASE/$collection/$id") {
@@ -403,6 +410,10 @@ internal object JvmFirestoreRest {
 
     /** Create a doc with an auto id (POST to the collection). Returns the new id. */
     suspend fun addDoc(collection: String, modelJson: String): String {
+        // #825: the twin of [setDoc]'s record above. The id is blank because
+        // there is no id yet -- Firestore mints it -- and an unkeyed write having
+        // no id of its own is precisely what the keyed path exists to change.
+        JvmFirestoreFixtures.lastWrite = RestWrite("POST", collection, "")
         val token = jvmFirebaseIdToken() ?: error("Not signed in")
         val plain = codec.parseToJsonElement(modelJson).jsonObject
         val resp = http.post("$BASE/$collection") {

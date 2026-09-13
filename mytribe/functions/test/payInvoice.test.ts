@@ -20,16 +20,37 @@ interface CheckoutSessionParams {
   [key: string]: unknown;
 }
 
+/**
+ * Stripe's SECOND argument: per-request options, where its own idempotency
+ * lives (issue #825). Declared for the same reason `CheckoutSessionParams` is:
+ * an untyped mock records a one-arg call signature and `mock.calls[0][1]`
+ * reads as `undefined` no matter what the handler passed.
+ */
+interface StripeRequestOptions {
+  idempotencyKey?: string;
+}
 const mocks = vi.hoisted(() => ({
   dbFn: vi.fn(),
   stripeMock: {
     checkout: {
       sessions: {
-        create: vi.fn(async (_params: CheckoutSessionParams) => ({
+        create: vi.fn(async (_params: CheckoutSessionParams, _options?: StripeRequestOptions) => ({
           id: 'cs_test_1',
           url: 'https://checkout.stripe.com/test',
           client_secret: null,
         })),
+        /**
+         * Issue #826, the reuse path's one Stripe read.
+         *
+         * REJECTS by default, which is both what Stripe does with an id it does
+         * not know and what keeps this suite honest: a resolving default would
+         * make "did the reuse check even run?" unanswerable, because every test
+         * that never stubs it would take the mint path for the right reason by
+         * accident.
+         */
+        retrieve: vi.fn(async (_id: string): Promise<unknown> => {
+          throw new Error('No such checkout.session');
+        }),
       },
     },
   },
@@ -41,6 +62,7 @@ vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.stripeMock.checkout.sessions.create.mockClear();
+  mocks.stripeMock.checkout.sessions.retrieve.mockClear();
   delete process.env.AUNTIE_OPERATOR_UIDS;
 });
 
@@ -398,5 +420,250 @@ describe('payInvoice payment_method_types (issue #409)', () => {
       /Invalid API Key/,
     );
     expect(mocks.stripeMock.checkout.sessions.create).toHaveBeenCalledTimes(1);
+  });
+});
+/**
+ * ISSUE #826: the settlement round, and reusing a session instead of minting a
+ * new one on every call.
+ *
+ * `payInvoice` charges nothing itself — it hands back a Stripe-hosted URL — so
+ * nothing here can refuse a duplicate charge. Two things it CAN do: stamp the
+ * round the webhook refuses stale sessions on, and stop handing out a second
+ * session when the invoice already has one open.
+ */
+/**
+ * #825 meets #826: the Stripe request-option key and the session reuse are
+ * layers, not rivals, and they must not be able to disagree.
+ *
+ * The reuse can only hand back a session it can FIND, through the
+ * `pendingCheckoutSessionId` written AFTER Stripe returns. It therefore covers
+ * the call that finished. The key covers the call that did not: Stripe made the
+ * session, the reply was lost, nothing was stored, and the retry would
+ * otherwise mint a second live checkout.
+ *
+ * Where they could have fought is the BODY. Stripe refuses a key reused with
+ * different parameters, and #826 deliberately mints fresh when the amount or
+ * the round has moved. So the key handed to Stripe carries both of those, which
+ * makes the two rules turn on the same facts.
+ */
+describe('payInvoice Stripe idempotency key (#825) against the #826 reuse', () => {
+  const baseDocs = {
+    'clients/u1': { kinfolkIds: ['3'] },
+    'families/3/members/u1': PRIMARY_MEMBER,
+  };
+  const args = {
+    invoiceId: 'inv-1',
+    successUrl: 'https://x/ok',
+    cancelUrl: 'https://x/cancel',
+    idempotencyKey: 'chk_1757700000000_ab12cd',
+  };
+  const invoice = (over: Record<string, unknown> = {}) => ({
+    kinfolkId: '3',
+    amountDue: 12.5,
+    ...over,
+  });
+  async function mint(docs: Record<string, unknown>, data: Record<string, unknown> = args) {
+    const ctx = buildDbMock({ docs: { ...baseDocs, ...docs } as any });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    await payInvoiceHandler({ data, auth: { uid: 'u1' } } as any);
+    return mocks.stripeMock.checkout.sessions.create.mock.calls[0][1]?.idempotencyKey;
+  }
+  it('sends no request options at all when the caller supplied no key', async () => {
+    const key = await mint({ 'invoices/inv-1': invoice() }, {
+      invoiceId: 'inv-1',
+      successUrl: 'https://x/ok',
+      cancelUrl: 'https://x/cancel',
+    });
+    expect(key).toBeUndefined();
+  });
+  it('derives the Stripe key from the caller key, the round and the amount', async () => {
+    const key = await mint({ 'invoices/inv-1': invoice({ stripeCheckoutRound: 2 }) });
+    expect(key).toBe('chk_1757700000000_ab12cd_r2_1250');
+  });
+  it('sends the SAME Stripe key for a retry of one submission at one balance', async () => {
+    // The whole point. Two attempts, nothing changed in between, so Stripe
+    // replays the first session instead of opening a second live checkout.
+    const first = await mint({ 'invoices/inv-1': invoice() });
+    mocks.stripeMock.checkout.sessions.create.mockClear();
+    const second = await mint({ 'invoices/inv-1': invoice() });
+    expect(second).toBe(first);
+  });
+  it('sends a DIFFERENT Stripe key once the balance has moved', async () => {
+    // #826 mints a fresh session when the amount no longer matches. If the key
+    // did not move with it, Stripe would refuse the changed body and a
+    // household would be unable to pay a bill they are trying to settle. This
+    // is the case a partial Venmo payment between two taps produces.
+    const before = await mint({ 'invoices/inv-1': invoice() });
+    mocks.stripeMock.checkout.sessions.create.mockClear();
+    const after = await mint({ 'invoices/inv-1': invoice({ amountDue: 7.5 }) });
+    expect(after).not.toBe(before);
+    expect(after).toBe('chk_1757700000000_ab12cd_r0_750');
+  });
+  it('sends a DIFFERENT Stripe key once the settlement round has closed', async () => {
+    const before = await mint({ 'invoices/inv-1': invoice() });
+    mocks.stripeMock.checkout.sessions.create.mockClear();
+    const after = await mint({ 'invoices/inv-1': invoice({ stripeCheckoutRound: 1 }) });
+    expect(after).not.toBe(before);
+  });
+  it('gives the card-only fallback its own key, because it sends a different body', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        ...baseDocs,
+        'invoices/inv-1': invoice(),
+        'business_settings/business_settings': { paymentOptions: { klarna: { enabled: true } } },
+      } as any,
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.stripeMock.checkout.sessions.create.mockImplementationOnce(async () => {
+      const err: any = new Error('The payment method type provided is invalid.');
+      err.type = 'StripeInvalidRequestError';
+      err.param = 'payment_method_types[1]';
+      throw err;
+    });
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    await payInvoiceHandler({ data: args, auth: { uid: 'u1' } } as any);
+    const calls = mocks.stripeMock.checkout.sessions.create.mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0][1]?.idempotencyKey).toBe('chk_1757700000000_ab12cd_r0_1250');
+    // Not the same key with a smaller method list: Stripe would refuse that,
+    // and the graceful fallback would become a hard error on a bill somebody
+    // is trying to settle.
+    expect(calls[1][1]?.idempotencyKey).toBe('chk_1757700000000_ab12cd_r0_1250_card');
+  });
+  it('never reaches Stripe at all when the reuse answers first', async () => {
+    // Layer order: the reuse runs BEFORE the create, so a session that can be
+    // handed back costs no Stripe write and consumes no key.
+    const ctx = buildDbMock({
+      docs: {
+        ...baseDocs,
+        'invoices/inv-1': invoice({ pendingCheckoutSessionId: 'cs_open_1' }),
+      } as any,
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.stripeMock.checkout.sessions.retrieve.mockResolvedValueOnce({
+      id: 'cs_open_1',
+      url: 'https://checkout.stripe.com/open',
+      status: 'open',
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+      amount_total: 1250,
+      success_url: args.successUrl,
+      cancel_url: args.cancelUrl,
+      metadata: { invoiceId: 'inv-1', checkoutRound: '0' },
+    });
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    const res = await payInvoiceHandler({ data: args, auth: { uid: 'u1' } } as any);
+    expect(mocks.stripeMock.checkout.sessions.create).not.toHaveBeenCalled();
+    expect(res.sessionId).toBe('cs_open_1');
+  });
+});
+describe('payInvoice checkout round and session reuse (issue #826)', () => {
+  const baseDocs = {
+    'clients/u1': { kinfolkIds: ['3'] },
+    'families/3/members/u1': PRIMARY_MEMBER,
+  };
+  const args = { invoiceId: 'inv-1', successUrl: 'https://x/ok', cancelUrl: 'https://x/cancel' };
+  /** An open session Stripe would hand back for this invoice at this balance. */
+  function openSession(over: Record<string, unknown> = {}) {
+    return {
+      id: 'cs_open_1',
+      url: 'https://checkout.stripe.com/open',
+      status: 'open',
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+      amount_total: 1250,
+      success_url: args.successUrl,
+      cancel_url: args.cancelUrl,
+      metadata: { invoiceId: 'inv-1', checkoutRound: '0' },
+      ...over,
+    };
+  }
+  it('stamps the round on BOTH metadata copies, because the webhook may read either', async () => {
+    const ctx = buildDbMock({
+      docs: { ...baseDocs, 'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, stripeCheckoutRound: 2 } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    await payInvoiceHandler({ data: args, auth: { uid: 'u1' } } as any);
+    const callArg = mocks.stripeMock.checkout.sessions.create.mock.calls[0][0];
+    // A string, because Stripe metadata values are strings.
+    expect(callArg.metadata.checkoutRound).toBe('2');
+    expect(callArg.payment_intent_data?.metadata?.checkoutRound).toBe('2');
+  });
+  it('stamps round 0 on an invoice that has never taken a Stripe payment', async () => {
+    const ctx = buildDbMock({
+      docs: { ...baseDocs, 'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    await payInvoiceHandler({ data: args, auth: { uid: 'u1' } } as any);
+    expect(mocks.stripeMock.checkout.sessions.create.mock.calls[0][0].metadata.checkoutRound).toBe('0');
+  });
+  it('hands back the session this invoice already has open instead of minting a second', async () => {
+    // Defence in depth, NOT the fix: the same session means the same
+    // PaymentIntent, which the webhook's existing per-intent ledger already
+    // dedupes. It keeps the ordinary two-taps case from ever reaching the
+    // invoice-level refusal.
+    const ctx = buildDbMock({
+      docs: {
+        ...baseDocs,
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, pendingCheckoutSessionId: 'cs_open_1' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.stripeMock.checkout.sessions.retrieve.mockResolvedValueOnce(openSession());
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    const res = await payInvoiceHandler({ data: args, auth: { uid: 'u1' } } as any);
+    expect(mocks.stripeMock.checkout.sessions.retrieve).toHaveBeenCalledWith('cs_open_1');
+    expect(mocks.stripeMock.checkout.sessions.create).not.toHaveBeenCalled();
+    expect(res.sessionId).toBe('cs_open_1');
+    expect(res.checkoutUrl).toBe('https://checkout.stripe.com/open');
+  });
+  it.each([
+    ['the session is already complete', { status: 'complete', url: null }],
+    ['the session has expired', { status: 'expired', url: null }],
+    ['it expires within the minute', { expires_at: Math.floor(Date.now() / 1000) + 30 }],
+    ['it charges a stale amount', { amount_total: 5000 }],
+    ['it would return to a different screen', { success_url: 'https://other/ok' }],
+    ['it would cancel to a different screen', { cancel_url: 'https://other/cancel' }],
+    ['it belongs to a settlement round that has closed', { metadata: { invoiceId: 'inv-1', checkoutRound: '1' } }],
+    ['it belongs to a different invoice', { metadata: { invoiceId: 'inv-9', checkoutRound: '0' } }],
+  ])('mints a fresh session when %s', async (_why, over) => {
+    const ctx = buildDbMock({
+      docs: {
+        ...baseDocs,
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, pendingCheckoutSessionId: 'cs_open_1' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.stripeMock.checkout.sessions.retrieve.mockResolvedValueOnce(openSession(over));
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    const res = await payInvoiceHandler({ data: args, auth: { uid: 'u1' } } as any);
+    expect(mocks.stripeMock.checkout.sessions.create).toHaveBeenCalledTimes(1);
+    expect(res.sessionId).toBe('cs_test_1');
+  });
+  it('mints a fresh session when the stored id cannot be read at all', async () => {
+    // Fail-soft, and it has to be: a household must never be unable to pay a
+    // bill because a stale id could not be inspected. `retrieve` rejects by
+    // default in this suite, which is exactly this case.
+    const ctx = buildDbMock({
+      docs: {
+        ...baseDocs,
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, pendingCheckoutSessionId: 'cs_gone' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    const res = await payInvoiceHandler({ data: args, auth: { uid: 'u1' } } as any);
+    expect(mocks.stripeMock.checkout.sessions.retrieve).toHaveBeenCalledWith('cs_gone');
+    expect(res.sessionId).toBe('cs_test_1');
+  });
+  it('does not call Stripe at all when the invoice has no pending session', async () => {
+    const ctx = buildDbMock({
+      docs: { ...baseDocs, 'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    await payInvoiceHandler({ data: args, auth: { uid: 'u1' } } as any);
+    expect(mocks.stripeMock.checkout.sessions.retrieve).not.toHaveBeenCalled();
   });
 });

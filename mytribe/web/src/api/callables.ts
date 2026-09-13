@@ -45,6 +45,11 @@ export const PENDING_CALLABLES = [
   'listMembers',
   'addSecondaryContact',
   'updateSecondaryPermissions',
+  // Household CONTACTS, which are not members and not invites: see the block in
+  // api/tribeApi.ts and the 2026-09-12 ruling it quotes.
+  'listHouseholdContacts',
+  'saveHouseholdContact',
+  'removeHouseholdContact',
   // account / notifications
   'getMyAccount',
   'saveMyAccount',

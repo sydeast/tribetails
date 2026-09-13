@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   invoiceDispute,
   invoiceDisputeDeadline,
@@ -51,6 +51,10 @@ import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { Banner } from './Banner';
 import { phaseOfError } from '../lib/offlineWrite';
+import {
+  mintInvoicePaymentIdempotencyKey,
+  mintPaymentIdempotencyKey,
+} from '../lib/moneyIdempotency';
 import './InvoiceDetail.css';
 
 /**
@@ -63,16 +67,25 @@ import './InvoiceDetail.css';
  * and on this panel those call for different actions:
  *
  *   blocked  nothing was sent. Re-enter it when there is a signal. Safe.
- *   unknown  it was away when the signal went. DO NOT re-enter it without
- *            looking: `recordPayment` writes an auto-id row into the root
- *            `payments` collection with no dedupe key of any kind, and with
- *            `autoApply` it also increments `families/{id}.accountBalanceCents`
- *            — so a second one is a double-counted payment AND spendable
- *            credit made from nothing. `markInvoicePaid` refuses a replay only
- *            when the first call SETTLED the invoice; on an explicit partial it
- *            writes a second subcollection row and drops the balance twice.
- *            None of the invoice callables accepts an idempotency key (checked:
- *            only `createMultiDateBookingRequest` does).
+ *   unknown  it was away when the signal went. SINCE #825 THIS IS SAFE TO
+ *            RE-SUBMIT, and the sentence below says so rather than sending the
+ *            operator off to check by hand. Both money callables in this
+ *            panel's flow now carry a caller-minted `idempotencyKey` — the id
+ *            of the row each will write — and the panel holds one pair of keys
+ *            for as long as the form is unchanged, so pressing again lands on
+ *            the rows the first press may already have written.
+ *
+ *            What that fixed: `recordPayment` wrote an auto-id row into the
+ *            root `payments` collection with no dedupe of any kind and, with
+ *            `autoApply`, also incremented `families/{id}.accountBalanceCents`
+ *            — so a second one was a double-counted payment AND spendable
+ *            credit made from nothing. `markInvoicePaid` refused a replay only
+ *            when the first call SETTLED the invoice; on an explicit partial
+ *            it wrote a second subcollection row and dropped the balance twice.
+ *
+ *            EDITING THE FORM MINTS NEW KEYS, because an edited payment is a
+ *            different payment. So the safe advice still depends on leaving the
+ *            form alone, and the sentence says that.
  *   failed   the server answered. Its own sentence is the useful one.
  *
  * The offline classes carry their whole sentence, so the callable-name prefix
@@ -84,7 +97,7 @@ export function invoiceActionError(caught: unknown, callableName: string): strin
   const message = caught instanceof Error && caught.message ? caught.message : 'Action failed';
   if (phase === 'blocked') return message;
   if (phase === 'unknown') {
-    return `${message} Open the Payments screen and check whether this payment is already there before recording it again.`;
+    return `${message} Press the same button again WITHOUT changing anything: this payment carries a key that makes a second attempt land on the same record. Changing a figure first would make it a different payment.`;
   }
   return `${callableName} failed: ${message}`;
 }
@@ -516,6 +529,45 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // "Will automatically apply any Unapplied amount to future invoices."
   const [paidAutoApply, setPaidAutoApply] = useState(false);
   const [paidSendConfirmation, setPaidSendConfirmation] = useState(false);
+  /**
+   * #825: ONE PAIR OF KEYS PER SUBMISSION, held across a re-press.
+   *
+   * This flow makes TWO money writes — `markInvoicePaid` (the authority) and
+   * `recordPayment` (the display ledger) — so it holds two keys, one shaped for
+   * each callable's anchor row. They are minted lazily on the first press and
+   * kept while the form is unchanged, which is exactly the case that used to
+   * double-collect: the operator sees `functions/internal`, which the SDK
+   * reports whether the request never arrived or the write committed and the
+   * reply was lost, and presses again.
+   *
+   * KEEPING THEM ACROSS A PARTIAL FAILURE IS THE POINT. Step 1 can land and
+   * step 2 fail; pressing again then replays step 1 (the server answers from
+   * the row it already wrote, rather than collecting a second time) and writes
+   * the ledger row that is genuinely missing. Without the keys, the only safe
+   * advice after that was "go and look", and the only unsafe-but-tempting
+   * action was to press again.
+   *
+   * Cleared by `startAction` (a new dialog is a new payment) and by the effect
+   * below whenever any figure on the form changes (an edited payment is a
+   * different payment, and a held key would report the first one's figures back
+   * for money that was never collected).
+   */
+  const settleKey = useRef<string | null>(null);
+  const ledgerKey = useRef<string | null>(null);
+  useEffect(() => {
+    settleKey.current = null;
+    ledgerKey.current = null;
+  }, [
+    paidAmount,
+    paidTip,
+    paidFee,
+    paidTotal,
+    paidMethod,
+    paidReference,
+    paidNotes,
+    paidAutoApply,
+    paidSendConfirmation,
+  ]);
 
   // Edit mode. Seeded from the invoice the moment Edit is pressed rather than
   // held in sync with it: the live listener would otherwise overwrite what the
@@ -685,6 +737,12 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     // Prefilled with the outstanding balance so the common case is one click,
     // and editable so a partial is one field away rather than impossible.
     setPaidAmount(key === 'markPaid' && invoice.amountDue > 0 ? String(invoice.amountDue) : '');
+    // A NEW DIALOG IS A NEW PAYMENT (#825). The effect above already clears
+    // these whenever a figure changes, but opening the dialog is not a figure
+    // change, and a key held from the last payment would report that one's
+    // result back for this one.
+    settleKey.current = null;
+    ledgerKey.current = null;
     setPending(key);
   }
 
@@ -909,10 +967,13 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         // re-derives the balance from the sum of every recorded payment. Its
         // failure is fatal to the whole action, because nothing was written and
         // no payment happened. Same sequence Android has run since W2-2.
+        settleKey.current ??= mintInvoicePaymentIdempotencyKey();
+        ledgerKey.current ??= mintPaymentIdempotencyKey();
         const res = await markInvoicePaid(invoice._id, {
           ...(amount !== undefined && { amount }),
           ...(method !== '' && { method }),
           ...(reference !== '' && { reference }),
+          idempotencyKey: settleKey.current,
         });
 
         // WHAT THIS ONE PAYMENT WAS WORTH, which is NOT `res.paidCents`: that
@@ -968,6 +1029,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
               sendConfirmationEmail: paidSendConfirmation,
               invoiceId: invoice._id,
               invoiceNumber: invoice.invoiceNumber,
+              idempotencyKey: ledgerKey.current,
             });
             // NO `apply` FIELD, deliberately. `markInvoicePaid` has already
             // settled this invoice two steps up; sending an apply here would put

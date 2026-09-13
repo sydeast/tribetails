@@ -13,7 +13,8 @@ import { computeInvoiceTotals, validateInvoiceMoney, centsToDollars } from '../l
 import { InvoiceDayArg } from '../lib/invoiceDay';
 import { InvoiceTermsCodeArg } from '../lib/invoiceTerms';
 import { resolveStructuredTerms, serviceDaysForSessions } from '../lib/invoiceCreateFields';
-import { mintInvoiceNumber } from '../lib/invoiceNumber';
+import { INVOICE_NUMBER_COUNTER_PATH, mintInvoiceNumberInTransaction } from '../lib/invoiceNumber';
+import { InvoiceIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { payMethodSnapshotForIssue } from '../lib/payMethodSnapshot';
 import { validateResponse } from '../lib/callableResponse';
@@ -109,6 +110,22 @@ export const Args = z.object({
   lineItems: z.array(LineItem).max(100).optional(),
   /** Whole-invoice reduction, integer cents. Only meaningful alongside `lineItems`. */
   invoiceDiscountCents: z.number().int().min(0).optional(),
+  /**
+   * #825: mint one per SUBMISSION, not per press, and this call becomes safe to
+   * retry. It becomes the id of the `invoices/{key}` document, so a second
+   * attempt at one invoice finds the first attempt's document.
+   *
+   * A REPLAY HERE COSTS TWO THINGS, not one. The household gets billed twice,
+   * and the sequence in `counters/invoiceNumber` is advanced twice — so even
+   * after the duplicate invoice is deleted, the numbering says an invoice was
+   * issued that nobody can produce. Nothing can put a consumed number back,
+   * which is why the number is now drawn inside the same transaction that
+   * creates the document: a replay never reaches the counter at all.
+   *
+   * OPTIONAL. Omitted, the document gets a server-minted auto id and there is
+   * no dedupe, exactly as before.
+   */
+  idempotencyKey: InvoiceIdempotencyKeyArg,
 });
 
 /**
@@ -141,6 +158,30 @@ export async function createInvoiceHandler(
   req: CallableRequest<unknown>,
 ): Promise<z.infer<typeof Result>> {
   const args = Args.parse(req.data);
+  const uid = req.auth!.uid;
+
+  // ── THE FAST PATH (#825) ────────────────────────────────────────────────
+  //
+  // Answered before anything else runs, including the reads that price the
+  // terms and freeze the payment options: a retry of a stored invoice must not
+  // re-do work whose result it is going to throw away, and above all it must
+  // not reach `mintInvoiceNumber`, which spends a number it cannot give back.
+  // It also must not re-enqueue `invoice.new`: the household was told about
+  // this invoice on the first attempt.
+  if (args.idempotencyKey !== undefined) {
+    const existing = await db().collection('invoices').doc(args.idempotencyKey).get();
+    if (existing.exists) {
+      const stored = (existing.data() ?? {}) as Record<string, unknown>;
+      assertSameCaller(stored, uid, 'createdBy');
+      logEvent({
+        severity: 'info',
+        function: 'createInvoice',
+        event: 'admin.invoice.created.replay',
+        extra: { invoiceId: args.idempotencyKey, invoiceNumber: stored['invoiceNumber'] },
+      });
+      return validateResponse('createInvoice', Result, { ok: true, invoiceId: args.idempotencyKey });
+    }
+  }
 
   // The itemized fields, or nothing at all. An un-itemized invoice must not
   // pick up a `lineItems: []` or a `totalCents: 0`: "nobody itemized this" and
@@ -209,16 +250,12 @@ export async function createInvoiceHandler(
     }
     termsFields = outcome.fields;
   }
-  // THE NUMBER IS ASSIGNED WHEN NOBODY SAID (#408). A caller that sends one
-  // keeps it; the composer stopped asking, so most invoices arrive without.
-  const invoiceNumber =
-    (args.invoiceNumber ?? '').trim() === ''
-      ? await mintInvoiceNumber(firestore, args.date)
-      : args.invoiceNumber!.trim();
-  const ref = firestore.collection('invoices').doc();
-  const doc = {
+  const ref =
+    args.idempotencyKey !== undefined
+      ? firestore.collection('invoices').doc(args.idempotencyKey)
+      : firestore.collection('invoices').doc();
+  const docBase = {
     kinfolkName: args.kinfolkName,
-    invoiceNumber,
     client: args.client,
     address: args.address,
     date: args.date,
@@ -238,19 +275,69 @@ export async function createInvoiceHandler(
   // an unreadable settings doc yields no snapshot and the portal falls back to
   // live settings, which is what every invoice did before this shipped.
   const payMethodSnapshot = await payMethodSnapshotForIssue('createInvoice');
-  // The state stamp (ADR-0002), IN THE SAME WRITE as the money it describes.
-  // Spread AFTER the caller's fields: it canonicalizes `status` to the
-  // classifier's reading of this very doc (a caller's 'sent' or '' stores as
-  // 'open'), which is the vocabulary all three clients' own classifiers
-  // already resolve these fields to. paidCents is 0 by construction: a payment
-  // cannot be recorded against an invoice before it exists.
-  await ref.set({
-    ...doc,
-    ...invoiceStateStampOf(doc, 0),
-    ...payMethodSnapshot,
-    createdAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp(),
+
+  // ── ONE TRANSACTION: THE DEDUPE, THE NUMBER, THE DOCUMENT (#825) ────────
+  //
+  // THE NUMBER IS ASSIGNED WHEN NOBODY SAID (#408). A caller that sends one
+  // keeps it; the composer stopped asking, so most invoices arrive without.
+  //
+  // It is now drawn INSIDE the transaction that writes the invoice, so the
+  // sequence value and the document it belongs to move together. Minting first
+  // and writing afterwards meant a call that turned out to be a replay had
+  // already spent a number on an invoice it was not going to write, and a
+  // consumed sequence value cannot be returned: the numbering would say two
+  // invoices were issued where one was, permanently.
+  const counterRef = firestore.doc(INVOICE_NUMBER_COUNTER_PATH);
+  const written = await firestore.runTransaction(async (tx) => {
+    // Every read before every write, Firestore's rule and the guard's order.
+    if (args.idempotencyKey !== undefined) {
+      const existing = await tx.get(ref);
+      if (existing.exists) {
+        const stored = (existing.data() ?? {}) as Record<string, unknown>;
+        assertSameCaller(stored, uid, 'createdBy');
+        return null;
+      }
+    }
+    const invoiceNumber =
+      (args.invoiceNumber ?? '').trim() === ''
+        ? await mintInvoiceNumberInTransaction(tx, counterRef, args.date)
+        : args.invoiceNumber!.trim();
+    const doc = { ...docBase, invoiceNumber };
+    // The state stamp (ADR-0002), IN THE SAME WRITE as the money it describes.
+    // Spread AFTER the caller's fields: it canonicalizes `status` to the
+    // classifier's reading of this very doc (a caller's 'sent' or '' stores as
+    // 'open'), which is the vocabulary all three clients' own classifiers
+    // already resolve these fields to. paidCents is 0 by construction: a
+    // payment cannot be recorded against an invoice before it exists.
+    const full = {
+      ...doc,
+      ...invoiceStateStampOf(doc, 0),
+      ...payMethodSnapshot,
+      // WHO ISSUED IT. Additive, and the field the idempotency guard above
+      // refuses a cross-caller collision on: a key that lands on somebody
+      // else's invoice is a guessed or replayed id, and answering with their
+      // document would be a disclosure rather than a dedupe.
+      createdBy: uid,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+    // `create` when there is a key, so two attempts reaching the write together
+    // are refereed by the server rather than by the read above.
+    if (args.idempotencyKey !== undefined) tx.create(ref, full);
+    else tx.set(ref, full);
+    return invoiceNumber;
   });
+
+  if (written === null) {
+    logEvent({
+      severity: 'info',
+      function: 'createInvoice',
+      event: 'admin.invoice.created.replay',
+      extra: { invoiceId: ref.id, raced: true },
+    });
+    return validateResponse('createInvoice', Result, { ok: true, invoiceId: ref.id });
+  }
+  const invoiceNumber = written;
 
   await writeAuditEntry({
     status: 'SUCCESS',
@@ -261,6 +348,9 @@ export async function createInvoiceHandler(
       invoiceNumber,
       itemized: args.lineItems !== undefined,
       lineCount: args.lineItems?.length ?? 0,
+      // Which submission this invoice belongs to, so the trail can tell a
+      // second invoice from a second attempt at one (#825).
+      idempotencyKey: args.idempotencyKey ?? null,
     },
   });
 

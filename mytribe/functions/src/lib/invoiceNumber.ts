@@ -31,7 +31,7 @@
  * number at creation keeps it untouched. This module only answers the case
  * where nobody said.
  */
-import type { Firestore } from 'firebase-admin/firestore';
+import type { DocumentReference, Firestore, Transaction } from 'firebase-admin/firestore';
 
 /** The counter document. One per business; this deployment is single-tenant. */
 export const INVOICE_NUMBER_COUNTER_PATH = 'counters/invoiceNumber';
@@ -77,17 +77,43 @@ export async function mintInvoiceNumber(
   day: string,
   now: Date = new Date(),
 ): Promise<string> {
-  const year = /^\d{4}-\d{2}-\d{2}$/.test(day.trim())
-    ? Number(day.trim().slice(0, 4))
-    : now.getUTCFullYear();
-
   const ref = firestore.doc(INVOICE_NUMBER_COUNTER_PATH);
-  const sequence = await firestore.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    const seq = nextSequence(snap.exists ? (snap.data() ?? {})['next'] : undefined);
-    tx.set(ref, { next: seq + 1 }, { merge: true });
-    return seq;
-  });
+  return firestore.runTransaction((tx) => mintInvoiceNumberInTransaction(tx, ref, day, now));
+}
 
-  return formatInvoiceNumber(year, sequence);
+/** The year the number is stamped with. See `mintInvoiceNumber`'s `day` note. */
+function yearFor(day: string, now: Date): number {
+  return /^\d{4}-\d{2}-\d{2}$/.test(day.trim()) ? Number(day.trim().slice(0, 4)) : now.getUTCFullYear();
+}
+
+/**
+ * The same reservation, INSIDE A TRANSACTION THE CALLER ALREADY OWNS.
+ *
+ * #825: `createInvoice` and `createQuote` now write the invoice document and
+ * take the number in ONE transaction, so the two move together. Before this,
+ * the number was minted in its own transaction and the invoice written
+ * afterwards, which meant a retried call that turned out to be a replay had
+ * already spent a sequence value on a document it was not going to write. The
+ * sequence then has a hole in it, and the operator's numbering says two
+ * invoices were issued where one was. Nothing can put a consumed number back,
+ * so the only fix is not to consume it, which means the "has this key already
+ * been used?" read and the counter bump have to be the same operation.
+ *
+ * `mintInvoiceNumber` above is now this function plus a transaction to run it
+ * in, so there is one counter rule rather than two that could drift.
+ *
+ * FIRESTORE'S READ-BEFORE-WRITE RULE applies to the caller's whole transaction,
+ * not to this function: call it before staging any write, or the transaction is
+ * rejected.
+ */
+export async function mintInvoiceNumberInTransaction(
+  tx: Transaction,
+  counterRef: DocumentReference,
+  day: string,
+  now: Date = new Date(),
+): Promise<string> {
+  const snap = await tx.get(counterRef);
+  const seq = nextSequence(snap.exists ? (snap.data() ?? {})['next'] : undefined);
+  tx.set(counterRef, { next: seq + 1 }, { merge: true });
+  return formatInvoiceNumber(yearFor(day, now), seq);
 }

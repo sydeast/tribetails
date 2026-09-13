@@ -12,6 +12,7 @@ import com.kinfolk.portal.portal.InvoicesResult
 import com.kinfolk.portal.portal.PayMethod
 import com.kinfolk.portal.portal.PayMethodKind
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.portal.mintCheckoutIdempotencyKey
 import com.kinfolk.portal.util.formatUsd
 import com.kinfolk.portal.util.openExternalUrl
 import kotlinx.coroutines.launch
@@ -134,17 +135,68 @@ class InvoicesController internal constructor(
         }
     }
 
+    /**
+     * WHAT THIS SCREEN GUARANTEES ABOUT DOUBLE CHARGES: LESS THAN THE WEB
+     * PORTAL'S DOES (issue #826).
+     *
+     * `payInvoice` mints a NEW Stripe Checkout Session, with its own
+     * PaymentIntent, on every call it cannot answer from an existing one. The
+     * web portal's success path is `window.location.href`, which unloads the
+     * page and so cannot hold two live sessions at once. For a while that
+     * accident was the only thing stopping two completed checkouts becoming two
+     * real charges for one bill.
+     *
+     * THIS SCREEN NEVER HAD EVEN THAT. `openExternalUrl` hands the URL to the
+     * system browser and comes straight back; the screen stays alive, `paying`
+     * is cleared in `finally`, and a second tap starts a second session. The
+     * `paying != null` guard covers the round trip, not the checkout.
+     *
+     * So the refusal has to live on the server, and now does: `stripeWebhook`
+     * compares a settling session against the invoice's own settlement round
+     * and sends a second one to the household's account balance instead of
+     * paying the bill twice (functions/src/lib/invoiceCheckoutDedupe.ts).
+     * `payInvoice` also hands back the session this invoice already has open
+     * rather than minting another, so the ordinary two-taps case reuses one
+     * PaymentIntent.
+     *
+     * ── AND THE KEY BELOW, WHICH COVERS THE TAP NEITHER OF THOSE CAN (#825) ──
+     *
+     * The server's reuse can only hand back a session it can FIND, through the
+     * `pendingCheckoutSessionId` it writes AFTER Stripe returns. A call that
+     * never got that far stored nothing: Stripe made the session, then the
+     * reply was lost on the way back and this screen showed an error for a
+     * checkout that exists. The next tap finds nothing to reuse and opens a
+     * second one. The key is what closes that, inside Stripe, before a second
+     * session exists.
+     *
+     * ONE KEY PER INVOICE, held across a re-tap, kept in a map rather than a
+     * single field: a household with two open bills can tap one, fail, and tap
+     * the other, and one held key would carry the first invoice's key to the
+     * second invoice's checkout.
+     *
+     * Dropped the moment a checkout URL comes back, so the only tap that reuses
+     * a key is a tap after a visible failure. `CheckoutIdempotency.kt` says why
+     * a second session is money this business cannot get back.
+     */
+    private val checkoutKeys = mutableMapOf<String, String>()
+
     fun startPay(invoice: Invoice) {
         if (paying != null) return
         paying = invoice.id
         scope.launch {
             try {
+                val key = checkoutKeys.getOrPut(invoice.id) { mintCheckoutIdempotencyKey() }
                 val res = portalApi.payInvoice(
                     invoiceId = invoice.id,
                     kinfolkId = kinfolkId,
                     successUrl = "https://kinfolk.tribetails.com/portal/payment-success",
                     cancelUrl = "https://kinfolk.tribetails.com/portal/payment-cancel",
+                    idempotencyKey = key,
                 )
+                // Dropped BEFORE the hand-off. A household that comes back to
+                // pay a different balance later must not reuse a key Stripe
+                // still holds: the body would differ and Stripe would refuse it.
+                checkoutKeys.remove(invoice.id)
                 if (res.checkoutUrl.isNotBlank()) openExternalUrl(res.checkoutUrl)
             } catch (t: Throwable) {
                 error = t.message ?: "Could not start payment"

@@ -89,6 +89,18 @@ textarea.inp { resize: vertical; min-height: 64px; font-family: var(--sans); }
 .memberrow .msub { font-family: var(--mono); font-size: 11px; color: var(--navy-muted); margin-top: 2px; letter-spacing: .03em; }
 .memberrow .mtoggles { margin: 10px 0 12px; }
 
+/* Household CONTACTS (#818): the same .memberrow identity block without the
+   toggles, because a contact has no account and so nothing to authorise. Only
+   the button row and the inline remove confirm are new; every colour is a
+   token, and the small button sizing rides base.css's .btn. */
+.contactactions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.contactactions .btn { padding: 9px 14px; font-size: 13.5px; }
+/* The confirm reads as a held-open step, not an alarm: a glass panel with a
+   coral left edge. Every colour is a token — no literal rgba, per the ruling. */
+.contactconfirm { margin-top: 10px; padding: 12px 14px; border-radius: 14px;
+  border: 1px solid var(--hairline); border-left: 3px solid var(--coral); background: var(--glass-dim); }
+.contactconfirm .contactactions { margin-top: 8px; }
+
 @media (max-width: 560px) {
   .grid2 { grid-template-columns: 1fr; }
   .kvrow { grid-template-columns: 1fr 1fr; }

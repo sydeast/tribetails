@@ -17,7 +17,8 @@ import { OkSchema } from '../lib/invoiceResponseSchema';
 import { InvoiceDayArg } from '../lib/invoiceDay';
 import { InvoiceTermsCodeArg } from '../lib/invoiceTerms';
 import { resolveStructuredTerms, serviceDaysForSessions } from '../lib/invoiceCreateFields';
-import { mintInvoiceNumber } from '../lib/invoiceNumber';
+import { INVOICE_NUMBER_COUNTER_PATH, mintInvoiceNumberInTransaction } from '../lib/invoiceNumber';
+import { QuoteIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 
 /**
  * A quote is NOT a separate model: it is an invoice in QUOTE status. This
@@ -88,6 +89,22 @@ export const Args = z.object({
   invoiceDiscountCents: z.number().int().min(0).optional(),
   /** When true, dispatch an issued-quote notification to the kinfolk. */
   sendToKinfolk: z.boolean().default(false),
+  /**
+   * #825: mint one per SUBMISSION, not per press, and this call becomes safe to
+   * retry. It becomes the id of the `invoices/{key}` document.
+   *
+   * A quote costs the same two things on a replay that an invoice does — a
+   * second document and a second sequence value from `counters/invoiceNumber`,
+   * which quotes draw from the same counter deliberately (see the header) — and
+   * one more: `sendToKinfolk` puts the duplicate in front of the household.
+   * A separate `quot_` prefix from `createInvoice`'s `inv_` keeps a key minted
+   * for one from ever answering at the other, since both write the same
+   * collection.
+   *
+   * OPTIONAL. Omitted, the document gets a server-minted auto id and there is
+   * no dedupe, exactly as before.
+   */
+  idempotencyKey: QuoteIdempotencyKeyArg,
 });
 
 /**
@@ -107,6 +124,24 @@ export async function createQuoteHandler(
   req: CallableRequest<unknown>,
 ): Promise<z.infer<typeof Result>> {
   const args = Args.parse(req.data);
+  const uid = req.auth!.uid;
+
+  // THE FAST PATH (#825). Before everything, for `createInvoice`'s reasons and
+  // one of its own: a replay must not re-issue the quote to the household.
+  if (args.idempotencyKey !== undefined) {
+    const existing = await db().collection('invoices').doc(args.idempotencyKey).get();
+    if (existing.exists) {
+      const stored = (existing.data() ?? {}) as Record<string, unknown>;
+      assertSameCaller(stored, uid, 'createdBy');
+      logEvent({
+        severity: 'info',
+        function: 'createQuote',
+        event: 'admin.quote.created.replay',
+        extra: { invoiceId: args.idempotencyKey, invoiceNumber: stored['invoiceNumber'] },
+      });
+      return validateResponse('createQuote', Result, { ok: true, invoiceId: args.idempotencyKey });
+    }
+  }
 
   // The itemized fields, or nothing at all. An un-itemized quote must not
   // pick up a `lineItems: []` or a `totalCents: 0`: mirrors createInvoice.
@@ -167,14 +202,12 @@ export async function createQuoteHandler(
     }
     termsFields = outcome.fields;
   }
-  const invoiceNumber =
-    (args.invoiceNumber ?? '').trim() === ''
-      ? await mintInvoiceNumber(firestore, args.date)
-      : args.invoiceNumber!.trim();
-  const ref = firestore.collection('invoices').doc();
-  const doc = {
+  const ref =
+    args.idempotencyKey !== undefined
+      ? firestore.collection('invoices').doc(args.idempotencyKey)
+      : firestore.collection('invoices').doc();
+  const docBase = {
     kinfolkName: args.kinfolkName,
-    invoiceNumber,
     client: args.client,
     address: args.address,
     date: args.date,
@@ -199,15 +232,54 @@ export async function createQuoteHandler(
   // what it offered when they read it. Fail-soft: no snapshot means the portal
   // resolves live settings, exactly as it did before this shipped.
   const payMethodSnapshot = await payMethodSnapshotForIssue('createQuote');
-  // The state stamp (ADR-0002), in the same write. paidCents is 0 by
-  // construction on a brand-new doc.
-  await ref.set({
-    ...doc,
-    ...invoiceStateStampOf(doc, 0),
-    ...payMethodSnapshot,
-    createdAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp(),
+
+  // ONE TRANSACTION: THE DEDUPE, THE NUMBER, THE DOCUMENT (#825). The number is
+  // drawn inside it so a replay never spends a sequence value on a quote it is
+  // not going to write; `createInvoice` carries the full argument, and the two
+  // callables share the counter on purpose, so they must share this treatment
+  // of it too.
+  const counterRef = firestore.doc(INVOICE_NUMBER_COUNTER_PATH);
+  const written = await firestore.runTransaction(async (tx) => {
+    if (args.idempotencyKey !== undefined) {
+      const existing = await tx.get(ref);
+      if (existing.exists) {
+        const stored = (existing.data() ?? {}) as Record<string, unknown>;
+        assertSameCaller(stored, uid, 'createdBy');
+        return null;
+      }
+    }
+    const invoiceNumber =
+      (args.invoiceNumber ?? '').trim() === ''
+        ? await mintInvoiceNumberInTransaction(tx, counterRef, args.date)
+        : args.invoiceNumber!.trim();
+    const doc = { ...docBase, invoiceNumber };
+    // The state stamp (ADR-0002), in the same write. paidCents is 0 by
+    // construction on a brand-new doc.
+    const full = {
+      ...doc,
+      ...invoiceStateStampOf(doc, 0),
+      ...payMethodSnapshot,
+      // WHO ISSUED IT: the field the idempotency guard refuses a cross-caller
+      // collision on. Additive, and `createInvoice` writes the same one.
+      createdBy: uid,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+    if (args.idempotencyKey !== undefined) tx.create(ref, full);
+    else tx.set(ref, full);
+    return invoiceNumber;
   });
+
+  if (written === null) {
+    logEvent({
+      severity: 'info',
+      function: 'createQuote',
+      event: 'admin.quote.created.replay',
+      extra: { invoiceId: ref.id, raced: true },
+    });
+    return validateResponse('createQuote', Result, { ok: true, invoiceId: ref.id });
+  }
+  const invoiceNumber = written;
 
   await writeAuditEntry({
     status: 'SUCCESS',
@@ -219,6 +291,8 @@ export async function createQuoteHandler(
       sendToKinfolk: args.sendToKinfolk,
       itemized: args.lineItems !== undefined,
       lineCount: args.lineItems?.length ?? 0,
+      // Which submission this quote belongs to (#825).
+      idempotencyKey: args.idempotencyKey ?? null,
     },
   });
 

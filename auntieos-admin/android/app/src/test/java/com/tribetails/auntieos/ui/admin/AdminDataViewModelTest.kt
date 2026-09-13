@@ -459,7 +459,7 @@ class AdminDataViewModelTest {
 
     @Test
     fun `createInvoice refreshes invoices list on success`() = runTest(testDispatcher) {
-        coEvery { mockInvoiceRepo.createInvoice(any()) } returns Result.success("inv-new")
+        coEvery { mockInvoiceRepo.createInvoice(any(), any(), any(), any(), any()) } returns Result.success("inv-new")
         coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(listOf(TestFixtures.invoice1))
 
         val vm = buildViewModel()
@@ -472,7 +472,7 @@ class AdminDataViewModelTest {
 
     @Test
     fun `createInvoice sets error on failure`() = runTest(testDispatcher) {
-        coEvery { mockInvoiceRepo.createInvoice(any()) } returns Result.failure(RuntimeException("Write failed"))
+        coEvery { mockInvoiceRepo.createInvoice(any(), any(), any(), any(), any()) } returns Result.failure(RuntimeException("Write failed"))
 
         val vm = buildViewModel()
         vm.createInvoice(TestFixtures.invoice1)
@@ -486,14 +486,14 @@ class AdminDataViewModelTest {
 
     @Test
     fun `createQuote routes through repository and refreshes on success`() = runTest(testDispatcher) {
-        coEvery { mockInvoiceRepo.createQuote(any(), any()) } returns Result.success("q-new")
+        coEvery { mockInvoiceRepo.createQuote(any(), any(), any(), any(), any(), any()) } returns Result.success("q-new")
         coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(listOf(TestFixtures.invoice1))
 
         val vm = buildViewModel()
         vm.createQuote(TestFixtures.invoice1, sendToKinfolk = true)
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { mockInvoiceRepo.createQuote(any(), true) }
+        coVerify(exactly = 1) { mockInvoiceRepo.createQuote(any(), true, any(), any(), any(), any()) }
         assertFalse(vm.isLoading.value)
         assertEquals(1, vm.invoices.value.size)
         assertEquals("Quote created and sent.", vm.invoiceActionMessage.value)
@@ -501,20 +501,20 @@ class AdminDataViewModelTest {
 
     @Test
     fun `createQuote without send confirms quietly`() = runTest(testDispatcher) {
-        coEvery { mockInvoiceRepo.createQuote(any(), any()) } returns Result.success("q-new")
+        coEvery { mockInvoiceRepo.createQuote(any(), any(), any(), any(), any(), any()) } returns Result.success("q-new")
         coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(emptyList())
 
         val vm = buildViewModel()
         vm.createQuote(TestFixtures.invoice1, sendToKinfolk = false)
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { mockInvoiceRepo.createQuote(any(), false) }
+        coVerify(exactly = 1) { mockInvoiceRepo.createQuote(any(), false, any(), any(), any(), any()) }
         assertEquals("Quote created.", vm.invoiceActionMessage.value)
     }
 
     @Test
     fun `createQuote sets error on failure`() = runTest(testDispatcher) {
-        coEvery { mockInvoiceRepo.createQuote(any(), any()) } returns Result.failure(RuntimeException("quote failed"))
+        coEvery { mockInvoiceRepo.createQuote(any(), any(), any(), any(), any(), any()) } returns Result.failure(RuntimeException("quote failed"))
 
         val vm = buildViewModel()
         vm.createQuote(TestFixtures.invoice1, sendToKinfolk = false)
@@ -531,7 +531,7 @@ class AdminDataViewModelTest {
     fun `composeInvoice routes an invoice request through createInvoice and hands back the id`() =
         runTest(testDispatcher) {
             coEvery {
-                mockInvoiceRepo.createInvoice(any(), any(), any(), any())
+                mockInvoiceRepo.createInvoice(any(), any(), any(), any(), any())
             } returns Result.success("inv-new")
             coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(listOf(TestFixtures.invoice1))
 
@@ -550,8 +550,8 @@ class AdminDataViewModelTest {
             ) { handed = it }
             advanceUntilIdle()
 
-            coVerify(exactly = 1) { mockInvoiceRepo.createInvoice(any(), "net_14", any(), 0L) }
-            coVerify(exactly = 0) { mockInvoiceRepo.createQuote(any(), any(), any(), any(), any()) }
+            coVerify(exactly = 1) { mockInvoiceRepo.createInvoice(any(), "net_14", any(), 0L, any()) }
+            coVerify(exactly = 0) { mockInvoiceRepo.createQuote(any(), any(), any(), any(), any(), any()) }
             // The caller needs the id: the point of creating an invoice is to
             // land on it.
             assertEquals("inv-new", handed!!.getOrNull())
@@ -564,7 +564,7 @@ class AdminDataViewModelTest {
     @Test
     fun `composeInvoice routes a quote request through createQuote`() = runTest(testDispatcher) {
         coEvery {
-            mockInvoiceRepo.createQuote(any(), any(), any(), any(), any())
+            mockInvoiceRepo.createQuote(any(), any(), any(), any(), any(), any())
         } returns Result.success("q-new")
         coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(emptyList())
 
@@ -579,7 +579,7 @@ class AdminDataViewModelTest {
         )
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { mockInvoiceRepo.createQuote(any(), true, "due_on_receipt", null, null) }
+        coVerify(exactly = 1) { mockInvoiceRepo.createQuote(any(), true, "due_on_receipt", null, null, any()) }
         assertEquals("Quote created and sent.", vm.invoiceActionMessage.value)
     }
 
@@ -587,7 +587,7 @@ class AdminDataViewModelTest {
     fun `composeInvoice reports a refusal to the caller as well as to the error flow`() =
         runTest(testDispatcher) {
             coEvery {
-                mockInvoiceRepo.createInvoice(any(), any(), any(), any())
+                mockInvoiceRepo.createInvoice(any(), any(), any(), any(), any())
             } returns Result.failure(RuntimeException("due date disagrees with the terms"))
 
             val vm = buildViewModel()
@@ -748,7 +748,7 @@ class AdminDataViewModelTest {
 
     @Test
     fun `createPayment refreshes payments list on success`() = runTest(testDispatcher) {
-        coEvery { mockInvoiceRepo.createPayment(any()) } returns Result.success("pay-new")
+        coEvery { mockInvoiceRepo.createPayment(any(), any()) } returns Result.success("pay-new")
         coEvery { mockInvoiceRepo.listPayments() } returns
             Result.success(TestFixtures.paymentsPage(TestFixtures.paymentRow("p1", 13750L)))
 
@@ -762,7 +762,7 @@ class AdminDataViewModelTest {
 
     @Test
     fun `createPayment sets error on failure`() = runTest(testDispatcher) {
-        coEvery { mockInvoiceRepo.createPayment(any()) } returns Result.failure(RuntimeException("Write failed"))
+        coEvery { mockInvoiceRepo.createPayment(any(), any()) } returns Result.failure(RuntimeException("Write failed"))
 
         val vm = buildViewModel()
         vm.createPayment(TestFixtures.payment1)

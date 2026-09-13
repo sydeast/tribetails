@@ -259,6 +259,70 @@ class InvoiceRepositoryTest {
         assertEquals(setOf("invoiceId", "method"), p.keys)
     }
 
+    // ── the #825 idempotency keys on the wire ────────────────────────────────
+
+    /**
+     * ABSENT IS THE DEFAULT, AND IT HAS TO STAY THAT WAY. The server types every
+     * one of these `.optional()`, never `.nullable().optional()`, because
+     * Kotlin's one `T?` cannot distinguish "key omitted" from "key sent null" —
+     * so an absent key means exactly one thing: mint me an id, no dedupe. Every
+     * caller that has not adopted a key must keep behaving as it always did, and
+     * a null that reached the wire as an explicit null would fail validation and
+     * refuse the write outright.
+     */
+    @Test
+    fun `every money payload omits the idempotency key when the caller has none`() {
+        assertFalse(createInvoiceArgs(invoice, familyId = "kf1").toPayload().containsKey("idempotencyKey"))
+        assertFalse(
+            createQuoteArgs(invoice, familyId = "kf1", sendToKinfolk = false)
+                .toPayload().containsKey("idempotencyKey"),
+        )
+        assertFalse(
+            markInvoicePaidArgs("inv1", amount = 20.0, method = "Cash", reference = "")
+                .toPayload().containsKey("idempotencyKey"),
+        )
+        assertFalse(recordPaymentArgs(payment).toPayload().containsKey("idempotencyKey"))
+    }
+
+    /**
+     * And when the caller HAS one it reaches the wire verbatim, under the key
+     * name the four zod schemas share. Each value carries the prefix its own
+     * callable guards, because two of these land in the same `invoices`
+     * collection and the prefix is the only thing separating them.
+     */
+    @Test
+    fun `a minted key reaches the wire untouched, under each callable's own prefix`() {
+        assertEquals(
+            "inv_1789000000000_abc123",
+            createInvoiceArgs(invoice, familyId = "kf1", idempotencyKey = "inv_1789000000000_abc123")
+                .toPayload()["idempotencyKey"],
+        )
+        assertEquals(
+            "quot_1789000000000_abc123",
+            createQuoteArgs(
+                invoice,
+                familyId = "kf1",
+                sendToKinfolk = true,
+                idempotencyKey = "quot_1789000000000_abc123",
+            ).toPayload()["idempotencyKey"],
+        )
+        assertEquals(
+            "ipay_1789000000000_abc123",
+            markInvoicePaidArgs(
+                "inv1",
+                amount = 20.0,
+                method = "Cash",
+                reference = "",
+                idempotencyKey = "ipay_1789000000000_abc123",
+            ).toPayload()["idempotencyKey"],
+        )
+        assertEquals(
+            "pay_1789000000000_abc123",
+            recordPaymentArgs(payment, idempotencyKey = "pay_1789000000000_abc123")
+                .toPayload()["idempotencyKey"],
+        )
+    }
+
     // ── archiveInvoice payload ───────────────────────────────────────────────
 
     @Test

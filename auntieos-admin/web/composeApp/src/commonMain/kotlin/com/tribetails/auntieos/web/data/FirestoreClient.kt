@@ -972,8 +972,35 @@ class FirestoreClient {
         return if (scope != null) platformPaymentsForKinfolkStream(scope).scopeKinfolk(testMode) { it.kinfolkId }
         else platformPaymentsStream()
     }
-    suspend fun recordPayment(payment: Payment): WriteResult<String> =
-        platformRecordPayment(payment.copy(kinfolkId = enforceWriteKinfolkId(testMode, payment.kinfolkId)))
+    /**
+     * #825. Note what this is NOT: it does not go through the `recordPayment`
+     * admin callable. This console writes the `payments` row directly over REST
+     * (`allow create/update: if isAuntie()` covers it), and always has -- so it
+     * has never done the callable's balance increment, invoice apply, audit
+     * entry or confirmation email either. That gap predates this change and is
+     * out of its scope; what is in scope is that the direct write used an auto
+     * id, which made every re-press a second payment row.
+     *
+     * [idempotencyKey] closes that: the key becomes the document id, which is
+     * #644's rule ("the row the write was going to make IS the idempotency
+     * record") applied to a write that has no server half to hold it. It is the
+     * same `pay_<millis>_<suffix>` shape the callable's guard accepts, so a row
+     * written from here is indistinguishable from one the callable wrote.
+     *
+     * Honest about the mechanism: the keyed write is an UPSERT, not a
+     * create-once claim. A re-press with an unchanged payment rewrites the same
+     * row with the same values, which is what the operator needs; it does not
+     * refuse the second attempt the way the server's transaction does. Two
+     * presses still cannot become two payments, which is the money question.
+     *
+     * Null key keeps the pre-#825 auto-id write untouched, for any caller that
+     * has not adopted one.
+     */
+    suspend fun recordPayment(payment: Payment, idempotencyKey: String? = null): WriteResult<String> =
+        platformRecordPayment(
+            payment.copy(kinfolkId = enforceWriteKinfolkId(testMode, payment.kinfolkId)),
+            idempotencyKey,
+        )
 
     // ---- Booking time slots (availability + Google-busy blocks) ----
     /**
@@ -989,11 +1016,26 @@ class FirestoreClient {
      * BILLING_INVOICE_CREATED + invoice.new notify). Returns the new server id.
      * Routes through platformInvokeCallable so it works on both wasmJs and jvm.
      */
-    suspend fun createInvoice(invoice: Invoice): WriteResult<String> {
+    suspend fun createInvoice(
+        invoice: Invoice,
+        /**
+         * #825: becomes the `invoices/{id}` document id the server writes inside
+         * its transaction, so a second press lands on the invoice the first press
+         * may already have created. It also stops a replay spending a second
+         * value from `counters/invoiceNumber`: the number is drawn inside that
+         * same transaction, and a consumed sequence value cannot be given back.
+         *
+         * Optional, and absent rather than null when the caller has none -- the
+         * callable's zod guard refuses an explicit null, and an unkeyed create is
+         * meant to behave exactly as it did before #825.
+         */
+        idempotencyKey: String? = null,
+    ): WriteResult<String> {
         // Test admin: force the scoped kinfolkId so the create passes the rule.
         val scopedKinfolkId = enforceWriteKinfolkId(testMode, invoice.kinfolkId)
         val payload = buildJsonObject {
             put("familyId", JsonPrimitive(scopedKinfolkId))
+            idempotencyKey?.let { put("idempotencyKey", JsonPrimitive(it)) }
             put("kinfolkName", JsonPrimitive(invoice.kinfolkName))
             put("invoiceNumber", JsonPrimitive(invoice.invoiceNumber))
             put("client", JsonPrimitive(invoice.client))
@@ -1167,10 +1209,23 @@ class FirestoreClient {
      * is ignored). [sendToKinfolk] dispatches an issued-quote notification when
      * true. Mirrors createInvoice's payload exactly. Returns the new invoice id.
      */
-    suspend fun createQuote(invoice: Invoice, sendToKinfolk: Boolean): WriteResult<String> {
+    suspend fun createQuote(
+        invoice: Invoice,
+        sendToKinfolk: Boolean,
+        /**
+         * #825: as [createInvoice]'s, and drawn from the same invoice-number
+         * sequence. One extra thing to know about a quote: [sendToKinfolk] is
+         * part of the submission, not a modifier on it. A replay answers with
+         * what the FIRST attempt did, and the first attempt is what decided
+         * whether the household was notified -- so a caller that flips the
+         * toggle must mint a new key, or the send it just asked for is skipped.
+         */
+        idempotencyKey: String? = null,
+    ): WriteResult<String> {
         val scopedKinfolkId = enforceWriteKinfolkId(testMode, invoice.kinfolkId)
         val payload = buildJsonObject {
             put("familyId", JsonPrimitive(scopedKinfolkId))
+            idempotencyKey?.let { put("idempotencyKey", JsonPrimitive(it)) }
             put("kinfolkName", JsonPrimitive(invoice.kinfolkName))
             put("invoiceNumber", JsonPrimitive(invoice.invoiceNumber))
             put("client", JsonPrimitive(invoice.client))
@@ -2009,7 +2064,15 @@ internal expect suspend fun platformDeleteKinTaleTemplate(templateId: String): W
 
 internal expect fun platformPaymentsStream(): Flow<FirestoreResult<List<Payment>>>
 internal expect fun platformBookingTimeSlotsStream(): Flow<FirestoreResult<List<BookingTimeSlot>>>
-internal expect suspend fun platformRecordPayment(payment: Payment): WriteResult<String>
+/**
+ * #825: [idempotencyKey], when present, is the id the payment row is stored
+ * under, so a second attempt at one submission overwrites the first attempt's
+ * row instead of adding a second one. Null keeps the pre-#825 behaviour exactly
+ * -- an auto-id row, no dedupe. No default value here: a default on an `expect`
+ * declaration cannot be repeated on the `actual`, and `FirestoreClient` is the
+ * only caller, so the argument is always passed explicitly.
+ */
+internal expect suspend fun platformRecordPayment(payment: Payment, idempotencyKey: String?): WriteResult<String>
 
 internal expect fun platformBusinessSettingsStream(): Flow<FirestoreResult<BusinessSettings>>
 internal expect suspend fun platformSaveBusinessSettings(settings: BusinessSettings): WriteResult<Unit>

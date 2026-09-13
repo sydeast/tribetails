@@ -70,8 +70,12 @@ export class CallableNotStubbedError extends Error {
  * nothing, or dedupes the second attempt itself.
  *
  * `createMultiDateBookingRequest` and `requestBooking` earn it by carrying an
- * `idempotencyKey` (see `functions/src/lib/bookingIdempotency.ts`). The other
- * ~174 callables do not opt in, and must not be swept in as a batch: each one
+ * `idempotencyKey` (see `functions/src/lib/bookingIdempotency.ts`). #825 added
+ * four more — `recordPayment`, `markInvoicePaid`, `createInvoice` and
+ * `createQuote` — and they earn it CONDITIONALLY: `api/invoicesWrite.ts` passes
+ * `idempotent` only when the caller actually supplied a key, because without
+ * one those callables still dedupe nothing and the claim would be false. The
+ * remaining ~170 do not opt in, and must not be swept in as a batch: each one
  * is its own claim, and a wrong one double-writes silently.
  */
 export interface CallOptions {
@@ -102,10 +106,14 @@ export async function call<TReq, TRes>(
   // That code is the problem, and `CallOptions`' header above already says
   // why: it is what the SDK reports for ANY transport failure, so it cannot
   // tell "the request never arrived" from "the write committed and the reply
-  // was lost". On `recordPayment` that is the difference between re-entering a
-  // payment and double-counting one — and `recordPayment` writes an auto-id
-  // row with no dedupe key and, with `autoApply`, increments the household's
-  // account balance, so a second one is spendable money made from nothing.
+  // was lost". On `recordPayment` that used to be the difference between
+  // re-entering a payment and double-counting one: it wrote an auto-id row with
+  // no dedupe key and, with `autoApply`, incremented the household's account
+  // balance, so a second one was spendable money made from nothing. #825 gave
+  // it a key, so a retried submission is now answered from the row the first
+  // attempt wrote — but ONLY when the caller sent one, and a refusal raised
+  // before the request is dialled is still the better answer than a retry,
+  // because it needs nothing from the server to be true.
   //
   // A refusal raised on THIS side of the wire is the only thing in the app
   // that can honestly say nothing was sent, so it is raised here, for reads
