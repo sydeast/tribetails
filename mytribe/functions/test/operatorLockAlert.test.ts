@@ -25,6 +25,10 @@ const mocks = vi.hoisted(() => ({
   /** Notification keys whose NEXT enqueue from loginSecurity throws, once each. */
   failOnce: new Set<string>(),
   onInjectedFailure: null as null | (() => Promise<void>),
+  /** Every key loginSecurity asked to enqueue, in order, whether or not it was delivered. */
+  enqueueCalls: [] as string[],
+  /** Runs before loginSecurity's enqueue reaches the dispatcher. */
+  beforeEnqueue: null as null | ((key: string) => Promise<void>),
 }));
 vi.mock('../src/lib/firestoreAdmin', () => ({
   db: mocks.dbFn,
@@ -41,6 +45,8 @@ vi.mock('../src/notifications', async (importOriginal) => {
   return {
     ...actual,
     enqueueNotification: async (args: Parameters<typeof actual.enqueueNotification>[0]) => {
+      mocks.enqueueCalls.push(args.key);
+      if (mocks.beforeEnqueue) await mocks.beforeEnqueue(args.key);
       if (mocks.failOnce.has(args.key)) {
         mocks.failOnce.delete(args.key);
         if (mocks.onInjectedFailure) await mocks.onInjectedFailure();
@@ -51,7 +57,12 @@ vi.mock('../src/notifications', async (importOriginal) => {
   };
 });
 
-import { recordFailedLoginHandler, lockAlertDedupeKey } from '../src/auth/loginSecurity';
+import { FieldValue } from 'firebase-admin/firestore';
+import {
+  recordFailedLoginHandler,
+  unlockKinfolkAccountHandler,
+  lockAlertDedupeKey,
+} from '../src/auth/loginSecurity';
 import { enqueueNotification, NOTIFICATION_DEDUPE_WINDOW_MS } from '../src/notifications/dispatcher';
 
 const OPERATOR_KEY = 'security.account.locked.operator';
@@ -111,6 +122,19 @@ function workOrderFor(writes: Write[], notificationPath: string): Write | undefi
   return writes.find((w) => w.path === `notificationDispatch/${id}`);
 }
 
+/**
+ * True when a merge write deleted the field. The write-through mock stores the
+ * `FieldValue.delete()` sentinel verbatim rather than removing the key, which is
+ * exactly what Firestore is asked to do, so the sentinel is the assertion.
+ */
+function isDeleted(v: unknown): boolean {
+  return v instanceof FieldValue && v.isEqual(FieldValue.delete());
+}
+
+async function storedSecurityDoc(ctx: ReturnType<typeof buildDbMock>): Promise<Record<string, unknown>> {
+  return ((await ctx.db.doc(SECURITY_DOC).get()).data() ?? {}) as Record<string, unknown>;
+}
+
 function lockCopies(writes: Write[]) {
   return {
     operator: inboxFor(writes, 'op1').filter((w) => w.data.key === OPERATOR_KEY),
@@ -125,6 +149,8 @@ beforeEach(() => {
   mocks.getUserByEmail.mockResolvedValue({ uid: 'kin1' });
   mocks.failOnce.clear();
   mocks.onInjectedFailure = null;
+  mocks.enqueueCalls.length = 0;
+  mocks.beforeEnqueue = null;
   originalEnv = process.env.AUNTIE_OPERATOR_UIDS;
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
@@ -342,6 +368,51 @@ describe('#869 lock alerts survive a failed enqueue', () => {
     expect(household).toHaveLength(1);
   });
 
+  it('clears the pending marker once both alerts go out, so a later failed login during the lock enqueues nothing', async () => {
+    process.env.AUNTIE_OPERATOR_UIDS = 'op1';
+    const ctx = buildDbMock({ writeThrough: true, docs: baseDocs() });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await lockOut();
+
+    const stored = await storedSecurityDoc(ctx);
+    expect(stored.lockStartedAtMs).toBe(LOCK_AT);
+    expect(isDeleted(stored.lockAlertsPendingForMs), 'marker deleted after both alerts went out').toBe(true);
+
+    // Not "no new notifications": a retry would be swallowed by the dedupe
+    // ledger and look identical. Zero enqueue CALLS is what proves no retry ran.
+    mocks.enqueueCalls.length = 0;
+    expect((await fail(LOCK_AT + 60_000)).locked).toBe(true);
+    expect((await fail(LOCK_AT + 10 * 60_000)).locked).toBe(true);
+    expect(mocks.enqueueCalls).toEqual([]);
+  });
+
+  it("does not clear a newer lock's marker that replaced this one while its alerts were sending", async () => {
+    process.env.AUNTIE_OPERATOR_UIDS = 'op1';
+    const ctx = buildDbMock({ writeThrough: true, docs: baseDocs() });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await nineFailures();
+
+    // While lock A's operator alert is on its way, the account is unlocked and
+    // locked again (lock B), which saves B's own pending marker.
+    const NEWER = LOCK_AT + 5000;
+    mocks.beforeEnqueue = async (key) => {
+      if (key !== OPERATOR_KEY) return;
+      mocks.beforeEnqueue = null;
+      await ctx.db
+        .doc(SECURITY_DOC)
+        .set(
+          { lockStartedAtMs: NEWER, lockedUntilMs: NEWER + LOCK_MS, lockAlertsPendingForMs: NEWER },
+          { merge: true },
+        );
+    };
+    expect((await fail(LOCK_AT)).locked).toBe(true);
+
+    // Lock A's alerts finished; lock B's retry marker must survive A's clear.
+    expect((await storedSecurityDoc(ctx)).lockAlertsPendingForMs).toBe(NEWER);
+  });
+
   it('a lock saved before this change (no pending marker) is never re-alerted', async () => {
     process.env.AUNTIE_OPERATOR_UIDS = 'op1';
     const ctx = buildDbMock({
@@ -354,6 +425,29 @@ describe('#869 lock alerts survive a failed enqueue', () => {
 
     expect((await fail(NOW)).locked).toBe(true);
     expect(ctx.writes.filter((w) => w.path.startsWith('notifications/'))).toEqual([]);
+  });
+});
+
+describe('#869 unlockKinfolkAccount', () => {
+  it('deletes the pending marker along with the other lock fields', async () => {
+    process.env.AUNTIE_OPERATOR_UIDS = 'op1';
+    const ctx = buildDbMock({ writeThrough: true, docs: baseDocs() });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    // A lock whose operator alert failed, so its marker is still pending.
+    await nineFailures();
+    mocks.failOnce.add(OPERATOR_KEY);
+    await fail(LOCK_AT);
+    expect((await storedSecurityDoc(ctx)).lockAlertsPendingForMs).toBe(LOCK_AT);
+
+    await expect(
+      unlockKinfolkAccountHandler(callableRequest({ uid: 'kin1' }, { uid: 'op1', token: { admin: true } })),
+    ).resolves.toEqual({ ok: true });
+
+    const stored = await storedSecurityDoc(ctx);
+    expect(isDeleted(stored.lockAlertsPendingForMs), 'unlock deletes the pending marker').toBe(true);
+    expect(isDeleted(stored.lockStartedAtMs)).toBe(true);
+    expect(isDeleted(stored.lockedUntilMs)).toBe(true);
   });
 });
 

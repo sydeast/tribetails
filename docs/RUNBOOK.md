@@ -1064,10 +1064,12 @@ push carry content-free copy pointing at AuntieOS, and **SMS is skipped**
 |---|---|---|
 | `security.account.locked.operator` | #869 | The operator's lockout alert names neither the household nor the account email, and sends no SMS. |
 
-To import, follow the numbered steps at the end of *Connecting Stripe*, step 4
-(Admin, then **Templates**, then **Import from repo** on web or the **Import** tab
-on Android). A template new to Firestore shows `create` on every channel and
-needs nothing ticked. Do not tick an unrelated `skipped` row to get it in.
+To import, follow [the template import list](#importing-notification-templates):
+Admin, then **Templates**, then **Import from repo** on web or the **Import** tab
+on Android, then read the plan before pressing **Import**. A template new to
+Firestore shows `create` on every channel and needs nothing ticked. Do not tick
+**Replace the stored copy with the repo wording** on an unrelated `skipped` row to
+get it in.
 
 ### Merged branches are deleted after the tag
 
@@ -1758,6 +1760,7 @@ The script still exists and still reads the same seed directories, but running
 it against production replaces whole documents and drops the title, category,
 tags and description an operator authored in the Template Bank. The importer
 merges the content fields and leaves the rest alone.
+<a id="importing-notification-templates"></a>
 Do this instead, on the web admin or the phone:
 1. Admin, then **Templates**.
 2. **Import from repo** on web, or the **Import** tab on Android.

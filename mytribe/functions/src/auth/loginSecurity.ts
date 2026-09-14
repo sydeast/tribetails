@@ -288,8 +288,17 @@ async function sendLockAlerts(uid: string, email: string, lockStartedAtMs: numbe
   });
   if (!operatorAccepted) return;
 
-  await securityDocRef(uid)
-    .set({ lockAlertsPendingForMs: FieldValue.delete() }, { merge: true })
+  // Cleared only while the stored marker still names THIS lock. Between the lock
+  // being saved and this line, an admin unlock or a password reset followed by a
+  // fresh lock can replace it with a newer lock's marker, and deleting that one
+  // would silently cancel the newer lock's retry.
+  const ref = securityDocRef(uid);
+  await db()
+    .runTransaction(async (tx) => {
+      const stored = parseSecurityDoc((await tx.get(ref)).data());
+      if (stored.lockAlertsPendingForMs !== lockStartedAtMs) return;
+      tx.set(ref, { lockAlertsPendingForMs: FieldValue.delete() }, { merge: true });
+    })
     .catch((err) => {
       // Harmless if it fails: the next retry is deduped by the ledger.
       logEvent({
@@ -588,6 +597,8 @@ export async function unlockKinfolkAccountHandler(
         warnSentAtMs: FieldValue.delete(),
         lockedUntilMs: FieldValue.delete(),
         lockStartedAtMs: FieldValue.delete(),
+        // #869: an unlocked account has no lock whose alerts could be pending.
+        lockAlertsPendingForMs: FieldValue.delete(),
         updatedAtMs: Date.now(),
       },
       { merge: true },
