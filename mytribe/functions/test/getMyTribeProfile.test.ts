@@ -287,4 +287,45 @@ describe('getMyTribeProfileHandler: legacy Emergency Contact rows for old client
     const res = await profileFor({ 'families/3': FAMILY_DOC, 'kinfolk/3': { firstName: 'Dana' } });
     expect(res.profile.customFields.map((f) => f.key)).toEqual(['k1']);
   });
+
+  // Same read rule as listEmergencyContacts: any ACTIVE member reads, a member
+  // who is not ACTIVE does not. Only the Emergency Contact rows follow it.
+  const WITH_BOTH_COPIES = {
+    'families/3': { displayName: 'The Foster', customFields: STALE_FAMILIES_EC },
+    'families/3/homeAccess/current': HOME_ACCESS_DOC,
+    'kinfolk/3': {
+      firstName: 'Dana',
+      emergencyContacts: [{ name: 'Rae Mercer', phone: '+18055550199', relationship: 'Sister', recordedAt: null, updatedAt: null }],
+    },
+  };
+
+  async function profileAs(member: Record<string, unknown>, extraDocs: Record<string, unknown> = WITH_BOTH_COPIES) {
+    const ctx = buildDbMock({ docs: { 'clients/u8': { kinfolkIds: ['3'] }, 'families/3/members/u8': member, ...extraDocs } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyTribeProfileHandler } = await import('../src/portal/getMyTribeProfile');
+    return getMyTribeProfileHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u8' } } as any);
+  }
+
+  it('a member who is not ACTIVE gets no Emergency Contact rows, slot 1 or families copy, and the rest of the profile unchanged', async () => {
+    const suspended = { ...KINTALES_ONLY_MEMBER, status: 'SUSPENDED' };
+    const res = await profileAs(suspended);
+    expect(res.profile.customFields).toEqual([{ key: 'k1', label: 'Anniversary', value: 'Oct 14' }]);
+    expect(JSON.stringify(res)).not.toContain('Rae Mercer');
+    expect(JSON.stringify(res)).not.toContain('Old Name');
+
+    // Everything else matches what the same member got with no contact on file at all.
+    const baseline = await profileAs(suspended, {
+      'families/3': { displayName: 'The Foster', customFields: [{ key: 'k1', label: 'Anniversary', value: 'Oct 14' }] },
+      'families/3/homeAccess/current': HOME_ACCESS_DOC,
+      'kinfolk/3': { firstName: 'Dana' },
+    });
+    expect(res).toEqual(baseline);
+  });
+
+  it('an ACTIVE secondary without Home access still gets the rows: reading is open to any member', async () => {
+    const res = await profileAs(KINTALES_ONLY_MEMBER);
+    expect(res.canEditHomeDetails).toBe(false);
+    expect(res.profile.customFields.find((f) => f.key === 'emergencyContactName')?.value).toBe('Rae Mercer');
+    expect(res.profile.customFields.find((f) => f.key === 'emergencyContactPhone')?.value).toBe('+18055550199');
+  });
 });

@@ -159,6 +159,28 @@ export async function saveEmergencyContactsHandler(
   return { contacts: merged.map(toDto) };
 }
 
+/**
+ * Who may READ a household's Emergency Contacts (#829): staff; a caller with no
+ * member doc, who is the legacy single-primary account (the same anti-lockout
+ * rule as requireKinfolkPerm); and a member whose doc is ACTIVE. Any other
+ * member (INVITED, SUSPENDED) may not. Home access is not needed to read.
+ *
+ * The one copy of this rule, shared by listEmergencyContacts (which refuses) and
+ * getMyTribeProfile's legacy emergencyContact* rows (which it leaves out).
+ * The caller has already resolved the household through resolveKinfolkAccess.
+ */
+export async function canReadEmergencyContacts(
+  firestore: Firestore,
+  uid: string,
+  kinfolkId: string,
+  isAdmin: boolean,
+  fn: string,
+): Promise<boolean> {
+  if (isStaff(uid, isAdmin, fn)) return true;
+  const memberSnap = await firestore.doc(`families/${kinfolkId}/members/${uid}`).get();
+  return !memberSnap.exists || (memberSnap.data() as MemberDoc).status === 'ACTIVE';
+}
+
 export async function listEmergencyContactsHandler(
   req: CallableRequest<unknown>,
 ): Promise<{ contacts: EmergencyContactDTO[]; canEdit: boolean; legacy: boolean }> {
@@ -170,13 +192,8 @@ export async function listEmergencyContactsHandler(
   const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, isAdmin, 'listEmergencyContacts');
 
   const firestore = db();
-  if (!isStaff(uid, isAdmin, 'listEmergencyContacts')) {
-    const memberSnap = await firestore.doc(`families/${kinfolkId}/members/${uid}`).get();
-    // Missing member doc: the legacy single-primary account, same anti-lockout
-    // rule as requireKinfolkPerm. Present but not ACTIVE: denied.
-    if (memberSnap.exists && (memberSnap.data() as MemberDoc).status !== 'ACTIVE') {
-      throw new HttpsError('permission-denied', 'permission-denied');
-    }
+  if (!(await canReadEmergencyContacts(firestore, uid, kinfolkId, isAdmin, 'listEmergencyContacts'))) {
+    throw new HttpsError('permission-denied', 'permission-denied');
   }
   const [kinSnap, canEdit] = await Promise.all([
     firestore.doc(`kinfolk/${kinfolkId}`).get(),

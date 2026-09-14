@@ -8,6 +8,7 @@ import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { hasKinfolkPerm } from '../lib/memberGate';
 import { readStoredEmergencyContacts } from '../lib/emergencyContacts';
+import { canReadEmergencyContacts } from './emergencyContacts';
 
 interface GetMyTribeProfileRequest { kinfolkId?: string }
 
@@ -44,18 +45,21 @@ export async function getMyTribeProfileHandler(
   const firestore = db();
   const { kinfolkId } = await resolveKinfolkAccess(uid, req.data?.kinfolkId, req.auth?.token?.admin === true, 'getMyTribeProfile');
 
-  const [familySnap, kinfolkSnap] = await Promise.all([
+  const [familySnap, kinfolkSnap, canReadContacts] = await Promise.all([
     firestore.collection('families').doc(kinfolkId).get(),
     firestore.doc(`kinfolk/${kinfolkId}`).get(),
+    // #829: the legacy Emergency Contact rows follow listEmergencyContacts' read
+    // rule. A member who is not ACTIVE gets the rest of the profile without them.
+    canReadEmergencyContacts(firestore, uid, kinfolkId, req.auth?.token?.admin === true, 'getMyTribeProfile'),
   ]);
   const fam = (familySnap.data() ?? {}) as Record<string, unknown>;
+  const storedFields = parseCustomFields(fam['customFields']);
   const profile: TribeProfileDto = {
     kinfolkId,
     displayName: typeof fam['displayName'] === 'string' ? (fam['displayName'] as string) : `Tribe ${kinfolkId}`,
-    customFields: withLegacyEmergencyContactRows(
-      parseCustomFields(fam['customFields']),
-      (kinfolkSnap.data() ?? {}) as Record<string, unknown>,
-    ),
+    customFields: canReadContacts
+      ? withLegacyEmergencyContactRows(storedFields, (kinfolkSnap.data() ?? {}) as Record<string, unknown>)
+      : storedFields.filter((f) => !LEGACY_EMERGENCY_CONTACT_KEYS.has(f.key)),
   };
 
   const [accessSnap, canSeeHome] = await Promise.all([
