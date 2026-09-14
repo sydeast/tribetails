@@ -273,12 +273,13 @@ foreground run. `RELEASE_BG_FORCE=1` overrides once you have checked the console
 yourself, and says in its output that it did.
 
 One exception, and it needs no flag: a **resumed** release. When an earlier run
-of the exact commit at HEAD got past step 3 and stopped later, `.release-progress`
+of the exact commit being released (the pinned `RELEASE_SHA`) got past step 3
+and stopped later, `.release-progress`
 records the index step, the rerun skips steps 2 and 3, and there is no prompt
 left to skip. `.release-state` still names the previous release until a run
 finishes, so the diff says "changed" anyway; the wrapper lets that run through
 and prints `resumed:` instead of refusing. It uses the same rule as the release
-(exact HEAD sha, clean tree, `RELEASE_NO_RESUME` unset), from the one copy in
+(exact `RELEASE_SHA`, clean tree, `RELEASE_NO_RESUME` unset), from the one copy in
 `scripts/release-progress.sh`. See "A stopped release resumes on the same commit".
 
 | # | Step | Why here |
@@ -595,7 +596,8 @@ right names, survives, and refuses honestly when the quota never lifts. It runs
 the real script against a throwaway repo with `gh`, `gcloud`, `firebase`, `curl`
 and `npm` stubbed, plus a fake `gradlew` per Android app so the two-app build
 and distribution path runs wet without an SDK. It also covers the admin deploy
-retry and its error classifier, and the per-commit resume (#840). 133 cases.
+retry and its error classifier, the per-commit resume, and the checkout checks
+around every deploy (#840). 145 cases.
 Run it after touching `scripts/release.sh`. `bash scripts/release-bg.test.sh`
 (26 cases) covers the detached wrapper, including a resumed run with changed
 indexes and each reason a resume is refused.
@@ -691,9 +693,22 @@ tree is not clean` followed by `git status --short`. Skippable:
 `RELEASE_SHA`, and uses it for the progress record, the diffs, `.release-state`
 and the tag. The agent shell and the operator's terminal share one checkout, so a
 checkout or commit during a 20 to 40 minute run would otherwise mark the new
-commit done for work the old one deployed. If HEAD moves, the run stops at the
-next step boundary with `REFUSED: HEAD moved during the release`, and what shipped
-stays recorded against the original commit. `npm run deploy:bg` passes the sha it
+commit done for work the old one deployed. If HEAD moves, or the working tree
+changes after the first deploy, the run stops at the next check with `REFUSED:
+HEAD moved during the release` (or `the working tree changed during the
+release`), naming where it was caught. The checks run at every step boundary,
+before and after each functions batch, before each admin codebase attempt and
+after its deploy, before step 5 is recorded, and before `.release-state` is
+written.
+
+They are that dense because `firebase deploy` rebuilds `lib/` from the working
+tree for every functions batch (the predeploy in `mytribe/firebase.json`), so a
+checkout that changes mid-step-5 ships the later batches from the other commit,
+and the fleet verify cannot tell. When a change is caught right after a deploy,
+the stop message says that codebase may be partly from the other commit, names
+both shas, and nothing is recorded for it, so a rerun deploys it again. A change
+made and undone inside a single deploy is invisible to every check; the only
+defence against that is not working in the checkout while a release runs. `npm run deploy:bg` passes the sha it
 launched for, and step 0 refuses if HEAD is no longer that commit. When the
 wrapper let changed indexes through because of a resume, it also passes
 `RELEASE_BG_EXPECTS_INDEX_RESUME=1`, and step 2 refuses if the index step is no

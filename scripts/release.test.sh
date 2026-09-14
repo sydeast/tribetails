@@ -232,7 +232,17 @@ STUB
   # Everything gcloud is asked here is a read that this test has no answer for.
   # Failing is the honest stub: release.sh and prune-run-revisions.sh both have
   # a documented "could not ask" path, and this exercises it.
-  printf '#!/usr/bin/env bash\nexit 1\n' > "$dir/stubs/gcloud"
+  #
+  # GCLOUD_MOVE_HEAD_REPO=<repo> commits to that repo on any `gcloud run ...`
+  # call. Only the revision prune asks that (step 8, and between retry rounds),
+  # so it moves HEAD at a point no other stub can reach (#840 review).
+  cat > "$dir/stubs/gcloud" <<'STUB'
+#!/usr/bin/env bash
+if [ -n "${GCLOUD_MOVE_HEAD_REPO:-}" ] && [ "${1:-}" = "run" ]; then
+  git -C "$GCLOUD_MOVE_HEAD_REPO" commit --allow-empty -qm "moved while the release ran" >/dev/null 2>&1
+fi
+exit 1
+STUB
 
   # A real deploy would land here. It must be reached only by the wet-run case,
   # and it records that it was, so a DRY_RUN case that leaks through is caught.
@@ -269,6 +279,11 @@ done
 # repo, so git here acts on it.
 if [ -n "${FIREBASE_MOVE_HEAD_ON:-}" ] && [ "$only" = "$FIREBASE_MOVE_HEAD_ON" ]; then
   git commit --allow-empty -qm "moved while the release ran" >/dev/null 2>&1
+fi
+# FIREBASE_EDIT_TREE_ON=<target> edits a tracked file instead, without moving
+# HEAD: a working-tree change that the deploy's build would pick up.
+if [ -n "${FIREBASE_EDIT_TREE_ON:-}" ] && [ "$only" = "$FIREBASE_EDIT_TREE_ON" ]; then
+  printf 'edited while the release ran\n' >> "$(git rev-parse --show-toplevel)/note.txt"
 fi
 
 # FIREBASE_ADMIN_FAIL_TEXT makes an admin codebase deploy fail printing that
@@ -1627,10 +1642,14 @@ if grep -q " rules$" "$DE/repo/.release-progress" 2>/dev/null &&
 else
   bad "an unverified functions deploy was recorded"; cat "$DE/repo/.release-progress" 2>/dev/null
 fi
+LIVE_E="$(sed 's/\x1b\[[0-9;]*m//g' "$DE/out" | awk '/^Completed and LIVE for /{f=1; next} /^[^ ]/{f=0} f')"
+UNVER_E="$(sed 's/\x1b\[[0-9;]*m//g' "$DE/out" | awk '/^Deployed, NOT verified, for /{f=1; next} /^[^ ]/{f=0} f')"
 if grep -q " functions-mytribe-unverified$" "$DE/repo/.release-progress" 2>/dev/null &&
-   grep -q "functions:mytribe, deployed, not verified" "$DE/out" &&
+   printf '%s' "$UNVER_E" | grep -q "functions:mytribe, deployed, not verified" &&
+   ! printf '%s' "$LIVE_E" | grep -q "not verified" &&
+   printf '%s' "$LIVE_E" | grep -q "firestore rules" &&
    ! grep -q "functions:mytribe, fleet verified" "$DE/out"; then
-  ok "the stop message lists the unverified functions as deployed, not verified"
+  ok "the stop message lists the unverified functions under their own heading, not under LIVE"
 else
   bad "the stop message did not say the functions were deployed but not verified"; tail -12 "$DE/out"
 fi
@@ -1684,7 +1703,9 @@ fi
 DG="$(make_repo)"; write_stubs "$DG"; arm_ci "$DG"
 RCG="$(run_release "$DG" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
   RELEASE_BG_EXPECTS_INDEX_RESUME=1 FIREBASE_CALL_LOG="$DG/calls")"
-if [ "$RCG" != "0" ] && grep -q "launched this run as a RESUME of steps 2 and 3" "$DG/out" &&
+if [ "$RCG" != "0" ] && grep -q "RELEASE_BG_EXPECTS_INDEX_RESUME=1 says this run resumes steps 2 and 3" "$DG/out" &&
+   grep -q "unset RELEASE_BG_EXPECTS_INDEX_RESUME" "$DG/out" &&
+   ! grep -q "launched this run" "$DG/out" &&
    ! grep -q 'firestore:indexes' "$DG/calls" 2>/dev/null; then
   ok "an expected index resume that is not recorded stops step 2 before indexes deploy"
 else
@@ -1733,6 +1754,196 @@ if [ "$RCI2" = "0" ] && grep -q "found nothing to deploy" "$DI/out" &&
   ok "the resume and the tag message say nothing to deploy, not deployed and verified"
 else
   bad "the resume or tag misdescribed an empty step 5 (rc=$RCI2)"; printf '%s\n' "$TAG_I"; grep -n "RESUMED" "$DI/out"
+fi
+
+# ---------------------------------------------------------------------------
+# #840 second review. The checkout is read by every deploy (firebase runs the
+# functions build as a predeploy), so it is checked around each deploy, not only
+# at banners. Each case moves HEAD where exactly one check stands between the
+# move and the next deploy or record, and asserts where it was caught, so
+# removing that one check fails the case even if a later check still stops the
+# run.
+# ---------------------------------------------------------------------------
+
+# stripped <file>: the output without colour codes.
+stripped() { sed 's/\x1b\[[0-9;]*m//g' "$1"; }
+# short <sha>
+short7() { printf '%s' "$1" | cut -c1-7; }
+
+REAL_NODE="$(command -v node)"
+# stub_node_move_head <dir> <arg-substring>: a node that commits to the repo when
+# its arguments contain <arg-substring>, then runs the real node.
+stub_node_move_head() {
+  cat > "$1/stubs/node" <<STUB
+#!/usr/bin/env bash
+case "\$*" in
+  *"$2"*) git -C "$1/repo" commit --allow-empty -qm "moved while the release ran" >/dev/null 2>&1 ;;
+esac
+exec "$REAL_NODE" "\$@"
+STUB
+  chmod +x "$1/stubs/node"
+}
+# stub_npx_fleet_move_head <dir>: the fleet read for the verify, which also
+# moves HEAD, i.e. after the last batch and before step 5 is recorded.
+stub_npx_fleet_move_head() {
+  cat > "$1/stubs/npx" <<STUB
+#!/usr/bin/env bash
+git -C "$1/repo" commit --allow-empty -qm "moved while the release ran" >/dev/null 2>&1
+echo '{"result":[]}'
+exit 0
+STUB
+  chmod +x "$1/stubs/npx"
+}
+# verified_repo: step 5 deploys and its verify passes, no admin codebases.
+verified_repo() {
+  local d
+  d="$(make_repo)"; write_stubs "$d"; arm_ci "$d"
+  stub_npm_verify "$d" 0
+  stub_npx_fleet "$d"
+  printf '%s' "$d"
+}
+FN_ENV=(RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 RELEASE_FUNCTIONS_SETTLE=0 RELEASE_RETRY_KEEP=0)
+
+# 1. HEAD moves DURING a batch. The batch after it must not deploy, step 5 must
+#    record nothing, and the stop message must say the functions may be partly
+#    from the other commit, naming both.
+DJ="$(verified_repo)"
+HEAD_J="$(cd "$DJ/repo" && git rev-parse HEAD)"
+FIRST_J="$(cd "$DJ/repo" && "$REAL_NODE" scripts/function-targets.js 2>/dev/null | head -1)"
+RCJ="$(run_release "$DJ" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=1 \
+  FIREBASE_MOVE_HEAD_ON="functions:mytribe:$FIRST_J" FIREBASE_CALL_LOG="$DJ/calls")"
+MOVED_J="$(cd "$DJ/repo" && git rev-parse HEAD)"
+OUT_J="$(stripped "$DJ/out")"
+if [ -n "$FIRST_J" ] && [ "$RCJ" != "0" ] && [ "$(fn_deploys "$DJ/calls" | wc -l | tr -d ' ')" = "1" ] &&
+   printf '%s' "$OUT_J" | grep -q "Caught after a functions batch"; then
+  ok "HEAD moving during a functions batch stops before the next batch, caught after the batch"
+else
+  bad "a later batch deployed after HEAD moved, or the post-batch check did not catch it (rc=$RCJ)"; fn_deploys "$DJ/calls"; printf '%s\n' "$OUT_J" | grep -n "Caught\|REFUSED"
+fi
+if ! grep -q " functions-mytribe" "$DJ/repo/.release-progress" 2>/dev/null; then
+  ok "a batch that may have shipped the other commit records nothing for step 5"
+else
+  bad "step 5 was recorded after HEAD moved mid-batch"; cat "$DJ/repo/.release-progress"
+fi
+if printf '%s' "$OUT_J" | grep -q "functions:mytribe may be PARTLY from $MOVED_J" &&
+   printf '%s' "$OUT_J" | grep -q "not from $(short7 "$HEAD_J") ($HEAD_J)"; then
+  ok "the stop message says the functions may be partly from the other commit, naming both shas"
+else
+  bad "the stop message did not name the mixed functions and both shas"; printf '%s\n' "$OUT_J" | tail -15
+fi
+
+# 2. HEAD moves BETWEEN batches (the prune between retry rounds). The check
+#    before the next batch must stop it before it deploys.
+DK="$(verified_repo)"
+RCK="$(run_release "$DK" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 RELEASE_FUNCTIONS_SETTLE=0 \
+  RELEASE_FUNCTIONS_BATCH=6 RELEASE_RETRY_KEEP=2 FIREBASE_QUOTA_MAX=0 \
+  GCLOUD_MOVE_HEAD_REPO="$DK/repo" FIREBASE_CALL_LOG="$DK/calls")"
+if [ "$RCK" != "0" ] && [ "$(fn_deploys "$DK/calls" | wc -l | tr -d ' ')" = "1" ] &&
+   stripped "$DK/out" | grep -q "Caught before a functions batch"; then
+  ok "HEAD moving between batches is caught before the next batch deploys"
+else
+  bad "the retry batch deployed after HEAD moved (rc=$RCK)"; fn_deploys "$DK/calls"; stripped "$DK/out" | grep -n "Caught\|REFUSED"
+fi
+
+# 3. HEAD moves during the fleet verify, after the last batch: step 5 must not be
+#    recorded against the step-0 commit.
+DL="$(verified_repo)"
+stub_npx_fleet_move_head "$DL"
+RCL="$(run_release "$DL" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 FIREBASE_CALL_LOG="$DL/calls")"
+if [ "$RCL" != "0" ] && stripped "$DL/out" | grep -q "Caught before recording step 5\." &&
+   ! grep -q " functions-mytribe" "$DL/repo/.release-progress" 2>/dev/null; then
+  ok "HEAD moving before step 5 is recorded is caught there, and nothing is recorded"
+else
+  bad "step 5 was recorded from a moved checkout (rc=$RCL)"; cat "$DL/repo/.release-progress" 2>/dev/null; stripped "$DL/out" | grep -n "Caught"
+fi
+
+# 4. The same for an empty step 5: HEAD moves while the change is attributed.
+DM="$(verified_repo)"
+mkdir -p "$DM/repo/mytribe/functions/test"
+printf 'it("works", () => {});\n' > "$DM/repo/mytribe/functions/test/alpha.test.ts"
+( cd "$DM/repo" && git add -A && git commit -qm "add a test" && git push -q origin main ) >/dev/null 2>&1
+(cd "$DM/repo" && git rev-parse HEAD) > "$DM/repo/.release-state"
+commit_change "$DM" "mytribe/functions/test/alpha.test.ts" 'it("also works", () => {});'
+arm_ci "$DM"
+stub_node_move_head "$DM" "--changed-from"
+RCM="$(run_release "$DM" "${FN_ENV[@]}")"
+if [ "$RCM" != "0" ] && stripped "$DM/out" | grep -q "Caught before recording step 5 (nothing to deploy)" &&
+   ! grep -q " functions-mytribe-none" "$DM/repo/.release-progress" 2>/dev/null; then
+  ok "HEAD moving before an empty step 5 is recorded is caught there, and nothing is recorded"
+else
+  bad "an empty step 5 was recorded from a moved checkout (rc=$RCM)"; cat "$DM/repo/.release-progress" 2>/dev/null; stripped "$DM/out" | grep -n "Caught"
+fi
+
+# 5. The explicit check before the admin codebases. A resumed step 5 runs no
+#    check of its own, so HEAD moving there (while the fleet is enumerated) is
+#    caught only by the check before the admin codebases.
+DN="$(admin_repo)"
+run_release "$DN" "${ADMIN_ENV[@]}" FIREBASE_ADMIN_FAIL_TEXT="$MISSING_TEXT" >/dev/null
+stub_node_move_head "$DN" "function-targets.js"
+RCN="$(run_release "$DN" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DN/calls2")"
+# The rerun resumes indexes, rules and step 5, so it may call firebase not at
+# all and leave no call log; "no functions:default deploy" holds either way.
+if [ "$RCN" != "0" ] && stripped "$DN/out" | grep -q "Caught before the admin codebases\." &&
+   ! grep -qF -- "--only functions:default " "$DN/calls2" 2>/dev/null; then
+  ok "HEAD moving during a resumed step 5 is caught before the admin codebases"
+else
+  bad "the admin codebases were reached after HEAD moved (rc=$RCN)"; stripped "$DN/out" | grep -n "Caught\|RESUMED: SKIPPED"
+fi
+
+# 6. The check at the top of each admin attempt: HEAD moves during a transient
+#    failure, so the retry must not deploy.
+DO="$(admin_repo)"
+RCO="$(run_release "$DO" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DO/calls" \
+  FIREBASE_MOVE_HEAD_ON=functions:default FIREBASE_ADMIN_FAIL_TEXT="$INCIDENT_TEXT" \
+  FIREBASE_ADMIN_FAIL_TIMES=1 FIREBASE_ADMIN_FAIL_COUNTER="$DO/admin-fails")"
+if [ "$RCO" != "0" ] && [ "$(admin_calls "$DO/calls" functions:default)" = "1" ] &&
+   stripped "$DO/out" | grep -q "Caught before functions:default attempt 2\."; then
+  ok "HEAD moving during a failed admin attempt stops the retry before it deploys"
+else
+  bad "the admin retry deployed after HEAD moved (rc=$RCO, attempts $(admin_calls "$DO/calls" functions:default))"; stripped "$DO/out" | grep -n "Caught"
+fi
+
+# 7. The check after an admin deploy: it built from a moved checkout, so it is
+#    not recorded, the next codebase does not deploy, and the stop message says so.
+DP="$(admin_repo)"
+HEAD_P="$(cd "$DP/repo" && git rev-parse HEAD)"
+RCP="$(run_release "$DP" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DP/calls" \
+  FIREBASE_MOVE_HEAD_ON=functions:default)"
+if [ "$RCP" != "0" ] && stripped "$DP/out" | grep -q "Caught after deploying functions:default\." &&
+   ! grep -q " functions-admin-default$" "$DP/repo/.release-progress" 2>/dev/null &&
+   [ "$(admin_calls "$DP/calls" functions:reconcile)" = "0" ] &&
+   stripped "$DP/out" | grep -q "functions:default may be PARTLY from"; then
+  ok "an admin deploy from a moved checkout is not recorded, and the stop message names it"
+else
+  bad "an admin deploy from a moved checkout was recorded or not reported (rc=$RCP)"; cat "$DP/repo/.release-progress" 2>/dev/null; stripped "$DP/out" | tail -12
+fi
+if grep -qxF "$HEAD_P functions-mytribe" "$DP/repo/.release-progress" 2>/dev/null; then
+  ok "step 5, verified before HEAD moved, stays recorded for the step-0 commit"
+else
+  bad "the earlier verified step 5 record was lost"; cat "$DP/repo/.release-progress" 2>/dev/null
+fi
+
+# 8. The check before .release-state: HEAD moves during the step 8 prune, the
+#    only thing between the step 8 banner and the record.
+DQ="$(verified_repo)"
+RCQ="$(run_release "$DQ" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 \
+  GCLOUD_MOVE_HEAD_REPO="$DQ/repo" FIREBASE_CALL_LOG="$DQ/calls")"
+if [ "$RCQ" != "0" ] && stripped "$DQ/out" | grep -q "Caught before recording .release-state\." &&
+   [ ! -e "$DQ/repo/.release-state" ] && [ -z "$(cd "$DQ/repo" && git tag -l)" ]; then
+  ok "HEAD moving during the prune stops the release before .release-state is written"
+else
+  bad ".release-state was written or the tag made after HEAD moved (rc=$RCQ)"; ls -la "$DQ/repo/.release-state" 2>/dev/null; stripped "$DQ/out" | grep -n "Caught"
+fi
+
+# 9. A working-tree edit with no HEAD move is caught the same way.
+DR="$(verified_repo)"
+RCR="$(run_release "$DR" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 \
+  FIREBASE_EDIT_TREE_ON=firestore:rules FIREBASE_CALL_LOG="$DR/calls")"
+if [ "$RCR" != "0" ] && stripped "$DR/out" | grep -q "REFUSED: the working tree changed during the release" &&
+   stripped "$DR/out" | grep -q "note.txt" && [ -z "$(fn_deploys "$DR/calls")" ]; then
+  ok "a working-tree edit during the release is refused before the next deploy"
+else
+  bad "a working-tree edit did not stop the release (rc=$RCR)"; stripped "$DR/out" | grep -n "REFUSED\|Caught"
 fi
 
 echo

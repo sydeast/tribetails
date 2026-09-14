@@ -156,7 +156,7 @@ PID=$!
 echo "$PID" > "$PIDFILE"
 
 grn "release started: pid $PID"
-cyan "  commit:  $SHA  $(git log -1 --format=%s 2>/dev/null | cut -c1-60)"
+cyan "  commit:  $SHA  $(git log -1 --format=%s "$RELEASE_SHA" 2>/dev/null | cut -c1-60)"
 cyan "  log:     $LOG"
 cyan ""
 cyan "  watch:   tail -f $LOG"

@@ -185,6 +185,13 @@ export RELEASE_SHA
 # launch gets step 0's specific refusal rather than the generic one; on from
 # there until the release is over, so the closing banners do not re-check.
 RELEASE_HEAD_GUARD=0
+# A fingerprint of the working tree, taken just before the first deploy (step 2)
+# and compared by release_head_guard from then on. Empty until then.
+RELEASE_TREE_BASELINE=""
+# Set by release_head_refuse when a deploy may have shipped something other than
+# RELEASE_SHA, so the stop message can say which codebase and which commit.
+RELEASE_MIXED_TARGET=""
+RELEASE_MIXED_WITH=""
 
 # The generated .env.production.local files (step 0c) exist only for the length
 # of this run. They are gitignored and hold nothing a browser cannot already
@@ -257,19 +264,42 @@ progress_label() {
 # progress_report_stop: the rest of the stop message. Names every step recorded
 # for RELEASE_SHA, so an operator reading a failed run knows what is live.
 progress_report_stop() {
-  local sha="$RELEASE_SHA" short="$RELEASE_SHORT" line_sha key done_list=""
+  local sha="$RELEASE_SHA" short="$RELEASE_SHORT" line_sha key done_list="" unverified_list=""
   if [ -n "$sha" ] && [ -f "$PROGRESS_FILE" ]; then
     while read -r line_sha key; do
-      if [ "$line_sha" = "$sha" ] && [ -n "$key" ]; then
-        done_list="$done_list
-    - $(progress_label "$key")"
+      if [ "$line_sha" != "$sha" ] || [ -z "$key" ]; then
+        continue
       fi
+      # A deploy whose verify did not pass is not "completed and live" on this
+      # file's evidence, so it gets its own heading rather than a line under it.
+      case "$key" in
+        *-unverified)
+          unverified_list="$unverified_list
+    - $(progress_label "$key")" ;;
+        *)
+          done_list="$done_list
+    - $(progress_label "$key")" ;;
+      esac
     done < "$PROGRESS_FILE"
   fi
   if [ "$DRY_RUN" = "1" ]; then
     red "DRY_RUN=1: nothing was deployed by this run."
-  elif [ -n "$done_list" ]; then
+    return 0
+  fi
+  if [ -n "$done_list" ]; then
     red "Completed and LIVE for $short:$done_list"
+  fi
+  if [ -n "$unverified_list" ]; then
+    red "Deployed, NOT verified, for $short:$unverified_list"
+  fi
+  if [ -n "$RELEASE_MIXED_TARGET" ]; then
+    red "$RELEASE_MIXED_TARGET may be PARTLY from $RELEASE_MIXED_WITH,"
+    red "  not from $RELEASE_SHORT ($RELEASE_SHA). firebase builds and uploads it from"
+    red "  the working tree at deploy time, and the checkout had changed by the time"
+    red "  that deploy finished. Nothing is recorded for it against $RELEASE_SHORT, so"
+    red "  a rerun on $RELEASE_SHORT deploys it again."
+  fi
+  if [ -n "$done_list" ] || [ -n "$unverified_list" ]; then
     red "Nothing after those has shipped, and the step named above may be"
     red "PARTIALLY shipped. Fix the cause and re-run on this same commit: the"
     red "recorded backend steps are skipped (RELEASE_NO_RESUME=1 runs them all)."
@@ -279,29 +309,77 @@ progress_report_stop() {
   fi
 }
 
-# release_head_guard: refuse if HEAD is no longer RELEASE_SHA. Called from
-# banner(), so it runs at every step boundary, and explicitly before the two
-# places that act without a banner of their own (the admin codebases and
-# .release-state).
-release_head_guard() {
-  local now
-  [ "${RELEASE_HEAD_GUARD:-1}" = "1" ] || return 0
-  [ -n "${RELEASE_SHA:-}" ] || return 0
-  now="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
-  [ "$now" = "$RELEASE_SHA" ] && return 0
-  STEP="checking HEAD has not moved since the release started"
-  red "REFUSED: HEAD moved during the release."
-  red "  This run is releasing $RELEASE_SHORT; HEAD is now ${now:-unreadable}."
-  red "  Something checked out, committed or pulled in this checkout while the"
-  red "  release ran. Everything deployed so far came from $RELEASE_SHORT, and"
-  red "  .release-progress records it against $RELEASE_SHORT, not the new HEAD."
-  red "  To resume, re-run once main is back at $RELEASE_SHORT. The new commit"
-  red "  gets a full run of its own: a different commit never resumes."
+# release_tree_fingerprint: one line that changes when any tracked file changes
+# or an untracked, non-ignored file appears. The release's own outputs (lib/,
+# dist/, the APK build dirs, .env.production.local, .release-*) are gitignored,
+# so building and deploying does not move it.
+release_tree_fingerprint() {
+  { git -C "$ROOT" status --porcelain 2>/dev/null
+    git -C "$ROOT" diff HEAD --no-ext-diff 2>/dev/null
+  } | cksum
+}
+
+# release_head_refuse <where> <target> <headline> <moved-to>: stop the release
+# because the checkout changed. <target> is the codebase a deploy that just ran
+# may have shipped from the changed checkout ("" when nothing can have): it is
+# named in the stop message, and step 5's records are dropped for it, because a
+# rerun must deploy it again rather than resume over it.
+release_head_refuse() {
+  local where="$1" target="$2" headline="$3" moved_to="$4"
+  STEP="checking the checkout has not changed since the release started"
+  red "REFUSED: $headline"
+  red "  Caught $where."
+  red "  This run is releasing $RELEASE_SHORT ($RELEASE_SHA)."
+  if [ -n "$moved_to" ]; then
+    red "  HEAD is now $moved_to."
+  fi
+  if [ -n "$target" ]; then
+    RELEASE_MIXED_TARGET="$target"
+    RELEASE_MIXED_WITH="${moved_to:-the edited working tree}"
+    case "$target" in
+      functions:mytribe)
+        progress_forget functions-mytribe
+        progress_forget functions-mytribe-none
+        progress_forget functions-mytribe-unverified
+        ;;
+    esac
+  else
+    red "  Everything deployed so far came from $RELEASE_SHORT, and .release-progress"
+    red "  records it against $RELEASE_SHORT."
+  fi
+  red "  Something checked out, committed, pulled or edited files in this checkout"
+  red "  while the release ran. To resume, re-run once main is back at"
+  red "  $RELEASE_SHORT with a clean tree. A new commit gets a full run of its own:"
+  red "  a different commit never resumes."
   exit 1
 }
 
+# release_head_guard <where> [<target>]: refuse if HEAD is no longer
+# RELEASE_SHA, or, once step 2 has taken the baseline, if the working tree has
+# changed. <where> is named in the refusal. Pass <target> when the check runs
+# AFTER a deploy of that codebase, since that deploy may have built from the
+# changed checkout.
+#
+# Called from banner() at every step boundary, before and after every functions
+# batch, before every admin codebase attempt and after its deploy, before step
+# 5 is recorded, before the admin codebases, and before .release-state.
+release_head_guard() {
+  local where="${1:-at a step boundary}" target="${2:-}" now
+  [ "${RELEASE_HEAD_GUARD:-1}" = "1" ] || return 0
+  [ -n "${RELEASE_SHA:-}" ] || return 0
+  now="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+  if [ "$now" != "$RELEASE_SHA" ]; then
+    release_head_refuse "$where" "$target" "HEAD moved during the release." "${now:-unreadable}"
+  fi
+  if [ -n "$RELEASE_TREE_BASELINE" ] && [ "$(release_tree_fingerprint)" != "$RELEASE_TREE_BASELINE" ]; then
+    red "$(git -C "$ROOT" status --short 2>/dev/null)"
+    release_head_refuse "$where" "$target" "the working tree changed during the release (git status above)." ""
+  fi
+  return 0
+}
+
 banner() {
-  release_head_guard
+  release_head_guard "at the start of step: $*"
   printf '\n'
   cyan "─────────────────────────────────────────────────────────────"
   cyan "  $*"
@@ -402,9 +480,26 @@ deploy_one_function_batch() {
   done < "$names_file"
 
   log="$names_file.log"
+
+  # THE DEPLOY READS THE CHECKOUT ITSELF (#840 review). mytribe/firebase.json
+  # runs `npm run build` as a predeploy on EVERY functions deploy, so each batch
+  # compiles lib/ from whatever the working tree holds at that moment, not from
+  # RELEASE_SHA. A HEAD that moves between batch 3 and batch 4 ships batch 4 from
+  # the other commit, and the fleet verify cannot tell (it checks names and
+  # timestamps). So the checkout is checked before each batch, and again after
+  # it, when a failure means this batch may have shipped the other commit.
+  #
+  # THE WINDOW THAT IS LEFT. The check before a batch and firebase's predeploy
+  # build are seconds apart, and a change made and undone entirely inside one
+  # deploy is invisible to both checks. Nothing in this script can close that;
+  # not using a checkout that something else is working in during a release can.
+  release_head_guard "before a functions batch"
   cyan "deploy: mytribe -> $count function(s): $(awk 'NF{printf "%s%s", (n++?" ":""), $0}' "$names_file")"
+  local rc=0
   # shellcheck disable=SC2086
-  if DRY_RUN="$DRY_RUN" bash "$SAFE_DEPLOY" mytribe -- firebase deploy $FN_FORCE_FLAG --only "$targets" 2>&1 | tee "$log"; then
+  DRY_RUN="$DRY_RUN" bash "$SAFE_DEPLOY" mytribe -- firebase deploy $FN_FORCE_FLAG --only "$targets" 2>&1 | tee "$log" || rc=$?
+  release_head_guard "after a functions batch" "functions:mytribe"
+  if [ "$rc" -eq 0 ]; then
     return 0
   fi
 
@@ -584,6 +679,9 @@ deploy_admin_codebase() {
   local target="$1" attempt=1 log class
   log="$(mktemp)"
   while :; do
+    # The admin codebases upload from the working tree too (default is plain
+    # JS), so every attempt starts from a checked checkout, retries included.
+    release_head_guard "before $target attempt $attempt"
     cyan "deploy: auntieos-admin -> $target (attempt $attempt of $FN_ROUNDS)"
     if DRY_RUN="$DRY_RUN" bash "$SAFE_DEPLOY" auntieos-admin -- firebase deploy --only "$target" 2>&1 | tee "$log"; then
       rm -f "$log"
@@ -796,13 +894,13 @@ if [ "$LOCAL" != "$REMOTE" ]; then
   red "  Deploying either one silently picks a winner. Pull (or push) first."
   exit 1
 fi
-grn "sync: main == origin/main ($(git rev-parse --short HEAD), via $SYNC_VIA)"
+grn "sync: main == origin/main ($RELEASE_SHORT, via $SYNC_VIA)"
 
 # What is actually about to ship, so the operator can recognise it. A release
 # whose contents are a surprise is one nobody can sanity-check.
 STEP="summarising the release"
 cyan ""
-cyan "HEAD: $(git log -1 --format='%h %s' | cut -c1-100)"
+cyan "HEAD: $(git log -1 --format='%h %s' "$RELEASE_SHA" | cut -c1-100)"
 if [ "$DRY_RUN" = "1" ]; then
   ylw "DRY_RUN=1: every firebase command below will be PRINTED, not run."
 fi
@@ -1407,6 +1505,10 @@ fi
 # ---------------------------------------------------------------------------
 # 2 & 3. Indexes, then WAIT for them.
 # ---------------------------------------------------------------------------
+# The working-tree baseline, taken after step 1 has built (so its outputs are
+# already there) and before anything deploys. From here on a changed tree
+# refuses at the next check, the same as a moved HEAD.
+RELEASE_TREE_BASELINE="$(release_tree_fingerprint)"
 banner "2. Firestore indexes"
 
 STEP="deploying firestore indexes"
@@ -1422,11 +1524,13 @@ fi
 # let step 3's prompt answer itself under RELEASE_YES=1, which is exactly what
 # the wrapper exists to prevent. So stop, before anything deploys.
 if [ "${RELEASE_BG_EXPECTS_INDEX_RESUME:-0}" = "1" ] && [ "$RESUMED_INDEXES" = "0" ]; then
-  red "REFUSED: npm run deploy:bg launched this run as a RESUME of steps 2 and 3,"
-  red "  but .release-progress no longer lets $RELEASE_SHORT resume the index step"
-  red "  (the reason, if there is one, is printed above). Deploying indexes now"
-  red "  would let step 3's 'are all indexes Enabled?' answer itself."
+  red "REFUSED: RELEASE_BG_EXPECTS_INDEX_RESUME=1 says this run resumes steps 2 and 3"
+  red "  (npm run deploy:bg sets it when it lets changed indexes through on a"
+  red "  resume), but .release-progress no longer lets $RELEASE_SHORT resume the"
+  red "  index step (the reason, if there is one, is printed above). Deploying"
+  red "  indexes now would let step 3's 'are all indexes Enabled?' answer itself."
   red "  Run it in the foreground and answer step 3 yourself:  npm run deploy"
+  red "  or, if the variable was left set in your shell:  unset RELEASE_BG_EXPECTS_INDEX_RESUME"
   exit 1
 fi
 
@@ -1811,6 +1915,7 @@ else
     FUNCTIONS_SHIPPED_DESC="nothing to deploy ($FN_SCOPE reaches no deployed function)"
     # Its own record, never functions-mytribe: nothing was deployed or verified,
     # and the resume, the stop message and the tag must not say it was.
+    release_head_guard "before recording step 5 (nothing to deploy)"
     progress_mark functions-mytribe-none
   else
     # PRUNE BEFORE, NOT ONLY AFTER, and be honest about what it buys.
@@ -1862,6 +1967,9 @@ else
       # functions-mytribe ONLY on a verify that passed. "Could not verify" and a
       # skipped verify record functions-mytribe-unverified instead, which the
       # stop message names and no rerun skips on. A dry run records nothing.
+      # Checked first: a record naming RELEASE_SHA must not be written from a
+      # checkout that has left it.
+      release_head_guard "before recording step 5"
       if [ "$FLEET_VERIFIED" = "1" ]; then
         progress_forget functions-mytribe-unverified
         progress_mark functions-mytribe
@@ -1911,8 +2019,8 @@ else
   rm -rf "$FN_WORK"
 fi
 
-# No banner of its own, so the moved-HEAD check is called here directly.
-release_head_guard
+# No banner of its own, so the checkout check is called here directly.
+release_head_guard "before the admin codebases"
 STEP="deploying the admin functions codebases"
 if [ "${RELEASE_INCLUDE_ADMIN_FUNCTIONS:-0}" = "1" ]; then
   # Two codebases, declared in auntieos-admin/web, deployed one at a time
@@ -1933,6 +2041,8 @@ if [ "${RELEASE_INCLUDE_ADMIN_FUNCTIONS:-0}" = "1" ]; then
       red "REFUSED: functions:$ADMIN_CODEBASE did not deploy (see above)."
       exit 1
     fi
+    # The deploy built from the checkout, so check it before recording it.
+    release_head_guard "after deploying functions:$ADMIN_CODEBASE" "functions:$ADMIN_CODEBASE"
     progress_mark "functions-admin-$ADMIN_CODEBASE"
   done
   STEP="deploying the admin functions codebases"
@@ -2186,7 +2296,7 @@ if [ "$DRY_RUN" = "1" ]; then
 else
   # The commit this run released, not whatever is checked out now; and refuse
   # rather than record if HEAD moved, since this step has no banner to check it.
-  release_head_guard
+  release_head_guard "before recording .release-state"
   STEP="recording the released commit"
   printf '%s\n' "$RELEASE_SHA" > "$ROOT/.release-state"
   # The fleet as it stood when it last shipped. Deploying by explicit name never
