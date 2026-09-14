@@ -26,7 +26,12 @@ const mocks = vi.hoisted(() => ({
   enqueueCalls: [] as string[],
   failOnce: new Set<string>(),
   logEvent: vi.fn(),
+  captureFunctionError: vi.fn(() => 'sentry-1'),
 }));
+vi.mock('../src/lib/sentry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/lib/sentry')>();
+  return { ...actual, initSentry: vi.fn(), captureFunctionError: mocks.captureFunctionError };
+});
 vi.mock('../src/lib/firestoreAdmin', () => ({
   db: mocks.dbFn,
   auth: () => ({ getUserByEmail: mocks.getUserByEmail }),
@@ -54,6 +59,7 @@ import {
   RecordFailedLoginResult,
   recordFailedLoginHandler,
 } from '../src/auth/loginSecurity';
+import { wrapCallable } from '../src/lib/wrapCallable';
 
 const NOW = Date.UTC(2026, 8, 14, 15, 0, 0);
 const LOCK_MS = 30 * 60 * 1000;
@@ -288,10 +294,64 @@ describe('#886 rate limits still hold, and refuse both kinds of email the same w
     expect((err as HttpsError).code).toBe('resource-exhausted');
   });
 
-  it('a malformed email is refused before any account lookup', async () => {
+  it('a malformed email is refused with invalid-argument before any account lookup', async () => {
     await setup();
-    await expect(recordFailedLoginHandler(callableRequest({ email: 'not-an-email' }))).rejects.toThrow();
+    const err = await recordFailedLoginHandler(callableRequest({ email: 'not-an-email' }, { ip: '192.0.2.10' })).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(HttpsError);
+    expect((err as HttpsError).code).toBe('invalid-argument');
     expect(mocks.getUserByEmail).not.toHaveBeenCalled();
     expect(RecordFailedLoginArgs.safeParse({ email: KIN_EMAIL }).success).toBe(true);
+  });
+});
+
+/**
+ * #886 security review, BLOCKER: the request used to be parsed with `.parse`,
+ * BEFORE the IP limit. A ZodError is not an HttpsError, so `wrapCallable` answered
+ * `internal`, captured it to Sentry and wrote an audit failure row, for any
+ * unauthenticated caller, without limit.
+ */
+describe('#886 malformed reports are cheap, counted and quiet', () => {
+  it('malformed reports spend the per-IP budget: after 30 of them a valid report is refused', async () => {
+    await setup();
+    for (let i = 0; i < 30; i += 1) {
+      const err = await report('not-an-email', NOW + i * 1000, '192.0.2.77').catch((e: unknown) => e);
+      expect((err as HttpsError).code).toBe('invalid-argument');
+    }
+    const err = await report(KIN_EMAIL, NOW + 31_000, '192.0.2.77').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(HttpsError);
+    expect((err as HttpsError).code).toBe('resource-exhausted');
+  });
+
+  it('through wrapCallable, a malformed report is invalid-argument with no Sentry capture', async () => {
+    await setup();
+    const callable = wrapCallable('recordFailedLogin', recordFailedLoginHandler);
+    for (const data of [{ email: 'not-an-email' }, {}, null, { email: KIN_EMAIL, ip: 'x'.repeat(257) }]) {
+      const err = await callable(callableRequest(data, { ip: '192.0.2.88' })).catch((e: unknown) => e);
+      expect(err, JSON.stringify(data)).toBeInstanceOf(HttpsError);
+      expect((err as HttpsError).code, JSON.stringify(data)).toBe('invalid-argument');
+    }
+    expect(mocks.captureFunctionError).not.toHaveBeenCalled();
+  });
+
+  it('caps ip and userAgent at 256 characters', async () => {
+    await setup();
+    const at = (s: string) => ({ email: KIN_EMAIL, ip: s, userAgent: s });
+    expect(RecordFailedLoginArgs.safeParse(at('a'.repeat(256))).success).toBe(true);
+    expect(RecordFailedLoginArgs.safeParse({ email: KIN_EMAIL, ip: 'a'.repeat(257) }).success).toBe(false);
+    expect(RecordFailedLoginArgs.safeParse({ email: KIN_EMAIL, userAgent: 'a'.repeat(257) }).success).toBe(false);
+  });
+
+  it('the audit row for an address that is not an account stores its hash, never the address', async () => {
+    await setup();
+    const { writeAuditEntry } = await import('../src/lib/writeAuditEntry');
+    vi.mocked(writeAuditEntry).mockClear();
+    await report(STRANGER_EMAIL, NOW);
+
+    const rows = vi.mocked(writeAuditEntry).mock.calls.map((c) => c[0]);
+    expect(rows).toHaveLength(1);
+    expect(JSON.stringify(rows[0])).not.toContain(STRANGER_EMAIL);
+    expect((rows[0]!.payload as Record<string, unknown>).emailHash).toMatch(/^[0-9a-f]{32}$/);
   });
 });

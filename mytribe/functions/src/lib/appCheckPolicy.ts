@@ -139,11 +139,17 @@ export const APP_CHECK_COHORT: readonly string[] = ['getBusinessClosures'];
  * at all, and a web sign-in session is unattested by design (see Cohort 2
  * above). Enforcing it would refuse every report, the clients swallow that
  * refusal by design (the report is fire and forget), and account lockout would
- * silently stop working with no error anywhere. `appCheckPolicy.test.ts` fails
- * if a name here is added to [APP_CHECK_COHORT]; remove it from this list only in
- * the same change that gives all of its clients a token.
+ * silently stop working with no error anywhere.
+ *
+ * `requestPasswordReset` is the way out of that lock, and the portal desktop REST
+ * client (`RestAuthClient.sendPasswordReset`) calls it with no token either.
+ * Enforcing it would strand a locked desktop kinfolk with no reset.
+ *
+ * `appCheckFailedLoginGuard.test.ts` fails if a name here is added to
+ * [APP_CHECK_COHORT]; remove it from this list only in the same change that gives
+ * all of its clients a token.
  */
-export const UNATTESTED_CLIENT_CALLABLES: readonly string[] = ['recordFailedLogin'];
+export const UNATTESTED_CLIENT_CALLABLES: readonly string[] = ['recordFailedLogin', 'requestPasswordReset'];
 
 export function isAppCheckCohort(functionName: string): boolean {
   return APP_CHECK_COHORT.includes(functionName);

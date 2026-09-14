@@ -436,6 +436,21 @@ describe('rules: flat top-level collections', () => {
     await assertFails(asAuntie(env).firestore().doc('n8nIpRateLimits/hash1').get());
   });
 
+  // #886: recordFailedLogin's per-address counter for addresses that are not
+  // accounts. Operator reads for monitoring; no client may read or forge it.
+  it('unknownLoginAttempts reads for the operator only and is never client-writable', async () => {
+    const env = await getEnv();
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().doc('unknownLoginAttempts/abc123').set({ attempts: [{ ts: 1 }], updatedAtMs: 1 });
+    });
+    const auntie = asAuntie(env).firestore();
+    await assertSucceeds(auntie.doc('unknownLoginAttempts/abc123').get());
+    await assertFails(auntie.doc('unknownLoginAttempts/abc123').set({ attempts: [] }));
+    await assertFails(auntie.doc('unknownLoginAttempts/new').set({ attempts: [] }));
+    await assertFails(env.unauthenticatedContext().firestore().doc('unknownLoginAttempts/abc123').get());
+    await assertFails(env.unauthenticatedContext().firestore().doc('unknownLoginAttempts/abc123').set({ attempts: [] }));
+  });
+
   it('the surviving rate-limit ledgers still read for the operator', async () => {
     const env = await getEnv();
     await env.withSecurityRulesDisabled(async (ctx) => {

@@ -17,8 +17,10 @@ import {
  * handler directly and never goes through `wrapCallable`'s App Check gate.
  */
 describe('#886 recordFailedLogin is never App Check enforced without client tokens', () => {
-  it('recordFailedLogin is listed as a callable its clients cannot attest', () => {
+  it('recordFailedLogin and requestPasswordReset are listed as callables their clients cannot attest', () => {
     expect(UNATTESTED_CLIENT_CALLABLES).toContain('recordFailedLogin');
+    // #886 review: the portal desktop REST client resets passwords with no token.
+    expect(UNATTESTED_CLIENT_CALLABLES).toContain('requestPasswordReset');
   });
 
   it('no callable its clients cannot attest is in the enforced cohort', () => {
@@ -32,11 +34,11 @@ describe('#886 recordFailedLogin is never App Check enforced without client toke
     ).toEqual([]);
   });
 
-  it('under full enforcement, a token-less recordFailedLogin report is still served', () => {
-    for (const status of ['absent', 'invalid'] as const) {
-      expect(
-        appCheckDecision({ mode: 'enforce', status, inCohort: isAppCheckCohort('recordFailedLogin') }),
-      ).toBe('allow');
+  it('under full enforcement, token-less recordFailedLogin and requestPasswordReset calls are still served', () => {
+    for (const name of UNATTESTED_CLIENT_CALLABLES) {
+      for (const status of ['absent', 'invalid'] as const) {
+        expect(appCheckDecision({ mode: 'enforce', status, inCohort: isAppCheckCohort(name) }), name).toBe('allow');
+      }
     }
   });
 });

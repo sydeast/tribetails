@@ -156,10 +156,18 @@ interface LoginSecurityDoc {
   updatedAtMs: number;
 }
 
+/**
+ * #886 review: `ip` and `userAgent` are optional and no client sends them, but
+ * when sent they are stored on every attempt entry. Capped so nine oversized
+ * reports cannot push `clients/{uid}/security/loginAttempts` toward the 1 MiB
+ * document limit.
+ */
+const CALLER_FIELD_MAX = 256;
+
 export const RecordFailedLoginArgs = z.object({
   email: z.string().email(),
-  ip: z.string().optional(),
-  userAgent: z.string().optional(),
+  ip: z.string().max(CALLER_FIELD_MAX).optional(),
+  userAgent: z.string().max(CALLER_FIELD_MAX).optional(),
 });
 
 /**
@@ -455,14 +463,23 @@ type LockDecision =
 export async function recordFailedLoginHandler(
   req: CallableRequest<unknown>,
 ): Promise<RecordFailedLoginResponse> {
-  const args = RecordFailedLoginArgs.parse(req.data);
-
   // Server-side IP (not the client-supplied args.ip which can be spoofed).
   const remoteIp =
-    (req.rawRequest.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ??
-    req.rawRequest.ip ??
+    (req.rawRequest?.headers?.['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ??
+    req.rawRequest?.ip ??
     'unknown';
+  // #886 review: the IP limit runs BEFORE the request is parsed, so malformed
+  // requests spend the same per-IP budget as well-formed ones. And a bad request
+  // is `invalid-argument`, not a thrown ZodError: `wrapCallable` turns anything
+  // that is not an HttpsError into `internal`, captures it to Sentry and writes an
+  // audit failure row, so an unauthenticated caller could mint unlimited Sentry
+  // events. Same order and code as `requestPasswordReset`.
   await checkIpRateLimit(remoteIp);
+  const parsed = RecordFailedLoginArgs.safeParse(req.data);
+  if (!parsed.success) {
+    throw new HttpsError('invalid-argument', 'email (valid email address) is required');
+  }
+  const args = parsed.data;
   // Per-target rate limit. Even if the attacker rotates IPs, a single target
   // email can only be reported EMAIL_RATE_LIMIT times per window.
   await checkEmailRateLimit(args.email);
@@ -524,8 +541,11 @@ async function recordUnknownEmailFailure(email: string, remoteIp: string): Promi
     event: AUDIT_EVENTS.AUTH_LOGIN_FAIL,
     severity: 'warn',
     actorRole: 'SYSTEM',
-    description: `Failed login (no matching account) for ${email}`,
-    payload: { email, ip: remoteIp, reason: 'no-such-user' },
+    // #886 review: an address that is not an account is typed by a stranger and
+    // may be someone else's; it is stored hashed, as `requestPasswordReset` does,
+    // still stable per address for spotting credential stuffing.
+    description: 'Failed login (no matching account)',
+    payload: { emailHash: hashEmail(email), ip: remoteIp, reason: 'no-such-user' },
     status: 'FAILURE',
   }).catch((err) => {
     logEvent({

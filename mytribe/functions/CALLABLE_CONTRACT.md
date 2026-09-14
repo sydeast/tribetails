@@ -1039,15 +1039,22 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
     the admin UI; there is no seed script for them (operator ruling 2026-09-13, #847).
 
 ### recordFailedLogin (pre-existing; response made constant and clients wired 2026-09-14, #886)
-- req `{ email: string /* email */, ip?: string, userAgent?: string }`. Clients send
-  `email` only. Frozen in `test/callableContract.test.ts`.
+- req `{ email: string /* email */, ip?: string /* max 256 */, userAgent?: string /* max 256 */ }`.
+  Clients send `email` only. Frozen in `test/callableContract.test.ts`.
 - res `{ ok: true }`, ALWAYS, exported as `RecordFailedLoginResult` (strict). No
   generated artifact: the auth surface is in no contract registry, the same as
   `signOutAllDevices`.
 - GATE: none, `wrapCallable` only. The caller has just failed to sign in, so there
   is no token to check. Per-IP (30 per 5 minutes) and per-email (15 per 24 hours)
-  rate limits refuse with `resource-exhausted`; a malformed email is
-  `invalid-argument`. Neither depends on whether the email is an account.
+  rate limits refuse with `resource-exhausted`; a malformed request is
+  `invalid-argument` (never `internal`, so it is not captured to Sentry). The IP
+  limit runs BEFORE the request is parsed, so malformed requests spend the same
+  per-IP budget. None of these depends on whether the email is an account. The
+  audit row for an address that is not an account stores `emailHash`, never the
+  address.
+- The lock only counts failures reported by our own clients. A script that calls
+  Firebase Auth directly never reports, and relies on Firebase Auth's own
+  throttling instead.
 - **The response says nothing about the account.** Until #886 it returned
   `remainingBeforeLock` (10 for an unknown email, counting down for a real one)
   and `lockedUntilMs`, which told an unauthenticated caller that an address was an
