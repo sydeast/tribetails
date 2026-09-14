@@ -51,6 +51,8 @@ object JvmFirestoreFixtures {
     var dynamicFields: List<DynamicField>? = null
     var businessSettings: BusinessSettings? = null
     var callableResponses: Map<String, String> = emptyMap()
+    /** #890: a callable named here fails with this message instead of answering, without a network. */
+    var callableErrors: Map<String, String> = emptyMap()
     var incomingKinCares: List<KinCareVisit>? = null
     /** Keyed by "familyId/batchId/visitId"; answers platformGetKinCareAssignment in tests. */
     var kinCareAssignments: Map<String, KinCareAssignment> = emptyMap()
@@ -84,7 +86,7 @@ object JvmFirestoreFixtures {
             bookingRequests != null || sessionsForKinfolk != null || provideUserProfile ||
             voicemails != null || calls != null || sms != null || emails != null ||
             activity != null || trainingDocs != null || dynamicFields != null ||
-            businessSettings != null || callableResponses.isNotEmpty() || kinByKinfolk.isNotEmpty() ||
+            businessSettings != null || callableResponses.isNotEmpty() || callableErrors.isNotEmpty() || kinByKinfolk.isNotEmpty() ||
             incomingKinCares != null || kinCareAssignments.isNotEmpty()
 
     /** Reset everything to null (call in test teardown to avoid cross-test bleed). */
@@ -96,7 +98,7 @@ object JvmFirestoreFixtures {
         provideUserProfile = false; userProfile = null
         voicemails = null; calls = null; sms = null; emails = null
         activity = null; trainingDocs = null; dynamicFields = null; businessSettings = null
-        callableResponses = emptyMap(); incomingKinCares = null
+        callableResponses = emptyMap(); callableErrors = emptyMap(); incomingKinCares = null
         kinCareAssignments = emptyMap()
         lastCallableName = null; lastCallablePayloadJson = null
         lastWrite = null
@@ -322,9 +324,8 @@ internal actual suspend fun platformUpdateMediaTags(mediaId: String, taggedKinId
 
 // ── writes: live REST ───────────────────────────────────────────────────────
 
-// #829: the create body carries no Emergency Contact key (kinfolkWriteJson).
-internal actual suspend fun platformCreateKinfolk(k: Kinfolk): WriteResult<String> =
-    runCatching { WriteResult.Ok(JvmFirestoreRest.addDoc("kinfolk", kinfolkWriteJson(k))) }.getOrElse { WriteResult.Err(it.message ?: "create failed") }
+// #890: there is no direct kinfolk create here any more. FirestoreClient.createKinfolk
+// goes through the createKinfolk callable, so the server can refuse a duplicate.
 // #829: a MERGE write, not setDoc. setDoc replaced the whole document, which
 // deleted every field the model does not send. The body is only the fields the
 // caller changed (FirestoreClient.updateKinfolk diffs against its read), so the
@@ -688,6 +689,7 @@ private suspend fun rawInvokeCallable(name: String, payloadJson: String): WriteR
     // are cheap writes; the live path (else branch) still hits real REST).
     JvmFirestoreFixtures.lastCallableName = name
     JvmFirestoreFixtures.lastCallablePayloadJson = payloadJson
+    JvmFirestoreFixtures.callableErrors[name]?.let { return WriteResult.Err(it) }
     return JvmFirestoreFixtures.callableResponses[name]?.let { WriteResult.Ok(it) }
         ?: JvmFirestoreRest.callable(name, payloadJson)
 }
