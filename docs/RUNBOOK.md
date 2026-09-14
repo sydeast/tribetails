@@ -134,17 +134,36 @@ directory and fix, a clean install proceeds silently, and
 `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` is actually shipping it.
 
 **Never run `npm ci` INSIDE a workspace member** (`mytribe/web`,
-`auntieos-admin`, `packages/geo`). They share the ROOT's
-`package-lock.json`/`node_modules` and carry no lockfile of their own, and
-that absence is normal, not a defect. Another agent working in parallel on this
-same issue saw `npm ci` run inside `mytribe/web` exit 0 and SILENTLY DROP
-`@tiptap/*` and `@vitejs/plugin-react` from its `node_modules`, because with
-no lockfile there `npm ci` falls back to a plain (and much smaller) install
-rather than refusing. The fix, every time, is `npm ci` at the **root**. The
-drift check follows this: a workspace member's drift is always reported as
-"workspace root: ..." with the fix `npm ci`, never `npm ci --prefix
-mytribe/web`, and `scripts/release.test.sh` and `scripts/preflight.test.sh`
-each assert that no per-member `--prefix` command is ever suggested.
+`auntieos-admin`, `packages/geo`, `packages/issue-recorder`). They share the
+ROOT's `package-lock.json`/`node_modules` and carry no lockfile of their own,
+and that absence is normal, not a defect. Another agent working in parallel
+on this same issue saw `npm ci` run inside `mytribe/web` exit 0 and SILENTLY
+DROP `@tiptap/*` and `@vitejs/plugin-react` from its `node_modules`: npm
+walks up, finds the workspace root, and runs the equivalent of `npm ci -w
+mytribe/web` from there. That empties the root `node_modules` and reinstalls
+only that member's dependencies, then exits 0. The fix, every time, is `npm
+ci` at the **root**. The drift check follows this: a workspace member's
+drift is always reported as "workspace root: ..." with the fix `npm ci`,
+never `npm ci --prefix mytribe/web`, and `scripts/release.test.sh` and
+`scripts/preflight.test.sh` each assert that no per-member `--prefix`
+command is ever suggested.
+
+`npm ci` inside a member still empties the root `node_modules` before any
+guard can run, and npm has no earlier hook to stop it (tested on both npm
+10.9.8 and 11.9.0). Since #862 a guard turns that silent exit 0 into a loud
+refusal: every lockfile-less member carries a `preinstall` script
+(`scripts/lib/refuse-member-install.js`) that refuses `npm ci`, `npm
+install`, and `npm uninstall` run from inside that member, and stays silent
+for a root install, a `-w` filter run from the root, CI, or `bootstrap.sh` --
+see `scripts/refuse-member-install.test.sh` for the cases. The fix is `npm
+ci` at the repo root either way; to add or remove a single dependency in one
+member, run `npm install <pkg> -w mytribe/web` (or `npm uninstall <pkg> -w
+mytribe/web`) from the repo root instead of from inside the member.
+
+`npm ci -w <member>` run FROM THE ROOT is a legitimate command, not something
+this guard refuses, but it also empties most of the root tree down to just
+that member's subtree (477 entries down to 456 in one measurement here) --
+restore the full tree afterward with a plain root `npm ci`.
 
 Two of the tool checks above fail in ways that do not name themselves, which is
 why preflight checks them by RUNNING them rather than by looking for the binary:
@@ -437,6 +456,23 @@ So the ceiling that produced 197, 201, 197 is about four times the fleet's
 current draw, and the 2026-08-03 release deployed 202 functions with zero quota
 errors. Read the numbers above as what a 1-vCPU fleet did against a 200 vCPU
 ceiling, and nothing about today.
+
+### The nightly release stays off until it can authenticate
+
+`.github/workflows/nightly-release.yml` is off (`NIGHTLY_RELEASE=off`,
+operator ruling 2026-09-14), and releases run by hand from the operator Mac.
+Before anyone sets it to `preflight` or `on`, the hosted ubuntu runner needs
+what it does not have today, all tracked in #851: Google Cloud access that can
+read Secret Manager and deploy (Workload Identity), the Android signing
+secrets step 1c assembles the release builds with (`KEYSTORE_PATH`,
+`KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`), and a `GH_TOKEN` (or `GITHUB_TOKEN`) that can
+read this repo's Actions runs, for step 0b. Without them the preflight fails
+and blames the wrong thing: on 2026-09-12, 13 and 14 it reported
+existing secrets as missing and a green commit as having no CI run (#850). The
+workflow now stops at its first real step, "Check the runner can authenticate",
+and names whichever credential is absent. That is the expected result until
+#851 lands, not something to fix by re-creating secrets. Once all three exist, run
+`preflight` for a few nights before `on`.
 
 ### The quota that was actually refusing the deploy
 
@@ -1048,6 +1084,29 @@ or push failure does not fail the release: by step 9 the web is already live
 and verified, so the run reports the problem and leaves it for you to tag by
 hand rather than call a good deploy broken.
 
+### Templates to import after a release
+
+Some merges add a notification template that the release cannot load for you.
+The seed files ship inside the functions deploy, and templates reach Firestore
+only through the importer (operator ruling, issue #468). So each row below is an
+operator step after the first release that contains it.
+
+Until a template is imported, its notification still goes out on the generic
+fallback (`mytribe/functions/src/notifications/fallbackTemplate.ts`): email and
+push carry content-free copy pointing at AuntieOS, and **SMS is skipped**
+(operator ruling 2026-08-23, a segment costs money).
+
+| Template | Added by | What is missing until it is imported |
+|---|---|---|
+| `security.account.locked.operator` | #869 | The operator's lockout alert names neither the household nor the account email, and sends no SMS. |
+
+To import, follow [the template import list](#importing-notification-templates):
+Admin, then **Templates**, then **Import from repo** on web or the **Import** tab
+on Android, then read the plan before pressing **Import**. A template new to
+Firestore shows `create` on every channel and needs nothing ticked. Do not tick
+**Replace the stored copy with the repo wording** on an unrelated `skipped` row to
+get it in.
+
 ### Merged branches are deleted after the tag
 
 Immediately after step 9, `scripts/prune-merged-branches.sh` deletes remote
@@ -1417,6 +1476,47 @@ After the first secret's ACCESS call times out, the rest are marked unreadable
 without being spawned: a dead route stays dead for the whole run, so the worst
 case is one 30-second wait, not one per secret.
 
+**"Could not be read" is not "is missing", so check which one you got
+before creating anything (#850).** When gcloud is not installed, has no
+credentials, or lists nothing at all, the step still takes values from the
+apps' own `.env` files, but a required value that is not there either is
+reported as `could not be read`, with the reason (`gcloud is not installed`,
+`no usable credentials` plus gcloud's own line, or `listed no secrets at all`).
+It refuses with exit 4. The advice is the auth check, never
+`gcloud secrets create`:
+
+```bash
+gcloud auth list
+gcloud secrets list --project auntieos-ttpc --limit 1
+```
+
+If the first shows no active account or the second errors or prints nothing,
+the fix is signing this machine in (`gcloud auth login`), and the secrets are
+probably fine. Only `REFUSED: the web apps declare client build config that has
+no value ... is missing` means the store answered and does not hold the value,
+and only that message prints `gcloud secrets create`. The nightly preflight
+printed `is missing` on 2026-09-12, 13 and 14 for three secrets that all
+existed, because its runner had no Google credentials, and they were
+re-created for nothing.
+
+**A release does not build from your `.env` when the store cannot be read.**
+The `.env` fallback above applies to `node scripts/client-secrets.mjs --check`
+only. Release step 0c runs `--write`, and there a required value that only a
+local `.env` holds is refused with exit 4, `REFUSED: Secret Manager could not
+confirm these REQUIRED values`, because the store never confirmed it. Optional
+values held locally warn. Sign in and re-run, or, if you have checked the local
+values and mean to ship them, `RELEASE_SKIP_CLIENT_SECRETS=1 npm run deploy`.
+
+**A secret the store listed but would not hand over** is `could not be read`
+too, with gcloud's reason and advice for that secret, never
+`gcloud secrets create`: `PERMISSION_DENIED` names
+`roles/secretmanager.secretAccessor` and
+`gcloud secrets get-iam-policy <name> --project auntieos-ttpc`; a disabled or
+destroyed latest version (`FAILED_PRECONDITION`) points at
+`gcloud secrets versions list <name> --project auntieos-ttpc` and adding a
+version; `NOT_FOUND` means it has no versions or was deleted between the two
+calls. Any account email in gcloud's text is printed as `<account>`.
+
 Two names are deliberately outside all of this, and **neither is in Secret
 Manager, so do not go looking for them there**. `VITE_SENTRY_RELEASE` is derived:
 step 0c sets it to the commit being released, because a release tag maintained by
@@ -1737,6 +1837,7 @@ The script still exists and still reads the same seed directories, but running
 it against production replaces whole documents and drops the title, category,
 tags and description an operator authored in the Template Bank. The importer
 merges the content fields and leaves the rest alone.
+<a id="importing-notification-templates"></a>
 Do this instead, on the web admin or the phone:
 1. Admin, then **Templates**.
 2. **Import from repo** on web, or the **Import** tab on Android.
@@ -2351,12 +2452,22 @@ and it is release step 0b. Fix the named job on main and release the commit that
 fixes it. `RELEASE_SKIP_CI_GATE=1` is for a gate that cannot answer, not for one
 that answered no; using it that way reproduces 2026-08-01 exactly.
 
+**A release refuses with "gh could not ask GitHub for CI's verdict".** Step
+0b, and it says nothing about CI. Since #850 the step runs
+`gh auth status --hostname github.com` before the lookup and prints its output.
+It names github.com because plain `gh auth status` also fails when some other
+configured host, a GitHub Enterprise login say, has a bad token. "not
+authenticated, or GitHub unreachable" means that check failed: run
+`gh auth login` (or export `GH_TOKEN`) and re-run. "the lookup failed" means gh is signed in but the API
+call errored; the error is printed, so check the network and re-run. Neither
+means CI has no run. The nightly preflight had no `GH_TOKEN` on 2026-09-12, 13
+and 14, and before #850 it printed "no check runs at all" for a commit CI had
+passed.
+
 **A release refuses with "GitHub reports no check runs at all for `<sha>`".**
-Also step 0b, and also working as intended, but check which of two causes it
-is before doing anything else: `release.sh` swallows `gh`'s own errors (`2>/dev/null
-|| true`, so it cannot tell "genuinely no run" from "could not ask" apart from
-the refusal text you already got), and the fix is different for each. From a
-signed-in shell, run:
+Also step 0b, and also working as intended. gh is signed in and answered, and
+`ci.yml` has no run for this commit (the could-not-ask case above now prints
+its own message). To confirm from a signed-in shell, run:
 
 ```bash
 gh api "repos/sydeast/tribetails/actions/workflows/ci.yml/runs?head_sha=<sha>" --jq .total_count

@@ -19,7 +19,9 @@ import { FULL_CPU } from '../lib/runtimeOptions';
  * Thresholds (per kinfolk acct, rolling windows):
  *   ≥ 5 failures in 10 min → enqueue 'auth.failedLogin.attempts' (kinfolk)
  *   ≥ 10 failures in 20 min → set lockedUntil, enqueue 'auth.account.locked'
- *                              to kinfolk AND businessAdmins
+ *                              to the kinfolk, and
+ *                              'security.account.locked.operator' to every
+ *                              business admin on the roster (#869)
  *
  * Lockout duration is manual, only an admin call to `unlockKinfolkAccount` or
  * a successful password reset (detected via Firebase Auth tokensValidAfterTime
@@ -118,6 +120,14 @@ interface LoginSecurityDoc {
   warnSentAtMs?: number;
   lockedUntilMs?: number;
   lockStartedAtMs?: number;
+  /**
+   * Set to `lockStartedAtMs` in the same transaction that saves the lock, and
+   * deleted once both lock alerts have been accepted by the dispatcher. While it
+   * equals the stored `lockStartedAtMs`, a later failed login re-sends the alerts
+   * for THAT lock (#869 review). A lock saved before this field existed never
+   * matches, so it is never re-alerted.
+   */
+  lockAlertsPendingForMs?: number;
   updatedAtMs: number;
 }
 
@@ -146,16 +156,25 @@ function pruneAttempts(attempts: LoginAttempt[], nowMs: number): LoginAttempt[] 
   return attempts.filter((a) => a.ts >= cutoff);
 }
 
-async function readSecurityDoc(uid: string): Promise<LoginSecurityDoc> {
-  const snap = await db().collection('clients').doc(uid).collection('security').doc('loginAttempts').get();
-  const data = snap.data() as Partial<LoginSecurityDoc> | undefined;
+function securityDocRef(uid: string) {
+  return db().collection('clients').doc(uid).collection('security').doc('loginAttempts');
+}
+
+function parseSecurityDoc(raw: unknown): LoginSecurityDoc {
+  const data = raw as Partial<LoginSecurityDoc> | undefined;
   return {
     attempts: data?.attempts ?? [],
     warnSentAtMs: data?.warnSentAtMs,
     lockedUntilMs: data?.lockedUntilMs,
     lockStartedAtMs: data?.lockStartedAtMs,
+    lockAlertsPendingForMs:
+      typeof data?.lockAlertsPendingForMs === 'number' ? data.lockAlertsPendingForMs : undefined,
     updatedAtMs: data?.updatedAtMs ?? 0,
   };
+}
+
+async function readSecurityDoc(uid: string): Promise<LoginSecurityDoc> {
+  return parseSecurityDoc((await securityDocRef(uid).get()).data());
 }
 
 async function writeSecurityDoc(uid: string, doc: Partial<LoginSecurityDoc>): Promise<void> {
@@ -166,6 +185,136 @@ async function writeSecurityDoc(uid: string, doc: Partial<LoginSecurityDoc>): Pr
     .doc('loginAttempts')
     .set({ ...doc, updatedAtMs: Date.now() }, { merge: true });
 }
+
+/**
+ * The #832 dedupe identity of one lock's alerts: the household account and the
+ * moment its lock started, read from the saved lock rather than the current
+ * call. A retry for the same lock carries the same pair and is refused; a second
+ * household locking, or the same one locking again, is a new pair and alerts.
+ * Both copies (household and operator) use it; the dispatcher's ledger is keyed
+ * by notification key too, so they never suppress each other.
+ */
+export function lockAlertDedupeKey(kinfolkUid: string, lockStartedAtMs: number): string {
+  return `auth.lock:${kinfolkUid}:${lockStartedAtMs}`;
+}
+
+function nonEmpty(v: unknown): string {
+  return typeof v === 'string' ? v.trim() : '';
+}
+
+/**
+ * What the operator's lock alert says about the household (#869).
+ *
+ * `kinfolkName` is always sent, so the subject can never render as
+ * "Account locked:  (email)". It is the first non-empty of: the household's
+ * name (`families/{kinfolkId}`, only when the account holds exactly ONE
+ * household), the account's own name, the email's local part.
+ *
+ * `kinfolkId` is sent only for exactly one household, which also gives the card
+ * its deep link. Kinfolk with two or more tribes are a defect state (only admins
+ * hold several), and naming one of them would be a guess. Never throws: a failed
+ * read still sends the alert with the email and the local-part name.
+ */
+async function operatorLockAlertData(
+  uid: string,
+  email: string,
+  lockStartedAtMs: number,
+): Promise<Record<string, unknown>> {
+  const data: Record<string, unknown> = { kinfolkUid: uid, kinfolkEmail: email, lockStartedAtMs };
+  let name = '';
+  try {
+    const client = (await db().collection('clients').doc(uid).get()).data() ?? {};
+    const ids = Array.isArray(client['kinfolkIds'])
+      ? (client['kinfolkIds'] as unknown[]).filter((v): v is string => typeof v === 'string' && v !== '')
+      : [];
+    if (ids.length === 1) {
+      data['kinfolkId'] = ids[0];
+      const family = (await db().collection('families').doc(ids[0]!).get()).data() ?? {};
+      name = nonEmpty(family['displayName']) || nonEmpty(family['name']);
+    }
+    if (!name) name = nonEmpty(client['displayName']) || nonEmpty(client['name']);
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'recordFailedLogin',
+      event: 'admin.lock.household.lookup.failed',
+      uid,
+      errorMessage: (err as Error)?.message,
+    });
+  }
+  data['kinfolkName'] = name || email.split('@')[0] || email;
+  return data;
+}
+
+/**
+ * Sends both alerts for one saved lock, then clears the pending marker.
+ *
+ * The household copy has no catch: its failure fails the call, as it always
+ * has, and the marker stays so the next failed login retries. The operator copy
+ * is caught (a resolver failure must never undo a lock) but also leaves the
+ * marker, so it is retried the same way. Both carry the lock's dedupe key with
+ * a window as long as the lock, so a retry that follows a partial success sends
+ * only the copy that is still missing.
+ */
+async function sendLockAlerts(uid: string, email: string, lockStartedAtMs: number): Promise<void> {
+  const dedupeKey = lockAlertDedupeKey(uid, lockStartedAtMs);
+  await enqueueNotification({
+    key: 'auth.account.locked',
+    recipientUid: uid,
+    data: { email, lockStartedAtMs },
+    dedupeKey,
+    dedupeWindowMs: LOCKOUT_DURATION_MS,
+  });
+
+  // #869: the operator copy is its own key, resolved from the business admin
+  // roster as STAFF. The roster is the source of truth; AUNTIE_OPERATOR_UIDS
+  // (bound on this function below) is only its self-heal fallback while the
+  // roster is empty.
+  let operatorAccepted = true;
+  await enqueueNotification({
+    key: 'security.account.locked.operator',
+    data: await operatorLockAlertData(uid, email, lockStartedAtMs),
+    dedupeKey,
+    dedupeWindowMs: LOCKOUT_DURATION_MS,
+  }).catch((err) => {
+    operatorAccepted = false;
+    logEvent({
+      severity: 'warn',
+      function: 'recordFailedLogin',
+      event: 'admin.lock.notify.failed',
+      uid,
+      errorMessage: (err as Error)?.message,
+    });
+  });
+  if (!operatorAccepted) return;
+
+  // Cleared only while the stored marker still names THIS lock. Between the lock
+  // being saved and this line, an admin unlock or a password reset followed by a
+  // fresh lock can replace it with a newer lock's marker, and deleting that one
+  // would silently cancel the newer lock's retry.
+  const ref = securityDocRef(uid);
+  await db()
+    .runTransaction(async (tx) => {
+      const stored = parseSecurityDoc((await tx.get(ref)).data());
+      if (stored.lockAlertsPendingForMs !== lockStartedAtMs) return;
+      tx.set(ref, { lockAlertsPendingForMs: FieldValue.delete() }, { merge: true });
+    })
+    .catch((err) => {
+      // Harmless if it fails: the next retry is deduped by the ledger.
+      logEvent({
+        severity: 'warn',
+        function: 'recordFailedLogin',
+        event: 'admin.lock.pending.clear.failed',
+        uid,
+        errorMessage: (err as Error)?.message,
+      });
+    });
+}
+
+type LockDecision =
+  | { kind: 'alreadyLocked'; lockedUntilMs: number; pendingLockStartedAtMs: number | null }
+  | { kind: 'lockedNow'; lockedUntilMs: number; lockStartedAtMs: number }
+  | { kind: 'counted'; nowMs: number; countLock: number; countWarn: number; warn: boolean };
 
 export interface RecordFailedLoginResult {
   /** Remaining failures within 20-min window before lockout fires. */
@@ -231,79 +380,91 @@ export async function recordFailedLoginHandler(
     });
   });
 
-  const nowMs = Date.now();
-  const current = await readSecurityDoc(uid);
-  if (current.lockedUntilMs && current.lockedUntilMs > nowMs) {
-    return {
-      remainingBeforeLock: 0,
-      locked: true,
-      lockedUntilMs: current.lockedUntilMs,
-    };
-  }
+  // #869 review: the attempt is counted and any lock is SAVED in one
+  // transaction, before a single alert is sent. The alerts then key off the
+  // saved `lockStartedAtMs`, never this call's clock, so an alert that fails is
+  // retried for the same lock instead of a fresh lock being taken (and alerted)
+  // on the next call. The transaction also stops two concurrent failures from
+  // both crossing the threshold with two different lock starts.
+  const ref = securityDocRef(uid);
+  const decision = await db().runTransaction(async (tx): Promise<LockDecision> => {
+    const nowMs = Date.now();
+    const current = parseSecurityDoc((await tx.get(ref)).data());
+    if (current.lockedUntilMs && current.lockedUntilMs > nowMs) {
+      const pending =
+        current.lockStartedAtMs !== undefined &&
+        current.lockAlertsPendingForMs === current.lockStartedAtMs
+          ? current.lockStartedAtMs
+          : null;
+      return { kind: 'alreadyLocked', lockedUntilMs: current.lockedUntilMs, pendingLockStartedAtMs: pending };
+    }
 
-  const nextAttempts = pruneAttempts(
-    [...current.attempts, { ts: nowMs, ip: args.ip, userAgent: args.userAgent }],
-    nowMs,
-  );
-  const countWarn = attemptsInWindow(nextAttempts, WINDOW_WARN_MS, nowMs);
-  const countLock = attemptsInWindow(nextAttempts, WINDOW_LOCK_MS, nowMs);
-
-  const update: Partial<LoginSecurityDoc> = { attempts: nextAttempts };
-  let locked = false;
-  let lockedUntilMs: number | null = null;
-
-  if (countLock >= THRESHOLD_LOCK) {
-    // Finite lockout (30 min), auto-clears so an attacker-driven lockout
-    // doesn't become permanent. Real user can also recover via password reset
-    // (beforeSignIn detects tokensValidAfterTime > lockStartedAtMs).
-    update.lockedUntilMs = nowMs + LOCKOUT_DURATION_MS;
-    update.lockStartedAtMs = nowMs;
-    locked = true;
-    lockedUntilMs = update.lockedUntilMs;
-
-    await enqueueNotification({
-      key: 'auth.account.locked',
-      recipientUid: uid,
-      data: { email: args.email, lockStartedAtMs: nowMs },
-    });
-    const operatorUids = (process.env.AUNTIE_OPERATOR_UIDS ?? '')
-      .split(',').map((s) => s.trim()).filter(Boolean);
-    await Promise.all(
-      operatorUids.map((operatorUid) =>
-        enqueueNotification({
-          key: 'auth.account.locked',
-          recipientUid: operatorUid,
-          data: { email: args.email, lockStartedAtMs: nowMs, kinfolkUid: uid },
-        }).catch((err) => {
-          logEvent({
-            severity: 'warn',
-            function: 'recordFailedLogin',
-            event: 'admin.lock.notify.failed',
-            uid,
-            errorMessage: (err as Error)?.message,
-          });
-        }),
-      ),
+    const nextAttempts = pruneAttempts(
+      [...current.attempts, { ts: nowMs, ip: args.ip, userAgent: args.userAgent }],
+      nowMs,
     );
-  } else if (
-    countWarn >= THRESHOLD_WARN &&
-    (!current.warnSentAtMs || current.warnSentAtMs < nowMs - WINDOW_WARN_MS)
-  ) {
-    update.warnSentAtMs = nowMs;
-    await enqueueNotification({
-      key: 'auth.failedLogin.attempts',
-      recipientUid: uid,
-      data: { email: args.email, attemptsInWindow: countWarn },
-    });
+    const countWarn = attemptsInWindow(nextAttempts, WINDOW_WARN_MS, nowMs);
+    const countLock = attemptsInWindow(nextAttempts, WINDOW_LOCK_MS, nowMs);
+
+    if (countLock >= THRESHOLD_LOCK) {
+      // Finite lockout (30 min), auto-clears so an attacker-driven lockout
+      // doesn't become permanent. Real user can also recover via password reset
+      // (beforeSignIn detects tokensValidAfterTime > lockStartedAtMs).
+      const lockedUntilMs = nowMs + LOCKOUT_DURATION_MS;
+      tx.set(
+        ref,
+        {
+          attempts: nextAttempts,
+          lockedUntilMs,
+          lockStartedAtMs: nowMs,
+          lockAlertsPendingForMs: nowMs,
+          updatedAtMs: nowMs,
+        },
+        { merge: true },
+      );
+      return { kind: 'lockedNow', lockedUntilMs, lockStartedAtMs: nowMs };
+    }
+
+    tx.set(ref, { attempts: nextAttempts, updatedAtMs: nowMs }, { merge: true });
+    const warn =
+      countWarn >= THRESHOLD_WARN &&
+      (!current.warnSentAtMs || current.warnSentAtMs < nowMs - WINDOW_WARN_MS);
+    return { kind: 'counted', nowMs, countLock, countWarn, warn };
+  });
+
+  switch (decision.kind) {
+    case 'alreadyLocked': {
+      if (decision.pendingLockStartedAtMs !== null) {
+        await sendLockAlerts(uid, args.email, decision.pendingLockStartedAtMs);
+      }
+      return { remainingBeforeLock: 0, locked: true, lockedUntilMs: decision.lockedUntilMs };
+    }
+    case 'lockedNow': {
+      await sendLockAlerts(uid, args.email, decision.lockStartedAtMs);
+      return { remainingBeforeLock: 0, locked: true, lockedUntilMs: decision.lockedUntilMs };
+    }
+    case 'counted': {
+      if (decision.warn) {
+        await enqueueNotification({
+          key: 'auth.failedLogin.attempts',
+          recipientUid: uid,
+          data: { email: args.email, attemptsInWindow: decision.countWarn },
+        });
+        // Stamped only after the warning was accepted, as before, so a failed
+        // warning is retried by the next failed login.
+        await writeSecurityDoc(uid, { warnSentAtMs: decision.nowMs });
+      }
+      return {
+        remainingBeforeLock: Math.max(0, THRESHOLD_LOCK - decision.countLock),
+        locked: false,
+        lockedUntilMs: null,
+      };
+    }
+    default: {
+      const exhaustive: never = decision;
+      throw new Error(`recordFailedLogin: unknown lock decision ${JSON.stringify(exhaustive)}`);
+    }
   }
-
-  await writeSecurityDoc(uid, update);
-
-  return {
-    remainingBeforeLock: Math.max(0, THRESHOLD_LOCK - countLock),
-    locked,
-    lockedUntilMs,
-  };
 }
 
 export const recordFailedLogin = onCall(
@@ -379,6 +540,7 @@ export const beforeSignIn = beforeUserSignedIn(
           warnSentAtMs: FieldValue.delete(),
           lockedUntilMs: FieldValue.delete(),
           lockStartedAtMs: FieldValue.delete(),
+          lockAlertsPendingForMs: FieldValue.delete(),
           updatedAtMs: Date.now(),
         },
         { merge: true },
@@ -435,6 +597,8 @@ export async function unlockKinfolkAccountHandler(
         warnSentAtMs: FieldValue.delete(),
         lockedUntilMs: FieldValue.delete(),
         lockStartedAtMs: FieldValue.delete(),
+        // #869: an unlocked account has no lock whose alerts could be pending.
+        lockAlertsPendingForMs: FieldValue.delete(),
         updatedAtMs: Date.now(),
       },
       { merge: true },

@@ -33,8 +33,13 @@
  *
  *   npm run check:voice-secrets
  *   npm run check:voice-secrets -- --project auntieos-ttpc
+ *   npm run check:voice-secrets -- --help
  *
- * Exit code is 1 when any check fails, so CI or a release gate can use it.
+ * An unrecognized argument (a typo like --halp, or --project with no value)
+ * is refused with a usage message before any gcloud or Twilio call, exit code
+ * 2. --help / -h prints the same usage and exits 0, also before any call.
+ * Exit code is 1 when a secret check itself fails, so CI or a release gate
+ * can use it.
  */
 import { execFileSync } from 'node:child_process';
 
@@ -137,19 +142,100 @@ async function twilioStatus(url: string, user: string, pass: string): Promise<nu
   }
 }
 
-export function parseProject(argv: string[]): string {
-  const i = argv.indexOf('--project');
-  if (i >= 0) {
-    const v = argv[i + 1];
-    if (!v || v.startsWith('--')) throw new Error('--project requires a value');
-    return v;
+/** Where the project id came from, in priority order. */
+export type ProjectSource = 'flag' | 'environment' | 'default';
+
+export interface ProjectChoice {
+  readonly project: string;
+  readonly source: ProjectSource;
+}
+
+export const USAGE = `Usage: npm run check:voice-secrets -- [--project <id>] [--help]
+
+Asks Twilio whether the voice secrets in Secret Manager actually work.
+Read-only: makes no writes, and never prints a secret value.
+
+  --project <id>   Firebase/GCP project to check.
+                    Default: $GCLOUD_PROJECT, or 'auntieos-ttpc' if that is unset.
+  --help, -h       Print this message and exit.`;
+
+/**
+ * Thrown by `parseProject` for `--help` / `-h`. Caught by `main` before it
+ * makes a single gcloud or Twilio call, so a caller who only wanted the
+ * usage message never pays for either.
+ */
+export class HelpRequested extends Error {}
+
+/**
+ * Thrown by `parseProject` for anything it does not recognize: an
+ * unrecognized flag, or `--project` with no value. Also caught by `main`
+ * before any gcloud or Twilio call. The bug this exists for: `--halp` (or
+ * any other typo) used to be silently ignored and fell through to running
+ * the full live check against the default project.
+ */
+export class UsageError extends Error {}
+
+/**
+ * `--project` beats `GCLOUD_PROJECT` beats the hardcoded default. Returns the
+ * source alongside the value so the caller can say out loud where a secrets
+ * check is actually pointed, rather than leave that to whatever the shell
+ * happened to export. See `describeProjectChoice`.
+ *
+ * Walks every token rather than only looking for `--project`, so an argument
+ * it does not recognize is refused rather than silently ignored.
+ */
+export function parseProject(argv: string[]): ProjectChoice {
+  let project: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--help' || arg === '-h') {
+      throw new HelpRequested();
+    }
+    if (arg === '--project') {
+      const v = argv[i + 1];
+      if (!v || v.startsWith('--')) throw new UsageError('--project requires a value');
+      project = v;
+      i += 1;
+      continue;
+    }
+    throw new UsageError(`unrecognized argument: ${arg}`);
   }
-  return process.env.GCLOUD_PROJECT || 'auntieos-ttpc';
+  if (project !== undefined) {
+    return { project, source: 'flag' };
+  }
+  const fromEnv = process.env.GCLOUD_PROJECT;
+  if (fromEnv) {
+    return { project: fromEnv, source: 'environment' };
+  }
+  return { project: 'auntieos-ttpc', source: 'default' };
+}
+
+/** Pulled out so the announcement can be asserted without running `main`. */
+export function describeProjectChoice(choice: ProjectChoice): string {
+  return `Checking Twilio voice secrets in ${choice.project} (from ${choice.source})`;
 }
 
 export async function main(argv: string[]): Promise<void> {
-  const project = parseProject(argv);
-  console.log(`Checking Twilio voice secrets in ${project}\n`);
+  let choice: ProjectChoice;
+  try {
+    choice = parseProject(argv);
+  } catch (err) {
+    if (err instanceof HelpRequested) {
+      console.log(USAGE);
+      process.exitCode = 0;
+      return;
+    }
+    if (err instanceof UsageError) {
+      console.error(err.message);
+      console.error('');
+      console.error(USAGE);
+      process.exitCode = 2;
+      return;
+    }
+    throw err;
+  }
+  console.log(`${describeProjectChoice(choice)}\n`);
+  const project = choice.project;
 
   const values = new Map<string, string | null>();
   const findings: Finding[] = [];

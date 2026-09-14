@@ -201,6 +201,8 @@ describe('NOTIFICATION_CATALOG audiences streams (audience revamp 2026-07)', () 
     'auth.password.reset': { kinfolk: true },
     'auth.failedLogin.attempts': { kinfolk: true, business: true },
     'auth.account.locked': { kinfolk: true },
+    // #869: the operator's copy of a lockout, never the household's key.
+    'security.account.locked.operator': { business: true },
     'security.breach_attempt.kinfolk': { business: true },
     'rating.submitted.bad': { business: true },
     'rating.submitted.good': { business: true },
