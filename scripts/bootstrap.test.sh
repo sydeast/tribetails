@@ -29,15 +29,20 @@
 # genuinely clean state rather than a check that always reports fixed no
 # matter what shipped.
 #
-# THE STUB SKIPS OPTIONAL/PLATFORM PACKAGES TOO, the same way real npm does:
-# an earlier version copied package-lock.json's ENTIRE packages object
-# straight into the installed marker, so the stub always claimed to have
-# installed everything the lockfile named, including optional binaries for
-# other platforms. That made it impossible for any fixture here to exercise
-# the "missing but not drift" exemption (scripts/lib/optional-pkg.js): a
+# THE STUB SKIPS OPTIONAL PACKAGES TOO, the same way real npm does: an
+# earlier version copied package-lock.json's ENTIRE packages object straight
+# into the installed marker, so the stub always claimed to have installed
+# everything the lockfile named, including optional binaries for other
+# platforms. That made it impossible for any fixture here to exercise the
+# "missing but not drift" exemption (scripts/lib/optional-pkg.js) at all: a
 # lockfile entry the stub always "installs" can never be the entry that is
-# legitimately absent. It shells out to the real optional-pkg.js so the stub
-# and the code under test cannot silently disagree about what counts.
+# legitimately absent.
+#
+# The stub does NOT `require()` the real optional-pkg.js to decide this: it
+# carries its own tiny, independent "optional: true" check instead. Sharing
+# the real module would mean a broken classifier there could never fail a
+# test built on this stub, since the fixture and the code under test would
+# be wrong together, by construction.
 
 set -uo pipefail
 
@@ -113,19 +118,22 @@ install_dep() {
 # genuinely sees clean rather than a check that always claims success.
 #
 # SKIPS OPTIONAL/PLATFORM ENTRIES, the same way a real `npm ci` does on this
-# machine: it shells out to the real scripts/lib/optional-pkg.js (copied into
-# the fixture alongside the rest of scripts/lib/) to decide, so an entry the
-# stub "installs" is exactly the set a real install would produce here.
-# Copying package-lock.json's WHOLE packages object into the marker (an
-# earlier version of this stub did) would make it impossible for any fixture
-# to exercise the "missing but not drift" exemption at all: a lockfile entry
-# the stub always installs can never be the one that is legitimately absent.
+# machine, so an entry the stub "installs" is exactly the set a real install
+# would produce here. Copying package-lock.json's WHOLE packages object into
+# the marker (an earlier version of this stub did) would make it impossible
+# for any fixture to exercise the "missing but not drift" exemption at all: a
+# lockfile entry the stub always installs can never be the one that is
+# legitimately absent.
 #
-# <repo>/stubs/.repo-root records where scripts/lib actually lives, because
-# `npm ci` runs with `cd "$dir" && npm ci`, so $PWD when the stub runs is
-# mytribe/functions or auntieos-admin/web/functions, not the repo root.
+# DELIBERATELY NOT scripts/lib/optional-pkg.js. The stub used to `require()`
+# the real module, which meant a broken classifier there could never fail
+# any test built on this stub: the check under test and the fixture that
+# feeds it would agree with each other by construction, wrong in exactly the
+# same way. This is instead the stub's OWN, independent, minimal read of
+# "optional: true" -- just enough to model the ONE shape the fixtures here
+# use -- so a regression in the real module shows up as a MISMATCH between
+# what the stub actually installed and what preflight.sh reports about it.
 write_npm_stub() {
-  printf '%s' "$1" > "$1/stubs/.repo-root"
   cat > "$1/stubs/npm" <<'STUB'
 #!/usr/bin/env bash
 # Logs the cwd too, not just the args: install_if_stale runs `(cd "$dir" &&
@@ -133,12 +141,14 @@ write_npm_stub() {
 # call from another's, never the argv the stub sees.
 echo "STUB npm $* (cwd=$PWD)" >> "${NPM_CALL_LOG:-/dev/null}"
 if [ "${1:-}" = "ci" ]; then
-  REPO_ROOT="$(cat "$(dirname "$0")/.repo-root")"
   node -e '
     const fs = require("fs"), path = require("path");
     const dir = process.cwd();
-    const repoRoot = process.argv[1];
-    const { isSkippableMissing } = require(path.join(repoRoot, "scripts", "lib", "optional-pkg.js"));
+    // A hardcoded, independent stand-in for "npm would skip this on this
+    // machine" -- optional: true only. Fixtures that need the os/cpu-only
+    // exemption exercise the real optional-pkg.js directly, in
+    // preflight.test.sh, not through this stub.
+    const skippable = (entry) => entry.optional === true;
     let pj, lock;
     try {
       pj = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
@@ -149,7 +159,7 @@ if [ "${1:-}" = "ci" ]; then
     for (const name of Object.keys(want)) {
       const entry = locked["node_modules/" + name];
       if (!entry || !entry.version) continue;
-      if (isSkippableMissing(entry)) continue; // npm itself would skip this too
+      if (skippable(entry)) continue; // npm itself would skip this too
       const dest = path.join(dir, "node_modules", name);
       fs.mkdirSync(dest, { recursive: true });
       fs.writeFileSync(path.join(dest, "package.json"),
@@ -163,12 +173,12 @@ if [ "${1:-}" = "ci" ]; then
     for (const key of Object.keys(locked)) {
       if (key === "") continue;
       const entry = locked[key];
-      if (isSkippableMissing(entry)) continue;
+      if (skippable(entry)) continue;
       installedPkgs[key] = { version: entry.version };
     }
     fs.writeFileSync(path.join(dir, "node_modules", ".package-lock.json"),
       JSON.stringify({ packages: installedPkgs }));
-  ' "$REPO_ROOT"
+  '
 fi
 exit 0
 STUB

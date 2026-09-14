@@ -470,6 +470,63 @@ else
   tail -20 "$D4L/out"
 fi
 
+# `optional: true` excuses an ABSENT package; it never excuses one that IS
+# installed at the wrong version. An optional package npm actually put on
+# disk here (matching the current platform) is exactly as real an install as
+# any other, and a stale one is exactly as much drift.
+D4L2="$(make_repo)"
+install_matching "$D4L2"
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  const lock = JSON.parse(fs.readFileSync(p, "utf8"));
+  lock.packages["node_modules/optional-here-thing"] = { version: "2.0.0", optional: true };
+  fs.writeFileSync(p, JSON.stringify(lock));
+' "$D4L2/mytribe/functions/package-lock.json"
+cat > "$D4L2/mytribe/functions/node_modules/.package-lock.json" <<'LOCK'
+{ "packages": {
+  "node_modules/left-pad": { "version": "1.3.0" },
+  "node_modules/optional-here-thing": { "version": "1.0.0" }
+} }
+LOCK
+RC="$(run_preflight "$D4L2")"
+if [ "$RC" = "2" ] && grep -q "optional-here-thing (1.0.0, lockfile says 2.0.0)" "$D4L2/out"; then
+  ok "an installed optional package at the wrong version is still drift (rc=2)"
+else
+  bad "an optional package installed at the wrong version went uncaught; got rc=$RC"
+  tail -20 "$D4L2/out"
+fi
+
+# npm's own "any" escape hatch on an os/cpu list means no restriction at
+# all, the same as the field being absent -- a package.json can declare
+# `"os": ["any"]` to say explicitly "this runs everywhere" rather than
+# leaving the field off. NOT optional and MISSING (never installed at all):
+# if "any" were mishandled as "restricted to a platform literally named
+# any" (which never matches process.platform), this would wrongly reach the
+# same "npm skipped it on purpose" exemption a real platform binary gets,
+# hiding a genuine missing dependency.
+D4L3="$(make_repo)"
+install_matching "$D4L3"
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  const lock = JSON.parse(fs.readFileSync(p, "utf8"));
+  lock.packages["node_modules/any-os-thing"] = { version: "1.0.0", os: ["any"] };
+  fs.writeFileSync(p, JSON.stringify(lock));
+' "$D4L3/mytribe/functions/package-lock.json"
+cat > "$D4L3/mytribe/functions/node_modules/.package-lock.json" <<'LOCK'
+{ "packages": {
+  "node_modules/left-pad": { "version": "1.3.0" }
+} }
+LOCK
+RC="$(run_preflight "$D4L3")"
+if [ "$RC" = "2" ] && grep -q "any-os-thing (not installed)" "$D4L3/out"; then
+  ok "os: [\"any\"] means no restriction, so a genuinely missing package is still drift"
+else
+  bad "os: [\"any\"] was mishandled as a platform exclusion; got rc=$RC"
+  tail -20 "$D4L3/out"
+fi
+
 # --------------------------------------------- a member's package.json is garbage
 # A workspace member is correctly skipped when its package.json does not
 # EXIST (a partial or synthetic tree may declare a workspace pattern with

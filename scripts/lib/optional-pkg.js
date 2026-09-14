@@ -21,10 +21,14 @@
 // leading "!" negates ("not this one"); entries may mix positive and
 // negative forms, though real package.json files use one style consistently.
 //   - undefined/empty list: no restriction, anything matches.
+//   - the literal string "any" anywhere in the list: no restriction, the
+//     same as an absent list -- npm's own documented escape hatch for a
+//     package that works everywhere but still wants to say so explicitly.
 //   - any positive entries present: `value` must be one of them.
 //   - any negative entries present: `value` must not be one of them.
 function platformListOk(list, value) {
   if (!Array.isArray(list) || list.length === 0) return true;
+  if (list.includes('any')) return true;
   const positives = [];
   const negatives = [];
   for (const item of list) {
@@ -44,12 +48,13 @@ function platformListOk(list, value) {
 // optional or not.
 function isSkippableMissing(entry) {
   if (!entry) return false;
+  // `optional: true` alone is npm's own signal that this entry may be
+  // absent; that already covers the "devOptional AND optional together"
+  // shape npm uses for cross-platform binaries. `devOptional` alone (no
+  // `optional`) means "optional within the dev subtree", which does NOT by
+  // itself excuse a missing production install, so it is deliberately not
+  // checked here.
   if (entry.optional === true) return true;
-  // devOptional alone (no `optional`) means "optional within the dev
-  // subtree", which does not by itself excuse a missing production install;
-  // only the combination npm actually uses for cross-platform binaries
-  // (both flags together) is treated the same as plain `optional`.
-  if (entry.devOptional === true && entry.optional === true) return true;
   if (!platformListOk(entry.os, process.platform)) return true;
   if (!platformListOk(entry.cpu, process.arch)) return true;
   // libc (glibc vs musl) only ever qualifies a Linux entry, and always

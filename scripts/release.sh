@@ -654,8 +654,10 @@ if [ "${RELEASE_INCLUDE_ADMIN_FUNCTIONS:-0}" = "1" ]; then
     esac
   fi
 else
-  ylw "deps: auntieos-admin/web/functions NOT CHECKED (RELEASE_INCLUDE_ADMIN_FUNCTIONS is"
-  ylw "  off; this run will not build or deploy it)"
+  ylw "deps: auntieos-admin/web/functions NOT CHECKED: RELEASE_INCLUDE_ADMIN_FUNCTIONS is"
+  ylw "  off, so this run will not build or deploy it, and checking dependency"
+  ylw "  drift in a codebase nothing here ships would refuse releases over"
+  ylw "  drift nothing here reads. A full release sets this flag and checks it."
 fi
 
 if [ "${#DRIFT_NAMES[@]}" -gt 0 ]; then
