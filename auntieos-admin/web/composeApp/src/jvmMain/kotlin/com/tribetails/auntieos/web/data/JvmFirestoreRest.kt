@@ -404,6 +404,29 @@ internal object JvmFirestoreRest {
     }
 
     /**
+     * #829 review: MERGE-write exactly [changes] at collection/id. Every change's
+     * path goes in `updateMask.fieldPaths` (quoted by [firestoreFieldPath]); set
+     * values go in the nested body, and a delete is a path in the mask that the body
+     * leaves out, which Firestore removes. Lets `formValues.<key>` be written or
+     * deleted without touching the other keys. Recorded before the token fetch,
+     * with the encoded paths, so a test can assert the mask.
+     */
+    suspend fun mergeFieldChanges(collection: String, id: String, changes: List<KinfolkFieldChange>): String {
+        val paths = changes.map { firestoreFieldPath(it.path) }
+        JvmFirestoreFixtures.lastWrite = RestWrite("MERGE", collection, id, paths.toSet())
+        val token = jvmFirebaseIdToken() ?: error("Not signed in")
+        val body = bodyFrom(kinfolkChangesBody(changes))
+        val resp = http.patch("$BASE/$collection/$id") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            paths.forEach { parameter("updateMask.fieldPaths", it) }
+            contentType(ContentType.Application.Json)
+            setBody(body.toString())
+        }
+        if (!resp.status.isSuccess()) error("Firestore write ${resp.status.value}: ${resp.bodyAsText().take(180)}")
+        return id
+    }
+
+    /**
      * Pure: the `updateMask.fieldPaths` for a merge write of [plain]. One backtick-
      * quoted path per top-level model key except `_id` (the doc-id alias, not a
      * field). Only these paths are touched, so unlisted sibling fields survive.

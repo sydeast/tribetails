@@ -91,7 +91,7 @@ class EmergencyContactsClientTest {
     @Test
     fun anUnchangedSaveWritesNothing() = runBlocking {
         val r = FirestoreClient().updateKinfolk(onFile, onFile.copy())
-        assertTrue(r is WriteResult.Ok)
+        assertEquals(false, (r as WriteResult.Ok).value, "Ok(false): nothing was written")
         assertEquals(null, JvmFirestoreFixtures.lastWrite)
     }
 
@@ -103,8 +103,30 @@ class EmergencyContactsClientTest {
             emergencyContactName = "",
             emergencyContactPhone = "805",
         )
-        assertEquals(setOf("firstName"), kinfolkChangedFields(onFile, edited).keys)
-        assertEquals(emptySet(), kinfolkChangedFields(onFile, onFile.copy(_id = "other")).keys)
+        assertEquals(listOf(listOf("firstName")), kinfolkChanges(onFile, edited).map { it.path })
+        assertTrue(kinfolkChanges(onFile, onFile.copy(_id = "other")).isEmpty())
+    }
+
+    private val withCustomFields = onFile.copy(formValues = mapOf("petName" to "Biscuit", "pet.vet" to "Dr Lee", "notes" to "gate sticks"))
+
+    /**
+     * #829 review: editing one custom field names only `formValues.<thatKey>`, so
+     * another admin's concurrent change to a different key survives.
+     */
+    @Test
+    fun changingOneCustomFieldNamesOnlyThatKey() = runBlocking {
+        FirestoreClient().updateKinfolk(withCustomFields, withCustomFields.copy(formValues = withCustomFields.formValues + ("petName" to "Pepper")))
+        assertEquals("MERGE", JvmFirestoreFixtures.lastWrite?.op)
+        assertEquals(setOf("formValues.petName"), JvmFirestoreFixtures.lastWrite?.fields)
+    }
+
+    @Test
+    fun aKeyWithADotIsQuotedAndARemovedKeyIsADelete() = runBlocking {
+        val edited = withCustomFields.copy(formValues = mapOf("petName" to "Biscuit", "pet.vet" to "Dr Ruiz"))
+        FirestoreClient().updateKinfolk(withCustomFields, edited)
+        assertEquals(setOf("formValues.`pet.vet`", "formValues.notes"), JvmFirestoreFixtures.lastWrite?.fields)
+        val changes = kinfolkChanges(withCustomFields, edited)
+        assertEquals(null, changes.single { it.path == listOf("formValues", "notes") }.value, "a removed key is a delete")
     }
 
     @Test

@@ -20,7 +20,7 @@ class KinfolkSaveTest {
         val out = saveKinfolkWithContacts(
             retryKinfolkId = null,
             saveContacts = true,
-            writeHousehold = { c.log += "household"; WriteResult.Ok("kf-new") },
+            writeHousehold = { c.log += "household"; WriteResult.Ok(HouseholdWrite("kf-new")) },
             writeContacts = { id -> c.log += "contacts:$id"; WriteResult.Ok(Unit) },
             onHouseholdWritten = { id -> c.log += "audit:$id" },
         )
@@ -34,7 +34,7 @@ class KinfolkSaveTest {
         val out = saveKinfolkWithContacts(
             retryKinfolkId = null,
             saveContacts = true,
-            writeHousehold = { c.log += "household"; WriteResult.Ok("kf-new") },
+            writeHousehold = { c.log += "household"; WriteResult.Ok(HouseholdWrite("kf-new")) },
             writeContacts = { c.log += "contacts"; WriteResult.Err("An Emergency Contact has to be someone outside the household.") },
             onHouseholdWritten = { c.log += "audit" },
         )
@@ -49,7 +49,7 @@ class KinfolkSaveTest {
         val out = saveKinfolkWithContacts(
             retryKinfolkId = "kf-new",
             saveContacts = true,
-            writeHousehold = { c.log += "household"; WriteResult.Ok("kf-second") },
+            writeHousehold = { c.log += "household"; WriteResult.Ok(HouseholdWrite("kf-second")) },
             writeContacts = { id -> c.log += "contacts:$id"; WriteResult.Ok(Unit) },
             onHouseholdWritten = { c.log += "audit" },
         )
@@ -89,12 +89,40 @@ class KinfolkSaveTest {
         val out = saveKinfolkWithContacts(
             retryKinfolkId = null,
             saveContacts = false,
-            writeHousehold = { c.log += "household"; WriteResult.Ok("kf1") },
+            writeHousehold = { c.log += "household"; WriteResult.Ok(HouseholdWrite("kf1")) },
             writeContacts = { c.log += "contacts"; WriteResult.Ok(Unit) },
-            onHouseholdWritten = {},
+            onHouseholdWritten = { c.log += "audit" },
+        )
+        assertEquals(KinfolkSaveOutcome.Saved("kf1"), out)
+        assertEquals(listOf("household", "audit"), c.log)
+    }
+
+    /** #829 review: an edit whose diff is empty writes nothing, so nothing is audited. */
+    @Test
+    fun anEmptyEditIsNotAudited() = runTest {
+        val c = Calls()
+        val out = saveKinfolkWithContacts(
+            retryKinfolkId = null,
+            saveContacts = false,
+            writeHousehold = { c.log += "household"; WriteResult.Ok(HouseholdWrite("kf1", wrote = false)) },
+            writeContacts = { c.log += "contacts"; WriteResult.Ok(Unit) },
+            onHouseholdWritten = { c.log += "audit" },
         )
         assertEquals(KinfolkSaveOutcome.Saved("kf1"), out)
         assertEquals(listOf("household"), c.log)
+    }
+
+    @Test
+    fun anEmptyEditStillSavesChangedContactsWithoutAnAudit() = runTest {
+        val c = Calls()
+        saveKinfolkWithContacts(
+            retryKinfolkId = null,
+            saveContacts = true,
+            writeHousehold = { WriteResult.Ok(HouseholdWrite("kf1", wrote = false)) },
+            writeContacts = { id -> c.log += "contacts:$id"; WriteResult.Ok(Unit) },
+            onHouseholdWritten = { c.log += "audit" },
+        )
+        assertEquals(listOf("contacts:kf1"), c.log)
     }
 
     @Test
@@ -107,5 +135,14 @@ class KinfolkSaveTest {
         assertFalse(emergencyContactsNeedSaving(isNew = false, drafts = blank, baseline = blank), "none on file and still none: the flag, not a block")
         assertTrue(emergencyContactsNeedSaving(isNew = false, drafts = rae, baseline = blank), "adding one to a flagged household")
         assertTrue(emergencyContactsNeedSaving(isNew = false, drafts = blank, baseline = rae), "clearing them is sent, and refused")
+    }
+
+    /** #829 review: stray whitespace on file is not an edit. */
+    @Test
+    fun aTrimmedFieldKeepsTheStoredValueUnlessEdited() {
+        assertEquals("1234 ", keepStoredUnlessEdited("1234 ", "1234 "), "opened with no edit: stored value stands")
+        assertEquals("1234 ", keepStoredUnlessEdited("1234", "1234 "), "only whitespace differs: not an edit")
+        assertEquals("9999", keepStoredUnlessEdited(" 9999 ", "1234 "), "a real edit saves trimmed")
+        assertEquals("Dana", keepStoredUnlessEdited(" Dana ", ""), "a new value saves trimmed")
     }
 }

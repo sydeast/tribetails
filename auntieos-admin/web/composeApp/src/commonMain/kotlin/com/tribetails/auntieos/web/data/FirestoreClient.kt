@@ -631,12 +631,17 @@ class FirestoreClient {
     suspend fun createKinfolk(k: Kinfolk):   WriteResult<String> = platformCreateKinfolk(k)
     /**
      * #829 review: sends ONLY the fields [edited] changed relative to [loaded]
-     * (the record the caller read), as a merge write. Nothing changed means no
-     * write at all.
+     * (the record the caller read), as a merge write; `formValues` per key. Ok(true)
+     * when a write was sent, Ok(false) when nothing changed and nothing was written.
      */
-    suspend fun updateKinfolk(loaded: Kinfolk, edited: Kinfolk): WriteResult<Unit> {
+    suspend fun updateKinfolk(loaded: Kinfolk, edited: Kinfolk): WriteResult<Boolean> {
         if (edited._id.isBlank()) return WriteResult.Err("updateKinfolk requires a kinfolk id")
-        return platformUpdateKinfolkFields(edited._id, kinfolkChangedFields(loaded, edited).toString())
+        val changes = kinfolkChanges(loaded, edited)
+        if (changes.isEmpty()) return WriteResult.Ok(false)
+        return when (val r = platformUpdateKinfolkFields(edited._id, changes)) {
+            is WriteResult.Ok  -> WriteResult.Ok(true)
+            is WriteResult.Err -> WriteResult.Err(r.message)
+        }
     }
     suspend fun archiveKinfolk(id: String):  WriteResult<Unit>   = platformArchiveKinfolk(id)
     suspend fun createKin(k: Kin):           WriteResult<String> =
@@ -664,7 +669,10 @@ class FirestoreClient {
     /** Replaces a household's tag NAME list. [kinfolk] must be the loaded record. */
     suspend fun updateKinfolkTags(kinfolk: Kinfolk, tags: List<String>): WriteResult<Unit> {
         require(kinfolk._id.isNotBlank()) { "updateKinfolkTags requires a kinfolk id" }
-        return updateKinfolk(kinfolk, kinfolk.copy(tags = tags))
+        return when (val r = updateKinfolk(kinfolk, kinfolk.copy(tags = tags))) {
+            is WriteResult.Ok  -> WriteResult.Ok(Unit)
+            is WriteResult.Err -> WriteResult.Err(r.message)
+        }
     }
 
     /**
@@ -2047,8 +2055,8 @@ internal expect fun platformDossierStream(kinfolkId: String): Flow<FirestoreResu
 internal expect fun platformKin411Stream(kinId: String):      Flow<FirestoreResult<Kin411?>>
 
 internal expect suspend fun platformCreateKinfolk(k: Kinfolk):  WriteResult<String>
-/** #829 review: merge-writes exactly the top-level fields in [fieldsJson]; an empty object writes nothing. */
-internal expect suspend fun platformUpdateKinfolkFields(kinfolkId: String, fieldsJson: String): WriteResult<Unit>
+/** #829 review: merge-writes exactly [changes] (sets and deletes, by field path); an empty list writes nothing. */
+internal expect suspend fun platformUpdateKinfolkFields(kinfolkId: String, changes: List<KinfolkFieldChange>): WriteResult<Unit>
 internal expect suspend fun platformArchiveKinfolk(id: String): WriteResult<Unit>
 internal expect suspend fun platformCreateKin(k: Kin):          WriteResult<String>
 internal expect suspend fun platformUpdateKin(k: Kin):          WriteResult<Unit>

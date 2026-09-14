@@ -330,12 +330,11 @@ internal actual suspend fun platformCreateKinfolk(k: Kinfolk): WriteResult<Strin
 // caller changed (FirestoreClient.updateKinfolk diffs against its read), so the
 // mask never names an untouched field or an Emergency Contact key. Every desktop
 // kinfolk update (edit form, photo, tags) goes through here.
-internal actual suspend fun platformUpdateKinfolkFields(kinfolkId: String, fieldsJson: String): WriteResult<Unit> =
+internal actual suspend fun platformUpdateKinfolkFields(kinfolkId: String, changes: List<KinfolkFieldChange>): WriteResult<Unit> =
     runCatching {
         require(kinfolkId.isNotBlank()) { "updateKinfolk requires a kinfolk id" }
-        val fields = jsonOut.parseToJsonElement(fieldsJson).jsonObject
-        require(fields.keys.none { it == "_id" || it in KINFOLK_WRITE_EXCLUDED_KEYS }) { "updateKinfolk: a reserved key reached the write" }
-        if (fields.isNotEmpty()) JvmFirestoreRest.mergeDoc("kinfolk", kinfolkId, fieldsJson)
+        require(changes.none { it.path.first() == "_id" || it.path.first() in KINFOLK_WRITE_EXCLUDED_KEYS }) { "updateKinfolk: a reserved key reached the write" }
+        if (changes.isNotEmpty()) JvmFirestoreRest.mergeFieldChanges("kinfolk", kinfolkId, changes)
         WriteResult.Ok(Unit)
     }.getOrElse { WriteResult.Err(it.message ?: "update failed") }
 internal actual suspend fun platformArchiveKinfolk(id: String): WriteResult<Unit> =

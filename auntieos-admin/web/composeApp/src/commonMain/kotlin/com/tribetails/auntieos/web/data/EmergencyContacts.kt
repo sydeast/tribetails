@@ -116,7 +116,7 @@ private val writeJson = Json { encodeDefaults = true; ignoreUnknownKeys = true; 
 /**
  * The body a desktop kinfolk CREATE sends: the model minus
  * [KINFOLK_WRITE_EXCLUDED_KEYS], so a new household never writes an Emergency
- * Contact key. Updates send [kinfolkChangedFields] instead.
+ * Contact key. Updates send [kinfolkChanges] instead.
  */
 fun kinfolkWriteJson(k: Kinfolk): String {
     val obj = writeJson.encodeToJsonElement(Kinfolk.serializer(), k).jsonObject
@@ -124,20 +124,82 @@ fun kinfolkWriteJson(k: Kinfolk): String {
 }
 
 /**
- * #829 review: the fields a desktop kinfolk UPDATE may send, which is only the
- * top-level fields whose value in [edited] differs from [loaded] (what the
- * caller read). A save therefore never rewrites a field it did not change, so a
- * concurrent change to `tags`, `outstandingBalance`, `status` or a portal-edited
- * field survives it. Never includes `_id` or an Emergency Contact key. An empty
- * object means there is nothing to write. Android does the same through
- * `DirectoryFieldChanges` (DirectoryViewModel.kt:1187).
+ * One field a desktop kinfolk update writes. [path] is the field path as
+ * segments (`["gateCode"]`, `["formValues", "pet.name"]`); a null [value] deletes
+ * that field.
  */
-fun kinfolkChangedFields(loaded: Kinfolk, edited: Kinfolk): JsonObject {
+data class KinfolkFieldChange(val path: List<String>, val value: kotlinx.serialization.json.JsonElement?)
+
+/** The map field that is diffed key by key, so one custom field's edit never rewrites another's. */
+private const val PER_KEY_MAP_FIELD = "formValues"
+
+/**
+ * #829 review: what a desktop kinfolk UPDATE writes, which is only the fields
+ * whose value in [edited] differs from [loaded] (what the caller read). A save
+ * never rewrites a field it did not change, so a concurrent change to `tags`,
+ * `outstandingBalance`, `status` or a portal-edited field survives it.
+ *
+ * `formValues` is diffed per key: a changed or added key is one change at
+ * `formValues.<key>`, a removed key is a delete at that path. Editing one custom
+ * field therefore cannot overwrite another admin's change to a different key.
+ *
+ * Never includes `_id` or an Emergency Contact key. Empty means nothing to write.
+ * Android does the same through `DirectoryFieldChanges` (DirectoryViewModel.kt:1187).
+ */
+fun kinfolkChanges(loaded: Kinfolk, edited: Kinfolk): List<KinfolkFieldChange> {
     val before = writeJson.encodeToJsonElement(Kinfolk.serializer(), loaded).jsonObject
     val after = writeJson.encodeToJsonElement(Kinfolk.serializer(), edited).jsonObject
-    return JsonObject(
-        after.filter { (key, value) ->
-            key != "_id" && key !in KINFOLK_WRITE_EXCLUDED_KEYS && before[key] != value
+    val changes = mutableListOf<KinfolkFieldChange>()
+    for ((key, value) in after) {
+        if (key == "_id" || key in KINFOLK_WRITE_EXCLUDED_KEYS) continue
+        val old = before[key]
+        if (key == PER_KEY_MAP_FIELD && value is JsonObject && (old == null || old is JsonObject)) {
+            val oldMap = old as? JsonObject ?: JsonObject(emptyMap())
+            for ((k, v) in value) if (oldMap[k] != v) changes += KinfolkFieldChange(listOf(key, k), v)
+            for (k in oldMap.keys) if (k !in value) changes += KinfolkFieldChange(listOf(key, k), null)
+        } else if (old != value) {
+            changes += KinfolkFieldChange(listOf(key), value)
+        }
+    }
+    return changes
+}
+
+private val SIMPLE_FIELD_SEGMENT = Regex("^[A-Za-z_][A-Za-z_0-9]*$")
+
+/**
+ * A Firestore field path for `updateMask.fieldPaths`. A segment that is a plain
+ * identifier stays as it is; anything else (a dot, a space, a dash, a leading
+ * digit) is wrapped in backticks with backslash and backtick escaped, per the
+ * Firestore field-path grammar. `["formValues", "pet.name"]` -> formValues.`pet.name`.
+ */
+fun firestoreFieldPath(path: List<String>): String {
+    require(path.isNotEmpty() && path.none { it.isEmpty() }) { "a field path needs non-empty segments: $path" }
+    return path.joinToString(".") { seg ->
+        if (SIMPLE_FIELD_SEGMENT.matches(seg)) seg
+        else "`" + seg.replace("\\", "\\\\").replace("`", "\\`") + "`"
+    }
+}
+
+/**
+ * The nested plain body for [changes]: each set value placed at its path, each
+ * delete left out (a path in the mask but absent from the body is deleted).
+ */
+fun kinfolkChangesBody(changes: List<KinfolkFieldChange>): JsonObject {
+    val root = mutableMapOf<String, Any>()
+    for (change in changes) {
+        val value = change.value ?: continue
+        var node = root
+        for (seg in change.path.dropLast(1)) {
+            @Suppress("UNCHECKED_CAST")
+            node = node.getOrPut(seg) { mutableMapOf<String, Any>() } as MutableMap<String, Any>
+        }
+        node[change.path.last()] = value
+    }
+    fun toJson(m: Map<String, Any>): JsonObject = JsonObject(
+        m.mapValues { (_, x) ->
+            @Suppress("UNCHECKED_CAST")
+            if (x is kotlinx.serialization.json.JsonElement) x else toJson(x as Map<String, Any>)
         },
     )
+    return toJson(root)
 }

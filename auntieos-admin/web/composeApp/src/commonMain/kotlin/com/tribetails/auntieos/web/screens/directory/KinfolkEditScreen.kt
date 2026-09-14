@@ -39,7 +39,7 @@ import com.tribetails.auntieos.web.data.EmergencyContactDraft
 import com.tribetails.auntieos.web.data.NO_EMERGENCY_CONTACT
 import com.tribetails.auntieos.web.data.draftsEqual
 import com.tribetails.auntieos.web.data.emergencyContactsOf
-import com.tribetails.auntieos.web.data.kinfolkChangedFields
+import com.tribetails.auntieos.web.data.kinfolkChanges
 import com.tribetails.auntieos.web.data.isBlankDrafts
 import com.tribetails.auntieos.web.data.toDrafts
 import com.tribetails.auntieos.web.data.validateEmergencyContactDrafts
@@ -231,34 +231,36 @@ fun KinfolkEditScreen(
         toast = msg; toastKind = kind; toastVisible = true
     }
 
-    fun build(): Kinfolk = (loaded ?: existing ?: Kinfolk(_id = kinfolkId.orEmpty())).copy(
-        firstName                = firstName.trim(),
-        lastName                 = lastName.trim(),
-        phoneNumber              = phoneNumber.trim(),
-        secondaryPhone           = secondaryPhone.trim(),
-        email                    = email.trim(),
-        secondaryEmail           = secondaryEmail.trim(),
+    // #829 review: trimmed fields go through keepStoredUnlessEdited, so stray
+    // whitespace on file is neither shown as an unsaved change nor rewritten.
+    fun build(): Kinfolk = (loaded ?: existing ?: Kinfolk(_id = kinfolkId.orEmpty())).let { base -> base.copy(
+        firstName                = keepStoredUnlessEdited(firstName, base.firstName),
+        lastName                 = keepStoredUnlessEdited(lastName, base.lastName),
+        phoneNumber              = keepStoredUnlessEdited(phoneNumber, base.phoneNumber),
+        secondaryPhone           = keepStoredUnlessEdited(secondaryPhone, base.secondaryPhone),
+        email                    = keepStoredUnlessEdited(email, base.email),
+        secondaryEmail           = keepStoredUnlessEdited(secondaryEmail, base.secondaryEmail),
         // preferredContactMethod / bestTimeToContact intentionally NOT overwritten
         // here (item 2: editor removed); existing values are preserved via copy().
-        serviceAddress           = serviceAddr.trim(),
-        gateCode                 = gateCode.trim(),
-        parkingInstructions      = parking.trim(),
+        serviceAddress           = keepStoredUnlessEdited(serviceAddr, base.serviceAddress),
+        gateCode                 = keepStoredUnlessEdited(gateCode, base.gateCode),
+        parkingInstructions      = keepStoredUnlessEdited(parking, base.parkingInstructions),
         entryNotes               = entryNotes,
-        wifiName                 = wifiName.trim(),
+        wifiName                 = keepStoredUnlessEdited(wifiName, base.wifiName),
         wifiPassword             = wifiPass,
         // #829: no Emergency Contact field here. The four keys are dropped from
         // every kinfolk write (kinfolkWriteJson); contacts go through the callable.
         internalNotes            = internalNotes,
-        referralSource           = referral.trim(),
-        vetClinicName            = vetName.trim(),
-        vetClinicPhone           = vetPhone.trim(),
-        vetClinicAddress         = vetAddress.trim(),
+        referralSource           = keepStoredUnlessEdited(referral, base.referralSource),
+        vetClinicName            = keepStoredUnlessEdited(vetName, base.vetClinicName),
+        vetClinicPhone           = keepStoredUnlessEdited(vetPhone, base.vetClinicPhone),
+        vetClinicAddress         = keepStoredUnlessEdited(vetAddress, base.vetClinicAddress),
         profilePictureUrl        = photoUrl,
         // The status picker exists only on Add. On edit the loaded status stands,
         // so a stored blank status is not rewritten as "active" by a save.
-        status                   = if (isNew) status else (loaded ?: existing)?.status ?: status,
+        status                   = if (isNew) status else base.status,
         formValues               = formValues.toMap(),
-    )
+    ) }
 
     var attemptedSave  by remember { mutableStateOf(false) }
     // P1-FORMS hardening 2026-05-26: require Last name; reject alpha in phone;
@@ -302,7 +304,7 @@ fun KinfolkEditScreen(
                 internalNotes, referral, vetName, vetPhone, vetAddress,
             ).any { it.isNotBlank() }
         } else {
-            loaded?.let { base -> kinfolkChangedFields(base, build()).isNotEmpty() || !draftsEqual(ecDrafts, ecBaseline) } ?: false
+            loaded?.let { base -> kinfolkChanges(base, build()).isNotEmpty() || !draftsEqual(ecDrafts, ecBaseline) } ?: false
         }
     }
 
@@ -357,11 +359,17 @@ fun KinfolkEditScreen(
                             )
                         )
                     }
-                    if (isNew) client.createKinfolk(draft) else {
-                        // #829 review: only the fields the form changed.
+                    if (isNew) {
+                        when (val r = client.createKinfolk(draft)) {
+                            is WriteResult.Ok  -> WriteResult.Ok(HouseholdWrite(r.value))
+                            is WriteResult.Err -> WriteResult.Err(r.message)
+                        }
+                    } else {
+                        // #829 review: only the fields the form changed; `wrote` is
+                        // false when nothing did, so no audit entry is logged.
                         when (val r = client.updateKinfolk(loaded ?: existing ?: draft, draft)) {
-                            is WriteResult.Ok  -> { loaded = draft; WriteResult.Ok(draft._id) }
-                            is WriteResult.Err -> r
+                            is WriteResult.Ok  -> { loaded = draft; WriteResult.Ok(HouseholdWrite(draft._id, wrote = r.value)) }
+                            is WriteResult.Err -> WriteResult.Err(r.message)
                         }
                     }
                 },

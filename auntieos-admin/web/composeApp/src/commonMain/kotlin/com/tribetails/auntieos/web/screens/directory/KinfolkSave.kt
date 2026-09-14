@@ -20,6 +20,12 @@ sealed interface KinfolkSaveOutcome {
 }
 
 /**
+ * The household step of a save. [wrote] is false when an edit changed nothing,
+ * so no write was sent (#829 review: nothing is audited then).
+ */
+data class HouseholdWrite(val kinfolkId: String, val wrote: Boolean = true)
+
+/**
  * Whether this save must call `saveEmergencyContacts`. Always on Add (a household
  * needs one). On edit, only when the editor changed, and never when a household
  * with none on file is saved with the editor still blank: the "No Emergency
@@ -36,18 +42,28 @@ fun emergencyContactsNeedSaving(
 }
 
 /**
+ * #829 review: the value a trimmed form field saves. If what is typed matches the
+ * stored value once both are trimmed, the stored value stands, so a record with
+ * stray whitespace neither shows as changed on open nor gets rewritten by a save
+ * with no edits. A real edit saves trimmed.
+ */
+fun keepStoredUnlessEdited(typed: String, stored: String): String =
+    if (typed.trim() == stored.trim()) stored else typed.trim()
+
+/**
  * The save sequence, kept out of the composable so it can be tested.
  *
  * - [retryKinfolkId] set: an Add whose contact save failed earlier. Only the
  *   contacts are saved; [writeHousehold] is never called, so a retry cannot
  *   create a second household.
- * - Otherwise the household is written first; [onHouseholdWritten] runs (audit
- *   log) as soon as it is on file, then the contacts are saved when [saveContacts].
+ * - Otherwise the household step runs first. [onHouseholdWritten] (the audit log)
+ *   runs only when that step actually wrote something, then the contacts are
+ *   saved when [saveContacts].
  */
 suspend fun saveKinfolkWithContacts(
     retryKinfolkId: String?,
     saveContacts: Boolean,
-    writeHousehold: suspend () -> WriteResult<String>,
+    writeHousehold: suspend () -> WriteResult<HouseholdWrite>,
     writeContacts: suspend (kinfolkId: String) -> WriteResult<*>,
     onHouseholdWritten: (kinfolkId: String) -> Unit,
 ): KinfolkSaveOutcome {
@@ -57,11 +73,12 @@ suspend fun saveKinfolkWithContacts(
             is WriteResult.Err -> KinfolkSaveOutcome.ContactsFailed(retryKinfolkId, ec.message)
         }
     }
-    val id = when (val h = writeHousehold()) {
+    val household = when (val h = writeHousehold()) {
         is WriteResult.Err -> return KinfolkSaveOutcome.HouseholdFailed(h.message)
         is WriteResult.Ok -> h.value
     }
-    onHouseholdWritten(id)
+    val id = household.kinfolkId
+    if (household.wrote) onHouseholdWritten(id)
     if (!saveContacts) return KinfolkSaveOutcome.Saved(id)
     return when (val ec = writeContacts(id)) {
         is WriteResult.Ok -> KinfolkSaveOutcome.Saved(id)
