@@ -20,6 +20,8 @@
 - Old flat fields (`emergencyContactName/Phone/Relation`) stay readable as a fallback until the operator verifies the migration. No client writes them after this PR.
 - Branch `feat/829-emergency-contact` in a manual worktree, never on main. Long commit messages go through `git commit -F <file>`. Merge with `gh pr merge --merge`.
 - The migration write is the operator's step after release. The PR contains the dry run only.
+- Build approach (operator, 2026-09-13): subagent-driven. One fresh agent per task, and each task is reviewed before the next one starts.
+- Explanatory sentences on Compose surfaces sit behind an info icon in a `TooltipBox` that also opens on a tap, mirroring admin Android's `DenInfoTip` (operator ruling 2026-09-13). Admin Android reuses `DenInfoTip`; desktop adds `AuntieInfoTip`; portal Android adds `KinInfoTip`.
 
 ---
 
@@ -2380,6 +2382,7 @@ Paths below are under `auntieos-admin/android/app/src/` with package dir `java/c
 - Modify: `main/.../data/repository/AuntieRepository.kt` (beside `inviteKinfolkToPortal`, ~line 428)
 - Modify: `main/.../ui/directory/DirectoryViewModel.kt` (`AddKinfolkUiState` ~214, `EditKinfolkUiState` ~247, updaters ~733 and ~811, `saveKinfolk` ~737, `populateEditForm` ~1001, `saveKinfolkChanges` ~1053, `buildKinfolkFromEditState` ~1195)
 - Create: `main/.../ui/directory/EmergencyContactsEditor.kt`
+- Modify: `main/.../ui/components/DenScreenKit.kt` (~140: `private fun DenInfoTip` becomes `internal fun DenInfoTip` so the editor can reuse it)
 - Modify: `main/.../ui/directory/EditKinfolkScreen.kt` (~308-330, save enablement ~561), `AddKinfolkScreen.kt` (~195-230, ~276)
 - Modify: `main/.../ui/directory/KinfolkProfileScreen.kt` (~164, `EmergencyContactsPanel` ~556), `DirectoryScreen.kt` (`KinfolkDirectoryCard` ~443)
 - Modify: `main/.../ui/admin/KinCareDetailScreen.kt` (~436), `main/.../ui/kintales/KinTaleTemplateEngine.kt` (~145)
@@ -2904,13 +2907,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TooltipBox
-import androidx.compose.material3.TooltipDefaults
-import androidx.compose.material3.rememberTooltipState
+import androidx.compose.ui.Alignment
+import com.tribetails.auntieos.ui.components.DenInfoTip
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -2920,7 +2920,6 @@ import com.tribetails.auntieos.ui.components.AuntieField
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 
 /** Up to two Emergency Contacts, the first called first. Every field clearable (#829). */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EmergencyContactsEditor(
     drafts: List<EmergencyContactDraft>,
@@ -2932,18 +2931,15 @@ fun EmergencyContactsEditor(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         drafts.forEachIndexed { i, d ->
-            // The explanation is a tooltip on the slot label, never a subtitle
-            // (operator ruling 2026-09-11).
-            TooltipBox(
-                positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
-                tooltip = { PlainTooltip { Text("Called only when no kinfolk can be reached. The first one is called first.") } },
-                state = rememberTooltipState(),
-            ) {
+            // The explanation is an info tip on the first slot label, never a
+            // subtitle (rulings 2026-09-11 and 2026-09-13).
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     if (i == 0) "Called first" else "Called second",
                     style = AuntieTheme.typography.labelSmall,
                     color = AuntieTheme.colors.kinfolkOrange,
                 )
+                if (i == 0) DenInfoTip("Called only when no kinfolk can be reached. The first one is called first.")
             }
             AuntieField(value = d.name, onValueChange = { onChange(i, d.copy(name = it)) }, label = "Name", modifier = Modifier.fillMaxWidth())
             AuntieField(value = d.phone, onValueChange = { onChange(i, d.copy(phone = it)) }, label = "Phone", modifier = Modifier.fillMaxWidth())
@@ -3060,11 +3056,13 @@ Paths below are under `auntieos-admin/web/composeApp/src/`, package dir `kotlin/
 - Modify: `commonMain/.../web/screens/directory/KinfolkProfileScreen.kt` (~272), `DirectoryScreen.kt` (household card)
 - Modify: `commonMain/.../web/screens/sessions/KinCareDetailScreen.kt` (~258), `commonMain/.../web/data/KinTaleConditionEngine.kt` (~158)
 - Create: `commonTest/.../web/data/EmergencyContactsTest.kt`, `jvmTest/.../web/data/EmergencyContactsClientTest.kt`
+- Create: `commonMain/.../web/ui/components/AuntieInfoTip.kt` (the desktop twin of admin Android's `DenInfoTip`)
+- Create: `jvmTest/.../web/ui/components/AuntieInfoTipRenderTest.kt`
 
 Desktop has no household members screen, so the `home_access` description change does not apply here.
 
 **Interfaces:**
-- Consumes: `platformInvokeCallable(name, payloadJson): WriteResult<String>`; `JvmFirestoreRest.mergeDoc(collection, id, modelJson)`, `mergeFieldPaths(plain)`; `JvmFirestoreFixtures.callableResponses`, `lastCallableName`, `lastCallablePayloadJson`, `lastWrite`; `RestWrite(method, collection, id, fields?)`.
+- Consumes: Compose Multiplatform material3 1.8.2 (the desktop tree pins `compose = "1.8.2"`): `TooltipBox(positionProvider: PopupPositionProvider, tooltip: @Composable TooltipScope.() -> Unit, state: TooltipState, modifier: Modifier, focusable: Boolean, enableUserInput: Boolean, content: @Composable () -> Unit)`, `TooltipScope.PlainTooltip(...)`, `TooltipDefaults.rememberPlainTooltipPositionProvider(spacingBetweenTooltipAndAnchor: Dp)`, `rememberTooltipState(initialIsVisible, isPersistent, mutatorMutex)` (checked with `javap` against `material3-desktop-1.8.2.jar` and `-1.9.0.jar`, 2026-09-13); `AuntieTheme.colors.textDim`, `AuntieTheme.typography.bodySmall`; `Lucide.Info`; `platformInvokeCallable(name, payloadJson): WriteResult<String>`; `JvmFirestoreRest.mergeDoc(collection, id, modelJson)`, `mergeFieldPaths(plain)`; `JvmFirestoreFixtures.callableResponses`, `lastCallableName`, `lastCallablePayloadJson`, `lastWrite`; `RestWrite(method, collection, id, fields?)`.
 - Produces:
   - `@Serializable data class EmergencyContact(val name: String = "", val phone: String = "", val relationship: String? = null, val recordedAt: String? = null, val updatedAt: String? = null)`
   - `data class EmergencyContactDraft(val name: String = "", val phone: String = "", val relationship: String = "")`
@@ -3074,6 +3072,8 @@ Desktop has no household members screen, so the `home_access` description change
   - `Kinfolk.emergencyContacts: JsonElement? = null`
   - `FirestoreClient.listEmergencyContacts(kinfolkId): WriteResult<EmergencyContactsResult>`, `FirestoreClient.saveEmergencyContacts(kinfolkId, drafts): WriteResult<List<EmergencyContact>>`
   - `@Composable fun EmergencyContactsEditor(drafts, onChange, onAdd, onRemove, onMoveFirst, enabled = true)`
+  - `const val AUNTIE_INFO_TIP_TAG = "auntie-info-tip"` and `@OptIn(ExperimentalMaterial3Api::class) @Composable fun AuntieInfoTip(text: String, modifier: Modifier = Modifier)` in `ui/components/AuntieInfoTip.kt`
+  - `const val EMERGENCY_CONTACT_WHO_GETS_CALLED = "Called only when no kinfolk can be reached. The first one is called first."` in `data/EmergencyContacts.kt`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3198,10 +3198,71 @@ class EmergencyContactsClientTest {
 
 Check `RestWrite` at `FirestoreInterop.jvm.kt:106` for its real property names (`method`, `collection`, `id`, `fields` assumed here); if `lastCallablePayloadJson` records the payload with different key order, assert on the parsed `JsonObject` instead of the string.
 
+`jvmTest/kotlin/com/tribetails/auntieos/web/ui/components/AuntieInfoTipRenderTest.kt`:
+
+```kotlin
+package com.tribetails.auntieos.web.ui.components
+
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.runDesktopComposeUiTest
+import com.tribetails.auntieos.web.data.EMERGENCY_CONTACT_WHO_GETS_CALLED
+import com.tribetails.auntieos.web.data.EmergencyContactDraft
+import com.tribetails.auntieos.web.screens.directory.EmergencyContactsEditor
+import com.tribetails.auntieos.web.theme.AuntieAppTheme
+import com.tribetails.auntieos.web.theme.ThemeMode
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+/**
+ * #829, operator ruling 2026-09-13: the Emergency Contact explanation sits
+ * behind an info tip that answers a TAP, not only hover and long-press. The
+ * clock is held because a plain tooltip dismisses itself after about 1.5s, and
+ * an auto-advancing clock would close it before the assertion ran.
+ */
+@OptIn(ExperimentalTestApi::class)
+class AuntieInfoTipRenderTest {
+
+    @Test
+    fun tappingTheIconShowsTheSentence() = runDesktopComposeUiTest {
+        mainClock.autoAdvance = false
+        setContent { AuntieAppTheme(themeMode = ThemeMode.DARK) { AuntieInfoTip(EMERGENCY_CONTACT_WHO_GETS_CALLED) } }
+        mainClock.advanceTimeBy(16L)
+        assertTrue(onAllNodesWithText(EMERGENCY_CONTACT_WHO_GETS_CALLED).fetchSemanticsNodes().isEmpty())
+        onNodeWithTag(AUNTIE_INFO_TIP_TAG).performClick()
+        mainClock.advanceTimeBy(300L)
+        onNodeWithText(EMERGENCY_CONTACT_WHO_GETS_CALLED).assertIsDisplayed()
+    }
+
+    @Test
+    fun theEditorCarriesOneTipOnTheFirstSlot() = runDesktopComposeUiTest {
+        setContent {
+            AuntieAppTheme(themeMode = ThemeMode.DARK) {
+                EmergencyContactsEditor(
+                    drafts = listOf(EmergencyContactDraft("Rae", "8055550199"), EmergencyContactDraft("Lee", "8055550177")),
+                    onChange = { _, _ -> },
+                    onAdd = {},
+                    onRemove = {},
+                    onMoveFirst = {},
+                )
+            }
+        }
+        assertEquals(1, onAllNodesWithTag(AUNTIE_INFO_TIP_TAG).fetchSemanticsNodes().size)
+        onNodeWithTag(AUNTIE_INFO_TIP_TAG).assertIsDisplayed()
+    }
+}
+```
+
 - [ ] **Step 2: Run them and watch them fail**
 
 ```bash
-cd auntieos-admin/web && ./gradlew :composeApp:jvmTest --tests 'com.tribetails.auntieos.web.data.EmergencyContactsTest' --tests 'com.tribetails.auntieos.web.data.EmergencyContactsClientTest'
+cd auntieos-admin/web && ./gradlew :composeApp:jvmTest --tests 'com.tribetails.auntieos.web.data.EmergencyContactsTest' --tests 'com.tribetails.auntieos.web.data.EmergencyContactsClientTest' --tests 'com.tribetails.auntieos.web.ui.components.AuntieInfoTipRenderTest'
 ```
 
 Expected: compilation FAILS (`Unresolved reference: emergencyContactsOf`, `kinfolkWriteJson`).
@@ -3225,6 +3286,7 @@ import kotlinx.serialization.json.jsonPrimitive
 const val EMERGENCY_CONTACTS_MAX = 2
 const val EMERGENCY_CONTACT_REQUIRED = "A household needs at least one Emergency Contact"
 const val EMERGENCY_CONTACT_OUTSIDE = "An Emergency Contact has to be someone outside the household."
+const val EMERGENCY_CONTACT_WHO_GETS_CALLED = "Called only when no kinfolk can be reached. The first one is called first."
 
 @Serializable
 data class EmergencyContact(
@@ -3380,6 +3442,66 @@ internal actual suspend fun platformUpdateKinfolk(k: Kinfolk): WriteResult<Unit>
 
 Search `jvmTest` for any test asserting `RestWrite("PATCH", "kinfolk", ...)` (`grep -rn '"kinfolk"' src/jvmTest`) and change it to `"MERGE"` with a comment naming #829; `BusinessSettingsMergeTest.kt` also calls `mergeDoc` and must still pass.
 
+`commonMain/kotlin/com/tribetails/auntieos/web/ui/components/AuntieInfoTip.kt`:
+
+```kotlin
+package com.tribetails.auntieos.web.ui.components
+
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.PlainTooltip
+import androidx.compose.material3.Text
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
+import com.composables.icons.lucide.Info
+import com.composables.icons.lucide.Lucide
+import com.tribetails.auntieos.web.theme.AuntieTheme
+import kotlinx.coroutines.launch
+
+const val AUNTIE_INFO_TIP_TAG = "auntie-info-tip"
+
+/**
+ * A hairline "i" that holds one sentence of explanation, the desktop twin of
+ * admin Android's `DenInfoTip` (operator ruling 2026-09-13). TooltipBox answers
+ * hover and long-press; the tap is wired by hand, because without it the tip is
+ * a gesture nobody finds. The icon's content description is the sentence itself,
+ * so a screen reader hears it too.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AuntieInfoTip(text: String, modifier: Modifier = Modifier) {
+    val c = AuntieTheme.colors
+    val state = rememberTooltipState()
+    val scope = rememberCoroutineScope()
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+        tooltip = { PlainTooltip { Text(text, style = AuntieTheme.typography.bodySmall) } },
+        state = state,
+        modifier = modifier,
+    ) {
+        IconButton(
+            onClick = { scope.launch { state.show() } },
+            modifier = Modifier.size(24.dp).testTag(AUNTIE_INFO_TIP_TAG),
+        ) {
+            Icon(
+                imageVector = Lucide.Info,
+                contentDescription = text,
+                tint = c.textDim,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
+}
+```
+
 `commonMain/kotlin/com/tribetails/auntieos/web/screens/directory/EmergencyContactsEditor.kt`:
 
 ```kotlin
@@ -3396,13 +3518,17 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.tribetails.auntieos.web.data.EMERGENCY_CONTACTS_MAX
 import com.tribetails.auntieos.web.data.EmergencyContactDraft
+import androidx.compose.ui.Alignment
+import com.tribetails.auntieos.web.data.EMERGENCY_CONTACT_WHO_GETS_CALLED
+import com.tribetails.auntieos.web.ui.components.AuntieInfoTip
 import com.tribetails.auntieos.web.ui.components.GhostButton
 
 /**
  * Up to two Emergency Contacts, the first called first (#829). Built from the
  * same `BottomBorderField` and `AuntieFieldLabel` the rest of KinfolkEditScreen
- * uses. commonMain has no tooltip primitive, so the "called only when no kinfolk
- * can be reached" sentence is not shown on this surface.
+ * uses. The "called only when no kinfolk can be reached" sentence sits behind
+ * [AuntieInfoTip] on the first slot label, the way admin Android shows it with
+ * DenInfoTip (operator ruling 2026-09-13).
  */
 @Composable
 fun EmergencyContactsEditor(
@@ -3415,7 +3541,10 @@ fun EmergencyContactsEditor(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         drafts.forEachIndexed { i, d ->
-            AuntieFieldLabel(text = if (i == 0) "Called first" else "Called second")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AuntieFieldLabel(text = if (i == 0) "Called first" else "Called second")
+                if (i == 0) AuntieInfoTip(EMERGENCY_CONTACT_WHO_GETS_CALLED)
+            }
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 BottomBorderField(d.name, { onChange(i, d.copy(name = it)) }, label = "Name", modifier = Modifier.weight(1f))
@@ -3556,7 +3685,7 @@ Add `import com.tribetails.auntieos.web.data.emergencyContactsOf` to `KinCareDet
 cd auntieos-admin/web && ./gradlew :composeApp:jvmTest
 ```
 
-Expected: PASS, including `EmergencyContactsTest`, `EmergencyContactsClientTest`, `BusinessSettingsMergeTest` and `KinTaleConditionEngineTest`. Open `composeApp/build/reports/tests/jvmTest/index.html` and confirm the two new classes are listed.
+Expected: PASS, including `EmergencyContactsTest`, `EmergencyContactsClientTest`, `AuntieInfoTipRenderTest`, `BusinessSettingsMergeTest` and `KinTaleConditionEngineTest`. Open `composeApp/build/reports/tests/jvmTest/index.html` and confirm the three new classes are listed.
 
 - [ ] **Step 5: Commit**
 
@@ -3946,10 +4075,12 @@ git commit -m "Portal web: Emergency Contacts card over the callable, off the pr
 - Modify: `mytribe/src/commonMain/kotlin/com/kinfolk/portal/screens/tribe/TribeScreen.kt` (state ~127-130, seed ~169-171, card ~348-370, save ~411-441, `mergeVetFields` ~862, toggles ~1013 and ~1108)
 - Create: `mytribe/src/commonTest/kotlin/com/kinfolk/portal/portal/EmergencyContactsPortalApiTest.kt`
 - Create: `mytribe/src/composeUiTest/kotlin/com/kinfolk/portal/screens/tribe/EmergencyContactsCardTest.kt`
+- Create: `mytribe/src/commonMain/kotlin/com/kinfolk/portal/components/KinInfoTip.kt` (the portal twin of admin Android's `DenInfoTip`)
+- Create: `mytribe/src/composeUiTest/kotlin/com/kinfolk/portal/components/KinInfoTipTest.kt`
 - Modify: `mytribe/src/composeUiTest/kotlin/com/kinfolk/portal/screens/tribe/TribeScreenTest.kt`, `HouseholdContactsCardTest.kt` (stub `listEmergencyContacts`)
 
 **Interfaces:**
-- Consumes: `FunctionsClient.call(name, payload: JsonObject?): JsonObject`; `FakeFunctionsClient.stub/stubError/calls`; `setThemedContent`; `GlassCard`, `CardHead`, `KinField`, `KinButton`.
+- Consumes: material3 `TooltipBox(positionProvider, tooltip: @Composable TooltipScope.() -> Unit, state, modifier, content)`, `TooltipScope.PlainTooltip`, `TooltipDefaults.rememberPlainTooltipPositionProvider()`, `rememberTooltipState()` from the material3 that org.jetbrains.compose 1.12.0 resolves (Step 0 checks the signature; `ExperimentalMaterial3Api` is already opted in module-wide at `mytribe/build.gradle.kts:73`); `CardHead(icon, tint, title, sub: String = "", actions: @Composable RowScope.() -> Unit = {})` in `TribeScreen.kt`; `KinfolkTheme.typography.sansMeta`, `KinfolkBrand.NavyMuted`; `Icons.Outlined.Info`; `FunctionsClient.call(name, payload: JsonObject?): JsonObject`; `FakeFunctionsClient.stub/stubError/calls`; `setThemedContent`; `GlassCard`, `CardHead`, `KinField`, `KinButton`.
 - Produces:
   - `data class EmergencyContactDto(val name: String, val phone: String, val relationship: String?, val recordedAt: String?, val updatedAt: String?)`
   - `data class EmergencyContactsResult(val contacts: List<EmergencyContactDto>, val canEdit: Boolean, val legacy: Boolean)`
@@ -3957,6 +4088,23 @@ git commit -m "Portal web: Emergency Contacts card over the callable, off the pr
   - `suspend fun PortalApi.listEmergencyContacts(kinfolkId: String? = null): EmergencyContactsResult`
   - `suspend fun PortalApi.saveEmergencyContacts(kinfolkId: String? = null, contacts: List<EmergencyContactInput>): List<EmergencyContactDto>`
   - `@Composable fun EmergencyContactsCard(kinfolkId: String?, portalApi: PortalApi)`
+  - `const val KIN_INFO_TIP_TAG = "kin-info-tip"` and `@Composable fun KinInfoTip(text: String, modifier: Modifier = Modifier)` in `com.kinfolk.portal.components`
+  - `const val EMERGENCY_CONTACT_WHO_GETS_CALLED = "Called only when no kinfolk can be reached. The first one is called first."` in `EmergencyContactsCard.kt`
+
+- [ ] **Step 0: Confirm the tooltip API the portal resolves**
+
+The desktop tree's material3 1.8.2 and 1.9.0 jars both carry the `TooltipBox(positionProvider, tooltip, state, modifier, ..., content)` overload and `rememberPlainTooltipPositionProvider` (checked 2026-09-13). The portal's org.jetbrains.compose 1.12.0 resolves a later material3 that is not in the local cache yet, so check it before writing `KinInfoTip`:
+
+```bash
+cd mytribe
+./gradlew -q :dependencies --configuration jvmCompileClasspath | grep 'org.jetbrains.compose.material3:material3'
+V=$(./gradlew -q :dependencies --configuration jvmCompileClasspath | grep -o 'org.jetbrains.compose.material3:material3[^ ]*' | head -1 | awk -F: '{print $NF}')
+J=$(find "$GRADLE_USER_HOME/caches/modules-2/files-2.1/org.jetbrains.compose.material3/material3-desktop/$V" -name '*.jar' | head -1)
+javap -cp "$J" androidx.compose.material3.TooltipKt | grep 'TooltipBox\|rememberTooltipState'
+javap -cp "$J" androidx.compose.material3.TooltipDefaults | grep 'PositionProvider'
+```
+
+Expected: the resolved version, a `TooltipBox(PopupPositionProvider, Function3, TooltipState, Modifier, ...)` overload, `rememberTooltipState`, and a position provider. If `rememberPlainTooltipPositionProvider` is marked deprecated in favour of `rememberTooltipPositionProvider(TooltipAnchorPosition.Above)`, call the replacement inside `KinInfoTip` (import `androidx.compose.material3.TooltipAnchorPosition`); nothing else in this task changes.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -4151,10 +4299,66 @@ and add to `TribeScreenTest.kt`:
 
 (`stubProfileWithSavedField` is an extension on `FakeFunctionsClient` in that file; call it as `fake.stubProfileWithSavedField()` and add any other stubs the existing save test in the file registers, such as `getVetClinics` and `listMembers`.)
 
+`mytribe/src/composeUiTest/kotlin/com/kinfolk/portal/components/KinInfoTipTest.kt`:
+
+```kotlin
+@file:OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
+
+package com.kinfolk.portal.components
+
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.runComposeUiTest
+import com.kinfolk.portal.firebase.FakeFunctionsClient
+import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.screens.setThemedContent
+import com.kinfolk.portal.screens.tribe.EMERGENCY_CONTACT_WHO_GETS_CALLED
+import com.kinfolk.portal.screens.tribe.EmergencyContactsCard
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlin.test.Test
+import kotlin.test.assertTrue
+
+/**
+ * #829, operator ruling 2026-09-13: the Emergency Contact explanation opens on a
+ * TAP of the info icon, as admin Android's DenInfoTip does. The clock is driven by
+ * hand (as in KinLoadingTest) because a plain tooltip dismisses itself after about
+ * 1.5s, which an auto-advancing clock would reach before the assertion.
+ */
+class KinInfoTipTest {
+
+    @Test
+    fun tappingTheIconShowsTheSentence() = runComposeUiTest {
+        mainClock.autoAdvance = false
+        setThemedContent { KinInfoTip(EMERGENCY_CONTACT_WHO_GETS_CALLED) }
+        mainClock.advanceTimeBy(16L)
+        assertTrue(onAllNodesWithText(EMERGENCY_CONTACT_WHO_GETS_CALLED).fetchSemanticsNodes().isEmpty())
+        onNodeWithTag(KIN_INFO_TIP_TAG).performClick()
+        mainClock.advanceTimeBy(300L)
+        onNodeWithText(EMERGENCY_CONTACT_WHO_GETS_CALLED).assertIsDisplayed()
+    }
+
+    @Test
+    fun theEmergencyContactsCardTitleCarriesTheTip() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("listEmergencyContacts", buildJsonObject {
+            put("contacts", buildJsonArray {}); put("canEdit", false); put("legacy", false)
+        })
+        setThemedContent { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag(KIN_INFO_TIP_TAG).assertIsDisplayed()
+    }
+}
+```
+
 - [ ] **Step 2: Run them and watch them fail**
 
 ```bash
-cd mytribe && ./gradlew :jvmTest --tests 'com.kinfolk.portal.portal.EmergencyContactsPortalApiTest' --tests 'com.kinfolk.portal.screens.tribe.EmergencyContactsCardTest' --tests 'com.kinfolk.portal.screens.tribe.TribeScreenTest'
+cd mytribe && ./gradlew :jvmTest --tests 'com.kinfolk.portal.components.KinInfoTipTest' --tests 'com.kinfolk.portal.portal.EmergencyContactsPortalApiTest' --tests 'com.kinfolk.portal.screens.tribe.EmergencyContactsCardTest' --tests 'com.kinfolk.portal.screens.tribe.TribeScreenTest'
 ```
 
 Expected: compilation FAILS (`Unresolved reference: listEmergencyContacts`, `EmergencyContactsCard`).
@@ -4219,6 +4423,64 @@ data class EmergencyContactInput(val name: String, val phone: String, val relati
 
 (add `import kotlinx.serialization.json.add` if `buildJsonArray { add(...) }` does not resolve.)
 
+`mytribe/src/commonMain/kotlin/com/kinfolk/portal/components/KinInfoTip.kt`:
+
+```kotlin
+package com.kinfolk.portal.components
+
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.PlainTooltip
+import androidx.compose.material3.Text
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
+import com.kinfolk.portal.theme.KinfolkBrand
+import com.kinfolk.portal.theme.KinfolkTheme
+import kotlinx.coroutines.launch
+
+const val KIN_INFO_TIP_TAG = "kin-info-tip"
+
+/**
+ * A small "i" that holds one sentence of explanation, mirroring admin Android's
+ * `DenInfoTip` (operator ruling 2026-09-13). TooltipBox answers hover and
+ * long-press; the tap is wired by hand, because without it the tip is a gesture
+ * nobody finds. The icon's content description is the sentence itself, so
+ * TalkBack reads it. `ExperimentalMaterial3Api` is opted in module-wide.
+ */
+@Composable
+fun KinInfoTip(text: String, modifier: Modifier = Modifier) {
+    val state = rememberTooltipState()
+    val scope = rememberCoroutineScope()
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+        tooltip = { PlainTooltip { Text(text, style = KinfolkTheme.typography.sansMeta) } },
+        state = state,
+        modifier = modifier,
+    ) {
+        IconButton(
+            onClick = { scope.launch { state.show() } },
+            modifier = Modifier.size(24.dp).testTag(KIN_INFO_TIP_TAG),
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Info,
+                contentDescription = text,
+                tint = KinfolkBrand.NavyMuted,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
+}
+```
+
 `EmergencyContactsCard.kt`:
 
 ```kotlin
@@ -4241,12 +4503,17 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import com.kinfolk.portal.components.GlassCard
+import com.kinfolk.portal.components.KinButton
+import com.kinfolk.portal.components.KinField
+import com.kinfolk.portal.components.KinInfoTip
 import com.kinfolk.portal.portal.EmergencyContactInput
 import com.kinfolk.portal.portal.EmergencyContactsResult
 import com.kinfolk.portal.portal.PortalApi
 import kotlinx.coroutines.launch
 
 private const val REQUIRED = "A household needs at least one Emergency Contact"
+const val EMERGENCY_CONTACT_WHO_GETS_CALLED = "Called only when no kinfolk can be reached. The first one is called first."
 
 private fun comparable(p: String) = p.filter(Char::isDigit).let { if (it.length == 10) "1$it" else it }
 
@@ -4282,7 +4549,14 @@ fun EmergencyContactsCard(kinfolkId: String?, portalApi: PortalApi) {
 
     GlassCard(modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l), contentPadding = PaddingValues(KinfolkSpacing.l)) {
         Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
-            CardHead(icon = Icons.Filled.Phone, tint = KinfolkBrand.SnuggleCoral, title = "Emergency Contacts", sub = null)
+            CardHead(
+                icon = Icons.Filled.Phone,
+                tint = KinfolkBrand.SnuggleCoral,
+                title = "Emergency Contacts",
+                // An info tip, never a subtitle (ruling 2026-09-11), and it opens on a
+                // tap as well as hover and long-press (ruling 2026-09-13).
+                actions = { KinInfoTip(EMERGENCY_CONTACT_WHO_GETS_CALLED) },
+            )
             val r = loaded
             when {
                 loadError != null -> Text(loadError!!)
@@ -4328,11 +4602,12 @@ fun EmergencyContactsCard(kinfolkId: String?, portalApi: PortalApi) {
 }
 ```
 
-Match the real signatures in this tree: if `CardHead`'s `sub` is non-null `String`, overload is not needed, pass `sub = ""` only if the component hides an empty subtitle, otherwise add a `sub: String? = null` default to `CardHead` (the operator ruling puts explanatory copy in a tooltip, not under the title); if `KinButton`'s `onClick` lambda does not allow `return@KinButton`, restructure the precheck as an `if/else`. The `"Called only when no kinfolk can be reached."` explanation goes on the card title as a tooltip where this tree has a tooltip modifier; if none exists on the Compose portal, leave it out on this surface and say so in the PR description.
+Match the real signatures in this tree: `CardHead` is `private` in `TribeScreen.kt` (~520); make it `internal` so this file can call it. It already takes `actions: @Composable RowScope.() -> Unit`, which is where the tip goes, and `sub: String = ""`, which this card leaves empty. Import `KinfolkSpacing` and `KinfolkBrand` from the package `TribeScreen.kt` imports them from. If `KinButton`'s `onClick` lambda does not allow `return@KinButton`, restructure the precheck as an `if/else`.
 
 `TribeScreen.kt`:
 - Delete `emergencyName`, `emergencyPhone`, `emergencyRelation` (~127-130) and their seeding (~169-171), and replace the "Emergency contact" `GlassCard` (~348-370) with `EmergencyContactsCard(kinfolkId = kinfolkId, portalApi = portalApi)`.
 - In the save, rename `vetFields` to `vetClinicFields` and delete the three emergency `add(...)` lines (~415-417).
+- Change `private fun CardHead(` (~520) to `internal fun CardHead(` so `EmergencyContactsCard.kt` can use it.
 - Rename `mergeVetFields` to `mergeVetClinicFields`; keep the three `emergencyContact*` keys in its reserved set with the comment `// #829: kept reserved so a stale copy is dropped, never re-sent.`
 - Both "Home access (gate code, Wi-Fi)" labels (~1013, ~1108) become `"Home access (gate code, Wi-Fi, Emergency Contacts)"`.
 
@@ -4342,7 +4617,7 @@ Match the real signatures in this tree: if `CardHead`'s `sub` is non-null `Strin
 cd mytribe && ./gradlew :jvmTest && ./gradlew testDebugUnitTest
 ```
 
-Expected: `:jvmTest` PASSES including the three new or changed classes (`ComposeUiTestSourceSetTest` included, which confirms the card test sits in `composeUiTest`); `testDebugUnitTest` PASSES. Confirm in `build/reports/tests/jvmTest/index.html` that `EmergencyContactsCardTest` ran.
+Expected: `:jvmTest` PASSES including `KinInfoTipTest` and the three new or changed classes (`ComposeUiTestSourceSetTest` included, which confirms the card test sits in `composeUiTest`); `testDebugUnitTest` PASSES. Confirm in `build/reports/tests/jvmTest/index.html` that `EmergencyContactsCardTest` ran.
 
 - [ ] **Step 5: Commit**
 
@@ -4412,13 +4687,17 @@ The body lists: what changed per client; that the migration is a dry run in the 
 | Old flat fields readable until verified, then stop being read and written | Readers fall back in Tasks 1, 5, 7, 8; no client writes them after this PR (Tasks 2, 6, 7, 8, 9, 10). Removing the fallback is a follow-up after verification |
 | Portal cleanup: no `emergencyContact*` in `families/{id}.customFields`, no `vetFields` name | Task 9 and Task 10 (payload tests, rename) |
 | Section 3: widened description on all five clients | Admin React and Android: exact sentence (Tasks 6, 7). Portal web and Android have a label, not a description: label widened, sentence as tooltip on web (Tasks 9, 10). Desktop has no members screen: not applicable |
-| Section 4: two-slot ordered editor on each client; copy says contacts are called only when no kinfolk can be reached | Editors in Tasks 5-10. The sentence is a tooltip (2026-09-11 subtitles ruling) on admin web (Task 5), admin Android (Task 7 `TooltipBox`) and portal web (Task 9). Desktop (Task 8) and portal Android (Task 10) have no tooltip primitive in commonMain, so the sentence is not shown there, and the PR says so |
+| Section 4: two-slot ordered editor on each client; copy says contacts are called only when no kinfolk can be reached | Editors in Tasks 5-10. The sentence is a tooltip (2026-09-11 subtitles ruling) on admin web (Task 5), portal web (Task 9), and on the three Compose surfaces as an info icon in a `TooltipBox` that also opens on a tap (operator ruling 2026-09-13): admin Android reuses `DenInfoTip` (Task 7), desktop adds `AuntieInfoTip` (Task 8) and portal Android adds `KinInfoTip` (Task 10), each with a UI test that taps the icon and finds the sentence |
 | Delivery: full vertical, not stacked | One branch, Tasks 1-11 |
 
+Recorded rulings (operator, 2026-09-13):
+- **Reads vs. edits.** Any ACTIVE household member can READ Emergency Contacts; edits are gated on `home_access`. `listEmergencyContacts` implements exactly that and returns `canEdit` (Task 1).
+- **Tooltips on every Compose surface.** Desktop and portal Android show the Emergency Contact sentence the way admin Android does, through an info tip (Tasks 7, 8, 10).
+- **Build approach.** Subagent-driven, one fresh agent per task, reviewed before the next task.
+
 Open points the operator should rule on (in the PR body):
-1. **`home_access` reads vs. edits.** Section 1 lets any ACTIVE member read Emergency Contacts; section 3's copy says `home_access` "Sees and edits" them. The plan implements section 1 (read open, edit gated) and returns `canEdit`.
-2. **A legacy record with no date.** Where a kinfolk doc has neither `updatedAt` nor `joinDate`, `recordedAt` is written as `null` and the dry run prints `NO DATE`. The spec types it as a Timestamp.
-3. **Portal member check.** The portal cannot pre-check against secondary members' phones and names (it has no read of them); the server refusal carries the spec message instead.
-4. **Kinfolk-claim allowlist.** The three flat keys were removed from `onlyAllowedKinfolkFields()` (Task 2). Nothing in the portal wrote them, but it is a rules change.
-5. **Desktop kinfolk updates became merge writes** (Task 8). Fields the desktop model does not carry now survive a desktop save instead of being deleted.
+1. **A legacy record with no date.** Where a kinfolk doc has neither `updatedAt` nor `joinDate`, `recordedAt` is written as `null` and the dry run prints `NO DATE`. The spec types it as a Timestamp.
+2. **Portal member check.** The portal cannot pre-check against secondary members' phones and names (it has no read of them); the server refusal carries the spec message instead.
+3. **Kinfolk-claim allowlist.** The three flat keys were removed from `onlyAllowedKinfolkFields()` (Task 2). Nothing in the portal wrote them, but it is a rules change.
+4. **Desktop kinfolk updates became merge writes** (Task 8). Fields the desktop model does not carry now survive a desktop save instead of being deleted.
 
