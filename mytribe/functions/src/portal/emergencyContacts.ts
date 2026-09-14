@@ -1,5 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
-import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp, type DocumentReference, type Firestore } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
@@ -23,6 +23,7 @@ import {
   householdIdentity,
   mergeEmergencyContacts,
   readStoredEmergencyContacts,
+  type EmergencyContactInput,
   type StoredEmergencyContact,
 } from '../lib/emergencyContacts';
 
@@ -92,6 +93,48 @@ function toDto(c: StoredEmergencyContact): EmergencyContactDTO {
   };
 }
 
+/**
+ * Parses contacts exactly as `saveEmergencyContacts` does, with the same messages
+ * and field paths. Exported for saveTribeProfile's old-client path (#829), so an
+ * old portal install sees the error a new client would.
+ */
+export function parseEmergencyContactsInput(contacts: unknown[]): EmergencyContactInput[] {
+  return parseArgs(SaveArgs, { contacts }).contacts;
+}
+
+/**
+ * The rules every Emergency Contact write passes: at least one, two different
+ * phones, the household still exists, and nobody from the household. Shared by
+ * `saveEmergencyContacts` and saveTribeProfile's old-client path (#829). Reads
+ * only: returns the doc to write and the merged list, and throws the same
+ * HttpsErrors either caller shows. The caller has already checked home_access.
+ */
+export async function prepareEmergencyContactsSave(
+  firestore: Firestore,
+  kinfolkId: string,
+  contacts: EmergencyContactInput[],
+): Promise<{ ref: DocumentReference; merged: StoredEmergencyContact[] }> {
+  const [first, second] = contacts;
+  if (!first) {
+    throw new HttpsError('failed-precondition', EMERGENCY_CONTACT_REQUIRED_MESSAGE);
+  }
+  if (second && comparablePhone(first.phone) === comparablePhone(second.phone)) {
+    throw new HttpsError('invalid-argument', 'The two Emergency Contacts need different phone numbers.');
+  }
+
+  const ref = firestore.doc(`kinfolk/${kinfolkId}`);
+  const [kinSnap, membersSnap] = await Promise.all([ref.get(), firestore.collection(`families/${kinfolkId}/members`).get()]);
+  if (!kinSnap.exists) throw new HttpsError('not-found', 'That household no longer exists.');
+  const kinfolk = (kinSnap.data() ?? {}) as Record<string, unknown>;
+  const who = householdIdentity(kinfolk, membersSnap.docs.map((d) => (d.data() ?? {}) as Record<string, unknown>));
+  if (householdClash(contacts, who) !== -1) {
+    throw new HttpsError('failed-precondition', EMERGENCY_CONTACT_OUTSIDE_MESSAGE);
+  }
+
+  const merged = mergeEmergencyContacts(readStoredEmergencyContacts(kinfolk).contacts, contacts, Timestamp.now());
+  return { ref, merged };
+}
+
 export async function saveEmergencyContactsHandler(
   req: CallableRequest<unknown>,
 ): Promise<{ contacts: EmergencyContactDTO[] }> {
@@ -103,24 +146,7 @@ export async function saveEmergencyContactsHandler(
   const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, isAdmin, 'saveEmergencyContacts');
   await requireKinfolkPerm(uid, kinfolkId, 'home_access', isAdmin, 'saveEmergencyContacts');
 
-  if (args.contacts.length === 0) {
-    throw new HttpsError('failed-precondition', EMERGENCY_CONTACT_REQUIRED_MESSAGE);
-  }
-  if (args.contacts.length === 2 && comparablePhone(args.contacts[0].phone) === comparablePhone(args.contacts[1].phone)) {
-    throw new HttpsError('invalid-argument', 'The two Emergency Contacts need different phone numbers.');
-  }
-
-  const firestore = db();
-  const ref = firestore.doc(`kinfolk/${kinfolkId}`);
-  const [kinSnap, membersSnap] = await Promise.all([ref.get(), firestore.collection(`families/${kinfolkId}/members`).get()]);
-  if (!kinSnap.exists) throw new HttpsError('not-found', 'That household no longer exists.');
-  const kinfolk = (kinSnap.data() ?? {}) as Record<string, unknown>;
-  const who = householdIdentity(kinfolk, membersSnap.docs.map((d) => (d.data() ?? {}) as Record<string, unknown>));
-  if (householdClash(args.contacts, who) !== -1) {
-    throw new HttpsError('failed-precondition', EMERGENCY_CONTACT_OUTSIDE_MESSAGE);
-  }
-
-  const merged = mergeEmergencyContacts(readStoredEmergencyContacts(kinfolk).contacts, args.contacts, Timestamp.now());
+  const { ref, merged } = await prepareEmergencyContactsSave(db(), kinfolkId, args.contacts);
   await ref.update({ emergencyContacts: merged, updatedAt: FieldValue.serverTimestamp() });
 
   logEvent({

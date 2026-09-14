@@ -9,6 +9,9 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
+import { hasKinfolkPerm } from '../lib/memberGate';
+import { comparablePhone, normaliseName, readStoredEmergencyContacts } from '../lib/emergencyContacts';
+import { parseEmergencyContactsInput, prepareEmergencyContactsSave } from './emergencyContacts';
 
 const CustomFieldZ = z.object({
   key: z.string().min(1).max(80),
@@ -28,8 +31,14 @@ const Args = z.object({
  *
  * Safety: `families` is MyTribe-owned. AuntieOS reads this doc but does not
  * own writes. Updates are scoped to the caller's allowed kinfolkIds.
+ *
+ * `emergencyContactIgnored: true` in the reply means an old client sent an
+ * Emergency Contact edit the caller has no Home access to make (#829). New
+ * clients never send one and can ignore the field.
  */
-export async function saveTribeProfileHandler(req: CallableRequest<unknown>): Promise<{ ok: true }> {
+export async function saveTribeProfileHandler(
+  req: CallableRequest<unknown>,
+): Promise<{ ok: true; emergencyContactIgnored?: true }> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -58,44 +67,93 @@ export async function saveTribeProfileHandler(req: CallableRequest<unknown>): Pr
     actorRole = role === 'SECONDARY' ? 'SECONDARY' : 'PRIMARY';
   }
 
-  // #829: Emergency Contacts live on the kinfolk record, written only by
-  // saveEmergencyContacts (gated on `home_access` there). The
-  // `emergencyContact*` rows in these customFields are a store nothing reads, so
-  // this callable no longer judges them: it strips them from EVERY payload and
-  // never writes a value a client sent. An old portal bundle or portal Android
-  // still sends them; that save goes through with them removed.
+  // #829: Emergency Contacts live on the kinfolk record. The `emergencyContact*`
+  // rows in these customFields are a store nothing reads, so they are stripped
+  // from EVERY payload and a sent value never lands in customFields.
   //
-  // Why the #843 comparison is gone rather than taught to ignore absent keys:
-  // once sent keys are stripped, nothing this callable writes can change an
-  // Emergency Contact, so there is nothing left to gate. Keeping the comparison
-  // would keep a permission check over a dead store, and it is what locked every
-  // secondary without Home access out of profile saves once the new portal
-  // stopped sending the keys.
+  // Why the #843 comparison is gone rather than taught to ignore absent keys: it
+  // compared the dead store with the payload, read a missing key as "cleared",
+  // and locked every secondary without Home access out of profile saves once the
+  // new portal stopped sending the keys.
   //
   // A STORED copy is carried through unchanged instead of being dropped, because
   // `customFields` is replaced whole and a profile save must not destroy the
   // only copy before the migration (scripts/backfillKinfolkEmergencyContacts.ts)
-  // moves it onto the kinfolk record and deletes it.
+  // moves it onto the kinfolk record and deletes it. (Operator: agreed.)
+  //
+  // OLD CLIENTS. Portal Android on an old install and cached portal web bundles
+  // still edit the contact as these rows, and their edit must reach the real
+  // store or fail visibly, never vanish under "Saved." (operator ruling):
+  //   - an echo is a no-op: the values match the families copy the client
+  //     loaded, or match kinfolk slot 1. Matching the families copy matters,
+  //     because an old client re-sends what it loaded on every save, and that
+  //     stale copy must not overwrite a newer contact the office entered;
+  //   - with Home access the edit replaces slot 1, keeps slot 2, and goes
+  //     through saveEmergencyContacts' own parser and rules, so a refusal fails
+  //     this whole call with the message a new client would show;
+  //   - without Home access nothing is written to the contact and the reply
+  //     carries emergencyContactIgnored.
+  const isAdmin = req.auth?.token?.admin === true;
   let customFields = args.customFields;
+  let emergencyContactWrite: Awaited<ReturnType<typeof prepareEmergencyContactsSave>> | null = null;
+  let emergencyContactIgnored = false;
   if (customFields !== undefined) {
-    const sentStale = customFields.filter((f) => isEmergencyContactKey(f.key)).length;
+    const sentRows = customFields.filter((f) => isEmergencyContactKey(f.key));
     const stored = await firestore.collection('families').doc(kinfolkId).get();
     const carried = storedEmergencyContactRows((stored.data() ?? {})['customFields']);
     customFields = [...customFields.filter((f) => !isEmergencyContactKey(f.key)), ...carried];
-    if (sentStale > 0) {
-      logEvent({ severity: 'info', function: 'saveTribeProfile', event: 'portal.tribe.emergency_contact_keys.stripped', uid, extra: { kinfolkId, stripped: sentStale } });
+
+    const sent = contactFromRows(sentRows);
+    if (sent !== null) {
+      let outcome: 'echo' | 'applied' | 'ignored' = 'echo';
+      const kinSnap = await firestore.doc(`kinfolk/${kinfolkId}`).get();
+      const current = readStoredEmergencyContacts((kinSnap.data() ?? {}) as Record<string, unknown>).contacts;
+      const loaded = contactFromRows(carried);
+      const slot1 = current[0];
+      const isEcho = (loaded !== null && sameContact(sent, loaded)) || (slot1 !== undefined && sameContact(sent, slot1));
+      if (!isEcho) {
+        if (await hasKinfolkPerm(uid, kinfolkId, 'home_access', isAdmin, 'saveTribeProfile')) {
+          // Validated before anything is written; a refusal throws out of this call.
+          const contacts = parseEmergencyContactsInput([
+            sent,
+            ...current.slice(1).map((c) => ({ name: c.name, phone: c.phone, relationship: c.relationship })),
+          ]);
+          emergencyContactWrite = await prepareEmergencyContactsSave(firestore, kinfolkId, contacts);
+          outcome = 'applied';
+        } else {
+          emergencyContactIgnored = true;
+          outcome = 'ignored';
+        }
+      }
+      logEvent({
+        severity: outcome === 'ignored' ? 'warn' : 'info',
+        function: 'saveTribeProfile',
+        event: 'portal.tribe.emergency_contact_keys.stripped',
+        uid,
+        extra: { kinfolkId, stripped: sentRows.length, outcome },
+      });
     }
   }
 
   const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
   if (args.displayName !== undefined) update['displayName'] = args.displayName;
   if (customFields !== undefined) update['customFields'] = customFields;
-  if (Object.keys(update).length === 1) {
+  if (Object.keys(update).length === 1 && emergencyContactWrite === null) {
     return { ok: true }; // only timestamp would be written; skip
   }
 
-  await firestore.collection('families').doc(kinfolkId).set(update, { merge: true });
-  logEvent({ severity: 'info', function: 'saveTribeProfile', event: 'portal.tribe.saved', uid, extra: { kinfolkId, fields: Object.keys(update) } });
+  const familiesRef = firestore.collection('families').doc(kinfolkId);
+  if (emergencyContactWrite !== null) {
+    // One batch, so the contact and the rest of the profile land together or not at all.
+    const batch = firestore.batch();
+    batch.update(emergencyContactWrite.ref, { emergencyContacts: emergencyContactWrite.merged, updatedAt: FieldValue.serverTimestamp() });
+    batch.set(familiesRef, update, { merge: true });
+    await batch.commit();
+  } else {
+    await familiesRef.set(update, { merge: true });
+  }
+  const fields = [...Object.keys(update).filter((k) => k !== 'updatedAt'), ...(emergencyContactWrite !== null ? ['emergencyContacts'] : [])];
+  logEvent({ severity: 'info', function: 'saveTribeProfile', event: 'portal.tribe.saved', uid, extra: { kinfolkId, fields } });
   await writeAuditEntry({
     status: 'SUCCESS',
     event: AUDIT_EVENTS.PROFILE_UPDATED,
@@ -106,15 +164,15 @@ export async function saveTribeProfileHandler(req: CallableRequest<unknown>): Pr
     actorUid: uid,
     targetUid: kinfolkId,
     targetCollection: 'families',
-    description: `Tribe profile updated: ${Object.keys(update).filter((k) => k !== 'updatedAt').join(', ')}`,
-    payload: { kinfolkId, fields: Object.keys(update).filter((k) => k !== 'updatedAt') },
+    description: `Tribe profile updated: ${fields.join(', ')}`,
+    payload: { kinfolkId, fields },
   }).catch((err) => {
     logEvent({
       severity: 'warn', function: 'saveTribeProfile', event: 'audit.write.failed',
       uid, errorMessage: (err as Error)?.message,
     });
   });
-  return { ok: true };
+  return emergencyContactIgnored ? { ok: true, emergencyContactIgnored: true } : { ok: true };
 }
 
 const EMERGENCY_CONTACT_KEYS: ReadonlySet<string> = new Set(['emergencyContactName', 'emergencyContactPhone', 'emergencyContactRelation']);
@@ -134,6 +192,30 @@ function storedEmergencyContactRows(fields: unknown): Array<z.infer<typeof Custo
       isEmergencyContactKey((f as { key: string }).key) &&
       typeof (f as { label?: unknown }).label === 'string' &&
       typeof (f as { value?: unknown }).value === 'string',
+  );
+}
+
+interface OldClientContact {
+  name: string;
+  phone: string;
+  relationship: string | null;
+}
+
+/** The one contact an old client's emergencyContact* rows describe; null when there are no such rows. */
+function contactFromRows(rows: Array<{ key: string; value: string }>): OldClientContact | null {
+  const hits = rows.filter((r) => isEmergencyContactKey(r.key));
+  if (hits.length === 0) return null;
+  const valueOf = (key: string) => (hits.find((r) => r.key === key)?.value ?? '').trim();
+  const relationship = valueOf('emergencyContactRelation');
+  return { name: valueOf('emergencyContactName'), phone: valueOf('emergencyContactPhone'), relationship: relationship === '' ? null : relationship };
+}
+
+/** Same person, same number: name ignoring case and spacing, phone in any spelling, relationship trimmed. */
+function sameContact(a: OldClientContact, b: OldClientContact): boolean {
+  return (
+    normaliseName(a.name) === normaliseName(b.name) &&
+    comparablePhone(a.phone) === comparablePhone(b.phone) &&
+    (a.relationship ?? '').trim() === (b.relationship ?? '').trim()
   );
 }
 
