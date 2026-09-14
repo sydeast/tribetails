@@ -40,6 +40,7 @@ import com.tribetails.auntieos.web.data.FormSchema
 import com.tribetails.auntieos.web.data.FormSchemaSummary
 import com.tribetails.auntieos.web.data.appliesToSchemaIds
 import com.tribetails.auntieos.web.data.Kin
+import com.tribetails.auntieos.web.data.MediaFile
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
@@ -185,6 +186,9 @@ fun KinEditScreen(
     }
 
     var saving       by remember { mutableStateOf(false) }
+    /** #853: true while a photo upload + write is in flight, so the change-photo
+     * control shows a loading cue and cannot be clicked again mid-save. */
+    var photoSaving  by remember(kinId) { mutableStateOf(false) }
     var toast        by remember { mutableStateOf("") }
     var toastVisible by remember { mutableStateOf(false) }
     var toastKind    by remember { mutableStateOf(ToastKind.Info) }
@@ -221,6 +225,7 @@ fun KinEditScreen(
     val c = AuntieTheme.colors
 
     fun doSave() {
+        if (saving || photoSaving) return
         saving = true
         scope.launch {
             val draft  = build()
@@ -287,19 +292,26 @@ fun KinEditScreen(
             archived = existing?.status == "archived",
             onBack   = onBack,
             photoUrl = photoUrl,
+            photoSaving = photoSaving,
             // Photo upload only once the kin exists (needs a real entityId). Reuses the
             // proven media pipeline; on desktop it fails loud (upload is mobile-only today).
-            onChangePhoto = if (!isNew && kinId != null) {
+            onChangePhoto = if (!isNew && kinId != null && !photoSaving) {
                 {
-                    scope.launch {
-                        when (val r = client.uploadMedia(kinId, "KIN", ByteArray(0), "")) {
-                            is WriteResult.Ok -> {
-                                val url = r.value.storageUrl
-                                photoUrl = url
-                                client.updateKin(build().copy(profilePictureUrl = url))
-                                showToast("Photo updated.", ToastKind.Success)
-                            }
-                            is WriteResult.Err -> showToast("Photo upload failed: ${r.message}", ToastKind.Error)
+                    val base = existing
+                    if (base == null) {
+                        showToast("Photo update failed: kin not loaded yet.", ToastKind.Error)
+                    } else {
+                        photoSaving = true
+                        val previousUrl = photoUrl
+                        scope.launch {
+                            runKinPhotoUploadPipeline(
+                                previousUrl = previousUrl,
+                                upload      = { client.uploadMedia(kinId, "KIN", ByteArray(0), "") },
+                                write       = { url -> writeKinPhoto(client, base, url) },
+                                onPhotoUrl  = { photoUrl = it },
+                                onToast     = { (msg, kind) -> showToast(msg, kind) },
+                            )
+                            photoSaving = false
                         }
                     }
                 }
@@ -486,10 +498,17 @@ fun KinEditScreen(
         // ---- Sticky-style save bar (Den editor footer) ----
         AuntieSaveBar(
             dirty       = canSave,
-            saveEnabled = canSave && !saving,
+            // #853 review: held while a photo upload + write is in flight, so the
+            // whole-document Save cannot race it (build() carries the optimistic
+            // photoUrl, which the pipeline reverts if its write fails).
+            saveEnabled = canSave && !saving && !photoSaving,
             onCancel    = onBack,
             onSave      = { doSave() },
-            saveLabel   = if (isNew) "Create Kin" else "Save changes",
+            saveLabel   = when {
+                photoSaving -> "Uploading photo…"
+                isNew       -> "Create Kin"
+                else        -> "Save changes"
+            },
             modifier    = Modifier.clip(RoundedCornerShape(16.dp)),
         )
 
@@ -526,6 +545,7 @@ private fun KinHero(
     archived: Boolean,
     onBack: () -> Unit,
     photoUrl: String? = null,
+    photoSaving: Boolean = false,
     onChangePhoto: (() -> Unit)? = null,
 ) {
     val c = AuntieTheme.colors
@@ -548,14 +568,18 @@ private fun KinHero(
                     size         = 88.dp,
                     gradientSeed = name.ifBlank { "kin" },
                 )
-                if (onChangePhoto != null) {
+                if (onChangePhoto != null || photoSaving) {
                     Text(
-                        text = if (photoUrl.isNullOrBlank()) "Add photo" else "Change photo",
+                        text = when {
+                            photoSaving             -> "Uploading…"
+                            photoUrl.isNullOrBlank() -> "Add photo"
+                            else                     -> "Change photo"
+                        },
                         style = AuntieTheme.typography.labelSmall,
-                        color = c.primary,
+                        color = if (photoSaving) c.textDim else c.primary,
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
-                            .clickable(onClick = onChangePhoto)
+                            .let { m -> if (onChangePhoto != null) m.clickable(onClick = onChangePhoto) else m }
                             .padding(horizontal = 8.dp, vertical = 4.dp),
                     )
                 }
@@ -753,6 +777,63 @@ private fun BreedField(
                                 .padding(horizontal = 16.dp, vertical = 10.dp),
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * #853: the Kin (pet) sent on a photo change: [base] (always [existing], the
+ * loaded record, never the live form draft) with only `profilePictureUrl`
+ * replaced. Pure and separately testable from the write itself, so a test can
+ * pin "every other field equals the loaded record" without a live Firestore.
+ */
+internal fun kinWithPhoto(base: Kin, url: String): Kin = base.copy(profilePictureUrl = url)
+
+/**
+ * #853: the write behind a Kin (pet) photo change. `updateKin` is a
+ * whole-document write, but since [kinWithPhoto] carries every other field of
+ * [base] unchanged, only `profilePictureUrl` ends up different on the server -
+ * whatever the operator has typed elsewhere on the screen (which [base] never
+ * reflects) cannot ride along with the photo.
+ */
+internal suspend fun writeKinPhoto(client: FirestoreClient, base: Kin, url: String): WriteResult<Unit> =
+    client.updateKin(kinWithPhoto(base, url))
+
+/**
+ * #853: the photo-change pipeline behind KinEditScreen's "Change photo"
+ * control, extracted so a fake [upload]/[write] can drive every outcome
+ * without a live Cloudinary upload or Firestore write (mirrors
+ * `runAvatarUploadPipeline` in SettingsScreen.kt). The preview is set
+ * optimistically once the upload succeeds and reverted to [previousUrl] if
+ * the write then fails; "Photo updated." shows only once the write itself
+ * comes back Ok, never on upload success alone.
+ */
+internal suspend fun runKinPhotoUploadPipeline(
+    previousUrl: String,
+    upload: suspend () -> WriteResult<MediaFile>,
+    write: suspend (url: String) -> WriteResult<Unit>,
+    onPhotoUrl: (String) -> Unit,
+    onToast: (Pair<String, ToastKind>) -> Unit,
+) {
+    when (val up = upload()) {
+        is WriteResult.Err -> onToast("Photo upload failed: ${up.message}" to ToastKind.Error)
+        is WriteResult.Ok -> {
+            val url = up.value.storageUrl
+            if (url.isBlank()) {
+                onToast("No photo selected" to ToastKind.Error)
+                return
+            }
+            onPhotoUrl(url)
+            when (val w = write(url)) {
+                is WriteResult.Ok  -> onToast("Photo updated." to ToastKind.Success)
+                is WriteResult.Err -> {
+                    // The file is already in Cloudinary + media_files (it shows in
+                    // Gallery), so say so: a plain "update failed" invites a retry
+                    // that uploads a duplicate. Matches admin Android.
+                    onPhotoUrl(previousUrl)
+                    onToast("Photo uploaded but save failed: ${w.message}" to ToastKind.Error)
                 }
             }
         }
