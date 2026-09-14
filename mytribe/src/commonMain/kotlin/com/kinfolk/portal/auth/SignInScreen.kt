@@ -220,7 +220,9 @@ fun SignInScreen(
                                 error = null
                                 scope.launch {
                                     try {
-                                        repo.sendPasswordReset(email)
+                                        // #886 review: a mobile keyboard's trailing space made
+                                        // requestPasswordReset refuse the address (400).
+                                        repo.sendPasswordReset(email.trim())
                                         resetSuccess = true
                                     } catch (t: Throwable) {
                                         error = ErrorEnvelope.message("Couldn't send reset email.")

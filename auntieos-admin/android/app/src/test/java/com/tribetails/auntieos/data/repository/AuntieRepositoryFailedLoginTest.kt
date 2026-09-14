@@ -66,6 +66,21 @@ class AuntieRepositoryFailedLoginTest {
     }
 
     @Test
+    fun `a report the server refuses is a breadcrumb, while any other failure stays a warning`() {
+        val refused = mockk<com.google.firebase.functions.FirebaseFunctionsException>(relaxed = true)
+        assertEquals(FailedLoginReportLog.Breadcrumb, failedLoginReportLog(refused))
+        assertEquals(FailedLoginReportLog.Warning, failedLoginReportLog(java.io.IOException("connection reset")))
+        assertEquals(FailedLoginReportLog.Warning, failedLoginReportLog(IllegalStateException("unexpected")))
+
+        // And the refusal is still swallowed: the sign-in error is unchanged.
+        every { callable.call(any()) } returns Tasks.forException(refused)
+        signInFailsWith(FirebaseAuthInvalidCredentialsException("ERROR_WRONG_PASSWORD", "The password is invalid."))
+        val result = signIn()
+        assertEquals("The password is invalid.", result.exceptionOrNull()?.message)
+        verify(exactly = 1) { callable.call(mapOf("email" to email)) }
+    }
+
+    @Test
     fun `every production repository shares one report scope, so a rebuilt one leaves no orphaned job`() {
         val first = AuntieRepository(n8n = mockk<N8nApi>(), authGate = AuthGate { auth }, authProvider = { auth })
         val second = AuntieRepository(n8n = mockk<N8nApi>(), authGate = AuthGate { auth }, authProvider = { auth })

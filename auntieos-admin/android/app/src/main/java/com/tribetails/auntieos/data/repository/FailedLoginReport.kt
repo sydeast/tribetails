@@ -50,6 +50,20 @@ internal fun isAccountLockedFailure(t: Throwable): Boolean =
         .take(8)
         .any { it.message?.contains("account is locked", ignoreCase = true) == true }
 
+/**
+ * #886 review: how a failed `recordFailedLogin` report is logged.
+ *
+ * A [FirebaseFunctionsException] is the server answering (a 429 rate limit, a
+ * 500): expected, handled, and not an app defect, so it is a breadcrumb only.
+ * Anything else (a transport failure, an unexpected throw) keeps going through
+ * `AuntieLog.w`, which already breadcrumbs transport failures and captures the rest.
+ */
+internal enum class FailedLoginReportLog { Breadcrumb, Warning }
+
+internal fun failedLoginReportLog(t: Throwable): FailedLoginReportLog =
+    if (t is com.google.firebase.functions.FirebaseFunctionsException) FailedLoginReportLog.Breadcrumb
+    else FailedLoginReportLog.Warning
+
 /** True only for the failures a guessed password produces. */
 internal fun isCredentialSignInFailure(t: Throwable): Boolean {
     if (isAccountLockedFailure(t)) return false

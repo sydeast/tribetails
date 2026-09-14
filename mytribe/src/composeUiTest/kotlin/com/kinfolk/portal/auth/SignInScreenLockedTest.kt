@@ -49,6 +49,19 @@ class SignInScreenLockedTest {
         waitForIdle()
     }
 
+    /** #886 review: a trailing space from a mobile keyboard must not reach requestPasswordReset. */
+    @Test
+    fun forgotPassword_sendsTheTrimmedEmail() = runComposeUiTest {
+        val backend = RefusingBackend(RuntimeException("unused"))
+        setThemedContent { SignInScreen(repo = AuthRepository(backend), onSignedIn = {}) }
+        waitForIdle()
+        onAllNodes(hasSetTextAction())[0].performTextInput("  pat@household.test ")
+        onNodeWithText("Forgot password?").performClick()
+        waitForIdle()
+        assertEquals(listOf("pat@household.test"), backend.resets)
+        onNodeWithText("Reset link sent. Check your inbox.").assertExists()
+    }
+
     @Test
     fun aLockedAccount_showsTheLockedMessage_andTheResetLinkWorks() = runComposeUiTest {
         val backend = RefusingBackend(

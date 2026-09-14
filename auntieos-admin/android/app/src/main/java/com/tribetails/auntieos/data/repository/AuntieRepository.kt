@@ -157,7 +157,12 @@ class AuntieRepository(
         } catch (c: CancellationException) {
             throw c
         } catch (t: Throwable) {
-            AuntieLog.w("recordFailedLogin report failed", t)
+            when (failedLoginReportLog(t)) {
+                // The server refused the report (rate limit, 500). Not a defect: breadcrumb only.
+                FailedLoginReportLog.Breadcrumb ->
+                    AuntieLog.i("recordFailedLogin report refused: ${t.javaClass.simpleName}: ${t.message}")
+                FailedLoginReportLog.Warning -> AuntieLog.w("recordFailedLogin report failed", t)
+            }
         }
     }
 
