@@ -282,7 +282,7 @@ yourself, and says in its output that it did.
 | 2 | Firestore indexes | Before the code that queries them. A query with no index fails at RUNTIME, not at build. |
 | 3 | Wait for indexes | The CLI returns when Firestore ACCEPTS an index, not when it is Enabled. The run blocks; the CLI will not. |
 | 4 | Firestore rules | From `mytribe` only. Refused outright if the admin mirror has drifted. |
-| 5 | Functions | Before the clients that call them. **Skipped when `mytribe/functions` is unchanged since the last release AND no declared secret is newer than it**. Otherwise deployed **by name, in batches of 25, with retries**, because the whole fleet does not fit the regional CPU quota. See below. |
+| 5 | Functions | Before the clients that call them. **Skipped when `mytribe/functions` is unchanged since the last release AND no declared secret is newer than it**. Otherwise deployed **by name, in batches of 25, with retries**, because the whole fleet does not fit the regional CPU quota. See below. A rerun of the **same commit** skips it once its fleet verify passed; see "A stopped release resumes on the same commit". |
 | 6 | Hosting | Admin, then portal. |
 | 6b | Android | Uploads both APKs from step 1c to App Distribution, each to its own Firebase app, in the same run as the web. |
 | 7 | Verify | Fetches both live sites and compares the hashed bundle they reference against the one just built. |
@@ -585,8 +585,9 @@ past it exactly as the quota did, and the suite proves the release retries the
 right names, survives, and refuses honestly when the quota never lifts. It runs
 the real script against a throwaway repo with `gh`, `gcloud`, `firebase`, `curl`
 and `npm` stubbed, plus a fake `gradlew` per Android app so the two-app build
-and distribution path runs wet without an SDK. 54 cases. Run it after touching
-`scripts/release.sh`.
+and distribution path runs wet without an SDK. It also covers the admin deploy
+retry and its error classifier, and the per-commit resume (#840). 117 cases.
+Run it after touching `scripts/release.sh`.
 
 Knobs, all off by default:
 
@@ -595,7 +596,8 @@ Knobs, all off by default:
 | `DRY_RUN=1` | Rehearse: print every firebase command, run none, write nothing, claim nothing |
 | `RELEASE_SKIP_CHECK=1` | Skip step 1. Then `dist/` is whatever was last built, which may not match HEAD |
 | `RELEASE_SKIP_CI_GATE=1` | Release without CI's verdict for HEAD. For when the gate is unavailable, not for when it says no |
-| `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` | Also ship the AuntieOS `default` and `reconcile` codebases. `reconcile` needs the Python venv above |
+| `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` | Also ship the AuntieOS `default` and `reconcile` codebases. `reconcile` needs the Python venv above. Each deploy is retried on a transient error; see "A stopped release resumes on the same commit" |
+| `RELEASE_NO_RESUME=1` | Run every step, including the ones `.release-progress` records as already done for this commit |
 | `RELEASE_FUNCTIONS_FORCE=1` | Pass `--force` to the functions deploy. Needed when a change RAISES the minimum bill; see below. Also lets firebase DELETE functions missing from source, so read the diff |
 | `RELEASE_PRUNE_BRANCHES=0` | Skip deleting merged remote branches after the tag |
 | `BRANCH_PRUNE_MIN_AGE_DAYS=N` | How long a merged branch stays quiet before the prune takes it (default 1) |
@@ -621,6 +623,74 @@ Knobs, all off by default:
 | `RELEASE_FUNCTIONS_ROUNDS=N` | Retry rounds for functions that did not land (default 3) |
 | `RELEASE_FUNCTIONS_SETTLE=S` | Seconds between batches (default 30) |
 | `RELEASE_RETRY_KEEP=N` | Prune depth between retry rounds (default 2, `0` disables) |
+
+### A stopped release resumes on the same commit
+
+On 2026-09-13 a release shipped indexes, rules and all 279 `mytribe` functions,
+verified the fleet, then stopped on one dropped Secret Manager request while
+deploying the admin codebases (#840):
+
+```
+Error: Failed to validate secret versions:
+- FirebaseError Failed to make request to https://secretmanager.googleapis.com/v1/projects/auntieos-ttpc/secrets/CLOUDINARY_API_KEY/versions/latest
+```
+
+The secret had an enabled version. The blip stopped the release because the
+admin deploys had no retry, and a rerun would have redeployed all 279 functions
+(about 30 minutes, another round of Cloud Run revisions) because nothing
+recorded that they had shipped.
+
+**The admin codebase deploys retry transient errors.** `functions:default` and
+`functions:reconcile` get up to `RELEASE_FUNCTIONS_ROUNDS` attempts (3),
+`RELEASE_FUNCTIONS_SETTLE` seconds apart (30), the same numbers step 5 uses for
+its batches. Whether to retry is read from the error text:
+
+| Error text contains | Verdict | Retried |
+|---|---|---|
+| `not found`, `NOT_FOUND`, `has no versions`, `PERMISSION_DENIED`, `increase the minimum bill` | permanent | no |
+| `Failed to make request`, `HTTP Error: 429` or `5xx`, `ECONNRESET`, `ETIMEDOUT`, `ECONNREFUSED`, `EAI_AGAIN`, `ENOTFOUND`, `socket hang up`, `DEADLINE_EXCEEDED`, `Service Unavailable`, `Bad Gateway`, `Gateway Timeout` | transient | yes |
+| anything else | unknown | no |
+
+A permanent marker wins even when a transient one is also in the log. A secret
+that is genuinely missing fails under the same `Failed to validate secret
+versions` header as the blip, and three attempts would only delay the same
+refusal. An unknown error stops the run, as every failure did before.
+
+**Finished steps are recorded per commit.** As steps complete, the release
+appends `<sha> <step>` lines to `.release-progress` (gitignored, per machine). A
+rerun skips a recorded step only when the line names the exact commit at HEAD,
+the tree is clean, and `RELEASE_NO_RESUME=1` is not set. Skippable:
+
+- indexes (steps 2 and 3, including the "are all indexes Enabled?" prompt)
+- rules (step 4)
+- the `mytribe` functions (step 5), recorded **only when the fleet verify
+  passed**. "Could not verify", `RELEASE_SKIP_FLEET_VERIFY=1` and a dry run leave
+  it unrecorded, so the rerun deploys them again
+- each admin codebase, separately
+
+Hosting and Android are recorded but never skipped: they are cheap to redo, and
+step 7 has to compare the live sites against the bundle the rerun built. Every
+skip prints a `RESUMED:` line naming the commit. The file is deleted once the
+release finishes and `.release-state` is written. A dry run neither writes nor
+deletes it. `RELEASE_FORCE_FUNCTIONS=1` also overrides the step 5 skip.
+
+A different commit never skips anything: its sha is not in the file, and the
+first step it records clears the old lines.
+
+**The stop message names what is live.** A stopped run lists every step recorded
+for the commit:
+
+```
+RELEASE STOPPED during: deploying the admin functions codebases (functions:default)
+Completed and LIVE for e245053:
+    - firestore indexes (steps 2-3)
+    - firestore rules (step 4)
+    - functions:mytribe, fleet verified (step 5)
+```
+
+Fix the cause and run `npm run deploy` again on the same commit. If `main` has
+moved on in the meantime, the new commit gets a full run, because nothing
+recorded was verified for that code.
 
 ### The release checks that the deploy actually delivered
 
@@ -662,7 +732,8 @@ it off; a dry run skips it, having deployed nothing to check.
 
 **What it does not cover.** The AuntieOS codebases behind
 `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` (`default`, `reconcile`) are deployed in
-step 5b and are not verified. Extending to them is worth doing and is not done.
+step 5b and are not verified. They are retried on transient errors (#840), which
+is not the same thing. Extending the verify to them is worth doing and is not done.
 
 **Why there is no scheduled version.** A cron check would catch a hand-run
 deploy, which is what 2026-08-11 was and what this gate cannot see. It needs a
@@ -2031,6 +2102,12 @@ the release for a dirty tree.
 Write `.release-state` by hand only when the functions really are all live.
 The next release reads it to decide whether to deploy functions at all, so a
 premature write makes that release skip work it needed to do.
+
+**The release stopped AFTER step 5 verified** (on an admin codebase, hosting,
+Android or step 7). Do not write `.release-state` by hand. Run `npm run deploy`
+again on the same commit: `.release-progress` skips the steps that already
+shipped, and the stop message listed them. See "A stopped release resumes on the
+same commit".
 
 **A client mirror test goes red after a backend change.** The contract freeze
 doing its job. Update the doc, the frozen set and every mirror together.
