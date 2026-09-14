@@ -52,31 +52,59 @@ class EmergencyContactsClientTest {
         assertTrue(FirestoreClient().saveEmergencyContacts("kf1", listOf(EmergencyContactDraft("Rae", "805"))) is WriteResult.Err)
     }
 
+    private val onFile = Kinfolk(
+        _id = "kf1",
+        firstName = "Dana",
+        lastName = "Mercer",
+        status = "prospect",
+        outstandingBalance = "42.50",
+        tags = listOf("VIP"),
+        gateCode = "1234",
+        emergencyContacts = buildJsonArray { add(buildJsonObject { put("name", "Rae") }) },
+        emergencyContactName = "Rae",
+    )
+
     /**
-     * #829: the desktop update used to be setDoc, a PATCH with no updateMask that
-     * replaced the whole document and deleted every field the model does not
-     * send. It is now a MERGE whose mask never names an Emergency Contact key, so
-     * the array the callable wrote survives a desktop edit. No token in a test, so
-     * the write fails after recording what it was asked to do.
+     * #829 review: the desktop update used to send the whole model, so it
+     * overwrote concurrent changes to fields the form never touched. An edit that
+     * changes one field is now a MERGE naming only that field; unchanged
+     * outstandingBalance, status and tags are never in the mask. No token in a
+     * test, so the write fails after recording what it was asked to do.
      */
     @Test
-    fun aKinfolkUpdateIsAMergeWriteThatNeverNamesAnEmergencyContactKey() = runBlocking {
-        platformUpdateKinfolk(
-            Kinfolk(
-                _id = "kf1",
-                firstName = "Dana",
-                emergencyContacts = buildJsonArray { add(buildJsonObject { put("name", "Rae") }) },
-                emergencyContactName = "Rae",
-            ),
-        )
+    fun anEditChangingOneFieldNamesOnlyThatField() = runBlocking {
+        val r = FirestoreClient().updateKinfolk(onFile, onFile.copy(gateCode = "9999"))
+        assertTrue(r is WriteResult.Err)
         val w = JvmFirestoreFixtures.lastWrite
         assertEquals("MERGE", w?.op)
         assertEquals("kinfolk", w?.collection)
         assertEquals("kf1", w?.id)
-        val fields = w?.fields.orEmpty()
-        assertTrue("firstName" in fields && "serviceAddress" in fields && "tags" in fields, "the mask still names the fields the form edits")
-        assertTrue("_id" !in fields)
-        for (key in KINFOLK_WRITE_EXCLUDED_KEYS) assertTrue(key !in fields, "$key must not be in the update mask")
+        assertEquals(setOf("gateCode"), w?.fields)
+    }
+
+    @Test
+    fun aTagSaveNamesOnlyTags() = runBlocking {
+        FirestoreClient().updateKinfolkTags(onFile, listOf("VIP", "Cats"))
+        assertEquals(setOf("tags"), JvmFirestoreFixtures.lastWrite?.fields)
+    }
+
+    @Test
+    fun anUnchangedSaveWritesNothing() = runBlocking {
+        val r = FirestoreClient().updateKinfolk(onFile, onFile.copy())
+        assertTrue(r is WriteResult.Ok)
+        assertEquals(null, JvmFirestoreFixtures.lastWrite)
+    }
+
+    @Test
+    fun theDiffNeverCarriesAnEmergencyContactKeyOrTheId() {
+        val edited = onFile.copy(
+            firstName = "Dani",
+            emergencyContacts = null,
+            emergencyContactName = "",
+            emergencyContactPhone = "805",
+        )
+        assertEquals(setOf("firstName"), kinfolkChangedFields(onFile, edited).keys)
+        assertEquals(emptySet(), kinfolkChangedFields(onFile, onFile.copy(_id = "other")).keys)
     }
 
     @Test

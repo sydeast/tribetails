@@ -383,7 +383,7 @@ internal object JvmFirestoreRest {
      * MERGE-write a document at collection/id from a serialized model. PATCHes with
      * an `updateMask.fieldPaths` covering exactly the body keys (every field of the
      * model except `_id`), so fields NOT present in the model are left untouched
-     * rather than deleted. This is the merge:true equivalent of the wasm path.
+     * rather than deleted.
      * Returns the id. Field paths are backtick-quoted to be safe for any key.
      */
     suspend fun mergeDoc(collection: String, id: String, modelJson: String): String {

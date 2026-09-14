@@ -39,6 +39,7 @@ import com.tribetails.auntieos.web.data.EmergencyContactDraft
 import com.tribetails.auntieos.web.data.NO_EMERGENCY_CONTACT
 import com.tribetails.auntieos.web.data.draftsEqual
 import com.tribetails.auntieos.web.data.emergencyContactsOf
+import com.tribetails.auntieos.web.data.kinfolkChangedFields
 import com.tribetails.auntieos.web.data.isBlankDrafts
 import com.tribetails.auntieos.web.data.toDrafts
 import com.tribetails.auntieos.web.data.validateEmergencyContactDrafts
@@ -128,6 +129,10 @@ fun KinfolkEditScreen(
     }
 
     var initialized by remember(kinfolkId) { mutableStateOf(false) }
+    // #829 review: the record as this screen read it, frozen at prefill (the
+    // stream keeps polling). Saves build from it and send only the fields that
+    // differ from it; it advances to what was written after each successful save.
+    var loaded by remember(kinfolkId) { mutableStateOf<Kinfolk?>(null) }
 
     var firstName      by remember(kinfolkId) { mutableStateOf("") }
     var lastName       by remember(kinfolkId) { mutableStateOf("") }
@@ -212,6 +217,7 @@ fun KinfolkEditScreen(
             photoUrl       = existing.profilePictureUrl
             formValues.clear()
             formValues.putAll(existing.formValues)
+            loaded = existing
             initialized = true
         }
     }
@@ -225,7 +231,7 @@ fun KinfolkEditScreen(
         toast = msg; toastKind = kind; toastVisible = true
     }
 
-    fun build(): Kinfolk = (existing ?: Kinfolk(_id = kinfolkId.orEmpty())).copy(
+    fun build(): Kinfolk = (loaded ?: existing ?: Kinfolk(_id = kinfolkId.orEmpty())).copy(
         firstName                = firstName.trim(),
         lastName                 = lastName.trim(),
         phoneNumber              = phoneNumber.trim(),
@@ -248,7 +254,9 @@ fun KinfolkEditScreen(
         vetClinicPhone           = vetPhone.trim(),
         vetClinicAddress         = vetAddress.trim(),
         profilePictureUrl        = photoUrl,
-        status                   = status,
+        // The status picker exists only on Add. On edit the loaded status stands,
+        // so a stored blank status is not rewritten as "active" by a save.
+        status                   = if (isNew) status else (loaded ?: existing)?.status ?: status,
         formValues               = formValues.toMap(),
     )
 
@@ -285,7 +293,7 @@ fun KinfolkEditScreen(
         firstName, lastName, phoneNumber, secondaryPhone, email, secondaryEmail,
         status, serviceAddr, gateCode, parking, entryNotes,
         wifiName, wifiPass, ecDrafts, ecBaseline, internalNotes, referral,
-        vetName, vetPhone, vetAddress, existing, createdKinfolkId,
+        vetName, vetPhone, vetAddress, loaded, createdKinfolkId,
     ) {
         if (isNew) {
             createdKinfolkId != null || !ecDrafts.isBlankDrafts() || listOf(
@@ -294,7 +302,7 @@ fun KinfolkEditScreen(
                 internalNotes, referral, vetName, vetPhone, vetAddress,
             ).any { it.isNotBlank() }
         } else {
-            existing != null && (build() != existing || !draftsEqual(ecDrafts, ecBaseline))
+            loaded?.let { base -> kinfolkChangedFields(base, build()).isNotEmpty() || !draftsEqual(ecDrafts, ecBaseline) } ?: false
         }
     }
 
@@ -350,8 +358,9 @@ fun KinfolkEditScreen(
                         )
                     }
                     if (isNew) client.createKinfolk(draft) else {
-                        when (val r = client.updateKinfolk(draft)) {
-                            is WriteResult.Ok  -> WriteResult.Ok(draft._id)
+                        // #829 review: only the fields the form changed.
+                        when (val r = client.updateKinfolk(loaded ?: existing ?: draft, draft)) {
+                            is WriteResult.Ok  -> { loaded = draft; WriteResult.Ok(draft._id) }
                             is WriteResult.Err -> r
                         }
                     }
@@ -446,7 +455,12 @@ fun KinfolkEditScreen(
                                     is WriteResult.Ok -> {
                                         val url = r.value.storageUrl
                                         photoUrl = url
-                                        client.updateKinfolk(build().copy(profilePictureUrl = url))
+                                        // Diffed like every update, so untouched fields are not
+                                        // rewritten. It still sends any unsaved form edits
+                                        // along with the photo: that is issue #853.
+                                        val base = loaded ?: existing
+                                        val sent = build().copy(profilePictureUrl = url)
+                                        if (base != null && client.updateKinfolk(base, sent) is WriteResult.Ok) loaded = sent
                                         showToast("Photo updated.", ToastKind.Success)
                                     }
                                     is WriteResult.Err -> showToast("Photo upload failed: ${r.message}", ToastKind.Error)
@@ -600,7 +614,7 @@ fun KinfolkEditScreen(
             MultilineField(entryNotes, { unlessLocked { entryNotes = it } }, label = "Entry notes", placeholder = "Anything Auntie should know walking up to the door", minLines = 3)
         }
 
-        // 04/05 · Emergency contact MOVED up into Identity (item 3, now required).
+        // Emergency Contacts live in "02 · Other Contacts" (#829).
 
         // ── 04 · Vet Clinic (optional, attaches to the HOUSEHOLD) ─────────────
         SubsectionPanel(index = "04", title = "Vet Clinic", enabled = householdFieldsEnabled) {

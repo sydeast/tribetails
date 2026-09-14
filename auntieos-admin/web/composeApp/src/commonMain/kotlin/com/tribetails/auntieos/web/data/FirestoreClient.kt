@@ -629,7 +629,15 @@ class FirestoreClient {
 
     // ---- Profile writes (kinfolk + kin CRUD) ----
     suspend fun createKinfolk(k: Kinfolk):   WriteResult<String> = platformCreateKinfolk(k)
-    suspend fun updateKinfolk(k: Kinfolk):   WriteResult<Unit>   = platformUpdateKinfolk(k)
+    /**
+     * #829 review: sends ONLY the fields [edited] changed relative to [loaded]
+     * (the record the caller read), as a merge write. Nothing changed means no
+     * write at all.
+     */
+    suspend fun updateKinfolk(loaded: Kinfolk, edited: Kinfolk): WriteResult<Unit> {
+        if (edited._id.isBlank()) return WriteResult.Err("updateKinfolk requires a kinfolk id")
+        return platformUpdateKinfolkFields(edited._id, kinfolkChangedFields(loaded, edited).toString())
+    }
     suspend fun archiveKinfolk(id: String):  WriteResult<Unit>   = platformArchiveKinfolk(id)
     suspend fun createKin(k: Kin):           WriteResult<String> =
         platformCreateKin(k.copy(kinfolkId = enforceWriteKinfolkId(testMode, k.kinfolkId)))
@@ -641,11 +649,10 @@ class FirestoreClient {
     // (api/directoryWrite.ts:237-255). Semantics kept identical: a whole-list
     // replace of tag NAMES, so clearing the last tag genuinely empties the field.
     //
-    // TRANSPORT DIFFERENCE, deliberate: React patches only `{ tags, updatedAt }`.
-    // This tree has no per-field patch seam for `kin` / `kinfolk`, so the write goes
-    // through the existing whole-document [updateKin] / [updateKinfolk]. That is safe
-    // only because `tags` now lives on both models; pass the record you LOADED, and
-    // every other field round-trips instead of being wiped. Fail-loud: a rejected
+    // TRANSPORT: React patches only `{ tags, updatedAt }`. Kinfolk now matches
+    // (#829 review): [updateKinfolk] diffs against the record you LOADED and merges
+    // only `tags`. Kin still goes through the whole-document [updateKin], so pass
+    // the loaded kin and every other field round-trips. Fail-loud: a rejected
     // write propagates to the caller as WriteResult.Err.
 
     /** Replaces a pet's tag NAME list. [kin] must be the loaded record, not a fresh one. */
@@ -657,7 +664,7 @@ class FirestoreClient {
     /** Replaces a household's tag NAME list. [kinfolk] must be the loaded record. */
     suspend fun updateKinfolkTags(kinfolk: Kinfolk, tags: List<String>): WriteResult<Unit> {
         require(kinfolk._id.isNotBlank()) { "updateKinfolkTags requires a kinfolk id" }
-        return updateKinfolk(kinfolk.copy(tags = tags))
+        return updateKinfolk(kinfolk, kinfolk.copy(tags = tags))
     }
 
     /**
@@ -2040,7 +2047,8 @@ internal expect fun platformDossierStream(kinfolkId: String): Flow<FirestoreResu
 internal expect fun platformKin411Stream(kinId: String):      Flow<FirestoreResult<Kin411?>>
 
 internal expect suspend fun platformCreateKinfolk(k: Kinfolk):  WriteResult<String>
-internal expect suspend fun platformUpdateKinfolk(k: Kinfolk):  WriteResult<Unit>
+/** #829 review: merge-writes exactly the top-level fields in [fieldsJson]; an empty object writes nothing. */
+internal expect suspend fun platformUpdateKinfolkFields(kinfolkId: String, fieldsJson: String): WriteResult<Unit>
 internal expect suspend fun platformArchiveKinfolk(id: String): WriteResult<Unit>
 internal expect suspend fun platformCreateKin(k: Kin):          WriteResult<String>
 internal expect suspend fun platformUpdateKin(k: Kin):          WriteResult<Unit>

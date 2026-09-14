@@ -326,11 +326,18 @@ internal actual suspend fun platformUpdateMediaTags(mediaId: String, taggedKinId
 internal actual suspend fun platformCreateKinfolk(k: Kinfolk): WriteResult<String> =
     runCatching { WriteResult.Ok(JvmFirestoreRest.addDoc("kinfolk", kinfolkWriteJson(k))) }.getOrElse { WriteResult.Err(it.message ?: "create failed") }
 // #829: a MERGE write, not setDoc. setDoc replaced the whole document, which
-// deleted every field the model does not send; the Emergency Contact keys are
-// deliberately not sent, so only a masked write leaves them alone. Every desktop
+// deleted every field the model does not send. The body is only the fields the
+// caller changed (FirestoreClient.updateKinfolk diffs against its read), so the
+// mask never names an untouched field or an Emergency Contact key. Every desktop
 // kinfolk update (edit form, photo, tags) goes through here.
-internal actual suspend fun platformUpdateKinfolk(k: Kinfolk): WriteResult<Unit> =
-    runCatching { JvmFirestoreRest.mergeDoc("kinfolk", k._id, kinfolkWriteJson(k)); WriteResult.Ok(Unit) }.getOrElse { WriteResult.Err(it.message ?: "update failed") }
+internal actual suspend fun platformUpdateKinfolkFields(kinfolkId: String, fieldsJson: String): WriteResult<Unit> =
+    runCatching {
+        require(kinfolkId.isNotBlank()) { "updateKinfolk requires a kinfolk id" }
+        val fields = jsonOut.parseToJsonElement(fieldsJson).jsonObject
+        require(fields.keys.none { it == "_id" || it in KINFOLK_WRITE_EXCLUDED_KEYS }) { "updateKinfolk: a reserved key reached the write" }
+        if (fields.isNotEmpty()) JvmFirestoreRest.mergeDoc("kinfolk", kinfolkId, fieldsJson)
+        WriteResult.Ok(Unit)
+    }.getOrElse { WriteResult.Err(it.message ?: "update failed") }
 internal actual suspend fun platformArchiveKinfolk(id: String): WriteResult<Unit> =
     if (JvmFirestoreRest.patchFields("kinfolk", id, mapOf("status" to JsonPrimitive("archived")))) WriteResult.Ok(Unit) else WriteResult.Err("archive failed")
 internal actual suspend fun platformCreateKin(k: Kin): WriteResult<String> =

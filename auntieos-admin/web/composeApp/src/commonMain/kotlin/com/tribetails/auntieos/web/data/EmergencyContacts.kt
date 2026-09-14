@@ -114,11 +114,30 @@ val KINFOLK_WRITE_EXCLUDED_KEYS: Set<String> = setOf(
 private val writeJson = Json { encodeDefaults = true; ignoreUnknownKeys = true; isLenient = true }
 
 /**
- * The kinfolk body a desktop write may send: the model minus
- * [KINFOLK_WRITE_EXCLUDED_KEYS]. Both the create body and the update's merge mask
- * are built from it, so neither can touch an Emergency Contact.
+ * The body a desktop kinfolk CREATE sends: the model minus
+ * [KINFOLK_WRITE_EXCLUDED_KEYS], so a new household never writes an Emergency
+ * Contact key. Updates send [kinfolkChangedFields] instead.
  */
 fun kinfolkWriteJson(k: Kinfolk): String {
     val obj = writeJson.encodeToJsonElement(Kinfolk.serializer(), k).jsonObject
     return JsonObject(obj.filterKeys { it !in KINFOLK_WRITE_EXCLUDED_KEYS }).toString()
+}
+
+/**
+ * #829 review: the fields a desktop kinfolk UPDATE may send, which is only the
+ * top-level fields whose value in [edited] differs from [loaded] (what the
+ * caller read). A save therefore never rewrites a field it did not change, so a
+ * concurrent change to `tags`, `outstandingBalance`, `status` or a portal-edited
+ * field survives it. Never includes `_id` or an Emergency Contact key. An empty
+ * object means there is nothing to write. Android does the same through
+ * `DirectoryFieldChanges` (DirectoryViewModel.kt:1187).
+ */
+fun kinfolkChangedFields(loaded: Kinfolk, edited: Kinfolk): JsonObject {
+    val before = writeJson.encodeToJsonElement(Kinfolk.serializer(), loaded).jsonObject
+    val after = writeJson.encodeToJsonElement(Kinfolk.serializer(), edited).jsonObject
+    return JsonObject(
+        after.filter { (key, value) ->
+            key != "_id" && key !in KINFOLK_WRITE_EXCLUDED_KEYS && before[key] != value
+        },
+    )
 }
