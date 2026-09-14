@@ -668,6 +668,93 @@ test('CLI: a LIST timeout refuses (exit 4), marks Secret Manager rows unreadable
   assert.ok(!/has no value/.test(out), `the missing-value refusal must not appear for an unreadable store:\n${out}`);
 });
 
+test('CLI: a genuinely MISSING secret and an UNREADABLE one print separate REFUSED blocks, get different advice, and exit 4', () => {
+  // LIST answers and leaves ADMIN_WEB_MAPBOX_PUBLIC_TOKEN off the list (the
+  // store answered: that one plainly does not exist). PORTAL_WEB_MAPBOX_
+  // PUBLIC_TOKEN IS on the list, but its ACCESS call sleeps and times out.
+  // One secret missing and one unreadable in the SAME run must not collapse
+  // into one message or one kind of advice (#852 review, item 2).
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'client-secrets-cli-mixed-'));
+  const fakeGcloud = path.join(dir, 'gcloud');
+  fs.writeFileSync(
+    fakeGcloud,
+    [
+      '#!/bin/sh',
+      'case "$1 $2 $3" in',
+      '  "secrets list --project")',
+      '    printf \'%s\\n\' ADMIN_WEB_APPCHECK_SITE_KEY PORTAL_WEB_MAPBOX_PUBLIC_TOKEN ADMIN_WEB_SENTRY_DSN PORTAL_WEB_SENTRY_DSN',
+      '    exit 0',
+      '    ;;',
+      '  "secrets versions access")',
+      '    name=""',
+      '    for a in "$@"; do case "$a" in --secret=*) name="${a#--secret=}" ;; esac; done',
+      '    case "$name" in',
+      '      PORTAL_WEB_MAPBOX_PUBLIC_TOKEN) sleep 5 ;;',
+      '      ADMIN_WEB_APPCHECK_SITE_KEY) printf \'fake-site-key\\n\'; exit 0 ;;',
+      '      ADMIN_WEB_SENTRY_DSN) printf \'https://example@o0.ingest.us.sentry.io/0\\n\'; exit 0 ;;',
+      '      PORTAL_WEB_SENTRY_DSN) printf \'https://example@o0.ingest.us.sentry.io/1\\n\'; exit 0 ;;',
+      '      *) exit 1 ;;',
+      '    esac',
+      '    ;;',
+      'esac',
+      'exit 1',
+      '',
+    ].join('\n'),
+  );
+  fs.chmodSync(fakeGcloud, 0o755);
+
+  let r;
+  try {
+    r = spawnSync(
+      process.execPath,
+      [path.join(ROOT, 'scripts', 'client-secrets.mjs'), '--check', '--project', 'auntieos-ttpc', '--release', 'abc1234'],
+      {
+        encoding: 'utf8',
+        timeout: 15_000,
+        env: {
+          ...process.env,
+          PATH: `${dir}:${process.env.PATH}`,
+          // A larger budget than the LIST-only test above: this run also
+          // makes three FAST, real ACCESS spawns before the one that sleeps,
+          // and a freshly spawned child process's first few spawns can be
+          // slower than a warm process's, so 200ms cut it too close and this
+          // test flaked on the fast calls, not the slow one.
+          CLIENT_SECRETS_GCLOUD_TIMEOUT_MS: '1500',
+        },
+      },
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  const out = `${r.stdout || ''}\n${r.stderr || ''}`;
+  assert.equal(r.status, 4, `expected exit 4 (at least one refusal is unreadable), got ${r.status}:\n${out}`);
+
+  // Both REFUSED blocks have to print. One says "has no value" (the store
+  // answered and does not have it); the other says the store never answered.
+  assert.match(out, /REFUSED: the web apps declare client build config that has no value/);
+  assert.match(out, /REFUSED: Secret Manager did not answer for these REQUIRED secrets in time/);
+  assert.match(out, /VITE_MAPBOX_PUBLIC_TOKEN \(admin\).*ADMIN_WEB_MAPBOX_PUBLIC_TOKEN is missing/);
+  assert.match(out, /VITE_MAPBOX_PUBLIC_TOKEN \(portal\).*PORTAL_WEB_MAPBOX_PUBLIC_TOKEN could not be read/);
+
+  // The MISSING one gets create/set advice, by name.
+  assert.match(out, /gcloud secrets create ADMIN_WEB_MAPBOX_PUBLIC_TOKEN/);
+  assert.match(out, /secrets versions add ADMIN_WEB_MAPBOX_PUBLIC_TOKEN/);
+
+  // The UNREADABLE one gets ONLY the curl checks, never create/set advice for
+  // its own name: it may already exist and hold a good value.
+  assert.ok(
+    !out.includes('gcloud secrets create PORTAL_WEB_MAPBOX_PUBLIC_TOKEN'),
+    `advised creating a secret Secret Manager never answered about:\n${out}`,
+  );
+  assert.ok(
+    !out.includes('secrets versions add PORTAL_WEB_MAPBOX_PUBLIC_TOKEN'),
+    `advised setting a secret Secret Manager never answered about:\n${out}`,
+  );
+  assert.match(out, /curl -4/);
+  assert.match(out, /curl -6/);
+});
+
 // ---------------------------------------------------------------------------
 // The declaration has to stay honest about what the apps actually read.
 // ---------------------------------------------------------------------------

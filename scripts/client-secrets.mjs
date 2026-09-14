@@ -402,9 +402,10 @@ export function resolveClientVars({
         // Secret Manager never answered for this one. This is not the same as
         // "the store answered and has no such secret": reporting it as missing
         // would tell the operator to create a secret that may already exist
-        // and hold a good value. It gets its own status, and the release still
-        // refuses on it below regardless of whether the variable is required,
-        // because a value nobody could verify is not a value that shipped.
+        // and hold a good value. It gets its own status, and follows the SAME
+        // required/optional split as 'missing' and 'empty' below: a REQUIRED
+        // value nobody could verify refuses (its own exit code, 4), an
+        // OPTIONAL one warns, same as an optional value confirmed absent.
         row.source = 'secret-manager';
         row.status = 'unreadable';
         rows.push(row);
