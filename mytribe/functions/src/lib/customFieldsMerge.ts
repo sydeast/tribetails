@@ -17,6 +17,7 @@
  *   - A sent key with no stored row is appended, in sent order. A key sent twice:
  *     the last copy wins.
  *   - A sent `value: ''` is a real clear. The row stays, with an empty value.
+ *     A sent '' for a key with no stored row writes nothing.
  *   - A stored row is removed only when its key is in `removeKeys`.
  *   - A stored entry with no string `key` is carried through verbatim: nothing
  *     here deletes what it cannot read.
@@ -64,6 +65,9 @@ export function mergeCustomFields(
   }
   for (const row of latest.values()) {
     if (placed.has(row.key) || remove.has(row.key)) continue;
+    // An old client sends '' for a schema field it never had a value for. Over
+    // nothing stored that is not a clear, so no empty row is written.
+    if (row.value === '') continue;
     out.push(row);
     placed.add(row.key);
   }

@@ -1249,7 +1249,7 @@ every client in both directions: these callables are the only door.
   - a sent row replaces the stored row with the same key, in the stored row's position; later stored copies of that key fold into it;
   - a sent key with no stored row is appended, in sent order; a key sent twice, the last copy wins;
   - a stored row the client did not send is kept as stored, value and position;
-  - a sent `value: ''` is a real clear: the row stays with an empty value;
+  - a sent `value: ''` is a real clear: the row stays with an empty value. A sent `''` for a key with no stored row writes nothing, so an old client's untouched, never-set schema field no longer lands as an empty row;
   - a stored row is deleted ONLY when its key is in `removeCustomFieldKeys`. Omitting a row never deletes it;
   - a stored entry with no string `key` is carried through verbatim.
   - A key both sent and named for removal is refused with `invalid-argument` and nothing is written.

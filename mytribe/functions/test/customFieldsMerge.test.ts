@@ -29,6 +29,10 @@ describe('mergeCustomFields (#873)', () => {
     expect(mergeCustomFields([office, allergy], [{ ...allergy, value: '' }], [])).toEqual([office, { ...allergy, value: '' }]);
   });
 
+  it("a sent '' for a key with no stored row writes no row (an old client's untouched, never-set schema field)", () => {
+    expect(mergeCustomFields([office], [{ key: 'color', label: 'Favorite color', value: '' }], [])).toEqual([office]);
+  });
+
   it('removes a row only when the client names it', () => {
     expect(mergeCustomFields([office, allergy, color], [], ['allergy'])).toEqual([office, color]);
   });
