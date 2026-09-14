@@ -74,9 +74,14 @@
  *   npx ts-node --project ../scripts/tsconfig.json ../scripts/seed_test_sandbox.ts --apply --password=<pw>
  */
 
-import { getApps, initializeApp, applicationDefault } from 'firebase-admin/app';
-import { getFirestore, Timestamp } from 'firebase-admin/firestore';
-import { getAuth } from 'firebase-admin/auth';
+import {
+  getApps,
+  initializeApp,
+  applicationDefault,
+  getFirestore,
+  Timestamp,
+  getAuth,
+} from './lib/firebaseAdmin';
 
 // ---------------------------------------------------------------------------
 // Fixed identity. Deterministic so re-runs converge and the rules match

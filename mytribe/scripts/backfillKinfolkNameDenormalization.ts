@@ -38,8 +38,13 @@
  *     auditable + non-repudiable.
  */
 
-import { getApps, initializeApp, applicationDefault } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import {
+  getApps,
+  initializeApp,
+  applicationDefault,
+  getFirestore,
+  FieldValue,
+} from './lib/firebaseAdmin';
 
 type Mode = 'dry-run' | 'apply';
 

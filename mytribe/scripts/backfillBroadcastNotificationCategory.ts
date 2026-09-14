@@ -73,8 +73,13 @@
  *      Applies. Needs GOOGLE_APPLICATION_CREDENTIALS.
  *   4. Re-run step 1. A clean second run reports 0 to update.
  */
-import { getApps, initializeApp } from 'firebase-admin/app';
-import { getFirestore, type Firestore, type QueryDocumentSnapshot } from 'firebase-admin/firestore';
+import {
+  getApps,
+  initializeApp,
+  getFirestore,
+  type Firestore,
+  type QueryDocumentSnapshot,
+} from './lib/firebaseAdmin';
 
 /** The inbox collection broadcasts write into. */
 export const NOTIFICATIONS_COLLECTION = 'notifications';
