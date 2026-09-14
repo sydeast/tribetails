@@ -314,7 +314,9 @@ fun KinfolkEditScreen(
     }
 
     // #890: asked when Add opens on a household still waiting on its contact.
-    val offeredPending = if (isNew && createdKinfolkId == null) PendingAddKinfolk.get(operatorUid) else null
+    // Never while saving: the save keeps the household the moment it is created,
+    // before `createdKinfolkId` is set, and the form must stay on screen meanwhile.
+    val offeredPending = if (isNew && !saving && createdKinfolkId == null) PendingAddKinfolk.get(operatorUid) else null
 
     // #890: keeps the pending household's contact current while a retry is edited.
     LaunchedEffect(ecDrafts, createdKinfolkId) {
