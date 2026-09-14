@@ -353,6 +353,27 @@ STUB
   chmod +x "$dir/stubs/gcloud"
 }
 
+# secret_store_list_hangs <dir>: a gcloud stub whose LIST call sleeps far
+# longer than any timeout under test, and fails everything else, the way the
+# shared stub does. Drives the LIST-times-out path scripts/client-secrets.mjs
+# has to tell apart from "no gcloud at all": collapsing the two used to mean a
+# LIST timeout fell back to a local .env and reported every value 'missing'
+# with `gcloud secrets create` advice for a store that might hold every one of
+# them (#839/#852).
+secret_store_list_hangs() {
+  local dir="$1"
+  cat > "$dir/stubs/gcloud" <<'STUB'
+#!/usr/bin/env bash
+case "$1 $2 $3" in
+  "secrets list --project")
+    sleep 5
+    ;;
+esac
+exit 1
+STUB
+  chmod +x "$dir/stubs/gcloud"
+}
+
 # Everything a release needs, so a case can take exactly one thing away.
 FULL_STORE=(
   ADMIN_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/0
@@ -1373,6 +1394,43 @@ if printf '%s' "$OUT" | grep -q "every declared VITE_\* value resolved"; then
   bad "an unreadable store reported the client config as resolved"
 else
   ok "an unreadable store never claims the client config resolved"
+fi
+
+# A LIST call that specifically TIMES OUT (#839/#852), not the shared stub's
+# ordinary exit-1 failure above. This must refuse with its OWN exit code (4)
+# and its own wording, never the "has no value" refusal a genuinely missing
+# secret gets, and never `gcloud secrets create` advice for a store that might
+# hold every one of the values.
+D="$(make_repo)"; write_stubs "$D"
+secret_store_list_hangs "$D"
+fixture_all_green "$D/fixtures/$(cd "$D/repo" && git rev-parse HEAD)"
+RC="$(run_release "$D" RELEASE_YES=1 CLIENT_SECRETS_GCLOUD_TIMEOUT_MS=200)"
+OUT="$(cat "$D/out")"
+
+if [ "$RC" -ne 0 ]; then
+  ok "a LIST timeout fails the release"
+else
+  bad "a LIST timeout shipped a release (rc $RC)"; echo "$OUT" | tail -25
+fi
+if printf '%s' "$OUT" | grep -q "Secret Manager did not answer for a required secret in time"; then
+  ok "a LIST timeout gets its own refusal wording, not \"has no value\""
+else
+  bad "a LIST timeout printed the wrong refusal wording"; echo "$OUT" | tail -25
+fi
+if printf '%s' "$OUT" | grep -q "the web apps declare client build config that has no value"; then
+  bad "a LIST timeout printed the missing-value refusal, which claims the store answered"
+else
+  ok "a LIST timeout never prints the missing-value refusal"
+fi
+if printf '%s' "$OUT" | grep -q "gcloud secrets create"; then
+  bad "a LIST timeout advised creating a secret that may already exist"; echo "$OUT" | tail -25
+else
+  ok "a LIST timeout never advises \`gcloud secrets create\`"
+fi
+if printf '%s' "$OUT" | grep -q "curl -4" && printf '%s' "$OUT" | grep -q "curl -6"; then
+  ok "a LIST timeout prints the IPv4/IPv6 check"
+else
+  bad "a LIST timeout never printed the network check"; echo "$OUT" | tail -25
 fi
 
 echo

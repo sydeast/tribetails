@@ -376,9 +376,21 @@ test('isGcloudTimeout recognizes both shapes a timed-out spawnSync can take, and
   assert.equal(isGcloudTimeout({ status: null, signal: 'SIGTERM' }), true);
   assert.equal(isGcloudTimeout({ status: 1, signal: null, error: undefined }), false);
   assert.equal(isGcloudTimeout({ status: 0 }), false);
+  // An OOM kill (or anything else that kills the child and populates `error`
+  // with a code other than ETIMEDOUT) must not be reported as a timeout just
+  // because a signal happens to be present too.
+  assert.equal(
+    isGcloudTimeout({
+      status: null,
+      signal: 'SIGKILL',
+      error: Object.assign(new Error('spawnSync gcloud ENOMEM'), { code: 'ENOMEM' }),
+    }),
+    false,
+    'an error present with a non-ETIMEDOUT code must never be reported as a timeout',
+  );
 });
 
-test('listSecretsWithGcloud passes the timeout and kill signal to spawnSync, and a LIST timeout is unreadable, not merely failed', () => {
+test('listSecretsWithGcloud passes the timeout and kill signal to spawnSync, and a LIST timeout returns SECRET_UNREADABLE, not null', () => {
   const calls = [];
   const logs = [];
   const spawn = (cmd, args, opts) => {
@@ -388,7 +400,11 @@ test('listSecretsWithGcloud passes the timeout and kill signal to spawnSync, and
 
   const result = listSecretsWithGcloud('auntieos-ttpc', { spawn, timeoutMs: 5, log: (l) => logs.push(l) });
 
-  assert.equal(result, null, 'a timed-out LIST is the existing unreadable-store path');
+  // A timed-out LIST is NOT the same claim as "no gcloud, no credentials":
+  // collapsing both into `null` is what made a LIST timeout fall back to a
+  // local .env and get reported as plain 'missing' (#852 review).
+  assert.equal(result, SECRET_UNREADABLE);
+  assert.notEqual(result, null);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].cmd, 'gcloud');
   assert.equal(calls[0].opts.timeout, 5);
@@ -399,7 +415,7 @@ test('listSecretsWithGcloud passes the timeout and kill signal to spawnSync, and
   assert.ok(logs.some((l) => l.includes('curl -6')));
 });
 
-test('the gcloud timeout defaults to DEFAULT_GCLOUD_TIMEOUT_MS and CLIENT_SECRETS_GCLOUD_TIMEOUT_MS overrides it', () => {
+test('the gcloud timeout defaults to DEFAULT_GCLOUD_TIMEOUT_MS and CLIENT_SECRETS_GCLOUD_TIMEOUT_MS overrides it with a valid value', () => {
   const calls = [];
   const spawn = (cmd, args, opts) => {
     calls.push(opts);
@@ -418,6 +434,28 @@ test('the gcloud timeout defaults to DEFAULT_GCLOUD_TIMEOUT_MS and CLIENT_SECRET
   }
 });
 
+test('the env override rejects a non-integer, zero or a negative value, and falls back to the default', () => {
+  const calls = [];
+  const spawn = (cmd, args, opts) => {
+    calls.push(opts.timeout);
+    return { status: 0, stdout: 'X\n' };
+  };
+
+  for (const bad of ['1500.5', '0', '-100', 'garbage']) {
+    process.env.CLIENT_SECRETS_GCLOUD_TIMEOUT_MS = bad;
+    try {
+      listSecretsWithGcloud('auntieos-ttpc', { spawn, log: () => {} });
+    } finally {
+      delete process.env.CLIENT_SECRETS_GCLOUD_TIMEOUT_MS;
+    }
+  }
+
+  assert.ok(
+    calls.every((t) => t === DEFAULT_GCLOUD_TIMEOUT_MS),
+    `a fractional, zero, negative or garbage override reached spawnSync: ${calls.join(', ')}`,
+  );
+});
+
 test('makeGcloudFetcher prints one progress line per secret as it is fetched, on stderr, before the call resolves', () => {
   const logs = [];
   const spawn = () => ({ status: 0, stdout: 'a-value\n' });
@@ -432,6 +470,33 @@ test('makeGcloudFetcher prints one progress line per secret as it is fetched, on
     logs.some((l) => l.includes('fetching SECRET_A')),
     'the step stayed silent while fetching a secret, which is the defect #839 is about',
   );
+});
+
+test('after the first ACCESS timeout, later secrets are marked unreadable without spawning gcloud again', () => {
+  const calls = [];
+  const spawn = () => {
+    calls.push(1);
+    return timeoutResult();
+  };
+  const logs = [];
+  const fetcher = makeGcloudFetcher('auntieos-ttpc', ['SECRET_A', 'SECRET_B', 'SECRET_C'], {
+    spawn,
+    timeoutMs: 5,
+    log: (l) => logs.push(l),
+  });
+
+  assert.equal(fetcher('SECRET_A'), SECRET_UNREADABLE);
+  assert.equal(calls.length, 1, 'the first fetch should spawn gcloud exactly once');
+
+  assert.equal(fetcher('SECRET_B'), SECRET_UNREADABLE);
+  assert.equal(fetcher('SECRET_C'), SECRET_UNREADABLE);
+  assert.equal(
+    calls.length,
+    1,
+    'later secrets must not spawn gcloud again after a timeout: the worst case must be one timeout, not one per secret',
+  );
+  assert.ok(logs.some((l) => l.includes('skipping SECRET_B')));
+  assert.ok(logs.some((l) => l.includes('skipping SECRET_C')));
 });
 
 test('makeGcloudFetcher passes the timeout and kill signal to spawnSync, and a timed-out ACCESS is unreadable, not missing', () => {
@@ -492,7 +557,13 @@ test('a timed-out ACCESS refuses the release, and the fix commands never suggest
   assert.ok(cmds.some((c) => c.includes('curl -6')));
 });
 
-test('a timed-out ACCESS on an OPTIONAL variable still refuses; it is not downgraded to a warning', () => {
+test('a timed-out ACCESS on an OPTIONAL variable WARNS, the same as the declaration already does for a confirmed-absent value', () => {
+  // The declaration's "REQUIRED IS NOT THE DEFAULT" paragraph, and both
+  // Sentry DSN rows above, argue that a value nothing depends on must not
+  // stop a release. That reasoning
+  // does not change just because gcloud stalled instead of answering "not
+  // found": 'unreadable' follows the SAME required/optional split as
+  // 'missing' and 'empty' (#852 review).
   const { rows, refusals, warnings } = resolveClientVars({
     fetchSecret: (name) => (name.endsWith('_SENTRY_DSN') ? SECRET_UNREADABLE : fullStore()(name)),
     release: 'abc1234',
@@ -502,11 +573,99 @@ test('a timed-out ACCESS on an OPTIONAL variable still refuses; it is not downgr
   assert.equal(dsnRows.length, 2);
   assert.ok(dsnRows.every((r) => r.status === 'unreadable'));
   assert.equal(
-    warnings.filter((w) => w.variable === 'VITE_SENTRY_DSN').length,
+    refusals.filter((r) => r.variable === 'VITE_SENTRY_DSN').length,
     0,
-    'a value nobody could check is not the same as a value confirmed absent and optional',
+    'an OPTIONAL value nobody could check must not refuse the release',
   );
-  assert.equal(refusals.filter((r) => r.variable === 'VITE_SENTRY_DSN').length, 2);
+  assert.equal(warnings.filter((w) => w.variable === 'VITE_SENTRY_DSN').length, 2);
+
+  // The warning's fix commands must be the network check, never a create/set
+  // pair the operator has no way to know is correct advice.
+  const dsnWarning = warnings.find((w) => w.variable === 'VITE_SENTRY_DSN');
+  const cmds = fixCommands(dsnWarning, 'auntieos-ttpc');
+  assert.ok(!cmds.some((c) => c.includes('gcloud secrets create')));
+  assert.ok(cmds.some((c) => c.includes('curl -4')));
+  assert.ok(cmds.some((c) => c.includes('curl -6')));
+});
+
+test('a REQUIRED value that is unreadable refuses; an OPTIONAL one warns, even when EVERY secret is unreadable (the shape a LIST timeout produces)', () => {
+  const { rows, refusals, warnings } = resolveClientVars({
+    fetchSecret: () => SECRET_UNREADABLE,
+    release: 'abc1234',
+  });
+
+  const secretManagerRows = rows.filter((r) => r.kind === 'secret-manager');
+  assert.ok(secretManagerRows.length > 0);
+  assert.ok(
+    secretManagerRows.every((r) => r.status === 'unreadable'),
+    'every Secret Manager-backed row must be unreadable, never missing, when the store never answered',
+  );
+
+  const requiredNames = secretManagerRows.filter((r) => r.required).map((r) => r.variable).sort();
+  const optionalNames = secretManagerRows.filter((r) => !r.required).map((r) => r.variable).sort();
+  assert.deepEqual(refusals.map((r) => r.variable).sort(), requiredNames);
+  assert.deepEqual(warnings.map((w) => w.variable).sort(), optionalNames);
+
+  for (const r of refusals) {
+    const cmds = fixCommands(r, 'auntieos-ttpc');
+    assert.ok(
+      !cmds.some((c) => c.includes('gcloud secrets create')),
+      `${r.variable}: advised creating a secret that may already exist`,
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// End-to-end: the actual CLI, a real gcloud that sleeps on PATH, and a real
+// (short) timeout. This is the exact reproduction that found the #852 review
+// blocker: a LIST timeout used to return the same `null` as "no gcloud", fall
+// back to a local .env, and refuse every value as 'missing' with `gcloud
+// secrets create` advice for a store that may hold every one of them.
+// ---------------------------------------------------------------------------
+
+test('CLI: a LIST timeout refuses (exit 4), marks Secret Manager rows unreadable, and never advises `gcloud secrets create`', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'client-secrets-cli-'));
+  const fakeGcloud = path.join(dir, 'gcloud');
+  fs.writeFileSync(fakeGcloud, '#!/bin/sh\nsleep 5\n');
+  fs.chmodSync(fakeGcloud, 0o755);
+
+  let r;
+  try {
+    r = spawnSync(
+      process.execPath,
+      // --release given, so the unrelated 'derived' VITE_SENTRY_RELEASE rows
+      // resolve too: the only refusal left standing is the one this test is
+      // about, and "has no value" cannot appear for a reason unrelated to
+      // gcloud.
+      [path.join(ROOT, 'scripts', 'client-secrets.mjs'), '--check', '--project', 'auntieos-ttpc', '--release', 'abc1234'],
+      {
+        encoding: 'utf8',
+        timeout: 15_000,
+        env: {
+          ...process.env,
+          PATH: `${dir}:${process.env.PATH}`,
+          CLIENT_SECRETS_GCLOUD_TIMEOUT_MS: '200',
+        },
+      },
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  const out = `${r.stdout || ''}\n${r.stderr || ''}`;
+  assert.equal(r.status, 4, `expected exit 4 (refused because unreadable), got ${r.status}:\n${out}`);
+  assert.ok(
+    !/gcloud secrets create/.test(out),
+    `a LIST timeout must never advise creating a secret that may already exist:\n${out}`,
+  );
+  assert.ok(!/secrets versions add/.test(out), `a LIST timeout must never advise setting a secret:\n${out}`);
+  assert.match(out, /unreadable/);
+  assert.match(out, /curl -4/);
+  assert.match(out, /curl -6/);
+  // Not "has no value": that wording claims the store answered, and it did
+  // not. The unreadable paragraph has its own wording.
+  assert.match(out, /did not answer/);
+  assert.ok(!/has no value/.test(out), `the missing-value refusal must not appear for an unreadable store:\n${out}`);
 });
 
 // ---------------------------------------------------------------------------

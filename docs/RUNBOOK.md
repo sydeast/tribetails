@@ -1143,9 +1143,10 @@ credentials and no network.
 
 ### What stops a release and what only gets named
 
-A release **refuses** when a REQUIRED variable resolves to nothing, or when its
-stored secret exists and the latest version is empty. It names the variable, the
-secret and the command that fixes it. Two are required today:
+A release **refuses** when a REQUIRED variable resolves to nothing, when its
+stored secret exists and the latest version is empty, or when Secret Manager
+never answered for it at all (see the timeout paragraph below). It names the
+variable, the secret and the command that fixes it. Two are required today:
 `ADMIN_WEB_APPCHECK_SITE_KEY` and `PORTAL_WEB_MAPBOX_PUBLIC_TOKEN`. Both back a
 feature that is live and that fails invisibly without them: App Check reads
 `unconfigured`, and the visit route silently drops to the SVG polyline.
@@ -1168,16 +1169,25 @@ missing.
 release step 0c sat silent for 16 minutes: a gcloud child had one socket in
 SYN_SENT to Google over IPv6 (a VPN was installed; IPv4 answered instantly),
 and nothing printed, so the hang read as an auth prompt (#839). It now prints a
-line per secret as it fetches, and `CLIENT_SECRETS_GCLOUD_TIMEOUT_MS`
-(milliseconds) overrides the default on a network known to be slower. A
-variable whose ACCESS call times out is **unreadable, not missing**: the
-refusal says so and points at the IPv4/IPv6 check below rather than telling you
-to create a secret that may already exist.
+line per secret as it fetches, and `CLIENT_SECRETS_GCLOUD_TIMEOUT_MS` (a
+positive integer, milliseconds) overrides the default on a network known to be
+slower. Whether it is the LIST call or one secret's ACCESS call that times out,
+every affected variable is marked **unreadable, never missing**: reporting it
+as missing would tell you to create a secret that may already exist. A
+REQUIRED value that is unreadable refuses with its own exit code, 4, and
+release.sh says the store did not answer rather than "has no value". An
+OPTIONAL value that is unreadable warns instead, the same call the declaration
+already makes for a value confirmed absent. Either way the advice is the same
+IPv4/IPv6 check, never `gcloud secrets create`:
 
 ```bash
 curl -4 -sS -o /dev/null -w '%{http_code}\n' https://secretmanager.googleapis.com
 curl -6 -sS -o /dev/null -w '%{http_code}\n' https://secretmanager.googleapis.com
 ```
+
+After the first secret's ACCESS call times out, the rest are marked unreadable
+without being spawned: a dead route stays dead for the whole run, so the worst
+case is one 30-second wait, not one per secret.
 
 Two names are deliberately outside all of this, and **neither is in Secret
 Manager, so do not go looking for them there**. `VITE_SENTRY_RELEASE` is derived:

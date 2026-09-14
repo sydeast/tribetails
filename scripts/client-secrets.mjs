@@ -4,21 +4,24 @@
  * step that fills it from Google Secret Manager before a release builds.
  *
  *   node scripts/client-secrets.mjs --list     what each app declares
- *   node scripts/client-secrets.mjs --check    resolve it; refuse if a required
- *                                              value is missing or empty, or if
- *                                              Secret Manager never answered
- *                                              for a declared secret
+ *   node scripts/client-secrets.mjs --check    resolve it; refuse (1) if a
+ *                                              required value is missing or
+ *                                              empty, or (4) if Secret Manager
+ *                                              never answered for one
  *   node scripts/client-secrets.mjs --write    --check, then write each app's
  *                                              .env.production.local
  *   node scripts/client-secrets.mjs --clean    remove those files
  *
- * EXIT CODES, because "resolved", "refused" and "could not look" are three
- * outcomes and two of them are not the third:
+ * EXIT CODES, because "resolved", "refused for a bad value", "refused because
+ * unreadable" and "could not look" are four outcomes and no two of them print
+ * the same:
  *   0  every declared value resolved
- *   1  a required value is missing or empty, OR Secret Manager never answered
- *      for a declared secret (any variable, required or not: see #839 below).
- *      The names are on stderr.
+ *   1  a required value is missing or empty. The names are on stderr.
  *   3  neither source could be READ, so nothing was checked. Not a pass.
+ *   4  Secret Manager never answered for a REQUIRED secret, a gcloud timeout
+ *      most likely (see #839 below). NOT the same as 1: the secret may exist
+ *      and hold a good value. The names and the IPv4/IPv6 check are on
+ *      stderr.
  *
  * WHY THIS EXISTS
  * `vite build` inlines import.meta.env.VITE_* into the bundle at BUILD time, so
@@ -83,15 +86,34 @@
  * in SYN_SENT to Google over IPv6 (a VPN was installed; IPv4 answered
  * instantly). Nothing printed, so the hang read as an auth prompt rather than a
  * network fault. DEFAULT_GCLOUD_TIMEOUT_MS below is the default, thirty
- * seconds; CLIENT_SECRETS_GCLOUD_TIMEOUT_MS (milliseconds) overrides it on a
- * network known to be slower. A timed-out LIST is handled exactly like any
- * other unreadable store: listSecretsWithGcloud returns null, and the release
- * falls back to each app's own .env files. A timed-out ACCESS is NOT the same
- * as "the store answered and has no such secret": reporting it as missing
- * would tell the operator to `gcloud secrets create` a secret that may already
- * exist and hold a perfectly good value. It gets its own status, 'unreadable',
- * so the release still refuses (a value nobody could verify is not a value
- * that shipped) without printing the wrong advice.
+ * seconds; CLIENT_SECRETS_GCLOUD_TIMEOUT_MS overrides it (a positive integer,
+ * milliseconds) on a network known to be slower.
+ *
+ * A timed-out LIST is NOT the same as no gcloud and no credentials, even
+ * though both used to collapse into the same `null`. No gcloud at all falls
+ * back to each app's own .env files, the way local development already
+ * works. A LIST that specifically TIMED OUT tells you nothing about whether
+ * the store holds the values; gcloud just never answered, so falling back to
+ * a laptop's .env would ship a value the store never confirmed. Every
+ * Secret Manager-backed row is marked 'unreadable' instead, with no .env
+ * fallback for those rows.
+ *
+ * A timed-out ACCESS for one secret gets the same status. Once one ACCESS
+ * call times out, the rest are marked unreadable WITHOUT being spawned:
+ * gcloud stuck on the same dead route once is going to be stuck on it for
+ * every remaining secret in the run, so waiting out the full timeout again
+ * for each one turns a 30-second problem into a multi-minute one for no
+ * better an answer.
+ *
+ * 'unreadable' is NOT 'missing': reporting it as missing would tell the
+ * operator to `gcloud secrets create` a secret that may already exist and
+ * hold a perfectly good value. A REQUIRED value that is unreadable REFUSES,
+ * with its own exit code (4, see above) so release.sh can print the
+ * IPv4/IPv6 check instead of "has no value". An OPTIONAL value that is
+ * unreadable WARNS instead, the same as an optional value confirmed absent:
+ * the two Sentry DSNs are optional because nothing depends on them (see the
+ * declaration below), and that reasoning does not change just because
+ * gcloud stalled instead of answering "not found".
  */
 
 import { spawnSync } from 'node:child_process';
@@ -276,29 +298,42 @@ export const DEFAULT_GCLOUD_TIMEOUT_MS = 30_000;
 function resolveTimeoutMs() {
   const raw = process.env.CLIENT_SECRETS_GCLOUD_TIMEOUT_MS;
   const n = raw ? Number(raw) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_GCLOUD_TIMEOUT_MS;
+  // Integers only. A fractional value (1500.5), zero, a negative number or
+  // garbage is not a request for that many milliseconds, it is a bad value,
+  // and DEFAULT_GCLOUD_TIMEOUT_MS is the safer read than trying to honor it.
+  return Number.isInteger(n) && n > 0 ? n : DEFAULT_GCLOUD_TIMEOUT_MS;
 }
 
 /**
  * True when a spawnSync result is a timeout rather than an ordinary gcloud
- * failure. Node sets `error.code` to 'ETIMEDOUT' when its own `timeout` option
- * fires, and it also kills the child (killSignal below), so a `signal` on the
- * result is the same event even on a platform, or a fake spawn in a test, that
- * does not produce the ETIMEDOUT error object. Checked as either.
+ * failure. Node's own `timeout` option sets `error.code` to 'ETIMEDOUT' when
+ * it fires (verified against a real spawnSync: `timeout` plus
+ * `killSignal: 'SIGKILL'` against `sleep` produces exactly
+ * {code: 'ETIMEDOUT', signal: 'SIGKILL', status: null}). When an `error` IS
+ * present, its code has to be 'ETIMEDOUT': a failure that happens to also
+ * carry a signal, an OOM kill say, must not be reported as a timeout just
+ * because something else killed the child. Only when there is NO error
+ * object at all does a bare `signal` count on its own, which is what lets a
+ * minimal test double (no `error` field, just `signal`) still exercise the
+ * timeout path.
  */
 export function isGcloudTimeout(r) {
-  return Boolean(r?.error?.code === 'ETIMEDOUT') || Boolean(r?.signal);
+  if (r?.error) return r.error.code === 'ETIMEDOUT';
+  return Boolean(r?.signal);
 }
 
 const IPV4_CHECK = "curl -4 -sS -o /dev/null -w '%{http_code}\\n' https://secretmanager.googleapis.com";
 const IPV6_CHECK = "curl -6 -sS -o /dev/null -w '%{http_code}\\n' https://secretmanager.googleapis.com";
 
 /**
- * The sentinel a fetcher returns for one secret that Secret Manager never
- * answered about (a timeout, most likely), so resolveClientVars can tell it
- * apart from `null`, which means "the store answered and has no such secret".
- * A Symbol rather than a string: nothing here should be able to stringify it
- * by accident and have the result look like a real, if odd, secret value.
+ * The sentinel returned when Secret Manager never answered: from a
+ * fetchSecret function when one ACCESS call timed out, or from
+ * listSecretsWithGcloud when the LIST call itself timed out. resolveClientVars
+ * needs to tell this apart from `null`, which means "the store answered and
+ * has no such secret" (or, from listSecretsWithGcloud, "the store could not be
+ * asked at all"). A Symbol rather than a string: nothing here should be able
+ * to stringify it by accident and have the result look like a real, if odd,
+ * secret value.
  */
 export const SECRET_UNREADABLE = Symbol('client-secrets:unreadable');
 
@@ -422,13 +457,15 @@ export function resolveClientVars({
   const unreadable = rows.filter((r) => r.status === 'unreadable');
   return {
     rows,
-    // An unreadable secret refuses regardless of `required`. Warn-and-ship is
-    // the right call for a value that is genuinely absent and optional; it is
-    // not the right call for one nobody could even check, which is a "we don't
-    // know" state rather than the "we checked, and it's fine to skip" state a
-    // warning means.
-    refusals: [...bad.filter((r) => r.required), ...unreadable],
-    warnings: bad.filter((r) => !r.required),
+    // 'unreadable' follows the SAME required/optional split as 'missing' and
+    // 'empty': a REQUIRED value nobody could verify refuses, an OPTIONAL one
+    // warns. The declaration's own "REQUIRED IS NOT THE DEFAULT" paragraph
+    // above, and the two Sentry DSNs, already argue that a value nothing
+    // depends on should not stop a release, and that holds whether the store
+    // said "not found" or simply never answered. The one thing 'unreadable'
+    // never does is get treated as 'missing'.
+    refusals: [...bad.filter((r) => r.required), ...unreadable.filter((r) => r.required)],
+    warnings: [...bad.filter((r) => !r.required), ...unreadable.filter((r) => !r.required)],
   };
 }
 
@@ -492,15 +529,21 @@ export function renderEnvFile(appRows, { generatedFor = '' } = {}) {
 // ---------------------------------------------------------------------------
 
 /**
- * Every secret name the project holds, or null when the store could not be
- * asked at all. Same shape and the same reasoning as release.sh step 1b:
- * "no secrets found" and "could not look" must never print the same.
+ * Every secret name the project holds; `null` when the store could not be
+ * asked at all (no gcloud, no credentials, or gcloud answered nothing); or
+ * SECRET_UNREADABLE when the LIST call specifically TIMED OUT. The timeout
+ * case is not the same claim as `null`: the store might hold every declared
+ * secret, gcloud simply never answered, so a caller must not fall back to a
+ * local .env for it the way it does for "no gcloud at all" (#839). Same
+ * reasoning as release.sh step 1b: "no secrets found" and "could not look"
+ * must never print the same, and now neither must "could not look because
+ * there is no gcloud" and "could not look because gcloud never answered".
  *
  * `spawn` is injectable so scripts/client-secrets.test.mjs can simulate a
  * gcloud that never answers without actually waiting out a timeout. `log`
  * defaults to stderr and prints one line before the call and, on a timeout,
- * a diagnostic pointing at the IPv4/IPv6 check (#839): the real defect here
- * was not the hang, it was that step 0c gave no sign anything was happening.
+ * a diagnostic pointing at the IPv4/IPv6 check: the real defect here was not
+ * the hang, it was that step 0c gave no sign anything was happening.
  */
 export function listSecretsWithGcloud(
   project,
@@ -516,10 +559,12 @@ export function listSecretsWithGcloud(
     log(`client config: listing secrets timed out after ${timeoutMs}ms.`);
     log('  This is the same failure shape release step 0c hit on 2026-09-13: gcloud');
     log('  stuck on a dead route to Google, most often IPv6 with a VPN installed, while');
-    log('  IPv4 answers instantly. Check:');
+    log('  IPv4 answers instantly. Every Secret Manager-backed value will be treated as');
+    log('  unreadable rather than falling back to a local .env: the store might hold');
+    log('  every one of them, gcloud just never answered. Check:');
     log(`    ${IPV4_CHECK}`);
     log(`    ${IPV6_CHECK}`);
-    return null;
+    return SECRET_UNREADABLE;
   }
   if (r.error || r.status !== 0) return null;
   const names = (r.stdout || '')
@@ -537,8 +582,24 @@ export function makeGcloudFetcher(
   existing,
   { spawn = spawnSync, timeoutMs = resolveTimeoutMs(), log = (line) => console.error(line) } = {},
 ) {
+  // Set once any ACCESS call times out. gcloud stuck on a dead route once is
+  // going to be stuck on it for every remaining secret in this run, so after
+  // the first timeout the rest are marked unreadable without being spawned:
+  // waiting out the full timeout again for each one turns a 30-second problem
+  // into a multi-minute one for no better an answer (#839).
+  let networkUnreachable = false;
+
   return (name) => {
     if (!existing.includes(name)) return null;
+
+    if (networkUnreachable) {
+      log(
+        `client config: skipping ${name} (an earlier fetch already timed out; not waiting ` +
+          `out ${timeoutMs}ms again for the same dead route)`,
+      );
+      return SECRET_UNREADABLE;
+    }
+
     log(`client config: fetching ${name}...`);
     const r = spawn(
       'gcloud',
@@ -546,6 +607,7 @@ export function makeGcloudFetcher(
       { encoding: 'utf8', timeout: timeoutMs, killSignal: 'SIGKILL' },
     );
     if (isGcloudTimeout(r)) {
+      networkUnreachable = true;
       log(`client config: fetching ${name} timed out after ${timeoutMs}ms.`);
       log(`  This does not mean ${name} is missing. It means gcloud never answered, most`);
       log('  likely the same IPv6-to-Google stall release step 0c hit on 2026-09-13 (a VPN');
@@ -631,7 +693,24 @@ async function main(argv) {
   const existing = listSecretsWithGcloud(project);
   const loaded = await loadLocalEnv();
   const localEnv = loaded || {};
-  const fetchSecret = existing === null ? null : makeGcloudFetcher(project, existing);
+
+  // Three states, not two, and they resolve differently (#839). `existing` an
+  // array: gcloud answered, fetch each secret normally. `null`: no gcloud, no
+  // credentials, or it answered nothing; fall back to each app's own .env
+  // files, the way local development already works. SECRET_UNREADABLE: the
+  // LIST call specifically TIMED OUT, which tells us nothing about whether
+  // the store holds these values, so every Secret Manager-backed row is
+  // marked unreadable instead. Falling back to a local .env for THAT case
+  // would ship a value the store never confirmed, which is exactly the class
+  // of bug the ruling behind this whole file exists to prevent.
+  let fetchSecret;
+  if (existing === SECRET_UNREADABLE) {
+    fetchSecret = () => SECRET_UNREADABLE;
+  } else if (existing === null) {
+    fetchSecret = null;
+  } else {
+    fetchSecret = makeGcloudFetcher(project, existing);
+  }
 
   if (existing === null) {
     console.error(
@@ -676,8 +755,24 @@ async function main(argv) {
     return 3;
   }
 
-  for (const w of warnings) {
+  // Missing/empty and unreadable warnings read differently: the first says the
+  // store answered and the value is absent, which is the declaration's own
+  // `why` (nothing depends on it); the second says the store never answered
+  // at all, which needs the network check, not the declaration's reasoning.
+  const notFoundWarnings = warnings.filter((r) => r.status !== 'unreadable');
+  const unreadableWarnings = warnings.filter((r) => r.status === 'unreadable');
+
+  for (const w of notFoundWarnings) {
     console.error(`WARNING: ${w.variable} (${w.app}) is ${w.status}. ${w.why}`);
+    for (const c of fixCommands(w, project)) console.error(`    ${c}`);
+  }
+  for (const w of unreadableWarnings) {
+    console.error(
+      `WARNING: ${w.variable} (${w.app}) could not be read from Secret Manager. It is ` +
+        'OPTIONAL, so this warns rather than refuses (the same call the declaration ' +
+        'already makes for a confirmed-absent value); gcloud simply never answered in ' +
+        'time. Check:',
+    );
     for (const c of fixCommands(w, project)) console.error(`    ${c}`);
   }
 
@@ -714,7 +809,7 @@ async function main(argv) {
 
     if (unreadable.length > 0) {
       console.error('');
-      console.error('REFUSED: Secret Manager did not answer for these in time:');
+      console.error('REFUSED: Secret Manager did not answer for these REQUIRED secrets in time:');
       for (const r of unreadable) {
         console.error(`    ${r.variable} (${r.app})${r.secret ? ` <- ${r.secret}` : ''} could not be read`);
       }
@@ -725,7 +820,10 @@ async function main(argv) {
       for (const c of fixCommands(unreadable[0], project)) console.error(`    ${c}`);
     }
 
-    return 1;
+    // Exit 4, not 1, whenever at least one refusal could not even be checked:
+    // the fix is a network check, not `gcloud secrets create`, and release.sh
+    // reads this code to print the right one instead of "has no value" (#839).
+    return unreadable.length > 0 ? 4 : 1;
   }
 
   if (mode === 'write') {
