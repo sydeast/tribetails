@@ -225,6 +225,7 @@ fun KinEditScreen(
     val c = AuntieTheme.colors
 
     fun doSave() {
+        if (saving || photoSaving) return
         saving = true
         scope.launch {
             val draft  = build()
@@ -497,10 +498,17 @@ fun KinEditScreen(
         // ---- Sticky-style save bar (Den editor footer) ----
         AuntieSaveBar(
             dirty       = canSave,
-            saveEnabled = canSave && !saving,
+            // #853 review: held while a photo upload + write is in flight, so the
+            // whole-document Save cannot race it (build() carries the optimistic
+            // photoUrl, which the pipeline reverts if its write fails).
+            saveEnabled = canSave && !saving && !photoSaving,
             onCancel    = onBack,
             onSave      = { doSave() },
-            saveLabel   = if (isNew) "Create Kin" else "Save changes",
+            saveLabel   = when {
+                photoSaving -> "Uploading photo…"
+                isNew       -> "Create Kin"
+                else        -> "Save changes"
+            },
             modifier    = Modifier.clip(RoundedCornerShape(16.dp)),
         )
 
@@ -821,8 +829,11 @@ internal suspend fun runKinPhotoUploadPipeline(
             when (val w = write(url)) {
                 is WriteResult.Ok  -> onToast("Photo updated." to ToastKind.Success)
                 is WriteResult.Err -> {
+                    // The file is already in Cloudinary + media_files (it shows in
+                    // Gallery), so say so: a plain "update failed" invites a retry
+                    // that uploads a duplicate. Matches admin Android.
                     onPhotoUrl(previousUrl)
-                    onToast("Photo update failed: ${w.message}" to ToastKind.Error)
+                    onToast("Photo uploaded but save failed: ${w.message}" to ToastKind.Error)
                 }
             }
         }

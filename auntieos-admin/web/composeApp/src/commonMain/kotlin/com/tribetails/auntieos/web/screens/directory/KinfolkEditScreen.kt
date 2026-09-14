@@ -333,7 +333,9 @@ fun KinfolkEditScreen(
     // failure), upsert any new vet clinic into the shared catalog, then
     // create / update the Kinfolk and fire the audit log.
     fun onSave() {
-        if (saving) return
+        // #853 review: never save while a photo write is in flight (the bar is
+        // disabled too; this also covers any other path into onSave).
+        if (saving || photoSaving) return
         attemptedSave = true
         val retryId = createdKinfolkId
         // The retry skips the household checks (those fields are locked and
@@ -494,7 +496,7 @@ fun KinfolkEditScreen(
                                         upload      = { client.uploadMedia(kinfolkId, "KINFOLK", ByteArray(0), "") },
                                         write       = { url -> writeKinfolkPhoto(client, base, url) },
                                         onPhotoUrl  = { photoUrl = it },
-                                        onLoaded    = { loaded = it },
+                                        onLoaded    = { loaded = kinfolkBaselineAfterPhotoWrite(loaded, it) },
                                         onToast     = { (msg, kind) -> showToast(msg, kind) },
                                     )
                                     photoSaving = false
@@ -777,10 +779,12 @@ fun KinfolkEditScreen(
         // after a failed contact save on Add, the button says what the retry does.
         AuntieSaveBar(
             dirty       = dirty,
-            saveEnabled = !saving,
+            // #853 review: also held while a photo upload + write is in flight.
+            saveEnabled = !saving && !photoSaving,
             onCancel    = { leave() },
             onSave      = { onSave() },
             saveLabel   = when {
+                photoSaving                        -> "Uploading photo…"
                 saving && createdKinfolkId != null -> "Saving…"
                 saving && isNew                    -> "Adding…"
                 saving                             -> "Saving…"
@@ -1098,6 +1102,16 @@ internal suspend fun writeKinfolkPhoto(client: FirestoreClient, base: Kinfolk, u
 }
 
 /**
+ * #853 review: the unsaved-changes baseline after a photo write lands. Only
+ * `profilePictureUrl` is taken from [written]; every other field stays as
+ * [current] holds it, so a Save that completed while the upload was running
+ * (and moved the baseline to its draft) is not rolled back to the record
+ * captured when the photo was clicked.
+ */
+internal fun kinfolkBaselineAfterPhotoWrite(current: Kinfolk?, written: Kinfolk): Kinfolk =
+    current?.copy(profilePictureUrl = written.profilePictureUrl) ?: written
+
+/**
  * #853: the photo-change pipeline behind KinfolkEditScreen's "Change photo"
  * control, extracted so a fake [upload]/[write] can drive every outcome
  * without a live Cloudinary upload or Firestore write (mirrors
@@ -1129,8 +1143,11 @@ internal suspend fun runKinfolkPhotoUploadPipeline(
                     onToast("Photo updated." to ToastKind.Success)
                 }
                 is WriteResult.Err -> {
+                    // The file is already in Cloudinary + media_files (it shows in
+                    // Gallery), so say so: a plain "update failed" invites a retry
+                    // that uploads a duplicate. Matches admin Android.
                     onPhotoUrl(previousUrl)
-                    onToast("Photo update failed: ${w.message}" to ToastKind.Error)
+                    onToast("Photo uploaded but save failed: ${w.message}" to ToastKind.Error)
                 }
             }
         }

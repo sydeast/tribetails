@@ -82,8 +82,48 @@ class KinfolkPhotoUploadPipelineTest {
         // Exactly one toast, and it is never the success one: a caller that
         // fired both "Photo updated." and the error would still be caught here,
         // unlike a last-write-wins single toast variable.
-        assertEquals(listOf("Photo update failed: Not signed in" to ToastKind.Error), toasts)
+        // The upload landed (the file is in Gallery), so the toast says so rather
+        // than implying nothing happened and inviting a duplicate retry.
+        assertEquals(listOf("Photo uploaded but save failed: Not signed in" to ToastKind.Error), toasts)
         assertTrue(toasts.none { it.first == "Photo updated." }, "a failed write must never show the success toast")
+    }
+
+    /**
+     * #853 review: a Save that completes while the upload is still running moves
+     * the baseline to its draft. When the photo write lands afterwards, the
+     * screen's `onLoaded` goes through [kinfolkBaselineAfterPhotoWrite], which
+     * must take only the photo from the written record, never the stale `base`
+     * captured when "Change photo" was clicked.
+     */
+    @Test
+    fun `a Save that completes before the photo write keeps its saved fields in the baseline`() = runTest {
+        val clickedBase = Kinfolk(_id = "kf1", firstName = "Dana", gateCode = "1234", profilePictureUrl = "https://old.jpg")
+        val savedDraft = clickedBase.copy(firstName = "Danielle", gateCode = "9999")
+        var loaded: Kinfolk? = clickedBase
+        val uploaded = photo()
+
+        runKinfolkPhotoUploadPipeline(
+            previousUrl = clickedBase.profilePictureUrl,
+            upload      = { WriteResult.Ok(uploaded) },
+            write       = { url ->
+                // The Save lands first: onSave sets `loaded = draft`.
+                loaded = savedDraft
+                WriteResult.Ok(clickedBase.copy(profilePictureUrl = url))
+            },
+            onPhotoUrl  = {},
+            onLoaded    = { loaded = kinfolkBaselineAfterPhotoWrite(loaded, it) },
+            onToast     = {},
+        )
+
+        assertEquals(savedDraft.copy(profilePictureUrl = uploaded.storageUrl), loaded)
+        assertEquals("Danielle", loaded?.firstName, "the saved first name must survive the photo write")
+        assertEquals("9999", loaded?.gateCode, "the saved gate code must survive the photo write")
+    }
+
+    @Test
+    fun `with no baseline yet the written record becomes the baseline`() {
+        val written = Kinfolk(_id = "kf1", profilePictureUrl = "https://new.jpg")
+        assertEquals(written, kinfolkBaselineAfterPhotoWrite(null, written))
     }
 
     @Test

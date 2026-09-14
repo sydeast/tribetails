@@ -72,7 +72,9 @@ class KinPhotoUploadPipelineTest {
         // Exactly one toast, and it is never the success one: a caller that
         // fired both "Photo updated." and the error would still be caught here,
         // unlike a last-write-wins single toast variable.
-        assertEquals(listOf("Photo update failed: Not signed in" to ToastKind.Error), toasts)
+        // The upload landed (the file is in Gallery), so the toast says so rather
+        // than implying nothing happened and inviting a duplicate retry.
+        assertEquals(listOf("Photo uploaded but save failed: Not signed in" to ToastKind.Error), toasts)
         assertTrue(toasts.none { it.first == "Photo updated." }, "a failed write must never show the success toast")
     }
 
