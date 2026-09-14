@@ -517,6 +517,10 @@ async function dispatchAuntieSummaries(args: {
       await enqueueNotification({
         key: 'assignment.assigned',
         recipientUid: auntieUid,
+        // #832: the same approval identity as the household's copy, per Auntie
+        // (the ledger is keyed per recipient), so a re-approval after a cancel
+        // reaches her again and a retry of this approval does not.
+        dedupeKey: `booking:${batchId}:approve:${claimMs}`,
         data: {
           kinfolkId,
           batchId,
