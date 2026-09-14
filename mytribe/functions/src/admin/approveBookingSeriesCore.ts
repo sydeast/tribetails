@@ -382,11 +382,16 @@ async function dispatchSeriesConfirmation(args: {
 }): Promise<boolean> {
   const { kinfolkId, batchId, parentRef, envelope, actorUid } = args;
   try {
+    // #832: the claim's time is also the approval's notification identity. The
+    // claim already stops a second send for one approval; a cancel deletes the
+    // claim, and a re-approval inside the dispatcher window is a new approval
+    // with a new claim time, so it must not collide with the first one's ledger.
+    const claimMs = Date.now();
     const claimed = await db().runTransaction(async (tx) => {
       const snap = await tx.get(parentRef);
       const already = (snap.data() as Record<string, unknown> | undefined)?.['confirmNotifiedAtMs'];
       if (typeof already === 'number') return false;
-      tx.set(parentRef, { confirmNotifiedAtMs: Date.now() }, { merge: true });
+      tx.set(parentRef, { confirmNotifiedAtMs: claimMs }, { merge: true });
       return true;
     });
     if (!claimed) {
@@ -434,6 +439,7 @@ async function dispatchSeriesConfirmation(args: {
         },
         targetType: 'booking',
         targetId: batchId,
+        dedupeKey: `booking:${batchId}:approve:${claimMs}`,
       });
       householdNotified = true;
     } catch (err) {
@@ -446,7 +452,7 @@ async function dispatchSeriesConfirmation(args: {
       });
     }
 
-    await dispatchAuntieSummaries({ kinfolkId, batchId, visits, tz, envelope, actorUid });
+    await dispatchAuntieSummaries({ kinfolkId, batchId, visits, tz, envelope, actorUid, claimMs });
     return householdNotified;
   } catch (err) {
     logEvent({
@@ -489,8 +495,10 @@ async function dispatchAuntieSummaries(args: {
   tz: string;
   envelope: Record<string, unknown> | undefined;
   actorUid: string;
+  /** The approval claim's time: this approval's notification identity (#832). */
+  claimMs: number;
 }): Promise<void> {
-  const { kinfolkId, batchId, visits, tz, envelope, actorUid } = args;
+  const { kinfolkId, batchId, visits, tz, envelope, actorUid, claimMs } = args;
 
   const byAuntie = new Map<string, typeof visits>();
   for (const v of visits) {
@@ -509,6 +517,10 @@ async function dispatchAuntieSummaries(args: {
       await enqueueNotification({
         key: 'assignment.assigned',
         recipientUid: auntieUid,
+        // #832: the same approval identity as the household's copy, per Auntie
+        // (the ledger is keyed per recipient), so a re-approval after a cancel
+        // reaches her again and a retry of this approval does not.
+        dedupeKey: `booking:${batchId}:approve:${claimMs}`,
         data: {
           kinfolkId,
           batchId,

@@ -826,6 +826,10 @@ export interface SendInvoiceReminderArgs {
 export interface SendInvoiceReminderResult {
   ok: true;
   invoiceId: string;
+  sent: boolean;
+  reason: 'sent' | 'recent' | 'in-progress' | 'suppressed';
+  lastReminderAtMs: number | null;
+  nextReminderAllowedAtMs: number | null;
 }
 
 // ---------- unarchiveInvoice ----------

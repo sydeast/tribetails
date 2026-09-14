@@ -32,11 +32,27 @@ class VisitNotifier(
 
     data class DispatchResult(val dispatchIds: List<String>, val suppressed: Boolean)
 
+    companion object {
+        /** The stamped ISO instant as epoch millis, or null when absent or unparseable (never a guess). */
+        fun epochMillisOrNull(iso: String?): Long? =
+            iso?.takeIf { it.isNotBlank() }?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
+    }
+
+    /**
+     * @param eventAtIso the `onMyWayAt` / `arrivedAt` / `departedAt` the caller
+     *   just wrote. Sent as `eventAtMs`: the server names the household
+     *   notification by it, so a re-arrival after an undo is a new message and a
+     *   retry of one tap is not (#832).
+     * @param reportId the KinTale a REPORT_SENT announces, for the same reason:
+     *   two reports for one visit are two notifications.
+     */
     suspend fun notify(
         event: Event,
         session: KinCareSession,
         etaMinutes: Int = 0,
         reportPreviewUrl: String? = null,
+        eventAtIso: String? = null,
+        reportId: String? = null,
     ): Result<DispatchResult> = runCatching {
         val familyId = session.kinfolkId.ifBlank {
             error("VisitNotifier: session.kinfolkId is blank - cannot route notification")
@@ -66,6 +82,8 @@ class VisitNotifier(
             put("event", event.wire)
             if (etaMinutes > 0) put("etaMinutes", etaMinutes)
             if (!reportPreviewUrl.isNullOrBlank()) put("reportPreviewUrl", reportPreviewUrl)
+            epochMillisOrNull(eventAtIso)?.let { put("eventAtMs", it) }
+            if (!reportId.isNullOrBlank()) put("reportId", reportId)
         }
 
         val routingDesc = if (useEnvelopeIds) "batch=$batchId visit=$visitId" else "booking=$bookingId"

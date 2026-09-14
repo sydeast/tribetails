@@ -250,25 +250,35 @@ class KinCareRepository(
         Unit
     }
 
-    suspend fun markSessionOnMyWay(sessionId: String, etaMinutes: Int): Result<Unit> =
-        patchSession(sessionId, mapOf(
+    // The three in-visit stamps return the ISO time they wrote (#832). The
+    // household notification that follows names itself by that instant, so a
+    // re-arrival after an undo is a new message and a retry of one tap is not.
+
+    suspend fun markSessionOnMyWay(sessionId: String, etaMinutes: Int): Result<String> {
+        val at = getCurrentTimestamp()
+        return patchSession(sessionId, mapOf(
             "status" to VisitStatus.ON_MY_WAY.name,
-            "onMyWayAt" to getCurrentTimestamp(),
+            "onMyWayAt" to at,
             "etaMinutesAway" to etaMinutes
-        )).onFailure { AuntieLog.e("Failed to mark on-my-way for $sessionId", it) }
+        )).map { at }.onFailure { AuntieLog.e("Failed to mark on-my-way for $sessionId", it) }
+    }
 
-    suspend fun markSessionArrived(sessionId: String, visitRouteId: String): Result<Unit> =
-        patchSession(sessionId, mapOf(
+    suspend fun markSessionArrived(sessionId: String, visitRouteId: String): Result<String> {
+        val at = getCurrentTimestamp()
+        return patchSession(sessionId, mapOf(
             "status" to VisitStatus.ARRIVED.name,
-            "arrivedAt" to getCurrentTimestamp(),
+            "arrivedAt" to at,
             "visitRouteId" to visitRouteId
-        )).onFailure { AuntieLog.e("Failed to mark arrived for $sessionId", it) }
+        )).map { at }.onFailure { AuntieLog.e("Failed to mark arrived for $sessionId", it) }
+    }
 
-    suspend fun markSessionDeparted(sessionId: String): Result<Unit> =
-        patchSession(sessionId, mapOf(
+    suspend fun markSessionDeparted(sessionId: String): Result<String> {
+        val at = getCurrentTimestamp()
+        return patchSession(sessionId, mapOf(
             "status" to VisitStatus.DEPARTED.name,
-            "departedAt" to getCurrentTimestamp()
-        )).onFailure { AuntieLog.e("Failed to mark departed for $sessionId", it) }
+            "departedAt" to at
+        )).map { at }.onFailure { AuntieLog.e("Failed to mark departed for $sessionId", it) }
+    }
 
     /**
      * ISSUE #582: the three fields `verifyVisitArrival` stamps on a session, and

@@ -26,7 +26,10 @@ vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError:
 vi.mock('../src/lib/wrapTrigger', () => ({
   wrapTrigger: (_name: string, fn: (...args: unknown[]) => unknown) => fn,
 }));
-vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: mocks.enqueue }));
+vi.mock('../src/notifications/dispatcher', async () => {
+  const actual = await vi.importActual<typeof import('../src/notifications/dispatcher')>('../src/notifications/dispatcher');
+  return { contentDedupeKey: actual.contentDedupeKey, enqueueNotification: mocks.enqueue };
+});
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveUid }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: mocks.writeAuditEntryFn }));
 // Only the Firestore-backed claim is mocked; `clientAlreadyAnnouncedSend` is a

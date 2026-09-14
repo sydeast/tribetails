@@ -275,6 +275,7 @@ fun InvoicesScreen(
     val error by viewModel.error.collectAsState()
     val kinfolk by viewModel.kinfolkDirectory.collectAsState()
     val actionMessage by viewModel.invoiceActionMessage.collectAsState()
+    val remindingIds by viewModel.remindingInvoiceIds.collectAsState()
 
     LaunchedEffect(Unit) {
         viewModel.loadInvoices()
@@ -441,6 +442,7 @@ fun InvoicesScreen(
                                         onReceipt = { viewModel.generateReceipt(it.id) },
                                         onSendReminder = { viewModel.sendInvoiceReminder(it.id) },
                                         onSendDraft = { viewModel.reviewAndSendDraftInvoice(it) },
+                                        remindingIds = remindingIds,
                                     )
                                 }
                             }
@@ -624,6 +626,7 @@ private fun InvoiceList(
     onReceipt: (Invoice) -> Unit,
     onSendReminder: (Invoice) -> Unit,
     onSendDraft: (Invoice) -> Unit,
+    remindingIds: Set<String> = emptySet(),
 ) {
     Column {
         invoices.forEachIndexed { idx, invoice ->
@@ -634,6 +637,7 @@ private fun InvoiceList(
                 onReceipt = onReceipt,
                 onSendReminder = onSendReminder,
                 onSendDraft = onSendDraft,
+                reminding = invoice.id in remindingIds,
             )
             if (idx < invoices.lastIndex) {
                 Box(
@@ -655,6 +659,7 @@ private fun InvoiceRow(
     onReceipt: (Invoice) -> Unit,
     onSendReminder: (Invoice) -> Unit,
     onSendDraft: (Invoice) -> Unit,
+    reminding: Boolean = false,
 ) {
     val c = AuntieTheme.colors
     val state = invoiceStateOrNull(invoice)
@@ -763,6 +768,15 @@ private fun InvoiceRow(
             style = AuntieTheme.typography.mono.copy(fontSize = 11.sp),
             color = if (overdue) c.error else c.textDim,
         )
+        // #832: when the household was last chased about this bill, visible
+        // before the operator presses Send reminder rather than only after.
+        if (InvoiceAction.SEND_REMINDER in invoiceActionsFor(state)) {
+            Text(
+                text = "reminded ${com.tribetails.auntieos.domain.lastReminderLabel(invoice.reminderNotifiedAtMs)}",
+                style = AuntieTheme.typography.mono.copy(fontSize = 11.sp),
+                color = c.textDim,
+            )
+        }
         val visitCount = invoice.sessionIds.size
         if (visitCount > 0) {
             Text(
@@ -809,6 +823,7 @@ private fun InvoiceRow(
                 onReceipt = { onReceipt(invoice) },
                 onSendReminder = { onSendReminder(invoice) },
                 onSendDraft = { onSendDraft(invoice) },
+                reminding = reminding,
             )
         }
     }
@@ -837,14 +852,17 @@ private fun RowAction(
     onReceipt: () -> Unit,
     onSendReminder: () -> Unit,
     onSendDraft: () -> Unit,
+    reminding: Boolean = false,
 ) {
     val c = AuntieTheme.colors
     when {
         InvoiceAction.REVIEW_AND_SEND in actions ->
             PrimaryButton(label = "Review & send", onClick = onSendDraft)
+        // Pessimistic (#832): busy and disabled until the server answers.
         InvoiceAction.SEND_REMINDER in actions -> PrimaryButton(
-            label = "Send reminder",
-            onClick = onSendReminder,
+            label = if (reminding) "Sending…" else "Send reminder",
+            onClick = { if (!reminding) onSendReminder() },
+            enabled = !reminding,
             leading = {
                 Icon(
                     imageVector = Lucide.Bell,

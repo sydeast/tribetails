@@ -930,9 +930,11 @@ const FROZEN_RESPONSE_SHAPES: Record<
     load: () => import('../src/admin/reviewAndSendDraftInvoice'),
     signature: ['invoiceId', 'ok'],
   },
+  // #832: `sent` / `reason` / `lastReminderAtMs` / `nextReminderAllowedAtMs`
+  // say whether THIS call reminded the household, and if not, why.
   sendInvoiceReminder: {
     load: () => import('../src/admin/sendInvoiceReminder'),
-    signature: ['invoiceId', 'ok'],
+    signature: ['invoiceId', 'lastReminderAtMs', 'nextReminderAllowedAtMs', 'ok', 'reason', 'sent'],
   },
   // Bare acks. `postInvoiceEvent` merges an ARBITRARY payload and must not
   // start echoing the doc back: that would make the merge's result a contract.

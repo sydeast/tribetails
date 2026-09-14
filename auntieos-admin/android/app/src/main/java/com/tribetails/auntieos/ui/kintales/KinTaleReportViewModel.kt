@@ -757,6 +757,8 @@ class KinTaleReportViewModel(
             notifier.notify(
                 event = VisitNotifier.Event.REPORT_SENT,
                 session = session,
+                // #832: two KinTales for one visit are two notifications.
+                reportId = savedReport.id,
             ).fold(
                 onSuccess = { result ->
                     val firstDispatchId = result.dispatchIds.firstOrNull().orEmpty()

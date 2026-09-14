@@ -3,6 +3,7 @@ package com.tribetails.auntieos.data.repository
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.functions.FirebaseFunctions
 import com.tribetails.auntieos.data.contracts.ArchiveInvoiceArgs
+import com.tribetails.auntieos.domain.ReminderOutcome
 import com.tribetails.auntieos.data.contracts.CreateInvoiceArgs
 import com.tribetails.auntieos.data.contracts.CreateInvoiceArgsLineItem
 import com.tribetails.auntieos.data.contracts.CreateQuoteArgs
@@ -423,17 +424,23 @@ class InvoiceRepository(
     /**
      * Stage 2 tail: admin-initiated on-demand resend of a single invoice reminder
      * via the sendInvoiceReminder callable (reuses the cron's per-invoice dispatch
-     * path; stamps reminderNotifiedAtMs for idempotency). Returns the invoiceId on
-     * success. Fail-loud: the server message (already-paid, not-found, etc.) is
-     * surfaced verbatim.
+     * path; stamps reminderNotifiedAtMs for idempotency). Fail-loud: the server
+     * message (already-paid, not-found, etc.) is surfaced verbatim.
+     *
+     * #832: returns what the server DECIDED. A reminder inside the server's window
+     * comes back `sent = false` with the time of the one that already went out,
+     * as a success, because the household has been reminded.
      */
-    suspend fun sendInvoiceReminder(invoiceId: String): Result<String> = runCatching {
+    suspend fun sendInvoiceReminder(
+        invoiceId: String,
+        nowMs: Long = System.currentTimeMillis(),
+    ): Result<ReminderOutcome> = runCatching {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("sendInvoiceReminder")
             .call(SendInvoiceReminderArgs(invoiceId = invoiceId).toPayload())
             .awaitCallable().data as? Map<String, Any?>
-        reminderInvoiceIdOrRequested(raw, invoiceId)
+        reminderOutcomeOf(raw, nowMs)
     }.onFailure { AuntieLog.e("sendInvoiceReminder failed for $invoiceId", it) }
 
     /**
@@ -864,6 +871,32 @@ internal fun recordPaymentArgs(payment: Payment, idempotencyKey: String? = null)
  */
 internal fun reminderInvoiceIdOrRequested(raw: Map<String, Any?>?, requested: String): String =
     decodeSendInvoiceReminderResult(raw).invoiceId.ifBlank { requested }
+
+/**
+ * The `sendInvoiceReminder` answer as a [ReminderOutcome] (#832).
+ *
+ * THE GENERATED DECODER CANNOT BE TRUSTED WITH `sent` ALONE: it is fail-soft, so a
+ * missing key decodes to `false`. A response with no `sent` at all comes from a
+ * function deployed before #832, which only ever answered after sending, and
+ * reading it as "refused" would tell the admin a reminder did not go out when it
+ * did. So key PRESENCE decides: absent reads as sent, at [nowMs].
+ */
+internal fun reminderOutcomeOf(raw: Map<String, Any?>?, nowMs: Long): ReminderOutcome {
+    if (raw?.get("sent") !is Boolean) {
+        return ReminderOutcome(sent = true, reason = "sent", lastReminderAtMs = nowMs, nextReminderAllowedAtMs = null)
+    }
+    val decoded = decodeSendInvoiceReminderResult(raw)
+    // A reason outside the four (or none) falls back on `sent`, never on a guess
+    // that nothing went out when the server said it did.
+    val reason = decoded.reason.takeIf { it in com.tribetails.auntieos.domain.REMINDER_REASONS }
+        ?: if (decoded.sent) "sent" else "recent"
+    return ReminderOutcome(
+        sent = decoded.sent,
+        reason = reason,
+        lastReminderAtMs = decoded.lastReminderAtMs,
+        nextReminderAllowedAtMs = decoded.nextReminderAllowedAtMs,
+    )
+}
 
 /**
  * The `linkInvoiceSessions` response, with the two echoed fields falling back to
