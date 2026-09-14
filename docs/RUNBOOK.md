@@ -1091,6 +1091,32 @@ Firestore shows `create` on every channel and needs nothing ticked. Do not tick
 **Replace the stored copy with the repo wording** on an unrelated `skipped` row to
 get it in.
 
+### Backfills to run after a release
+
+Some merges change which key a stored setting belongs to. Run each row once,
+after the first release that contains it and after that release's template
+import above. Every backfill here is a dry run by default, and **before any
+write, run `npm run test:scripts:emulator` and read the pass count.**
+
+| Backfill | Added by | What it fixes |
+|---|---|---|
+| `backfill:operator-warning-override` | #877 | An operator who turned off the failed-login warning, or one of its channels, on the Business tab saved that on `auth.failedLogin.attempts`. That key is household-only now, so the setting stopped applying to operators. This copies it to `security.failedLogin.attempts.operator`, only where that key has no setting yet. |
+
+For `backfill:operator-warning-override`:
+
+1. `npm run test:scripts:emulator`
+2. `npm --prefix mytribe/functions run backfill:operator-warning-override`
+   Reads only. The first line names the target: check it says `PRODUCTION` and
+   the right project. Then read the old value and the planned `WRITE` line.
+3. `npm --prefix mytribe/functions run backfill:operator-warning-override -- --allow-prod`
+   Needs `GOOGLE_APPLICATION_CREDENTIALS`, and refuses to run while
+   `FIRESTORE_EMULATOR_HOST` is set.
+4. Re-run step 2. It reports `target-exists`, or the same no-op as before.
+
+The script never overwrites a setting the new key already has, and never copies
+locks. If step 2 prints `NOT COPIED`, re-set those locks by hand on the Business
+tab.
+
 ### Merged branches are deleted after the tag
 
 Immediately after step 9, `scripts/prune-merged-branches.sh` deletes remote
