@@ -1038,6 +1038,19 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
     Firestore `emailTemplates` collection. The operator edits email templates in
     the admin UI; there is no seed script for them (operator ruling 2026-09-13, #847).
 
+### requestPasswordReset (pre-existing; caps made silent and a locked account exempted 2026-09-14, #891)
+- req `{ email: string /* email */ }`. Called by portal Android and portal desktop;
+  the other clients use Firebase's native reset.
+- res `{ ok: true }` for a known, unknown, locked or capped email alike.
+- GATE: none, `wrapCallable` only. Per-IP limit (30 per 5 minutes, keyed like
+  `recordFailedLogin`) refuses with `resource-exhausted`; a malformed request is
+  `invalid-argument`.
+- Per-email cap: 3 per 24 hours. An account inside an unexpired lock is exempt
+  and has its own cap of 10 per lock, and resets during a lock do not use the
+  daily 3. Over either cap the call sends nothing and still answers `{ ok: true }`
+  (before #891 it threw `resource-exhausted`, which with the exemption would have
+  told a caller the account was locked).
+
 ### recordFailedLogin (pre-existing; response made constant and clients wired 2026-09-14, #886)
 - req `{ email: string /* email */, ip?: string /* max 256 */, userAgent?: string /* max 256 */ }`.
   Clients send `email` only. Frozen in `test/callableContract.test.ts`.
@@ -1052,6 +1065,14 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
   per-IP budget. None of these depends on whether the email is an account. The
   audit row for an address that is not an account stores `emailHash`, never the
   address.
+- #891: the per-IP limit keys on `clientIpOf`, the rightmost `X-Forwarded-For`
+  entry (the one Google's front end appended), not the caller's first entry and
+  not `rawRequest.ip` (which `trust proxy` makes that same first entry). The audit
+  row's `ip` is the same address.
+- #891: when a REAL account's per-email refusal finds its 15 spent, the operator
+  gets `security.failedLogin.budgetExhausted.operator`, once per exhaustion. The
+  refusal body is unchanged. When 3 distinct accounts lock within 30 minutes, the
+  operator also gets one `security.account.locked.spike.operator`.
 - The lock only counts failures reported by our own clients. A script that calls
   Firebase Auth directly never reports, and relies on Firebase Auth's own
   throttling instead.

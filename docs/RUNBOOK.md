@@ -1103,6 +1103,13 @@ push carry content-free copy pointing at AuntieOS, and **SMS is skipped**
 | `security.failedLogin.budgetExhausted.operator` | #891 | The alert that an account's failed sign-ins stopped counting for 24 hours names neither the household nor the account email, and sends no SMS. |
 | `security.account.locked.spike.operator` | #891 | The alert that 3 or more accounts locked within 30 minutes does not give the count or the window, and sends no SMS. |
 
+To import, follow [the template import list](#importing-notification-templates):
+Admin, then **Templates**, then **Import from repo** on web or the **Import** tab
+on Android, then read the plan before pressing **Import**. A template new to
+Firestore shows `create` on every channel and needs nothing ticked. Do not tick
+**Replace the stored copy with the repo wording** on an unrelated `skipped` row to
+get it in.
+
 #### What the failed-login lock does and does not see (#891)
 
 The lock counts only failures our own sign-in clients report to
@@ -1122,13 +1129,6 @@ a forged header, for example `X-Forwarded-For: 1.2.3.4`, and read the `ip` on
 its `AUTH_LOGIN_FAIL` row in the Activity Log. It must be your real address. If
 it is `1.2.3.4`, or every row shows the same Google address, `TRUSTED_PROXY_HOPS`
 in `loginSecurity.ts` does not match what is in front of the function.
-
-To import, follow [the template import list](#importing-notification-templates):
-Admin, then **Templates**, then **Import from repo** on web or the **Import** tab
-on Android, then read the plan before pressing **Import**. A template new to
-Firestore shows `create` on every channel and needs nothing ticked. Do not tick
-**Replace the stored copy with the repo wording** on an unrelated `skipped` row to
-get it in.
 
 ### Backfills to run after a release
 

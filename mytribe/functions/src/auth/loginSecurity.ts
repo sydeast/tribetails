@@ -131,11 +131,6 @@ async function reserveFailedLoginReport(email: string): Promise<EmailReportDecis
   });
 }
 
-export async function checkEmailRateLimit(email: string): Promise<void> {
-  const decision = await reserveFailedLoginReport(email);
-  if (!decision.allowed) throw new HttpsError('resource-exhausted', EMAIL_RATE_LIMIT_MESSAGE);
-}
-
 /**
  * How many proxies Google puts between the internet and this function that
  * each append one entry to `X-Forwarded-For`. See `clientIpOf`.
