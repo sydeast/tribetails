@@ -288,6 +288,11 @@ jobs:
               # change that dropped one of those mappings would sail through:
               # the test that catches it would not have run.
               - '.github/workflows/preview.yml'
+              # workflow-budget.test.sh (also in deploy-guard) scans every file
+              # in .github/workflows/, ci-run-watch.yml included, for a
+              # timeout-minutes on every job. A change to that file alone,
+              # touching nothing under scripts/**, must still run it.
+              - '.github/workflows/ci-run-watch.yml'
 
   admin:
     name: React admin
@@ -900,6 +905,17 @@ jobs:
             bash scripts/workflow-budget.test.sh
           else
             echo "scripts/workflow-budget.test.sh not present yet, skipping."
+          fi
+      # The decision logic ci-run-watch.yml runs on a schedule: whether a
+      # check-run-less HEAD is old enough to act on, and whether it has
+      # already been dispatched once. Tested against fixture JSON shaped like
+      # `gh api`'s own responses so every branch runs with no network (#838).
+      - name: Run the CI-run-watch decision test if present
+        run: |
+          if [ -f scripts/ci-run-watch.test.mjs ]; then
+            node --test scripts/ci-run-watch.test.mjs
+          else
+            echo "scripts/ci-run-watch.test.mjs not present yet, skipping."
           fi
   mytribe-gradle:
     name: Portal shared (jvm + android unit + js)

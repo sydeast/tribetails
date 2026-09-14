@@ -2071,6 +2071,47 @@ and it is release step 0b. Fix the named job on main and release the commit that
 fixes it. `RELEASE_SKIP_CI_GATE=1` is for a gate that cannot answer, not for one
 that answered no; using it that way reproduces 2026-08-01 exactly.
 
+**A release refuses with "GitHub reports no check runs at all for `<sha>`".**
+Also step 0b, and also working as intended, but the cause is different: CI
+never started for this commit. This happened for real on 2026-09-13 (#838):
+PR #837's merge landed on main as `92786e7` during a GitHub outage, where the
+merge API call itself came back a gateway error but the merge had actually
+completed server-side. It is a genuine GitHub merge, not one crafted to look
+like one: `gh api repos/<owner>/<repo>/commits/92786e7 --jq
+.commit.verification` reports `verified: true`, signed with a key that
+matches one of the two published at `https://github.com/web-flow.gpg`,
+GitHub's own merge-commit identity. The bookkeeping a merge normally does
+alongside that git write never finished, though: the PR was never marked
+merged, and the `push` event `ci.yml`'s `on: push` listens for never fired.
+`gh api repos/<owner>/<repo>/commits/92786e7/check-suites` shows exactly one
+check suite for that SHA (the operator's own hand-dispatched run, hours
+later), which is proof no push-triggered suite, and so no push event, was
+ever created for it, not just an absence in a best-effort log.
+`.github/workflows/ci.yml` has no path filter on `push`, no `[skip ci]`-style
+marker stopped it, and its push concurrency group keys on `github.run_id`
+(unique per run), so none of those repo-side knobs caused it either. The
+push event was simply never delivered.
+
+Recover by hand with:
+
+```bash
+gh workflow run ci.yml --ref main
+```
+
+`.github/workflows/ci-run-watch.yml` does this automatically now. It runs
+every 20 minutes on a **schedule**, deliberately not on `push` or
+`check_suite`: whatever swallows a push event runs through the same delivery
+pipeline a webhook-triggered watcher would also depend on, and a cron tick
+does not. Once main's HEAD has zero check runs and is older than 10 minutes
+(`scripts/ci-run-watch.mjs`, `DEFAULT_MAX_AGE_MINUTES`), it dispatches
+`ci.yml` for `main` itself and writes a warning to the run's job summary. It
+will not fire twice for the same commit: before dispatching it checks
+`ci.yml`'s own `workflow_dispatch` run history for that SHA, and stands down
+if one is already on record. `RELEASE_SKIP_CI_GATE=1` is still there for when
+the gate itself cannot be asked at all (`gh` down, unauthenticated); this is
+for when it can be asked and the honest answer is "nothing has judged this
+commit yet".
+
 ---
 
 ## Where else to look
