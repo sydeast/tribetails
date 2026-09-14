@@ -57,7 +57,7 @@ internal class RestAuthClient {
     )
 
     suspend fun signInWithPassword(email: String, password: String): SignInResponse {
-        val url = "${FirebaseRestConfig.IDENTITY_TOOLKIT_BASE}/accounts:signInWithPassword?key=${FirebaseRestConfig.API_KEY}"
+        val url = "${FirebaseRestConfig.identityToolkitBase()}/accounts:signInWithPassword?key=${FirebaseRestConfig.API_KEY}"
         val res: HttpResponse = RestHttp.client.post(url) {
             contentType(ContentType.Application.Json)
             setBody(SignInRequest(email, password))
@@ -72,7 +72,7 @@ internal class RestAuthClient {
     internal data class CustomTokenResponse(val idToken: String, val refreshToken: String)
     /** accounts:signInWithCustomToken — claim flow (server-minted account). */
     suspend fun signInWithCustomToken(token: String): CustomTokenResponse {
-        val url = "${FirebaseRestConfig.IDENTITY_TOOLKIT_BASE}/accounts:signInWithCustomToken?key=${FirebaseRestConfig.API_KEY}"
+        val url = "${FirebaseRestConfig.identityToolkitBase()}/accounts:signInWithCustomToken?key=${FirebaseRestConfig.API_KEY}"
         val res: HttpResponse = RestHttp.client.post(url) {
             contentType(ContentType.Application.Json)
             setBody(CustomTokenRequest(token))
@@ -83,7 +83,7 @@ internal class RestAuthClient {
 
     /** Returns Pair(idToken, uid). Updates JvmTokenStore.refreshToken if rotated. */
     suspend fun refresh(refreshToken: String): Pair<String, String> {
-        val url = "${FirebaseRestConfig.SECURE_TOKEN_BASE}/token?key=${FirebaseRestConfig.API_KEY}"
+        val url = "${FirebaseRestConfig.secureTokenBase()}/token?key=${FirebaseRestConfig.API_KEY}"
         val res: HttpResponse = RestHttp.client.post(url) {
             setBody(
                 FormDataContent(
@@ -102,7 +102,7 @@ internal class RestAuthClient {
 
     /** Requests a password reset via the custom Cloud Function (bypasses Firebase email). */
     suspend fun sendPasswordReset(email: String) {
-        val url = "https://us-central1-${FirebaseRestConfig.PROJECT_ID}.cloudfunctions.net/requestPasswordReset"
+        val url = FirebaseRestConfig.functionUrl("requestPasswordReset")
         val body = """{"data":{"email":${kotlinx.serialization.json.JsonPrimitive(email)}}}"""
         val res: HttpResponse = RestHttp.client.post(url) {
             contentType(ContentType.Application.Json)
@@ -117,7 +117,7 @@ internal class RestAuthClient {
      * callable is unauthenticated. Same endpoint shape as [sendPasswordReset].
      */
     suspend fun reportFailedLogin(email: String) {
-        val url = "https://us-central1-${FirebaseRestConfig.PROJECT_ID}.cloudfunctions.net/recordFailedLogin"
+        val url = FirebaseRestConfig.functionUrl("recordFailedLogin")
         val body = """{"data":{"email":${kotlinx.serialization.json.JsonPrimitive(email)}}}"""
         val res: HttpResponse = RestHttp.client.post(url) {
             contentType(ContentType.Application.Json)
@@ -127,7 +127,7 @@ internal class RestAuthClient {
     }
 
     suspend fun lookup(idToken: String): LookupUser? {
-        val url = "${FirebaseRestConfig.IDENTITY_TOOLKIT_BASE}/accounts:lookup?key=${FirebaseRestConfig.API_KEY}"
+        val url = "${FirebaseRestConfig.identityToolkitBase()}/accounts:lookup?key=${FirebaseRestConfig.API_KEY}"
         val res: HttpResponse = RestHttp.client.post(url) {
             contentType(ContentType.Application.Json)
             setBody(mapOf("idToken" to idToken))
@@ -150,7 +150,7 @@ internal class RestAuthClient {
      *  the tokens that a password change invalidates. Nulls are omitted from the
      *  body so a password-only change never sends an empty email (and vice versa). */
     suspend fun update(idToken: String, password: String? = null, email: String? = null): UpdateResponse {
-        val url = "${FirebaseRestConfig.IDENTITY_TOOLKIT_BASE}/accounts:update?key=${FirebaseRestConfig.API_KEY}"
+        val url = "${FirebaseRestConfig.identityToolkitBase()}/accounts:update?key=${FirebaseRestConfig.API_KEY}"
         val fields = buildList {
             add("\"idToken\":${kotlinx.serialization.json.JsonPrimitive(idToken)}")
             add("\"returnSecureToken\":true")

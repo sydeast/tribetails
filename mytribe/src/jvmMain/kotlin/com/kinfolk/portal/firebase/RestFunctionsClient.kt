@@ -17,7 +17,9 @@ import kotlinx.serialization.json.put
 /**
  * Firebase Callable Functions over HTTPS.
  *
- * Endpoint: https://{region}-{projectId}.cloudfunctions.net/{name}
+ * Endpoint: https://{region}-{projectId}.cloudfunctions.net/{name} in
+ * production, or the local Functions emulator when `FUNCTIONS_EMULATOR_HOST`
+ * is set — see [FirebaseRestConfig.functionUrl] (#889).
  * Body: {"data": <payload>}
  * Header: Authorization: Bearer <idToken>
  * Response: {"result": <payload>}  on success
@@ -30,7 +32,7 @@ internal class RestFunctionsClient(
 
     override suspend fun call(name: String, payload: JsonObject?): JsonObject {
         val token = auth.idToken() ?: throw IllegalStateException("Not signed in.")
-        val url = "https://$region-${FirebaseRestConfig.PROJECT_ID}.cloudfunctions.net/$name"
+        val url = FirebaseRestConfig.functionUrl(name, region)
         val bodyJson = buildJsonObject {
             put("data", payload ?: JsonNull)
         }

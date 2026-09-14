@@ -380,6 +380,15 @@ compose.desktop {
     }
 }
 
+// #889: arms RestHttp's test-runtime network guard for exactly the Gradle
+// Test task CLAUDE.md names as the gate (":jvmTest"), not testDebugUnitTest or
+// any other Test task. The property has no effect outside a test JVM — a
+// shipped desktop build never sets it — so this is the "shared test setup"
+// that installs the guard: one place, not one fixture per test class.
+tasks.withType<Test>().matching { it.name == "jvmTest" }.configureEach {
+    systemProperty("kinfolk.portal.testRuntime", "true")
+}
+
 // Force Firebase JS SDK to 10.14.0 — gitlive 2.1.0 transitive may pin older.
 // 10.14+ required for initializeRecaptchaConfig (Identity Platform reCAPTCHA
 // Enterprise integration in index.html). See project_path_b_decisions memory.
