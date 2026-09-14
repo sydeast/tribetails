@@ -67,6 +67,7 @@ import type { App } from 'firebase-admin/app';
 import type * as FirebaseAdminApp from 'firebase-admin/app';
 import type { Firestore, QueryDocumentSnapshot } from 'firebase-admin/firestore';
 import type * as FirebaseAdminFirestore from 'firebase-admin/firestore';
+import type { Auth } from 'firebase-admin/auth';
 import type * as FirebaseAdminAuth from 'firebase-admin/auth';
 import { assertSingleFirebaseAdminResolution } from './adminResolveGuard';
 
@@ -162,3 +163,8 @@ export { FieldValue, Timestamp };
 export type Timestamp = FirebaseAdminFirestore.Timestamp;
 export type FieldValue = FirebaseAdminFirestore.FieldValue;
 export type { Firestore, QueryDocumentSnapshot };
+// Auth-touching emulator tests (issue #860, qaSandboxScripts.emulator.test.ts)
+// need this type the same way they need getAuth() itself: through this
+// shared module, never a direct `firebase-admin/auth` import, so
+// emulatorTestImports.test.ts (#870) has nothing to flag.
+export type { Auth };

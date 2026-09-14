@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "preinstall": "node ../scripts/lib/refuse-member-install.js",
     "dev": "vite",
     "dev:record": "VITE_ISSUE_RECORDER=1 vite",
     "prebuild": "npm --prefix ../packages/issue-recorder run build:bookmarklet && mkdir -p public && cp ../packages/issue-recorder/dist/__recorder.js public/__recorder.js",

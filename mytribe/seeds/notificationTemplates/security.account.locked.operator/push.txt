@@ -1,0 +1,1 @@
+Kinfolk account locked. {{kinfolkName}} ({{kinfolkEmail}}) hit 10 failed sign-ins. Check whether it was them.

@@ -1,0 +1,1 @@
+Tribe Tails SECURITY: {{kinfolkName}} ({{kinfolkEmail}}) locked after 10 failed sign-ins. Clears in 30 min or on a password reset. Check it was them.

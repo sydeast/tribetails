@@ -100,7 +100,7 @@ batchKey + batchWindowMs, marketing-class keys live in marketing category.
 1. From `recordFailedLogin` callable, post failures with `email` of a test kinfolk:
    - 4 fails → no notification, `remainingBeforeLock = 6`.
    - 5th fail within 10 min → `auth.failedLogin.attempts` notification fires; `remainingBeforeLock = 5`.
-   - Continue to 10 fails within 20 min → `auth.account.locked` notification fires to kinfolk AND business admins (resolver dispatches twice). `clients/{uid}/security/loginAttempts.lockedUntilMs` set to `MAX_SAFE_INTEGER`.
+   - Continue to 10 fails within 20 min → `auth.account.locked` fires to the kinfolk, and `security.account.locked.operator` fires to every uid in `businessSettings/admins.uids` as staff (#869). `clients/{uid}/security/loginAttempts.lockedUntilMs` set to the lock start plus 30 minutes.
 2. Attempt Firebase Auth sign-in for the locked kinfolk → `beforeSignIn` blocking function rejects with `permission-denied: This account is locked.`
 3. Trigger Firebase Auth password reset for the kinfolk (out of band).
 4. Sign in successfully → `beforeSignIn` detects `tokensValidAfterTime > lockStartedAtMs`, clears the lock + counter, allows sign-in.

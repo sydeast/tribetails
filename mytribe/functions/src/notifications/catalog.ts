@@ -777,9 +777,14 @@ const CATALOG_LIST: NotificationDef[] = [
     description: 'Repeated failed login attempts detected (5 in 10 min).',
   },
   {
+    // The household's copy only. Business admins get
+    // `security.account.locked.operator` below (#869): this row's `specificUid`
+    // resolver tags every recipient `clients`, so an operator sent THIS key had
+    // their prefs read from a clients doc they do not have and got the
+    // household's "I've locked your account" template.
     key: 'auth.account.locked',
     label: 'Account locked after failed logins',
-    audience: 'both',
+    audience: 'kinfolk',
     audiences: { kinfolk: true },
     category: 'account',
     allowedChannels: ['email', 'sms', 'push'],
@@ -795,6 +800,31 @@ const CATALOG_LIST: NotificationDef[] = [
   // ─────────────────────────────────────────────────────────
   // SECURITY
   // ─────────────────────────────────────────────────────────
+  {
+    // #869: the operator's copy of a kinfolk lockout. Resolved through the
+    // business admin roster (lib/businessAdmins.ts), so recipients are STAFF and
+    // their prefs, email, phone and push tokens come from staff/. Fired by
+    // auth/loginSecurity.ts with a dedupeKey naming the household and the lock
+    // start, so two lockouts inside the #832 window stay two alerts.
+    key: 'security.account.locked.operator',
+    label: 'Kinfolk account locked after failed logins',
+    audience: 'business',
+    audiences: { business: true },
+    category: 'security',
+    allowedChannels: ['email', 'sms', 'push'],
+    required: { email: true, push: true },
+    alwaysEnabled: true,
+    kinfolkFacing: false,
+    deliveryMode: 'trigger',
+    recipientResolver: 'businessAdmins',
+    templates: {
+      email: 'security.account.locked.operator',
+      sms: 'security.account.locked.operator',
+      push: 'security.account.locked.operator',
+    },
+    description:
+      'A kinfolk account locked after 10 failed sign-in attempts in 20 minutes. It clears after 30 minutes or on a password reset.',
+  },
   {
     key: 'security.breach_attempt.kinfolk',
     label: 'Unsolicited password reset attempt',
