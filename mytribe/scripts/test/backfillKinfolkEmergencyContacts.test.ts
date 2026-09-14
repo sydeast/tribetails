@@ -1,6 +1,65 @@
 import { describe, it, expect } from 'vitest';
 import { Timestamp } from 'firebase-admin/firestore';
-import { parseArgs, planEmergencyContactMigration } from '../backfillKinfolkEmergencyContacts';
+import { parseArgs, planEmergencyContactMigration, planFamiliesEmergencyContacts } from '../backfillKinfolkEmergencyContacts';
+
+const OTHER = { key: 'vetClinicId', label: 'Vet Clinic', value: 'clinic-1' };
+const FAMILY_EC = [
+  { key: 'emergencyContactName', label: 'Emergency Contact', value: ' Sam Ortiz ' },
+  { key: 'emergencyContactPhone', label: 'Emergency Contact Phone', value: '(805) 555-0111' },
+  { key: 'emergencyContactRelation', label: 'Emergency Contact Relation', value: 'Brother' },
+];
+
+describe('planFamiliesEmergencyContacts (the portal store the admin never read)', () => {
+  it('has nothing to do when families customFields hold no emergencyContact key', () => {
+    expect(planFamiliesEmergencyContacts({ customFields: [OTHER] }, { firstName: 'Dana' })).toBeNull();
+    expect(planFamiliesEmergencyContacts({}, { firstName: 'Dana' })).toBeNull();
+  });
+
+  it('moves the copy into slot 1 when the kinfolk has none, dated by the families doc, and keeps every other field', () => {
+    const ts = Timestamp.fromDate(new Date('2026-02-10T09:30:00Z'));
+    const plan = planFamiliesEmergencyContacts({ updatedAt: ts, customFields: [OTHER, ...FAMILY_EC] }, { firstName: 'Dana' });
+    expect(plan?.action).toBe('move');
+    if (plan?.action !== 'move') return;
+    expect(plan.contact).toMatchObject({ name: 'Sam Ortiz', phone: '+18055550111', relationship: 'Brother' });
+    expect(plan.contact.recordedAt).toEqual(ts);
+    expect(plan.contact.updatedAt).toEqual(ts);
+    expect(plan.dateSource).toBe('families.updatedAt');
+    expect(plan.keep).toEqual([OTHER]);
+    expect(plan.stale.map((f) => f.key)).toEqual(['emergencyContactName', 'emergencyContactPhone', 'emergencyContactRelation']);
+  });
+
+  it('says the date is unknown rather than stamping the migration time', () => {
+    const plan = planFamiliesEmergencyContacts({ customFields: FAMILY_EC }, { firstName: 'Dana' });
+    expect(plan?.action === 'move' && plan.contact.recordedAt).toBeNull();
+    expect(plan?.action === 'move' && plan.dateSource).toBeNull();
+  });
+
+  it('only strips when the kinfolk already holds contacts: the office copy is the newer decision', () => {
+    const plan = planFamiliesEmergencyContacts(
+      { customFields: [OTHER, ...FAMILY_EC] },
+      { emergencyContacts: [{ name: 'Lee Park', phone: '+18055550177' }] },
+    );
+    expect(plan).toMatchObject({ action: 'strip', reason: 'kinfolk-has-contacts', keep: [OTHER] });
+  });
+
+  it("only strips when the kinfolk's own flat fields are migrating in the same run", () => {
+    const plan = planFamiliesEmergencyContacts(
+      { customFields: FAMILY_EC },
+      { emergencyContactName: 'Rae Mercer', emergencyContactPhone: '8055550199' },
+    );
+    expect(plan).toMatchObject({ action: 'strip', reason: 'kinfolk-flat-wins', keep: [] });
+  });
+
+  it('strips half a record without inventing the other half, and keeps the values for the report', () => {
+    const plan = planFamiliesEmergencyContacts({ customFields: [OTHER, FAMILY_EC[0]!] }, { firstName: 'Dana' });
+    expect(plan).toMatchObject({ action: 'strip', reason: 'half-record', keep: [OTHER] });
+    expect(plan?.stale[0]?.value).toBe(' Sam Ortiz ');
+  });
+
+  it('reports a families doc with no kinfolk doc and plans no write for it', () => {
+    expect(planFamiliesEmergencyContacts({ customFields: FAMILY_EC }, null)).toMatchObject({ action: 'report', reason: 'no-kinfolk-doc' });
+  });
+});
 
 describe('parseArgs', () => {
   it('defaults to a dry run', () => {
