@@ -1329,13 +1329,30 @@ CI_E2E_LOOKBACK=15
 # default page, and `.workflow_runs[0]` is the most recent one if there is
 # more than one, the same "latest wins" rule the old check-runs query got from
 # the API's own default filter.
+#
+# A FAILED first hop returns 3 with gh's error on stderr (#850), so the caller
+# can tell "could not ask" from "ci.yml has no run". An EMPTY answer to a
+# successful call is still "no run" and returns 0 with no output.
 ci_check_runs() {
-  local sha="$1" run_id
+  local sha="$1" run_id rc=0
   run_id="$(gh api "repos/{owner}/{repo}/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=1" \
-    --jq '.workflow_runs[0].id // empty' 2>/dev/null || true)"
+    --jq '.workflow_runs[0].id // empty' 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    printf '%s\n' "$run_id" | head -3 >&2
+    return 3
+  fi
   [ -n "$run_id" ] || return 0
-  gh api "repos/{owner}/{repo}/actions/runs/$run_id/jobs?per_page=100" \
-    --jq '.jobs[] | [.name, .status, (.conclusion // "")] | @tsv' 2>/dev/null || true
+  local jobs
+  jobs="$(gh api "repos/{owner}/{repo}/actions/runs/$run_id/jobs?per_page=100" \
+    --jq '.jobs[] | [.name, .status, (.conclusion // "")] | @tsv' 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    # The run exists and its jobs could not be read. Also "could not ask",
+    # never an empty answer that step 0b would print as "no check runs".
+    printf '%s\n' "$jobs" | head -3 >&2
+    return 3
+  fi
+  [ -n "$jobs" ] && printf '%s\n' "$jobs"
+  return 0
 }
 
 # ci_verdict <status> <conclusion>: pass | pending | fail.
@@ -1354,7 +1371,7 @@ ci_verdict() {
 # if it is still running, or empty if the job produced no check run at all.
 ci_e2e_conclusion() {
   local line
-  line="$(ci_check_runs "$1" | grep -i "$CI_E2E_MATCH" | head -1 || true)"
+  line="$(ci_check_runs "$1" 2>/dev/null | grep -i "$CI_E2E_MATCH" | head -1 || true)"
   [ -n "$line" ] || return 0
   printf '%s' "$line" | awk -F'\t' '{ if ($2 != "completed") print "pending"; else print $3 }'
 }
@@ -1398,16 +1415,49 @@ if [ "${RELEASE_SKIP_CI_GATE:-0}" = "1" ]; then
 elif ! command -v gh >/dev/null 2>&1; then
   ci_refuse "gh is not installed, so CI's verdict for $HEAD_SHORT cannot be read." \
     "Install it and sign in:  brew install gh && gh auth login"
+elif ! GH_AUTH_OUT="$(gh auth status --hostname github.com 2>&1)"; then
+  # ASK WHETHER gh CAN ASK, BEFORE ASKING (#850). The lookup used to swallow
+  # gh's errors, so a gh with no token printed "no check runs at all" for a
+  # commit CI had passed, three nights running on the hosted nightly runner.
+  # `gh auth status` is one cheap call, fails when there is no token, a bad
+  # token or no route to GitHub, and its own words are printed, not hidden.
+  # --hostname github.com because plain `gh auth status` also fails when ANY
+  # other configured host (a GitHub Enterprise login, say) has a bad token,
+  # even though github.com, the only host this asks, is fine (gh 2.98.0).
+  # Bash 3.2 with `set -u` treats an empty array expansion as unbound, and a gh
+  # that fails silently prints nothing, hence the placeholder line.
+  CI_AUTH_LINES=("    ${GH_AUTH_OUT:-<gh auth status printed nothing>}")
+  if [ -n "$GH_AUTH_OUT" ]; then
+    CI_AUTH_LINES=()
+    while IFS= read -r l; do CI_AUTH_LINES+=("    $l"); done <<< "$GH_AUTH_OUT"
+  fi
+  ci_refuse "gh could not ask GitHub for CI's verdict on $HEAD_SHORT: not authenticated, or GitHub unreachable." \
+    "This says nothing about CI. Nothing was asked. gh auth status said:" \
+    "${CI_AUTH_LINES[@]}" \
+    "" \
+    "Fix: gh auth login  (or export GH_TOKEN with read access to this repo), then re-run."
 else
-  CI_RUNS="$(ci_check_runs "$HEAD_SHA")"
+  CI_ASK_RC=0
+  CI_ASK_ERR="$(mktemp)"
+  CI_RUNS="$(ci_check_runs "$HEAD_SHA" 2>"$CI_ASK_ERR")" || CI_ASK_RC=$?
+  CI_ASK_MSG="$(cat "$CI_ASK_ERR" 2>/dev/null || true)"
+  rm -f "$CI_ASK_ERR"
 
-  if [ -z "$CI_RUNS" ]; then
-    # "No check runs" and "could not ask" are the same output from the API's
-    # point of view and different facts, so this refuses on both rather than
-    # picking one. Either way nothing has judged this commit.
+  if [ "$CI_ASK_RC" -ne 0 ]; then
+    # Authenticated, and the lookup itself still failed: a dropped connection
+    # or an API error. Still "could not ask", never "no run".
+    ci_refuse "gh could not ask GitHub for CI's verdict on $HEAD_SHORT: the lookup failed." \
+      "This says nothing about CI. Nothing was answered. gh said:" \
+      "    ${CI_ASK_MSG:-<no output>}" \
+      "" \
+      "Check: gh auth status, and whether api.github.com is reachable, then re-run."
+  elif [ -z "$CI_RUNS" ]; then
+    # gh answered, and ci.yml has no run for this commit. Asked and answered,
+    # so this is a fact about CI, not about gh (the "could not ask" case is
+    # the two branches above).
     ci_refuse "GitHub reports no check runs at all for $HEAD_SHORT." \
-      "Either CI has not started for this commit, or gh could not reach GitHub," \
-      "or it is not authenticated (check with: gh auth status)." \
+      "gh is signed in and answered: ci.yml has no run for this commit, so" \
+      "CI has not started for it (or its push event was never delivered, #838)." \
       "A commit no job has judged is not a commit to ship."
   else
     CI_FAILED=""
@@ -1518,10 +1568,18 @@ banner "0c. Client build config (VITE_*)"
 # This step writes the middle one from Secret Manager, so the store beats a
 # developer's local files for a RELEASE build while local development keeps
 # working with no gcloud, no credentials and no network.
+#
+# A RELEASE DOES NOT FALL BACK TO A LAPTOP'S .env (#850 review). This step runs
+# `--write`, and when Secret Manager cannot be read, `--write` refuses a
+# required value that only a local .env holds (exit 4) instead of resolving it
+# from there: the store never confirmed it. `--check` still falls back, for a
+# developer. RELEASE_SKIP_CLIENT_SECRETS=1 is how to ship the local values
+# anyway, knowingly.
 STEP="resolving client build config from Secret Manager"
 if [ "${RELEASE_SKIP_CLIENT_SECRETS:-0}" = "1" ]; then
   ylw "SKIPPED (RELEASE_SKIP_CLIENT_SECRETS=1). Both web bundles will be built"
-  ylw "  from whatever each app's own .env files hold."
+  ylw "  from whatever each app's own .env files hold, which Secret Manager has"
+  ylw "  not confirmed."
 else
   # --release is what VITE_SENTRY_RELEASE becomes: derived here rather than
   # stored, because a release tag kept by hand in a .env is a tag that names the
@@ -1549,10 +1607,13 @@ else
       ;;
     4)
       red ""
-      red "REFUSED: Secret Manager did not answer for a required secret in time."
+      red "REFUSED: Secret Manager could not be read for a required secret."
       red "  This is NOT the same as missing: the secret may exist and hold a good"
-      red "  value, gcloud simply never answered. The names and the IPv4/IPv6 check"
-      red "  are listed above; run them before creating or setting anything."
+      red "  value. gcloud timed out, is not installed, has no credentials, listed"
+      red "  nothing, or listed a secret and was refused its value (#839/#850). A"
+      red "  value only a local .env holds is refused too: the store never confirmed"
+      red "  it. The names, the reason and the check that matches it are listed"
+      red "  above; run that check before creating or setting anything."
       red ""
       red "  To ship anyway, knowing what could not be verified: RELEASE_SKIP_CLIENT_SECRETS=1"
       exit 1
