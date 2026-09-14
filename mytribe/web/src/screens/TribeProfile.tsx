@@ -9,20 +9,22 @@ import {
   CONTACT_NAME_MAX,
   CONTACT_PHONE_MAX,
   contactMetaLine,
+  editCustomFields,
   getFormSchema,
   getMyTribeProfile,
   getVetClinics,
   HOME_RESERVED_KEYS,
   isDisplayableField,
+  LEGACY_EMERGENCY_CONTACT_KEYS,
   listHouseholdContacts,
   listMembers,
   memberStatusLabel,
-  mergeReservedFields,
   PROFILE_RESERVED_KEYS,
   removeHouseholdContact,
   saveHomeAccess,
   saveHouseholdContact,
   saveTribeProfile,
+  schemaFieldRow,
   submitVetClinic,
   type ClinicCandidateDto,
   updateSecondaryPermissions,
@@ -281,53 +283,66 @@ export function TribeProfile() {
     setSaving(true);
     setStatus(null);
     try {
-      const vetClinicFields: CustomFieldDto[] = [];
-      // ONE id, not three strings. Name, phone and address are read from the
-      // catalog, so the portal no longer keeps a copy that can go stale and that
-      // nobody is able to correct. Emergency Contacts are not here (#829): the
-      // card saves them through saveEmergencyContacts, and the reserved keys drop
-      // any stale emergencyContact* copy from this payload.
-      if (vetClinicId.trim()) vetClinicFields.push({ key: 'vetClinicId', label: 'Vet Clinic', value: vetClinicId.trim() });
-
+      // #873: both saves start from the stored rows and change only the rows
+      // this screen edits (schema fields and the vet cards). The callables merge
+      // by key, so a row that is omitted is KEPT; a blank card field is removed
+      // by naming it in removeCustomFieldKeys. The old rebuild from schema keys
+      // deleted every office-set row on save.
+      //
+      // Vet: ONE id, not three strings. Name, phone and address are read from
+      // the catalog. Emergency Contacts are not here (#829): the card saves them
+      // through saveEmergencyContacts, and their rows are never sent.
+      const trimmedVetClinicId = vetClinicId.trim();
       const baseProfileFields = profile.data?.profile.customFields ?? [];
       const nextDisplayName = effectiveDisplayName.trim();
-      let profileCustomFields = mergeReservedFields(baseProfileFields, vetClinicFields, PROFILE_RESERVED_KEYS);
+      const profileSet: CustomFieldDto[] = trimmedVetClinicId ? [{ key: 'vetClinicId', label: 'Vet Clinic', value: trimmedVetClinicId }] : [];
       if (profileSchema) {
-        const schemaFields = profileSchema.sections.flatMap((s) => s.fields).filter((f) => f.key !== 'displayName');
-        const fromSchema = schemaFields.map((f) => ({ key: f.key, label: f.label, value: profileValues[f.key] ?? '' }));
-        profileCustomFields = mergeReservedFields(fromSchema, vetClinicFields, PROFILE_RESERVED_KEYS);
+        for (const f of profileSchema.sections.flatMap((s) => s.fields)) {
+          if (f.key === 'displayName') continue;
+          const row = schemaFieldRow(baseProfileFields, f, profileValues[f.key]);
+          if (row) profileSet.push(row);
+        }
       }
+      const profileEdit = editCustomFields(
+        baseProfileFields,
+        profileSet,
+        trimmedVetClinicId ? [] : ['vetClinicId'],
+        LEGACY_EMERGENCY_CONTACT_KEYS,
+      );
       await saveTribeProfile({
         ...(kinfolkId !== undefined ? { kinfolkId } : {}),
         displayName: nextDisplayName,
-        customFields: profileCustomFields,
+        ...profileEdit,
       });
 
-      const afterHoursFields: CustomFieldDto[] = [];
-      if (afterHoursVetName.trim()) afterHoursFields.push({ key: 'afterHoursVetName', label: 'After-hours Clinic', value: afterHoursVetName.trim() });
-      if (afterHoursVetPhone.trim()) afterHoursFields.push({ key: 'afterHoursVetPhone', label: 'After-hours Phone', value: afterHoursVetPhone.trim() });
+      const homeSet: CustomFieldDto[] = [];
+      const homeClear: string[] = [];
+      if (afterHoursVetName.trim()) homeSet.push({ key: 'afterHoursVetName', label: 'After-hours Clinic', value: afterHoursVetName.trim() });
+      else homeClear.push('afterHoursVetName');
+      if (afterHoursVetPhone.trim()) homeSet.push({ key: 'afterHoursVetPhone', label: 'After-hours Phone', value: afterHoursVetPhone.trim() });
+      else homeClear.push('afterHoursVetPhone');
 
       const baseHomeFields = profile.data?.homeAccess.customFields ?? [];
       let nextGateCode: string | null = gateCode.trim() || null;
       let nextKeyLocation: string | null = keyLocation.trim() || null;
       let nextWifi: string | null = wifi.trim() || null;
-      let homeCustomFields = mergeReservedFields(baseHomeFields, afterHoursFields, HOME_RESERVED_KEYS);
       if (homeSchema) {
         nextGateCode = schemaTextOrNull(homeValues, 'gateCode', gateCode);
         nextKeyLocation = schemaTextOrNull(homeValues, 'keyLocation', keyLocation);
         nextWifi = schemaTextOrNull(homeValues, 'wifiPassword', wifi);
-        const schemaFields = homeSchema.sections
-          .flatMap((s) => s.fields)
-          .filter((f) => f.key !== 'gateCode' && f.key !== 'keyLocation' && f.key !== 'wifiPassword');
-        const fromSchema = schemaFields.map((f) => ({ key: f.key, label: f.label, value: homeValues[f.key] ?? '' }));
-        homeCustomFields = mergeReservedFields(fromSchema, afterHoursFields, HOME_RESERVED_KEYS);
+        for (const f of homeSchema.sections.flatMap((s) => s.fields)) {
+          if (f.key === 'gateCode' || f.key === 'keyLocation' || f.key === 'wifiPassword') continue;
+          const row = schemaFieldRow(baseHomeFields, f, homeValues[f.key]);
+          if (row) homeSet.push(row);
+        }
       }
+      const homeEdit = editCustomFields(baseHomeFields, homeSet, homeClear, LEGACY_EMERGENCY_CONTACT_KEYS);
       await saveHomeAccess({
         ...(kinfolkId !== undefined ? { kinfolkId } : {}),
         gateCode: nextGateCode,
         keyLocation: nextKeyLocation,
         wifiPassword: nextWifi,
-        customFields: homeCustomFields,
+        ...homeEdit,
       });
 
       // The card saves on its own button, so "Saved." here would be false about

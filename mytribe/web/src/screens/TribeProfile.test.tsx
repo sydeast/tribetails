@@ -380,6 +380,102 @@ describe('TribeProfile schema-mode save', () => {
   });
 });
 /**
+ * #873. With a form schema, this screen rebuilt `customFields` from the schema
+ * keys alone and the callables replaced the stored list whole, so every stored
+ * row outside the schema was deleted on save and untouched schema fields were
+ * written back as ''. The save now starts from the stored rows and changes only
+ * the rows this screen edits. Removal is always named in removeCustomFieldKeys.
+ */
+describe('TribeProfile: a schema-mode save keeps the rows it does not edit (#873)', () => {
+  const OFFICE = { key: 'gateNote', label: 'Set by Auntie', value: 'Side gate sticks' };
+  const ALLERGY = { key: 'allergy', label: 'Allergies', value: 'Chicken' };
+  const VET = { key: 'vetClinicId', label: 'Vet Clinic', value: 'clinic-1' };
+  const SHED = { key: 'shed', label: 'Set by Auntie', value: 'Left of the gate' };
+  const ALARM = { key: 'alarm', label: 'Alarm Code', value: '5678' };
+  const AFTER_PHONE = { key: 'afterHoursVetPhone', label: 'After-hours Phone', value: '805-555-0100' };
+
+  const SCHEMA_PROFILE: GetMyTribeProfileResult = {
+    profile: { kinfolkId: 'kin-fam-1', displayName: 'The Ramirez Tribe', customFields: [OFFICE, ALLERGY, VET] },
+    homeAccess: { ...PROFILE.homeAccess, customFields: [SHED, ALARM, AFTER_PHONE] },
+  };
+  const PROFILE_FORM: FormSchemaDto = {
+    ...PROFILE_SCHEMA,
+    sections: [
+      {
+        title: 'Family',
+        description: null,
+        fields: [textField('displayName', 'Family Display Name'), textField('allergy', 'Allergies'), textField('color', 'Favorite color')],
+      },
+    ],
+  };
+  const HOME_FORM: FormSchemaDto = {
+    ...HOME_SCHEMA,
+    sections: [{ ...HOME_SCHEMA.sections[0]!, fields: [...HOME_SCHEMA.sections[0]!.fields, textField('alarm', 'Alarm Code'), textField('pool', 'Pool gate')] }],
+  };
+
+  async function saved() {
+    const { saveTribeProfile, saveHomeAccess } = await import('../api/tribeApi');
+    await waitFor(() => expect(saveHomeAccess).toHaveBeenCalledTimes(1));
+    return { profile: vi.mocked(saveTribeProfile).mock.calls[0]![0], home: vi.mocked(saveHomeAccess).mock.calls[0]![0] };
+  }
+
+  it('an untouched save sends every stored row as stored, in order, and writes no empty row for an unstored schema field', async () => {
+    const view = await renderTribeProfile({ profile: SCHEMA_PROFILE, profileSchema: PROFILE_FORM, homeSchema: HOME_FORM });
+    await view.findByDisplayValue('Chicken');
+    await view.findByDisplayValue('5678');
+    await userEvent.click(view.getByRole('button', { name: /Save Changes/ }));
+    const { profile, home } = await saved();
+    expect(profile.customFields).toEqual([OFFICE, ALLERGY, VET]);
+    expect(profile.removeCustomFieldKeys).toEqual([]);
+    expect(home.customFields).toEqual([SHED, ALARM, AFTER_PHONE]);
+    expect(home.removeCustomFieldKeys).toEqual([]);
+  });
+
+  it('an edited schema field changes only its own row, in place', async () => {
+    const view = await renderTribeProfile({ profile: SCHEMA_PROFILE, profileSchema: PROFILE_FORM, homeSchema: HOME_FORM });
+    const allergy = await view.findByDisplayValue('Chicken');
+    await userEvent.clear(allergy);
+    await userEvent.type(allergy, 'Beef');
+    await userEvent.type(await view.findByDisplayValue('5678'), '9');
+    await userEvent.click(view.getByRole('button', { name: /Save Changes/ }));
+    const { profile, home } = await saved();
+    expect(profile.customFields).toEqual([OFFICE, { ...ALLERGY, value: 'Beef' }, VET]);
+    expect(home.customFields).toEqual([SHED, { ...ALARM, value: '56789' }, AFTER_PHONE]);
+  });
+
+  it("a cleared schema field is sent as a real clear: its row with value ''", async () => {
+    const view = await renderTribeProfile({ profile: SCHEMA_PROFILE, profileSchema: PROFILE_FORM, homeSchema: HOME_FORM });
+    await userEvent.clear(await view.findByDisplayValue('Chicken'));
+    await userEvent.clear(await view.findByDisplayValue('5678'));
+    await userEvent.click(view.getByRole('button', { name: /Save Changes/ }));
+    const { profile, home } = await saved();
+    expect(profile.customFields).toEqual([OFFICE, { ...ALLERGY, value: '' }, VET]);
+    expect(home.customFields).toEqual([SHED, { ...ALARM, value: '' }, AFTER_PHONE]);
+  });
+
+  it('a cleared after-hours phone is removed by name, since an omitted row is kept', async () => {
+    const view = await renderTribeProfile({ profile: SCHEMA_PROFILE, profileSchema: PROFILE_FORM, homeSchema: HOME_FORM });
+    await userEvent.clear(await view.findByDisplayValue('805-555-0100'));
+    await userEvent.click(view.getByRole('button', { name: /Save Changes/ }));
+    const { home } = await saved();
+    expect(home.customFields).toEqual([SHED, ALARM]);
+    expect(home.removeCustomFieldKeys).toEqual(['afterHoursVetPhone']);
+  });
+
+  it('without a schema the stored rows go back the same way, and a stored duplicate vetClinicId folds into one row', async () => {
+    const dupVet: GetMyTribeProfileResult = {
+      ...SCHEMA_PROFILE,
+      profile: { ...SCHEMA_PROFILE.profile, customFields: [VET, OFFICE, { ...VET, value: 'clinic-1' }] },
+    };
+    const view = await renderTribeProfile({ profile: dupVet });
+    await userEvent.click(await view.findByRole('button', { name: /Save Changes/ }));
+    const { profile, home } = await saved();
+    expect(profile.customFields).toEqual([VET, OFFICE]);
+    expect(home.customFields).toEqual([SHED, ALARM, AFTER_PHONE]);
+  });
+});
+
+/**
  * Operator ruling 2026-08-01. Two things this pins:
  *  - the vet is a search-and-select, not a free-text box, so the portal can no
  *    longer author a third, uncorrectable copy of a household's vet;
