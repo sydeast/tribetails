@@ -100,6 +100,31 @@ describe('Emergency Contacts are never a recipient (#829)', () => {
     expect(offenders).toEqual([]);
   });
 
+  // #829 review item 9: the other two backends that message people or write
+  // copy about a household. `auntieos-admin/web/functions` feeds kinfolk docs
+  // into AI prompts; `twilio-service` places and routes calls. Only the strip
+  // helper may name the fields, and it exists to remove them.
+  it('STATIC: the AuntieOS web functions and the Twilio service never name the fields, except the strip helper', () => {
+    const repo = join(__dirname, '..', '..', '..');
+    const roots = [join(repo, 'auntieos-admin', 'web', 'functions'), join(repo, 'auntieos-admin', 'twilio-service')];
+    const allowed = new Set(['auntieos-admin/web/functions/stripEmergencyContacts.js']);
+    const walkAny = (dir: string): string[] =>
+      readdirSync(dir).flatMap((name) => {
+        if (name === 'node_modules' || name === 'test' || name.startsWith('.')) return [];
+        const p = join(dir, name);
+        if (statSync(p).isDirectory()) return walkAny(p);
+        return /\.(c|m)?(j|t)s$/.test(name) && !/\.test\.(c|m)?(j|t)s$/.test(name) ? [p] : [];
+      });
+    const scanned = roots.flatMap(walkAny).map((f) => relative(repo, f).split('\\').join('/'));
+    // A root that moved or emptied would pass this check on nothing.
+    expect(scanned).toContain('auntieos-admin/web/functions/generate.js');
+    expect(scanned.some((f) => f.startsWith('auntieos-admin/twilio-service/'))).toBe(true);
+    const offenders = scanned
+      .filter((rel) => !allowed.has(rel))
+      .filter((rel) => /emergencyContact(s|Name|Phone|Relation)\b/.test(readFileSync(join(repo, rel), 'utf8')));
+    expect(offenders).toEqual([]);
+  });
+
   it('broadcastMessage texts the household phone and never an Emergency Contact phone', async () => {
     const ctx = buildDbMock({
       writeThrough: true,
