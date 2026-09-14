@@ -387,77 +387,67 @@ fun TribeScreen(
                     status = null
                     scope.launch {
                         try {
-                            // Build vet clinic customFields (always, regardless of schema mode).
+                            // #873: both saves start from the stored rows and change only
+                            // the rows this screen edits (schema fields and the vet cards).
+                            // The callables merge by key, so an omitted row is KEPT, and a
+                            // blank card field is removed by naming it. The old rebuild from
+                            // schema keys deleted every office-set row on save.
                             // Emergency Contacts are not here (#829): the card saves them
-                            // through saveEmergencyContacts, and the reserved keys in
-                            // mergeVetClinicFields drop any stale emergencyContact* copy.
-                            val vetClinicFields = buildList {
-                                if (vetName.isNotBlank()) add(CustomField(key = "vetClinicName",    label = "Vet Clinic",        value = vetName.trim()))
-                                if (vetPhone.isNotBlank()) add(CustomField(key = "vetClinicPhone",   label = "Vet Clinic Phone",  value = vetPhone.trim()))
-                                if (vetAddress.isNotBlank()) add(CustomField(key = "vetClinicAddress", label = "Vet Clinic Address", value = vetAddress.trim()))
+                            // through saveEmergencyContacts, and their rows are never sent.
+                            val profileSet = mutableListOf<CustomField>()
+                            val profileClear = mutableListOf<String>()
+                            fun card(key: String, label: String, value: String, set: MutableList<CustomField>, clear: MutableList<String>) {
+                                if (value.isNotBlank()) set += CustomField(key = key, label = label, value = value.trim()) else clear += key
                             }
-                            // Profile save — schema-driven path overrides static fields when schema present.
-                            if (profileSchema != null) {
-                                val schemaFields = profileSchema!!.sections.flatMap { it.fields }
-                                val displayFromSchema = profileValues["displayName"]?.trim().orEmpty().ifBlank { displayName.trim() }
-                                val rest = schemaFields
-                                    .filter { it.key != "displayName" }
-                                    .map { f ->
-                                        CustomField(
-                                            key = f.key,
-                                            label = f.label,
-                                            value = profileValues[f.key].orEmpty(),
-                                        )
-                                    }
-                                portalApi.saveTribeProfile(
-                                    kinfolkId = kinfolkId,
-                                    displayName = displayFromSchema,
-                                    customFields = mergeVetClinicFields(rest, vetClinicFields),
-                                )
+                            card("vetClinicName", "Vet Clinic", vetName, profileSet, profileClear)
+                            card("vetClinicPhone", "Vet Clinic Phone", vetPhone, profileSet, profileClear)
+                            card("vetClinicAddress", "Vet Clinic Address", vetAddress, profileSet, profileClear)
+                            val ps = profileSchema
+                            val nextDisplayName = if (ps != null) {
+                                profileValues["displayName"]?.trim().orEmpty().ifBlank { displayName.trim() }
                             } else {
-                                portalApi.saveTribeProfile(
-                                    kinfolkId = kinfolkId,
-                                    displayName = displayName.trim(),
-                                    customFields = mergeVetClinicFields(profileFields, vetClinicFields),
-                                )
+                                displayName.trim()
                             }
-                            // After-hours emergency vet customFields, persisted into the
-                            // HomeAccess store under stable keys (gated; empty list when off).
-                            val afterHoursFields = buildList {
-                                if (afterHoursVetName.isNotBlank()) add(CustomField(key = "afterHoursVetName", label = "After-hours Clinic", value = afterHoursVetName.trim()))
-                                if (afterHoursVetPhone.isNotBlank()) add(CustomField(key = "afterHoursVetPhone", label = "After-hours Phone", value = afterHoursVetPhone.trim()))
+                            ps?.sections?.flatMap { it.fields }?.filter { it.key != "displayName" }?.forEach { f ->
+                                schemaFieldRow(profileFields, f.key, f.label, profileValues[f.key])?.let { profileSet += it }
                             }
-                            // Home access save — schema-driven path same pattern.
-                            if (homeSchema != null) {
-                                val schemaFields = homeSchema!!.sections.flatMap { it.fields }
-                                val gc = homeValues["gateCode"]?.trim()?.ifBlank { null } ?: gateCode.trim().ifBlank { null }
-                                val kl = homeValues["keyLocation"]?.trim()?.ifBlank { null } ?: keyLocation.trim().ifBlank { null }
-                                val wf = homeValues["wifiPassword"]?.trim()?.ifBlank { null } ?: wifi.trim().ifBlank { null }
-                                val rest = schemaFields
+                            val profileEdit = editCustomFields(profileFields, profileSet, profileClear, LEGACY_EMERGENCY_CONTACT_KEYS)
+                            portalApi.saveTribeProfile(
+                                kinfolkId = kinfolkId,
+                                displayName = nextDisplayName,
+                                customFields = profileEdit.customFields,
+                                removeCustomFieldKeys = profileEdit.removeKeys,
+                            )
+
+                            val homeSet = mutableListOf<CustomField>()
+                            val homeClear = mutableListOf<String>()
+                            card("afterHoursVetName", "After-hours Clinic", afterHoursVetName, homeSet, homeClear)
+                            card("afterHoursVetPhone", "After-hours Phone", afterHoursVetPhone, homeSet, homeClear)
+                            val hsSave = homeSchema
+                            val gc: String?
+                            val kl: String?
+                            val wf: String?
+                            if (hsSave != null) {
+                                gc = homeValues["gateCode"]?.trim()?.ifBlank { null } ?: gateCode.trim().ifBlank { null }
+                                kl = homeValues["keyLocation"]?.trim()?.ifBlank { null } ?: keyLocation.trim().ifBlank { null }
+                                wf = homeValues["wifiPassword"]?.trim()?.ifBlank { null } ?: wifi.trim().ifBlank { null }
+                                hsSave.sections.flatMap { it.fields }
                                     .filter { it.key != "gateCode" && it.key != "keyLocation" && it.key != "wifiPassword" }
-                                    .map { f ->
-                                        CustomField(
-                                            key = f.key,
-                                            label = f.label,
-                                            value = homeValues[f.key].orEmpty(),
-                                        )
-                                    }
-                                portalApi.saveHomeAccess(
-                                    kinfolkId = kinfolkId,
-                                    gateCode = gc,
-                                    keyLocation = kl,
-                                    wifiPassword = wf,
-                                    customFields = mergeAfterHoursFields(rest, afterHoursFields, keep = true),
-                                )
+                                    .forEach { f -> schemaFieldRow(accessFields, f.key, f.label, homeValues[f.key])?.let { homeSet += it } }
                             } else {
-                                portalApi.saveHomeAccess(
-                                    kinfolkId = kinfolkId,
-                                    gateCode = gateCode.trim().ifBlank { null },
-                                    keyLocation = keyLocation.trim().ifBlank { null },
-                                    wifiPassword = wifi.trim().ifBlank { null },
-                                    customFields = mergeAfterHoursFields(accessFields, afterHoursFields, keep = true),
-                                )
+                                gc = gateCode.trim().ifBlank { null }
+                                kl = keyLocation.trim().ifBlank { null }
+                                wf = wifi.trim().ifBlank { null }
                             }
+                            val homeEdit = editCustomFields(accessFields, homeSet, homeClear, LEGACY_EMERGENCY_CONTACT_KEYS)
+                            portalApi.saveHomeAccess(
+                                kinfolkId = kinfolkId,
+                                gateCode = gc,
+                                keyLocation = kl,
+                                wifiPassword = wf,
+                                customFields = homeEdit.customFields,
+                                removeCustomFieldKeys = homeEdit.removeKeys,
+                            )
                             // The card saves on its own button, so "Saved." here would be
                             // false about any contact edit still sitting in it (#829).
                             status = if (emergencyContactsDirty) {
@@ -857,13 +847,58 @@ private fun VetClinicSection(
     }
 }
 
-private fun mergeVetClinicFields(base: List<CustomField>, vetClinic: List<CustomField>): List<CustomField> {
-    val reservedKeys = setOf(
-        "vetClinicName", "vetClinicPhone", "vetClinicAddress",
-        // #829: kept reserved so a stale copy is dropped, never re-sent.
-        "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation",
-    )
-    return base.filter { it.key !in reservedKeys } + vetClinic
+/** #829: stored for old clients and the migration only. This screen never sends them. */
+internal val LEGACY_EMERGENCY_CONTACT_KEYS = setOf("emergencyContactName", "emergencyContactPhone", "emergencyContactRelation")
+
+/** #873: a save payload. [removeKeys] names each stored row to delete, since an omitted row is kept. */
+internal data class CustomFieldEdit(val customFields: List<CustomField>, val removeKeys: List<String>)
+
+/**
+ * #873. The row a schema field saves, or null when the stored row stays as it is.
+ * [value] null means the form never held the key. A value equal to the stored one
+ * is untouched. "" over a stored value is a real clear. "" with nothing stored
+ * writes no empty row. Mirrors `schemaFieldRow` in web `api/tribeApi.ts`.
+ */
+internal fun schemaFieldRow(stored: List<CustomField>, key: String, label: String, value: String?): CustomField? {
+    if (value == null) return null
+    val current = stored.firstOrNull { it.key == key }
+    if (current != null) {
+        return if (value == current.value) null else CustomField(key = key, label = label.ifBlank { current.label.ifBlank { key } }, value = value)
+    }
+    return if (value.isEmpty()) null else CustomField(key = key, label = label.ifBlank { key }, value = value)
+}
+
+/**
+ * #873. The stored rows, in order, with [set] applied by key (a new key is
+ * appended), every stored key in [clear] removed and named, and [drop] keys never
+ * sent. A stored duplicate key folds into its first position. The full list is
+ * sent so the payload is also right against a server that replaces it whole.
+ * Mirrors `editCustomFields` in web `api/tribeApi.ts`.
+ */
+internal fun editCustomFields(
+    stored: List<CustomField>,
+    set: List<CustomField>,
+    clear: Collection<String>,
+    drop: Set<String> = emptySet(),
+): CustomFieldEdit {
+    val latest = LinkedHashMap<String, CustomField>()
+    set.forEach { latest[it.key] = it }
+    val clearKeys = clear.toSet()
+    val placed = mutableSetOf<String>()
+    val removed = LinkedHashSet<String>()
+    val out = mutableListOf<CustomField>()
+    for (row in stored) {
+        if (row.key in drop) continue
+        if (row.key in clearKeys) { removed += row.key; continue }
+        if (!placed.add(row.key)) continue
+        out += latest[row.key] ?: row
+    }
+    for (row in latest.values) {
+        if (row.key in placed || row.key in clearKeys || row.key in drop) continue
+        out += row
+        placed += row.key
+    }
+    return CustomFieldEdit(out, removed.toList())
 }
 
 /** Normalizes a clinic name for case/space-insensitive comparison (mirrors the
@@ -878,22 +913,6 @@ internal fun clinicAlreadyOnList(name: String, clinics: List<VetClinic>): Boolea
     val n = normalizeClinicName(name)
     if (n.isEmpty()) return true
     return clinics.any { normalizeClinicName(it.name) == n }
-}
-
-/**
- * Merges after-hours emergency vet fields into the HomeAccess customFields.
- * When [keep] is true (flag on) the two reserved keys are replaced with the
- * freshly edited values. When false (flag off) the base list is returned
- * unchanged so any previously saved after-hours values are never deleted.
- */
-private fun mergeAfterHoursFields(
-    base: List<CustomField>,
-    afterHours: List<CustomField>,
-    keep: Boolean,
-): List<CustomField> {
-    if (!keep) return base
-    val reservedKeys = setOf("afterHoursVetName", "afterHoursVetPhone")
-    return base.filter { it.key !in reservedKeys } + afterHours
 }
 
 /**

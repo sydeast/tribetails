@@ -9,12 +9,16 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.runComposeUiTest
 import com.kinfolk.portal.firebase.FakeFunctionsClient
+import com.kinfolk.portal.firebase.FunctionsClient
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.screens.setThemedContent
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -23,6 +27,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class TribeScreenTest {
@@ -277,5 +282,123 @@ class TribeScreenTest {
             .performScrollTo().assertIsDisplayed()
         assertTrue(fake.calls.none { it.first == "saveEmergencyContacts" })
         onNodeWithText("Unsaved changes").performScrollTo().assertIsDisplayed()
+    }
+
+    // ---- #873: a schema-mode save keeps the rows it does not edit ----
+
+    /**
+     * Answers getFormSchema by schemaId, which [FakeFunctionsClient] cannot, and
+     * hands every other call to [fake] so its call log still records the saves.
+     */
+    private class SchemaFunctions(
+        private val fake: FakeFunctionsClient,
+        private val schemas: Map<String, JsonObject>,
+    ) : FunctionsClient {
+        override suspend fun call(name: String, payload: JsonObject?): JsonObject {
+            if (name == "getFormSchema") {
+                val id = payload?.get("schemaId")?.jsonPrimitive?.content
+                return schemas[id] ?: throw IllegalStateException("not-found")
+            }
+            return fake.call(name, payload)
+        }
+    }
+
+    private fun schemaJson(id: String, vararg fields: Pair<String, String>) = buildJsonObject {
+        put("id", id); put("name", id); put("version", 1)
+        put("sections", buildJsonArray {
+            add(buildJsonObject {
+                put("title", "Details for $id")
+                put("fields", buildJsonArray {
+                    fields.forEach { (key, label) -> add(buildJsonObject { put("key", key); put("label", label); put("type", "text") }) }
+                })
+            })
+        })
+    }
+
+    private fun row(key: String, label: String, value: String) = Triple(key, label, value)
+    private val office = row("gateNote", "Set by Auntie", "Side gate sticks")
+    private val allergy = row("allergy", "Allergies", "Chicken")
+    private val vet = row("vetClinicId", "Vet Clinic", "clinic-1")
+    private val shed = row("shed", "Set by Auntie", "Left of the gate")
+    private val alarm = row("alarm", "Alarm Code", "5678")
+    private val afterPhone = row("afterHoursVetPhone", "After-hours Phone", "805-555-0100")
+
+    private fun rowsJson(vararg rows: Triple<String, String, String>) = buildJsonArray {
+        rows.forEach { (k, l, v) -> add(buildJsonObject { put("key", k); put("label", l); put("value", v) }) }
+    }
+
+    private fun schemaHousehold(): Pair<FakeFunctionsClient, PortalApi> {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyTribeProfile", buildJsonObject {
+            put("profile", buildJsonObject {
+                put("kinfolkId", "3"); put("displayName", "The Foster")
+                put("customFields", rowsJson(office, allergy, vet))
+            })
+            put("homeAccess", buildJsonObject {
+                put("gateCode", "4242"); put("keyLocation", JsonNull); put("wifiPassword", JsonNull)
+                put("customFields", rowsJson(shed, alarm, afterPhone))
+                put("updatedAtMs", JsonNull)
+            })
+        })
+        fake.stubEmergencyContacts()
+        fake.stub("getVetClinics", buildJsonObject { put("clinics", buildJsonArray {}) })
+        fake.stub("listMembers", buildJsonObject { put("members", buildJsonArray {}) })
+        fake.stub("listHouseholdContacts", buildJsonObject { put("contacts", buildJsonArray {}) })
+        fake.stub("saveTribeProfile", buildJsonObject { put("ok", true) })
+        fake.stub("saveHomeAccess", buildJsonObject { put("ok", true) })
+        val schemas = mapOf(
+            "tribeProfile" to schemaJson("tribeProfile", "displayName" to "Family Display Name", "allergy" to "Allergies", "color" to "Favorite color"),
+            "homeAccess" to schemaJson("homeAccess", "gateCode" to "Gate / Door Code", "alarm" to "Alarm Code", "pool" to "Pool gate"),
+        )
+        return fake to PortalApi(SchemaFunctions(fake, schemas))
+    }
+
+    private fun FakeFunctionsClient.sent(name: String): Pair<List<Triple<String, String, String>>, List<String>?> {
+        val payload = calls.last { it.first == name }.second!!
+        val rows = payload["customFields"]!!.jsonArray.map {
+            val o = it.jsonObject
+            Triple(o["key"]!!.jsonPrimitive.content, o["label"]!!.jsonPrimitive.content, o["value"]!!.jsonPrimitive.content)
+        }
+        val removed = (payload["removeCustomFieldKeys"] as? JsonArray)?.map { it.jsonPrimitive.content }
+        return rows to removed
+    }
+
+    @Test
+    fun schemaSave_untouched_sendsEveryStoredRowAsStored_andNoEmptyRowForAnUnstoredField() = runComposeUiTest {
+        val (fake, api) = schemaHousehold()
+        setThemedContent { TribeScreen("The Foster", "3", api) }
+        waitForIdle()
+        onNodeWithText("Chicken").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        assertEquals(listOf(office, allergy, vet) to emptyList<String>(), fake.sent("saveTribeProfile"))
+        assertEquals(listOf(shed, alarm, afterPhone) to emptyList<String>(), fake.sent("saveHomeAccess"))
+    }
+
+    @Test
+    fun schemaSave_clearedSchemaField_isSentAsARealClear_andNothingElseChanges() = runComposeUiTest {
+        val (fake, api) = schemaHousehold()
+        setThemedContent { TribeScreen("The Foster", "3", api) }
+        waitForIdle()
+        onNodeWithText("Chicken").performScrollTo().performTextClearance()
+        onNodeWithText("5678").performScrollTo().performTextClearance()
+        waitForIdle()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        assertEquals(listOf(office, allergy.copy(third = ""), vet) to emptyList<String>(), fake.sent("saveTribeProfile"))
+        assertEquals(listOf(shed, alarm.copy(third = ""), afterPhone) to emptyList<String>(), fake.sent("saveHomeAccess"))
+    }
+
+    @Test
+    fun schemaSave_clearedAfterHoursPhone_isRemovedByName() = runComposeUiTest {
+        val (fake, api) = schemaHousehold()
+        setThemedContent { TribeScreen("The Foster", "3", api) }
+        waitForIdle()
+        onNodeWithText("805-555-0100").performScrollTo().performTextClearance()
+        waitForIdle()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        assertEquals(listOf(shed, alarm) to listOf("afterHoursVetPhone"), fake.sent("saveHomeAccess"))
+        assertEquals(listOf(office, allergy, vet) to emptyList<String>(), fake.sent("saveTribeProfile"))
     }
 }

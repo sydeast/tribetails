@@ -795,11 +795,14 @@ class PortalApi(private val fns: FunctionsClient) {
         kinfolkId: String? = null,
         displayName: String? = null,
         customFields: List<CustomField>? = null,
+        // #873: customFields merge by key on the server; a stored row is deleted only when named here.
+        removeCustomFieldKeys: List<String>? = null,
     ) {
         fns.call("saveTribeProfile", buildJsonObject {
             kinfolkId?.let { put("kinfolkId", it) }
             displayName?.let { put("displayName", it) }
             customFields?.let { put("customFields", encodeCustomFields(it)) }
+            removeCustomFieldKeys?.let { keys -> put("removeCustomFieldKeys", buildJsonArray { keys.forEach { add(it) } }) }
         })
     }
 
@@ -809,6 +812,8 @@ class PortalApi(private val fns: FunctionsClient) {
         keyLocation: String? = null,
         wifiPassword: String? = null,
         customFields: List<CustomField>? = null,
+        // #873: customFields merge by key on the server; a stored row is deleted only when named here.
+        removeCustomFieldKeys: List<String>? = null,
     ) {
         fns.call("saveHomeAccess", buildJsonObject {
             kinfolkId?.let { put("kinfolkId", it) }
@@ -816,6 +821,7 @@ class PortalApi(private val fns: FunctionsClient) {
             keyLocation?.let { put("keyLocation", it) }
             wifiPassword?.let { put("wifiPassword", it) }
             customFields?.let { put("customFields", encodeCustomFields(it)) }
+            removeCustomFieldKeys?.let { keys -> put("removeCustomFieldKeys", buildJsonArray { keys.forEach { add(it) } }) }
         })
     }
 
