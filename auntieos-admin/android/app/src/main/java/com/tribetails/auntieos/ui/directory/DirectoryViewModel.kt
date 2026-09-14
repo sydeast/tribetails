@@ -762,10 +762,25 @@ class DirectoryViewModel(
      * already made, never call `createKinfolkComplete` again - that would
      * leave a duplicate, contact-less household behind. `createdKinfolkId`
      * on the state is what a retry checks first.
+     *
+     * The retry re-validates before saving, the same as the first attempt:
+     * the editor stays live outside the locked household fields exactly so a
+     * retry can fix the contact, which means it can also be cleared or typed
+     * as the household's own number. Skipping validation here would let that
+     * refusal come back wrapped as a callable-failure message instead of the
+     * plain spec message (web's Fix round 1 on this same defect, #829).
      */
     fun saveKinfolk() {
         val state = _addKinfolkState.value
-        state.createdKinfolkId?.let { id -> saveNewHouseholdContacts(id, state); return }
+        state.createdKinfolkId?.let { id ->
+            validateEmergencyContactDrafts(
+                state.emergencyContacts,
+                listOf("${state.firstName} ${state.lastName}"),
+                listOf(state.phoneNumber, state.secondaryPhone),
+            )?.let { _addKinfolkState.value = state.copy(error = it); return }
+            saveNewHouseholdContacts(id, state)
+            return
+        }
         if (state.firstName.isBlank()) {
             _addKinfolkState.value = state.copy(error = "First name is required.")
             return

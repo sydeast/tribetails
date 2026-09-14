@@ -87,6 +87,32 @@ class DirectoryViewModelEmergencyContactsTest {
         assertTrue(vm.addKinfolkState.value.isSuccess)
     }
 
+    /**
+     * The retry runs against an ALREADY-CREATED household, so the operator
+     * can still edit the contact fields on it. web's Fix round 1 (#829) found
+     * this exact gap: skip re-validation and a cleared or household-matching
+     * retry comes back as a callable-failure message instead of the plain
+     * spec refusal, and never even reaches the second createKinfolkComplete
+     * call it would otherwise have to avoid.
+     */
+    @Test
+    fun `a retry with a cleared contact is refused before it ever calls the callable again`() {
+        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(firstArg<Kinfolk>().copy(id = "kf-new")) }
+        coEvery { repo.saveEmergencyContacts("kf-new", any()) } returns Result.failure(Exception("offline"))
+        vm.updateFirstName("Jamie")
+        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125559090"))
+        vm.saveKinfolk()
+        assertEquals("kf-new", vm.addKinfolkState.value.createdKinfolkId)
+
+        vm.updateAddEmergencyContact(0, EmergencyContactDraft())
+        vm.saveKinfolk()
+
+        assertEquals(EMERGENCY_CONTACT_REQUIRED, vm.addKinfolkState.value.error)
+        assertEquals("kf-new", vm.addKinfolkState.value.createdKinfolkId)
+        coVerify(exactly = 1) { repo.createKinfolkComplete(any()) }
+        coVerify(exactly = 1) { repo.saveEmergencyContacts(any(), any()) }
+    }
+
     @Test
     fun `edit with no other change still saves a changed contact list, and never puts it in the diff`() {
         val stored = Kinfolk(id = "kf1", firstName = "Jamie", phoneNumber = "5125551234", emergencyContactName = "Rae", emergencyContactPhone = "5125559090")
