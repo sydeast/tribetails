@@ -75,7 +75,8 @@ import { logEvent } from './logger';
  * `undefined` with no error. That is why arm (2) is a fallback and not a
  * gate: a function without the binding is not silently wrong, it falls through
  * to (3) and throws with the fix named. Today only `onBookingsWrite` and the
- * roster callables bind it.
+ * roster callables bind it. (Stale since before #869: `recordFailedLogin` binds
+ * it too, which is what lets the operator lock alert self-heal on that path.)
  */
 
 const DOC_PATH = { collection: 'businessSettings', doc: 'admins' } as const;

@@ -717,9 +717,20 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   'auth.account.locked': [
     {
       trigger:
-        'Failed sign-ins lock an account. One copy goes to the locked-out person, one to each operator uid in AUNTIE_OPERATOR_UIDS.',
+        'Failed sign-ins lock an account. This copy goes to the locked-out person only; business admins get security.account.locked.operator.',
       source: 'src/auth/loginSecurity.ts',
-      dataKeys: ['email', 'lockStartedAtMs', 'kinfolkUid'],
+      dataKeys: ['email', 'lockStartedAtMs'],
+    },
+  ],
+  'security.account.locked.operator': [
+    {
+      trigger:
+        'Failed sign-ins lock a kinfolk account. One copy goes to each business admin on the roster (AUNTIE_OPERATOR_UIDS only while the roster is empty).',
+      source: 'src/auth/loginSecurity.ts',
+      dataKeys: ['kinfolkUid', 'kinfolkEmail', 'lockStartedAtMs'],
+      dataNote:
+        'Plus `kinfolkId` when the account holds exactly one household, otherwise `kinfolkName` from the account. ' +
+        'Sent with a dedupeKey naming the account and the lock start.',
     },
   ],
   'security.breach_attempt.kinfolk': [

@@ -19,7 +19,9 @@ import { FULL_CPU } from '../lib/runtimeOptions';
  * Thresholds (per kinfolk acct, rolling windows):
  *   ≥ 5 failures in 10 min → enqueue 'auth.failedLogin.attempts' (kinfolk)
  *   ≥ 10 failures in 20 min → set lockedUntil, enqueue 'auth.account.locked'
- *                              to kinfolk AND businessAdmins
+ *                              to the kinfolk, and
+ *                              'security.account.locked.operator' to every
+ *                              business admin on the roster (#869)
  *
  * Lockout duration is manual, only an admin call to `unlockKinfolkAccount` or
  * a successful password reset (detected via Firebase Auth tokensValidAfterTime
@@ -167,6 +169,55 @@ async function writeSecurityDoc(uid: string, doc: Partial<LoginSecurityDoc>): Pr
     .set({ ...doc, updatedAtMs: Date.now() }, { merge: true });
 }
 
+/**
+ * The #832 dedupe identity of one operator lock alert: the household account
+ * and the moment its lock started. A retry of the same lock carries the same
+ * pair and is refused; a second household locking, or the same one locking
+ * again, is a new pair and alerts again.
+ */
+export function operatorLockDedupeKey(kinfolkUid: string, lockStartedAtMs: number): string {
+  return `auth.lock:${kinfolkUid}:${lockStartedAtMs}`;
+}
+
+/**
+ * What the operator's lock alert says about the household (#869).
+ *
+ * `kinfolkId` is passed only when the account holds exactly ONE household, so
+ * the enricher fills `{{kinfolkName}}` from `families/{kinfolkId}` and the card
+ * deep-links to it. Kinfolk with two or more tribes are a defect state (only
+ * admins hold several), and naming one of them would be a guess; the account's
+ * own display name stands in instead. Never throws: a failed read still sends
+ * the alert with the email, which is enough to act on.
+ */
+async function operatorLockAlertData(
+  uid: string,
+  email: string,
+  lockStartedAtMs: number,
+): Promise<Record<string, unknown>> {
+  const data: Record<string, unknown> = { kinfolkUid: uid, kinfolkEmail: email, lockStartedAtMs };
+  try {
+    const client = (await db().collection('clients').doc(uid).get()).data() ?? {};
+    const ids = Array.isArray(client['kinfolkIds'])
+      ? (client['kinfolkIds'] as unknown[]).filter((v): v is string => typeof v === 'string' && v !== '')
+      : [];
+    if (ids.length === 1) {
+      data['kinfolkId'] = ids[0];
+    } else {
+      const name = client['displayName'] ?? client['name'];
+      if (typeof name === 'string' && name !== '') data['kinfolkName'] = name;
+    }
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'recordFailedLogin',
+      event: 'admin.lock.household.lookup.failed',
+      uid,
+      errorMessage: (err as Error)?.message,
+    });
+  }
+  return data;
+}
+
 export interface RecordFailedLoginResult {
   /** Remaining failures within 20-min window before lockout fires. */
   remainingBeforeLock: number;
@@ -266,25 +317,23 @@ export async function recordFailedLoginHandler(
       recipientUid: uid,
       data: { email: args.email, lockStartedAtMs: nowMs },
     });
-    const operatorUids = (process.env.AUNTIE_OPERATOR_UIDS ?? '')
-      .split(',').map((s) => s.trim()).filter(Boolean);
-    await Promise.all(
-      operatorUids.map((operatorUid) =>
-        enqueueNotification({
-          key: 'auth.account.locked',
-          recipientUid: operatorUid,
-          data: { email: args.email, lockStartedAtMs: nowMs, kinfolkUid: uid },
-        }).catch((err) => {
-          logEvent({
-            severity: 'warn',
-            function: 'recordFailedLogin',
-            event: 'admin.lock.notify.failed',
-            uid,
-            errorMessage: (err as Error)?.message,
-          });
-        }),
-      ),
-    );
+    // #869: the operator copy is its own key, resolved from the business admin
+    // roster as STAFF. The roster is the source of truth; AUNTIE_OPERATOR_UIDS
+    // (bound on this function below) is only its self-heal fallback while the
+    // roster is empty. A resolver failure must never undo the lock, hence the catch.
+    await enqueueNotification({
+      key: 'security.account.locked.operator',
+      data: await operatorLockAlertData(uid, args.email, nowMs),
+      dedupeKey: operatorLockDedupeKey(uid, nowMs),
+    }).catch((err) => {
+      logEvent({
+        severity: 'warn',
+        function: 'recordFailedLogin',
+        event: 'admin.lock.notify.failed',
+        uid,
+        errorMessage: (err as Error)?.message,
+      });
+    });
   } else if (
     countWarn >= THRESHOLD_WARN &&
     (!current.warnSentAtMs || current.warnSentAtMs < nowMs - WINDOW_WARN_MS)

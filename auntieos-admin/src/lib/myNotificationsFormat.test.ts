@@ -369,6 +369,28 @@ describe('myNotificationsFormat', () => {
       expect(rows.map(([section]) => section.title)).toEqual(['Messages']);
       expect(rows[0]![1].map((e) => e.key)).toEqual(['broadcast.message']);
     });
+    /**
+     * #869: the operator's lockout alert is its own business-only catalog row in
+     * the `security` category. It must show on the operator's Business settings
+     * under Account and security, and never on the Auntie or Kinfolk streams.
+     */
+    it('shows the operator lock alert under Account and security on the business stream only', () => {
+      const lock = entry({
+        key: 'security.account.locked.operator',
+        label: 'Kinfolk account locked after failed logins',
+        category: 'security',
+        audiences: new Set([STREAM_BUSINESS]),
+        required: { email: true, push: true },
+        alwaysEnabled: true,
+      });
+      const m = matrix({ catalog: [lock] });
+      const business = adminVisibleNotifications(m, STREAM_BUSINESS);
+      expect(business.map((e) => e.key)).toEqual(['security.account.locked.operator']);
+      const rows = sectionedNotifications(business, STREAM_BUSINESS);
+      expect(rows.map(([section]) => section.title)).toEqual(['Account and security']);
+      expect(adminVisibleNotifications(m, STREAM_STAFF)).toEqual([]);
+      expect(adminVisibleNotifications(m, STREAM_KINFOLK)).toEqual([]);
+    });
     it('uses the staff-specific section set for the staff stream', () => {
       const kintale = entry({ key: 'kintale-comment', category: 'kintale' });
       const rows = sectionedNotifications([kintale], STREAM_STAFF);
