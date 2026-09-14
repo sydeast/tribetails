@@ -94,4 +94,38 @@ describe.runIf(EMULATOR)('the Emergency Contact migration against a real documen
     expect(await buildFamiliesPlan(db)).toEqual([]);
     expect(await applyPlan(db, await buildPlan(db), await buildFamiliesPlan(db))).toEqual({ migrated: 0, familiesCleaned: 0 });
   });
+
+  it('writes nothing for a household whose kinfolk holds half a flat record, even with a full families copy', async () => {
+    await db.collection('kinfolk').doc('kf_half').set({ firstName: 'Cy', emergencyContactName: 'Rae Mercer' });
+    const familiesFields = [
+      { key: 'emergencyContactName', label: 'Emergency Contact', value: 'Sam Ortiz' },
+      { key: 'emergencyContactPhone', label: 'Emergency Contact Phone', value: '8055550111' },
+    ];
+    await db.collection('families').doc('kf_half').set({ customFields: familiesFields });
+
+    const families = await buildFamiliesPlan(db);
+    expect(families.find((r) => r.kinfolkId === 'kf_half')?.plan).toMatchObject({ action: 'report', reason: 'kinfolk-half-record' });
+    expect(await applyPlan(db, await buildPlan(db), families)).toEqual({ migrated: 0, familiesCleaned: 0 });
+
+    expect((await db.collection('kinfolk').doc('kf_half').get()).data()?.['emergencyContacts']).toBeUndefined();
+    expect((await db.collection('families').doc('kf_half').get()).data()?.['customFields']).toEqual(familiesFields);
+  });
+
+  it('stops at a doc that changed after the plan was read, names it, and a fresh plan recovers', async () => {
+    await db.collection('kinfolk').doc('kf_race').set({ firstName: 'Di', emergencyContactName: 'Rae Mercer', emergencyContactPhone: '8055550199' });
+    await db.collection('kinfolk').doc('kf_calm').set({ firstName: 'Ed', emergencyContactName: 'Lee Park', emergencyContactPhone: '8055550177' });
+
+    const rows = await buildPlan(db);
+    const families = await buildFamiliesPlan(db);
+    // Someone edits the household between the dry run and the apply.
+    await db.collection('kinfolk').doc('kf_race').update({ firstName: 'Changed' });
+
+    await expect(applyPlan(db, rows, families)).rejects.toThrow(/kinfolk\/kf_race/);
+    // One batch holds both, and a batch is all or nothing.
+    expect((await db.collection('kinfolk').doc('kf_race').get()).data()?.['emergencyContacts']).toBeUndefined();
+    expect((await db.collection('kinfolk').doc('kf_calm').get()).data()?.['emergencyContacts']).toBeUndefined();
+
+    expect(await applyPlan(db, await buildPlan(db), await buildFamiliesPlan(db))).toEqual({ migrated: 2, familiesCleaned: 0 });
+    expect((await db.collection('kinfolk').doc('kf_race').get()).data()?.['emergencyContacts']).toHaveLength(1);
+  });
 });

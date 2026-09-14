@@ -56,6 +56,20 @@ describe('planFamiliesEmergencyContacts (the portal store the admin never read)'
     expect(plan?.stale[0]?.value).toBe(' Sam Ortiz ');
   });
 
+  it('refuses to move the families copy over half a kinfolk record, and reports both values', () => {
+    const plan = planFamiliesEmergencyContacts(
+      { customFields: [OTHER, ...FAMILY_EC] },
+      { firstName: 'Dana', emergencyContactName: 'Rae Mercer' },
+    );
+    expect(plan).toMatchObject({
+      action: 'report',
+      reason: 'kinfolk-half-record',
+      kinfolkHalf: { name: 'Rae Mercer', phone: '' },
+    });
+    expect(plan?.stale.map((f) => f.value)).toEqual([' Sam Ortiz ', '(805) 555-0111', 'Brother']);
+    expect(plan).not.toHaveProperty('keep');
+  });
+
   it('reports a families doc with no kinfolk doc and plans no write for it', () => {
     expect(planFamiliesEmergencyContacts({ customFields: FAMILY_EC }, null)).toMatchObject({ action: 'report', reason: 'no-kinfolk-doc' });
   });
