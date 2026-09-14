@@ -5,7 +5,7 @@ import { render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TribeProfile } from './TribeProfile';
-import type { FormFieldDto, FormSchemaDto, GetMyTribeProfileResult } from '../api/tribeApi';
+import type { FormFieldDto, FormSchemaDto, GetMyTribeProfileResult, ListEmergencyContactsResult, MemberDto } from '../api/tribeApi';
 
 /**
  * Regression cover for the schema-mode save path.
@@ -54,6 +54,9 @@ vi.mock('../api/tribeApi', async () => {
     listHouseholdContacts: vi.fn(),
     saveHouseholdContact: vi.fn(),
     removeHouseholdContact: vi.fn(),
+    // #829: the Emergency Contacts card reads and writes through its own callables.
+    listEmergencyContacts: vi.fn(),
+    saveEmergencyContacts: vi.fn(),
   };
 });
 
@@ -100,13 +103,21 @@ const PROFILE_SCHEMA: FormSchemaDto = {
   version: 1,
 };
 
-async function renderTribeProfile(opts: { profileSchema?: FormSchemaDto; homeSchema?: FormSchemaDto; clinics?: Parameters<typeof vi.fn>[0] extends never ? never : any[]; profile?: GetMyTribeProfileResult }) {
+async function renderTribeProfile(opts: {
+  profileSchema?: FormSchemaDto;
+  homeSchema?: FormSchemaDto;
+  clinics?: Parameters<typeof vi.fn>[0] extends never ? never : any[];
+  profile?: GetMyTribeProfileResult;
+  emergencyContacts?: ListEmergencyContactsResult;
+  members?: MemberDto[];
+}) {
   const tribeApi = await import('../api/tribeApi');
   const portal = await import('../api/portal');
 
+  vi.mocked(tribeApi.listEmergencyContacts).mockResolvedValue(opts.emergencyContacts ?? { contacts: [], canEdit: true, legacy: false });
   vi.mocked(tribeApi.getMyTribeProfile).mockResolvedValue(opts.profile ?? PROFILE);
   vi.mocked(tribeApi.getVetClinics).mockResolvedValue({ clinics: opts.clinics ?? [] });
-  vi.mocked(tribeApi.listMembers).mockResolvedValue({ members: [] });
+  vi.mocked(tribeApi.listMembers).mockResolvedValue({ members: opts.members ?? [] });
   vi.mocked(tribeApi.listHouseholdContacts).mockResolvedValue([]);
   vi.mocked(tribeApi.saveTribeProfile).mockResolvedValue({ ok: true });
   vi.mocked(tribeApi.saveHomeAccess).mockResolvedValue({ ok: true });
@@ -137,40 +148,109 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('TribeProfile: Emergency Contact follows Home access (#843)', () => {
-  const WITH_EC: GetMyTribeProfileResult = {
+describe('TribeProfile: Emergency Contacts follow Home access (#843, #829)', () => {
+  const RAE = { name: 'Rae Halbrook', phone: '+18055550100', relationship: null, recordedAt: null, updatedAt: null };
+  const STALE_EC: GetMyTribeProfileResult = {
     ...PROFILE,
     profile: {
       ...PROFILE.profile,
       customFields: [
-        { key: 'emergencyContactName', label: 'Emergency Contact', value: 'Rae Halbrook' },
+        { key: 'vetClinicId', label: 'Vet Clinic', value: 'clinic-1' },
+        { key: 'emergencyContactName', label: 'Emergency Contact', value: 'Stale' },
         { key: 'emergencyContactPhone', label: 'Emergency Contact Phone', value: '555-0100' },
       ],
     },
   };
 
-  it('locks the Emergency Contact inputs and says why when the member lacks Home access', async () => {
-    const view = await renderTribeProfile({ profile: { ...WITH_EC, canEditHomeDetails: false } });
+  it('without Home access: the contacts show read-only and the card says why', async () => {
+    const view = await renderTribeProfile({ emergencyContacts: { contacts: [RAE], canEdit: false, legacy: false } });
     await waitFor(() => expect(view.getByTestId('ec-locked')).toBeInTheDocument());
     expect(view.getByText('Only someone with Home access can change the Emergency Contact.')).toBeInTheDocument();
-    for (const id of ['ecname', 'ecphone', 'ecrel']) {
-      expect(view.container.querySelector(`#${id}`)).toHaveAttribute('readonly');
-    }
-    expect(view.container.querySelector('#ecname')).toHaveValue('Rae Halbrook');
+    expect(view.getByText('Rae Halbrook')).toBeInTheDocument();
+    expect(view.container.querySelector('#ec-0-name')).toBeNull();
   });
 
-  it('leaves the inputs editable with Home access', async () => {
-    const view = await renderTribeProfile({ profile: { ...WITH_EC, canEditHomeDetails: true } });
-    await waitFor(() => expect(view.container.querySelector('#ecname')).toHaveValue('Rae Halbrook'));
+  it('with Home access: the two-slot editor is there and nothing is locked', async () => {
+    const view = await renderTribeProfile({ emergencyContacts: { contacts: [RAE], canEdit: true, legacy: false } });
+    await waitFor(() => expect(view.container.querySelector('#ec-0-name')).toHaveValue('Rae Halbrook'));
     expect(view.queryByTestId('ec-locked')).toBeNull();
-    expect(view.container.querySelector('#ecname')).not.toHaveAttribute('readonly');
   });
 
-  it('leaves the inputs editable when an older backend sends no flag at all', async () => {
-    const view = await renderTribeProfile({ profile: WITH_EC });
-    await waitFor(() => expect(view.container.querySelector('#ecname')).toHaveValue('Rae Halbrook'));
-    expect(view.queryByTestId('ec-locked')).toBeNull();
-    expect(view.container.querySelector('#ecname')).not.toHaveAttribute('readonly');
+  it('never reads the old customFields copy: a stale value there is not shown', async () => {
+    const view = await renderTribeProfile({ profile: STALE_EC });
+    await waitFor(() => expect(view.getByText('A household needs at least one Emergency Contact.')).toBeInTheDocument());
+    expect(view.queryByDisplayValue('Stale')).toBeNull();
+    expect(view.queryByText('Stale')).toBeNull();
+  });
+
+  it('#829: the profile save carries no emergencyContact key at all, and keeps the vet clinic', async () => {
+    const view = await renderTribeProfile({ profile: STALE_EC });
+    await userEvent.click(await view.findByRole('button', { name: /Save Changes/ }));
+    const { saveTribeProfile, saveEmergencyContacts } = await import('../api/tribeApi');
+    await waitFor(() => expect(saveTribeProfile).toHaveBeenCalledTimes(1));
+    const keys = (vi.mocked(saveTribeProfile).mock.calls[0]?.[0].customFields ?? []).map((f) => f.key);
+    expect(keys.filter((k) => k.startsWith('emergencyContact'))).toEqual([]);
+    expect(keys).toContain('vetClinicId');
+    expect(saveEmergencyContacts).not.toHaveBeenCalled();
+  });
+
+  it('#829: an edited contact is still unsaved after the page Save, and the page says so', async () => {
+    const view = await renderTribeProfile({ emergencyContacts: { contacts: [RAE], canEdit: true, legacy: false } });
+    const name = await view.findByDisplayValue('Rae Halbrook');
+    expect(view.queryByTestId('ec-unsaved-page')).toBeNull();
+    await userEvent.type(name, ' Jr');
+    expect(view.getByTestId('ec-unsaved-page')).toHaveTextContent('Your Emergency Contacts have unsaved changes.');
+    await userEvent.click(view.getByRole('button', { name: /Save Changes/ }));
+    const { saveHomeAccess, saveEmergencyContacts } = await import('../api/tribeApi');
+    await waitFor(() => expect(saveHomeAccess).toHaveBeenCalledTimes(1));
+    expect(
+      await view.findByText('Profile saved. Your Emergency Contacts are not saved yet: use Save Emergency Contacts.'),
+    ).toBeInTheDocument();
+    // A saved profile is a success, whatever the sentence starts with.
+    expect(view.getByTestId('page-save-status')).not.toHaveClass('err');
+    expect(view.queryByText('Saved.')).toBeNull();
+    expect(view.getByTestId('ec-unsaved')).toBeInTheDocument();
+    expect(view.container.querySelector('#ec-0-name')).toHaveValue('Rae Halbrook Jr');
+    expect(saveEmergencyContacts).not.toHaveBeenCalled();
+  });
+
+  it('a household with none is prompted, and the rest of the profile still saves', async () => {
+    const view = await renderTribeProfile({});
+    await waitFor(() => expect(view.getByText('A household needs at least one Emergency Contact.')).toBeInTheDocument());
+    await userEvent.click(view.getByRole('button', { name: /Save Changes/ }));
+    const { saveTribeProfile, saveHomeAccess } = await import('../api/tribeApi');
+    await waitFor(() => expect(saveHomeAccess).toHaveBeenCalledTimes(1));
+    expect(saveTribeProfile).toHaveBeenCalledTimes(1);
+    expect(await view.findByText('Saved.')).toBeInTheDocument();
+  });
+
+  it('the page save status is coloured by outcome: a failure is an error, a success is not', async () => {
+    const view = await renderTribeProfile({});
+    const { saveHomeAccess } = await import('../api/tribeApi');
+    vi.mocked(saveHomeAccess).mockRejectedValueOnce(new Error('nope'));
+    await userEvent.click(await view.findByRole('button', { name: /Save Changes/ }));
+    expect(await view.findByText('Save failed: nope')).toBeInTheDocument();
+    expect(view.getByTestId('page-save-status')).toHaveClass('err');
+    await userEvent.click(view.getByRole('button', { name: /Save Changes/ }));
+    expect(await view.findByText('Saved.')).toBeInTheDocument();
+    expect(view.getByTestId('page-save-status')).not.toHaveClass('err');
+  });
+
+  it('both Home access toggles, member row and invite, name Emergency Contacts', async () => {
+    const view = await renderTribeProfile({
+      members: [
+        {
+          uid: 'sec-1',
+          role: 'SECONDARY',
+          status: 'ACTIVE',
+          invitedEmail: 'sam@example.com',
+          secondaryLabel: 'Sam',
+          permissions: { billing_full: false, messaging_direct: false, messaging_group: false, kin_edit: false, home_access: false },
+        } as MemberDto,
+      ],
+    });
+    await waitFor(() => expect(view.getAllByText('Home access (gate code, Wi-Fi, Emergency Contacts)')).toHaveLength(2));
+    expect(view.queryByText('Home access (gate code, Wi-Fi)')).toBeNull();
   });
 });
 

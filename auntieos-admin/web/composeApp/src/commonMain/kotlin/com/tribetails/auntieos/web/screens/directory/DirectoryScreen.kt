@@ -39,6 +39,8 @@ import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.Kinfolk
+import com.tribetails.auntieos.web.data.NO_EMERGENCY_CONTACT
+import com.tribetails.auntieos.web.data.emergencyContactsOf
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
@@ -147,6 +149,11 @@ fun DirectoryScreen(
                 onBack     = { route = DirectoryRoute.List },
                 onSaved    = { newId -> route = DirectoryRoute.Profile(newId) },
                 onArchived = { route = DirectoryRoute.List },
+                // #829 review item 6: leaving Add after the household was created
+                // but its contact did not save opens THAT household, which shows
+                // No Emergency Contact, so the contact is added there instead of
+                // the household being Added a second time.
+                onLeftWithoutContact = { createdId -> route = DirectoryRoute.Profile(createdId) },
             )
 
         is DirectoryRoute.EditKinfolk ->
@@ -513,7 +520,7 @@ private fun matchKin(kin: Kin, q: String): Boolean {
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun KinfolkCard(
+internal fun KinfolkCard(
     kf: Kinfolk,
     kin: List<Kin>,
     lastVisit: String?,
@@ -577,7 +584,16 @@ private fun KinfolkCard(
                     // "household · area" subtitle is desired verbatim.
                     val subtitle = if (kf.lastName.isNotBlank()) householdLabel(kf.lastName)
                                    else kinSummaryOf(kin)
-                    if (subtitle.isNotBlank()) {
+                    // #829: a household with no Emergency Contact shows the flag in
+                    // the subtitle slot. The card is a fixed 196dp, so a new row
+                    // would squeeze the kin chips, and at the 290dp minimum the
+                    // footer cannot hold the flag beside the status pill (render
+                    // test: KinfolkCardRenderTest). The subtitle only repeats the
+                    // household name, so the flag takes its place.
+                    if (emergencyContactsOf(kf).isEmpty()) {
+                        // #829 review item 14: the compact pill, as on every client.
+                        AuntieStatusPill(label = NO_EMERGENCY_CONTACT, tone = AuntieStatusTone.Orange, compact = true)
+                    } else if (subtitle.isNotBlank()) {
                         Text(
                             text     = subtitle,
                             style    = AuntieTheme.typography.bodySmall,
@@ -641,7 +657,11 @@ private fun KinfolkCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
+                // #829 review: the left half yields width to the pills on the
+                // right, so at the 290dp minimum "Last visit" ellipsizes instead of
+                // squeezing the pills into wrapping.
                 Row(
+                    modifier = Modifier.weight(1f, fill = false),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {

@@ -431,6 +431,52 @@ class FirestoreClient {
      * honoring opt-outs. Fail-loud: the no_recipients / broadcast_all_failed
      * sentinels and provider errors surface verbatim via [WriteResult.Err].
      */
+    /**
+     * #829: Emergency Contacts go through the home_access-gated callables
+     * (mytribe/functions/src/portal/emergencyContacts.ts), never a direct write.
+     * A missing `contacts` array is an error, never "none on file".
+     */
+    suspend fun listEmergencyContacts(kinfolkId: String): WriteResult<EmergencyContactsResult> {
+        val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
+        return when (val r = platformInvokeCallable("listEmergencyContacts", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatching {
+                val o = callableJson.parseToJsonElement(r.value).jsonObject
+                val rows = o["contacts"] as? JsonArray ?: error("listEmergencyContacts: no contacts array in the answer")
+                WriteResult.Ok(
+                    EmergencyContactsResult(
+                        contacts = rows.mapNotNull { (it as? JsonObject)?.let(::contactFromJson) },
+                        canEdit = (o["canEdit"] as? JsonPrimitive)?.booleanOrNull == true,
+                        legacy = (o["legacy"] as? JsonPrimitive)?.booleanOrNull == true,
+                    ),
+                )
+            }.getOrElse { WriteResult.Err(it.message ?: "listEmergencyContacts decode failed") }
+        }
+    }
+
+    suspend fun saveEmergencyContacts(kinfolkId: String, drafts: List<EmergencyContactDraft>): WriteResult<List<EmergencyContact>> {
+        val payload = buildJsonObject {
+            put("kinfolkId", JsonPrimitive(kinfolkId))
+            put("contacts", buildJsonArray {
+                drafts.forEach { d ->
+                    add(buildJsonObject {
+                        put("name", JsonPrimitive(d.name.trim()))
+                        put("phone", JsonPrimitive(d.phone.trim()))
+                        put("relationship", d.relationship.trim().ifBlank { null }?.let { JsonPrimitive(it) } ?: JsonNull)
+                    })
+                }
+            })
+        }
+        return when (val r = platformInvokeCallable("saveEmergencyContacts", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatching {
+                val rows = callableJson.parseToJsonElement(r.value).jsonObject["contacts"] as? JsonArray
+                    ?: error("saveEmergencyContacts: no contacts array in the answer")
+                WriteResult.Ok(rows.mapNotNull { (it as? JsonObject)?.let(::contactFromJson) })
+            }.getOrElse { WriteResult.Err(it.message ?: "saveEmergencyContacts decode failed") }
+        }
+    }
+
     suspend fun listAudienceSegments(): WriteResult<List<com.tribetails.auntieos.web.screens.communicate.AudienceSegment>> {
         return when (val r = platformInvokeCallable("listAudienceSegments", "{}")) {
             is WriteResult.Err -> WriteResult.Err(r.message)
@@ -583,7 +629,20 @@ class FirestoreClient {
 
     // ---- Profile writes (kinfolk + kin CRUD) ----
     suspend fun createKinfolk(k: Kinfolk):   WriteResult<String> = platformCreateKinfolk(k)
-    suspend fun updateKinfolk(k: Kinfolk):   WriteResult<Unit>   = platformUpdateKinfolk(k)
+    /**
+     * #829 review: sends ONLY the fields [edited] changed relative to [loaded]
+     * (the record the caller read), as a merge write; `formValues` per key. Ok(true)
+     * when a write was sent, Ok(false) when nothing changed and nothing was written.
+     */
+    suspend fun updateKinfolk(loaded: Kinfolk, edited: Kinfolk): WriteResult<Boolean> {
+        if (edited._id.isBlank()) return WriteResult.Err("updateKinfolk requires a kinfolk id")
+        val changes = kinfolkChanges(loaded, edited)
+        if (changes.isEmpty()) return WriteResult.Ok(false)
+        return when (val r = platformUpdateKinfolkFields(edited._id, changes)) {
+            is WriteResult.Ok  -> WriteResult.Ok(true)
+            is WriteResult.Err -> WriteResult.Err(r.message)
+        }
+    }
     suspend fun archiveKinfolk(id: String):  WriteResult<Unit>   = platformArchiveKinfolk(id)
     suspend fun createKin(k: Kin):           WriteResult<String> =
         platformCreateKin(k.copy(kinfolkId = enforceWriteKinfolkId(testMode, k.kinfolkId)))
@@ -595,11 +654,10 @@ class FirestoreClient {
     // (api/directoryWrite.ts:237-255). Semantics kept identical: a whole-list
     // replace of tag NAMES, so clearing the last tag genuinely empties the field.
     //
-    // TRANSPORT DIFFERENCE, deliberate: React patches only `{ tags, updatedAt }`.
-    // This tree has no per-field patch seam for `kin` / `kinfolk`, so the write goes
-    // through the existing whole-document [updateKin] / [updateKinfolk]. That is safe
-    // only because `tags` now lives on both models; pass the record you LOADED, and
-    // every other field round-trips instead of being wiped. Fail-loud: a rejected
+    // TRANSPORT: React patches only `{ tags, updatedAt }`. Kinfolk now matches
+    // (#829 review): [updateKinfolk] diffs against the record you LOADED and merges
+    // only `tags`. Kin still goes through the whole-document [updateKin], so pass
+    // the loaded kin and every other field round-trips. Fail-loud: a rejected
     // write propagates to the caller as WriteResult.Err.
 
     /** Replaces a pet's tag NAME list. [kin] must be the loaded record, not a fresh one. */
@@ -611,7 +669,10 @@ class FirestoreClient {
     /** Replaces a household's tag NAME list. [kinfolk] must be the loaded record. */
     suspend fun updateKinfolkTags(kinfolk: Kinfolk, tags: List<String>): WriteResult<Unit> {
         require(kinfolk._id.isNotBlank()) { "updateKinfolkTags requires a kinfolk id" }
-        return updateKinfolk(kinfolk.copy(tags = tags))
+        return when (val r = updateKinfolk(kinfolk, kinfolk.copy(tags = tags))) {
+            is WriteResult.Ok  -> WriteResult.Ok(Unit)
+            is WriteResult.Err -> WriteResult.Err(r.message)
+        }
     }
 
     /**
@@ -2000,7 +2061,8 @@ internal expect fun platformDossierStream(kinfolkId: String): Flow<FirestoreResu
 internal expect fun platformKin411Stream(kinId: String):      Flow<FirestoreResult<Kin411?>>
 
 internal expect suspend fun platformCreateKinfolk(k: Kinfolk):  WriteResult<String>
-internal expect suspend fun platformUpdateKinfolk(k: Kinfolk):  WriteResult<Unit>
+/** #829 review: merge-writes exactly [changes] (sets and deletes, by field path); an empty list writes nothing. */
+internal expect suspend fun platformUpdateKinfolkFields(kinfolkId: String, changes: List<KinfolkFieldChange>): WriteResult<Unit>
 internal expect suspend fun platformArchiveKinfolk(id: String): WriteResult<Unit>
 internal expect suspend fun platformCreateKin(k: Kin):          WriteResult<String>
 internal expect suspend fun platformUpdateKin(k: Kin):          WriteResult<Unit>
@@ -2702,6 +2764,13 @@ data class Kinfolk(
     val emergencyContactName: String = "",
     val emergencyContactPhone: String = "",
     val emergencyContactRelation: String = "",
+    /**
+     * #829. Read-only here: written ONLY by the saveEmergencyContacts callable.
+     * Raw JSON because REST decodes its Timestamps to strings; `kinfolkWriteJson`
+     * removes it (and the flat triple above) from every kinfolk write so a desktop
+     * save cannot rewrite or delete it. Read through `emergencyContactsOf`.
+     */
+    val emergencyContacts: JsonElement? = null,
 
     // Household-level Vet Clinic (lives on Kinfolk, not Kin)
     val vetClinicName: String = "",

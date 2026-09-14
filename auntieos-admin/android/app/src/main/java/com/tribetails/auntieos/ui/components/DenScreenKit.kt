@@ -137,7 +137,7 @@ fun DenBreadcrumbs(crumbs: List<DenCrumb>, modifier: Modifier = Modifier) {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DenInfoTip(text: String, modifier: Modifier = Modifier) {
+internal fun DenInfoTip(text: String, modifier: Modifier = Modifier) {
     val c = AuntieTheme.colors
     val state = rememberTooltipState()
     val scope = rememberCoroutineScope()

@@ -104,6 +104,25 @@ data class HouseholdContact(
 )
 
 /**
+ * #829. An Emergency Contact: called only when no kinfolk can be reached, never
+ * messaged, no portal access. [phone] is what the server stored (E.164).
+ * [recordedAt] and [updatedAt] are ISO-8601 or null, display only.
+ */
+data class EmergencyContactDto(
+    val name: String,
+    val phone: String,
+    val relationship: String?,
+    val recordedAt: String?,
+    val updatedAt: String?,
+)
+
+/** What `listEmergencyContacts` answers. [canEdit] is true only with home_access. */
+data class EmergencyContactsResult(val contacts: List<EmergencyContactDto>, val canEdit: Boolean, val legacy: Boolean)
+
+/** One slot as the card edits it. An empty [relationship] is sent as null, which clears it. */
+data class EmergencyContactInput(val name: String, val phone: String, val relationship: String)
+
+/**
  * What `saveHouseholdContact` answers.
  *
  * [created] is the difference between "we wrote somebody new down" and "we

@@ -299,7 +299,7 @@ describe('HouseholdMembers PRIMARY entitlements are not switches', () => {
     mount({ members: [primary()] });
 
     await screen.findByText('loretta@example.com');
-    for (const label of ['Full billing', 'Home access', 'Edit kin', 'Direct messaging']) {
+    for (const label of ['Full billing', 'Home access (gate code, Wi-Fi, Emergency Contacts)', 'Edit kin', 'Direct messaging']) {
       expect(
         screen.queryByRole('switch', { name: `${label} for loretta@example.com` }),
       ).not.toBeInTheDocument();

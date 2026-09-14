@@ -10,6 +10,7 @@ import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.KinTaleTemplate
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.MoodOption
+import com.tribetails.auntieos.data.model.emergencyContactsOf
 
 // Evaluates whether a checklist item is visible for a given kin within a
 // session. Conditions are AND-ed; an empty condition list means "always
@@ -142,8 +143,8 @@ object KinTaleTemplateEngine {
         "gateCode"              -> kinfolk.gateCode
         "parkingInstructions"   -> kinfolk.parkingInstructions
         "entryNotes"            -> kinfolk.entryNotes
-        "emergencyContactName"  -> kinfolk.emergencyContactName
-        "emergencyContactPhone" -> kinfolk.emergencyContactPhone
+        "emergencyContactName"  -> emergencyContactsOf(kinfolk).firstOrNull()?.name.orEmpty()
+        "emergencyContactPhone" -> emergencyContactsOf(kinfolk).firstOrNull()?.phone.orEmpty()
         else                    -> ""
     }
 }

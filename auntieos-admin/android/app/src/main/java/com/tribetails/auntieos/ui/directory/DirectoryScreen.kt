@@ -44,6 +44,7 @@ import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Search
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kinfolk
+import com.tribetails.auntieos.data.model.emergencyContactsOf
 import com.tribetails.auntieos.ui.admin.householdLabel
 import com.tribetails.auntieos.ui.components.AuntieAvatar
 import com.tribetails.auntieos.ui.components.AuntieBanner
@@ -487,6 +488,10 @@ private fun KinfolkDirectoryCard(
                         )
                     }
                 }
+            }
+
+            if (emergencyContactsOf(kf).isEmpty()) {
+                AuntieStatusPill(label = "No Emergency Contact", tone = AuntieStatusTone.Orange, compact = true)
             }
 
             if (kin.isNotEmpty()) {

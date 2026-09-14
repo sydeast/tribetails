@@ -1,5 +1,6 @@
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { emergencyContactsOf, type EmergencyContact } from './emergencyContacts';
 
 /**
  * The FULL household record at `kinfolk/{id}` (rules: `allow read: if isAuntie()`),
@@ -39,10 +40,10 @@ export interface KinfolkProfile {
   entryNotes: string;
   wifiName: string;
   wifiPassword: string;
-  // Emergency
-  emergencyContactName: string;
-  emergencyContactPhone: string;
-  emergencyContactRelation: string;
+  // Emergency (#829). Array first, the old flat triple as a fallback until the
+  // migration is verified. Index 0 is called first. Written only through the
+  // `saveEmergencyContacts` callable; see `api/emergencyContacts.ts`.
+  emergencyContacts: EmergencyContact[];
   // Vet clinic (household-level)
   /**
    * The `vet_clinics` doc this household's vet is joined to, or '' for a legacy
@@ -60,7 +61,7 @@ const EMPTY: Omit<KinfolkProfile, '_id'> = {
   firstName: '', lastName: '', phoneNumber: '', email: '', profilePictureUrl: '', status: 'active', joinDate: '', tags: [],
   secondaryPhone: '', secondaryEmail: '', preferredContactMethod: '', bestTimeToContact: '',
   serviceAddress: '', gateCode: '', parkingInstructions: '', entryNotes: '', wifiName: '', wifiPassword: '',
-  emergencyContactName: '', emergencyContactPhone: '', emergencyContactRelation: '',
+  emergencyContacts: [],
 };
 
 /** Defensive field-by-field merge over the empty shape (never `undefined`, never fabricates). */
@@ -90,9 +91,7 @@ export function mergeKinfolkProfile(id: string, raw: Record<string, unknown> | u
     entryNotes: s(r.entryNotes, EMPTY.entryNotes),
     wifiName: s(r.wifiName, EMPTY.wifiName),
     wifiPassword: s(r.wifiPassword, EMPTY.wifiPassword),
-    emergencyContactName: s(r.emergencyContactName, EMPTY.emergencyContactName),
-    emergencyContactPhone: s(r.emergencyContactPhone, EMPTY.emergencyContactPhone),
-    emergencyContactRelation: s(r.emergencyContactRelation, EMPTY.emergencyContactRelation),
+    emergencyContacts: emergencyContactsOf(raw),
   };
 }
 

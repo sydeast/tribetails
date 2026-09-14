@@ -59,7 +59,7 @@ import com.tribetails.auntieos.data.model.Kinfolk
  * Fields on `kinfolk` this client may write, keyed by Firestore field name.
  *
  * Absent ON PURPOSE, see [KINFOLK_SERVER_OWNED]: the document id, the stamp,
- * and the four fields written by something other than this editor.
+ * and the fields written by something other than this editor.
  */
 internal val KINFOLK_DIFF_FIELDS: Map<String, (Kinfolk) -> Any> = linkedMapOf(
     "firstName" to { it: Kinfolk -> it.firstName },
@@ -86,9 +86,6 @@ internal val KINFOLK_DIFF_FIELDS: Map<String, (Kinfolk) -> Any> = linkedMapOf(
     "entryNotes" to { it: Kinfolk -> it.entryNotes },
     "wifiName" to { it: Kinfolk -> it.wifiName },
     "wifiPassword" to { it: Kinfolk -> it.wifiPassword },
-    "emergencyContactName" to { it: Kinfolk -> it.emergencyContactName },
-    "emergencyContactPhone" to { it: Kinfolk -> it.emergencyContactPhone },
-    "emergencyContactRelation" to { it: Kinfolk -> it.emergencyContactRelation },
     "internalNotes" to { it: Kinfolk -> it.internalNotes },
     "referralSource" to { it: Kinfolk -> it.referralSource },
     "joinDate" to { it: Kinfolk -> it.joinDate },
@@ -106,10 +103,16 @@ internal val KINFOLK_DIFF_FIELDS: Map<String, (Kinfolk) -> Any> = linkedMapOf(
  * - `contactOverride` the comms reconcile pipeline's time-boxed channel override
  * - `archivedAt` / `archivedReason` / `archivedBy`
  *                    the archive audit trail, `AuntieRepository.archiveKinfolk`
+ * - `emergencyContacts` and the legacy `emergencyContactName/Phone/Relation`
+ *                    written only by the `saveEmergencyContacts` callable (#829)
  */
 internal val KINFOLK_SERVER_OWNED = setOf(
     "id", "updatedAt", "uid", "contactOverride",
     "archivedAt", "archivedReason", "archivedBy",
+    "emergencyContacts",
+    "emergencyContactName",
+    "emergencyContactPhone",
+    "emergencyContactRelation",
 )
 
 /** Fields on `kin` this client may write, keyed by Firestore field name. */

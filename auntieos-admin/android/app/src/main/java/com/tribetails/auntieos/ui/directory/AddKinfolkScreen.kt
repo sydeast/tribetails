@@ -9,6 +9,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.tribetails.auntieos.ui.components.*
@@ -17,7 +18,6 @@ import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.util.emailOkOrBlank
-import com.tribetails.auntieos.util.isValidPhone
 import com.tribetails.auntieos.util.phoneOkOrBlank
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 
@@ -28,6 +28,14 @@ fun AddKinfolkScreen(
     onSaved: () -> Unit
 ) {
     val state by viewModel.addKinfolkState.collectAsState()
+    // #829 Fix round 1: once the household exists (a retry after a failed
+    // contact save), every household field locks - only the Emergency
+    // Contact editor stays live, the one thing a retry exists to fix. Web
+    // locks the same fields (`AddKinfolkDialog.tsx`, `disabled={saving ||
+    // createdId !== null}`); the view model's own updaters already refuse
+    // these edits (see `updateAddHouseholdField`), so this is belt and
+    // braces, not the only guard.
+    val householdFieldsEnabled = !state.isSaving && state.createdKinfolkId == null
 
     LaunchedEffect(state.isSuccess) {
         if (state.isSuccess) {
@@ -68,12 +76,14 @@ fun AddKinfolkScreen(
                                 value = state.firstName,
                                 onValueChange = viewModel::updateFirstName,
                                 label = "First Name",
+                                enabled = householdFieldsEnabled,
                                 modifier = Modifier.weight(1f),
                             )
                             AuntieField(
                                 value = state.lastName,
                                 onValueChange = viewModel::updateLastName,
                                 label = "Last Name",
+                                enabled = householdFieldsEnabled,
                                 modifier = Modifier.weight(1f),
                             )
                         }
@@ -82,6 +92,7 @@ fun AddKinfolkScreen(
                             value = state.phoneNumber,
                             onValueChange = viewModel::updatePhoneNumber,
                             label = "Primary Phone *",
+                            enabled = householdFieldsEnabled,
                             modifier = Modifier.fillMaxWidth(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                         )
@@ -90,6 +101,7 @@ fun AddKinfolkScreen(
                             value = state.email,
                             onValueChange = viewModel::updateEmail,
                             label = "Email",
+                            enabled = householdFieldsEnabled,
                             modifier = Modifier.fillMaxWidth(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                         )
@@ -114,31 +126,46 @@ fun AddKinfolkScreen(
                             value = state.secondaryPhone,
                             onValueChange = viewModel::updateSecondaryPhone,
                             label = "Secondary Phone",
+                            enabled = householdFieldsEnabled,
                             modifier = Modifier.fillMaxWidth(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                         )
 
                         // item 2: Preferred contact method editor removed (Auntie complaint).
 
-                        StatusChips(
-                            selected = state.status,
-                            onSelect = viewModel::updateAddStatus,
-                        )
+                        // AuntieChip has no `enabled` param, and the view
+                        // model's own guard already refuses this edit while
+                        // locked (`updateAddStatus` routes through
+                        // `updateAddHouseholdField`), so the dim below is
+                        // belt-and-braces UI feedback, not the only guard.
+                        Box(modifier = Modifier.alpha(if (householdFieldsEnabled) 1f else 0.5f)) {
+                            StatusChips(
+                                selected = state.status,
+                                onSelect = viewModel::updateAddStatus,
+                            )
+                        }
 
                         // Mapbox lookup runs through the mapboxSearch /
                         // mapboxRetrieve callables; the view model owns the
                         // debounce and the session token. No key in this app.
                         val addressSuggestions by viewModel.addressSuggestions.collectAsState()
                         val addressError by viewModel.addressError.collectAsState()
-                        AddressAutocompleteField(
-                            value = state.serviceAddress,
-                            onValueChange = viewModel::updateServiceAddress,
-                            suggestions = addressSuggestions,
-                            onQueryChange = viewModel::queryAddressSuggestions,
-                            onPick = viewModel::pickAddressSuggestionForAdd,
-                            errorMessage = addressError,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+                        // AddressAutocompleteField has no `enabled` param
+                        // either; same belt-and-braces dim. `updateServiceAddress`
+                        // and `pickAddressSuggestionForAdd` (the two calls that
+                        // can actually change `serviceAddress`) both refuse the
+                        // write while locked in the view model.
+                        Box(modifier = Modifier.alpha(if (householdFieldsEnabled) 1f else 0.5f)) {
+                            AddressAutocompleteField(
+                                value = state.serviceAddress,
+                                onValueChange = viewModel::updateServiceAddress,
+                                suggestions = addressSuggestions,
+                                onQueryChange = viewModel::queryAddressSuggestions,
+                                onPick = viewModel::pickAddressSuggestionForAdd,
+                                errorMessage = addressError,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
                     }
                 }
             }
@@ -160,6 +187,7 @@ fun AddKinfolkScreen(
                             value = state.gateCode,
                             onValueChange = viewModel::updateGateCode,
                             label = "Gate Code",
+                            enabled = householdFieldsEnabled,
                             modifier = Modifier.fillMaxWidth(),
                         )
 
@@ -167,6 +195,7 @@ fun AddKinfolkScreen(
                             value = state.entryNotes,
                             onValueChange = viewModel::updateEntryNotes,
                             label = "Entry Notes",
+                            enabled = householdFieldsEnabled,
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = false,
                             minLines = 2,
@@ -180,12 +209,14 @@ fun AddKinfolkScreen(
                                 value = state.wifiName,
                                 onValueChange = viewModel::updateWifiName,
                                 label = "WiFi Name",
+                                enabled = householdFieldsEnabled,
                                 modifier = Modifier.weight(1f),
                             )
                             AuntieField(
                                 value = state.wifiPassword,
                                 onValueChange = viewModel::updateWifiPassword,
                                 label = "WiFi Password",
+                                enabled = householdFieldsEnabled,
                                 modifier = Modifier.weight(1f),
                             )
                         }
@@ -193,34 +224,21 @@ fun AddKinfolkScreen(
                 }
             }
 
-            // Emergency Contact
+            // Emergency Contact. Required to create the household (#829): a
+            // household with none is a defect state the Add flow must never
+            // produce.
             item {
-                AuntieCard(modifier = Modifier.fillMaxWidth()) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Text(
-                            "EMERGENCY CONTACT",
-                            style = AuntieTheme.typography.labelSmall,
-                            color = AuntieTheme.colors.kinfolkOrange
-                        )
-
-                        AuntieField(
-                            value = state.emergencyContactName,
-                            onValueChange = viewModel::updateEmergencyContactName,
-                            label = "Contact Name",
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-
-                        AuntieField(
-                            value = state.emergencyContactPhone,
-                            onValueChange = viewModel::updateEmergencyContactPhone,
-                            label = "Contact Phone",
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                }
+                // #829 review item 14: titled "Emergency Contacts", the same
+                // card Edit Kinfolk shows.
+                EmergencyContactsSection(
+                    drafts = state.emergencyContacts,
+                    onChange = viewModel::updateAddEmergencyContact,
+                    onAdd = viewModel::addAddEmergencyContact,
+                    onRemove = viewModel::removeAddEmergencyContact,
+                    onMoveFirst = viewModel::moveAddEmergencyContactFirst,
+                    enabled = !state.isSaving,
+                    showNoneOnFile = state.createdKinfolkId != null,
+                )
             }
 
             // Internal Notes
@@ -240,6 +258,7 @@ fun AddKinfolkScreen(
                             value = state.internalNotes,
                             onValueChange = viewModel::updateInternalNotes,
                             label = "Internal Notes",
+                            enabled = householdFieldsEnabled,
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = false,
                             minLines = 3,
@@ -268,14 +287,14 @@ fun AddKinfolkScreen(
             // Single Save button (matches web canonical - status = prospect when
             // incomplete, active when full; no separate draft path).
             item {
-                // item 3: service address + emergency name/phone required.
+                // item 3: service address required. Emergency Contacts are
+                // validated by the view model (validateEmergencyContactDrafts).
                 val canSave = !state.isSaving && state.firstName.isNotBlank() &&
                     phoneOkOrBlank(state.phoneNumber) && phoneOkOrBlank(state.secondaryPhone) &&
                     emailOkOrBlank(state.email) &&
-                    state.serviceAddress.isNotBlank() &&
-                    state.emergencyContactName.isNotBlank() && isValidPhone(state.emergencyContactPhone)
+                    state.serviceAddress.isNotBlank()
                 PrimaryButton(
-                    label    = "Save",
+                    label    = if (state.createdKinfolkId != null) "Save Emergency Contact" else "Save",
                     onClick  = viewModel::saveKinfolk,
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                     enabled  = canSave,

@@ -513,6 +513,45 @@ describe('resolveContext with a kinfolk_id', () => {
   });
 });
 
+// #829 review item 9: an Emergency Contact is never messaged and never written
+// about, so the household doc loses every contact key the moment it is read.
+describe('Emergency Contacts never reach the prompt context', () => {
+  const { withoutEmergencyContacts, EMERGENCY_CONTACT_KEYS } = require('../stripEmergencyContacts.js');
+  const WITH_EC = {
+    id: '9',
+    firstName: 'Dana',
+    lastName: 'Delgado',
+    emergencyContacts: [{ name: 'Rae Mercer', phone: '+18055550199', relationship: 'Sister' }],
+    emergencyContactName: 'Rae Mercer',
+    emergencyContactPhone: '805-555-0198',
+    emergencyContactRelation: 'Sister',
+  };
+  const noContactKey = (doc) => EMERGENCY_CONTACT_KEYS.every((k) => !(k in doc));
+
+  it('the helper drops all four keys, keeps everything else, and leaves the input alone', () => {
+    const out = withoutEmergencyContacts(WITH_EC);
+    assert.deepStrictEqual(out, { id: '9', firstName: 'Dana', lastName: 'Delgado' });
+    assert.ok('emergencyContacts' in WITH_EC, 'the caller\'s object is not mutated');
+    assert.strictEqual(withoutEmergencyContacts(null), null);
+  });
+
+  it('the id path hands back a household with no contact key', async () => {
+    const db = makeDb({ kinfolk: [WITH_EC] });
+    const ctx = await gen.resolveContext(db, { communication_type: 'email', recipient: '', kinfolk_id: '9', raw_notes: 'x' });
+    assert.strictEqual(ctx.kinfolkName, 'Dana Delgado');
+    assert.ok(noContactKey(ctx.kinfolk), `unexpected keys: ${Object.keys(ctx.kinfolk)}`);
+    assert.ok(!JSON.stringify(ctx).includes('Rae Mercer'));
+  });
+
+  it('the name path hands back a household with no contact key', async () => {
+    const db = makeDb({ kinfolk: [WITH_EC] });
+    const ctx = await gen.resolveContext(db, { communication_type: 'email', recipient: 'Dana', raw_notes: 'x' });
+    assert.strictEqual(ctx.kinfolkId, '9');
+    assert.ok(noContactKey(ctx.kinfolk));
+    assert.ok(!JSON.stringify(ctx).includes('0199'));
+  });
+});
+
 describe('matchKinfolk', () => {
   it('matches on first name, case-insensitive', () => {
     assert.strictEqual(gen.matchKinfolk('dana', KINFOLK).id, '9');

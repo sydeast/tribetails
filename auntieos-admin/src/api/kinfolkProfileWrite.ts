@@ -84,9 +84,8 @@ export interface KinfolkEditPatch {
   entryNotes: string;
   wifiName: string;
   wifiPassword: string;
-  emergencyContactName: string;
-  emergencyContactPhone: string;
-  emergencyContactRelation: string;
+  // NO EMERGENCY CONTACT FIELDS (#829). They are written only by the
+  // `saveEmergencyContacts` callable, which validates them against the household.
   // NO VET FIELDS. The household vet lives on `household_data`, catalog-linked
   // by clinic id (operator ruling 2026-08-01, page-specs 04 item 3). This
   // patch used to carry all eight `vetClinic*` / `emergencyVetClinic*` keys,
@@ -119,9 +118,6 @@ export const KINFOLK_EDIT_FIELDS = [
   'entryNotes',
   'wifiName',
   'wifiPassword',
-  'emergencyContactName',
-  'emergencyContactPhone',
-  'emergencyContactRelation',
 ] as const satisfies readonly (keyof KinfolkEditPatch)[];
 
 /** Trimmed on the way out, matching `createKinfolk`'s treatment of the same fields. */
@@ -133,8 +129,6 @@ const TRIMMED: ReadonlySet<keyof KinfolkEditPatch> = new Set<keyof KinfolkEditPa
   'secondaryPhone',
   'secondaryEmail',
   'serviceAddress',
-  'emergencyContactName',
-  'emergencyContactPhone',
 ]);
 
 /**
@@ -153,17 +147,46 @@ const TRIMMED: ReadonlySet<keyof KinfolkEditPatch> = new Set<keyof KinfolkEditPa
  *
  * Fail-loud: a rejected write propagates to the caller unchanged.
  */
-export async function updateKinfolkProfile(kinfolkId: string, patch: KinfolkEditPatch): Promise<void> {
+export async function updateKinfolkProfile(kinfolkId: string, patch: Partial<KinfolkEditPatch>): Promise<boolean> {
   const id = kinfolkId.trim();
   if (id === '') throw new Error('updateKinfolkProfile requires a kinfolk id');
 
+  // #829 review item 5: only the fields the caller passes are written, walked
+  // off the fixed key list so nothing riding along on the object can leak in.
+  // Nothing to write means no write at all, not even the stamp: `updatedAt`
+  // says when the record last changed.
   const fields: Record<string, string> = {};
   for (const key of KINFOLK_EDIT_FIELDS) {
     const value = patch[key];
+    if (typeof value !== 'string') continue;
     fields[key] = TRIMMED.has(key) ? value.trim() : value;
   }
+  if (Object.keys(fields).length === 0) return false;
 
   await updateDoc(doc(db, 'kinfolk', id), { ...fields, updatedAt: serverTimestamp() });
+  return true;
+}
+
+/**
+ * #829 review item 5: what the edit form actually changed, against the stored
+ * record it loaded. The same comparison the write uses (identity and contact
+ * fields trimmed, free-text notes as typed), so stray whitespace on file is not
+ * an edit, and the unsaved indicator and the write can never disagree. Android
+ * (`DirectoryFieldChanges.kt`) and desktop (`kinfolkChanges`) diff the same way.
+ */
+export function changedKinfolkEditFields(
+  stored: Pick<KinfolkEditPatch, (typeof KINFOLK_EDIT_FIELDS)[number]>,
+  edited: KinfolkEditPatch,
+): Partial<KinfolkEditPatch> {
+  const out: Partial<KinfolkEditPatch> = {};
+  for (const key of KINFOLK_EDIT_FIELDS) {
+    const norm = (v: string | undefined) => {
+      const s = typeof v === 'string' ? v : '';
+      return TRIMMED.has(key) ? s.trim() : s;
+    };
+    if (norm(stored[key]) !== norm(edited[key])) out[key] = edited[key];
+  }
+  return out;
 }
 
 /**

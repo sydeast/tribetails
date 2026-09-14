@@ -794,7 +794,12 @@ private fun AuthenticatedNavHost(
                     onGenerateFollowUp = { kinfolkId, transcript ->
                         commVm.prefillFromCall(kinfolkId, transcript)
                         navController.navigate(Screen.Communicate.route) { launchSingleTop = true }
-                    }
+                    },
+                    // #829 review item 16: through Add Kinfolk, where the contact is required.
+                    onCreateKinfolkFromCall = { name, callerNumber, callSid ->
+                        directoryVm.prefillAddKinfolkFromCall(name, callerNumber, callSid)
+                        navController.navigate(Screen.AddKinfolk.route) { launchSingleTop = true }
+                    },
                 )
             }
              composable(Screen.Calendar.route) {
@@ -899,7 +904,9 @@ private fun AuthenticatedNavHost(
                 AddKinfolkScreen(
                     viewModel = directoryVm,
                     onBack = {
-                        directoryVm.clearAddKinfolkForm()
+                        // #829 review item 6: keeps a created household whose
+                        // contact did not save, so coming back continues it.
+                        directoryVm.leaveAddKinfolk()
                         navController.popBackStack()
                     },
                     onSaved = {

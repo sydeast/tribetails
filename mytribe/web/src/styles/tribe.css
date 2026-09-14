@@ -101,6 +101,33 @@ textarea.inp { resize: vertical; min-height: 64px; font-family: var(--sans); }
   border: 1px solid var(--hairline); border-left: 3px solid var(--coral); background: var(--glass-dim); }
 .contactconfirm .contactactions { margin-top: 8px; }
 
+/* EMERGENCY CONTACTS (#829). A <fieldset> defaults to min-inline-size:
+   min-content, which can widen the card past a 390px screen, so the slot
+   resets it along with the browser border and padding. Colours are tokens. */
+.ec-slot { min-inline-size: 0; border: 0; padding: 0; margin: 0 0 18px; }
+.ec-slot legend { padding: 0; margin-bottom: 10px; }
+.ec-slot .contactactions { margin-top: 12px; }
+.ec-actions { margin-top: 4px; }
+.ec-prompt { color: var(--coral); margin-bottom: 14px; }
+.ec-list { list-style: none; margin: 0 0 12px; padding: 0; }
+.ec-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 10px 0; border-bottom: 1px solid var(--hairline); min-width: 0; }
+.ec-list li:last-child { border-bottom: none; }
+.ec-list__order { flex-basis: 100%; font-family: var(--mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--navy-muted); }
+.ec-list__name { font-size: 14.5px; font-weight: 600; overflow-wrap: anywhere; }
+.ec-list__rel { font-size: 13px; color: var(--navy-muted); overflow-wrap: anywhere; }
+.ec-list__phone { font-size: 13px; color: var(--navy); }
+/* The tip opens under the whole title block, not under the icon: anchored to
+   the icon it started ~300px in and ran 180px past a 390px screen (measured by
+   cypress/e2e/emergency-contacts-phone.cy.ts). */
+.ec-card .htxt { position: relative; min-width: 0; }
+.ec-tip { display: inline-block; vertical-align: middle; }
+.ec-tip__icon { position: relative; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--navy-muted); background: transparent; color: var(--navy-muted);
+  font: 600 11px/1 var(--mono); display: inline-grid; place-items: center; cursor: pointer; padding: 0; margin-left: 6px; }
+/* A 42px tap target around the 18px icon. */
+.ec-tip__icon::after { content: ''; position: absolute; inset: -12px; }
+.ec-tip__text { position: absolute; top: calc(100% + 8px); left: 0; right: 0; z-index: 5; max-width: 320px;
+  padding: 8px 10px; border-radius: 10px; background: var(--navy); color: var(--cream); font: 400 12.5px/1.4 var(--sans); letter-spacing: 0; text-transform: none; }
+
 @media (max-width: 560px) {
   .grid2 { grid-template-columns: 1fr; }
   .kvrow { grid-template-columns: 1fr 1fr; }
