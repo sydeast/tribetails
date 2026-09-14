@@ -420,13 +420,21 @@ describe('recordPayment: the Send Confirmation Email toggle', () => {
       }),
     );
   });
-  it('sends the HOUSEHOLD nothing by default: a message to a real person needs a deliberate tick', async () => {
+  it('sends NOTHING by default for a payment that does not pay the invoice off', async () => {
+    // #866 operator ruling, as on main: unticked, the household is never told,
+    // and the office is told only when this payment paid the invoice off. This
+    // one names an open invoice and applies nothing, so nobody is told.
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await recordPaymentHandler(req(feeArgs));
     expect(res.confirmationEmailSent).toBe(false);
-    // #866 operator ruling: the office keeps its "Invoice Paid" copy on every
-    // path, so the notice is still enqueued, with no household recipient.
+    expect(mocks.resolveKinfolkUid).not.toHaveBeenCalled();
+    expect(mocks.enqueueNotification).not.toHaveBeenCalled();
+  });
+  it('unticked, but this payment paid the invoice off: the office copy alone goes out', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await recordPaymentHandler(req({ ...feeArgs, invoiceId: '', apply: { invoiceId: 'inv1', amount: 127.5 } }));
     expect(mocks.resolveKinfolkUid).not.toHaveBeenCalled();
     expect(mocks.enqueueNotification).toHaveBeenCalledTimes(1);
     expect(mocks.enqueueNotification).toHaveBeenCalledWith(

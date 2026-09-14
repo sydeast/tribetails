@@ -428,6 +428,103 @@ describe('#866 recordPayment: a retry of the same submission', () => {
   });
 });
 
+describe('#866 office copy: only for a payment that pays the invoice off (as on main)', () => {
+  const KEY = 'pay_1757860000000_offc01';
+
+  it('unticked partial, two-step flow: nobody is told', async () => {
+    seedInvoice();
+    await adminTwoStep(15, false);
+    expect(appliedCount()).toBe(0);
+    expect(staffCount()).toBe(0);
+  });
+
+  it('unticked partial, recordPayment applying: nobody is told', async () => {
+    seedInvoice();
+    await adminApply(15, false);
+    expect(appliedCount()).toBe(0);
+    expect(staffCount()).toBe(0);
+  });
+
+  it('ticked partial: household and office are both told, as on main', async () => {
+    // The staff copy is the same "Payment received" template the household gets
+    // (seedCorpus), not an "Invoice Paid" message, so a partial may carry it.
+    seedInvoice();
+    await adminTwoStep(15, true);
+    expect(appliedCount()).toBe(1);
+    expect(staffCount()).toBe(1);
+  });
+
+  it('ticked partial for a household with no portal account: nobody is told', async () => {
+    seedInvoice();
+    mocks.resolveUid.mockResolvedValue(null);
+    await adminTwoStep(15, true);
+    expect(appliedCount()).toBe(0);
+    expect(staffCount()).toBe(0);
+  });
+
+  it('a later payment linked to an invoice already paid off sends no second office copy', async () => {
+    seedInvoice();
+    await adminTwoStep(40, false);
+    expect(staffCount()).toBe(1);
+    expect(docs[INVOICE]!['paymentAppliedNoticeClaim']).toMatch(/^markInvoicePaid:/);
+    await withTrigger(() =>
+      recordPaymentHandler(adminReq({ kinfolkId: 'fam1', amount: 5, paymentMethod: 'cash', invoiceId: 'inv1' })),
+    );
+    expect(staffCount()).toBe(1);
+    expect(appliedCount()).toBe(0);
+  });
+
+  it('unticked full, recordPayment applying, first enqueue fails: a same-key retry sends the office copy once', async () => {
+    seedInvoice();
+    mocks.enqueue.mockRejectedValueOnce(new Error('dispatcher down'));
+    await adminApply(40, false, KEY);
+    expect(staffCount()).toBe(0);
+    expect(docs[`payments/${KEY}`]!['officeNoticeSentAt']).toBeFalsy();
+
+    later(HOUR);
+    await adminApply(40, false, KEY);
+    expect(staffCount()).toBe(1);
+    expect(appliedCount()).toBe(0);
+    expect(docs[`payments/${KEY}`]!['officeNoticeSentAt']).toBeTruthy();
+
+    later(HOUR);
+    await adminApply(40, false, KEY);
+    expect(staffCount()).toBe(1);
+  });
+
+  it('unticked full, two-step flow, first enqueue fails: a same-key retry sends the office copy once', async () => {
+    seedInvoice();
+    const step2 = () =>
+      withTrigger(() =>
+        recordPaymentHandler(
+          adminReq({ kinfolkId: 'fam1', amount: 40, paymentMethod: 'cash', invoiceId: 'inv1', idempotencyKey: KEY }),
+        ),
+      );
+    await withTrigger(() => markInvoicePaidHandler(adminReq({ invoiceId: 'inv1', amount: 40, method: 'cash' })));
+    mocks.enqueue.mockRejectedValueOnce(new Error('dispatcher down'));
+    await step2();
+    expect(staffCount()).toBe(0);
+
+    later(HOUR);
+    await step2();
+    expect(staffCount()).toBe(1);
+
+    later(HOUR);
+    await step2();
+    expect(staffCount()).toBe(1);
+    expect(appliedCount()).toBe(0);
+  });
+
+  it('unticked partial retried with the same key still tells nobody', async () => {
+    seedInvoice();
+    await adminApply(15, false, KEY);
+    later(HOUR);
+    await adminApply(15, false, KEY);
+    expect(appliedCount()).toBe(0);
+    expect(staffCount()).toBe(0);
+  });
+});
+
 describe('#866 account credit', () => {
   it('credit that pays the invoice off sends exactly one', async () => {
     seedInvoice();

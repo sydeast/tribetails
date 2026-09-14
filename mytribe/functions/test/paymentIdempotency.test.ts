@@ -84,9 +84,17 @@ function req(data: unknown, uid = 'admin1'): CallableRequest<unknown> {
   } as unknown as CallableRequest<unknown>;
 }
 
-/** Writes to the root `payments` collection, by path. */
-const paymentRows = (ctx: { writes: Array<{ path: string }> }) =>
-  ctx.writes.filter((w) => w.path.startsWith('payments/')).map((w) => w.path);
+/**
+ * Payment ROWS written to the root `payments` collection, by path.
+ *
+ * Merge writes are excluded: they are updates to a row that already exists, not
+ * a second row. Since #866 `recordPayment` stamps which notice copies went out
+ * (`confirmationEmailSent`, `officeNoticeSentAt`) on its own row with `update`,
+ * and counting that stamp as a payment would make "one key, one payment" fail
+ * for a reason unrelated to money.
+ */
+const paymentRows = (ctx: { writes: Array<{ path: string; merge?: boolean }> }) =>
+  ctx.writes.filter((w) => w.path.startsWith('payments/') && w.merge !== true).map((w) => w.path);
 
 /** Writes that move `families/{id}.accountBalanceCents`. THE INVENTED-CREDIT CHECK. */
 const balanceMoves = (ctx: { writes: Array<{ path: string; data: Record<string, unknown> }> }) =>

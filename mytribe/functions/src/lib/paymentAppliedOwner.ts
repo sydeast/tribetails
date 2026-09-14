@@ -41,6 +41,35 @@ export function paymentAppliedOwner(source: PaymentAppliedOwnerSource, id: strin
   return `${source}:${id}`;
 }
 
+/**
+ * #866: written on the invoice by the `recordPayment` step that follows a
+ * settling `markInvoicePaid`, holding the owner stamp it claimed.
+ *
+ * WHY A CLAIM. The office is told "paid" only by a payment that pays the invoice
+ * off (operator ruling), and in the two-step admin flow the step that knows the
+ * toggle (`recordPayment`) is not the step that paid the bill. The claim lets
+ * exactly one `recordPayment` act for that settlement: a later payment linked
+ * to the same invoice finds the stamp already claimed and sends nothing.
+ */
+export const PAYMENT_APPLIED_CLAIM_FIELD = 'paymentAppliedNoticeClaim';
+
+/**
+ * The `markInvoicePaid` owner stamp a `recordPayment` for `kinfolkId` may claim
+ * on this invoice, or null. Claimable means: the invoice is paid, belongs to that
+ * household, was paid off by `markInvoicePaid`, and nobody has claimed that stamp.
+ */
+export function claimableMarkInvoicePaidOwner(
+  invoice: Record<string, unknown> | undefined,
+  kinfolkId: string,
+): string | null {
+  if (!invoice || kinfolkId === '' || invoice['kinfolkId'] !== kinfolkId) return null;
+  const owner = invoice[PAYMENT_APPLIED_OWNER_FIELD];
+  if (typeof owner !== 'string' || !owner.startsWith('markInvoicePaid:')) return null;
+  if (invoice[PAYMENT_APPLIED_CLAIM_FIELD] === owner) return null;
+  const status = typeof invoice['status'] === 'string' ? invoice['status'].trim().toLowerCase() : '';
+  return status === 'paid' ? owner : null;
+}
+
 /** True when the write from `before` to `after` stamped a new notice owner. */
 export function paymentAppliedNoticeOwnedByWriter(
   before: Record<string, unknown> | undefined,
