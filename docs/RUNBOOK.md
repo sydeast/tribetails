@@ -1164,6 +1164,21 @@ to force.
 `RELEASE_SKIP_CLIENT_SECRETS=1` skips the check entirely if you know what is
 missing.
 
+**Every gcloud call in this step carries a 30-second timeout.** On 2026-09-13
+release step 0c sat silent for 16 minutes: a gcloud child had one socket in
+SYN_SENT to Google over IPv6 (a VPN was installed; IPv4 answered instantly),
+and nothing printed, so the hang read as an auth prompt (#839). It now prints a
+line per secret as it fetches, and `CLIENT_SECRETS_GCLOUD_TIMEOUT_MS`
+(milliseconds) overrides the default on a network known to be slower. A
+variable whose ACCESS call times out is **unreadable, not missing**: the
+refusal says so and points at the IPv4/IPv6 check below rather than telling you
+to create a secret that may already exist.
+
+```bash
+curl -4 -sS -o /dev/null -w '%{http_code}\n' https://secretmanager.googleapis.com
+curl -6 -sS -o /dev/null -w '%{http_code}\n' https://secretmanager.googleapis.com
+```
+
 Two names are deliberately outside all of this, and **neither is in Secret
 Manager, so do not go looking for them there**. `VITE_SENTRY_RELEASE` is derived:
 step 0c sets it to the commit being released, because a release tag maintained by
