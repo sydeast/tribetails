@@ -57,6 +57,13 @@ beforeEach(() => {
   mocks.multicast.mockReset().mockResolvedValue({ successCount: 1, responses: [{ success: true, messageId: 'fcm-1' }] });
 });
 
+/** Shared minimal def for the two `kinfolkAcct` resolver/sender tests below. */
+const TEST_DEF = {
+  key: 't.k', label: 'Test', audience: 'kinfolk', audiences: { kinfolk: true }, category: 'visit',
+  allowedChannels: ['sms'], required: {}, alwaysEnabled: false, kinfolkFacing: true, deliveryMode: 'trigger',
+  recipientResolver: 'kinfolkAcct', templates: { sms: 't.k' }, description: 'test',
+} as NotificationDef;
+
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
     const p = join(dir, name);
@@ -111,30 +118,48 @@ describe('Emergency Contacts are never a recipient (#829)', () => {
     expect(JSON.stringify(audience)).not.toContain('Rae');
   });
 
-  it('resolveRecipients returns the supplied account and nothing from the household record', async () => {
-    const def = {
-      key: 't.k', label: 'Test', audience: 'kinfolk', audiences: { kinfolk: true }, category: 'visit',
-      allowedChannels: ['sms'], required: {}, alwaysEnabled: false, kinfolkFacing: true, deliveryMode: 'trigger',
-      recipientResolver: 'kinfolkAcct', templates: { sms: 't.k' }, description: 'test',
-    } as NotificationDef;
+  // `kinfolkAcct`/`specificUid` are a pure passthrough of `args.recipientUid`
+  // (recipientResolver.ts:26-32): given a uid they never touch Firestore at
+  // all, and given no uid they THROW rather than fall back to reading the
+  // household doc, so there is no input that makes an EC-fallback observable
+  // through this resolver's return value. The seeded `kinfolk/k1` fixture
+  // below is therefore proof this call makes no Firestore round trip at all
+  // (asserted directly), not proof a read of it was ignored.
+  it('resolveRecipients resolves the account from the uid alone and never reads Firestore', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock({ docs: { 'kinfolk/k1': KINFOLK_WITH_EC } }).db);
-    const out = await resolveRecipients(def, { key: 't.k', recipientUid: 'u1', data: { kinfolkId: 'k1' } } as never);
+    const out = await resolveRecipients(TEST_DEF, { key: 't.k', recipientUid: 'u1', data: { kinfolkId: 'k1' } } as never);
     expect(out).toEqual([{ uid: 'u1', collection: 'clients' }]);
+    expect(mocks.dbFn).not.toHaveBeenCalled();
   });
 
-  it('sendSmsChannel sends to the account phone even when the household carries Emergency Contacts', async () => {
-    const def = {
-      key: 't.k', label: 'Test', audience: 'kinfolk', audiences: { kinfolk: true }, category: 'visit',
-      allowedChannels: ['sms'], required: {}, alwaysEnabled: false, kinfolkFacing: true, deliveryMode: 'trigger',
-      recipientResolver: 'kinfolkAcct', templates: { sms: 't.k' }, description: 'test',
-    } as NotificationDef;
+  // `lookupRecipientPhone` (smsChannel.ts:82-93) resolves strictly from
+  // `clients/{uid}` then `staff/{uid}`; since `clients/u1` has a phone here,
+  // it never reaches `staff/u1` or anything else. The `kinfolk/k1` fixture is
+  // present but, on this call, unread: the case that actually exercises "what
+  // if the account has no phone" is the test below.
+  it('sendSmsChannel sends to the clients/{uid} phone; the household carrying Emergency Contacts is beside the point', async () => {
     mocks.dbFn.mockReturnValue(
       buildDbMock({
         docs: { 'smsTemplates/t.k': { text: 'Hi' }, 'clients/u1': { phone: PRIMARY_PHONE }, 'kinfolk/k1': KINFOLK_WITH_EC },
       }).db,
     );
-    await sendSmsChannel({ def, recipientUid: 'u1', data: { kinfolkId: 'k1' } });
+    await sendSmsChannel({ def: TEST_DEF, recipientUid: 'u1', data: { kinfolkId: 'k1' } });
     expect(mocks.twilioCreate).toHaveBeenCalledTimes(1);
     expect((mocks.twilioCreate.mock.calls[0][0] as { to: string }).to).toBe(PRIMARY_PHONE);
+  });
+
+  it('sendSmsChannel skips rather than falling back to an Emergency Contact when the account has no phone on file', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        // Neither `clients/u1` nor `staff/u1` exists, so `lookupRecipientPhone`
+        // resolves to null. `kinfolk/k1` (the same household) carries both the
+        // new array and the legacy flat triple, so a future fallback that read
+        // EITHER shape would have a phone available here to reach for.
+        docs: { 'smsTemplates/t.k': { text: 'Hi' }, 'kinfolk/k1': KINFOLK_WITH_EC },
+      }).db,
+    );
+    const result = await sendSmsChannel({ def: TEST_DEF, recipientUid: 'u1', data: { kinfolkId: 'k1' } });
+    expect(result).toEqual({ skipped: true, skipReason: 'recipient_no_phone' });
+    expect(mocks.twilioCreate).not.toHaveBeenCalled();
   });
 });
