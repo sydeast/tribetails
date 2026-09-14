@@ -3,7 +3,9 @@ package com.tribetails.auntieos.web.screens.directory
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
+import com.tribetails.auntieos.web.ui.components.AUNTIE_INFO_TIP_TAG
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -138,5 +140,54 @@ class KinfolkEditSaveRenderTest {
         onNodeWithText("ALL CHANGES SAVED").assertExists()
         assertTrue(onAllNodesWithText("UNSAVED CHANGES").fetchSemanticsNodes().isEmpty(), "the indicator stayed on after the custom field went back to the stored value")
         assertNull(JvmFirestoreFixtures.lastWrite, "no save was pressed, so nothing may be written")
+    }
+
+    /**
+     * #829 review item 14 (operator ruling: the flag never blocks other edits).
+     * A half-filled contact on Edit no longer stops the save: the household write
+     * goes out carrying only the changed field, the callable is never called for
+     * the bad contact, and the screen stays open.
+     *
+     * The write fails after it is recorded here (no signed-in token in a test), so
+     * what the screen shows once a save SUCCEEDS with a contact problem is proven
+     * on the pure decision instead (KinfolkContactGateTest).
+     */
+    @Test
+    fun aHalfFilledContactDoesNotBlockTheHouseholdSave() = runDesktopComposeUiTest {
+        noCustomFields()
+        JvmFirestoreFixtures.kinfolk = listOf(household())
+        var saved: String? = null
+        setContent {
+            AuntieAppTheme(themeMode = ThemeMode.DARK) {
+                KinfolkEditScreen(kinfolkId = "kf1", onBack = {}, onSaved = { saved = it }, onArchived = {})
+            }
+        }
+        waitForIdle()
+        onNode(hasSetTextAction() and hasText("1234")).performScrollTo().performTextReplacement("9999")
+        onNode(hasSetTextAction() and hasText("8055550199")).performScrollTo().performTextReplacement("")
+        waitForIdle()
+        onNodeWithText("Save changes").performScrollTo().performClick()
+        waitUntil(timeoutMillis = 5_000) { JvmFirestoreFixtures.lastWrite?.op == "MERGE" }
+
+        assertEquals(setOf("gateCode"), JvmFirestoreFixtures.lastWrite?.fields)
+        waitForIdle()
+        assertTrue(JvmFirestoreFixtures.lastCallableName != "saveEmergencyContacts", "a contact that failed the pre-check reached the callable")
+        assertNull(saved, "the screen closed while the contact still needs fixing")
+    }
+
+    /** #829 review item 14: the who-gets-called tip sits beside the section title, once. */
+    @Test
+    fun theEmergencyContactsTitleCarriesOneTip() = runDesktopComposeUiTest {
+        noCustomFields()
+        JvmFirestoreFixtures.kinfolk = listOf(household())
+        setContent {
+            AuntieAppTheme(themeMode = ThemeMode.DARK) {
+                KinfolkEditScreen(kinfolkId = "kf1", onBack = {}, onSaved = {}, onArchived = {})
+            }
+        }
+        waitForIdle()
+        // AuntieFieldLabel renders its text uppercased.
+        onNodeWithText("EMERGENCY CONTACTS").assertExists()
+        assertEquals(1, onAllNodesWithTag(AUNTIE_INFO_TIP_TAG).fetchSemanticsNodes().size)
     }
 }

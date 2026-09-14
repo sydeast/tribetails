@@ -35,8 +35,10 @@ import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.UserCog
 import com.composables.icons.lucide.UserPlus
 import com.tribetails.auntieos.web.data.AuditLog
+import com.tribetails.auntieos.web.data.EMERGENCY_CONTACT_WHO_GETS_CALLED
 import com.tribetails.auntieos.web.data.EmergencyContactDraft
 import com.tribetails.auntieos.web.data.NO_EMERGENCY_CONTACT
+import com.tribetails.auntieos.web.ui.components.AuntieInfoTip
 import com.tribetails.auntieos.web.data.draftsEqual
 import com.tribetails.auntieos.web.data.emergencyContactsOf
 import com.tribetails.auntieos.web.data.kinfolkChanges
@@ -102,6 +104,12 @@ fun KinfolkEditScreen(
     onBack: () -> Unit,
     onSaved: (kinfolkId: String) -> Unit,
     onArchived: () -> Unit,
+    /**
+     * #829 review item 6: leaving Add after the household was created but its
+     * Emergency Contact did not save. Receives that household's id so the caller
+     * can take the operator to it; without a handler it is an ordinary back.
+     */
+    onLeftWithoutContact: ((kinfolkId: String) -> Unit)? = null,
 ) {
     val client = remember { FirestoreClient() }
     val scope  = rememberReportingScope()
@@ -223,12 +231,20 @@ fun KinfolkEditScreen(
     }
 
     var saving       by remember { mutableStateOf(false) }
+    /** #829 review: a contact refusal or failed contact save, shown under the contact editor. */
+    var ecError      by remember(kinfolkId) { mutableStateOf<String?>(null) }
     var toast        by remember { mutableStateOf("") }
     var toastVisible by remember { mutableStateOf(false) }
     var toastKind    by remember { mutableStateOf(ToastKind.Info) }
 
     fun showToast(msg: String, kind: ToastKind = ToastKind.Info) {
         toast = msg; toastKind = kind; toastVisible = true
+    }
+
+    /** Back and Cancel. A household created without its contact goes to [onLeftWithoutContact]. */
+    fun leave() {
+        val pending = createdKinfolkId
+        if (pending != null && onLeftWithoutContact != null) onLeftWithoutContact(pending) else onBack()
     }
 
     // #829 review: trimmed fields go through keepStoredUnlessEdited, so stray
@@ -327,22 +343,25 @@ fun KinfolkEditScreen(
             return
         }
         val saveContacts = retryId != null || emergencyContactsNeedSaving(isNew, ecDrafts, ecBaseline)
-        if (saveContacts) {
-            validateEmergencyContactDrafts(
-                ecDrafts,
-                listOf("$firstName $lastName"),
-                listOf(phoneNumber, secondaryPhone),
-            )?.let {
-                showToast(it, ToastKind.Error)
-                return
-            }
+        val contactProblem = if (saveContacts) {
+            validateEmergencyContactDrafts(ecDrafts, listOf("$firstName $lastName"), listOf(phoneNumber, secondaryPhone))
+        } else null
+        // Add (and an Add retry) requires a valid contact before anything is
+        // written. On Edit the contact never blocks the household (#829 review
+        // item 14, operator ruling): the household saves below, then the contact
+        // problem is shown on the contact editor.
+        if (contactBlocksSave(isNew, retryId, contactProblem) && contactProblem != null) {
+            ecError = contactProblem
+            showToast(contactProblem, ToastKind.Error)
+            return
         }
+        ecError = null
         saving = true
         scope.launch {
             val draft = build()
             val outcome = saveKinfolkWithContacts(
                 retryKinfolkId = retryId,
-                saveContacts   = saveContacts,
+                saveContacts   = saveContacts && contactProblem == null,
                 writeHousehold = {
                     // If the entered clinic name is new (or has new details),
                     // write it to the shared catalog so other households see it
@@ -390,27 +409,24 @@ fun KinfolkEditScreen(
                 },
             )
             saving = false
+            ecError = contactErrorAfterSave(outcome, isNew, contactProblem)
             when (outcome) {
                 is KinfolkSaveOutcome.Saved -> {
-                    if (saveContacts) ecBaseline = ecDrafts
-                    showToast(if (isNew) "Kinfolk added." else "Saved.", ToastKind.Success)
-                    onSaved(outcome.kinfolkId)
+                    if (contactProblem != null) {
+                        // Edit: the household is saved; the contact still needs fixing
+                        // and the screen stays open for it.
+                        showToast("The household is saved. The Emergency Contact still needs attention.", ToastKind.Info)
+                    } else {
+                        if (saveContacts) ecBaseline = ecDrafts
+                        showToast(if (isNew) "Kinfolk added." else "Saved.", ToastKind.Success)
+                        onSaved(outcome.kinfolkId)
+                    }
                 }
                 is KinfolkSaveOutcome.HouseholdFailed ->
                     showToast("Save failed: ${outcome.message}", ToastKind.Error)
                 is KinfolkSaveOutcome.ContactsFailed -> {
-                    if (isNew) {
-                        createdKinfolkId = outcome.kinfolkId
-                        showToast(
-                            "saveEmergencyContacts failed: ${outcome.message}. The household was created and shows No Emergency Contact until this is saved.",
-                            ToastKind.Error,
-                        )
-                    } else {
-                        showToast(
-                            "The household is saved. saveEmergencyContacts failed: ${outcome.message}",
-                            ToastKind.Error,
-                        )
-                    }
+                    if (isNew) createdKinfolkId = outcome.kinfolkId
+                    showToast(ecError.orEmpty(), ToastKind.Error)
                 }
             }
         }
@@ -422,7 +438,7 @@ fun KinfolkEditScreen(
             subtitle = if (isNew) "A new household joining the Tribe"
                        else        existing?.displayName?.let { "Updating $it" } ?: "Updating profile",
             icon     = if (isNew) Lucide.UserPlus else Lucide.UserCog,
-            onBack   = onBack,
+            onBack   = { leave() },
             breadcrumbs = if (isNew) listOf("Directory") else listOf("Directory", "Profile"),
         )
 
@@ -563,22 +579,31 @@ fun KinfolkEditScreen(
 
         // ── 02 · Other Contacts ───────────────────────────────────────────────
         SubsectionPanel(index = "02", title = "Other Contacts") {
-            AuntieFieldLabel(text = "Emergency Contacts")
+            // #829 review item 14: the section title with the who-gets-called
+            // tip beside it (a tap opens it), as on every client.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AuntieFieldLabel(text = "Emergency Contacts")
+                AuntieInfoTip(EMERGENCY_CONTACT_WHO_GETS_CALLED)
+            }
             Spacer(Modifier.height(8.dp))
             if (!isNew && ecBaseline.isBlankDrafts()) {
-                AuntieStatusPill(label = NO_EMERGENCY_CONTACT, tone = AuntieStatusTone.Orange)
+                AuntieStatusPill(label = NO_EMERGENCY_CONTACT, tone = AuntieStatusTone.Orange, compact = true)
                 Spacer(Modifier.height(8.dp))
             }
             // Stays live during an Add retry: the contact is the one thing a
             // retry exists to fix.
             EmergencyContactsEditor(
                 drafts      = ecDrafts,
-                onChange    = { i, d -> ecDrafts = ecDrafts.mapIndexed { j, x -> if (j == i) d else x } },
-                onAdd       = { if (ecDrafts.size < com.tribetails.auntieos.web.data.EMERGENCY_CONTACTS_MAX) ecDrafts = ecDrafts + EmergencyContactDraft() },
-                onRemove    = { i -> ecDrafts = ecDrafts.filterIndexed { j, _ -> j != i }.ifEmpty { listOf(EmergencyContactDraft()) } },
-                onMoveFirst = { i -> ecDrafts = listOf(ecDrafts[i]) + ecDrafts.filterIndexed { j, _ -> j != i } },
+                onChange    = { i, d -> ecDrafts = ecDrafts.mapIndexed { j, x -> if (j == i) d else x }; ecError = null },
+                onAdd       = { if (ecDrafts.size < com.tribetails.auntieos.web.data.EMERGENCY_CONTACTS_MAX) ecDrafts = ecDrafts + EmergencyContactDraft(); ecError = null },
+                onRemove    = { i -> ecDrafts = ecDrafts.filterIndexed { j, _ -> j != i }.ifEmpty { listOf(EmergencyContactDraft()) }; ecError = null },
+                onMoveFirst = { i -> ecDrafts = listOf(ecDrafts[i]) + ecDrafts.filterIndexed { j, _ -> j != i }; ecError = null },
                 enabled     = !saving,
             )
+            ecError?.let {
+                Spacer(Modifier.height(6.dp))
+                Text(it, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.error)
+            }
             Spacer(Modifier.height(16.dp))
             Row(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -743,7 +768,7 @@ fun KinfolkEditScreen(
         AuntieSaveBar(
             dirty       = dirty,
             saveEnabled = !saving,
-            onCancel    = onBack,
+            onCancel    = { leave() },
             onSave      = { onSave() },
             saveLabel   = when {
                 saving && createdKinfolkId != null -> "Saving…"

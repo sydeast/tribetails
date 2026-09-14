@@ -38,8 +38,14 @@ class AuntieInfoTipRenderTest {
         onNodeWithText(EMERGENCY_CONTACT_WHO_GETS_CALLED).assertIsDisplayed()
     }
 
+    /**
+     * #829 review item 14: the tip moved beside the section title, which
+     * KinfolkEditScreen draws (KinfolkEditSaveRenderTest checks it there), so
+     * the editor itself carries none. With two contacts both slots offer Remove
+     * and only the second offers Call first.
+     */
     @Test
-    fun theEditorCarriesOneTipOnTheFirstSlot() = runDesktopComposeUiTest {
+    fun theEditorCarriesNoTipAndOffersRemoveOnBothSlots() = runDesktopComposeUiTest {
         setContent {
             AuntieAppTheme(themeMode = ThemeMode.DARK) {
                 EmergencyContactsEditor(
@@ -51,11 +57,12 @@ class AuntieInfoTipRenderTest {
                 )
             }
         }
-        assertEquals(1, onAllNodesWithTag(AUNTIE_INFO_TIP_TAG).fetchSemanticsNodes().size)
-        onNodeWithTag(AUNTIE_INFO_TIP_TAG).assertIsDisplayed()
+        assertTrue(onAllNodesWithTag(AUNTIE_INFO_TIP_TAG).fetchSemanticsNodes().isEmpty())
         // AuntieFieldLabel renders its text uppercased.
         onNodeWithText("CALLED FIRST").assertIsDisplayed()
         onNodeWithText("CALLED SECOND").assertIsDisplayed()
+        assertEquals(2, onAllNodesWithText("Remove").fetchSemanticsNodes().size)
+        assertEquals(1, onAllNodesWithText("Call first").fetchSemanticsNodes().size)
         // Two on file: no third slot.
         assertTrue(onAllNodesWithText("Add a second Emergency Contact").fetchSemanticsNodes().isEmpty())
     }

@@ -42,6 +42,34 @@ fun emergencyContactsNeedSaving(
 }
 
 /**
+ * #829 review item 14 (operator ruling: the flag never blocks other edits).
+ * Whether a contact that fails the pre-check stops the save before anything is
+ * written. On Add, and on an Add retry, yes: a household is created with its
+ * contact. On Edit, never: the household saves and the problem is reported on
+ * the contact editor afterwards ([contactErrorAfterSave]).
+ */
+fun contactBlocksSave(isNew: Boolean, retryKinfolkId: String?, contactProblem: String?): Boolean =
+    contactProblem != null && (isNew || retryKinfolkId != null)
+
+/**
+ * #829 review items 4 and 14: the line under the contact editor once a save has
+ * come back, or null when there is nothing to say. The server's own message,
+ * never a "saveEmergencyContacts failed: " prefix.
+ *
+ * - Saved, with a [contactProblem] the pre-check found: the household is saved,
+ *   the contact still needs fixing, and the screen stays open.
+ * - Contacts refused on Add: the household exists, so the message says it shows
+ *   No Emergency Contact until the contact saves.
+ */
+fun contactErrorAfterSave(outcome: KinfolkSaveOutcome, isNew: Boolean, contactProblem: String?): String? = when (outcome) {
+    is KinfolkSaveOutcome.Saved -> contactProblem
+    is KinfolkSaveOutcome.HouseholdFailed -> null
+    is KinfolkSaveOutcome.ContactsFailed ->
+        if (isNew) "${outcome.message} The household was created and shows No Emergency Contact until this is saved."
+        else outcome.message
+}
+
+/**
  * #829 review: the value a trimmed form field saves. If what is typed matches the
  * stored value once both are trimmed, the stored value stands, so a record with
  * stray whitespace neither shows as changed on open nor gets rewritten by a save

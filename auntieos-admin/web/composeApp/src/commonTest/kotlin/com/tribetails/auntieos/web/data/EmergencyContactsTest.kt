@@ -60,10 +60,14 @@ class EmergencyContactsTest {
     fun validationMirrorsTheServer() {
         val names = listOf("Dana Mercer")
         val phones = listOf("(805) 555-0100")
-        assertEquals("A household needs at least one Emergency Contact", validateEmergencyContactDrafts(listOf(EmergencyContactDraft()), names, phones))
+        assertEquals("A household needs at least one Emergency Contact.", validateEmergencyContactDrafts(listOf(EmergencyContactDraft()), names, phones))
+        assertEquals("An Emergency Contact needs a name.", validateEmergencyContactDrafts(listOf(EmergencyContactDraft("", "8055550199")), names, phones))
+        assertEquals("An Emergency Contact's name can be at most 80 characters.", validateEmergencyContactDrafts(listOf(EmergencyContactDraft("R".repeat(81), "8055550199")), names, phones))
+        assertEquals("An Emergency Contact's phone number can be at most 32 characters.", validateEmergencyContactDrafts(listOf(EmergencyContactDraft("Rae", "8".repeat(33))), names, phones))
+        assertEquals("A relationship can be at most 40 characters.", validateEmergencyContactDrafts(listOf(EmergencyContactDraft("Rae", "8055550199", "S".repeat(41))), names, phones))
         assertEquals("An Emergency Contact has to be someone outside the household.", validateEmergencyContactDrafts(listOf(EmergencyContactDraft("Rae", "8055550100")), names, phones))
         assertEquals("An Emergency Contact has to be someone outside the household.", validateEmergencyContactDrafts(listOf(EmergencyContactDraft(" dana  MERCER ", "8055550199")), names, phones))
-        assertEquals("Each Emergency Contact needs a phone number.", validateEmergencyContactDrafts(listOf(EmergencyContactDraft("Rae", "")), names, phones))
+        assertEquals("An Emergency Contact needs a phone number.", validateEmergencyContactDrafts(listOf(EmergencyContactDraft("Rae", "")), names, phones))
         assertEquals("The two Emergency Contacts need different phone numbers.", validateEmergencyContactDrafts(listOf(EmergencyContactDraft("Rae", "8055550199"), EmergencyContactDraft("Lee", "+1 805 555 0199")), names, phones))
         assertNull(validateEmergencyContactDrafts(listOf(EmergencyContactDraft("Rae", "8055550199")), names, phones))
     }

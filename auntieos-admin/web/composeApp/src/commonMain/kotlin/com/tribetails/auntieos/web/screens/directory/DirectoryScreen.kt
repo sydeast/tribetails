@@ -149,6 +149,11 @@ fun DirectoryScreen(
                 onBack     = { route = DirectoryRoute.List },
                 onSaved    = { newId -> route = DirectoryRoute.Profile(newId) },
                 onArchived = { route = DirectoryRoute.List },
+                // #829 review item 6: leaving Add after the household was created
+                // but its contact did not save opens THAT household, which shows
+                // No Emergency Contact, so the contact is added there instead of
+                // the household being Added a second time.
+                onLeftWithoutContact = { createdId -> route = DirectoryRoute.Profile(createdId) },
             )
 
         is DirectoryRoute.EditKinfolk ->
@@ -586,7 +591,8 @@ internal fun KinfolkCard(
                     // test: KinfolkCardRenderTest). The subtitle only repeats the
                     // household name, so the flag takes its place.
                     if (emergencyContactsOf(kf).isEmpty()) {
-                        AuntieStatusPill(label = NO_EMERGENCY_CONTACT, tone = AuntieStatusTone.Orange)
+                        // #829 review item 14: the compact pill, as on every client.
+                        AuntieStatusPill(label = NO_EMERGENCY_CONTACT, tone = AuntieStatusTone.Orange, compact = true)
                     } else if (subtitle.isNotBlank()) {
                         Text(
                             text     = subtitle,
