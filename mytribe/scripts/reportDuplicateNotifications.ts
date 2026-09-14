@@ -189,7 +189,7 @@ export function findDuplicates(rows: readonly NotificationRow[], windowOverrideM
   const groups = new Map<string, NotificationRow[]>();
   for (const row of rows) {
     if (row.identity === '' || row.recipientUid === '' || row.key === '' || row.atMs === null) continue;
-    const id = [row.collection, row.key, row.identity, row.recipientUid].join(' ');
+    const id = [row.collection, row.key, row.identity, row.recipientUid].join('|');
     const list = groups.get(id);
     if (list) list.push(row);
     else groups.set(id, [row]);
