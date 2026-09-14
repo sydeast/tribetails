@@ -211,17 +211,51 @@ STUB
 write_stubs() {
   local dir="$1"
 
-  # gh: answers check-runs from $GH_FIXTURES/<sha>, one "name<TAB>status<TAB>
-  # conclusion" line per check run. No fixture means the commit has no checks.
-  # GH_UNAVAILABLE=1 makes gh itself fail, which is the "gate is down" case.
+  # gh: answers ci.yml's own run history for a commit from $GH_FIXTURES/<sha>,
+  # one "name<TAB>status<TAB>conclusion" line per job. No fixture means ci.yml
+  # has never run for that commit. GH_UNAVAILABLE=1 makes gh itself fail,
+  # which is the "gate is down" case. GH_CALL_LOG=<file>, if set, records
+  # every call so a case can assert what was and was not asked.
+  #
+  # ci_check_runs (#838/#856) is a two-hop lookup: first the workflow-scoped
+  # run for the sha (`actions/workflows/ci.yml/runs?head_sha=`), then that
+  # run's jobs (`actions/runs/<id>/jobs`). The stub uses the sha itself as the
+  # fake run id BY DEFAULT, so both hops read the SAME fixture file and every
+  # existing single-run fixture in this suite keeps working unchanged.
+  #
+  # A case that needs MORE THAN ONE ci.yml run for a sha (a re-run after a
+  # fix, say) writes `$GH_FIXTURES/<sha>.runs`: one run id per line, newest
+  # first, exactly the order the real API returns. The first hop then answers
+  # with that file's FIRST line, the same as the real `.workflow_runs[0].id`,
+  # and each run id names its own jobs fixture (`$GH_FIXTURES/<run-id>`).
+  #
+  # `commits/<sha>/check-runs` is the OLD, unscoped endpoint ci_check_runs
+  # used to read, which counted every check run on a commit regardless of
+  # which workflow made it. It is POISONED here on purpose, printing a
+  # failing job if it is ever asked: nothing in release.sh should call it any
+  # more, and a case that does would otherwise silently pass by accident.
   cat > "$dir/stubs/gh" <<'STUB'
 #!/usr/bin/env bash
 [ "${GH_UNAVAILABLE:-0}" = "1" ] && exit 1
+[ -n "${GH_CALL_LOG:-}" ] && printf '%s\n' "$*" >> "$GH_CALL_LOG"
 for a in "$@"; do
   case "$a" in
+    *actions/workflows/ci.yml/runs*head_sha=*)
+      sha="${a#*head_sha=}"; sha="${sha%%&*}"
+      if [ -f "$GH_FIXTURES/$sha.runs" ]; then
+        head -n1 "$GH_FIXTURES/$sha.runs" | tr -d '\n'
+      elif [ -f "$GH_FIXTURES/$sha" ]; then
+        printf '%s' "$sha"
+      fi
+      exit 0
+      ;;
+    *actions/runs/*/jobs*)
+      rest="${a#*actions/runs/}"; run_id="${rest%%/*}"
+      [ -f "$GH_FIXTURES/$run_id" ] && cat "$GH_FIXTURES/$run_id"
+      exit 0
+      ;;
     *commits/*check-runs*)
-      sha="${a#*commits/}"; sha="${sha%%/*}"
-      [ -f "$GH_FIXTURES/$sha" ] && cat "$GH_FIXTURES/$sha"
+      printf 'POISON: commits/check-runs was called\tcompleted\tfailure\n'
       exit 0
       ;;
   esac
@@ -574,6 +608,83 @@ if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "RELEASE_SKIP_CI_GATE=1"; the
   ok "RELEASE_SKIP_CI_GATE=1 releases past an unavailable gate, and says so"
 else
   bad "the override did not get past an unavailable gate"; echo "$OUT" | tail -20
+fi
+
+# ---------------------------------------------------------------------------
+# 8b. #838/#856: ci_check_runs used to read `commits/<sha>/check-runs`, which
+#     counts EVERY check run on a commit regardless of which workflow made it.
+#     In production that includes a scheduled watcher's own run and
+#     main-channel.yml's, so a tick still in progress made this gate say "CI
+#     has not finished" for a HEAD whose actual CI was long since green, and a
+#     failed tick made HEAD look red. ci_check_runs now reads ci.yml's OWN run
+#     for the commit (the same workflow-scoped query scripts/ci-run-watch.mjs
+#     uses) and that run's jobs, so a check run some OTHER workflow left on
+#     the same commit cannot touch this gate at all. write_stubs's gh stub
+#     poisons the old commits/check-runs endpoint on purpose (prints a failing
+#     job if it is ever asked); this case proves the gate never asks it.
+# ---------------------------------------------------------------------------
+D8="$(make_repo)"; write_stubs "$D8"
+HEAD8="$(cd "$D8/repo" && git rev-parse HEAD)"
+fixture_all_green "$D8/fixtures/$HEAD8"
+
+RC="$(run_release "$D8" DRY_RUN=1 RELEASE_YES=1 GH_CALL_LOG="$D8/gh-calls.log")"
+OUT="$(cat "$D8/out")"
+if [ "$RC" -eq 0 ]; then
+  ok "a green ci.yml run releases even with the poisoned commits/check-runs endpoint present"
+else
+  bad "release refused with a genuinely green ci.yml run"; echo "$OUT" | tail -20
+fi
+if [ -f "$D8/gh-calls.log" ] && grep -q "check-runs" "$D8/gh-calls.log"; then
+  bad "release.sh still calls commits/<sha>/check-runs; that is the #838 regression"
+else
+  ok "release.sh no longer calls commits/<sha>/check-runs at all"
+fi
+
+# ---------------------------------------------------------------------------
+# 8c. No ci.yml run at all for HEAD, but gh itself answers fine, unlike case 8
+#     above (gh UNREACHABLE). Same refusal, different cause: nothing has
+#     judged this commit, so the gate must say so either way.
+# ---------------------------------------------------------------------------
+D9="$(make_repo)"; write_stubs "$D9"
+HEAD9="$(cd "$D9/repo" && git rev-parse HEAD)"
+# Deliberately no fixture written for $HEAD9: ci.yml has never run for it.
+RC="$(run_release "$D9" DRY_RUN=1 RELEASE_YES=1)"
+OUT="$(cat "$D9/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "no check runs at all"; then
+  ok "a commit ci.yml never ran for refuses, with gh answering fine"
+else
+  bad "a missing ci.yml run did not refuse cleanly"; echo "$OUT" | tail -20
+fi
+
+# ---------------------------------------------------------------------------
+# 8d/8e. TWO ci.yml runs for the same sha (a re-run after a fix, say). The
+#     API returns them newest first, and `ci_check_runs` reads
+#     `.workflow_runs[0]`, so the NEWER run's jobs are what the gate sees,
+#     whichever way its own verdict differs from the older one's.
+# ---------------------------------------------------------------------------
+D10="$(make_repo)"; write_stubs "$D10"
+HEAD10="$(cd "$D10/repo" && git rev-parse HEAD)"
+
+printf 'run-newer\nrun-older\n' > "$D10/fixtures/$HEAD10.runs"
+printf 'React admin e2e\tcompleted\tcancelled\n' > "$D10/fixtures/run-older"
+fixture_all_green "$D10/fixtures/run-newer"
+RC="$(run_release "$D10" DRY_RUN=1 RELEASE_YES=1)"
+OUT="$(cat "$D10/out")"
+if [ "$RC" -eq 0 ]; then
+  ok "an older cancelled run does not block once a newer run is green: the gate reads [0]"
+else
+  bad "a green NEWER run did not release past an older cancelled one"; echo "$OUT" | tail -20
+fi
+
+printf 'run-newer\nrun-older\n' > "$D10/fixtures/$HEAD10.runs"
+fixture_all_green "$D10/fixtures/run-older"
+printf 'React admin e2e\tcompleted\tfailure\n' > "$D10/fixtures/run-newer"
+RC="$(run_release "$D10" DRY_RUN=1 RELEASE_YES=1)"
+OUT="$(cat "$D10/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "React admin e2e"; then
+  ok "a red NEWER run still refuses even though an older run for the same sha was green: the gate reads [0]"
+else
+  bad "a red newer run did not refuse past a green older one"; echo "$OUT" | tail -20
 fi
 
 # ---------------------------------------------------------------------------

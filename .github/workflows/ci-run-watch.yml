@@ -1,0 +1,87 @@
+name: CI run watch
+
+# WHAT THIS EXISTS FOR: issue #838. On 2026-09-13 PR #837's merge landed on
+# main as `92786e7` during a GitHub outage: the operator's merge request came
+# back as a gateway error, but the merge had already completed server-side:
+# the commit's GPG signature verifies against one of GitHub's own `web-flow`
+# keys (github.com/web-flow.gpg), so it is a genuine GitHub merge. The
+# bookkeeping a normal merge performs alongside that git write never finished,
+# though: PR #837 was never marked merged, and the `push` event `ci.yml`'s
+# `on: push` listens for never fired. `commits/92786e7/check-suites` shows
+# exactly one suite for that SHA, the operator's own hand-dispatched run hours
+# later, so no push-triggered suite (and therefore no push event) was ever
+# created for it. Nobody found out until `scripts/release.sh` step 0b refused
+# at release time, hours later. Full evidence and reasoning in
+# scripts/ci-run-watch.mjs's header, issue #838, and PR #856.
+#
+# This runs on a SCHEDULE rather than `push` or `check_suite` on purpose:
+# whatever swallowed 92786e7's push event runs through the same delivery
+# pipeline a webhook-triggered watcher would depend on. A cron tick comes from
+# GitHub's own scheduler, not from a webhook the same outage could also drop.
+#
+# RECOVERY, if this ever has to be done by hand instead: `gh workflow run
+# ci.yml --ref main` (docs/RUNBOOK.md, "When something breaks"). This workflow
+# does exactly that once main's HEAD is older than DEFAULT_MAX_AGE_MINUTES
+# (scripts/ci-run-watch.mjs) with zero ci.yml runs on record, and will not
+# fire twice for the same commit: it asks whether ci.yml has ANY run at all
+# for that SHA first, of any event or status (scripts/ci-run-watch.mjs,
+# decideForHead), so a run it dispatched on a previous tick already counts.
+#
+# Cheap and hosted-runner-only on purpose (see ci.yml's own header on why
+# hosted, not self-hosted): a public repo's Actions minutes are free, and this
+# job's steps are two `gh api` calls, so there is no minutes budget to protect
+# and no runner to keep online. Hardcoded to `ubuntu-latest` rather than
+# `vars.CI_RUNNER`: that variable exists for the heavier jobs in ci.yml, and
+# this one has no reason to ever move with them.
+
+on:
+  schedule:
+    # Every 20 minutes. Cheap relative to the 10-minute dispatch threshold in
+    # scripts/ci-run-watch.mjs (SCHEDULE_MINUTES documents this pairing): a
+    # commit is at most ~30 minutes old (threshold + one tick) before this
+    # notices it, comfortably inside "soon after the push", not "at release
+    # time".
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+
+# Least privilege: this reads ci.yml's own run history and writes nothing
+# except (via `gh workflow run`) a NEW workflow_dispatch run of ci.yml, which
+# is what `actions: write` is for. Nothing here touches repo contents, and
+# nothing here reads check runs directly (see scripts/ci-run-watch.mjs's
+# header for why that query was the bug), so `checks: read` is not needed.
+permissions:
+  contents: read
+  actions: write
+
+# One in flight at a time. A second tick landing mid-decision would see the
+# same "no runs yet" state the first tick is already acting on and could
+# double-dispatch before either write completes; a shared, non-cancelling group
+# serializes that away for a job that finishes in well under a minute.
+concurrency:
+  group: ci-run-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    name: Check main HEAD has a CI run
+    # Measured well under a minute: a checkout of one file plus two `gh api`
+    # calls (the commit, then ci.yml's runs for it) and, rarely, one
+    # `gh workflow run`. Generous headroom over a job this small still buys
+    # nothing past a few minutes' hang.
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            scripts/ci-run-watch.mjs
+          sparse-checkout-cone-mode: false
+
+      # No setup-node: the script uses only node:child_process, node:fs and
+      # node:url, all long-stable, so whatever Node ubuntu-latest ships is
+      # fine. Nothing here needs pinning the way a build or a test run does.
+      - name: Ask whether ci.yml has run for main's HEAD, dispatch it if not
+        run: node scripts/ci-run-watch.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
