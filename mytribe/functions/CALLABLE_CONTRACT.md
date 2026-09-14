@@ -1038,6 +1038,44 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
     Firestore `emailTemplates` collection. The operator edits email templates in
     the admin UI; there is no seed script for them (operator ruling 2026-09-13, #847).
 
+### recordFailedLogin (pre-existing; response made constant and clients wired 2026-09-14, #886)
+- req `{ email: string /* email */, ip?: string, userAgent?: string }`. Clients send
+  `email` only. Frozen in `test/callableContract.test.ts`.
+- res `{ ok: true }`, ALWAYS, exported as `RecordFailedLoginResult` (strict). No
+  generated artifact: the auth surface is in no contract registry, the same as
+  `signOutAllDevices`.
+- GATE: none, `wrapCallable` only. The caller has just failed to sign in, so there
+  is no token to check. Per-IP (30 per 5 minutes) and per-email (15 per 24 hours)
+  rate limits refuse with `resource-exhausted`; a malformed email is
+  `invalid-argument`. Neither depends on whether the email is an account.
+- **The response says nothing about the account.** Until #886 it returned
+  `remainingBeforeLock` (10 for an unknown email, counting down for a real one)
+  and `lockedUntilMs`, which told an unauthenticated caller that an address was an
+  account and when its lock would end. Now a real account, an unknown email, a
+  call that warns, a call that locks and a call whose alert failed to send all
+  answer `{ ok: true }`. A failure after the rate limits is logged
+  (`recordFailedLogin.failed`) and sent to Sentry, never thrown: an alert that did
+  not go out is retried off the saved `lockAlertsPendingForMs` marker by the next
+  failed login.
+- Timing: an unknown email runs the same work as a real account (audit write plus
+  one read-prune-write transaction on `unknownLoginAttempts/{emailHash}`). The
+  residual difference is notification work on a real account's threshold calls
+  (5th and 10th failures); see the comment on `recordUnknownEmailFailure`.
+- CLIENTS report only credential failures (wrong password, user not found,
+  invalid credential; `INVALID_PASSWORD`, `EMAIL_NOT_FOUND` and
+  `INVALID_LOGIN_CREDENTIALS` over REST), never network errors, too-many-requests,
+  a disabled user or a `beforeSignIn` refusal. The report is fire and forget: it
+  never delays or replaces the error the user sees.
+- LOCKED STATE is not read from this callable. `beforeSignIn` refuses a locked
+  account with `permission-denied` "This account is locked. Use the reset password
+  link or contact support.", which reaches clients inside Identity Toolkit's
+  `BLOCKING_FUNCTION_ERROR_RESPONSE`. Every sign-in screen maps it to a locked
+  message that names its "Forgot password?" control.
+- Mirrors: `mytribe/web/src/api/authApi.ts`, `auntieos-admin/src/lib/failedLogin.ts`,
+  `AuntieRepository.reportFailedLogin` (admin Android), `AuthBackend.reportFailedLogin`
+  (portal Android and portal desktop), `AuthClient` in `auntieos-admin/web/composeApp`
+  (desktop console).
+
 ### mintInvite (PRIMARY-only since 2026-08-04)
 - req `{ familyId: string, invitedEmail: string /* email */, proposedRole?: 'PRIMARY' }`
 - res `{ inviteId: string }`

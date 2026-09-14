@@ -250,9 +250,10 @@ describe('#869 operator account-lock alert', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
 
     await nineFailures();
-    const last = await fail(LOCK_AT);
+    // #886: the response no longer says whether the account locked; the saved doc does.
+    expect(await fail(LOCK_AT)).toEqual({ ok: true });
 
-    expect(last.locked).toBe(true);
+    expect((await storedSecurityDoc(ctx)).lockedUntilMs).toBe(LOCK_AT + LOCK_MS);
     expect(lockCopies(ctx.writes as Write[]).household).toHaveLength(1);
   });
 
@@ -319,7 +320,11 @@ describe('#869 lock alerts survive a failed enqueue', () => {
     mocks.onInjectedFailure = async () => {
       lockDocWhenAlertFailed = (await ctx.db.doc(SECURITY_DOC).get()).data();
     };
-    await expect(fail(LOCK_AT)).rejects.toThrow(/injected auth\.account\.locked failure/);
+    // #886: the failure is logged, not thrown. Only a real account can reach an
+    // alert, so a thrown error would tell an unauthenticated caller the email is
+    // an account. The retry below is driven by the saved marker, not by the throw.
+    await expect(fail(LOCK_AT)).resolves.toEqual({ ok: true });
+    expect(lockDocWhenAlertFailed, 'the injected household failure did run').toBeDefined();
 
     // The lock was already saved when the alert failed, with the pending marker.
     expect(lockDocWhenAlertFailed).toMatchObject({
@@ -330,7 +335,8 @@ describe('#869 lock alerts survive a failed enqueue', () => {
     expect(lockCopies(ctx.writes as Write[]).operator).toHaveLength(0);
 
     const retry = await fail(LOCK_AT + 60_000);
-    expect(retry).toEqual({ remainingBeforeLock: 0, locked: true, lockedUntilMs: LOCK_AT + LOCK_MS });
+    expect(retry).toEqual({ ok: true });
+    expect((await storedSecurityDoc(ctx)).lockedUntilMs).toBe(LOCK_AT + LOCK_MS);
     await fail(LOCK_AT + 120_000);
     await fail(LOCK_AT + 180_000);
 
@@ -354,7 +360,8 @@ describe('#869 lock alerts survive a failed enqueue', () => {
     await nineFailures();
     mocks.failOnce.add(OPERATOR_KEY);
     // The operator copy is caught, so the lock call itself still succeeds.
-    expect((await fail(LOCK_AT)).locked).toBe(true);
+    expect(await fail(LOCK_AT)).toEqual({ ok: true });
+    expect((await storedSecurityDoc(ctx)).lockedUntilMs).toBe(LOCK_AT + LOCK_MS);
     expect(lockCopies(ctx.writes as Write[]).operator).toHaveLength(0);
 
     // Past the default 5-minute dedupe window, still inside the 30-minute lock.
@@ -382,8 +389,9 @@ describe('#869 lock alerts survive a failed enqueue', () => {
     // Not "no new notifications": a retry would be swallowed by the dedupe
     // ledger and look identical. Zero enqueue CALLS is what proves no retry ran.
     mocks.enqueueCalls.length = 0;
-    expect((await fail(LOCK_AT + 60_000)).locked).toBe(true);
-    expect((await fail(LOCK_AT + 10 * 60_000)).locked).toBe(true);
+    expect(await fail(LOCK_AT + 60_000)).toEqual({ ok: true });
+    expect(await fail(LOCK_AT + 10 * 60_000)).toEqual({ ok: true });
+    expect((await storedSecurityDoc(ctx)).lockedUntilMs).toBe(LOCK_AT + LOCK_MS);
     expect(mocks.enqueueCalls).toEqual([]);
   });
 
@@ -407,7 +415,7 @@ describe('#869 lock alerts survive a failed enqueue', () => {
           { merge: true },
         );
     };
-    expect((await fail(LOCK_AT)).locked).toBe(true);
+    expect(await fail(LOCK_AT)).toEqual({ ok: true });
 
     // Lock A's alerts finished; lock B's retry marker must survive A's clear.
     expect((await storedSecurityDoc(ctx)).lockAlertsPendingForMs).toBe(NEWER);
@@ -423,7 +431,8 @@ describe('#869 lock alerts survive a failed enqueue', () => {
     });
     mocks.dbFn.mockReturnValue(ctx.db);
 
-    expect((await fail(NOW)).locked).toBe(true);
+    expect(await fail(NOW)).toEqual({ ok: true });
+    expect((await storedSecurityDoc(ctx)).lockedUntilMs).toBe(NOW + LOCK_MS);
     expect(ctx.writes.filter((w) => w.path.startsWith('notifications/'))).toEqual([]);
   });
 });
