@@ -30,13 +30,18 @@ import {
   PRODUCTION_ENV_FILE,
   ROOT,
   SECRET_UNREADABLE,
+  classifyAccessFailure,
+  classifyListResult,
+  isUnreadableValue,
   declaredSecretNames,
   fixCommands,
   isGcloudTimeout,
   listSecretsWithGcloud,
   makeGcloudFetcher,
+  refuseUnconfirmedLocalValues,
   renderEnvFile,
   resolveClientVars,
+  splitRefusals,
 } from './client-secrets.mjs';
 
 // Obviously-fake values. Nothing real belongs in a test file: it would be a
@@ -527,14 +532,158 @@ test('makeGcloudFetcher passes the timeout and kill signal to spawnSync, and a t
   assert.ok(logs.some((l) => l.includes('curl -6')));
 });
 
-test('an ordinary gcloud failure, with no timeout, still resolves to null rather than unreadable', () => {
-  const spawn = () => ({ status: 1, error: undefined, signal: null, stdout: '' });
+test('an ACCESS failure for a LISTED secret is unreadable with a reason, never null; a name the LIST lacks is still null', () => {
+  // This used to assert null for the listed secret, which printed `gcloud
+  // secrets create` for a secret the store had just named (#850).
+  const spawn = () => ({ status: 1, error: undefined, signal: null, stdout: '', stderr: 'ERROR: something odd' });
 
   const fetcher = makeGcloudFetcher('auntieos-ttpc', ['SECRET_A'], { spawn, timeoutMs: 5, log: () => {} });
-  assert.equal(fetcher('SECRET_A'), null);
+  const v = fetcher('SECRET_A');
+  assert.notEqual(v, null);
+  assert.ok(isUnreadableValue(v));
+  assert.equal(v.reason, 'access-failed');
+  // Not on the list: the store answered that it does not exist, and create
+  // advice is right for that one.
+  assert.equal(fetcher('NOT_LISTED'), null);
 
   const listResult = listSecretsWithGcloud('auntieos-ttpc', { spawn, timeoutMs: 5, log: () => {} });
   assert.equal(listResult, null);
+});
+
+// Real gcloud stderr, captured 2026-09-14, with the account email replaced.
+// DISABLED_STDERR is NOT captured: producing it needs a store change.
+const PERMISSION_DENIED_STDERR =
+  "ERROR: (gcloud.secrets.versions.access) PERMISSION_DENIED: Permission 'secretmanager.versions.access' denied on resource (or it may not exist). Remediate access with this Troubleshooter URL or share it with your administrator - https://console.cloud.google.com/iam-admin/troubleshooter/summary;errorId=X . This command is authenticated as someone@example.com which is the active account specified by the [core/account] property.\n- '@type': type.googleapis.com/google.rpc.ErrorInfo\n  reason: IAM_PERMISSION_DENIED\n";
+const NOT_FOUND_STDERR =
+  'ERROR: (gcloud.secrets.versions.access) NOT_FOUND: Secret [projects/153396971788/secrets/X] not found or has no versions. This command is authenticated as someone@example.com which is the active account specified by the [core/account] property.\n';
+const DISABLED_STDERR =
+  'ERROR: (gcloud.secrets.versions.access) FAILED_PRECONDITION: Secret Version [projects/153396971788/secrets/X/versions/3] is in DISABLED state.\n';
+
+test('classifyAccessFailure reads permission denied, no enabled version and not found from gcloud stderr, without the account email', () => {
+  const perm = classifyAccessFailure({ status: 1, stderr: PERMISSION_DENIED_STDERR });
+  assert.equal(perm.reason, 'permission-denied');
+  assert.match(perm.detail, /PERMISSION_DENIED/);
+  assert.ok(!perm.detail.includes('someone@example.com'), perm.detail);
+  assert.ok(!perm.detail.includes('troubleshooter'), perm.detail);
+
+  const gone = classifyAccessFailure({ status: 1, stderr: NOT_FOUND_STDERR });
+  assert.equal(gone.reason, 'not-found');
+  assert.ok(!gone.detail.includes('someone@example.com'), gone.detail);
+
+  assert.equal(classifyAccessFailure({ status: 1, stderr: DISABLED_STDERR }).reason, 'no-enabled-version');
+  assert.equal(
+    classifyAccessFailure({ status: 1, stderr: 'ERROR: FAILED_PRECONDITION: Secret Version [x] is in DESTROYED state.' }).reason,
+    'no-enabled-version',
+  );
+  assert.equal(classifyAccessFailure({ status: 1, stderr: 'ERROR: something new' }).reason, 'access-failed');
+});
+
+test('each ACCESS failure shape: a REQUIRED value refuses and an OPTIONAL one warns, with advice that fits and never create', () => {
+  const shapes = {
+    'permission-denied': PERMISSION_DENIED_STDERR,
+    'no-enabled-version': DISABLED_STDERR,
+    'not-found': NOT_FOUND_STDERR,
+  };
+  for (const [reason, stderr] of Object.entries(shapes)) {
+    const listed = declaredSecretNames();
+    const fetcher = makeGcloudFetcher('auntieos-ttpc', listed, {
+      spawn: () => ({ status: 1, stdout: '', stderr }),
+      timeoutMs: 5,
+      log: () => {},
+    });
+    const { rows, refusals, warnings } = resolveClientVars({ fetchSecret: fetcher, release: 'abc1234' });
+    const sm = rows.filter((r) => r.kind === 'secret-manager');
+    assert.ok(sm.every((r) => r.status === 'unreadable' && r.reason === reason), `${reason}: not every row unreadable`);
+    assert.deepEqual(
+      refusals.map((r) => r.variable).sort(),
+      sm.filter((r) => r.required).map((r) => r.variable).sort(),
+    );
+    assert.deepEqual(
+      warnings.map((r) => r.variable).sort(),
+      sm.filter((r) => !r.required).map((r) => r.variable).sort(),
+    );
+
+    for (const r of [...refusals, ...warnings]) {
+      const cmds = fixCommands(r, 'auntieos-ttpc').join('\n');
+      assert.ok(!cmds.includes('gcloud secrets create'), `${reason}: create advice for listed ${r.secret}`);
+      if (reason === 'permission-denied') {
+        assert.ok(cmds.includes(`gcloud secrets get-iam-policy ${r.secret} --project auntieos-ttpc`), cmds);
+        assert.ok(cmds.includes('roles/secretmanager.secretAccessor'), cmds);
+      } else if (reason === 'no-enabled-version') {
+        assert.ok(cmds.includes(`gcloud secrets versions list ${r.secret} --project auntieos-ttpc`), cmds);
+        assert.ok(cmds.includes(`secrets versions add ${r.secret}`), cmds);
+      } else {
+        assert.ok(cmds.includes(`gcloud secrets versions list ${r.secret} --project auntieos-ttpc`), cmds);
+      }
+    }
+  }
+});
+
+test('CLI: listed secrets whose ACCESS fails refuse with exit 4, per-secret advice, no create, no account email', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'client-secrets-access-'));
+  for (const [name, text] of [
+    ['perm', PERMISSION_DENIED_STDERR],
+    ['gone', NOT_FOUND_STDERR],
+    ['disabled', DISABLED_STDERR],
+  ]) {
+    fs.writeFileSync(path.join(dir, `${name}.txt`), text);
+  }
+  const fakeGcloud = path.join(dir, 'gcloud');
+  fs.writeFileSync(
+    fakeGcloud,
+    [
+      '#!/bin/sh',
+      `D='${dir}'`,
+      'case "$1 $2 $3" in',
+      '  "secrets list --project")',
+      "    printf '%s\\n' ADMIN_WEB_APPCHECK_SITE_KEY ADMIN_WEB_MAPBOX_PUBLIC_TOKEN PORTAL_WEB_MAPBOX_PUBLIC_TOKEN ADMIN_WEB_SENTRY_DSN PORTAL_WEB_SENTRY_DSN",
+      '    exit 0',
+      '    ;;',
+      '  "secrets versions access")',
+      '    name=""',
+      '    for a in "$@"; do case "$a" in --secret=*) name="${a#--secret=}" ;; esac; done',
+      '    case "$name" in',
+      '      ADMIN_WEB_APPCHECK_SITE_KEY|ADMIN_WEB_SENTRY_DSN) cat "$D/perm.txt" >&2; exit 1 ;;',
+      '      ADMIN_WEB_MAPBOX_PUBLIC_TOKEN) cat "$D/disabled.txt" >&2; exit 1 ;;',
+      '      PORTAL_WEB_MAPBOX_PUBLIC_TOKEN) cat "$D/gone.txt" >&2; exit 1 ;;',
+      "      PORTAL_WEB_SENTRY_DSN) printf 'https://example@o0.ingest.us.sentry.io/1\\n'; exit 0 ;;",
+      '    esac',
+      '    ;;',
+      'esac',
+      'exit 1',
+      '',
+    ].join('\n'),
+  );
+  fs.chmodSync(fakeGcloud, 0o755);
+
+  let r;
+  try {
+    r = spawnSync(
+      process.execPath,
+      [path.join(ROOT, 'scripts', 'client-secrets.mjs'), '--check', '--project', 'auntieos-ttpc', '--release', 'abc1234'],
+      { encoding: 'utf8', timeout: 15_000, env: { ...process.env, PATH: `${dir}:${process.env.PATH}` } },
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  const out = `${r.stdout || ''}\n${r.stderr || ''}`;
+
+  assert.equal(r.status, 4, `expected exit 4, got ${r.status}:\n${out}`);
+  assert.ok(!/gcloud secrets create/.test(out), `create advice for a listed secret:\n${out}`);
+  assert.ok(!/is missing/.test(out), `"is missing" for a listed secret:\n${out}`);
+  assert.ok(!/has no value/.test(out), `the missing-value refusal appeared:\n${out}`);
+  assert.ok(!out.includes('someone@example.com'), `the account email reached the output:\n${out}`);
+  assert.match(out, /ADMIN_WEB_APPCHECK_SITE_KEY could not be read/);
+  assert.match(out, /ADMIN_WEB_MAPBOX_PUBLIC_TOKEN could not be read/);
+  assert.match(out, /PORTAL_WEB_MAPBOX_PUBLIC_TOKEN could not be read/);
+  assert.match(out, /roles\/secretmanager\.secretAccessor/);
+  assert.match(out, /gcloud secrets get-iam-policy ADMIN_WEB_APPCHECK_SITE_KEY --project auntieos-ttpc/);
+  assert.match(out, /gcloud secrets versions list ADMIN_WEB_MAPBOX_PUBLIC_TOKEN --project auntieos-ttpc/);
+  assert.match(out, /secrets versions add ADMIN_WEB_MAPBOX_PUBLIC_TOKEN/);
+  assert.match(out, /gcloud secrets versions list PORTAL_WEB_MAPBOX_PUBLIC_TOKEN --project auntieos-ttpc/);
+  // The optional admin DSN is refused its value too: it warns, it does not refuse.
+  assert.match(out, /WARNING: VITE_SENTRY_DSN \(admin\) could not be read/);
+  assert.match(out, /gcloud secrets get-iam-policy ADMIN_WEB_SENTRY_DSN/);
 });
 
 test('a timed-out ACCESS refuses the release, and the fix commands never suggest `gcloud secrets create`', () => {
@@ -753,6 +902,334 @@ test('CLI: a genuinely MISSING secret and an UNREADABLE one print separate REFUS
   );
   assert.match(out, /curl -4/);
   assert.match(out, /curl -6/);
+});
+
+// ---------------------------------------------------------------------------
+// #850: no gcloud, no credentials, or an empty answer. The nightly preflight
+// ran on a hosted runner with no Google credentials three nights running, and
+// every required value printed `is missing` plus `gcloud secrets create` for
+// secrets that all existed. Each shape below must refuse with exit 4, name the
+// secret as unreadable, print the auth check, and never advise create or set.
+// ---------------------------------------------------------------------------
+
+test('classifyListResult tells no gcloud, no credentials, an empty answer and another failure apart', () => {
+  assert.deepEqual(
+    classifyListResult({ error: Object.assign(new Error('spawnSync gcloud ENOENT'), { code: 'ENOENT' }) }),
+    { reason: 'no-gcloud', detail: '' },
+  );
+  const noAuth = classifyListResult({
+    status: 1,
+    stdout: '',
+    stderr:
+      'ERROR: (gcloud.secrets.list) You do not currently have an active account selected.\nPlease run:\n\n  $ gcloud auth login\n',
+  });
+  assert.equal(noAuth.reason, 'not-authenticated');
+  assert.match(noAuth.detail, /active account selected/);
+  assert.equal(classifyListResult({ status: 0, stdout: '\n', stderr: '' }).reason, 'no-answer');
+  const denied = classifyListResult({
+    status: 1,
+    stdout: '',
+    stderr: 'ERROR: (gcloud.secrets.list) PERMISSION_DENIED: Permission denied on resource project x.\n',
+  });
+  assert.equal(denied.reason, 'gcloud-failed');
+  assert.match(denied.detail, /PERMISSION_DENIED/);
+  assert.deepEqual(classifyListResult({ status: 0, stdout: 'A\nB\n' }).names, ['A', 'B']);
+  assert.equal(classifyListResult(timeoutResult()).reason, 'timeout');
+});
+
+test('listSecretsWithGcloud still returns null for a store it could not ask, and reports why', () => {
+  const seen = [];
+  const r = listSecretsWithGcloud('auntieos-ttpc', {
+    spawn: () => ({ status: 1, stdout: '', stderr: 'ERROR: You do not currently have an active account selected.' }),
+    log: () => {},
+    onUnavailable: (s) => seen.push(s),
+  });
+  assert.equal(r, null);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].reason, 'not-authenticated');
+});
+
+test('with no fetcher and nothing local, a Secret Manager value is UNREADABLE with the reason, and its advice is the auth check', () => {
+  const { rows, refusals } = resolveClientVars({
+    fetchSecret: null,
+    localEnv: {},
+    release: 'abc1234',
+    storeReason: 'not-authenticated',
+  });
+  const smRows = rows.filter((r) => r.kind === 'secret-manager');
+  assert.ok(smRows.every((r) => r.status === 'unreadable' && r.reason === 'not-authenticated'));
+  assert.ok(refusals.length > 0);
+  for (const r of refusals) {
+    const cmds = fixCommands(r, 'auntieos-ttpc');
+    assert.deepEqual(cmds, ['gcloud auth list', 'gcloud secrets list --project auntieos-ttpc --limit 1']);
+  }
+});
+
+/**
+ * Run the real CLI from a throwaway copy of the repo with NO .env files, so the
+ * result does not depend on whether this machine has a developer's .env (the
+ * operator's checkout does). The copy gets its OWN minimal `vite` module whose
+ * loadEnv reads `.env`, `.env.local`, `.env.<mode>` and `.env.<mode>.local`,
+ * so `import('vite')` resolves and the run is not the "blind" exit-3 path
+ * EVEN WHERE VITE IS NOT INSTALLED: CI's Deploy guard job runs `node --test`
+ * with no `npm ci`, and a symlink to the repo's node_modules made these tests
+ * exit 3 there. These tests are about what happens when Secret Manager cannot
+ * be read, not about Vite's precedence; the precedence test further down still
+ * drives the real Vite loader and skips when it is absent. `bin` is the ONLY
+ * directory on PATH, so a gcloud installed on the machine running the test
+ * cannot answer: GitHub's ubuntu image ships one at /usr/bin/gcloud. Nothing
+ * else needs PATH. node is spawned by absolute path, the stubs are #!/bin/sh
+ * (resolved by absolute path), and echo and exit are shell builtins.
+ */
+function runCliWithoutStore(gcloudScript, { mode = '--check', envFiles = {}, extraEnv = {} } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'client-secrets-850-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'scripts'));
+    fs.mkdirSync(path.join(dir, 'bin'));
+    for (const d of Object.values(APP_DIRS)) fs.mkdirSync(path.join(dir, d), { recursive: true });
+    for (const [rel, body] of Object.entries(envFiles)) fs.writeFileSync(path.join(dir, rel), body);
+    fs.copyFileSync(path.join(ROOT, 'scripts', 'client-secrets.mjs'), path.join(dir, 'scripts', 'client-secrets.mjs'));
+    const viteDir = path.join(dir, 'node_modules', 'vite');
+    fs.mkdirSync(viteDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(viteDir, 'package.json'),
+      JSON.stringify({ name: 'vite', type: 'module', exports: './index.js' }),
+    );
+    fs.writeFileSync(
+      path.join(viteDir, 'index.js'),
+      [
+        "import fs from 'node:fs';",
+        "import path from 'node:path';",
+        '// Test stand-in for vite.loadEnv: KEY=VALUE lines, later files win.',
+        "export function loadEnv(mode, envDir, prefix = 'VITE_') {",
+        '  const out = {};',
+        "  for (const name of ['.env', '.env.local', `.env.${mode}`, `.env.${mode}.local`]) {",
+        '    let text;',
+        "    try { text = fs.readFileSync(path.join(envDir, name), 'utf8'); } catch { continue; }",
+        "    for (const line of text.split('\\n')) {",
+        '      const m = line.match(/^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(.*?)\\s*$/);',
+        '      if (m && m[1].startsWith(prefix)) out[m[1]] = m[2].replace(/^([\'"])(.*)\\1$/, \'$2\');',
+        '    }',
+        '  }',
+        '  return out;',
+        '}',
+        '',
+      ].join('\n'),
+    );
+    if (gcloudScript !== null) {
+      fs.writeFileSync(path.join(dir, 'bin', 'gcloud'), gcloudScript);
+      fs.chmodSync(path.join(dir, 'bin', 'gcloud'), 0o755);
+    }
+    const env = { HOME: process.env.HOME || dir, PATH: path.join(dir, 'bin'), ...extraEnv };
+    const r = spawnSync(
+      process.execPath,
+      [path.join(dir, 'scripts', 'client-secrets.mjs'), mode, '--project', 'auntieos-ttpc', '--release', 'abc1234'],
+      { encoding: 'utf8', timeout: 60_000, env, cwd: dir },
+    );
+    const written = Object.fromEntries(
+      Object.entries(APP_DIRS).map(([app, d]) => [app, fs.existsSync(path.join(dir, d, PRODUCTION_ENV_FILE))]),
+    );
+    return { status: r.status, stderr: r.stderr || '', out: `${r.stdout || ''}\n${r.stderr || ''}`, written };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function assertUnreadableNotMissing({ status, out }, why) {
+  assert.equal(status, 4, `expected exit 4 (refused because unreadable), got ${status}:\n${out}`);
+  assert.match(out, /REFUSED: Secret Manager could not be read for these REQUIRED secrets/);
+  for (const secret of ['ADMIN_WEB_APPCHECK_SITE_KEY', 'ADMIN_WEB_MAPBOX_PUBLIC_TOKEN', 'PORTAL_WEB_MAPBOX_PUBLIC_TOKEN']) {
+    assert.match(out, new RegExp(`${secret} could not be read`), `${secret} was not named as unreadable:\n${out}`);
+    assert.ok(!out.includes(`gcloud secrets create ${secret}`), `advised creating ${secret}:\n${out}`);
+    assert.ok(!out.includes(`secrets versions add ${secret}`), `advised setting ${secret}:\n${out}`);
+  }
+  assert.ok(!/is missing/.test(out), `an unasked store must never print "is missing":\n${out}`);
+  assert.ok(!/has no value/.test(out), `the missing-value refusal must not appear:\n${out}`);
+  assert.ok(!/gcloud secrets create/.test(out), `no create advice at all:\n${out}`);
+  assert.match(out, /gcloud auth list/);
+  assert.match(out, /gcloud secrets list --project auntieos-ttpc --limit 1/);
+  assert.match(out, why);
+}
+
+test('CLI: NO gcloud on PATH refuses as unreadable (exit 4), says gcloud is not installed, and never advises create', () => {
+  assertUnreadableNotMissing(runCliWithoutStore(null), /gcloud is not installed/);
+});
+
+test('CLI: gcloud with NO credentials refuses as unreadable (exit 4), quotes gcloud, and never advises create', () => {
+  const script = [
+    '#!/bin/sh',
+    'echo "ERROR: (gcloud.secrets.list) You do not currently have an active account selected." >&2',
+    'echo "Please run:" >&2',
+    'echo "  \\$ gcloud auth login" >&2',
+    'exit 1',
+    '',
+  ].join('\n');
+  const res = runCliWithoutStore(script);
+  assertUnreadableNotMissing(res, /no usable credentials/);
+  assert.match(res.out, /active account selected/);
+});
+
+test('CLI: gcloud that exits 0 and lists NOTHING refuses as unreadable (exit 4), and never advises create', () => {
+  assertUnreadableNotMissing(runCliWithoutStore('#!/bin/sh\nexit 0\n'), /listed no secrets at all/);
+});
+
+// ---------------------------------------------------------------------------
+// #850 review: account emails, gRPC code matching, a mixed run, and --write.
+// ---------------------------------------------------------------------------
+
+// Two gcloud shapes that name the account outside the "authenticated as"
+// phrase. example.com only.
+const EXPIRED_CREDS_STDERR =
+  'ERROR: (gcloud.secrets.list) Your current active account [person@example.com] does not have any valid credentials\nPlease run:\n\n  $ gcloud auth login\n';
+const REFRESH_FAILED_STDERR =
+  'ERROR: (gcloud.secrets.list) There was a problem refreshing auth tokens for account person@example.com: Reauthentication failed.\nPlease run:\n  $ gcloud auth login\n';
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/;
+
+test('the account email is redacted from gcloud detail in every shape, not only after "authenticated as"', () => {
+  for (const stderr of [EXPIRED_CREDS_STDERR, REFRESH_FAILED_STDERR, PERMISSION_DENIED_STDERR, NOT_FOUND_STDERR]) {
+    const list = classifyListResult({ status: 1, stdout: '', stderr });
+    const access = classifyAccessFailure({ status: 1, stderr });
+    assert.ok(!EMAIL_RE.test(list.detail), `LIST detail leaked an address: ${list.detail}`);
+    assert.ok(!EMAIL_RE.test(access.detail), `ACCESS detail leaked an address: ${access.detail}`);
+  }
+  assert.equal(classifyListResult({ status: 1, stdout: '', stderr: EXPIRED_CREDS_STDERR }).reason, 'not-authenticated');
+  assert.equal(classifyListResult({ status: 1, stdout: '', stderr: REFRESH_FAILED_STDERR }).reason, 'not-authenticated');
+  assert.match(classifyListResult({ status: 1, stdout: '', stderr: EXPIRED_CREDS_STDERR }).detail, /<account>/);
+});
+
+/** A gcloud stub that prints `text` on stderr and fails, using only builtins. */
+function failingGcloud(text) {
+  const lines = text.split('\n').filter((l) => l !== '');
+  return ['#!/bin/sh', ...lines.map((l) => `printf '%s\\n' '${l}' >&2`), 'exit 1', ''].join('\n');
+}
+
+test('CLI: no email address reaches any Why: or WARNING line, for either account-naming gcloud shape', () => {
+  for (const stderr of [EXPIRED_CREDS_STDERR, REFRESH_FAILED_STDERR]) {
+    const { status, out } = runCliWithoutStore(failingGcloud(stderr));
+    assert.equal(status, 4, out);
+    const lines = out.split('\n').filter((l) => /Why:|WARNING|gcloud said|could not read Secret Manager/.test(l));
+    assert.ok(lines.some((l) => /Why:/.test(l)), `no Why: line to check:\n${out}`);
+    assert.ok(lines.some((l) => /WARNING/.test(l)), `no WARNING line to check:\n${out}`);
+    for (const l of lines) assert.ok(!EMAIL_RE.test(l), `an address reached the output: ${l}`);
+    assert.ok(!out.includes('person@example.com'), `the account email reached the output:\n${out}`);
+  }
+});
+
+test('gRPC codes match only as uppercase whole words, so a code in a URL or prose is not a reason', () => {
+  const reason = (stderr) => classifyAccessFailure({ status: 1, stderr }).reason;
+  assert.equal(reason('ERROR: see https://cloud.google.com/secret-manager/docs/permission_denied for help'), 'access-failed');
+  assert.equal(reason('ERROR: https://cloud.google.com/docs/not_found and failed_precondition notes'), 'access-failed');
+  assert.equal(reason('ERROR: https://cloud.google.com/help/PERMISSION_DENIED_HELP'), 'access-failed');
+  assert.equal(reason('ERROR: (gcloud.secrets.versions.access) PERMISSION_DENIED: denied'), 'permission-denied');
+  assert.equal(reason('ERROR: (gcloud.secrets.versions.access) NOT_FOUND: gone'), 'not-found');
+});
+
+// Folded in from the PR #885 review (r885/mixed.test.mjs): one secret MISSING
+// from the LIST, one DENIED, one that HANGS. Three REFUSED blocks, each with
+// its own advice, and each secret in exactly one of them.
+test('CLI mixed: missing + permission denied + timeout exit 4 with three blocks and the right advice in each', () => {
+  const perm =
+    "ERROR: (gcloud.secrets.versions.access) PERMISSION_DENIED: Permission 'secretmanager.versions.access' denied on resource (or it may not exist). This command is authenticated as reviewer@example.com which is the active account specified by the [core/account] property.";
+  const stub = [
+    '#!/bin/sh',
+    'case "$1 $2 $3" in',
+    '  "secrets list --project")',
+    "    printf '%s\\n' ADMIN_WEB_MAPBOX_PUBLIC_TOKEN PORTAL_WEB_MAPBOX_PUBLIC_TOKEN ADMIN_WEB_SENTRY_DSN PORTAL_WEB_SENTRY_DSN; exit 0 ;;",
+    '  "secrets versions access")',
+    '    name=""',
+    '    for a in "$@"; do case "$a" in --secret=*) name="${a#--secret=}" ;; esac; done',
+    '    case "$name" in',
+    `      ADMIN_WEB_MAPBOX_PUBLIC_TOKEN) printf "%s\\n" "${perm}" >&2; exit 1 ;;`,
+    '      PORTAL_WEB_MAPBOX_PUBLIC_TOKEN) exec /bin/sleep 20 ;;',
+    "      *) printf 'https://k@o0.ingest.us.sentry.io/1\\n'; exit 0 ;;",
+    '    esac ;;',
+    'esac',
+    'exit 1',
+    '',
+  ].join('\n');
+  const { status, stderr, out } = runCliWithoutStore(stub, { extraEnv: { CLIENT_SECRETS_GCLOUD_TIMEOUT_MS: '1500' } });
+  assert.equal(status, 4, out);
+
+  // A: missing, create advice for A only.
+  assert.match(out, /REFUSED: the web apps declare client build config that has no value:/);
+  assert.match(out, /ADMIN_WEB_APPCHECK_SITE_KEY is missing/);
+  assert.match(out, /gcloud secrets create ADMIN_WEB_APPCHECK_SITE_KEY --project auntieos-ttpc/);
+  assert.ok(!/gcloud secrets create ADMIN_WEB_MAPBOX_PUBLIC_TOKEN/.test(out), 'create advice for the denied secret');
+  assert.ok(!/gcloud secrets create PORTAL_WEB_MAPBOX_PUBLIC_TOKEN/.test(out), 'create advice for the hung secret');
+
+  // B: the per-secret permission block.
+  assert.match(
+    out,
+    /REFUSED: Secret Manager could not be read for these REQUIRED secrets:\n\s+VITE_MAPBOX_PUBLIC_TOKEN \(admin\) <- ADMIN_WEB_MAPBOX_PUBLIC_TOKEN could not be read/,
+  );
+  assert.match(out, /gcloud secrets get-iam-policy ADMIN_WEB_MAPBOX_PUBLIC_TOKEN --project auntieos-ttpc/);
+  assert.ok(!out.includes('reviewer@example.com'), 'email leaked');
+
+  // C: the timeout block with the curl checks.
+  assert.match(
+    out,
+    /REFUSED: Secret Manager did not answer for these REQUIRED secrets in time:\n\s+VITE_MAPBOX_PUBLIC_TOKEN \(portal\) <- PORTAL_WEB_MAPBOX_PUBLIC_TOKEN could not be read/,
+  );
+  assert.match(out, /curl -4 -sS/);
+  assert.match(out, /curl -6 -sS/);
+
+  const blocks = stderr.split(/\nREFUSED: /).slice(1);
+  assert.equal(blocks.length, 3, `expected 3 REFUSED blocks, got ${blocks.length}:\n${out}`);
+});
+
+const NO_ACCOUNT_GCLOUD = failingGcloud(
+  'ERROR: (gcloud.secrets.list) You do not currently have an active account selected.\nPlease run:\n  $ gcloud auth login\n',
+);
+const LAPTOP_ENV = {
+  [path.join(APP_DIRS.admin, '.env')]:
+    'VITE_ADMIN_APPCHECK_SITE_KEY=laptop-appcheck\nVITE_MAPBOX_PUBLIC_TOKEN=pk.laptop-admin\nVITE_SENTRY_DSN=https://laptop@o0.ingest.us.sentry.io/0\n',
+  [path.join(APP_DIRS.portal, '.env')]: 'VITE_MAPBOX_PUBLIC_TOKEN=pk.laptop-portal\n',
+};
+
+test('CLI --write: a signed-out store with the values in a local .env refuses (exit 4), writes nothing, and names the skip', () => {
+  const { status, out, written } = runCliWithoutStore(NO_ACCOUNT_GCLOUD, { mode: '--write', envFiles: LAPTOP_ENV });
+  assert.equal(status, 4, `--write must not ship values the store never confirmed:\n${out}`);
+  assert.match(out, /REFUSED: Secret Manager could not confirm these REQUIRED values/);
+  for (const secret of ['ADMIN_WEB_APPCHECK_SITE_KEY', 'ADMIN_WEB_MAPBOX_PUBLIC_TOKEN', 'PORTAL_WEB_MAPBOX_PUBLIC_TOKEN']) {
+    assert.match(out, new RegExp(`${secret} could not be read \\(a local \\.env has a value\\)`), out);
+  }
+  assert.match(out, /RELEASE_SKIP_CLIENT_SECRETS=1/);
+  assert.match(out, /gcloud auth list/);
+  assert.ok(!/gcloud secrets create/.test(out), out);
+  assert.ok(!/is missing/.test(out), out);
+  assert.ok(!/wrote /.test(out), `a file was written:\n${out}`);
+  assert.deepEqual(written, { admin: false, portal: false });
+  // The optional DSN held locally warns, and says a local value exists.
+  assert.match(out, /WARNING: VITE_SENTRY_DSN \(admin\) could not be read from Secret Manager\. A local \.env has a value for it/);
+  assert.ok(!out.includes('pk.laptop'), `a local value was printed:\n${out}`);
+});
+
+test('CLI --check: the same signed-out store with the values in a local .env still falls back to .env and exits 0', () => {
+  const { status, out, written } = runCliWithoutStore(NO_ACCOUNT_GCLOUD, { mode: '--check', envFiles: LAPTOP_ENV });
+  assert.equal(status, 0, `--check keeps the local .env fallback:\n${out}`);
+  assert.match(out, /VITE_ADMIN_APPCHECK_SITE_KEY\s+local-file\s+ok/);
+  assert.ok(!/REFUSED/.test(out), out);
+  assert.deepEqual(written, { admin: false, portal: false });
+});
+
+test('refuseUnconfirmedLocalValues marks only local-file Secret Manager rows, and leaves process.env and derived rows alone', () => {
+  const { rows } = resolveClientVars({
+    fetchSecret: null,
+    processEnv: { VITE_ADMIN_APPCHECK_SITE_KEY: 'from-ci' },
+    localEnv: { admin: { VITE_MAPBOX_PUBLIC_TOKEN: 'pk.local' }, portal: { VITE_MAPBOX_PUBLIC_TOKEN: 'pk.local' } },
+    release: 'abc1234',
+    storeReason: 'not-authenticated',
+  });
+  refuseUnconfirmedLocalValues(rows, 'not-authenticated');
+  const find = (app, v) => rows.find((r) => r.app === app && r.variable === v);
+  assert.equal(find('admin', 'VITE_ADMIN_APPCHECK_SITE_KEY').status, 'ok');
+  assert.equal(find('admin', 'VITE_ADMIN_APPCHECK_SITE_KEY').source, 'process-env');
+  assert.equal(find('admin', 'VITE_MAPBOX_PUBLIC_TOKEN').status, 'unreadable');
+  assert.equal(find('admin', 'VITE_MAPBOX_PUBLIC_TOKEN').localUnconfirmed, true);
+  assert.equal(find('admin', 'VITE_MAPBOX_PUBLIC_TOKEN').value, '');
+  assert.equal(find('admin', 'VITE_SENTRY_RELEASE').status, 'ok');
+  const { refusals } = splitRefusals(rows);
+  assert.deepEqual(refusals.map((r) => `${r.app}:${r.variable}`).sort(), ['admin:VITE_MAPBOX_PUBLIC_TOKEN', 'portal:VITE_MAPBOX_PUBLIC_TOKEN']);
 });
 
 // ---------------------------------------------------------------------------
