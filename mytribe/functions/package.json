@@ -16,7 +16,7 @@
     "test:ci": "vitest run --config vitest.ci.config.ts",
     "test:watch": "vitest",
     "test:rules": "firebase emulators:exec --only firestore --project mytribe-rules-test \"vitest run --config vitest.rules.config.ts\"",
-    "test:scripts:emulator": "firebase emulators:exec --only firestore --project mytribe-scripts-emulator-test \"vitest run --config vitest.scripts-emulator.config.ts\"",
+    "test:scripts:emulator": "firebase emulators:exec --only auth,firestore --project mytribe-scripts-emulator-test \"vitest run --config vitest.scripts-emulator.config.ts\"",
     "serve": "npm run build && firebase emulators:start --only functions",
     "deploy": "../../scripts/safe-deploy.sh mytribe -- firebase deploy --only functions:mytribe",
     "logs": "firebase functions:log",
@@ -43,7 +43,9 @@
     "report:duplicate-notifications": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/reportDuplicateNotifications.ts",
     "check:voice-secrets": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/checkVoiceSecrets.ts",
     "seed:notif-templates": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/seedNotificationTemplates.ts",
-    "seed:demo-kinfolk": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/seedDemoKinfolk.ts"
+    "seed:demo-kinfolk": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/seedDemoKinfolk.ts",
+    "qa:enable-sandbox-login": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/qa_enable_sandbox_login.ts",
+    "qa:set-sandbox-password": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/qa_set_sandbox_password.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0",
