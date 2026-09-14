@@ -50,7 +50,7 @@ emergencyContacts: [
 
 Name and phone are required. Relationship is optional and clearable, per "persisted fields must be editable".
 
-**One write path.** A new callable `saveEmergencyContacts({ kinfolkId, contacts })` in `mytribe/functions`, used by all five clients. It validates with a strict schema (max 2, name and phone required, no unknown keys) and replaces the array whole, so reordering is one write. Gate: staff; or the household's PRIMARY; or an ACTIVE SECONDARY whose permissions include `household_edit` (section 3). A read callable `listEmergencyContacts` uses the same gate plus any ACTIVE member for reading.
+**One write path.** A new callable `saveEmergencyContacts({ kinfolkId, contacts })` in `mytribe/functions`, used by all five clients. It validates with a strict schema (max 2, name and phone required, no unknown keys) and replaces the array whole, so reordering is one write. Gate: staff; or the household's PRIMARY; or an ACTIVE SECONDARY whose permissions include `home_access` (section 3). A read callable `listEmergencyContacts` uses the same gate plus any ACTIVE member for reading.
 
 **Required.** A household must have at least one Emergency Contact.
 - `saveEmergencyContacts` refuses an empty list (`failed-precondition`, "A household needs at least one Emergency Contact").
@@ -83,12 +83,14 @@ Name and phone are required. Relationship is optional and clearable, per "persis
 
 Uid-keyed members and every gate stay untouched. The alternative (member docs with optional uid and a new status) touches every member lookup in the backend and was rejected for that reason.
 
-### 3. The seventh permission: `household_edit`
+### 3. The permission: reuse `home_access`, no new flag
 
-`MemberPermissions` has six flags today: `billing_full`, `messaging_direct`, `messaging_group`, `kin_edit`, `kintales_only`, `home_access`. None covers household details. Add `household_edit`: edit the household's Emergency Contacts and Household Data (vets, supply locations, emergency notes). It is named for the whole screen so a later field does not need an eighth flag.
+Operator question 2026-09-13: "isn't home_access the same as the intended household_edit". It is. `home_access` ("Sees the household home details, including entry notes") already gates `saveHomeAccess` (gate code, key location, Wi-Fi password, home-details custom fields, where the portal Android app keeps the after-hours emergency vet) and the home-details half of `getMyTribeProfile`. Emergency Contacts are household details of the same kind, so they go behind the same flag. No seventh permission, no schema change, no backfill.
 
-- `FULL_PERMISSIONS` (primary) gets `true`. New secondaries default to `false`. A missing field reads as `false`, so the 4 existing member docs need no backfill.
-- The primary toggles it on the secondary's permissions, beside the existing six.
+- `saveEmergencyContacts` and `listEmergencyContacts` gate on `requireKinfolkPerm(uid, kinfolkId, 'home_access', ...)`, which already lets staff and the primary through.
+- The description widens on all five clients to "Sees and edits the household home details: entry notes and Emergency Contacts."
+- Trade-off, accepted by reusing it: a secondary allowed to edit Emergency Contacts also sees the gate code and Wi-Fi password.
+- Found alongside: `saveTribeProfile` checks only household membership (`resolveKinfolkAccess`), not a permission, so today any secondary can write the portal's `emergencyContact*` custom fields. That write path is removed by section 1.
 
 ### 4. Clients (all five)
 
@@ -97,7 +99,7 @@ Uid-keyed members and every gate stay untouched. The alternative (member docs wi
 | Admin React web (`auntieos-admin/src`) | Household Members: "Add secondary contact" becomes "Add secondary kinfolk", plus "Give portal access". Kinfolk profile and edit: Emergency Contact becomes a two-slot ordered editor over the callable. |
 | Admin Android | Same, on `HouseholdMembers` and `EditKinfolkScreen` / `AddKinfolkScreen`. |
 | Admin desktop console (`auntieos-admin/web/composeApp`) | Same on `KinfolkEditScreen` and members. Kept working as the fallback. |
-| Portal web (`mytribe/web`) | Tribe profile: contacts card becomes secondary kinfolk; Emergency Contact card writes through the callable, editable only with `household_edit`. |
+| Portal web (`mytribe/web`) | Tribe profile: contacts card becomes secondary kinfolk; Emergency Contact card writes through the callable, editable only with `home_access`. |
 | Portal Android (`mytribe/src`) | Same on `TribeScreen`. |
 
 Copy keeps "Add secondary kinfolk" and "Give portal access" visibly separate, so nobody thinks adding a person grants access. Emergency Contact copy says they are called only when no kinfolk can be reached.
@@ -111,7 +113,7 @@ Copy keeps "Add secondary kinfolk" and "Give portal access" visibly separate, so
 
 Two PRs, each a full vertical (callables, rules, all five clients, tests), neither stacked on the other:
 
-1. **Emergency Contact**: storage, callables, `household_edit`, five clients, audience-builder tests, migration script (dry run in the PR, write run by the operator after release).
+1. **Emergency Contact**: storage, callables gated on `home_access`, five clients, audience-builder tests, migration script (dry run in the PR, write run by the operator after release).
 2. **Secondary kinfolk**: person record, access grant, `acceptInvite` link, five clients, removal of secondary contact.
 
 ## Answered questions
