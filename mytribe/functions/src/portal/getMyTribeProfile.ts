@@ -29,6 +29,8 @@ interface HomeAccessDto {
 interface GetMyTribeProfileResult {
   profile: TribeProfileDto;
   homeAccess: HomeAccessDto;
+  /** #843: may this caller change home details, the Emergency Contact included. Same `home_access` rule saveTribeProfile enforces. */
+  canEditHomeDetails: boolean;
 }
 
 export async function getMyTribeProfileHandler(
@@ -63,7 +65,7 @@ export async function getMyTribeProfileHandler(
   };
 
   logEvent({ severity: 'info', function: 'getMyTribeProfile', event: 'portal.tribe.resolved', uid, extra: { kinfolkId } });
-  return { profile, homeAccess };
+  return { profile, homeAccess, canEditHomeDetails: canSeeHome };
 }
 
 function parseCustomFields(v: unknown): CustomField[] {

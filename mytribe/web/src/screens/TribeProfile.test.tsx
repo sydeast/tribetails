@@ -100,11 +100,11 @@ const PROFILE_SCHEMA: FormSchemaDto = {
   version: 1,
 };
 
-async function renderTribeProfile(opts: { profileSchema?: FormSchemaDto; homeSchema?: FormSchemaDto; clinics?: Parameters<typeof vi.fn>[0] extends never ? never : any[] }) {
+async function renderTribeProfile(opts: { profileSchema?: FormSchemaDto; homeSchema?: FormSchemaDto; clinics?: Parameters<typeof vi.fn>[0] extends never ? never : any[]; profile?: GetMyTribeProfileResult }) {
   const tribeApi = await import('../api/tribeApi');
   const portal = await import('../api/portal');
 
-  vi.mocked(tribeApi.getMyTribeProfile).mockResolvedValue(PROFILE);
+  vi.mocked(tribeApi.getMyTribeProfile).mockResolvedValue(opts.profile ?? PROFILE);
   vi.mocked(tribeApi.getVetClinics).mockResolvedValue({ clinics: opts.clinics ?? [] });
   vi.mocked(tribeApi.listMembers).mockResolvedValue({ members: [] });
   vi.mocked(tribeApi.listHouseholdContacts).mockResolvedValue([]);
@@ -135,6 +135,43 @@ async function saveHomeAccessArgs() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe('TribeProfile: Emergency Contact follows Home access (#843)', () => {
+  const WITH_EC: GetMyTribeProfileResult = {
+    ...PROFILE,
+    profile: {
+      ...PROFILE.profile,
+      customFields: [
+        { key: 'emergencyContactName', label: 'Emergency Contact', value: 'Rae Halbrook' },
+        { key: 'emergencyContactPhone', label: 'Emergency Contact Phone', value: '555-0100' },
+      ],
+    },
+  };
+
+  it('locks the Emergency Contact inputs and says why when the member lacks Home access', async () => {
+    const view = await renderTribeProfile({ profile: { ...WITH_EC, canEditHomeDetails: false } });
+    await waitFor(() => expect(view.getByTestId('ec-locked')).toBeInTheDocument());
+    expect(view.getByText('Only someone with Home access can change the Emergency Contact.')).toBeInTheDocument();
+    for (const id of ['ecname', 'ecphone', 'ecrel']) {
+      expect(view.container.querySelector(`#${id}`)).toHaveAttribute('readonly');
+    }
+    expect(view.container.querySelector('#ecname')).toHaveValue('Rae Halbrook');
+  });
+
+  it('leaves the inputs editable with Home access', async () => {
+    const view = await renderTribeProfile({ profile: { ...WITH_EC, canEditHomeDetails: true } });
+    await waitFor(() => expect(view.container.querySelector('#ecname')).toHaveValue('Rae Halbrook'));
+    expect(view.queryByTestId('ec-locked')).toBeNull();
+    expect(view.container.querySelector('#ecname')).not.toHaveAttribute('readonly');
+  });
+
+  it('leaves the inputs editable when an older backend sends no flag at all', async () => {
+    const view = await renderTribeProfile({ profile: WITH_EC });
+    await waitFor(() => expect(view.container.querySelector('#ecname')).toHaveValue('Rae Halbrook'));
+    expect(view.queryByTestId('ec-locked')).toBeNull();
+    expect(view.container.querySelector('#ecname')).not.toHaveAttribute('readonly');
+  });
 });
 
 describe('TribeProfile secret field masking', () => {

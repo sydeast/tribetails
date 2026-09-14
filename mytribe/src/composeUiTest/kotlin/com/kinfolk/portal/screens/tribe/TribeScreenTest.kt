@@ -3,6 +3,9 @@
 package com.kinfolk.portal.screens.tribe
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runComposeUiTest
@@ -125,5 +128,63 @@ class TribeScreenTest {
         setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
         waitForIdle()
         onNodeWithText("read failed").assertIsDisplayed()
+    }
+
+    private fun FakeFunctionsClient.stubProfile(canEditHomeDetails: Boolean?) {
+        stub("getMyTribeProfile", buildJsonObject {
+            put("profile", buildJsonObject {
+                put("kinfolkId", "3")
+                put("displayName", "The Foster")
+                put("customFields", buildJsonArray {
+                    add(buildJsonObject {
+                        put("key", "emergencyContactName")
+                        put("label", "Emergency Contact")
+                        put("value", "Rae Halbrook")
+                    })
+                })
+            })
+            put("homeAccess", buildJsonObject {
+                put("gateCode", JsonNull)
+                put("keyLocation", JsonNull)
+                put("wifiPassword", JsonNull)
+                put("customFields", buildJsonArray {})
+                put("updatedAtMs", JsonNull)
+            })
+            canEditHomeDetails?.let { put("canEditHomeDetails", it) }
+        })
+    }
+
+    // #843: the server refuses an Emergency Contact change without Home access,
+    // so the screen locks those fields and says why instead of failing on save.
+    @Test
+    fun emergencyContact_lockedWithoutHomeAccess() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfile(canEditHomeDetails = false)
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Only someone with Home access can change the Emergency Contact.").performScrollTo().assertIsDisplayed()
+        onNodeWithTag("ec-name").assertIsNotEnabled()
+        onNodeWithTag("ec-phone").assertIsNotEnabled()
+        onNodeWithTag("ec-relation").assertIsNotEnabled()
+    }
+
+    @Test
+    fun emergencyContact_editableWithHomeAccess() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfile(canEditHomeDetails = true)
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Only someone with Home access can change the Emergency Contact.").assertDoesNotExist()
+        onNodeWithTag("ec-name").assertIsEnabled()
+    }
+
+    @Test
+    fun emergencyContact_editableWhenOlderBackendSendsNoFlag() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfile(canEditHomeDetails = null)
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Only someone with Home access can change the Emergency Contact.").assertDoesNotExist()
+        onNodeWithTag("ec-name").assertIsEnabled()
     }
 }

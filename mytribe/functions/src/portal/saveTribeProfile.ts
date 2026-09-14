@@ -9,6 +9,7 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
+import { hasKinfolkPerm } from '../lib/memberGate';
 
 const CustomFieldZ = z.object({
   key: z.string().min(1).max(80),
@@ -49,6 +50,33 @@ export async function saveTribeProfileHandler(req: CallableRequest<unknown>): Pr
     'saveTribeProfile',
   );
 
+  // The caller's real role, for the audit trail. A missing member doc is a
+  // legacy primary, the same reading memberGate gives it.
+  let actorRole: 'AUNTIE' | 'PRIMARY' | 'SECONDARY' = 'AUNTIE';
+  if (!isOperator) {
+    const memberSnap = await firestore.doc(`families/${kinfolkId}/members/${uid}`).get();
+    const role = memberSnap.exists ? (memberSnap.data() as { role?: string }).role : undefined;
+    actorRole = role === 'SECONDARY' ? 'SECONDARY' : 'PRIMARY';
+  }
+
+  // #843: the Emergency Contact is a home detail. saveHomeAccess gates the gate
+  // code and Wi-Fi on `home_access`, and this callable used to let any member
+  // of the household overwrite the Emergency Contact beside them. Only a CHANGE
+  // is refused: the portal re-sends the stored values on every save, so a
+  // secondary without the permission can still save the rest of the profile.
+  if (args.customFields !== undefined && !isOperator) {
+    const stored = await firestore.collection('families').doc(kinfolkId).get();
+    const before = emergencyContactSnapshot((stored.data() ?? {})['customFields']);
+    const after = emergencyContactSnapshot(args.customFields);
+    if (before !== after) {
+      const allowed = await hasKinfolkPerm(uid, kinfolkId, 'home_access', req.auth?.token?.admin === true, 'saveTribeProfile');
+      if (!allowed) {
+        logEvent({ severity: 'warn', function: 'saveTribeProfile', event: 'portal.tribe.emergency_contact.denied', uid, extra: { kinfolkId } });
+        throw new HttpsError('permission-denied', 'Only someone with Home access can change the Emergency Contact.');
+      }
+    }
+  }
+
   const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
   if (args.displayName !== undefined) update['displayName'] = args.displayName;
   if (args.customFields !== undefined) update['customFields'] = args.customFields;
@@ -62,10 +90,9 @@ export async function saveTribeProfileHandler(req: CallableRequest<unknown>): Pr
     status: 'SUCCESS',
     event: AUDIT_EVENTS.PROFILE_UPDATED,
     severity: 'info',
-    // Matches the AUNTIE/PRIMARY split requestBooking already draws: a
-    // kinfolk PRIMARY writes their own profile, an operator writes on the
-    // household's behalf and is labeled AUNTIE, never falsely as PRIMARY.
-    actorRole: isOperator ? 'AUNTIE' : 'PRIMARY',
+    // An operator writing on the household's behalf is AUNTIE, never falsely
+    // PRIMARY; a secondary is SECONDARY, never falsely the primary (#843).
+    actorRole,
     actorUid: uid,
     targetUid: kinfolkId,
     targetCollection: 'families',
@@ -78,6 +105,20 @@ export async function saveTribeProfileHandler(req: CallableRequest<unknown>): Pr
     });
   });
   return { ok: true };
+}
+
+const EMERGENCY_CONTACT_KEYS = ['emergencyContactName', 'emergencyContactPhone', 'emergencyContactRelation'] as const;
+
+/** The three Emergency Contact values as one comparable string; absent reads as empty. */
+function emergencyContactSnapshot(fields: unknown): string {
+  const list = Array.isArray(fields) ? fields : [];
+  const valueOf = (key: string): string => {
+    const hit = list.find((f) => typeof f === 'object' && f !== null && (f as { key?: unknown }).key === key) as
+      | { value?: unknown }
+      | undefined;
+    return typeof hit?.value === 'string' ? hit.value.trim() : '';
+  };
+  return JSON.stringify(EMERGENCY_CONTACT_KEYS.map(valueOf));
 }
 
 export const saveTribeProfile = onCall(

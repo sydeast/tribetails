@@ -613,18 +613,22 @@ export function TribeProfile() {
                     <p className="sub">Who your Auntie calls if we can&rsquo;t reach you during a visit.</p>
                   </div>
                 </div>
+                {/* #843: the server refuses a change from a member without Home access, so say so up front. */}
+                {profile.data?.canEditHomeDetails === false ? (
+                  <p className="sub" data-testid="ec-locked">Only someone with Home access can change the Emergency Contact.</p>
+                ) : null}
                 <div className="grid2">
                   <div className="field">
                     <label htmlFor="ecname">Contact Name</label>
-                    <input id="ecname" className="inp" type="text" value={emergencyName} onChange={(e) => setEmergencyName(e.target.value)} />
+                    <input id="ecname" className="inp" type="text" value={emergencyName} readOnly={profile.data?.canEditHomeDetails === false} onChange={(e) => setEmergencyName(e.target.value)} />
                   </div>
                   <div className="field">
                     <label htmlFor="ecphone">Contact Phone</label>
-                    <input id="ecphone" className="inp mono" type="tel" value={emergencyPhone} onChange={(e) => setEmergencyPhone(e.target.value)} />
+                    <input id="ecphone" className="inp mono" type="tel" value={emergencyPhone} readOnly={profile.data?.canEditHomeDetails === false} onChange={(e) => setEmergencyPhone(e.target.value)} />
                   </div>
                   <div className="field full">
                     <label htmlFor="ecrel">Relationship (e.g. Neighbor, Sister)</label>
-                    <input id="ecrel" className="inp" type="text" value={emergencyRelation} onChange={(e) => setEmergencyRelation(e.target.value)} />
+                    <input id="ecrel" className="inp" type="text" value={emergencyRelation} readOnly={profile.data?.canEditHomeDetails === false} onChange={(e) => setEmergencyRelation(e.target.value)} />
                   </div>
                 </div>
               </section>

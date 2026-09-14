@@ -19,6 +19,12 @@ data class HomeAccess(
 data class TribeProfileResult(
     val profile: TribeProfile,
     val homeAccess: HomeAccess,
+    /**
+     * #843: may this caller change home details, the Emergency Contact included.
+     * A backend older than #843 sends nothing, which reads as allowed; the
+     * server enforces the rule either way.
+     */
+    val canEditHomeDetails: Boolean = true,
 )
 
 /**

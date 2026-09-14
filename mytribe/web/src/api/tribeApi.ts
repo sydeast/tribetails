@@ -38,6 +38,12 @@ export interface HomeAccessDto {
 export interface GetMyTribeProfileResult {
   profile: TribeProfileDto;
   homeAccess: HomeAccessDto;
+  /**
+   * #843: may this caller change home details, the Emergency Contact included.
+   * Absent from a backend older than #843, which reads as allowed; the server
+   * enforces the rule either way.
+   */
+  canEditHomeDetails?: boolean;
 }
 
 /** Tribe profile + home access (home access fields null when the caller lacks `home_access` perm). */
