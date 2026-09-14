@@ -19,8 +19,13 @@ import kotlin.test.assertEquals
  * shows the locked message instead of the opaque banner, and "Forgot password?"
  * stays on screen and sends the reset.
  */
-private class RefusingBackend(private val failure: Throwable) : AuthBackend by FakeAuthBackend() {
+private class RefusingBackend(
+    private val failure: Throwable,
+    private val kind: SignInFailureKind? = null,
+) : AuthBackend by FakeAuthBackend() {
     val resets = mutableListOf<String>()
+    private val defaults = FakeAuthBackend()
+    override fun classifySignInFailure(t: Throwable): SignInFailureKind = kind ?: defaults.classifySignInFailure(t)
     override suspend fun signInWithEmailPassword(email: String, password: String): AuthState.SignedIn = throw failure
     override suspend fun sendPasswordReset(email: String) {
         resets += email
@@ -62,6 +67,15 @@ class SignInScreenLockedTest {
         waitForIdle()
         assertEquals(listOf("pat@household.test"), backend.resets)
         onNodeWithText("Reset link sent. Check your inbox.").assertExists()
+    }
+
+    @Test
+    fun aWrongPassword_showsThePortalWebSentence_notTheOpaqueBanner() = runComposeUiTest {
+        signInWith(RefusingBackend(RuntimeException("auth/invalid-credential"), SignInFailureKind.Credentials))
+
+        onNodeWithText(WRONG_CREDENTIALS_MESSAGE).assertExists()
+        onNodeWithText("An error occurred. It's been reported to Auntie.").assertDoesNotExist()
+        assertEquals("That email and password did not match. Check for typos and try again.", WRONG_CREDENTIALS_MESSAGE)
     }
 
     @Test

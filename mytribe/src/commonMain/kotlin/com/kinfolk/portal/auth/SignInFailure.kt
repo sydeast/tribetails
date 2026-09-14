@@ -22,10 +22,19 @@ enum class SignInFailureKind {
 
 /**
  * What the kinfolk reads when the account is locked. It names the control that
- * clears it, which on this screen sits above the Jump back in! button.
+ * clears it without saying where it sits, because SignInScreen puts "Forgot
+ * password?" above its button and ClaimInviteScreen puts it below.
  */
 const val ACCOUNT_LOCKED_MESSAGE =
-    "This account is locked after too many sign-in attempts. Tap \"Forgot password?\" above to reset your password, then sign in with the new one."
+    "This account is locked after too many sign-in attempts. Tap \"Forgot password?\" to reset your password, then sign in with the new one."
+
+/**
+ * What the kinfolk reads for a wrong password or an unknown email. The same
+ * sentence the portal web shows (`mytribe/web/src/lib/authErrors.ts`), and a
+ * plain message rather than the opaque "reported to Auntie" banner: a mistyped
+ * password is the kinfolk's to fix, not a fault to report.
+ */
+const val WRONG_CREDENTIALS_MESSAGE = "That email and password did not match. Check for typos and try again."
 
 /** Thrown by [AuthRepository.signInWithEmailPassword] in place of `beforeSignIn`'s raw refusal. */
 class AccountLockedException(cause: Throwable? = null) : IllegalStateException(ACCOUNT_LOCKED_MESSAGE, cause)

@@ -110,6 +110,30 @@ class AuthRepositoryFailedLoginTest {
     }
 }
 
+class AuthRepositoryReportScopeTest {
+
+    @Test
+    fun everyRepository_sharesOneReportScope_soNoneLeavesAnOrphanedJobBehind() {
+        val backend = FailingSignInBackend(RuntimeException("x"), SignInFailureKind.Other)
+        val first = AuthRepository(backend)
+        val second = AuthRepository(backend)
+        assertSame(first.reportScopeForTest, second.reportScopeForTest)
+        assertSame(sharedAuthReportScope, first.reportScopeForTest)
+    }
+
+    @Test
+    fun isCredentialFailure_followsTheBackendClassification_andNeverThrows() {
+        val cred = AuthRepository(FailingSignInBackend(RuntimeException("x"), SignInFailureKind.Credentials))
+        val other = AuthRepository(FailingSignInBackend(RuntimeException("x"), SignInFailureKind.Other))
+        assertTrue(cred.isCredentialFailure(RuntimeException("wrong")))
+        assertTrue(!other.isCredentialFailure(RuntimeException("net")))
+        val throwing = object : AuthBackend by FailingSignInBackend(RuntimeException("x"), SignInFailureKind.Other) {
+            override fun classifySignInFailure(t: Throwable): SignInFailureKind = error("classifier broke")
+        }
+        assertTrue(!AuthRepository(throwing).isCredentialFailure(RuntimeException("x")))
+    }
+}
+
 class SignInFailureClassifierTest {
 
     @Test

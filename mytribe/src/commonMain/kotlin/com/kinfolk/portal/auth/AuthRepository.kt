@@ -70,14 +70,38 @@ interface AuthBackend {
     suspend fun reportFailedLogin(email: String) {}
 }
 
+/**
+ * #886: the one scope every [AuthRepository] launches its failed-login reports
+ * in. Process-lifetime on purpose: a report is a single short callable that
+ * must outlive the screen that fired it, and one shared scope means a rebuilt
+ * repository never leaves an orphaned `SupervisorJob` behind.
+ */
+internal val sharedAuthReportScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
 class AuthRepository(
     private val backend: AuthBackend,
     /**
      * #886: where a failed sign-in's report runs, detached from the sign-in so
-     * the error reaches the screen without waiting on it. Tests pass `Unconfined`.
+     * the error reaches the screen without waiting on it. Production shares
+     * [sharedAuthReportScope]; tests pass `Unconfined`.
      */
-    private val reportScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    private val reportScope: CoroutineScope = sharedAuthReportScope,
 ) {
+    /** Test seam: which scope reports run in. */
+    internal val reportScopeForTest: CoroutineScope get() = reportScope
+
+    /**
+     * #886: whether [t], thrown by [signInWithEmailPassword], was a wrong password
+     * or unknown email, so a screen can say so plainly instead of treating it as
+     * a fault. Never throws.
+     */
+    fun isCredentialFailure(t: Throwable): Boolean =
+        try {
+            backend.classifySignInFailure(t) == SignInFailureKind.Credentials
+        } catch (_: Throwable) {
+            false
+        }
+
     private val _state = MutableStateFlow<AuthState>(AuthState.Loading)
     val state: StateFlow<AuthState> = _state.asStateFlow()
 
