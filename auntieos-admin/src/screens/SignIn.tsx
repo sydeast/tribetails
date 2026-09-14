@@ -4,6 +4,7 @@ import { FirebaseError } from 'firebase/app';
 import { sendReset, signIn, signOutSilent, useAuth } from '../lib/auth';
 import { attestationOwnsRecaptcha } from '../lib/boot';
 import { readAndClearSignInNotice, recordSignInNotice } from '../lib/signInNotice';
+import { ACCOUNT_LOCKED_MSG, isAccountLockedError } from '../lib/failedLogin';
 import { resolveAccess } from '../lib/access';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
 import { Banner } from '../components/Banner';
@@ -22,6 +23,9 @@ const RESET_SENT_MSG = 'Reset link sent. Check your inbox.';
 
 /** Maps the common auth error codes to a human line; anything else stays raw. */
 function authMessage(err: unknown): string {
+  // #886: beforeSignIn's refusal arrives as auth/internal-error, whose raw
+  // message would otherwise be painted below. Checked first for that reason.
+  if (isAccountLockedError(err)) return ACCOUNT_LOCKED_MSG;
   if (err instanceof FirebaseError) {
     switch (err.code) {
       case 'auth/invalid-email':
