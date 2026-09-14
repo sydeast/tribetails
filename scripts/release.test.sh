@@ -290,6 +290,15 @@ fi
 if [ -n "${FIREBASE_EDIT_UNTRACKED_ON:-}" ] && [ "$only" = "$FIREBASE_EDIT_UNTRACKED_ON" ]; then
   printf 'v2\n' > "$(git rev-parse --show-toplevel)/scratch.txt"
 fi
+# FIREBASE_RELINK_ON=<target> points the untracked symlink `dangle` elsewhere
+# (still dangling). FIREBASE_CHMOD_ON=<target> changes the mode of the
+# unreadable untracked file `locked.txt` (still unreadable).
+if [ -n "${FIREBASE_RELINK_ON:-}" ] && [ "$only" = "$FIREBASE_RELINK_ON" ]; then
+  ln -sfn /nonexistent/elsewhere "$(git rev-parse --show-toplevel)/dangle"
+fi
+if [ -n "${FIREBASE_CHMOD_ON:-}" ] && [ "$only" = "$FIREBASE_CHMOD_ON" ]; then
+  chmod 200 "$(git rev-parse --show-toplevel)/locked.txt"
+fi
 # FIREBASE_ARM_FILE_ON=<target> creates FIREBASE_ARM_FILE during that deploy,
 # which a git shim reads as "start failing now".
 if [ -n "${FIREBASE_ARM_FILE_ON:-}" ] && [ "$only" = "$FIREBASE_ARM_FILE_ON" ]; then
@@ -2055,12 +2064,14 @@ else
   bad "root debug-log ignores missing ($MISSING_IGNORES) or the release refused (rc=$RCW)"; stripped "$DW/out" | grep -n "REFUSED\|Caught" | head
 fi
 
-# 14. git cannot read the tree once (a held index.lock): the fingerprint retries
-#     and the release carries on. Persistently: it refuses, saying git could not
-#     read the tree, never that the tree changed.
+# 14. A git read of the tree fails once: the fingerprint retries and the release
+#     carries on. Persistently: it refuses, saying git could not read the tree
+#     (never that the tree changed), and prints the failing command and git's
+#     own message. It does not name .git/index.lock, which does not make these
+#     reads fail.
 REAL_GIT="$(command -v git)"
 # stub_git_status_fails <dir> <times>: once <dir>/git-armed exists, the next
-# <times> `git status --porcelain` calls fail the way a held index.lock does.
+# <times> `git status --porcelain` calls exit 128 with a git-shaped error.
 stub_git_status_fails() {
   cat > "$1/stubs/git" <<STUB
 #!/usr/bin/env bash
@@ -2070,7 +2081,7 @@ case "\$*" in
       n="\$(cat "$1/git-fail-count" 2>/dev/null || echo 0)"
       if [ "\$n" -lt "$2" ]; then
         echo "\$((n + 1))" > "$1/git-fail-count"
-        echo "fatal: Unable to create '.git/index.lock': File exists." >&2
+        echo "fatal: bad object HEAD (stubbed failure)" >&2
         exit 128
       fi
     fi
@@ -2104,6 +2115,13 @@ if [ "$RCY" != "0" ] &&
 else
   bad "a persistent git failure was misreported (rc=$RCY)"; stripped "$DY/out" | grep -n "REFUSED\|Caught\|changed" | head
 fi
+if stripped "$DY/out" | grep -q "git status --porcelain  (exit 128)" &&
+   stripped "$DY/out" | grep -q "fatal: bad object HEAD (stubbed failure)" &&
+   ! grep -q "index.lock" "$DY/out"; then
+  ok "the git-read refusal prints the failing command and git's own message, and does not blame index.lock"
+else
+  bad "the git-read refusal did not show git's error, or still blames index.lock"; stripped "$DY/out" | grep -n -A6 "What failed"
+fi
 
 # 15. An untracked file whose CONTENTS change (git status unchanged) is caught.
 #     It appears during step 1b, after step 0's clean-tree check and before the
@@ -2125,6 +2143,69 @@ if [ "$RCZ" != "0" ] && stripped "$DZ/out" | grep -q "REFUSED: the working tree 
   ok "a change to an untracked file's contents is caught, not only its appearance"
 else
   bad "an untracked file's content change was not caught (rc=$RCZ)"; stripped "$DZ/out" | grep -n "REFUSED\|Caught" | head
+fi
+
+# 16. Untracked entries git hash-object cannot hash: a dangling symlink, an
+#     unreadable file and a nested git repository. They appear during step 1b
+#     (after step 0's clean-tree check, before the baseline). The release must
+#     proceed with all three present, and retargeting the symlink or changing the
+#     unreadable file's mode must still be caught.
+# stub_node_awkward_untracked <dir>
+stub_node_awkward_untracked() {
+  cat > "$1/stubs/node" <<STUB
+#!/usr/bin/env bash
+case "\$*" in
+  *declared-secrets.js*)
+    if [ ! -e "$1/repo/locked.txt" ]; then
+      ln -s /nonexistent/target "$1/repo/dangle"
+      printf 'secret\n' > "$1/repo/locked.txt"
+      chmod 000 "$1/repo/locked.txt"
+      mkdir -p "$1/repo/sub" && git -C "$1/repo/sub" init -q
+    fi
+    ;;
+esac
+exec "$REAL_NODE" "\$@"
+STUB
+  chmod +x "$1/stubs/node"
+}
+DA2="$(verified_repo)"
+stub_node_awkward_untracked "$DA2"
+RCA2="$(run_release "$DA2" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 FIREBASE_CALL_LOG="$DA2/calls")"
+if [ -L "$DA2/repo/dangle" ] && [ -e "$DA2/repo/locked.txt" ] && [ -d "$DA2/repo/sub/.git" ] &&
+   [ "$RCA2" = "0" ] && grep -q "is live and verified" "$DA2/out" &&
+   ! stripped "$DA2/out" | grep -q "REFUSED"; then
+  ok "a dangling symlink, an unreadable file and a nested repo do not stop the release"
+else
+  bad "an awkward untracked entry refused the release (rc=$RCA2)"; stripped "$DA2/out" | grep -n -A6 "REFUSED" | head -20
+fi
+
+DB2="$(verified_repo)"
+stub_node_awkward_untracked "$DB2"
+RCB2X="$(run_release "$DB2" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 \
+  FIREBASE_RELINK_ON=firestore:rules FIREBASE_CALL_LOG="$DB2/calls")"
+if [ "$RCB2X" != "0" ] && stripped "$DB2/out" | grep -q "REFUSED: the working tree changed during the release" &&
+   stripped "$DB2/out" | grep -q "Caught after deploying firestore:rules\." &&
+   [ -z "$(fn_deploys "$DB2/calls")" ]; then
+  ok "retargeting an untracked dangling symlink is caught"
+else
+  bad "a retargeted untracked symlink was not caught (rc=$RCB2X)"; stripped "$DB2/out" | grep -n "REFUSED\|Caught" | head
+fi
+
+if [ "$(id -u)" = "0" ]; then
+  # root reads any file, so there is no unreadable file to change the mode of.
+  ok "skipped: running as root, so no file is unreadable"
+else
+  DC2="$(verified_repo)"
+  stub_node_awkward_untracked "$DC2"
+  RCC2="$(run_release "$DC2" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 \
+    FIREBASE_CHMOD_ON=firestore:rules FIREBASE_CALL_LOG="$DC2/calls")"
+  if [ "$RCC2" != "0" ] && stripped "$DC2/out" | grep -q "REFUSED: the working tree changed during the release" &&
+     stripped "$DC2/out" | grep -q "Caught after deploying firestore:rules\." &&
+     [ -z "$(fn_deploys "$DC2/calls")" ]; then
+    ok "changing the mode of an unreadable untracked file is caught"
+  else
+    bad "a mode change on an unreadable untracked file was not caught (rc=$RCC2)"; stripped "$DC2/out" | grep -n "REFUSED\|Caught" | head
+  fi
 fi
 
 echo

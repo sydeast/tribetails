@@ -713,12 +713,19 @@ deploy ran since the last passing check, the refusal says every deploy so far wa
 checked.
 
 What the working-tree check compares: `git status --porcelain`, `git diff HEAD`,
-and a `git hash-object` of every untracked, non-ignored file, so a changed
-untracked file's contents count too. It costs 0.07 to 0.08s on the real checkout
-(measured 2026-09-14, no untracked files) and 0.09 to 0.15s with 500 untracked
-4KB files. If git itself fails (a held `.git/index.lock`), the check retries once a
-second later, and then refuses with `git could not read the working tree`, which
-is not a claim that anything changed. The release's own outputs are gitignored
+and a fingerprint of every untracked, non-ignored entry: a regular file by its
+contents (`git hash-object`), a symlink by its target, a directory (git lists an
+untracked nested repository as `sub/`) by its name, and a file that cannot be read
+by its mode. So a changed untracked file's contents count, and a dangling
+symlink, an unreadable file or a nested repository never makes the check fail.
+It costs 0.09 to 0.10s on the real checkout (measured 2026-09-14, no untracked
+files) and 0.17 to 0.22s with 500 untracked 4KB files.
+
+If one of the three git reads itself exits non-zero, the check retries once a
+second later, then refuses with `git could not read the working tree` and prints
+the command, its exit code and git's own message. That is not a claim that
+anything changed. A held `.git/index.lock` is not a cause: all three reads exit 0
+with a lock present. The release's own outputs are gitignored
 (checked with `git check-ignore`: both `.env.production.local` files, `lib/`,
 both `dist/`, both Android build dirs, `.release-*`, and the Firebase debug logs,
 which the root only ignores since #840). The two Firebase CLI calls that run

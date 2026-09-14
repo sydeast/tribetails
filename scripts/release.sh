@@ -193,6 +193,9 @@ RELEASE_TREE_BASELINE=""
 RELEASE_TREE_BASELINE_STATUS=""
 # Deploys run since the checkout was last checked (see release_note_deploy).
 RELEASE_UNCHECKED_DEPLOYS=""
+# What git printed when a working-tree read failed, kept for the refusal to show.
+# A file, not a variable: the fingerprint runs in a command substitution.
+RELEASE_GIT_ERR_FILE="${TMPDIR:-/tmp}/release-git-err.$$"
 # Set by release_head_refuse when a deploy may have shipped something other than
 # RELEASE_SHA, so the stop message can say which codebase and which commit.
 RELEASE_MIXED_TARGET=""
@@ -207,6 +210,7 @@ RELEASE_MIXED_WITH=""
 # where they are.
 cleanup_client_env() {
   node "$ROOT/scripts/client-secrets.mjs" --clean >/dev/null 2>&1 || true
+  rm -f "${RELEASE_GIT_ERR_FILE:-}" 2>/dev/null || true
 }
 
 # Any exit that is not the clean end of this script names the step it died in.
@@ -315,14 +319,25 @@ progress_report_stop() {
 }
 
 # release_tree_fingerprint: print one line that changes when a tracked file
-# changes, an untracked non-ignored file appears or goes, or such a file's
-# CONTENTS change (hashed with git hash-object). Returns non-zero and prints
-# nothing when git could not answer, after one retry a second later: a held
-# .git/index.lock from another git command in the same checkout is the usual
-# cause, and it clears quickly. A failure is never folded into "changed".
+# changes, an untracked non-ignored entry appears or goes, or one of those
+# entries changes: a regular file's CONTENTS (git hash-object), a symlink's
+# target, or an unreadable file's mode. A directory entry (git lists an untracked
+# nested repository as `sub/`) counts by its name only.
 #
-# Cost, measured 2026-09-14: 0.07 to 0.08s on the real checkout (3,976 tracked
-# files, 0 untracked), and 0.09 to 0.15s on a clone with 500 untracked 4KB files.
+# NOTHING UNTRACKED CAN MAKE IT FAIL. `git hash-object` exits 128 on a dangling
+# symlink, an unreadable file and a nested repository alike (checked 2026-09-14),
+# so those are never handed to it; an entry that still cannot be hashed is
+# fingerprinted as "unreadable <mode> <path>" instead. It returns non-zero only
+# when one of its three git reads (status --porcelain, diff HEAD, ls-files
+# --others) exits non-zero on both tries, a second apart, and it leaves each
+# failing command, its exit code and git's own stderr in RELEASE_GIT_ERR_FILE for
+# the refusal to print. A held .git/index.lock does NOT make those reads fail:
+# with a lock present all three exit 0 (checked 2026-09-14). A failure is never
+# folded into "changed".
+#
+# Cost, measured 2026-09-14 with this version: 0.09 to 0.10s on the real checkout
+# (3,976 tracked files, 0 untracked), and 0.17 to 0.22s on a clone with 500
+# untracked 4KB files.
 #
 # WHAT IS IGNORED, AND SO DOES NOT MOVE IT. Checked with `git check-ignore -v`
 # on 2026-09-14, and nothing more than this:
@@ -340,21 +355,95 @@ progress_report_stop() {
 # Anything else `npm run check` writes has NOT been checked. If it writes an
 # unignored file, the baseline is taken after it, so it cannot refuse a release
 # by itself; only a change after step 2 does.
+# release_git_to <out-file> <git args...>: run one git read into <out-file>. On a
+# non-zero exit, append the command, the exit code and git's stderr to
+# RELEASE_GIT_ERR_FILE, and return that exit code.
+release_git_to() {
+  local out="$1" rc=0
+  shift
+  git -C "$ROOT" "$@" > "$out" 2> "$out.err" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    { printf 'git %s  (exit %s)\n' "$*" "$rc"; cat "$out.err"; } >> "$RELEASE_GIT_ERR_FILE" 2>/dev/null
+  fi
+  return "$rc"
+}
+
+# release_untracked_fingerprint <nul-list>: one line per untracked, non-ignored
+# entry in the NUL-separated list from `git ls-files --others -z`. Never fails:
+#   symlink            "link <path> -> <target>"   (a dangling one included)
+#   directory          "dir <path>"                (a nested repo is "sub/")
+#   readable file      "<blob hash> <path>"        (all hashed in one git call)
+#   anything else      "unreadable <mode> <path>"  (so a mode change still counts)
+release_untracked_fingerprint() {
+  local list="$1" p f h mode
+  : > "$list.paths"
+  while IFS= read -r -d '' p; do
+    f="$ROOT/${p%/}"
+    if [ -L "$f" ]; then
+      printf 'link %s -> %s\n' "$p" "$(readlink "$f" 2>/dev/null)"
+    elif [ -d "$f" ]; then
+      printf 'dir %s\n' "$p"
+    elif [ -f "$f" ] && [ -r "$f" ]; then
+      printf '%s\n' "$p" >> "$list.paths"
+    else
+      mode="$(ls -ld "$f" 2>/dev/null | awk '{print $1}')"
+      printf 'unreadable %s %s\n' "${mode:-gone}" "$p"
+    fi
+  done < "$list"
+  if [ ! -s "$list.paths" ]; then
+    return 0
+  fi
+  if (cd "$ROOT" && git hash-object --stdin-paths < "$list.paths") > "$list.hashes" 2>/dev/null; then
+    paste -d ' ' "$list.hashes" "$list.paths"
+    return 0
+  fi
+  # A file became unreadable between the test above and the hash: go one at a
+  # time, so the rest still hash and that one is fingerprinted as unreadable.
+  while IFS= read -r p; do
+    if h="$(cd "$ROOT" && git hash-object -- "$p" 2>/dev/null)"; then
+      printf '%s %s\n' "$h" "$p"
+    else
+      mode="$(ls -ld "$ROOT/$p" 2>/dev/null | awk '{print $1}')"
+      printf 'unreadable %s %s\n' "${mode:-gone}" "$p"
+    fi
+  done < "$list.paths"
+  return 0
+}
+
 release_tree_fingerprint() {
-  local attempt status diff untracked
+  local attempt work
+  if ! work="$(mktemp -d 2>/dev/null)"; then
+    printf 'could not create a temporary directory for the working-tree check\n' > "$RELEASE_GIT_ERR_FILE" 2>/dev/null
+    return 1
+  fi
   for attempt in 1 2; do
-    if status="$(git -C "$ROOT" status --porcelain 2>/dev/null)" &&
-       diff="$(git -C "$ROOT" diff HEAD --no-ext-diff 2>/dev/null)" &&
-       untracked="$(git -C "$ROOT" ls-files --others --exclude-standard -z 2>/dev/null |
-                    (cd "$ROOT" && xargs -0 git hash-object -- 2>/dev/null))"; then
-      printf '%s\n--\n%s\n--\n%s\n' "$status" "$diff" "$untracked" | cksum
+    : > "$RELEASE_GIT_ERR_FILE" 2>/dev/null || true
+    if release_git_to "$work/status" status --porcelain &&
+       release_git_to "$work/diff" diff HEAD --no-ext-diff &&
+       release_git_to "$work/others" ls-files --others --exclude-standard -z; then
+      release_untracked_fingerprint "$work/others" > "$work/untracked"
+      { cat "$work/status"; echo '--'; cat "$work/diff"; echo '--'; cat "$work/untracked"; } | cksum
+      rm -rf "$work"
       return 0
     fi
     if [ "$attempt" = "1" ]; then
       sleep 1
     fi
   done
+  rm -rf "$work"
   return 1
+}
+
+# release_print_git_error: print what the last failing working-tree read said.
+release_print_git_error() {
+  local line
+  if [ -s "$RELEASE_GIT_ERR_FILE" ]; then
+    while IFS= read -r line; do
+      red "    $line"
+    done < "$RELEASE_GIT_ERR_FILE"
+  else
+    red "    (git printed nothing)"
+  fi
 }
 
 # release_note_deploy <target>: record that a deploy of <target> is about to run.
@@ -419,9 +508,11 @@ release_head_refuse() {
     red "  .release-progress records them against $RELEASE_SHORT."
   fi
   if [ "$kind" = "unreadable" ]; then
-    red "  git failed twice, a second apart, so this run cannot show the checkout is"
-    red "  unchanged. That is not evidence it changed. Usually another git command"
-    red "  holds .git/index.lock: check nothing else runs git here, then re-run."
+    red "  A git read of the working tree failed twice, a second apart, so this run"
+    red "  cannot show the checkout is unchanged. That is not evidence it changed."
+    red "  What failed, and what git said:"
+    release_print_git_error
+    red "  Fix what git names above, then re-run."
   else
     red "  Something checked out, committed, pulled or edited files in this checkout"
     red "  while the release ran. To resume, re-run once main is back at"
@@ -1615,8 +1706,9 @@ fi
 if ! RELEASE_TREE_BASELINE="$(release_tree_fingerprint)"; then
   red "REFUSED: git could not read the working tree (twice, a second apart), so"
   red "  this run cannot take the baseline it checks the checkout against."
-  red "  Nothing has deployed. Usually another git command holds .git/index.lock:"
-  red "  check nothing else runs git in this checkout, then re-run."
+  red "  Nothing has deployed. What failed, and what git said:"
+  release_print_git_error
+  red "  Fix what git names above, then re-run."
   exit 1
 fi
 RELEASE_TREE_BASELINE_STATUS="$(git -C "$ROOT" status --short 2>/dev/null || true)"
