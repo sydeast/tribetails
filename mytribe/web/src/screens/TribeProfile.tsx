@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getBusinessContact } from '../api/portal';
 import { SecretField } from '../components/SecretField';
+import { EmergencyContactsCard } from '../components/EmergencyContactsCard';
 import {
   addSecondaryContact,
   CONTACT_LABEL_MAX,
@@ -96,9 +97,13 @@ function schemaTextOrNull(values: Record<string, string>, key: string, staticVal
  *    screen too (HouseholdMembersCard / SecondaryInviteCard in TribeScreen.kt),
  *    even though the mockup doesn't show them — there's no separate mockup
  *    for either, so the layout below follows the same glass-card idiom.
- *  - Emergency Contact + Vet Clinic after-hours fields are additions from
- *    TribeScreen.kt with no mockup coverage either; stored in the same
- *    customFields stores under stable keys (no backend change needed).
+ *  - Vet Clinic after-hours fields are additions from TribeScreen.kt with no
+ *    mockup coverage either; stored in the home-access customFields under
+ *    stable keys.
+ *  - Emergency Contacts (#829) are stored on the kinfolk record and go through
+ *    `listEmergencyContacts` / `saveEmergencyContacts` in their own card
+ *    (components/EmergencyContactsCard.tsx), which saves on its own button.
+ *    The profile save no longer carries any `emergencyContact*` key.
  */
 export function TribeProfile() {
   const queryClient = useQueryClient();
@@ -146,11 +151,6 @@ export function TribeProfile() {
   const [submittingClinic, setSubmittingClinic] = useState(false);
   const [submitClinicMsg, setSubmitClinicMsg] = useState<string | null>(null);
 
-  // ---- Emergency Contact ----
-  const [emergencyName, setEmergencyName] = useState('');
-  const [emergencyPhone, setEmergencyPhone] = useState('');
-  const [emergencyRelation, setEmergencyRelation] = useState('');
-
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
@@ -167,9 +167,6 @@ export function TribeProfile() {
     const pByKey = byKey(p.customFields);
     const aByKey = byKey(homeAccess.customFields);
     setVetClinicId(pByKey['vetClinicId'] ?? '');
-    setEmergencyName(pByKey['emergencyContactName'] ?? '');
-    setEmergencyPhone(pByKey['emergencyContactPhone'] ?? '');
-    setEmergencyRelation(pByKey['emergencyContactRelation'] ?? '');
     setAfterHoursVetName(aByKey['afterHoursVetName'] ?? '');
     setAfterHoursVetPhone(aByKey['afterHoursVetPhone'] ?? '');
   }, [profile.data]);
@@ -281,23 +278,21 @@ export function TribeProfile() {
     setSaving(true);
     setStatus(null);
     try {
-      const vetFields: CustomFieldDto[] = [];
+      const vetClinicFields: CustomFieldDto[] = [];
       // ONE id, not three strings. Name, phone and address are read from the
       // catalog, so the portal no longer keeps a copy that can go stale and that
-      // nobody is able to correct.
-      if (vetClinicId.trim()) vetFields.push({ key: 'vetClinicId', label: 'Vet Clinic', value: vetClinicId.trim() });
-      if (emergencyName.trim()) vetFields.push({ key: 'emergencyContactName', label: 'Emergency Contact', value: emergencyName.trim() });
-      if (emergencyPhone.trim()) vetFields.push({ key: 'emergencyContactPhone', label: 'Emergency Contact Phone', value: emergencyPhone.trim() });
-      if (emergencyRelation.trim())
-        vetFields.push({ key: 'emergencyContactRelation', label: 'Emergency Contact Relation', value: emergencyRelation.trim() });
+      // nobody is able to correct. Emergency Contacts are not here (#829): the
+      // card saves them through saveEmergencyContacts, and the reserved keys drop
+      // any stale emergencyContact* copy from this payload.
+      if (vetClinicId.trim()) vetClinicFields.push({ key: 'vetClinicId', label: 'Vet Clinic', value: vetClinicId.trim() });
 
       const baseProfileFields = profile.data?.profile.customFields ?? [];
       const nextDisplayName = effectiveDisplayName.trim();
-      let profileCustomFields = mergeReservedFields(baseProfileFields, vetFields, PROFILE_RESERVED_KEYS);
+      let profileCustomFields = mergeReservedFields(baseProfileFields, vetClinicFields, PROFILE_RESERVED_KEYS);
       if (profileSchema) {
         const schemaFields = profileSchema.sections.flatMap((s) => s.fields).filter((f) => f.key !== 'displayName');
         const fromSchema = schemaFields.map((f) => ({ key: f.key, label: f.label, value: profileValues[f.key] ?? '' }));
-        profileCustomFields = mergeReservedFields(fromSchema, vetFields, PROFILE_RESERVED_KEYS);
+        profileCustomFields = mergeReservedFields(fromSchema, vetClinicFields, PROFILE_RESERVED_KEYS);
       }
       await saveTribeProfile({
         ...(kinfolkId !== undefined ? { kinfolkId } : {}),
@@ -604,34 +599,9 @@ export function TribeProfile() {
                 </div>
               </section>
 
-              {/* EMERGENCY CONTACT CARD — no mockup coverage; ported from TribeScreen.kt */}
-              <section className="glass card d4">
-                <div className="cardhead">
-                  <div className="ic coral">{'\u{1F4DE}'}</div>
-                  <div className="htxt">
-                    <h3 className="title">Emergency Contact</h3>
-                    <p className="sub">Who your Auntie calls if we can&rsquo;t reach you during a visit.</p>
-                  </div>
-                </div>
-                {/* #843: the server refuses a change from a member without Home access, so say so up front. */}
-                {profile.data?.canEditHomeDetails === false ? (
-                  <p className="sub" data-testid="ec-locked">Only someone with Home access can change the Emergency Contact.</p>
-                ) : null}
-                <div className="grid2">
-                  <div className="field">
-                    <label htmlFor="ecname">Contact Name</label>
-                    <input id="ecname" className="inp" type="text" value={emergencyName} readOnly={profile.data?.canEditHomeDetails === false} onChange={(e) => setEmergencyName(e.target.value)} />
-                  </div>
-                  <div className="field">
-                    <label htmlFor="ecphone">Contact Phone</label>
-                    <input id="ecphone" className="inp mono" type="tel" value={emergencyPhone} readOnly={profile.data?.canEditHomeDetails === false} onChange={(e) => setEmergencyPhone(e.target.value)} />
-                  </div>
-                  <div className="field full">
-                    <label htmlFor="ecrel">Relationship (e.g. Neighbor, Sister)</label>
-                    <input id="ecrel" className="inp" type="text" value={emergencyRelation} readOnly={profile.data?.canEditHomeDetails === false} onChange={(e) => setEmergencyRelation(e.target.value)} />
-                  </div>
-                </div>
-              </section>
+              {/* EMERGENCY CONTACTS (#829): its own callables and its own Save.
+                  Locked with the #843 sentence when the caller lacks Home access. */}
+              <EmergencyContactsCard kinfolkId={kinfolkId} />
 
               {/* HOUSEHOLD MEMBERS — no mockup coverage; ported from HouseholdMembersCard in TribeScreen.kt.
                   PRIMARY-only: listMembers denies a SECONDARY caller, so this card degrades to an
@@ -846,8 +816,8 @@ function MemberPermissionRow(props: { kinfolkId: string | undefined; member: Mem
             </span>
           </span>
         </label>
-        <label className="togglerow">
-          <span className="tlabel">Home access (gate code, Wi-Fi)</span>
+        <label className="togglerow" title="Sees and edits the household home details: entry notes and Emergency Contacts.">
+          <span className="tlabel">Home access (gate code, Wi-Fi, Emergency Contacts)</span>
           <span className="toggle">
             <input type="checkbox" checked={canAccessHome} onChange={(e) => setCanAccessHome(e.target.checked)} />
             <span className="track">
@@ -942,8 +912,8 @@ function InviteKinfolkCard(props: { kinfolkId: string | undefined }) {
           </span>
         </span>
       </label>
-      <label className="togglerow">
-        <span className="tlabel">Home access (gate code, Wi-Fi)</span>
+      <label className="togglerow" title="Sees and edits the household home details: entry notes and Emergency Contacts.">
+        <span className="tlabel">Home access (gate code, Wi-Fi, Emergency Contacts)</span>
         <span className="toggle">
           <input type="checkbox" checked={canAccessHome} onChange={(e) => setCanAccessHome(e.target.checked)} />
           <span className="track">
