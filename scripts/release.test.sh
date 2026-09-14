@@ -101,6 +101,26 @@ make_repo() {
   # runs is not there.
   cp "$REPO_SCRIPTS"/*.mjs "$r/scripts/" 2>/dev/null
   cp "$REPO_SCRIPTS"/*.py "$r/scripts/" 2>/dev/null
+  # scripts/lib/: step 0a sources scripts/lib/dep-drift.sh, which in turn
+  # shells out to the two Node scripts beside it. Same reason as the .mjs
+  # copy above -- without this the step under test dies on a missing file
+  # rather than exercising the drift check itself.
+  mkdir -p "$r/scripts/lib"
+  cp "$REPO_SCRIPTS"/lib/*.sh "$REPO_SCRIPTS"/lib/*.js "$r/scripts/lib/" 2>/dev/null
+
+  # 0a reads a root lockfile and mytribe/functions' own lockfile. Empty
+  # (no dependencies declared) so a fully-synthetic repo with no real
+  # node_modules reports "not installed yet" rather than "no lockfile at
+  # all"; the drift-specific cases below add a real, mismatched install on
+  # top of this baseline.
+  printf '{ "name": "synthetic-functions", "dependencies": {} }\n' \
+    > "$r/mytribe/functions/package.json"
+  printf '{ "name": "synthetic-functions", "lockfileVersion": 3, "packages": {} }\n' \
+    > "$r/mytribe/functions/package-lock.json"
+  printf '{ "name": "synthetic-root", "private": true, "workspaces": ["packages/*", "auntieos-admin", "mytribe/web"] }\n' \
+    > "$r/package.json"
+  printf '{ "name": "synthetic-root", "lockfileVersion": 3, "packages": {} }\n' \
+    > "$r/package-lock.json"
 
   # safe-deploy refuses a rules deploy unless these two are byte-identical.
   printf 'rules_version = "2";\n' > "$r/mytribe/firestore.rules"
@@ -188,7 +208,7 @@ STUB
   # The same entries the real .gitignore carries for these, because step 0
   # refuses a dirty tree and .release-state and the APK are both untracked
   # by design. Without this the test would be testing the dirty-tree guard.
-  printf '.release-state\n.release-functions\nauntieos-admin/android/app/build/\nmytribe/build/\n' > "$r/.gitignore"
+  printf '.release-state\n.release-functions\n.release-progress\nauntieos-admin/android/app/build/\nmytribe/build/\nnode_modules/\n' > "$r/.gitignore"
 
   ( cd "$r"
     git init -q -b main .
@@ -266,7 +286,17 @@ STUB
   # Everything gcloud is asked here is a read that this test has no answer for.
   # Failing is the honest stub: release.sh and prune-run-revisions.sh both have
   # a documented "could not ask" path, and this exercises it.
-  printf '#!/usr/bin/env bash\nexit 1\n' > "$dir/stubs/gcloud"
+  #
+  # GCLOUD_MOVE_HEAD_REPO=<repo> commits to that repo on any `gcloud run ...`
+  # call. Only the revision prune asks that (step 8, and between retry rounds),
+  # so it moves HEAD at a point no other stub can reach (#840 review).
+  cat > "$dir/stubs/gcloud" <<'STUB'
+#!/usr/bin/env bash
+if [ -n "${GCLOUD_MOVE_HEAD_REPO:-}" ] && [ "${1:-}" = "run" ]; then
+  git -C "$GCLOUD_MOVE_HEAD_REPO" commit --allow-empty -qm "moved while the release ran" >/dev/null 2>&1
+fi
+exit 1
+STUB
 
   # A real deploy would land here. It must be reached only by the wet-run case,
   # and it records that it was, so a DRY_RUN case that leaks through is caught.
@@ -296,6 +326,62 @@ for a in "$@"; do
     --only=*) only="${a#--only=}" ;;
   esac
 done
+
+# FIREBASE_MOVE_HEAD_ON=<target> commits to the checkout while deploying that
+# target, which is what another shell doing git work in the SAME checkout looks
+# like to a release mid-run (#840 review). safe-deploy has already cd'd into the
+# repo, so git here acts on it.
+if [ -n "${FIREBASE_MOVE_HEAD_ON:-}" ] && [ "$only" = "$FIREBASE_MOVE_HEAD_ON" ]; then
+  git commit --allow-empty -qm "moved while the release ran" >/dev/null 2>&1
+fi
+# FIREBASE_EDIT_TREE_ON=<target> edits a tracked file instead, without moving
+# HEAD: a working-tree change that the deploy's build would pick up.
+if [ -n "${FIREBASE_EDIT_TREE_ON:-}" ] && [ "$only" = "$FIREBASE_EDIT_TREE_ON" ]; then
+  printf 'edited while the release ran\n' >> "$(git rev-parse --show-toplevel)/note.txt"
+fi
+# FIREBASE_EDIT_UNTRACKED_ON=<target> rewrites the untracked scratch.txt, so only
+# its CONTENTS change: git status still says "?? scratch.txt" either way.
+if [ -n "${FIREBASE_EDIT_UNTRACKED_ON:-}" ] && [ "$only" = "$FIREBASE_EDIT_UNTRACKED_ON" ]; then
+  printf 'v2\n' > "$(git rev-parse --show-toplevel)/scratch.txt"
+fi
+# FIREBASE_RELINK_ON=<target> points the untracked symlink `dangle` elsewhere
+# (still dangling). FIREBASE_CHMOD_ON=<target> changes the mode of the
+# unreadable untracked file `locked.txt` (still unreadable).
+if [ -n "${FIREBASE_RELINK_ON:-}" ] && [ "$only" = "$FIREBASE_RELINK_ON" ]; then
+  ln -sfn /nonexistent/elsewhere "$(git rev-parse --show-toplevel)/dangle"
+fi
+if [ -n "${FIREBASE_CHMOD_ON:-}" ] && [ "$only" = "$FIREBASE_CHMOD_ON" ]; then
+  chmod 200 "$(git rev-parse --show-toplevel)/locked.txt"
+fi
+# FIREBASE_ARM_FILE_ON=<target> creates FIREBASE_ARM_FILE during that deploy,
+# which a git shim reads as "start failing now".
+if [ -n "${FIREBASE_ARM_FILE_ON:-}" ] && [ "$only" = "$FIREBASE_ARM_FILE_ON" ]; then
+  : > "$FIREBASE_ARM_FILE"
+fi
+# FIREBASE_DISTRIBUTE_DEBUG_LOG=cwd|root makes appdistribution:distribute write
+# firebase-debug.log (into its working directory, or the repo root) and exit 2,
+# which is what the real CLI does on a failed upload.
+case "${1:-}:${FIREBASE_DISTRIBUTE_DEBUG_LOG:-}" in
+  appdistribution:distribute:cwd)
+    printf 'debug\n' > "$PWD/firebase-debug.log"; exit 2 ;;
+  appdistribution:distribute:root)
+    printf 'debug\n' > "$(git rev-parse --show-toplevel)/firebase-debug.log"; exit 2 ;;
+esac
+
+# FIREBASE_ADMIN_FAIL_TEXT makes an admin codebase deploy fail printing that
+# text (printf %b, so \n works), FIREBASE_ADMIN_FAIL_TIMES times (default:
+# every time), counted in FIREBASE_ADMIN_FAIL_COUNTER because each call is a
+# fresh process. FIREBASE_ADMIN_FAIL_TARGET picks the codebase (#840).
+if [ -n "${FIREBASE_ADMIN_FAIL_TEXT:-}" ] && [ "$only" = "${FIREBASE_ADMIN_FAIL_TARGET:-functions:default}" ]; then
+  counter="${FIREBASE_ADMIN_FAIL_COUNTER:-}"
+  seen=0
+  if [ -n "$counter" ] && [ -f "$counter" ]; then seen="$(cat "$counter")"; fi
+  if [ "$seen" -lt "${FIREBASE_ADMIN_FAIL_TIMES:-9999}" ]; then
+    if [ -n "$counter" ]; then echo $((seen + 1)) > "$counter"; fi
+    printf '%b\n' "$FIREBASE_ADMIN_FAIL_TEXT"
+    exit 2
+  fi
+fi
 
 case "$only" in
   functions:mytribe:*) ;;
@@ -488,6 +574,13 @@ if (cd "$D/repo" && git tag -l | grep -q .); then
   bad "dry run created a git tag"
 else
   ok "dry run created no git tag"
+fi
+# .release-progress makes a later run SKIP steps (#840), so it is the same kind
+# of file as .release-state and a rehearsal must not write it either.
+if [ -e "$D/repo/.release-progress" ]; then
+  bad "dry run wrote .release-progress"
+else
+  ok "dry run writes no .release-progress"
 fi
 
 # ---------------------------------------------------------------------------
@@ -729,6 +822,17 @@ commit_change() {
     printf '%s\n' "$line" >> "$file"
     git add -A
     git commit -qm "change $file"
+    git push -q origin main
+  ) >/dev/null 2>&1
+}
+
+# commit_all <dir>: land and push WHATEVER is sitting uncommitted in the repo,
+# for cases that set up several files at once (a declared dependency, a
+# mismatched install) rather than one line in one file.
+commit_all() {
+  ( cd "$1/repo"
+    git add -A
+    git commit -qm "test: dependency drift setup"
     git push -q origin main
   ) >/dev/null 2>&1
 }
@@ -1507,11 +1611,1103 @@ else
   ok "an unreadable store never claims the client config resolved"
 fi
 
-# A LIST call that specifically TIMES OUT (#839/#852), not the shared stub's
-# ordinary exit-1 failure above. This must refuse with its OWN exit code (4)
-# and its own wording, never the "has no value" refusal a genuinely missing
-# secret gets, and never `gcloud secrets create` advice for a store that might
-# hold every one of the values.
+# ---------------------------------------------------------------------------
+# #840. On 2026-09-13 a release shipped indexes, rules and all 279 mytribe
+# functions, verified the fleet, then died on ONE dropped Secret Manager request
+# while deploying the admin codebases, which had no retry. The rerun would have
+# redeployed all 279 functions, because nothing recorded that they had shipped.
+# ---------------------------------------------------------------------------
+
+# The classifier, lifted straight out of release.sh, so this tests the function
+# the script runs and not a copy of it.
+CLASSIFIER="$(awk '/^classify_deploy_failure\(\) \{/,/^}/' "$REPO_SCRIPTS/release.sh")"
+if [ -n "$CLASSIFIER" ]; then
+  eval "$CLASSIFIER"
+  ok "classify_deploy_failure can be lifted out of release.sh"
+else
+  bad "classify_deploy_failure is not at column 0 in release.sh"
+fi
+CLS_DIR="$(mktemp -d)"
+INCIDENT_TEXT='Error: Failed to validate secret versions:\n- FirebaseError Failed to make request to https://secretmanager.googleapis.com/v1/projects/auntieos-ttpc/secrets/CLOUDINARY_API_KEY/versions/latest'
+MISSING_TEXT='Error: Failed to validate secret versions:\n- FirebaseError HTTP Error: 404, Secret [projects/auntieos-ttpc/secrets/CLOUDINARY_API_KEY] not found or has no versions.'
+
+# expect_class <class> <label> <log text>
+expect_class() {
+  local want="$1" label="$2" got
+  printf '%b\n' "$3" > "$CLS_DIR/log"
+  got="$(classify_deploy_failure "$CLS_DIR/log" 2>/dev/null || true)"
+  if [ "$got" = "$want" ]; then
+    ok "classifier: $label is $want"
+  else
+    bad "classifier: $label is '$got', expected $want"
+  fi
+}
+expect_class transient "the 2026-09-13 dropped Secret Manager request" "$INCIDENT_TEXT"
+expect_class permanent "a secret that is not found, under the same header" "$MISSING_TEXT"
+expect_class permanent "a secret with no versions" 'Error: Failed to validate secret versions:\n- FirebaseError Secret projects/auntieos-ttpc/secrets/X has no versions'
+expect_class transient "an HTTP 503" 'HTTP Error: 503, The service is currently unavailable.'
+expect_class transient "a connection reset" 'Error: request to https://cloudfunctions.googleapis.com failed, reason: read ECONNRESET'
+expect_class transient "a DNS failure, whose ENOTFOUND is not a not-found" 'getaddrinfo ENOTFOUND secretmanager.googleapis.com'
+expect_class transient "a mutation rate limit" "HTTP Error: 429, Quota exceeded for quota metric 'Per project mutation requests'"
+expect_class permanent "a minimum-bill refusal" 'Error: Pass the --force option to deploy functions that increase the minimum bill'
+# Both markers in one log. This is the case the ordering exists for: checking
+# transient first would retry a secret that genuinely has no versions.
+expect_class permanent "a log with BOTH a dropped request and a no-versions secret" 'Error: Failed to validate secret versions:\n- FirebaseError Failed to make request to https://secretmanager.googleapis.com/v1/projects/auntieos-ttpc/secrets/A/versions/latest\n- FirebaseError Secret projects/auntieos-ttpc/secrets/B has no versions'
+expect_class permanent "a lowercase permission denied" 'Error: permission denied on resource project auntieos-ttpc'
+expect_class transient "an internal error" 'Error: Internal error encountered.'
+expect_class unknown "a predeploy build error" 'Error: functions predeploy error: Command terminated with non-zero exit code 2'
+: > "$CLS_DIR/log"
+if [ "$(classify_deploy_failure "$CLS_DIR/log")" = "unknown" ]; then
+  ok "classifier: an empty log is unknown"
+else
+  bad "classifier: an empty log was not unknown"
+fi
+rm -rf "$CLS_DIR"
+
+# admin_repo: a synthetic repo that can deploy the admin codebases (safe-deploy
+# refuses without auntieos-admin/web/firebase.json) and whose step 5 fleet verify
+# PASSES, so step 5 is recorded as done. Echoes the directory.
+admin_repo() {
+  local d
+  d="$(make_repo)"; write_stubs "$d"
+  commit_change "$d" "auntieos-admin/web/firebase.json" '{}'
+  # Step 0a (#841) checks auntieos-admin/web/functions against its lockfile
+  # whenever RELEASE_INCLUDE_ADMIN_FUNCTIONS=1, which every admin_repo case
+  # sets. The same minimal, not-yet-installed codebase test 26's
+  # add_admin_functions builds, inline because that helper is defined later.
+  mkdir -p "$d/repo/auntieos-admin/web/functions"
+  printf '{ "name": "auntieos-functions", "dependencies": {} }\n' \
+    > "$d/repo/auntieos-admin/web/functions/package.json"
+  printf '{ "name": "auntieos-functions", "lockfileVersion": 3, "packages": {} }\n' \
+    > "$d/repo/auntieos-admin/web/functions/package-lock.json"
+  ( cd "$d/repo" && git add -A && git commit -qm "admin functions codebase" && git push -q origin main ) >/dev/null 2>&1
+  arm_ci "$d"
+  stub_npm_verify "$d" 0
+  stub_npx_fleet "$d"
+  printf '%s' "$d"
+}
+ADMIN_ENV=(RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 RELEASE_INCLUDE_ADMIN_FUNCTIONS=1
+  RELEASE_FUNCTIONS_BATCH=4 RELEASE_FUNCTIONS_SETTLE=0 RELEASE_RETRY_KEEP=0)
+
+# admin_calls <call-log> <target>: how many times firebase was asked for <target>.
+admin_calls() {
+  grep -cF -- "--only $2 " "$1" 2>/dev/null || true
+}
+
+# Retry then succeed: the incident's exact text, once.
+DA="$(admin_repo)"
+RCA="$(run_release "$DA" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DA/calls" \
+  FIREBASE_ADMIN_FAIL_TEXT="$INCIDENT_TEXT" FIREBASE_ADMIN_FAIL_TIMES=1 \
+  FIREBASE_ADMIN_FAIL_COUNTER="$DA/admin-fails")"
+if [ "$RCA" = "0" ]; then
+  ok "a dropped request on the admin deploy is retried and the release completes"
+else
+  bad "a dropped request on the admin deploy failed the release (rc=$RCA)"; tail -25 "$DA/out"
+fi
+if [ "$(admin_calls "$DA/calls" functions:default)" = "2" ] &&
+   [ "$(admin_calls "$DA/calls" functions:reconcile)" = "1" ]; then
+  ok "functions:default was tried twice, functions:reconcile once"
+else
+  bad "admin deploy attempts: default $(admin_calls "$DA/calls" functions:default), reconcile $(admin_calls "$DA/calls" functions:reconcile)"
+fi
+if grep -q "transient failure" "$DA/out"; then
+  ok "the retry says the failure was transient"
+else
+  bad "the retry did not say why it retried"
+fi
+if [ ! -e "$DA/repo/.release-progress" ] &&
+   [ "$(cat "$DA/repo/.release-state" 2>/dev/null)" = "$(cd "$DA/repo" && git rev-parse HEAD)" ]; then
+  ok "a completed release records .release-state and clears .release-progress"
+else
+  bad "a completed release left .release-progress behind or did not record .release-state"
+fi
+
+# No retry on a genuinely missing secret, and the stop names what shipped.
+DB="$(admin_repo)"
+HEAD_B="$(cd "$DB/repo" && git rev-parse HEAD)"
+RCB="$(run_release "$DB" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DB/calls1" \
+  FIREBASE_ADMIN_FAIL_TEXT="$MISSING_TEXT")"
+if [ "$RCB" != "0" ]; then
+  ok "a secret that is not found fails the release"
+else
+  bad "a not-found secret did not fail the release"
+fi
+if [ "$(admin_calls "$DB/calls1" functions:default)" = "1" ] && grep -q "NOT retrying" "$DB/out"; then
+  ok "a not-found secret is not retried, and the run says so"
+else
+  bad "a not-found secret was retried ($(admin_calls "$DB/calls1" functions:default) attempts)"; tail -25 "$DB/out"
+fi
+if grep -q 'hosting' "$DB/calls1" 2>/dev/null; then
+  bad "hosting shipped after the admin codebase failed"
+else
+  ok "hosting does not ship after the admin codebase failed"
+fi
+if grep -qxF "$HEAD_B functions-mytribe" "$DB/repo/.release-progress" 2>/dev/null &&
+   [ ! -e "$DB/repo/.release-state" ]; then
+  ok "the verified mytribe functions are recorded for this commit, and nothing is recorded as released"
+else
+  bad "progress after the failed admin deploy is wrong"; cat "$DB/repo/.release-progress" 2>/dev/null
+fi
+if grep -q "Completed and LIVE for $(cd "$DB/repo" && git rev-parse --short HEAD)" "$DB/out" &&
+   grep -q "functions:mytribe, fleet verified" "$DB/out" &&
+   grep -q "firestore rules" "$DB/out"; then
+  ok "the stop message names the steps that completed for this commit"
+else
+  bad "the stop message does not name what shipped"; tail -15 "$DB/out"
+fi
+
+# Resume: the SAME commit, the secret fixed. Nothing already live redeploys.
+# A manifest from an earlier release that still lists a function since removed
+# from the code, so the resumed step 5 has something to report.
+printf 'alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\nretiredFn\n' > "$DB/repo/.release-functions"
+RCB2="$(run_release "$DB" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DB/calls2")"
+if [ "$RCB2" = "0" ]; then
+  ok "a rerun of the same commit completes"
+else
+  bad "a rerun of the same commit failed (rc=$RCB2)"; tail -25 "$DB/out"
+fi
+if [ -z "$(fn_deploys "$DB/calls2")" ] && grep -q "RESUMED: SKIPPED the mytribe functions" "$DB/out"; then
+  ok "the rerun skips the already-verified mytribe functions, and says so"
+else
+  bad "the rerun redeployed '$(fn_deploys "$DB/calls2" | tr '\n' ' ')'"
+fi
+if grep -q "firebase functions:delete retiredFn" "$DB/out" &&
+   ! grep -q "functions:delete" "$DB/calls2" 2>/dev/null &&
+   ! grep -q "firebase functions:delete alpha" "$DB/out"; then
+  ok "the resumed step 5 still names a function removed from the code, and deletes nothing"
+else
+  bad "the resumed step 5 did not report the removed function"; grep -n "retiredFn\|functions:delete" "$DB/out" "$DB/calls2"
+fi
+if grep -q 'firestore:indexes\|firestore:rules' "$DB/calls2"; then
+  bad "the rerun redeployed indexes or rules it had already shipped"
+else
+  ok "the rerun skips indexes and rules it had already shipped"
+fi
+# Step 3 was answered by RELEASE_YES in the first run, so nothing may say the
+# indexes were confirmed Enabled.
+if grep -q "confirmed" "$DB/out" || ! grep -q "answered by RELEASE_YES=1" "$DB/out"; then
+  bad "the index resume claims a confirmation RELEASE_YES never gave"; grep -n "RESUMED" "$DB/out"
+else
+  ok "the index resume says step 3 was answered by RELEASE_YES, not confirmed"
+fi
+if [ "$(admin_calls "$DB/calls2" functions:default)" = "1" ] && grep -q 'hosting:app' "$DB/calls2"; then
+  ok "the rerun deploys the step that failed and everything after it"
+else
+  bad "the rerun did not pick up at the failed step"; cat "$DB/calls2"
+fi
+if [ ! -e "$DB/repo/.release-progress" ] &&
+   [ "$(cat "$DB/repo/.release-state" 2>/dev/null)" = "$HEAD_B" ] &&
+   grep -qx alpha "$DB/repo/.release-functions" 2>/dev/null; then
+  ok "the resumed release records .release-state and the fleet, and clears progress"
+else
+  bad "the resumed release did not record itself"
+fi
+
+# A DIFFERENT commit never skips, whatever the progress file says.
+DC="$(admin_repo)"
+run_release "$DC" "${ADMIN_ENV[@]}" FIREBASE_ADMIN_FAIL_TEXT="$MISSING_TEXT" >/dev/null
+if grep -q " functions-mytribe$" "$DC/repo/.release-progress" 2>/dev/null; then
+  ok "precondition: the first commit's functions are recorded"
+else
+  bad "precondition failed: nothing recorded after the first run"
+fi
+commit_change "$DC" "note.txt" "a later commit"
+arm_ci "$DC"
+RCC="$(run_release "$DC" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DC/calls2")"
+if [ "$RCC" = "0" ] && [ -n "$(fn_deploys "$DC/calls2")" ] &&
+   grep -q 'firestore:rules' "$DC/calls2" && ! grep -q "RESUMED" "$DC/out"; then
+  ok "a different commit redeploys everything and resumes nothing"
+else
+  bad "a different commit skipped work (rc=$RCC, functions '$(fn_deploys "$DC/calls2" | tr '\n' ' ')')"
+fi
+
+# RELEASE_NO_RESUME=1 forces the full run on the same commit.
+DD="$(admin_repo)"
+run_release "$DD" "${ADMIN_ENV[@]}" FIREBASE_ADMIN_FAIL_TEXT="$MISSING_TEXT" >/dev/null
+RCD="$(run_release "$DD" "${ADMIN_ENV[@]}" RELEASE_NO_RESUME=1 FIREBASE_CALL_LOG="$DD/calls2")"
+if [ "$RCD" = "0" ] && [ -n "$(fn_deploys "$DD/calls2")" ] &&
+   grep -q 'firestore:rules' "$DD/calls2" && ! grep -q "RESUMED" "$DD/out"; then
+  ok "RELEASE_NO_RESUME=1 redeploys every step on the same commit"
+else
+  bad "RELEASE_NO_RESUME=1 still skipped work (rc=$RCD)"
+fi
+
+# A fleet the verify could not read is not a verified fleet: not recorded, so a
+# rerun redeploys the functions even though it skips the rules.
+DE="$(admin_repo)"
+stub_npm_verify "$DE" 2
+run_release "$DE" "${ADMIN_ENV[@]}" FIREBASE_ADMIN_FAIL_TEXT="$MISSING_TEXT" >/dev/null
+if grep -q " rules$" "$DE/repo/.release-progress" 2>/dev/null &&
+   ! grep -q " functions-mytribe$" "$DE/repo/.release-progress" 2>/dev/null; then
+  ok "an unverified functions deploy is not recorded as done"
+else
+  bad "an unverified functions deploy was recorded"; cat "$DE/repo/.release-progress" 2>/dev/null
+fi
+LIVE_E="$(sed 's/\x1b\[[0-9;]*m//g' "$DE/out" | awk '/^Completed and LIVE for /{f=1; next} /^[^ ]/{f=0} f')"
+UNVER_E="$(sed 's/\x1b\[[0-9;]*m//g' "$DE/out" | awk '/^Deployed, NOT verified, for /{f=1; next} /^[^ ]/{f=0} f')"
+if grep -q " functions-mytribe-unverified$" "$DE/repo/.release-progress" 2>/dev/null &&
+   printf '%s' "$UNVER_E" | grep -q "functions:mytribe, deployed, not verified" &&
+   ! printf '%s' "$LIVE_E" | grep -q "not verified" &&
+   printf '%s' "$LIVE_E" | grep -q "firestore rules" &&
+   ! grep -q "functions:mytribe, fleet verified" "$DE/out"; then
+  ok "the stop message lists the unverified functions under their own heading, not under LIVE"
+else
+  bad "the stop message did not say the functions were deployed but not verified"; tail -12 "$DE/out"
+fi
+RCE="$(run_release "$DE" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DE/calls2")"
+if [ "$RCE" = "0" ] && [ -n "$(fn_deploys "$DE/calls2")" ] && ! grep -q 'firestore:rules' "$DE/calls2"; then
+  ok "the rerun redeploys the unverified functions and skips the recorded rules"
+else
+  bad "the rerun after an unverified deploy was wrong (rc=$RCE)"; cat "$DE/calls2"
+fi
+
+# ---------------------------------------------------------------------------
+# #840 review. HEAD moves WHILE the release runs: the agent shell and the
+# operator's terminal share one checkout. Every record must name the commit
+# step 0 checked, and the run must refuse at the next step boundary.
+# ---------------------------------------------------------------------------
+DF="$(admin_repo)"
+HEAD_F="$(cd "$DF/repo" && git rev-parse HEAD)"
+RCF="$(run_release "$DF" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DF/calls" \
+  FIREBASE_MOVE_HEAD_ON=firestore:rules)"
+MOVED_F="$(cd "$DF/repo" && git rev-parse HEAD)"
+if [ "$MOVED_F" != "$HEAD_F" ]; then
+  ok "precondition: the stub moved HEAD during the rules deploy"
+else
+  bad "precondition failed: HEAD did not move"
+fi
+if [ "$RCF" != "0" ] && grep -q "REFUSED: HEAD moved during the release" "$DF/out" &&
+   sed 's/\x1b\[[0-9;]*m//g' "$DF/out" | grep -q "Caught after deploying firestore:rules\."; then
+  ok "HEAD moving during the rules deploy is caught right after it"
+else
+  bad "the move during the rules deploy was not caught after it (rc=$RCF)"; tail -20 "$DF/out"
+fi
+# The rules deploy read firestore.rules from the moved checkout, so it is not
+# recorded; the indexes, checked before the move, stay recorded for step 0's sha.
+if grep -qxF "$HEAD_F indexes" "$DF/repo/.release-progress" 2>/dev/null &&
+   ! grep -q " rules$" "$DF/repo/.release-progress" 2>/dev/null &&
+   ! grep -q "^$MOVED_F " "$DF/repo/.release-progress" 2>/dev/null; then
+  ok "a rules deploy from a moved checkout is not recorded, and earlier records keep the step-0 sha"
+else
+  bad "the rules record survived, or a record names the moved commit"; cat "$DF/repo/.release-progress" 2>/dev/null
+fi
+if sed 's/\x1b\[[0-9;]*m//g' "$DF/out" | grep -q "firestore:rules may be PARTLY from $MOVED_F" &&
+   ! grep -q "Every deploy so far passed a check" "$DF/out"; then
+  ok "the refusal names the rules deploy as possibly from the other commit, not everything as clean"
+else
+  bad "the refusal did not name the rules deploy"; tail -20 "$DF/out"
+fi
+if [ -z "$(fn_deploys "$DF/calls")" ] && ! grep -q 'hosting' "$DF/calls" 2>/dev/null; then
+  ok "nothing after the moved-HEAD boundary deploys"
+else
+  bad "work deployed after HEAD moved"; cat "$DF/calls"
+fi
+if grep -q "Completed and LIVE for $(printf '%s' "$HEAD_F" | cut -c1-7)" "$DF/out"; then
+  ok "the stop message lists what shipped for the step-0 commit"
+else
+  bad "the stop message did not name the step-0 commit"; tail -12 "$DF/out"
+fi
+
+# #840 review. deploy:bg let changed indexes through because it expected a
+# resume, and release.sh no longer sees one: it must stop before deploying them.
+DG="$(make_repo)"; write_stubs "$DG"; arm_ci "$DG"
+RCG="$(run_release "$DG" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
+  RELEASE_BG_EXPECTS_INDEX_RESUME=1 FIREBASE_CALL_LOG="$DG/calls")"
+if [ "$RCG" != "0" ] && grep -q "RELEASE_BG_EXPECTS_INDEX_RESUME=1 says this run resumes steps 2 and 3" "$DG/out" &&
+   grep -q "unset RELEASE_BG_EXPECTS_INDEX_RESUME" "$DG/out" &&
+   ! grep -q "launched this run" "$DG/out" &&
+   ! grep -q 'firestore:indexes' "$DG/calls" 2>/dev/null; then
+  ok "an expected index resume that is not recorded stops step 2 before indexes deploy"
+else
+  bad "step 2 deployed indexes the wrapper expected to resume (rc=$RCG)"; tail -15 "$DG/out"
+fi
+
+# #840 review. RELEASE_SHA from deploy:bg that no longer matches HEAD at step 0.
+DH="$(make_repo)"; write_stubs "$DH"; arm_ci "$DH"
+PREV_H="$(cd "$DH/repo" && git rev-parse HEAD~1)"
+RCH="$(run_release "$DH" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
+  RELEASE_SHA="$PREV_H" FIREBASE_CALL_LOG="$DH/calls")"
+if [ "$RCH" != "0" ] && grep -q "but this run was started for" "$DH/out" && [ ! -s "$DH/calls" ]; then
+  ok "a RELEASE_SHA that is not HEAD refuses at step 0, before anything deploys"
+else
+  bad "a mismatched RELEASE_SHA was not refused at step 0 (rc=$RCH)"; tail -15 "$DH/out"
+fi
+
+# #840 review. Step 5 with nothing to deploy is its own record, and says so in
+# the stop message, the resume and the tag. It never claims a verified deploy.
+DI="$(admin_repo)"
+mkdir -p "$DI/repo/mytribe/functions/test"
+printf 'it("works", () => {});\n' > "$DI/repo/mytribe/functions/test/alpha.test.ts"
+( cd "$DI/repo" && git add -A && git commit -qm "add a test" && git push -q origin main ) >/dev/null 2>&1
+(cd "$DI/repo" && git rev-parse HEAD) > "$DI/repo/.release-state"
+commit_change "$DI" "mytribe/functions/test/alpha.test.ts" 'it("also works", () => {});'
+arm_ci "$DI"
+HEAD_I="$(cd "$DI/repo" && git rev-parse HEAD)"
+RCI="$(run_release "$DI" "${ADMIN_ENV[@]}" FIREBASE_ADMIN_FAIL_TEXT="$MISSING_TEXT")"
+if [ "$RCI" != "0" ] &&
+   grep -qxF "$HEAD_I functions-mytribe-none" "$DI/repo/.release-progress" 2>/dev/null &&
+   ! grep -qxF "$HEAD_I functions-mytribe" "$DI/repo/.release-progress" 2>/dev/null; then
+  ok "step 5 with nothing to deploy is recorded under its own key"
+else
+  bad "nothing-to-deploy was recorded as a deploy"; cat "$DI/repo/.release-progress" 2>/dev/null
+fi
+if grep -q "functions:mytribe, nothing to deploy" "$DI/out" && ! grep -q "fleet verified" "$DI/out"; then
+  ok "the stop message says nothing to deploy, not fleet verified"
+else
+  bad "the stop message misdescribed an empty step 5"; tail -12 "$DI/out"
+fi
+RCI2="$(run_release "$DI" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DI/calls2")"
+TAG_I="$(cd "$DI/repo" && git for-each-ref refs/tags --format='%(contents)')"
+if [ "$RCI2" = "0" ] && grep -q "found nothing to deploy" "$DI/out" &&
+   printf '%s' "$TAG_I" | grep -q "resumed: nothing to deploy" &&
+   ! printf '%s' "$TAG_I" | grep -q "fleet-verified"; then
+  ok "the resume and the tag message say nothing to deploy, not deployed and verified"
+else
+  bad "the resume or tag misdescribed an empty step 5 (rc=$RCI2)"; printf '%s\n' "$TAG_I"; grep -n "RESUMED" "$DI/out"
+fi
+
+# ---------------------------------------------------------------------------
+# #840 second review. The checkout is read by every deploy (firebase runs the
+# functions build as a predeploy), so it is checked around each deploy, not only
+# at banners. Each case moves HEAD where exactly one check stands between the
+# move and the next deploy or record, and asserts where it was caught, so
+# removing that one check fails the case even if a later check still stops the
+# run.
+# ---------------------------------------------------------------------------
+
+# stripped <file>: the output without colour codes.
+stripped() { sed 's/\x1b\[[0-9;]*m//g' "$1"; }
+# short <sha>
+short7() { printf '%s' "$1" | cut -c1-7; }
+
+REAL_NODE="$(command -v node)"
+# stub_node_move_head <dir> <arg-substring>: a node that commits to the repo when
+# its arguments contain <arg-substring>, then runs the real node.
+stub_node_move_head() {
+  cat > "$1/stubs/node" <<STUB
+#!/usr/bin/env bash
+case "\$*" in
+  *"$2"*) git -C "$1/repo" commit --allow-empty -qm "moved while the release ran" >/dev/null 2>&1 ;;
+esac
+exec "$REAL_NODE" "\$@"
+STUB
+  chmod +x "$1/stubs/node"
+}
+# stub_npx_fleet_move_head <dir>: the fleet read for the verify, which also
+# moves HEAD, i.e. after the last batch and before step 5 is recorded.
+stub_npx_fleet_move_head() {
+  cat > "$1/stubs/npx" <<STUB
+#!/usr/bin/env bash
+git -C "$1/repo" commit --allow-empty -qm "moved while the release ran" >/dev/null 2>&1
+echo '{"result":[]}'
+exit 0
+STUB
+  chmod +x "$1/stubs/npx"
+}
+# verified_repo: step 5 deploys and its verify passes, no admin codebases.
+verified_repo() {
+  local d
+  d="$(make_repo)"; write_stubs "$d"; arm_ci "$d"
+  stub_npm_verify "$d" 0
+  stub_npx_fleet "$d"
+  printf '%s' "$d"
+}
+FN_ENV=(RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 RELEASE_FUNCTIONS_SETTLE=0 RELEASE_RETRY_KEEP=0)
+
+# 1. HEAD moves DURING a batch. The batch after it must not deploy, step 5 must
+#    record nothing, and the stop message must say the functions may be partly
+#    from the other commit, naming both.
+DJ="$(verified_repo)"
+HEAD_J="$(cd "$DJ/repo" && git rev-parse HEAD)"
+FIRST_J="$(cd "$DJ/repo" && "$REAL_NODE" scripts/function-targets.js 2>/dev/null | head -1)"
+RCJ="$(run_release "$DJ" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=1 \
+  FIREBASE_MOVE_HEAD_ON="functions:mytribe:$FIRST_J" FIREBASE_CALL_LOG="$DJ/calls")"
+MOVED_J="$(cd "$DJ/repo" && git rev-parse HEAD)"
+OUT_J="$(stripped "$DJ/out")"
+if [ -n "$FIRST_J" ] && [ "$RCJ" != "0" ] && [ "$(fn_deploys "$DJ/calls" | wc -l | tr -d ' ')" = "1" ] &&
+   printf '%s' "$OUT_J" | grep -q "Caught after a functions batch"; then
+  ok "HEAD moving during a functions batch stops before the next batch, caught after the batch"
+else
+  bad "a later batch deployed after HEAD moved, or the post-batch check did not catch it (rc=$RCJ)"; fn_deploys "$DJ/calls"; printf '%s\n' "$OUT_J" | grep -n "Caught\|REFUSED"
+fi
+if ! grep -q " functions-mytribe" "$DJ/repo/.release-progress" 2>/dev/null; then
+  ok "a batch that may have shipped the other commit records nothing for step 5"
+else
+  bad "step 5 was recorded after HEAD moved mid-batch"; cat "$DJ/repo/.release-progress"
+fi
+if printf '%s' "$OUT_J" | grep -q "functions:mytribe may be PARTLY from $MOVED_J" &&
+   printf '%s' "$OUT_J" | grep -q "not from $(short7 "$HEAD_J") ($HEAD_J)"; then
+  ok "the stop message says the functions may be partly from the other commit, naming both shas"
+else
+  bad "the stop message did not name the mixed functions and both shas"; printf '%s\n' "$OUT_J" | tail -15
+fi
+
+# 2. HEAD moves BETWEEN batches (the prune between retry rounds). The check
+#    before the next batch must stop it before it deploys.
+DK="$(verified_repo)"
+RCK="$(run_release "$DK" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 RELEASE_FUNCTIONS_SETTLE=0 \
+  RELEASE_FUNCTIONS_BATCH=6 RELEASE_RETRY_KEEP=2 FIREBASE_QUOTA_MAX=0 \
+  GCLOUD_MOVE_HEAD_REPO="$DK/repo" FIREBASE_CALL_LOG="$DK/calls")"
+if [ "$RCK" != "0" ] && [ "$(fn_deploys "$DK/calls" | wc -l | tr -d ' ')" = "1" ] &&
+   stripped "$DK/out" | grep -q "Caught before a functions batch"; then
+  ok "HEAD moving between batches is caught before the next batch deploys"
+else
+  bad "the retry batch deployed after HEAD moved (rc=$RCK)"; fn_deploys "$DK/calls"; stripped "$DK/out" | grep -n "Caught\|REFUSED"
+fi
+
+# 3. HEAD moves during the fleet verify, after the last batch: step 5 must not be
+#    recorded against the step-0 commit.
+DL="$(verified_repo)"
+stub_npx_fleet_move_head "$DL"
+RCL="$(run_release "$DL" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 FIREBASE_CALL_LOG="$DL/calls")"
+if [ "$RCL" != "0" ] && stripped "$DL/out" | grep -q "Caught before recording step 5\." &&
+   ! grep -q " functions-mytribe" "$DL/repo/.release-progress" 2>/dev/null; then
+  ok "HEAD moving before step 5 is recorded is caught there, and nothing is recorded"
+else
+  bad "step 5 was recorded from a moved checkout (rc=$RCL)"; cat "$DL/repo/.release-progress" 2>/dev/null; stripped "$DL/out" | grep -n "Caught"
+fi
+
+# 4. The same for an empty step 5: HEAD moves while the change is attributed.
+DM="$(verified_repo)"
+mkdir -p "$DM/repo/mytribe/functions/test"
+printf 'it("works", () => {});\n' > "$DM/repo/mytribe/functions/test/alpha.test.ts"
+( cd "$DM/repo" && git add -A && git commit -qm "add a test" && git push -q origin main ) >/dev/null 2>&1
+(cd "$DM/repo" && git rev-parse HEAD) > "$DM/repo/.release-state"
+commit_change "$DM" "mytribe/functions/test/alpha.test.ts" 'it("also works", () => {});'
+arm_ci "$DM"
+stub_node_move_head "$DM" "--changed-from"
+RCM="$(run_release "$DM" "${FN_ENV[@]}")"
+if [ "$RCM" != "0" ] && stripped "$DM/out" | grep -q "Caught before recording step 5 (nothing to deploy)" &&
+   ! grep -q " functions-mytribe-none" "$DM/repo/.release-progress" 2>/dev/null; then
+  ok "HEAD moving before an empty step 5 is recorded is caught there, and nothing is recorded"
+else
+  bad "an empty step 5 was recorded from a moved checkout (rc=$RCM)"; cat "$DM/repo/.release-progress" 2>/dev/null; stripped "$DM/out" | grep -n "Caught"
+fi
+
+# 5. The explicit check before the admin codebases. A resumed step 5 runs no
+#    check of its own, so HEAD moving there (while the fleet is enumerated) is
+#    caught only by the check before the admin codebases.
+DN="$(admin_repo)"
+run_release "$DN" "${ADMIN_ENV[@]}" FIREBASE_ADMIN_FAIL_TEXT="$MISSING_TEXT" >/dev/null
+stub_node_move_head "$DN" "function-targets.js"
+RCN="$(run_release "$DN" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DN/calls2")"
+# The rerun resumes indexes, rules and step 5, so it may call firebase not at
+# all and leave no call log; "no functions:default deploy" holds either way.
+if [ "$RCN" != "0" ] && stripped "$DN/out" | grep -q "Caught before the admin codebases\." &&
+   ! grep -qF -- "--only functions:default " "$DN/calls2" 2>/dev/null; then
+  ok "HEAD moving during a resumed step 5 is caught before the admin codebases"
+else
+  bad "the admin codebases were reached after HEAD moved (rc=$RCN)"; stripped "$DN/out" | grep -n "Caught\|RESUMED: SKIPPED"
+fi
+
+# 6. The check at the top of each admin attempt: HEAD moves during a transient
+#    failure, so the retry must not deploy.
+DO="$(admin_repo)"
+RCO="$(run_release "$DO" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DO/calls" \
+  FIREBASE_MOVE_HEAD_ON=functions:default FIREBASE_ADMIN_FAIL_TEXT="$INCIDENT_TEXT" \
+  FIREBASE_ADMIN_FAIL_TIMES=1 FIREBASE_ADMIN_FAIL_COUNTER="$DO/admin-fails")"
+if [ "$RCO" != "0" ] && [ "$(admin_calls "$DO/calls" functions:default)" = "1" ] &&
+   stripped "$DO/out" | grep -q "Caught before functions:default attempt 2\."; then
+  ok "HEAD moving during a failed admin attempt stops the retry before it deploys"
+else
+  bad "the admin retry deployed after HEAD moved (rc=$RCO, attempts $(admin_calls "$DO/calls" functions:default))"; stripped "$DO/out" | grep -n "Caught"
+fi
+
+# 7. The check after an admin deploy: it built from a moved checkout, so it is
+#    not recorded, the next codebase does not deploy, and the stop message says so.
+DP="$(admin_repo)"
+HEAD_P="$(cd "$DP/repo" && git rev-parse HEAD)"
+RCP="$(run_release "$DP" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DP/calls" \
+  FIREBASE_MOVE_HEAD_ON=functions:default)"
+if [ "$RCP" != "0" ] && stripped "$DP/out" | grep -q "Caught after deploying functions:default\." &&
+   ! grep -q " functions-admin-default$" "$DP/repo/.release-progress" 2>/dev/null &&
+   [ "$(admin_calls "$DP/calls" functions:reconcile)" = "0" ] &&
+   stripped "$DP/out" | grep -q "functions:default may be PARTLY from"; then
+  ok "an admin deploy from a moved checkout is not recorded, and the stop message names it"
+else
+  bad "an admin deploy from a moved checkout was recorded or not reported (rc=$RCP)"; cat "$DP/repo/.release-progress" 2>/dev/null; stripped "$DP/out" | tail -12
+fi
+if grep -qxF "$HEAD_P functions-mytribe" "$DP/repo/.release-progress" 2>/dev/null; then
+  ok "step 5, verified before HEAD moved, stays recorded for the step-0 commit"
+else
+  bad "the earlier verified step 5 record was lost"; cat "$DP/repo/.release-progress" 2>/dev/null
+fi
+
+# 8. The check before .release-state: HEAD moves during the step 8 prune, the
+#    only thing between the step 8 banner and the record.
+DQ="$(verified_repo)"
+RCQ="$(run_release "$DQ" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 \
+  GCLOUD_MOVE_HEAD_REPO="$DQ/repo" FIREBASE_CALL_LOG="$DQ/calls")"
+if [ "$RCQ" != "0" ] && stripped "$DQ/out" | grep -q "Caught before recording .release-state\." &&
+   [ ! -e "$DQ/repo/.release-state" ] && [ -z "$(cd "$DQ/repo" && git tag -l)" ]; then
+  ok "HEAD moving during the prune stops the release before .release-state is written"
+else
+  bad ".release-state was written or the tag made after HEAD moved (rc=$RCQ)"; ls -la "$DQ/repo/.release-state" 2>/dev/null; stripped "$DQ/out" | grep -n "Caught"
+fi
+
+# 9. A working-tree edit with no HEAD move is caught the same way.
+DR="$(verified_repo)"
+RCR="$(run_release "$DR" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 \
+  FIREBASE_EDIT_TREE_ON=firestore:rules FIREBASE_CALL_LOG="$DR/calls")"
+if [ "$RCR" != "0" ] && stripped "$DR/out" | grep -q "REFUSED: the working tree changed during the release" &&
+   stripped "$DR/out" | grep -q "note.txt" && [ -z "$(fn_deploys "$DR/calls")" ]; then
+  ok "a working-tree edit during the release is refused before the next deploy"
+else
+  bad "a working-tree edit did not stop the release (rc=$RCR)"; stripped "$DR/out" | grep -n "REFUSED\|Caught"
+fi
+if stripped "$DR/out" | grep -q "git status --short when the release started deploying:" &&
+   stripped "$DR/out" | grep -q "git status --short now:" &&
+   stripped "$DR/out" | grep -A1 "git status --short now:" | grep -q "note.txt"; then
+  ok "a working-tree refusal prints git status from the baseline and from now"
+else
+  bad "the refusal did not print both git statuses"; stripped "$DR/out" | grep -n -A2 "git status"
+fi
+
+# ---------------------------------------------------------------------------
+# #840 third review.
+# ---------------------------------------------------------------------------
+
+# 10. HEAD moves during the indexes deploy. The next check is the step 3 banner,
+#     and the refusal must name the indexes deploy, not call everything clean.
+DS="$(verified_repo)"
+RCS="$(run_release "$DS" "${FN_ENV[@]}" FIREBASE_MOVE_HEAD_ON=firestore:indexes FIREBASE_CALL_LOG="$DS/calls")"
+MOVED_S="$(cd "$DS/repo" && git rev-parse HEAD)"
+if [ "$RCS" != "0" ] && stripped "$DS/out" | grep -q "Caught at the start of step: 3\. Wait for indexes to finish building\." &&
+   stripped "$DS/out" | grep -q "firestore:indexes may be PARTLY from $MOVED_S" &&
+   ! grep -q "Every deploy so far passed a check" "$DS/out" &&
+   ! grep -q " indexes$" "$DS/repo/.release-progress" 2>/dev/null &&
+   ! grep -q 'firestore:rules' "$DS/calls" 2>/dev/null; then
+  ok "a move during the indexes deploy is caught at step 3, names the indexes deploy, records nothing"
+else
+  bad "the move during the indexes deploy was misreported (rc=$RCS)"; stripped "$DS/out" | tail -20
+fi
+
+# 11. progress_mark records RELEASE_SHA, never a fresh read of HEAD: run it with
+#     HEAD one commit past RELEASE_SHA and read what it wrote.
+DU="$(make_repo)"
+A_U="$(cd "$DU/repo" && git rev-parse HEAD)"
+( cd "$DU/repo" && git commit --allow-empty -qm "HEAD moves on" ) >/dev/null 2>&1
+B_U="$(cd "$DU/repo" && git rev-parse HEAD)"
+( ROOT="$DU/repo"; RELEASE_SHA="$A_U"; DRY_RUN=0
+  . "$REPO_SCRIPTS/release-progress.sh"
+  progress_mark rules ) >/dev/null 2>&1
+if [ "$A_U" != "$B_U" ] && grep -qxF "$A_U rules" "$DU/repo/.release-progress" 2>/dev/null &&
+   ! grep -q "^$B_U " "$DU/repo/.release-progress" 2>/dev/null; then
+  ok "progress_mark records RELEASE_SHA even when HEAD has moved on"
+else
+  bad "progress_mark recorded HEAD instead of RELEASE_SHA"; cat "$DU/repo/.release-progress" 2>/dev/null
+fi
+
+# 12. A failed Android upload leaves firebase-debug.log in the CLI's working
+#     directory. Run from mytribe/ (ignored there, as in the real repo), it must
+#     not refuse the release after both hostings are live.
+DV="$(make_repo)"; write_stubs "$DV"
+commit_change "$DV" "mytribe/.gitignore" '*.log'
+arm_ci "$DV"
+RCV="$(run_release "$DV" RELEASE_YES=1 RELEASE_ANDROID_TESTERS=a@b.test \
+  FIREBASE_DISTRIBUTE_DEBUG_LOG=cwd FIREBASE_CALL_LOG="$DV/calls")"
+if [ "$RCV" = "0" ] && grep -q "is live and verified" "$DV/out" &&
+   grep -q "distribution FAILED" "$DV/out" &&
+   [ -f "$DV/repo/mytribe/firebase-debug.log" ] && [ ! -e "$DV/repo/firebase-debug.log" ]; then
+  ok "a failed upload's firebase-debug.log lands in mytribe/ and the release still finishes"
+else
+  bad "a failed upload's debug log refused the release or landed at the root (rc=$RCV)"
+  ls "$DV/repo/firebase-debug.log" "$DV/repo/mytribe/firebase-debug.log" 2>&1; stripped "$DV/out" | grep -n "REFUSED\|Caught" | head
+fi
+
+# 13. The root ignores the Firebase debug logs too, using the real repo's own
+#     .gitignore lines: a log written at the root must not refuse the release.
+DW="$(make_repo)"; write_stubs "$DW"
+MISSING_IGNORES=""
+for p in 'firebase-debug.log' 'firebase-debug.*.log' 'firestore-debug.log' 'ui-debug.log'; do
+  if grep -qxF "$p" "$REPO_SCRIPTS/../.gitignore" 2>/dev/null; then
+    printf '%s\n' "$p" >> "$DW/repo/.gitignore"
+  else
+    MISSING_IGNORES="$MISSING_IGNORES $p"
+  fi
+done
+( cd "$DW/repo" && git add -A && git commit -qm "ignore firebase debug logs" && git push -q origin main ) >/dev/null 2>&1
+arm_ci "$DW"
+RCW="$(run_release "$DW" RELEASE_YES=1 RELEASE_ANDROID_TESTERS=a@b.test \
+  FIREBASE_DISTRIBUTE_DEBUG_LOG=root FIREBASE_CALL_LOG="$DW/calls")"
+if [ -z "$MISSING_IGNORES" ] && [ "$RCW" = "0" ] && [ -f "$DW/repo/firebase-debug.log" ] &&
+   grep -q "is live and verified" "$DW/out"; then
+  ok "the root .gitignore covers the Firebase debug logs, and one at the root does not refuse"
+else
+  bad "root debug-log ignores missing ($MISSING_IGNORES) or the release refused (rc=$RCW)"; stripped "$DW/out" | grep -n "REFUSED\|Caught" | head
+fi
+
+# 14. A git read of the tree fails once: the fingerprint retries and the release
+#     carries on. Persistently: it refuses, saying git could not read the tree
+#     (never that the tree changed), and prints the failing command and git's
+#     own message. It does not name .git/index.lock, which does not make these
+#     reads fail.
+REAL_GIT="$(command -v git)"
+# stub_git_status_fails <dir> <times>: once <dir>/git-armed exists, the next
+# <times> `git status --porcelain` calls exit 128 with a git-shaped error.
+stub_git_status_fails() {
+  cat > "$1/stubs/git" <<STUB
+#!/usr/bin/env bash
+case "\$*" in
+  *" status --porcelain"*)
+    if [ -f "$1/git-armed" ]; then
+      n="\$(cat "$1/git-fail-count" 2>/dev/null || echo 0)"
+      if [ "\$n" -lt "$2" ]; then
+        echo "\$((n + 1))" > "$1/git-fail-count"
+        echo "fatal: bad object HEAD (stubbed failure)" >&2
+        exit 128
+      fi
+    fi
+    ;;
+esac
+exec "$REAL_GIT" "\$@"
+STUB
+  chmod +x "$1/stubs/git"
+}
+DX="$(verified_repo)"
+stub_git_status_fails "$DX" 1
+RCX="$(run_release "$DX" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 \
+  FIREBASE_ARM_FILE_ON=firestore:rules FIREBASE_ARM_FILE="$DX/git-armed")"
+if [ "$RCX" = "0" ] && [ "$(cat "$DX/git-fail-count" 2>/dev/null)" = "1" ] &&
+   grep -q "is live and verified" "$DX/out"; then
+  ok "one failed git read is retried and the release carries on"
+else
+  bad "a single git failure was not retried through (rc=$RCX, failures $(cat "$DX/git-fail-count" 2>/dev/null))"; stripped "$DX/out" | grep -n "REFUSED\|Caught" | head
+fi
+DY="$(verified_repo)"
+stub_git_status_fails "$DY" 99
+RCY="$(run_release "$DY" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 \
+  FIREBASE_ARM_FILE_ON=firestore:rules FIREBASE_ARM_FILE="$DY/git-armed" FIREBASE_CALL_LOG="$DY/calls")"
+if [ "$RCY" != "0" ] &&
+   stripped "$DY/out" | grep -q "REFUSED: git could not read the working tree" &&
+   ! stripped "$DY/out" | grep -q "the working tree changed" &&
+   stripped "$DY/out" | grep -q "Caught after deploying firestore:rules\." &&
+   ! grep -q " rules$" "$DY/repo/.release-progress" 2>/dev/null &&
+   [ -z "$(fn_deploys "$DY/calls")" ]; then
+  ok "git failing persistently refuses as unreadable, not as a changed tree, and records nothing"
+else
+  bad "a persistent git failure was misreported (rc=$RCY)"; stripped "$DY/out" | grep -n "REFUSED\|Caught\|changed" | head
+fi
+if stripped "$DY/out" | grep -q "git status --porcelain  (exit 128)" &&
+   stripped "$DY/out" | grep -q "fatal: bad object HEAD (stubbed failure)" &&
+   ! grep -q "index.lock" "$DY/out"; then
+  ok "the git-read refusal prints the failing command and git's own message, and does not blame index.lock"
+else
+  bad "the git-read refusal did not show git's error, or still blames index.lock"; stripped "$DY/out" | grep -n -A6 "What failed"
+fi
+
+# 15. An untracked file whose CONTENTS change (git status unchanged) is caught.
+#     It appears during step 1b, after step 0's clean-tree check and before the
+#     baseline, and is rewritten during the rules deploy.
+DZ="$(verified_repo)"
+cat > "$DZ/stubs/node" <<STUB
+#!/usr/bin/env bash
+case "\$*" in
+  *declared-secrets.js*) [ -f "$DZ/repo/scratch.txt" ] || printf 'v1\n' > "$DZ/repo/scratch.txt" ;;
+esac
+exec "$REAL_NODE" "\$@"
+STUB
+chmod +x "$DZ/stubs/node"
+RCZ="$(run_release "$DZ" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 \
+  FIREBASE_EDIT_UNTRACKED_ON=firestore:rules FIREBASE_CALL_LOG="$DZ/calls")"
+if [ "$RCZ" != "0" ] && stripped "$DZ/out" | grep -q "REFUSED: the working tree changed during the release" &&
+   stripped "$DZ/out" | grep -q "Caught after deploying firestore:rules\." &&
+   [ -z "$(fn_deploys "$DZ/calls")" ]; then
+  ok "a change to an untracked file's contents is caught, not only its appearance"
+else
+  bad "an untracked file's content change was not caught (rc=$RCZ)"; stripped "$DZ/out" | grep -n "REFUSED\|Caught" | head
+fi
+
+# 16. Untracked entries git hash-object cannot hash: a dangling symlink, an
+#     unreadable file and a nested git repository. They appear during step 1b
+#     (after step 0's clean-tree check, before the baseline). The release must
+#     proceed with all three present, and retargeting the symlink or changing the
+#     unreadable file's mode must still be caught.
+# stub_node_awkward_untracked <dir>
+stub_node_awkward_untracked() {
+  cat > "$1/stubs/node" <<STUB
+#!/usr/bin/env bash
+case "\$*" in
+  *declared-secrets.js*)
+    if [ ! -e "$1/repo/locked.txt" ]; then
+      ln -s /nonexistent/target "$1/repo/dangle"
+      printf 'secret\n' > "$1/repo/locked.txt"
+      chmod 000 "$1/repo/locked.txt"
+      mkdir -p "$1/repo/sub" && git -C "$1/repo/sub" init -q
+    fi
+    ;;
+esac
+exec "$REAL_NODE" "\$@"
+STUB
+  chmod +x "$1/stubs/node"
+}
+DA2="$(verified_repo)"
+stub_node_awkward_untracked "$DA2"
+RCA2="$(run_release "$DA2" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 FIREBASE_CALL_LOG="$DA2/calls")"
+if [ -L "$DA2/repo/dangle" ] && [ -e "$DA2/repo/locked.txt" ] && [ -d "$DA2/repo/sub/.git" ] &&
+   [ "$RCA2" = "0" ] && grep -q "is live and verified" "$DA2/out" &&
+   ! stripped "$DA2/out" | grep -q "REFUSED"; then
+  ok "a dangling symlink, an unreadable file and a nested repo do not stop the release"
+else
+  bad "an awkward untracked entry refused the release (rc=$RCA2)"; stripped "$DA2/out" | grep -n -A6 "REFUSED" | head -20
+fi
+
+DB2="$(verified_repo)"
+stub_node_awkward_untracked "$DB2"
+RCB2X="$(run_release "$DB2" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 \
+  FIREBASE_RELINK_ON=firestore:rules FIREBASE_CALL_LOG="$DB2/calls")"
+if [ "$RCB2X" != "0" ] && stripped "$DB2/out" | grep -q "REFUSED: the working tree changed during the release" &&
+   stripped "$DB2/out" | grep -q "Caught after deploying firestore:rules\." &&
+   [ -z "$(fn_deploys "$DB2/calls")" ]; then
+  ok "retargeting an untracked dangling symlink is caught"
+else
+  bad "a retargeted untracked symlink was not caught (rc=$RCB2X)"; stripped "$DB2/out" | grep -n "REFUSED\|Caught" | head
+fi
+
+if [ "$(id -u)" = "0" ]; then
+  # root reads any file, so there is no unreadable file to change the mode of.
+  ok "skipped: running as root, so no file is unreadable"
+else
+  DC2="$(verified_repo)"
+  stub_node_awkward_untracked "$DC2"
+  RCC2="$(run_release "$DC2" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 \
+    FIREBASE_CHMOD_ON=firestore:rules FIREBASE_CALL_LOG="$DC2/calls")"
+  if [ "$RCC2" != "0" ] && stripped "$DC2/out" | grep -q "REFUSED: the working tree changed during the release" &&
+     stripped "$DC2/out" | grep -q "Caught after deploying firestore:rules\." &&
+     [ -z "$(fn_deploys "$DC2/calls")" ]; then
+    ok "changing the mode of an unreadable untracked file is caught"
+  else
+    bad "a mode change on an unreadable untracked file was not caught (rc=$RCC2)"; stripped "$DC2/out" | grep -n "REFUSED\|Caught" | head
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 23. Dependency drift (step 0a, #841). On 2026-09-13 a release tested
+#     mytribe/web against a node_modules that predated a Dependabot bump
+#     (vitest 4 -> 5, ~20 other packages, stripe in mytribe/functions) and
+#     failed a test CI had already passed on the same commit. These cases
+#     hold step 0a to refusing BEFORE step 1 runs, naming the drifted
+#     directory and the exact `npm ci` command that fixes it, and to letting
+#     a clean install (or one release.sh is not going to ship) straight
+#     through.
+# ---------------------------------------------------------------------------
+
+# declare_dep <dir> <name> <version>: add <name> to <dir>'s package.json AND
+# pin it in <dir>'s package-lock.json at <version>, so a later mismatched
+# node_modules entry is real drift (a declared, locked dependency) rather
+# than an "absent" package nobody asked for.
+declare_dep() {
+  local dir="$1" name="$2" version="$3"
+  node -e '
+    const fs = require("fs");
+    const [, pjPath, lockPath, name, version] = process.argv;
+    const pj = JSON.parse(fs.readFileSync(pjPath, "utf8"));
+    pj.dependencies = pj.dependencies || {};
+    pj.dependencies[name] = "^" + version;
+    fs.writeFileSync(pjPath, JSON.stringify(pj));
+    const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+    lock.packages = lock.packages || {};
+    lock.packages["node_modules/" + name] = { version };
+    fs.writeFileSync(lockPath, JSON.stringify(lock));
+  ' "$dir/package.json" "$dir/package-lock.json" "$name" "$version"
+}
+
+# install_pkg <dir> <name> <version>: node_modules/<name> at <version>, in
+# <dir>'s OWN node_modules: the standalone shape mytribe/functions and
+# auntieos-admin/web/functions both use.
+install_pkg() {
+  mkdir -p "$1/node_modules/$2"
+  printf '{ "name": "%s", "version": "%s" }\n' "$2" "$3" > "$1/node_modules/$2/package.json"
+}
+
+D20="$(make_repo)"; write_stubs "$D20"
+declare_dep "$D20/repo/mytribe/functions" stripe 18.5.0
+commit_all "$D20"
+install_pkg "$D20/repo/mytribe/functions" stripe 17.0.0
+arm_ci "$D20"
+RC="$(run_release "$D20" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$D20/calls")"
+OUT="$(cat "$D20/out")"
+if [ "$RC" -ne 0 ]; then
+  ok "dependency drift in mytribe/functions refuses the release"
+else
+  bad "dependency drift did not refuse the release"; echo "$OUT" | tail -25
+fi
+if printf '%s' "$OUT" | grep -q "mytribe/functions" && printf '%s' "$OUT" | grep -q "stripe"; then
+  ok "the refusal names the drifted directory and package"
+else
+  bad "the refusal did not name mytribe/functions or stripe"; echo "$OUT" | tail -25
+fi
+if printf '%s' "$OUT" | grep -q "npm ci --prefix mytribe/functions"; then
+  ok "the refusal prints the exact npm ci command that fixes it"
+else
+  bad "the refusal did not print the fix command"; echo "$OUT" | tail -25
+fi
+if printf '%s' "$OUT" | grep -qi "1\. Check"; then
+  bad "step 1 ran despite the dependency drift refusal"
+else
+  ok "step 1 never ran; the release stopped at step 0a, before anything built"
+fi
+if [ -n "$(cat "$D20/calls" 2>/dev/null)" ]; then
+  bad "something reached firebase despite the drift refusal"
+else
+  ok "nothing was deployed before the drift refusal"
+fi
+# Step 0a sits BEFORE the "release this commit?" confirm now, precisely so an
+# operator who says yes is not then told no. RELEASE_YES=1 prints "continuing
+# without prompting" the moment confirm() runs; its total absence here proves
+# confirm never ran at all, i.e. the refusal really did land before it.
+if printf '%s' "$OUT" | grep -q "continuing without prompting"; then
+  bad "the release prompted for confirmation before refusing on dependency drift"
+else
+  ok "the release never reaches the confirm prompt when drift refuses it"
+fi
+# A step 0a refusal stops before any deploy, so the stop message (#840) must say
+# nothing was deployed, not that production "may be PARTIALLY shipped".
+if grep -q "Nothing was deployed by this run" "$D20/out" && ! grep -q "PARTIALLY" "$D20/out"; then
+  ok "a step 0a refusal's stop message says nothing was deployed"
+else
+  bad "a step 0a refusal's stop message did not say nothing was deployed"; sed 's/\x1b\[[0-9;]*m//g' "$D20/out" | tail -8
+fi
+
+# ---------------------------------------------------------------------------
+# 24. The workspace root drifting (vitest's half of the incident) refuses the
+#     same way, naming the plain `npm ci` that fixes the root install.
+# ---------------------------------------------------------------------------
+D21="$(make_repo)"; write_stubs "$D21"
+# vitest is declared by a WORKSPACE MEMBER (mytribe/web), pinned in the ROOT
+# lockfile, and installed (mismatched) in the ROOT node_modules: the exact
+# hoisted shape a real `npm install` leaves, and the half of the 2026-09-13
+# incident the standalone mytribe/functions case above does not cover.
+mkdir -p "$D21/repo/mytribe/web"
+printf '{ "name": "mytribe-web", "dependencies": { "vitest": "^5.0.0" } }\n' \
+  > "$D21/repo/mytribe/web/package.json"
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  const lock = JSON.parse(fs.readFileSync(p, "utf8"));
+  lock.packages = lock.packages || {};
+  lock.packages["node_modules/vitest"] = { version: "5.0.0" };
+  fs.writeFileSync(p, JSON.stringify(lock));
+' "$D21/repo/package-lock.json"
+commit_all "$D21"
+install_pkg "$D21/repo" vitest 4.1.11
+arm_ci "$D21"
+RC="$(run_release "$D21" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$D21/calls")"
+OUT="$(cat "$D21/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "vitest"; then
+  ok "workspace root drift refuses the release and names the package"
+else
+  bad "workspace root drift did not refuse (rc $RC)"; echo "$OUT" | tail -25
+fi
+# Strip ANSI color codes before anchoring on a whole line: red() wraps the
+# printed line in an escape prefix/suffix, so `^...$` never matches the raw
+# text otherwise.
+PLAIN="$(printf '%s' "$OUT" | sed -E $'s/\x1b\\[[0-9;]*m//g')"
+if printf '%s' "$PLAIN" | grep -qE '^ *npm ci *$'; then
+  ok "the workspace refusal prints the plain 'npm ci' fix, not a --prefix'd one"
+else
+  bad "the workspace refusal did not print bare 'npm ci'"; echo "$OUT" | tail -25
+fi
+# A workspace MEMBER never has its own lockfile, and that is normal, not a
+# defect, since the three of them share the root's. `npm ci` run INSIDE one
+# (e.g. `npm ci --prefix mytribe/web`) is a real, separate incident: it exits
+# 0 and SILENTLY DROPS whatever that member does not carry in its own
+# (nonexistent) lockfile, which is not the same tree `npm ci` at the root
+# produces. So the fix this step prints must never suggest running npm
+# inside mytribe/web, auntieos-admin, or packages/geo, only at the root.
+if printf '%s' "$OUT" | grep -qE -- '--prefix (mytribe/web|auntieos-admin|packages/geo)\b'; then
+  bad "the workspace refusal named npm ci --prefix inside a workspace MEMBER"
+  echo "$OUT" | tail -25
+else
+  ok "the fix never suggests npm ci --prefix inside a workspace member"
+fi
+
+# ---------------------------------------------------------------------------
+# 24b. A garbage/truncated lockfile is UNREADABLE, not clean. A caught-and-
+#      swallowed parse error used to print nothing and look identical to no
+#      drift at all, which would have let a release ship against a tree
+#      nothing had actually verified.
+# ---------------------------------------------------------------------------
+D21B="$(make_repo)"; write_stubs "$D21B"
+# node_modules must actually EXIST for the check to read anything at all: an
+# absent node_modules is the ordinary "not installed yet" state and returns
+# before ever opening the lockfile, which would make this test pass for the
+# wrong reason (never reaching the corrupt file).
+mkdir -p "$D21B/repo/mytribe/functions/node_modules"
+printf 'this is not json' > "$D21B/repo/mytribe/functions/package-lock.json"
+commit_all "$D21B"
+arm_ci "$D21B"
+RC="$(run_release "$D21B" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$D21B/calls")"
+OUT="$(cat "$D21B/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qi "cannot be checked\|not valid JSON"; then
+  ok "an unreadable (garbage) lockfile refuses the release rather than reporting clean"
+else
+  bad "a garbage lockfile did not refuse the release; rc=$RC"; echo "$OUT" | tail -25
+fi
+if printf '%s' "$OUT" | grep -q "mytribe/functions matches its lockfile"; then
+  bad "a garbage lockfile was reported as matching (clean)"
+else
+  ok "a garbage lockfile is never reported as matching"
+fi
+if [ -n "$(cat "$D21B/calls" 2>/dev/null)" ]; then
+  bad "something reached firebase despite the unreadable-lockfile refusal"
+else
+  ok "nothing was deployed before the unreadable-lockfile refusal"
+fi
+
+# ---------------------------------------------------------------------------
+# 25. No drift -> the release proceeds. Every case above this one that ran
+#     with no drift declared (an absent node_modules, reported "not installed
+#     yet") already passed, which covers the common case; this is the OTHER
+#     passing state, a real install that matches its lockfile, asserted
+#     explicitly so a future change cannot silently stop reporting it while
+#     those other cases stay green for an unrelated reason.
+# ---------------------------------------------------------------------------
+D22="$(make_repo)"; write_stubs "$D22"
+declare_dep "$D22/repo/mytribe/functions" stripe 18.5.0
+mkdir -p "$D22/repo/mytribe/web"
+printf '{ "name": "mytribe-web", "dependencies": { "vitest": "^5.0.0" } }\n' \
+  > "$D22/repo/mytribe/web/package.json"
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  const lock = JSON.parse(fs.readFileSync(p, "utf8"));
+  lock.packages = lock.packages || {};
+  lock.packages["node_modules/vitest"] = { version: "5.0.0" };
+  fs.writeFileSync(p, JSON.stringify(lock));
+' "$D22/repo/package-lock.json"
+commit_all "$D22"
+install_pkg "$D22/repo/mytribe/functions" stripe 18.5.0
+install_pkg "$D22/repo" vitest 5.0.0
+arm_ci "$D22"
+RC="$(run_release "$D22" DRY_RUN=1 RELEASE_YES=1)"
+OUT="$(cat "$D22/out")"
+if [ "$RC" -eq 0 ] &&
+   printf '%s' "$OUT" | grep -q "mytribe/functions matches its lockfile" &&
+   printf '%s' "$OUT" | grep -q "workspace root (every npm workspace member) matches its lockfile"; then
+  ok "a clean, fully-installed tree reports matching both units and does not block the release"
+else
+  bad "a clean install did not report as matching"; echo "$OUT" | tail -25
+fi
+
+# ---------------------------------------------------------------------------
+# 26. auntieos-admin/web/functions drift is checked ONLY under
+#     RELEASE_INCLUDE_ADMIN_FUNCTIONS=1, the flag that actually builds and
+#     deploys it (step 5's neighbour). Off, this run is not touching that
+#     codebase, so its drift must not block releases that never read it.
+# ---------------------------------------------------------------------------
+add_admin_functions() {
+  local dir="$1"
+  mkdir -p "$dir/auntieos-admin/web/functions"
+  printf '{ "name": "auntieos-functions", "dependencies": {} }\n' \
+    > "$dir/auntieos-admin/web/functions/package.json"
+  printf '{ "name": "auntieos-functions", "lockfileVersion": 3, "packages": {} }\n' \
+    > "$dir/auntieos-admin/web/functions/package-lock.json"
+}
+
+D23="$(make_repo)"; write_stubs "$D23"
+add_admin_functions "$D23/repo"
+declare_dep "$D23/repo/auntieos-admin/web/functions" "@anthropic-ai/sdk" 0.124.0
+commit_all "$D23"
+install_pkg "$D23/repo/auntieos-admin/web/functions" "@anthropic-ai/sdk" 0.100.0
+arm_ci "$D23"
+RC="$(run_release "$D23" DRY_RUN=1 RELEASE_YES=1)"
+OUT="$(cat "$D23/out")"
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "NOT CHECKED"; then
+  ok "admin-functions drift is not checked when RELEASE_INCLUDE_ADMIN_FUNCTIONS is off"
+else
+  bad "an unchecked admin-functions codebase blocked (or stopped saying so); rc=$RC"
+  echo "$OUT" | tail -25
+fi
+
+RC="$(run_release "$D23" DRY_RUN=1 RELEASE_YES=1 RELEASE_INCLUDE_ADMIN_FUNCTIONS=1)"
+OUT="$(cat "$D23/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "auntieos-admin/web/functions" &&
+   printf '%s' "$OUT" | grep -q "npm ci --prefix auntieos-admin/web/functions"; then
+  ok "the same drift refuses once RELEASE_INCLUDE_ADMIN_FUNCTIONS=1 actually ships it"
+else
+  bad "RELEASE_INCLUDE_ADMIN_FUNCTIONS=1 did not catch the admin-functions drift"
+  echo "$OUT" | tail -25
+fi
+
+# ---------------------------------------------------------------------------
+# 27. A transitive-only bump (the shape a Dependabot GROUP update takes) in
+#     step 0a refuses the release, the same as a direct-dependency bump.
+#     Only direct dependencies used to be compared, which missed this.
+# ---------------------------------------------------------------------------
+D24C="$(make_repo)"; write_stubs "$D24C"
+declare_dep "$D24C/repo/mytribe/functions" stripe 18.5.0
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  const lock = JSON.parse(fs.readFileSync(p, "utf8"));
+  lock.packages["node_modules/stripe/node_modules/nested-thing"] = { version: "2.0.0" };
+  fs.writeFileSync(p, JSON.stringify(lock));
+' "$D24C/repo/mytribe/functions/package-lock.json"
+commit_all "$D24C"
+install_pkg "$D24C/repo/mytribe/functions" stripe 18.5.0   # the direct dep MATCHES
+cat > "$D24C/repo/mytribe/functions/node_modules/.package-lock.json" <<'LOCK'
+{ "packages": {
+  "node_modules/stripe": { "version": "18.5.0" },
+  "node_modules/stripe/node_modules/nested-thing": { "version": "1.0.0" }
+} }
+LOCK
+arm_ci "$D24C"
+RC="$(run_release "$D24C" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$D24C/calls")"
+OUT="$(cat "$D24C/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "nested-thing (1.0.0, lockfile says 2.0.0)"; then
+  ok "a transitive-only bump refuses the release even though the direct dependency matches"
+else
+  bad "a transitive-only bump did not refuse the release; rc=$RC"; echo "$OUT" | tail -25
+fi
+if [ -n "$(cat "$D24C/calls" 2>/dev/null)" ]; then
+  bad "something reached firebase despite the transitive-drift refusal"
+else
+  ok "nothing was deployed before the transitive-drift refusal"
+fi
+
+# ---------------------------------------------------------------------------
+# 28. A dependency declared in package.json with NO lockfile entry at all
+#     refuses the release. package.json and package-lock.json disagreeing
+#     with EACH OTHER used to be silently skipped (not compared against
+#     node_modules at all), which is a different failure than "installed
+#     but wrong version".
+# ---------------------------------------------------------------------------
+D24D="$(make_repo)"; write_stubs "$D24D"
+# node_modules must actually EXIST, or the check returns the ordinary "not
+# installed yet" state before ever opening package.json/package-lock.json to
+# compare them against each other.
+mkdir -p "$D24D/repo/mytribe/functions/node_modules"
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  const pj = JSON.parse(fs.readFileSync(p, "utf8"));
+  pj.dependencies = pj.dependencies || {};
+  pj.dependencies["ghost-pkg"] = "^1.0.0";
+  fs.writeFileSync(p, JSON.stringify(pj));
+' "$D24D/repo/mytribe/functions/package.json"
+commit_all "$D24D"
+arm_ci "$D24D"
+RC="$(run_release "$D24D" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$D24D/calls")"
+OUT="$(cat "$D24D/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "ghost-pkg (declared, but not in package-lock.json)"; then
+  ok "a declared dependency with no lockfile entry refuses the release"
+else
+  bad "an unlocked declared dependency did not refuse the release; rc=$RC"; echo "$OUT" | tail -25
+fi
+if [ -n "$(cat "$D24D/calls" 2>/dev/null)" ]; then
+  bad "something reached firebase despite the unlocked-dependency refusal"
+else
+  ok "nothing was deployed before the unlocked-dependency refusal"
+fi
+
+# ---------------------------------------------------------------------------
+# 29. A LIST call that specifically TIMES OUT (#839/#852), not the shared
+#     stub's ordinary exit-1 failure above. This must refuse with its OWN
+#     exit code (4) and its own wording, never the "has no value" refusal a
+#     genuinely missing secret gets, and never `gcloud secrets create` advice
+#     for a store that might hold every one of the values.
+# ---------------------------------------------------------------------------
 D="$(make_repo)"; write_stubs "$D"
 secret_store_list_hangs "$D"
 fixture_all_green "$D/fixtures/$(cd "$D/repo" && git rev-parse HEAD)"
