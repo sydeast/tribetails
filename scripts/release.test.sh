@@ -101,6 +101,26 @@ make_repo() {
   # runs is not there.
   cp "$REPO_SCRIPTS"/*.mjs "$r/scripts/" 2>/dev/null
   cp "$REPO_SCRIPTS"/*.py "$r/scripts/" 2>/dev/null
+  # scripts/lib/: step 0a sources scripts/lib/dep-drift.sh, which in turn
+  # shells out to the two Node scripts beside it. Same reason as the .mjs
+  # copy above -- without this the step under test dies on a missing file
+  # rather than exercising the drift check itself.
+  mkdir -p "$r/scripts/lib"
+  cp "$REPO_SCRIPTS"/lib/*.sh "$REPO_SCRIPTS"/lib/*.js "$r/scripts/lib/" 2>/dev/null
+
+  # 0a reads a root lockfile and mytribe/functions' own lockfile. Empty
+  # (no dependencies declared) so a fully-synthetic repo with no real
+  # node_modules reports "not installed yet" rather than "no lockfile at
+  # all"; the drift-specific cases below add a real, mismatched install on
+  # top of this baseline.
+  printf '{ "name": "synthetic-functions", "dependencies": {} }\n' \
+    > "$r/mytribe/functions/package.json"
+  printf '{ "name": "synthetic-functions", "lockfileVersion": 3, "packages": {} }\n' \
+    > "$r/mytribe/functions/package-lock.json"
+  printf '{ "name": "synthetic-root", "private": true, "workspaces": ["packages/*", "auntieos-admin", "mytribe/web"] }\n' \
+    > "$r/package.json"
+  printf '{ "name": "synthetic-root", "lockfileVersion": 3, "packages": {} }\n' \
+    > "$r/package-lock.json"
 
   # safe-deploy refuses a rules deploy unless these two are byte-identical.
   printf 'rules_version = "2";\n' > "$r/mytribe/firestore.rules"
@@ -188,7 +208,7 @@ STUB
   # The same entries the real .gitignore carries for these, because step 0
   # refuses a dirty tree and .release-state and the APK are both untracked
   # by design. Without this the test would be testing the dirty-tree guard.
-  printf '.release-state\n.release-functions\nauntieos-admin/android/app/build/\nmytribe/build/\n' > "$r/.gitignore"
+  printf '.release-state\n.release-functions\nauntieos-admin/android/app/build/\nmytribe/build/\nnode_modules/\n' > "$r/.gitignore"
 
   ( cd "$r"
     git init -q -b main .
@@ -729,6 +749,17 @@ commit_change() {
     printf '%s\n' "$line" >> "$file"
     git add -A
     git commit -qm "change $file"
+    git push -q origin main
+  ) >/dev/null 2>&1
+}
+
+# commit_all <dir>: land and push WHATEVER is sitting uncommitted in the repo,
+# for cases that set up several files at once (a declared dependency, a
+# mismatched install) rather than one line in one file.
+commit_all() {
+  ( cd "$1/repo"
+    git add -A
+    git commit -qm "test: dependency drift setup"
     git push -q origin main
   ) >/dev/null 2>&1
 }
@@ -1507,11 +1538,326 @@ else
   ok "an unreadable store never claims the client config resolved"
 fi
 
-# A LIST call that specifically TIMES OUT (#839/#852), not the shared stub's
-# ordinary exit-1 failure above. This must refuse with its OWN exit code (4)
-# and its own wording, never the "has no value" refusal a genuinely missing
-# secret gets, and never `gcloud secrets create` advice for a store that might
-# hold every one of the values.
+# ---------------------------------------------------------------------------
+# 23. Dependency drift (step 0a, #841). On 2026-09-13 a release tested
+#     mytribe/web against a node_modules that predated a Dependabot bump
+#     (vitest 4 -> 5, ~20 other packages, stripe in mytribe/functions) and
+#     failed a test CI had already passed on the same commit. These cases
+#     hold step 0a to refusing BEFORE step 1 runs, naming the drifted
+#     directory and the exact `npm ci` command that fixes it, and to letting
+#     a clean install (or one release.sh is not going to ship) straight
+#     through.
+# ---------------------------------------------------------------------------
+
+# declare_dep <dir> <name> <version>: add <name> to <dir>'s package.json AND
+# pin it in <dir>'s package-lock.json at <version>, so a later mismatched
+# node_modules entry is real drift (a declared, locked dependency) rather
+# than an "absent" package nobody asked for.
+declare_dep() {
+  local dir="$1" name="$2" version="$3"
+  node -e '
+    const fs = require("fs");
+    const [, pjPath, lockPath, name, version] = process.argv;
+    const pj = JSON.parse(fs.readFileSync(pjPath, "utf8"));
+    pj.dependencies = pj.dependencies || {};
+    pj.dependencies[name] = "^" + version;
+    fs.writeFileSync(pjPath, JSON.stringify(pj));
+    const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+    lock.packages = lock.packages || {};
+    lock.packages["node_modules/" + name] = { version };
+    fs.writeFileSync(lockPath, JSON.stringify(lock));
+  ' "$dir/package.json" "$dir/package-lock.json" "$name" "$version"
+}
+
+# install_pkg <dir> <name> <version>: node_modules/<name> at <version>, in
+# <dir>'s OWN node_modules: the standalone shape mytribe/functions and
+# auntieos-admin/web/functions both use.
+install_pkg() {
+  mkdir -p "$1/node_modules/$2"
+  printf '{ "name": "%s", "version": "%s" }\n' "$2" "$3" > "$1/node_modules/$2/package.json"
+}
+
+D20="$(make_repo)"; write_stubs "$D20"
+declare_dep "$D20/repo/mytribe/functions" stripe 18.5.0
+commit_all "$D20"
+install_pkg "$D20/repo/mytribe/functions" stripe 17.0.0
+arm_ci "$D20"
+RC="$(run_release "$D20" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$D20/calls")"
+OUT="$(cat "$D20/out")"
+if [ "$RC" -ne 0 ]; then
+  ok "dependency drift in mytribe/functions refuses the release"
+else
+  bad "dependency drift did not refuse the release"; echo "$OUT" | tail -25
+fi
+if printf '%s' "$OUT" | grep -q "mytribe/functions" && printf '%s' "$OUT" | grep -q "stripe"; then
+  ok "the refusal names the drifted directory and package"
+else
+  bad "the refusal did not name mytribe/functions or stripe"; echo "$OUT" | tail -25
+fi
+if printf '%s' "$OUT" | grep -q "npm ci --prefix mytribe/functions"; then
+  ok "the refusal prints the exact npm ci command that fixes it"
+else
+  bad "the refusal did not print the fix command"; echo "$OUT" | tail -25
+fi
+if printf '%s' "$OUT" | grep -qi "1\. Check"; then
+  bad "step 1 ran despite the dependency drift refusal"
+else
+  ok "step 1 never ran; the release stopped at step 0a, before anything built"
+fi
+if [ -n "$(cat "$D20/calls" 2>/dev/null)" ]; then
+  bad "something reached firebase despite the drift refusal"
+else
+  ok "nothing was deployed before the drift refusal"
+fi
+# Step 0a sits BEFORE the "release this commit?" confirm now, precisely so an
+# operator who says yes is not then told no. RELEASE_YES=1 prints "continuing
+# without prompting" the moment confirm() runs; its total absence here proves
+# confirm never ran at all, i.e. the refusal really did land before it.
+if printf '%s' "$OUT" | grep -q "continuing without prompting"; then
+  bad "the release prompted for confirmation before refusing on dependency drift"
+else
+  ok "the release never reaches the confirm prompt when drift refuses it"
+fi
+
+# ---------------------------------------------------------------------------
+# 24. The workspace root drifting (vitest's half of the incident) refuses the
+#     same way, naming the plain `npm ci` that fixes the root install.
+# ---------------------------------------------------------------------------
+D21="$(make_repo)"; write_stubs "$D21"
+# vitest is declared by a WORKSPACE MEMBER (mytribe/web), pinned in the ROOT
+# lockfile, and installed (mismatched) in the ROOT node_modules: the exact
+# hoisted shape a real `npm install` leaves, and the half of the 2026-09-13
+# incident the standalone mytribe/functions case above does not cover.
+mkdir -p "$D21/repo/mytribe/web"
+printf '{ "name": "mytribe-web", "dependencies": { "vitest": "^5.0.0" } }\n' \
+  > "$D21/repo/mytribe/web/package.json"
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  const lock = JSON.parse(fs.readFileSync(p, "utf8"));
+  lock.packages = lock.packages || {};
+  lock.packages["node_modules/vitest"] = { version: "5.0.0" };
+  fs.writeFileSync(p, JSON.stringify(lock));
+' "$D21/repo/package-lock.json"
+commit_all "$D21"
+install_pkg "$D21/repo" vitest 4.1.11
+arm_ci "$D21"
+RC="$(run_release "$D21" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$D21/calls")"
+OUT="$(cat "$D21/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "vitest"; then
+  ok "workspace root drift refuses the release and names the package"
+else
+  bad "workspace root drift did not refuse (rc $RC)"; echo "$OUT" | tail -25
+fi
+# Strip ANSI color codes before anchoring on a whole line: red() wraps the
+# printed line in an escape prefix/suffix, so `^...$` never matches the raw
+# text otherwise.
+PLAIN="$(printf '%s' "$OUT" | sed -E $'s/\x1b\\[[0-9;]*m//g')"
+if printf '%s' "$PLAIN" | grep -qE '^ *npm ci *$'; then
+  ok "the workspace refusal prints the plain 'npm ci' fix, not a --prefix'd one"
+else
+  bad "the workspace refusal did not print bare 'npm ci'"; echo "$OUT" | tail -25
+fi
+# A workspace MEMBER never has its own lockfile, and that is normal, not a
+# defect, since the three of them share the root's. `npm ci` run INSIDE one
+# (e.g. `npm ci --prefix mytribe/web`) is a real, separate incident: it exits
+# 0 and SILENTLY DROPS whatever that member does not carry in its own
+# (nonexistent) lockfile, which is not the same tree `npm ci` at the root
+# produces. So the fix this step prints must never suggest running npm
+# inside mytribe/web, auntieos-admin, or packages/geo, only at the root.
+if printf '%s' "$OUT" | grep -qE -- '--prefix (mytribe/web|auntieos-admin|packages/geo)\b'; then
+  bad "the workspace refusal named npm ci --prefix inside a workspace MEMBER"
+  echo "$OUT" | tail -25
+else
+  ok "the fix never suggests npm ci --prefix inside a workspace member"
+fi
+
+# ---------------------------------------------------------------------------
+# 24b. A garbage/truncated lockfile is UNREADABLE, not clean. A caught-and-
+#      swallowed parse error used to print nothing and look identical to no
+#      drift at all, which would have let a release ship against a tree
+#      nothing had actually verified.
+# ---------------------------------------------------------------------------
+D21B="$(make_repo)"; write_stubs "$D21B"
+# node_modules must actually EXIST for the check to read anything at all: an
+# absent node_modules is the ordinary "not installed yet" state and returns
+# before ever opening the lockfile, which would make this test pass for the
+# wrong reason (never reaching the corrupt file).
+mkdir -p "$D21B/repo/mytribe/functions/node_modules"
+printf 'this is not json' > "$D21B/repo/mytribe/functions/package-lock.json"
+commit_all "$D21B"
+arm_ci "$D21B"
+RC="$(run_release "$D21B" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$D21B/calls")"
+OUT="$(cat "$D21B/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qi "cannot be checked\|not valid JSON"; then
+  ok "an unreadable (garbage) lockfile refuses the release rather than reporting clean"
+else
+  bad "a garbage lockfile did not refuse the release; rc=$RC"; echo "$OUT" | tail -25
+fi
+if printf '%s' "$OUT" | grep -q "mytribe/functions matches its lockfile"; then
+  bad "a garbage lockfile was reported as matching (clean)"
+else
+  ok "a garbage lockfile is never reported as matching"
+fi
+if [ -n "$(cat "$D21B/calls" 2>/dev/null)" ]; then
+  bad "something reached firebase despite the unreadable-lockfile refusal"
+else
+  ok "nothing was deployed before the unreadable-lockfile refusal"
+fi
+
+# ---------------------------------------------------------------------------
+# 25. No drift -> the release proceeds. Every case above this one that ran
+#     with no drift declared (an absent node_modules, reported "not installed
+#     yet") already passed, which covers the common case; this is the OTHER
+#     passing state, a real install that matches its lockfile, asserted
+#     explicitly so a future change cannot silently stop reporting it while
+#     those other cases stay green for an unrelated reason.
+# ---------------------------------------------------------------------------
+D22="$(make_repo)"; write_stubs "$D22"
+declare_dep "$D22/repo/mytribe/functions" stripe 18.5.0
+mkdir -p "$D22/repo/mytribe/web"
+printf '{ "name": "mytribe-web", "dependencies": { "vitest": "^5.0.0" } }\n' \
+  > "$D22/repo/mytribe/web/package.json"
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  const lock = JSON.parse(fs.readFileSync(p, "utf8"));
+  lock.packages = lock.packages || {};
+  lock.packages["node_modules/vitest"] = { version: "5.0.0" };
+  fs.writeFileSync(p, JSON.stringify(lock));
+' "$D22/repo/package-lock.json"
+commit_all "$D22"
+install_pkg "$D22/repo/mytribe/functions" stripe 18.5.0
+install_pkg "$D22/repo" vitest 5.0.0
+arm_ci "$D22"
+RC="$(run_release "$D22" DRY_RUN=1 RELEASE_YES=1)"
+OUT="$(cat "$D22/out")"
+if [ "$RC" -eq 0 ] &&
+   printf '%s' "$OUT" | grep -q "mytribe/functions matches its lockfile" &&
+   printf '%s' "$OUT" | grep -q "workspace root (every npm workspace member) matches its lockfile"; then
+  ok "a clean, fully-installed tree reports matching both units and does not block the release"
+else
+  bad "a clean install did not report as matching"; echo "$OUT" | tail -25
+fi
+
+# ---------------------------------------------------------------------------
+# 26. auntieos-admin/web/functions drift is checked ONLY under
+#     RELEASE_INCLUDE_ADMIN_FUNCTIONS=1, the flag that actually builds and
+#     deploys it (step 5's neighbour). Off, this run is not touching that
+#     codebase, so its drift must not block releases that never read it.
+# ---------------------------------------------------------------------------
+add_admin_functions() {
+  local dir="$1"
+  mkdir -p "$dir/auntieos-admin/web/functions"
+  printf '{ "name": "auntieos-functions", "dependencies": {} }\n' \
+    > "$dir/auntieos-admin/web/functions/package.json"
+  printf '{ "name": "auntieos-functions", "lockfileVersion": 3, "packages": {} }\n' \
+    > "$dir/auntieos-admin/web/functions/package-lock.json"
+}
+
+D23="$(make_repo)"; write_stubs "$D23"
+add_admin_functions "$D23/repo"
+declare_dep "$D23/repo/auntieos-admin/web/functions" "@anthropic-ai/sdk" 0.124.0
+commit_all "$D23"
+install_pkg "$D23/repo/auntieos-admin/web/functions" "@anthropic-ai/sdk" 0.100.0
+arm_ci "$D23"
+RC="$(run_release "$D23" DRY_RUN=1 RELEASE_YES=1)"
+OUT="$(cat "$D23/out")"
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "NOT CHECKED"; then
+  ok "admin-functions drift is not checked when RELEASE_INCLUDE_ADMIN_FUNCTIONS is off"
+else
+  bad "an unchecked admin-functions codebase blocked (or stopped saying so); rc=$RC"
+  echo "$OUT" | tail -25
+fi
+
+RC="$(run_release "$D23" DRY_RUN=1 RELEASE_YES=1 RELEASE_INCLUDE_ADMIN_FUNCTIONS=1)"
+OUT="$(cat "$D23/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "auntieos-admin/web/functions" &&
+   printf '%s' "$OUT" | grep -q "npm ci --prefix auntieos-admin/web/functions"; then
+  ok "the same drift refuses once RELEASE_INCLUDE_ADMIN_FUNCTIONS=1 actually ships it"
+else
+  bad "RELEASE_INCLUDE_ADMIN_FUNCTIONS=1 did not catch the admin-functions drift"
+  echo "$OUT" | tail -25
+fi
+
+# ---------------------------------------------------------------------------
+# 27. A transitive-only bump (the shape a Dependabot GROUP update takes) in
+#     step 0a refuses the release, the same as a direct-dependency bump.
+#     Only direct dependencies used to be compared, which missed this.
+# ---------------------------------------------------------------------------
+D24C="$(make_repo)"; write_stubs "$D24C"
+declare_dep "$D24C/repo/mytribe/functions" stripe 18.5.0
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  const lock = JSON.parse(fs.readFileSync(p, "utf8"));
+  lock.packages["node_modules/stripe/node_modules/nested-thing"] = { version: "2.0.0" };
+  fs.writeFileSync(p, JSON.stringify(lock));
+' "$D24C/repo/mytribe/functions/package-lock.json"
+commit_all "$D24C"
+install_pkg "$D24C/repo/mytribe/functions" stripe 18.5.0   # the direct dep MATCHES
+cat > "$D24C/repo/mytribe/functions/node_modules/.package-lock.json" <<'LOCK'
+{ "packages": {
+  "node_modules/stripe": { "version": "18.5.0" },
+  "node_modules/stripe/node_modules/nested-thing": { "version": "1.0.0" }
+} }
+LOCK
+arm_ci "$D24C"
+RC="$(run_release "$D24C" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$D24C/calls")"
+OUT="$(cat "$D24C/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "nested-thing (1.0.0, lockfile says 2.0.0)"; then
+  ok "a transitive-only bump refuses the release even though the direct dependency matches"
+else
+  bad "a transitive-only bump did not refuse the release; rc=$RC"; echo "$OUT" | tail -25
+fi
+if [ -n "$(cat "$D24C/calls" 2>/dev/null)" ]; then
+  bad "something reached firebase despite the transitive-drift refusal"
+else
+  ok "nothing was deployed before the transitive-drift refusal"
+fi
+
+# ---------------------------------------------------------------------------
+# 28. A dependency declared in package.json with NO lockfile entry at all
+#     refuses the release. package.json and package-lock.json disagreeing
+#     with EACH OTHER used to be silently skipped (not compared against
+#     node_modules at all), which is a different failure than "installed
+#     but wrong version".
+# ---------------------------------------------------------------------------
+D24D="$(make_repo)"; write_stubs "$D24D"
+# node_modules must actually EXIST, or the check returns the ordinary "not
+# installed yet" state before ever opening package.json/package-lock.json to
+# compare them against each other.
+mkdir -p "$D24D/repo/mytribe/functions/node_modules"
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  const pj = JSON.parse(fs.readFileSync(p, "utf8"));
+  pj.dependencies = pj.dependencies || {};
+  pj.dependencies["ghost-pkg"] = "^1.0.0";
+  fs.writeFileSync(p, JSON.stringify(pj));
+' "$D24D/repo/mytribe/functions/package.json"
+commit_all "$D24D"
+arm_ci "$D24D"
+RC="$(run_release "$D24D" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$D24D/calls")"
+OUT="$(cat "$D24D/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "ghost-pkg (declared, but not in package-lock.json)"; then
+  ok "a declared dependency with no lockfile entry refuses the release"
+else
+  bad "an unlocked declared dependency did not refuse the release; rc=$RC"; echo "$OUT" | tail -25
+fi
+if [ -n "$(cat "$D24D/calls" 2>/dev/null)" ]; then
+  bad "something reached firebase despite the unlocked-dependency refusal"
+else
+  ok "nothing was deployed before the unlocked-dependency refusal"
+fi
+
+# ---------------------------------------------------------------------------
+# 29. A LIST call that specifically TIMES OUT (#839/#852), not the shared
+#     stub's ordinary exit-1 failure above. This must refuse with its OWN
+#     exit code (4) and its own wording, never the "has no value" refusal a
+#     genuinely missing secret gets, and never `gcloud secrets create` advice
+#     for a store that might hold every one of the values.
+# ---------------------------------------------------------------------------
 D="$(make_repo)"; write_stubs "$D"
 secret_store_list_hangs "$D"
 fixture_all_green "$D/fixtures/$(cd "$D/repo" && git rev-parse HEAD)"
