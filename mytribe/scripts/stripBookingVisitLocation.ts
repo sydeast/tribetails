@@ -59,8 +59,7 @@
  * Runbook: run DRY first, read the non-null values it lists, then re-run with
  * --allow-prod.
  */
-import { getApps, initializeApp } from 'firebase-admin/app';
-import { FieldValue, getFirestore, type Firestore } from 'firebase-admin/firestore';
+import { getApps, initializeApp, FieldValue, getFirestore, type Firestore } from './lib/firebaseAdmin';
 
 /**
  * Visits live at `families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}`,

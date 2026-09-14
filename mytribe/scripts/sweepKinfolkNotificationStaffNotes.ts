@@ -103,13 +103,14 @@
  *   4. Re-run step 1. A clean second run reports 0 to strip in both
  *      collections; that is the check that the sweep is done.
  */
-import { getApps, initializeApp } from 'firebase-admin/app';
 import {
+  getApps,
+  initializeApp,
   FieldValue,
   getFirestore,
   type Firestore,
   type QueryDocumentSnapshot,
-} from 'firebase-admin/firestore';
+} from './lib/firebaseAdmin';
 
 /** The inbox a kinfolk reads. Written by the trigger path and by promotions. */
 export const INBOX_COLLECTION = 'notifications';

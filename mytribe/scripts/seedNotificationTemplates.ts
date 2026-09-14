@@ -1,5 +1,4 @@
-import { initializeApp } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { initializeApp, getFirestore, FieldValue } from './lib/firebaseAdmin';
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import {

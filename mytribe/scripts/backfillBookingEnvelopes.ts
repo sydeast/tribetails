@@ -51,8 +51,7 @@
  *     with no Firestore deps.
  */
 
-import { getApps, initializeApp } from 'firebase-admin/app';
-import { getFirestore, FieldValue, type Firestore } from 'firebase-admin/firestore';
+import { getApps, initializeApp, getFirestore, FieldValue, type Firestore } from './lib/firebaseAdmin';
 
 type Mode = 'dry-run' | 'apply';
 
