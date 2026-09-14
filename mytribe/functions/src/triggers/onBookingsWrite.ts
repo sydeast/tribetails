@@ -203,18 +203,12 @@ export function cancellationDispatches(
  * an undo. Each helper names one event so a retry of it dedupes and the next
  * event sends.
  *
- * `kincare.changed` is named by what changed and to what, so a replay of the
- * same edit is one notification and a different edit is another.
+ * `kincare.changed` is NOT named by its content. A content hash would drop an
+ * edit that returns a field to an earlier value (A, B, back to A inside the
+ * window): the third edit hashes like the first. It uses the Firestore event
+ * id like every transition below (see bookingEventDedupeKey), because one
+ * write is one edit.
  */
-export function changeDedupeKey(
-  visitId: string,
-  after: BookingDoc,
-  changedFields: ReadonlyArray<keyof BookingDoc>,
-): string {
-  const values: Record<string, unknown> = {};
-  for (const f of changedFields) values[f] = after[f] ?? null;
-  return contentDedupeKey(`booking:${visitId}:changed`, { fields: [...changedFields].sort(), values });
-}
 
 /**
  * `kincare.reschedule.requested` is named by the ask itself: when it was made
@@ -489,11 +483,9 @@ export const onBookingsWrite = onDocumentWritten(
 
     if (afterStatus === 'confirmed' || afterStatus === 'approved') {
       if (changedFieldsAll.length > 0) {
-        await dispatch(
-          'kincare.changed',
-          { changedFields: changedFieldsAll },
-          changeDedupeKey(visitId, after, changedFieldsAll),
-        );
+        // #832: named by this write's event id (the dispatch default), so a
+        // redelivery of this write dedupes and every later edit sends.
+        await dispatch('kincare.changed', { changedFields: changedFieldsAll });
       }
     }
   }),

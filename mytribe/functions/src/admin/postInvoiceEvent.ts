@@ -85,12 +85,15 @@ function sameValue(a: unknown, b: unknown): boolean {
  *      wrote the doc and sent `invoice.new`, so the retry sees an existing doc
  *      and would have sent `invoice.updated` about a change that never happened.
  *      The dispatcher cannot catch that one, because the two keys differ.
- *   2. CONTENT IDENTITY (the dispatcher). An edit's `invoice.updated` carries a
+ *   2. EDIT IDENTITY (the dispatcher). An edit's `invoice.updated` carries a
  *      `dedupeKey` hashed from INVOICE_RENDERED_FIELDS of the invoice as the
- *      edit leaves it. Two attempts at the same edit that both read the doc
- *      before either wrote produce the same key and deliver once; a second,
- *      different edit (a corrected amount minutes after the invoice went out)
- *      produces a new key and sends, to the household and to the office copy.
+ *      edit leaves it AND the `invoiceEditRevision` the edit was based on. Two
+ *      attempts at the same edit that both read the doc before either wrote
+ *      share both and deliver once. A second, different edit (a corrected
+ *      amount minutes after the invoice went out) sends, to the household and
+ *      to the office copy. So does a REVERT: an edit returning the invoice to
+ *      an earlier value hashes like that earlier edit, and only the revision,
+ *      bumped by every real edit in the same write, tells them apart.
  *
  * There is deliberately no "this household was notified a moment ago" skip: it
  * dropped exactly the correction a household most needs to see.
@@ -127,11 +130,18 @@ export async function postInvoiceEventHandler(req: CallableRequest<unknown>): Pr
     ...intended,
   };
   const stamp = invoiceStateStampOf(merged, paidCents);
+  const unchanged = !isNew && isUnchanged(stored, intended);
+  // The revision this edit is based on. Bumped in the same write by every edit
+  // that changes something, so it moves on every real edit and never on a
+  // no-op retry (see the EDIT IDENTITY note above).
+  const baseRevision =
+    typeof stored?.['invoiceEditRevision'] === 'number' ? (stored['invoiceEditRevision'] as number) : 0;
   await ref.set(
     {
       ...args.payload,
       kinfolkId: args.familyId,
       ...stamp,
+      ...(unchanged ? {} : { invoiceEditRevision: baseRevision + 1 }),
       updatedAt: FieldValue.serverTimestamp(),
     },
     { merge: true },
@@ -144,7 +154,7 @@ export async function postInvoiceEventHandler(req: CallableRequest<unknown>): Pr
   });
 
   const key = isNew ? 'invoice.new' : 'invoice.updated';
-  if (!isNew && isUnchanged(stored, intended)) {
+  if (unchanged) {
     logEvent({
       severity: 'info',
       function: 'postInvoiceEvent',
@@ -165,7 +175,14 @@ export async function postInvoiceEventHandler(req: CallableRequest<unknown>): Pr
       data,
       // A new invoice keeps the plain `invoice:<id>` identity: there is one
       // issue per invoice. An edit is named by what it leaves on the invoice.
-      ...(isNew ? {} : { dedupeKey: contentDedupeKey(`invoice:${args.invoiceId}:updated`, rendered) }),
+      ...(isNew
+        ? {}
+        : {
+            dedupeKey: contentDedupeKey(`invoice:${args.invoiceId}:updated`, {
+              rendered,
+              basedOnRevision: baseRevision,
+            }),
+          }),
     });
     const duplicate = outcome.suppressed.find((s) => s.reason === 'duplicate');
     if (duplicate) {

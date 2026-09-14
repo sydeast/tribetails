@@ -22,7 +22,7 @@ import {
   NOTIFICATION_DEDUPE_WINDOW_MS,
   enqueueNotification,
 } from '../src/notifications/dispatcher';
-import { bookingEventDedupeKey, changeDedupeKey, rescheduleDedupeKey } from '../src/triggers/onBookingsWrite';
+import { bookingEventDedupeKey, rescheduleDedupeKey } from '../src/triggers/onBookingsWrite';
 import { visitDedupeKey } from '../src/admin/dispatchVisitNotification';
 import { kinTaleNoteDedupeKey } from '../src/triggers/onKinTaleUpdate';
 
@@ -59,25 +59,31 @@ async function aThenBThenRetryA(a: Send, b: Send, countFor: string): Promise<num
 
 const visit = { kinfolkId: 'fam1', batchId: 'b1', bookingId: 'v1', visitId: 'v1' };
 
-describe('kincare.changed (onBookingsWrite): named by what changed and to what', () => {
-  it('two different edits both send; a replay of the first does not', async () => {
-    const a = changeDedupeKey('v1', { startTime: Timestamp.fromMillis(NOW + 86_400_000) }, ['startTime']);
-    const b = changeDedupeKey('v1', { startTime: Timestamp.fromMillis(NOW + 2 * 86_400_000) }, ['startTime']);
-    expect(a).not.toBe(b);
-    expect(changeDedupeKey('v1', { startTime: Timestamp.fromMillis(NOW + 86_400_000) }, ['startTime'])).toBe(a);
-    const data = { ...visit, changedFields: ['startTime'] };
-    const sent = await aThenBThenRetryA(
-      { key: 'kincare.changed', recipientUid: 'kinUid', data, dedupeKey: a },
-      { key: 'kincare.changed', recipientUid: 'kinUid', data, dedupeKey: b },
-      'kinUid',
-    );
-    expect(sent).toBe(2);
-  });
+describe('kincare.changed (onBookingsWrite): named by the Firestore event, so A, B, back to A is three edits', () => {
+  it('an edit, a second edit and a revert to the first value all send; a redelivery of the first does not', async () => {
+    const ctx = buildDbMock({ writeThrough: true, docs: { 'businessSettings/admins': { uids: ['admin1'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const data = { ...visit, changedFields: ['notes'] };
+    const send = (eventId: string) =>
+      enqueueNotification({
+        key: 'kincare.changed',
+        recipientUid: 'kinUid',
+        data,
+        dedupeKey: bookingEventDedupeKey('v1', 'kincare.changed', eventId),
+      });
 
-  it('the same values reached through a different field set is a different change', () => {
-    const one = changeDedupeKey('v1', { notes: 'x', title: 'y' }, ['notes']);
-    const two = changeDedupeKey('v1', { notes: 'x', title: 'y' }, ['notes', 'title']);
-    expect(one).not.toBe(two);
+    await send('evt-1'); // notes: a -> b
+    vi.setSystemTime(NOW + 20_000);
+    await send('evt-2'); // notes: b -> a
+    vi.setSystemTime(NOW + 40_000);
+    await send('evt-3'); // notes: a -> b again, same content as evt-1
+    vi.setSystemTime(NOW + 60_000);
+    await send('evt-1'); // the platform redelivers the first write
+
+    const household = ctx.writes.filter(
+      (w) => w.path.startsWith('notifications/') && w.data.key === 'kincare.changed' && w.data.recipientUid === 'kinUid',
+    );
+    expect(household).toHaveLength(3);
   });
 });
 

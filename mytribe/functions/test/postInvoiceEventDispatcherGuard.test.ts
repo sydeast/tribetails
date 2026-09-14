@@ -66,10 +66,29 @@ describe('postInvoiceEvent over the real dispatcher', () => {
     // The retry of the due-date fix read the invoice BEFORE its first attempt
     // committed, so the unchanged check passes it; the content identity does not.
     await ctx.db.collection('invoices').doc('inv1').set(
-      { kinfolkId: 'fam1', invoiceNumber: '1042', total: 55, amountDue: 55 },
+      // As it stood before the due-date fix committed: after the amount fix,
+      // revision 1.
+      { kinfolkId: 'fam1', invoiceNumber: '1042', total: 55, amountDue: 55, invoiceEditRevision: 1 },
     );
     vi.setSystemTime(NOW + 90_000);
     await postInvoiceEventHandler(call({ dueDate: '2026-11-01' }));
     expect(sent(ctx.writes, 'invoice.updated', 'kin-uid-1')).toHaveLength(2);
+  });
+
+  it('an edit, a second edit, and a revert to the first value inside the window all send (A, B, A)', async () => {
+    const ctx = buildDbMock({
+      writeThrough: true,
+      docs: { 'invoices/inv1': { kinfolkId: 'fam1', invoiceNumber: '1042', total: 40, amountDue: 40 } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await postInvoiceEventHandler(call({ total: 55, amountDue: 55 }));
+    vi.setSystemTime(NOW + 30_000);
+    await postInvoiceEventHandler(call({ total: 40, amountDue: 40 }));
+    vi.setSystemTime(NOW + 60_000);
+    // Back to 55: the same content as the first edit, and a real edit.
+    await postInvoiceEventHandler(call({ total: 55, amountDue: 55 }));
+
+    expect(sent(ctx.writes, 'invoice.updated', 'kin-uid-1')).toHaveLength(3);
   });
 });
