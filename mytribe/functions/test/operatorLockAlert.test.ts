@@ -104,16 +104,18 @@ async function nineFailures(): Promise<void> {
 }
 
 /**
- * Every inbox doc for `uid`, minus the 5th-failure warning. `auth.failedLogin.attempts`
- * already reaches business admins through its secondary resolver, fires on the
- * way to a lock, and is not what this issue is about.
+ * Every inbox doc for `uid`, minus the 5th-failure warnings. The household's
+ * `auth.failedLogin.attempts` and the operator's
+ * `security.failedLogin.attempts.operator` (#877) both fire on the way to a
+ * lock and are covered by operatorFailedLoginWarning.test.ts.
  */
 function inboxFor(writes: Write[], uid: string): Write[] {
   return writes.filter(
     (w) =>
       w.path.startsWith('notifications/') &&
       w.data.recipientUid === uid &&
-      w.data.key !== 'auth.failedLogin.attempts',
+      w.data.key !== 'auth.failedLogin.attempts' &&
+      w.data.key !== 'security.failedLogin.attempts.operator',
   );
 }
 

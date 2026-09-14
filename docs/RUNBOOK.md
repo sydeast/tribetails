@@ -1063,6 +1063,7 @@ push carry content-free copy pointing at AuntieOS, and **SMS is skipped**
 | Template | Added by | What is missing until it is imported |
 |---|---|---|
 | `security.account.locked.operator` | #869 | The operator's lockout alert names neither the household nor the account email, and sends no SMS. |
+| `security.failedLogin.attempts.operator` | #877 | The operator's 5-failure warning does not name the household, the account email or the attempt count, and sends no SMS. |
 
 To import, follow [the template import list](#importing-notification-templates):
 Admin, then **Templates**, then **Import from repo** on web or the **Import** tab
