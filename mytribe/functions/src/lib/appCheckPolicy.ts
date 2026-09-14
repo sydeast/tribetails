@@ -129,6 +129,22 @@ export function resetAppCheckModeCache(): void {
  */
 export const APP_CHECK_COHORT: readonly string[] = ['getBusinessClosures'];
 
+/**
+ * #886: callables that must NEVER join an enforced cohort until every client
+ * that calls them sends an App Check token.
+ *
+ * `recordFailedLogin` is called right after a failed sign-in by six clients: both
+ * web apps, the Android admin, the portal Android app, the portal desktop REST
+ * client and the desktop console. The two desktop clients have no App Check SDK
+ * at all, and a web sign-in session is unattested by design (see Cohort 2
+ * above). Enforcing it would refuse every report, the clients swallow that
+ * refusal by design (the report is fire and forget), and account lockout would
+ * silently stop working with no error anywhere. `appCheckPolicy.test.ts` fails
+ * if a name here is added to [APP_CHECK_COHORT]; remove it from this list only in
+ * the same change that gives all of its clients a token.
+ */
+export const UNATTESTED_CLIENT_CALLABLES: readonly string[] = ['recordFailedLogin'];
+
 export function isAppCheckCohort(functionName: string): boolean {
   return APP_CHECK_COHORT.includes(functionName);
 }
