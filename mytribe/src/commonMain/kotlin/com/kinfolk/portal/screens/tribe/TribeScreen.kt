@@ -357,16 +357,27 @@ fun TribeScreen(
                         title = "Emergency Contact",
                         sub = "Who your Auntie calls if we can't reach you during a visit.",
                     )
+                    // #843: saveTribeProfile refuses a change without Home access,
+                    // so lock the fields and say why rather than fail on save.
+                    val canEditEmergency = loaded?.canEditHomeDetails != false
+                    if (!canEditEmergency) {
+                        Text(
+                            "Only someone with Home access can change the Emergency Contact.",
+                            style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted),
+                        )
+                    }
                     FieldPair(
                         wide = wide,
-                        first = { m -> KinField(value = emergencyName, onValueChange = { emergencyName = it }, label = "Contact Name", modifier = m) },
-                        second = { m -> KinField(value = emergencyPhone, onValueChange = { emergencyPhone = it }, label = "Contact Phone", modifier = m) },
+                        first = { m -> KinField(value = emergencyName, onValueChange = { emergencyName = it }, label = "Contact Name", modifier = m, enabled = canEditEmergency, fieldTestTag = "ec-name") },
+                        second = { m -> KinField(value = emergencyPhone, onValueChange = { emergencyPhone = it }, label = "Contact Phone", modifier = m, enabled = canEditEmergency, fieldTestTag = "ec-phone") },
                     )
                     KinField(
                         value = emergencyRelation,
                         onValueChange = { emergencyRelation = it },
                         label = "Relationship (e.g. Neighbor, Sister)",
                         modifier = Modifier.fillMaxWidth(),
+                        enabled = canEditEmergency,
+                        fieldTestTag = "ec-relation",
                     )
                 }
             }

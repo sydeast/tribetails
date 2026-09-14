@@ -186,4 +186,40 @@ describe('getMyTribeProfileHandler', () => {
     expect(res.homeAccess.gateCode).toBeNull();
     expect(res.homeAccess.customFields).toEqual([]);
   });
+
+  // #843: the portal disables the Emergency Contact inputs off this flag, the
+  // same permission saveTribeProfile now enforces on those keys.
+  it('tells a secondary without home_access they cannot edit home details', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u5': { kinfolkIds: ['3'] },
+        'families/3': FAMILY_DOC,
+        'families/3/homeAccess/current': HOME_ACCESS_DOC,
+        'families/3/members/u5': KINTALES_ONLY_MEMBER,
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyTribeProfileHandler } = await import('../src/portal/getMyTribeProfile');
+    const res = await getMyTribeProfileHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u5' } } as any);
+    expect(res.canEditHomeDetails).toBe(false);
+  });
+
+  it('tells a secondary with home_access, and a primary, they can edit home details', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u6': { kinfolkIds: ['3'] },
+        'clients/u7': { kinfolkIds: ['3'] },
+        'families/3': FAMILY_DOC,
+        'families/3/homeAccess/current': HOME_ACCESS_DOC,
+        'families/3/members/u6': HOME_ACCESS_MEMBER,
+        'families/3/members/u7': PRIMARY_MEMBER,
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyTribeProfileHandler } = await import('../src/portal/getMyTribeProfile');
+    const secondary = await getMyTribeProfileHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u6' } } as any);
+    const primary = await getMyTribeProfileHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u7' } } as any);
+    expect(secondary.canEditHomeDetails).toBe(true);
+    expect(primary.canEditHomeDetails).toBe(true);
+  });
 });

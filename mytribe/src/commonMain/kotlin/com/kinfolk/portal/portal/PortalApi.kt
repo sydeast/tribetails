@@ -784,6 +784,8 @@ class PortalApi(private val fns: FunctionsClient) {
                 customFields = decodeCustomFields(a["customFields"]),
                 updatedAtMs = a["updatedAtMs"]?.jsonPrimitive?.longOrNull,
             ),
+            // #843. Absent from an older backend: allowed, and the server still enforces it.
+            canEditHomeDetails = raw["canEditHomeDetails"]?.jsonPrimitive?.booleanOrNull ?: true,
         )
     }
 
