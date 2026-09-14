@@ -329,3 +329,80 @@ describe('getMyTribeProfileHandler: legacy Emergency Contact rows for old client
     expect(res.profile.customFields.find((f) => f.key === 'emergencyContactPhone')?.value).toBe('+18055550199');
   });
 });
+
+/**
+ * #829: families/{fid}/legacyEcServed/{uid} is the server-only record of which
+ * contact each caller was served, so saveTribeProfile can recognise an old
+ * client's echo of something it loaded before the office changed slot 1. It
+ * holds one-way keys, never a name or phone, and is never part of the response.
+ */
+describe('getMyTribeProfileHandler: the record of what each caller was served', () => {
+  type Contact = { name: string; phone: string; relationship: string | null };
+  const contact = (name: string, phone: string): Contact => ({ name, phone, relationship: null });
+  const SERVED_PATH = 'families/3/legacyEcServed/u1';
+
+  function household(opts: { member?: Record<string, unknown>; slot1?: Contact | null; familiesFields?: Array<Record<string, string>> } = {}) {
+    const docs: Record<string, any> = {
+      'clients/u1': { kinfolkIds: ['3'] },
+      'families/3/members/u1': opts.member ?? PRIMARY_MEMBER,
+      'families/3': { displayName: 'The Foster', customFields: opts.familiesFields ?? [{ key: 'k1', label: 'Anniversary', value: 'Oct 14' }] },
+      'kinfolk/3': {
+        firstName: 'Dana',
+        ...(opts.slot1 ? { emergencyContacts: [{ ...opts.slot1, recordedAt: null, updatedAt: null }] } : {}),
+      },
+    };
+    const ctx = buildDbMock({ docs, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    return { ctx, docs };
+  }
+  async function load() {
+    const { getMyTribeProfileHandler } = await import('../src/portal/getMyTribeProfile');
+    return getMyTribeProfileHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+  }
+  const servedKeys = (docs: Record<string, any>) => ((docs[SERVED_PATH]?.served ?? []) as Array<{ key: string }>).map((s) => s.key);
+
+  it('records a key for the served contact, writes only when it changes, keeps the last three, and never returns it', async () => {
+    const { legacyServedKey } = await import('../src/lib/emergencyContacts');
+    const A = contact('Rae Mercer', '+18055550199');
+    const { ctx, docs } = household({ slot1: A });
+
+    const first = await load();
+    await load();
+    expect(servedKeys(docs)).toEqual([legacyServedKey(A)]);
+    expect(ctx.writes.filter((w) => w.path === SERVED_PATH)).toHaveLength(1);
+    expect(JSON.stringify(first)).not.toContain('legacyEcServed');
+    expect(JSON.stringify(first)).not.toContain(legacyServedKey(A));
+    expect(JSON.stringify(docs[SERVED_PATH])).not.toContain('Rae');
+    expect(JSON.stringify(docs[SERVED_PATH])).not.toContain('0199');
+
+    const later = ['Lee Park', 'Sam Ortiz', 'Kim Lee'].map((n, i) => contact(n, `+1805555012${i}`));
+    for (const c of later) {
+      docs['kinfolk/3'] = { firstName: 'Dana', emergencyContacts: [{ ...c, recordedAt: null, updatedAt: null }] };
+      await load();
+    }
+    expect(servedKeys(docs)).toEqual(later.map(legacyServedKey));
+    expect(ctx.writes.filter((w) => w.path === SERVED_PATH)).toHaveLength(4);
+  });
+
+  it('records the families copy when that is what was served (not migrated yet)', async () => {
+    const { legacyServedKey } = await import('../src/lib/emergencyContacts');
+    const { docs } = household({
+      familiesFields: [
+        { key: 'emergencyContactName', label: 'Emergency Contact', value: 'Old Name' },
+        { key: 'emergencyContactPhone', label: 'Emergency Contact Phone', value: '555-0133' },
+      ],
+    });
+    await load();
+    expect(servedKeys(docs)).toEqual([legacyServedKey(contact('Old Name', '555-0133'))]);
+  });
+
+  it('records nothing when no contact was served, or for a member who is not ACTIVE', async () => {
+    const none = household();
+    await load();
+    expect(none.ctx.writes.find((w) => w.path === SERVED_PATH)).toBeUndefined();
+
+    const suspended = household({ member: { ...KINTALES_ONLY_MEMBER, status: 'SUSPENDED' }, slot1: contact('Rae Mercer', '+18055550199') });
+    await load();
+    expect(suspended.ctx.writes.find((w) => w.path === SERVED_PATH)).toBeUndefined();
+  });
+});

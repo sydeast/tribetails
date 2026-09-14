@@ -7,8 +7,13 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { hasKinfolkPerm } from '../lib/memberGate';
-import { readStoredEmergencyContacts } from '../lib/emergencyContacts';
-import { canReadEmergencyContacts } from './emergencyContacts';
+import {
+  LEGACY_EMERGENCY_CONTACT_KEYS,
+  legacyContactFromRows,
+  legacyServedKey,
+  readStoredEmergencyContacts,
+} from '../lib/emergencyContacts';
+import { canReadEmergencyContacts, recordLegacyServed } from './emergencyContacts';
 
 interface GetMyTribeProfileRequest { kinfolkId?: string }
 
@@ -62,6 +67,14 @@ export async function getMyTribeProfileHandler(
       : storedFields.filter((f) => !LEGACY_EMERGENCY_CONTACT_KEYS.has(f.key)),
   };
 
+  // #829: remember, server-side, which contact this caller was just served, so
+  // saveTribeProfile can tell an old client's untouched echo of it from an edit
+  // even after the office changes slot 1. Never part of this response.
+  const served = canReadContacts ? legacyContactFromRows(profile.customFields) : null;
+  if (served !== null) {
+    await recordLegacyServed(firestore, kinfolkId, uid, legacyServedKey(served));
+  }
+
   const [accessSnap, canSeeHome] = await Promise.all([
     firestore.doc(`families/${kinfolkId}/homeAccess/current`).get(),
     hasKinfolkPerm(uid, kinfolkId, 'home_access', req.auth?.token?.admin === true, 'getMyTribeProfile'),
@@ -90,12 +103,6 @@ function parseCustomFields(v: unknown): CustomField[] {
     }))
     .filter((c) => c.key.length > 0);
 }
-const LEGACY_EMERGENCY_CONTACT_KEYS: ReadonlySet<string> = new Set([
-  'emergencyContactName',
-  'emergencyContactPhone',
-  'emergencyContactRelation',
-]);
-
 /**
  * #829, old clients. Portal Android before Task 10 and cached portal web bundles
  * show and re-send the Emergency Contact as these three customFields rows. They

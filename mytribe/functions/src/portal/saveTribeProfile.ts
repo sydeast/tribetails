@@ -10,8 +10,14 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { hasKinfolkPerm } from '../lib/memberGate';
-import { comparablePhone, normaliseName, readStoredEmergencyContacts } from '../lib/emergencyContacts';
-import { parseEmergencyContactsInput, prepareEmergencyContactsSave } from './emergencyContacts';
+import {
+  LEGACY_EMERGENCY_CONTACT_KEYS,
+  legacyContactFromRows,
+  legacyServedKey,
+  readStoredEmergencyContacts,
+  sameLegacyContact,
+} from '../lib/emergencyContacts';
+import { parseEmergencyContactsInput, prepareEmergencyContactsSave, readLegacyServedKeys } from './emergencyContacts';
 
 const CustomFieldZ = z.object({
   key: z.string().min(1).max(80),
@@ -84,10 +90,11 @@ export async function saveTribeProfileHandler(
   // OLD CLIENTS. Portal Android on an old install and cached portal web bundles
   // still edit the contact as these rows, and their edit must reach the real
   // store or fail visibly, never vanish under "Saved." (operator ruling):
-  //   - an echo is a no-op: the values match the families copy the client
-  //     loaded, or match kinfolk slot 1. Matching the families copy matters,
-  //     because an old client re-sends what it loaded on every save, and that
-  //     stale copy must not overwrite a newer contact the office entered;
+  //   - an echo is a no-op: the values match a contact getMyTribeProfile served
+  //     this caller (the server-only record in portal/emergencyContacts.ts), the
+  //     families copy, or kinfolk slot 1. The served record is what catches an
+  //     untouched save of something loaded before the office changed slot 1,
+  //     which matches neither of the other two and must not overwrite it;
   //   - with Home access the edit replaces slot 1, keeps slot 2, and goes
   //     through saveEmergencyContacts' own parser and rules, so a refusal fails
   //     this whole call with the message a new client would show;
@@ -103,14 +110,33 @@ export async function saveTribeProfileHandler(
     const carried = storedEmergencyContactRows((stored.data() ?? {})['customFields']);
     customFields = [...customFields.filter((f) => !isEmergencyContactKey(f.key)), ...carried];
 
-    const sent = contactFromRows(sentRows);
+    const sent = legacyContactFromRows(sentRows);
+    const servedKeys = await readLegacyServedKeys(firestore, kinfolkId, uid);
+    if (sent === null && servedKeys.length > 0) {
+      // Served a contact, sent none. Either an old client cleared every contact
+      // field, or a new client (which never sends these rows) saved the profile;
+      // the rows alone cannot tell them apart. The contact stays as it is in both
+      // cases, because a household needs at least one and clearing it goes
+      // through saveEmergencyContacts' own rules. The rest of the profile saves.
+      // Logged at info, not warn, since the common case is a new client.
+      logEvent({
+        severity: 'info',
+        function: 'saveTribeProfile',
+        event: 'portal.tribe.emergency_contact_keys.none_sent',
+        uid,
+        extra: { kinfolkId, outcome: 'kept' },
+      });
+    }
     if (sent !== null) {
       let outcome: 'echo' | 'applied' | 'ignored' = 'echo';
       const kinSnap = await firestore.doc(`kinfolk/${kinfolkId}`).get();
       const current = readStoredEmergencyContacts((kinSnap.data() ?? {}) as Record<string, unknown>).contacts;
-      const loaded = contactFromRows(carried);
+      const loaded = legacyContactFromRows(carried);
       const slot1 = current[0];
-      const isEcho = (loaded !== null && sameContact(sent, loaded)) || (slot1 !== undefined && sameContact(sent, slot1));
+      const isEcho =
+        servedKeys.includes(legacyServedKey(sent)) ||
+        (loaded !== null && sameLegacyContact(sent, loaded)) ||
+        (slot1 !== undefined && sameLegacyContact(sent, slot1));
       if (!isEcho) {
         if (await hasKinfolkPerm(uid, kinfolkId, 'home_access', isAdmin, 'saveTribeProfile')) {
           // Validated before anything is written; a refusal throws out of this call.
@@ -160,6 +186,21 @@ export async function saveTribeProfileHandler(
   }
   const fields = [...Object.keys(update).filter((k) => k !== 'updatedAt'), ...(emergencyContactWrite !== null ? ['emergencyContacts'] : [])];
   logEvent({ severity: 'info', function: 'saveTribeProfile', event: 'portal.tribe.saved', uid, extra: { kinfolkId, fields } });
+  if (emergencyContactWrite !== null) {
+    // The same event saveEmergencyContacts logs for a save, so one query finds
+    // every Emergency Contact write whichever client made it. No names or phones.
+    logEvent({
+      severity: 'info',
+      function: 'saveTribeProfile',
+      event: 'kinfolk.emergencyContacts.saved',
+      uid,
+      extra: { kinfolkId, count: emergencyContactWrite.merged.length },
+    });
+  }
+  const targets = [
+    { collection: 'families', id: kinfolkId },
+    ...(emergencyContactWrite !== null ? [{ collection: 'kinfolk', id: kinfolkId }] : []),
+  ];
   await writeAuditEntry({
     status: 'SUCCESS',
     event: AUDIT_EVENTS.PROFILE_UPDATED,
@@ -171,7 +212,7 @@ export async function saveTribeProfileHandler(
     targetUid: kinfolkId,
     targetCollection: 'families',
     description: `Tribe profile updated: ${fields.join(', ')}`,
-    payload: { kinfolkId, fields },
+    payload: { kinfolkId, fields, targets },
   }).catch((err) => {
     logEvent({
       severity: 'warn', function: 'saveTribeProfile', event: 'audit.write.failed',
@@ -181,10 +222,8 @@ export async function saveTribeProfileHandler(
   return emergencyContactIgnored ? { ok: true, emergencyContactIgnored: true } : { ok: true };
 }
 
-const EMERGENCY_CONTACT_KEYS: ReadonlySet<string> = new Set(['emergencyContactName', 'emergencyContactPhone', 'emergencyContactRelation']);
-
 function isEmergencyContactKey(key: string): boolean {
-  return EMERGENCY_CONTACT_KEYS.has(key);
+  return LEGACY_EMERGENCY_CONTACT_KEYS.has(key);
 }
 
 /** The stored emergencyContact* rows, exactly as stored, for carrying through a save. */
@@ -198,30 +237,6 @@ function storedEmergencyContactRows(fields: unknown): Array<z.infer<typeof Custo
       isEmergencyContactKey((f as { key: string }).key) &&
       typeof (f as { label?: unknown }).label === 'string' &&
       typeof (f as { value?: unknown }).value === 'string',
-  );
-}
-
-interface OldClientContact {
-  name: string;
-  phone: string;
-  relationship: string | null;
-}
-
-/** The one contact an old client's emergencyContact* rows describe; null when there are no such rows. */
-function contactFromRows(rows: Array<{ key: string; value: string }>): OldClientContact | null {
-  const hits = rows.filter((r) => isEmergencyContactKey(r.key));
-  if (hits.length === 0) return null;
-  const valueOf = (key: string) => (hits.find((r) => r.key === key)?.value ?? '').trim();
-  const relationship = valueOf('emergencyContactRelation');
-  return { name: valueOf('emergencyContactName'), phone: valueOf('emergencyContactPhone'), relationship: relationship === '' ? null : relationship };
-}
-
-/** Same person, same number: name ignoring case and spacing, phone in any spelling, relationship trimmed. */
-function sameContact(a: OldClientContact, b: OldClientContact): boolean {
-  return (
-    normaliseName(a.name) === normaliseName(b.name) &&
-    comparablePhone(a.phone) === comparablePhone(b.phone) &&
-    (a.relationship ?? '').trim() === (b.relationship ?? '').trim()
   );
 }
 

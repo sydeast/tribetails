@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { Timestamp } from 'firebase-admin/firestore';
 import { normalizeE164 } from './phoneNormalize';
 
@@ -56,6 +57,45 @@ export function comparablePhone(v: string | null | undefined): string | null {
     if (d === '') return null;
     return d.length === 10 ? `1${d}` : d;
   }
+}
+
+/**
+ * The three customFields rows old clients (portal Android before Task 10, cached
+ * portal web bundles) show and send for slot 1. getMyTribeProfile serves them;
+ * saveTribeProfile reads them back.
+ */
+export const LEGACY_EMERGENCY_CONTACT_KEYS: ReadonlySet<string> = new Set([
+  'emergencyContactName',
+  'emergencyContactPhone',
+  'emergencyContactRelation',
+]);
+
+/** The one contact a set of legacy rows describes; null when there are no such rows. */
+export function legacyContactFromRows(rows: ReadonlyArray<{ key: string; value: string }>): EmergencyContactInput | null {
+  const hits = rows.filter((r) => LEGACY_EMERGENCY_CONTACT_KEYS.has(r.key));
+  if (hits.length === 0) return null;
+  const valueOf = (key: string) => (hits.find((r) => r.key === key)?.value ?? '').trim();
+  const relationship = valueOf('emergencyContactRelation');
+  return { name: valueOf('emergencyContactName'), phone: valueOf('emergencyContactPhone'), relationship: relationship === '' ? null : relationship };
+}
+
+/** Same person, same number: name ignoring case and spacing, phone in any spelling, relationship trimmed. */
+export function sameLegacyContact(a: EmergencyContactInput, b: EmergencyContactInput): boolean {
+  return (
+    normaliseName(a.name) === normaliseName(b.name) &&
+    comparablePhone(a.phone) === comparablePhone(b.phone) &&
+    (a.relationship ?? '').trim() === (b.relationship ?? '').trim()
+  );
+}
+
+/**
+ * A one-way key for "this contact was served to this caller", so the served
+ * record holds no name or phone. Two spellings sameLegacyContact calls equal
+ * get the same key.
+ */
+export function legacyServedKey(c: EmergencyContactInput): string {
+  const normalised = `${normaliseName(c.name)}|${comparablePhone(c.phone) ?? ''}|${(c.relationship ?? '').trim()}`;
+  return createHash('sha256').update(normalised).digest('hex').slice(0, 32);
 }
 
 function str(v: unknown): string {

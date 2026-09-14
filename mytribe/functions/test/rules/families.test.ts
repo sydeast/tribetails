@@ -106,4 +106,29 @@ describe('rules: /families/{fid}', () => {
     await assertFails(fs.doc('families/f1').get());
     await assertFails(fs.doc('families/f1/members/u-prim').get());
   });
+
+  // #829: families/{fid}/legacyEcServed/{uid} records which Emergency Contact
+  // getMyTribeProfile served each caller, so saveTribeProfile can tell an old
+  // client's echo from an edit. Written and read only by the Admin SDK. It has
+  // no match block, so every client is denied, including the member it is about
+  // and staff through the SDK; a member who can read families/{fid} still cannot
+  // reach it.
+  it('the served-contact record is closed to every client, the member it is about included', async () => {
+    const env = await getEnv();
+    await seedFamily({ fid: 'f1', primaryUid: 'u-prim', secondaries: [{ uid: 'u-sec', perms: {} }] });
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().doc('families/f1/legacyEcServed/u-prim').set({ served: [{ key: 'abc', at: new Date() }] });
+    });
+    const clients = [
+      asUser(env, 'u-prim').firestore(),
+      asUser(env, 'u-sec').firestore(),
+      env.authenticatedContext('staff-1', { admin: true }).firestore(),
+    ];
+    for (const fs of clients) {
+      await assertFails(fs.doc('families/f1/legacyEcServed/u-prim').get());
+      await assertFails(fs.collection('families/f1/legacyEcServed').get());
+      await assertFails(fs.doc('families/f1/legacyEcServed/u-prim').set({ served: [] }));
+      await assertFails(fs.doc('families/f1/legacyEcServed/u-sec').set({ served: [{ key: 'forged', at: new Date() }] }));
+    }
+  });
 });

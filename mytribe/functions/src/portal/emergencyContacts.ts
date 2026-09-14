@@ -181,6 +181,51 @@ export async function canReadEmergencyContacts(
   return !memberSnap.exists || (memberSnap.data() as MemberDoc).status === 'ACTIVE';
 }
 
+/** How many served contacts are remembered per caller: enough for a phone and a tablet that loaded at different times. */
+const LEGACY_SERVED_MAX = 3;
+
+/**
+ * `families/{kinfolkId}/legacyEcServed/{uid}`: the contacts getMyTribeProfile
+ * served this caller as legacy rows, newest last, as one-way keys
+ * (`legacyServedKey`), never a name or phone.
+ *
+ * WHY IT EXISTS. saveTribeProfile cannot see what an old client loaded. If the
+ * client loaded A and the office then set B, an untouched save re-sends A, which
+ * matches neither the families copy nor slot 1, and would overwrite B. A token
+ * carried by the client cannot fix that: old portal web shows unreserved rows as
+ * fields, and portal Android rebuilds its rows from schema keys. So the server
+ * remembers what it served, and a sent contact matching any of it is an echo.
+ *
+ * SERVER ONLY. No firestore.rules match block covers this path, so every client
+ * is denied (pinned in test/rules/families.test.ts), and getMyTribeProfile never
+ * puts it in a response.
+ */
+function legacyServedRef(firestore: Firestore, kinfolkId: string, uid: string): DocumentReference {
+  return firestore.doc(`families/${kinfolkId}/legacyEcServed/${uid}`);
+}
+
+function servedEntries(data: unknown): Array<{ key: string; at: unknown }> {
+  const served = (data as { served?: unknown } | undefined)?.served;
+  if (!Array.isArray(served)) return [];
+  return served.filter((s): s is { key: string; at: unknown } => typeof s === 'object' && s !== null && typeof (s as { key?: unknown }).key === 'string');
+}
+
+/** The keys of the contacts last served to this caller, oldest first. */
+export async function readLegacyServedKeys(firestore: Firestore, kinfolkId: string, uid: string): Promise<string[]> {
+  const snap = await legacyServedRef(firestore, kinfolkId, uid).get();
+  return snap.exists ? servedEntries(snap.data()).map((s) => s.key) : [];
+}
+
+/** Remembers that this contact was served to this caller. Writes only when it is not already the newest entry. */
+export async function recordLegacyServed(firestore: Firestore, kinfolkId: string, uid: string, key: string): Promise<void> {
+  const ref = legacyServedRef(firestore, kinfolkId, uid);
+  const snap = await ref.get();
+  const served = snap.exists ? servedEntries(snap.data()) : [];
+  if (served[served.length - 1]?.key === key) return;
+  const next = [...served.filter((s) => s.key !== key), { key, at: Timestamp.now() }].slice(-LEGACY_SERVED_MAX);
+  await ref.set({ served: next });
+}
+
 export async function listEmergencyContactsHandler(
   req: CallableRequest<unknown>,
 ): Promise<{ contacts: EmergencyContactDTO[]; canEdit: boolean; legacy: boolean }> {

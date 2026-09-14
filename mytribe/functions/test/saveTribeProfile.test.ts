@@ -364,3 +364,137 @@ describe('saveTribeProfileHandler: an old client editing the Emergency Contact',
     expect(ctx.writes).toHaveLength(0);
   });
 });
+
+/**
+ * #829, what this caller was served. saveTribeProfile cannot see what an old
+ * client loaded, and a client-carried token cannot survive old web (which shows
+ * unreserved rows as fields) or Android (which rebuilds rows from schema keys).
+ * So getMyTribeProfile records, server-side, a key for each contact it served
+ * each uid, and a sent contact matching any of them is an echo. These run both
+ * callables against one write-through store, in the order a household lives it.
+ */
+describe('saveTribeProfileHandler: what this caller was served decides an echo', () => {
+  type Contact = { name: string; phone: string; relationship: string | null };
+  const A: Contact = { name: 'Rae Mercer', phone: '+18055550199', relationship: 'Sister' };
+  const B: Contact = { name: 'Lee Park', phone: '+18055550177', relationship: null };
+  const C: Contact = { name: 'Sam Ortiz', phone: '805-555-0111', relationship: 'Brother' };
+  const K1 = { key: 'k1', label: 'Anniversary', value: 'Oct 14' };
+  const PERMS = { billing_full: false, messaging_direct: false, messaging_group: false, kin_edit: false, kintales_only: true };
+  const MEMBERS = {
+    primary: { role: 'PRIMARY', status: 'ACTIVE', permissions: {} },
+    secondaryNoHome: { role: 'SECONDARY', status: 'ACTIVE', displayName: 'Sam Foster', permissions: { ...PERMS, home_access: false } },
+  } as const;
+
+  const slot = (c: Contact) => ({ ...c, recordedAt: null, updatedAt: null });
+  const rows = (c: Contact) => [
+    { key: 'emergencyContactName', label: 'Emergency Contact', value: c.name },
+    { key: 'emergencyContactPhone', label: 'Emergency Contact Phone', value: c.phone },
+    ...(c.relationship ? [{ key: 'emergencyContactRelation', label: 'Emergency Contact Relation', value: c.relationship }] : []),
+  ];
+
+  function household(member: keyof typeof MEMBERS) {
+    const docs: Record<string, any> = {
+      'clients/u9': { kinfolkIds: ['3'] },
+      'families/3': { displayName: 'The Foster', customFields: [K1] },
+      'families/3/members/u9': MEMBERS[member],
+      'kinfolk/3': { firstName: 'Dana', lastName: 'Foster', phoneNumber: '(805) 555-0100', emergencyContacts: [slot(A)] },
+    };
+    const ctx = buildDbMock({ docs, writeThrough: true, queryDocs: { 'families/3/members': [{ id: 'u9', data: MEMBERS[member] }] } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    return { ctx, docs };
+  }
+
+  /** An old client opening the Tribe screen. */
+  async function load() {
+    const { getMyTribeProfileHandler } = await import('../src/portal/getMyTribeProfile');
+    return getMyTribeProfileHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u9' } } as any);
+  }
+  /** The office changing slot 1 in the admin, outside this caller's view. */
+  function officeSets(docs: Record<string, any>, c: Contact) {
+    docs['kinfolk/3'] = { ...docs['kinfolk/3'], emergencyContacts: [slot(c)] };
+  }
+  async function save(customFields: Array<{ key: string; label: string; value: string }>) {
+    const { saveTribeProfileHandler } = await import('../src/portal/saveTribeProfile');
+    return saveTribeProfileHandler({ data: { kinfolkId: '3', displayName: 'The Foster Tribe', customFields }, auth: { uid: 'u9' } } as any);
+  }
+  async function events() {
+    const { logEvent } = await import('../src/lib/logger');
+    return vi.mocked(logEvent).mock.calls.map((c) => c[0] as { severity: string; event: string; function?: string; extra?: Record<string, unknown> });
+  }
+  const slot1Name = (docs: Record<string, any>) => (docs['kinfolk/3'].emergencyContacts as Array<{ name: string }>)[0]?.name;
+
+  beforeEach(async () => {
+    const { logEvent } = await import('../src/lib/logger');
+    vi.mocked(logEvent).mockClear();
+  });
+
+  it.each(['primary', 'secondaryNoHome'] as const)(
+    '%s: loaded A, the office set B, an untouched save re-sends A: slot 1 stays B, no warn, not flagged',
+    async (member) => {
+      const { ctx, docs } = household(member);
+      await load();
+      officeSets(docs, B);
+      await expect(save([K1, ...rows(A)])).resolves.toEqual({ ok: true });
+      expect(slot1Name(docs)).toBe('Lee Park');
+      expect(ctx.writes.find((w) => w.path === 'kinfolk/3')).toBeUndefined();
+      expect(docs['families/3'].displayName).toBe('The Foster Tribe');
+      const logged = await events();
+      expect(logged.filter((e) => e.severity === 'warn')).toEqual([]);
+      expect(logged.find((e) => e.event === 'portal.tribe.emergency_contact_keys.stripped')?.extra).toMatchObject({ outcome: 'echo' });
+    },
+  );
+
+  it('two devices: served A, then B to the same uid, and the stale device re-sends A: still an echo', async () => {
+    const { ctx, docs } = household('primary');
+    await load();
+    officeSets(docs, B);
+    await load();
+    await expect(save([K1, ...rows(A)])).resolves.toEqual({ ok: true });
+    expect(slot1Name(docs)).toBe('Lee Park');
+    expect(ctx.writes.find((w) => w.path === 'kinfolk/3')).toBeUndefined();
+  });
+
+  it('a real edit to C is still applied, logged as the callable logs a save, with kinfolk in the audit targets', async () => {
+    const { docs } = household('primary');
+    await load();
+    await expect(save([K1, ...rows(C)])).resolves.toEqual({ ok: true });
+    expect(docs['kinfolk/3'].emergencyContacts[0]).toMatchObject({ name: 'Sam Ortiz', phone: '+18055550111', relationship: 'Brother' });
+    const logged = await events();
+    expect(logged.find((e) => e.event === 'kinfolk.emergencyContacts.saved')).toMatchObject({
+      severity: 'info',
+      extra: expect.objectContaining({ kinfolkId: '3', count: 1 }),
+    });
+    expect(JSON.stringify(logged)).not.toContain('Sam Ortiz');
+    expect(mocks.writeAuditEntryFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          targets: expect.arrayContaining([
+            { collection: 'families', id: '3' },
+            { collection: 'kinfolk', id: '3' },
+          ]),
+        }),
+      }),
+    );
+  });
+
+  it('served a contact, sent none: the contact is kept (one is required), the rest saves, and it is logged at info', async () => {
+    const { ctx, docs } = household('primary');
+    await load();
+    await expect(save([K1])).resolves.toEqual({ ok: true });
+    expect(slot1Name(docs)).toBe('Rae Mercer');
+    expect(ctx.writes.find((w) => w.path === 'kinfolk/3')).toBeUndefined();
+    expect(docs['families/3'].displayName).toBe('The Foster Tribe');
+    const logged = await events();
+    expect(logged.find((e) => e.event === 'portal.tribe.emergency_contact_keys.none_sent')).toMatchObject({
+      severity: 'info',
+      extra: expect.objectContaining({ kinfolkId: '3', outcome: 'kept' }),
+    });
+    expect(logged.filter((e) => e.severity === 'warn')).toEqual([]);
+  });
+
+  it('a caller who was never served a contact and sends none logs nothing about it', async () => {
+    household('primary');
+    await expect(save([K1])).resolves.toEqual({ ok: true });
+    expect((await events()).find((e) => e.event === 'portal.tribe.emergency_contact_keys.none_sent')).toBeUndefined();
+  });
+});
