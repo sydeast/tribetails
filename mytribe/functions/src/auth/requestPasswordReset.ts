@@ -62,11 +62,9 @@ const RequestPasswordResetArgs = z.object({
 export async function requestPasswordResetHandler(
   req: CallableRequest<unknown>,
 ): Promise<{ ok: true }> {
-  const remoteIp =
-    (req.rawRequest?.headers?.['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ??
-    req.rawRequest?.ip ??
-    'unknown';
-  await checkIpRateLimit(remoteIp);
+  // #891: keyed on the entry Google appended to X-Forwarded-For, not the
+  // caller's first entry; see `clientIpOf` in loginSecurity.ts.
+  const remoteIp = await checkIpRateLimit(req.rawRequest);
 
   const parsed = RequestPasswordResetArgs.safeParse(req.data);
   if (!parsed.success) {

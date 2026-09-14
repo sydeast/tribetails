@@ -45,7 +45,8 @@ import { FULL_CPU } from '../lib/runtimeOptions';
  * ⚠️ recordFailedLogin is unauthenticated, frontend reports after a failed
  * Firebase Auth signin call. Hardened with three layers to prevent
  * attacker-driven permanent lockouts of arbitrary emails (CWE-307 DoS):
- *   1. Per-IP sliding window (30/5min)
+ *   1. Per-IP sliding window (30/5min), keyed on the address Google appended
+ *      to X-Forwarded-For, not the caller's own first entry (#891, clientIpOf)
  *   2. Per-email sliding window (15/24h), caps target-specific harassment
  *   3. Finite lockout duration (30 min auto-clear), no Number.MAX_SAFE_INTEGER
  * App Check enforcement remains a TODO (requires client wiring).
@@ -103,7 +104,72 @@ export async function checkEmailRateLimit(email: string): Promise<void> {
   });
 }
 
-export async function checkIpRateLimit(rawIp: string): Promise<void> {
+/**
+ * How many proxies Google puts between the internet and this function that
+ * each append one entry to `X-Forwarded-For`. See `clientIpOf`.
+ */
+const TRUSTED_PROXY_HOPS = 1;
+
+type RawRequestLike = { headers?: Record<string, string | string[] | undefined>; ip?: string } | undefined;
+
+/**
+ * #891: the caller's IP as Google's front end saw it, for rate limiting and audit rows.
+ *
+ * WHY NOT THE FIRST `X-Forwarded-For` ENTRY. A caller can send its own
+ * `X-Forwarded-For`, and Google keeps what was sent and appends after it. The
+ * External Application Load Balancer docs say so directly: "The load balancer
+ * appends two IP addresses to the X-Forwarded-For header ... <existing-value>,
+ * <client-ip>,<load-balancer-ip>", and it does not verify anything before them
+ * (https://docs.cloud.google.com/load-balancing/docs/https, "X-Forwarded-For
+ * header"). The first entry is whatever the caller wrote. The #888 review
+ * showed it on the emulator: a rotating first entry got 32 of 32 reports
+ * through a 30-per-5-minute limit.
+ *
+ * WHY NOT `rawRequest.ip`. Gen 2 functions run on the Functions Framework,
+ * which calls `app.enable('trust proxy')` "To respect X-Forwarded-For header"
+ * (GoogleCloudPlatform/functions-framework-nodejs, src/server.ts). With
+ * `trust proxy` set to true, Express takes the client address as "the
+ * left-most entry in the X-Forwarded-For header" (https://expressjs.com/en/guide/behind-proxies.html).
+ * So `rawRequest.ip` is the same forgeable first entry.
+ *
+ * WHAT IS USED. The entry `TRUSTED_PROXY_HOPS` from the right. These callables
+ * are called straight at `cloudfunctions.net` (the SDKs and the desktop REST
+ * client; no Hosting rewrite points at them), where Google's front end appends
+ * one entry, the connecting client's address, after anything the caller sent.
+ * No Google page states that single append for Cloud Run ingress in so many
+ * words; it is the load balancer's documented behaviour minus the load
+ * balancer's own address, and it is what the operator can confirm after a
+ * release: send one report with a forged `X-Forwarded-For: 1.2.3.4` and read
+ * the `ip` on its `AUTH_LOGIN_FAIL` audit row, which must be the real address.
+ *
+ * IF A LOAD BALANCER OR HOSTING REWRITE IS EVER PUT IN FRONT, this must become
+ * 2: the rightmost entry would be the balancer's own address, and every caller
+ * would share one 30-per-5-minute bucket.
+ *
+ * With no header at all (the emulator, a local call) it falls back to
+ * `rawRequest.ip`, which is then the socket address, and then to 'unknown'.
+ */
+export function clientIpOf(rawRequest: RawRequestLike): string {
+  const header = rawRequest?.headers?.['x-forwarded-for'];
+  const joined = Array.isArray(header) ? header.join(',') : header ?? '';
+  const entries = joined
+    .split(',')
+    .map((e) => e.trim())
+    .filter((e) => e !== '');
+  if (entries.length > 0) {
+    return entries[Math.max(0, entries.length - TRUSTED_PROXY_HOPS)]!;
+  }
+  const socketIp = typeof rawRequest?.ip === 'string' ? rawRequest.ip.trim() : '';
+  return socketIp || 'unknown';
+}
+
+/**
+ * The shared per-IP limit (30 per 5 minutes) for the unauthenticated auth
+ * callables. Keyed on `clientIpOf` (#891), and returns that key so the caller
+ * stores the same address on its audit row.
+ */
+export async function checkIpRateLimit(rawRequest: RawRequestLike): Promise<string> {
+  const rawIp = clientIpOf(rawRequest);
   const ipKey = hashIp(rawIp);
   const ref = db().collection('ipRateLimits').doc(ipKey);
   const nowMs = Date.now();
@@ -119,6 +185,7 @@ export async function checkIpRateLimit(rawIp: string): Promise<void> {
     recent.push(nowMs);
     tx.set(ref, { timestamps: recent, updatedAtMs: nowMs }, { merge: true });
   });
+  return rawIp;
 }
 
 interface LoginAttempt {
@@ -463,18 +530,15 @@ type LockDecision =
 export async function recordFailedLoginHandler(
   req: CallableRequest<unknown>,
 ): Promise<RecordFailedLoginResponse> {
-  // Server-side IP (not the client-supplied args.ip which can be spoofed).
-  const remoteIp =
-    (req.rawRequest?.headers?.['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ??
-    req.rawRequest?.ip ??
-    'unknown';
   // #886 review: the IP limit runs BEFORE the request is parsed, so malformed
   // requests spend the same per-IP budget as well-formed ones. And a bad request
   // is `invalid-argument`, not a thrown ZodError: `wrapCallable` turns anything
   // that is not an HttpsError into `internal`, captures it to Sentry and writes an
   // audit failure row, so an unauthenticated caller could mint unlimited Sentry
   // events. Same order and code as `requestPasswordReset`.
-  await checkIpRateLimit(remoteIp);
+  // #891: the server-side IP is the entry Google appended (`clientIpOf`), never
+  // the caller's first `X-Forwarded-For` entry or the client-supplied `args.ip`.
+  const remoteIp = await checkIpRateLimit(req.rawRequest);
   const parsed = RecordFailedLoginArgs.safeParse(req.data);
   if (!parsed.success) {
     throw new HttpsError('invalid-argument', 'email (valid email address) is required');
