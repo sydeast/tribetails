@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Timestamp } from 'firebase-admin/firestore';
+import { Timestamp } from '../lib/firebaseAdmin';
 import { parseArgs, planEmergencyContactMigration, planFamiliesEmergencyContacts } from '../backfillKinfolkEmergencyContacts';
 
 const OTHER = { key: 'vetClinicId', label: 'Vet Clinic', value: 'clinic-1' };

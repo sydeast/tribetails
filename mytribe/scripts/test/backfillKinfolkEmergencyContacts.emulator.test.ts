@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { getApps, initializeApp, deleteApp } from 'firebase-admin/app';
-import { getFirestore, Timestamp, type Firestore } from 'firebase-admin/firestore';
+import { getApps, initializeApp, deleteApp, getFirestore, Timestamp, type Firestore } from '../lib/firebaseAdmin';
 import { buildPlan, buildFamiliesPlan, applyPlan } from '../backfillKinfolkEmergencyContacts';
 
 const EMULATOR = process.env['FIRESTORE_EMULATOR_HOST'];

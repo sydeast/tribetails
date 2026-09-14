@@ -43,8 +43,10 @@
  * Modes: default DRY RUN, prints a per-household diff. `--allow-prod` applies.
  * Runbook: the operator runs the dry run after release, reads it, then applies.
  */
-import { getApps, initializeApp } from 'firebase-admin/app';
-import { getFirestore, Timestamp, type Firestore } from 'firebase-admin/firestore';
+// The single firebase-admin import point (#846): resolved from
+// mytribe/functions/node_modules and guarded against a stray copy before the
+// first Firestore call.
+import { getApps, initializeApp, getFirestore, Timestamp, type Firestore } from './lib/firebaseAdmin';
 import { recordedAtForLegacy, timestampFromStored } from '../functions/src/lib/emergencyContacts';
 import { normalizeE164 } from '../functions/src/lib/phoneNormalize';
 
