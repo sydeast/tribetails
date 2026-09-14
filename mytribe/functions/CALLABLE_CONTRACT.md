@@ -1235,6 +1235,32 @@ every client in both directions: these callables are the only door.
   `permission-denied` for what it is and says the primary keeps the list, rather
   than drawing a broken panel over a working server.
 
+### saveTribeProfile / saveHomeAccess: `customFields` merge by key (#873)
+- `saveTribeProfile`
+  - req `{ kinfolkId?: string, displayName?: string /* 1..120 */, customFields?: CustomField[] /* max 40 */, removeCustomFieldKeys?: string[] /* 1..80 each, max 40 */ }`
+  - res `{ ok: true, emergencyContactIgnored?: true }`
+  - writes `families/{kinfolkId}.displayName` / `.customFields`
+- `saveHomeAccess`
+  - req `{ kinfolkId?: string, gateCode?: string | null, keyLocation?: string | null, wifiPassword?: string | null, customFields?: CustomField[] /* max 40 */, removeCustomFieldKeys?: string[] /* 1..80 each, max 40 */ }`
+  - res `{ ok: true }`
+  - writes `families/{kinfolkId}/homeAccess/current`
+- `CustomField` `{ key: string /* 1..80 */, label: string /* 1..80 */, value: string /* <= 1000 */ }`
+- MERGE, NEVER REPLACE. Until #873 both callables replaced `customFields` whole. The portal clients, in schema mode, rebuilt the list from the form schema's keys, so every stored row outside the schema (office-set rows shown as "Set by your Auntie", rows from an older schema, hand-added rows) was deleted on the household's next save. Now (`src/lib/customFieldsMerge.ts`):
+  - a sent row replaces the stored row with the same key, in the stored row's position; later stored copies of that key fold into it;
+  - a sent key with no stored row is appended, in sent order; a key sent twice, the last copy wins;
+  - a stored row the client did not send is kept as stored, value and position;
+  - a sent `value: ''` is a real clear: the row stays with an empty value;
+  - a stored row is deleted ONLY when its key is in `removeCustomFieldKeys`. Omitting a row never deletes it;
+  - a stored entry with no string `key` is carried through verbatim.
+  - A key both sent and named for removal is refused with `invalid-argument` and nothing is written.
+- OLD CLIENTS are safe by construction: they never send `removeCustomFieldKeys`, so the worst an old schema-mode client can do is overwrite the rows it sends. What they lose: an old client that blanks a vet or after-hours card field omits that row, and the omission no longer deletes it. The row stays until a current client saves. That is the safe direction for a data-loss fix.
+- `''` IS A CLEAR, NOT A NO-OP, because both old clients seed their schema form from every stored row: an untouched field echoes its stored value, and only a field the household emptied arrives as `''`. Treating `''` as "leave it" would silently undo those clears under "Saved.".
+- CLIENTS send the stored rows in order with only their own edits applied, name every blank card field that has a stored row in `removeCustomFieldKeys`, and never send an untouched schema field with no stored row as `''`. The full list (not a diff) is sent so the same payload is also right against a server that still replaces the list whole. Web `editCustomFields` / `schemaFieldRow` in `mytribe/web/src/api/tribeApi.ts`; Android `editCustomFields` / `schemaFieldRow` in `TribeScreen.kt` and the `removeCustomFieldKeys` parameter on `PortalApi.saveTribeProfile / saveHomeAccess`.
+- EMERGENCY CONTACT ROWS (#829). `saveTribeProfile` strips sent `emergencyContact*` rows (an old client's contact edit goes through the #829 path), keeps the stored copy in place for the migration, and ignores those keys in `removeCustomFieldKeys`. `saveHomeAccess` strips them from what is sent AND from the merged result, as it did when the list was replaced whole: nothing reads a copy there.
+- GATE: `saveTribeProfile` `resolveKinfolkAccess` (any household member or staff; contact edits need `home_access`). `saveHomeAccess` `resolveKinfolkAccess` + `requireKinfolkPerm(..., 'home_access')`. Secrets `SENTRY_DSN`, `AUNTIE_OPERATOR_UIDS`.
+- Not in `test/callableContract.test.ts`'s frozen set and not in `scripts/contracts/registry.ts`, so there is no generated mirror; `contracts:check` is unchanged.
+- Already-lost rows: `scripts/reportTruncatedCustomFields.ts` (read-only). No before-state is recorded (PROFILE_UPDATED audit carries field names only, `saveHomeAccess` writes no audit), so it lists lists that look like the old schema rebuild, with the portal-save evidence for each.
+
 ### saveEmergencyContacts / listEmergencyContacts (#829)
 - `saveEmergencyContacts`
   - req `{ kinfolkId?: string, contacts: Array<{ name: string /* 1..80 */, phone: string /* valid, stored E.164 */, relationship?: string | null /* <= 40, '' and null persist as null */ }> }` (strict, max 2)

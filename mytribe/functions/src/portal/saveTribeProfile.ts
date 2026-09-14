@@ -18,6 +18,7 @@ import {
   sameLegacyContact,
 } from '../lib/emergencyContacts';
 import { parseEmergencyContactsInput, prepareEmergencyContactsSave, readLegacyServedKeys } from './emergencyContacts';
+import { conflictingCustomFieldKeys, mergeCustomFields } from '../lib/customFieldsMerge';
 
 const CustomFieldZ = z.object({
   key: z.string().min(1).max(80),
@@ -29,11 +30,16 @@ const Args = z.object({
   kinfolkId: z.string().optional(),
   displayName: z.string().min(1).max(120).optional(),
   customFields: z.array(CustomFieldZ).max(40).optional(),
+  /** #873: the only way to delete a stored row. Emergency Contact keys are ignored here. */
+  removeCustomFieldKeys: z.array(z.string().min(1).max(80)).max(40).optional(),
 });
 
 /**
  * Updates `families/{kinfolkId}` doc with displayName and/or customFields.
  * Additive, only writes fields the caller passed.
+ *
+ * #873: `customFields` merges by key into the stored list (lib/customFieldsMerge.ts).
+ * A row the client did not send is kept; only `removeCustomFieldKeys` deletes.
  *
  * Safety: `families` is MyTribe-owned. AuntieOS reads this doc but does not
  * own writes. Updates are scoped to the caller's allowed kinfolkIds.
@@ -50,6 +56,10 @@ export async function saveTribeProfileHandler(
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
 
   const args = Args.parse(req.data);
+  const conflicts = conflictingCustomFieldKeys(args.customFields, args.removeCustomFieldKeys);
+  if (conflicts.length > 0) {
+    throw new HttpsError('invalid-argument', `A custom field cannot be both saved and removed: ${conflicts.join(', ')}.`);
+  }
   const firestore = db();
   // Was a hard clients/{uid}.kinfolkIds check with no staff path: an operator
   // impersonating a household loaded it fine (reads already went through
@@ -83,9 +93,11 @@ export async function saveTribeProfileHandler(
   // new portal stopped sending the keys.
   //
   // A STORED copy is carried through unchanged instead of being dropped, because
-  // `customFields` is replaced whole and a profile save must not destroy the
-  // only copy before the migration (scripts/backfillKinfolkEmergencyContacts.ts)
-  // moves it onto the kinfolk record and deletes it. (Operator: agreed.)
+  // a profile save must not destroy the only copy before the migration
+  // (scripts/backfillKinfolkEmergencyContacts.ts) moves it onto the kinfolk
+  // record and deletes it. (Operator: agreed.) Since #873 the list merges by
+  // key, so an unsent stored row is kept in place, and `removeCustomFieldKeys`
+  // cannot name one of these keys either.
   //
   // OLD CLIENTS. Portal Android on an old install and cached portal web bundles
   // still edit the contact as these rows, and their edit must reach the real
@@ -101,14 +113,22 @@ export async function saveTribeProfileHandler(
   //   - without Home access nothing is written to the contact and the reply
   //     carries emergencyContactIgnored.
   const isAdmin = req.auth?.token?.admin === true;
-  let customFields = args.customFields;
+  let customFields: unknown[] | undefined;
   let emergencyContactWrite: Awaited<ReturnType<typeof prepareEmergencyContactsSave>> | null = null;
   let emergencyContactIgnored = false;
-  if (customFields !== undefined) {
-    const sentRows = customFields.filter((f) => isEmergencyContactKey(f.key));
+  if (args.customFields !== undefined || args.removeCustomFieldKeys !== undefined) {
+    const sentFields = args.customFields ?? [];
+    const sentRows = sentFields.filter((f) => isEmergencyContactKey(f.key));
     const stored = await firestore.collection('families').doc(kinfolkId).get();
-    const carried = storedEmergencyContactRows((stored.data() ?? {})['customFields']);
-    customFields = [...customFields.filter((f) => !isEmergencyContactKey(f.key)), ...carried];
+    const storedFields = (stored.data() ?? {})['customFields'];
+    const carried = storedEmergencyContactRows(storedFields);
+    // #873: merged by key. Sent Emergency Contact rows never land, and stored
+    // ones are unsent and so kept where they are.
+    customFields = mergeCustomFields(
+      storedFields,
+      sentFields.filter((f) => !isEmergencyContactKey(f.key)),
+      (args.removeCustomFieldKeys ?? []).filter((k) => !isEmergencyContactKey(k)),
+    );
 
     const sent = legacyContactFromRows(sentRows);
     // Sent none (sent === null). Either an old client cleared every contact

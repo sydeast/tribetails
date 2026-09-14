@@ -217,3 +217,60 @@ describe('saveHomeAccessHandler', () => {
     expect(JSON.stringify(w!.data)).not.toContain('Rae Mercer');
   });
 });
+
+/**
+ * #873. The home-access schema path rebuilt `customFields` from schema keys and
+ * this callable replaced the stored list whole, deleting every other row. It now
+ * merges by key and removes a row only when named in `removeCustomFieldKeys`.
+ */
+describe('saveHomeAccessHandler: customFields merge by key (#873)', () => {
+  const OFFICE = { key: 'shed', label: 'Set by Auntie', value: 'Left of the gate' };
+  const ALARM = { key: 'alarm', label: 'Alarm Code', value: '5678' };
+  const AFTER = { key: 'afterHoursVetPhone', label: 'After-hours Phone', value: '805-555-0100' };
+
+  function home(stored: Array<Record<string, string>>) {
+    const docs: Record<string, any> = {
+      'clients/u1': { kinfolkIds: ['3'] },
+      [HOME_ACCESS_PATH]: { gateCode: '1234', customFields: stored },
+    };
+    const ctx = buildDbMock({ docs, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    return { ctx, docs };
+  }
+  async function save(data: Record<string, unknown>) {
+    const { saveHomeAccessHandler } = await import('../src/portal/saveHomeAccess');
+    return saveHomeAccessHandler({ data: { kinfolkId: '3', ...data }, auth: { uid: 'u1' } } as any);
+  }
+  const stored = (docs: Record<string, any>) => docs[HOME_ACCESS_PATH].customFields;
+
+  it('an OLD client sending only its schema rows no longer deletes a stored non-schema row', async () => {
+    const { docs } = home([OFFICE, ALARM, AFTER]);
+    await expect(save({ customFields: [{ ...ALARM, value: '9999' }, AFTER] })).resolves.toEqual({ ok: true });
+    expect(stored(docs)).toEqual([OFFICE, { ...ALARM, value: '9999' }, AFTER]);
+  });
+
+  it('a NEW client keeps the non-schema row, clears with a sent empty value, and removes a named row', async () => {
+    const { docs } = home([OFFICE, ALARM, AFTER]);
+    await save({ customFields: [OFFICE, { ...ALARM, value: '' }], removeCustomFieldKeys: ['afterHoursVetPhone'] });
+    expect(stored(docs)).toEqual([OFFICE, { ...ALARM, value: '' }]);
+  });
+
+  it('a stored emergencyContact* row is still dropped on save (#829), whatever the client sends', async () => {
+    const { docs } = home([OFFICE, { key: 'emergencyContactName', label: 'Emergency Contact', value: 'Rae Mercer' }]);
+    await save({ customFields: [OFFICE] });
+    expect(stored(docs)).toEqual([OFFICE]);
+  });
+
+  it('refuses a key that is both sent and named for removal, and writes nothing', async () => {
+    const { ctx } = home([ALARM]);
+    await expect(save({ customFields: [ALARM], removeCustomFieldKeys: ['alarm'] })).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('leaves customFields alone when neither customFields nor removeCustomFieldKeys is sent', async () => {
+    const { ctx } = home([OFFICE]);
+    await save({ gateCode: '4321' });
+    const w = ctx.writes.find((x) => x.path === HOME_ACCESS_PATH);
+    expect(w!.data.customFields).toBeUndefined();
+  });
+});

@@ -112,6 +112,77 @@ describe('saveTribeProfileHandler', () => {
 });
 
 /**
+ * #873. A household with a tribeProfile form schema saved `customFields` rebuilt
+ * from the schema keys, and the callable replaced the stored list whole, so every
+ * office-set, older-schema or hand-added row was deleted on the next save. The
+ * callable now merges by key and removes a row only when it is named in
+ * `removeCustomFieldKeys`.
+ */
+describe('saveTribeProfileHandler: customFields merge by key (#873)', () => {
+  const OFFICE = { key: 'gateNote', label: 'Set by Auntie', value: 'Side gate sticks' };
+  const ALLERGY = { key: 'allergy', label: 'Allergies', value: 'Chicken' };
+  const VET = { key: 'vetClinicId', label: 'Vet Clinic', value: 'clinic-1' };
+  const EC = { key: 'emergencyContactName', label: 'Emergency Contact', value: 'Rae Halbrook' };
+
+  function household(stored: Array<Record<string, string>>) {
+    const docs: Record<string, any> = {
+      'clients/u1': { kinfolkIds: ['3'] },
+      'families/3': { displayName: 'The Foster', customFields: stored },
+    };
+    const ctx = buildDbMock({ docs, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    return { ctx, docs };
+  }
+  async function save(data: Record<string, unknown>) {
+    const { saveTribeProfileHandler } = await import('../src/portal/saveTribeProfile');
+    return saveTribeProfileHandler({ data: { kinfolkId: '3', displayName: 'The Foster', ...data }, auth: { uid: 'u1' } } as any);
+  }
+  const stored = (docs: Record<string, any>) => docs['families/3'].customFields as Array<{ key: string; label: string; value: string }>;
+
+  it('an OLD client sending only its schema rows no longer deletes a stored non-schema row', async () => {
+    const { docs } = household([OFFICE, ALLERGY, VET]);
+    await expect(save({ customFields: [{ ...ALLERGY, value: 'Beef' }, VET] })).resolves.toEqual({ ok: true });
+    expect(stored(docs)).toEqual([OFFICE, { ...ALLERGY, value: 'Beef' }, VET]);
+  });
+
+  it('a NEW client (full list plus an empty removeCustomFieldKeys) keeps the non-schema row and its order', async () => {
+    const { docs } = household([OFFICE, ALLERGY]);
+    await expect(save({ customFields: [OFFICE, { ...ALLERGY, value: 'Beef' }], removeCustomFieldKeys: [] })).resolves.toEqual({ ok: true });
+    expect(stored(docs)).toEqual([OFFICE, { ...ALLERGY, value: 'Beef' }]);
+  });
+
+  it("a cleared schema field really clears: a sent '' is stored as ''", async () => {
+    const { docs } = household([OFFICE, ALLERGY]);
+    await save({ customFields: [{ ...ALLERGY, value: '' }], removeCustomFieldKeys: [] });
+    expect(stored(docs)).toEqual([OFFICE, { ...ALLERGY, value: '' }]);
+  });
+
+  it('a row named in removeCustomFieldKeys is removed, and nothing else is', async () => {
+    const { docs } = household([OFFICE, VET, ALLERGY]);
+    await save({ customFields: [], removeCustomFieldKeys: ['vetClinicId'] });
+    expect(stored(docs)).toEqual([OFFICE, ALLERGY]);
+  });
+
+  it('removeCustomFieldKeys works without customFields', async () => {
+    const { docs } = household([OFFICE, VET]);
+    await save({ removeCustomFieldKeys: ['vetClinicId'] });
+    expect(stored(docs)).toEqual([OFFICE]);
+  });
+
+  it('removeCustomFieldKeys cannot remove the stored Emergency Contact copy the #829 migration reads', async () => {
+    const { docs } = household([OFFICE, EC]);
+    await save({ customFields: [OFFICE], removeCustomFieldKeys: ['emergencyContactName'] });
+    expect(stored(docs)).toEqual([OFFICE, EC]);
+  });
+
+  it('refuses a key that is both sent and named for removal, and writes nothing', async () => {
+    const { ctx } = household([OFFICE, ALLERGY]);
+    await expect(save({ customFields: [ALLERGY], removeCustomFieldKeys: ['allergy'] })).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(ctx.writes).toHaveLength(0);
+  });
+});
+
+/**
  * #829: the `emergencyContact*` keys in `families/{id}.customFields` are a dead
  * store. Emergency Contacts live on the kinfolk record and are gated on
  * `home_access` inside `saveEmergencyContacts`. This callable strips the keys
