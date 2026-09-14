@@ -10,6 +10,7 @@ import { logEvent } from '../lib/logger';
 import { wrapHttp } from '../lib/wrapHttp';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
+import { isNoRecipientsError } from '../notifications/recipientErrors';
 import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { PAYMENT_APPLIED_OWNER_FIELD, paymentAppliedOwner } from '../lib/paymentAppliedOwner';
@@ -78,12 +79,13 @@ export type FollowupKind = 'paid' | 'failed';
 
 /**
  * A notice that can never reach anyone: no household account and no office
- * roster (`enqueueNotification` throws this when every resolver came back
- * empty). Retrying it for Stripe's three days changes nothing, so it is final.
- * Matched on the message because the dispatcher throws a plain Error.
+ * roster. The dispatcher throws `NoRecipientsError` (code 'no-recipients') only
+ * when every resolver is empty BY DEFINITION; a failed roster read is rethrown
+ * as itself and stays retryable. Retrying a genuine "nobody" for Stripe's three
+ * days changes nothing, so only that code is final.
  */
 export function isFinalNoticeFailure(err: unknown): boolean {
-  return /no recipients resolved/.test((err as Error)?.message ?? '');
+  return isNoRecipientsError(err);
 }
 
 /**
@@ -946,14 +948,13 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     return;
   }
 
-  if (isPaidEvent) {
-    // #866: THE AUDIT AND THE NOTICE MUST SURVIVE A CRASH AFTER THE COMMIT.
-    // The invoice write above stamped this webhook as the notice's only sender,
-    // so `onInvoicesWrite` no longer backstops it. Any failure from here on
-    // answers 500, Stripe retries, and the retry's replay branch (above) finishes
-    // whichever of the two steps `stripeEvents/{id}` does not record as done.
-  }
-  // #866: THE SAME FOLLOW-UP FOR BOTH OUTCOMES. A failed charge's audit entry and
+  // #866: THE AUDIT AND THE NOTICE MUST SURVIVE A CRASH AFTER THE COMMIT. For a
+  // paid event the invoice write above stamped this webhook as the notice's only
+  // sender, so `onInvoicesWrite` no longer backstops it. Any failure from here on
+  // answers 500, Stripe retries, and the retry's replay branch (above) finishes
+  // whichever of the two steps `stripeEvents/{id}` does not record as done.
+  //
+  // THE SAME FOLLOW-UP FOR BOTH OUTCOMES. A failed charge's audit entry and
   // `invoice.charge.failed` ran after the commit with no guard, so a throw drew a
   // Stripe retry that stopped at the replay check and lost the notice for good.
   // Now either outcome answers 500 until its follow-up is stamped done.

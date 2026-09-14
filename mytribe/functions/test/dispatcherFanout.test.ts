@@ -146,6 +146,51 @@ describe('enqueueNotification fan-out (audience:both)', () => {
     ).rejects.toThrow(/no recipients resolved/);
   });
 
+  // #866: "nobody exists" and "the lookup failed" are no longer the same answer.
+  // A caller that treats the first as final (the Stripe webhook stops retrying)
+  // must never see it for the second.
+  it('NEGATIVE: every resolver empty BY DEFINITION rejects with the no-recipients code', async () => {
+    const ctx = buildDbMock({ docs: { 'businessSettings/admins': { uids: [] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { isNoRecipientsError } = await import('../src/notifications/recipientErrors');
+
+    const err = await enqueueNotification({ key: 'kincare.booking.confirm', recipientUid: '', data: {} }).catch(
+      (e: unknown) => e,
+    );
+    expect(isNoRecipientsError(err)).toBe(true);
+  });
+
+  it('a roster that could not be READ is rethrown as itself, not treated as an empty roster', async () => {
+    const ctx = buildDbMock({ docs: {} });
+    const readError = Object.assign(new Error('14 UNAVAILABLE: deadline exceeded'), { code: 14 });
+    // ONLY the roster document fails. The dispatcher reads other businessSettings
+    // documents too (the operator's per-key overrides), and failing those would
+    // reject this call whether or not the resolver error is swallowed.
+    const db = {
+      ...ctx.db,
+      collection: (path: string) => {
+        const real = ctx.db.collection(path);
+        if (path !== 'businessSettings') return real;
+        return {
+          ...real,
+          doc: (id?: string) =>
+            id === 'admins' ? { get: async () => { throw readError; } } : real.doc(id),
+        };
+      },
+    };
+    mocks.dbFn.mockReturnValue(db);
+    const { isNoRecipientsError } = await import('../src/notifications/recipientErrors');
+
+    // The household copy alone would have resolved; before #866 the failed read
+    // was swallowed and it went out with the office silently dropped.
+    const err = await enqueueNotification({ key: 'kincare.booking.confirm', recipientUid: 'kinUid', data: { bookingId: 'b1' } }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBe(readError);
+    expect(isNoRecipientsError(err)).toBe(false);
+    expect(ctx.writes.filter((w) => w.path.startsWith('notifications/'))).toHaveLength(0);
+  });
+
   it('EDGE: dedupes same uid appearing in both resolvers', async () => {
     // Contrived but valid — primary returns uid X, secondary admin list also has X.
     const ctx = buildDbMock({

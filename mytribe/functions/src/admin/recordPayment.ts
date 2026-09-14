@@ -28,6 +28,7 @@ import { creditAccount } from '../lib/accountCredit';
 import { PaymentIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
+import { isNoRecipientsError } from '../notifications/recipientErrors';
 import { PAYMENT_APPLIED_CLAIM_FIELD, claimableMarkInvoicePaidOwner } from '../lib/paymentAppliedOwner';
 
 /**
@@ -492,16 +493,18 @@ export async function recordPaymentHandler(
     // The office is told only for a payment that paid the bill off, so this call
     // claims THAT settlement's owner stamp (`markInvoicePaid:<id>`), in the same
     // transaction, and only once. A call without the id never claims.
+    // An older installed client sends no id; it may still claim a settlement
+    // stamped within the last few minutes, which is its own step 1 landing just
+    // before this (OLD_CLIENT_CLAIM_WINDOW_MS in lib/paymentAppliedOwner.ts).
     const linkedInvoiceRef =
-      !plannedStep && args.invoiceId !== '' && args.settledByInvoicePaymentId !== undefined
-        ? db().collection('invoices').doc(args.invoiceId)
-        : null;
+      !plannedStep && args.invoiceId !== '' ? db().collection('invoices').doc(args.invoiceId) : null;
     const linkedInvoiceSnap = linkedInvoiceRef ? await tx.get(linkedInvoiceRef) : null;
     const claimedOwner = linkedInvoiceSnap?.exists
       ? claimableMarkInvoicePaidOwner(
           (linkedInvoiceSnap.data() ?? {}) as Record<string, unknown>,
           kinfolkId,
           args.settledByInvoicePaymentId,
+          Date.now(),
         )
       : null;
     // THE APPLY AND THE PAYMENT ROW LAND TOGETHER. `markInvoicePaid` and this
@@ -702,7 +705,7 @@ export async function recordPaymentHandler(
     // away a payment that is already recorded, and within
     // PAYMENT_CONFIRMATION_DEDUPE_WINDOW_MS the ledger stops a retry repeating
     // a copy that did go out.
-    if (args.idempotencyKey !== undefined && (sent.household || sent.office)) {
+    if (args.idempotencyKey !== undefined && (sent.household || sent.office || sent.skipped)) {
       await ref.update(noticeStamps(sent)).catch((err) => {
         logEvent({
           severity: 'warn',
@@ -783,22 +786,31 @@ function storedCents(stored: Record<string, unknown>, field: string): number {
  * answer and a first answer are produced by the same arithmetic.
  */
 /**
- * How long the dispatcher ledger remembers one payment's confirmation copies.
- * A same-key retry that finishes a lost confirmation (below) can land hours
- * after the first attempt; the identity names one payment, so a day can never
+ * How long the dispatcher ledger remembers one payment's confirmation copies,
+ * for every enqueue this callable makes (the ledger's `expiresAt` follows the
+ * window, so the first attempt's entry lives as long as a retry looks back).
+ *
+ * 7 DAYS, well past any realistic client retry of one submission. It is what
+ * stops a second office copy when the household gains a portal account between
+ * attempts: the retry then owes the household its copy, and the office copy
+ * that rides the same enqueue is caught by the ledger, however many hours
+ * later the retry lands. The identity names one payment, so a week can never
  * merge two.
  */
-export const PAYMENT_CONFIRMATION_DEDUPE_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const PAYMENT_CONFIRMATION_DEDUPE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * #866: the row fields that record which copies of `invoice.payment.applied`
  * went out for this payment. `confirmationEmailSent` is the household copy (and
- * the #825 answer field); `officeNoticeSentAt` is the office copy.
+ * the #825 answer field); `officeNoticeSentAt` is the office copy;
+ * `officeNoticeSkippedReason` records an office-only copy that nobody exists to
+ * receive, which a retry must not keep trying.
  */
 function noticeStamps(sent: ConfirmationOutcome): Record<string, unknown> {
   return {
     ...(sent.household ? { confirmationEmailSent: true } : {}),
     ...(sent.office ? { officeNoticeSentAt: FieldValue.serverTimestamp() } : {}),
+    ...(sent.skipped ? { officeNoticeSkippedReason: 'no-recipients' } : {}),
   };
 }
 
@@ -828,7 +840,11 @@ async function replayWithConfirmation(
   const answer = replayResult(ref.id, stored);
   const settlesInvoice = stored['settlesInvoice'] === true;
   const householdDue = householdRequested && stored['confirmationEmailSent'] !== true;
-  const officeDue = (settlesInvoice || householdRequested) && stored['officeNoticeSentAt'] == null;
+  const officeDue =
+    (settlesInvoice || householdRequested) &&
+    stored['officeNoticeSentAt'] == null &&
+    // Nobody existed to receive it last time; that is final, not unfinished.
+    stored['officeNoticeSkippedReason'] == null;
   if (!householdDue && !officeDue) return answer;
   const sent = await sendPaymentConfirmation({
     kinfolkId: answer.kinfolkId,
@@ -841,7 +857,7 @@ async function replayWithConfirmation(
     // household one; with no household uid, it must not send the office a second.
     officeDue,
   });
-  if (!sent.household && !sent.office) return answer;
+  if (!sent.household && !sent.office && !sent.skipped) return answer;
   await ref.update(noticeStamps(sent)).catch((err) => {
     logEvent({
       severity: 'warn',
@@ -930,6 +946,12 @@ interface ConfirmationOutcome {
   household: boolean;
   /** The office copy was enqueued (it rides every enqueue). */
   office: boolean;
+  /**
+   * #866: nobody exists to receive it (no household uid and no office roster),
+   * as the dispatcher's `NoRecipientsError` says. Final: stamped so a retry does
+   * not keep trying. A failed READ is not this; it stays retryable.
+   */
+  skipped?: boolean;
 }
 
 async function sendPaymentConfirmation(input: {
@@ -982,10 +1004,14 @@ async function sendPaymentConfirmation(input: {
     });
     return { household: recipientUid !== null, office: true };
   } catch (err) {
+    // #866: only "nobody exists to receive it" is final. Any other failure (a
+    // roster read, the dispatcher itself) is left unstamped so a same-key retry
+    // finishes it.
+    const final = isNoRecipientsError(err);
     logEvent({
-      severity: 'warn',
+      severity: final ? 'error' : 'warn',
       function: 'recordPayment',
-      event: 'payment.confirmation.failed',
+      event: final ? 'payment.confirmation.unreachable' : 'payment.confirmation.failed',
       uid: input.uid,
       extra: {
         kinfolkId: input.kinfolkId,
@@ -993,7 +1019,7 @@ async function sendPaymentConfirmation(input: {
         err: (err as Error)?.message,
       },
     });
-    return none;
+    return final ? { ...none, skipped: true } : none;
   }
 }
 

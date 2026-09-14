@@ -7,6 +7,7 @@ import { buildNotificationDetail } from './buildNotificationDetail';
 import { getNotificationDef } from './catalog';
 import { loadBusinessOverride, loadUserPrefs, resolveChannels, streamForRecipient } from './prefs';
 import { resolveRecipients } from './recipientResolver';
+import { NoRecipientsError, isRecipientsUnavailable } from './recipientErrors';
 import type {
   AudienceStream,
   Channel,
@@ -307,10 +308,15 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
     return { written: [], suppressed: [] };
   }
 
+  // #866: only a resolver with nobody BY DEFINITION counts as empty. A failed
+  // read (the office roster, say) is rethrown, so the caller can retry it rather
+  // than mistaking it for an office with nobody on the roster. See
+  // notifications/recipientErrors.ts.
   const tryResolve = async (resolver?: typeof def.recipientResolver) => {
     try {
       return await resolveRecipients(def, args, resolver);
     } catch (err) {
+      if (!isRecipientsUnavailable(err)) throw err;
       logEvent({
         severity: 'info',
         function: 'enqueueNotification',
@@ -327,7 +333,7 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
   const primary = await tryResolve();
   const secondary = def.secondaryResolver ? await tryResolve(def.secondaryResolver) : [];
   if (primary.length === 0 && secondary.length === 0) {
-    throw new Error(
+    throw new NoRecipientsError(
       `enqueueNotification(${def.key}): no recipients resolved from any resolver`,
     );
   }

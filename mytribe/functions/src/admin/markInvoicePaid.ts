@@ -17,7 +17,11 @@ import {
   type InvoiceSettlementState,
 } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
-import { PAYMENT_APPLIED_OWNER_FIELD, paymentAppliedOwner } from '../lib/paymentAppliedOwner';
+import {
+  PAYMENT_APPLIED_OWNER_AT_FIELD,
+  PAYMENT_APPLIED_OWNER_FIELD,
+  paymentAppliedOwner,
+} from '../lib/paymentAppliedOwner';
 import { InvoicePaymentIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 import { validateResponse } from '../lib/callableResponse';
 import {
@@ -453,6 +457,10 @@ export async function markInvoicePaidHandler(
           // `onInvoicesWrite` neither doubles a ticked confirmation nor sends
           // one the admin left unticked.
           [PAYMENT_APPLIED_OWNER_FIELD]: paymentAppliedOwner('markInvoicePaid', paymentRef.id),
+          // When the stamp was written, so an older admin client that does not
+          // send this settlement's id can still claim it moments later, and no
+          // unrelated payment days later can (OLD_CLIENT_CLAIM_WINDOW_MS).
+          [PAYMENT_APPLIED_OWNER_AT_FIELD]: Date.now(),
         }
       : {}),
     lastPaymentAt: FieldValue.serverTimestamp(),

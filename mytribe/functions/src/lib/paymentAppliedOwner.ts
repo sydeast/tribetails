@@ -54,26 +54,54 @@ export function paymentAppliedOwner(source: PaymentAppliedOwnerSource, id: strin
 export const PAYMENT_APPLIED_CLAIM_FIELD = 'paymentAppliedNoticeClaim';
 
 /**
+ * #866: when the owner stamp was written (ms epoch), beside it in the same write.
+ * Only read to let an older admin client, which does not send the settlement id,
+ * claim a settlement it made moments ago (OLD_CLIENT_CLAIM_WINDOW_MS).
+ */
+export const PAYMENT_APPLIED_OWNER_AT_FIELD = 'paymentAppliedNoticeOwnerAtMs';
+
+/**
+ * How recently a `markInvoicePaid` settlement must have been stamped for a
+ * `recordPayment` WITHOUT `settledByInvoicePaymentId` to claim it. Installed
+ * React and Android builds from before #866 call the two steps back to back, so
+ * their step 2 lands seconds after step 1; 5 minutes covers a cold start and a
+ * slow network with room to spare, and is far short of the days-later unrelated
+ * payment that must not claim (the P3 case).
+ */
+export const OLD_CLIENT_CLAIM_WINDOW_MS = 5 * 60 * 1000;
+
+/**
  * The `markInvoicePaid` owner stamp a `recordPayment` for `kinfolkId` may claim
  * on this invoice, or null. Claimable means: the invoice is paid, belongs to that
- * household, was paid off by THE `markInvoicePaid` call whose payment row id the
- * client passed (`invoicePaymentId`), and nobody has claimed that stamp.
+ * household, was paid off by `markInvoicePaid`, nobody has claimed that stamp,
+ * and the stamp is this call's own settlement:
  *
- * WHY THE ID IS REQUIRED. Without it any later payment linked to the invoice
- * (days later, a different payment) could claim a settlement whose own
- * `recordPayment` step never ran, and tell the office "paid" under the wrong
- * payment. The id is what `markInvoicePaid` returned to the same submission, so
- * only that submission's second step can match it. No id, no claim.
+ *   - `invoicePaymentId` given (current clients): the stamp must be exactly
+ *     `markInvoicePaid:<invoicePaymentId>`.
+ *   - not given (older installed clients): the stamp must have been written
+ *     within OLD_CLIENT_CLAIM_WINDOW_MS of `nowMs`, by its own recorded time.
+ *
+ * WHY. Without that, any later payment linked to the invoice (days later, a
+ * different payment) could claim a settlement whose own `recordPayment` step
+ * never ran, and tell the office "paid" under the wrong payment.
  */
 export function claimableMarkInvoicePaidOwner(
   invoice: Record<string, unknown> | undefined,
   kinfolkId: string,
   invoicePaymentId: string | undefined,
+  nowMs: number,
 ): string | null {
-  if (!invoicePaymentId) return null;
   if (!invoice || kinfolkId === '' || invoice['kinfolkId'] !== kinfolkId) return null;
   const owner = invoice[PAYMENT_APPLIED_OWNER_FIELD];
-  if (owner !== paymentAppliedOwner('markInvoicePaid', invoicePaymentId)) return null;
+  if (typeof owner !== 'string' || !owner.startsWith('markInvoicePaid:')) return null;
+  if (invoicePaymentId) {
+    if (owner !== paymentAppliedOwner('markInvoicePaid', invoicePaymentId)) return null;
+  } else {
+    const at = invoice[PAYMENT_APPLIED_OWNER_AT_FIELD];
+    if (typeof at !== 'number' || !Number.isFinite(at) || nowMs - at > OLD_CLIENT_CLAIM_WINDOW_MS || nowMs < at) {
+      return null;
+    }
+  }
   if (invoice[PAYMENT_APPLIED_CLAIM_FIELD] === owner) return null;
   const status = typeof invoice['status'] === 'string' ? invoice['status'].trim().toLowerCase() : '';
   return status === 'paid' ? owner : null;

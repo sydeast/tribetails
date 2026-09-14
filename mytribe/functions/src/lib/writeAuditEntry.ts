@@ -192,7 +192,10 @@ export async function writeAuditEntry(args: WriteAuditArgs): Promise<string> {
       entryHash,
       createdAt: FieldValue.serverTimestamp(),
     };
-    tx.set(logRef, fullDoc);
+    // A fixed id is created, never set: if two attempts race past the existence
+    // check above, Firestore refuses the second rather than overwriting the first.
+    if (args.docId !== undefined) tx.create(logRef, fullDoc);
+    else tx.set(logRef, fullDoc);
     tx.set(headRef, {
       seq,
       lastHash: entryHash,

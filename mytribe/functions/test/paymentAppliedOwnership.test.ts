@@ -19,10 +19,10 @@ import { buildDbMock } from './_helpers/mockDb';
  * "already delivered" exactly as `writeOnce` does, with the real
  * `dedupeIdentityOf`, `resolveTargetRef` and `dedupeWindowOf`, keyed per
  * recipient. It fans out the way these keys do: the household copy only when a
- * recipientUid is given (the `kinfolkAcct` resolver throws on '' and the
- * dispatcher skips it), and one office copy through `businessAdmins`. With the
- * office roster switched off and no household uid it throws what the real
- * dispatcher throws when nobody resolves.
+ * recipientUid is given, and one office copy through `businessAdmins`. The
+ * office roster has three states, the three the real dispatcher tells apart
+ * since #866: on; empty (with no household uid, `NoRecipientsError`, final);
+ * and a failed read (the read's own error, retryable).
  *
  * THE AUDIT LOG IS REAL. `writeAuditEntry` runs against the same mock, so an
  * audit entry written twice is two documents, not two mock calls.
@@ -34,7 +34,7 @@ const mocks = vi.hoisted(() => ({
   event: { current: null as unknown },
   resolveUid: vi.fn(),
   audit: vi.fn(),
-  roster: { on: true },
+  roster: { state: 'on' as 'on' | 'empty' | 'readError' },
 }));
 
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: () => mocks.db.current, auth: vi.fn(), getAdmin: vi.fn() }));
@@ -64,6 +64,7 @@ import { markInvoicePaidHandler } from '../src/admin/markInvoicePaid';
 import { stripeWebhookHandler } from '../src/billing/stripeWebhook';
 import { drawAccountCredit } from '../src/lib/accountCredit';
 import { dedupeIdentityOf, dedupeWindowOf, resolveTargetRef } from '../src/notifications/dispatcher';
+import { NoRecipientsError } from '../src/notifications/recipientErrors';
 import type { EnqueueArgs } from '../src/notifications/types';
 
 const realAudit = (await vi.importActual<typeof import('../src/lib/writeAuditEntry')>('../src/lib/writeAuditEntry'))
@@ -78,11 +79,15 @@ let delivered: Array<{ key: string; recipientUid: string; household: boolean }>;
 let ledger: Map<string, number>;
 
 function fakeEnqueue(args: EnqueueArgs): string[] {
+  if (mocks.roster.state === 'readError') {
+    // What the real dispatcher now rethrows instead of reading as "nobody".
+    throw Object.assign(new Error('14 UNAVAILABLE: businessSettings/admins read failed'), { code: 14 });
+  }
   const recipients: Array<{ uid: string; household: boolean }> = [];
   if (args.recipientUid) recipients.push({ uid: args.recipientUid, household: true });
-  if (mocks.roster.on) recipients.push({ uid: STAFF_UID, household: false });
+  if (mocks.roster.state === 'on') recipients.push({ uid: STAFF_UID, household: false });
   if (recipients.length === 0) {
-    throw new Error(`enqueueNotification(${args.key}): no recipients resolved from any resolver`);
+    throw new NoRecipientsError(`enqueueNotification(${args.key}): no recipients resolved from any resolver`);
   }
   const identity = dedupeIdentityOf(args, resolveTargetRef(args));
   const windowMs = dedupeWindowOf(args);
@@ -101,7 +106,7 @@ function fakeEnqueue(args: EnqueueArgs): string[] {
 beforeEach(() => {
   delivered = [];
   ledger = new Map();
-  mocks.roster.on = true;
+  mocks.roster.state = 'on';
   mocks.enqueue.mockReset().mockImplementation(async (args: EnqueueArgs) => fakeEnqueue(args));
   mocks.resolveUid.mockReset().mockResolvedValue('kin-uid-1');
   mocks.audit.mockReset().mockImplementation((args: Parameters<typeof realAudit>[0]) => realAudit(args));
@@ -114,7 +119,8 @@ afterEach(() => {
 });
 
 const INVOICE = 'invoices/inv1';
-const HOUR = 60 * 60 * 1000;
+const MIN = 60 * 1000;
+const HOUR = 60 * MIN;
 const KEY = 'pay_1757860000000_abcdef';
 
 function seedInvoice(over: Record<string, unknown> = {}) {
@@ -190,7 +196,7 @@ async function settleStep(amount: number): Promise<string> {
   return res.paymentId;
 }
 
-/** Step 2: the ledger row, carrying the toggle and step 1's payment id, as both clients send it. */
+/** Step 2: the ledger row, carrying the toggle and (for a current client) step 1's payment id. */
 function ledgerStep(amount: number, sendConfirmationEmail: boolean, settledByInvoicePaymentId?: string, idempotencyKey?: string) {
   return withTrigger(() =>
     recordPaymentHandler(
@@ -207,7 +213,7 @@ function ledgerStep(amount: number, sendConfirmationEmail: boolean, settledByInv
   );
 }
 
-/** The whole two-step flow. */
+/** The whole two-step flow, as a current client runs it. */
 async function adminTwoStep(amount: number, sendConfirmationEmail: boolean) {
   const settledBy = await settleStep(amount);
   await ledgerStep(amount, sendConfirmationEmail, settledBy);
@@ -402,7 +408,7 @@ describe('#866 card payments: a crash between the commit and the follow-up', () 
   it('a notice nobody can receive (no household account, no office roster) is final: 200, stamped, never retried', async () => {
     seedInvoice();
     mocks.resolveUid.mockResolvedValue(null);
-    mocks.roster.on = false;
+    mocks.roster.state = 'empty';
     expect(await deliver(stripeEvent('evt_1', 'checkout.session.completed', 4000))).toBe(200);
     expect(docs['stripeEvents/evt_1']).toMatchObject({ noticeSkippedReason: 'no-recipients' });
     expect(stripeAudits('BILLING_INVOICE_PAID')).toBe(1);
@@ -410,6 +416,21 @@ describe('#866 card payments: a crash between the commit and the follow-up', () 
     later(HOUR);
     expect(await deliver(stripeEvent('evt_1', 'checkout.session.completed', 4000))).toBe(200);
     expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('a roster that could not be READ is not "nobody": 500, nothing stamped, and the retry sends', async () => {
+    seedInvoice();
+    mocks.resolveUid.mockResolvedValue(null);
+    mocks.roster.state = 'readError';
+    expect(await deliver(stripeEvent('evt_1', 'checkout.session.completed', 4000))).toBe(500);
+    expect(docs['stripeEvents/evt_1']!['noticeSkippedReason']).toBeUndefined();
+    expect(docs['stripeEvents/evt_1']!['noticeSentAt']).toBeUndefined();
+
+    mocks.roster.state = 'on';
+    later(HOUR);
+    expect(await deliver(stripeEvent('evt_1', 'checkout.session.completed', 4000))).toBe(200);
+    expect(staffCount()).toBe(1);
+    expect(docs['stripeEvents/evt_1']!['noticeSentAt']).toBeTruthy();
   });
 });
 
@@ -438,6 +459,19 @@ describe('#866 failed charges: the same follow-up', () => {
     expect(appliedCount('invoice.charge.failed')).toBe(1);
     expect(stripeAudits('BILLING_INVOICE_FAILED')).toBe(1);
     expect(docs['stripeEvents/evt_f']!['noticeSentAt']).toBeTruthy();
+  });
+
+  it('a failed-charge notice nobody can receive is final too: 200, stamped, one enqueue call after a retry', async () => {
+    seedInvoice();
+    mocks.resolveUid.mockResolvedValue(null);
+    mocks.roster.state = 'empty';
+    expect(await deliver(failed())).toBe(200);
+    expect(docs['stripeEvents/evt_f']).toMatchObject({ noticeSkippedReason: 'no-recipients' });
+    expect(stripeAudits('BILLING_INVOICE_FAILED')).toBe(1);
+
+    later(HOUR);
+    expect(await deliver(failed())).toBe(200);
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
   });
 
   it('a failed-charge event recorded before this deploy is never followed up again', async () => {
@@ -557,7 +591,7 @@ describe('#866 recordPayment: a retry of the same submission', () => {
   });
 
   it('ticked, settling, household has no portal account: a retry 25 hours later sends no second office copy', async () => {
-    // Past the 24h ledger window, so only the row's own `officeNoticeSentAt` stops it.
+    // Past the old 24h ledger window, so the row's own `officeNoticeSentAt` stops it.
     seedInvoice();
     mocks.resolveUid.mockResolvedValue(null);
     await adminApply(40, true, KEY);
@@ -566,6 +600,49 @@ describe('#866 recordPayment: a retry of the same submission', () => {
     await adminApply(40, true, KEY);
     expect(staffCount()).toBe(1);
     expect(appliedCount()).toBe(0);
+  });
+
+  it('the household gains a portal account between attempts: a retry 25 hours later tells the household once and the office no more', async () => {
+    // The retry owes the household its copy, and the office copy rides that same
+    // enqueue. The 7-day ledger window is what keeps the office at one.
+    seedInvoice();
+    mocks.resolveUid.mockResolvedValue(null);
+    await adminApply(40, true, KEY);
+    expect(appliedCount()).toBe(0);
+    expect(staffCount()).toBe(1);
+
+    later(25 * HOUR);
+    mocks.resolveUid.mockResolvedValue('kin-uid-1');
+    const retry = await adminApply(40, true, KEY);
+    expect(retry.confirmationEmailSent).toBe(true);
+    expect(appliedCount()).toBe(1);
+    expect(staffCount()).toBe(1);
+  });
+
+  it('an office copy nobody can receive is stamped skipped, and a retry makes no second enqueue call', async () => {
+    seedInvoice();
+    mocks.roster.state = 'empty';
+    await adminApply(40, false, KEY);
+    expect(staffCount()).toBe(0);
+    expect(docs[`payments/${KEY}`]).toMatchObject({ officeNoticeSkippedReason: 'no-recipients' });
+
+    later(HOUR);
+    await adminApply(40, false, KEY);
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('an office roster that could not be READ is retried: nothing stamped, and the same-key retry sends', async () => {
+    seedInvoice();
+    mocks.roster.state = 'readError';
+    await adminApply(40, false, KEY);
+    expect(staffCount()).toBe(0);
+    expect(docs[`payments/${KEY}`]!['officeNoticeSkippedReason']).toBeUndefined();
+    expect(docs[`payments/${KEY}`]!['officeNoticeSentAt']).toBeUndefined();
+
+    mocks.roster.state = 'on';
+    later(HOUR);
+    await adminApply(40, false, KEY);
+    expect(staffCount()).toBe(1);
   });
 });
 
@@ -609,7 +686,8 @@ describe('#866 office copy: only for a payment that pays the invoice off (as on 
     await ledgerStep(40, false, settledBy);
     expect(staffCount()).toBe(1);
     expect(docs[INVOICE]!['paymentAppliedNoticeClaim']).toBe(`markInvoicePaid:${settledBy}`);
-    // Even naming the same settlement, a second claim is refused.
+    // Even naming the same settlement, or as an old client inside the window, a
+    // second claim is refused.
     await ledgerStep(5, false, settledBy);
     await ledgerStep(5, false);
     expect(staffCount()).toBe(1);
@@ -629,6 +707,34 @@ describe('#866 office copy: only for a payment that pays the invoice off (as on 
     expect(docs[INVOICE]!['paymentAppliedNoticeClaim']).toBeUndefined();
     const rows = Object.entries(docs).filter(([p, d]) => p.startsWith('payments/') && d !== null);
     expect(rows.every(([, d]) => d!['settlesInvoice'] === false)).toBe(true);
+  });
+
+  it('an older installed client (no settlement id) claims its own settlement a minute later', async () => {
+    seedInvoice();
+    await settleStep(40);
+    expect(typeof docs[INVOICE]!['paymentAppliedNoticeOwnerAtMs']).toBe('number');
+    later(1 * MIN);
+    await ledgerStep(40, false);
+    expect(staffCount()).toBe(1);
+    expect(appliedCount()).toBe(0);
+    expect(docs[INVOICE]!['paymentAppliedNoticeClaim']).toMatch(/^markInvoicePaid:/);
+  });
+
+  it('an older installed client 10 minutes after the settlement claims nothing', async () => {
+    seedInvoice();
+    await settleStep(40);
+    later(10 * MIN);
+    await ledgerStep(40, false);
+    expect(staffCount()).toBe(0);
+    expect(docs[INVOICE]!['paymentAppliedNoticeClaim']).toBeUndefined();
+  });
+
+  it('a current client naming the wrong settlement claims nothing, even at once', async () => {
+    seedInvoice();
+    await settleStep(40);
+    await ledgerStep(40, false, 'not-this-settlement');
+    expect(staffCount()).toBe(0);
+    expect(docs[INVOICE]!['paymentAppliedNoticeClaim']).toBeUndefined();
   });
 
   it('unticked full, recordPayment applying, first enqueue fails: a same-key retry sends the office copy once', async () => {

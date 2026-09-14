@@ -42,13 +42,18 @@ const txSetMock = vi.fn((ref: FakeRef, data: Record<string, unknown>) => {
   }
 });
 
+// #866: a fixed-id entry is written with `create`, recorded like a set.
+const txCreateMock = vi.fn((ref: FakeRef, data: Record<string, unknown>) => {
+  writes.push({ ref, data, created: true } as { ref: FakeRef; data: Record<string, unknown> });
+});
+
 const dbMock = {
   collection: (name: string) => ({
     doc: (id?: string) => makeRef(name, id ?? nextAutoId()),
   }),
   runTransaction: async (
-    cb: (tx: { get: typeof txGetMock; set: typeof txSetMock }) => Promise<unknown>,
-  ) => cb({ get: txGetMock, set: txSetMock }),
+    cb: (tx: { get: typeof txGetMock; set: typeof txSetMock; create: typeof txCreateMock }) => Promise<unknown>,
+  ) => cb({ get: txGetMock, set: txSetMock, create: txCreateMock }),
 };
 
 vi.mock('../src/lib/firestoreAdmin', () => ({

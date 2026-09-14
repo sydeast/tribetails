@@ -93,7 +93,7 @@ function req(data: unknown, uid = 'admin1'): CallableRequest<unknown> {
  * and counting that stamp as a payment would make "one key, one payment" fail
  * for a reason unrelated to money.
  */
-const NOTICE_STAMP_FIELDS = ['confirmationEmailSent', 'officeNoticeSentAt'];
+const NOTICE_STAMP_FIELDS = ['confirmationEmailSent', 'officeNoticeSentAt', 'officeNoticeSkippedReason'];
 const paymentRows = (ctx: { writes: Array<{ path: string; merge?: boolean; data?: Record<string, unknown> }> }) => {
   const rows = ctx.writes.filter((w) => w.path.startsWith('payments/') && w.merge !== true).map((w) => w.path);
   // And every merge write under `payments/` is only a notice stamp on a row this
