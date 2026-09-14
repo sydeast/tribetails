@@ -17,15 +17,26 @@ import { FULL_CPU } from '../lib/runtimeOptions';
  * Failed-login security subsystem.
  *
  * Thresholds (per kinfolk acct, rolling windows):
- *   ≥ 5 failures in 10 min → enqueue 'auth.failedLogin.attempts' (kinfolk)
- *   ≥ 10 failures in 20 min → set lockedUntil, enqueue 'auth.account.locked'
- *                              to the kinfolk, and
- *                              'security.account.locked.operator' to every
- *                              business admin on the roster (#869)
+ *   5 failures in 10 min: a warning burst starts (at most one per 10 min).
+ *       'auth.failedLogin.attempts' goes to the kinfolk only, and
+ *       'security.failedLogin.attempts.operator' to every business admin on
+ *       the roster (#877).
+ *   10 failures in 20 min: the account locks. 'auth.account.locked' goes to
+ *       the kinfolk only, and 'security.account.locked.operator' to every
+ *       business admin on the roster (#869).
  *
- * Lockout duration is manual, only an admin call to `unlockKinfolkAccount` or
- * a successful password reset (detected via Firebase Auth tokensValidAfterTime
- * rising above the lock-start timestamp) clears it.
+ * The lock lasts LOCKOUT_DURATION_MS (30 minutes) and then clears by itself.
+ * It clears sooner on an admin call to `unlockKinfolkAccount`, or on the first
+ * sign-in after a password reset (beforeSignIn sees Firebase Auth's
+ * tokensValidAfterTime rise above the lock start).
+ *
+ * Both kinds of alert are saved before they are sent. The counting transaction
+ * stores the burst or lock start with a pending marker, both copies carry a
+ * dedupe key built from that stored start, and a later failed login re-sends
+ * whatever did not go out. The marker is cleared once both copies are accepted.
+ * A pending warning is retried only while its 10-minute burst is open and the
+ * account is not locked: once the account locks, later failures only retry the
+ * lock alerts, which tell both audiences more than the warning would.
  *
  * The reset-PW link must remain on the login screen at all times (frontend
  * responsibility) so a locked user has a recovery path.
@@ -117,7 +128,20 @@ interface LoginAttempt {
 
 interface LoginSecurityDoc {
   attempts: LoginAttempt[];
+  /**
+   * When the current warning burst started. Written in the counting
+   * transaction that crossed the threshold, BEFORE the warning is sent (#877),
+   * so it is the burst's identity rather than a delivery receipt.
+   */
   warnSentAtMs?: number;
+  /**
+   * Set to `warnSentAtMs` in the same transaction, and deleted once both
+   * warning copies have been accepted. While it equals the stored
+   * `warnSentAtMs` and the burst is under 10 minutes old, a later failed login
+   * re-sends that burst's warnings (#877). A warning stamped before this field
+   * existed never matches, so it is never re-sent.
+   */
+  warnAlertsPendingForMs?: number;
   lockedUntilMs?: number;
   lockStartedAtMs?: number;
   /**
@@ -165,6 +189,8 @@ function parseSecurityDoc(raw: unknown): LoginSecurityDoc {
   return {
     attempts: data?.attempts ?? [],
     warnSentAtMs: data?.warnSentAtMs,
+    warnAlertsPendingForMs:
+      typeof data?.warnAlertsPendingForMs === 'number' ? data.warnAlertsPendingForMs : undefined,
     lockedUntilMs: data?.lockedUntilMs,
     lockStartedAtMs: data?.lockStartedAtMs,
     lockAlertsPendingForMs:
@@ -175,15 +201,6 @@ function parseSecurityDoc(raw: unknown): LoginSecurityDoc {
 
 async function readSecurityDoc(uid: string): Promise<LoginSecurityDoc> {
   return parseSecurityDoc((await securityDocRef(uid).get()).data());
-}
-
-async function writeSecurityDoc(uid: string, doc: Partial<LoginSecurityDoc>): Promise<void> {
-  await db()
-    .collection('clients')
-    .doc(uid)
-    .collection('security')
-    .doc('loginAttempts')
-    .set({ ...doc, updatedAtMs: Date.now() }, { merge: true });
 }
 
 /**
@@ -203,9 +220,19 @@ function nonEmpty(v: unknown): string {
 }
 
 /**
- * What the operator's lock alert says about the household (#869).
+ * The #832 dedupe identity of one warning burst's copies (#877): the household
+ * account and the moment its burst started, read from the saved burst rather
+ * than the current call. Shaped like `lockAlertDedupeKey`.
+ */
+export function failedLoginWarningDedupeKey(kinfolkUid: string, warnStartedAtMs: number): string {
+  return `auth.warn:${kinfolkUid}:${warnStartedAtMs}`;
+}
+
+/**
+ * What an operator alert (the lock alert, #869, and the warning, #877) says
+ * about the household.
  *
- * `kinfolkName` is always sent, so the subject can never render as
+ * `kinfolkName` is always sent, so a subject can never render as
  * "Account locked:  (email)". It is the first non-empty of: the household's
  * name (`families/{kinfolkId}`, only when the account holds exactly ONE
  * household), the account's own name, the email's local part.
@@ -215,12 +242,12 @@ function nonEmpty(v: unknown): string {
  * hold several), and naming one of them would be a guess. Never throws: a failed
  * read still sends the alert with the email and the local-part name.
  */
-async function operatorLockAlertData(
+async function operatorHouseholdData(
   uid: string,
   email: string,
-  lockStartedAtMs: number,
+  lookupFailedEvent: string,
 ): Promise<Record<string, unknown>> {
-  const data: Record<string, unknown> = { kinfolkUid: uid, kinfolkEmail: email, lockStartedAtMs };
+  const data: Record<string, unknown> = { kinfolkUid: uid, kinfolkEmail: email };
   let name = '';
   try {
     const client = (await db().collection('clients').doc(uid).get()).data() ?? {};
@@ -237,13 +264,108 @@ async function operatorLockAlertData(
     logEvent({
       severity: 'warn',
       function: 'recordFailedLogin',
-      event: 'admin.lock.household.lookup.failed',
+      event: lookupFailedEvent,
       uid,
       errorMessage: (err as Error)?.message,
     });
   }
   data['kinfolkName'] = name || email.split('@')[0] || email;
   return data;
+}
+
+/**
+ * Deletes a pending-alert marker, but only while it still names `startedAtMs`.
+ *
+ * Between the burst or lock being saved and this call, a newer burst or lock
+ * can replace the marker with its own, and deleting that one would silently
+ * cancel the newer retry. Harmless if it fails: the next retry is deduped by
+ * the ledger.
+ */
+async function clearPendingAlertMarker(
+  uid: string,
+  field: 'lockAlertsPendingForMs' | 'warnAlertsPendingForMs',
+  startedAtMs: number,
+  failedEvent: string,
+): Promise<void> {
+  const ref = securityDocRef(uid);
+  await db()
+    .runTransaction(async (tx) => {
+      const stored = parseSecurityDoc((await tx.get(ref)).data());
+      if (stored[field] !== startedAtMs) return;
+      tx.set(ref, { [field]: FieldValue.delete() }, { merge: true });
+    })
+    .catch((err) => {
+      logEvent({
+        severity: 'warn',
+        function: 'recordFailedLogin',
+        event: failedEvent,
+        uid,
+        errorMessage: (err as Error)?.message,
+      });
+    });
+}
+
+/**
+ * Sends both copies of one saved warning burst (#877), then clears its marker.
+ *
+ * Both copies are caught, and either failure leaves the marker so the next
+ * failed login in the burst retries. The household copy is caught (#877
+ * review) because `recordFailedLogin` is unauthenticated: an error thrown only
+ * for a real account's warning would tell the caller the email exists. Its
+ * failure is logged at error. The operator copy is caught so a resolver
+ * failure never fails the call. Both carry the burst's dedupe key with a window
+ * as long as the burst, so a retry after a partial success sends only the copy
+ * that is still missing. A retry sends the current `attemptsInWindow`, which
+ * may be higher than when the burst started.
+ */
+async function sendWarningAlerts(
+  uid: string,
+  email: string,
+  warnStartedAtMs: number,
+  attemptsInWindow: number,
+): Promise<void> {
+  const dedupeKey = failedLoginWarningDedupeKey(uid, warnStartedAtMs);
+  let householdAccepted = true;
+  await enqueueNotification({
+    key: 'auth.failedLogin.attempts',
+    recipientUid: uid,
+    data: { email, attemptsInWindow },
+    dedupeKey,
+    dedupeWindowMs: WINDOW_WARN_MS,
+  }).catch((err) => {
+    householdAccepted = false;
+    logEvent({
+      severity: 'error',
+      function: 'recordFailedLogin',
+      event: 'auth.warn.notify.failed',
+      uid,
+      errorMessage: (err as Error)?.message,
+    });
+  });
+
+  let operatorAccepted = true;
+  await enqueueNotification({
+    key: 'security.failedLogin.attempts.operator',
+    data: {
+      ...(await operatorHouseholdData(uid, email, 'admin.warn.household.lookup.failed')),
+      attemptsInWindow,
+      warnStartedAtMs,
+    },
+    dedupeKey,
+    dedupeWindowMs: WINDOW_WARN_MS,
+  }).catch((err) => {
+    operatorAccepted = false;
+    logEvent({
+      severity: 'warn',
+      function: 'recordFailedLogin',
+      event: 'admin.warn.notify.failed',
+      uid,
+      errorMessage: (err as Error)?.message,
+    });
+  });
+  if (!householdAccepted || !operatorAccepted) return;
+
+  await clearPendingAlertMarker(uid, 'warnAlertsPendingForMs', warnStartedAtMs, 'admin.warn.pending.clear.failed');
 }
 
 /**
@@ -273,7 +395,10 @@ async function sendLockAlerts(uid: string, email: string, lockStartedAtMs: numbe
   let operatorAccepted = true;
   await enqueueNotification({
     key: 'security.account.locked.operator',
-    data: await operatorLockAlertData(uid, email, lockStartedAtMs),
+    data: {
+      ...(await operatorHouseholdData(uid, email, 'admin.lock.household.lookup.failed')),
+      lockStartedAtMs,
+    },
     dedupeKey,
     dedupeWindowMs: LOCKOUT_DURATION_MS,
   }).catch((err) => {
@@ -288,33 +413,21 @@ async function sendLockAlerts(uid: string, email: string, lockStartedAtMs: numbe
   });
   if (!operatorAccepted) return;
 
-  // Cleared only while the stored marker still names THIS lock. Between the lock
-  // being saved and this line, an admin unlock or a password reset followed by a
-  // fresh lock can replace it with a newer lock's marker, and deleting that one
-  // would silently cancel the newer lock's retry.
-  const ref = securityDocRef(uid);
-  await db()
-    .runTransaction(async (tx) => {
-      const stored = parseSecurityDoc((await tx.get(ref)).data());
-      if (stored.lockAlertsPendingForMs !== lockStartedAtMs) return;
-      tx.set(ref, { lockAlertsPendingForMs: FieldValue.delete() }, { merge: true });
-    })
-    .catch((err) => {
-      // Harmless if it fails: the next retry is deduped by the ledger.
-      logEvent({
-        severity: 'warn',
-        function: 'recordFailedLogin',
-        event: 'admin.lock.pending.clear.failed',
-        uid,
-        errorMessage: (err as Error)?.message,
-      });
-    });
+  // Cleared only while the stored marker still names THIS lock: an admin unlock
+  // or a password reset followed by a fresh lock can replace it in between.
+  await clearPendingAlertMarker(uid, 'lockAlertsPendingForMs', lockStartedAtMs, 'admin.lock.pending.clear.failed');
 }
 
 type LockDecision =
   | { kind: 'alreadyLocked'; lockedUntilMs: number; pendingLockStartedAtMs: number | null }
   | { kind: 'lockedNow'; lockedUntilMs: number; lockStartedAtMs: number }
-  | { kind: 'counted'; nowMs: number; countLock: number; countWarn: number; warn: boolean };
+  | {
+      kind: 'counted';
+      countLock: number;
+      countWarn: number;
+      /** The saved burst whose warnings to send now (new or pending), else null. */
+      warnStartedAtMs: number | null;
+    };
 
 export interface RecordFailedLoginResult {
   /** Remaining failures within 20-min window before lockout fires. */
@@ -425,11 +538,28 @@ export async function recordFailedLoginHandler(
       return { kind: 'lockedNow', lockedUntilMs, lockStartedAtMs: nowMs };
     }
 
-    tx.set(ref, { attempts: nextAttempts, updatedAtMs: nowMs }, { merge: true });
-    const warn =
-      countWarn >= THRESHOLD_WARN &&
-      (!current.warnSentAtMs || current.warnSentAtMs < nowMs - WINDOW_WARN_MS);
-    return { kind: 'counted', nowMs, countLock, countWarn, warn };
+    // #877: a burst is open for WINDOW_WARN_MS after it starts. Crossing the
+    // threshold with no open burst starts one, saved here with its pending
+    // marker before either warning is sent. Inside an open burst whose marker is
+    // still pending, the warnings are re-sent for THAT burst. The retry stops
+    // when the burst closes, because the dedupe window is the burst's length
+    // and a later send could double the household's copy.
+    const burstOpen = current.warnSentAtMs !== undefined && current.warnSentAtMs > nowMs - WINDOW_WARN_MS;
+    let warnStartedAtMs: number | null = null;
+    if (countWarn >= THRESHOLD_WARN && !burstOpen) {
+      warnStartedAtMs = nowMs;
+      tx.set(
+        ref,
+        { attempts: nextAttempts, warnSentAtMs: nowMs, warnAlertsPendingForMs: nowMs, updatedAtMs: nowMs },
+        { merge: true },
+      );
+    } else {
+      if (burstOpen && current.warnAlertsPendingForMs === current.warnSentAtMs) {
+        warnStartedAtMs = current.warnSentAtMs!;
+      }
+      tx.set(ref, { attempts: nextAttempts, updatedAtMs: nowMs }, { merge: true });
+    }
+    return { kind: 'counted', countLock, countWarn, warnStartedAtMs };
   });
 
   switch (decision.kind) {
@@ -444,15 +574,8 @@ export async function recordFailedLoginHandler(
       return { remainingBeforeLock: 0, locked: true, lockedUntilMs: decision.lockedUntilMs };
     }
     case 'counted': {
-      if (decision.warn) {
-        await enqueueNotification({
-          key: 'auth.failedLogin.attempts',
-          recipientUid: uid,
-          data: { email: args.email, attemptsInWindow: decision.countWarn },
-        });
-        // Stamped only after the warning was accepted, as before, so a failed
-        // warning is retried by the next failed login.
-        await writeSecurityDoc(uid, { warnSentAtMs: decision.nowMs });
+      if (decision.warnStartedAtMs !== null) {
+        await sendWarningAlerts(uid, args.email, decision.warnStartedAtMs, decision.countWarn);
       }
       return {
         remainingBeforeLock: Math.max(0, THRESHOLD_LOCK - decision.countLock),
@@ -538,6 +661,7 @@ export const beforeSignIn = beforeUserSignedIn(
         {
           attempts: [],
           warnSentAtMs: FieldValue.delete(),
+          warnAlertsPendingForMs: FieldValue.delete(),
           lockedUntilMs: FieldValue.delete(),
           lockStartedAtMs: FieldValue.delete(),
           lockAlertsPendingForMs: FieldValue.delete(),
@@ -595,6 +719,8 @@ export async function unlockKinfolkAccountHandler(
       {
         attempts: [],
         warnSentAtMs: FieldValue.delete(),
+        // #877: no burst is left whose warnings could be pending.
+        warnAlertsPendingForMs: FieldValue.delete(),
         lockedUntilMs: FieldValue.delete(),
         lockStartedAtMs: FieldValue.delete(),
         // #869: an unlocked account has no lock whose alerts could be pending.

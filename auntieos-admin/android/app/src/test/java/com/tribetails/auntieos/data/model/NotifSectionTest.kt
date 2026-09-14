@@ -124,6 +124,26 @@ class NotifSectionTest {
         assertEquals(listOf("security.account.locked.operator"), grouped.single().second.map { it.key })
     }
 
+    /**
+     * #877: the operator's failed-login warning is a business-only `security`
+     * row, next to the lock alert. It belongs on the Business tab under Account
+     * and security, and nowhere else.
+     */
+    @Test
+    fun operatorFailedLoginWarningLandsUnderAccountAndSecurityOnBusinessOnly() {
+        val warning = NotificationCatalogEntry(
+            key = "security.failedLogin.attempts.operator",
+            category = "security",
+            audiences = setOf(STREAM_BUSINESS),
+        )
+        assertTrue(warning.inAudience(NotifAudience.Business))
+        assertTrue(!warning.inAudience(NotifAudience.Staff))
+        assertTrue(!warning.inAudience(NotifAudience.Kinfolk))
+        val grouped = sectionedNotifEntries(listOf(warning), STREAM_BUSINESS)
+        assertEquals(listOf("Account and security"), grouped.map { it.first })
+        assertEquals(listOf("security.failedLogin.attempts.operator"), grouped.single().second.map { it.key })
+    }
+
     @Test
     fun unknownStreamPutsEverythingUnderOther() {
         val grouped = sectionedNotifEntries(listOf(entry("visit.report", "visit")), "nope")

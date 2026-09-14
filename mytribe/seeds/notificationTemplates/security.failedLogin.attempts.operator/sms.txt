@@ -1,0 +1,1 @@
+Tribe Tails SECURITY: {{attemptsInWindow}} failed sign-ins in 10 min on {{kinfolkName}} ({{kinfolkEmail}}). Not locked yet, locks at 10. Check it was them.
