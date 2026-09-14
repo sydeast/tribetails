@@ -968,8 +968,14 @@ test('with no fetcher and nothing local, a Secret Manager value is UNREADABLE wi
 /**
  * Run the real CLI from a throwaway copy of the repo with NO .env files, so the
  * result does not depend on whether this machine has a developer's .env (the
- * operator's checkout does). node_modules is symlinked so `import('vite')`
- * resolves and the run is not the "blind" exit-3 path. `bin` is the ONLY
+ * operator's checkout does). The copy gets its OWN minimal `vite` module whose
+ * loadEnv reads `.env`, `.env.local`, `.env.<mode>` and `.env.<mode>.local`,
+ * so `import('vite')` resolves and the run is not the "blind" exit-3 path
+ * EVEN WHERE VITE IS NOT INSTALLED: CI's Deploy guard job runs `node --test`
+ * with no `npm ci`, and a symlink to the repo's node_modules made these tests
+ * exit 3 there. These tests are about what happens when Secret Manager cannot
+ * be read, not about Vite's precedence; the precedence test further down still
+ * drives the real Vite loader and skips when it is absent. `bin` is the ONLY
  * directory on PATH, so a gcloud installed on the machine running the test
  * cannot answer: GitHub's ubuntu image ships one at /usr/bin/gcloud. Nothing
  * else needs PATH. node is spawned by absolute path, the stubs are #!/bin/sh
@@ -983,7 +989,33 @@ function runCliWithoutStore(gcloudScript, { mode = '--check', envFiles = {}, ext
     for (const d of Object.values(APP_DIRS)) fs.mkdirSync(path.join(dir, d), { recursive: true });
     for (const [rel, body] of Object.entries(envFiles)) fs.writeFileSync(path.join(dir, rel), body);
     fs.copyFileSync(path.join(ROOT, 'scripts', 'client-secrets.mjs'), path.join(dir, 'scripts', 'client-secrets.mjs'));
-    fs.symlinkSync(path.join(ROOT, 'node_modules'), path.join(dir, 'node_modules'));
+    const viteDir = path.join(dir, 'node_modules', 'vite');
+    fs.mkdirSync(viteDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(viteDir, 'package.json'),
+      JSON.stringify({ name: 'vite', type: 'module', exports: './index.js' }),
+    );
+    fs.writeFileSync(
+      path.join(viteDir, 'index.js'),
+      [
+        "import fs from 'node:fs';",
+        "import path from 'node:path';",
+        '// Test stand-in for vite.loadEnv: KEY=VALUE lines, later files win.',
+        "export function loadEnv(mode, envDir, prefix = 'VITE_') {",
+        '  const out = {};',
+        "  for (const name of ['.env', '.env.local', `.env.${mode}`, `.env.${mode}.local`]) {",
+        '    let text;',
+        "    try { text = fs.readFileSync(path.join(envDir, name), 'utf8'); } catch { continue; }",
+        "    for (const line of text.split('\\n')) {",
+        '      const m = line.match(/^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(.*?)\\s*$/);',
+        '      if (m && m[1].startsWith(prefix)) out[m[1]] = m[2].replace(/^([\'"])(.*)\\1$/, \'$2\');',
+        '    }',
+        '  }',
+        '  return out;',
+        '}',
+        '',
+      ].join('\n'),
+    );
     if (gcloudScript !== null) {
       fs.writeFileSync(path.join(dir, 'bin', 'gcloud'), gcloudScript);
       fs.chmodSync(path.join(dir, 'bin', 'gcloud'), 0o755);
