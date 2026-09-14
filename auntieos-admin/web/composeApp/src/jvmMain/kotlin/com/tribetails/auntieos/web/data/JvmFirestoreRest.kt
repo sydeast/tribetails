@@ -14,6 +14,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
+import io.ktor.http.encodeURLParameter
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.delay
@@ -55,8 +56,20 @@ import com.tribetails.auntieos.web.observability.reportMessage
  */
 internal object JvmFirestoreRest {
     private const val PROJECT = "auntieos-ttpc"
-    private const val BASE =
-        "https://firestore.googleapis.com/v1/projects/$PROJECT/databases/(default)/documents"
+
+    /**
+     * #829: `FIRESTORE_EMULATOR_HOST` (the variable every Firebase SDK and
+     * `firebase emulators:exec` use) points reads and writes at a local
+     * emulator instead of production, so the merge writes below can be proven
+     * against a real Firestore. Unset, this is the production endpoint.
+     */
+    private val EMULATOR_HOST: String? = System.getenv("FIRESTORE_EMULATOR_HOST")?.takeIf { it.isNotBlank() }
+    private val BASE =
+        if (EMULATOR_HOST != null) "http://$EMULATOR_HOST/v1/projects/$PROJECT/databases/(default)/documents"
+        else "https://firestore.googleapis.com/v1/projects/$PROJECT/databases/(default)/documents"
+
+    /** The emulator's admin token when [EMULATOR_HOST] is set; otherwise the signed-in user's ID token. */
+    private suspend fun bearerToken(): String? = if (EMULATOR_HOST != null) "owner" else jvmFirebaseIdToken()
     private const val FUNCTIONS = "https://us-central1-$PROJECT.cloudfunctions.net"
     private const val POLL_MS = 8_000L
 
@@ -68,7 +81,7 @@ internal object JvmFirestoreRest {
 
     /** GET an entire collection (paginated), returning each doc as flat JSON with `_id`. */
     private suspend fun getCollection(collection: String): List<JsonObject> {
-        val token = jvmFirebaseIdToken() ?: error("Not signed in")
+        val token = bearerToken() ?: error("Not signed in")
         val out = ArrayList<JsonObject>()
         var pageToken: String? = null
         do {
@@ -140,7 +153,7 @@ internal object JvmFirestoreRest {
      * exactly like [docToPlain].
      */
     suspend fun runQueryWhereEq(collection: String, field: String, value: String): List<JsonObject> {
-        val token = jvmFirebaseIdToken() ?: error("Not signed in")
+        val token = bearerToken() ?: error("Not signed in")
         val query = buildJsonObject {
             put("structuredQuery", buildJsonObject {
                 put("from", buildJsonArray { add(buildJsonObject { put("collectionId", collection) }) })
@@ -198,7 +211,7 @@ internal object JvmFirestoreRest {
      * kinCares queue). Public so [runCollectionGroupQueryWhereEqPlain] can be tested.
      */
     suspend fun runCollectionGroupQueryWhereEq(groupId: String, field: String, value: String): List<JsonObject> {
-        val token = jvmFirebaseIdToken() ?: error("Not signed in")
+        val token = bearerToken() ?: error("Not signed in")
         val query = buildJsonObject {
             put("structuredQuery", buildJsonObject {
                 put("from", buildJsonArray { add(buildJsonObject { put("collectionId", groupId); put("allDescendants", true) }) })
@@ -281,7 +294,7 @@ internal object JvmFirestoreRest {
 
     /** GET a single document by id, as flat JSON with `_id`, or null when it does not exist. */
     suspend fun getDocPlain(collection: String, id: String): JsonObject? {
-        val token = jvmFirebaseIdToken() ?: error("Not signed in")
+        val token = bearerToken() ?: error("Not signed in")
         val resp = http.get("$BASE/$collection/$id") {
             header(HttpHeaders.Authorization, "Bearer $token")
         }
@@ -368,7 +381,7 @@ internal object JvmFirestoreRest {
         // collection and a PATCH at a caller-chosen id, and no assertion on a
         // return value can tell those apart.
         JvmFirestoreFixtures.lastWrite = RestWrite("PATCH", collection, id)
-        val token = jvmFirebaseIdToken() ?: error("Not signed in")
+        val token = bearerToken() ?: error("Not signed in")
         val plain = codec.parseToJsonElement(modelJson).jsonObject
         val resp = http.patch("$BASE/$collection/$id") {
             header(HttpHeaders.Authorization, "Bearer $token")
@@ -391,7 +404,7 @@ internal object JvmFirestoreRest {
         // test with no credentials can assert which fields the mask names.
         val plain = codec.parseToJsonElement(modelJson).jsonObject
         JvmFirestoreFixtures.lastWrite = RestWrite("MERGE", collection, id, plain.keys.filter { it != "_id" }.toSet())
-        val token = jvmFirebaseIdToken() ?: error("Not signed in")
+        val token = bearerToken() ?: error("Not signed in")
         val paths = mergeFieldPaths(plain)
         val resp = http.patch("$BASE/$collection/$id") {
             header(HttpHeaders.Authorization, "Bearer $token")
@@ -414,11 +427,15 @@ internal object JvmFirestoreRest {
     suspend fun mergeFieldChanges(collection: String, id: String, changes: List<KinfolkFieldChange>): String {
         val paths = changes.map { firestoreFieldPath(it.path) }
         JvmFirestoreFixtures.lastWrite = RestWrite("MERGE", collection, id, paths.toSet())
-        val token = jvmFirebaseIdToken() ?: error("Not signed in")
+        val token = bearerToken() ?: error("Not signed in")
         val body = bodyFrom(kinfolkChangesBody(changes))
         val resp = http.patch("$BASE/$collection/$id") {
             header(HttpHeaders.Authorization, "Bearer $token")
-            paths.forEach { parameter("updateMask.fieldPaths", it) }
+            // Pre-encoded with %20 for a space. `parameter()` form-encodes a space
+            // as `+`, which Firestore reads as a literal plus, so a mask naming
+            // formValues.`new key` wrote nothing (proven on the emulator,
+            // KinfolkMergeEmulatorTest).
+            url { paths.forEach { encodedParameters.append("updateMask.fieldPaths", it.encodeURLParameter()) } }
             contentType(ContentType.Application.Json)
             setBody(body.toString())
         }
@@ -443,7 +460,7 @@ internal object JvmFirestoreRest {
         // create writes (a new household must not write the Emergency Contact keys).
         val plain = codec.parseToJsonElement(modelJson).jsonObject
         JvmFirestoreFixtures.lastWrite = RestWrite("POST", collection, "", plain.keys.filter { it != "_id" }.toSet())
-        val token = jvmFirebaseIdToken() ?: error("Not signed in")
+        val token = bearerToken() ?: error("Not signed in")
         val resp = http.post("$BASE/$collection") {
             header(HttpHeaders.Authorization, "Bearer $token")
             contentType(ContentType.Application.Json)
@@ -457,7 +474,7 @@ internal object JvmFirestoreRest {
     /** Hard-delete a doc (REST DELETE). Returns true on success. */
     suspend fun deleteDoc(collection: String, id: String): Boolean {
         JvmFirestoreFixtures.lastWrite = RestWrite("DELETE", collection, id)
-        val token = jvmFirebaseIdToken() ?: return false
+        val token = bearerToken() ?: return false
         val resp = http.delete("$BASE/$collection/$id") {
             header(HttpHeaders.Authorization, "Bearer $token")
         }
@@ -467,7 +484,7 @@ internal object JvmFirestoreRest {
     /** PATCH only the given fields of a doc (field-level update via updateMask). */
     suspend fun patchFields(collection: String, id: String, fields: Map<String, JsonElement>): Boolean {
         JvmFirestoreFixtures.lastWrite = RestWrite("PATCH", collection, id, fields.keys.toSet())
-        val token = jvmFirebaseIdToken() ?: return false
+        val token = bearerToken() ?: return false
         val resp = http.patch("$BASE/$collection/$id") {
             header(HttpHeaders.Authorization, "Bearer $token")
             fields.keys.forEach { parameter("updateMask.fieldPaths", it) }
@@ -496,7 +513,7 @@ internal object JvmFirestoreRest {
         sentAtIso: String,
         updatedAtIso: String,
     ): Boolean {
-        val token = jvmFirebaseIdToken() ?: return false
+        val token = bearerToken() ?: return false
         val reportName = "$BASE/kin_care_reports/$reportId"
         val sessionName = "$BASE/kin_care_sessions/$sessionId"
         val body = buildJsonObject {
