@@ -137,6 +137,7 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   'rating.submitted.bad': ['score'],
   'rating.submitted.good': ['score'],
   'schedule.upcoming.digest': ['count'],
+  'security.account.locked.operator': ['kinfolkEmail', 'kinfolkName'],
   'security.breach_attempt.kinfolk': ['incidentId', 'ip', 'kinfolkEmail', 'timestampIso', 'userAgent'],
   'survey.event': [],
 };

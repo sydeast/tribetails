@@ -97,6 +97,7 @@ describe('getNotificationCatalogHandler', () => {
       // its absence from the catalog itself.
       'invite.expired', // business
       'security.breach_attempt.kinfolk', // business
+      'security.account.locked.operator', // business (#869)
       'rating.submitted.bad', // business
       'rating.submitted.good', // business
       'pet.marked.inactive', // business

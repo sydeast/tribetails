@@ -134,17 +134,36 @@ directory and fix, a clean install proceeds silently, and
 `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` is actually shipping it.
 
 **Never run `npm ci` INSIDE a workspace member** (`mytribe/web`,
-`auntieos-admin`, `packages/geo`). They share the ROOT's
-`package-lock.json`/`node_modules` and carry no lockfile of their own, and
-that absence is normal, not a defect. Another agent working in parallel on this
-same issue saw `npm ci` run inside `mytribe/web` exit 0 and SILENTLY DROP
-`@tiptap/*` and `@vitejs/plugin-react` from its `node_modules`, because with
-no lockfile there `npm ci` falls back to a plain (and much smaller) install
-rather than refusing. The fix, every time, is `npm ci` at the **root**. The
-drift check follows this: a workspace member's drift is always reported as
-"workspace root: ..." with the fix `npm ci`, never `npm ci --prefix
-mytribe/web`, and `scripts/release.test.sh` and `scripts/preflight.test.sh`
-each assert that no per-member `--prefix` command is ever suggested.
+`auntieos-admin`, `packages/geo`, `packages/issue-recorder`). They share the
+ROOT's `package-lock.json`/`node_modules` and carry no lockfile of their own,
+and that absence is normal, not a defect. Another agent working in parallel
+on this same issue saw `npm ci` run inside `mytribe/web` exit 0 and SILENTLY
+DROP `@tiptap/*` and `@vitejs/plugin-react` from its `node_modules`: npm
+walks up, finds the workspace root, and runs the equivalent of `npm ci -w
+mytribe/web` from there. That empties the root `node_modules` and reinstalls
+only that member's dependencies, then exits 0. The fix, every time, is `npm
+ci` at the **root**. The drift check follows this: a workspace member's
+drift is always reported as "workspace root: ..." with the fix `npm ci`,
+never `npm ci --prefix mytribe/web`, and `scripts/release.test.sh` and
+`scripts/preflight.test.sh` each assert that no per-member `--prefix`
+command is ever suggested.
+
+`npm ci` inside a member still empties the root `node_modules` before any
+guard can run, and npm has no earlier hook to stop it (tested on both npm
+10.9.8 and 11.9.0). Since #862 a guard turns that silent exit 0 into a loud
+refusal: every lockfile-less member carries a `preinstall` script
+(`scripts/lib/refuse-member-install.js`) that refuses `npm ci`, `npm
+install`, and `npm uninstall` run from inside that member, and stays silent
+for a root install, a `-w` filter run from the root, CI, or `bootstrap.sh` --
+see `scripts/refuse-member-install.test.sh` for the cases. The fix is `npm
+ci` at the repo root either way; to add or remove a single dependency in one
+member, run `npm install <pkg> -w mytribe/web` (or `npm uninstall <pkg> -w
+mytribe/web`) from the repo root instead of from inside the member.
+
+`npm ci -w <member>` run FROM THE ROOT is a legitimate command, not something
+this guard refuses, but it also empties most of the root tree down to just
+that member's subtree (477 entries down to 456 in one measurement here) --
+restore the full tree afterward with a plain root `npm ci`.
 
 Two of the tool checks above fail in ways that do not name themselves, which is
 why preflight checks them by RUNNING them rather than by looking for the binary:
@@ -203,6 +222,7 @@ From the repo root. Each fans out to the project that owns it.
 | `npm test` | Every JS suite (functions, geo, admin, portal) |
 | `npm run test:android` | Gradle unit tests |
 | `npm run test:rules` | Firestore rules, against the emulator |
+| `npm run test:scripts:emulator` | Every backfill's `*.emulator.test.ts`, against the emulator. **Run it before any backfill's prod write.** |
 | `npm run typecheck` | All four projects |
 | `npm run build` | Functions, admin, portal. `packages/geo` has no build step — both apps consume its TypeScript source directly. |
 | `npm run build:android` | `compileDebugKotlin` |
@@ -216,6 +236,10 @@ From the repo root. Each fans out to the project that owns it.
 
 Suffix any of `test`, `typecheck`, `build` with `:functions`, `:admin` or
 `:portal` to run one project.
+
+**Before a backfill writes to prod, run `npm run test:scripts:emulator` and
+read the pass count.** A dry run only reads, so it cannot catch a write that
+Firestore rejects. The emulator test runs the real write path.
 
 All suites pass on `main`. The counts move every day, so `npm test` is the
 authority rather than a number written here; as of 2026-08-04 the functions
@@ -1043,6 +1067,29 @@ or push failure does not fail the release: by step 9 the web is already live
 and verified, so the run reports the problem and leaves it for you to tag by
 hand rather than call a good deploy broken.
 
+### Templates to import after a release
+
+Some merges add a notification template that the release cannot load for you.
+The seed files ship inside the functions deploy, and templates reach Firestore
+only through the importer (operator ruling, issue #468). So each row below is an
+operator step after the first release that contains it.
+
+Until a template is imported, its notification still goes out on the generic
+fallback (`mytribe/functions/src/notifications/fallbackTemplate.ts`): email and
+push carry content-free copy pointing at AuntieOS, and **SMS is skipped**
+(operator ruling 2026-08-23, a segment costs money).
+
+| Template | Added by | What is missing until it is imported |
+|---|---|---|
+| `security.account.locked.operator` | #869 | The operator's lockout alert names neither the household nor the account email, and sends no SMS. |
+
+To import, follow [the template import list](#importing-notification-templates):
+Admin, then **Templates**, then **Import from repo** on web or the **Import** tab
+on Android, then read the plan before pressing **Import**. A template new to
+Firestore shows `create` on every channel and needs nothing ticked. Do not tick
+**Replace the stored copy with the repo wording** on an unrelated `skipped` row to
+get it in.
+
 ### Merged branches are deleted after the tag
 
 Immediately after step 9, `scripts/prune-merged-branches.sh` deletes remote
@@ -1732,6 +1779,7 @@ The script still exists and still reads the same seed directories, but running
 it against production replaces whole documents and drops the title, category,
 tags and description an operator authored in the Template Bank. The importer
 merges the content fields and leaves the rest alone.
+<a id="importing-notification-templates"></a>
 Do this instead, on the web admin or the phone:
 1. Admin, then **Templates**.
 2. **Import from repo** on web, or the **Import** tab on Android.
