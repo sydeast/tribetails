@@ -203,6 +203,7 @@ From the repo root. Each fans out to the project that owns it.
 | `npm test` | Every JS suite (functions, geo, admin, portal) |
 | `npm run test:android` | Gradle unit tests |
 | `npm run test:rules` | Firestore rules, against the emulator |
+| `npm run test:scripts:emulator` | Every backfill's `*.emulator.test.ts`, against the emulator. **Run it before any backfill's prod write.** |
 | `npm run typecheck` | All four projects |
 | `npm run build` | Functions, admin, portal. `packages/geo` has no build step — both apps consume its TypeScript source directly. |
 | `npm run build:android` | `compileDebugKotlin` |
@@ -216,6 +217,10 @@ From the repo root. Each fans out to the project that owns it.
 
 Suffix any of `test`, `typecheck`, `build` with `:functions`, `:admin` or
 `:portal` to run one project.
+
+**Before a backfill writes to prod, run `npm run test:scripts:emulator` and
+read the pass count.** A dry run only reads, so it cannot catch a write that
+Firestore rejects. The emulator test runs the real write path.
 
 All suites pass on `main`. The counts move every day, so `npm test` is the
 authority rather than a number written here; as of 2026-08-04 the functions
