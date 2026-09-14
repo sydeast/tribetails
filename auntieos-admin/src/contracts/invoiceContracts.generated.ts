@@ -827,8 +827,9 @@ export interface SendInvoiceReminderResult {
   ok: true;
   invoiceId: string;
   sent: boolean;
-  lastReminderAtMs: number;
-  nextReminderAllowedAtMs: number;
+  reason: 'sent' | 'recent' | 'in-progress' | 'suppressed';
+  lastReminderAtMs: number | null;
+  nextReminderAllowedAtMs: number | null;
 }
 
 // ---------- unarchiveInvoice ----------

@@ -14,22 +14,34 @@ class InvoiceReminderTest {
     @Test
     fun decodesASend() {
         assertEquals(
-            ReminderOutcome(true, t, t + day),
-            decodeReminderOutcome("""{"ok":true,"invoiceId":"i","sent":true,"lastReminderAtMs":$t,"nextReminderAllowedAtMs":${t + day}}""", 1L),
+            ReminderOutcome(true, "sent", t, t + day),
+            decodeReminderOutcome("""{"ok":true,"invoiceId":"i","sent":true,"reason":"sent","lastReminderAtMs":$t,"nextReminderAllowedAtMs":${t + day}}""", 1L),
         )
     }
 
     @Test
     fun decodesAnAlreadySentAnswer() {
         assertEquals(
-            ReminderOutcome(false, t, t + day),
-            decodeReminderOutcome("""{"ok":true,"invoiceId":"i","sent":false,"lastReminderAtMs":$t,"nextReminderAllowedAtMs":${t + day}}""", 1L),
+            ReminderOutcome(false, "recent", t, t + day),
+            decodeReminderOutcome("""{"ok":true,"invoiceId":"i","sent":false,"reason":"recent","lastReminderAtMs":$t,"nextReminderAllowedAtMs":${t + day}}""", 1L),
+        )
+    }
+
+    @Test
+    fun decodesSuppressedAndInProgressWithNullTimes() {
+        assertEquals(
+            ReminderOutcome(false, "suppressed", null, null),
+            decodeReminderOutcome("""{"ok":true,"invoiceId":"i","sent":false,"reason":"suppressed","lastReminderAtMs":null,"nextReminderAllowedAtMs":null}""", 1L),
+        )
+        assertEquals(
+            ReminderOutcome(false, "in-progress", null, t),
+            decodeReminderOutcome("""{"ok":true,"invoiceId":"i","sent":false,"reason":"in-progress","lastReminderAtMs":null,"nextReminderAllowedAtMs":$t}""", 1L),
         )
     }
 
     @Test
     fun aBodyWithoutSentIsAPreFixSendNeverARefusal() {
-        assertEquals(ReminderOutcome(true, 42L, 42L), decodeReminderOutcome("""{"ok":true,"invoiceId":"i"}""", 42L))
+        assertEquals(ReminderOutcome(true, "sent", 42L, null), decodeReminderOutcome("""{"ok":true,"invoiceId":"i"}""", 42L))
     }
 
     @Test
@@ -44,14 +56,26 @@ class InvoiceReminderTest {
 
     @Test
     fun sentMessageIsPlain() {
-        assertEquals("Reminder sent.", reminderOutcomeMessage(ReminderOutcome(true, t, t + day), TimeZone.UTC))
+        assertEquals("Reminder sent.", reminderOutcomeMessage(ReminderOutcome(true, "sent", t, t + day), TimeZone.UTC))
     }
 
     @Test
     fun refusedMessageSaysWhenAndWhenNext() {
         assertEquals(
             "Not sent: a reminder already went out Sep 14, 3:05 PM. The next one can go out after Sep 15, 3:05 PM.",
-            reminderOutcomeMessage(ReminderOutcome(false, t, t + day), TimeZone.UTC),
+            reminderOutcomeMessage(ReminderOutcome(false, "recent", t, t + day), TimeZone.UTC),
+        )
+    }
+
+    @Test
+    fun inProgressAndSuppressedMessages() {
+        assertEquals(
+            "Not sent: a reminder for this invoice is already being sent. If it does not arrive, try again after Sep 14, 3:05 PM.",
+            reminderOutcomeMessage(ReminderOutcome(false, "in-progress", null, t), TimeZone.UTC),
+        )
+        assertEquals(
+            "Not sent: this household's notification settings block payment reminders, so no reminder went out.",
+            reminderOutcomeMessage(ReminderOutcome(false, "suppressed", null, null), TimeZone.UTC),
         )
     }
 

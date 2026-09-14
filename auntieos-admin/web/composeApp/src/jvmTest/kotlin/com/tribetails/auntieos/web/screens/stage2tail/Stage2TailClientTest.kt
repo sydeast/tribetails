@@ -27,11 +27,11 @@ class Stage2TailClientTest {
     fun sendInvoiceReminderDecodesASend() = runBlocking {
         JvmFirestoreFixtures.callableResponses = mapOf(
             "sendInvoiceReminder" to
-                """{"ok":true,"invoiceId":"inv_7","sent":true,"lastReminderAtMs":1000,"nextReminderAllowedAtMs":86401000}""",
+                """{"ok":true,"invoiceId":"inv_7","sent":true,"reason":"sent","lastReminderAtMs":1000,"nextReminderAllowedAtMs":86401000}""",
         )
         val r = FirestoreClient().sendInvoiceReminder("inv_7", nowMs = 5L)
         assertTrue(r is WriteResult.Ok)
-        assertEquals(ReminderOutcome(sent = true, lastReminderAtMs = 1000L, nextReminderAllowedAtMs = 86_401_000L), (r as WriteResult.Ok).value)
+        assertEquals(ReminderOutcome(sent = true, reason = "sent", lastReminderAtMs = 1000L, nextReminderAllowedAtMs = 86_401_000L), (r as WriteResult.Ok).value)
     }
 
     /** #832: the server refused a second reminder inside its window. An Ok, carrying when. */
@@ -39,7 +39,7 @@ class Stage2TailClientTest {
     fun sendInvoiceReminderDecodesAlreadySentAsOkNotErr() = runBlocking {
         JvmFirestoreFixtures.callableResponses = mapOf(
             "sendInvoiceReminder" to
-                """{"ok":true,"invoiceId":"inv_7","sent":false,"lastReminderAtMs":500,"nextReminderAllowedAtMs":86400500}""",
+                """{"ok":true,"invoiceId":"inv_7","sent":false,"reason":"recent","lastReminderAtMs":500,"nextReminderAllowedAtMs":86400500}""",
         )
         val r = FirestoreClient().sendInvoiceReminder("inv_7", nowMs = 5L)
         assertTrue(r is WriteResult.Ok)
@@ -54,7 +54,7 @@ class Stage2TailClientTest {
         JvmFirestoreFixtures.callableResponses = mapOf("sendInvoiceReminder" to """{"ok":true,"invoiceId":"inv_7"}""")
         val r = FirestoreClient().sendInvoiceReminder("inv_arg", nowMs = 42L)
         assertTrue(r is WriteResult.Ok)
-        assertEquals(ReminderOutcome(sent = true, lastReminderAtMs = 42L, nextReminderAllowedAtMs = 42L), (r as WriteResult.Ok).value)
+        assertEquals(ReminderOutcome(sent = true, reason = "sent", lastReminderAtMs = 42L, nextReminderAllowedAtMs = null), (r as WriteResult.Ok).value)
     }
 
     @Test

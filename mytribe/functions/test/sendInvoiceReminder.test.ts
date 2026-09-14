@@ -15,10 +15,14 @@ vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolv
 vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotificationDetailed: mocks.enqueue }));
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<any>('firebase-admin/firestore');
-  return { ...actual, FieldValue: { serverTimestamp: () => '__TS__' } };
+  return { ...actual, FieldValue: { serverTimestamp: () => '__TS__', delete: () => '__DELETE__' } };
 });
 
-import { INVOICE_REMINDER_RESEND_WINDOW_MS, sendInvoiceReminderHandler } from '../src/admin/sendInvoiceReminder';
+import {
+  INVOICE_REMINDER_CLAIM_LEASE_MS,
+  INVOICE_REMINDER_RESEND_WINDOW_MS,
+  sendInvoiceReminderHandler,
+} from '../src/admin/sendInvoiceReminder';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
 
 const NOW = Date.UTC(2026, 8, 14, 15, 0, 0);
@@ -47,6 +51,11 @@ function seed(invoice: Record<string, unknown> | null = { kinfolkId: 'fam1', inv
   return buildDbMock({ docs: { 'invoices/inv1': invoice }, writeThrough: true });
 }
 
+/** The invoice as stored right now. */
+async function stored(ctx: ReturnType<typeof seed>): Promise<Record<string, unknown>> {
+  return ((await ctx.db.collection('invoices').doc('inv1').get()).data() ?? {}) as Record<string, unknown>;
+}
+
 describe('sendInvoiceReminder happy path', () => {
   it('enqueues invoice.reminder to the resolved kinfolk uid and says it sent', async () => {
     const ctx = seed();
@@ -56,6 +65,7 @@ describe('sendInvoiceReminder happy path', () => {
       ok: true,
       invoiceId: 'inv1',
       sent: true,
+      reason: 'sent',
       lastReminderAtMs: NOW,
       nextReminderAllowedAtMs: NOW + INVOICE_REMINDER_RESEND_WINDOW_MS,
     });
@@ -64,12 +74,13 @@ describe('sendInvoiceReminder happy path', () => {
     );
   });
 
-  it('stamps reminderNotifiedAtMs for cron idempotency parity', async () => {
+  it('stamps reminderNotifiedAtMs for cron idempotency parity, and clears its claim', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
     await sendInvoiceReminderHandler(req({ invoiceId: 'inv1' }));
-    const write = ctx.writes.find((w) => w.path === 'invoices/inv1');
-    expect(write?.data.reminderNotifiedAtMs).toBe(NOW);
+    const doc = await stored(ctx);
+    expect(doc.reminderNotifiedAtMs).toBe(NOW);
+    expect(doc.reminderClaimAtMs).toBe('__DELETE__');
   });
 
   it('writes a BILLING_REMINDER_SENT audit entry', async () => {
@@ -103,12 +114,12 @@ describe('sendInvoiceReminder refuses a duplicate (#832)', () => {
       ok: true,
       invoiceId: 'inv1',
       sent: false,
+      reason: 'recent',
       lastReminderAtMs: earlier,
       nextReminderAllowedAtMs: earlier + INVOICE_REMINDER_RESEND_WINDOW_MS,
     });
     expect(mocks.enqueue).not.toHaveBeenCalled();
     expect(writeAuditEntry).not.toHaveBeenCalled();
-    // The earlier stamp is left exactly as it was.
     expect(ctx.writes.some((w) => w.path === 'invoices/inv1')).toBe(false);
   });
 
@@ -121,8 +132,7 @@ describe('sendInvoiceReminder refuses a duplicate (#832)', () => {
     const second = await sendInvoiceReminderHandler(req({ invoiceId: 'inv1' }));
 
     expect(first.sent).toBe(true);
-    expect(second.sent).toBe(false);
-    expect(second.lastReminderAtMs).toBe(NOW);
+    expect(second).toMatchObject({ sent: false, reason: 'recent', lastReminderAtMs: NOW });
     expect(mocks.enqueue).toHaveBeenCalledTimes(1);
   });
 
@@ -141,21 +151,21 @@ describe('sendInvoiceReminder refuses a duplicate (#832)', () => {
     const ctx = seed({ kinfolkId: 'fam1', reminderNotifiedAtMs: cronRan });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await sendInvoiceReminderHandler(req({ invoiceId: 'inv1' }));
-    expect(res.sent).toBe(false);
-    expect(res.lastReminderAtMs).toBe(cronRan);
+    expect(res).toMatchObject({ sent: false, reason: 'recent', lastReminderAtMs: cronRan });
   });
 
-  it('makes the check and the claim in one transaction, before dispatching', async () => {
+  it('claims before dispatching, and does NOT write the stamp until the dispatch has succeeded', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
-    let stampWhenDispatched: unknown;
+    let docWhenDispatched: Record<string, unknown> = {};
     mocks.enqueue.mockImplementation(async () => {
-      stampWhenDispatched = (await ctx.db.collection('invoices').doc('inv1').get()).data()?.reminderNotifiedAtMs;
+      docWhenDispatched = await stored(ctx);
       return { written: ['n1'], suppressed: [] };
     });
     await sendInvoiceReminderHandler(req({ invoiceId: 'inv1' }));
     expect(ctx.db.runTransaction).toHaveBeenCalled();
-    expect(stampWhenDispatched).toBe(NOW);
+    expect(docWhenDispatched.reminderClaimAtMs).toBe(NOW);
+    expect(docWhenDispatched.reminderNotifiedAtMs).toBeUndefined();
   });
 
   it('when the dispatcher refuses a duplicate the stamp did not know about, reports it and records that time', async () => {
@@ -169,11 +179,107 @@ describe('sendInvoiceReminder refuses a duplicate (#832)', () => {
 
     const res = await sendInvoiceReminderHandler(req({ invoiceId: 'inv1' }));
 
-    expect(res.sent).toBe(false);
-    expect(res.lastReminderAtMs).toBe(dispatcherSaw);
+    expect(res).toMatchObject({ sent: false, reason: 'recent', lastReminderAtMs: dispatcherSaw });
     expect(writeAuditEntry).not.toHaveBeenCalled();
-    const last = ctx.writes.filter((w) => w.path === 'invoices/inv1').at(-1);
-    expect(last?.data.reminderNotifiedAtMs).toBe(dispatcherSaw);
+    expect((await stored(ctx)).reminderNotifiedAtMs).toBe(dispatcherSaw);
+  });
+});
+
+describe('sendInvoiceReminder claim is a lease (#832)', () => {
+  it('a claim left by a crash between claim and send: refused as in progress, the stamp untouched, then works after the lease', async () => {
+    // What a crashed call leaves behind: its claim, and no stamp, because the
+    // stamp is only ever written after a send.
+    const crashedAt = NOW - 60_000;
+    const ctx = seed({ kinfolkId: 'fam1', reminderClaimAtMs: crashedAt });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const during = await sendInvoiceReminderHandler(req({ invoiceId: 'inv1' }));
+    expect(during).toEqual({
+      ok: true,
+      invoiceId: 'inv1',
+      sent: false,
+      reason: 'in-progress',
+      // No reminder ever went out, and the answer never pretends one did.
+      lastReminderAtMs: null,
+      nextReminderAllowedAtMs: crashedAt + INVOICE_REMINDER_CLAIM_LEASE_MS,
+    });
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect((await stored(ctx)).reminderNotifiedAtMs).toBeUndefined();
+
+    vi.setSystemTime(crashedAt + INVOICE_REMINDER_CLAIM_LEASE_MS);
+    const after = await sendInvoiceReminderHandler(req({ invoiceId: 'inv1' }));
+    expect(after).toMatchObject({ sent: true, reason: 'sent' });
+    expect((await stored(ctx)).reminderNotifiedAtMs).toBe(crashedAt + INVOICE_REMINDER_CLAIM_LEASE_MS);
+  });
+
+  it('a throw resolving the household (after the claim) releases the claim and never stamps', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.resolveUid.mockRejectedValueOnce(new Error('kinfolk lookup down'));
+
+    await expect(sendInvoiceReminderHandler(req({ invoiceId: 'inv1' }))).rejects.toThrow('kinfolk lookup down');
+
+    const doc = await stored(ctx);
+    expect(doc.reminderClaimAtMs).toBe('__DELETE__');
+    expect(doc.reminderNotifiedAtMs).toBeUndefined();
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+
+    const retry = await sendInvoiceReminderHandler(req({ invoiceId: 'inv1' }));
+    expect(retry.sent).toBe(true);
+  });
+
+  it('fails loud (does NOT swallow) when dispatch throws, releases the claim, and keeps the older stamp', async () => {
+    const old = NOW - 3 * INVOICE_REMINDER_RESEND_WINDOW_MS;
+    const ctx = seed({ kinfolkId: 'fam1', reminderNotifiedAtMs: old });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.enqueue.mockRejectedValueOnce(new Error('boom'));
+
+    await expect(sendInvoiceReminderHandler(req({ invoiceId: 'inv1' }))).rejects.toThrow('boom');
+
+    const doc = await stored(ctx);
+    expect(doc.reminderNotifiedAtMs).toBe(old);
+    expect(doc.reminderClaimAtMs).toBe('__DELETE__');
+    const retry = await sendInvoiceReminderHandler(req({ invoiceId: 'inv1' }));
+    expect(retry.sent).toBe(true);
+  });
+
+  it('a claim taken over after its lease is not cleared by the stale call finishing late', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    // While the first call is dispatching, its lease expires and a second press
+    // takes the claim over.
+    mocks.enqueue.mockImplementationOnce(async () => {
+      await ctx.db.collection('invoices').doc('inv1').set({ reminderClaimAtMs: NOW + INVOICE_REMINDER_CLAIM_LEASE_MS }, { merge: true });
+      return { written: ['n1'], suppressed: [] };
+    });
+    await sendInvoiceReminderHandler(req({ invoiceId: 'inv1' }));
+    const doc = await stored(ctx);
+    expect(doc.reminderClaimAtMs).toBe(NOW + INVOICE_REMINDER_CLAIM_LEASE_MS);
+    expect(doc.reminderNotifiedAtMs).toBe(NOW);
+  });
+});
+
+describe('sendInvoiceReminder when prefs suppress every recipient (#832)', () => {
+  it('answers suppressed, never sent, and writes no stamp and no audit', async () => {
+    const earlier = NOW - 5 * INVOICE_REMINDER_RESEND_WINDOW_MS;
+    const ctx = seed({ kinfolkId: 'fam1', reminderNotifiedAtMs: earlier });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.enqueue.mockResolvedValue({ written: [], suppressed: [{ recipientUid: 'kin-uid-1', reason: 'prefs' }] });
+
+    const res = await sendInvoiceReminderHandler(req({ invoiceId: 'inv1' }));
+
+    expect(res).toEqual({
+      ok: true,
+      invoiceId: 'inv1',
+      sent: false,
+      reason: 'suppressed',
+      lastReminderAtMs: earlier,
+      nextReminderAllowedAtMs: null,
+    });
+    const doc = await stored(ctx);
+    expect(doc.reminderNotifiedAtMs).toBe(earlier);
+    expect(doc.reminderClaimAtMs).toBe('__DELETE__');
+    expect(writeAuditEntry).not.toHaveBeenCalled();
   });
 });
 
@@ -205,28 +311,5 @@ describe('sendInvoiceReminder validation + sad paths', () => {
   it('rejects unauthenticated caller', async () => {
     mocks.dbFn.mockReturnValue(seed().db);
     await expect(sendInvoiceReminderHandler(req({ invoiceId: 'inv1' }, null))).rejects.toMatchObject({ code: 'unauthenticated' });
-  });
-
-  it('fails loud (does NOT swallow) when dispatch throws, and releases the claim so a retry can send', async () => {
-    const ctx = seed();
-    mocks.dbFn.mockReturnValue(ctx.db);
-    mocks.enqueue.mockRejectedValueOnce(new Error('boom'));
-    await expect(sendInvoiceReminderHandler(req({ invoiceId: 'inv1' }))).rejects.toThrow('boom');
-
-    const last = ctx.writes.filter((w) => w.path === 'invoices/inv1').at(-1);
-    expect(last?.data.reminderNotifiedAtMs).toBeNull();
-
-    const retry = await sendInvoiceReminderHandler(req({ invoiceId: 'inv1' }));
-    expect(retry.sent).toBe(true);
-  });
-
-  it('releasing the claim restores an older stamp rather than blanking it', async () => {
-    const old = NOW - 3 * INVOICE_REMINDER_RESEND_WINDOW_MS;
-    const ctx = seed({ kinfolkId: 'fam1', reminderNotifiedAtMs: old });
-    mocks.dbFn.mockReturnValue(ctx.db);
-    mocks.enqueue.mockRejectedValueOnce(new Error('boom'));
-    await expect(sendInvoiceReminderHandler(req({ invoiceId: 'inv1' }))).rejects.toThrow('boom');
-    const last = ctx.writes.filter((w) => w.path === 'invoices/inv1').at(-1);
-    expect(last?.data.reminderNotifiedAtMs).toBe(old);
   });
 });

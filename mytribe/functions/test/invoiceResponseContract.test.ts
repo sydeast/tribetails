@@ -446,12 +446,16 @@ const CASES: Array<{
     name: 'sendInvoiceReminder',
     schema: SendInvoiceReminderResult,
     accepts: [
-      ['a reminder sent now', { ok: true, invoiceId: 'inv1', sent: true, lastReminderAtMs: 1000, nextReminderAllowedAtMs: 86_401_000 }],
+      ['a reminder sent now', { ok: true, invoiceId: 'inv1', sent: true, reason: 'sent', lastReminderAtMs: 1000, nextReminderAllowedAtMs: 86_401_000 }],
       // #832: refused as a duplicate is still a successful answer, not an error.
-      ['a reminder already sent', { ok: true, invoiceId: 'inv1', sent: false, lastReminderAtMs: 500, nextReminderAllowedAtMs: 86_400_500 }],
+      ['a reminder already sent', { ok: true, invoiceId: 'inv1', sent: false, reason: 'recent', lastReminderAtMs: 500, nextReminderAllowedAtMs: 86_400_500 }],
+      // A crashed press's lease, on an invoice never reminded: no last reminder.
+      ['a press already in flight', { ok: true, invoiceId: 'inv1', sent: false, reason: 'in-progress', lastReminderAtMs: null, nextReminderAllowedAtMs: 180_000 }],
+      ['every recipient suppressed by prefs', { ok: true, invoiceId: 'inv1', sent: false, reason: 'suppressed', lastReminderAtMs: null, nextReminderAllowedAtMs: null }],
     ],
     refuses: [
-      ['an empty invoiceId', { ok: true, invoiceId: '', sent: true, lastReminderAtMs: 1000, nextReminderAllowedAtMs: 86_401_000 }],
+      ['an empty invoiceId', { ok: true, invoiceId: '', sent: true, reason: 'sent', lastReminderAtMs: 1000, nextReminderAllowedAtMs: 86_401_000 }],
+      ['a reason outside the four', { ok: true, invoiceId: 'inv1', sent: false, reason: 'maybe', lastReminderAtMs: null, nextReminderAllowedAtMs: null }],
       // The pre-#832 bare echo: a client could not tell a send from a refusal.
       ['no word on whether it sent', { ok: true, invoiceId: 'inv1' }],
     ],

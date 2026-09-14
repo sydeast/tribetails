@@ -117,9 +117,10 @@ describe('sendInvoiceReminder', () => {
 
   it('#832: returns an already-sent answer instead of throwing', async () => {
     call.mockReset();
-    call.mockResolvedValue({ ok: true, invoiceId: 'inv-3', sent: false, lastReminderAtMs: 5, nextReminderAllowedAtMs: 9 });
+    call.mockResolvedValue({ ok: true, invoiceId: 'inv-3', sent: false, reason: 'recent', lastReminderAtMs: 5, nextReminderAllowedAtMs: 9 });
     await expect(sendInvoiceReminder('inv-3')).resolves.toEqual({
       sent: false,
+      reason: 'recent',
       lastReminderAtMs: 5,
       nextReminderAllowedAtMs: 9,
     });

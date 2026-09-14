@@ -883,12 +883,19 @@ internal fun reminderInvoiceIdOrRequested(raw: Map<String, Any?>?, requested: St
  */
 internal fun reminderOutcomeOf(raw: Map<String, Any?>?, nowMs: Long): ReminderOutcome {
     if (raw?.get("sent") !is Boolean) {
-        return ReminderOutcome(sent = true, lastReminderAtMs = nowMs, nextReminderAllowedAtMs = nowMs)
+        return ReminderOutcome(sent = true, reason = "sent", lastReminderAtMs = nowMs, nextReminderAllowedAtMs = null)
     }
     val decoded = decodeSendInvoiceReminderResult(raw)
-    val last = if (raw["lastReminderAtMs"] is Number) decoded.lastReminderAtMs else nowMs
-    val next = if (raw["nextReminderAllowedAtMs"] is Number) decoded.nextReminderAllowedAtMs else last
-    return ReminderOutcome(sent = decoded.sent, lastReminderAtMs = last, nextReminderAllowedAtMs = next)
+    // A reason outside the four (or none) falls back on `sent`, never on a guess
+    // that nothing went out when the server said it did.
+    val reason = decoded.reason.takeIf { it in com.tribetails.auntieos.domain.REMINDER_REASONS }
+        ?: if (decoded.sent) "sent" else "recent"
+    return ReminderOutcome(
+        sent = decoded.sent,
+        reason = reason,
+        lastReminderAtMs = decoded.lastReminderAtMs,
+        nextReminderAllowedAtMs = decoded.nextReminderAllowedAtMs,
+    )
 }
 
 /**

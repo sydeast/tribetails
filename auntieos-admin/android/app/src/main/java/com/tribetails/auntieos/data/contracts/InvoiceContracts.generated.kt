@@ -1645,8 +1645,10 @@ data class SendInvoiceReminderResult(
     val ok: Boolean,
     val invoiceId: String,
     val sent: Boolean,
-    val lastReminderAtMs: Long,
-    val nextReminderAllowedAtMs: Long,
+    /** One of `sent`, `recent`, `in-progress`, `suppressed`. `""` when the payload omits it. */
+    val reason: String,
+    val lastReminderAtMs: Long?,
+    val nextReminderAllowedAtMs: Long?,
 )
 
 /**
@@ -1659,8 +1661,9 @@ internal fun decodeSendInvoiceReminderResult(raw: Map<String, Any?>?): SendInvoi
         ok = raw?.get("ok") as? Boolean ?: false,
         invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
         sent = raw?.get("sent") as? Boolean ?: false,
-        lastReminderAtMs = (raw?.get("lastReminderAtMs") as? Number)?.toLong() ?: 0L,
-        nextReminderAllowedAtMs = (raw?.get("nextReminderAllowedAtMs") as? Number)?.toLong() ?: 0L,
+        reason = (raw?.get("reason") as? String).orEmpty(),
+        lastReminderAtMs = (raw?.get("lastReminderAtMs") as? Number)?.toLong(),
+        nextReminderAllowedAtMs = (raw?.get("nextReminderAllowedAtMs") as? Number)?.toLong(),
     )
 
 // ---------- unarchiveInvoice ----------

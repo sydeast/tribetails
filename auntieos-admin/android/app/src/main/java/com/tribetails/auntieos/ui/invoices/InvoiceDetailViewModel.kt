@@ -606,7 +606,11 @@ class InvoiceDetailViewModel(
                         // COPY of the loaded model with the one server-written
                         // field moved, never a rebuild: every other field on the
                         // invoice stays exactly as the server sent it.
-                        invoice = current.invoice?.copy(reminderNotifiedAtMs = outcome.lastReminderAtMs),
+                        // Only a real time moves it: null means no reminder on
+                        // record and must never blank a stamp the model holds.
+                        invoice = current.invoice?.let { inv ->
+                            outcome.lastReminderAtMs?.let { inv.copy(reminderNotifiedAtMs = it) } ?: inv
+                        },
                         toastMessage = com.tribetails.auntieos.domain.reminderOutcomeMessage(outcome),
                         toastVisible = true,
                         // A refusal is not a failure, but it must not read as a

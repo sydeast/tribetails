@@ -89,7 +89,7 @@ import { formatReminderTime, type ReminderOutcome } from '../lib/invoiceReminder
 /** What `sendInvoiceReminder` resolves to when THIS press sent the reminder (#832). */
 function reminderSent(): ReminderOutcome {
   const at = Date.UTC(2026, 8, 14, 15, 0, 0);
-  return { sent: true, lastReminderAtMs: at, nextReminderAllowedAtMs: at + 24 * 60 * 60 * 1000 };
+  return { sent: true, reason: 'sent', lastReminderAtMs: at, nextReminderAllowedAtMs: at + 24 * 60 * 60 * 1000 };
 }
 
 /** The `<dd>` paired with a `<dt>` in the facts list. */
@@ -467,6 +467,7 @@ describe('InvoiceDetail', () => {
     const earlier = Date.UTC(2026, 8, 14, 9, 0, 0);
     sendInvoiceReminder.mockResolvedValue({
       sent: false,
+      reason: 'recent',
       lastReminderAtMs: earlier,
       nextReminderAllowedAtMs: earlier + 24 * 60 * 60 * 1000,
     });
@@ -481,6 +482,35 @@ describe('InvoiceDetail', () => {
     expect(screen.getByText('Done, but not all of it')).toBeInTheDocument();
     expect(screen.queryByText('Reminder sent.')).toBeNull();
     expect(factValue('Last reminder')).toBe(formatReminderTime(earlier));
+  });
+
+  it('#832: a reminder blocked by the household settings says nothing went out, and the fact stays as it was', async () => {
+    const earlier = Date.UTC(2026, 7, 1, 9, 0, 0);
+    sendInvoiceReminder.mockResolvedValue({
+      sent: false,
+      reason: 'suppressed',
+      lastReminderAtMs: null,
+      nextReminderAllowedAtMs: null,
+    });
+    render(<InvoiceDetail invoice={entry({ reminderNotifiedAtMs: earlier })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
+
+    expect(await screen.findByText(/notification settings block payment reminders/i)).toBeInTheDocument();
+    expect(screen.getByText('Done, but not all of it')).toBeInTheDocument();
+    expect(screen.queryByText('Reminder sent.')).toBeNull();
+    expect(factValue('Last reminder')).toBe(formatReminderTime(earlier));
+  });
+
+  it('#832: "Last reminder" follows the live invoice while the panel is open', () => {
+    const first = Date.UTC(2026, 8, 13, 14, 0, 0);
+    const later = Date.UTC(2026, 8, 14, 9, 0, 0);
+    const { rerender } = render(<InvoiceDetail invoice={entry({})} onClose={vi.fn()} />);
+    expect(factValue('Last reminder')).toBe('none sent');
+    rerender(<InvoiceDetail invoice={entry({ reminderNotifiedAtMs: first })} onClose={vi.fn()} />);
+    expect(factValue('Last reminder')).toBe(formatReminderTime(first));
+    rerender(<InvoiceDetail invoice={entry({ reminderNotifiedAtMs: later })} onClose={vi.fn()} />);
+    expect(factValue('Last reminder')).toBe(formatReminderTime(later));
   });
 
   it('#832: the confirm is pessimistic: busy and disabled until the server answers, so a second tap cannot fire', async () => {

@@ -510,6 +510,12 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
    * press lands, sent or refused, without waiting for the list to reload.
    */
   const [lastReminderAt, setLastReminderAt] = useState<unknown>(invoice.reminderNotifiedAtMs);
+  // The invoice prop is the live row, so a stamp written while the panel is open
+  // (the cron, another operator's press, another tab) arrives here and must
+  // replace what the panel showed.
+  useEffect(() => {
+    setLastReminderAt(invoice.reminderNotifiedAtMs);
+  }, [invoice.reminderNotifiedAtMs]);
   const [paidMethod, setPaidMethod] = useState('');
   const [paidReference, setPaidReference] = useState('');
   // Free text, not a number input, so a half-typed "2" is never read as $2.
@@ -915,7 +921,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
 
       if (meta.key === 'reminder') {
         const reminder = await sendInvoiceReminder(invoice._id);
-        setLastReminderAt(reminder.lastReminderAtMs);
+        // Only a real time moves the fact. `null` means no reminder is on record,
+        // which is what the panel already shows; it never blanks a stamp.
+        if (reminder.lastReminderAtMs !== null) setLastReminderAt(reminder.lastReminderAtMs);
         outcome = reminderOutcomeMessage(reminder);
         // A refusal is not a failure (the household HAS been reminded), but it
         // is not "Done" either: nothing was sent by this press.

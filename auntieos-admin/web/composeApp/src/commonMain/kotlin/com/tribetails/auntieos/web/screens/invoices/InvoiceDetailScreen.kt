@@ -418,7 +418,8 @@ private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
                             // failure, but it is not "sent" either. Say which,
                             // and when, and move the Last reminder row now.
                             is WriteResult.Ok  -> {
-                                lastReminderAtMs = r.value.lastReminderAtMs
+                                // Only a real time moves the row; null never blanks a stamp.
+                                r.value.lastReminderAtMs?.let { lastReminderAtMs = it }
                                 showToast(reminderOutcomeMessage(r.value), !r.value.sent)
                             }
                         }

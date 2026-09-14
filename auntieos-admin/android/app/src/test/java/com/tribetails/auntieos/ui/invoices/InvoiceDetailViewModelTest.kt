@@ -100,7 +100,7 @@ class InvoiceDetailViewModelTest {
 
         val earlier = 1_757_840_400_000L
         coEvery { invoiceRepository.sendInvoiceReminder("inv832", any()) } returns Result.success(
-            com.tribetails.auntieos.domain.ReminderOutcome(sent = false, lastReminderAtMs = earlier, nextReminderAllowedAtMs = earlier + 86_400_000L),
+            com.tribetails.auntieos.domain.ReminderOutcome(sent = false, reason = "recent", lastReminderAtMs = earlier, nextReminderAllowedAtMs = earlier + 86_400_000L),
         )
         viewModel.sendReminder()
         advanceUntilIdle()
@@ -122,7 +122,7 @@ class InvoiceDetailViewModelTest {
         viewModel.loadInvoice("inv833")
         advanceUntilIdle()
         coEvery { invoiceRepository.sendInvoiceReminder("inv833", any()) } returns Result.success(
-            com.tribetails.auntieos.domain.ReminderOutcome(sent = false, lastReminderAtMs = 1L, nextReminderAllowedAtMs = 2L),
+            com.tribetails.auntieos.domain.ReminderOutcome(sent = false, reason = "recent", lastReminderAtMs = 1L, nextReminderAllowedAtMs = 2L),
         )
 
         viewModel.sendReminder()

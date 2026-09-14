@@ -2,21 +2,31 @@
  * What happened when the admin asked for an invoice reminder, and how to say it
  * (#832).
  *
- * `sendInvoiceReminder` refuses a second reminder inside its window and answers
- * `sent: false` with the time of the one that already went out. That answer is a
- * success, not an error: the household has been reminded. The panel says so in a
- * sentence and shows when, instead of claiming "Reminder sent." for a send that
- * did not happen.
+ * `sendInvoiceReminder` answers every press with `sent` and a `reason`. Only
+ * `sent` means a reminder went out now. The other three are not errors, and
+ * the panel says each one in a sentence instead of claiming "Reminder sent.":
+ *   - `recent`: one already went out inside the window (with when);
+ *   - `in-progress`: another press is sending one right now;
+ *   - `suppressed`: the household's notification settings block reminders.
  */
 import type { SendInvoiceReminderResult } from '../contracts/invoiceContracts.generated';
+
+export type ReminderReason = SendInvoiceReminderResult['reason'];
 
 export interface ReminderOutcome {
   /** True when THIS call sent a reminder. */
   sent: boolean;
-  /** When the most recent reminder went out (ms epoch). */
-  lastReminderAtMs: number;
-  /** The earliest moment another reminder will be accepted (ms epoch). */
-  nextReminderAllowedAtMs: number;
+  reason: ReminderReason;
+  /** When a reminder last actually went out (ms epoch), or null if none ever did. */
+  lastReminderAtMs: number | null;
+  /** The earliest moment a press can send again (ms epoch), or null when waiting would not help. */
+  nextReminderAllowedAtMs: number | null;
+}
+
+const REASONS: readonly ReminderReason[] = ['sent', 'recent', 'in-progress', 'suppressed'];
+
+function msOrNull(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
 /**
@@ -31,11 +41,19 @@ export function reminderOutcomeOf(
   nowMs: number,
 ): ReminderOutcome {
   if (typeof res?.sent !== 'boolean') {
-    return { sent: true, lastReminderAtMs: nowMs, nextReminderAllowedAtMs: nowMs };
+    return { sent: true, reason: 'sent', lastReminderAtMs: nowMs, nextReminderAllowedAtMs: null };
   }
-  const last = typeof res.lastReminderAtMs === 'number' ? res.lastReminderAtMs : nowMs;
-  const next = typeof res.nextReminderAllowedAtMs === 'number' ? res.nextReminderAllowedAtMs : last;
-  return { sent: res.sent, lastReminderAtMs: last, nextReminderAllowedAtMs: next };
+  const reason = REASONS.includes(res.reason as ReminderReason)
+    ? (res.reason as ReminderReason)
+    : res.sent
+      ? 'sent'
+      : 'recent';
+  return {
+    sent: res.sent,
+    reason,
+    lastReminderAtMs: msOrNull(res.lastReminderAtMs),
+    nextReminderAllowedAtMs: msOrNull(res.nextReminderAllowedAtMs),
+  };
 }
 
 /** "Sep 14, 3:05 PM". `timeZone` is for tests; the panel uses the viewer's zone. */
@@ -51,14 +69,35 @@ export function formatReminderTime(ms: number, timeZone?: string): string {
 
 /** The notice after a press. */
 export function reminderOutcomeMessage(outcome: ReminderOutcome, timeZone?: string): string {
-  if (outcome.sent) return 'Reminder sent.';
-  return `Not sent: a reminder already went out ${formatReminderTime(outcome.lastReminderAtMs, timeZone)}. The next one can go out after ${formatReminderTime(outcome.nextReminderAllowedAtMs, timeZone)}.`;
+  const at = (ms: number) => formatReminderTime(ms, timeZone);
+  switch (outcome.reason) {
+    case 'sent':
+      return 'Reminder sent.';
+    case 'recent':
+      return (
+        (outcome.lastReminderAtMs !== null
+          ? `Not sent: a reminder already went out ${at(outcome.lastReminderAtMs)}.`
+          : 'Not sent: a reminder already went out recently.') +
+        (outcome.nextReminderAllowedAtMs !== null
+          ? ` The next one can go out after ${at(outcome.nextReminderAllowedAtMs)}.`
+          : '')
+      );
+    case 'in-progress':
+      return (
+        'Not sent: a reminder for this invoice is already being sent.' +
+        (outcome.nextReminderAllowedAtMs !== null
+          ? ` If it does not arrive, try again after ${at(outcome.nextReminderAllowedAtMs)}.`
+          : '')
+      );
+    case 'suppressed':
+      return "Not sent: this household's notification settings block payment reminders, so no reminder went out.";
+  }
 }
 
 /**
- * The value of the "Last reminder" fact. The stored stamp may be absent, null
- * (a released claim), or not a number on a doc written outside the callables;
- * all of those mean no reminder is on record.
+ * The value of the "Last reminder" fact. The stored stamp may be absent, null,
+ * or not a number on a doc written outside the callables; all of those mean no
+ * reminder is on record.
  */
 export function lastReminderLabel(stamp: unknown, timeZone?: string): string {
   return typeof stamp === 'number' && Number.isFinite(stamp) && stamp > 0

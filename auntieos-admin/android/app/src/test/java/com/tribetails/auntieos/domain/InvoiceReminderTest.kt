@@ -15,24 +15,36 @@ class InvoiceReminderTest {
     @Test
     fun `decodes a send`() {
         assertEquals(
-            ReminderOutcome(true, t, t + day),
-            reminderOutcomeOf(mapOf("ok" to true, "invoiceId" to "i", "sent" to true, "lastReminderAtMs" to t, "nextReminderAllowedAtMs" to t + day), 1L),
+            ReminderOutcome(true, "sent", t, t + day),
+            reminderOutcomeOf(mapOf("ok" to true, "invoiceId" to "i", "sent" to true, "reason" to "sent", "lastReminderAtMs" to t, "nextReminderAllowedAtMs" to t + day), 1L),
         )
     }
 
     @Test
     fun `decodes an already-sent answer, numbers arriving as Int or Long`() {
         assertEquals(
-            ReminderOutcome(false, 500L, 86_400_500L),
-            reminderOutcomeOf(mapOf("ok" to true, "sent" to false, "lastReminderAtMs" to 500, "nextReminderAllowedAtMs" to 86_400_500L), 1L),
+            ReminderOutcome(false, "recent", 500L, 86_400_500L),
+            reminderOutcomeOf(mapOf("ok" to true, "sent" to false, "reason" to "recent", "lastReminderAtMs" to 500, "nextReminderAllowedAtMs" to 86_400_500L), 1L),
+        )
+    }
+
+    @Test
+    fun `decodes suppressed and in-progress with null times`() {
+        assertEquals(
+            ReminderOutcome(false, "suppressed", null, null),
+            reminderOutcomeOf(mapOf("ok" to true, "sent" to false, "reason" to "suppressed", "lastReminderAtMs" to null, "nextReminderAllowedAtMs" to null), 1L),
+        )
+        assertEquals(
+            ReminderOutcome(false, "in-progress", null, t),
+            reminderOutcomeOf(mapOf("ok" to true, "sent" to false, "reason" to "in-progress", "nextReminderAllowedAtMs" to t), 1L),
         )
     }
 
     @Test
     fun `an answer without sent is a pre-fix send, never a refusal`() {
         // The generated decoder alone would read this as sent = false.
-        assertEquals(ReminderOutcome(true, 42L, 42L), reminderOutcomeOf(mapOf("ok" to true, "invoiceId" to "i"), 42L))
-        assertEquals(ReminderOutcome(true, 42L, 42L), reminderOutcomeOf(null, 42L))
+        assertEquals(ReminderOutcome(true, "sent", 42L, null), reminderOutcomeOf(mapOf("ok" to true, "invoiceId" to "i"), 42L))
+        assertEquals(ReminderOutcome(true, "sent", 42L, null), reminderOutcomeOf(null, 42L))
     }
 
     @Test
@@ -41,11 +53,19 @@ class InvoiceReminderTest {
     }
 
     @Test
-    fun `sent message is plain, refused message says when and when next`() {
-        assertEquals("Reminder sent.", reminderOutcomeMessage(ReminderOutcome(true, t, t + day), utc))
+    fun `each reason reads as its own sentence`() {
+        assertEquals("Reminder sent.", reminderOutcomeMessage(ReminderOutcome(true, "sent", t, t + day), utc))
         assertEquals(
             "Not sent: a reminder already went out Sep 14, 3:05 PM. The next one can go out after Sep 15, 3:05 PM.",
-            reminderOutcomeMessage(ReminderOutcome(false, t, t + day), utc),
+            reminderOutcomeMessage(ReminderOutcome(false, "recent", t, t + day), utc),
+        )
+        assertEquals(
+            "Not sent: a reminder for this invoice is already being sent. If it does not arrive, try again after Sep 14, 3:05 PM.",
+            reminderOutcomeMessage(ReminderOutcome(false, "in-progress", null, t), utc),
+        )
+        assertEquals(
+            "Not sent: this household's notification settings block payment reminders, so no reminder went out.",
+            reminderOutcomeMessage(ReminderOutcome(false, "suppressed", null, null), utc),
         )
     }
 

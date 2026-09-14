@@ -53,7 +53,7 @@ class AdminDataViewModelReminderTest {
     fun `an already-sent answer is a sentence naming when, not Reminder sent and not an error`() = runTest {
         val earlier = 1_757_840_400_000L
         coEvery { invoiceRepo.sendInvoiceReminder("inv1", any()) } returns
-            Result.success(ReminderOutcome(sent = false, lastReminderAtMs = earlier, nextReminderAllowedAtMs = earlier + 86_400_000L))
+            Result.success(ReminderOutcome(sent = false, reason = "recent", lastReminderAtMs = earlier, nextReminderAllowedAtMs = earlier + 86_400_000L))
         val vm = vm()
 
         vm.sendInvoiceReminder("inv1")
@@ -66,9 +66,25 @@ class AdminDataViewModelReminderTest {
     }
 
     @Test
+    fun `a reminder blocked by household settings says nothing went out`() = runTest {
+        coEvery { invoiceRepo.sendInvoiceReminder("inv1", any()) } returns
+            Result.success(ReminderOutcome(sent = false, reason = "suppressed", lastReminderAtMs = null, nextReminderAllowedAtMs = null))
+        val vm = vm()
+
+        vm.sendInvoiceReminder("inv1")
+        advanceUntilIdle()
+
+        assertEquals(
+            "Not sent: this household's notification settings block payment reminders, so no reminder went out.",
+            vm.invoiceActionMessage.value,
+        )
+        assertNull(vm.error.value)
+    }
+
+    @Test
     fun `the row is pessimistic, in flight until the server answers, and a double tap fires once`() = runTest {
         coEvery { invoiceRepo.sendInvoiceReminder("inv1", any()) } returns
-            Result.success(ReminderOutcome(sent = false, lastReminderAtMs = 1L, nextReminderAllowedAtMs = 2L))
+            Result.success(ReminderOutcome(sent = false, reason = "recent", lastReminderAtMs = 1L, nextReminderAllowedAtMs = 2L))
         val vm = vm()
 
         vm.sendInvoiceReminder("inv1")

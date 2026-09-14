@@ -799,8 +799,10 @@ class AdminDataViewModel(
                 }
                 // The row's "reminded ..." line reads the loaded model, so move
                 // the one server-written field on it (copy, never a rebuild).
-                _invoices.value = _invoices.value.map {
-                    if (it.id == invoiceId) it.copy(reminderNotifiedAtMs = outcome.lastReminderAtMs) else it
+                outcome.lastReminderAtMs?.let { at ->
+                    _invoices.value = _invoices.value.map {
+                        if (it.id == invoiceId) it.copy(reminderNotifiedAtMs = at) else it
+                    }
                 }
                 _invoiceActionMessage.value = com.tribetails.auntieos.domain.reminderOutcomeMessage(outcome)
             }.onFailure { throwable ->

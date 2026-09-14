@@ -7,6 +7,7 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
@@ -14,19 +15,23 @@ import kotlinx.serialization.json.longOrNull
 /**
  * What the server decided when the admin asked for an invoice reminder (#832).
  *
- * `sendInvoiceReminder` refuses a second reminder inside its window and answers
- * `sent = false` with the time of the one that already went out. That is a
- * success: the household has been reminded. The console says so, and when,
- * instead of "Reminder sent." for a send that did not happen.
+ * Only [sent] means a reminder went out now. [reason] names the other three,
+ * none of which is an error: `recent` (one already went out inside the
+ * window), `in-progress` (another press is sending one right now), and
+ * `suppressed` (the household's notification settings block reminders).
  */
 data class ReminderOutcome(
     /** True when THIS call sent a reminder. */
     val sent: Boolean,
-    /** When the most recent reminder went out (ms epoch). */
-    val lastReminderAtMs: Long,
-    /** The earliest moment another reminder will be accepted (ms epoch). */
-    val nextReminderAllowedAtMs: Long,
+    /** `sent`, `recent`, `in-progress` or `suppressed`. */
+    val reason: String,
+    /** When a reminder last actually went out (ms epoch), or null if none ever did. */
+    val lastReminderAtMs: Long?,
+    /** The earliest moment a press can send again (ms epoch), or null when waiting would not help. */
+    val nextReminderAllowedAtMs: Long?,
 )
+
+private val REASONS = setOf("sent", "recent", "in-progress", "suppressed")
 
 private val reminderJson = Json { ignoreUnknownKeys = true; isLenient = true }
 
@@ -41,10 +46,15 @@ private val reminderJson = Json { ignoreUnknownKeys = true; isLenient = true }
 fun decodeReminderOutcome(body: String, nowMs: Long): ReminderOutcome {
     val obj = reminderJson.parseToJsonElement(body).jsonObject
     val sent = obj["sent"]?.jsonPrimitive?.booleanOrNull
-        ?: return ReminderOutcome(sent = true, lastReminderAtMs = nowMs, nextReminderAllowedAtMs = nowMs)
-    val last = obj["lastReminderAtMs"]?.jsonPrimitive?.longOrNull ?: nowMs
-    val next = obj["nextReminderAllowedAtMs"]?.jsonPrimitive?.longOrNull ?: last
-    return ReminderOutcome(sent = sent, lastReminderAtMs = last, nextReminderAllowedAtMs = next)
+        ?: return ReminderOutcome(sent = true, reason = "sent", lastReminderAtMs = nowMs, nextReminderAllowedAtMs = null)
+    val rawReason = obj["reason"]?.jsonPrimitive?.contentOrNull
+    val reason = rawReason?.takeIf { it in REASONS } ?: if (sent) "sent" else "recent"
+    return ReminderOutcome(
+        sent = sent,
+        reason = reason,
+        lastReminderAtMs = obj["lastReminderAtMs"]?.jsonPrimitive?.longOrNull,
+        nextReminderAllowedAtMs = obj["nextReminderAllowedAtMs"]?.jsonPrimitive?.longOrNull,
+    )
 }
 
 @OptIn(ExperimentalTime::class)
@@ -64,13 +74,22 @@ fun formatReminderTime(ms: Long, zone: TimeZone = TimeZone.currentSystemDefault(
 }
 
 /** The notice after a press. */
-fun reminderOutcomeMessage(outcome: ReminderOutcome, zone: TimeZone = TimeZone.currentSystemDefault()): String =
-    if (outcome.sent) {
-        "Reminder sent."
-    } else {
-        "Not sent: a reminder already went out ${formatReminderTime(outcome.lastReminderAtMs, zone)}. " +
-            "The next one can go out after ${formatReminderTime(outcome.nextReminderAllowedAtMs, zone)}."
+fun reminderOutcomeMessage(outcome: ReminderOutcome, zone: TimeZone = TimeZone.currentSystemDefault()): String {
+    val next = outcome.nextReminderAllowedAtMs
+    val last = outcome.lastReminderAtMs
+    return when (outcome.reason) {
+        "sent" -> "Reminder sent."
+        "in-progress" ->
+            "Not sent: a reminder for this invoice is already being sent." +
+                (next?.let { " If it does not arrive, try again after ${formatReminderTime(it, zone)}." } ?: "")
+        "suppressed" ->
+            "Not sent: this household's notification settings block payment reminders, so no reminder went out."
+        else ->
+            (last?.let { "Not sent: a reminder already went out ${formatReminderTime(it, zone)}." }
+                ?: "Not sent: a reminder already went out recently.") +
+                (next?.let { " The next one can go out after ${formatReminderTime(it, zone)}." } ?: "")
     }
+}
 
 /** The value of the "Last reminder" row. Absent, null or non-positive means none on record. */
 fun lastReminderLabel(stampMs: Long?, zone: TimeZone = TimeZone.currentSystemDefault()): String =
