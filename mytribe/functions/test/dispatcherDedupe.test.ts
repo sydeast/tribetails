@@ -148,6 +148,24 @@ describe('dispatcher dedupe on (key, target, recipient)', () => {
     expect(inbox(ctx.writes)).toHaveLength(2);
   });
 
+  it('two different pets in one household both go: kinId tells them apart when the target is the household', async () => {
+    // onFamilyKinWrite passes { kinfolkId, kinId } with no explicit target, so
+    // the derived target is the household for every pet in it.
+    const ctx = buildDbMock({ writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const pet = (kinId: string) => ({
+      key: 'kincare.auntie.on_my_way',
+      recipientUid: 'kinUid',
+      data: { kinfolkId: 'fam1', kinId },
+    });
+
+    await enqueueNotification(pet('bandit'));
+    await enqueueNotification(pet('biscuit'));
+    await enqueueNotification(pet('bandit'));
+
+    expect(inbox(ctx.writes)).toHaveLength(2);
+  });
+
   it('an explicit dedupeKey replaces the derived identity', async () => {
     const ctx = buildDbMock({ writeThrough: true });
     mocks.dbFn.mockReturnValue(ctx.db);

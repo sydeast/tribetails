@@ -126,6 +126,16 @@ describe('sendInvoiceReminder refuses a duplicate (#832)', () => {
     expect(mocks.enqueue).toHaveBeenCalledTimes(1);
   });
 
+  it('a fractional stored stamp still answers with integer times, not a validation failure', async () => {
+    const earlier = NOW - 60_000 + 0.5;
+    const ctx = seed({ kinfolkId: 'fam1', reminderNotifiedAtMs: earlier });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await sendInvoiceReminderHandler(req({ invoiceId: 'inv1' }));
+    expect(res.sent).toBe(false);
+    expect(res.lastReminderAtMs).toBe(Math.floor(earlier));
+    expect(Number.isInteger(res.nextReminderAllowedAtMs)).toBe(true);
+  });
+
   it('a stamp written by the daily cron blocks a manual press the same day', async () => {
     const cronRan = NOW - 6 * 60 * 60 * 1000;
     const ctx = seed({ kinfolkId: 'fam1', reminderNotifiedAtMs: cronRan });

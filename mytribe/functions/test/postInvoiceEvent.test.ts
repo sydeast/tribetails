@@ -170,6 +170,21 @@ describe('postInvoiceEvent compares against what the household already has (#832
     expect(mocks.enqueue).toHaveBeenCalledWith(expect.objectContaining({ key: 'invoice.updated' }));
   });
 
+  it('a failing advisory ledger read never blocks the notification', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({ docs: { 'invoices/inv-7': { kinfolkId: '3', total: 40 } } }).db,
+    );
+    mocks.lastDelivered.mockRejectedValue(new Error('ledger unavailable'));
+    const { postInvoiceEventHandler } = await import('../src/admin/postInvoiceEvent');
+    await postInvoiceEventHandler({
+      data: { familyId: '3', invoiceId: 'inv-7', payload: { total: 45 } },
+      auth: { uid: 'admin-uid' },
+    } as any);
+    expect(mocks.enqueue).toHaveBeenCalledWith(expect.objectContaining({ key: 'invoice.updated' }));
+    expect(mocks.logEvent).toHaveBeenCalledWith(expect.objectContaining({ event: 'notification.compare.failed' }));
+    expect(mocks.logEvent).not.toHaveBeenCalledWith(expect.objectContaining({ event: 'notification.dispatch.failed' }));
+  });
+
   it('logs a dispatcher dedupe as a dedupe, not as a failure, and still answers ok', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock({ docs: {} }).db);
     mocks.enqueue.mockResolvedValue({

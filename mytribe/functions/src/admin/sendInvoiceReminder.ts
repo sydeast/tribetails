@@ -100,12 +100,15 @@ export const Result = z
 type ResultShape = z.infer<typeof Result>;
 
 function outcome(invoiceId: string, sent: boolean, lastReminderAtMs: number): ResultShape {
+  // Floored: the stamp can come from a stored doc, and the Result schema is
+  // integer ms. A fractional legacy stamp must not fail response validation.
+  const last = Math.floor(lastReminderAtMs);
   return {
     ok: true,
     invoiceId,
     sent,
-    lastReminderAtMs,
-    nextReminderAllowedAtMs: lastReminderAtMs + INVOICE_REMINDER_RESEND_WINDOW_MS,
+    lastReminderAtMs: last,
+    nextReminderAllowedAtMs: last + INVOICE_REMINDER_RESEND_WINDOW_MS,
   };
 }
 

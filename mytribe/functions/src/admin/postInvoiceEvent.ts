@@ -135,8 +135,20 @@ export async function postInvoiceEventHandler(req: CallableRequest<unknown>): Pr
   const recipientUid = await resolveKinfolkUid(args.familyId);
   const key = isNew ? 'invoice.new' : 'invoice.updated';
   const data = { kinfolkId: args.familyId, invoiceId: args.invoiceId };
+  // The comparison is ADVISORY and gets its own try: a ledger read that fails
+  // must not stop a real notification, which before #832 nothing could.
+  let skip: Awaited<ReturnType<typeof skipReason>> = null;
   try {
-    const skip = await skipReason(isNew, stored, intended, recipientUid, data);
+    skip = await skipReason(isNew, stored, intended, recipientUid, data);
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'postInvoiceEvent',
+      event: 'notification.compare.failed',
+      extra: { familyId: args.familyId, invoiceId: args.invoiceId, key, err: (err as Error)?.message },
+    });
+  }
+  try {
     if (skip) {
       logEvent({
         severity: 'info',
