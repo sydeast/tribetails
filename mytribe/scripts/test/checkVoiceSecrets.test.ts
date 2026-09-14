@@ -1,12 +1,24 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import {
   apiKeyProbeUrl,
   checkShape,
   describeProjectChoice,
+  main,
   parseProject,
+  HelpRequested,
+  UsageError,
+  USAGE,
   VOICE_SECRETS,
   type SecretSpec,
 } from '../checkVoiceSecrets';
+
+// `main` must never reach gcloud or Twilio for a usage problem. Mocking
+// child_process here, rather than stubbing fetch alone, is what makes that
+// provable: if parseProject's guard ever regressed to the old "unrecognized
+// argument falls through and runs the live check" behavior, this mock would
+// catch it instead of a real `gcloud secrets versions access` call firing.
+vi.mock('node:child_process', () => ({ execFileSync: vi.fn() }));
 
 const AP: SecretSpec = {
   name: 'TWIML_APP_SID',
@@ -124,10 +136,32 @@ describe('parseProject', () => {
     expect(parseProject(['--project', 'other'])).toEqual({ project: 'other', source: 'flag' });
   });
 
-  it('refuses a flag as the value', () => {
+  it('refuses a flag as the value, as a UsageError', () => {
     delete process.env.GCLOUD_PROJECT;
+    expect(() => parseProject(['--project', '--verbose'])).toThrow(UsageError);
     expect(() => parseProject(['--project', '--verbose'])).toThrow('--project requires a value');
+    expect(() => parseProject(['--project'])).toThrow(UsageError);
     expect(() => parseProject(['--project'])).toThrow('--project requires a value');
+  });
+});
+
+describe('parseProject: help and unrecognized arguments', () => {
+  // THE BUG an accidental live run exposed: parseProject only ever looked for
+  // the literal string '--project'. Any other argument, including a typo like
+  // --halp, was silently ignored, so the script fell through to running the
+  // full check against the default project. It is not enough for --project to
+  // be validated; everything else has to be refused too.
+  it('throws HelpRequested for --help', () => {
+    expect(() => parseProject(['--help'])).toThrow(HelpRequested);
+  });
+
+  it('throws HelpRequested for -h', () => {
+    expect(() => parseProject(['-h'])).toThrow(HelpRequested);
+  });
+
+  it('rejects an unrecognized argument by name, as a UsageError', () => {
+    expect(() => parseProject(['--halp'])).toThrow(UsageError);
+    expect(() => parseProject(['--halp'])).toThrow('unrecognized argument: --halp');
   });
 });
 
@@ -145,6 +179,76 @@ describe('describeProjectChoice', () => {
     expect(describeProjectChoice({ project: 'other', source: 'flag' })).toBe(
       'Checking Twilio voice secrets in other (from flag)',
     );
+  });
+});
+
+describe('main: a usage problem never reaches gcloud or Twilio', () => {
+  // The accidental production run this guards against: `npm run
+  // check:voice-secrets -- --help` actually called gcloud and Twilio for real,
+  // because the script had no --help handling and no unrecognized-argument
+  // check, so it fell through to the live default-project check. These tests
+  // stub execFileSync (gcloud) and fetch (Twilio) and assert zero calls for
+  // every argument shape that must stop before either.
+  const originalExitCode = process.exitCode;
+
+  beforeEach(() => {
+    vi.mocked(execFileSync).mockClear();
+    vi.stubGlobal('fetch', vi.fn());
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    process.exitCode = undefined;
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    process.exitCode = originalExitCode;
+  });
+
+  it('--help prints usage, exits 0, and never calls gcloud or Twilio', async () => {
+    await main(['--help']);
+    expect(process.exitCode).toBe(0);
+    expect(execFileSync).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith(USAGE);
+  });
+
+  it('-h prints usage, exits 0, and never calls gcloud or Twilio', async () => {
+    await main(['-h']);
+    expect(process.exitCode).toBe(0);
+    expect(execFileSync).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('a typo like --halp is refused, exits 2, and never calls gcloud or Twilio', async () => {
+    await main(['--halp']);
+    expect(process.exitCode).toBe(2);
+    expect(execFileSync).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith('unrecognized argument: --halp');
+  });
+
+  it('--project with a missing value is refused, exits 2, and never calls gcloud or Twilio', async () => {
+    await main(['--project']);
+    expect(process.exitCode).toBe(2);
+    expect(execFileSync).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith('--project requires a value');
+  });
+
+  // The positive control. Every "never calls gcloud or Twilio" assertion above
+  // is vacuous if vi.mock failed to intercept the copy checkVoiceSecrets.ts
+  // imports: this proves the mock is actually wired, by exercising the one
+  // path that IS supposed to call it, so a broken mock would show up here as
+  // zero calls or a real gcloud invocation, not as an accidental pass above.
+  it('a run that passes the usage gate DOES call gcloud once per secret, and never Twilio once every shape fails', async () => {
+    vi.mocked(execFileSync).mockImplementation(() => {
+      throw new Error('gcloud: not found (simulated for the test)');
+    });
+    await main(['--project', 'no-such-project']);
+    expect(execFileSync).toHaveBeenCalledTimes(VOICE_SECRETS.length + 1); // +1 for TWILIO_AUTH_TOKEN
+    expect(fetch).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
   });
 });
 
