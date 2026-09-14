@@ -39,14 +39,18 @@
  *     (asserted in functions/test/invoiceStateStamp.test.ts), which is what
  *     makes that skip check sound.
  *   - THE NOTIFICATION GUARD. `onInvoicesWrite` fires invoice.payment.applied
- *     at the household when a write flips `resolveLifecycle` into 'paid'. A
- *     stamp write can do that in exactly one shape: a doc with NO numeric
- *     amountDue whose classifier reading is 'paid' (the lifecycle needs the
- *     status label, and the stamp is what supplies it). This script REFUSES to
- *     stamp those docs (`would_notify_household`) and lists them for the
- *     operator instead: a backfill must never text a household about a
- *     payment that happened months ago. Handle the leftovers by hand or
- *     accept the notification deliberately, per doc.
+ *     at the household when a write is a paid transition, `isPaidTransition`
+ *     (#884): invoiceStateOf moves from `open` into `paid`. The guard asks that
+ *     exported function about the stamp write itself, so it follows whatever
+ *     the trigger does. The stamp is invoiceStateOf's own output (a fixpoint),
+ *     so a stamp write never changes the state it reads and the guard refuses
+ *     nothing today; it stays so a later change to either side cannot make a
+ *     backfill text a household about a payment from months ago. A refused doc
+ *     is listed (`would_notify_household`) for the operator to handle by hand.
+ *     Before #884 the trigger used an `amountDue <= 0` rule, and docs with a
+ *     `total` and no numeric `amountDue` were refused here; they now stamp
+ *     `paid`, which is what every reader already shows. The stamp cannot
+ *     produce an overdue label, so the overdue notice cannot be reached.
  *
  * Runbook: run DRY first, read the plan, then re-run with --allow-prod.
  * This script has NOT been run against production as part of the PR that
@@ -70,7 +74,7 @@ import {
   type InvoiceStateStamp,
 } from '../functions/src/lib/invoiceStateStamp';
 import { paidCentsFromPayments, type PaymentAmount } from '../functions/src/lib/invoiceMath';
-import { resolveLifecycle } from '../functions/src/triggers/onInvoicesWrite';
+import { isPaidTransition } from '../functions/src/triggers/onInvoicesWrite';
 
 type Mode = 'dry-run' | 'apply';
 
@@ -171,6 +175,12 @@ export type StampDecision =
  * including the notification guard, is unit-testable against fixtures
  * (mytribe/scripts/test/backfillInvoiceStateStamp.test.ts).
  */
+export function wouldNotifyHousehold(doc: Record<string, unknown>, stamp: InvoiceStateStamp): boolean {
+  // The trigger's own exported predicate, applied to this stamp write, so the
+  // guard cannot drift from what `onInvoicesWrite` sends (#884).
+  return isPaidTransition(doc, { ...doc, ...stamp });
+}
+
 export function planStamp(
   doc: Record<string, unknown>,
   payments: readonly PaymentAmount[],
@@ -181,13 +191,8 @@ export function planStamp(
     return { action: 'skip', reason: 'stamp_current' };
   }
 
-  // The notification guard (see the header). resolveLifecycle is the trigger's
-  // own exported function, so this check can never drift from what actually
-  // fires. The stamp cannot produce 'past_due' (not one of the eight states),
-  // so flipping INTO paid is the only notifying transition reachable here.
-  const before = resolveLifecycle(doc);
-  const after = resolveLifecycle({ ...doc, ...stamp });
-  if (after === 'paid' && before !== 'paid') {
+  // The notification guard (see the header).
+  if (wouldNotifyHousehold(doc, stamp)) {
     return { action: 'skip', reason: 'would_notify_household' };
   }
 
@@ -226,7 +231,7 @@ interface RunResult {
 /** Firestore caps a WriteBatch at 500 ops; stay comfortably under it. */
 const WRITES_PER_BATCH = 400;
 
-async function run(mode: Mode, pageSize: number): Promise<RunResult> {
+export async function run(mode: Mode, pageSize: number): Promise<RunResult> {
   const db: Firestore = getFirestore();
   const result: RunResult = {
     scanned: 0,

@@ -479,8 +479,9 @@ const CATALOG_LIST: NotificationDef[] = [
     //   Android Payments screen: recordPayment (not paid by it)        recordPayment (household only
     //     without `apply`                                                when ticked; the screen has no
     //                                                                    toggle, so never)
-    //   Account credit draw: onInvoiceAutoApply drawAccountCredit      onInvoicesWrite
-    //     trigger or the runAutoApply callable
+    //   Account credit draw: onInvoiceAutoApply drawAccountCredit,     drawAccountCredit, once, when the
+    //     trigger or the runAutoApply callable   stamps                  draw pays the bill off (#884 review)
+    //                                            accountCredit:<id>
     //   Any other write that pays the bill     (unstamped)             onInvoicesWrite
     //   updateInvoice lowering the total to    updateInvoice, stamps   nobody (#884): no money moved; the
     //     what was already paid                  updateInvoice:<uuid>    audit (`settledByEdit`) is the record
@@ -503,10 +504,10 @@ const CATALOG_LIST: NotificationDef[] = [
     //     admin clients pass from step 1. No id, or another id, never claims.
     //   - An unticked partial, or a payment that paid nothing off: nobody.
     //
-    // Card, markInvoicePaid and recordPayment's apply stamp `paymentAppliedNoticeOwner`
-    // in the write that pays the invoice, and so does updateInvoice when an edit
-    // settles it (#884, an owner that sends nothing). `onInvoicesWrite` stays
-    // silent for a write that changed the stamp.
+    // Card, markInvoicePaid, recordPayment's apply and the account credit draw
+    // stamp `paymentAppliedNoticeOwner` in the write that pays the invoice, and so
+    // does updateInvoice when an edit settles it (#884, an owner that sends
+    // nothing). `onInvoicesWrite` stays silent for a write that changed the stamp.
     // The rule and its reasons: lib/paymentAppliedOwner.ts.
     //
     // A CRASH AFTER THE COMMIT.

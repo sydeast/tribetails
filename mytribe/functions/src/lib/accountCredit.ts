@@ -77,6 +77,9 @@ import {
 } from './invoiceMath';
 import { invoiceStateStampOf } from './invoiceStateStamp';
 import { logEvent } from './logger';
+import { PAYMENT_APPLIED_OWNER_FIELD, paymentAppliedOwner } from './paymentAppliedOwner';
+import { resolveKinfolkUid } from './resolveKinfolkUid';
+import { enqueueNotification } from '../notifications/dispatcher';
 
 /** The stored balance field. Named once so every reader and writer agrees. */
 export const ACCOUNT_BALANCE_FIELD = 'accountBalanceCents';
@@ -325,7 +328,8 @@ export async function drawAccountCredit(
     const after = settleInvoice(before.totalCents, before.paidCents + drawCents);
     const settling = after.state === 'settled' || after.state === 'overpaid';
 
-    tx.set(invRef.collection('payments').doc(), {
+    const paymentRef = invRef.collection('payments').doc();
+    tx.set(paymentRef, {
       amount: centsToDollars(drawCents),
       amountCents: drawCents,
       method: ACCOUNT_CREDIT_METHOD,
@@ -359,7 +363,18 @@ export async function drawAccountCredit(
       amountDueCents: after.amountDueCents,
       overpaidCents: after.overpaidCents,
       amountDue: centsToDollars(after.amountDueCents),
-      ...(settling ? { paidAt: FieldValue.serverTimestamp(), paidBy: input.actorUid } : {}),
+      ...(settling
+        ? {
+            paidAt: FieldValue.serverTimestamp(),
+            paidBy: input.actorUid,
+            // #884 review: the draw is a real payment and sends its own notice
+            // (below, after the commit), so the write that pays the bill names it
+            // and `onInvoicesWrite` stands down. The trigger cannot be relied on
+            // here: a legacy invoice with a `total` and no `amountDue` already
+            // reads paid to invoiceStateOf, so paying it off is paid to paid.
+            [PAYMENT_APPLIED_OWNER_FIELD]: paymentAppliedOwner('accountCredit', paymentRef.id),
+          }
+        : {}),
       lastPaymentAt: FieldValue.serverTimestamp(),
       lastPaymentBy: input.actorUid,
       updatedAt: FieldValue.serverTimestamp(),
@@ -378,7 +393,16 @@ export async function drawAccountCredit(
         accountBalanceCents: remainingCents,
         amountDueCents: after.amountDueCents,
       } satisfies AutoApplyResult,
-      applied: { kinfolkId, state: after.state },
+      applied: {
+        kinfolkId,
+        state: after.state,
+        settling,
+        paymentId: paymentRef.id,
+        currency: typeof (doc as Record<string, unknown>)['currency'] === 'string'
+          ? ((doc as Record<string, unknown>)['currency'] as string)
+          : null,
+        dueDate: dueDateOf(doc as Record<string, unknown>),
+      },
     };
   });
 
@@ -403,5 +427,62 @@ export async function drawAccountCredit(
     });
   }
 
+  // #884 review: THE DRAW SENDS ITS OWN PAYMENT NOTICE, after the commit and
+  // only when this draw paid the bill off (a partial draw tells nobody, as
+  // before). Its own write stamped `accountCredit:<paymentId>`, so
+  // `onInvoicesWrite` stands down for it. The notice carries the payment row's
+  // id, so the dispatcher ledger dedupes a repeat of this same pass; a second
+  // pass over the paid bill draws nothing and never reaches here. A failed
+  // enqueue is logged, the same outcome the trigger had when it sent this.
+  if (pass.applied !== null && pass.applied.settling) {
+    await sendCreditPaymentNotice(input.invoiceId, pass.applied, pass.result.amountDueCents);
+  }
+
   return pass.result;
+}
+
+/** The due date the invoice trigger put on this notice, from either spelling. */
+function dueDateOf(doc: Record<string, unknown>): string | null {
+  for (const key of ['dueDate', 'invoiceDueDate']) {
+    const value = doc[key];
+    if (typeof value === 'string') return value;
+  }
+  return null;
+}
+
+async function sendCreditPaymentNotice(
+  invoiceId: string,
+  applied: { kinfolkId: string; paymentId: string; currency: string | null; dueDate: string | null },
+  amountDueCents: number,
+): Promise<void> {
+  try {
+    const recipientUid = await resolveKinfolkUid(applied.kinfolkId);
+    await enqueueNotification({
+      key: 'invoice.payment.applied',
+      recipientUid: recipientUid ?? '',
+      data: {
+        kinfolkId: applied.kinfolkId,
+        invoiceId,
+        amountDue: centsToDollars(amountDueCents),
+        currency: applied.currency,
+        dueDate: applied.dueDate,
+        paymentId: applied.paymentId,
+      },
+      targetType: 'invoice',
+      targetId: invoiceId,
+    });
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'accountCredit',
+      event: 'notification.dispatch.failed',
+      extra: {
+        kinfolkId: applied.kinfolkId,
+        invoiceId,
+        paymentId: applied.paymentId,
+        key: 'invoice.payment.applied',
+        err: (err as Error)?.message,
+      },
+    });
+  }
 }

@@ -99,6 +99,16 @@ describe('#884 invoice.payment.applied fires only on a transition from open into
     expect(mocks.enqueue).not.toHaveBeenCalled();
   });
 
+  for (const label of ['past_due', 'past due', 'Overdue']) {
+    it(`a '${label}'-labelled invoice with a balance is open, so an unstamped write paying it off fires`, async () => {
+      const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
+      await onInvoicesWriteHandler(
+        makeEvent({ kinfolkId: '3', status: label, amountDue: 40, total: 40 }, STATE_FIXTURES.paid) as any,
+      );
+      expect(paidKeyCalls()).toBe(1);
+    });
+  }
+
   it('an overdue-labelled invoice with a balance is open, so paying it off fires', async () => {
     const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
     await onInvoicesWriteHandler(

@@ -575,7 +575,13 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       dataKeys: ['kinfolkId', 'invoiceId', 'stripeEventId'],
     },
     {
-      trigger: 'An invoice is paid off by a write that names no other sender, such as account credit.',
+      trigger:
+        'Account credit pays an invoice off (the auto-apply trigger or the Run auto-apply button). A partial draw tells nobody.',
+      source: 'src/lib/accountCredit.ts',
+      dataKeys: ['kinfolkId', 'invoiceId', 'amountDue', 'currency', 'dueDate', 'paymentId'],
+    },
+    {
+      trigger: 'An open invoice is paid off by a write that names no other sender.',
       source: 'src/triggers/onInvoicesWrite.ts',
       dataKeys: ['kinfolkId', 'invoiceId', 'amountDue', 'currency', 'dueDate'],
     },

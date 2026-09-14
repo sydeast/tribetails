@@ -61,11 +61,13 @@ type InvoiceDoc = {
  * TWO LEGACY SHAPES, read as the classifier reads them (ADR-0002), not patched
  * with a second rule here:
  *   - A doc with a `total` and no `amountDue` (`{ status: 'open', total: 40 }`)
- *     classifies `paid`, because a missing balance is no evidence of one. So a
- *     credit draw that pays one off (onInvoiceAutoApply accepts `amountDue`
- *     null as collectable) is paid to paid and sends nothing. The old rule sent
- *     for it. The portal already shows that doc as Paid and the state backfill
- *     stamps it `paid`.
+ *     classifies `paid`, because a missing balance is no evidence of one. So
+ *     paying one off is paid to paid here. The one payer that accepts that
+ *     shape is the credit draw (onInvoiceAutoApply treats `amountDue` null as
+ *     collectable; payInvoice refuses it; markInvoicePaid and recordPayment
+ *     stamp their own owner), and since the #884 review the draw sends its own
+ *     notice, so no real payment depends on this trigger reading that shape.
+ *     The shared rule for a missing `amountDue` is #902.
  *   - A doc with `amountDue: 0` and no `total` classifies `zero`. Every payer
  *     writes `status: 'paid'` in the write that pays it, so that write reads
  *     `paid`, but from `zero`, and sends nothing unless the payer owns its notice.

@@ -45,15 +45,30 @@
  * The trigger also sends only on a transition from `open` into `paid`
  * (`PAYMENT_APPLIED_FROM_STATES` in triggers/onInvoicesWrite.ts), so a created
  * doc, a $0 invoice, a quote or a credit never needs a stamp to stay silent.
+ *
+ * #884 review: THE CREDIT DRAW OWNS ITS NOTICE TOO. `drawAccountCredit` stamps
+ * `accountCredit:<paymentId>` in the write that pays the bill off and sends the
+ * notice itself after the commit. It used to leave that to the trigger, but a
+ * legacy invoice with a `total` and no `amountDue` already reads `paid` to
+ * invoiceStateOf, and the credit draw is the one payer that accepts that shape,
+ * so the trigger saw paid to paid and a real payment went unannounced. The
+ * earlier paragraph's "the credit draw stamps nothing" describes #866; the
+ * rule it illustrates (changed in this write, not present) is unchanged.
  */
 export const PAYMENT_APPLIED_OWNER_FIELD = 'paymentAppliedNoticeOwner';
 
 /** Who took ownership. The id after the colon is for a reader tracing one payment; nothing parses it. */
-export type PaymentAppliedOwnerSource = 'stripe' | 'recordPayment' | 'markInvoicePaid' | 'updateInvoice';
+export type PaymentAppliedOwnerSource =
+  | 'stripe'
+  | 'recordPayment'
+  | 'markInvoicePaid'
+  | 'updateInvoice'
+  | 'accountCredit';
 
 /**
  * The stamp value: `stripe:<eventId>`, `recordPayment:<paymentId>`,
- * `markInvoicePaid:<paymentId>`, or `updateInvoice:<uuid>` (#884, sends nothing).
+ * `markInvoicePaid:<paymentId>`, `accountCredit:<paymentId>` (#884 review), or
+ * `updateInvoice:<uuid>` (#884, sends nothing).
  */
 export function paymentAppliedOwner(source: PaymentAppliedOwnerSource, id: string): string {
   return `${source}:${id}`;

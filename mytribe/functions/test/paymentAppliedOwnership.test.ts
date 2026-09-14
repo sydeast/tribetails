@@ -886,6 +886,159 @@ describe('#866 account credit', () => {
   });
 });
 
+describe('#884 review: updateInvoice decides and writes in one transaction', () => {
+  /**
+   * An optimistic transaction over the write-through store, as Firestore runs
+   * one: every read is remembered, writes are staged, and a commit whose reads
+   * changed underneath it discards the attempt and runs the callback again.
+   */
+  function optimisticTransactions(store: Docs) {
+    const db = mocks.db.current as any;
+    const stateOf = (path: string) =>
+      JSON.stringify(Object.entries(store).filter(([k]) => k === path || k.startsWith(`${path}/`)).sort());
+    db.runTransaction = async (fn: (tx: unknown) => Promise<unknown>) => {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const seen = new Map<string, string>();
+        const staged: Array<() => Promise<unknown>> = [];
+        const tx = {
+          get: async (ref: any) => {
+            seen.set(ref.path, stateOf(ref.path));
+            return ref.get();
+          },
+          set: (ref: any, data: any, options?: any) => void staged.push(() => ref.set(data, options)),
+          update: (ref: any, data: any) => void staged.push(() => ref.update(data)),
+          create: (ref: any, data: any) => void staged.push(() => ref.create(data)),
+          delete: (ref: any) => void staged.push(() => ref.delete()),
+        };
+        const result = await fn(tx);
+        if ([...seen].some(([path, before]) => stateOf(path) !== before)) continue;
+        for (const write of staged) await write();
+        return result;
+      }
+      throw new Error('ABORTED: contention');
+    };
+  }
+
+  it("a markInvoicePaid that commits between the edit's read and its write keeps its owner stamp", async () => {
+    // Admin A lowers the lines to the $60 already paid. Admin B's markInvoicePaid
+    // for the remaining $40 commits right after A has read the invoice.
+    const store: Docs = {
+      [INVOICE]: {
+        kinfolkId: 'fam1',
+        status: 'open',
+        invoiceNumber: '1029',
+        total: 100,
+        totalCents: 10000,
+        amountDue: 40,
+        amountDueCents: 4000,
+        lineItems: [{ description: 'Dog walking', qty: 4, unitCents: 2500 }],
+      },
+      'invoices/inv1/payments/p1': { amountCents: 6000, amount: 60 },
+    };
+    docs = store;
+    let raced = false;
+    const racing = new Proxy(store, {
+      get(target, p, receiver) {
+        const value = Reflect.get(target, p, receiver);
+        if (!raced && p === INVOICE) {
+          raced = true;
+          target[INVOICE] = {
+            ...(value as Record<string, unknown>),
+            status: 'paid',
+            paymentStatus: 'PAID',
+            amountDue: 0,
+            amountDueCents: 0,
+            paidCents: 10000,
+            paymentAppliedNoticeOwner: 'markInvoicePaid:p2',
+            paymentAppliedNoticeOwnerAtMs: Date.now(),
+          };
+          target['invoices/inv1/payments/p2'] = { amountCents: 4000, amount: 40 };
+        }
+        return value;
+      },
+    });
+    mocks.db.current = buildDbMock({ docs: racing, writeThrough: true }).db;
+    optimisticTransactions(store);
+
+    // A's retry reads the invoice B paid off, which is frozen, so A is refused.
+    await expect(
+      updateInvoiceHandler(
+        adminReq({ invoiceId: 'inv1', patch: { lineItems: [{ description: 'Dog walking', qty: 1, unitCents: 6000 }] } }),
+      ),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(raced).toBe(true);
+    expect(store[INVOICE]!['paymentAppliedNoticeOwner']).toBe('markInvoicePaid:p2');
+    expect(store[INVOICE]!['paidCents']).toBe(10000);
+    expect(store[INVOICE]!['status']).toBe('paid');
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+
+    // B's recordPayment step can still claim its settlement, so the office is told.
+    await recordPaymentHandler(
+      adminReq({
+        kinfolkId: 'fam1',
+        amount: 40,
+        paymentMethod: 'cash',
+        invoiceId: 'inv1',
+        sendConfirmationEmail: false,
+        settledByInvoicePaymentId: 'p2',
+      }),
+    );
+    expect(staffCount()).toBe(1);
+    expect(appliedCount()).toBe(0);
+  });
+});
+
+describe('#884 review: the credit draw owns its notice', () => {
+  it('a legacy invoice with a total and no amountDue, paid off by account credit, sends exactly one', async () => {
+    // invoiceStateOf reads this doc as paid before the draw, so the trigger sees
+    // paid to paid. The draw is a real payment and sends the notice itself.
+    docs[INVOICE] = { kinfolkId: 'fam1', status: 'open', invoiceNumber: '1029', total: 40 };
+    docs['families/fam1'] = { accountBalanceCents: 5000 };
+    await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+    expect(docs[INVOICE]!['status']).toBe('paid');
+    expect(docs[INVOICE]!['paymentAppliedNoticeOwner']).toMatch(/^accountCredit:.+/);
+    expect(appliedCount()).toBe(1);
+    expect(staffCount()).toBe(1);
+  });
+
+  it('credit that covers only part of the bill tells nobody, as before', async () => {
+    seedInvoice();
+    docs['families/fam1'] = { accountBalanceCents: 1000 };
+    await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+    expect(docs[INVOICE]!['status']).toBe('open');
+    expect(docs[INVOICE]!['paymentAppliedNoticeOwner']).toBeUndefined();
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('a second pass over the same paid invoice draws nothing and sends nothing more', async () => {
+    seedInvoice();
+    docs['families/fam1'] = { accountBalanceCents: 5000 };
+    await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+    await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+    expect(appliedCount()).toBe(1);
+    expect(staffCount()).toBe(1);
+  });
+
+  for (const label of ['past_due', 'overdue']) {
+    it(`a ${label} bill with a balance, paid off by account credit, sends exactly one`, async () => {
+      seedInvoice({ status: label });
+      docs['families/fam1'] = { accountBalanceCents: 5000 };
+      await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+      expect(docs[INVOICE]!['status']).toBe('paid');
+      expect(appliedCount()).toBe(1);
+      expect(staffCount()).toBe(1);
+    });
+
+    it(`a ${label} bill with a balance, paid off by recordPayment (ticked), sends exactly one`, async () => {
+      seedInvoice({ status: label });
+      await adminApply(40, true);
+      expect(docs[INVOICE]!['status']).toBe('paid');
+      expect(appliedCount()).toBe(1);
+      expect(staffCount()).toBe(1);
+    });
+  }
+});
+
 describe('#884 settling a balance by editing the invoice, not by paying it', () => {
   function seedPartPaid(over: Record<string, unknown> = {}) {
     seedInvoice({
