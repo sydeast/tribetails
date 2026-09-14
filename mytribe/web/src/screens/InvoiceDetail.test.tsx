@@ -53,11 +53,24 @@ vi.mock('../api/portal', () => ({
   getMyHome: (...args: unknown[]) => getMyHome(...args),
 }));
 
-// Stripe-only default: most tests here are about the mutation/status
-// machinery, not the payment-method registry (that's PayOptions.test.tsx and
-// getMyHome.test.ts). Individual tests below override this to cover the
-// multi-method render.
+// payInvoice, redeemCredit and getMyInvoicePdf are module-level vi.fn()s, so
+// without an explicit reset a call count left over from the test that ran
+// before carries into the next one's assertion (#842 — this is what made the
+// #825 checkout-key test depend on its neighbour and pass or fail by which
+// runner default vitest happened to apply, rather than by what it asserts).
+// getMyInvoices and getBusinessContact don't need the same treatment: every
+// test that uses getMyInvoices sets its OWN resolved value before rendering
+// (mockResolvedValue replaces the prior implementation outright, it doesn't
+// queue), and no test asserts either mock's call count or arguments.
 beforeEach(() => {
+  payInvoice.mockReset();
+  redeemCredit.mockReset();
+  getMyInvoicePdf.mockReset();
+
+  // Stripe-only default: most tests here are about the mutation/status
+  // machinery, not the payment-method registry (that's PayOptions.test.tsx and
+  // getMyHome.test.ts). Individual tests below override this to cover the
+  // multi-method render.
   getMyHome.mockReset();
   getMyHome.mockResolvedValue({
     kinfolkId: 'kin-fam-1',
