@@ -108,7 +108,7 @@ Ground rules:
 - Call the advisor tool (if available this session) before committing to an
   approach and before declaring done.
 - Track work with the task tools; one task per vertical slice.
-- Test account: test-admin+sandbox@tribetails.test / Sandbox-Tribe-2026 on
+- Test account: test-admin+sandbox@tribetails.test / <redacted, rotated> on
   https://mytribe-kinfolk-beta.web.app (new portal) and
   https://kinfolk.tribetails.com (legacy). Re-run seed_test_sandbox.ts --apply
   if state drifted.
@@ -212,7 +212,7 @@ manual step) — name exactly what you need. Nothing else counts as blocked.
 ## Immediate next actions (updated 2026-07-10 evening)
 
 1. Git hosting DEFERRED by owner until the app is in a better state — S1's
-   hygiene items still apply pre-push; sandbox password stays `Sandbox-Tribe-2026`
+   hygiene items still apply pre-push; sandbox password stays `<redacted, rotated>`
    for testing until the pre-push rotation.
 2. Owner: set the Anthropic key when ready:
    `npx firebase functions:secrets:set ANTHROPIC_API_KEY --project auntieos-ttpc`

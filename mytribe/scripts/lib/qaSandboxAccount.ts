@@ -7,14 +7,18 @@
  * account QA testing is allowed to use, so both need the exact same two
  * refusals rather than two copies that can drift apart:
  *
- *   1. assertProjectAllowed - refuses to run against the production project
- *      (auntieos-ttpc, the only Firebase project this repo has - see
- *      mytribe/functions/src/lib/integrationCatalog.ts) unless the operator
- *      passes --allow-production. This repo has no staging project, so the
- *      "throwaway --project id against the emulators" path this refusal
- *      leaves open is also how both scripts are proven in
+ *   1. assertProjectAllowed - refuses to run against the production project,
+ *      by either its project ID (auntieos-ttpc, see
+ *      mytribe/functions/src/lib/integrationCatalog.ts) or its numeric
+ *      project number (153396971788 - gcloud/firebase both accept a
+ *      `--project` value in either form, and the numeric form resolves to
+ *      the exact same project, so checking only the string id would let
+ *      `--project 153396971788` walk straight past this refusal) - unless
+ *      the operator passes --allow-production. This repo has no staging
+ *      project, so the "throwaway --project id against the emulators" path
+ *      this refusal leaves open is also how both scripts are proven in
  *      mytribe/scripts/test/*.emulator.test.ts: a throwaway id never equals
- *      PRODUCTION_PROJECT_ID, so the emulator proof needs no flag at all.
+ *      either production value, so the emulator proof needs no flag at all.
  *
  *   2. resolveSandboxUid - looks up the fixed sandbox email and refuses
  *      unless it resolves to EXACTLY the fixed sandbox uid. Both scripts
@@ -37,13 +41,24 @@ export { TEST_ADMIN_EMAIL, TEST_ADMIN_UID, TEST_TRIBE_ID };
 export const PRODUCTION_PROJECT_ID = FIREBASE_PROJECT_ID;
 
 /**
- * Refuses (throws) when `projectId` is the production project and the
- * operator has not passed --allow-production. A throwaway emulator project
- * id never matches, so proving these scripts against the emulators needs no
- * flag; only a real run against auntieos-ttpc does.
+ * The same production project's numeric project number. `--project` accepts
+ * either form and both resolve to the identical project, so a check against
+ * PRODUCTION_PROJECT_ID alone would let `--project 153396971788` walk
+ * straight past assertProjectAllowed.
+ */
+export const PRODUCTION_PROJECT_NUMBER = '153396971788';
+
+const PRODUCTION_PROJECT_VALUES = new Set([PRODUCTION_PROJECT_ID, PRODUCTION_PROJECT_NUMBER]);
+
+/**
+ * Refuses (throws) when `projectId` is the production project, by either its
+ * string id or its numeric project number, and the operator has not passed
+ * --allow-production. A throwaway emulator project id never matches, so
+ * proving these scripts against the emulators needs no flag; only a real run
+ * against production does.
  */
 export function assertProjectAllowed(projectId: string, allowProduction: boolean): void {
-  if (projectId !== PRODUCTION_PROJECT_ID) return;
+  if (!PRODUCTION_PROJECT_VALUES.has(projectId)) return;
   if (allowProduction) return;
   throw new Error(
     [

@@ -35,16 +35,39 @@ import { run as runSetPassword } from '../qa_set_sandbox_password';
  *   firebase emulators:exec --only auth,firestore --project qa-sandbox-emulator-test \
  *     "npm run test:ci"
  *
- * Refuses to run (describe.runIf) without BOTH emulator hosts set, so a
- * plain `npm test` never touches anything real.
+ * Skips (describe.runIf) only when NEITHER emulator host is set, so a plain
+ * `npm test` never touches anything real. When exactly ONE is set - e.g. a
+ * CI job that runs `--only firestore` without `auth` (#878 review found
+ * PR #875's mytribe-scripts-emulator job configured exactly this way) - this
+ * file throws at collection time instead of silently reporting 0 of 6 tests
+ * as if nothing were wrong. A partially-configured emulator is a
+ * misconfiguration to fix, not a state this suite should quietly tolerate.
  */
 const FIRESTORE_EMULATOR = process.env['FIRESTORE_EMULATOR_HOST'];
 const AUTH_EMULATOR = process.env['FIREBASE_AUTH_EMULATOR_HOST'];
-const EMULATORS = Boolean(FIRESTORE_EMULATOR && AUTH_EMULATOR);
+const ANY_EMULATOR_HOST_SET = Boolean(FIRESTORE_EMULATOR || AUTH_EMULATOR);
+const BOTH_EMULATOR_HOSTS_SET = Boolean(FIRESTORE_EMULATOR && AUTH_EMULATOR);
 
-// Must equal the --project passed to `firebase emulators:exec` above - see
-// the file header for why.
-const EMULATOR_PROJECT_ID = 'qa-sandbox-emulator-test';
+if (ANY_EMULATOR_HOST_SET && !BOTH_EMULATOR_HOSTS_SET) {
+  throw new Error(
+    [
+      'qaSandboxScripts.emulator.test.ts requires BOTH FIRESTORE_EMULATOR_HOST and',
+      'FIREBASE_AUTH_EMULATOR_HOST to be set, but only one is. Run this file via',
+      '`firebase emulators:exec --only auth,firestore ...` (not `--only firestore` alone) -',
+      'otherwise this suite silently reports 0 of 6 tests instead of what it actually needs.',
+      `  FIRESTORE_EMULATOR_HOST=${FIRESTORE_EMULATOR ?? '(unset)'}`,
+      `  FIREBASE_AUTH_EMULATOR_HOST=${AUTH_EMULATOR ?? '(unset)'}`,
+    ].join('\n'),
+  );
+}
+
+// Must equal the --project passed to `firebase emulators:exec` - see the
+// file header for why. `emulators:exec --project X` always exports
+// GCLOUD_PROJECT=X into this process, so reading it back here means this
+// file works under whatever project id the CALLER chose (including a CI
+// job's own project id), rather than only under one project id hardcoded
+// here that the caller would have to happen to match.
+const EMULATOR_PROJECT_ID = process.env.GCLOUD_PROJECT ?? 'qa-sandbox-emulator-test';
 
 async function signInWithPassword(
   email: string,
@@ -62,7 +85,7 @@ async function signInWithPassword(
   return { ok: res.ok, status: res.status, body };
 }
 
-describe.runIf(EMULATORS)('qa_enable_sandbox_login.ts and qa_set_sandbox_password.ts against the emulators', () => {
+describe.runIf(BOTH_EMULATOR_HOSTS_SET)('qa_enable_sandbox_login.ts and qa_set_sandbox_password.ts against the emulators', () => {
   let db: Firestore;
   let auth: Auth;
 
@@ -80,7 +103,13 @@ describe.runIf(EMULATORS)('qa_enable_sandbox_login.ts and qa_set_sandbox_passwor
     // Clean slate: delete every Auth user and the one clients doc each test
     // touches. Safe here specifically because this whole file - both
     // scripts' tests - runs against one project in one file, so there is no
-    // sibling file racing over the same fixed sandbox uid/email.
+    // sibling file racing over the same fixed sandbox uid/email. This is
+    // ALSO only safe because no sibling emulator test file in this suite
+    // touches Auth against the same project id: "delete every Auth user"
+    // would just as happily wipe another file's fixture mid-test if one ever
+    // did. If a future emulator test needs Auth, give it its own project id
+    // (see the file header on why that id must also match `--project`)
+    // rather than sharing this one.
     const list = await auth.listUsers();
     await Promise.all(list.users.map((u) => auth.deleteUser(u.uid)));
     await db.collection('clients').doc(TEST_ADMIN_UID).delete().catch(() => undefined);
@@ -142,6 +171,25 @@ describe.runIf(EMULATORS)('qa_enable_sandbox_login.ts and qa_set_sandbox_passwor
       await expect(runEnableLogin({ auth, db })).rejects.toThrow(/no Auth user/i);
       const client = await db.collection('clients').doc(TEST_ADMIN_UID).get();
       expect(client.exists).toBe(false);
+    });
+
+    // #878 review: writePasswordFile runs BEFORE updateUser precisely so a
+    // failed write never leaves the Auth account holding a password nobody
+    // recorded. Prove the ordering, not just the happy path: a failing write
+    // must mean Auth was never touched at all.
+    it('never touches Auth when writing the password file fails', async () => {
+      await auth.createUser({ uid: TEST_ADMIN_UID, email: TEST_ADMIN_EMAIL, password: 'old-password-123' });
+      const failingWrite = (): string => {
+        throw new Error('simulated disk failure');
+      };
+
+      await expect(runEnableLogin({ auth, db }, { writePasswordFile: failingWrite })).rejects.toThrow(
+        /simulated disk failure/,
+      );
+
+      // The old password still works: updateUser was never called.
+      const stillWorks = await signInWithPassword(TEST_ADMIN_EMAIL, 'old-password-123');
+      expect(stillWorks.ok, JSON.stringify(stillWorks)).toBe(true);
     });
   });
 

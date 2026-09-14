@@ -117,10 +117,16 @@ export function generateTempPassword(): string {
   return 'QA-' + crypto.randomBytes(9).toString('base64url') + '!7';
 }
 
-/** Writes the password to a 0600 file under the OS temp dir. Returns the path, never the value. */
+/**
+ * Writes the password to a 0600 file under the OS temp dir. Returns the
+ * path, never the value. `flag: 'wx'` (exclusive create) rather than the
+ * default 'w': it fails loud instead of silently overwriting if the
+ * timestamped path ever collided with an existing file, which is exactly
+ * the kind of surprise this function should never paper over.
+ */
 export function writePasswordFile(password: string): string {
   const filePath = path.join(os.tmpdir(), `qa-sandbox-login-password-${Date.now()}.txt`);
-  fs.writeFileSync(filePath, password + '\n', { mode: 0o600 });
+  fs.writeFileSync(filePath, password + '\n', { mode: 0o600, flag: 'wx' });
   return filePath;
 }
 
@@ -135,15 +141,25 @@ export interface EnableResult {
   passwordFilePath: string;
 }
 
-export async function run(deps: { auth: Auth; db: Firestore }): Promise<EnableResult> {
+export async function run(
+  deps: { auth: Auth; db: Firestore },
+  opts: { writePasswordFile?: (password: string) => string } = {},
+): Promise<EnableResult> {
+  const write = opts.writePasswordFile ?? writePasswordFile;
   const uid = await resolveSandboxUid(deps.auth);
 
   await deps.db.collection('clients').doc(uid).set({ kinfolkIds: [TEST_TRIBE_ID] }, { merge: true });
   console.log(`[1/2] linked kinfolkIds -> [${TEST_TRIBE_ID}]`);
 
   const password = generateTempPassword();
+  // Persist the password BEFORE changing it in Auth, not after. If the write
+  // fails (disk full, unwritable temp dir, ...), the account's password is
+  // simply left unchanged - known, recoverable. Applying the change first and
+  // writing the file second would mean a failed write loses the only copy of
+  // a password that is now, silently, the account's real one: an unknown
+  // password on a live QA account, discoverable only by trying to sign in.
+  const passwordFilePath = write(password);
   await deps.auth.updateUser(uid, { password });
-  const passwordFilePath = writePasswordFile(password);
   console.log('[2/2] temp password set.');
 
   return { uid, passwordFilePath };
