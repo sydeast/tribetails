@@ -1069,10 +1069,17 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             // settled this invoice two steps up; sending an apply here would put
             // the same money against the same bill a second time. The Apply
             // amount for this flow IS what markInvoicePaid collected.
+            // #866: the server says WHY, so the note does not have to guess.
             if (paidSendConfirmation && !ledgerRow.confirmationEmailSent) {
               incomplete = true;
+              ledgerNote += ledgerRow.householdNoPortalAccount
+                ? ' The confirmation email did not go out: the household has no portal account. The payment itself is recorded.'
+                : ' The confirmation email did not go out. The payment itself is recorded; let the household know another way.';
+            }
+            if (ledgerRow.officeNoticePending) {
+              incomplete = true;
               ledgerNote +=
-                ' The confirmation email did not go out (the household may have no portal account). The payment itself is recorded.';
+                ' The office copy of the payment notice did not go out, because the admin roster could not be read. The household copy is not affected.';
             }
             if (ledgerRow.creditedToAccountCents > 0) {
               ledgerNote += ` ${formatUsd(ledgerRow.creditedToAccountCents / 100)} was left over and has been added to the household's account credit, which goes onto their next invoice automatically.`;

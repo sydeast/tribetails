@@ -46,7 +46,15 @@ vi.mock('firebase-admin/firestore', async () => {
   };
 });
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveKinfolkUid }));
-vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: mocks.enqueueNotification }));
+// #866: recordPayment calls the detailed variant; it delegates to the same mock.
+vi.mock('../src/notifications/dispatcher', () => ({
+  enqueueNotification: mocks.enqueueNotification,
+  enqueueNotificationDetailed: async (args: unknown) => ({
+    written: ((await mocks.enqueueNotification(args)) as string[] | undefined) ?? [],
+    suppressed: [],
+    unresolved: [],
+  }),
+}));
 vi.mock('../src/lib/payMethodSnapshot', () => ({
   payMethodSnapshotForIssue: mocks.payMethodSnapshot,
   readLivePayMethodSettings: vi.fn().mockResolvedValue({}),

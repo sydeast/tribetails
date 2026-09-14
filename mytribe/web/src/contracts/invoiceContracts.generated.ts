@@ -691,6 +691,8 @@ export interface RecordPaymentResult {
   application: RecordPaymentResultApplication | null;
   creditedToAccountCents: number;
   confirmationEmailSent: boolean;
+  householdNoPortalAccount: boolean;
+  officeNoticePending: boolean;
 }
 
 // ---------- redeemCredit ----------

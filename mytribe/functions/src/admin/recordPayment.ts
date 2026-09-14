@@ -27,7 +27,7 @@ import {
 import { creditAccount } from '../lib/accountCredit';
 import { PaymentIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
-import { enqueueNotification } from '../notifications/dispatcher';
+import { enqueueNotificationDetailed } from '../notifications/dispatcher';
 import { isNoRecipientsError } from '../notifications/recipientErrors';
 import { PAYMENT_APPLIED_CLAIM_FIELD, claimableMarkInvoicePaidOwner } from '../lib/paymentAppliedOwner';
 
@@ -343,6 +343,19 @@ export const Result = z
      * of lie this whole surface is being cleaned of.
      */
     confirmationEmailSent: z.boolean(),
+    /**
+     * #866: Send Confirmation was ticked, and the household has no portal
+     * account, so there was no household copy to send. Lets a client say that,
+     * rather than guess it from `confirmationEmailSent: false`.
+     */
+    householdNoPortalAccount: z.boolean(),
+    /**
+     * #866: the office copy of this payment's notice is owed and did not go out,
+     * because the office roster could not be read. The household copy, if any,
+     * is unaffected. A retry of the same submission (same `idempotencyKey`) sends
+     * the office copy; nothing else resends it.
+     */
+    officeNoticePending: z.boolean(),
   })
   .strict();
 export type RecordPaymentResult = z.infer<typeof Result>;
@@ -757,6 +770,8 @@ export async function recordPaymentHandler(
     application,
     creditedToAccountCents,
     confirmationEmailSent,
+    householdNoPortalAccount: sent.noPortalAccount,
+    officeNoticePending: sent.officePending,
   });
 }
 
@@ -856,8 +871,18 @@ async function replayWithConfirmation(
     // A ticked retry whose office copy is already stamped still owes the
     // household one; with no household uid, it must not send the office a second.
     officeDue,
+    // #866: the first attempt told the household and its office copy did not go
+    // out (the roster could not be read). The office is owed that copy alone,
+    // settled invoice or not, because the ticked first attempt owed it one.
+    officeOwedWithoutHousehold: householdRequested && stored['confirmationEmailSent'] === true,
   });
-  if (!sent.household && !sent.office && !sent.skipped) return answer;
+  const reported = {
+    ...answer,
+    confirmationEmailSent: answer.confirmationEmailSent || sent.household,
+    householdNoPortalAccount: sent.noPortalAccount,
+    officeNoticePending: sent.officePending,
+  };
+  if (!sent.household && !sent.office && !sent.skipped) return reported;
   await ref.update(noticeStamps(sent)).catch((err) => {
     logEvent({
       severity: 'warn',
@@ -906,6 +931,10 @@ function replayResult(paymentId: string, stored: Record<string, unknown>): z.inf
     application,
     creditedToAccountCents: storedCents(stored, 'creditedToAccountCents'),
     confirmationEmailSent: stored['confirmationEmailSent'] === true,
+    // A replay answers from the row. What a retry itself sends is folded in by
+    // `replayWithConfirmation`; the row alone cannot say either of these.
+    householdNoPortalAccount: false,
+    officeNoticePending: false,
   });
 }
 
@@ -944,7 +973,7 @@ function replayResult(paymentId: string, stored: Record<string, unknown>): z.inf
 interface ConfirmationOutcome {
   /** The household copy was enqueued. */
   household: boolean;
-  /** The office copy was enqueued (it rides every enqueue). */
+  /** The office copy was enqueued: it rides every enqueue, unless its roster lookup failed. */
   office: boolean;
   /**
    * #866: nobody exists to receive it (no household uid and no office roster),
@@ -952,6 +981,13 @@ interface ConfirmationOutcome {
    * not keep trying. A failed READ is not this; it stays retryable.
    */
   skipped?: boolean;
+  /** #866: the household copy was asked for and the household has no portal account. */
+  noPortalAccount: boolean;
+  /**
+   * #866: the office copy was owed and did not go out, because a lookup or the
+   * dispatch failed. Left unstamped, so a same-key retry sends it.
+   */
+  officePending: boolean;
 }
 
 async function sendPaymentConfirmation(input: {
@@ -959,7 +995,7 @@ async function sendPaymentConfirmation(input: {
   invoiceId: string;
   paymentId: string;
   uid: string;
-  /** The Send Confirmation toggle. Off means the household is not told. */
+  /** The Send Confirmation toggle (or, on a retry, a household copy still owed). */
   householdRequested: boolean;
   /** This payment paid the invoice off, so the office is told even when the household is not. */
   settlesInvoice: boolean;
@@ -970,14 +1006,24 @@ async function sendPaymentConfirmation(input: {
    * else; it is skipped.
    */
   officeDue: boolean;
+  /**
+   * #866: on a retry, the household copy already went out on the first attempt
+   * and the office copy did not. An office-only enqueue is then owed even for a
+   * payment that did not settle the invoice, because the ticked first attempt
+   * owed the office a copy too.
+   */
+  officeOwedWithoutHousehold?: boolean;
 }): Promise<ConfirmationOutcome> {
-  const none: ConfirmationOutcome = { household: false, office: false };
+  const none: ConfirmationOutcome = { household: false, office: false, noPortalAccount: false, officePending: false };
   if (input.kinfolkId === '') return none;
+  let recipientUid: string | null = null;
+  let noPortalAccount = false;
+  const officeOnlyAllowed = input.settlesInvoice || input.officeOwedWithoutHousehold === true;
   try {
-    let recipientUid: string | null = null;
     if (input.householdRequested) {
       recipientUid = await resolveKinfolkUid(input.kinfolkId);
       if (recipientUid === null) {
+        noPortalAccount = true;
         logEvent({
           severity: 'info',
           function: 'recordPayment',
@@ -988,9 +1034,9 @@ async function sendPaymentConfirmation(input: {
       }
     }
     // With no household copy to send, an enqueue is the office copy alone: only
-    // for a payment that paid the invoice off, and only while it is still owed.
-    if (recipientUid === null && (!input.settlesInvoice || !input.officeDue)) return none;
-    await enqueueNotification({
+    // when it is owed without one, and only while it is still owed.
+    if (recipientUid === null && (!officeOnlyAllowed || !input.officeDue)) return { ...none, noPortalAccount };
+    const outcome = await enqueueNotificationDetailed({
       key: 'invoice.payment.applied',
       recipientUid: recipientUid ?? '',
       data: {
@@ -1002,11 +1048,29 @@ async function sendPaymentConfirmation(input: {
       // recovery below); the ledger has to remember this payment's copies that long.
       dedupeWindowMs: PAYMENT_CONFIRMATION_DEDUPE_WINDOW_MS,
     });
-    return { household: recipientUid !== null, office: true };
+    // #866: a failed lookup (the office roster read) leaves that audience out of
+    // this delivery. The household copy went out; the office copy did not, and
+    // stays unstamped for a retry.
+    const officeUnresolved = (outcome.unresolved ?? []).length > 0;
+    if (officeUnresolved) {
+      logEvent({
+        severity: 'error',
+        function: 'recordPayment',
+        event: 'payment.confirmation.office.pending',
+        uid: input.uid,
+        extra: { kinfolkId: input.kinfolkId, paymentId: input.paymentId, unresolved: outcome.unresolved },
+      });
+    }
+    return {
+      household: recipientUid !== null,
+      office: !officeUnresolved,
+      noPortalAccount,
+      officePending: officeUnresolved,
+    };
   } catch (err) {
     // #866: only "nobody exists to receive it" is final. Any other failure (a
-    // roster read, the dispatcher itself) is left unstamped so a same-key retry
-    // finishes it.
+    // roster read with no household copy to send, the dispatcher itself) is left
+    // unstamped so a same-key retry finishes it.
     const final = isNoRecipientsError(err);
     logEvent({
       severity: final ? 'error' : 'warn',
@@ -1019,7 +1083,9 @@ async function sendPaymentConfirmation(input: {
         err: (err as Error)?.message,
       },
     });
-    return final ? { ...none, skipped: true } : none;
+    return final
+      ? { ...none, noPortalAccount, skipped: true }
+      : { ...none, noPortalAccount, officePending: recipientUid !== null || officeOnlyAllowed };
   }
 }
 

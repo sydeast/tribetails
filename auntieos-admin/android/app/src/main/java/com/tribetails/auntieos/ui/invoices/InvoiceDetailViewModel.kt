@@ -355,6 +355,8 @@ class InvoiceDetailViewModel(
             val confirmationNote = recordPaymentConfirmationNote(
                 requested = payment.sendConfirmationEmail,
                 confirmationSent = ledgerRow.getOrNull()?.confirmationEmailSent,
+                householdNoPortalAccount = ledgerRow.getOrNull()?.householdNoPortalAccount == true,
+                officeNoticePending = ledgerRow.getOrNull()?.officeNoticePending == true,
             )
 
             com.tribetails.auntieos.data.admin.AuditLog.fire(
@@ -986,14 +988,34 @@ internal fun recordPaymentToast(settlement: MarkInvoicePaidResult): String = whe
  * recorded on this screen, so a confirmation she asked for and did not get has
  * to be said out loud. [confirmationSent] is null when that step failed and
  * never answered. Nothing is said when she did not ask, or when it went out.
+ *
+ * #866 fourth review: the server now says WHY, so the note no longer guesses.
+ * [householdNoPortalAccount] is the household having no account to send to;
+ * [officeNoticePending] is the office copy not going out because the admin
+ * roster could not be read, which has nothing to do with the household.
  * Pure; unit-tested.
  */
-internal fun recordPaymentConfirmationNote(requested: Boolean, confirmationSent: Boolean?): String = when {
-    !requested || confirmationSent == true -> ""
-    confirmationSent == null ->
-        " The confirmation email did not go out, because the payment ledger row did not save. Let the household know another way."
-    else ->
-        " The confirmation email did not go out (the household may have no portal account)."
+internal fun recordPaymentConfirmationNote(
+    requested: Boolean,
+    confirmationSent: Boolean?,
+    householdNoPortalAccount: Boolean = false,
+    officeNoticePending: Boolean = false,
+): String {
+    val household = when {
+        !requested || confirmationSent == true -> ""
+        confirmationSent == null ->
+            " The confirmation email did not go out, because the payment ledger row did not save. Let the household know another way."
+        householdNoPortalAccount ->
+            " The confirmation email did not go out: the household has no portal account."
+        else ->
+            " The confirmation email did not go out. Let the household know another way."
+    }
+    val office = if (officeNoticePending) {
+        " The office copy of the payment notice did not go out, because the admin roster could not be read. The household copy is not affected."
+    } else {
+        ""
+    }
+    return household + office
 }
 /**
  * The audit line for one recorded payment. Says whether the invoice was settled

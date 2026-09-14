@@ -22,7 +22,16 @@ vi.mock('firebase-admin/firestore', async () => {
   };
 });
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveKinfolkUid }));
-vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: mocks.enqueueNotification }));
+// #866: recordPayment calls the detailed variant. It delegates to the same
+// counted mock, so every assertion below on `enqueueNotification` still holds.
+vi.mock('../src/notifications/dispatcher', () => ({
+  enqueueNotification: mocks.enqueueNotification,
+  enqueueNotificationDetailed: async (args: unknown) => ({
+    written: ((await mocks.enqueueNotification(args)) as string[] | undefined) ?? [],
+    suppressed: [],
+    unresolved: [],
+  }),
+}));
 
 import { recordPaymentHandler } from '../src/admin/recordPayment';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';

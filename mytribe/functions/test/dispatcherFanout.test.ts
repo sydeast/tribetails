@@ -160,12 +160,15 @@ describe('enqueueNotification fan-out (audience:both)', () => {
     expect(isNoRecipientsError(err)).toBe(true);
   });
 
-  it('a roster that could not be READ is rethrown as itself, not treated as an empty roster', async () => {
+  /**
+   * A db whose ONLY failure is the `businessSettings/admins` read. The
+   * dispatcher reads other businessSettings documents too (the operator's
+   * per-key overrides), so failing the whole collection would reject every call
+   * and prove nothing about the resolver.
+   */
+  function rosterReadFails() {
     const ctx = buildDbMock({ docs: {} });
     const readError = Object.assign(new Error('14 UNAVAILABLE: deadline exceeded'), { code: 14 });
-    // ONLY the roster document fails. The dispatcher reads other businessSettings
-    // documents too (the operator's per-key overrides), and failing those would
-    // reject this call whether or not the resolver error is swallowed.
     const db = {
       ...ctx.db,
       collection: (path: string) => {
@@ -179,11 +182,77 @@ describe('enqueueNotification fan-out (audience:both)', () => {
       },
     };
     mocks.dbFn.mockReturnValue(db);
-    const { isNoRecipientsError } = await import('../src/notifications/recipientErrors');
+    return { ctx, readError };
+  }
 
-    // The household copy alone would have resolved; before #866 the failed read
-    // was swallowed and it went out with the office silently dropped.
-    const err = await enqueueNotification({ key: 'kincare.booking.confirm', recipientUid: 'kinUid', data: { bookingId: 'b1' } }).catch(
+  // #866 fourth review: a failed office-roster read must not cost the household
+  // its copy. Main delivered it (the failure was swallowed), and so must this.
+  it('a failed roster READ still delivers the household copy, and reports businessAdmins unresolved', async () => {
+    const { ctx } = rosterReadFails();
+    const { enqueueNotificationDetailed } = await import('../src/notifications/dispatcher');
+
+    const outcome = await enqueueNotificationDetailed({
+      key: 'kincare.booking.confirm',
+      recipientUid: 'kinUid',
+      data: { bookingId: 'b1' },
+    });
+
+    const household = ctx.writes.filter(
+      (w) => w.path.startsWith('notifications/') && (w.data as { recipientUid?: string }).recipientUid === 'kinUid',
+    );
+    expect(household).toHaveLength(1);
+    expect(outcome.written).toHaveLength(1);
+    expect(outcome.unresolved).toEqual([
+      { resolver: 'businessAdmins', error: expect.stringContaining('UNAVAILABLE') },
+    ]);
+    // Reported loudly, not swallowed.
+    expect(mocks.logEventFn).toHaveBeenCalledWith(
+      expect.objectContaining({ severity: 'error', event: 'resolver.lookup.failed' }),
+    );
+  });
+
+  describe.each([
+    // [key, primary resolver, secondary resolver, data]
+    ['kincare.booking.confirm', { bookingId: 'b1', kinfolkId: 'kf1' }],
+    ['invoice.new', { invoiceId: 'inv1', kinfolkId: 'kf1' }],
+    ['invoice.payment.applied', { invoiceId: 'inv1', kinfolkId: 'kf1', paymentId: 'p1' }],
+    ['kincare.changed', { bookingId: 'b1', kinfolkId: 'kf1' }],
+  ] as const)('only the roster read fails: %s', (key, data) => {
+    it('delivers the household copy and resolves', async () => {
+      const { ctx } = rosterReadFails();
+      const ids = await enqueueNotification({ key, recipientUid: 'kinUid', data: { ...data } });
+      const household = ctx.writes.filter(
+        (w) => w.path.startsWith('notifications/') && (w.data as { recipientUid?: string }).recipientUid === 'kinUid',
+      );
+      expect(household).toHaveLength(1);
+      expect(ids).toHaveLength(1);
+    });
+  });
+
+  it('only the roster read fails: profile.updated (debounced) still writes the household pending row', async () => {
+    const { ctx } = rosterReadFails();
+    await enqueueNotification({ key: 'profile.updated', recipientUid: 'kinUid', data: { kinfolkId: 'kf1' } });
+    const pending = ctx.writes.filter((w) => w.path.startsWith('pendingNotifications/'));
+    expect(pending.map((w) => w.path)).toEqual(['pendingNotifications/kinUid_profile.updated']);
+  });
+
+  it('control: a specificUid-only key never reads the roster, so its failure changes nothing', async () => {
+    const { ctx } = rosterReadFails();
+    const { enqueueNotificationDetailed } = await import('../src/notifications/dispatcher');
+    const outcome = await enqueueNotificationDetailed({
+      key: 'auth.account.locked',
+      recipientUid: 'kinUid',
+      data: { email: 'a@b.c', lockStartedAtMs: 1 },
+    });
+    expect(outcome.written).toHaveLength(1);
+    expect(outcome.unresolved).toEqual([]);
+    expect(ctx.writes.filter((w) => w.path.startsWith('notifications/'))).toHaveLength(1);
+  });
+
+  it('with no household uid, a failed roster READ is rethrown as itself, never as "nobody exists"', async () => {
+    const { ctx, readError } = rosterReadFails();
+    const { isNoRecipientsError } = await import('../src/notifications/recipientErrors');
+    const err = await enqueueNotification({ key: 'kincare.booking.confirm', recipientUid: '', data: { bookingId: 'b1' } }).catch(
       (e: unknown) => e,
     );
     expect(err).toBe(readError);

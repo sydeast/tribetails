@@ -146,4 +146,35 @@ class RecordPaymentOutcomeTest {
         assertTrue(msg, msg.contains("confirmation email did not go out"))
         assertTrue(msg, msg.contains("ledger row did not save"))
     }
+
+    // ── #866 fourth review: say which of the two it was ─────────────────────
+
+    @Test
+    fun `a household with no portal account is named as that, and nothing else`() {
+        val msg = recordPaymentConfirmationNote(requested = true, confirmationSent = false, householdNoPortalAccount = true)
+        assertTrue(msg, msg.contains("the household has no portal account"))
+        assertFalse(msg, msg.contains("office copy"))
+    }
+
+    @Test
+    fun `a household copy that failed for another reason does not blame a missing portal account`() {
+        val msg = recordPaymentConfirmationNote(requested = true, confirmationSent = false, householdNoPortalAccount = false)
+        assertTrue(msg, msg.contains("confirmation email did not go out"))
+        assertFalse(msg, msg.contains("portal account"))
+    }
+
+    @Test
+    fun `an office copy that did not go out is named, and the household copy is not blamed`() {
+        val msg = recordPaymentConfirmationNote(requested = true, confirmationSent = true, officeNoticePending = true)
+        assertTrue(msg, msg.contains("office copy of the payment notice did not go out"))
+        assertTrue(msg, msg.contains("admin roster could not be read"))
+        assertFalse(msg, msg.contains("portal account"))
+        assertFalse(msg, msg.contains("confirmation email did not go out"))
+    }
+
+    @Test
+    fun `an office copy pending is said even when no household confirmation was asked for`() {
+        val msg = recordPaymentConfirmationNote(requested = false, confirmationSent = false, officeNoticePending = true)
+        assertTrue(msg, msg.contains("office copy of the payment notice did not go out"))
+    }
 }

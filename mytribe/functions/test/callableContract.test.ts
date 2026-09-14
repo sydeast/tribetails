@@ -1012,7 +1012,11 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'confirmationEmailSent',
       'creditedToAccountCents',
       'feeCents',
+      // #866: why a household copy did not go out, and whether the office copy
+      // is still owed after a failed roster read.
+      'householdNoPortalAccount',
       'kinfolkId',
+      'officeNoticePending',
       'ok',
       'paymentId',
       'proceedsCents',

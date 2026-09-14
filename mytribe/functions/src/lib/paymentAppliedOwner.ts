@@ -71,6 +71,14 @@ export const PAYMENT_APPLIED_OWNER_AT_FIELD = 'paymentAppliedNoticeOwnerAtMs';
 export const OLD_CLIENT_CLAIM_WINDOW_MS = 5 * 60 * 1000;
 
 /**
+ * The stamp's time and the claiming call's time are both `Date.now()`, but on
+ * different function instances whose clocks can disagree by a little. A stamp
+ * that reads as up to this far in the future is still this call's own
+ * settlement; one further ahead than that is not trusted.
+ */
+export const OLD_CLIENT_CLAIM_CLOCK_SKEW_MS = 5 * 1000;
+
+/**
  * The `markInvoicePaid` owner stamp a `recordPayment` for `kinfolkId` may claim
  * on this invoice, or null. Claimable means: the invoice is paid, belongs to that
  * household, was paid off by `markInvoicePaid`, nobody has claimed that stamp,
@@ -98,7 +106,7 @@ export function claimableMarkInvoicePaidOwner(
     if (owner !== paymentAppliedOwner('markInvoicePaid', invoicePaymentId)) return null;
   } else {
     const at = invoice[PAYMENT_APPLIED_OWNER_AT_FIELD];
-    if (typeof at !== 'number' || !Number.isFinite(at) || nowMs - at > OLD_CLIENT_CLAIM_WINDOW_MS || nowMs < at) {
+    if (typeof at !== 'number' || !Number.isFinite(at) || nowMs - at > OLD_CLIENT_CLAIM_WINDOW_MS || at - nowMs > OLD_CLIENT_CLAIM_CLOCK_SKEW_MS) {
       return null;
     }
   }

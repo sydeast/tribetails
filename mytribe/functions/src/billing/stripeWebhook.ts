@@ -9,7 +9,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { logEvent } from '../lib/logger';
 import { wrapHttp } from '../lib/wrapHttp';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
-import { enqueueNotification } from '../notifications/dispatcher';
+import { enqueueNotificationDetailed, type UnresolvedResolver } from '../notifications/dispatcher';
 import { isNoRecipientsError } from '../notifications/recipientErrors';
 import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
@@ -134,14 +134,16 @@ async function finishEventFollowup(input: {
   if (!input.noticeDone) {
     const key = paid ? 'invoice.payment.applied' : 'invoice.charge.failed';
     const recipientUid = await resolveKinfolkUid(input.familyId);
+    let unresolved: UnresolvedResolver[];
     try {
-      await enqueueNotification({
+      const outcome = await enqueueNotificationDetailed({
         key,
         // '' for a household with no portal account: the office copy still goes out.
         recipientUid: recipientUid ?? '',
         data: { kinfolkId: input.familyId, invoiceId: input.invoiceId, stripeEventId: input.eventId },
         dedupeWindowMs: STRIPE_NOTICE_DEDUPE_WINDOW_MS,
       });
+      unresolved = outcome.unresolved ?? [];
     } catch (err) {
       if (!isFinalNoticeFailure(err)) throw err;
       logEvent({
@@ -152,6 +154,18 @@ async function finishEventFollowup(input: {
       });
       await stamp({ [NOTICE_SKIPPED_FIELD]: 'no-recipients' });
       return;
+    }
+    if (unresolved.length > 0) {
+      // #866: the household copy went out but an audience's lookup FAILED (the
+      // office roster read). The notice is not done: no stamp, and the throw
+      // answers 500 so Stripe retries. On that retry the dispatcher ledger
+      // (per-recipient, STRIPE_NOTICE_DEDUPE_WINDOW_MS) stops the household copy
+      // repeating while the office copy goes out.
+      throw new Error(
+        `stripeWebhook: ${key} for ${input.eventId} reached some recipients but ${unresolved
+          .map((u) => u.resolver)
+          .join(', ')} could not be resolved (${unresolved.map((u) => u.error).join('; ')}); retrying for the rest`,
+      );
     }
     await stamp({ [NOTICE_SENT_FIELD]: FieldValue.serverTimestamp() });
   }

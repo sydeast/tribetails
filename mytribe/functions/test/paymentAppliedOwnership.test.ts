@@ -40,7 +40,13 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: () => mocks.db.current, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/notifications/dispatcher', async () => {
   const actual = await vi.importActual<typeof import('../src/notifications/dispatcher')>('../src/notifications/dispatcher');
-  return { ...actual, enqueueNotification: mocks.enqueue };
+  // Both entry points go through ONE counted mock, which answers with an
+  // EnqueueOutcome (written, suppressed, unresolved) like the real dispatcher.
+  return {
+    ...actual,
+    enqueueNotificationDetailed: mocks.enqueue,
+    enqueueNotification: async (args: unknown) => ((await mocks.enqueue(args)) as { written: string[] }).written,
+  };
 });
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveUid }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
@@ -78,14 +84,20 @@ const STAFF_UID = 'staff-uid-1';
 let delivered: Array<{ key: string; recipientUid: string; household: boolean }>;
 let ledger: Map<string, number>;
 
-function fakeEnqueue(args: EnqueueArgs): string[] {
-  if (mocks.roster.state === 'readError') {
-    // What the real dispatcher now rethrows instead of reading as "nobody".
-    throw Object.assign(new Error('14 UNAVAILABLE: businessSettings/admins read failed'), { code: 14 });
-  }
+type FakeOutcome = { written: string[]; suppressed: never[]; unresolved: Array<{ resolver: string; error: string }> };
+
+function fakeEnqueue(args: EnqueueArgs): FakeOutcome {
   const recipients: Array<{ uid: string; household: boolean }> = [];
+  const unresolved: FakeOutcome['unresolved'] = [];
   if (args.recipientUid) recipients.push({ uid: args.recipientUid, household: true });
   if (mocks.roster.state === 'on') recipients.push({ uid: STAFF_UID, household: false });
+  if (mocks.roster.state === 'readError') {
+    // As the real dispatcher does: the failed lookup costs only its own audience.
+    // With nobody else to deliver to, the read error itself is thrown (retryable).
+    const readError = Object.assign(new Error('14 UNAVAILABLE: businessSettings/admins read failed'), { code: 14 });
+    if (recipients.length === 0) throw readError;
+    unresolved.push({ resolver: 'businessAdmins', error: readError.message });
+  }
   if (recipients.length === 0) {
     throw new NoRecipientsError(`enqueueNotification(${args.key}): no recipients resolved from any resolver`);
   }
@@ -100,7 +112,7 @@ function fakeEnqueue(args: EnqueueArgs): string[] {
     delivered.push({ key: args.key, recipientUid: r.uid, household: r.household });
     ids.push(`n${delivered.length}`);
   }
-  return ids;
+  return { written: ids, suppressed: [], unresolved };
 }
 
 beforeEach(() => {
@@ -779,6 +791,76 @@ describe('#866 office copy: only for a payment that pays the invoice off (as on 
     await adminApply(15, false, OFFICE_KEY);
     expect(appliedCount()).toBe(0);
     expect(staffCount()).toBe(0);
+  });
+});
+
+describe('#866 a failed office-roster READ costs only the office copy, and only until a retry', () => {
+  it('webhook: the household is told, the office is not, 500, nothing stamped; the retry tells the office once', async () => {
+    seedInvoice();
+    mocks.roster.state = 'readError';
+    expect(await deliver(stripeEvent('evt_1', 'checkout.session.completed', 4000))).toBe(500);
+    expect(appliedCount()).toBe(1);
+    expect(staffCount()).toBe(0);
+    expect(docs['stripeEvents/evt_1']!['noticeSentAt']).toBeUndefined();
+
+    mocks.roster.state = 'on';
+    later(HOUR);
+    expect(await deliver(stripeEvent('evt_1', 'checkout.session.completed', 4000))).toBe(200);
+    expect(appliedCount()).toBe(1);
+    expect(staffCount()).toBe(1);
+    expect(docs['stripeEvents/evt_1']!['noticeSentAt']).toBeTruthy();
+  });
+
+  it('recordPayment: the household copy is stamped sent, the office copy stays pending, and a same-key retry sends it', async () => {
+    seedInvoice();
+    mocks.roster.state = 'readError';
+    const first = await adminApply(15, true, KEY);
+    expect(appliedCount()).toBe(1);
+    expect(staffCount()).toBe(0);
+    expect(first.confirmationEmailSent).toBe(true);
+    expect(first.officeNoticePending).toBe(true);
+    expect(first.householdNoPortalAccount).toBe(false);
+    expect(docs[`payments/${KEY}`]!['confirmationEmailSent']).toBe(true);
+    expect(docs[`payments/${KEY}`]!['officeNoticeSentAt']).toBeUndefined();
+
+    mocks.roster.state = 'on';
+    later(HOUR);
+    const retry = await adminApply(15, true, KEY);
+    // A partial: the office copy is owed because the first attempt was ticked.
+    expect(staffCount()).toBe(1);
+    expect(appliedCount()).toBe(1);
+    expect(retry.officeNoticePending).toBe(false);
+    expect(docs[`payments/${KEY}`]!['officeNoticeSentAt']).toBeTruthy();
+  });
+
+  it('recordPayment: a ticked payment for a household with no portal account says so, and nothing is pending', async () => {
+    seedInvoice();
+    mocks.resolveUid.mockResolvedValue(null);
+    const res = await adminApply(15, true, KEY);
+    expect(res.confirmationEmailSent).toBe(false);
+    expect(res.householdNoPortalAccount).toBe(true);
+    expect(res.officeNoticePending).toBe(false);
+  });
+});
+
+describe('#866 old-client claim window and clock skew', () => {
+  it('a settlement stamp that reads 1 second in the future (instance clock skew) is still claimed', async () => {
+    seedInvoice();
+    await settleStep(40);
+    // The claiming instance's clock runs a second behind the stamping one.
+    later(-1000);
+    await ledgerStep(40, false);
+    expect(staffCount()).toBe(1);
+    expect(docs[INVOICE]!['paymentAppliedNoticeClaim']).toMatch(/^markInvoicePaid:/);
+  });
+
+  it('a settlement stamp that reads 10 seconds in the future is not trusted', async () => {
+    seedInvoice();
+    await settleStep(40);
+    later(-10_000);
+    await ledgerStep(40, false);
+    expect(staffCount()).toBe(0);
+    expect(docs[INVOICE]!['paymentAppliedNoticeClaim']).toBeUndefined();
   });
 });
 
