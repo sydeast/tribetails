@@ -33,3 +33,15 @@ import { call } from '../lib/fns';
 export function signOutAllDevices(): Promise<{ ok: true }> {
   return call<Record<string, never>, { ok: true }>('signOutAllDevices', {});
 }
+
+/**
+ * #886: tells the backend a sign-in failed on a credential error, so it can
+ * count failures, warn the household at 5 and lock the account at 10.
+ *
+ * Unauthenticated by design: the person has just failed to sign in. The server
+ * answers `{ ok: true }` for every email, real or not, so the result carries no
+ * information and nothing here reads it. `lib/auth.ts` fires it and forgets it.
+ */
+export function reportFailedLogin(email: string): Promise<{ ok: true }> {
+  return call<{ email: string }, { ok: true }>('recordFailedLogin', { email });
+}
