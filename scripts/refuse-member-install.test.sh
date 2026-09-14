@@ -39,9 +39,10 @@
 # `npm ci`'S OWN DESTRUCTIVE STEP, SEPARATE FROM WHAT THIS GUARD CAN CONTROL.
 # `npm ci` unconditionally clears node_modules before reify runs, and
 # lifecycle scripts (including this guard) run INSIDE reify -- confirmed
-# against real npm (v11) in #862's own investigation, where a refused `npm
-# ci` inside a real member left the real repo's root node_modules with 2 of
-# its 477 entries. No preinstall hook anywhere can run before that clear.
+# against real npm 10.9.8 and 11.9.0 in #862's own investigation, where a
+# refused `npm ci` inside a real member left the real repo's root
+# node_modules with 2 of its 477 entries. No preinstall hook anywhere,
+# tested on either npm version, can run before that clear.
 # `npm install` has no such unconditional clear and is proven below (case
 # 2f) to leave node_modules byte-for-byte untouched on refusal. Both still
 # refuse loudly (exit nonzero) instead of the original defect's silent exit 0
@@ -142,10 +143,19 @@ rm -f "$WIRING_OUT"
 make_fixture() {
   local dir
   dir="$(mktemp -d)"
-  mkdir -p "$dir/scripts/lib" "$dir/admin" "$dir/apps/web"
+  mkdir -p "$dir/scripts/lib" "$dir/admin" "$dir/apps/web" "$dir/local-pkg"
   cp "$GUARD_SRC" "$dir/scripts/lib/refuse-member-install.js"
   cat > "$dir/package.json" <<'PJ'
 { "name": "fixture-root", "private": true, "workspaces": ["admin", "apps/web"] }
+PJ
+  # A real (non-workspace) local package, installable via `file:../local-pkg`
+  # from admin. Used only by case 2f, to give it something that WOULD change
+  # admin/package.json and the root lockfile if the guard did not stop it --
+  # a bare `npm install` with nothing to add is a no-op whether or not any
+  # guard exists, which is exactly why the marker-only version of this case
+  # used to pass even with the guard disabled.
+  cat > "$dir/local-pkg/package.json" <<'PJ'
+{ "name": "local-pkg", "version": "1.0.0" }
 PJ
   cat > "$dir/admin/package.json" <<'PJ'
 { "name": "fixture-admin", "private": true,
@@ -214,7 +224,7 @@ run_npm "$D1" ci >/dev/null 2>&1
 # 2e. `npm ci` run INSIDE each member: must refuse (nonzero exit), and must
 #     name the fix.
 OUT="$(run_npm "$D1/admin" ci 2>&1)"; RC=$?
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'run `npm ci` at the repo root'; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'To restore dependencies: `npm ci` at the repo root'; then
   ok "npm ci INSIDE admin (depth 1) refuses and names the repo-root fix"
 else
   bad "npm ci INSIDE admin did not refuse as expected (rc=$RC)"; printf '%s\n' "$OUT"
@@ -222,23 +232,47 @@ fi
 run_npm "$D1" ci >/dev/null 2>&1   # restore: npm ci clears root node_modules even when refused
 
 OUT="$(run_npm "$D1/apps/web" ci 2>&1)"; RC=$?
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'run `npm ci` at the repo root'; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'To restore dependencies: `npm ci` at the repo root'; then
   ok "npm ci INSIDE apps/web (depth 2) refuses and names the repo-root fix"
 else
   bad "npm ci INSIDE apps/web did not refuse as expected (rc=$RC)"; printf '%s\n' "$OUT"
 fi
 run_npm "$D1" ci >/dev/null 2>&1   # restore
 
-# 2f. `npm install` run INSIDE a member: must refuse, AND must leave the
-#     root node_modules install marker byte-for-byte untouched (npm install
-#     has no unconditional clear the way npm ci does).
+# 2f. `npm install <a real new dependency>` run INSIDE a member: must
+#     refuse, AND must leave that member's OWN package.json and the root
+#     lockfile unchanged. A bare `npm install` with nothing to add (the
+#     previous version of this case) is a no-op whether or not any guard
+#     exists, so it never actually exercised the guard; installing a real
+#     local `file:` dependency is something that DOES rewrite
+#     admin/package.json (adding the new dependency) and the root
+#     package-lock.json when nothing stops it -- confirmed by temporarily
+#     gutting scripts/lib/refuse-member-install.js to `process.exit(0)` and
+#     re-running this exact case by hand: both files changed, this case
+#     failed as expected, and the real guard was restored and diffed
+#     byte-identical afterward. `npm install` still has no unconditional
+#     clear the way `npm ci` does, so node_modules itself is also checked.
+ADMIN_PJ_BEFORE="$(cat "$D1/admin/package.json")"
+LOCK_BEFORE="$(cat "$D1/package-lock.json")"
 MARKER_BEFORE="$(cat "$D1/node_modules/.package-lock.json" 2>/dev/null)"
-OUT="$(run_npm "$D1/admin" install 2>&1)"; RC=$?
+OUT="$(run_npm "$D1/admin" install file:../local-pkg 2>&1)"; RC=$?
+ADMIN_PJ_AFTER="$(cat "$D1/admin/package.json")"
+LOCK_AFTER="$(cat "$D1/package-lock.json")"
 MARKER_AFTER="$(cat "$D1/node_modules/.package-lock.json" 2>/dev/null)"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'run `npm ci` at the repo root'; then
-  ok "npm install INSIDE admin refuses and names the repo-root fix"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'To restore dependencies: `npm ci` at the repo root'; then
+  ok "npm install file:../local-pkg INSIDE admin refuses and names the repo-root fix"
 else
-  bad "npm install INSIDE admin did not refuse as expected (rc=$RC)"; printf '%s\n' "$OUT"
+  bad "npm install file:../local-pkg INSIDE admin did not refuse as expected (rc=$RC)"; printf '%s\n' "$OUT"
+fi
+if [ "$ADMIN_PJ_BEFORE" = "$ADMIN_PJ_AFTER" ]; then
+  ok "npm install INSIDE admin left admin/package.json unchanged (no dependency was added)"
+else
+  bad "npm install INSIDE admin added the dependency to admin/package.json despite refusing"
+fi
+if [ "$LOCK_BEFORE" = "$LOCK_AFTER" ]; then
+  ok "npm install INSIDE admin left the root package-lock.json unchanged"
+else
+  bad "npm install INSIDE admin changed the root package-lock.json despite refusing"
 fi
 if [ "$MARKER_BEFORE" = "$MARKER_AFTER" ]; then
   ok "npm install INSIDE admin left the root install marker untouched"

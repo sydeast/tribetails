@@ -24,14 +24,16 @@
 // set to that member's directory, whichever command triggered the install
 // (root `npm ci`, `npm install -w <member>` from the root, CI, bootstrap.sh,
 // or plain `npm ci` typed inside the member itself) -- verified against real
-// npm (v11) for every case this guard needs to tell apart, see
+// npm 10.9.8 and 11.9.0 for every case this guard needs to tell apart, see
 // scripts/refuse-member-install.test.sh for the cases and their evidence.
-// `INIT_CWD` is npm's own record of the
-// directory npm was INVOKED FROM (documented under npm's lifecycle-script
-// environment variables), which npm recomputes fresh for every npm process
-// it starts, including one npm process started from inside another (a
-// nested `npm ci` run by a script an outer `npm run` is executing) -- it is
-// never inherited from an enclosing npm invocation's own INIT_CWD.
+// `INIT_CWD` is npm's own record of the directory npm was INVOKED FROM
+// (documented under npm's lifecycle-script environment variables), which
+// npm recomputes fresh for every npm process it starts, including one npm
+// process started from inside another (a nested `npm ci` run by a script an
+// outer `npm run` is executing) -- it is never inherited from an enclosing
+// npm invocation's own INIT_CWD. `npm_command` (used below to tell `npm ci`
+// apart from `npm install`/`npm uninstall`) is likewise set correctly for a
+// member's own lifecycle script on both npm versions.
 //
 // So: this process's cwd (the member directory, set by npm) equals INIT_CWD
 // only when npm was invoked while sitting inside that exact member
@@ -76,7 +78,20 @@ if (memberReal === initReal) {
   })();
   console.error('');
   console.error(`  refused: npm was run inside ${name} (${memberDir}).`);
-  console.error('  This workspace member has no lockfile of its own -- run `npm ci` at the repo root instead.');
+  console.error('  This workspace member has no lockfile of its own.');
+  console.error('  To restore dependencies: `npm ci` at the repo root.');
+  console.error(`  To add or remove one: \`npm install <pkg> -w ${name}\` (or \`npm uninstall <pkg> -w ${name}\`) from the repo root.`);
+  // npm_command is set for every npm invocation, including a workspace
+  // member's own lifecycle scripts -- verified against real npm 10.9.8 and
+  // 11.9.0 (both report "ci" here for a `npm ci` run inside this exact
+  // member; "install" and "uninstall" for those). `npm ci` alone carries
+  // the extra warning below because it, unlike `npm install`/`npm
+  // uninstall`, unconditionally clears node_modules before ANY lifecycle
+  // script (this guard included) gets a chance to run -- see this file's
+  // header comment.
+  if (process.env.npm_command === 'ci') {
+    console.error('  If this was `npm ci`, npm already emptied the root `node_modules` before this check ran; `npm ci` at the root restores it.');
+  }
   console.error('');
   process.exit(1);
 }
