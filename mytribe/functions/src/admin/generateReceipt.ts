@@ -6,9 +6,10 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
-import { enqueueNotification } from '../notifications/dispatcher';
+import { contentDedupeKey, enqueueNotification } from '../notifications/dispatcher';
 import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
 
@@ -27,6 +28,30 @@ export const Args = z.object({
  */
 export const Result = z.object({ ok: OkSchema }).strict();
 
+/**
+ * #832: the dispatcher identity of one receipt, named by WHAT IT RECEIPTS.
+ *
+ * A receipt says what was paid against an invoice: the total collected and
+ * the payments that make it up. A second press, or a retry after the first
+ * press committed, receipts the same payments and so carries the same key and
+ * is deduped. A receipt issued after a new payment landed receipts something
+ * different and sends.
+ *
+ * It replaces a stored receipt counter, which a retry after the first commit
+ * read one higher and so sent a second, identical receipt.
+ */
+export function receiptDedupeKey(
+  invoiceId: string,
+  invoice: { total?: unknown; totalCents?: unknown } | undefined,
+  payments: ReadonlyArray<{ id: string; data: PaymentAmount }>,
+): string {
+  return contentDedupeKey(`invoice:${invoiceId}:receipt`, {
+    paidCents: paidCentsFromPayments(payments.map((p) => p.data)),
+    paymentIds: payments.map((p) => p.id).sort(),
+    total: invoice?.totalCents ?? invoice?.total ?? null,
+  });
+}
+
 export async function generateReceiptHandler(
   req: CallableRequest<unknown>,
 ): Promise<z.infer<typeof Result>> {
@@ -37,23 +62,15 @@ export async function generateReceiptHandler(
   if (!snap.exists) {
     throw new HttpsError('not-found', `invoice ${args.invoiceId} not found`);
   }
-  const stored = snap.data() as { kinfolkId?: string; receiptVersion?: unknown } | undefined;
+  const stored = snap.data() as { kinfolkId?: string; total?: unknown; totalCents?: unknown } | undefined;
   const familyId = stored?.kinfolkId ?? '';
-  // #832: each issue of a receipt is a VERSION of it, and the version is the
-  // notification's identity. Every receipt for one invoice used to share
-  // `invoice:<id>`, so a receipt re-issued inside the dispatcher window (a
-  // correction, a household asking again) was dropped. Read-then-write rather
-  // than an increment on purpose: two presses racing each other read the same
-  // version and deliver once, while an issue after the first one landed gets
-  // the next version and sends.
-  const receiptVersion =
-    (typeof stored?.receiptVersion === 'number' && Number.isFinite(stored.receiptVersion) ? stored.receiptVersion : 0) + 1;
+  const paymentsSnap = await ref.collection('payments').get();
+  const payments = paymentsSnap.docs.map((d) => ({ id: d.id, data: d.data() as PaymentAmount }));
 
   await ref.set(
     {
       receiptIssuedAt: FieldValue.serverTimestamp(),
       receiptIssuedBy: req.auth!.uid,
-      receiptVersion,
       updatedAt: FieldValue.serverTimestamp(),
     },
     { merge: true },
@@ -72,7 +89,7 @@ export async function generateReceiptHandler(
       key: 'invoice.receipt',
       recipientUid: recipientUid ?? '',
       data: { kinfolkId: familyId, invoiceId: args.invoiceId },
-      dedupeKey: `invoice:${args.invoiceId}:receipt:${receiptVersion}`,
+      dedupeKey: receiptDedupeKey(args.invoiceId, stored, payments),
     });
   } catch (err) {
     logEvent({
