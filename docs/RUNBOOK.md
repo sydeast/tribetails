@@ -820,6 +820,27 @@ or push failure does not fail the release: by step 9 the web is already live
 and verified, so the run reports the problem and leaves it for you to tag by
 hand rather than call a good deploy broken.
 
+### Templates to import after a release
+
+Some merges add a notification template that the release cannot load for you.
+The seed files ship inside the functions deploy, and templates reach Firestore
+only through the importer (operator ruling, issue #468). So each row below is an
+operator step after the first release that contains it.
+
+Until a template is imported, its notification still goes out on the generic
+fallback (`mytribe/functions/src/notifications/fallbackTemplate.ts`): email and
+push carry content-free copy pointing at AuntieOS, and **SMS is skipped**
+(operator ruling 2026-08-23, a segment costs money).
+
+| Template | Added by | What is missing until it is imported |
+|---|---|---|
+| `security.account.locked.operator` | #869 | The operator's lockout alert names neither the household nor the account email, and sends no SMS. |
+
+To import, follow the numbered steps at the end of *Connecting Stripe*, step 4
+(Admin, then **Templates**, then **Import from repo** on web or the **Import** tab
+on Android). A template new to Firestore shows `create` on every channel and
+needs nothing ticked. Do not tick an unrelated `skipped` row to get it in.
+
 ### Merged branches are deleted after the tag
 
 Immediately after step 9, `scripts/prune-merged-branches.sh` deletes remote

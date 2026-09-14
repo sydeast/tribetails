@@ -74,9 +74,10 @@ import { logEvent } from './logger';
  * binds it via `secrets: [...]`. A function that does not bind it sees
  * `undefined` with no error. That is why arm (2) is a fallback and not a
  * gate: a function without the binding is not silently wrong, it falls through
- * to (3) and throws with the fix named. Today only `onBookingsWrite` and the
- * roster callables bind it. (Stale since before #869: `recordFailedLogin` binds
- * it too, which is what lets the operator lock alert self-heal on that path.)
+ * to (3) and throws with the fix named. Many functions bind it, among them
+ * `onBookingsWrite`, `recordFailedLogin`, the roster callables and most portal
+ * callables; check a function's own `secrets:` list before relying on the
+ * fallback there.
  */
 
 const DOC_PATH = { collection: 'businessSettings', doc: 'admins' } as const;

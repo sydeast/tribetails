@@ -727,10 +727,11 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       trigger:
         'Failed sign-ins lock a kinfolk account. One copy goes to each business admin on the roster (AUNTIE_OPERATOR_UIDS only while the roster is empty).',
       source: 'src/auth/loginSecurity.ts',
-      dataKeys: ['kinfolkUid', 'kinfolkEmail', 'lockStartedAtMs'],
+      dataKeys: ['kinfolkUid', 'kinfolkEmail', 'kinfolkName', 'lockStartedAtMs'],
       dataNote:
-        'Plus `kinfolkId` when the account holds exactly one household, otherwise `kinfolkName` from the account. ' +
-        'Sent with a dedupeKey naming the account and the lock start.',
+        'Plus `kinfolkId` when the account holds exactly one household. `kinfolkName` is the household name, ' +
+        'else the account name, else the email local part. Sent with a dedupeKey naming the account and the ' +
+        'saved lock start, and re-sent for that same lock by a later failed login if it did not go out.',
     },
   ],
   'security.breach_attempt.kinfolk': [
