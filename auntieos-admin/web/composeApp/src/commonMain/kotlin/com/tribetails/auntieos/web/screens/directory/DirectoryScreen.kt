@@ -515,7 +515,7 @@ private fun matchKin(kin: Kin, q: String): Boolean {
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun KinfolkCard(
+internal fun KinfolkCard(
     kf: Kinfolk,
     kin: List<Kin>,
     lastVisit: String?,
@@ -579,7 +579,15 @@ private fun KinfolkCard(
                     // "household · area" subtitle is desired verbatim.
                     val subtitle = if (kf.lastName.isNotBlank()) householdLabel(kf.lastName)
                                    else kinSummaryOf(kin)
-                    if (subtitle.isNotBlank()) {
+                    // #829: a household with no Emergency Contact shows the flag in
+                    // the subtitle slot. The card is a fixed 196dp, so a new row
+                    // would squeeze the kin chips, and at the 290dp minimum the
+                    // footer cannot hold the flag beside the status pill (render
+                    // test: KinfolkCardRenderTest). The subtitle only repeats the
+                    // household name, so the flag takes its place.
+                    if (emergencyContactsOf(kf).isEmpty()) {
+                        AuntieStatusPill(label = NO_EMERGENCY_CONTACT, tone = AuntieStatusTone.Orange)
+                    } else if (subtitle.isNotBlank()) {
                         Text(
                             text     = subtitle,
                             style    = AuntieTheme.typography.bodySmall,
@@ -643,7 +651,11 @@ private fun KinfolkCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
+                // #829 review: the left half yields width to the pills on the
+                // right, so at the 290dp minimum "Last visit" ellipsizes instead of
+                // squeezing the pills into wrapping.
                 Row(
+                    modifier = Modifier.weight(1f, fill = false),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
@@ -679,17 +691,7 @@ private fun KinfolkCard(
                         )
                     }
                 }
-                // #829: beside the status pill, not a new row, because the card
-                // height is fixed.
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    if (emergencyContactsOf(kf).isEmpty()) {
-                        AuntieStatusPill(label = NO_EMERGENCY_CONTACT, tone = AuntieStatusTone.Orange)
-                    }
-                    StatusPill(status = kf.status)
-                }
+                StatusPill(status = kf.status)
             }
         }
     }

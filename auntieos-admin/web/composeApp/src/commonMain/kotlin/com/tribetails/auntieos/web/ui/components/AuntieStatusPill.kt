@@ -153,10 +153,14 @@ fun AuntieStatusPill(
                     modifier = Modifier.size(14.dp),
                 )
             }
+            // A pill is one line. Wrapping inside a fixed-height card (the
+            // Directory card is 196dp) pushed content past the clip (#829 review).
             Text(
                 text = labelText,
                 style = labelStyle,
                 color = toneColor,
+                maxLines = 1,
+                softWrap = false,
             )
         }
     }
