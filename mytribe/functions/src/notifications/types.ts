@@ -169,6 +169,14 @@ export interface EnqueueArgs {
   targetType?: NotificationTargetType;
   /** Originating entity id. When omitted the dispatcher derives it from `data`. */
   targetId?: string;
+  /**
+   * #832: names THIS event for the dispatcher's duplicate check, replacing the
+   * identity it would otherwise derive from the target plus any per-event id in
+   * `data` (messageId, commentId, paymentId, ...). Pass it when two genuinely
+   * different events share a key, a target, a recipient and every id in `data`,
+   * and must both be delivered. See `dedupeIdentityOf` in dispatcher.ts.
+   */
+  dedupeKey?: string;
 }
 
 /**
