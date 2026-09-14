@@ -99,7 +99,7 @@ batchKey + batchWindowMs, marketing-class keys live in marketing category.
 
 1. From `recordFailedLogin` callable, post failures with `email` of a test kinfolk. Every call answers `{ ok: true }`, for a real account and an unknown email alike (#886), so read progress from `clients/{uid}/security/loginAttempts.attempts`, not from the response:
    - 4 fails → no notification, 4 entries in `attempts`.
-   - 5th fail within 10 min → `auth.failedLogin.attempts` notification fires; `warnSentAtMs` is stamped.
+   - 5th fail within 10 min → `auth.failedLogin.attempts` fires to the kinfolk only, and `security.failedLogin.attempts.operator` fires to every uid in `businessSettings/admins.uids` as staff (#877); `warnSentAtMs` is stamped. More failures inside the same 10 minutes send no second warning.
    - Continue to 10 fails within 20 min → `auth.account.locked` fires to the kinfolk, and `security.account.locked.operator` fires to every uid in `businessSettings/admins.uids` as staff (#869). `clients/{uid}/security/loginAttempts.lockedUntilMs` set to the lock start plus 30 minutes.
    - An unknown email writes only `unknownLoginAttempts/{emailHash}` and never a `clients/` doc.
 2. Attempt Firebase Auth sign-in for the locked kinfolk → `beforeSignIn` blocking function rejects with `permission-denied: This account is locked.`

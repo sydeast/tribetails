@@ -35,6 +35,24 @@ class NotificationAudienceTest {
         assertEquals(listOf("security.account.locked.operator"), grouped.single().second.map { it.key })
     }
 
+    /**
+     * #877: the operator's failed-login warning is a business-only `security`
+     * row, next to the lock alert. It appears on the Business tab under Account
+     * and security, and on no other tab.
+     */
+    @Test
+    fun operatorFailedLoginWarningIsBusinessOnlyUnderAccountAndSecurity() {
+        val warning = NotificationCatalogEntry(
+            key = "security.failedLogin.attempts.operator",
+            category = "security",
+            audiences = setOf("business"),
+        )
+        assertEquals(setOf(NotifAudience.Business), warning.notifAudiences())
+        val grouped = sectionedNotifications(listOf(warning), NotifAudience.Business)
+        assertEquals(listOf("Account and security"), grouped.map { it.first.title })
+        assertEquals(listOf("security.failedLogin.attempts.operator"), grouped.single().second.map { it.key })
+    }
+
     @Test
     fun audiencesDriveTheTabsDirectly() {
         assertEquals(setOf(NotifAudience.Business), entry(setOf("business")).notifAudiences())

@@ -1,0 +1,12 @@
+Subject: Failed sign-ins: {{kinfolkName}} ({{kinfolkEmail}})
+
+A kinfolk account has had {{attemptsInWindow}} failed sign-in attempts in the last 10 minutes.
+
+Household: {{kinfolkName}}
+Account email: {{kinfolkEmail}}
+
+The account is not locked. It locks for 30 minutes at 10 failed attempts in 20 minutes, and you will get a separate alert if that happens.
+
+If the household is not having trouble signing in, someone may be guessing their password. Check with them, and look at the failed sign-ins in the Activity Log for the IP they came from.
+
+Tribe Tails Pet Care. Your Kin's Favorite Auntie.

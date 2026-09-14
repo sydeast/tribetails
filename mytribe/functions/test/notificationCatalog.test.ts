@@ -24,10 +24,12 @@ describe('NOTIFICATION_CATALOG integrity', () => {
     expect(expired.kinfolkFacing).toBe(false);
   });
 
-  it('Run-4 audit: the four dual-bucket notifications are audience=both AND dispatch to both', () => {
+  it('Run-4 audit: the three dual-bucket notifications are audience=both AND dispatch to both', () => {
     // audience=both is UI-only; a second resolver is what makes the other audience
     // actually RECEIVE it (otherwise the tab shows a notification it never sends).
-    for (const k of ['kincare.changed', 'kintale.comment.added', 'invoice.payment.applied', 'auth.failedLogin.attempts']) {
+    // `auth.failedLogin.attempts` left this list in #877: business admins get
+    // their own key, `security.failedLogin.attempts.operator`, with an operator template.
+    for (const k of ['kincare.changed', 'kintale.comment.added', 'invoice.payment.applied']) {
       const def = NOTIFICATION_CATALOG[k]!;
       expect(def.audience, `${k} should be both`).toBe('both');
       expect(def.secondaryResolver, `${k} needs a secondaryResolver to reach both audiences`).toBeTruthy();
@@ -199,10 +201,12 @@ describe('NOTIFICATION_CATALOG audiences streams (audience revamp 2026-07)', () 
     // exact match against the catalog, so its absence is the assertion.
     'invite.expired': { business: true },
     'auth.password.reset': { kinfolk: true },
-    'auth.failedLogin.attempts': { kinfolk: true, business: true },
+    'auth.failedLogin.attempts': { kinfolk: true },
     'auth.account.locked': { kinfolk: true },
     // #869: the operator's copy of a lockout, never the household's key.
     'security.account.locked.operator': { business: true },
+    // #877: the operator's copy of the 5-failure warning, never the household's key.
+    'security.failedLogin.attempts.operator': { business: true },
     'security.breach_attempt.kinfolk': { business: true },
     'rating.submitted.bad': { business: true },
     'rating.submitted.good': { business: true },

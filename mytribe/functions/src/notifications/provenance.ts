@@ -709,9 +709,23 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'auth.failedLogin.attempts': [
     {
-      trigger: 'Failed sign-ins on one account cross the warning threshold.',
+      trigger:
+        'Failed sign-ins on one account cross the warning threshold. This copy goes to that person only; business admins get security.failedLogin.attempts.operator.',
       source: 'src/auth/loginSecurity.ts',
       dataKeys: ['email', 'attemptsInWindow'],
+    },
+  ],
+  'security.failedLogin.attempts.operator': [
+    {
+      trigger:
+        'Failed sign-ins on a kinfolk account cross the warning threshold (5 in 10 minutes). One copy goes to each business admin on the roster (AUNTIE_OPERATOR_UIDS only while the roster is empty).',
+      source: 'src/auth/loginSecurity.ts',
+      dataKeys: ['kinfolkUid', 'kinfolkEmail', 'kinfolkName', 'attemptsInWindow', 'warnStartedAtMs'],
+      dataNote:
+        'Plus `kinfolkId` when the account holds exactly one household. `kinfolkName` is the household name, ' +
+        'else the account name, else the email local part. Sent with a dedupeKey naming the account and the ' +
+        'saved burst start, and re-sent for that same burst by a later failed login within 10 minutes if it ' +
+        'did not go out. A re-send carries the count at that moment.',
     },
   ],
   'auth.account.locked': [
