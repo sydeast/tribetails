@@ -13,9 +13,17 @@
 //       node_modules/.package-lock.json exists but could not be read or
 //       parsed. Distinct from "clean", because a caught-and-swallowed parse
 //       error used to print nothing and look identical to no drift at all.
+//
+// A lockfile entry MISSING from the install is not automatically drift: see
+// optional-pkg.js. npm never installs an optional package meant for another
+// platform (esbuild/rollup/@napi-rs binaries and the like), so a real,
+// freshly `npm ci`'d tree still shows dozens of such entries as "absent" on
+// any one platform. Only a NON-optional package that is missing, or any
+// package installed at the wrong version, is drift.
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { isSkippableMissing } = require('./optional-pkg');
 
 const dir = process.argv[2];
 
@@ -80,7 +88,11 @@ if (fs.existsSync(markerPath)) {
     const wantEntry = declaredLocked[key];
     const gotEntry = installedPkgs[key];
     if (wantEntry && wantEntry.version && !gotEntry) {
-      bad.push(name + ' (not installed)');
+      // npm itself never installs an optional package meant for a different
+      // platform (a Linux/Windows/other-arch binary in a lockfile built on
+      // this machine's own platform); that is not drift, it is npm doing
+      // exactly what it always does. See optional-pkg.js.
+      if (!isSkippableMissing(wantEntry)) bad.push(name + ' (not installed)');
     } else if (!wantEntry && gotEntry) {
       bad.push(name + ' (installed, but lockfile no longer declares it)');
     } else if (wantEntry && gotEntry && wantEntry.version && gotEntry.version && wantEntry.version !== gotEntry.version) {
@@ -93,7 +105,7 @@ if (fs.existsSync(markerPath)) {
     if (!entry) continue; // already reported above
     const p = path.join(dir, 'node_modules', name, 'package.json');
     if (!fs.existsSync(p)) {
-      bad.push(name + ' (absent)');
+      if (!isSkippableMissing(entry)) bad.push(name + ' (absent)');
       continue;
     }
     if (!entry.version) continue;

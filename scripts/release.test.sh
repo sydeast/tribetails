@@ -1648,6 +1648,77 @@ else
   echo "$OUT" | tail -25
 fi
 
+# ---------------------------------------------------------------------------
+# 27. A transitive-only bump (the shape a Dependabot GROUP update takes) in
+#     step 0a refuses the release, the same as a direct-dependency bump.
+#     Only direct dependencies used to be compared, which missed this.
+# ---------------------------------------------------------------------------
+D24C="$(make_repo)"; write_stubs "$D24C"
+declare_dep "$D24C/repo/mytribe/functions" stripe 18.5.0
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  const lock = JSON.parse(fs.readFileSync(p, "utf8"));
+  lock.packages["node_modules/stripe/node_modules/nested-thing"] = { version: "2.0.0" };
+  fs.writeFileSync(p, JSON.stringify(lock));
+' "$D24C/repo/mytribe/functions/package-lock.json"
+commit_all "$D24C"
+install_pkg "$D24C/repo/mytribe/functions" stripe 18.5.0   # the direct dep MATCHES
+cat > "$D24C/repo/mytribe/functions/node_modules/.package-lock.json" <<'LOCK'
+{ "packages": {
+  "node_modules/stripe": { "version": "18.5.0" },
+  "node_modules/stripe/node_modules/nested-thing": { "version": "1.0.0" }
+} }
+LOCK
+arm_ci "$D24C"
+RC="$(run_release "$D24C" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$D24C/calls")"
+OUT="$(cat "$D24C/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "nested-thing (1.0.0, lockfile says 2.0.0)"; then
+  ok "a transitive-only bump refuses the release even though the direct dependency matches"
+else
+  bad "a transitive-only bump did not refuse the release; rc=$RC"; echo "$OUT" | tail -25
+fi
+if [ -n "$(cat "$D24C/calls" 2>/dev/null)" ]; then
+  bad "something reached firebase despite the transitive-drift refusal"
+else
+  ok "nothing was deployed before the transitive-drift refusal"
+fi
+
+# ---------------------------------------------------------------------------
+# 28. A dependency declared in package.json with NO lockfile entry at all
+#     refuses the release. package.json and package-lock.json disagreeing
+#     with EACH OTHER used to be silently skipped (not compared against
+#     node_modules at all), which is a different failure than "installed
+#     but wrong version".
+# ---------------------------------------------------------------------------
+D24D="$(make_repo)"; write_stubs "$D24D"
+# node_modules must actually EXIST, or the check returns the ordinary "not
+# installed yet" state before ever opening package.json/package-lock.json to
+# compare them against each other.
+mkdir -p "$D24D/repo/mytribe/functions/node_modules"
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  const pj = JSON.parse(fs.readFileSync(p, "utf8"));
+  pj.dependencies = pj.dependencies || {};
+  pj.dependencies["ghost-pkg"] = "^1.0.0";
+  fs.writeFileSync(p, JSON.stringify(pj));
+' "$D24D/repo/mytribe/functions/package.json"
+commit_all "$D24D"
+arm_ci "$D24D"
+RC="$(run_release "$D24D" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$D24D/calls")"
+OUT="$(cat "$D24D/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "ghost-pkg (declared, but not in package-lock.json)"; then
+  ok "a declared dependency with no lockfile entry refuses the release"
+else
+  bad "an unlocked declared dependency did not refuse the release; rc=$RC"; echo "$OUT" | tail -25
+fi
+if [ -n "$(cat "$D24D/calls" 2>/dev/null)" ]; then
+  bad "something reached firebase despite the unlocked-dependency refusal"
+else
+  ok "nothing was deployed before the unlocked-dependency refusal"
+fi
+
 echo
 echo "release tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

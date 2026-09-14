@@ -398,6 +398,129 @@ else
   tail -20 "$D4G/out"
 fi
 
+# --------------------------------------------------- optional platform packages
+# npm's own lockfile carries every optional platform-specific binary a
+# dependency graph could ever need (esbuild, rollup, @napi-rs/*, ...), and
+# never installs the ones that do not match THIS machine. A real, freshly
+# `npm ci`'d checkout on macOS arm64 has dozens of such entries "missing" on
+# purpose. Counting them as drift would refuse a perfectly clean tree; a
+# NON-optional missing package must still be caught.
+D4K="$(make_repo)"
+install_matching "$D4K"
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  const lock = JSON.parse(fs.readFileSync(p, "utf8"));
+  lock.packages["node_modules/optional-linux-thing"] = { version: "1.0.0", optional: true, os: ["linux"] };
+  lock.packages["node_modules/wrong-cpu-thing"] = { version: "1.0.0", cpu: ["ia32"] };
+  lock.packages["node_modules/required-thing"] = { version: "1.0.0" };
+  fs.writeFileSync(p, JSON.stringify(lock));
+' "$D4K/mytribe/functions/package-lock.json"
+# The installed marker is what a real `npm ci` on THIS machine actually
+# wrote: left-pad, and none of the three new entries -- npm skipped the
+# first two on purpose (wrong platform), and required-thing failed to
+# install for a real reason this check must still catch.
+cat > "$D4K/mytribe/functions/node_modules/.package-lock.json" <<'LOCK'
+{ "packages": {
+  "node_modules/left-pad": { "version": "1.3.0" }
+} }
+LOCK
+RC="$(run_preflight "$D4K")"
+if [ "$RC" = "2" ] && grep -q "required-thing (not installed)" "$D4K/out"; then
+  ok "a non-optional missing package is still caught as drift"
+else
+  bad "a non-optional missing package went uncaught; got rc=$RC"; tail -20 "$D4K/out"
+fi
+if grep -q "optional-linux-thing" "$D4K/out"; then
+  bad "an optional: true, os-excluded package was reported as drift"
+else
+  ok "an optional: true, os-excluded package absent from this platform is not drift"
+fi
+if grep -q "wrong-cpu-thing" "$D4K/out"; then
+  bad "a cpu-excluded package (no optional flag) was reported as drift"
+else
+  ok "a cpu-excluded package absent from this platform is not drift, even without optional: true"
+fi
+
+# The same fixture, but through the STANDALONE FALLBACK path (no
+# node_modules/.package-lock.json marker at all): the direct-dependency walk
+# must apply the identical optional/platform exemption.
+D4L="$(make_repo)"
+install_matching "$D4L"
+rm -f "$D4L/mytribe/functions/node_modules/.package-lock.json"
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  const pj = JSON.parse(fs.readFileSync(p, "utf8"));
+  pj.dependencies["optional-linux-thing"] = "^1.0.0";
+  fs.writeFileSync(p, JSON.stringify(pj));
+' "$D4L/mytribe/functions/package.json"
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  const lock = JSON.parse(fs.readFileSync(p, "utf8"));
+  lock.packages["node_modules/optional-linux-thing"] = { version: "1.0.0", optional: true, os: ["linux"] };
+  fs.writeFileSync(p, JSON.stringify(lock));
+' "$D4L/mytribe/functions/package-lock.json"
+RC="$(run_preflight "$D4L")"
+if [ "$RC" = "0" ] && ! grep -qi "optional-linux-thing" "$D4L/out"; then
+  ok "the direct-dependency fallback also treats an os-excluded optional package as not drift"
+else
+  bad "the fallback path reported an os-excluded optional package as drift or failed; rc=$RC"
+  tail -20 "$D4L/out"
+fi
+
+# --------------------------------------------- a member's package.json is garbage
+# A workspace member is correctly skipped when its package.json does not
+# EXIST (a partial or synthetic tree may declare a workspace pattern with
+# nothing under it yet). A member whose package.json EXISTS but cannot be
+# parsed used to be caught by the exact same `catch { continue }` as the
+# legitimate "doesn't exist" case, silently dropping that member (and every
+# dependency it declares) from the check entirely. That is a real member
+# this check cannot trust, not an absent one, and must refuse (unreadable),
+# not skip.
+D4M="$(make_repo)"
+install_matching "$D4M"
+printf 'this is not json' > "$D4M/mytribe/web/package.json"
+RC="$(run_preflight "$D4M")"
+if [ "$RC" = "1" ] && grep -qi "cannot be checked" "$D4M/out"; then
+  ok "a workspace member with garbage package.json is UNREADABLE, refuses (rc=1)"
+else
+  bad "a garbage member package.json did not refuse as unreadable; got rc=$RC"
+  tail -20 "$D4M/out"
+fi
+if grep -q "workspace.*install matches it" "$D4M/out"; then
+  bad "a workspace with a garbage member's package.json was reported as clean"
+fi
+
+# ------------------------------------------------ an unexpandable glob pattern
+# Only a single trailing "*" SEGMENT is expanded ("packages/*"). Any other
+# shape (a mid-path "*", "**", a partial-segment glob, a "!" negation) used
+# to be silently mishandled -- treated as a literal directory name that
+# almost certainly does not exist, expanding to NOTHING rather than to the
+# right set of directories. A wrong expansion that finds no members looks
+# identical to "no members declared" and would report a workspace with real,
+# drifted dependencies as perfectly clean. It must refuse instead.
+for pat in 'packages/*/nested' 'pkg-*' '**' '!packages/excluded'; do
+  D4N="$(make_repo)"
+  install_matching "$D4N"
+  node -e '
+    const fs = require("fs");
+    const p = process.argv[1], pat = process.argv[2];
+    const pj = JSON.parse(fs.readFileSync(p, "utf8"));
+    pj.workspaces.push(pat);
+    fs.writeFileSync(p, JSON.stringify(pj));
+  ' "$D4N/package.json" "$pat"
+  RC="$(run_preflight "$D4N")"
+  if [ "$RC" = "1" ] && grep -qi "cannot be checked" "$D4N/out"; then
+    ok "an unexpandable workspaces pattern ('$pat') refuses rather than silently matching nothing"
+  else
+    bad "an unexpandable workspaces pattern ('$pat') did not refuse; got rc=$RC"
+    tail -20 "$D4N/out"
+  fi
+  rm -rf "$D4N"
+done
+
 # ------------------------------------------------------------- unreadable inputs
 # A garbage or truncated JSON file used to be swallowed by a bare `catch {
 # process.exit(0) }`, which printed nothing and looked EXACTLY like "clean".

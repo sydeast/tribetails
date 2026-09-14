@@ -28,6 +28,16 @@
 # reads), so the re-run of the REAL preflight.sh after "installing" sees a
 # genuinely clean state rather than a check that always reports fixed no
 # matter what shipped.
+#
+# THE STUB SKIPS OPTIONAL/PLATFORM PACKAGES TOO, the same way real npm does:
+# an earlier version copied package-lock.json's ENTIRE packages object
+# straight into the installed marker, so the stub always claimed to have
+# installed everything the lockfile named, including optional binaries for
+# other platforms. That made it impossible for any fixture here to exercise
+# the "missing but not drift" exemption (scripts/lib/optional-pkg.js): a
+# lockfile entry the stub always "installs" can never be the entry that is
+# legitimately absent. It shells out to the real optional-pkg.js so the stub
+# and the code under test cannot silently disagree about what counts.
 
 set -uo pipefail
 
@@ -101,7 +111,21 @@ install_dep() {
 # drift check reads (via real node, not stubbed) and materializes
 # node_modules to match, so the SUBSEQUENT re-run of the real preflight.sh
 # genuinely sees clean rather than a check that always claims success.
+#
+# SKIPS OPTIONAL/PLATFORM ENTRIES, the same way a real `npm ci` does on this
+# machine: it shells out to the real scripts/lib/optional-pkg.js (copied into
+# the fixture alongside the rest of scripts/lib/) to decide, so an entry the
+# stub "installs" is exactly the set a real install would produce here.
+# Copying package-lock.json's WHOLE packages object into the marker (an
+# earlier version of this stub did) would make it impossible for any fixture
+# to exercise the "missing but not drift" exemption at all: a lockfile entry
+# the stub always installs can never be the one that is legitimately absent.
+#
+# <repo>/stubs/.repo-root records where scripts/lib actually lives, because
+# `npm ci` runs with `cd "$dir" && npm ci`, so $PWD when the stub runs is
+# mytribe/functions or auntieos-admin/web/functions, not the repo root.
 write_npm_stub() {
+  printf '%s' "$1" > "$1/stubs/.repo-root"
   cat > "$1/stubs/npm" <<'STUB'
 #!/usr/bin/env bash
 # Logs the cwd too, not just the args: install_if_stale runs `(cd "$dir" &&
@@ -109,9 +133,12 @@ write_npm_stub() {
 # call from another's, never the argv the stub sees.
 echo "STUB npm $* (cwd=$PWD)" >> "${NPM_CALL_LOG:-/dev/null}"
 if [ "${1:-}" = "ci" ]; then
+  REPO_ROOT="$(cat "$(dirname "$0")/.repo-root")"
   node -e '
     const fs = require("fs"), path = require("path");
     const dir = process.cwd();
+    const repoRoot = process.argv[1];
+    const { isSkippableMissing } = require(path.join(repoRoot, "scripts", "lib", "optional-pkg.js"));
     let pj, lock;
     try {
       pj = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
@@ -122,15 +149,26 @@ if [ "${1:-}" = "ci" ]; then
     for (const name of Object.keys(want)) {
       const entry = locked["node_modules/" + name];
       if (!entry || !entry.version) continue;
+      if (isSkippableMissing(entry)) continue; // npm itself would skip this too
       const dest = path.join(dir, "node_modules", name);
       fs.mkdirSync(dest, { recursive: true });
       fs.writeFileSync(path.join(dest, "package.json"),
         JSON.stringify({ name, version: entry.version }));
     }
     fs.mkdirSync(path.join(dir, "node_modules"), { recursive: true });
+    // The marker reflects what actually got installed above, not a raw copy
+    // of the lockfile: every entry EXCEPT the ones npm (and this stub) skips
+    // on purpose.
+    const installedPkgs = {};
+    for (const key of Object.keys(locked)) {
+      if (key === "") continue;
+      const entry = locked[key];
+      if (isSkippableMissing(entry)) continue;
+      installedPkgs[key] = { version: entry.version };
+    }
     fs.writeFileSync(path.join(dir, "node_modules", ".package-lock.json"),
-      fs.readFileSync(path.join(dir, "package-lock.json")));
-  '
+      JSON.stringify({ packages: installedPkgs }));
+  ' "$REPO_ROOT"
 fi
 exit 0
 STUB
@@ -310,7 +348,93 @@ else
   bad "left-pad in auntieos-admin/web/functions was not reinstalled"
 fi
 
-rm -rf "$D1" "$D2" "$D3" "$D4" "$D5"
+# ---------------------------------------------------------------------------
+# 6. An optional platform package never blocks or gets reinstalled, and a
+#    genuinely missing REQUIRED package still drives a real install (#841
+#    re-review, item 2). Combined in one fixture so the same run proves both
+#    halves of the exemption: it does not over-suppress.
+# ---------------------------------------------------------------------------
+D6="$(make_repo)"; write_npm_stub "$D6"
+install_dep "$D6" "mytribe/functions" "1.3.0"   # left-pad: already matches
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  const pj = JSON.parse(fs.readFileSync(p, "utf8"));
+  pj.dependencies["required-thing"] = "^1.0.0";
+  fs.writeFileSync(p, JSON.stringify(pj));
+' "$D6/mytribe/functions/package.json"
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  const lock = JSON.parse(fs.readFileSync(p, "utf8"));
+  lock.packages["node_modules/optional-linux-thing"] = { version: "1.0.0", optional: true, os: ["linux"] };
+  lock.packages["node_modules/required-thing"] = { version: "1.0.0" };
+  fs.writeFileSync(p, JSON.stringify(lock));
+' "$D6/mytribe/functions/package-lock.json"
+RC="$(run_bootstrap "$D6" NPM_CALL_LOG="$D6/npm-calls")"
+OUT="$(cat "$D6/out")"
+
+if [ "$RC" -eq 0 ]; then
+  ok "bootstrap completes with an optional platform package and a real missing one both present"
+else
+  bad "bootstrap did not complete; rc=$RC"; tail -30 "$D6/out"
+fi
+if printf '%s' "$OUT" | grep -qi "optional-linux-thing"; then
+  bad "bootstrap complained about an optional platform package this machine will never install"
+  tail -30 "$D6/out"
+else
+  ok "bootstrap never mentions the optional platform package"
+fi
+if [ -e "$D6/mytribe/functions/node_modules/optional-linux-thing" ]; then
+  bad "the optional platform package was installed; it should stay absent, same as real npm"
+else
+  ok "the optional platform package stays absent, and that is never treated as drift"
+fi
+if [ -d "$D6/mytribe/functions/node_modules/required-thing" ]; then
+  ok "bootstrap actually installed the genuinely missing REQUIRED package"
+else
+  bad "bootstrap never installed the required package"
+  cat "$D6/npm-calls" 2>/dev/null
+fi
+
+# ---------------------------------------------------------------------------
+# 7. Drift ALONGSIDE a hard, non-drift failure still refuses entirely, and
+#    installs nothing (#841 re-review, item 5). A required Node version this
+#    machine cannot meet is used as the hard failure: it is fully portable
+#    (unlike hiding an actual binary from PATH, which on this machine cannot
+#    be done at all -- node, npm and firebase all resolve to the SAME
+#    directory, /usr/local/bin, so no PATH edit can hide one without hiding
+#    the others too) and it is exactly preflight's own "something installing
+#    will not fix" bucket, the same one a missing tool falls into.
+# ---------------------------------------------------------------------------
+D7="$(make_repo)"; write_npm_stub "$D7"
+install_dep "$D7" "mytribe/functions" "1.2.0"   # stale: lockfile pins 1.3.0
+printf '999\n' > "$D7/.nvmrc"                   # hard failure: no machine runs Node 999
+RC="$(run_bootstrap "$D7" NPM_CALL_LOG="$D7/npm-calls")"
+OUT="$(cat "$D7/out")"
+
+if [ "$RC" -ne 0 ]; then
+  ok "bootstrap refuses when drift and a hard failure both exist"
+else
+  bad "bootstrap proceeded despite a hard failure alongside drift"; tail -30 "$D7/out"
+fi
+if printf '%s' "$OUT" | grep -q "Not setting anything up until the required tools are installed"; then
+  ok "bootstrap prints the hard-failure refusal, not the drift-only continuation"
+else
+  bad "bootstrap did not print the hard-failure refusal"; tail -30 "$D7/out"
+fi
+if printf '%s' "$OUT" | grep -q "the only failure above is dependency drift"; then
+  bad "bootstrap treated a drift-plus-hard-failure preflight as drift-only"
+else
+  ok "bootstrap did not misclassify drift-plus-hard-failure as drift-only"
+fi
+if grep -q '^STUB npm ci ' "$D7/npm-calls" 2>/dev/null; then
+  bad "bootstrap installed something despite the hard-failure refusal"; cat "$D7/npm-calls"
+else
+  ok "nothing was installed when a hard failure accompanied the drift"
+fi
+
+rm -rf "$D1" "$D2" "$D3" "$D4" "$D5" "$D6" "$D7"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
