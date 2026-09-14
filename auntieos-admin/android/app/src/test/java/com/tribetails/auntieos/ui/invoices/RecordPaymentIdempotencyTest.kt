@@ -67,7 +67,7 @@ class RecordPaymentIdempotencyTest {
         coEvery { kinCareRepo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { repo.getBusinessSettings() } returns Result.failure(RuntimeException("not under test"))
         coEvery { repo.logActivity(any()) } returns Result.success(Unit)
-        coEvery { invoiceRepo.recordInvoicePayment(any(), any()) } returns
+        coEvery { invoiceRepo.recordInvoicePayment(any(), any(), any()) } returns
             Result.success(com.tribetails.auntieos.data.contracts.decodeRecordPaymentResult(mapOf("ok" to true, "paymentId" to "pay-1")))
     }
 
@@ -122,10 +122,33 @@ class RecordPaymentIdempotencyTest {
     private fun displayKeys(times: Int): List<String?> {
         val keys = mutableListOf<String?>()
         coVerify(exactly = times) {
-            invoiceRepo.recordInvoicePayment(any(), captureNullable(keys))
+            invoiceRepo.recordInvoicePayment(any(), captureNullable(keys), any())
         }
         return keys
     }
+
+    /**
+     * #866: the ledger row names the settlement `markInvoicePaid` just wrote, so
+     * the server tells the office "paid" for that settlement under this payment
+     * and no later payment linked to the invoice can claim it.
+     */
+    @Test
+    fun `the ledger row passes the payment id markInvoicePaid returned`() =
+        runTest(testDispatcher) {
+            coEvery { invoiceRepo.markInvoicePaid(any(), any(), any(), any(), any()) } returns
+                Result.success(settled())
+            val vm = loaded()
+            advanceUntilIdle()
+
+            vm.recordPayment(payment())
+            advanceUntilIdle()
+
+            val settledBy = mutableListOf<String?>()
+            coVerify(exactly = 1) {
+                invoiceRepo.recordInvoicePayment(any(), any(), captureNullable(settledBy))
+            }
+            assertEquals(listOf<String?>("ipay-1"), settledBy)
+        }
 
     @Test
     fun `one pair of keys is minted and held across the operator's own retry`() =
@@ -264,7 +287,7 @@ class RecordPaymentIdempotencyTest {
         runTest(testDispatcher) {
             coEvery { invoiceRepo.markInvoicePaid(any(), any(), any(), any(), any()) } returns
                 Result.success(settled())
-            coEvery { invoiceRepo.recordInvoicePayment(any(), any()) } returns
+            coEvery { invoiceRepo.recordInvoicePayment(any(), any(), any()) } returns
                 Result.failure(RuntimeException("internal"))
             val vm = loaded()
             advanceUntilIdle()

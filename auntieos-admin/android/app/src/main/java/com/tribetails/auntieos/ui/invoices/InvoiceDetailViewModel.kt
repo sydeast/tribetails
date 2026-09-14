@@ -341,7 +341,14 @@ class InvoiceDetailViewModel(
             // Best-effort: the money has already landed server-side, so a failure
             // here costs this screen's list row, not the payment. Logged, never
             // swallowed.
-            val ledgerRow = invoiceRepository.recordInvoicePayment(payment, idempotencyKey = displayKey)
+            // #866: `settlement.paymentId` is the row `markInvoicePaid` just wrote.
+            // The server claims that settlement, and tells the office "paid", only
+            // for this id, so no later payment linked to the invoice can claim it.
+            val ledgerRow = invoiceRepository.recordInvoicePayment(
+                payment,
+                idempotencyKey = displayKey,
+                settledByInvoicePaymentId = settlement.paymentId.ifBlank { null },
+            )
                 .onFailure { AuntieLog.e("Legacy payment row failed for invoice $invoiceId", it) }
             // #866: this call is the household confirmation's only sender, so a
             // confirmation she asked for and did not get is said in the toast.

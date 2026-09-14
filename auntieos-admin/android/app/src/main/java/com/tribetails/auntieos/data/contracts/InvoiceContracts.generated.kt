@@ -1270,6 +1270,8 @@ data class RecordPaymentArgs(
     val sendConfirmationEmail: Boolean = false,
     /** Optional: omitted from the payload when null. */
     val idempotencyKey: String? = null,
+    /** Optional: omitted from the payload when null. */
+    val settledByInvoicePaymentId: String? = null,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -1294,6 +1296,7 @@ data class RecordPaymentArgs(
         put("autoApply", autoApply)
         put("sendConfirmationEmail", sendConfirmationEmail)
         if (idempotencyKey != null) put("idempotencyKey", idempotencyKey)
+        if (settledByInvoicePaymentId != null) put("settledByInvoicePaymentId", settledByInvoicePaymentId)
     }
 }
 

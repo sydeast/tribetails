@@ -38,12 +38,24 @@ const IGNORED_REFUND_EVENTS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * #866: stamped on `stripeEvents/{id}` once a paid event's BILLING_INVOICE_PAID
- * audit entry is written, and once its `invoice.payment.applied` is enqueued.
- * A Stripe retry of a PAID event reads them to finish what is missing.
+ * #866: THE FOLLOW-UP LEDGER on `stripeEvents/{id}`, for an event that applied
+ * (PAID) or recorded a failed charge (FAILED).
+ *
+ *   followupTracked      written with the event record, in the transaction. Only
+ *                        an event carrying it is ever recovered on a retry. An
+ *                        event recorded before this deploy has no stamps at all,
+ *                        and reading that as "unfinished" would send a second
+ *                        notice and a second audit entry for a payment that was
+ *                        handled in full (a Stripe retry, or a dashboard Resend).
+ *   auditWrittenAt       the audit entry is written.
+ *   noticeSentAt         the household notice is enqueued.
+ *   noticeSkippedReason  the notice could not reach anyone and never will; see
+ *                        `isFinalNoticeFailure`. Counts as done.
  */
+export const FOLLOWUP_TRACKED_FIELD = 'followupTracked';
 export const AUDIT_WRITTEN_FIELD = 'auditWrittenAt';
 export const NOTICE_SENT_FIELD = 'noticeSentAt';
+export const NOTICE_SKIPPED_FIELD = 'noticeSkippedReason';
 
 /**
  * How long the dispatcher ledger remembers this webhook's notice for one event.
@@ -53,16 +65,40 @@ export const NOTICE_SENT_FIELD = 'noticeSentAt';
 export const STRIPE_NOTICE_DEDUPE_WINDOW_MS = 4 * 24 * 60 * 60 * 1000;
 
 /**
- * The follow-up to a paid event that has committed: the audit entry, then the
- * household notice (#866: this webhook is its only sender), each stamped on
+ * The activity_log document id for one event's audit entry. Deterministic, so
+ * a retry that finds the entry already written (its stamp lost) writes nothing
+ * (`writeAuditEntry`'s `docId`).
+ */
+export function stripeAuditDocId(eventId: string, kind: FollowupKind): string {
+  return `stripe_${eventId}_${kind}`;
+}
+
+/** Which follow-up an event owes. */
+export type FollowupKind = 'paid' | 'failed';
+
+/**
+ * A notice that can never reach anyone: no household account and no office
+ * roster (`enqueueNotification` throws this when every resolver came back
+ * empty). Retrying it for Stripe's three days changes nothing, so it is final.
+ * Matched on the message because the dispatcher throws a plain Error.
+ */
+export function isFinalNoticeFailure(err: unknown): boolean {
+  return /no recipients resolved/.test((err as Error)?.message ?? '');
+}
+
+/**
+ * The follow-up to an event that has committed: the audit entry, then the
+ * notice (#866: this webhook is the only sender of both keys), each stamped on
  * `stripeEvents/{eventId}` once done. Skips a step already stamped. THROWS on
- * any failure of a step, so the caller answers 500 and Stripe retries.
+ * any failure of a step, so the caller answers 500 and Stripe retries, except a
+ * notice that can reach nobody, which is logged, stamped as skipped and final.
  *
  * A failed STAMP does not throw. The step it records did happen, and after a 200
- * Stripe does not retry, so there is no later delivery to mislead; within the
- * notice's dedupe window the ledger would catch a repeat regardless.
+ * Stripe does not retry. If a later step throws and a retry comes, the audit
+ * entry's deterministic id and the notice's ledger identity stop a repeat.
  */
-async function finishPaidEvent(input: {
+async function finishEventFollowup(input: {
+  kind: FollowupKind;
   familyId: string;
   invoiceId: string;
   eventId: string;
@@ -70,35 +106,52 @@ async function finishPaidEvent(input: {
   noticeDone: boolean;
 }): Promise<void> {
   const eventRef = db().doc(`stripeEvents/${input.eventId}`);
-  const stamp = async (field: string) => {
-    await eventRef.set({ [field]: FieldValue.serverTimestamp() }, { merge: true }).catch((err) => {
+  const stamp = async (fields: Record<string, unknown>) => {
+    await eventRef.set(fields, { merge: true }).catch((err) => {
       logEvent({
         severity: 'warn',
         function: 'stripeWebhook',
-        event: 'stripe.paid.stamp.failed',
-        extra: { eventId: input.eventId, field, err: (err as Error)?.message },
+        event: 'stripe.followup.stamp.failed',
+        extra: { eventId: input.eventId, fields: Object.keys(fields), err: (err as Error)?.message },
       });
     });
   };
+  const paid = input.kind === 'paid';
   if (!input.auditDone) {
     await writeAuditEntry({
-      status: 'SUCCESS',
-      event: AUDIT_EVENTS.BILLING_INVOICE_PAID,
-      severity: 'info', actorRole: 'SYSTEM', familyId: input.familyId,
+      status: paid ? 'SUCCESS' : 'FAILURE',
+      event: paid ? AUDIT_EVENTS.BILLING_INVOICE_PAID : AUDIT_EVENTS.BILLING_INVOICE_FAILED,
+      severity: paid ? 'info' : 'critical',
+      actorRole: 'SYSTEM',
+      familyId: input.familyId,
       payload: { invoiceId: input.invoiceId, stripeEventId: input.eventId },
+      docId: stripeAuditDocId(input.eventId, input.kind),
     });
-    await stamp(AUDIT_WRITTEN_FIELD);
+    await stamp({ [AUDIT_WRITTEN_FIELD]: FieldValue.serverTimestamp() });
   }
   if (!input.noticeDone) {
+    const key = paid ? 'invoice.payment.applied' : 'invoice.charge.failed';
     const recipientUid = await resolveKinfolkUid(input.familyId);
-    await enqueueNotification({
-      key: 'invoice.payment.applied',
-      // '' for a household with no portal account: the office copy still goes out.
-      recipientUid: recipientUid ?? '',
-      data: { kinfolkId: input.familyId, invoiceId: input.invoiceId, stripeEventId: input.eventId },
-      dedupeWindowMs: STRIPE_NOTICE_DEDUPE_WINDOW_MS,
-    });
-    await stamp(NOTICE_SENT_FIELD);
+    try {
+      await enqueueNotification({
+        key,
+        // '' for a household with no portal account: the office copy still goes out.
+        recipientUid: recipientUid ?? '',
+        data: { kinfolkId: input.familyId, invoiceId: input.invoiceId, stripeEventId: input.eventId },
+        dedupeWindowMs: STRIPE_NOTICE_DEDUPE_WINDOW_MS,
+      });
+    } catch (err) {
+      if (!isFinalNoticeFailure(err)) throw err;
+      logEvent({
+        severity: 'error',
+        function: 'stripeWebhook',
+        event: 'stripe.notice.unreachable',
+        extra: { familyId: input.familyId, invoiceId: input.invoiceId, eventId: input.eventId, key, err: (err as Error)?.message },
+      });
+      await stamp({ [NOTICE_SKIPPED_FIELD]: 'no-recipients' });
+      return;
+    }
+    await stamp({ [NOTICE_SENT_FIELD]: FieldValue.serverTimestamp() });
   }
 }
 
@@ -426,8 +479,9 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
         proceed: false,
         reason: 'replay' as const,
         appliedOutcome: typeof stored['appliedOutcome'] === 'string' ? stored['appliedOutcome'] : '',
+        followupTracked: stored[FOLLOWUP_TRACKED_FIELD] === true,
         auditDone: stored[AUDIT_WRITTEN_FIELD] != null,
-        noticeDone: stored[NOTICE_SENT_FIELD] != null,
+        noticeDone: stored[NOTICE_SENT_FIELD] != null || stored[NOTICE_SKIPPED_FIELD] != null,
       };
     }
     // Every read before the first write: a Firestore transaction refuses reads
@@ -615,6 +669,10 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       familyId,
       invoiceId,
       appliedOutcome: isPaidEvent ? 'PAID' : 'FAILED',
+      // #866: this event's audit entry and notice are tracked by the stamps
+      // below, so a retry may finish them. Events recorded before this field
+      // existed are never recovered (see FOLLOWUP_TRACKED_FIELD).
+      [FOLLOWUP_TRACKED_FIELD]: true,
     });
     if (paymentClaimRef) {
       // Claim the PaymentIntent in the same atomic write as the money it
@@ -823,22 +881,27 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     return;
   }
 
-  if (
-    decision.reason === 'replay' &&
-    isPaidEvent &&
-    decision.appliedOutcome === 'PAID' &&
-    !(decision.auditDone && decision.noticeDone)
-  ) {
-    // #866: A RETRY OF A PAID EVENT WHOSE FOLLOW-UP NEVER FINISHED. The money
-    // and the invoice committed on an earlier delivery; its audit entry or its
-    // household notice did not (a throw or a crash between the commit and the
-    // stamps below). Stripe retries for up to three days, so the stamps on
-    // `stripeEvents/{id}` are what stop a second notice, not the dispatcher's
-    // default window, and the notice's own ledger identity
-    // (`invoice:<id>#stripeEventId:<evt>`, held for STRIPE_NOTICE_DEDUPE_WINDOW_MS)
-    // covers an enqueue that committed without its stamp.
+  // #866: A RETRY OF AN EVENT WHOSE FOLLOW-UP NEVER FINISHED. The money (or the
+  // failed-charge record) committed on an earlier delivery; its audit entry or
+  // its notice did not (a throw or a crash between the commit and the stamps).
+  // Only an event this code recorded, `followupTracked`, is ever finished here:
+  // one recorded before it has no stamps and was followed up in full at the
+  // time. Stripe retries for up to three days, so the stamps are what stop a
+  // repeat, not the dispatcher's default window; the audit entry's
+  // deterministic id and the notice's ledger identity cover a step that
+  // committed without its stamp.
+  const recoverKind: FollowupKind | null =
+    decision.reason !== 'replay' || !decision.followupTracked || (decision.auditDone && decision.noticeDone)
+      ? null
+      : isPaidEvent && decision.appliedOutcome === 'PAID'
+        ? 'paid'
+        : isFailedEvent && decision.appliedOutcome === 'FAILED'
+          ? 'failed'
+          : null;
+  if (recoverKind !== null && decision.reason === 'replay') {
     try {
-      await finishPaidEvent({
+      await finishEventFollowup({
+        kind: recoverKind,
         familyId,
         invoiceId,
         eventId: event.id,
@@ -849,17 +912,24 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       logEvent({
         severity: 'error',
         function: 'stripeWebhook',
-        event: 'stripe.paid.followup.failed',
-        extra: { familyId, invoiceId, eventId: event.id, replay: true, err: (err as Error)?.message },
+        event: 'stripe.followup.failed',
+        extra: { kind: recoverKind, familyId, invoiceId, eventId: event.id, replay: true, err: (err as Error)?.message },
       });
-      res.status(500).json({ error: 'paid-followup-pending' });
+      res.status(500).json({ error: 'followup-pending' });
       return;
     }
     logEvent({
       severity: 'warn',
       function: 'stripeWebhook',
-      event: 'stripe.paid.followup.recovered',
-      extra: { familyId, invoiceId, eventId: event.id, auditDone: decision.auditDone, noticeDone: decision.noticeDone },
+      event: 'stripe.followup.recovered',
+      extra: {
+        kind: recoverKind,
+        familyId,
+        invoiceId,
+        eventId: event.id,
+        auditDone: decision.auditDone,
+        noticeDone: decision.noticeDone,
+      },
     });
     res.status(200).json({ ok: true, dedup: true, reason: decision.reason, recovered: true });
     return;
@@ -882,40 +952,30 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     // so `onInvoicesWrite` no longer backstops it. Any failure from here on
     // answers 500, Stripe retries, and the retry's replay branch (above) finishes
     // whichever of the two steps `stripeEvents/{id}` does not record as done.
-    try {
-      await finishPaidEvent({ familyId, invoiceId, eventId: event.id, auditDone: false, noticeDone: false });
-    } catch (err) {
-      logEvent({
-        severity: 'error',
-        function: 'stripeWebhook',
-        event: 'stripe.paid.followup.failed',
-        extra: { familyId, invoiceId, eventId: event.id, err: (err as Error)?.message },
-      });
-      res.status(500).json({ error: 'paid-followup-pending' });
-      return;
-    }
-  } else {
-    await writeAuditEntry({
-      status: 'FAILURE',
-      event: AUDIT_EVENTS.BILLING_INVOICE_FAILED,
-      severity: 'critical', actorRole: 'SYSTEM', familyId,
-      payload: { invoiceId, stripeEventId: event.id },
+  }
+  // #866: THE SAME FOLLOW-UP FOR BOTH OUTCOMES. A failed charge's audit entry and
+  // `invoice.charge.failed` ran after the commit with no guard, so a throw drew a
+  // Stripe retry that stopped at the replay check and lost the notice for good.
+  // Now either outcome answers 500 until its follow-up is stamped done.
+  const followupKind: FollowupKind = isPaidEvent ? 'paid' : 'failed';
+  try {
+    await finishEventFollowup({
+      kind: followupKind,
+      familyId,
+      invoiceId,
+      eventId: event.id,
+      auditDone: false,
+      noticeDone: false,
     });
-    const recipientUid = await resolveKinfolkUid(familyId);
-    try {
-      await enqueueNotification({
-        key: 'invoice.charge.failed',
-        recipientUid: recipientUid ?? '',
-        data: { kinfolkId: familyId, invoiceId, stripeEventId: event.id },
-      });
-    } catch (err) {
-      logEvent({
-        severity: 'warn',
-        function: 'stripeWebhook',
-        event: 'notification.dispatch.failed',
-        extra: { familyId, invoiceId, key: 'invoice.charge.failed', err: (err as Error)?.message },
-      });
-    }
+  } catch (err) {
+    logEvent({
+      severity: 'error',
+      function: 'stripeWebhook',
+      event: 'stripe.followup.failed',
+      extra: { kind: followupKind, familyId, invoiceId, eventId: event.id, err: (err as Error)?.message },
+    });
+    res.status(500).json({ error: 'followup-pending' });
+    return;
   }
   res.status(200).json({ ok: true });
 }

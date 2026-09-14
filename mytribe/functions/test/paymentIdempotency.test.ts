@@ -93,8 +93,17 @@ function req(data: unknown, uid = 'admin1'): CallableRequest<unknown> {
  * and counting that stamp as a payment would make "one key, one payment" fail
  * for a reason unrelated to money.
  */
-const paymentRows = (ctx: { writes: Array<{ path: string; merge?: boolean }> }) =>
-  ctx.writes.filter((w) => w.path.startsWith('payments/') && w.merge !== true).map((w) => w.path);
+const NOTICE_STAMP_FIELDS = ['confirmationEmailSent', 'officeNoticeSentAt'];
+const paymentRows = (ctx: { writes: Array<{ path: string; merge?: boolean; data?: Record<string, unknown> }> }) => {
+  const rows = ctx.writes.filter((w) => w.path.startsWith('payments/') && w.merge !== true).map((w) => w.path);
+  // And every merge write under `payments/` is only a notice stamp on a row this
+  // run wrote: it may not touch money, and it may not land on some other doc.
+  for (const w of ctx.writes.filter((x) => x.path.startsWith('payments/') && x.merge === true)) {
+    expect(Object.keys(w.data ?? {}).filter((k) => !NOTICE_STAMP_FIELDS.includes(k)), `merge write to ${w.path}`).toEqual([]);
+    expect(rows, `merge write to ${w.path} has no row`).toContain(w.path);
+  }
+  return rows;
+};
 
 /** Writes that move `families/{id}.accountBalanceCents`. THE INVENTED-CREDIT CHECK. */
 const balanceMoves = (ctx: { writes: Array<{ path: string; data: Record<string, unknown> }> }) =>

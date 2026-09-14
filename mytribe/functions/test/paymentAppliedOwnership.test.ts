@@ -18,10 +18,14 @@ import { buildDbMock } from './_helpers/mockDb';
  * (that one needs the catalog, prefs, templates and a roster), but it decides
  * "already delivered" exactly as `writeOnce` does, with the real
  * `dedupeIdentityOf`, `resolveTargetRef` and `dedupeWindowOf`, keyed per
- * recipient. It fans out the way `invoice.payment.applied` does: the household
- * copy only when a recipientUid is given (the `kinfolkAcct` resolver throws on
- * '' and the dispatcher skips it), and one office copy through `businessAdmins`.
- * That is what lets the retry tests below say "zero extra" and mean it.
+ * recipient. It fans out the way these keys do: the household copy only when a
+ * recipientUid is given (the `kinfolkAcct` resolver throws on '' and the
+ * dispatcher skips it), and one office copy through `businessAdmins`. With the
+ * office roster switched off and no household uid it throws what the real
+ * dispatcher throws when nobody resolves.
+ *
+ * THE AUDIT LOG IS REAL. `writeAuditEntry` runs against the same mock, so an
+ * audit entry written twice is two documents, not two mock calls.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -29,6 +33,8 @@ const mocks = vi.hoisted(() => ({
   enqueue: vi.fn(),
   event: { current: null as unknown },
   resolveUid: vi.fn(),
+  audit: vi.fn(),
+  roster: { on: true },
 }));
 
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: () => mocks.db.current, auth: vi.fn(), getAdmin: vi.fn() }));
@@ -39,7 +45,10 @@ vi.mock('../src/notifications/dispatcher', async () => {
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveUid }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError: vi.fn() }));
-vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockResolvedValue('audit-1') }));
+vi.mock('../src/lib/writeAuditEntry', async () => {
+  const actual = await vi.importActual<typeof import('../src/lib/writeAuditEntry')>('../src/lib/writeAuditEntry');
+  return { ...actual, writeAuditEntry: mocks.audit };
+});
 vi.mock('../src/lib/wrapTrigger', () => ({
   wrapTrigger: (_name: string, fn: (...a: unknown[]) => unknown) => fn,
 }));
@@ -54,9 +63,11 @@ import { recordPaymentHandler } from '../src/admin/recordPayment';
 import { markInvoicePaidHandler } from '../src/admin/markInvoicePaid';
 import { stripeWebhookHandler } from '../src/billing/stripeWebhook';
 import { drawAccountCredit } from '../src/lib/accountCredit';
-import { writeAuditEntry } from '../src/lib/writeAuditEntry';
 import { dedupeIdentityOf, dedupeWindowOf, resolveTargetRef } from '../src/notifications/dispatcher';
 import type { EnqueueArgs } from '../src/notifications/types';
+
+const realAudit = (await vi.importActual<typeof import('../src/lib/writeAuditEntry')>('../src/lib/writeAuditEntry'))
+  .writeAuditEntry;
 
 type Docs = Record<string, Record<string, unknown> | null>;
 let docs: Docs;
@@ -69,7 +80,10 @@ let ledger: Map<string, number>;
 function fakeEnqueue(args: EnqueueArgs): string[] {
   const recipients: Array<{ uid: string; household: boolean }> = [];
   if (args.recipientUid) recipients.push({ uid: args.recipientUid, household: true });
-  recipients.push({ uid: STAFF_UID, household: false });
+  if (mocks.roster.on) recipients.push({ uid: STAFF_UID, household: false });
+  if (recipients.length === 0) {
+    throw new Error(`enqueueNotification(${args.key}): no recipients resolved from any resolver`);
+  }
   const identity = dedupeIdentityOf(args, resolveTargetRef(args));
   const windowMs = dedupeWindowOf(args);
   const ids: string[] = [];
@@ -87,9 +101,10 @@ function fakeEnqueue(args: EnqueueArgs): string[] {
 beforeEach(() => {
   delivered = [];
   ledger = new Map();
+  mocks.roster.on = true;
   mocks.enqueue.mockReset().mockImplementation(async (args: EnqueueArgs) => fakeEnqueue(args));
   mocks.resolveUid.mockReset().mockResolvedValue('kin-uid-1');
-  (writeAuditEntry as any).mockReset().mockResolvedValue('audit-1');
+  mocks.audit.mockReset().mockImplementation((args: Parameters<typeof realAudit>[0]) => realAudit(args));
   docs = {};
   mocks.db.current = buildDbMock({ docs, writeThrough: true }).db;
 });
@@ -100,6 +115,7 @@ afterEach(() => {
 
 const INVOICE = 'invoices/inv1';
 const HOUR = 60 * 60 * 1000;
+const KEY = 'pay_1757860000000_abcdef';
 
 function seedInvoice(over: Record<string, unknown> = {}) {
   docs[INVOICE] = {
@@ -114,14 +130,25 @@ function seedInvoice(over: Record<string, unknown> = {}) {
   };
 }
 
-/** Household copies of `invoice.payment.applied` that reached the household. */
-function appliedCount(): number {
-  return delivered.filter((d) => d.key === 'invoice.payment.applied' && d.household).length;
+/** Household copies of `key` that reached the household. */
+function appliedCount(key = 'invoice.payment.applied'): number {
+  return delivered.filter((d) => d.key === key && d.household).length;
 }
 
-/** Office copies ("Invoice Paid") of `invoice.payment.applied`. */
-function staffCount(): number {
-  return delivered.filter((d) => d.key === 'invoice.payment.applied' && !d.household).length;
+/** Office copies of `key`. */
+function staffCount(key = 'invoice.payment.applied'): number {
+  return delivered.filter((d) => d.key === key && !d.household).length;
+}
+
+/** Audit DOCUMENTS the webhook wrote for Stripe events, of one action type. */
+function stripeAudits(actionType: 'BILLING_INVOICE_PAID' | 'BILLING_INVOICE_FAILED'): number {
+  return Object.entries(docs).filter(
+    ([p, d]) =>
+      p.startsWith('activity_log/') &&
+      d !== null &&
+      d['actionType'] === actionType &&
+      typeof (d['payload'] as Record<string, unknown> | undefined)?.['stripeEventId'] === 'string',
+  ).length;
 }
 
 /** Moves the clock forward, so a retry lands outside the dispatcher's default 5-minute window. */
@@ -157,17 +184,33 @@ function adminReq(data: unknown): CallableRequest<unknown> {
   } as unknown as CallableRequest<unknown>;
 }
 
-/**
- * The React admin and Android Record Payment flow: `markInvoicePaid` settles
- * the bill, then `recordPayment` writes the ledger row and carries the toggle.
- */
-async function adminTwoStep(amount: number, sendConfirmationEmail: boolean) {
-  await withTrigger(() => markInvoicePaidHandler(adminReq({ invoiceId: 'inv1', amount, method: 'cash' })));
-  await withTrigger(() =>
+/** Step 1 of the React admin and Android Record Payment flow. Returns its payment id. */
+async function settleStep(amount: number): Promise<string> {
+  const res = await withTrigger(() => markInvoicePaidHandler(adminReq({ invoiceId: 'inv1', amount, method: 'cash' })));
+  return res.paymentId;
+}
+
+/** Step 2: the ledger row, carrying the toggle and step 1's payment id, as both clients send it. */
+function ledgerStep(amount: number, sendConfirmationEmail: boolean, settledByInvoicePaymentId?: string, idempotencyKey?: string) {
+  return withTrigger(() =>
     recordPaymentHandler(
-      adminReq({ kinfolkId: 'fam1', amount, paymentMethod: 'cash', invoiceId: 'inv1', sendConfirmationEmail }),
+      adminReq({
+        kinfolkId: 'fam1',
+        amount,
+        paymentMethod: 'cash',
+        invoiceId: 'inv1',
+        sendConfirmationEmail,
+        ...(settledByInvoicePaymentId ? { settledByInvoicePaymentId } : {}),
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+      }),
     ),
   );
+}
+
+/** The whole two-step flow. */
+async function adminTwoStep(amount: number, sendConfirmationEmail: boolean) {
+  const settledBy = await settleStep(amount);
+  await ledgerStep(amount, sendConfirmationEmail, settledBy);
 }
 
 /** `recordPayment` doing the apply itself. */
@@ -188,7 +231,7 @@ async function adminApply(amount: number, sendConfirmationEmail: boolean, idempo
 
 function stripeEvent(id: string, type: string, amountCents: number, paymentIntent = 'pi_1') {
   const object =
-    type === 'payment_intent.succeeded'
+    type === 'payment_intent.succeeded' || type === 'payment_intent.payment_failed'
       ? { id: paymentIntent, amount_received: amountCents, metadata: { familyId: 'fam1', invoiceId: 'inv1' } }
       : {
           id: 'cs_1',
@@ -235,6 +278,8 @@ describe('#866 card payments', () => {
     expect(docs[INVOICE]!['status']).toBe('paid');
     expect(appliedCount()).toBe(1);
     expect(staffCount()).toBe(1);
+    expect(stripeAudits('BILLING_INVOICE_PAID')).toBe(1);
+    expect(docs['stripeEvents/evt_1']).toMatchObject({ followupTracked: true });
     expect(docs['stripeEvents/evt_1']!['noticeSentAt']).toBeTruthy();
   });
 
@@ -258,10 +303,22 @@ describe('#866 card payments', () => {
     await deliver(stripeEvent('evt_2', 'payment_intent.succeeded', 4000));
     expect(appliedCount()).toBe(1);
     expect(staffCount()).toBe(1);
+    expect(stripeAudits('BILLING_INVOICE_PAID')).toBe(1);
+  });
+
+  it('a retry of an event whose notice is stamped makes no enqueue attempt at all', async () => {
+    // The 4-day ledger would hide a second attempt from the counts above, so
+    // this counts dispatcher CALLS: the stamp alone must stop the retry.
+    seedInvoice();
+    await deliver(stripeEvent('evt_1', 'checkout.session.completed', 4000));
+    later(HOUR);
+    await deliver(stripeEvent('evt_1', 'checkout.session.completed', 4000));
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.audit).toHaveBeenCalledTimes(1);
   });
 });
 
-describe('#866 card payments: a crash between the commit and the notice', () => {
+describe('#866 card payments: a crash between the commit and the follow-up', () => {
   it('a failure after the commit and before the enqueue answers 500, and the retry sends exactly one', async () => {
     seedInvoice();
     mocks.resolveUid.mockRejectedValueOnce(new Error('firestore unavailable'));
@@ -278,6 +335,7 @@ describe('#866 card payments: a crash between the commit and the notice', () => 
     later(HOUR);
     expect(await deliver(stripeEvent('evt_1', 'checkout.session.completed', 4000))).toBe(200);
     expect(appliedCount()).toBe(1);
+    expect(stripeAudits('BILLING_INVOICE_PAID')).toBe(1);
   });
 
   it('a crash after the enqueue and before the stamp: the retry, an hour later, sends zero extra', async () => {
@@ -298,23 +356,96 @@ describe('#866 card payments: a crash between the commit and the notice', () => 
     expect(docs['stripeEvents/evt_1']!['noticeSentAt']).toBeTruthy();
   });
 
-  it('a failed audit write after the commit answers 500, and the retry still sends exactly one', async () => {
-    (writeAuditEntry as any).mockRejectedValueOnce(new Error('audit down'));
+  it('a failed audit write after the commit answers 500, and the retry writes one audit and sends one notice', async () => {
+    mocks.audit.mockRejectedValueOnce(new Error('audit down'));
     seedInvoice();
     expect(await deliver(stripeEvent('evt_1', 'checkout.session.completed', 4000))).toBe(500);
     expect(appliedCount()).toBe(0);
+    expect(stripeAudits('BILLING_INVOICE_PAID')).toBe(0);
     later(HOUR);
     expect(await deliver(stripeEvent('evt_1', 'checkout.session.completed', 4000))).toBe(200);
     expect(appliedCount()).toBe(1);
+    expect(stripeAudits('BILLING_INVOICE_PAID')).toBe(1);
   });
 
-  it('a failed charge event is never recovered as a payment notice', async () => {
+  it('the audit is written, its stamp fails, then the enqueue throws: the retry writes no second audit entry', async () => {
     seedInvoice();
-    const failed = { id: 'evt_f', type: 'payment_intent.payment_failed', created: 1_000, data: { object: { id: 'pi_9', metadata: { familyId: 'fam1', invoiceId: 'inv1' } } } };
-    await deliver(failed);
-    await deliver(failed);
+    const eventRef = (mocks.db.current as any).doc('stripeEvents/evt_1');
+    eventRef.set.mockRejectedValueOnce(new Error('stamp lost'));
+    mocks.enqueue.mockRejectedValueOnce(new Error('dispatcher down'));
+    expect(await deliver(stripeEvent('evt_1', 'checkout.session.completed', 4000))).toBe(500);
+    expect(stripeAudits('BILLING_INVOICE_PAID')).toBe(1);
+    expect(docs['stripeEvents/evt_1']!['auditWrittenAt']).toBeUndefined();
+
+    later(HOUR);
+    expect(await deliver(stripeEvent('evt_1', 'checkout.session.completed', 4000))).toBe(200);
+    expect(stripeAudits('BILLING_INVOICE_PAID')).toBe(1);
+    expect(appliedCount()).toBe(1);
+  });
+
+  it('an event recorded before this deploy (no followupTracked, no stamps) is never followed up again', async () => {
+    // A Stripe retry or a dashboard Resend of an event the old code handled in full.
+    seedInvoice({ status: 'paid', amountDue: 0, amountDueCents: 0 });
+    docs['stripeEvents/evt_old'] = {
+      type: 'checkout.session.completed',
+      appliedOutcome: 'PAID',
+      familyId: 'fam1',
+      invoiceId: 'inv1',
+    };
+    expect(await deliver(stripeEvent('evt_old', 'checkout.session.completed', 4000))).toBe(200);
     expect(appliedCount()).toBe(0);
     expect(staffCount()).toBe(0);
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(stripeAudits('BILLING_INVOICE_PAID')).toBe(0);
+  });
+
+  it('a notice nobody can receive (no household account, no office roster) is final: 200, stamped, never retried', async () => {
+    seedInvoice();
+    mocks.resolveUid.mockResolvedValue(null);
+    mocks.roster.on = false;
+    expect(await deliver(stripeEvent('evt_1', 'checkout.session.completed', 4000))).toBe(200);
+    expect(docs['stripeEvents/evt_1']).toMatchObject({ noticeSkippedReason: 'no-recipients' });
+    expect(stripeAudits('BILLING_INVOICE_PAID')).toBe(1);
+
+    later(HOUR);
+    expect(await deliver(stripeEvent('evt_1', 'checkout.session.completed', 4000))).toBe(200);
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('#866 failed charges: the same follow-up', () => {
+  const failed = () => stripeEvent('evt_f', 'payment_intent.payment_failed', 4000, 'pi_9');
+
+  it('a failed charge sends one invoice.charge.failed and writes one failure audit', async () => {
+    seedInvoice();
+    expect(await deliver(failed())).toBe(200);
+    expect(appliedCount('invoice.charge.failed')).toBe(1);
+    expect(stripeAudits('BILLING_INVOICE_FAILED')).toBe(1);
+    expect(appliedCount()).toBe(0);
+    later(HOUR);
+    expect(await deliver(failed())).toBe(200);
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+    expect(stripeAudits('BILLING_INVOICE_FAILED')).toBe(1);
+  });
+
+  it('a throw after the commit answers 500, and the retry sends the notice it would have lost', async () => {
+    seedInvoice();
+    mocks.audit.mockRejectedValueOnce(new Error('audit down'));
+    expect(await deliver(failed())).toBe(500);
+    expect(appliedCount('invoice.charge.failed')).toBe(0);
+    later(HOUR);
+    expect(await deliver(failed())).toBe(200);
+    expect(appliedCount('invoice.charge.failed')).toBe(1);
+    expect(stripeAudits('BILLING_INVOICE_FAILED')).toBe(1);
+    expect(docs['stripeEvents/evt_f']!['noticeSentAt']).toBeTruthy();
+  });
+
+  it('a failed-charge event recorded before this deploy is never followed up again', async () => {
+    seedInvoice();
+    docs['stripeEvents/evt_f'] = { type: 'payment_intent.payment_failed', appliedOutcome: 'FAILED', familyId: 'fam1', invoiceId: 'inv1' };
+    expect(await deliver(failed())).toBe(200);
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(stripeAudits('BILLING_INVOICE_FAILED')).toBe(0);
   });
 });
 
@@ -390,8 +521,6 @@ describe('#866 admin-recorded payments (recordPayment applying the money itself)
 });
 
 describe('#866 recordPayment: a retry of the same submission', () => {
-  const KEY = 'pay_1757860000000_abcdef';
-
   it('a ticked confirmation that failed the first time is sent by the retry, and only once', async () => {
     seedInvoice();
     mocks.enqueue.mockRejectedValueOnce(new Error('dispatcher down'));
@@ -426,10 +555,22 @@ describe('#866 recordPayment: a retry of the same submission', () => {
     await adminApply(40, false, KEY);
     expect(appliedCount()).toBe(0);
   });
+
+  it('ticked, settling, household has no portal account: a retry 25 hours later sends no second office copy', async () => {
+    // Past the 24h ledger window, so only the row's own `officeNoticeSentAt` stops it.
+    seedInvoice();
+    mocks.resolveUid.mockResolvedValue(null);
+    await adminApply(40, true, KEY);
+    expect(staffCount()).toBe(1);
+    later(25 * HOUR);
+    await adminApply(40, true, KEY);
+    expect(staffCount()).toBe(1);
+    expect(appliedCount()).toBe(0);
+  });
 });
 
 describe('#866 office copy: only for a payment that pays the invoice off (as on main)', () => {
-  const KEY = 'pay_1757860000000_offc01';
+  const OFFICE_KEY = 'pay_1757860000000_offc01';
 
   it('unticked partial, two-step flow: nobody is told', async () => {
     seedInvoice();
@@ -464,62 +605,72 @@ describe('#866 office copy: only for a payment that pays the invoice off (as on 
 
   it('a later payment linked to an invoice already paid off sends no second office copy', async () => {
     seedInvoice();
-    await adminTwoStep(40, false);
+    const settledBy = await settleStep(40);
+    await ledgerStep(40, false, settledBy);
     expect(staffCount()).toBe(1);
-    expect(docs[INVOICE]!['paymentAppliedNoticeClaim']).toMatch(/^markInvoicePaid:/);
-    await withTrigger(() =>
-      recordPaymentHandler(adminReq({ kinfolkId: 'fam1', amount: 5, paymentMethod: 'cash', invoiceId: 'inv1' })),
-    );
+    expect(docs[INVOICE]!['paymentAppliedNoticeClaim']).toBe(`markInvoicePaid:${settledBy}`);
+    // Even naming the same settlement, a second claim is refused.
+    await ledgerStep(5, false, settledBy);
+    await ledgerStep(5, false);
     expect(staffCount()).toBe(1);
     expect(appliedCount()).toBe(0);
+  });
+
+  it('step 2 never ran: an unrelated linked payment 30 days later does not claim the settlement', async () => {
+    seedInvoice();
+    await settleStep(40);
+    expect(staffCount()).toBe(0);
+    later(30 * 24 * HOUR);
+    // No settlement id, as any other payment linked to this invoice would send.
+    await ledgerStep(5, false);
+    // And a wrong one.
+    await ledgerStep(5, false, 'some-other-payment');
+    expect(staffCount()).toBe(0);
+    expect(docs[INVOICE]!['paymentAppliedNoticeClaim']).toBeUndefined();
+    const rows = Object.entries(docs).filter(([p, d]) => p.startsWith('payments/') && d !== null);
+    expect(rows.every(([, d]) => d!['settlesInvoice'] === false)).toBe(true);
   });
 
   it('unticked full, recordPayment applying, first enqueue fails: a same-key retry sends the office copy once', async () => {
     seedInvoice();
     mocks.enqueue.mockRejectedValueOnce(new Error('dispatcher down'));
-    await adminApply(40, false, KEY);
+    await adminApply(40, false, OFFICE_KEY);
     expect(staffCount()).toBe(0);
-    expect(docs[`payments/${KEY}`]!['officeNoticeSentAt']).toBeFalsy();
+    expect(docs[`payments/${OFFICE_KEY}`]!['officeNoticeSentAt']).toBeFalsy();
 
     later(HOUR);
-    await adminApply(40, false, KEY);
+    await adminApply(40, false, OFFICE_KEY);
     expect(staffCount()).toBe(1);
     expect(appliedCount()).toBe(0);
-    expect(docs[`payments/${KEY}`]!['officeNoticeSentAt']).toBeTruthy();
+    expect(docs[`payments/${OFFICE_KEY}`]!['officeNoticeSentAt']).toBeTruthy();
 
     later(HOUR);
-    await adminApply(40, false, KEY);
+    await adminApply(40, false, OFFICE_KEY);
     expect(staffCount()).toBe(1);
   });
 
   it('unticked full, two-step flow, first enqueue fails: a same-key retry sends the office copy once', async () => {
     seedInvoice();
-    const step2 = () =>
-      withTrigger(() =>
-        recordPaymentHandler(
-          adminReq({ kinfolkId: 'fam1', amount: 40, paymentMethod: 'cash', invoiceId: 'inv1', idempotencyKey: KEY }),
-        ),
-      );
-    await withTrigger(() => markInvoicePaidHandler(adminReq({ invoiceId: 'inv1', amount: 40, method: 'cash' })));
+    const settledBy = await settleStep(40);
     mocks.enqueue.mockRejectedValueOnce(new Error('dispatcher down'));
-    await step2();
+    await ledgerStep(40, false, settledBy, OFFICE_KEY);
     expect(staffCount()).toBe(0);
 
     later(HOUR);
-    await step2();
+    await ledgerStep(40, false, settledBy, OFFICE_KEY);
     expect(staffCount()).toBe(1);
 
     later(HOUR);
-    await step2();
+    await ledgerStep(40, false, settledBy, OFFICE_KEY);
     expect(staffCount()).toBe(1);
     expect(appliedCount()).toBe(0);
   });
 
   it('unticked partial retried with the same key still tells nobody', async () => {
     seedInvoice();
-    await adminApply(15, false, KEY);
+    await adminApply(15, false, OFFICE_KEY);
     later(HOUR);
-    await adminApply(15, false, KEY);
+    await adminApply(15, false, OFFICE_KEY);
     expect(appliedCount()).toBe(0);
     expect(staffCount()).toBe(0);
   });

@@ -261,10 +261,13 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
     // makes this callable safe to retry: it becomes the id of the
     // `payments/{key}` row, so a second attempt at one payment finds the first
     // attempt's row instead of recording a second payment AND a second credit.
+    // `settledByInvoicePaymentId` (#866) is optional too: the id `markInvoicePaid`
+    // returned to the same submission, the only thing that lets this call claim
+    // that settlement and tell the office "paid".
     keys: [
       'address', 'amount', 'apply', 'autoApply', 'client', 'date', 'email', 'fee',
       'idempotencyKey', 'invoiceId', 'invoiceNumber', 'kinfolkId', 'kinfolkName', 'notes',
-      'paymentMethod', 'referenceNumber', 'sendConfirmationEmail', 'tip',
+      'paymentMethod', 'referenceNumber', 'sendConfirmationEmail', 'settledByInvoicePaymentId', 'tip',
     ],
   },
   assignTemplate: { schema: AssignTemplateArgs, keys: ['active', 'audience', 'catalogKey', 'templateId', 'triggerKey'] },

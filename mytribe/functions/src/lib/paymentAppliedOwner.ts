@@ -56,15 +56,24 @@ export const PAYMENT_APPLIED_CLAIM_FIELD = 'paymentAppliedNoticeClaim';
 /**
  * The `markInvoicePaid` owner stamp a `recordPayment` for `kinfolkId` may claim
  * on this invoice, or null. Claimable means: the invoice is paid, belongs to that
- * household, was paid off by `markInvoicePaid`, and nobody has claimed that stamp.
+ * household, was paid off by THE `markInvoicePaid` call whose payment row id the
+ * client passed (`invoicePaymentId`), and nobody has claimed that stamp.
+ *
+ * WHY THE ID IS REQUIRED. Without it any later payment linked to the invoice
+ * (days later, a different payment) could claim a settlement whose own
+ * `recordPayment` step never ran, and tell the office "paid" under the wrong
+ * payment. The id is what `markInvoicePaid` returned to the same submission, so
+ * only that submission's second step can match it. No id, no claim.
  */
 export function claimableMarkInvoicePaidOwner(
   invoice: Record<string, unknown> | undefined,
   kinfolkId: string,
+  invoicePaymentId: string | undefined,
 ): string | null {
+  if (!invoicePaymentId) return null;
   if (!invoice || kinfolkId === '' || invoice['kinfolkId'] !== kinfolkId) return null;
   const owner = invoice[PAYMENT_APPLIED_OWNER_FIELD];
-  if (typeof owner !== 'string' || !owner.startsWith('markInvoicePaid:')) return null;
+  if (owner !== paymentAppliedOwner('markInvoicePaid', invoicePaymentId)) return null;
   if (invoice[PAYMENT_APPLIED_CLAIM_FIELD] === owner) return null;
   const status = typeof invoice['status'] === 'string' ? invoice['status'].trim().toLowerCase() : '';
   return status === 'paid' ? owner : null;

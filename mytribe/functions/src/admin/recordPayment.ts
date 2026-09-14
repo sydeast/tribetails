@@ -236,6 +236,21 @@ export const Args = z.object({
    * valid while the three admin clients adopt this one at a time.
    */
   idempotencyKey: PaymentIdempotencyKeyArg,
+  /**
+   * #866: the `paymentId` that `markInvoicePaid` returned to THIS submission,
+   * in the two-step admin flow (settle first, then this ledger row).
+   *
+   * It is how this call learns that its own first step paid the invoice off, so
+   * the office is told "paid" exactly once, under this payment. The server
+   * claims the invoice's `markInvoicePaid:<id>` owner stamp only when it matches
+   * this id; a call without it never claims, so a later, unrelated payment
+   * linked to the same invoice cannot.
+   *
+   * OPTIONAL, like every addition here. A client that does not send it gets the
+   * household confirmation it ticked, and the office is not told for its
+   * settlement.
+   */
+  settledByInvoicePaymentId: z.string().min(1).max(200).optional(),
 });
 
 /**
@@ -471,16 +486,23 @@ export async function recordPaymentHandler(
         return { replayed: stored, application: null as ApplyOutcome | null, settlesInvoice: false };
       }
     }
-    // #866: DID THE `markInvoicePaid` STEP BEFORE THIS ONE PAY THE INVOICE OFF?
+    // #866: DID THIS SUBMISSION'S OWN `markInvoicePaid` STEP PAY THE INVOICE OFF?
     // Both admin clients settle with `markInvoicePaid` and then call this with
-    // the invoice as a display link. The office is told only for a payment that
-    // paid the bill off, so this call claims that settlement's owner stamp, in
-    // the same transaction, and only one call can ever claim it.
+    // the invoice as a display link, passing the payment id that step returned.
+    // The office is told only for a payment that paid the bill off, so this call
+    // claims THAT settlement's owner stamp (`markInvoicePaid:<id>`), in the same
+    // transaction, and only once. A call without the id never claims.
     const linkedInvoiceRef =
-      !plannedStep && args.invoiceId !== '' ? db().collection('invoices').doc(args.invoiceId) : null;
+      !plannedStep && args.invoiceId !== '' && args.settledByInvoicePaymentId !== undefined
+        ? db().collection('invoices').doc(args.invoiceId)
+        : null;
     const linkedInvoiceSnap = linkedInvoiceRef ? await tx.get(linkedInvoiceRef) : null;
     const claimedOwner = linkedInvoiceSnap?.exists
-      ? claimableMarkInvoicePaidOwner((linkedInvoiceSnap.data() ?? {}) as Record<string, unknown>, kinfolkId)
+      ? claimableMarkInvoicePaidOwner(
+          (linkedInvoiceSnap.data() ?? {}) as Record<string, unknown>,
+          kinfolkId,
+          args.settledByInvoicePaymentId,
+        )
       : null;
     // THE APPLY AND THE PAYMENT ROW LAND TOGETHER. `markInvoicePaid` and this
     // callable were two steps on purpose (the money first, the display row
@@ -669,6 +691,7 @@ export async function recordPaymentHandler(
     uid: actor.uid,
     householdRequested: args.sendConfirmationEmail,
     settlesInvoice: committed.settlesInvoice,
+    officeDue: true,
   });
   const confirmationEmailSent = sent.household;
   {
@@ -814,6 +837,9 @@ async function replayWithConfirmation(
     uid: actorUid,
     householdRequested: householdDue,
     settlesInvoice,
+    // A ticked retry whose office copy is already stamped still owes the
+    // household one; with no household uid, it must not send the office a second.
+    officeDue,
   });
   if (!sent.household && !sent.office) return answer;
   await ref.update(noticeStamps(sent)).catch((err) => {
@@ -915,6 +941,13 @@ async function sendPaymentConfirmation(input: {
   householdRequested: boolean;
   /** This payment paid the invoice off, so the office is told even when the household is not. */
   settlesInvoice: boolean;
+  /**
+   * #866: the office copy is still owed. False on a retry whose row already
+   * carries `officeNoticeSentAt`. The office copy rides every enqueue, so an
+   * enqueue with no household uid would be a second office copy and nothing
+   * else; it is skipped.
+   */
+  officeDue: boolean;
 }): Promise<ConfirmationOutcome> {
   const none: ConfirmationOutcome = { household: false, office: false };
   if (input.kinfolkId === '') return none;
@@ -932,7 +965,9 @@ async function sendPaymentConfirmation(input: {
         });
       }
     }
-    if (recipientUid === null && !input.settlesInvoice) return none;
+    // With no household copy to send, an enqueue is the office copy alone: only
+    // for a payment that paid the invoice off, and only while it is still owed.
+    if (recipientUid === null && (!input.settlesInvoice || !input.officeDue)) return none;
     await enqueueNotification({
       key: 'invoice.payment.applied',
       recipientUid: recipientUid ?? '',

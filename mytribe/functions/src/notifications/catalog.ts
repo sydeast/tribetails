@@ -492,19 +492,26 @@ const CATALOG_LIST: NotificationDef[] = [
     //   - Admin, unticked or no portal account: the office alone, and only when
     //     this payment paid the invoice off. recordPayment enqueues with no
     //     household uid. In the two-step flow it learns that by claiming the
-    //     `markInvoicePaid` owner stamp (`paymentAppliedNoticeClaim`) in its own
-    //     transaction, so a later payment linked to the same invoice cannot.
+    //     `markInvoicePaid:<id>` owner stamp (`paymentAppliedNoticeClaim`) in its
+    //     own transaction, where `<id>` is the `settledByInvoicePaymentId` both
+    //     admin clients pass from step 1. No id, or another id, never claims.
     //   - An unticked partial, or a payment that paid nothing off: nobody.
     //
     // The first three stamp `paymentAppliedNoticeOwner` in the write that pays the
     // invoice, and `onInvoicesWrite` stays silent for a write that changed it.
     // The rule and its reasons: lib/paymentAppliedOwner.ts.
     //
-    // A CRASH AFTER THE COMMIT. The webhook stamps `auditWrittenAt` and
-    // `noticeSentAt` on `stripeEvents/{id}` and answers 500 until both are done;
-    // a Stripe retry of a PAID event missing either finishes it. recordPayment
-    // stamps `confirmationEmailSent` and `officeNoticeSentAt` on its row, and a
-    // same-key retry sends whichever copy is due and not stamped.
+    // A CRASH AFTER THE COMMIT.
+    //   - stripeWebhook, for `invoice.payment.applied` and `invoice.charge.failed`
+    //     alike, writes `followupTracked` with the event record, then stamps
+    //     `auditWrittenAt` and `noticeSentAt` on `stripeEvents/{id}`, answering
+    //     500 until both are done. A retry of a TRACKED event finishes what is
+    //     missing; an event recorded before this code is never followed up again.
+    //     The audit entry has a deterministic id, so it is written at most once.
+    //     A notice nobody can receive is final: `noticeSkippedReason`, and 200.
+    //   - recordPayment stamps `confirmationEmailSent` and `officeNoticeSentAt` on
+    //     its row, and a same-key retry sends whichever copy is due and not
+    //     stamped, never an office-only copy that is already stamped.
     key: 'invoice.payment.applied',
     label: 'Payment or credit applied to an invoice',
     audience: 'both',

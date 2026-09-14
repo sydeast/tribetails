@@ -654,6 +654,7 @@ export interface RecordPaymentArgs {
   /** Optional in the request; the server defaults it to false. */
   sendConfirmationEmail?: boolean;
   idempotencyKey?: string;
+  settledByInvoicePaymentId?: string;
 }
 
 /**

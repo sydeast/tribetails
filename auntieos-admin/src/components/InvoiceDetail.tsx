@@ -1059,6 +1059,10 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
               sendConfirmationEmail: paidSendConfirmation,
               invoiceId: invoice._id,
               invoiceNumber: invoice.invoiceNumber,
+              // #866: the settlement row step 1 just wrote. The server claims
+              // that settlement, and tells the office "paid", only for this id,
+              // so no later payment linked to the invoice can claim it.
+              settledByInvoicePaymentId: res.paymentId,
               idempotencyKey: ledgerKey.current,
             });
             // NO `apply` FIELD, deliberately. `markInvoicePaid` has already

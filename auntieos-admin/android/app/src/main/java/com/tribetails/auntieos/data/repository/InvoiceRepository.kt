@@ -675,11 +675,20 @@ class InvoiceRepository(
      * bill `markInvoicePaid` settled), so the operator has to be told when it did
      * not go out.
      */
-    suspend fun recordInvoicePayment(payment: Payment, idempotencyKey: String? = null): Result<RecordPaymentResult> = runCatching {
+    suspend fun recordInvoicePayment(
+        payment: Payment,
+        idempotencyKey: String? = null,
+        /**
+         * #866: the `paymentId` `markInvoicePaid` returned to this submission. The
+         * server tells the office "paid" for that settlement only when it gets
+         * this id, so no later payment linked to the invoice can claim it.
+         */
+        settledByInvoicePaymentId: String? = null,
+    ): Result<RecordPaymentResult> = runCatching {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("recordPayment")
-            .call(recordPaymentArgs(payment, idempotencyKey).toPayload())
+            .call(recordPaymentArgs(payment, idempotencyKey, settledByInvoicePaymentId).toPayload())
             .awaitCallable().data as? Map<String, Any?>
             ?: error("recordPayment: non-map payload")
         val result = decodeRecordPaymentResult(raw)
@@ -843,7 +852,14 @@ internal fun archiveInvoiceArgs(invoiceId: String, force: Boolean): ArchiveInvoi
  * collection. No TestMode anywhere: the sandbox kinfolkId stamp is the server's
  * job now.
  */
-internal fun recordPaymentArgs(payment: Payment, idempotencyKey: String? = null): RecordPaymentArgs = RecordPaymentArgs(
+internal fun recordPaymentArgs(
+    payment: Payment,
+    idempotencyKey: String? = null,
+    // #866: the `markInvoicePaid` payment id of this submission; null, and so
+    // omitted from the payload, for a payment no settlement step preceded.
+    settledByInvoicePaymentId: String? = null,
+): RecordPaymentArgs = RecordPaymentArgs(
+    settledByInvoicePaymentId = settledByInvoicePaymentId,
     kinfolkId = payment.kinfolkId,
     kinfolkName = payment.kinfolkName,
     client = payment.client,

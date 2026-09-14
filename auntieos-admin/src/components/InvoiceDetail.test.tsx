@@ -1419,6 +1419,18 @@ describe('the record-payment form: fee, gross tip, notes and the two switches', 
     await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
     expect(recordPayment.mock.calls[0]![0]).not.toHaveProperty('apply');
   });
+  it('passes the settlement row markInvoicePaid returned, so only this payment can claim it (#866)', async () => {
+    // The server tells the office "paid" for a markInvoicePaid settlement only
+    // when step 2 names that settlement's payment id. Without it, any later
+    // payment linked to the invoice could claim it.
+    markInvoicePaid.mockResolvedValue(settledResult());
+    await openForm();
+    await submit();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    expect(recordPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ invoiceId: 'inv1', settledByInvoicePaymentId: 'pay1' }),
+    );
+  });
   it('sends zero for an untouched tip and fee, which is what a blank box means', async () => {
     markInvoicePaid.mockResolvedValue(settledResult());
     await openForm();
