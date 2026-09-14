@@ -56,9 +56,21 @@ describe('validateEmergencyContactDrafts', () => {
     expect(validateEmergencyContactDrafts([], HOUSEHOLD)).toBe(EMERGENCY_CONTACT_REQUIRED);
     expect(validateEmergencyContactDrafts([{ name: '', phone: '', relationship: '' }], HOUSEHOLD)).toBe(EMERGENCY_CONTACT_REQUIRED);
   });
-  it('needs a name and a phone on every slot', () => {
-    expect(validateEmergencyContactDrafts([{ name: 'Rae', phone: '', relationship: '' }], HOUSEHOLD)).toBe('Each Emergency Contact needs a phone number.');
-    expect(validateEmergencyContactDrafts([{ name: '', phone: '8055550199', relationship: '' }], HOUSEHOLD)).toBe('Each Emergency Contact needs a name.');
+  it('needs a name and a phone on every slot, in the server wording', () => {
+    expect(validateEmergencyContactDrafts([{ name: 'Rae', phone: '', relationship: '' }], HOUSEHOLD)).toBe('An Emergency Contact needs a phone number.');
+    expect(validateEmergencyContactDrafts([{ name: '', phone: '8055550199', relationship: '' }], HOUSEHOLD)).toBe('An Emergency Contact needs a name.');
+    expect(EMERGENCY_CONTACT_REQUIRED).toBe('A household needs at least one Emergency Contact.');
+  });
+  it('refuses the server length limits with the server messages', () => {
+    expect(validateEmergencyContactDrafts([{ name: 'R'.repeat(81), phone: '8055550199', relationship: '' }], HOUSEHOLD)).toBe(
+      "An Emergency Contact's name can be at most 80 characters.",
+    );
+    expect(validateEmergencyContactDrafts([{ name: 'Rae', phone: '8'.repeat(33), relationship: '' }], HOUSEHOLD)).toBe(
+      "An Emergency Contact's phone number can be at most 32 characters.",
+    );
+    expect(validateEmergencyContactDrafts([{ name: 'Rae', phone: '8055550199', relationship: 'S'.repeat(41) }], HOUSEHOLD)).toBe(
+      'A relationship can be at most 40 characters.',
+    );
   });
   it('refuses the same phone twice and a household member', () => {
     expect(

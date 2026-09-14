@@ -78,7 +78,8 @@ export const PERMISSION_META: readonly PermissionMeta[] = [
   },
   {
     key: 'home_access',
-    label: 'Home access',
+    // #829 review item 11: the same label the portals show, naming what it grants.
+    label: 'Home access (gate code, Wi-Fi, Emergency Contacts)',
     description: 'Sees and edits the household home details: entry notes and Emergency Contacts.',
   },
   {

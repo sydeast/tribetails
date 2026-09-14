@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const { createKinfolk, mapboxSuggest, mapboxRetrieve, saveEmergencyContacts } = vi.hoisted(() => ({
@@ -195,8 +195,41 @@ describe('AddKinfolkDialog', () => {
     render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} />);
     await fillHousehold();
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
-    expect(await screen.findByText('A household needs at least one Emergency Contact')).toBeInTheDocument();
+    expect(await screen.findByText('A household needs at least one Emergency Contact.')).toBeInTheDocument();
     expect(createKinfolk).not.toHaveBeenCalled();
+  });
+
+  it('titles the section "Emergency Contacts", with its sentence behind an info button beside the title', async () => {
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    const heading = screen.getByRole('heading', { name: /^Emergency Contacts/ });
+    const tip = within(heading).getByRole('tooltip', { hidden: true });
+    expect(tip).toHaveTextContent('Called only when no kinfolk can be reached. The first one is called first.');
+    await userEvent.click(within(heading).getByRole('button', { name: 'About this section' }));
+    expect(tip).toBeVisible();
+  });
+
+  // #829 review item 6.
+  it('closing with the household created but its contact unsaved names that household to the caller', async () => {
+    createKinfolk.mockResolvedValue('new-kf-9');
+    saveEmergencyContacts.mockRejectedValue(new Error('deadline-exceeded'));
+    const onLeftWithoutContact = vi.fn();
+    const onClose = vi.fn();
+    render(<AddKinfolkDialog onClose={onClose} onCreated={vi.fn()} onLeftWithoutContact={onLeftWithoutContact} />);
+    await fillHousehold();
+    await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550199');
+    await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
+    await screen.findByText(/deadline-exceeded/);
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    expect(onLeftWithoutContact).toHaveBeenCalledWith('new-kf-9');
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('closing before anything was created reports no household', async () => {
+    const onLeftWithoutContact = vi.fn();
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} onLeftWithoutContact={onLeftWithoutContact} />);
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    expect(onLeftWithoutContact).not.toHaveBeenCalled();
   });
 
   it('creates the household, then saves its contact', async () => {
@@ -221,7 +254,8 @@ describe('AddKinfolkDialog', () => {
     await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
     await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125559090');
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
-    expect(await screen.findByText(/saveEmergencyContacts failed: network/)).toBeInTheDocument();
+    expect(await screen.findByText(/^network The household was created/)).toBeInTheDocument();
+    expect(screen.queryByText(/saveEmergencyContacts failed/)).toBeNull();
     expect(onCreated).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contact' }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith('new-kf-1'));
@@ -237,7 +271,8 @@ describe('AddKinfolkDialog', () => {
     await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
     await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125559090');
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
-    expect(await screen.findByText(/saveEmergencyContacts failed: network/)).toBeInTheDocument();
+    expect(await screen.findByText(/^network The household was created/)).toBeInTheDocument();
+    expect(screen.queryByText(/saveEmergencyContacts failed/)).toBeNull();
     expect(saveEmergencyContacts).toHaveBeenCalledTimes(1);
 
     // The editor is still live during the retry (#829): clear it, then retry.

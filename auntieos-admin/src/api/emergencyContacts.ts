@@ -7,8 +7,25 @@
 import { call } from '../lib/fns';
 
 export const EMERGENCY_CONTACTS_MAX = 2;
-export const EMERGENCY_CONTACT_REQUIRED = 'A household needs at least one Emergency Contact';
+export const EMERGENCY_CONTACT_NAME_MAX = 80;
+export const EMERGENCY_CONTACT_PHONE_MAX = 32;
+export const EMERGENCY_CONTACT_RELATIONSHIP_MAX = 40;
+
+/**
+ * The server's own wording, word for word (`mytribe/functions/src/lib/emergencyContacts.ts`),
+ * so a refusal reads the same whether this pre-check or the callable caught it.
+ */
+export const EMERGENCY_CONTACT_REQUIRED = 'A household needs at least one Emergency Contact.';
 export const EMERGENCY_CONTACT_OUTSIDE = 'An Emergency Contact has to be someone outside the household.';
+export const EMERGENCY_CONTACT_NAME_REQUIRED = 'An Emergency Contact needs a name.';
+export const EMERGENCY_CONTACT_PHONE_REQUIRED = 'An Emergency Contact needs a phone number.';
+export const EMERGENCY_CONTACT_NAME_TOO_LONG = `An Emergency Contact's name can be at most ${EMERGENCY_CONTACT_NAME_MAX} characters.`;
+export const EMERGENCY_CONTACT_PHONE_TOO_LONG = `An Emergency Contact's phone number can be at most ${EMERGENCY_CONTACT_PHONE_MAX} characters.`;
+export const EMERGENCY_CONTACT_RELATIONSHIP_TOO_LONG = `A relationship can be at most ${EMERGENCY_CONTACT_RELATIONSHIP_MAX} characters.`;
+export const EMERGENCY_CONTACTS_TOO_MANY = 'A household can have at most two Emergency Contacts.';
+export const EMERGENCY_CONTACTS_SAME_PHONE = 'The two Emergency Contacts need different phone numbers.';
+/** The tip beside the Emergency Contacts title on every client. */
+export const EMERGENCY_CONTACT_WHO_GETS_CALLED = 'Called only when no kinfolk can be reached. The first one is called first.';
 
 export interface EmergencyContact {
   name: string;
@@ -101,12 +118,15 @@ export function validateEmergencyContactDrafts(
   household: { names: string[]; phones: string[] },
 ): string | null {
   if (drafts.length === 0 || isBlankDrafts(drafts)) return EMERGENCY_CONTACT_REQUIRED;
-  if (drafts.length > EMERGENCY_CONTACTS_MAX) return 'A household can have at most two Emergency Contacts.';
-  if (drafts.some((d) => d.name.trim() === '')) return 'Each Emergency Contact needs a name.';
-  if (drafts.some((d) => d.phone.trim() === '')) return 'Each Emergency Contact needs a phone number.';
+  if (drafts.length > EMERGENCY_CONTACTS_MAX) return EMERGENCY_CONTACTS_TOO_MANY;
+  if (drafts.some((d) => d.name.trim() === '')) return EMERGENCY_CONTACT_NAME_REQUIRED;
+  if (drafts.some((d) => d.phone.trim() === '')) return EMERGENCY_CONTACT_PHONE_REQUIRED;
+  if (drafts.some((d) => d.name.trim().length > EMERGENCY_CONTACT_NAME_MAX)) return EMERGENCY_CONTACT_NAME_TOO_LONG;
+  if (drafts.some((d) => d.phone.trim().length > EMERGENCY_CONTACT_PHONE_MAX)) return EMERGENCY_CONTACT_PHONE_TOO_LONG;
+  if (drafts.some((d) => d.relationship.trim().length > EMERGENCY_CONTACT_RELATIONSHIP_MAX)) return EMERGENCY_CONTACT_RELATIONSHIP_TOO_LONG;
   const [first, second] = drafts;
   if (drafts.length === 2 && first !== undefined && second !== undefined && comparablePhone(first.phone) === comparablePhone(second.phone)) {
-    return 'The two Emergency Contacts need different phone numbers.';
+    return EMERGENCY_CONTACTS_SAME_PHONE;
   }
   const names = new Set(household.names.map(comparableName).filter((n) => n !== ''));
   const phones = new Set(household.phones.map(comparablePhone).filter((p) => p !== ''));

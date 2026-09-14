@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { getKinfolkProfile, type KinfolkProfile } from '../api/kinfolkProfile';
 import {
   archiveKinfolk,
+  changedKinfolkEditFields,
   unarchiveKinfolk,
   updateKinfolkProfile,
   type KinfolkEditPatch,
@@ -18,6 +19,7 @@ import {
 import { joinDateForEdit } from '../lib/joinDate';
 import { type Async } from '../lib/async';
 import {
+  EMERGENCY_CONTACT_WHO_GETS_CALLED,
   draftsEqual,
   isBlankDrafts,
   saveEmergencyContacts,
@@ -122,6 +124,54 @@ function toForm(p: KinfolkProfile): FormState {
   };
 }
 
+/**
+ * The form as the write's patch shape. Built key by key, not spread: the patch
+ * type is exactly what the write is allowed to touch, and nothing that rode
+ * along on the form can leak in.
+ */
+function toPatch(form: FormState): KinfolkEditPatch {
+  return {
+    firstName: form.firstName,
+    lastName: form.lastName,
+    phoneNumber: form.phoneNumber,
+    email: form.email,
+    status: form.status,
+    joinDate: form.joinDate,
+    secondaryPhone: form.secondaryPhone,
+    secondaryEmail: form.secondaryEmail,
+    serviceAddress: form.serviceAddress,
+    gateCode: form.gateCode,
+    parkingInstructions: form.parkingInstructions,
+    entryNotes: form.entryNotes,
+    wifiName: form.wifiName,
+    wifiPassword: form.wifiPassword,
+  };
+}
+
+/**
+ * #829 review item 5: what is STORED, as the patch shape, for the diff. The raw
+ * loaded values, not `toForm`'s cleaned ones, so a legacy join date or status
+ * the form had to normalise still counts as a change the save will make.
+ */
+function storedPatch(p: KinfolkProfile): KinfolkEditPatch {
+  return {
+    firstName: p.firstName,
+    lastName: p.lastName,
+    phoneNumber: p.phoneNumber,
+    email: p.email,
+    status: p.status,
+    joinDate: p.joinDate,
+    secondaryPhone: p.secondaryPhone,
+    secondaryEmail: p.secondaryEmail,
+    serviceAddress: p.serviceAddress,
+    gateCode: p.gateCode,
+    parkingInstructions: p.parkingInstructions,
+    entryNotes: p.entryNotes,
+    wifiName: p.wifiName,
+    wifiPassword: p.wifiPassword,
+  };
+}
+
 function normaliseStatus(raw: string): FormState['status'] {
   const s = raw.trim().toLowerCase();
   if (s === KINFOLK_ARCHIVED_STATUS) return KINFOLK_ARCHIVED_STATUS;
@@ -160,6 +210,14 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
   // form state below is seeded from `loaded`, no second read, no callable).
   const [ecDrafts, setEcDrafts] = useState<EmergencyContactDraft[]>(toDrafts([]));
   const [ecBaseline, setEcBaseline] = useState<EmergencyContactDraft[]>(toDrafts([]));
+  /** A contact refusal or a failed contact save, shown on the contact editor rather than the page banner. */
+  const [ecError, setEcError] = useState<string | null>(null);
+  /**
+   * #829 review item 5: what the household record holds, as far as this form
+   * knows. Seeded from the load, moved forward by each successful write, so a
+   * retry after a contact problem does not re-send fields that already landed.
+   */
+  const [householdBaseline, setHouseholdBaseline] = useState<KinfolkEditPatch | null>(null);
 
   const load = useCallback(() => {
     let live = true;
@@ -170,6 +228,7 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
         if (live) {
           setLoaded({ status: 'ready', data });
           setForm(toForm(data));
+          setHouseholdBaseline(storedPatch(data));
           // Seeded in the SAME commit as the form above (no second read, no
           // callable), not a separate effect keyed on `loaded`: that shape
           // committed the ready state (and thus rendered the editor with a
@@ -235,8 +294,30 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
     return errors[key] ?? null;
   }
 
+  // #829 review item 14: an "Unsaved changes" status, from the same trimmed
+  // comparisons the save makes, so the indicator and the write never disagree.
+  const householdChanges =
+    form !== null && householdBaseline !== null ? changedKinfolkEditFields(householdBaseline, toPatch(form)) : {};
+  const dirty =
+    form !== null &&
+    householdBaseline !== null &&
+    (Object.keys(householdChanges).length > 0 || !draftsEqual(ecDrafts, ecBaseline));
+
+  /**
+   * #829 review items 5 and 14.
+   *
+   * ONLY WHAT CHANGED IS WRITTEN. The household write carries the fields that
+   * differ from the stored record, and is skipped entirely when none do, so a
+   * contacts-only save touches the kinfolk document not at all.
+   *
+   * THE CONTACT NEVER BLOCKS THE HOUSEHOLD (operator ruling). A cleared or
+   * half-filled contact, or a refused contact save, used to stop the whole form.
+   * Now the household saves first; the contact problem is then shown on the
+   * contact editor, the screen stays open so it can be fixed, and a retry sends
+   * only what is still unsaved.
+   */
   async function handleSave() {
-    if (!form || busy) return;
+    if (!form || busy || householdBaseline === null) return;
     // Save marks everything touched, so pressing Save on a form with three
     // problems shows all three at once rather than one per attempt.
     setAttempted(true);
@@ -245,60 +326,58 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
       return;
     }
 
+    const changes = changedKinfolkEditFields(householdBaseline, toPatch(form));
     const ecChanged = !draftsEqual(ecDrafts, ecBaseline);
-    // A household that has none and is not adding one right now is not blocked
-    // from saving anything else (#829). Everyone else must end with a valid list.
+    // A household that has none and is not adding one right now has nothing to
+    // send. Everyone else who touched the list must end with a valid one.
     const ecSkipped = isBlankDrafts(ecBaseline) && isBlankDrafts(ecDrafts);
-    if (!ecSkipped && ecChanged) {
-      const ecError = validateEmergencyContactDrafts(ecDrafts, {
-        names: [`${form.firstName} ${form.lastName}`],
-        phones: [form.phoneNumber, form.secondaryPhone],
-      });
-      if (ecError) {
-        setError(ecError);
+    const saveContacts = ecChanged && !ecSkipped;
+    const contactProblem = saveContacts
+      ? validateEmergencyContactDrafts(ecDrafts, {
+          names: [`${form.firstName} ${form.lastName}`],
+          phones: [form.phoneNumber, form.secondaryPhone],
+        })
+      : null;
+
+    setSaving(true);
+    setError(null);
+    setEcError(null);
+
+    let householdSaved = false;
+    if (Object.keys(changes).length > 0) {
+      try {
+        await updateKinfolkProfile(kinfolkId, changes);
+        householdSaved = true;
+        setHouseholdBaseline((prev) => (prev ? { ...prev, ...changes } : prev));
+      } catch (err) {
+        setSaving(false);
+        setError(`updateKinfolkProfile failed: ${err instanceof Error ? err.message : 'Save failed'}`);
         return;
       }
     }
 
-    setSaving(true);
-    setError(null);
-    try {
-      // Built key by key, not spread: the patch type is exactly what the write
-      // is allowed to touch, and nothing that rode along on the form can leak in.
-      const patch: KinfolkEditPatch = {
-        firstName: form.firstName,
-        lastName: form.lastName,
-        phoneNumber: form.phoneNumber,
-        email: form.email,
-        status: form.status,
-        joinDate: form.joinDate,
-        secondaryPhone: form.secondaryPhone,
-        secondaryEmail: form.secondaryEmail,
-        serviceAddress: form.serviceAddress,
-        gateCode: form.gateCode,
-        parkingInstructions: form.parkingInstructions,
-        entryNotes: form.entryNotes,
-        wifiName: form.wifiName,
-        wifiPassword: form.wifiPassword,
-      };
-      await updateKinfolkProfile(kinfolkId, patch);
-      if (!ecSkipped && ecChanged) {
+    if (saveContacts) {
+      let problem = contactProblem;
+      if (problem === null) {
         try {
           await saveEmergencyContacts(kinfolkId, ecDrafts);
           setEcBaseline(ecDrafts);
         } catch (err) {
-          setSaving(false);
-          setError(`saveEmergencyContacts failed: ${err instanceof Error ? err.message : 'Save failed'}`);
-          return;
+          // The server's own message, as the portals show it.
+          problem = err instanceof Error && err.message !== '' ? err.message : 'The Emergency Contacts were not saved. Try again.';
         }
       }
-      setSaving(false);
-      showToast(`Saved ${displayName}.`);
-      onDone();
-    } catch (err) {
-      setSaving(false);
-      setError(`updateKinfolkProfile failed: ${err instanceof Error ? err.message : 'Save failed'}`);
+      if (problem !== null) {
+        setSaving(false);
+        setEcError(problem);
+        if (householdSaved) showToast(`Saved ${displayName}. The Emergency Contact still needs attention.`);
+        return;
+      }
     }
+
+    setSaving(false);
+    showToast(`Saved ${displayName}.`);
+    onDone();
   }
 
   async function handleArchive() {
@@ -498,9 +577,27 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
                 </fieldset>
               </DenPanel>
 
-              <DenPanel title="Emergency Contacts" subtitle="Who Auntie calls if something goes wrong.">
+              {/* #829 review item 3: no explanatory subtitle. DenPanel draws its
+                  `subtitle` prop as the kit's info button beside the title
+                  (KitTooltip: hover, focus or a tap opens it), never as a line
+                  of copy, so it carries the one shared sentence every client
+                  shows behind its tip. */}
+              <DenPanel title="Emergency Contacts" subtitle={EMERGENCY_CONTACT_WHO_GETS_CALLED}>
                 {isBlankDrafts(ecBaseline) && <NoEmergencyContactFlag />}
-                <EmergencyContactsEditor idPrefix="kfedit" value={ecDrafts} onChange={setEcDrafts} disabled={saving} />
+                <EmergencyContactsEditor
+                  idPrefix="kfedit"
+                  value={ecDrafts}
+                  onChange={(next) => {
+                    setEcDrafts(next);
+                    setEcError(null);
+                  }}
+                  disabled={saving}
+                />
+                {ecError !== null && (
+                  <p className="kfedit__error" role="alert" data-testid="kfedit-ec-error">
+                    {ecError}
+                  </p>
+                )}
               </DenPanel>
 
               {/* THE VET PANEL IS GONE, and its absence is the fix.
@@ -523,6 +620,11 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
                   <GhostButton label="Archive" onClick={() => setAskArchive(true)} disabled={busy} />
                 )}
                 <div className="kfedit__actions-right">
+                  {dirty && (
+                    <span className="kfedit__hint" role="status" data-testid="kfedit-unsaved">
+                      Unsaved changes
+                    </span>
+                  )}
                   <GhostButton label="Cancel" onClick={onCancel} disabled={busy} />
                   <PrimaryButton
                     label={saving ? 'Saving…' : 'Save changes'}

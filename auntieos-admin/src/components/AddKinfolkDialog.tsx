@@ -1,12 +1,14 @@
 import { useCallback, useState } from 'react';
 import { createKinfolk, NEW_KINFOLK_STATUS_OPTIONS, type NewKinfolkStatus } from '../api/directoryWrite';
 import {
+  EMERGENCY_CONTACT_WHO_GETS_CALLED,
   saveEmergencyContacts,
   toDrafts,
   validateEmergencyContactDrafts,
   type EmergencyContactDraft,
 } from '../api/emergencyContacts';
 import { AddressAutofillField } from './AddressAutofillField';
+import { InfoTip } from './DenScreenKit';
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { EmergencyContactsEditor } from './EmergencyContactsEditor';
@@ -22,6 +24,13 @@ interface AddKinfolkDialogProps {
    * id (a toast, a future "open the new profile" hop), not to force a refetch.
    */
   onCreated: (kinfolkId: string) => void;
+  /**
+   * #829 review item 6: the dialog is closing with a household already created
+   * (`createdId`) and its Emergency Contact still unsaved. The caller says so,
+   * with a way back to that household, so an operator who walks away knows
+   * there is a contact-less household on file and does not Add it a second time.
+   */
+  onLeftWithoutContact?: (kinfolkId: string) => void;
 }
 
 /**
@@ -38,7 +47,7 @@ interface AddKinfolkDialogProps {
  * rejected write (names the failing call, leaves the form exactly as typed),
  * Escape/backdrop-close routed through Dialog but suppressed mid-save.
  */
-export function AddKinfolkDialog({ onClose, onCreated }: AddKinfolkDialogProps) {
+export function AddKinfolkDialog({ onClose, onCreated, onLeftWithoutContact }: AddKinfolkDialogProps) {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -71,8 +80,10 @@ export function AddKinfolkDialog({ onClose, onCreated }: AddKinfolkDialogProps) 
   // inline function here would be a new reference on every keystroke and would
   // steal focus off whichever field is active.
   const closeUnlessSaving = useCallback(() => {
-    if (!saving) onClose();
-  }, [saving, onClose]);
+    if (saving) return;
+    if (createdId !== null) onLeftWithoutContact?.(createdId);
+    onClose();
+  }, [saving, onClose, createdId, onLeftWithoutContact]);
 
   /**
    * The Emergency Contact write, split from household creation so a failed
@@ -86,9 +97,10 @@ export function AddKinfolkDialog({ onClose, onCreated }: AddKinfolkDialogProps) 
       onCreated(id);
     } catch (err) {
       setSaving(false);
-      setSaveError(
-        `saveEmergencyContacts failed: ${err instanceof Error ? err.message : 'Save failed'}. The household was created and shows No Emergency Contact until this is saved.`,
-      );
+      // #829 review item 4: the server's own message, as the portals show it,
+      // then what state that leaves the household in.
+      const reason = err instanceof Error && err.message !== '' ? err.message : 'The Emergency Contact was not saved.';
+      setSaveError(`${reason} The household was created and shows No Emergency Contact until this is saved.`);
     }
   }
 
@@ -102,8 +114,7 @@ export function AddKinfolkDialog({ onClose, onCreated }: AddKinfolkDialogProps) 
       // this retry), so it is still live, an operator can clear it or type
       // the household's own phone before pressing this button. The same gate
       // the first-save path runs, so a bad retry is refused with the plain
-      // spec message instead of a round trip that comes back wrapped as
-      // "saveEmergencyContacts failed: ...".
+      // spec message instead of a round trip to the callable.
       const retryEcError = validateEmergencyContactDrafts(ecDrafts, {
         names: [`${firstName} ${lastName}`],
         phones: [phoneNumber],
@@ -146,7 +157,7 @@ export function AddKinfolkDialog({ onClose, onCreated }: AddKinfolkDialogProps) 
       onClose={closeUnlessSaving}
       footer={
         <>
-          <GhostButton label="Cancel" onClick={onClose} disabled={saving} />
+          <GhostButton label="Cancel" onClick={closeUnlessSaving} disabled={saving} />
           <PrimaryButton
             label={
               saving
@@ -276,7 +287,9 @@ export function AddKinfolkDialog({ onClose, onCreated }: AddKinfolkDialogProps) 
           (`createdId !== null`) this editor is the only thing left to retry, so
           it stays enabled while the fields above it are locked. */}
       <div className="add-kinfolk__section">
-        <h3 className="add-kinfolk__label">Emergency Contact</h3>
+        <h3 className="add-kinfolk__label add-kinfolk__section-title">
+          Emergency Contacts <InfoTip text={EMERGENCY_CONTACT_WHO_GETS_CALLED} />
+        </h3>
         <EmergencyContactsEditor idPrefix="add-kinfolk" value={ecDrafts} onChange={setEcDrafts} disabled={saving} />
       </div>
 
