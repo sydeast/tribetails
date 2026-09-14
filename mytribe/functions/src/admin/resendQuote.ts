@@ -200,6 +200,18 @@ export async function resendQuoteHandler(
   const invoiceNumber = typeof data['invoiceNumber'] === 'string' ? (data['invoiceNumber'] as string) : '';
   const recipientUid = await resolveKinfolkUid(kinfolkId);
 
+  // #832: no household account means nobody the resend is FOR. `invoice.new`
+  // also copies the office, so without this the dispatcher would write that
+  // copy, report something written, and the quote would reopen having reached
+  // no household at all. Refused before anything is sent.
+  if (recipientUid === null) {
+    throw new HttpsError(
+      'failed-precondition',
+      'This household has no portal account to send the quote to, so it was not sent again. The quote is still declined.',
+      { code: 'quote_resend_unreachable' },
+    );
+  }
+
   // FAIL LOUD, and BEFORE the write. See the header: a resend that reopened the
   // quote without telling the household would look like it worked and reach
   // nobody, and a retry after a swallowed failure would refuse as
@@ -220,7 +232,7 @@ export async function resendQuoteHandler(
     // "New invoice/quote issued." row, and it is what createQuote sends when it
     // issues one in the first place.
     key: 'invoice.new',
-    recipientUid: recipientUid ?? '',
+    recipientUid,
     data: { kinfolkId, invoiceId: args.invoiceId, isQuote: true, resent: true },
     actorUid: uid,
     targetType: 'invoice',
@@ -228,19 +240,33 @@ export async function resendQuoteHandler(
     dedupeKey: `quote:${args.invoiceId}:resend:${resendNumber}`,
   });
 
-  // STILL FAIL LOUD when the dispatcher answered without sending: the header's
-  // reasoning applies to "nothing was enqueued" exactly as to "it threw".
-  const householdMiss =
-    recipientUid !== null ? dispatched.suppressed.find((s) => s.recipientUid === recipientUid) : undefined;
-  if (dispatched.written.length === 0 || householdMiss) {
+  // STILL FAIL LOUD when the dispatcher answered without reaching the household:
+  // the header's reasoning applies to "nothing was enqueued" exactly as to "it
+  // threw".
+  //
+  // ONE EXCEPTION, AND IT IS NOT A FAILURE. A household `duplicate` means an
+  // earlier attempt at THIS resend (same ordinal) already reached them, and only
+  // its reopening transaction did not land. The household has the quote, so the
+  // honest thing is to finish the job: reopen it and answer ok. Refusing would
+  // leave a quote the household was told about still declined, and the next
+  // press would try again with no way to succeed.
+  const householdMiss = dispatched.suppressed.find((s) => s.recipientUid === recipientUid);
+  const alreadyReachedHousehold = householdMiss?.reason === 'duplicate';
+  if (alreadyReachedHousehold) {
+    logEvent({
+      severity: 'info',
+      function: 'resendQuote',
+      event: 'quote.resend.already-delivered',
+      uid,
+      extra: {
+        invoiceId: args.invoiceId,
+        resendNumber,
+        existingId: householdMiss?.existingId ?? null,
+        lastAtMs: householdMiss?.lastAtMs ?? null,
+      },
+    });
+  } else if (dispatched.written.length === 0 || householdMiss) {
     const reason = householdMiss?.reason ?? dispatched.suppressed[0]?.reason ?? null;
-    if (reason === 'duplicate') {
-      throw new HttpsError(
-        'failed-precondition',
-        'This quote was just sent again, so it was not sent a second time. Refresh to see where it stands.',
-        { code: 'quote_resend_duplicate' },
-      );
-    }
     if (reason === 'prefs') {
       throw new HttpsError(
         'failed-precondition',

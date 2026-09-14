@@ -156,7 +156,9 @@ describe('resendQuote happy path', () => {
     expect(mocks.enqueue).toHaveBeenCalledWith(expect.objectContaining({ dedupeKey: 'quote:q1:resend:3' }));
   });
 
-  it('#832: FAILS LOUD, and leaves the quote declined, when the dispatcher refuses a duplicate', async () => {
+  it('#832: when an earlier attempt already reached the household, reopens the quote and answers ok', async () => {
+    // A household `duplicate` is this same resend delivered by an attempt whose
+    // reopening transaction never landed. They have the quote, so finish.
     const ctx = ctxFor(declinedQuote());
     mocks.dbFn.mockReturnValue(ctx.db);
     mocks.enqueue.mockResolvedValue({
@@ -164,10 +166,37 @@ describe('resendQuote happy path', () => {
       suppressed: [{ recipientUid: 'kin-uid-1', reason: 'duplicate', existingId: 'n0', lastAtMs: 1 }],
     });
 
+    await expect(resendQuoteHandler(req({ invoiceId: 'q1' }))).resolves.toMatchObject({ ok: true });
+
+    const data = quoteWrite(ctx)!;
+    expect(data).toBeDefined();
+    expect(data.quoteDecision).toBe('__DELETE__');
+    expect(data.quoteResendCount).toEqual({ __increment: 1 });
+  });
+
+  it('#832: a household with no portal account is unreachable, refused before anything is sent', async () => {
+    // The office copy alone would otherwise count as "written" and reopen the
+    // quote with no household told.
+    const ctx = ctxFor(declinedQuote());
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.resolveUid.mockResolvedValue(null);
+
     const err = await resendQuoteHandler(req({ invoiceId: 'q1' })).catch((e) => e);
 
     expect(err.code).toBe('failed-precondition');
-    expect(err.details).toMatchObject({ code: 'quote_resend_duplicate' });
+    expect(err.details).toMatchObject({ code: 'quote_resend_unreachable' });
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(quoteWrite(ctx)).toBeUndefined();
+  });
+
+  it('#832: still unreachable when the dispatcher wrote nothing and did not name the household', async () => {
+    const ctx = ctxFor(declinedQuote());
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.enqueue.mockResolvedValue({ written: [], suppressed: [] });
+
+    const err = await resendQuoteHandler(req({ invoiceId: 'q1' })).catch((e) => e);
+
+    expect(err.details).toMatchObject({ code: 'quote_resend_unreachable' });
     expect(quoteWrite(ctx)).toBeUndefined();
   });
 

@@ -81,7 +81,7 @@ describe('resendQuote over the real dispatcher', () => {
     expect(householdQuoteMessages(ctx.writes)[1].data.data).toMatchObject({ resent: true });
   });
 
-  it('a retry of the same resend is deduped and refused loudly; the next real resend sends', async () => {
+  it('a retry of a resend that already reached the household reopens the quote without a second copy', async () => {
     const ctx = buildDbMock({ writeThrough: true, docs: { 'invoices/q1': declined() } });
     mocks.dbFn.mockReturnValue(ctx.db);
 
@@ -89,11 +89,18 @@ describe('resendQuote over the real dispatcher', () => {
     expect(householdQuoteMessages(ctx.writes)).toHaveLength(1);
 
     // The retry: the quote reads as it did before the first attempt's
-    // transaction (declined, count unchanged), e.g. that commit never landed.
+    // transaction (declined, count unchanged), i.e. that commit never landed
+    // although the household was already told.
     await ctx.db.collection('invoices').doc('q1').set(declined());
     vi.setSystemTime(NOW + 20_000);
-    const err = await resendQuoteHandler(req()).catch((e) => e);
-    expect(err.details).toMatchObject({ code: 'quote_resend_duplicate' });
+    await expect(resendQuoteHandler(req())).resolves.toMatchObject({ ok: true });
+    expect(householdQuoteMessages(ctx.writes)).toHaveLength(1);
+
+    // The quote is open again, so a later press is refused by the quote's own
+    // state and still sends nothing.
+    vi.setSystemTime(NOW + 30_000);
+    const later = await resendQuoteHandler(req()).catch((e) => e);
+    expect(later.code).toBe('failed-precondition');
     expect(householdQuoteMessages(ctx.writes)).toHaveLength(1);
 
     // The household declines the revised quote and the office resends again,
@@ -102,5 +109,21 @@ describe('resendQuote over the real dispatcher', () => {
     vi.setSystemTime(NOW + 40_000);
     await expect(resendQuoteHandler(req())).resolves.toMatchObject({ ok: true });
     expect(householdQuoteMessages(ctx.writes)).toHaveLength(2);
+  });
+
+  it('a household with no portal account: nothing sent, quote left declined, even though the office would get a copy', async () => {
+    const { resolveKinfolkUid } = await import('../src/lib/resolveKinfolkUid');
+    vi.mocked(resolveKinfolkUid).mockResolvedValueOnce(null);
+    const ctx = buildDbMock({
+      writeThrough: true,
+      docs: { 'invoices/q1': declined(), 'businessSettings/admins': { uids: ['admin1'] } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const err = await resendQuoteHandler(req()).catch((e) => e);
+
+    expect(err.details).toMatchObject({ code: 'quote_resend_unreachable' });
+    expect(ctx.writes.some((w) => w.path.startsWith('notifications/'))).toBe(false);
+    expect((await ctx.db.collection('invoices').doc('q1').get()).data()?.quoteDecision).toBe('denied');
   });
 });
