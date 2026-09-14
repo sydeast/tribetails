@@ -44,6 +44,7 @@ import com.tribetails.auntieos.web.data.Kin411
 import com.tribetails.auntieos.web.data.KinCareReport
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.Kinfolk
+import com.tribetails.auntieos.web.data.emergencyContactsOf
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieKeyValueRow
@@ -255,13 +256,17 @@ fun KinCareDetailScreen(
         }
 
         // ---- Emergency contact ----
-        if (kinfolk != null && (kinfolk.emergencyContactName.isNotBlank() || kinfolk.emergencyContactPhone.isNotBlank())) {
+        // #829: up to two, in call order.
+        val emergencyContacts = kinfolk?.let { emergencyContactsOf(it) }.orEmpty()
+        if (emergencyContacts.isNotEmpty()) {
             DenPanel {
-                PanelHeading("Emergency contact", Lucide.ShieldAlert)
+                PanelHeading(if (emergencyContacts.size > 1) "Emergency Contacts" else "Emergency Contact", Lucide.ShieldAlert)
                 Spacer(Modifier.height(6.dp))
-                FactRow(Lucide.ShieldAlert, label = "Name",         value = kinfolk.emergencyContactName)
-                FactRow(Lucide.ShieldAlert, label = "Phone",        value = kinfolk.emergencyContactPhone)
-                FactRow(Lucide.ShieldAlert, label = "Relationship", value = kinfolk.emergencyContactRelation)
+                emergencyContacts.forEachIndexed { i, ec ->
+                    FactRow(Lucide.ShieldAlert, label = if (i == 0) "Called first" else "Called second", value = ec.name)
+                    FactRow(Lucide.ShieldAlert, label = "Phone",        value = ec.phone)
+                    FactRow(Lucide.ShieldAlert, label = "Relationship", value = ec.relationship.orEmpty())
+                }
             }
             Spacer(Modifier.height(18.dp))
         }

@@ -189,4 +189,31 @@ describe('saveHomeAccessHandler', () => {
     expect(w!.data.updatedByUid).toBe('u1');
     expect(w!.merge).toBe(true);
   });
+
+  // #829 review: the same strip saveTribeProfile does. A home-access save must
+  // never become a second, unvalidated Emergency Contact store.
+  it('strips every emergencyContact* row from customFields and keeps the rest in order', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { saveHomeAccessHandler } = await import('../src/portal/saveHomeAccess');
+    await saveHomeAccessHandler({
+      data: {
+        kinfolkId: '3',
+        customFields: [
+          { key: 'alarm', label: 'Alarm Code', value: '5678' },
+          { key: 'emergencyContactName', label: 'Emergency Contact', value: 'Rae Mercer' },
+          { key: 'emergencyContactPhone', label: 'Emergency Contact Phone', value: '805-555-0199' },
+          { key: 'emergencyContactRelation', label: 'Emergency Contact Relation', value: 'Sister' },
+          { key: 'shed', label: 'Shed', value: 'Left of the gate' },
+        ],
+      },
+      auth: { uid: 'u1' },
+    } as any);
+    const w = ctx.writes.find((w) => w.path === 'families/3/homeAccess/current');
+    expect(w!.data.customFields).toEqual([
+      { key: 'alarm', label: 'Alarm Code', value: '5678' },
+      { key: 'shed', label: 'Shed', value: 'Left of the gate' },
+    ]);
+    expect(JSON.stringify(w!.data)).not.toContain('Rae Mercer');
+  });
 });

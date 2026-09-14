@@ -108,10 +108,10 @@ data class RestWrite(
     val collection: String,
     val id: String,
     /**
-     * Field names carried by a field-level PATCH (`patchFields`). Empty for a
-     * DELETE, and since #825 also empty for a whole-document PATCH (`setDoc`)
-     * and a POST (`addDoc`), which send a body rather than an updateMask: what
-     * those two record is WHICH document was addressed, not which fields moved.
+     * Field names carried by a field-level PATCH (`patchFields`) or a MERGE
+     * (`mergeDoc`, its updateMask), and since #829 the top-level body keys of a
+     * POST (`addDoc`). Empty for a DELETE and a whole-document PATCH (`setDoc`),
+     * which records only WHICH document was addressed.
      */
     val fields: Set<String> = emptySet(),
 )
@@ -322,10 +322,21 @@ internal actual suspend fun platformUpdateMediaTags(mediaId: String, taggedKinId
 
 // ── writes: live REST ───────────────────────────────────────────────────────
 
+// #829: the create body carries no Emergency Contact key (kinfolkWriteJson).
 internal actual suspend fun platformCreateKinfolk(k: Kinfolk): WriteResult<String> =
-    runCatching { WriteResult.Ok(JvmFirestoreRest.addDoc("kinfolk", jsonOut.encodeToString(k))) }.getOrElse { WriteResult.Err(it.message ?: "create failed") }
-internal actual suspend fun platformUpdateKinfolk(k: Kinfolk): WriteResult<Unit> =
-    runCatching { JvmFirestoreRest.setDoc("kinfolk", k._id, jsonOut.encodeToString(k)); WriteResult.Ok(Unit) }.getOrElse { WriteResult.Err(it.message ?: "update failed") }
+    runCatching { WriteResult.Ok(JvmFirestoreRest.addDoc("kinfolk", kinfolkWriteJson(k))) }.getOrElse { WriteResult.Err(it.message ?: "create failed") }
+// #829: a MERGE write, not setDoc. setDoc replaced the whole document, which
+// deleted every field the model does not send. The body is only the fields the
+// caller changed (FirestoreClient.updateKinfolk diffs against its read), so the
+// mask never names an untouched field or an Emergency Contact key. Every desktop
+// kinfolk update (edit form, photo, tags) goes through here.
+internal actual suspend fun platformUpdateKinfolkFields(kinfolkId: String, changes: List<KinfolkFieldChange>): WriteResult<Unit> =
+    runCatching {
+        require(kinfolkId.isNotBlank()) { "updateKinfolk requires a kinfolk id" }
+        require(changes.none { it.path.first() == "_id" || it.path.first() in KINFOLK_WRITE_EXCLUDED_KEYS }) { "updateKinfolk: a reserved key reached the write" }
+        if (changes.isNotEmpty()) JvmFirestoreRest.mergeFieldChanges("kinfolk", kinfolkId, changes)
+        WriteResult.Ok(Unit)
+    }.getOrElse { WriteResult.Err(it.message ?: "update failed") }
 internal actual suspend fun platformArchiveKinfolk(id: String): WriteResult<Unit> =
     if (JvmFirestoreRest.patchFields("kinfolk", id, mapOf("status" to JsonPrimitive("archived")))) WriteResult.Ok(Unit) else WriteResult.Err("archive failed")
 internal actual suspend fun platformCreateKin(k: Kin): WriteResult<String> =

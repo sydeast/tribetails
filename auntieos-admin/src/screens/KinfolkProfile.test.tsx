@@ -115,7 +115,7 @@ describe('mergeKinfolkProfile (pure)', () => {
     expect(p._id).toBe('k9');
     expect(p.firstName).toBe('A');
     expect(p.gateCode).toBe('');
-    expect(p.emergencyContactPhone).toBe('');
+    expect(p.emergencyContacts).toEqual([]);
     expect(p.status).toBe('active');
   });
   it('ignores non-string field values (never coerces to "undefined")', () => {
@@ -135,16 +135,21 @@ describe('KinfolkProfile', () => {
     expect(getKinfolkProfile).toHaveBeenCalledWith('k1');
   });
 
-  it('omits all-blank sections (no empty Emergency Contacts/Vet panels)', async () => {
+  it('omits the empty Vet panel, but still shows Emergency Contacts, flagged (#829)', async () => {
     getKinfolkProfile.mockResolvedValue(profile());
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
     await screen.findByText('512-555-1000');
-    expect(screen.queryByRole('heading', { name: 'Emergency Contacts' })).toBeNull();
+    // #829: the Emergency Contacts panel is never omitted. A household with
+    // none still needs it, it is where the flag saying so lives.
+    expect(screen.getByRole('heading', { name: 'Emergency Contacts' })).toBeInTheDocument();
+    expect(screen.getByText('No Emergency Contact')).toBeInTheDocument();
     expect(screen.queryByText('Vet clinic')).toBeNull();
   });
 
   it('shows the Emergency Contacts section when a field is present, renamed from "Emergency" (#680)', async () => {
-    getKinfolkProfile.mockResolvedValue(profile({ emergencyContactName: 'Sam', emergencyContactPhone: '555-9' }));
+    getKinfolkProfile.mockResolvedValue(
+      profile({ emergencyContacts: [{ name: 'Sam', phone: '555-9', relationship: null, recordedAt: null, updatedAt: null }] }),
+    );
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
     expect(await screen.findByRole('heading', { name: 'Emergency Contacts' })).toBeInTheDocument();
     expect(screen.getByText('Sam')).toBeInTheDocument();
@@ -276,6 +281,33 @@ describe('KinfolkProfile', () => {
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
     await screen.findByText('512-555-1000');
     expect(screen.queryByRole('heading', { name: 'Tags' })).toBeNull();
+  });
+});
+
+describe('Emergency Contacts panel (#829)', () => {
+  it('lists both contacts in call order under Emergency Contacts', async () => {
+    getKinfolkProfile.mockResolvedValue(
+      mergeKinfolkProfile('kf1', {
+        firstName: 'Jamie',
+        lastName: 'Halbrook',
+        emergencyContacts: [
+          { name: 'Rae Halbrook', phone: '+15125550190', relationship: 'Sister' },
+          { name: 'Lee Park', phone: '+15125550177', relationship: null },
+        ],
+      }),
+    );
+    render(<KinfolkProfile kinfolkId="kf1" kinfolkName="Jamie Halbrook" kin={[]} onBack={vi.fn()} />);
+    const panel = (await screen.findByText('Emergency Contacts')).closest('section') as HTMLElement;
+    const names = within(panel).getAllByTestId('ec-name').map((n) => n.textContent);
+    expect(names).toEqual(['Rae Halbrook', 'Lee Park']);
+    expect(within(panel).queryByText('No Emergency Contact')).toBeNull();
+  });
+
+  it('flags a household with none, and still renders the panel', async () => {
+    getKinfolkProfile.mockResolvedValue(mergeKinfolkProfile('kf1', { firstName: 'Jamie', lastName: 'Halbrook' }));
+    render(<KinfolkProfile kinfolkId="kf1" kinfolkName="Jamie Halbrook" kin={[]} onBack={vi.fn()} />);
+    const panel = (await screen.findByText('Emergency Contacts')).closest('section') as HTMLElement;
+    expect(within(panel).getByText('No Emergency Contact')).toBeInTheDocument();
   });
 });
 

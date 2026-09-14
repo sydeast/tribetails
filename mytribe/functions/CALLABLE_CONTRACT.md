@@ -1235,6 +1235,21 @@ every client in both directions: these callables are the only door.
   `permission-denied` for what it is and says the primary keeps the list, rather
   than drawing a broken panel over a working server.
 
+### saveEmergencyContacts / listEmergencyContacts (#829)
+- `saveEmergencyContacts`
+  - req `{ kinfolkId?: string, contacts: Array<{ name: string /* 1..80 */, phone: string /* valid, stored E.164 */, relationship?: string | null /* <= 40, '' and null persist as null */ }> }` (strict, max 2)
+  - res `{ contacts: EmergencyContactDTO[] }`
+  - Replaces `kinfolk/{id}.emergencyContacts` whole, index 0 called first. A contact matched by phone, then name, keeps `recordedAt`.
+  - Refuses `[]` with `failed-precondition` "A household needs at least one Emergency Contact".
+  - Refuses a contact whose phone matches the primary's `phoneNumber`/`secondaryPhone` or any member's `phone`, or whose name matches a member name (case and spacing ignored), with `failed-precondition` "An Emergency Contact has to be someone outside the household."
+- `listEmergencyContacts`
+  - req `{ kinfolkId?: string }`, res `{ contacts: EmergencyContactDTO[], canEdit: boolean, legacy: boolean }`
+  - `legacy: true` means the doc has no array yet and the flat `emergencyContact*` triple was projected as one contact.
+- `EmergencyContactDTO` `{ name, phone, relationship: string | null, recordedAt: string | null, updatedAt: string | null }` (ISO-8601)
+- GATE: `resolveKinfolkAccess` + `requireKinfolkPerm(..., 'home_access')` for save; any ACTIVE member (or staff, or a legacy primary with no member doc) for list, with `canEdit` from `hasKinfolkPerm(..., 'home_access')`. Secrets `SENTRY_DSN`, `AUNTIE_OPERATOR_UIDS`.
+- NEVER a recipient: no audience builder reads these fields (`test/emergencyContactsNeverMessaged.test.ts`). NEVER logged: name or phone.
+- Clients: `auntieos-admin/src/api/emergencyContacts.ts`, Android `AuntieRepository.listEmergencyContacts / saveEmergencyContacts`, desktop `FirestoreClient.listEmergencyContacts / saveEmergencyContacts`, `mytribe/web/src/api/tribeApi.ts`, `PortalApi.listEmergencyContacts / saveEmergencyContacts`.
+
 ### expireStaleInvites (scheduled, NOT a callable)
 - `onSchedule('every day 02:00', 'America/New_York')`. There is no client trigger,
   and no admin "expire now" button exists or should be built: nothing in the

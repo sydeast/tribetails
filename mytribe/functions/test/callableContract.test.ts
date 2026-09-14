@@ -52,6 +52,10 @@ import { Args as SaveDashboardLayoutArgs } from '../src/admin/saveDashboardLayou
 // a RECURSIVE key-path signature so a nested rename fails the guard too.
 import { Args as SaveFormSchemaArgs } from '../src/admin/saveFormSchema';
 import { Args as SaveTemplateArgs } from '../src/admin/saveTemplate';
+// #829: five hand-built clients (admin web, admin Android, desktop, portal web,
+// portal Android) mirror this payload, and `contacts[]` is nested, so it gets
+// the recursive signature.
+import { Args as SaveEmergencyContactsArgs } from '../src/portal/emergencyContacts';
 import { Args as ImportSeedTemplatesArgs } from '../src/admin/importSeedTemplates';
 import { Args as BroadcastMessageArgs } from '../src/admin/broadcastMessage';
 // Marketing blasts (2026-09-12). Frozen from birth: the callable now takes the
@@ -393,6 +397,10 @@ const FROZEN_DEEP_SHAPES: Record<string, { schema: z.ZodTypeAny; signature: stri
       'sectionDefinitions[].description', 'sectionDefinitions[].title',
       'subject', 'tags[]', 'templateId', 'title', 'usageInstructions',
     ],
+  },
+  saveEmergencyContacts: {
+    schema: SaveEmergencyContactsArgs,
+    signature: ['contacts[].name', 'contacts[].phone', 'contacts[].relationship', 'kinfolkId'],
   },
   // Issue #468. Frozen from birth, because two hand-built clients mirror it:
   // the React admin's import view and the Android Templates screen.

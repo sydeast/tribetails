@@ -53,6 +53,12 @@ vi.mock('../api/directoryWrite', async (orig) => ({
   updateKinfolkTags,
 }));
 
+const { saveEmergencyContacts } = vi.hoisted(() => ({ saveEmergencyContacts: vi.fn() }));
+vi.mock('../api/emergencyContacts', async (orig) => ({
+  ...(await orig<typeof import('../api/emergencyContacts')>()),
+  saveEmergencyContacts,
+}));
+
 import { KinfolkEdit } from './KinfolkEdit';
 import type { VetClinic } from '../api/vetClinics';
 import { mergeKinfolkProfile } from '../api/kinfolkProfile';
@@ -67,14 +73,14 @@ function household(over: Record<string, unknown> = {}): KinfolkProfile {
   return mergeKinfolkProfile('kf1', {
     firstName: 'Jamie',
     lastName: 'Halbrook',
-    phoneNumber: '(512) 555-1234',
+    phoneNumber: '(512) 555-0134',
     email: 'jamie@example.com',
     status: 'active',
     serviceAddress: '123 Bark Ave',
     gateCode: '4242',
     wifiPassword: 'sunflower-porch',
     emergencyContactName: 'Rae Halbrook',
-    emergencyContactPhone: '512-555-9090',
+    emergencyContactPhone: '512-555-0190',
     ...over,
   });
 }
@@ -128,6 +134,7 @@ beforeEach(() => {
   saveBusinessSettings.mockResolvedValue({ updatedAt: 'now', updatedBy: 'auntie' });
   updateKinfolkTags.mockReset();
   updateKinfolkTags.mockResolvedValue(undefined);
+  saveEmergencyContacts.mockReset().mockResolvedValue([]);
 });
 
 describe('KinfolkEdit: rendering from data', () => {
@@ -135,9 +142,9 @@ describe('KinfolkEdit: rendering from data', () => {
     mount();
     expect(await screen.findByLabelText('First name')).toHaveValue('Jamie');
     expect(fieldByLabel('Last name')).toHaveValue('Halbrook');
-    expect(fieldByLabel('Primary phone')).toHaveValue('(512) 555-1234');
+    expect(fieldByLabel('Primary phone')).toHaveValue('(512) 555-0134');
     expect(fieldByLabel('Service address')).toHaveValue('123 Bark Ave');
-    expect(fieldByLabel('Emergency contact name')).toHaveValue('Rae Halbrook');
+    expect(await screen.findByLabelText('Name', { selector: '#kfedit-ec-0-name' })).toHaveValue('Rae Halbrook');
   });
 
   it('shows the loading skeleton, not an empty state, while the read is in flight', async () => {
@@ -243,6 +250,7 @@ describe('KinfolkEdit: the vet is not authored here any more', () => {
   it('sends NO vet key in the save patch, so kinfolk cannot hold a second copy', async () => {
     mount();
     await screen.findByLabelText('First name');
+    await userEvent.type(fieldByLabel('Last name'), 's');
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
     await waitFor(() => expect(updateKinfolkProfile).toHaveBeenCalled());
     const patch = updateKinfolkProfile.mock.calls[0]?.[1] as Record<string, unknown>;
@@ -255,6 +263,7 @@ describe('KinfolkEdit: the vet is not authored here any more', () => {
     // alone rather than cleared. The A2 migration is what removes them.
     mount();
     await screen.findByLabelText('First name');
+    await userEvent.type(fieldByLabel('Last name'), 's');
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
     await waitFor(() => expect(updateKinfolkProfile).toHaveBeenCalled());
     expect(updateKinfolkProfile.mock.calls[0]?.[1]).not.toHaveProperty('vetClinicName');
@@ -356,11 +365,11 @@ describe('KinfolkEdit: blur validation', () => {
   });
 
   it('reveals every outstanding error at once when Save is pressed', async () => {
-    mount({ serviceAddress: '', emergencyContactName: '' });
+    mount({ serviceAddress: '', phoneNumber: '123' });
     await screen.findByLabelText('First name');
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
     expect(await screen.findByText(/a service address is required/i)).toBeInTheDocument();
-    expect(screen.getByText(/an emergency contact name is required/i)).toBeInTheDocument();
+    expect(screen.getByText(/10 digit phone number/i)).toBeInTheDocument();
     expect(updateKinfolkProfile).not.toHaveBeenCalled();
   });
 });
@@ -376,8 +385,8 @@ describe('KinfolkEdit: save', () => {
     await waitFor(() => expect(updateKinfolkProfile).toHaveBeenCalledTimes(1));
     const [id, patch] = updateKinfolkProfile.mock.calls[0]!;
     expect(id).toBe('kf1');
-    expect(patch.firstName).toBe('Jaime');
-    expect(patch.lastName).toBe('Halbrook');
+    // #829 review item 5: only the field the operator changed.
+    expect(patch).toEqual({ firstName: 'Jaime' });
     await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
   });
 
@@ -395,11 +404,12 @@ describe('KinfolkEdit: save', () => {
       profilePictureUrl: 'https://example.test/photo.jpg',
     });
     await screen.findByLabelText('First name');
+    await userEvent.type(fieldByLabel('Last name'), 's');
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
 
     await waitFor(() => expect(updateKinfolkProfile).toHaveBeenCalledTimes(1));
     const patch = updateKinfolkProfile.mock.calls[0]![1] as Record<string, unknown>;
-    expect(Object.keys(patch).sort()).toEqual([...KINFOLK_EDIT_FIELDS].sort());
+    for (const key of Object.keys(patch)) expect(KINFOLK_EDIT_FIELDS).toContain(key);
     expect(patch).not.toHaveProperty('preferredContactMethod');
     expect(patch).not.toHaveProperty('bestTimeToContact');
     expect(patch).not.toHaveProperty('tags');
@@ -427,6 +437,7 @@ describe('KinfolkEdit: save', () => {
     updateKinfolkProfile.mockRejectedValue(new Error('permission-denied'));
     const { onDone } = mount();
     await screen.findByLabelText('First name');
+    await userEvent.type(fieldByLabel('Last name'), 's');
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
     expect(
       await screen.findByText(/updateKinfolkProfile failed:.*permission-denied/i),
@@ -520,5 +531,128 @@ describe('KinfolkEdit: cancel', () => {
     await screen.findByLabelText('First name');
     await userEvent.click(screen.getAllByRole('button', { name: /^cancel$/i })[0]!);
     expect(onCancel).toHaveBeenCalled();
+  });
+});
+
+describe('Emergency Contacts on the edit form (#829)', () => {
+  it('the profile write no longer carries any flat emergencyContact key', () => {
+    expect(KINFOLK_EDIT_FIELDS).not.toContain('emergencyContactName');
+    expect(KINFOLK_EDIT_FIELDS).not.toContain('emergencyContactPhone');
+    expect(KINFOLK_EDIT_FIELDS).not.toContain('emergencyContactRelation');
+  });
+
+  it('adds a second contact and saves both through the callable, in order', async () => {
+    getKinfolkProfile.mockResolvedValue(household());
+    updateKinfolkProfile.mockResolvedValue(undefined);
+    render(<KinfolkEdit kinfolkId="kf1" kinfolkName="Jamie Halbrook" onDone={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByDisplayValue('Rae Halbrook');
+    await userEvent.click(screen.getByRole('button', { name: 'Add a second Emergency Contact' }));
+    await userEvent.type(screen.getByLabelText('Name', { selector: '#kfedit-ec-1-name' }), 'Lee Park');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#kfedit-ec-1-phone' }), '5125550177');
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(saveEmergencyContacts).toHaveBeenCalledTimes(1));
+    expect(saveEmergencyContacts).toHaveBeenCalledWith('kf1', [
+      { name: 'Rae Halbrook', phone: '512-555-0190', relationship: '' },
+      { name: 'Lee Park', phone: '5125550177', relationship: '' },
+    ]);
+    // Contacts only: the kinfolk document is not written at all (#829 review item 5).
+    expect(updateKinfolkProfile).not.toHaveBeenCalled();
+  });
+
+  it("refuses the household's own phone on the contact editor, with the spec message, and never calls the callable", async () => {
+    const onDone = vi.fn();
+    getKinfolkProfile.mockResolvedValue(household());
+    render(<KinfolkEdit kinfolkId="kf1" kinfolkName="Jamie Halbrook" onDone={onDone} onCancel={vi.fn()} />);
+    const phone = await screen.findByLabelText('Phone', { selector: '#kfedit-ec-0-phone' });
+    await userEvent.clear(phone);
+    await userEvent.type(phone, '(512) 555-0134');
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(await screen.findByTestId('kfedit-ec-error')).toHaveTextContent('An Emergency Contact has to be someone outside the household.');
+    // Nothing else changed, so there is no household write either.
+    expect(updateKinfolkProfile).not.toHaveBeenCalled();
+    expect(saveEmergencyContacts).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it('a household with none can still save unrelated edits, and shows the flag', async () => {
+    getKinfolkProfile.mockResolvedValue(household({ emergencyContactName: '', emergencyContactPhone: '' }));
+    updateKinfolkProfile.mockResolvedValue(undefined);
+    const onDone = vi.fn();
+    render(<KinfolkEdit kinfolkId="kf1" kinfolkName="Jamie Halbrook" onDone={onDone} onCancel={vi.fn()} />);
+    expect(await screen.findByText('No Emergency Contact')).toBeInTheDocument();
+    await userEvent.type(fieldByLabel('Last name'), 's');
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(updateKinfolkProfile).toHaveBeenCalledTimes(1));
+    expect(saveEmergencyContacts).not.toHaveBeenCalled();
+  });
+
+  // #829 review item 5: a contacts-only save must not touch the kinfolk document.
+  it('a contacts-only save writes no household field at all', async () => {
+    const onDone = vi.fn();
+    getKinfolkProfile.mockResolvedValue(household());
+    render(<KinfolkEdit kinfolkId="kf1" kinfolkName="Jamie Halbrook" onDone={onDone} onCancel={vi.fn()} />);
+    await userEvent.type(await screen.findByLabelText('Relationship (optional)', { selector: '#kfedit-ec-0-relationship' }), 'Sister');
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(saveEmergencyContacts).toHaveBeenCalledTimes(1));
+    expect(updateKinfolkProfile).not.toHaveBeenCalled();
+    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+  });
+
+  // #829 review item 14 (the flag never blocks other edits): a half-filled
+  // contact saves the household anyway, then says what the contact still needs.
+  it('a half-filled contact does not block the household save: the household saves, the contact problem shows on the editor', async () => {
+    const onDone = vi.fn();
+    getKinfolkProfile.mockResolvedValue(household());
+    render(<KinfolkEdit kinfolkId="kf1" kinfolkName="Jamie Halbrook" onDone={onDone} onCancel={vi.fn()} />);
+    await userEvent.clear(await screen.findByLabelText('Phone', { selector: '#kfedit-ec-0-phone' }));
+    await userEvent.type(fieldByLabel('Last name'), 's');
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(updateKinfolkProfile).toHaveBeenCalledWith('kf1', { lastName: 'Halbrooks' }));
+    expect(await screen.findByTestId('kfedit-ec-error')).toHaveTextContent('An Emergency Contact needs a phone number.');
+    expect(saveEmergencyContacts).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+
+    // Fixing the contact and saving again sends the contact alone: the household
+    // field already landed and is not re-sent.
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#kfedit-ec-0-phone' }), '8055550199');
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(saveEmergencyContacts).toHaveBeenCalledTimes(1));
+    expect(updateKinfolkProfile).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+  });
+
+  it("a refused contact save shows the server's own message on the editor, with no call-name prefix", async () => {
+    saveEmergencyContacts.mockRejectedValue(new Error('An Emergency Contact has to be someone outside the household.'));
+    getKinfolkProfile.mockResolvedValue(household());
+    render(<KinfolkEdit kinfolkId="kf1" kinfolkName="Jamie Halbrook" onDone={vi.fn()} onCancel={vi.fn()} />);
+    await userEvent.type(await screen.findByLabelText('Relationship (optional)', { selector: '#kfedit-ec-0-relationship' }), 'Sister');
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    const err = await screen.findByTestId('kfedit-ec-error');
+    expect(err).toHaveTextContent('An Emergency Contact has to be someone outside the household.');
+    expect(screen.queryByText(/saveEmergencyContacts failed/)).toBeNull();
+  });
+
+  it('says Unsaved changes after an edit, and not for whitespace alone', async () => {
+    mount();
+    await screen.findByLabelText('First name');
+    expect(screen.queryByTestId('kfedit-unsaved')).toBeNull();
+    await userEvent.type(fieldByLabel('First name'), ' ');
+    await userEvent.type(screen.getByLabelText('Name', { selector: '#kfedit-ec-0-name' }), ' ');
+    expect(screen.queryByTestId('kfedit-unsaved')).toBeNull();
+    await userEvent.type(screen.getByLabelText('Relationship (optional)', { selector: '#kfedit-ec-0-relationship' }), 'S');
+    expect(screen.getByTestId('kfedit-unsaved')).toHaveTextContent('Unsaved changes');
+  });
+
+  it('the who-gets-called sentence sits behind the info button beside the title, not as copy under it', async () => {
+    mount();
+    const heading = await screen.findByRole('heading', { name: 'Emergency Contacts' });
+    const panel = heading.closest('section')!;
+    const tip = within(panel).getByRole('tooltip', { hidden: true });
+    expect(tip).toHaveTextContent('Called only when no kinfolk can be reached. The first one is called first.');
+    expect(tip).not.toBeVisible();
+    await userEvent.click(within(panel).getByRole('button', { name: 'About this section' }));
+    expect(tip).toBeVisible();
+    expect(screen.queryByText('Who Auntie calls if something goes wrong.')).toBeNull();
   });
 });

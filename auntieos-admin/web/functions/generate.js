@@ -12,6 +12,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { withoutEmergencyContacts } = require('./stripEmergencyContacts');
 
 class GenerateError extends Error {
   constructor(message, status = 400, extra = {}) {
@@ -321,7 +322,8 @@ async function resolveKinfolk(db, v) {
     if (!snap.exists) {
       throw new GenerateError(`No Kinfolk with id "${v.kinfolk_id}"`, 404);
     }
-    return { id: v.kinfolk_id, ...snap.data() };
+    // #829: an Emergency Contact never reaches a prompt or a draft.
+    return withoutEmergencyContacts({ id: v.kinfolk_id, ...snap.data() });
   }
 
   // Full-collection read is REQUIRED on this path (NOTE-48): matchKinfolk()
@@ -339,7 +341,7 @@ async function resolveKinfolk(db, v) {
       known: kinfolkDocs.map((k) => [k.firstName, k.lastName].filter(Boolean).join(' ')).filter(Boolean),
     });
   }
-  return kinfolk;
+  return withoutEmergencyContacts(kinfolk);
 }
 
 async function resolveContext(db, v) {

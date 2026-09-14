@@ -98,9 +98,6 @@ describe('kinfolk profile', () => {
     const WRITTEN_FIELDS = [
       'phoneNumber',
       'serviceAddress',
-      'emergencyContactName',
-      'emergencyContactPhone',
-      'emergencyContactRelation',
       'tags',
     ] as const;
 
@@ -114,6 +111,14 @@ describe('kinfolk profile', () => {
         statusCode: 200,
         body: { result: { suggestions: [] } },
       });
+      cy.intercept('POST', CALLABLE('listEmergencyContacts'), {
+        statusCode: 200,
+        body: { result: { contacts: [], canEdit: true, legacy: false } },
+      });
+      cy.intercept('POST', CALLABLE('saveEmergencyContacts'), {
+        statusCode: 200,
+        body: { result: { contacts: [{ name: 'Priya Shah', phone: '+18055550199', relationship: 'Sister', recordedAt: null, updatedAt: null }] } },
+      }).as('saveEmergencyContacts');
       cy.signIn();
       cy.visit('/directory/e2e-kf-1');
       cy.contains('button', 'Edit').click();
@@ -124,10 +129,16 @@ describe('kinfolk profile', () => {
 
       cy.get('#kfedit-phoneNumber').clear().type('8055550100');
       cy.get('#addr-serviceAddress').clear().type(ADDRESS);
-      cy.get('#kfedit-emergencyContactName').clear().type('Priya Shah');
-      cy.get('#kfedit-emergencyContactPhone').clear().type('8055550199');
-      cy.get('#kfedit-emergencyContactRelation').clear().type('Sister');
+      cy.get('#kfedit-ec-0-name').clear().type('Priya Shah');
+      cy.get('#kfedit-ec-0-phone').clear().type('8055550199');
+      cy.get('#kfedit-ec-0-relationship').clear().type('Sister');
       cy.contains('button', 'Save changes').click();
+      cy.wait('@saveEmergencyContacts')
+        .its('request.body.data')
+        .should('deep.equal', {
+          kinfolkId: 'e2e-kf-1',
+          contacts: [{ name: 'Priya Shah', phone: '8055550199', relationship: 'Sister' }],
+        });
       // Back on the read-only profile: proof the save actually went through,
       // since a validation refusal would leave the edit form on screen.
       cy.get('.kprofile__hero', { timeout: 8_000 }).should('exist');

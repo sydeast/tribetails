@@ -88,6 +88,38 @@ export function saveHomeAccess(req: SaveHomeAccessRequest): Promise<SaveHomeAcce
   return call<SaveHomeAccessRequest, SaveHomeAccessResult>('saveHomeAccess', req);
 }
 
+// ── Emergency Contacts (functions/src/portal/emergencyContacts.ts, #829) ────
+
+export interface EmergencyContactDto {
+  name: string;
+  phone: string;
+  relationship: string | null;
+  recordedAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface ListEmergencyContactsResult {
+  contacts: EmergencyContactDto[];
+  /** True when the caller holds home_access (staff and the primary always do). */
+  canEdit: boolean;
+  legacy: boolean;
+}
+
+/** Any ACTIVE household member may read. Index 0 is called first. */
+export function listEmergencyContacts(kinfolkId?: string): Promise<ListEmergencyContactsResult> {
+  return call<{ kinfolkId?: string }, ListEmergencyContactsResult>('listEmergencyContacts', kinfolkId !== undefined ? { kinfolkId } : {});
+}
+
+export interface SaveEmergencyContactsRequest {
+  kinfolkId?: string;
+  contacts: Array<{ name: string; phone: string; relationship: string | null }>;
+}
+
+/** Replaces the household's list whole, index 0 called first. Needs home_access. */
+export function saveEmergencyContacts(req: SaveEmergencyContactsRequest): Promise<{ contacts: EmergencyContactDto[] }> {
+  return call<SaveEmergencyContactsRequest, { contacts: EmergencyContactDto[] }>('saveEmergencyContacts', req);
+}
+
 // ── getFormSchema (functions/src/portal/getFormSchema.ts) ───────────────────
 
 export type FormFieldType = 'text' | 'textarea' | 'select' | 'multiselect' | 'date' | 'number' | 'checkbox' | 'phone' | 'email';
@@ -534,6 +566,9 @@ export const PROFILE_RESERVED_KEYS = [
   'vetClinicName',
   'vetClinicPhone',
   'vetClinicAddress',
+  // #829: no longer written here; Emergency Contacts go through
+  // saveEmergencyContacts. Kept reserved so a stale copy is dropped from
+  // customFields on the next save instead of riding along forever.
   'emergencyContactName',
   'emergencyContactPhone',
   'emergencyContactRelation',

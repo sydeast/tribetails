@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-const { createKinfolk, mapboxSuggest, mapboxRetrieve } = vi.hoisted(() => ({
+const { createKinfolk, mapboxSuggest, mapboxRetrieve, saveEmergencyContacts } = vi.hoisted(() => ({
   createKinfolk: vi.fn(),
   mapboxSuggest: vi.fn(),
   mapboxRetrieve: vi.fn(),
+  saveEmergencyContacts: vi.fn(),
 }));
 vi.mock('../api/directoryWrite', async () => {
   const actual = await vi.importActual<typeof import('../api/directoryWrite')>('../api/directoryWrite');
@@ -19,13 +20,25 @@ vi.mock('../api/mapbox', async () => {
   const actual = await vi.importActual<typeof import('../api/mapbox')>('../api/mapbox');
   return { ...actual, mapboxSuggest, mapboxRetrieve };
 });
+vi.mock('../api/emergencyContacts', async () => {
+  const actual = await vi.importActual<typeof import('../api/emergencyContacts')>('../api/emergencyContacts');
+  return { ...actual, saveEmergencyContacts };
+});
 
 import { AddKinfolkDialog } from './AddKinfolkDialog';
+import { EMERGENCY_CONTACT_REQUIRED } from '../api/emergencyContacts';
+
+async function fillHousehold() {
+  await userEvent.type(screen.getByLabelText('First name'), 'Jamie');
+  await userEvent.type(screen.getByLabelText('Last name'), 'Halbrook');
+  await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-phone' }), '(512) 555-0134');
+}
 
 beforeEach(() => {
   createKinfolk.mockReset();
   mapboxSuggest.mockReset().mockResolvedValue([]);
   mapboxRetrieve.mockReset();
+  saveEmergencyContacts.mockReset().mockResolvedValue([]);
 });
 
 describe('AddKinfolkDialog', () => {
@@ -33,7 +46,7 @@ describe('AddKinfolkDialog', () => {
     render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} />);
     expect(screen.getByLabelText('First name')).toHaveValue('');
     expect(screen.getByLabelText('Last name')).toHaveValue('');
-    expect(screen.getByLabelText('Phone')).toHaveValue('');
+    expect(screen.getByLabelText('Phone', { selector: '#add-kinfolk-phone' })).toHaveValue('');
     expect(screen.getByLabelText('Email')).toHaveValue('');
     expect(screen.getByLabelText('Address')).toHaveValue('');
     expect(screen.getByLabelText('Status')).toHaveValue('active');
@@ -52,9 +65,11 @@ describe('AddKinfolkDialog', () => {
 
     await userEvent.type(screen.getByLabelText('First name'), '  Jamie  ');
     await userEvent.type(screen.getByLabelText('Last name'), '  Halbrook  ');
-    await userEvent.type(screen.getByLabelText('Phone'), '(512) 555-1234');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-phone' }), '(512) 555-0134');
     await userEvent.type(screen.getByLabelText('Email'), 'jamie@example.com');
     await userEvent.type(screen.getByLabelText('Address'), '123 Bark Ave');
+    await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
 
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
 
@@ -62,7 +77,7 @@ describe('AddKinfolkDialog', () => {
       expect(createKinfolk).toHaveBeenCalledWith({
         firstName: '  Jamie  ',
         lastName: '  Halbrook  ',
-        phoneNumber: '(512) 555-1234',
+        phoneNumber: '(512) 555-0134',
         email: 'jamie@example.com',
         status: 'active',
         serviceAddress: '123 Bark Ave',
@@ -82,6 +97,8 @@ describe('AddKinfolkDialog', () => {
     await userEvent.type(screen.getByLabelText('First name'), 'Jamie');
     await userEvent.type(screen.getByLabelText('Last name'), 'Halbrook');
     await userEvent.type(screen.getByLabelText('Address'), '123 Bark');
+    await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
 
     await userEvent.click(await screen.findByRole('button', { name: /Bark House/ }));
     await waitFor(() => expect(screen.getByLabelText('Address')).toHaveValue('123 Bark Ave, Austin TX 78701'));
@@ -103,6 +120,8 @@ describe('AddKinfolkDialog', () => {
     await userEvent.type(screen.getByLabelText('Last name'), 'Halbrook');
     await userEvent.type(screen.getByLabelText('Address'), '9 Unmapped Rd');
     expect(await screen.findByText(/address lookup failed: mapbox_502/i)).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
 
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
     await waitFor(() =>
@@ -136,6 +155,8 @@ describe('AddKinfolkDialog', () => {
 
     await userEvent.type(screen.getByLabelText('First name'), 'Jamie');
     await userEvent.type(screen.getByLabelText('Last name'), 'Halbrook');
+    await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
 
     expect(screen.getByRole('button', { name: /adding/i })).toBeDisabled();
@@ -153,6 +174,8 @@ describe('AddKinfolkDialog', () => {
 
     await userEvent.type(screen.getByLabelText('First name'), 'Jamie');
     await userEvent.type(screen.getByLabelText('Last name'), 'Halbrook');
+    await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
 
     expect(await screen.findByText(/createKinfolk failed:.*permission-denied/i)).toBeInTheDocument();
@@ -166,5 +189,101 @@ describe('AddKinfolkDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
     expect(onClose).toHaveBeenCalledOnce();
     expect(createKinfolk).not.toHaveBeenCalled();
+  });
+
+  it('requires an Emergency Contact before anything is created', async () => {
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    await fillHousehold();
+    await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
+    expect(await screen.findByText('A household needs at least one Emergency Contact.')).toBeInTheDocument();
+    expect(createKinfolk).not.toHaveBeenCalled();
+  });
+
+  it('titles the section "Emergency Contacts", with its sentence behind an info button beside the title', async () => {
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    const heading = screen.getByRole('heading', { name: /^Emergency Contacts/ });
+    const tip = within(heading).getByRole('tooltip', { hidden: true });
+    expect(tip).toHaveTextContent('Called only when no kinfolk can be reached. The first one is called first.');
+    await userEvent.click(within(heading).getByRole('button', { name: 'About this section' }));
+    expect(tip).toBeVisible();
+  });
+
+  // #829 review item 6.
+  it('closing with the household created but its contact unsaved names that household to the caller', async () => {
+    createKinfolk.mockResolvedValue('new-kf-9');
+    saveEmergencyContacts.mockRejectedValue(new Error('deadline-exceeded'));
+    const onLeftWithoutContact = vi.fn();
+    const onClose = vi.fn();
+    render(<AddKinfolkDialog onClose={onClose} onCreated={vi.fn()} onLeftWithoutContact={onLeftWithoutContact} />);
+    await fillHousehold();
+    await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550199');
+    await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
+    await screen.findByText(/deadline-exceeded/);
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    expect(onLeftWithoutContact).toHaveBeenCalledWith('new-kf-9');
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('closing before anything was created reports no household', async () => {
+    const onLeftWithoutContact = vi.fn();
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} onLeftWithoutContact={onLeftWithoutContact} />);
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    expect(onLeftWithoutContact).not.toHaveBeenCalled();
+  });
+
+  it('creates the household, then saves its contact', async () => {
+    createKinfolk.mockResolvedValue('new-kf-1');
+    saveEmergencyContacts.mockResolvedValue([]);
+    const onCreated = vi.fn();
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={onCreated} />);
+    await fillHousehold();
+    await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
+    await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith('new-kf-1'));
+    expect(saveEmergencyContacts).toHaveBeenCalledWith('new-kf-1', [{ name: 'Rae Halbrook', phone: '5125550190', relationship: '' }]);
+  });
+
+  it('when the contact save fails, says so and retries only the contact, never a second household', async () => {
+    createKinfolk.mockResolvedValue('new-kf-1');
+    saveEmergencyContacts.mockRejectedValueOnce(new Error('network')).mockResolvedValueOnce([]);
+    const onCreated = vi.fn();
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={onCreated} />);
+    await fillHousehold();
+    await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
+    await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
+    expect(await screen.findByText(/^network The household was created/)).toBeInTheDocument();
+    expect(screen.queryByText(/saveEmergencyContacts failed/)).toBeNull();
+    expect(onCreated).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contact' }));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith('new-kf-1'));
+    expect(createKinfolk).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-validates the contact on retry: clearing it after a failed save refuses locally, never a second callable call', async () => {
+    createKinfolk.mockResolvedValue('new-kf-1');
+    saveEmergencyContacts.mockRejectedValueOnce(new Error('network'));
+    const onCreated = vi.fn();
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={onCreated} />);
+    await fillHousehold();
+    await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
+    await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
+    expect(await screen.findByText(/^network The household was created/)).toBeInTheDocument();
+    expect(screen.queryByText(/saveEmergencyContacts failed/)).toBeNull();
+    expect(saveEmergencyContacts).toHaveBeenCalledTimes(1);
+
+    // The editor is still live during the retry (#829): clear it, then retry.
+    await userEvent.clear(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }));
+    await userEvent.clear(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contact' }));
+
+    expect(await screen.findByText(EMERGENCY_CONTACT_REQUIRED)).toBeInTheDocument();
+    // Refused locally: no second round trip, and never a second household.
+    expect(saveEmergencyContacts).toHaveBeenCalledTimes(1);
+    expect(createKinfolk).toHaveBeenCalledTimes(1);
+    expect(onCreated).not.toHaveBeenCalled();
   });
 });

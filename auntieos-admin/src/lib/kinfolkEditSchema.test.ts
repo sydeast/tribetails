@@ -26,9 +26,6 @@ function form(over: Partial<KinfolkEditInput> = {}): KinfolkEditInput {
     entryNotes: '',
     wifiName: '',
     wifiPassword: '',
-    emergencyContactName: 'Rae Halbrook',
-    emergencyContactPhone: '512-555-9090',
-    emergencyContactRelation: '',
     ...over,
   };
 }
@@ -89,18 +86,16 @@ describe('validateKinfolkEdit', () => {
 
   it('flags each required field by name', () => {
     const errors = validateKinfolkEdit(
-      form({ firstName: '  ', lastName: '', serviceAddress: '', emergencyContactName: '' }),
+      form({ firstName: '  ', lastName: '', serviceAddress: '' }),
     );
     expect(errors.firstName).toMatch(/first name/i);
     expect(errors.lastName).toMatch(/last name/i);
     expect(errors.serviceAddress).toMatch(/service address/i);
-    expect(errors.emergencyContactName).toMatch(/emergency contact name/i);
   });
 
-  it('requires a valid primary phone and a valid emergency phone', () => {
-    const errors = validateKinfolkEdit(form({ phoneNumber: '123', emergencyContactPhone: '' }));
+  it('requires a valid primary phone', () => {
+    const errors = validateKinfolkEdit(form({ phoneNumber: '123' }));
     expect(errors.phoneNumber).toMatch(/10 digit/i);
-    expect(errors.emergencyContactPhone).toMatch(/required/i);
   });
 
   it('lets the optional contact fields be blank but not wrong', () => {

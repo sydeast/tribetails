@@ -22,6 +22,7 @@ import {
 import { Avatar } from '../components/Avatar';
 import { GhostButton } from '../components/Buttons';
 import { MaskedValue } from '../components/MaskedValue';
+import { NoEmergencyContactFlag } from '../components/NoEmergencyContactFlag';
 import { KinfolkEdit } from './KinfolkEdit';
 import { HouseholdData } from './HouseholdData';
 import './KinfolkProfile.css';
@@ -71,18 +72,23 @@ function Fact({
   mono,
   secret,
   directions,
+  testId,
 }: {
   label: string;
   value: string;
   mono?: boolean;
   secret?: boolean;
   directions?: boolean;
+  testId?: string;
 }) {
   if (value.trim() === '') return null;
   return (
     <div className="kprofile__fact">
       <dt className="kprofile__fact-label">{label}</dt>
-      <dd className={mono ? 'kprofile__fact-value kprofile__fact-value--mono' : 'kprofile__fact-value'}>
+      <dd
+        className={mono ? 'kprofile__fact-value kprofile__fact-value--mono' : 'kprofile__fact-value'}
+        {...(testId !== undefined ? { 'data-testid': testId } : {})}
+      >
         {directions === true ? (
           <a href={directionsHref(value)} target="_blank" rel="noopener">
             {value}
@@ -456,15 +462,34 @@ export function KinfolkProfile({
                   </dl>
                 </DenPanel>
 
-                {any(p.emergencyContactName, p.emergencyContactPhone, p.emergencyContactRelation) && (
-                  <DenPanel title="Emergency Contacts">
-                    <dl className="kprofile__facts">
-                      <Fact label="Name" value={p.emergencyContactName} />
-                      <Fact label="Phone" value={p.emergencyContactPhone} mono />
-                      <Fact label="Relation" value={p.emergencyContactRelation} />
-                    </dl>
-                  </DenPanel>
-                )}
+                {/*
+                  ALWAYS RENDERED (#829), a household with none still needs the
+                  panel: it is where the flag saying so lives, not a gap in the
+                  layout. `p.emergencyContacts` is array-first with the old flat
+                  triple as a fallback (`emergencyContactsOf`), so a legacy
+                  household's single contact still shows here.
+                */}
+                <DenPanel title="Emergency Contacts">
+                  {p.emergencyContacts.length === 0 ? (
+                    <NoEmergencyContactFlag />
+                  ) : (
+                    <ol className="kprofile__ec-list">
+                      {p.emergencyContacts.map((c, i) => (
+                        <li key={`${c.phone}-${i}`}>
+                          <dl className="kprofile__facts">
+                            <Fact
+                              label={i === 0 ? 'Called first' : 'Called second'}
+                              value={c.name}
+                              testId="ec-name"
+                            />
+                            <Fact label="Phone" value={c.phone} mono />
+                            <Fact label="Relationship" value={c.relationship ?? ''} />
+                          </dl>
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                </DenPanel>
 
                 {/* THE VET IS READ, NOT OWNED. Operator ruling 2026-08-01:
                     "vet info lives on household data, it can be seen on the kin

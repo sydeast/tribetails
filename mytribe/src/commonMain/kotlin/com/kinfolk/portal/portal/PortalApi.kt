@@ -6,6 +6,8 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
@@ -1237,6 +1239,49 @@ class PortalApi(private val fns: FunctionsClient) {
             kinfolkId?.let { put("kinfolkId", it) }
             put("contactId", contactId)
         })
+    }
+
+    /**
+     * #829. Any ACTIVE member reads; `canEdit` is true only with home_access.
+     * Fail-loud: an answer with no contacts array throws rather than reading as
+     * a household with none, which would prompt for a contact it already has.
+     */
+    suspend fun listEmergencyContacts(kinfolkId: String? = null): EmergencyContactsResult {
+        val raw = fns.call("listEmergencyContacts", buildJsonObject { kinfolkId?.let { put("kinfolkId", it) } })
+        val rows = raw["contacts"] as? JsonArray ?: error("listEmergencyContacts: missing contacts array")
+        return EmergencyContactsResult(
+            contacts = rows.map { decodeEmergencyContact(it.jsonObject) },
+            canEdit = raw["canEdit"]?.jsonPrimitive?.booleanOrNull ?: false,
+            legacy = raw["legacy"]?.jsonPrimitive?.booleanOrNull ?: false,
+        )
+    }
+
+    /**
+     * #829. Replaces the household's list whole, index 0 called first. Sends
+     * exactly name, phone and relationship per slot; an empty relationship goes
+     * as null so it clears. Returns what the server stored.
+     */
+    suspend fun saveEmergencyContacts(kinfolkId: String? = null, contacts: List<EmergencyContactInput>): List<EmergencyContactDto> {
+        val raw = fns.call("saveEmergencyContacts", buildJsonObject {
+            kinfolkId?.let { put("kinfolkId", it) }
+            put("contacts", buildJsonArray {
+                contacts.forEach { c ->
+                    add(buildJsonObject {
+                        put("name", c.name.trim())
+                        put("phone", c.phone.trim())
+                        val rel = c.relationship.trim()
+                        if (rel.isEmpty()) put("relationship", JsonNull) else put("relationship", rel)
+                    })
+                }
+            })
+        })
+        val rows = raw["contacts"] as? JsonArray ?: error("saveEmergencyContacts: missing contacts array")
+        return rows.map { decodeEmergencyContact(it.jsonObject) }
+    }
+
+    private fun decodeEmergencyContact(o: JsonObject): EmergencyContactDto {
+        fun text(key: String): String? = o[key]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+        return EmergencyContactDto(text("name").orEmpty(), text("phone").orEmpty(), text("relationship"), text("recordedAt"), text("updatedAt"))
     }
 
     /** Builds a complete [MemberPermissions] from the callable JSON, defaulting

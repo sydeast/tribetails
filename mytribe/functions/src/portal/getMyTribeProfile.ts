@@ -7,6 +7,14 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { hasKinfolkPerm } from '../lib/memberGate';
+import { isStaff } from '../lib/staffGate';
+import {
+  LEGACY_EMERGENCY_CONTACT_KEYS,
+  legacyContactFromRows,
+  legacyServedKey,
+  readStoredEmergencyContacts,
+} from '../lib/emergencyContacts';
+import { canReadEmergencyContacts, recordLegacyServed } from './emergencyContacts';
 
 interface GetMyTribeProfileRequest { kinfolkId?: string }
 
@@ -43,13 +51,48 @@ export async function getMyTribeProfileHandler(
   const firestore = db();
   const { kinfolkId } = await resolveKinfolkAccess(uid, req.data?.kinfolkId, req.auth?.token?.admin === true, 'getMyTribeProfile');
 
-  const familySnap = await firestore.collection('families').doc(kinfolkId).get();
+  const [familySnap, kinfolkSnap, canReadContacts] = await Promise.all([
+    firestore.collection('families').doc(kinfolkId).get(),
+    firestore.doc(`kinfolk/${kinfolkId}`).get(),
+    // #829: the legacy Emergency Contact rows follow listEmergencyContacts' read
+    // rule. A member who is not ACTIVE gets the rest of the profile without them.
+    canReadEmergencyContacts(firestore, uid, kinfolkId, req.auth?.token?.admin === true, 'getMyTribeProfile'),
+  ]);
   const fam = (familySnap.data() ?? {}) as Record<string, unknown>;
+  const storedFields = parseCustomFields(fam['customFields']);
   const profile: TribeProfileDto = {
     kinfolkId,
     displayName: typeof fam['displayName'] === 'string' ? (fam['displayName'] as string) : `Tribe ${kinfolkId}`,
-    customFields: parseCustomFields(fam['customFields']),
+    customFields: canReadContacts
+      ? withLegacyEmergencyContactRows(storedFields, (kinfolkSnap.data() ?? {}) as Record<string, unknown>)
+      : storedFields.filter((f) => !LEGACY_EMERGENCY_CONTACT_KEYS.has(f.key)),
   };
+
+  // #829: remember, server-side, which contact this caller was just served, so
+  // saveTribeProfile can tell an old client's untouched echo of it from an edit
+  // even after the office changes slot 1. Never part of this response.
+  //
+  // #829 review: bookkeeping, so it never blocks or fails the read. It starts
+  // here and runs beside the home-access reads below; a failure is caught and
+  // logged, and the profile is returned regardless. It is settled before the
+  // return rather than left dangling, because a v2 function can be frozen as
+  // soon as it responds and an unawaited write may never land. Staff are never
+  // an old portal client, so they leave no record.
+  const isAdmin = req.auth?.token?.admin === true;
+  const served =
+    canReadContacts && !isStaff(uid, isAdmin, 'getMyTribeProfile') ? legacyContactFromRows(profile.customFields) : null;
+  const bookkeeping: Promise<void> =
+    served === null
+      ? Promise.resolve()
+      : recordLegacyServed(firestore, kinfolkId, uid, legacyServedKey(served)).catch((err: unknown) => {
+          logEvent({
+            severity: 'warn',
+            function: 'getMyTribeProfile',
+            event: 'portal.tribe.legacyServedFailed',
+            uid,
+            extra: { kinfolkId, message: err instanceof Error ? err.message : String(err) },
+          });
+        });
 
   const [accessSnap, canSeeHome] = await Promise.all([
     firestore.doc(`families/${kinfolkId}/homeAccess/current`).get(),
@@ -64,6 +107,7 @@ export async function getMyTribeProfileHandler(
     updatedAtMs: canSeeHome ? tsMillis(acc['updatedAt']) : null,
   };
 
+  await bookkeeping;
   logEvent({ severity: 'info', function: 'getMyTribeProfile', event: 'portal.tribe.resolved', uid, extra: { kinfolkId } });
   return { profile, homeAccess, canEditHomeDetails: canSeeHome };
 }
@@ -79,6 +123,27 @@ function parseCustomFields(v: unknown): CustomField[] {
     }))
     .filter((c) => c.key.length > 0);
 }
+/**
+ * #829, old clients. Portal Android before Task 10 and cached portal web bundles
+ * show and re-send the Emergency Contact as these three customFields rows. They
+ * are served from the real store, kinfolk slot 1 (the kinfolk's own flat fields
+ * count until the migration runs), overriding any families copy, so an old
+ * client shows the current contact and its echo on save matches slot 1 in
+ * saveTribeProfile. With no kinfolk contact the families copy passes through
+ * as stored. New portal web lists these keys in PROFILE_RESERVED_KEYS and never
+ * reads them.
+ */
+function withLegacyEmergencyContactRows(fields: CustomField[], kinfolk: Record<string, unknown>): CustomField[] {
+  const slot1 = readStoredEmergencyContacts(kinfolk).contacts[0];
+  if (!slot1) return fields;
+  return [
+    ...fields.filter((f) => !LEGACY_EMERGENCY_CONTACT_KEYS.has(f.key)),
+    { key: 'emergencyContactName', label: 'Emergency Contact', value: slot1.name },
+    { key: 'emergencyContactPhone', label: 'Emergency Contact Phone', value: slot1.phone },
+    ...(slot1.relationship ? [{ key: 'emergencyContactRelation', label: 'Emergency Contact Relation', value: slot1.relationship }] : []),
+  ];
+}
+
 function stringOrNull(v: unknown): string | null { return typeof v === 'string' && v.length > 0 ? v : null; }
 function tsMillis(v: unknown): number | null {
   if (v instanceof Timestamp) return v.toMillis();

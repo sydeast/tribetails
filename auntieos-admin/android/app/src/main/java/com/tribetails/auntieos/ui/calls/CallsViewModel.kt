@@ -141,26 +141,13 @@ class CallsViewModel(
         }
     }
 
-    fun createKinfolkFromCall(event: CallEvent, name: String) {
-        AuntieLog.i("Creating kinfolk from call: $name")
-        viewModelScope.launch {
-            _isActing.value = true
-            val names = name.split(" ", limit = 2)
-            val firstName = names.getOrElse(0) { "Unknown" }
-            val lastName = names.getOrElse(1) { "" }
-            repository.createKinfolk(firstName, lastName, event.callerNumber).onSuccess { kinfolk ->
-                AuntieLog.i("Kinfolk created successfully from call")
-                event.kinfolkName = kinfolk.displayName
-                event.kinfolkId = kinfolk.id
-                CallEventStore.updateEvent(event)
-                _actionResult.value = "Kinfolk profile created for $name!"
-            }.onFailure { e ->
-                AuntieLog.e("Failed to create kinfolk from call", e)
-                _actionResult.value = "Failed to create profile: ${e.message}"
-            }
-            _isActing.value = false
-        }
-    }
+    // #829 review item 16: there is no createKinfolkFromCall here any more. It
+    // created the household straight from a caller's name and number, which is
+    // the one Add path that skipped "required on Add": no Emergency Contact was
+    // ever asked for. A call now opens the Add Kinfolk screen prefilled
+    // (DirectoryViewModel.prefillAddKinfolkFromCall), where the contact is required.
+    // The call's sid rides along, and Add links the created household onto this
+    // call through CallEventStore.linkKinfolk, as the old direct create did.
 
     fun consumeVoicemailJump() { _jumpToVoicemails.value = false }
     fun clearActionResult()    { _actionResult.value = null }

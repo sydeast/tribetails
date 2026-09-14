@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tribetails.auntieos.web.theme.AuntieTheme
@@ -67,6 +68,12 @@ fun AuntieStatusPill(
     mono: Boolean = false,
     glow: Boolean = false,
     leadingIcon: ImageVector? = null,
+    /**
+     * #829 review item 14: the compact capsule (tighter padding, smaller label),
+     * the same small pill admin web, admin Android and the portals draw for a flag
+     * inside a card, such as No Emergency Contact on the 290dp Directory card.
+     */
+    compact: Boolean = false,
 ) {
     val c = AuntieTheme.colors
     val toneColor = tone.color(c)
@@ -117,11 +124,12 @@ fun AuntieStatusPill(
         else -> toneColor.copy(alpha = 0.28f)
     }
 
-    val labelStyle = if (mono) {
+    val baseLabelStyle = if (mono) {
         AuntieTheme.typography.mono.copy(letterSpacing = 0.6.sp)
     } else {
         AuntieTheme.typography.labelSmall
     }
+    val labelStyle = if (compact) baseLabelStyle.copy(fontSize = 10.sp, lineHeight = 12.sp) else baseLabelStyle
     val labelText = if (mono) label.uppercase() else label
 
     Box(
@@ -134,7 +142,10 @@ fun AuntieStatusPill(
             )
             // Hover-only interaction source: no indication, no onClick (read-only).
             .hoverable(interaction)
-            .padding(horizontal = AuntieTheme.dims.space3, vertical = AuntieTheme.dims.space1),
+            .padding(
+                horizontal = if (compact) AuntieTheme.dims.space2 else AuntieTheme.dims.space3,
+                vertical = if (compact) 2.dp else AuntieTheme.dims.space1,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Row(
@@ -153,10 +164,15 @@ fun AuntieStatusPill(
                     modifier = Modifier.size(14.dp),
                 )
             }
+            // A pill is one line. Wrapping inside a fixed-height card (the
+            // Directory card is 196dp) pushed content past the clip (#829 review).
             Text(
                 text = labelText,
                 style = labelStyle,
                 color = toneColor,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }

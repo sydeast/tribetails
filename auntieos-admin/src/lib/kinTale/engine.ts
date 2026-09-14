@@ -32,6 +32,7 @@ import {
 import type { KinDetail } from '../../api/kinView';
 import type { KinfolkProfile } from '../../api/kinfolkProfile';
 import type { SessionEntry } from '../../api/sessions';
+import { emergencyContactsOf } from '../../api/emergencyContacts';
 
 /**
  * The slice of a session the engine reads (only the service type, for
@@ -210,10 +211,17 @@ function readKinfolkAttribute(kinfolk: KinfolkProfile, key: string): string {
       return kinfolk.parkingInstructions;
     case 'entryNotes':
       return kinfolk.entryNotes;
+    // #829: Emergency Contacts is now a list, but Android and Kotlin web both
+    // still resolve these two keys off the FIRST (called-first) contact, and a
+    // template's persisted condition has to keep meaning the same thing on
+    // every client. `emergencyContactsOf` is Task 5's array-first-with-flat-
+    // fallback reader, the same one `kinfolkProfile.ts` itself now resolves
+    // `emergencyContacts` through, so a legacy household with only the old flat
+    // fields still resolves here exactly as it does everywhere else.
     case 'emergencyContactName':
-      return kinfolk.emergencyContactName;
+      return emergencyContactsOf(kinfolk as unknown as Record<string, unknown>)[0]?.name ?? '';
     case 'emergencyContactPhone':
-      return kinfolk.emergencyContactPhone;
+      return emergencyContactsOf(kinfolk as unknown as Record<string, unknown>)[0]?.phone ?? '';
     default:
       return '';
   }

@@ -280,6 +280,9 @@ export {
   saveHouseholdContact,
   removeHouseholdContact,
 } from './portal/householdContacts';
+// #829 section 1: the one store and the one write path for Emergency Contacts,
+// used by all five clients. Gated on home_access.
+export { saveEmergencyContacts, listEmergencyContacts } from './portal/emergencyContacts';
 export { getMyKinTaleMedia } from './portal/getMyKinTaleMedia';
 // #399 item 1: the whole household's photo archive, for the Tribe hub gallery.
 // getMyKinTaleMedia resolves ONE tale the caller already has the id of; this

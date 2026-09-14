@@ -155,8 +155,10 @@ object KinTaleConditionEngine {
         "gateCode"              -> kinfolk.gateCode
         "parkingInstructions"   -> kinfolk.parkingInstructions
         "entryNotes"            -> kinfolk.entryNotes
-        "emergencyContactName"  -> kinfolk.emergencyContactName
-        "emergencyContactPhone" -> kinfolk.emergencyContactPhone
+        // #829: the first Emergency Contact (array, flat triple as fallback). The
+        // keys are unchanged so saved conditions keep working.
+        "emergencyContactName"  -> emergencyContactsOf(kinfolk).firstOrNull()?.name.orEmpty()
+        "emergencyContactPhone" -> emergencyContactsOf(kinfolk).firstOrNull()?.phone.orEmpty()
         "vetClinicName"         -> kinfolk.vetClinicName
         else                    -> ""
     }

@@ -123,11 +123,10 @@ fun TribeScreen(
     // stable keys so no backend change is needed.
     var afterHoursVetName by remember { mutableStateOf("") }
     var afterHoursVetPhone by remember { mutableStateOf("") }
-    // Emergency contact (a person to reach if we can't reach you), stored in the
-    // profile customFields under stable keys — no backend change needed.
-    var emergencyName by remember { mutableStateOf("") }
-    var emergencyPhone by remember { mutableStateOf("") }
-    var emergencyRelation by remember { mutableStateOf("") }
+    // #829: Emergency Contacts live in their own card over their own callables.
+    // This flag only says the card holds edits its own Save has not sent, because
+    // Save Changes below never sends contacts.
+    var emergencyContactsDirty by remember { mutableStateOf(false) }
 
     LaunchedEffect(kinfolkId) {
         try {
@@ -166,9 +165,6 @@ fun TribeScreen(
         vetName    = seededVet["vetClinicName"].orEmpty()
         vetPhone   = seededVet["vetClinicPhone"].orEmpty()
         vetAddress = seededVet["vetClinicAddress"].orEmpty()
-        emergencyName     = seededVet["emergencyContactName"].orEmpty()
-        emergencyPhone    = seededVet["emergencyContactPhone"].orEmpty()
-        emergencyRelation = seededVet["emergencyContactRelation"].orEmpty()
 
         try {
             val hs = portalApi.getFormSchema("homeAccess")
@@ -345,42 +341,13 @@ fun TribeScreen(
                 wide = wide,
             )
 
-            // Emergency contact — a person to reach if we can't reach you.
-            GlassCard(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
-                contentPadding = PaddingValues(KinfolkSpacing.l),
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
-                    CardHead(
-                        icon = Icons.Filled.Phone,
-                        tint = KinfolkBrand.SnuggleCoral,
-                        title = "Emergency Contact",
-                        sub = "Who your Auntie calls if we can't reach you during a visit.",
-                    )
-                    // #843: saveTribeProfile refuses a change without Home access,
-                    // so lock the fields and say why rather than fail on save.
-                    val canEditEmergency = loaded?.canEditHomeDetails != false
-                    if (!canEditEmergency) {
-                        Text(
-                            "Only someone with Home access can change the Emergency Contact.",
-                            style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted),
-                        )
-                    }
-                    FieldPair(
-                        wide = wide,
-                        first = { m -> KinField(value = emergencyName, onValueChange = { emergencyName = it }, label = "Contact Name", modifier = m, enabled = canEditEmergency, fieldTestTag = "ec-name") },
-                        second = { m -> KinField(value = emergencyPhone, onValueChange = { emergencyPhone = it }, label = "Contact Phone", modifier = m, enabled = canEditEmergency, fieldTestTag = "ec-phone") },
-                    )
-                    KinField(
-                        value = emergencyRelation,
-                        onValueChange = { emergencyRelation = it },
-                        label = "Relationship (e.g. Neighbor, Sister)",
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = canEditEmergency,
-                        fieldTestTag = "ec-relation",
-                    )
-                }
-            }
+            // Emergency Contacts (#829): its own callables and its own Save. Read-only
+            // with the #844 sentence when the caller lacks Home access.
+            EmergencyContactsCard(
+                kinfolkId = kinfolkId,
+                portalApi = portalApi,
+                onDirtyChange = { emergencyContactsDirty = it },
+            )
 
             // Household members: edit an existing secondary's permissions.
             HouseholdMembersCard(kinfolkId = kinfolkId, portalApi = portalApi)
@@ -394,7 +361,9 @@ fun TribeScreen(
             HouseholdContactsCard(kinfolkId = kinfolkId, portalApi = portalApi)
 
             if (status != null) {
-                val ok = status!!.startsWith("Saved")
+                // Every success message starts "Saved" or "Profile saved"; only a
+                // failure starts "Save failed".
+                val ok = !status!!.startsWith("Save failed")
                 val statusColor = if (ok) KinfolkBrand.KinTeal else KinfolkBrand.SnuggleCoral
                 Row(modifier = Modifier.padding(horizontal = KinfolkSpacing.l)) {
                     Row(
@@ -419,13 +388,13 @@ fun TribeScreen(
                     scope.launch {
                         try {
                             // Build vet clinic customFields (always, regardless of schema mode).
-                            val vetFields = buildList {
+                            // Emergency Contacts are not here (#829): the card saves them
+                            // through saveEmergencyContacts, and the reserved keys in
+                            // mergeVetClinicFields drop any stale emergencyContact* copy.
+                            val vetClinicFields = buildList {
                                 if (vetName.isNotBlank()) add(CustomField(key = "vetClinicName",    label = "Vet Clinic",        value = vetName.trim()))
                                 if (vetPhone.isNotBlank()) add(CustomField(key = "vetClinicPhone",   label = "Vet Clinic Phone",  value = vetPhone.trim()))
                                 if (vetAddress.isNotBlank()) add(CustomField(key = "vetClinicAddress", label = "Vet Clinic Address", value = vetAddress.trim()))
-                                if (emergencyName.isNotBlank()) add(CustomField(key = "emergencyContactName", label = "Emergency Contact", value = emergencyName.trim()))
-                                if (emergencyPhone.isNotBlank()) add(CustomField(key = "emergencyContactPhone", label = "Emergency Contact Phone", value = emergencyPhone.trim()))
-                                if (emergencyRelation.isNotBlank()) add(CustomField(key = "emergencyContactRelation", label = "Emergency Contact Relation", value = emergencyRelation.trim()))
                             }
                             // Profile save — schema-driven path overrides static fields when schema present.
                             if (profileSchema != null) {
@@ -443,13 +412,13 @@ fun TribeScreen(
                                 portalApi.saveTribeProfile(
                                     kinfolkId = kinfolkId,
                                     displayName = displayFromSchema,
-                                    customFields = mergeVetFields(rest, vetFields),
+                                    customFields = mergeVetClinicFields(rest, vetClinicFields),
                                 )
                             } else {
                                 portalApi.saveTribeProfile(
                                     kinfolkId = kinfolkId,
                                     displayName = displayName.trim(),
-                                    customFields = mergeVetFields(profileFields, vetFields),
+                                    customFields = mergeVetClinicFields(profileFields, vetClinicFields),
                                 )
                             }
                             // After-hours emergency vet customFields, persisted into the
@@ -489,7 +458,13 @@ fun TribeScreen(
                                     customFields = mergeAfterHoursFields(accessFields, afterHoursFields, keep = true),
                                 )
                             }
-                            status = "Saved."
+                            // The card saves on its own button, so "Saved." here would be
+                            // false about any contact edit still sitting in it (#829).
+                            status = if (emergencyContactsDirty) {
+                                "Profile saved. Your Emergency Contacts are not saved yet: use Save Emergency Contacts."
+                            } else {
+                                "Saved."
+                            }
                         } catch (t: Throwable) {
                             status = "Save failed: ${t.message ?: t}"
                         } finally {
@@ -500,6 +475,13 @@ fun TribeScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l, vertical = KinfolkSpacing.s),
                 enabled = !saving && displayName.isNotBlank(),
             )
+            if (emergencyContactsDirty) {
+                Text(
+                    "Your Emergency Contacts have unsaved changes.",
+                    style = type.sansLabel.copy(color = KinfolkBrand.KinfolkOrange),
+                    modifier = Modifier.padding(horizontal = KinfolkSpacing.l),
+                )
+            }
             Spacer(Modifier.height(KinfolkSpacing.l))
         }
     }
@@ -517,7 +499,7 @@ fun TribeScreen(
  * written with; a new card is a title and an icon.
  */
 @Composable
-private fun CardHead(
+internal fun CardHead(
     icon: ImageVector,
     tint: Color,
     title: String,
@@ -550,7 +532,7 @@ private fun CardHead(
 }
 
 @Composable
-private fun CardDivider() {
+internal fun CardDivider() {
     Box(
         Modifier
             .fillMaxWidth()
@@ -619,7 +601,12 @@ private fun CustomFieldList(
     val type = LocalKinfolkTypography.current
     // Keys owned by dedicated controls elsewhere on this screen (the after-hours
     // vet block) are never shown in this generic list to avoid duplicate display.
-    val ownedElsewhere = setOf("afterHoursVetName", "afterHoursVetPhone")
+    // #829: getMyTribeProfile still serves slot 1 as emergencyContact* rows for
+    // old clients; the Emergency Contacts card owns them now, so they stay hidden.
+    val ownedElsewhere = setOf(
+        "afterHoursVetName", "afterHoursVetPhone",
+        "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation",
+    )
     val visible = fields.filter { it.key !in ownedElsewhere }
     Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
         // Read-only: admins define fields in AuntieOS; a kinfolk cannot add them.
@@ -870,12 +857,13 @@ private fun VetClinicSection(
     }
 }
 
-private fun mergeVetFields(base: List<CustomField>, vet: List<CustomField>): List<CustomField> {
+private fun mergeVetClinicFields(base: List<CustomField>, vetClinic: List<CustomField>): List<CustomField> {
     val reservedKeys = setOf(
         "vetClinicName", "vetClinicPhone", "vetClinicAddress",
+        // #829: kept reserved so a stale copy is dropped, never re-sent.
         "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation",
     )
-    return base.filter { it.key !in reservedKeys } + vet
+    return base.filter { it.key !in reservedKeys } + vetClinic
 }
 
 /** Normalizes a clinic name for case/space-insensitive comparison (mirrors the
@@ -1021,9 +1009,10 @@ private fun MemberPermissionRow(
             onChange = { canEditPets = it },
         )
         AccessToggleRow(
-            label = "Home access (gate code, Wi-Fi)",
+            label = "Home access (gate code, Wi-Fi, Emergency Contacts)",
             value = canAccessHome,
             onChange = { canAccessHome = it },
+            description = HOME_ACCESS_DESCRIPTION,
         )
         AccessToggleRow(
             label = "Direct messaging",
@@ -1116,9 +1105,10 @@ private fun SecondaryInviteCard(kinfolkId: String, portalApi: PortalApi) {
                 onChange = { canEditPets = it },
             )
             AccessToggleRow(
-                label = "Home access (gate code, Wi-Fi)",
+                label = "Home access (gate code, Wi-Fi, Emergency Contacts)",
                 value = canAccessHome,
                 onChange = { canAccessHome = it },
+                description = HOME_ACCESS_DESCRIPTION,
             )
             KinButton(
                 label = if (inviting) "Sending…" else "Send Invite",
@@ -1432,11 +1422,21 @@ private fun HouseholdContactsCard(kinfolkId: String, portalApi: PortalApi) {
     }
 }
 
+/**
+ * #829 review item 11: what Home access grants, word for word portal web's hover
+ * text on the same toggle. Shown behind an info tip, never as a subtitle.
+ */
+internal const val HOME_ACCESS_DESCRIPTION = "Sees and edits the household home details: entry notes and Emergency Contacts."
+
 /** A labelled access toggle used when inviting a secondary kinfolk. The PRIMARY
  *  opts the secondary in to a specific permission (default OFF). Foundation-only
- *  track/thumb switch, mirroring the toggle used elsewhere in the app. */
+ *  track/thumb switch, mirroring the toggle used elsewhere in the app.
+ *
+ *  #829 review item 11: a [description] sits behind a [KinInfoTip] beside the
+ *  label (a tap opens it), the way portal web shows it on hover; never a
+ *  subtitle line (ruling 2026-09-11). */
 @Composable
-private fun AccessToggleRow(label: String, value: Boolean, onChange: (Boolean) -> Unit) {
+internal fun AccessToggleRow(label: String, value: Boolean, onChange: (Boolean) -> Unit, description: String? = null) {
     val type = LocalKinfolkTypography.current
     Row(
         modifier = Modifier
@@ -1447,7 +1447,10 @@ private fun AccessToggleRow(label: String, value: Boolean, onChange: (Boolean) -
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
     ) {
-        Text(label, style = type.sansBody, modifier = Modifier.weight(1f))
+        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+            Text(label, style = type.sansBody, modifier = Modifier.weight(1f, fill = false))
+            description?.let { com.kinfolk.portal.components.KinInfoTip(it) }
+        }
         Box(
             modifier = Modifier
                 .size(width = 44.dp, height = 24.dp)

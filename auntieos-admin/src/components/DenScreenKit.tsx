@@ -170,6 +170,16 @@ function KitTooltip({
   );
 }
 
+/**
+ * The same info button, for a title that is not a DenPanel or a page heading
+ * (a section inside a dialog). #829 review: every Emergency Contacts title
+ * carries its sentence this way, beside the title, where a tap opens it.
+ */
+export function InfoTip({ text }: { text: string }) {
+  const id = useId();
+  return <KitTooltip id={id} text={text} bodyClassName="kit-tip-inline" />;
+}
+
 // ── page heading ────────────────────────────────────────────────────────────
 
 interface DenScreenHeadingBase {
