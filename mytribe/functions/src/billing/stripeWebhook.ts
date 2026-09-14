@@ -12,6 +12,7 @@ import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
+import { PAYMENT_APPLIED_OWNER_FIELD, paymentAppliedOwner } from '../lib/paymentAppliedOwner';
 import { FULL_CPU } from '../lib/runtimeOptions';
 import { handleStripeDisputeEvent, isDisputeEvent } from './stripeDispute';
 import { handleSetupSessionCompleted, isSetupSessionEvent } from './stripeSetupSession';
@@ -616,6 +617,10 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       //                 before this stamp existed.
       patch[CHECKOUT_ROUND_FIELD] = checkoutRoundOf(invoice?.[CHECKOUT_ROUND_FIELD]) + 1;
       if (paymentIntentId) patch[SETTLED_INTENT_FIELD] = paymentIntentId;
+      // #866: this webhook sends the household's `invoice.payment.applied`
+      // below, so it names itself as the sender in the write that pays the
+      // bill, and `onInvoicesWrite` stands down for that write.
+      patch[PAYMENT_APPLIED_OWNER_FIELD] = paymentAppliedOwner('stripe', event.id);
     }
     tx.set(ref, patch, { merge: true });
     if (isPaidEvent) {

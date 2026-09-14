@@ -464,6 +464,23 @@ const CATALOG_LIST: NotificationDef[] = [
   },
   {
     // Run-4 #13 audit: Kinfolk sees "Payment/credit applied"; Business sees "Invoice Paid".
+    //
+    // #866: ONE SENDER PER PAYMENT PATH. Each payment gets at most one of these.
+    //
+    //   Path                                  Pays the invoice with   Sends this notice
+    //   ------------------------------------  ----------------------  --------------------------------
+    //   Card (Stripe), full or the remainder  stripeWebhook patch     stripeWebhook, once per payment
+    //   Admin: markInvoicePaid, then          markInvoicePaid         recordPayment, only when the
+    //     recordPayment (React, Android)                                Send Confirmation box is ticked
+    //   Admin: recordPayment with `apply`     stageApply              recordPayment, only when ticked
+    //   Admin partial (bill stays open)       (not paid)              recordPayment, only when ticked
+    //   Account credit draw (auto-apply)      drawAccountCredit       onInvoicesWrite
+    //   Any other write that pays the bill    (unstamped)             onInvoicesWrite
+    //
+    // The first three stamp `paymentAppliedNoticeOwner` in the write that pays the
+    // invoice, and `onInvoicesWrite` stays silent for a write that changed it.
+    // An unticked admin payment therefore tells the household nothing, from any
+    // path. The rule and its reasons: lib/paymentAppliedOwner.ts.
     key: 'invoice.payment.applied',
     label: 'Payment or credit applied to an invoice',
     audience: 'both',

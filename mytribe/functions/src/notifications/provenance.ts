@@ -92,8 +92,10 @@ export const RECIPIENT_SENTENCES: Record<RecipientResolver, string> = {
  *
  * A key with more than one entry really does have more than one trigger, and
  * the operator needs to see all of them: `invoice.payment.applied` fires from a
- * manual payment, from a Stripe webhook, AND from an invoice lifecycle change,
- * so silencing one path silences a third of the traffic.
+ * manual payment, from a Stripe webhook, AND from an invoice lifecycle change.
+ * Since #866 each payment has exactly one of those as its sender (see the
+ * ownership table on the catalog entry), so silencing one path silences a
+ * whole kind of payment rather than a duplicate copy.
  */
 export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]> = {
   // ── Visits ──────────────────────────────────────────────────────────────
@@ -562,17 +564,17 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'invoice.payment.applied': [
     {
-      trigger: 'An admin records a payment against an invoice.',
+      trigger: 'An admin records a payment, full or partial, with Send Confirmation ticked.',
       source: 'src/admin/recordPayment.ts',
       dataKeys: ['kinfolkId', 'invoiceId', 'paymentId'],
     },
     {
-      trigger: 'Stripe reports a payment succeeded.',
+      trigger: 'Stripe reports a card payment succeeded.',
       source: 'src/billing/stripeWebhook.ts',
       dataKeys: ['kinfolkId', 'invoiceId', 'stripeEventId'],
     },
     {
-      trigger: 'An invoice document moves into the paid lifecycle state.',
+      trigger: 'An invoice is paid off by a write that names no other sender, such as account credit.',
       source: 'src/triggers/onInvoicesWrite.ts',
       dataKeys: ['kinfolkId', 'invoiceId', 'amountDue', 'currency', 'dueDate'],
     },

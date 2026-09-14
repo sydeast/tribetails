@@ -763,10 +763,17 @@ function replayResult(paymentId: string, stored: Record<string, unknown>): z.inf
  *
  * `invoice.payment.applied` IS THE EXISTING CONFIRMATION and no new catalog key
  * was minted for this toggle. That key already has an email template, a push
- * template, a prefs entry and a category, and both `onInvoicesWrite` and
- * `stripeWebhook.ts` fire it for the same event: money landed on a bill. A
- * second key saying the same thing would give the household two independent
- * switches for one message and let them mute one of the two.
+ * template, a prefs entry and a category, and `stripeWebhook.ts` and
+ * `onInvoicesWrite` fire it for the same event on other paths: money landed on
+ * a bill. A second key saying the same thing would give the household two
+ * independent switches for one message and let them mute one of the two.
+ *
+ * #866: FOR AN ADMIN-RECORDED PAYMENT THIS IS THE ONLY SENDER. The write that
+ * pays the invoice (`stageApply` here, or `markInvoicePaid` in the two-step
+ * flow) stamps `paymentAppliedNoticeOwner`, so `onInvoicesWrite` does not send
+ * a second copy, and does not send one when the box was left unticked either.
+ * A partial payment that leaves the bill open is confirmed here too, because
+ * no trigger fires for it. See the ownership table in notifications/catalog.ts.
  *
  * Returns whether it went out. A household that has never installed MyTribe has
  * no uid to deliver to, which is a fact about them and not a failure here.

@@ -17,6 +17,7 @@ import {
   type InvoiceSettlementState,
 } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
+import { PAYMENT_APPLIED_OWNER_FIELD, paymentAppliedOwner } from '../lib/paymentAppliedOwner';
 import { InvoicePaymentIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 import { validateResponse } from '../lib/callableResponse';
 import {
@@ -66,18 +67,16 @@ import {
  * Canonical store is the FLAT top-level `invoices` collection (the same one
  * createInvoice/postInvoiceEvent/sendInvoiceReminder read and write).
  *
- * Notification: deliberately NOT enqueued here. `onInvoicesWrite` (the
- * invoices-collection trigger) already fires `invoice.payment.applied`
- * whenever a Firestore write to ANY invoice doc flips its resolved lifecycle
- * into 'paid' (admin UI direct write, callable, or the Stripe webhook, per
- * that trigger's own header comment). Enqueuing the same notification again
- * here would double-send it for this write path specifically. The trigger
- * reacts to the actual persisted state, so it can never fire out of step
- * with what this callable really wrote. One consequence of this fix is worth
- * naming: a PARTIAL payment leaves `amountDue` above zero, so that trigger no
- * longer resolves the invoice to 'paid' and no "payment applied" notification
- * goes out for it. That is correct. The invoice is not paid, and telling a
- * household it was is the same lie the doc write used to tell the operator.
+ * Notification: deliberately NOT enqueued here, and (#866) not by the invoice
+ * trigger either. Both admin clients call this and then `recordPayment`, and
+ * `recordPayment` carries the operator's Send Confirmation toggle. So a
+ * settling payment stamps `paymentAppliedNoticeOwner` in the same write that
+ * pays the bill, and `onInvoicesWrite` stays silent for it. Before #866 the
+ * trigger sent on that write regardless, which doubled a ticked confirmation
+ * and sent one the operator had left unticked. A PARTIAL payment leaves the
+ * invoice open, so nothing is stamped and no trigger fires; its confirmation,
+ * when ticked, also comes from `recordPayment`. Ownership table:
+ * notifications/catalog.ts, on the `invoice.payment.applied` entry.
  */
 // Exported so the callable-contract drift guard can freeze this request shape.
 export const Args = z.object({
@@ -445,7 +444,16 @@ export async function markInvoicePaidHandler(
     // `lastPaymentAt`/`lastPaymentBy` instead, which is a different claim and
     // deserves a different field rather than a premature version of this one.
     ...(settling
-      ? { paidAt: FieldValue.serverTimestamp(), paidBy: uid }
+      ? {
+          paidAt: FieldValue.serverTimestamp(),
+          paidBy: uid,
+          // #866: the household's confirmation for this payment belongs to the
+          // `recordPayment` step both admin clients run next, which carries the
+          // Send Confirmation toggle. Stamped in the write that pays the bill, so
+          // `onInvoicesWrite` neither doubles a ticked confirmation nor sends
+          // one the admin left unticked.
+          [PAYMENT_APPLIED_OWNER_FIELD]: paymentAppliedOwner('markInvoicePaid', paymentRef.id),
+        }
       : {}),
     lastPaymentAt: FieldValue.serverTimestamp(),
     lastPaymentBy: uid,
