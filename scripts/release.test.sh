@@ -285,6 +285,25 @@ fi
 if [ -n "${FIREBASE_EDIT_TREE_ON:-}" ] && [ "$only" = "$FIREBASE_EDIT_TREE_ON" ]; then
   printf 'edited while the release ran\n' >> "$(git rev-parse --show-toplevel)/note.txt"
 fi
+# FIREBASE_EDIT_UNTRACKED_ON=<target> rewrites the untracked scratch.txt, so only
+# its CONTENTS change: git status still says "?? scratch.txt" either way.
+if [ -n "${FIREBASE_EDIT_UNTRACKED_ON:-}" ] && [ "$only" = "$FIREBASE_EDIT_UNTRACKED_ON" ]; then
+  printf 'v2\n' > "$(git rev-parse --show-toplevel)/scratch.txt"
+fi
+# FIREBASE_ARM_FILE_ON=<target> creates FIREBASE_ARM_FILE during that deploy,
+# which a git shim reads as "start failing now".
+if [ -n "${FIREBASE_ARM_FILE_ON:-}" ] && [ "$only" = "$FIREBASE_ARM_FILE_ON" ]; then
+  : > "$FIREBASE_ARM_FILE"
+fi
+# FIREBASE_DISTRIBUTE_DEBUG_LOG=cwd|root makes appdistribution:distribute write
+# firebase-debug.log (into its working directory, or the repo root) and exit 2,
+# which is what the real CLI does on a failed upload.
+case "${1:-}:${FIREBASE_DISTRIBUTE_DEBUG_LOG:-}" in
+  appdistribution:distribute:cwd)
+    printf 'debug\n' > "$PWD/firebase-debug.log"; exit 2 ;;
+  appdistribution:distribute:root)
+    printf 'debug\n' > "$(git rev-parse --show-toplevel)/firebase-debug.log"; exit 2 ;;
+esac
 
 # FIREBASE_ADMIN_FAIL_TEXT makes an admin codebase deploy fail printing that
 # text (printf %b, so \n works), FIREBASE_ADMIN_FAIL_TIMES times (default:
@@ -1675,17 +1694,26 @@ if [ "$MOVED_F" != "$HEAD_F" ]; then
 else
   bad "precondition failed: HEAD did not move"
 fi
-if [ "$RCF" != "0" ] && grep -q "REFUSED: HEAD moved during the release" "$DF/out"; then
-  ok "a HEAD that moves mid-release is refused at the next step boundary"
+if [ "$RCF" != "0" ] && grep -q "REFUSED: HEAD moved during the release" "$DF/out" &&
+   sed 's/\x1b\[[0-9;]*m//g' "$DF/out" | grep -q "Caught after deploying firestore:rules\."; then
+  ok "HEAD moving during the rules deploy is caught right after it"
 else
-  bad "the release carried on after HEAD moved (rc=$RCF)"; tail -20 "$DF/out"
+  bad "the move during the rules deploy was not caught after it (rc=$RCF)"; tail -20 "$DF/out"
 fi
-if grep -qxF "$HEAD_F rules" "$DF/repo/.release-progress" 2>/dev/null &&
-   grep -qxF "$HEAD_F indexes" "$DF/repo/.release-progress" 2>/dev/null &&
+# The rules deploy read firestore.rules from the moved checkout, so it is not
+# recorded; the indexes, checked before the move, stay recorded for step 0's sha.
+if grep -qxF "$HEAD_F indexes" "$DF/repo/.release-progress" 2>/dev/null &&
+   ! grep -q " rules$" "$DF/repo/.release-progress" 2>/dev/null &&
    ! grep -q "^$MOVED_F " "$DF/repo/.release-progress" 2>/dev/null; then
-  ok "progress marked after HEAD moved still names the step-0 commit"
+  ok "a rules deploy from a moved checkout is not recorded, and earlier records keep the step-0 sha"
 else
-  bad "progress names the wrong commit"; cat "$DF/repo/.release-progress" 2>/dev/null
+  bad "the rules record survived, or a record names the moved commit"; cat "$DF/repo/.release-progress" 2>/dev/null
+fi
+if sed 's/\x1b\[[0-9;]*m//g' "$DF/out" | grep -q "firestore:rules may be PARTLY from $MOVED_F" &&
+   ! grep -q "Every deploy so far passed a check" "$DF/out"; then
+  ok "the refusal names the rules deploy as possibly from the other commit, not everything as clean"
+else
+  bad "the refusal did not name the rules deploy"; tail -20 "$DF/out"
 fi
 if [ -z "$(fn_deploys "$DF/calls")" ] && ! grep -q 'hosting' "$DF/calls" 2>/dev/null; then
   ok "nothing after the moved-HEAD boundary deploys"
@@ -1944,6 +1972,159 @@ if [ "$RCR" != "0" ] && stripped "$DR/out" | grep -q "REFUSED: the working tree 
   ok "a working-tree edit during the release is refused before the next deploy"
 else
   bad "a working-tree edit did not stop the release (rc=$RCR)"; stripped "$DR/out" | grep -n "REFUSED\|Caught"
+fi
+if stripped "$DR/out" | grep -q "git status --short when the release started deploying:" &&
+   stripped "$DR/out" | grep -q "git status --short now:" &&
+   stripped "$DR/out" | grep -A1 "git status --short now:" | grep -q "note.txt"; then
+  ok "a working-tree refusal prints git status from the baseline and from now"
+else
+  bad "the refusal did not print both git statuses"; stripped "$DR/out" | grep -n -A2 "git status"
+fi
+
+# ---------------------------------------------------------------------------
+# #840 third review.
+# ---------------------------------------------------------------------------
+
+# 10. HEAD moves during the indexes deploy. The next check is the step 3 banner,
+#     and the refusal must name the indexes deploy, not call everything clean.
+DS="$(verified_repo)"
+RCS="$(run_release "$DS" "${FN_ENV[@]}" FIREBASE_MOVE_HEAD_ON=firestore:indexes FIREBASE_CALL_LOG="$DS/calls")"
+MOVED_S="$(cd "$DS/repo" && git rev-parse HEAD)"
+if [ "$RCS" != "0" ] && stripped "$DS/out" | grep -q "Caught at the start of step: 3\. Wait for indexes to finish building\." &&
+   stripped "$DS/out" | grep -q "firestore:indexes may be PARTLY from $MOVED_S" &&
+   ! grep -q "Every deploy so far passed a check" "$DS/out" &&
+   ! grep -q " indexes$" "$DS/repo/.release-progress" 2>/dev/null &&
+   ! grep -q 'firestore:rules' "$DS/calls" 2>/dev/null; then
+  ok "a move during the indexes deploy is caught at step 3, names the indexes deploy, records nothing"
+else
+  bad "the move during the indexes deploy was misreported (rc=$RCS)"; stripped "$DS/out" | tail -20
+fi
+
+# 11. progress_mark records RELEASE_SHA, never a fresh read of HEAD: run it with
+#     HEAD one commit past RELEASE_SHA and read what it wrote.
+DU="$(make_repo)"
+A_U="$(cd "$DU/repo" && git rev-parse HEAD)"
+( cd "$DU/repo" && git commit --allow-empty -qm "HEAD moves on" ) >/dev/null 2>&1
+B_U="$(cd "$DU/repo" && git rev-parse HEAD)"
+( ROOT="$DU/repo"; RELEASE_SHA="$A_U"; DRY_RUN=0
+  . "$REPO_SCRIPTS/release-progress.sh"
+  progress_mark rules ) >/dev/null 2>&1
+if [ "$A_U" != "$B_U" ] && grep -qxF "$A_U rules" "$DU/repo/.release-progress" 2>/dev/null &&
+   ! grep -q "^$B_U " "$DU/repo/.release-progress" 2>/dev/null; then
+  ok "progress_mark records RELEASE_SHA even when HEAD has moved on"
+else
+  bad "progress_mark recorded HEAD instead of RELEASE_SHA"; cat "$DU/repo/.release-progress" 2>/dev/null
+fi
+
+# 12. A failed Android upload leaves firebase-debug.log in the CLI's working
+#     directory. Run from mytribe/ (ignored there, as in the real repo), it must
+#     not refuse the release after both hostings are live.
+DV="$(make_repo)"; write_stubs "$DV"
+commit_change "$DV" "mytribe/.gitignore" '*.log'
+arm_ci "$DV"
+RCV="$(run_release "$DV" RELEASE_YES=1 RELEASE_ANDROID_TESTERS=a@b.test \
+  FIREBASE_DISTRIBUTE_DEBUG_LOG=cwd FIREBASE_CALL_LOG="$DV/calls")"
+if [ "$RCV" = "0" ] && grep -q "is live and verified" "$DV/out" &&
+   grep -q "distribution FAILED" "$DV/out" &&
+   [ -f "$DV/repo/mytribe/firebase-debug.log" ] && [ ! -e "$DV/repo/firebase-debug.log" ]; then
+  ok "a failed upload's firebase-debug.log lands in mytribe/ and the release still finishes"
+else
+  bad "a failed upload's debug log refused the release or landed at the root (rc=$RCV)"
+  ls "$DV/repo/firebase-debug.log" "$DV/repo/mytribe/firebase-debug.log" 2>&1; stripped "$DV/out" | grep -n "REFUSED\|Caught" | head
+fi
+
+# 13. The root ignores the Firebase debug logs too, using the real repo's own
+#     .gitignore lines: a log written at the root must not refuse the release.
+DW="$(make_repo)"; write_stubs "$DW"
+MISSING_IGNORES=""
+for p in 'firebase-debug.log' 'firebase-debug.*.log' 'firestore-debug.log' 'ui-debug.log'; do
+  if grep -qxF "$p" "$REPO_SCRIPTS/../.gitignore" 2>/dev/null; then
+    printf '%s\n' "$p" >> "$DW/repo/.gitignore"
+  else
+    MISSING_IGNORES="$MISSING_IGNORES $p"
+  fi
+done
+( cd "$DW/repo" && git add -A && git commit -qm "ignore firebase debug logs" && git push -q origin main ) >/dev/null 2>&1
+arm_ci "$DW"
+RCW="$(run_release "$DW" RELEASE_YES=1 RELEASE_ANDROID_TESTERS=a@b.test \
+  FIREBASE_DISTRIBUTE_DEBUG_LOG=root FIREBASE_CALL_LOG="$DW/calls")"
+if [ -z "$MISSING_IGNORES" ] && [ "$RCW" = "0" ] && [ -f "$DW/repo/firebase-debug.log" ] &&
+   grep -q "is live and verified" "$DW/out"; then
+  ok "the root .gitignore covers the Firebase debug logs, and one at the root does not refuse"
+else
+  bad "root debug-log ignores missing ($MISSING_IGNORES) or the release refused (rc=$RCW)"; stripped "$DW/out" | grep -n "REFUSED\|Caught" | head
+fi
+
+# 14. git cannot read the tree once (a held index.lock): the fingerprint retries
+#     and the release carries on. Persistently: it refuses, saying git could not
+#     read the tree, never that the tree changed.
+REAL_GIT="$(command -v git)"
+# stub_git_status_fails <dir> <times>: once <dir>/git-armed exists, the next
+# <times> `git status --porcelain` calls fail the way a held index.lock does.
+stub_git_status_fails() {
+  cat > "$1/stubs/git" <<STUB
+#!/usr/bin/env bash
+case "\$*" in
+  *" status --porcelain"*)
+    if [ -f "$1/git-armed" ]; then
+      n="\$(cat "$1/git-fail-count" 2>/dev/null || echo 0)"
+      if [ "\$n" -lt "$2" ]; then
+        echo "\$((n + 1))" > "$1/git-fail-count"
+        echo "fatal: Unable to create '.git/index.lock': File exists." >&2
+        exit 128
+      fi
+    fi
+    ;;
+esac
+exec "$REAL_GIT" "\$@"
+STUB
+  chmod +x "$1/stubs/git"
+}
+DX="$(verified_repo)"
+stub_git_status_fails "$DX" 1
+RCX="$(run_release "$DX" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 \
+  FIREBASE_ARM_FILE_ON=firestore:rules FIREBASE_ARM_FILE="$DX/git-armed")"
+if [ "$RCX" = "0" ] && [ "$(cat "$DX/git-fail-count" 2>/dev/null)" = "1" ] &&
+   grep -q "is live and verified" "$DX/out"; then
+  ok "one failed git read is retried and the release carries on"
+else
+  bad "a single git failure was not retried through (rc=$RCX, failures $(cat "$DX/git-fail-count" 2>/dev/null))"; stripped "$DX/out" | grep -n "REFUSED\|Caught" | head
+fi
+DY="$(verified_repo)"
+stub_git_status_fails "$DY" 99
+RCY="$(run_release "$DY" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 \
+  FIREBASE_ARM_FILE_ON=firestore:rules FIREBASE_ARM_FILE="$DY/git-armed" FIREBASE_CALL_LOG="$DY/calls")"
+if [ "$RCY" != "0" ] &&
+   stripped "$DY/out" | grep -q "REFUSED: git could not read the working tree" &&
+   ! stripped "$DY/out" | grep -q "the working tree changed" &&
+   stripped "$DY/out" | grep -q "Caught after deploying firestore:rules\." &&
+   ! grep -q " rules$" "$DY/repo/.release-progress" 2>/dev/null &&
+   [ -z "$(fn_deploys "$DY/calls")" ]; then
+  ok "git failing persistently refuses as unreadable, not as a changed tree, and records nothing"
+else
+  bad "a persistent git failure was misreported (rc=$RCY)"; stripped "$DY/out" | grep -n "REFUSED\|Caught\|changed" | head
+fi
+
+# 15. An untracked file whose CONTENTS change (git status unchanged) is caught.
+#     It appears during step 1b, after step 0's clean-tree check and before the
+#     baseline, and is rewritten during the rules deploy.
+DZ="$(verified_repo)"
+cat > "$DZ/stubs/node" <<STUB
+#!/usr/bin/env bash
+case "\$*" in
+  *declared-secrets.js*) [ -f "$DZ/repo/scratch.txt" ] || printf 'v1\n' > "$DZ/repo/scratch.txt" ;;
+esac
+exec "$REAL_NODE" "\$@"
+STUB
+chmod +x "$DZ/stubs/node"
+RCZ="$(run_release "$DZ" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 \
+  FIREBASE_EDIT_UNTRACKED_ON=firestore:rules FIREBASE_CALL_LOG="$DZ/calls")"
+if [ "$RCZ" != "0" ] && stripped "$DZ/out" | grep -q "REFUSED: the working tree changed during the release" &&
+   stripped "$DZ/out" | grep -q "Caught after deploying firestore:rules\." &&
+   [ -z "$(fn_deploys "$DZ/calls")" ]; then
+  ok "a change to an untracked file's contents is caught, not only its appearance"
+else
+  bad "an untracked file's content change was not caught (rc=$RCZ)"; stripped "$DZ/out" | grep -n "REFUSED\|Caught" | head
 fi
 
 echo

@@ -188,6 +188,11 @@ RELEASE_HEAD_GUARD=0
 # A fingerprint of the working tree, taken just before the first deploy (step 2)
 # and compared by release_head_guard from then on. Empty until then.
 RELEASE_TREE_BASELINE=""
+# `git status --short` at the moment the baseline was taken, printed beside the
+# current one when a change is refused.
+RELEASE_TREE_BASELINE_STATUS=""
+# Deploys run since the checkout was last checked (see release_note_deploy).
+RELEASE_UNCHECKED_DEPLOYS=""
 # Set by release_head_refuse when a deploy may have shipped something other than
 # RELEASE_SHA, so the stop message can say which codebase and which commit.
 RELEASE_MIXED_TARGET=""
@@ -309,23 +314,85 @@ progress_report_stop() {
   fi
 }
 
-# release_tree_fingerprint: one line that changes when any tracked file changes
-# or an untracked, non-ignored file appears. The release's own outputs (lib/,
-# dist/, the APK build dirs, .env.production.local, .release-*) are gitignored,
-# so building and deploying does not move it.
+# release_tree_fingerprint: print one line that changes when a tracked file
+# changes, an untracked non-ignored file appears or goes, or such a file's
+# CONTENTS change (hashed with git hash-object). Returns non-zero and prints
+# nothing when git could not answer, after one retry a second later: a held
+# .git/index.lock from another git command in the same checkout is the usual
+# cause, and it clears quickly. A failure is never folded into "changed".
+#
+# Cost, measured 2026-09-14: 0.07 to 0.08s on the real checkout (3,976 tracked
+# files, 0 untracked), and 0.09 to 0.15s on a clone with 500 untracked 4KB files.
+#
+# WHAT IS IGNORED, AND SO DOES NOT MOVE IT. Checked with `git check-ignore -v`
+# on 2026-09-14, and nothing more than this:
+#   auntieos-admin/.env.production.local   auntieos-admin/.gitignore  *.local
+#   mytribe/web/.env.production.local      mytribe/.gitignore         .env.*.local
+#   mytribe/functions/lib/                 mytribe/functions/.gitignore  /lib
+#   auntieos-admin/dist/, mytribe/web/dist/   dist/ in each tree's .gitignore
+#   both Android build dirs                build/ in each tree's .gitignore
+#   .release-logs/, .release-state, .release-functions, .release-progress   root
+#   firebase-debug.log (and firestore-debug.log, ui-debug.log)
+#       under mytribe/ and auntieos-admin/ via *.log; at the ROOT only since
+#       #840 added them. Before that, a Firebase CLI call run from the root left
+#       an unignored log that refused the release; the two that run after the
+#       baseline (appdistribution) now also run from mytribe/.
+# Anything else `npm run check` writes has NOT been checked. If it writes an
+# unignored file, the baseline is taken after it, so it cannot refuse a release
+# by itself; only a change after step 2 does.
 release_tree_fingerprint() {
-  { git -C "$ROOT" status --porcelain 2>/dev/null
-    git -C "$ROOT" diff HEAD --no-ext-diff 2>/dev/null
-  } | cksum
+  local attempt status diff untracked
+  for attempt in 1 2; do
+    if status="$(git -C "$ROOT" status --porcelain 2>/dev/null)" &&
+       diff="$(git -C "$ROOT" diff HEAD --no-ext-diff 2>/dev/null)" &&
+       untracked="$(git -C "$ROOT" ls-files --others --exclude-standard -z 2>/dev/null |
+                    (cd "$ROOT" && xargs -0 git hash-object -- 2>/dev/null))"; then
+      printf '%s\n--\n%s\n--\n%s\n' "$status" "$diff" "$untracked" | cksum
+      return 0
+    fi
+    if [ "$attempt" = "1" ]; then
+      sleep 1
+    fi
+  done
+  return 1
 }
 
-# release_head_refuse <where> <target> <headline> <moved-to>: stop the release
-# because the checkout changed. <target> is the codebase a deploy that just ran
-# may have shipped from the changed checkout ("" when nothing can have): it is
-# named in the stop message, and step 5's records are dropped for it, because a
-# rerun must deploy it again rather than resume over it.
+# release_note_deploy <target>: record that a deploy of <target> is about to run.
+# Called by deploy(), by each functions batch and by each admin attempt, just
+# before the firebase call. A passing release_head_guard clears the list: every
+# deploy in it ran against a checkout that was still RELEASE_SHA at the check
+# that followed. On a refusal, the list is exactly the deploys that may have used
+# the changed checkout, whichever check caught it (#840 third review).
+release_note_deploy() {
+  case " $RELEASE_UNCHECKED_DEPLOYS " in
+    *" $1 "*) ;;
+    *) RELEASE_UNCHECKED_DEPLOYS="${RELEASE_UNCHECKED_DEPLOYS:+$RELEASE_UNCHECKED_DEPLOYS }$1" ;;
+  esac
+}
+
+# release_forget_deploy <target>: drop the progress records a deploy of <target>
+# would have written, so a rerun deploys it again instead of resuming over it.
+release_forget_deploy() {
+  case "$1" in
+    firestore:indexes)     progress_forget indexes; progress_forget indexes-confirmed ;;
+    firestore:rules)       progress_forget rules ;;
+    functions:mytribe)     progress_forget functions-mytribe
+                           progress_forget functions-mytribe-none
+                           progress_forget functions-mytribe-unverified ;;
+    functions:default)     progress_forget functions-admin-default ;;
+    functions:reconcile)   progress_forget functions-admin-reconcile ;;
+    hosting:app)           progress_forget hosting-admin ;;
+    hosting:kinfolk_portal) progress_forget hosting-portal ;;
+  esac
+}
+
+# release_head_refuse <where> <headline> <moved-to> <kind>: stop the release
+# because the checkout changed (kind "changed") or git could not read it (kind
+# "unreadable"). Names the deploys that ran since the last passing check as
+# possibly built from the changed checkout, drops their records, and leaves the
+# stop message to repeat them with both commits.
 release_head_refuse() {
-  local where="$1" target="$2" headline="$3" moved_to="$4"
+  local where="$1" headline="$2" moved_to="$3" kind="$4" t named=""
   STEP="checking the checkout has not changed since the release started"
   red "REFUSED: $headline"
   red "  Caught $where."
@@ -333,48 +400,78 @@ release_head_refuse() {
   if [ -n "$moved_to" ]; then
     red "  HEAD is now $moved_to."
   fi
-  if [ -n "$target" ]; then
-    RELEASE_MIXED_TARGET="$target"
-    RELEASE_MIXED_WITH="${moved_to:-the edited working tree}"
-    case "$target" in
-      functions:mytribe)
-        progress_forget functions-mytribe
-        progress_forget functions-mytribe-none
-        progress_forget functions-mytribe-unverified
-        ;;
-    esac
+  if [ -n "$RELEASE_UNCHECKED_DEPLOYS" ]; then
+    for t in $RELEASE_UNCHECKED_DEPLOYS; do
+      release_forget_deploy "$t"
+      named="${named:+$named, }$t"
+    done
+    RELEASE_MIXED_TARGET="$named"
+    if [ "$kind" = "unreadable" ]; then
+      RELEASE_MIXED_WITH="a checkout git could not read"
+    else
+      RELEASE_MIXED_WITH="${moved_to:-the edited working tree}"
+    fi
+    red "  Deployed since the last passing check, so possibly from the changed checkout:"
+    red "    $named"
+    red "  Nothing is recorded for them against $RELEASE_SHORT; a rerun deploys them again."
   else
-    red "  Everything deployed so far came from $RELEASE_SHORT, and .release-progress"
-    red "  records it against $RELEASE_SHORT."
+    red "  Every deploy so far passed a check against $RELEASE_SHORT after it ran, and"
+    red "  .release-progress records them against $RELEASE_SHORT."
   fi
-  red "  Something checked out, committed, pulled or edited files in this checkout"
-  red "  while the release ran. To resume, re-run once main is back at"
-  red "  $RELEASE_SHORT with a clean tree. A new commit gets a full run of its own:"
-  red "  a different commit never resumes."
+  if [ "$kind" = "unreadable" ]; then
+    red "  git failed twice, a second apart, so this run cannot show the checkout is"
+    red "  unchanged. That is not evidence it changed. Usually another git command"
+    red "  holds .git/index.lock: check nothing else runs git here, then re-run."
+  else
+    red "  Something checked out, committed, pulled or edited files in this checkout"
+    red "  while the release ran. To resume, re-run once main is back at"
+    red "  $RELEASE_SHORT with a clean tree. A new commit gets a full run of its own:"
+    red "  a different commit never resumes."
+  fi
   exit 1
 }
 
-# release_head_guard <where> [<target>]: refuse if HEAD is no longer
-# RELEASE_SHA, or, once step 2 has taken the baseline, if the working tree has
-# changed. <where> is named in the refusal. Pass <target> when the check runs
-# AFTER a deploy of that codebase, since that deploy may have built from the
-# changed checkout.
+# release_head_guard <where>: refuse if HEAD is no longer RELEASE_SHA or, once
+# step 2 has taken the baseline, if the working tree has changed or git cannot
+# read it. <where> is named in the refusal. On a pass, clears the list of
+# unchecked deploys.
 #
-# Called from banner() at every step boundary, before and after every functions
-# batch, before every admin codebase attempt and after its deploy, before step
-# 5 is recorded, before the admin codebases, and before .release-state.
+# Called from banner() at every step boundary; before and after every functions
+# batch; after the rules deploy; before every admin codebase attempt and after
+# its deploy; before step 5 is recorded; before the admin codebases; and before
+# .release-state.
 release_head_guard() {
-  local where="${1:-at a step boundary}" target="${2:-}" now
+  local where="${1:-at a step boundary}" now fp current
   [ "${RELEASE_HEAD_GUARD:-1}" = "1" ] || return 0
   [ -n "${RELEASE_SHA:-}" ] || return 0
   now="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
   if [ "$now" != "$RELEASE_SHA" ]; then
-    release_head_refuse "$where" "$target" "HEAD moved during the release." "${now:-unreadable}"
+    release_head_refuse "$where" "HEAD moved during the release." "${now:-unreadable}" changed
   fi
-  if [ -n "$RELEASE_TREE_BASELINE" ] && [ "$(release_tree_fingerprint)" != "$RELEASE_TREE_BASELINE" ]; then
-    red "$(git -C "$ROOT" status --short 2>/dev/null)"
-    release_head_refuse "$where" "$target" "the working tree changed during the release (git status above)." ""
+  if [ -n "$RELEASE_TREE_BASELINE" ]; then
+    if ! fp="$(release_tree_fingerprint)"; then
+      release_head_refuse "$where" "git could not read the working tree, so the checkout could not be checked." "" unreadable
+    fi
+    if [ "$fp" != "$RELEASE_TREE_BASELINE" ]; then
+      # Plain tests, not ${var:-default}: macOS bash 3.2 misparses a quote
+      # character inside a default word, even within double quotes.
+      if ! current="$(git -C "$ROOT" status --short 2>/dev/null)"; then
+        current="(unreadable)"
+      elif [ -z "$current" ]; then
+        current="(clean: only the contents of an untracked file changed)"
+      fi
+      red "git status --short when the release started deploying:"
+      if [ -n "$RELEASE_TREE_BASELINE_STATUS" ]; then
+        red "$RELEASE_TREE_BASELINE_STATUS"
+      else
+        red "(clean)"
+      fi
+      red "git status --short now:"
+      red "$current"
+      release_head_refuse "$where" "the working tree changed during the release (git status before and now, above)." "" changed
+    fi
   fi
+  RELEASE_UNCHECKED_DEPLOYS=""
   return 0
 }
 
@@ -414,6 +511,7 @@ confirm() {
 # deploy <prefix> <targets>: one guarded deploy, announced before it runs.
 deploy() {
   local prefix="$1" targets="$2"
+  release_note_deploy "$targets"
   cyan "deploy: $prefix -> $targets"
   DRY_RUN="$DRY_RUN" bash "$SAFE_DEPLOY" "$prefix" -- firebase deploy --only "$targets"
 }
@@ -496,9 +594,10 @@ deploy_one_function_batch() {
   release_head_guard "before a functions batch"
   cyan "deploy: mytribe -> $count function(s): $(awk 'NF{printf "%s%s", (n++?" ":""), $0}' "$names_file")"
   local rc=0
+  release_note_deploy functions:mytribe
   # shellcheck disable=SC2086
   DRY_RUN="$DRY_RUN" bash "$SAFE_DEPLOY" mytribe -- firebase deploy $FN_FORCE_FLAG --only "$targets" 2>&1 | tee "$log" || rc=$?
-  release_head_guard "after a functions batch" "functions:mytribe"
+  release_head_guard "after a functions batch"
   if [ "$rc" -eq 0 ]; then
     return 0
   fi
@@ -682,6 +781,7 @@ deploy_admin_codebase() {
     # The admin codebases upload from the working tree too (default is plain
     # JS), so every attempt starts from a checked checkout, retries included.
     release_head_guard "before $target attempt $attempt"
+    release_note_deploy "$target"
     cyan "deploy: auntieos-admin -> $target (attempt $attempt of $FN_ROUNDS)"
     if DRY_RUN="$DRY_RUN" bash "$SAFE_DEPLOY" auntieos-admin -- firebase deploy --only "$target" 2>&1 | tee "$log"; then
       rm -f "$log"
@@ -1473,8 +1573,12 @@ if [ "$ANDROID_ANY_BUILT" = "1" ] && [ -z "$ANDROID_GROUPS" ] && [ -z "$ANDROID_
   # Nothing configured, so fall back to every tester on the project. For an
   # internal tool that IS the audience, and it keeps the roster in the Firebase
   # console instead of hardcoded here where it would rot.
+  # Run from mytribe/, where *.log is ignored. The Firebase CLI writes
+  # firebase-debug.log into its working directory and keeps it on a failure
+  # (or with DEBUG set); from the root, that file used to land in the
+  # working-tree baseline taken before step 2 (#840 third review).
   ANDROID_TESTERS="$(
-    firebase appdistribution:testers:list --project "$PROJECT" --json 2>/dev/null |
+    ( cd "$ROOT/mytribe" && firebase appdistribution:testers:list --project "$PROJECT" --json 2>/dev/null ) |
       node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const t=(JSON.parse(s).result||{}).testers||[];console.log(t.map(x=>String(x.name).split("/").pop()).filter(Boolean).join(","))}catch(e){console.log("")}})'
   )"
   # awk NF rather than `tr , newline | wc -l`: with no trailing newline wc
@@ -1508,7 +1612,14 @@ fi
 # The working-tree baseline, taken after step 1 has built (so its outputs are
 # already there) and before anything deploys. From here on a changed tree
 # refuses at the next check, the same as a moved HEAD.
-RELEASE_TREE_BASELINE="$(release_tree_fingerprint)"
+if ! RELEASE_TREE_BASELINE="$(release_tree_fingerprint)"; then
+  red "REFUSED: git could not read the working tree (twice, a second apart), so"
+  red "  this run cannot take the baseline it checks the checkout against."
+  red "  Nothing has deployed. Usually another git command holds .git/index.lock:"
+  red "  check nothing else runs git in this checkout, then re-run."
+  exit 1
+fi
+RELEASE_TREE_BASELINE_STATUS="$(git -C "$ROOT" status --short 2>/dev/null || true)"
 banner "2. Firestore indexes"
 
 STEP="deploying firestore indexes"
@@ -1595,6 +1706,9 @@ if progress_done rules; then
 else
   deploy mytribe firestore:rules
   grn "rules: deployed"
+  # The rules deploy read firestore.rules from the working tree, so the checkout
+  # is checked before recording it; a refusal here drops the record.
+  release_head_guard "after deploying firestore:rules"
   progress_mark rules
 fi
 
@@ -2042,7 +2156,7 @@ if [ "${RELEASE_INCLUDE_ADMIN_FUNCTIONS:-0}" = "1" ]; then
       exit 1
     fi
     # The deploy built from the checkout, so check it before recording it.
-    release_head_guard "after deploying functions:$ADMIN_CODEBASE" "functions:$ADMIN_CODEBASE"
+    release_head_guard "after deploying functions:$ADMIN_CODEBASE"
     progress_mark "functions-admin-$ADMIN_CODEBASE"
   done
   STEP="deploying the admin functions codebases"
@@ -2126,11 +2240,15 @@ else
       ylw "DRY_RUN=1: would upload $ANDROID_APK to $ANDROID_AUDIENCE_DESC"
     else
       cyan "android/$ANDROID_NAME: distributing to $ANDROID_AUDIENCE_DESC"
-      if firebase appdistribution:distribute "$ANDROID_APK" \
+      # From mytribe/, where *.log is ignored: the CLI keeps firebase-debug.log
+      # in its working directory on a failure, and from the root that log made
+      # a merely-warned upload failure refuse the release at step 7, after both
+      # hostings were live (#840 third review). The APK path is absolute.
+      if ( cd "$ROOT/mytribe" && firebase appdistribution:distribute "$ANDROID_APK" \
         --app "$ANDROID_APP_ID" \
         --project "$PROJECT" \
         --release-notes "$ANDROID_NOTES" \
-        "${ANDROID_AUDIENCE_ARGS[@]}"; then
+        "${ANDROID_AUDIENCE_ARGS[@]}" ); then
         grn "android/$ANDROID_NAME: distributed to $ANDROID_AUDIENCE_DESC"
         ANDROID_DISTRIBUTED[$ANDROID_IDX]=1
         progress_mark "android-$ANDROID_NAME"
@@ -2146,9 +2264,9 @@ else
         ylw "android/$ANDROID_NAME: distribution FAILED. The signed APK is still at:"
         ylw "  $ANDROID_APK"
         ylw "  Retry with:"
-        ylw "  firebase appdistribution:distribute '$ANDROID_APK' \\"
+        ylw "  (cd mytribe && firebase appdistribution:distribute '$ANDROID_APK' \\"
         ylw "    --app $ANDROID_APP_ID --project $PROJECT \\"
-        ylw "    --release-notes '$ANDROID_NOTES' ${ANDROID_AUDIENCE_ARGS[*]}"
+        ylw "    --release-notes '$ANDROID_NOTES' ${ANDROID_AUDIENCE_ARGS[*]})"
       fi
     fi
     ANDROID_IDX=$((ANDROID_IDX + 1))

@@ -697,18 +697,36 @@ commit done for work the old one deployed. If HEAD moves, or the working tree
 changes after the first deploy, the run stops at the next check with `REFUSED:
 HEAD moved during the release` (or `the working tree changed during the
 release`), naming where it was caught. The checks run at every step boundary,
-before and after each functions batch, before each admin codebase attempt and
-after its deploy, before step 5 is recorded, and before `.release-state` is
-written.
+before and after each functions batch, after the rules deploy, before each admin
+codebase attempt and after its deploy, before step 5 is recorded, and before
+`.release-state` is written.
 
-They are that dense because `firebase deploy` rebuilds `lib/` from the working
-tree for every functions batch (the predeploy in `mytribe/firebase.json`), so a
-checkout that changes mid-step-5 ships the later batches from the other commit,
-and the fleet verify cannot tell. When a change is caught right after a deploy,
-the stop message says that codebase may be partly from the other commit, names
-both shas, and nothing is recorded for it, so a rerun deploys it again. A change
-made and undone inside a single deploy is invisible to every check; the only
-defence against that is not working in the checkout while a release runs. `npm run deploy:bg` passes the sha it
+They are that dense because the deploys read the working tree: `firebase deploy`
+rebuilds `lib/` for every functions batch (the predeploy in
+`mytribe/firebase.json`), the rules deploy reads `firestore.rules`, and the admin
+`default` codebase uploads plain JS. A checkout that changes mid-step-5 ships the
+later batches from the other commit, and the fleet verify cannot tell. The run
+keeps a list of the deploys since the last passing check. When a check fails, the
+refusal and the stop message name those deploys as possibly from the other commit,
+name both shas, and drop their records, so a rerun deploys them again. When no
+deploy ran since the last passing check, the refusal says every deploy so far was
+checked.
+
+What the working-tree check compares: `git status --porcelain`, `git diff HEAD`,
+and a `git hash-object` of every untracked, non-ignored file, so a changed
+untracked file's contents count too. It costs 0.07 to 0.08s on the real checkout
+(measured 2026-09-14, no untracked files) and 0.09 to 0.15s with 500 untracked
+4KB files. If git itself fails (a held `.git/index.lock`), the check retries once a
+second later, and then refuses with `git could not read the working tree`, which
+is not a claim that anything changed. The release's own outputs are gitignored
+(checked with `git check-ignore`: both `.env.production.local` files, `lib/`,
+both `dist/`, both Android build dirs, `.release-*`, and the Firebase debug logs,
+which the root only ignores since #840). The two Firebase CLI calls that run
+from outside a deploy tree (`appdistribution`) now run from `mytribe/`.
+
+A change made and undone inside a single deploy is invisible to every check; the
+only defence against that is not working in the checkout while a release runs.
+`npm run deploy:bg` passes the sha it
 launched for, and step 0 refuses if HEAD is no longer that commit. When the
 wrapper let changed indexes through because of a resume, it also passes
 `RELEASE_BG_EXPECTS_INDEX_RESUME=1`, and step 2 refuses if the index step is no
