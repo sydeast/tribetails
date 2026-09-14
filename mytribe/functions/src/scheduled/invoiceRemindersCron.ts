@@ -4,7 +4,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
-import { enqueueNotification, enqueueNotificationDetailed } from '../notifications/dispatcher';
+import { enqueueNotificationDetailed } from '../notifications/dispatcher';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 
@@ -152,8 +152,33 @@ export const invoiceRemindersCron = onSchedule(
 );
 
 /**
+ * When prefs last suppressed this invoice's overdue notice (ms epoch). Kept
+ * apart from `overdueNotifiedAtMs` on purpose (#832): that stamp means a notice
+ * reached the household, and a suppressed run reached nobody.
+ */
+const SUPPRESSED_FIELD_OVERDUE = 'overdueSuppressedAtMs';
+
+/**
+ * How long a prefs-suppressed invoice is left alone before the cron tries its
+ * overdue notice again. The cron runs daily, so a day means one attempt (and
+ * one log line) per day at most, instead of one per run forever, while a
+ * household that turns notices back on is picked up on the next run after.
+ */
+export const OVERDUE_SUPPRESSED_RETRY_MS = 24 * 60 * 60 * 1000;
+
+/**
  * Notifies on one past-due unpaid invoice doc if not yet notified. Exported for
  * unit testing. Returns true when an overdue notice was enqueued.
+ *
+ * #832: `overdueNotifiedAtMs` is written only for a notice that reached the
+ * household. Three outcomes:
+ *   - written: stamp now.
+ *   - duplicate: the `onInvoicesWrite` trigger already sent this notice (it
+ *     shares the `invoice:<id>` identity) and wrote no stamp of its own, so
+ *     stamp the ledger's last-sent time.
+ *   - prefs suppressed: no notified stamp, so a later run can send once prefs
+ *     allow it; `overdueSuppressedAtMs` skips the invoice for
+ *     OVERDUE_SUPPRESSED_RETRY_MS so it is not retried and logged every run.
  */
 export async function processOverdueInvoice(
   docSnap: QueryDocumentSnapshot,
@@ -162,6 +187,8 @@ export async function processOverdueInvoice(
   const data = docSnap.data() as InvoiceDoc;
   if (isPaid(data)) return false;
   if (data[NOTIFIED_FIELD_OVERDUE]) return false;
+  const suppressedAt = data[SUPPRESSED_FIELD_OVERDUE];
+  if (typeof suppressedAt === 'number' && now - suppressedAt < OVERDUE_SUPPRESSED_RETRY_MS) return false;
   const dueMs = parseDueMs(data);
   if (dueMs === null) return false;
   if (dueMs >= now) return false;
@@ -169,7 +196,7 @@ export async function processOverdueInvoice(
   if (!familyId) return false;
   const recipientUid = await resolveKinfolkUid(familyId);
   try {
-    await enqueueNotification({
+    const outcome = await enqueueNotificationDetailed({
       key: 'invoice.overdue',
       recipientUid: recipientUid ?? '',
       data: {
@@ -182,8 +209,24 @@ export async function processOverdueInvoice(
       },
       fireAtMs: now,
     });
-    await docSnap.ref.set({ [NOTIFIED_FIELD_OVERDUE]: now }, { merge: true });
-    return true;
+    if (outcome.written.length > 0) {
+      await docSnap.ref.set({ [NOTIFIED_FIELD_OVERDUE]: now }, { merge: true });
+      return true;
+    }
+    const duplicate = outcome.suppressed.find((s) => s.reason === 'duplicate');
+    if (duplicate) {
+      // The trigger's notice already reached this household; record THAT one.
+      await docSnap.ref.set({ [NOTIFIED_FIELD_OVERDUE]: duplicate.lastAtMs ?? now }, { merge: true });
+    } else {
+      await docSnap.ref.set({ [SUPPRESSED_FIELD_OVERDUE]: now }, { merge: true });
+    }
+    logEvent({
+      severity: 'info',
+      function: 'invoiceOverdueCron',
+      event: duplicate ? 'overdue.already-delivered' : 'overdue.suppressed',
+      extra: { familyId, invoiceId: docSnap.id, lastAtMs: duplicate?.lastAtMs ?? null },
+    });
+    return false;
   } catch (err) {
     logEvent({
       severity: 'warn',
