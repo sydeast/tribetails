@@ -111,23 +111,14 @@ export async function saveTribeProfileHandler(
     customFields = [...customFields.filter((f) => !isEmergencyContactKey(f.key)), ...carried];
 
     const sent = legacyContactFromRows(sentRows);
-    const servedKeys = await readLegacyServedKeys(firestore, kinfolkId, uid);
-    if (sent === null && servedKeys.length > 0) {
-      // Served a contact, sent none. Either an old client cleared every contact
-      // field, or a new client (which never sends these rows) saved the profile;
-      // the rows alone cannot tell them apart. The contact stays as it is in both
-      // cases, because a household needs at least one and clearing it goes
-      // through saveEmergencyContacts' own rules. The rest of the profile saves.
-      // Logged at info, not warn, since the common case is a new client.
-      logEvent({
-        severity: 'info',
-        function: 'saveTribeProfile',
-        event: 'portal.tribe.emergency_contact_keys.none_sent',
-        uid,
-        extra: { kinfolkId, outcome: 'kept' },
-      });
-    }
+    // Sent none (sent === null). Either an old client cleared every contact
+    // field, or a new client (which never sends these rows) saved the profile;
+    // the rows alone cannot tell them apart. The contact stays as it is in both
+    // cases, because a household needs at least one and clearing it goes through
+    // saveEmergencyContacts' own rules. The rest of the profile saves. Nothing is
+    // logged: it would fire on every new-client save and say nothing.
     if (sent !== null) {
+      const servedKeys = await readLegacyServedKeys(firestore, kinfolkId, uid);
       let outcome: 'echo' | 'applied' | 'ignored' = 'echo';
       const kinSnap = await firestore.doc(`kinfolk/${kinfolkId}`).get();
       const current = readStoredEmergencyContacts((kinSnap.data() ?? {}) as Record<string, unknown>).contacts;

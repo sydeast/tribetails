@@ -477,24 +477,19 @@ describe('saveTribeProfileHandler: what this caller was served decides an echo',
     );
   });
 
-  it('served a contact, sent none: the contact is kept (one is required), the rest saves, and it is logged at info', async () => {
-    const { ctx, docs } = household('primary');
-    await load();
-    await expect(save([K1])).resolves.toEqual({ ok: true });
-    expect(slot1Name(docs)).toBe('Rae Mercer');
-    expect(ctx.writes.find((w) => w.path === 'kinfolk/3')).toBeUndefined();
-    expect(docs['families/3'].displayName).toBe('The Foster Tribe');
-    const logged = await events();
-    expect(logged.find((e) => e.event === 'portal.tribe.emergency_contact_keys.none_sent')).toMatchObject({
-      severity: 'info',
-      extra: expect.objectContaining({ kinfolkId: '3', outcome: 'kept' }),
-    });
-    expect(logged.filter((e) => e.severity === 'warn')).toEqual([]);
-  });
-
-  it('a caller who was never served a contact and sends none logs nothing about it', async () => {
-    household('primary');
-    await expect(save([K1])).resolves.toEqual({ ok: true });
-    expect((await events()).find((e) => e.event === 'portal.tribe.emergency_contact_keys.none_sent')).toBeUndefined();
-  });
+  it.each([true, false])(
+    'sent no rows (served a contact first: %s): the contact is kept, the rest saves, and nothing about it is logged',
+    async (servedFirst) => {
+      const { ctx, docs } = household('primary');
+      if (servedFirst) await load();
+      await expect(save([K1])).resolves.toEqual({ ok: true });
+      expect(slot1Name(docs)).toBe('Rae Mercer');
+      expect(ctx.writes.find((w) => w.path === 'kinfolk/3')).toBeUndefined();
+      expect(docs['families/3'].displayName).toBe('The Foster Tribe');
+      const logged = await events();
+      // A new client never sends these rows, so any event here would fire on every save.
+      expect(logged.filter((e) => /emergency_contact|emergencyContacts/.test(e.event))).toEqual([]);
+      expect(logged.filter((e) => e.severity === 'warn')).toEqual([]);
+    },
+  );
 });

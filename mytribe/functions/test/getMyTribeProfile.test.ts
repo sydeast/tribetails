@@ -384,6 +384,20 @@ describe('getMyTribeProfileHandler: the record of what each caller was served', 
     expect(ctx.writes.filter((w) => w.path === SERVED_PATH)).toHaveLength(4);
   });
 
+  it('two reads with an unchanged contact make one write: a client reloading the screen adds nothing', async () => {
+    const { ctx, docs } = household({ slot1: contact('Rae Mercer', '+18055550199') });
+    await load();
+    await load();
+    expect(ctx.writes.filter((w) => w.path === SERVED_PATH)).toHaveLength(1);
+    // The same contact in another spelling is the same served value: still no second write.
+    docs['kinfolk/3'] = {
+      firstName: 'Dana',
+      emergencyContacts: [{ name: ' rae  MERCER', phone: '(805) 555-0199', relationship: null, recordedAt: null, updatedAt: null }],
+    };
+    await load();
+    expect(ctx.writes.filter((w) => w.path === SERVED_PATH)).toHaveLength(1);
+  });
+
   it('records the families copy when that is what was served (not migrated yet)', async () => {
     const { legacyServedKey } = await import('../src/lib/emergencyContacts');
     const { docs } = household({
