@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { FieldValue, type DocumentReference, type Transaction } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp, type DocumentReference, type Transaction } from 'firebase-admin/firestore';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { resolveActor, type ResolvedActor } from '../lib/resolveActor';
@@ -75,11 +75,27 @@ export const NOTIFICATION_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 /**
  * The dedupe ledger: one doc per `(key, identity, recipientUid)`, holding when
  * that notification was last delivered and which doc it produced. Server-only
- * (admin SDK); no client reads or writes it, so it needs no rule. A doc is
- * overwritten on every delivery rather than appended, so the collection is
- * bounded by the number of distinct notifications, not by the number of sends.
+ * (admin SDK); no client reads or writes it, so it needs no rule.
+ *
+ * GROWTH. A doc is overwritten on every delivery of the SAME notification, but
+ * most identities are one-off (a message id, a comment id, a content hash), so
+ * left alone the collection grows with every distinct notification ever sent.
+ * Each doc therefore carries `expiresAt`, and a Firestore TTL policy on
+ * `notificationDedupe.expiresAt` (declared in mytribe/firestore.indexes.json,
+ * deployed by the release's indexes step) deletes it once it can no longer
+ * matter. See DEDUPE_LEDGER_RETENTION_MS.
  */
 export const DEDUPE_COLLECTION = 'notificationDedupe';
+
+/**
+ * How long a ledger doc is kept after its last delivery. A doc only matters for
+ * NOTIFICATION_DEDUPE_WINDOW_MS; the rest is margin, because Firestore's TTL
+ * deletes are not immediate (typically within 24 hours of `expiresAt`) and an
+ * operator reading a recent duplicate report wants the entry still there.
+ * Nothing reads `expiresAt` to decide a dedupe: the window check uses `lastAtMs`,
+ * so a doc the TTL has not reached yet can never suppress a send.
+ */
+export const DEDUPE_LEDGER_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Per-event ids callers already thread through `data`, most specific first.
@@ -422,6 +438,9 @@ async function writeOnce(
       collection: collectionPath,
       lastAtMs: nowMs,
       windowMs: NOTIFICATION_DEDUPE_WINDOW_MS,
+      // The TTL field. Refreshed on every delivery, so a notification that keeps
+      // recurring keeps its entry; see DEDUPE_LEDGER_RETENTION_MS.
+      expiresAt: Timestamp.fromMillis(nowMs + DEDUPE_LEDGER_RETENTION_MS),
       updatedAt: FieldValue.serverTimestamp(),
     });
     return { kind: 'written', id };
