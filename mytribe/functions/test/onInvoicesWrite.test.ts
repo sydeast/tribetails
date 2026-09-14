@@ -32,7 +32,113 @@ function makeEvent(
   };
 }
 
-describe('resolveLifecycle', () => {
+/**
+ * #884: one doc per classifier state. `zero` is the $0 comped invoice, `quote`
+ * the amount-less quote, `credit` the unlabeled negative-balance credit: the
+ * three shapes the old `amountDue <= 0` rule announced as paid.
+ */
+const STATE_FIXTURES: Record<string, Record<string, unknown>> = {
+  quote: { kinfolkId: '3', status: 'quote' },
+  draft: { kinfolkId: '3', status: 'draft', amountDue: 40, total: 40 },
+  cancelled: { kinfolkId: '3', status: 'cancelled', amountDue: 0, total: 40 },
+  credit: { kinfolkId: '3', amountDue: -25, total: -25 },
+  redeemed: { kinfolkId: '3', status: 'redeemed', amountDue: -25, total: -25, creditRedeemedAt: 'ts' },
+  paid: { kinfolkId: '3', status: 'paid', amountDue: 0, total: 40 },
+  zero: { kinfolkId: '3', status: 'open', amountDue: 0, total: 0 },
+  open: { kinfolkId: '3', status: 'open', amountDue: 40, total: 40 },
+};
+
+function paidKeyCalls() {
+  return mocks.enqueue.mock.calls.filter((c) => c[0].key === 'invoice.payment.applied').length;
+}
+
+describe('#884 invoice.payment.applied fires only on a transition from open into paid', () => {
+  it('has one fixture per classifier state, and each fixture classifies as its own state', async () => {
+    const { INVOICE_STATES, invoiceStateOf } = await import('../src/lib/invoiceEditPolicy');
+    expect(Object.keys(STATE_FIXTURES).sort()).toEqual([...INVOICE_STATES].sort());
+    for (const [state, doc] of Object.entries(STATE_FIXTURES)) expect(invoiceStateOf(doc)).toBe(state);
+  });
+
+  it('names open as the only state a paid notice may come from', async () => {
+    const { PAYMENT_APPLIED_FROM_STATES } = await import('../src/triggers/onInvoicesWrite');
+    expect([...PAYMENT_APPLIED_FROM_STATES]).toEqual(['open']);
+  });
+
+  for (const state of Object.keys(STATE_FIXTURES)) {
+    it(`never fires when a doc is CREATED ${state}`, async () => {
+      const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
+      await onInvoicesWriteHandler(makeEvent(undefined, STATE_FIXTURES[state]) as any);
+      expect(paidKeyCalls()).toBe(0);
+    });
+  }
+
+  for (const from of Object.keys(STATE_FIXTURES)) {
+    for (const to of Object.keys(STATE_FIXTURES)) {
+      const fires = from === 'open' && to === 'paid';
+      it(`${from} -> ${to} ${fires ? 'fires once' : 'does not fire'}`, async () => {
+        const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
+        await onInvoicesWriteHandler(makeEvent(STATE_FIXTURES[from], STATE_FIXTURES[to]) as any);
+        expect(paidKeyCalls()).toBe(fires ? 1 : 0);
+      });
+    }
+  }
+
+  it('the issue cases: a $0 comped invoice, an amount-less quote and an unlabeled credit, created', async () => {
+    const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
+    await onInvoicesWriteHandler(makeEvent(undefined, { kinfolkId: '3', status: 'open', amountDue: 0, total: 0 }) as any);
+    await onInvoicesWriteHandler(makeEvent(undefined, { kinfolkId: '3', status: 'quote' }) as any);
+    await onInvoicesWriteHandler(makeEvent(undefined, { kinfolkId: '3', amountDue: -30, total: -30 }) as any);
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('an open invoice edited down to $0 with nothing paid is zero, not paid, and sends nothing', async () => {
+    const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
+    await onInvoicesWriteHandler(
+      makeEvent(STATE_FIXTURES.open, { kinfolkId: '3', status: 'zero', amountDue: 0, total: 0 }) as any,
+    );
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('an overdue-labelled invoice with a balance is open, so paying it off fires', async () => {
+    const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
+    await onInvoicesWriteHandler(
+      makeEvent({ kinfolkId: '3', status: 'overdue', amountDue: 40, total: 40 }, STATE_FIXTURES.paid) as any,
+    );
+    expect(paidKeyCalls()).toBe(1);
+  });
+
+  it('updateInvoice settling the balance by lowering the total stamps an owner, so nothing is sent', async () => {
+    const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
+    await onInvoicesWriteHandler(
+      makeEvent(
+        { ...STATE_FIXTURES.open, total: 100, amountDue: 40 },
+        { ...STATE_FIXTURES.paid, total: 25, paymentAppliedNoticeOwner: 'updateInvoice:u1' },
+      ) as any,
+    );
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('keeps the overdue branch as it was: an overdue label with no amountDue still sends invoice.overdue', async () => {
+    // invoiceStateOf reads `{ total: 40 }` with no amountDue as paid. The overdue
+    // branch is not driven by the classifier (#871 owns it), so this write still
+    // reads as "became overdue" and never as a payment.
+    const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
+    await onInvoicesWriteHandler(
+      makeEvent(STATE_FIXTURES.open, { kinfolkId: '3', status: 'overdue', total: 40 }) as any,
+    );
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueue.mock.calls[0][0].key).toBe('invoice.overdue');
+  });
+
+  it('still sends invoice.overdue when an overdue doc is created, as before', async () => {
+    const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
+    await onInvoicesWriteHandler(makeEvent(undefined, { kinfolkId: '3', status: 'overdue', amountDue: 40 }) as any);
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueue.mock.calls[0][0].key).toBe('invoice.overdue');
+  });
+});
+
+describe('resolveLifecycle (the overdue branch only since #884)', () => {
   it('treats explicit status=paid as paid', async () => {
     const { resolveLifecycle } = await import('../src/triggers/onInvoicesWrite');
     expect(resolveLifecycle({ status: 'paid', amountDue: 0 })).toBe('paid');

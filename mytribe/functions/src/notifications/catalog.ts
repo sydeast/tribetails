@@ -482,6 +482,12 @@ const CATALOG_LIST: NotificationDef[] = [
     //   Account credit draw: onInvoiceAutoApply drawAccountCredit      onInvoicesWrite
     //     trigger or the runAutoApply callable
     //   Any other write that pays the bill     (unstamped)             onInvoicesWrite
+    //   updateInvoice lowering the total to    updateInvoice, stamps   nobody (#884): no money moved; the
+    //     what was already paid                  updateInvoice:<uuid>    audit (`settledByEdit`) is the record
+    //
+    // #884: onInvoicesWrite sends only when the write moves the invoice from
+    // `open` into `paid`, both read by invoiceStateOf. Never on create, never for
+    // a $0 invoice, a quote, a draft, a credit or a redeemed credit.
     //
     // WHO GETS A COPY (operator ruling on #866, as on main). Every enqueue writes
     // the office copy (`businessAdmins`) beside any household copy (`kinfolkAcct`).

@@ -15,6 +15,8 @@ import {
   quoteAcceptanceOf,
 } from '../lib/invoiceEditPolicy';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
+import { PAYMENT_APPLIED_OWNER_FIELD, paymentAppliedOwner } from '../lib/paymentAppliedOwner';
+import { randomUUID } from 'node:crypto';
 import { InvoiceTermsCodeArg } from '../lib/invoiceTerms';
 import { resolveStructuredTerms, serviceDaysForSessions } from '../lib/invoiceCreateFields';
 import { validateResponse } from '../lib/callableResponse';
@@ -344,6 +346,19 @@ export async function updateInvoiceHandler(
   const stamp = invoiceStateStampOf({ ...data, ...update }, paidCents);
   update['status'] = stamp.status;
   update['editScope'] = stamp.editScope;
+
+  // #884: SETTLED BY AN EDIT, NOT A PAYMENT. Lowering the total to what has
+  // already been paid turns the invoice paid with no money moving, so nobody is
+  // told: the household did not pay anything just now, and the audit entry
+  // below (`settledByEdit`) is the office's record. The owner stamp, in this
+  // same write, is how `onInvoicesWrite` knows to stay silent. A fresh id every
+  // time, and only on the move INTO paid, for the reasons in
+  // lib/paymentAppliedOwner.ts.
+  const stateBefore = invoiceStateOf(data);
+  const settledByEdit = stateBefore !== 'paid' && stamp.status === 'paid';
+  if (settledByEdit) {
+    update[PAYMENT_APPLIED_OWNER_FIELD] = paymentAppliedOwner('updateInvoice', randomUUID());
+  }
   await ref.set(update, { merge: true });
 
   await writeAuditEntry({
@@ -361,6 +376,10 @@ export async function updateInvoiceHandler(
       fields: Object.keys(patch),
       itemized: lines !== null,
       totalCents: lines !== null ? totals.totalCents : null,
+      // #884: the office's record of a bill settled by an edit, which sends no notice.
+      stateBefore,
+      stateAfter: stamp.status,
+      settledByEdit,
     },
   }).catch((err) => {
     logEvent({

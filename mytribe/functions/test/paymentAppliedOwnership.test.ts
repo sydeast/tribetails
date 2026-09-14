@@ -69,6 +69,7 @@ import { recordPaymentHandler } from '../src/admin/recordPayment';
 import { markInvoicePaidHandler } from '../src/admin/markInvoicePaid';
 import { stripeWebhookHandler } from '../src/billing/stripeWebhook';
 import { drawAccountCredit } from '../src/lib/accountCredit';
+import { updateInvoiceHandler } from '../src/admin/updateInvoice';
 import { dedupeIdentityOf, dedupeWindowOf, resolveTargetRef } from '../src/notifications/dispatcher';
 import { NoRecipientsError } from '../src/notifications/recipientErrors';
 import type { EnqueueArgs } from '../src/notifications/types';
@@ -882,5 +883,70 @@ describe('#866 account credit', () => {
     await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
     expect(docs[INVOICE]!['status']).toBe('paid');
     expect(appliedCount()).toBe(1);
+  });
+});
+
+describe('#884 settling a balance by editing the invoice, not by paying it', () => {
+  function seedPartPaid(over: Record<string, unknown> = {}) {
+    seedInvoice({
+      total: 100,
+      totalCents: 10000,
+      amountDue: 40,
+      amountDueCents: 4000,
+      lineItems: [{ description: 'Dog walking', qty: 4, unitCents: 2500 }],
+      ...over,
+    });
+    docs['invoices/inv1/payments/p1'] = { amountCents: 6000, amount: 60 };
+  }
+
+  function editAudits(): number {
+    return Object.values(docs).filter((d) => d !== null && d['actionType'] === 'BILLING_INVOICE_UPDATED').length;
+  }
+
+  it('lowering the total to what was already paid tells nobody, and the audit is the record', async () => {
+    seedPartPaid();
+    await withTrigger(() =>
+      updateInvoiceHandler(
+        adminReq({ invoiceId: 'inv1', patch: { lineItems: [{ description: 'Dog walking', qty: 1, unitCents: 6000 }] } }),
+      ),
+    );
+    expect(docs[INVOICE]!['status']).toBe('paid');
+    expect(appliedCount()).toBe(0);
+    expect(staffCount()).toBe(0);
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(editAudits()).toBe(1);
+  });
+
+  it('lowering it BELOW what was paid tells nobody either', async () => {
+    seedPartPaid();
+    await withTrigger(() =>
+      updateInvoiceHandler(
+        adminReq({ invoiceId: 'inv1', patch: { lineItems: [{ description: 'Dog walking', qty: 1, unitCents: 2500 }] } }),
+      ),
+    );
+    expect(docs[INVOICE]!['status']).toBe('paid');
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('a bill a card paid once, reopened, then settled by an edit: the card stamp does not make the trigger send', async () => {
+    seedPartPaid({ paymentAppliedNoticeOwner: 'stripe:evt_old' });
+    await withTrigger(() =>
+      updateInvoiceHandler(
+        adminReq({ invoiceId: 'inv1', patch: { lineItems: [{ description: 'Dog walking', qty: 1, unitCents: 6000 }] } }),
+      ),
+    );
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('an edit stamp left on an open bill does not silence a later real payment (account credit)', async () => {
+    // A settled-by-edit invoice is frozen, so no edit reopens it; the stamp can
+    // still sit on an open bill (a repair reopening it). The credit draw stamps
+    // nothing, so the trigger owns that notice and must still send it.
+    seedInvoice({ paymentAppliedNoticeOwner: 'updateInvoice:earlier' });
+    docs['families/fam1'] = { accountBalanceCents: 5000 };
+    await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+    expect(docs[INVOICE]!['status']).toBe('paid');
+    expect(appliedCount()).toBe(1);
+    expect(staffCount()).toBe(1);
   });
 });

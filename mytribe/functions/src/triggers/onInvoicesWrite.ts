@@ -4,11 +4,12 @@ import { wrapTrigger } from '../lib/wrapTrigger';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { paymentAppliedNoticeOwnedByWriter } from '../lib/paymentAppliedOwner';
+import { invoiceStateOf, type InvoiceState } from '../lib/invoiceEditPolicy';
 
 type InvoiceDoc = {
   kinfolkId?: string;      // family id, stamped by AuntieOS + portal writers
   status?: string;         // free-text: e.g. open | paid | past_due | overdue | draft
-  amountDue?: number;      // numeric balance owed; <= 0 means settled
+  amountDue?: number;      // numeric balance owed
   total?: number;
   currency?: string;
   dueDate?: string;
@@ -17,24 +18,64 @@ type InvoiceDoc = {
 
 /**
  * Watches the FLAT top-level `invoices/{invoiceId}` collection (AuntieOS
- * Android + web write here). Fires a notification when an invoice crosses
- * into a "paid" or "past due" state via ANY write path (admin UI direct
- * write, callable, or the Stripe webhook). #866: a paid transition is skipped
- * when the write stamped a new `paymentAppliedNoticeOwner`, because that writer
- * sends the confirmation itself (lib/paymentAppliedOwner.ts). Other transitions
- * are handled elsewhere:
+ * Android + web write here). Fires a notification when an invoice is paid or
+ * becomes past due via ANY write path (admin UI direct write, callable, or the
+ * Stripe webhook). #866: a paid transition is skipped when the write stamped a
+ * new `paymentAppliedNoticeOwner`, because that writer sends the confirmation
+ * itself, or decided nobody is told (lib/paymentAppliedOwner.ts). Other
+ * transitions are handled elsewhere:
  *   - new invoice doc creation → postInvoiceEvent fires invoice.new
  *   - generic update          → postInvoiceEvent fires invoice.updated
  *   - charge failure          → stripeWebhook fires invoice.charge.failed
- *
- * The real flat docs carry a free-text `status` plus a numeric `amountDue`;
- * there is no quote/accepted lifecycle or paymentStatus enum, so the state is
- * derived from those two fields.
  */
+
+/**
+ * #884: THE STATES A PAID NOTICE MAY COME FROM. `invoice.payment.applied` fires
+ * only when the write moves the invoice from one of these into `paid`, both read
+ * by `invoiceStateOf` (lib/invoiceEditPolicy.ts), the one classifier.
+ *
+ * Before #884 the trigger had its own rule, `amountDue <= 0` unless draft or
+ * cancelled, and a created doc's "before" read as not paid. So a $0 comped
+ * invoice, an amount-less quote and an unlabeled credit each announced
+ * "Payment applied" on create, and so did an edit that lowered the total.
+ *
+ * WHY ONLY `open`, decided from the payment code:
+ *   - `quote` and `draft`: markInvoicePaid refuses them (`isDraftOrQuote`), and
+ *     so does the apply path. Draft to paid is a review of a draft whose payments
+ *     already cover it; no money moves in that write.
+ *   - `cancelled` and `credit`: refused (`refusedLifecycle`). `redeemed` is a
+ *     credit already turned into account balance; it is never paid.
+ *   - `zero` (total 0): payInvoice refuses a $0 balance, and the credit draw
+ *     needs a positive `amountDue`. The only payers that accept an overpayment
+ *     of a $0 bill (markInvoicePaid, recordPayment's apply) stamp their own
+ *     owner, so the trigger would stand down anyway. A zero doc that turns paid
+ *     without a payment (a total added to a bill payments already cover) is not
+ *     a payment, so it sends nothing.
+ *   - `paid` to `paid` is not a transition.
+ *   - Created docs have no "before", so they never send, whatever state they are
+ *     created in. A migrated or imported paid invoice is history, not news.
+ *
+ * `open` includes an `overdue` or `past_due` label with a balance: the classifier
+ * reads the money, so paying off an overdue bill still sends.
+ */
+export const PAYMENT_APPLIED_FROM_STATES: readonly InvoiceState[] = ['open'];
+
+/** #884: true when this write moved the invoice into `paid` from a state a payment pays. */
+export function isPaidTransition(before: InvoiceDoc | undefined, after: InvoiceDoc | undefined): boolean {
+  if (!before || !after) return false;
+  return PAYMENT_APPLIED_FROM_STATES.includes(invoiceStateOf(before)) && invoiceStateOf(after) === 'paid';
+}
 
 type Lifecycle = 'paid' | 'past_due' | 'other';
 
-/** Resolves a coarse lifecycle from the real free-text status + amountDue. */
+/**
+ * Resolves a coarse lifecycle from the real free-text status + amountDue.
+ *
+ * #884: this now gates the OVERDUE notice only, and is kept exactly as it was
+ * because #871 reworks that branch. Its `paid` result no longer decides
+ * `invoice.payment.applied` (see isPaidTransition); it survives here only as the
+ * precedence that keeps a settled doc from reading as past due.
+ */
 export function resolveLifecycle(doc: InvoiceDoc | undefined): Lifecycle {
   if (!doc) return 'other';
   const status = typeof doc.status === 'string' ? doc.status.trim().toLowerCase() : '';
@@ -60,14 +101,17 @@ export async function onInvoicesWriteHandler(event: InvoicesWriteEvent): Promise
 
   const beforeLifecycle = resolveLifecycle(before);
   const afterLifecycle = resolveLifecycle(after);
-  if (beforeLifecycle === afterLifecycle) return;
 
   let key: 'invoice.payment.applied' | 'invoice.overdue' | null = null;
-  if (afterLifecycle === 'paid' && beforeLifecycle !== 'paid') {
+  // The overdue branch is unchanged (#871 owns it). It is checked first so a
+  // write it would have announced as overdue is never re-read as a payment.
+  if (afterLifecycle === 'past_due' && beforeLifecycle !== 'past_due') {
+    key = 'invoice.overdue';
+  } else if (isPaidTransition(before, after)) {
     // #866: the write that paid it named another sender (lib/paymentAppliedOwner.ts).
     if (paymentAppliedNoticeOwnedByWriter(before, after)) return;
     key = 'invoice.payment.applied';
-  } else if (afterLifecycle === 'past_due' && beforeLifecycle !== 'past_due') key = 'invoice.overdue';
+  }
   if (!key) return;
 
   const invoiceId = event.params.invoiceId;
