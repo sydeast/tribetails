@@ -64,9 +64,10 @@ make_repo() {
   mkdir -p "$dir/scripts/lib"
   cp "$SCRIPT" "$dir/scripts/preflight.sh"
   # preflight.sh sources the shared drift comparison rather than carrying its
-  # own copy (see #841); without this the real script dies on a missing file
+  # own copy (see #841), which in turn shells out to the two Node scripts
+  # beside it; without all three the real script dies on a missing file
   # instead of exercising the check under test.
-  cp "$HERE/lib/dep-drift.sh" "$dir/scripts/lib/dep-drift.sh"
+  cp "$HERE"/lib/*.sh "$HERE"/lib/*.js "$dir/scripts/lib/"
 
   # mytribe/functions: NOT a workspace member. Own manifest, own lockfile.
   mkdir -p "$dir/mytribe/functions"
@@ -97,7 +98,12 @@ PJ
   }
 }
 LOCK
-  for p in mytribe/web auntieos-admin packages/geo; do
+  # packages/issue-recorder is included here (a REAL fourth workspace member,
+  # matching this repo's actual layout) so that any test relying on a
+  # hardcoded three-member list would miss it. Members are discovered from
+  # the root "workspaces" field above, expanding "packages/*", never from a
+  # list carried in this test or in preflight.sh itself.
+  for p in mytribe/web auntieos-admin packages/geo packages/issue-recorder; do
     mkdir -p "$dir/$p"
     cat > "$dir/$p/package.json" <<'PJ'
 { "name": "synthetic", "dependencies": { "left-pad": "^1.3.0" } }
@@ -274,7 +280,7 @@ else
   bad "the nested install mismatch did not name the installed version"
 fi
 # A workspace MEMBER (mytribe/web, auntieos-admin, packages/geo) never has its
-# own lockfile — that is normal, since the three share the root's. Running
+# own lockfile, and that is normal, since the three share the root's. Running
 # `npm ci` INSIDE one anyway is a real, separate incident: it exits 0 and
 # SILENTLY DROPS whatever that member does not carry in its own (nonexistent)
 # lockfile. So the fix for workspace drift must always be plain `npm ci` (at
@@ -282,12 +288,158 @@ fi
 # members. Checked against every workspace-drift fixture built above
 # (D3B, D4B, D4C), not just this one.
 for f in "$D3B/out" "$D4B/out" "$D4C/out"; do
-  if grep -qE -- '--prefix (mytribe/web|auntieos-admin|packages/geo)\b' "$f"; then
+  if grep -qE -- '--prefix (mytribe/web|auntieos-admin|packages/geo|packages/issue-recorder)\b' "$f"; then
     bad "a workspace drift report named npm ci --prefix inside a workspace member ($f)"
   else
     ok "workspace drift never suggests npm ci --prefix inside a member ($f)"
   fi
 done
+
+# ------------------------------------------- a member outside the old hardcoded list
+# The workspace check used to be told its members by a hardcoded list
+# (mytribe/web, auntieos-admin, packages/geo) passed in by the caller. A real
+# fourth member -- packages/issue-recorder, which make_repo above always
+# creates -- would have gone unchecked forever under that list. Drifting ONLY
+# it proves the member list is actually built from the root package.json's
+# "workspaces" field (packages/* expanded), not from anything hardcoded.
+D4D="$(make_repo)"
+install_matching "$D4D"
+cat > "$D4D/packages/issue-recorder/package.json" <<'PJ'
+{ "name": "synthetic", "dependencies": { "left-pad": "^1.3.0", "recorder-only-dep": "^2.0.0" } }
+PJ
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  const lock = JSON.parse(fs.readFileSync(p, "utf8"));
+  lock.packages["node_modules/recorder-only-dep"] = { version: "2.0.0" };
+  fs.writeFileSync(p, JSON.stringify(lock));
+' "$D4D/package-lock.json"
+mkdir -p "$D4D/node_modules/recorder-only-dep"
+printf '{ "name": "recorder-only-dep", "version": "1.0.0" }\n' \
+  > "$D4D/node_modules/recorder-only-dep/package.json"
+RC="$(run_preflight "$D4D")"
+if [ "$RC" = "2" ] && grep -q "packages/issue-recorder/recorder-only-dep" "$D4D/out"; then
+  ok "drift in a workspace member NOT on the old hardcoded list is still caught"
+else
+  bad "packages/issue-recorder drift went uncaught; got rc=$RC"
+  tail -20 "$D4D/out"
+fi
+
+# ------------------------------------------------- a declared dependency with
+# ------------------------------------------------- no lockfile entry at all
+# package.json and package-lock.json disagreeing with EACH OTHER (not with
+# node_modules) used to be silently skipped: the drift loop only ever walked
+# declared dependencies that already had a lockfile entry, so one with none
+# at all reported clean. Tested against both install units.
+D4E="$(make_repo)"
+install_matching "$D4E"
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  const pj = JSON.parse(fs.readFileSync(p, "utf8"));
+  pj.dependencies["ghost-pkg"] = "^1.0.0";
+  fs.writeFileSync(p, JSON.stringify(pj));
+' "$D4E/mytribe/functions/package.json"
+RC="$(run_preflight "$D4E")"
+if [ "$RC" = "2" ] && grep -q "ghost-pkg (declared, but not in package-lock.json)" "$D4E/out"; then
+  ok "a functions dependency declared but not in the lockfile is caught as drift"
+else
+  bad "an unlocked declared functions dependency went uncaught; got rc=$RC"
+  tail -20 "$D4E/out"
+fi
+
+D4F="$(make_repo)"
+install_matching "$D4F"
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  const pj = JSON.parse(fs.readFileSync(p, "utf8"));
+  pj.dependencies["ghost-pkg"] = "^1.0.0";
+  fs.writeFileSync(p, JSON.stringify(pj));
+' "$D4F/mytribe/web/package.json"
+RC="$(run_preflight "$D4F")"
+if [ "$RC" = "2" ] && grep -q "mytribe/web/ghost-pkg (declared, but not in package-lock.json)" "$D4F/out"; then
+  ok "a workspace member dependency declared but not in the lockfile is caught as drift"
+else
+  bad "an unlocked declared workspace dependency went uncaught; got rc=$RC"
+  tail -20 "$D4F/out"
+fi
+
+# --------------------------------------------------------- transitive-only drift
+# Only DIRECT dependencies used to be compared, so a transitive bump (the
+# shape a Dependabot GROUP update takes -- it can move a nested dependency's
+# version without touching the direct package.json entry at all) went
+# undetected. node_modules/.package-lock.json is npm's own record of every
+# installed package, transitive included; diffing it against the real
+# lockfile catches this without walking the dependency tree by hand.
+D4G="$(make_repo)"
+install_matching "$D4G"
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  const lock = JSON.parse(fs.readFileSync(p, "utf8"));
+  lock.packages["node_modules/left-pad/node_modules/nested-thing"] = { version: "2.0.0" };
+  fs.writeFileSync(p, JSON.stringify(lock));
+' "$D4G/mytribe/functions/package-lock.json"
+# The installed marker reflects the OLD lockfile: left-pad matches (1.3.0),
+# but the transitive nested-thing is still what the PREVIOUS install left,
+# not what the lockfile above now pins.
+cat > "$D4G/mytribe/functions/node_modules/.package-lock.json" <<'LOCK'
+{ "packages": {
+  "node_modules/left-pad": { "version": "1.3.0" },
+  "node_modules/left-pad/node_modules/nested-thing": { "version": "1.0.0" }
+} }
+LOCK
+RC="$(run_preflight "$D4G")"
+if [ "$RC" = "2" ] && grep -q "nested-thing (1.0.0, lockfile says 2.0.0)" "$D4G/out"; then
+  ok "a transitive-only version bump is caught even though the direct dependency matches"
+else
+  bad "transitive-only drift went uncaught; got rc=$RC"
+  tail -20 "$D4G/out"
+fi
+
+# ------------------------------------------------------------- unreadable inputs
+# A garbage or truncated JSON file used to be swallowed by a bare `catch {
+# process.exit(0) }`, which printed nothing and looked EXACTLY like "clean".
+# It must instead be its own state that refuses, distinct from both clean and
+# ordinary drift.
+D4H="$(make_repo)"
+install_matching "$D4H"
+printf 'this is not json' > "$D4H/mytribe/functions/package-lock.json"
+RC="$(run_preflight "$D4H")"
+if [ "$RC" = "1" ] && grep -qi "cannot be checked" "$D4H/out"; then
+  ok "a garbage functions lockfile is UNREADABLE, refuses (rc=1), and says so"
+else
+  bad "a garbage functions lockfile did not refuse as unreadable; got rc=$RC"
+  tail -20 "$D4H/out"
+fi
+if grep -q "functions.*install matches it" "$D4H/out"; then
+  bad "a garbage functions lockfile was reported as a CLEAN, matching install"
+else
+  ok "a garbage functions lockfile is never reported as clean"
+fi
+
+D4I="$(make_repo)"
+install_matching "$D4I"
+printf 'this is not json' > "$D4I/package-lock.json"
+RC="$(run_preflight "$D4I")"
+if [ "$RC" = "1" ] && grep -qi "cannot be checked" "$D4I/out"; then
+  ok "a garbage root lockfile is UNREADABLE, refuses (rc=1), and says so"
+else
+  bad "a garbage root lockfile did not refuse as unreadable; got rc=$RC"
+  tail -20 "$D4I/out"
+fi
+
+D4J="$(make_repo)"
+install_matching "$D4J"
+printf 'this is not json' > "$D4J/mytribe/functions/node_modules/.package-lock.json"
+RC="$(run_preflight "$D4J")"
+if [ "$RC" = "1" ] && grep -qi "cannot be checked" "$D4J/out"; then
+  ok "a garbage install marker (node_modules/.package-lock.json) is UNREADABLE, refuses"
+else
+  bad "a garbage install marker did not refuse as unreadable; got rc=$RC"
+  tail -20 "$D4J/out"
+fi
 
 # ------------------------------------------------- a missing lockfile still fails
 D5="$(make_repo)"
@@ -313,12 +465,17 @@ fi
 # ---------------------------------------------------------------------------
 # auntieos-admin/web/functions (#841): the SAME standalone shape as
 # mytribe/functions, for the "default" Firebase Functions codebase. Checked
-# only when the directory exists, and WARNS rather than fails for the same
-# reason the reconcile Python codebase below does: it only ships under
-# RELEASE_INCLUDE_ADMIN_FUNCTIONS=1, `npm run setup` never installs it, and
-# failing preflight over it would refuse an ordinary setup or release over a
-# codebase that run is not touching. release.sh's own step 0 refuses on this
-# exact drift when the flag actually ships it (see release.test.sh).
+# only when the directory exists.
+#
+# TREATED THE SAME AS mytribe/functions, not as a warning: bootstrap.sh
+# installs this codebase too now, regardless of RELEASE_INCLUDE_ADMIN_
+# FUNCTIONS, so its drift is exactly as fixable by `npm run setup` as
+# mytribe/functions' is. It used to only warn (never setting MISSING), which
+# meant preflight never exited 2 for it, `npm run setup` never installed it,
+# and the real repo carried real, unnoticed drift here (@anthropic-ai/sdk,
+# firebase-admin). release.sh's own step 0a still only REFUSES a release over
+# this when RELEASE_INCLUDE_ADMIN_FUNCTIONS=1 is actually shipping it (see
+# release.test.sh); preflight has no such flag to read.
 # ---------------------------------------------------------------------------
 add_admin_functions() {
   local dir="$1"
@@ -353,11 +510,11 @@ install_matching "$D5D"
 add_admin_functions "$D5D"
 install_dep "$D5D" "auntieos-admin/web/functions" "1.2.0"
 RC="$(run_preflight "$D5D")"
-if [ "$RC" = "0" ] && grep -q "adminfn.*does NOT match the lockfile" "$D5D/out" &&
+if [ "$RC" = "2" ] && grep -q "adminfn.*does NOT match the lockfile" "$D5D/out" &&
    grep -q "1.2.0" "$D5D/out" && grep -q "1.3.0" "$D5D/out"; then
-  ok "admin-functions drift is named but still does not fail preflight"
+  ok "admin-functions drift FAILS preflight, as drift-only (rc=2), and is named"
 else
-  bad "admin-functions drift either failed preflight or went unreported; got rc=$RC"
+  bad "admin-functions drift either did not fail as drift-only or went unreported; got rc=$RC"
   tail -20 "$D5D/out"
 fi
 

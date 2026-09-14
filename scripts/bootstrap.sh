@@ -31,6 +31,14 @@ grn() { printf '\033[32m%s\033[0m\n' "$*"; }
 ylw() { printf '\033[33m%s\033[0m\n' "$*"; }
 red() { printf '\033[31m%s\033[0m\n' "$*" >&2; }
 
+# The SAME comparison preflight.sh reports with, so step 3 can decide WHICH
+# install units are actually stale rather than trusting a single aggregate
+# exit code (drift in one unit must not force a reinstall of a sibling that
+# was already fine -- a root reinstall over a mytribe/functions-only drift
+# wastes minutes for nothing).
+# shellcheck source=scripts/lib/dep-drift.sh
+. "$ROOT/scripts/lib/dep-drift.sh"
+
 STEP="starting up"
 finish() {
   local code=$?
@@ -51,7 +59,7 @@ trap finish EXIT
 # EXCEPT WHEN THE ONLY THING WRONG IS DEPENDENCY DRIFT. On 2026-09-13 preflight
 # correctly reported that node_modules did not match a lockfile a Dependabot
 # PR had moved (vitest 4 -> 5, ~20 other packages) and this step refused to
-# start on the strength of that report — which stopped the ONE thing that
+# start on the strength of that report, which stopped the ONE thing that
 # fixes drift (installing) because of the drift itself. The operator ran
 # `npm ci` and `npm ci --prefix mytribe/functions` by hand to get past it.
 #
@@ -76,15 +84,6 @@ if [ -z "${SKIP_PREFLIGHT:-}" ]; then
       ylw "preflight: the only failure above is dependency drift (node_modules"
       ylw "  out of sync with a lockfile). That is exactly what installing fixes,"
       ylw "  so continuing rather than refusing to start the fix for it."
-      # FORCE step 3's install rather than trusting its own staleness check
-      # (an mtime comparison; see install_if_stale below). Preflight just
-      # proved that heuristic wrong for THIS tree by reading actual installed
-      # versions: node_modules exists, its marker file may even be newer than
-      # the lockfile (an `npm install <pkg>` after a pull leaves exactly that),
-      # and it is still not what the lockfile pins. Without this, step 3 can
-      # print "already installed and current", install nothing, and the
-      # re-check below then reports the same drift preflight already named.
-      FORCE_INSTALL=1
       printf '\n'
       ;;
     *)
@@ -96,6 +95,30 @@ if [ -z "${SKIP_PREFLIGHT:-}" ]; then
   esac
 else
   ylw "preflight: SKIPPED (SKIP_PREFLIGHT is set)"
+fi
+
+# WHICH units, specifically, does step 3 need to FORCE past their own
+# mtime-staleness heuristic? Only the ones preflight's more thorough,
+# actual-version comparison found in "drift" -- never every unit, and never
+# by trusting PREFLIGHT_RC alone (that is a single aggregate answer for
+# "was anything wrong", not "which of the three was it"). Re-running the
+# SAME functions preflight.sh just ran costs a few JSON reads, not an
+# install; asking again here is cheaper than parsing preflight's stdout back
+# apart to recover what it already knew.
+FORCE_FUNCTIONS=""
+FORCE_WORKSPACE=""
+FORCE_ADMINFN=""
+if [ "$PREFLIGHT_RC" = "2" ]; then
+  standalone_pkg_drift "mytribe/functions" || true
+  if [ "$DEP_DRIFT_STATE" = "drift" ]; then FORCE_FUNCTIONS=1; fi
+
+  workspace_pkg_drift "$ROOT" || true
+  if [ "$DEP_DRIFT_STATE" = "drift" ]; then FORCE_WORKSPACE=1; fi
+
+  if [ -d "auntieos-admin/web/functions" ]; then
+    standalone_pkg_drift "auntieos-admin/web/functions" || true
+    if [ "$DEP_DRIFT_STATE" = "drift" ]; then FORCE_ADMINFN=1; fi
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -176,11 +199,15 @@ done
 # 3. Dependencies.
 # ---------------------------------------------------------------------------
 # Since PR25a, mytribe/web, auntieos-admin, and packages/* are real npm
-# workspaces: ONE install at the repo root covers all three, and it's how
-# both apps get packages/geo. mytribe/functions is deliberately NOT a
-# workspace member — Cloud Functions deploy as a self-contained artifact with
-# their own lockfile, and hoisting its deps into the root tree would ship a
-# broken deploy — so it keeps its own standalone prefix install.
+# workspaces: ONE install at the repo root covers every member. mytribe/
+# functions and auntieos-admin/web/functions are deliberately NOT workspace
+# members (Cloud Functions deploy as a self-contained artifact with their
+# own lockfile, and hoisting their deps into the root tree would ship a
+# broken deploy), so each keeps its own standalone prefix install. Every
+# STANDALONE lockfile unit release.sh's step 0a checks gets installed here
+# (#841 follow-up): auntieos-admin/web/functions used to be left out, so
+# `npm run setup` could never fix its drift and it carried real, unnoticed
+# drift in the live repo (@anthropic-ai/sdk, firebase-admin).
 #
 # Installs run ONE AT A TIME on purpose: parallel npm processes race on the
 # shared cache and fail with EACCES renaming into ~/.npm/_cacache.
@@ -200,21 +227,32 @@ done
 # installed, because it only checked that a directory existed.
 STEP="installing dependencies"
 
+# install_if_stale <label> <dir> [force]: <force>, when non-empty, means
+# preflight's own version comparison (not this function's mtime guess) found
+# THIS UNIT specifically out of sync, and reinstalls it regardless of what
+# the timestamps say. It is per-call, not the FORCE_INSTALL env var (which
+# still means "reinstall everything, unconditionally"): drift in ONE unit
+# must not force a reinstall of a sibling that was already fine, or a
+# mytribe/functions-only bump would cost a full root reinstall for nothing.
 install_if_stale() {
-  local label="$1" dir="$2"
+  local label="$1" dir="$2" force="${3:-}"
   local marker="$dir/node_modules/.package-lock.json"
   local lockfile="$dir/package-lock.json"
-  local stale=0
+  local stale=0 reason=""
   if [ -d "$dir/node_modules" ]; then
     if [ ! -f "$marker" ]; then
-      stale=1   # no marker: npm never finished, or an ancient layout
+      stale=1; reason="no install marker: npm never finished, or an ancient layout"
     elif [ "$lockfile" -nt "$marker" ]; then
-      stale=1   # lockfile moved after the last install
+      stale=1; reason="package-lock.json is newer than the install"
     fi
+  fi
+  if [ "$stale" -eq 0 ] && [ -n "$force" ]; then
+    stale=1
+    reason="preflight's own version comparison found it out of sync (its mtimes looked fine)"
   fi
 
   if [ "$stale" -eq 1 ] && [ -z "${FORCE_INSTALL:-}" ]; then
-    ylw "deps: $label is STALE (package-lock.json is newer than the install)"
+    ylw "deps: $label is STALE ($reason)"
     ylw "      reinstalling; this is the drift that makes correct code fail to build"
   fi
 
@@ -229,12 +267,19 @@ install_if_stale() {
 }
 
 # mytribe/functions: standalone, own lockfile, own node_modules.
-install_if_stale "mytribe/functions" "mytribe/functions"
+install_if_stale "mytribe/functions" "mytribe/functions" "$FORCE_FUNCTIONS"
 
-# Workspace root: covers mytribe/web, auntieos-admin, and packages/geo in one
-# install. `.` so install_if_stale's "$dir/package-lock.json" resolves to the
-# root lockfile.
-install_if_stale "workspace root (mytribe/web, auntieos-admin, packages/geo)" "."
+# Workspace root: covers every npm workspace member in one install. `.` so
+# install_if_stale's "$dir/package-lock.json" resolves to the root lockfile.
+install_if_stale "workspace root (npm workspaces)" "." "$FORCE_WORKSPACE"
+
+# auntieos-admin/web/functions: the SAME standalone shape as mytribe/
+# functions, for the "default" Firebase Functions codebase. Installed only
+# when the directory exists (mirrors preflight.sh's own guard), since a
+# checkout of an older commit or a partial/synthetic tree may not have it.
+if [ -d "auntieos-admin/web/functions" ]; then
+  install_if_stale "auntieos-admin/web/functions" "auntieos-admin/web/functions" "$FORCE_ADMINFN"
+fi
 
 # ---------------------------------------------------------------------------
 # 3b. Re-check preflight, now that step 0 let a drift-only failure through.

@@ -548,22 +548,16 @@ if [ "$LOCAL" != "$REMOTE" ]; then
   exit 1
 fi
 grn "sync: main == origin/main ($(git rev-parse --short HEAD), via $SYNC_VIA)"
-
-# What is actually about to ship, so the operator can recognise it. A release
-# whose contents are a surprise is one nobody can sanity-check.
-STEP="summarising the release"
-cyan ""
-cyan "HEAD: $(git log -1 --format='%h %s' | cut -c1-100)"
-if [ "$DRY_RUN" = "1" ]; then
-  ylw "DRY_RUN=1: every firebase command below will be PRINTED, not run."
-fi
-
-confirm "Release this commit to production (auntieos-ttpc)?"
-fi  # end of the guards skipped under RELEASE_PREFLIGHT_ONLY
+fi  # end of the tree/branch/sync guards skipped under RELEASE_PREFLIGHT_ONLY
 
 # ---------------------------------------------------------------------------
 # 0a. Dependency drift: is node_modules what each lockfile says it should be?
 # ---------------------------------------------------------------------------
+# BEFORE the "release this commit?" confirm, deliberately: an operator who
+# says yes should not then be told no. This runs unconditionally (including
+# under RELEASE_PREFLIGHT_ONLY, via its own accommodation below), the same
+# reason step 0b's CI-gate check does not live inside the tree/branch/sync
+# guard above.
 banner "0a. Dependency drift"
 
 # WHY THIS EXISTS
@@ -582,7 +576,7 @@ STEP="checking installed dependencies match their lockfiles"
 . "$ROOT/scripts/lib/dep-drift.sh"
 
 # Under RELEASE_PREFLIGHT_ONLY, a real release would refuse here but this run
-# ships nothing, so it reports what would happen and continues — the same
+# ships nothing, so it reports what would happen and continues, the same
 # accommodation ci_refuse (below, in step 0b) makes, for the same reason: this
 # is the one mode that exists to exercise refusal paths without a real commit
 # GitHub has judged, and refusing here would make it unable to reach them.
@@ -607,33 +601,44 @@ if standalone_pkg_drift "$ROOT/mytribe/functions"; then
   esac
 else
   case "$DEP_DRIFT_STATE" in
-    no-lock) report_drift "mytribe/functions has no package-lock.json" "npm ci --prefix mytribe/functions" ;;
-    drift)   report_drift "mytribe/functions: $DEP_DRIFT_DETAIL" "npm ci --prefix mytribe/functions" ;;
+    no-lock)    report_drift "mytribe/functions has no package-lock.json" "npm ci --prefix mytribe/functions" ;;
+    unreadable) report_drift "mytribe/functions: $DEP_DRIFT_DETAIL" "npm ci --prefix mytribe/functions" ;;
+    drift)      report_drift "mytribe/functions: $DEP_DRIFT_DETAIL" "npm ci --prefix mytribe/functions" ;;
   esac
 fi
 
-# The workspace root: mytribe/web, auntieos-admin, and packages/geo share ONE
-# lockfile and node_modules (PR25a). The other unit named in the incident
-# (vitest, ~20 packages, all reached through this root).
-if workspace_pkg_drift "$ROOT" mytribe/web auntieos-admin packages/geo; then
+# The workspace root: every npm workspace member (mytribe/web, auntieos-admin,
+# packages/geo, packages/issue-recorder, and any other declared in the root
+# package.json's "workspaces" field -- workspace_pkg_drift reads that field
+# itself rather than being told the members, so a new one is checked without
+# this file changing) shares ONE lockfile and node_modules (PR25a). The other
+# unit named in the incident (vitest, ~20 packages, all reached through this
+# root). The fix for drift here is ALWAYS plain `npm ci` at the root, never a
+# `--prefix`'d install inside a member: a workspace member carries no
+# lockfile of its own, so `npm ci` run inside one exits 0 and silently
+# installs a smaller tree than the root's.
+if workspace_pkg_drift "$ROOT"; then
   case "$DEP_DRIFT_STATE" in
     ok)      ylw "deps: workspace root not installed yet (fresh checkout; npm ci will do it)" ;;
     no-node) ylw "deps: workspace root installed, but node is missing so it cannot be verified" ;;
-    clean)   grn "deps: workspace root (mytribe/web, auntieos-admin, packages/geo) matches its lockfile" ;;
+    clean)   grn "deps: workspace root (every npm workspace member) matches its lockfile" ;;
   esac
 else
   case "$DEP_DRIFT_STATE" in
-    no-lock) report_drift "the workspace root has no package-lock.json" "npm ci" ;;
-    drift)   report_drift "workspace root: $DEP_DRIFT_DETAIL" "npm ci" ;;
+    no-lock)    report_drift "the workspace root has no package-lock.json" "npm ci" ;;
+    unreadable) report_drift "workspace root: $DEP_DRIFT_DETAIL" "npm ci" ;;
+    drift)      report_drift "workspace root: $DEP_DRIFT_DETAIL" "npm ci" ;;
   esac
 fi
 
 # auntieos-admin/web/functions: the second Firebase Functions codebase (see
-# step 5), which this run BUILDS AND DEPLOYS only under
-# RELEASE_INCLUDE_ADMIN_FUNCTIONS=1. Checked only then, for the same reason
-# preflight.sh only WARNS about it unconditionally: testing a codebase this
-# run is not going to ship would refuse releases over drift nothing here
-# reads.
+# step 5), which THIS RUN builds and deploys only under
+# RELEASE_INCLUDE_ADMIN_FUNCTIONS=1. Checked only then: testing a codebase
+# this run is not going to ship would refuse releases over drift nothing here
+# reads. preflight.sh checks it unconditionally (scripts/bootstrap.sh installs
+# it unconditionally too, since 2026-09), because setup and release ask
+# different questions -- "is this machine ready" vs. "is this run shipping
+# it" -- and only the second one has a flag to read.
 if [ "${RELEASE_INCLUDE_ADMIN_FUNCTIONS:-0}" = "1" ]; then
   if standalone_pkg_drift "$ROOT/auntieos-admin/web/functions"; then
     case "$DEP_DRIFT_STATE" in
@@ -643,8 +648,9 @@ if [ "${RELEASE_INCLUDE_ADMIN_FUNCTIONS:-0}" = "1" ]; then
     esac
   else
     case "$DEP_DRIFT_STATE" in
-      no-lock) report_drift "auntieos-admin/web/functions has no package-lock.json" "npm ci --prefix auntieos-admin/web/functions" ;;
-      drift)   report_drift "auntieos-admin/web/functions: $DEP_DRIFT_DETAIL" "npm ci --prefix auntieos-admin/web/functions" ;;
+      no-lock)    report_drift "auntieos-admin/web/functions has no package-lock.json" "npm ci --prefix auntieos-admin/web/functions" ;;
+      unreadable) report_drift "auntieos-admin/web/functions: $DEP_DRIFT_DETAIL" "npm ci --prefix auntieos-admin/web/functions" ;;
+      drift)      report_drift "auntieos-admin/web/functions: $DEP_DRIFT_DETAIL" "npm ci --prefix auntieos-admin/web/functions" ;;
     esac
   fi
 else
@@ -659,7 +665,8 @@ if [ "${#DRIFT_NAMES[@]}" -gt 0 ]; then
     for n in "${DRIFT_NAMES[@]}"; do ylw "  $n"; done
   else
     red ""
-    red "REFUSED: installed dependencies do not match their lockfile(s):"
+    red "REFUSED: dependency state could not be trusted for one or more units"
+    red "(installed does not match the lockfile, or a manifest could not be read):"
     for n in "${DRIFT_NAMES[@]}"; do red "  - $n"; done
     red ""
     red "  This is exactly what stopped the 2026-09-13 release 3 minutes into"
@@ -672,6 +679,20 @@ if [ "${#DRIFT_NAMES[@]}" -gt 0 ]; then
     exit 1
   fi
 fi
+
+# What is actually about to ship, so the operator can recognise it, and the
+# confirm itself. AFTER 0a: an operator who says yes should not immediately
+# be told the release refuses over drift that was already known.
+if [ "$PREFLIGHT_ONLY" != "1" ]; then
+STEP="summarising the release"
+cyan ""
+cyan "HEAD: $(git log -1 --format='%h %s' | cut -c1-100)"
+if [ "$DRY_RUN" = "1" ]; then
+  ylw "DRY_RUN=1: every firebase command below will be PRINTED, not run."
+fi
+
+confirm "Release this commit to production (auntieos-ttpc)?"
+fi  # end of the summary/confirm guard skipped under RELEASE_PREFLIGHT_ONLY
 
 # ---------------------------------------------------------------------------
 # 0b. What CI thinks of THIS commit, before anything is built or shipped.

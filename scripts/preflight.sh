@@ -19,7 +19,7 @@
 # Exit codes: 0 everything required is present; 1 something required is
 # missing and installing dependencies will not fix it; 2 the ONLY thing
 # missing is dependency drift (node_modules out of sync with a lockfile),
-# which `npm ci` does fix — bootstrap.sh reads this distinction to decide
+# which `npm ci` does fix: bootstrap.sh reads this distinction to decide
 # whether to proceed to install or refuse to start. Optional tools never fail
 # the run; they are reported and the reason is given.
 
@@ -42,7 +42,7 @@ NOTES=()
 # cannot fix (a missing tool, a missing lockfile, an old Java). It starts true
 # and a failure of the SECOND kind, and only that kind, sets it to 0. Read at
 # the bottom to choose exit 1 (something else is wrong) vs exit 2 (drift only,
-# and `npm ci` is the whole fix) — see the comment at the exit codes for why
+# and `npm ci` is the whole fix); see the comment at the exit codes for why
 # bootstrap.sh needs that distinction and could not get it from exit 1 alone.
 DRIFT_ONLY_OK=1
 
@@ -318,6 +318,12 @@ else
       MISSING=1
       DRIFT_ONLY_OK=0
       ;;
+    unreadable)
+      red "$(basename "$p")" "cannot be checked: $DEP_DRIFT_DETAIL"
+      NOTES+=("$p: $DEP_DRIFT_DETAIL")
+      MISSING=1
+      DRIFT_ONLY_OK=0
+      ;;
     drift)
       red "$(basename "$p")" "install does NOT match the lockfile: $DEP_DRIFT_DETAIL"
       NOTES+=("$p is installed but out of sync with its lockfile ($DEP_DRIFT_DETAIL). Run: npm ci --prefix $p")
@@ -328,12 +334,15 @@ else
   esac
 fi
 
-# mytribe/web, auntieos-admin, and packages/geo ARE npm workspace members
-# (PR25a): one lockfile and one node_modules at the repo root cover all
-# three, and it's how both apps reach @tribetails/geo. Checked as ONE
-# workspace, not per-app: `npm ci` at the root installs (or fails) for all
-# three together.
-if workspace_pkg_drift "$ROOT" mytribe/web auntieos-admin packages/geo; then
+# mytribe/web, auntieos-admin, packages/geo, packages/issue-recorder, and any
+# OTHER npm workspace member ARE real npm workspaces (PR25a): one lockfile
+# and one node_modules at the repo root cover all of them, and it's how they
+# reach @tribetails/geo. Checked as ONE workspace, not per-member: `npm ci`
+# at the root installs (or fails) for all of them together. The member list
+# itself is not named here at all: workspace_pkg_drift reads it from the root
+# package.json's own "workspaces" field, so a member added later is checked
+# without this file changing.
+if workspace_pkg_drift "$ROOT"; then
   case "$DEP_DRIFT_STATE" in
     ok)
       ylw "workspace" "not installed yet. 'npm run setup' will do it."
@@ -349,8 +358,14 @@ if workspace_pkg_drift "$ROOT" mytribe/web auntieos-admin packages/geo; then
 else
   case "$DEP_DRIFT_STATE" in
     no-lock)
-      red "workspace" "NO root package-lock.json. 'npm ci' cannot run for mytribe/web, auntieos-admin, or packages/geo"
+      red "workspace" "NO root package-lock.json. 'npm ci' cannot run for any workspace member"
       NOTES+=("Root package-lock.json is missing. Run 'npm install' at the repo root.")
+      MISSING=1
+      DRIFT_ONLY_OK=0
+      ;;
+    unreadable)
+      red "workspace" "cannot be checked: $DEP_DRIFT_DETAIL"
+      NOTES+=("workspace: $DEP_DRIFT_DETAIL")
       MISSING=1
       DRIFT_ONLY_OK=0
       ;;
@@ -369,18 +384,24 @@ fi
 # check above uses: a repo state (or a synthetic test repo) that never grew
 # this tree reports nothing about it, rather than inventing a requirement.
 #
-# WARNS RATHER THAN FAILS, same reasoning as the reconcile Python codebase
-# above: this codebase only ships under RELEASE_INCLUDE_ADMIN_FUNCTIONS=1, and
-# `npm run setup` does not install it (see scripts/bootstrap.sh step 3), so
-# failing preflight over it would refuse an ordinary setup or release over a
-# codebase that run is not touching. release.sh's own step 0 refuses on this
-# exact drift when RELEASE_INCLUDE_ADMIN_FUNCTIONS=1 actually ships it.
+# TREATED THE SAME AS mytribe/functions (#841 follow-up), not as a warning:
+# `scripts/bootstrap.sh` installs this codebase too now, regardless of
+# RELEASE_INCLUDE_ADMIN_FUNCTIONS, so its drift is exactly as fixable by
+# `npm run setup` as mytribe/functions' is, and a preflight that only warned
+# about it never exited 2 -- so `npm run setup` never installed it, and the
+# real repo carried real drift here (@anthropic-ai/sdk, firebase-admin) that
+# nothing ever prompted anyone to fix. release.sh's own step 0a still only
+# REFUSES a release over this when RELEASE_INCLUDE_ADMIN_FUNCTIONS=1 is
+# actually going to deploy it; preflight has no such release-time flag to
+# read, and bootstrap installs it unconditionally, so preflight checks it
+# unconditionally too.
 AFN="auntieos-admin/web/functions"
 if [ -d "$AFN" ]; then
   if standalone_pkg_drift "$AFN"; then
     case "$DEP_DRIFT_STATE" in
       ok)
-        ylw "adminfn" "not installed yet. Only needed for RELEASE_INCLUDE_ADMIN_FUNCTIONS=1."
+        ylw "adminfn" "not installed yet. 'npm run setup' will do it."
+        NOTES+=("$AFN has no node_modules. Run 'npm run setup' (or 'npm ci' in $AFN).")
         ;;
       no-node)
         ylw "adminfn" "installed, but node is missing so it cannot be verified"
@@ -392,12 +413,21 @@ if [ -d "$AFN" ]; then
   else
     case "$DEP_DRIFT_STATE" in
       no-lock)
-        ylw "adminfn" "NO package-lock.json. 'npm ci' cannot run in $AFN"
-        NOTES+=("$AFN has no package-lock.json. Only needed for RELEASE_INCLUDE_ADMIN_FUNCTIONS=1.")
+        red "adminfn" "NO package-lock.json. 'npm ci' cannot run in $AFN"
+        NOTES+=("$AFN has no package-lock.json. Use 'npm install' there, or restore the lockfile.")
+        MISSING=1
+        DRIFT_ONLY_OK=0
+        ;;
+      unreadable)
+        red "adminfn" "cannot be checked: $DEP_DRIFT_DETAIL"
+        NOTES+=("$AFN: $DEP_DRIFT_DETAIL")
+        MISSING=1
+        DRIFT_ONLY_OK=0
         ;;
       drift)
-        ylw "adminfn" "install does NOT match the lockfile: $DEP_DRIFT_DETAIL"
-        NOTES+=("$AFN is installed but out of sync with its lockfile ($DEP_DRIFT_DETAIL). Run: npm ci --prefix $AFN before RELEASE_INCLUDE_ADMIN_FUNCTIONS=1.")
+        red "adminfn" "install does NOT match the lockfile: $DEP_DRIFT_DETAIL"
+        NOTES+=("$AFN is installed but out of sync with its lockfile ($DEP_DRIFT_DETAIL). Run: npm ci --prefix $AFN")
+        MISSING=1
         ;;
     esac
   fi

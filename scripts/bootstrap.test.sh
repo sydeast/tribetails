@@ -11,9 +11,9 @@
 #
 # preflight.sh now exits 2, not 1, when the ONLY thing wrong is dependency
 # drift (see scripts/lib/dep-drift.sh and scripts/preflight.test.sh).
-# bootstrap.sh reads that distinction: exit 2 proceeds to install — forcing
+# bootstrap.sh reads that distinction: exit 2 proceeds to install (forcing
 # it, since a drift-only preflight has just proven the install's own mtime
-# staleness check wrong for this tree — and re-checks preflight afterward;
+# staleness check wrong for this tree) and re-checks preflight afterward;
 # any other failure (exit 1) still refuses to start, unchanged.
 #
 # HOW: a synthetic repo, the real bootstrap.sh + preflight.sh + lib copied in
@@ -47,7 +47,7 @@ make_repo() {
   mkdir -p "$dir/scripts/lib" "$dir/stubs"
   cp "$HERE/bootstrap.sh" "$dir/scripts/bootstrap.sh"
   cp "$HERE/preflight.sh" "$dir/scripts/preflight.sh"
-  cp "$HERE/lib/dep-drift.sh" "$dir/scripts/lib/dep-drift.sh"
+  cp "$HERE"/lib/*.sh "$HERE"/lib/*.js "$dir/scripts/lib/"
 
   mkdir -p "$dir/mytribe/functions"
   cat > "$dir/mytribe/functions/package.json" <<'PJ'
@@ -139,7 +139,7 @@ STUB
 
 # run_bootstrap <repo> [VAR=VAL ...]: the real script, npm stubbed, ANDROID_HOME
 # pointed at a path that cannot exist so step 2 (local.properties) never tries
-# to write into directories this fixture does not have — this test is about
+# to write into directories this fixture does not have: this test is about
 # the preflight gate, not Android.
 run_bootstrap() {
   local dir="$1"; shift
@@ -193,7 +193,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 2. A hard failure (here: no package-lock.json at all — something `npm ci`
+# 2. A hard failure (here: no package-lock.json at all, something `npm ci`
 #    cannot fix by itself) still refuses to start, unchanged. Bootstrap must
 #    not have run any install before refusing.
 # ---------------------------------------------------------------------------
@@ -225,7 +225,7 @@ fi
 
 # ---------------------------------------------------------------------------
 # 3. A clean tree (no drift at all) proceeds normally, with no drift-only
-#    messaging — the baseline the two cases above are contrasted against.
+#    messaging: the baseline the two cases above are contrasted against.
 # ---------------------------------------------------------------------------
 D3="$(make_repo)"; write_npm_stub "$D3"
 RC="$(run_bootstrap "$D3" NPM_CALL_LOG="$D3/npm-calls")"
@@ -237,7 +237,80 @@ else
   tail -30 "$D3/out"
 fi
 
-rm -rf "$D1" "$D2" "$D3"
+# ---------------------------------------------------------------------------
+# 4. Drift in ONE unit must not force a reinstall of a sibling that was
+#    already fine (#841 review, item 7). mytribe/functions drifts; the
+#    workspace root is already installed and current by its OWN mtime check.
+#    Only mytribe/functions may see an `npm ci`.
+# ---------------------------------------------------------------------------
+D4="$(make_repo)"; write_npm_stub "$D4"
+install_dep "$D4" "mytribe/functions" "1.2.0"   # stale: lockfile pins 1.3.0
+# The workspace root: node_modules exists and its install marker is written
+# AFTER package-lock.json, so install_if_stale's own mtime check says
+# "current" (the state a real, already-`npm install`-ed root is in).
+mkdir -p "$D4/node_modules"
+cp "$D4/package-lock.json" "$D4/node_modules/.package-lock.json"
+RC="$(run_bootstrap "$D4" NPM_CALL_LOG="$D4/npm-calls")"
+OUT="$(cat "$D4/out")"
+
+if [ "$RC" -eq 0 ]; then
+  ok "bootstrap completes with drift isolated to one unit"
+else
+  bad "bootstrap did not complete; rc=$RC"; tail -30 "$D4/out"
+fi
+if grep -q "^STUB npm ci .*(cwd=.*/mytribe/functions)$" "$D4/npm-calls" 2>/dev/null; then
+  ok "bootstrap reinstalled the drifted unit (mytribe/functions)"
+else
+  bad "bootstrap never reinstalled mytribe/functions"; cat "$D4/npm-calls" 2>/dev/null
+fi
+if grep -qE "^STUB npm ci .*\(cwd=$D4\)$" "$D4/npm-calls" 2>/dev/null; then
+  bad "bootstrap reinstalled the workspace root even though it was already current"
+  cat "$D4/npm-calls"
+else
+  ok "bootstrap left the already-current workspace root alone"
+fi
+
+# ---------------------------------------------------------------------------
+# 5. auntieos-admin/web/functions is installed too now (#841 review, item 6):
+#    the standalone Cloud Functions codebase bootstrap used to skip entirely,
+#    which is why it carried real, unnoticed drift in the live repo. Drift
+#    there must ALSO make step 0 proceed (rc=2) rather than refuse, and step
+#    3 must actually fix it.
+# ---------------------------------------------------------------------------
+D5="$(make_repo)"; write_npm_stub "$D5"
+mkdir -p "$D5/auntieos-admin/web/functions"
+cat > "$D5/auntieos-admin/web/functions/package.json" <<'PJ'
+{ "name": "synthetic-admin-functions", "dependencies": { "left-pad": "^1.3.0" } }
+PJ
+cat > "$D5/auntieos-admin/web/functions/package-lock.json" <<'LOCK'
+{
+  "name": "synthetic-admin-functions",
+  "lockfileVersion": 3,
+  "packages": { "node_modules/left-pad": { "version": "1.3.0" } }
+}
+LOCK
+install_dep "$D5" "auntieos-admin/web/functions" "1.2.0"   # stale: pins 1.3.0
+RC="$(run_bootstrap "$D5" NPM_CALL_LOG="$D5/npm-calls")"
+OUT="$(cat "$D5/out")"
+
+if [ "$RC" -eq 0 ]; then
+  ok "bootstrap proceeds past drift in auntieos-admin/web/functions (rc=2 from preflight)"
+else
+  bad "bootstrap did not complete; rc=$RC"; tail -30 "$D5/out"
+fi
+if grep -q "^STUB npm ci .*(cwd=.*/auntieos-admin/web/functions)$" "$D5/npm-calls" 2>/dev/null; then
+  ok "bootstrap actually installs auntieos-admin/web/functions"
+else
+  bad "bootstrap never ran npm ci in auntieos-admin/web/functions"
+  cat "$D5/npm-calls" 2>/dev/null
+fi
+if [ "$(cat "$D5/auntieos-admin/web/functions/node_modules/left-pad/package.json" 2>/dev/null | grep -o '1\.[0-9.]*')" = "1.3.0" ]; then
+  ok "the admin-functions stale package now matches the lockfile on disk"
+else
+  bad "left-pad in auntieos-admin/web/functions was not reinstalled"
+fi
+
+rm -rf "$D1" "$D2" "$D3" "$D4" "$D5"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

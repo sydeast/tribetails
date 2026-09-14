@@ -101,16 +101,17 @@ make_repo() {
   # runs is not there.
   cp "$REPO_SCRIPTS"/*.mjs "$r/scripts/" 2>/dev/null
   cp "$REPO_SCRIPTS"/*.py "$r/scripts/" 2>/dev/null
-  # scripts/lib/: step 0a sources scripts/lib/dep-drift.sh. Same reason as the
-  # .mjs copy above — without this the step under test dies on a missing file
+  # scripts/lib/: step 0a sources scripts/lib/dep-drift.sh, which in turn
+  # shells out to the two Node scripts beside it. Same reason as the .mjs
+  # copy above -- without this the step under test dies on a missing file
   # rather than exercising the drift check itself.
   mkdir -p "$r/scripts/lib"
-  cp "$REPO_SCRIPTS"/lib/*.sh "$r/scripts/lib/" 2>/dev/null
+  cp "$REPO_SCRIPTS"/lib/*.sh "$REPO_SCRIPTS"/lib/*.js "$r/scripts/lib/" 2>/dev/null
 
   # 0a reads a root lockfile and mytribe/functions' own lockfile. Empty
   # (no dependencies declared) so a fully-synthetic repo with no real
   # node_modules reports "not installed yet" rather than "no lockfile at
-  # all" — the drift-specific cases below add a real, mismatched install on
+  # all"; the drift-specific cases below add a real, mismatched install on
   # top of this baseline.
   printf '{ "name": "synthetic-functions", "dependencies": {} }\n' \
     > "$r/mytribe/functions/package.json"
@@ -1437,7 +1438,7 @@ declare_dep() {
 }
 
 # install_pkg <dir> <name> <version>: node_modules/<name> at <version>, in
-# <dir>'s OWN node_modules — the standalone shape mytribe/functions and
+# <dir>'s OWN node_modules: the standalone shape mytribe/functions and
 # auntieos-admin/web/functions both use.
 install_pkg() {
   mkdir -p "$1/node_modules/$2"
@@ -1476,6 +1477,15 @@ if [ -n "$(cat "$D20/calls" 2>/dev/null)" ]; then
 else
   ok "nothing was deployed before the drift refusal"
 fi
+# Step 0a sits BEFORE the "release this commit?" confirm now, precisely so an
+# operator who says yes is not then told no. RELEASE_YES=1 prints "continuing
+# without prompting" the moment confirm() runs; its total absence here proves
+# confirm never ran at all, i.e. the refusal really did land before it.
+if printf '%s' "$OUT" | grep -q "continuing without prompting"; then
+  bad "the release prompted for confirmation before refusing on dependency drift"
+else
+  ok "the release never reaches the confirm prompt when drift refuses it"
+fi
 
 # ---------------------------------------------------------------------------
 # 24. The workspace root drifting (vitest's half of the incident) refuses the
@@ -1483,7 +1493,7 @@ fi
 # ---------------------------------------------------------------------------
 D21="$(make_repo)"; write_stubs "$D21"
 # vitest is declared by a WORKSPACE MEMBER (mytribe/web), pinned in the ROOT
-# lockfile, and installed (mismatched) in the ROOT node_modules — the exact
+# lockfile, and installed (mismatched) in the ROOT node_modules: the exact
 # hoisted shape a real `npm install` leaves, and the half of the 2026-09-13
 # incident the standalone mytribe/functions case above does not cover.
 mkdir -p "$D21/repo/mytribe/web"
@@ -1516,18 +1526,51 @@ if printf '%s' "$PLAIN" | grep -qE '^ *npm ci *$'; then
 else
   bad "the workspace refusal did not print bare 'npm ci'"; echo "$OUT" | tail -25
 fi
-# A workspace MEMBER never has its own lockfile — that is normal, not a
+# A workspace MEMBER never has its own lockfile, and that is normal, not a
 # defect, since the three of them share the root's. `npm ci` run INSIDE one
 # (e.g. `npm ci --prefix mytribe/web`) is a real, separate incident: it exits
 # 0 and SILENTLY DROPS whatever that member does not carry in its own
 # (nonexistent) lockfile, which is not the same tree `npm ci` at the root
 # produces. So the fix this step prints must never suggest running npm
-# inside mytribe/web, auntieos-admin, or packages/geo — only at the root.
+# inside mytribe/web, auntieos-admin, or packages/geo, only at the root.
 if printf '%s' "$OUT" | grep -qE -- '--prefix (mytribe/web|auntieos-admin|packages/geo)\b'; then
   bad "the workspace refusal named npm ci --prefix inside a workspace MEMBER"
   echo "$OUT" | tail -25
 else
   ok "the fix never suggests npm ci --prefix inside a workspace member"
+fi
+
+# ---------------------------------------------------------------------------
+# 24b. A garbage/truncated lockfile is UNREADABLE, not clean. A caught-and-
+#      swallowed parse error used to print nothing and look identical to no
+#      drift at all, which would have let a release ship against a tree
+#      nothing had actually verified.
+# ---------------------------------------------------------------------------
+D21B="$(make_repo)"; write_stubs "$D21B"
+# node_modules must actually EXIST for the check to read anything at all: an
+# absent node_modules is the ordinary "not installed yet" state and returns
+# before ever opening the lockfile, which would make this test pass for the
+# wrong reason (never reaching the corrupt file).
+mkdir -p "$D21B/repo/mytribe/functions/node_modules"
+printf 'this is not json' > "$D21B/repo/mytribe/functions/package-lock.json"
+commit_all "$D21B"
+arm_ci "$D21B"
+RC="$(run_release "$D21B" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$D21B/calls")"
+OUT="$(cat "$D21B/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qi "cannot be checked\|not valid JSON"; then
+  ok "an unreadable (garbage) lockfile refuses the release rather than reporting clean"
+else
+  bad "a garbage lockfile did not refuse the release; rc=$RC"; echo "$OUT" | tail -25
+fi
+if printf '%s' "$OUT" | grep -q "mytribe/functions matches its lockfile"; then
+  bad "a garbage lockfile was reported as matching (clean)"
+else
+  ok "a garbage lockfile is never reported as matching"
+fi
+if [ -n "$(cat "$D21B/calls" 2>/dev/null)" ]; then
+  bad "something reached firebase despite the unreadable-lockfile refusal"
+else
+  ok "nothing was deployed before the unreadable-lockfile refusal"
 fi
 
 # ---------------------------------------------------------------------------
@@ -1559,7 +1602,7 @@ RC="$(run_release "$D22" DRY_RUN=1 RELEASE_YES=1)"
 OUT="$(cat "$D22/out")"
 if [ "$RC" -eq 0 ] &&
    printf '%s' "$OUT" | grep -q "mytribe/functions matches its lockfile" &&
-   printf '%s' "$OUT" | grep -q "workspace root (mytribe/web, auntieos-admin, packages/geo) matches its lockfile"; then
+   printf '%s' "$OUT" | grep -q "workspace root (every npm workspace member) matches its lockfile"; then
   ok "a clean, fully-installed tree reports matching both units and does not block the release"
 else
   bad "a clean install did not report as matching"; echo "$OUT" | tail -25
@@ -1567,7 +1610,7 @@ fi
 
 # ---------------------------------------------------------------------------
 # 26. auntieos-admin/web/functions drift is checked ONLY under
-#     RELEASE_INCLUDE_ADMIN_FUNCTIONS=1 — the flag that actually builds and
+#     RELEASE_INCLUDE_ADMIN_FUNCTIONS=1, the flag that actually builds and
 #     deploys it (step 5's neighbour). Off, this run is not touching that
 #     codebase, so its drift must not block releases that never read it.
 # ---------------------------------------------------------------------------
