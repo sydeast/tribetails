@@ -3,12 +3,18 @@
  * Tests for scripts/ci-run-watch.mjs. Run:
  *   node --test scripts/ci-run-watch.test.mjs
  *
- * `decideForHead` takes exactly the JSON shapes `gh api` hands back (a commit,
- * a check-runs page, a workflow-runs page) and a fake `nowMs`, so every branch
- * is reachable with no network and no clock race. The fixtures below are
- * trimmed to the fields the function reads, not full API responses, the same
- * way client-secrets.test.mjs's fake fetcher only ever holds what the
- * resolver asks for.
+ * FIXTURES MODEL THE CI.YML-SCOPED QUERY, NOT `commits/{sha}/check-runs`.
+ * The first version of this script read `commits/{sha}/check-runs`, which
+ * counts every check run on a commit regardless of which workflow created it.
+ * In production that is never zero: the watcher's own "watch" job puts a
+ * check run on main's HEAD before its own script step runs (any workflow run
+ * is attributed to the commit it evaluated against, schedule triggers
+ * included), and main-channel.yml's push-triggered run does too. So the old
+ * script always saw at least one check run and always returned 'ok', and
+ * never dispatched anything. `ciRuns` here is the response of
+ * `actions/workflows/ci.yml/runs?head_sha=<sha>`, scoped to ci.yml
+ * specifically, so a run of any OTHER workflow for the same SHA never shows
+ * up in it, however many of them exist.
  */
 
 import assert from 'node:assert/strict';
@@ -28,19 +34,19 @@ function commitFixture(overrides = {}) {
   };
 }
 
-const NO_RUNS = { total_count: 0, check_runs: [] };
-const NO_DISPATCHES = { total_count: 0, workflow_runs: [] };
+const NO_CI_RUNS = { total_count: 0, workflow_runs: [] };
 
-test('a check run already exists for HEAD: ok, nothing to do', () => {
-  const checkRuns = {
-    total_count: 14,
-    check_runs: [{ name: 'Portal shared (jvm + android unit + js)', status: 'completed', conclusion: 'success' }],
+test('a ci.yml run already exists for HEAD (any status): ok, nothing to do', () => {
+  const ciRuns = {
+    total_count: 1,
+    workflow_runs: [
+      { id: 34778646429, event: 'push', head_sha: SHA, status: 'completed', conclusion: 'success' },
+    ],
   };
 
   const decision = decideForHead({
     commit: commitFixture(),
-    checkRuns,
-    workflowRuns: NO_DISPATCHES,
+    ciRuns,
     // Same day this really happened, hours after the commit. Old enough that
     // "too new" could not explain a false pass here.
     nowMs: COMMITTED_AT_MS + 6 * 60 * 60 * 1000,
@@ -50,24 +56,21 @@ test('a check run already exists for HEAD: ok, nothing to do', () => {
   assert.equal(decision.sha, SHA);
 });
 
-test('no check runs, and HEAD is older than the threshold: dispatch', () => {
+test('no ci.yml run, and HEAD is older than the threshold: dispatch', () => {
   const decision = decideForHead({
     commit: commitFixture(),
-    checkRuns: NO_RUNS,
-    workflowRuns: NO_DISPATCHES,
+    ciRuns: NO_CI_RUNS,
     nowMs: COMMITTED_AT_MS + (DEFAULT_MAX_AGE_MINUTES + 1) * 60 * 1000,
   });
 
   assert.equal(decision.action, 'dispatch');
-  assert.equal(decision.sha, SHA);
-  assert.match(decision.reason, /zero check runs/);
+  assert.match(decision.reason, /zero ci\.yml runs/);
 });
 
-test('no check runs, but HEAD is younger than the threshold: wait, do not dispatch', () => {
+test('no ci.yml run, but HEAD is younger than the threshold: wait, do not dispatch', () => {
   const decision = decideForHead({
     commit: commitFixture(),
-    checkRuns: NO_RUNS,
-    workflowRuns: NO_DISPATCHES,
+    ciRuns: NO_CI_RUNS,
     nowMs: COMMITTED_AT_MS + 90 * 1000, // 1.5 minutes old
   });
 
@@ -77,70 +80,59 @@ test('no check runs, but HEAD is younger than the threshold: wait, do not dispat
 test('exactly at the threshold counts as old enough (>=, not >)', () => {
   const decision = decideForHead({
     commit: commitFixture(),
-    checkRuns: NO_RUNS,
-    workflowRuns: NO_DISPATCHES,
+    ciRuns: NO_CI_RUNS,
     nowMs: COMMITTED_AT_MS + DEFAULT_MAX_AGE_MINUTES * 60 * 1000,
   });
 
   assert.equal(decision.action, 'dispatch');
 });
 
-test('no check runs, old enough, but a workflow_dispatch run for this SHA already exists: do not dispatch again', () => {
-  const workflowRuns = {
+test('a previously dispatched ci.yml run for this SHA counts as ok, so the watcher never fires twice', () => {
+  const ciRuns = {
     total_count: 1,
     workflow_runs: [
-      {
-        id: 34778646429,
-        event: 'workflow_dispatch',
-        head_sha: SHA,
-        status: 'in_progress',
-      },
+      { id: 1, event: 'workflow_dispatch', head_sha: SHA, status: 'in_progress', conclusion: null },
     ],
   };
 
   const decision = decideForHead({
     commit: commitFixture(),
-    checkRuns: NO_RUNS,
-    workflowRuns,
+    ciRuns,
     nowMs: COMMITTED_AT_MS + (DEFAULT_MAX_AGE_MINUTES + 30) * 60 * 1000,
   });
 
-  assert.equal(decision.action, 'already_dispatched');
+  assert.equal(decision.action, 'ok');
 });
 
-test('a workflow_dispatch run exists but for a DIFFERENT SHA: does not count as this one already being handled', () => {
-  const workflowRuns = {
+test('a FAILED ci.yml run for this SHA still counts as ok: a red verdict is release.sh step 0b, not this script', () => {
+  const ciRuns = {
     total_count: 1,
     workflow_runs: [
-      { id: 1, event: 'workflow_dispatch', head_sha: 'deadbeef', status: 'completed' },
+      { id: 2, event: 'push', head_sha: SHA, status: 'completed', conclusion: 'failure' },
     ],
   };
 
   const decision = decideForHead({
     commit: commitFixture(),
-    checkRuns: NO_RUNS,
-    workflowRuns,
+    ciRuns,
     nowMs: COMMITTED_AT_MS + (DEFAULT_MAX_AGE_MINUTES + 1) * 60 * 1000,
   });
 
-  assert.equal(decision.action, 'dispatch');
+  assert.equal(decision.action, 'ok');
 });
 
-test('a PUSH-triggered run for this SHA does not count as "already dispatched" (that is the trigger that failed to fire)', () => {
-  const workflowRuns = {
-    total_count: 1,
-    workflow_runs: [{ id: 1, event: 'push', head_sha: SHA, status: 'completed' }],
-  };
-
+test('the regression this fixes: other workflows ran for this SHA but ci.yml never did: dispatch, not ok', () => {
+  // In production, by the time this runs, main-channel.yml has already run
+  // for this SHA (a push touching mytribe/web/src/** matches its filter) and
+  // the watcher's OWN "watch" job has already put a check run on this exact
+  // commit. Neither shows up in `ciRuns`, because that query is scoped to
+  // ci.yml specifically. A fix that read commits/{sha}/check-runs instead
+  // would see those other runs and wrongly return 'ok' here.
   const decision = decideForHead({
     commit: commitFixture(),
-    checkRuns: NO_RUNS,
-    workflowRuns,
+    ciRuns: NO_CI_RUNS,
     nowMs: COMMITTED_AT_MS + (DEFAULT_MAX_AGE_MINUTES + 1) * 60 * 1000,
   });
 
-  // If a push run genuinely completed for this SHA, its check runs would have
-  // shown up in `checkRuns` already (NO_RUNS would be a lie). This case is
-  // here to pin the field this reads (`event`), not to claim it is reachable.
   assert.equal(decision.action, 'dispatch');
 });

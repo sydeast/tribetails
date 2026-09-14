@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Watches main's HEAD for a commit CI never judged, and dispatches `ci.yml`
- * for it before the release gate (scripts/release.sh step 0b) finds out first.
+ * Watches main's HEAD for a commit `ci.yml` never ran for, and dispatches it
+ * before the release gate (scripts/release.sh step 0b) finds out first.
  *
  *   node scripts/ci-run-watch.mjs
  *
@@ -22,17 +22,17 @@
  * ONE check suite for this SHA: the 19:45 `workflow_dispatch` run
  * (34778646429) the operator started by hand hours later. A push-triggered
  * run creates its own suite, so its total absence is proof no push event was
- * ever delivered for this commit, not merely a hint. (The public events feed,
- * `gh api repos/{owner}/{repo}/events`, also shows no PushEvent for this SHA
- * and no "merged" action for PR #837, consistent with the outage, though
- * that feed is documented as best-effort, so it corroborates rather than
- * proves.) `ci.yml`'s commit message carries no `[skip ci]` marker, its
- * `push` concurrency group keys on `github.run_id` (unique per run, so it
- * cannot itself have swallowed the run), and the repository requires no
- * status checks (`branches/main/protection` 404s), so none of those
- * repo-side knobs caused it either. Nobody noticed until `scripts/release.sh`
- * refused hours later with "GitHub reports no check runs at all". This
- * exists to notice in minutes instead of at release time.
+ * ever delivered for this commit, not merely a hint. `main-channel.yml` (also
+ * `on: push`, and PR #837 touched `mytribe/web/src/lib/moneyIdempotency.ts`,
+ * matching its path filter) shows the same zero runs for this SHA, so the
+ * absence is not specific to ci.yml's own config. The commit's message
+ * carries no `[skip ci]` marker, `ci.yml`'s `push` concurrency group keys on
+ * `github.run_id` (unique per run, so it cannot itself have swallowed the
+ * run), and the repository requires no status checks (`branches/main/
+ * protection` 404s), so none of those repo-side knobs caused it either.
+ * Nobody noticed until `scripts/release.sh` refused hours later with "GitHub
+ * reports no check runs at all". This exists to notice in minutes instead of
+ * at release time.
  *
  * WHY A SCHEDULE, NOT A PUSH OR CHECK-SUITE TRIGGER
  * Whatever swallowed 92786e7's `push` event runs through the same delivery
@@ -40,20 +40,32 @@
  * schedule is independent of it: cron ticks come from GitHub's scheduler, not
  * from a webhook the same outage could also drop.
  *
- * THE GUARD AGAINST RE-DISPATCHING THE SAME SHA
- * Rather than persist state anywhere, this asks `ci.yml`'s own run history: if
- * a `workflow_dispatch` run already exists for the SHA in question, another
- * dispatch is refused. That run's own check runs (or its continued absence)
- * are what the NEXT scheduled tick will see.
+ * WHY THIS ASKS `actions/workflows/ci.yml/runs?head_sha=<sha>` AND NOT
+ * `commits/<sha>/check-runs` (PR #856 review; the first version of this
+ * script used the latter, and it was broken).
+ * `commits/<sha>/check-runs` counts EVERY check run on a commit, regardless
+ * of which workflow created it. In production that total is never zero: this
+ * very workflow's own "watch" job puts a check run on main's HEAD before its
+ * script step even runs (a workflow run is attributed to the commit it
+ * evaluated against, schedule triggers included), and `main-channel.yml`'s
+ * push-triggered run does too. Reading that count made the first version of
+ * this script return 'ok' unconditionally and never dispatch anything.
+ * `actions/workflows/ci.yml/runs?head_sha=<sha>` is scoped to ci.yml
+ * specifically, so a run of any OTHER workflow for the same SHA (this
+ * watcher's own, main-channel's, a future one) never appears in it, however
+ * many of them exist. That scoping also does double duty as the guard against
+ * re-dispatching: a run this watcher already dispatched for a SHA shows up in
+ * this same query on the next tick, whatever its status, so there is no
+ * separate "already dispatched" check to maintain.
  */
 
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 
-// How stale a check-run-less HEAD has to be before this dispatches CI for it.
-// Below this, a commit merged 90 seconds ago just hasn't had its check suite
-// created yet, and dispatching would race the normal push trigger.
+// How stale a run-less HEAD has to be before this dispatches CI for it. Below
+// this, a commit merged 90 seconds ago just hasn't had ci.yml's run created
+// yet, and dispatching would race the normal push trigger.
 export const DEFAULT_MAX_AGE_MINUTES = 10;
 
 // How often the schedule ticks (`.github/workflows/ci-run-watch.yml`), named
@@ -62,63 +74,42 @@ export const DEFAULT_MAX_AGE_MINUTES = 10;
 export const SCHEDULE_MINUTES = 20;
 
 /**
- * decideForHead({ commit, checkRuns, workflowRuns, nowMs, maxAgeMinutes })
- *   -> { action, sha, ageMinutes, reason }
+ * decideForHead({ commit, ciRuns, nowMs, maxAgeMinutes }) -> { action, sha,
+ * ageMinutes, reason }
  *
  * action is one of:
- *   'ok'                 at least one check run exists for this SHA. Nothing
- *                        to do; CI answered, whatever the answer was. (A red
- *                        or pending verdict is release.sh step 0b's job, not
- *                        this script's.)
- *   'too_new'            no check run yet, but the commit is younger than
- *                        maxAgeMinutes. Its check suite may simply not exist
- *                        yet; wait for the next tick.
- *   'already_dispatched' no check run yet, but a `workflow_dispatch` run for
- *                        this exact SHA is already on record. Do not fire a
- *                        second one; wait for it to report.
- *   'dispatch'           no check run, old enough, never dispatched before.
+ *   'ok'        ci.yml has at least one run on record for this SHA, of any
+ *               event or status: queued, in progress, completed, cancelled,
+ *               failed. Nothing to do here either way; a red or pending
+ *               verdict is release.sh step 0b's job, not this script's. This
+ *               also covers "already dispatched": a run this watcher fired on
+ *               a previous tick is a run, so it reads as 'ok' too, and does
+ *               not get fired a second time.
+ *   'too_new'   no ci.yml run yet, but the commit is younger than
+ *               maxAgeMinutes. Its run may simply not exist yet; wait for the
+ *               next tick rather than race the normal push trigger.
+ *   'dispatch'  no ci.yml run, old enough, nothing on record.
  *
- * `commit`       the response of `gh api repos/{owner}/{repo}/commits/<ref>`
- * `checkRuns`    the response of
- *                `gh api repos/{owner}/{repo}/commits/<sha>/check-runs`
- * `workflowRuns` the response of
- *                `gh api repos/{owner}/{repo}/actions/workflows/ci.yml/runs?event=workflow_dispatch`
- * `nowMs`        current time in epoch ms, injected so tests do not race the
- *                clock
+ * `commit`  the response of `gh api repos/{owner}/{repo}/commits/<ref>`
+ * `ciRuns`  the response of
+ *           `gh api repos/{owner}/{repo}/actions/workflows/ci.yml/runs?head_sha=<sha>`
+ * `nowMs`   current time in epoch ms, injected so tests do not race the clock
  * `maxAgeMinutes` defaults to DEFAULT_MAX_AGE_MINUTES
  */
-export function decideForHead({
-  commit,
-  checkRuns,
-  workflowRuns,
-  nowMs,
-  maxAgeMinutes = DEFAULT_MAX_AGE_MINUTES,
-}) {
+export function decideForHead({ commit, ciRuns, nowMs, maxAgeMinutes = DEFAULT_MAX_AGE_MINUTES }) {
   const sha = commit.sha;
   const committedAtRaw = commit.commit?.committer?.date ?? commit.commit?.author?.date;
   const committedAtMs = Date.parse(committedAtRaw);
   const ageMinutes = (nowMs - committedAtMs) / 60000;
 
-  const totalCheckRuns = checkRuns?.total_count ?? 0;
-  if (totalCheckRuns > 0) {
+  const runs = ciRuns?.workflow_runs ?? [];
+  const totalRuns = ciRuns?.total_count ?? runs.length;
+  if (totalRuns > 0) {
     return {
       action: 'ok',
       sha,
       ageMinutes,
-      reason: `${totalCheckRuns} check run(s) already recorded for ${sha}.`,
-    };
-  }
-
-  const runs = workflowRuns?.workflow_runs ?? [];
-  const alreadyDispatched = runs.some(
-    (run) => run.head_sha === sha && run.event === 'workflow_dispatch',
-  );
-  if (alreadyDispatched) {
-    return {
-      action: 'already_dispatched',
-      sha,
-      ageMinutes,
-      reason: `A workflow_dispatch run for ${sha} is already on record; waiting for it to report rather than firing a second one.`,
+      reason: `${totalRuns} ci.yml run(s) already on record for ${sha}.`,
     };
   }
 
@@ -127,7 +118,7 @@ export function decideForHead({
       action: 'too_new',
       sha,
       ageMinutes,
-      reason: `${sha} is ${ageMinutes.toFixed(1)} min old (< ${maxAgeMinutes}), no check runs yet. Its check suite may not exist yet; waiting.`,
+      reason: `${sha} is ${ageMinutes.toFixed(1)} min old (< ${maxAgeMinutes}), no ci.yml runs yet. Its run may not exist yet; waiting.`,
     };
   }
 
@@ -135,7 +126,7 @@ export function decideForHead({
     action: 'dispatch',
     sha,
     ageMinutes,
-    reason: `${sha} is ${ageMinutes.toFixed(1)} min old with zero check runs and no prior dispatch on record.`,
+    reason: `${sha} is ${ageMinutes.toFixed(1)} min old with zero ci.yml runs on record.`,
   };
 }
 
@@ -164,16 +155,12 @@ export async function main() {
   if (!repo) throw new Error('GITHUB_REPOSITORY is not set.');
 
   const commit = ghJson(['api', `repos/${repo}/commits/main`]);
-  const checkRuns = ghJson([
+  const ciRuns = ghJson([
     'api',
-    `repos/${repo}/commits/${commit.sha}/check-runs?per_page=100`,
-  ]);
-  const workflowRuns = ghJson([
-    'api',
-    `repos/${repo}/actions/workflows/ci.yml/runs?event=workflow_dispatch&per_page=30`,
+    `repos/${repo}/actions/workflows/ci.yml/runs?head_sha=${commit.sha}&per_page=100`,
   ]);
 
-  const decision = decideForHead({ commit, checkRuns, workflowRuns, nowMs: Date.now() });
+  const decision = decideForHead({ commit, ciRuns, nowMs: Date.now() });
   console.log(`ci-run-watch: ${decision.action}: ${decision.reason}`);
 
   if (decision.action === 'dispatch') {
@@ -182,17 +169,10 @@ export async function main() {
     writeSummary([
       '## CI run watch',
       '',
-      `:warning: main's HEAD \`${decision.sha}\` had zero CI check runs after ` +
+      `:warning: main's HEAD \`${decision.sha}\` had zero ci.yml runs after ` +
         `${decision.ageMinutes.toFixed(1)} minutes. Dispatched \`ci.yml --ref main\` ` +
         'to give it a verdict. See issue #838 for why this can happen (a GitHub ' +
         'outage can land a merge commit without firing the push event that starts CI).',
-    ]);
-  } else if (decision.action === 'already_dispatched') {
-    writeSummary([
-      '## CI run watch',
-      '',
-      `:hourglass: main's HEAD \`${decision.sha}\` still has zero CI check runs, ` +
-        'but a workflow_dispatch run for it is already on record. Not dispatching again.',
     ]);
   }
 
