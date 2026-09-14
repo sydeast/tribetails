@@ -47,15 +47,53 @@ trap finish EXIT
 # ---------------------------------------------------------------------------
 # Refuse to start rather than failing three steps later with a message about
 # something removed from the real cause.
+#
+# EXCEPT WHEN THE ONLY THING WRONG IS DEPENDENCY DRIFT. On 2026-09-13 preflight
+# correctly reported that node_modules did not match a lockfile a Dependabot
+# PR had moved (vitest 4 -> 5, ~20 other packages) and this step refused to
+# start on the strength of that report — which stopped the ONE thing that
+# fixes drift (installing) because of the drift itself. The operator ran
+# `npm ci` and `npm ci --prefix mytribe/functions` by hand to get past it.
+#
+# preflight.sh now exits 2, not 1, for exactly that case (see its own exit-code
+# comment and scripts/lib/dep-drift.sh), so this step can tell "only drift" from
+# "something installing will not fix" and act differently: proceed to step 3
+# for the first, still refuse for the second. PREFLIGHT_RC is read again after
+# step 3 installs, to prove the drift is actually gone rather than assuming it.
 STEP="preflight (checking installed tools)"
+PREFLIGHT_RC=0
 if [ -z "${SKIP_PREFLIGHT:-}" ]; then
-  if ! bash scripts/preflight.sh; then
-    red ""
-    red "Not setting anything up until the required tools are installed."
-    red "Override with SKIP_PREFLIGHT=1 if you know what you are doing."
-    exit 1
-  fi
-  printf '\n'
+  set +e
+  bash scripts/preflight.sh
+  PREFLIGHT_RC=$?
+  set -e
+  case "$PREFLIGHT_RC" in
+    0)
+      printf '\n'
+      ;;
+    2)
+      ylw ""
+      ylw "preflight: the only failure above is dependency drift (node_modules"
+      ylw "  out of sync with a lockfile). That is exactly what installing fixes,"
+      ylw "  so continuing rather than refusing to start the fix for it."
+      # FORCE step 3's install rather than trusting its own staleness check
+      # (an mtime comparison; see install_if_stale below). Preflight just
+      # proved that heuristic wrong for THIS tree by reading actual installed
+      # versions: node_modules exists, its marker file may even be newer than
+      # the lockfile (an `npm install <pkg>` after a pull leaves exactly that),
+      # and it is still not what the lockfile pins. Without this, step 3 can
+      # print "already installed and current", install nothing, and the
+      # re-check below then reports the same drift preflight already named.
+      FORCE_INSTALL=1
+      printf '\n'
+      ;;
+    *)
+      red ""
+      red "Not setting anything up until the required tools are installed."
+      red "Override with SKIP_PREFLIGHT=1 if you know what you are doing."
+      exit 1
+      ;;
+  esac
 else
   ylw "preflight: SKIPPED (SKIP_PREFLIGHT is set)"
 fi
@@ -197,6 +235,34 @@ install_if_stale "mytribe/functions" "mytribe/functions"
 # install. `.` so install_if_stale's "$dir/package-lock.json" resolves to the
 # root lockfile.
 install_if_stale "workspace root (mytribe/web, auntieos-admin, packages/geo)" "."
+
+# ---------------------------------------------------------------------------
+# 3b. Re-check preflight, now that step 0 let a drift-only failure through.
+# ---------------------------------------------------------------------------
+# Report, don't assume. Step 0 continued past preflight's drift report on the
+# strength of "installing is the fix"; this proves that, rather than taking it
+# on faith. If preflight still finds something wrong here, installing was NOT
+# the whole fix (or something else broke in the meantime), and that is exactly
+# the kind of failure this script exists to say loudly rather than paper over.
+if [ "$PREFLIGHT_RC" = "2" ]; then
+  STEP="re-checking preflight after installing past the dependency drift"
+  ylw ""
+  ylw "preflight: re-checking now that the drift-only install above ran..."
+  set +e
+  bash scripts/preflight.sh
+  RECHECK_RC=$?
+  set -e
+  if [ "$RECHECK_RC" -eq 0 ]; then
+    grn "preflight: clean now. The drift preflight reported is gone."
+  else
+    red ""
+    red "preflight still reports a problem after installing dependencies."
+    red "Installing was supposed to be the whole fix; see the report above for"
+    red "what is still wrong."
+    exit 1
+  fi
+  printf '\n'
+fi
 
 # ---------------------------------------------------------------------------
 # 4. Prove it.

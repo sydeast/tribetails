@@ -28,6 +28,16 @@
 #
 # Each case builds a synthetic repo in $TMPDIR and runs the real script
 # against it.
+#
+# EXIT CODES, since #841. A drift-only failure (an install that does not
+# match its lockfile) exits 2, not 1: bootstrap.sh needs to tell that apart
+# from a failure installing dependencies cannot fix (a missing tool, a
+# missing lockfile), because on 2026-09-13 it refused to even START an
+# install over exactly the drift installing would have fixed. This machine
+# already has every REQUIRED tool (that is what makes case 1 below assert
+# rc=0 for a fresh clone), so a case here that touches only the two install
+# units is a drift-only failure and expects rc=2; a missing lockfile is not
+# something `npm ci` can fix on its own and still expects rc=1.
 
 set -uo pipefail
 
@@ -51,8 +61,12 @@ make_repo() {
   # (`dirname "${BASH_SOURCE[0]}"/..`) and cds there, so running the real script
   # from a synthetic cwd would still check the real repo. The copy is what makes
   # this a test of the script rather than a test of this machine.
-  mkdir -p "$dir/scripts"
+  mkdir -p "$dir/scripts/lib"
   cp "$SCRIPT" "$dir/scripts/preflight.sh"
+  # preflight.sh sources the shared drift comparison rather than carrying its
+  # own copy (see #841); without this the real script dies on a missing file
+  # instead of exercising the check under test.
+  cp "$HERE/lib/dep-drift.sh" "$dir/scripts/lib/dep-drift.sh"
 
   # mytribe/functions: NOT a workspace member. Own manifest, own lockfile.
   mkdir -p "$dir/mytribe/functions"
@@ -176,10 +190,10 @@ D3="$(make_repo)"
 install_matching "$D3"
 rm -rf "$D3/mytribe/functions/node_modules/left-pad"
 RC="$(run_preflight "$D3")"
-if [ "$RC" = "1" ]; then
-  ok "a partially installed functions tree FAILS preflight"
+if [ "$RC" = "2" ]; then
+  ok "a partially installed functions tree FAILS preflight, as drift-only (rc=2)"
 else
-  bad "a missing functions dependency did not fail preflight; got rc=$RC"
+  bad "a missing functions dependency did not fail preflight as drift-only; got rc=$RC"
   tail -20 "$D3/out"
 fi
 if grep -q "left-pad" "$D3/out"; then
@@ -192,10 +206,10 @@ D3B="$(make_repo)"
 install_matching "$D3B"
 rm -rf "$D3B/node_modules/left-pad"
 RC="$(run_preflight "$D3B")"
-if [ "$RC" = "1" ]; then
-  ok "a partially installed workspace FAILS preflight"
+if [ "$RC" = "2" ]; then
+  ok "a partially installed workspace FAILS preflight, as drift-only (rc=2)"
 else
-  bad "a missing workspace dependency did not fail preflight; got rc=$RC"
+  bad "a missing workspace dependency did not fail preflight as drift-only; got rc=$RC"
   tail -20 "$D3B/out"
 fi
 if grep -q "left-pad" "$D3B/out"; then
@@ -211,10 +225,10 @@ D4="$(make_repo)"
 install_matching "$D4"
 install_dep "$D4" "mytribe/functions" "1.2.0"
 RC="$(run_preflight "$D4")"
-if [ "$RC" = "1" ]; then
-  ok "functions version drift FAILS preflight"
+if [ "$RC" = "2" ]; then
+  ok "functions version drift FAILS preflight, as drift-only (rc=2)"
 else
-  bad "functions version drift did not fail preflight; got rc=$RC"
+  bad "functions version drift did not fail preflight as drift-only; got rc=$RC"
   tail -20 "$D4/out"
 fi
 if grep -q "1.2.0" "$D4/out" && grep -q "1.3.0" "$D4/out"; then
@@ -227,10 +241,10 @@ D4B="$(make_repo)"
 install_matching "$D4B"
 install_workspace_dep "$D4B" "1.2.0"
 RC="$(run_preflight "$D4B")"
-if [ "$RC" = "1" ]; then
-  ok "workspace version drift FAILS preflight"
+if [ "$RC" = "2" ]; then
+  ok "workspace version drift FAILS preflight, as drift-only (rc=2)"
 else
-  bad "workspace version drift did not fail preflight; got rc=$RC"
+  bad "workspace version drift did not fail preflight as drift-only; got rc=$RC"
   tail -20 "$D4B/out"
 fi
 if grep -q "1.2.0" "$D4B/out" && grep -q "1.3.0" "$D4B/out"; then
@@ -248,10 +262,10 @@ D4C="$(make_repo)"
 install_matching "$D4C"
 install_dep "$D4C" "auntieos-admin" "9.9.9"
 RC="$(run_preflight "$D4C")"
-if [ "$RC" = "1" ]; then
-  ok "a nested install that disagrees with the root lockfile FAILS preflight"
+if [ "$RC" = "2" ]; then
+  ok "a nested install that disagrees with the root lockfile FAILS preflight, as drift-only (rc=2)"
 else
-  bad "a nested-vs-root mismatch did not fail preflight; got rc=$RC"
+  bad "a nested-vs-root mismatch did not fail preflight as drift-only; got rc=$RC"
   tail -20 "$D4C/out"
 fi
 if grep -q "9.9.9" "$D4C/out"; then
@@ -259,6 +273,21 @@ if grep -q "9.9.9" "$D4C/out"; then
 else
   bad "the nested install mismatch did not name the installed version"
 fi
+# A workspace MEMBER (mytribe/web, auntieos-admin, packages/geo) never has its
+# own lockfile — that is normal, since the three share the root's. Running
+# `npm ci` INSIDE one anyway is a real, separate incident: it exits 0 and
+# SILENTLY DROPS whatever that member does not carry in its own (nonexistent)
+# lockfile. So the fix for workspace drift must always be plain `npm ci` (at
+# the root), and must never suggest running npm inside any of the three
+# members. Checked against every workspace-drift fixture built above
+# (D3B, D4B, D4C), not just this one.
+for f in "$D3B/out" "$D4B/out" "$D4C/out"; do
+  if grep -qE -- '--prefix (mytribe/web|auntieos-admin|packages/geo)\b' "$f"; then
+    bad "a workspace drift report named npm ci --prefix inside a workspace member ($f)"
+  else
+    ok "workspace drift never suggests npm ci --prefix inside a member ($f)"
+  fi
+done
 
 # ------------------------------------------------- a missing lockfile still fails
 D5="$(make_repo)"
@@ -279,6 +308,67 @@ if [ "$RC" = "1" ]; then
   ok "a missing root (workspace) lockfile fails preflight"
 else
   bad "a missing root lockfile stopped failing; got rc=$RC"
+fi
+
+# ---------------------------------------------------------------------------
+# auntieos-admin/web/functions (#841): the SAME standalone shape as
+# mytribe/functions, for the "default" Firebase Functions codebase. Checked
+# only when the directory exists, and WARNS rather than fails for the same
+# reason the reconcile Python codebase below does: it only ships under
+# RELEASE_INCLUDE_ADMIN_FUNCTIONS=1, `npm run setup` never installs it, and
+# failing preflight over it would refuse an ordinary setup or release over a
+# codebase that run is not touching. release.sh's own step 0 refuses on this
+# exact drift when the flag actually ships it (see release.test.sh).
+# ---------------------------------------------------------------------------
+add_admin_functions() {
+  local dir="$1"
+  mkdir -p "$dir/auntieos-admin/web/functions"
+  cat > "$dir/auntieos-admin/web/functions/package.json" <<'PJ'
+{ "name": "synthetic-admin-functions", "dependencies": { "left-pad": "^1.3.0" } }
+PJ
+  cat > "$dir/auntieos-admin/web/functions/package-lock.json" <<'LOCK'
+{
+  "name": "synthetic-admin-functions",
+  "lockfileVersion": 3,
+  "packages": {
+    "node_modules/left-pad": { "version": "1.3.0" }
+  }
+}
+LOCK
+}
+
+D5C="$(make_repo)"
+install_matching "$D5C"
+add_admin_functions "$D5C"
+RC="$(run_preflight "$D5C")"
+if [ "$RC" = "0" ] && grep -q "adminfn.*not installed yet" "$D5C/out"; then
+  ok "a not-yet-installed admin-functions codebase WARNS and does not fail preflight"
+else
+  bad "an uninstalled admin-functions codebase failed preflight; got rc=$RC"
+  tail -20 "$D5C/out"
+fi
+
+D5D="$(make_repo)"
+install_matching "$D5D"
+add_admin_functions "$D5D"
+install_dep "$D5D" "auntieos-admin/web/functions" "1.2.0"
+RC="$(run_preflight "$D5D")"
+if [ "$RC" = "0" ] && grep -q "adminfn.*does NOT match the lockfile" "$D5D/out" &&
+   grep -q "1.2.0" "$D5D/out" && grep -q "1.3.0" "$D5D/out"; then
+  ok "admin-functions drift is named but still does not fail preflight"
+else
+  bad "admin-functions drift either failed preflight or went unreported; got rc=$RC"
+  tail -20 "$D5D/out"
+fi
+
+D5E="$(make_repo)"
+install_matching "$D5E"
+RC="$(run_preflight "$D5E")"
+if [ "$RC" = "0" ] && ! grep -qi "adminfn" "$D5E/out"; then
+  ok "a repo with no admin-functions codebase reports nothing about one"
+else
+  bad "reported an admin-functions codebase that does not exist; got rc=$RC"
+  tail -20 "$D5E/out"
 fi
 
 # ---------------------------------------------------------------------------

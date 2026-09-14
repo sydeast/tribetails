@@ -18,7 +18,11 @@ bash scripts/preflight.sh
 
 Changes nothing. Reports every tool, and for each missing one prints the install
 command for your platform. Run it before anything else; `npm run setup` runs it
-too and refuses to start if anything required is absent.
+too and refuses to start if anything required is absent — **except** when the
+only thing wrong is dependency drift (node_modules out of sync with a
+lockfile, exit code 2 rather than 1): installing is exactly the fix for that,
+so setup proceeds to install and re-checks preflight afterward rather than
+refusing to start the one thing that would fix it. See below.
 
 | Tool | Needed for | Install (macOS) |
 |---|---|---|
@@ -76,6 +80,65 @@ BEFORE installing. A PARTIAL or STALE install fails, because that is the state
 that looks installed and is not. The first run of this check found two more
 instances nobody knew about, including a Fraunces font version that had been
 producing an unexplained e2e failure.
+
+**The comparison lives in one place** (`scripts/lib/dep-drift.sh`), sourced by
+both `preflight.sh` (report only) and `release.sh` step 0a (refuse), so they
+cannot silently disagree about what counts as drift. It checks three install
+units: the workspace root (`mytribe/web`, `auntieos-admin`, `packages/geo`),
+`mytribe/functions`, and — only when `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` is
+actually going to build and deploy it — `auntieos-admin/web/functions`.
+
+**A drift-only failure does not stop `npm run setup`.** On 2026-09-13 the
+release Mac's `node_modules` was installed 2026-09-10, before Dependabot moved
+vitest 4.1.11 → 5.0.0 and about twenty other packages, `stripe` in
+`mytribe/functions` included. `scripts/release.sh` had nothing checking this
+before its test step, so the third release attempt that day died three minutes
+into `npm run check` on a portal test CI had already passed on the same
+commit. Fixing it needed `npm ci` and `npm ci --prefix mytribe/functions` —
+but `npm run setup`'s OWN preflight check refused to even start over the exact
+drift installing would fix, so the operator ran both by hand.
+
+`preflight.sh` now exits **2**, not 1, when the ONLY thing wrong is dependency
+drift (1 still means something installing will not fix: a missing tool, a
+missing lockfile, an old JDK). `bootstrap.sh` reads that: on exit 2 it prints
+why, forces step 3's install (a drift-only preflight has just proven that
+step's own mtime-staleness check wrong for this tree), and re-runs preflight
+afterward to prove the drift is actually gone rather than assuming it. Any
+other preflight failure still refuses to start, unchanged. See
+`scripts/bootstrap.test.sh` and `scripts/preflight.test.sh` for the cases.
+
+`scripts/release.sh` runs the same comparison as its own precondition (step
+0a, before step 1 builds or tests anything) and refuses outright — a release
+is not a machine you want fixing itself mid-run — naming every drifted
+directory and the exact `npm ci` command for each:
+
+```
+REFUSED: installed dependencies do not match their lockfile(s):
+  - mytribe/functions: stripe (17.0.0, lockfile says 18.5.0)
+
+  This is exactly what stopped the 2026-09-13 release 3 minutes into
+  step 1, on a commit CI had already passed: ...
+
+    npm ci --prefix mytribe/functions
+```
+
+See `scripts/release.test.sh` for the cases: drift refuses and names the
+directory and fix, a clean install proceeds silently, and
+`auntieos-admin/web/functions` drift is checked only when
+`RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` is actually shipping it.
+
+**Never run `npm ci` INSIDE a workspace member** (`mytribe/web`,
+`auntieos-admin`, `packages/geo`). They share the ROOT's
+`package-lock.json`/`node_modules` and carry no lockfile of their own — that
+absence is normal, not a defect. Another agent working in parallel on this
+same issue saw `npm ci` run inside `mytribe/web` exit 0 and SILENTLY DROP
+`@tiptap/*` and `@vitejs/plugin-react` from its `node_modules`, because with
+no lockfile there `npm ci` falls back to a plain (and much smaller) install
+rather than refusing. The fix, every time, is `npm ci` at the **root**. The
+drift check follows this: a workspace member's drift is always reported as
+"workspace root: ..." with the fix `npm ci`, never `npm ci --prefix
+mytribe/web`, and `scripts/release.test.sh` and `scripts/preflight.test.sh`
+each assert that no per-member `--prefix` command is ever suggested.
 
 Two of the tool checks above fail in ways that do not name themselves, which is
 why preflight checks them by RUNNING them rather than by looking for the binary:
@@ -275,6 +338,7 @@ yourself, and says in its output that it did.
 | # | Step | Why here |
 |---|---|---|
 | 0 | Preconditions | Clean tree, on `main`, synced with origin. Shipping uncommitted or stale code is the classic incident. Falls back to `gh` if the SSH agent is down, since it must verify the fact, not one transport. |
+| 0a | Dependency drift | Is `node_modules` what each `package-lock.json` says it should be, for every root this run builds, tests, or deploys? Refuses and names the exact `npm ci` command, before step 1 tests anything against tools it cannot trust. See below. |
 | 0b | CI verdict for HEAD | Asks GitHub whether every check is green for this exact commit, **e2e included**. `npm run check` does not run e2e, so until this existed a red e2e could not stop a release. See below. |
 | 1 | `npm run check` | Typecheck, lint, test, build. Not optional theatre: this is what produces the `dist/` that step 6 uploads. |
 | 1b | Secret preflight | Every secret the code DECLARES must exist. Firebase validates these before uploading, and one missing name fails the whole codebase. Refuses here, before any deploy. |
@@ -2055,6 +2119,15 @@ npm run setup
 `node_modules/.package-lock.json` and reinstalls any project whose lockfile is
 newer, announcing it as STALE rather than skipping. (It used to check only that
 the directory existed, which is exactly how this hid for an hour.)
+
+It also does not refuse to START over this (#841): `npm run setup` runs
+`preflight.sh` first, and a preflight failure that is ONLY this drift exits 2
+rather than 1 and no longer stops `setup` before it can install — see
+"An install either matches its lockfile or it does not" above. **Never** fix
+this by running `npm ci` inside `mytribe/web`, `auntieos-admin`, or
+`packages/geo` directly: they carry no lockfile of their own, so `npm ci`
+there exits 0 and silently installs a smaller tree than the root's. Always
+`npm run setup` (or `npm ci` at the repo root).
 
 **Gradle: "SDK location not found".** Run `npm run setup`.
 

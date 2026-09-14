@@ -15,6 +15,12 @@
 # WHAT IT DOES, in this order and for these reasons:
 #   0. preconditions  - clean tree, on main, synced with origin. Shipping
 #                       uncommitted or stale code is the classic incident.
+#  0a. dependency     - is node_modules what each package-lock.json says it
+#      drift            should be, for every root this run builds, tests, or
+#                       deploys? A checkout whose install predates a
+#                       dependency bump tests stale tools against code CI
+#                       already judged with the new ones. See
+#                       scripts/lib/dep-drift.sh.
 #  0b. ci verdict    - ask GitHub whether CI is green for THIS commit. Step 1
 #                       does not run e2e and never did, so until this existed a
 #                       red e2e job could not stop a release. One didn't, on
@@ -554,6 +560,118 @@ fi
 
 confirm "Release this commit to production (auntieos-ttpc)?"
 fi  # end of the guards skipped under RELEASE_PREFLIGHT_ONLY
+
+# ---------------------------------------------------------------------------
+# 0a. Dependency drift: is node_modules what each lockfile says it should be?
+# ---------------------------------------------------------------------------
+banner "0a. Dependency drift"
+
+# WHY THIS EXISTS
+# On 2026-09-13 the third release attempt died about 3 minutes into step 1, on
+# mytribe/web/src/screens/InvoiceDetail.test.tsx, on a commit CI had already
+# passed all 923 portal tests on. Cause: the release Mac's node_modules was
+# installed 2026-09-10, before Dependabot moved vitest 4.1.11 -> 5.0.0 (merged
+# 09-11) and about twenty other packages, `stripe` in mytribe/functions
+# included. scripts/preflight.sh already reports this exactly ("does NOT match
+# the lockfile ... Run: npm ci"), but nothing here ever asked it before
+# spending time on a tree it could not trust. So: ask, before step 1 builds or
+# tests anything, using the SAME comparison preflight.sh reports with
+# (scripts/lib/dep-drift.sh), never a second copy that could disagree with it.
+STEP="checking installed dependencies match their lockfiles"
+# shellcheck source=scripts/lib/dep-drift.sh
+. "$ROOT/scripts/lib/dep-drift.sh"
+
+# Under RELEASE_PREFLIGHT_ONLY, a real release would refuse here but this run
+# ships nothing, so it reports what would happen and continues — the same
+# accommodation ci_refuse (below, in step 0b) makes, for the same reason: this
+# is the one mode that exists to exercise refusal paths without a real commit
+# GitHub has judged, and refusing here would make it unable to reach them.
+DRIFT_NAMES=()
+DRIFT_FIXES=()
+
+# report_drift <label> <what npm ci to run>: called only when a unit is
+# broken (no-lock or drift); ok/no-node/clean print their own line and never
+# reach here.
+report_drift() {
+  DRIFT_NAMES+=("$1")
+  DRIFT_FIXES+=("$2")
+}
+
+# mytribe/functions: standalone, own lockfile, own node_modules. The exact
+# unit named in the 2026-09-13 incident (stripe).
+if standalone_pkg_drift "$ROOT/mytribe/functions"; then
+  case "$DEP_DRIFT_STATE" in
+    ok)      ylw "deps: mytribe/functions not installed yet (fresh checkout; npm ci will do it)" ;;
+    no-node) ylw "deps: mytribe/functions installed, but node is missing so it cannot be verified" ;;
+    clean)   grn "deps: mytribe/functions matches its lockfile" ;;
+  esac
+else
+  case "$DEP_DRIFT_STATE" in
+    no-lock) report_drift "mytribe/functions has no package-lock.json" "npm ci --prefix mytribe/functions" ;;
+    drift)   report_drift "mytribe/functions: $DEP_DRIFT_DETAIL" "npm ci --prefix mytribe/functions" ;;
+  esac
+fi
+
+# The workspace root: mytribe/web, auntieos-admin, and packages/geo share ONE
+# lockfile and node_modules (PR25a). The other unit named in the incident
+# (vitest, ~20 packages, all reached through this root).
+if workspace_pkg_drift "$ROOT" mytribe/web auntieos-admin packages/geo; then
+  case "$DEP_DRIFT_STATE" in
+    ok)      ylw "deps: workspace root not installed yet (fresh checkout; npm ci will do it)" ;;
+    no-node) ylw "deps: workspace root installed, but node is missing so it cannot be verified" ;;
+    clean)   grn "deps: workspace root (mytribe/web, auntieos-admin, packages/geo) matches its lockfile" ;;
+  esac
+else
+  case "$DEP_DRIFT_STATE" in
+    no-lock) report_drift "the workspace root has no package-lock.json" "npm ci" ;;
+    drift)   report_drift "workspace root: $DEP_DRIFT_DETAIL" "npm ci" ;;
+  esac
+fi
+
+# auntieos-admin/web/functions: the second Firebase Functions codebase (see
+# step 5), which this run BUILDS AND DEPLOYS only under
+# RELEASE_INCLUDE_ADMIN_FUNCTIONS=1. Checked only then, for the same reason
+# preflight.sh only WARNS about it unconditionally: testing a codebase this
+# run is not going to ship would refuse releases over drift nothing here
+# reads.
+if [ "${RELEASE_INCLUDE_ADMIN_FUNCTIONS:-0}" = "1" ]; then
+  if standalone_pkg_drift "$ROOT/auntieos-admin/web/functions"; then
+    case "$DEP_DRIFT_STATE" in
+      ok)      ylw "deps: auntieos-admin/web/functions not installed yet (fresh checkout; npm ci will do it)" ;;
+      no-node) ylw "deps: auntieos-admin/web/functions installed, but node is missing so it cannot be verified" ;;
+      clean)   grn "deps: auntieos-admin/web/functions matches its lockfile" ;;
+    esac
+  else
+    case "$DEP_DRIFT_STATE" in
+      no-lock) report_drift "auntieos-admin/web/functions has no package-lock.json" "npm ci --prefix auntieos-admin/web/functions" ;;
+      drift)   report_drift "auntieos-admin/web/functions: $DEP_DRIFT_DETAIL" "npm ci --prefix auntieos-admin/web/functions" ;;
+    esac
+  fi
+else
+  ylw "deps: auntieos-admin/web/functions NOT CHECKED (RELEASE_INCLUDE_ADMIN_FUNCTIONS is"
+  ylw "  off; this run will not build or deploy it)"
+fi
+
+if [ "${#DRIFT_NAMES[@]}" -gt 0 ]; then
+  if [ "$PREFLIGHT_ONLY" = "1" ]; then
+    ylw ""
+    ylw "preflight: a real release would REFUSE here."
+    for n in "${DRIFT_NAMES[@]}"; do ylw "  $n"; done
+  else
+    red ""
+    red "REFUSED: installed dependencies do not match their lockfile(s):"
+    for n in "${DRIFT_NAMES[@]}"; do red "  - $n"; done
+    red ""
+    red "  This is exactly what stopped the 2026-09-13 release 3 minutes into"
+    red "  step 1, on a commit CI had already passed: the checkout's"
+    red "  node_modules predated a dependency bump, so the test step ran"
+    red "  against stale tools instead of the code CI tested. Fix it before"
+    red "  anything here builds or tests:"
+    red ""
+    for f in "${DRIFT_FIXES[@]}"; do red "    $f"; done
+    exit 1
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # 0b. What CI thinks of THIS commit, before anything is built or shipped.
