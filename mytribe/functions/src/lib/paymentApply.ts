@@ -63,6 +63,7 @@ import {
   type InvoiceSettlementState,
 } from './invoiceMath';
 import { invoiceStateStampOf } from './invoiceStateStamp';
+import { PAYMENT_APPLIED_OWNER_FIELD, paymentAppliedOwner } from './paymentAppliedOwner';
 
 /** What the apply did to the invoice, after the write. */
 export interface ApplyOutcome {
@@ -295,7 +296,16 @@ export function stageApply(
     amountDue: centsToDollars(step.after.amountDueCents),
     paymentMethod: input.method,
     paymentReference: input.reference,
-    ...(settling ? { paidAt: FieldValue.serverTimestamp(), paidBy: input.uid } : {}),
+    ...(settling
+      ? {
+          paidAt: FieldValue.serverTimestamp(),
+          paidBy: input.uid,
+          // #866: `recordPayment` is this payment's only confirmation sender
+          // (its Send Confirmation toggle), so the write that pays the bill
+          // says so and `onInvoicesWrite` stands down.
+          [PAYMENT_APPLIED_OWNER_FIELD]: paymentAppliedOwner('recordPayment', input.sourcePaymentId),
+        }
+      : {}),
     lastPaymentAt: FieldValue.serverTimestamp(),
     lastPaymentBy: input.uid,
     updatedAt: FieldValue.serverTimestamp(),

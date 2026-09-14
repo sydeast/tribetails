@@ -91,6 +91,45 @@ describe('onInvoicesWrite dispatch', () => {
     expect(mocks.enqueue).not.toHaveBeenCalled();
   });
 
+  // #866: a writer that owns its own confirmation stamps the invoice in the
+  // write that pays it, and the trigger stands down for that write only.
+  it('stays silent when the write that pays the invoice stamps a new notice owner', async () => {
+    const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
+    await onInvoicesWriteHandler(
+      makeEvent(
+        { kinfolkId: '3', status: 'open', amountDue: 40 },
+        { kinfolkId: '3', status: 'paid', amountDue: 0, paymentAppliedNoticeOwner: 'stripe:evt_1' },
+      ) as any,
+    );
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('still sends when the owner stamp is only left over from an earlier payment', async () => {
+    // Paid by card (stamped), reopened by an edit, then paid off by account
+    // credit, which stamps nothing. The trigger owns that notice.
+    const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
+    await onInvoicesWriteHandler(
+      makeEvent(
+        { kinfolkId: '3', status: 'open', amountDue: 10, paymentAppliedNoticeOwner: 'stripe:evt_1' },
+        { kinfolkId: '3', status: 'paid', amountDue: 0, paymentAppliedNoticeOwner: 'stripe:evt_1' },
+      ) as any,
+    );
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueue.mock.calls[0][0].key).toBe('invoice.payment.applied');
+  });
+
+  it('never lets a notice owner silence invoice.overdue', async () => {
+    const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
+    await onInvoicesWriteHandler(
+      makeEvent(
+        { kinfolkId: '3', status: 'open', amountDue: 40 },
+        { kinfolkId: '3', status: 'past_due', amountDue: 40, paymentAppliedNoticeOwner: 'recordPayment:p1' },
+      ) as any,
+    );
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueue.mock.calls[0][0].key).toBe('invoice.overdue');
+  });
+
   it('skips dispatch when kinfolkId is missing on the doc', async () => {
     const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
     await onInvoicesWriteHandler(

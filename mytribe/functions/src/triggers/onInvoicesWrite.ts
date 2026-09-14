@@ -3,6 +3,7 @@ import { logEvent } from '../lib/logger';
 import { wrapTrigger } from '../lib/wrapTrigger';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
+import { paymentAppliedNoticeOwnedByWriter } from '../lib/paymentAppliedOwner';
 
 type InvoiceDoc = {
   kinfolkId?: string;      // family id, stamped by AuntieOS + portal writers
@@ -18,8 +19,10 @@ type InvoiceDoc = {
  * Watches the FLAT top-level `invoices/{invoiceId}` collection (AuntieOS
  * Android + web write here). Fires a notification when an invoice crosses
  * into a "paid" or "past due" state via ANY write path (admin UI direct
- * write, callable, or the Stripe webhook). Other transitions are handled
- * elsewhere:
+ * write, callable, or the Stripe webhook). #866: a paid transition is skipped
+ * when the write stamped a new `paymentAppliedNoticeOwner`, because that writer
+ * sends the confirmation itself (lib/paymentAppliedOwner.ts). Other transitions
+ * are handled elsewhere:
  *   - new invoice doc creation → postInvoiceEvent fires invoice.new
  *   - generic update          → postInvoiceEvent fires invoice.updated
  *   - charge failure          → stripeWebhook fires invoice.charge.failed
@@ -60,8 +63,11 @@ export async function onInvoicesWriteHandler(event: InvoicesWriteEvent): Promise
   if (beforeLifecycle === afterLifecycle) return;
 
   let key: 'invoice.payment.applied' | 'invoice.overdue' | null = null;
-  if (afterLifecycle === 'paid' && beforeLifecycle !== 'paid') key = 'invoice.payment.applied';
-  else if (afterLifecycle === 'past_due' && beforeLifecycle !== 'past_due') key = 'invoice.overdue';
+  if (afterLifecycle === 'paid' && beforeLifecycle !== 'paid') {
+    // #866: the write that paid it named another sender (lib/paymentAppliedOwner.ts).
+    if (paymentAppliedNoticeOwnedByWriter(before, after)) return;
+    key = 'invoice.payment.applied';
+  } else if (afterLifecycle === 'past_due' && beforeLifecycle !== 'past_due') key = 'invoice.overdue';
   if (!key) return;
 
   const invoiceId = event.params.invoiceId;

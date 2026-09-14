@@ -1,8 +1,11 @@
 /**
  * reportDuplicateNotifications.ts
  *
- * READ-ONLY. Answers one question for issue #832: has any household ALREADY
- * been sent the same notification twice?
+ * READ-ONLY. Answers two questions:
+ *
+ *   #832  has any household ALREADY been sent the same notification twice?
+ *   #866  has any household been sent two `invoice.payment.applied` about one
+ *         invoice within 10 minutes, whichever senders they came from?
  *
  * Before #832 nothing stopped it. `sendInvoiceReminder` never read the stamp it
  * wrote, `postInvoiceEvent` re-enqueued on every call, and the dispatcher wrote
@@ -15,9 +18,9 @@
  * and `reportDuplicateNotifications.test.ts` greps this source to keep it that
  * way.
  *
- * WHAT COUNTS AS A DUPLICATE. Two documents in the same collection with the same
- * `key`, the same `recipientUid`, and the same identity, created closer together
- * than the window for that key:
+ * WHAT COUNTS AS A DUPLICATE (#832). Two documents in the same collection with
+ * the same `key`, the same `recipientUid`, and the same identity, created closer
+ * together than the window for that key:
  *
  *   - identity is exactly what the dispatcher now dedupes on (`dedupeIdentityOf`
  *     in functions/src/notifications/dispatcher.ts): the target plus any
@@ -34,13 +37,28 @@
  *     into `notifications`, so one reminder can briefly exist in both; pairing
  *     across the two would report that as a duplicate when it is one send.
  *
+ * WHAT COUNTS AS A DOUBLE PAYMENT CONFIRMATION (#866). The #832 test cannot see
+ * it: the Stripe webhook's copy carries `stripeEventId`, `recordPayment`'s
+ * carries `paymentId`, and the invoice trigger's carries neither, so the three
+ * have three different identities by design. This pass ignores the per-event id
+ * and groups delivered `invoice.payment.applied` documents on
+ * `(recipientUid, invoice)` alone, with a fixed 10-minute window
+ * (PAYMENT_APPLIED_PAIR_WINDOW_MS). `--window-minutes` does not change it.
+ *   - It over-reports on purpose rather than under-reports: two genuinely
+ *     separate payments on one invoice inside 10 minutes (an admin partial, then
+ *     the household paying the rest by card) appear here too. Each sample line
+ *     prints every copy's identity, so a reader can tell `stripeEventId` plus a
+ *     bare `invoice:` copy (the #866 shape) from two different payments.
+ *   - Only `notifications` is read: this key is delivered in trigger mode and is
+ *     never queued.
+ *
  * WHO IS A HOUSEHOLD. A `recipientUid` that names a document in `clients/`, the
  * same test `streamForRecipient` uses. Staff copies are reported too, separately,
  * because a duplicate to the office is still a duplicate, but the headline number
  * is households.
  *
- * NOTHING PRIVATE IS PRINTED. Output is keys, document paths, uids and times.
- * No `data`, no `detail`, no titles.
+ * NOTHING PRIVATE IS PRINTED. Output is keys, document paths, ids, uids and
+ * times. No `data`, no `detail`, no titles.
  *
  * Usage (the operator runs this against prod; an agent session does not):
  *
@@ -73,6 +91,12 @@ export type ScannedCollection = (typeof SCANNED_COLLECTIONS)[number];
  */
 export const INVOICE_REMINDER_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+/** #866: the key whose senders the second pass pairs across. */
+export const PAYMENT_APPLIED_KEY = 'invoice.payment.applied';
+
+/** #866: two confirmations about one invoice closer together than this are reported. */
+export const PAYMENT_APPLIED_PAIR_WINDOW_MS = 10 * 60 * 1000;
+
 const PAGE = 500;
 const LOOKUP_CHUNK = 100;
 
@@ -104,13 +128,14 @@ export function parseArgs(argv: string[]): Args {
     } else if (a === '--help' || a === '-h') {
       console.log(
         [
-          'reportDuplicateNotifications.ts: READ-ONLY report of notifications delivered twice (#832)',
+          'reportDuplicateNotifications.ts: READ-ONLY report of notifications delivered twice (#832),',
+          'and of invoice.payment.applied sent twice about one invoice within 10 minutes (#866)',
           '',
           '  npm --prefix mytribe/functions run report:duplicate-notifications -- --project <id>',
           '  npm --prefix mytribe/functions run report:duplicate-notifications -- --project <id> --samples 50',
           '  npm --prefix mytribe/functions run report:duplicate-notifications -- --project <id> --window-minutes 60',
           '',
-          'Writes nothing. Prints keys, paths, uids and times only.',
+          '--window-minutes changes the #832 pass only. Writes nothing. Prints keys, paths, ids, uids and times only.',
         ].join('\n'),
       );
       process.exit(0);
@@ -121,13 +146,15 @@ export function parseArgs(argv: string[]): Args {
   return args;
 }
 
-/** One stored notification, reduced to what the duplicate test reads. */
+/** One stored notification, reduced to what the duplicate tests read. */
 export interface NotificationRow {
   path: string;
   collection: ScannedCollection;
   key: string;
   recipientUid: string;
   identity: string;
+  /** The invoice the notification is about, or '' when its target is not an invoice. */
+  invoiceId: string;
   /** When it was written (ms epoch), or null when no time is stored. */
   atMs: number | null;
 }
@@ -161,6 +188,7 @@ export function rowOf(path: string, collection: ScannedCollection, raw: Record<s
     key,
     recipientUid: str(raw['recipientUid']),
     identity: dedupeIdentityOf({ key, data }, target),
+    invoiceId: target.targetType === 'invoice' ? target.targetId : '',
     atMs: millisOf(raw['createdAt']) ?? millisOf(raw['fireAtMs']),
   };
 }
@@ -184,6 +212,22 @@ export interface DuplicateGroup {
 }
 
 /**
+ * The gap test both passes share: sorts one group's rows oldest first and counts
+ * the copies that landed inside `windowMs` of the copy before them.
+ */
+function gapsOf(list: readonly NotificationRow[], windowMs: number): { sorted: NotificationRow[]; closest: number; extra: number } {
+  const sorted = [...list].sort((a, b) => (a.atMs as number) - (b.atMs as number));
+  let closest = Number.POSITIVE_INFINITY;
+  let extra = 0;
+  for (let i = 1; i < sorted.length; i += 1) {
+    const gap = (sorted[i].atMs as number) - (sorted[i - 1].atMs as number);
+    closest = Math.min(closest, gap);
+    if (gap < windowMs) extra += 1;
+  }
+  return { sorted, closest, extra };
+}
+
+/**
  * Pure: groups rows and keeps the groups where at least one copy landed inside
  * the window of the copy before it. Rows with no identity, no recipient, no key
  * or no time are skipped, because nothing can say two of them are the same send.
@@ -200,15 +244,7 @@ export function findDuplicates(rows: readonly NotificationRow[], windowOverrideM
   const out: DuplicateGroup[] = [];
   for (const list of groups.values()) {
     if (list.length < 2) continue;
-    const sorted = [...list].sort((a, b) => (a.atMs as number) - (b.atMs as number));
-    const windowMs = windowMsFor(sorted[0].key, windowOverrideMs);
-    let closest = Number.POSITIVE_INFINITY;
-    let extra = 0;
-    for (let i = 1; i < sorted.length; i += 1) {
-      const gap = (sorted[i].atMs as number) - (sorted[i - 1].atMs as number);
-      closest = Math.min(closest, gap);
-      if (gap < windowMs) extra += 1;
-    }
+    const { sorted, closest, extra } = gapsOf(list, windowMsFor(list[0].key, windowOverrideMs));
     if (extra === 0) continue;
     out.push({
       collection: sorted[0].collection,
@@ -223,6 +259,60 @@ export function findDuplicates(rows: readonly NotificationRow[], windowOverrideM
   return out.sort((a, b) => a.closestGapMs - b.closestGapMs);
 }
 
+/** #866: every `invoice.payment.applied` one recipient got about one invoice, when two landed close together. */
+export interface PaymentAppliedPair {
+  recipientUid: string;
+  invoiceId: string;
+  /** Every copy, oldest first, with the identity that says which sender wrote it. */
+  rows: Array<{ path: string; atMs: number; identity: string }>;
+  closestGapMs: number;
+  extraCopies: number;
+}
+
+/**
+ * Pure (#866): groups delivered `invoice.payment.applied` rows on recipient and
+ * invoice ONLY, ignoring the per-event id that keeps them apart in
+ * `findDuplicates`, and keeps the groups with two copies inside `windowMs`.
+ */
+export function findPaymentAppliedPairs(
+  rows: readonly NotificationRow[],
+  windowMs: number = PAYMENT_APPLIED_PAIR_WINDOW_MS,
+): PaymentAppliedPair[] {
+  const groups = new Map<string, NotificationRow[]>();
+  for (const row of rows) {
+    if (row.collection !== 'notifications' || row.key !== PAYMENT_APPLIED_KEY) continue;
+    if (row.invoiceId === '' || row.recipientUid === '' || row.atMs === null) continue;
+    const id = `${row.recipientUid}|${row.invoiceId}`;
+    const list = groups.get(id);
+    if (list) list.push(row);
+    else groups.set(id, [row]);
+  }
+  const out: PaymentAppliedPair[] = [];
+  for (const list of groups.values()) {
+    if (list.length < 2) continue;
+    const { sorted, closest, extra } = gapsOf(list, windowMs);
+    if (extra === 0) continue;
+    out.push({
+      recipientUid: sorted[0].recipientUid,
+      invoiceId: sorted[0].invoiceId,
+      rows: sorted.map((r) => ({ path: r.path, atMs: r.atMs as number, identity: r.identity })),
+      closestGapMs: closest,
+      extraCopies: extra,
+    });
+  }
+  return out.sort((a, b) => a.closestGapMs - b.closestGapMs);
+}
+
+export interface PaymentAppliedReport {
+  groups: Array<PaymentAppliedPair & { household: boolean }>;
+  /** Distinct households with at least one invoice confirmed twice. */
+  householdsAffected: number;
+  /** Household (recipient, invoice) pairs confirmed twice. */
+  householdInvoices: number;
+  extraHouseholdCopies: number;
+  staffGroups: number;
+}
+
 export interface Report {
   scanned: Record<ScannedCollection, number>;
   groups: Array<DuplicateGroup & { household: boolean }>;
@@ -231,6 +321,7 @@ export interface Report {
   staffGroups: number;
   extraHouseholdCopies: number;
   byKey: Array<{ key: string; groups: number; extraCopies: number; households: number }>;
+  paymentApplied: PaymentAppliedReport;
 }
 
 async function scan(db: Firestore, collection: ScannedCollection): Promise<NotificationRow[]> {
@@ -267,7 +358,8 @@ export async function buildReport(db: Firestore, windowOverrideMs: number | null
     all.push(...rows);
   }
   const dupes = findDuplicates(all, windowOverrideMs);
-  const households = await householdUids(db, dupes.map((g) => g.recipientUid));
+  const pairs = findPaymentAppliedPairs(all);
+  const households = await householdUids(db, [...dupes.map((g) => g.recipientUid), ...pairs.map((p) => p.recipientUid)]);
   const groups = dupes.map((g) => ({ ...g, household: households.has(g.recipientUid) }));
 
   const byKeyMap = new Map<string, { groups: number; extraCopies: number; households: Set<string> }>();
@@ -279,6 +371,9 @@ export async function buildReport(db: Firestore, windowOverrideMs: number | null
     byKeyMap.set(g.key, e);
   }
   const householdOnly = groups.filter((g) => g.household);
+
+  const pairGroups = pairs.map((p) => ({ ...p, household: households.has(p.recipientUid) }));
+  const householdPairs = pairGroups.filter((p) => p.household);
   return {
     scanned,
     groups,
@@ -289,6 +384,13 @@ export async function buildReport(db: Firestore, windowOverrideMs: number | null
     byKey: [...byKeyMap.entries()]
       .map(([key, e]) => ({ key, groups: e.groups, extraCopies: e.extraCopies, households: e.households.size }))
       .sort((a, b) => b.extraCopies - a.extraCopies || a.key.localeCompare(b.key)),
+    paymentApplied: {
+      groups: pairGroups,
+      householdsAffected: new Set(householdPairs.map((p) => p.recipientUid)).size,
+      householdInvoices: householdPairs.length,
+      extraHouseholdCopies: householdPairs.reduce((n, p) => n + p.extraCopies, 0),
+      staffGroups: pairGroups.length - householdPairs.length,
+    },
   };
 }
 
@@ -297,7 +399,7 @@ function printReport(r: Report, samples: number, windowOverrideMs: number | null
     windowOverrideMs !== null
       ? `${windowOverrideMs / 60000} min for every key (--window-minutes)`
       : `${NOTIFICATION_DEDUPE_WINDOW_MS / 60000} min, invoice.reminder ${INVOICE_REMINDER_WINDOW_MS / 3600000} h`;
-  console.log('READ-ONLY duplicate notification report (#832). Nothing was written.');
+  console.log('READ-ONLY duplicate notification report (#832, #866). Nothing was written.');
   console.log(`Window: ${windowLine}`);
   console.log(`Scanned: notifications ${r.scanned.notifications}, scheduledNotifications ${r.scanned.scheduledNotifications}`);
   console.log('');
@@ -320,6 +422,29 @@ function printReport(r: Report, samples: number, windowOverrideMs: number | null
         `  ${g.household ? 'HOUSEHOLD' : 'staff    '}  ${g.key}  recipient=${g.recipientUid}  ${g.identity}  closest gap ${Math.round(g.closestGapMs / 1000)}s`,
       );
       for (const row of g.rows) console.log(`      ${new Date(row.atMs).toISOString()}  ${row.path}`);
+    }
+  }
+
+  const p = r.paymentApplied;
+  console.log('');
+  console.log(
+    `#866 ${PAYMENT_APPLIED_KEY} about one invoice within ${PAYMENT_APPLIED_PAIR_WINDOW_MS / 60000} min, any sender:`,
+  );
+  if (p.householdInvoices === 0) {
+    console.log('  HOUSEHOLDS: none found.');
+  } else {
+    console.log(
+      `  HOUSEHOLDS: ${p.householdsAffected} household(s), ${p.householdInvoices} invoice(s), ${p.extraHouseholdCopies} extra cop(ies).`,
+    );
+  }
+  console.log(`  Staff/office: ${p.staffGroups} invoice(s).`);
+  if (p.groups.length > 0) {
+    console.log(`  Closest ${Math.min(samples, p.groups.length)} of ${p.groups.length}:`);
+    for (const g of p.groups.slice(0, samples)) {
+      console.log(
+        `    ${g.household ? 'HOUSEHOLD' : 'staff    '}  invoice=${g.invoiceId}  recipient=${g.recipientUid}  closest gap ${Math.round(g.closestGapMs / 1000)}s`,
+      );
+      for (const row of g.rows) console.log(`        ${new Date(row.atMs).toISOString()}  ${row.path}  ${row.identity}`);
     }
   }
 }

@@ -85,6 +85,16 @@ class InvoiceRepositoryTest {
     }
 
     @Test
+    fun `recordPayment payload names the settlement only when one preceded it (#866)`() {
+        // The server tells the office "paid" for a markInvoicePaid settlement only
+        // when this id matches it, so it is sent exactly as given, and a payment no
+        // settlement step preceded sends nothing at all rather than an empty id.
+        val withSettlement = recordPaymentArgs(payment, "pay_1_abc", "ipay-9").toPayload()
+        assertEquals("ipay-9", withSettlement["settledByInvoicePaymentId"])
+        assertFalse(recordPaymentArgs(payment).toPayload().containsKey("settledByInvoicePaymentId"))
+    }
+
+    @Test
     fun `recordPayment payload passes the caller's kinfolkId through untouched`() {
         // The old direct write rewrote kinfolkId client-side via
         // TestMode.scopedKinfolkId. The payload must NOT: the sandbox stamp is
