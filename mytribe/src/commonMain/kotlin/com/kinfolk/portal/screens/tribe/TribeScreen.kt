@@ -1012,6 +1012,7 @@ private fun MemberPermissionRow(
             label = "Home access (gate code, Wi-Fi, Emergency Contacts)",
             value = canAccessHome,
             onChange = { canAccessHome = it },
+            description = HOME_ACCESS_DESCRIPTION,
         )
         AccessToggleRow(
             label = "Direct messaging",
@@ -1107,6 +1108,7 @@ private fun SecondaryInviteCard(kinfolkId: String, portalApi: PortalApi) {
                 label = "Home access (gate code, Wi-Fi, Emergency Contacts)",
                 value = canAccessHome,
                 onChange = { canAccessHome = it },
+                description = HOME_ACCESS_DESCRIPTION,
             )
             KinButton(
                 label = if (inviting) "Sending…" else "Send Invite",
@@ -1420,11 +1422,21 @@ private fun HouseholdContactsCard(kinfolkId: String, portalApi: PortalApi) {
     }
 }
 
+/**
+ * #829 review item 11: what Home access grants, word for word portal web's hover
+ * text on the same toggle. Shown behind an info tip, never as a subtitle.
+ */
+internal const val HOME_ACCESS_DESCRIPTION = "Sees and edits the household home details: entry notes and Emergency Contacts."
+
 /** A labelled access toggle used when inviting a secondary kinfolk. The PRIMARY
  *  opts the secondary in to a specific permission (default OFF). Foundation-only
- *  track/thumb switch, mirroring the toggle used elsewhere in the app. */
+ *  track/thumb switch, mirroring the toggle used elsewhere in the app.
+ *
+ *  #829 review item 11: a [description] sits behind a [KinInfoTip] beside the
+ *  label (a tap opens it), the way portal web shows it on hover; never a
+ *  subtitle line (ruling 2026-09-11). */
 @Composable
-private fun AccessToggleRow(label: String, value: Boolean, onChange: (Boolean) -> Unit) {
+internal fun AccessToggleRow(label: String, value: Boolean, onChange: (Boolean) -> Unit, description: String? = null) {
     val type = LocalKinfolkTypography.current
     Row(
         modifier = Modifier
@@ -1435,7 +1447,10 @@ private fun AccessToggleRow(label: String, value: Boolean, onChange: (Boolean) -
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
     ) {
-        Text(label, style = type.sansBody, modifier = Modifier.weight(1f))
+        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+            Text(label, style = type.sansBody, modifier = Modifier.weight(1f, fill = false))
+            description?.let { com.kinfolk.portal.components.KinInfoTip(it) }
+        }
         Box(
             modifier = Modifier
                 .size(width = 44.dp, height = 24.dp)

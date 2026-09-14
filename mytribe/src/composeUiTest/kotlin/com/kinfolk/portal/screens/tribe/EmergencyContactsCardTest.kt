@@ -67,7 +67,7 @@ class EmergencyContactsCardTest {
     }
 
     private val locked = "Only someone with Home access can change the Emergency Contact."
-    private val required = "A household needs at least one Emergency Contact"
+    private val required = "A household needs at least one Emergency Contact."
 
     private fun contactJson(name: String, phone: String, relationship: String? = null) = buildJsonObject {
         put("name", name); put("phone", phone)
@@ -192,14 +192,46 @@ class EmergencyContactsCardTest {
         assertTrue(onAllNodesWithTag("ec-0-name").fetchSemanticsNodes().isEmpty())
     }
 
+    // #829 review item 12: read-only wording that names who can add one.
     @Test
-    fun readOnlyWithNoneOnFileStillPrompts() = runComposeUiTest {
+    fun readOnlyWithNoneOnFileSaysWhoCanAddOne() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.list(canEdit = false, withRae = false)
         setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
         waitForIdle()
-        onNodeWithText(required).assertIsDisplayed()
-        onNodeWithText(locked).assertIsDisplayed()
+        onNodeWithText("No Emergency Contact on file. Someone with Home access can add one.").assertIsDisplayed()
+        onNodeWithText(required).assertDoesNotExist()
+        onNodeWithText(locked).assertDoesNotExist()
+        assertTrue(onAllNodesWithTag("ec-0-name").fetchSemanticsNodes().isEmpty())
+    }
+
+    // #829 review item 14.
+    @Test
+    fun aStraySpaceIsNotAnUnsavedChange() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.list(canEdit = true, withRae = true)
+        setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("ec-0-name").performTextReplacement("Rae Mercer ")
+        waitForIdle()
+        onNodeWithText("Unsaved changes").assertDoesNotExist()
+        onNodeWithTag("ec-0-name").performTextReplacement("Rae Mercer Jr")
+        waitForIdle()
+        onNodeWithText("Unsaved changes").assertIsDisplayed()
+    }
+
+    // #829 review item 4: the server's own wording before the round trip.
+    @Test
+    fun aMissingPhoneIsRefusedInTheServerWording() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.list(canEdit = true, withRae = true)
+        setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("ec-0-phone").performTextReplacement("")
+        onNodeWithText("Save Emergency Contacts").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("An Emergency Contact needs a phone number.").assertIsDisplayed()
+        assertTrue(fake.calls.none { it.first == "saveEmergencyContacts" })
     }
 
     @Test

@@ -40,14 +40,30 @@ import com.kinfolk.portal.util.openExternalUrl
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
-/** The server's own `EMERGENCY_CONTACT_REQUIRED_MESSAGE`, and portal web's prompt. */
-private const val REQUIRED = "A household needs at least one Emergency Contact"
+/** `EMERGENCY_CONTACTS_MAX` and the field limits in `mytribe/functions/src/lib/emergencyContacts.ts`. */
+private const val MAX_CONTACTS = 2
+private const val NAME_MAX = 80
+private const val PHONE_MAX = 32
+private const val RELATIONSHIP_MAX = 40
+
+// #829 review item 4: the server's own wording, word for word, so a refusal reads
+// the same whether this pre-check or the callable caught it.
+private const val REQUIRED = "A household needs at least one Emergency Contact."
+private const val NAME_REQUIRED = "An Emergency Contact needs a name."
+private const val PHONE_REQUIRED = "An Emergency Contact needs a phone number."
+private const val NAME_TOO_LONG = "An Emergency Contact's name can be at most $NAME_MAX characters."
+private const val PHONE_TOO_LONG = "An Emergency Contact's phone number can be at most $PHONE_MAX characters."
+private const val RELATIONSHIP_TOO_LONG = "A relationship can be at most $RELATIONSHIP_MAX characters."
+private const val SAME_PHONE = "The two Emergency Contacts need different phone numbers."
 
 /** The #844 sentence, word for word the same on portal web. */
 private const val LOCKED = "Only someone with Home access can change the Emergency Contact."
 
-/** `EMERGENCY_CONTACTS_MAX` in `mytribe/functions/src/lib/emergencyContacts.ts`. */
-private const val MAX_CONTACTS = 2
+/**
+ * #829 review item 12: what a member without Home access reads when the household
+ * has none. Read-only, naming who can fix it; the same sentence as portal web.
+ */
+private const val NONE_READ_ONLY = "No Emergency Contact on file. Someone with Home access can add one."
 
 /** Same sentence admin web, admin Android, desktop and portal web show. */
 const val EMERGENCY_CONTACT_WHO_GETS_CALLED = "Called only when no kinfolk can be reached. The first one is called first."
@@ -66,11 +82,24 @@ private fun comparable(p: String) = p.filter(Char::isDigit).let { if (it.length 
  */
 private fun precheck(drafts: List<EmergencyContactInput>): String? = when {
     drafts.all { it.name.isBlank() && it.phone.isBlank() } -> REQUIRED
-    drafts.any { it.name.isBlank() } -> "Each Emergency Contact needs a name."
-    drafts.any { it.phone.isBlank() } -> "Each Emergency Contact needs a phone number."
-    drafts.size == 2 && comparable(drafts[0].phone) == comparable(drafts[1].phone) -> "The two Emergency Contacts need different phone numbers."
+    drafts.any { it.name.isBlank() } -> NAME_REQUIRED
+    drafts.any { it.phone.isBlank() } -> PHONE_REQUIRED
+    drafts.any { it.name.trim().length > NAME_MAX } -> NAME_TOO_LONG
+    drafts.any { it.phone.trim().length > PHONE_MAX } -> PHONE_TOO_LONG
+    drafts.any { it.relationship.trim().length > RELATIONSHIP_MAX } -> RELATIONSHIP_TOO_LONG
+    drafts.size == 2 && comparable(drafts[0].phone) == comparable(drafts[1].phone) -> SAME_PHONE
     else -> null
 }
+
+/**
+ * #829 review item 14: the drafts say what the server copy says, compared trimmed,
+ * as the save trims them and as every other client compares, so a stray space is
+ * never an unsaved change.
+ */
+private fun sameDrafts(a: List<EmergencyContactInput>, b: List<EmergencyContactInput>): Boolean =
+    a.size == b.size && a.zip(b).all { (x, y) ->
+        x.name.trim() == y.name.trim() && x.phone.trim() == y.phone.trim() && x.relationship.trim() == y.relationship.trim()
+    }
 
 /**
  * The household's Emergency Contacts (#829): up to two, the first called first,
@@ -119,7 +148,7 @@ fun EmergencyContactsCard(
     /** The household on screen now, read by a save when its reply lands. */
     val currentKinfolkId by rememberUpdatedState(kinfolkId)
 
-    val dirty = baseline?.let { drafts != toDrafts(it) } ?: false
+    val dirty = baseline?.let { !sameDrafts(drafts, toDrafts(it)) } ?: false
     val reportDirty by rememberUpdatedState(onDirtyChange)
     LaunchedEffect(dirty) { reportDirty(dirty) }
 
@@ -184,10 +213,13 @@ fun EmergencyContactsCard(
                     onSync = { reloadKey += 1 },
                 )
 
+                // #829 review item 12: none on file and no Home access. One read-only
+                // sentence saying who can add one, not the editor's prompt.
+                !r.canEdit && r.contacts.isEmpty() ->
+                    Text(NONE_READ_ONLY, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
+
                 !r.canEdit -> {
-                    if (r.contacts.isEmpty()) {
-                        Text(REQUIRED, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
-                    } else {
+                    run {
                         r.contacts.forEachIndexed { i, c ->
                             if (i > 0) CardDivider()
                             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
