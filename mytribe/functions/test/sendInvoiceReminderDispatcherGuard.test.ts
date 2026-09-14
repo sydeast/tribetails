@@ -21,7 +21,12 @@ vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockReso
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: vi.fn().mockResolvedValue('kin-uid-1') }));
 
 import { INVOICE_REMINDER_RESEND_WINDOW_MS, sendInvoiceReminderHandler } from '../src/admin/sendInvoiceReminder';
-import { enqueueNotification, enqueueNotificationDetailed } from '../src/notifications/dispatcher';
+import {
+  DEDUPE_LEDGER_RETENTION_MS,
+  enqueueNotification,
+  enqueueNotificationDetailed,
+} from '../src/notifications/dispatcher';
+import { processReminderInvoice } from '../src/scheduled/invoiceRemindersCron';
 
 const NOW = Date.UTC(2026, 8, 14, 15, 0, 0);
 
@@ -124,5 +129,39 @@ describe('sendInvoiceReminder over the real dispatcher', () => {
     });
     expect(scheduledReminders(ctx.writes)).toHaveLength(1);
     expect((await ctx.db.collection('invoices').doc('inv1').get()).data()?.reminderNotifiedAtMs).toBe(NOW);
+  });
+
+  it('a button reminder at 08:00 that lost its stamp: the 09:00 cron records the button time and sends nothing', async () => {
+    const eight = Date.UTC(2026, 8, 14, 12, 0, 0); // 08:00 ET
+    const nine = eight + 60 * 60_000;
+    const dueSoon = new Date(nine + 24 * 60 * 60_000).toISOString();
+    const ctx = buildDbMock({
+      writeThrough: true,
+      docs: { 'invoices/inv1': { kinfolkId: 'fam1', status: 'open', amountDue: 100, dueDate: dueSoon } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    // The button's delivery, recorded in the ledger; its stamp never landed.
+    vi.setSystemTime(eight);
+    await enqueueNotificationDetailed({
+      key: 'invoice.reminder',
+      recipientUid: 'kin-uid-1',
+      data: { kinfolkId: 'fam1', invoiceId: 'inv1' },
+      fireAtMs: eight,
+      dedupeWindowMs: INVOICE_REMINDER_RESEND_WINDOW_MS,
+    });
+
+    vi.setSystemTime(nine);
+    const snap = await ctx.db.collection('invoices').doc('inv1').get();
+    const reminded = await processReminderInvoice(snap as never, nine);
+
+    expect(reminded).toBe(false);
+    expect(scheduledReminders(ctx.writes)).toHaveLength(1);
+    expect((await ctx.db.collection('invoices').doc('inv1').get()).data()?.reminderNotifiedAtMs).toBe(eight);
+  });
+
+  it('the ledger keeps an entry at least as long as every widened caller window', () => {
+    // The button and the cron both widen to the reminder window; no other caller widens.
+    expect(DEDUPE_LEDGER_RETENTION_MS).toBeGreaterThanOrEqual(INVOICE_REMINDER_RESEND_WINDOW_MS);
   });
 });

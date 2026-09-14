@@ -16,13 +16,18 @@ const mocks = vi.hoisted(() => ({
   dbFn: vi.fn(),
   resolveUid: vi.fn(),
   enqueue: vi.fn(),
+  lastDelivered: vi.fn(),
 }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockResolvedValue('audit-1') }));
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveUid }));
-vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotificationDetailed: mocks.enqueue }));
+vi.mock('../src/notifications/dispatcher', () => ({
+  NOTIFICATION_DEDUPE_WINDOW_MS: 5 * 60 * 1000,
+  enqueueNotificationDetailed: mocks.enqueue,
+  lastDeliveredAtMs: mocks.lastDelivered,
+}));
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<any>('firebase-admin/firestore');
   return {
@@ -257,6 +262,30 @@ describe('resendQuote refusals', () => {
     expect(err.details).toMatchObject({ code: 'quote_not_declined' });
     expect(err.message).toContain('reminder');
     expect(quoteWrite(ctx)).toBeUndefined();
+  });
+
+  it('#832: a client retry of a resend that completed a minute ago answers ok, and sends and writes nothing', async () => {
+    // Already reopened by the resend it is retrying: no decision, count 1.
+    const ctx = ctxFor(declinedQuote({ quoteDecision: undefined, quoteDecidedAt: undefined, quoteResendCount: 1 }));
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.lastDelivered.mockResolvedValue(Date.now() - 60_000);
+
+    const res = await resendQuoteHandler(req({ invoiceId: 'q1' }));
+
+    expect(res).toMatchObject({ ok: true, invoiceId: 'q1' });
+    expect(mocks.lastDelivered).toHaveBeenCalledWith('invoice.new', 'quote:q1:resend:1', 'kin-uid-1');
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(quoteWrite(ctx)).toBeUndefined();
+  });
+
+  it('#832: a quote whose last resend reached the household longer ago than the window gets the ordinary refusal', async () => {
+    const ctx = ctxFor(declinedQuote({ quoteDecision: undefined, quoteDecidedAt: undefined, quoteResendCount: 1 }));
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.lastDelivered.mockResolvedValue(Date.now() - 6 * 60_000);
+
+    const err = await resendQuoteHandler(req({ invoiceId: 'q1' })).catch((e) => e);
+
+    expect(err.details).toMatchObject({ code: 'quote_not_declined' });
   });
 
   it('refuses an ordinary invoice', async () => {

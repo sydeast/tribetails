@@ -161,6 +161,10 @@ describe('WARNING-25: invoice reminder cron paginates past the cap', () => {
 
     expect(reminded).toBe(0);
     expect(ctx.writes).toEqual([{ id: 'inv-pressed', data: { reminderNotifiedAtMs: buttonSentAt } }]);
+    // It looks back the button's whole window, not the dispatcher's 5 minutes.
+    expect(mocks.enqueueDetailed).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'invoice.reminder', dedupeWindowMs: 24 * 60 * 60 * 1000 }),
+    );
   });
 
   it('#832: a reminder that went out is stamped with this run time', async () => {
@@ -219,7 +223,9 @@ describe('WARNING-25: invoice reminder cron paginates past the cap', () => {
     expect(ctx.writes).toEqual([{ id: 'ov-dup', data: { overdueNotifiedAtMs: triggerSentAt } }]);
   });
 
-  it('#832: prefs suppression writes no notified stamp, records the suppression, and skips the invoice for a day', async () => {
+  it('#832: an operator-override suppression writes no notified stamp, records the suppression, and skips the invoice until the next daily run', async () => {
+    // `invoice.overdue` has required email, so only an operator override can
+    // produce this outcome; the dispatcher reports it as `prefs` either way.
     const now = 1_000_000_000_000;
     const pastDue = new Date(now - 24 * 60 * 60 * 1000).toISOString();
     mocks.enqueueDetailed.mockResolvedValue({ written: [], suppressed: [{ recipientUid: 'kin-uid', reason: 'prefs' }] });
@@ -242,15 +248,21 @@ describe('WARNING-25: invoice reminder cron paginates past the cap', () => {
     expect(mocks.enqueueDetailed).not.toHaveBeenCalled();
     expect(sameDay.writes).toHaveLength(0);
 
-    // A day on, the household has turned notices back on: it sends and stamps.
+    // The next daily run lands 23 hours later (the spring-forward day, or a run
+    // that starts early). The operator has turned the notice back on: it must
+    // send and stamp, not wait out another whole day.
     mocks.enqueueDetailed.mockResolvedValue({ written: ['n1'], suppressed: [] });
     const nextDay = pagedDbMock([
       { id: 'ov-muted', data: { status: 'open', amountDue: 100, dueDate: pastDue, kinfolkId: 'fam-muted', overdueSuppressedAtMs: now } },
     ]);
     mocks.dbFn.mockReturnValue(nextDay.db);
-    const later = now + OVERDUE_SUPPRESSED_RETRY_MS;
+    const later = now + 23 * 60 * 60 * 1000;
     expect(await runInvoiceOverdueScan(later)).toBe(1);
     expect(nextDay.writes).toEqual([{ id: 'ov-muted', data: { overdueNotifiedAtMs: later } }]);
+  });
+
+  it('#832: the suppression wait is shorter than the 24-hour run period', () => {
+    expect(OVERDUE_SUPPRESSED_RETRY_MS).toBeLessThan(23 * 60 * 60 * 1000);
   });
 
   it('O-14 regression: familyId comes from the stamped kinfolkId field, not ref.parent.parent (always null on flat invoices docs)', async () => {

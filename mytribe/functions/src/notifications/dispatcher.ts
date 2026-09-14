@@ -151,6 +151,23 @@ function dedupeDocId(key: string, identity: string, recipientUid: string): strin
   return createHash('sha256').update(`${key}|${identity}|${recipientUid}`).digest('hex');
 }
 
+/**
+ * When the notification `key` named by `dedupeKey` last reached `recipientUid`,
+ * from the ledger, or null when it never did.
+ *
+ * READ-ONLY AND ADVISORY. It never decides whether to SEND; `enqueueNotification`
+ * does that atomically. It lets a caller recognise that an action it is about to
+ * refuse has in fact already been done (#832: `resendQuote` answering a client
+ * retry of a resend that completed).
+ */
+export async function lastDeliveredAtMs(key: string, dedupeKey: string, recipientUid: string): Promise<number | null> {
+  if (dedupeKey === '' || recipientUid === '') return null;
+  const identity = dedupeIdentityOf({ key, data: {}, dedupeKey }, { targetType: '', targetId: '' });
+  const snap = await db().collection(DEDUPE_COLLECTION).doc(dedupeDocId(key, identity, recipientUid)).get();
+  const v = snap.exists ? (snap.data() as { lastAtMs?: unknown }).lastAtMs : undefined;
+  return typeof v === 'number' ? v : null;
+}
+
 /** Timestamp-likes become millis and object keys are sorted, so equal content hashes equally. */
 function canonical(value: unknown): unknown {
   if (value === undefined || value === null) return null;

@@ -8,7 +8,11 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
-import { enqueueNotificationDetailed } from '../notifications/dispatcher';
+import {
+  NOTIFICATION_DEDUPE_WINDOW_MS,
+  enqueueNotificationDetailed,
+  lastDeliveredAtMs,
+} from '../notifications/dispatcher';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { validateResponse } from '../lib/callableResponse';
@@ -152,6 +156,40 @@ export function resendQuoteRefusal(
   return null;
 }
 
+/**
+ * The ok answer for a retry of a resend that already completed, or null when
+ * this is not one (#832).
+ *
+ * The last completed resend used ordinal `quoteResendCount` (the transaction
+ * bumped the count after sending), so its identity is
+ * `quote:<id>:resend:<count>`. Only a delivery to the household inside
+ * NOTIFICATION_DEDUPE_WINDOW_MS counts: an older one is a quote that has simply
+ * been waiting, and gets the ordinary refusal.
+ */
+async function completedResendAnswer(
+  invoiceId: string,
+  kinfolkId: string,
+  data: Record<string, unknown>,
+): Promise<z.infer<typeof Result> | null> {
+  const count = data['quoteResendCount'];
+  if (typeof count !== 'number' || count < 1) return null;
+  const recipientUid = await resolveKinfolkUid(kinfolkId);
+  if (recipientUid === null) return null;
+  const at = await lastDeliveredAtMs('invoice.new', `quote:${invoiceId}:resend:${count}`, recipientUid);
+  if (at === null || Date.now() - at >= NOTIFICATION_DEDUPE_WINDOW_MS) return null;
+  logEvent({
+    severity: 'info',
+    function: 'resendQuote',
+    event: 'quote.resend.retry-of-completed',
+    extra: { invoiceId, resendNumber: count, deliveredAtMs: at },
+  });
+  return validateResponse('resendQuote', Result, {
+    ok: true,
+    invoiceId,
+    status: invoiceStateStampOf(data, 0).status,
+  });
+}
+
 export async function resendQuoteHandler(
   req: CallableRequest<unknown>,
 ): Promise<z.infer<typeof Result>> {
@@ -194,6 +232,15 @@ export async function resendQuoteHandler(
   // the courtesy, that one is the guard.
   const preflight = resendQuoteRefusal(data, todayIso);
   if (preflight) {
+    // #832: a client retry of a resend that COMPLETED. The quote is already
+    // reopened, so it reads as "still waiting for an answer", and refusing with
+    // that sentence would tell the operator their resend failed when it went
+    // out. When the ledger has this resend reaching the household inside the
+    // dispatcher window, it is the same action: answer ok.
+    if (preflight.code === 'quote_not_declined') {
+      const done = await completedResendAnswer(args.invoiceId, kinfolkId, data);
+      if (done) return done;
+    }
     throw new HttpsError('failed-precondition', preflight.message, { code: preflight.code });
   }
 

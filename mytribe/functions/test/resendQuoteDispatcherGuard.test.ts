@@ -111,6 +111,28 @@ describe('resendQuote over the real dispatcher', () => {
     expect(householdQuoteMessages(ctx.writes)).toHaveLength(2);
   });
 
+  it('a client retry after a completed resend answers ok inside the window, and is refused once the window has passed', async () => {
+    const ctx = buildDbMock({ writeThrough: true, docs: { 'invoices/q1': declined() } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await resendQuoteHandler(req());
+    expect(householdQuoteMessages(ctx.writes)).toHaveLength(1);
+
+    // The quote as the completed resend left it: reopened, resend count 1.
+    const reopened: Record<string, unknown> = { ...declined({ quoteResendCount: 1 }) };
+    delete reopened.quoteDecision;
+    await ctx.db.collection('invoices').doc('q1').set(reopened);
+
+    vi.setSystemTime(NOW + 60_000);
+    await expect(resendQuoteHandler(req())).resolves.toMatchObject({ ok: true, invoiceId: 'q1' });
+    expect(householdQuoteMessages(ctx.writes)).toHaveLength(1);
+
+    vi.setSystemTime(NOW + 6 * 60_000);
+    const late = await resendQuoteHandler(req()).catch((e) => e);
+    expect(late.details).toMatchObject({ code: 'quote_not_declined' });
+    expect(householdQuoteMessages(ctx.writes)).toHaveLength(1);
+  });
+
   it('a household with no portal account: nothing sent, quote left declined, even though the office would get a copy', async () => {
     const { resolveKinfolkUid } = await import('../src/lib/resolveKinfolkUid');
     vi.mocked(resolveKinfolkUid).mockResolvedValueOnce(null);

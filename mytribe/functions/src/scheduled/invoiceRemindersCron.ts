@@ -5,6 +5,7 @@ import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotificationDetailed } from '../notifications/dispatcher';
+import { INVOICE_REMINDER_RESEND_WINDOW_MS } from '../admin/sendInvoiceReminder';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 
@@ -88,6 +89,11 @@ export async function processReminderInvoice(
         currency: data.currency ?? null,
       },
       fireAtMs: now,
+      // #832: look back the reminder button's whole window, as the button does.
+      // A press that delivered and lost its stamp an hour ago is past the
+      // dispatcher's 5-minute default; with the default this run would send a
+      // second reminder instead of recording the first.
+      dedupeWindowMs: INVOICE_REMINDER_RESEND_WINDOW_MS,
     });
     if (outcome.written.length > 0) {
       await docSnap.ref.set({ [NOTIFIED_FIELD_REMINDER]: now }, { merge: true });
@@ -152,19 +158,29 @@ export const invoiceRemindersCron = onSchedule(
 );
 
 /**
- * When prefs last suppressed this invoice's overdue notice (ms epoch). Kept
- * apart from `overdueNotifiedAtMs` on purpose (#832): that stamp means a notice
+ * When this invoice's overdue notice was last suppressed (ms epoch). Kept apart
+ * from `overdueNotifiedAtMs` on purpose (#832): that stamp means a notice
  * reached the household, and a suppressed run reached nobody.
+ *
+ * WHO CAN SUPPRESS IT. Not the household: `invoice.overdue` has catalog-required
+ * email, and `resolveChannels` puts a required channel above the recipient's
+ * own prefs. Only the OPERATOR can, by disabling the notification (or its email
+ * channel along with the others) in the business notification override.
+ * (`alwaysEnabled` on the row is advisory and enforces nothing.)
  */
 const SUPPRESSED_FIELD_OVERDUE = 'overdueSuppressedAtMs';
 
 /**
- * How long a prefs-suppressed invoice is left alone before the cron tries its
- * overdue notice again. The cron runs daily, so a day means one attempt (and
- * one log line) per day at most, instead of one per run forever, while a
- * household that turns notices back on is picked up on the next run after.
+ * How long a suppressed invoice is left alone before the cron tries its overdue
+ * notice again: at most one attempt (and one log line) per daily run, instead
+ * of one per run forever, and the notice goes out on the first run after the
+ * operator turns it back on.
+ *
+ * DELIBERATELY SHORTER THAN THE 24-HOUR RUN PERIOD. Equal to it, a run that
+ * starts a little early, or the 23-hour day when clocks spring forward, would
+ * fall inside the wait and skip a whole extra day.
  */
-export const OVERDUE_SUPPRESSED_RETRY_MS = 24 * 60 * 60 * 1000;
+export const OVERDUE_SUPPRESSED_RETRY_MS = 20 * 60 * 60 * 1000;
 
 /**
  * Notifies on one past-due unpaid invoice doc if not yet notified. Exported for
@@ -176,8 +192,9 @@ export const OVERDUE_SUPPRESSED_RETRY_MS = 24 * 60 * 60 * 1000;
  *   - duplicate: the `onInvoicesWrite` trigger already sent this notice (it
  *     shares the `invoice:<id>` identity) and wrote no stamp of its own, so
  *     stamp the ledger's last-sent time.
- *   - prefs suppressed: no notified stamp, so a later run can send once prefs
- *     allow it; `overdueSuppressedAtMs` skips the invoice for
+ *   - suppressed (only by an operator override; see SUPPRESSED_FIELD_OVERDUE):
+ *     no notified stamp, so a later run sends once the operator turns the
+ *     notice back on; `overdueSuppressedAtMs` skips the invoice for
  *     OVERDUE_SUPPRESSED_RETRY_MS so it is not retried and logged every run.
  */
 export async function processOverdueInvoice(
