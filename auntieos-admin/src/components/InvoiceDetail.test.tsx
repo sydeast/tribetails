@@ -1605,6 +1605,26 @@ describe('what the operator is told after the payment lands', () => {
       await screen.findByText(/confirmation email did not go out/i),
     ).toBeInTheDocument();
   });
+  // #866: the ledger step is now the only sender of the household's
+  // confirmation, so when it fails the operator must hear about both losses.
+  it('says the confirmation did not go out when the ledger step itself failed', async () => {
+    markInvoicePaid.mockResolvedValue(settledResult());
+    recordPayment.mockRejectedValue(new Error('internal'));
+    render(<InvoiceDetail invoice={entry({ amountDue: 127.5, total: 127.5 })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await userEvent.click(screen.getByLabelText(/send a confirmation email/i));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(await screen.findByText(/confirmation email did not go out either/i)).toBeInTheDocument();
+  });
+  it('says nothing about a confirmation nobody asked for when the ledger step failed', async () => {
+    markInvoicePaid.mockResolvedValue(settledResult());
+    recordPayment.mockRejectedValue(new Error('internal'));
+    render(<InvoiceDetail invoice={entry({ amountDue: 127.5, total: 127.5 })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(await screen.findByText(/payment ledger row did not save/i)).toBeInTheDocument();
+    expect(screen.queryByText(/confirmation email did not go out/i)).not.toBeInTheDocument();
+  });
 });
 /**
  * ── PAYMENT HISTORY, THE COLUMN SET ───────────────────────────────────────

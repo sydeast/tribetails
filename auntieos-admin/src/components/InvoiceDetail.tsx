@@ -372,6 +372,14 @@ interface ActionMeta {
   callableName: string;
 }
 
+/**
+ * #866: the household's payment confirmation is sent by the `recordPayment`
+ * step and by nothing else, so when that step fails or cannot run, the operator
+ * has to hear that the confirmation did not go out either.
+ */
+export const CONFIRMATION_NOT_SENT_WITH_LEDGER =
+  ' The confirmation email did not go out either, because it is sent with the ledger row. Let the household know another way.';
+
 const ACTIONS: readonly ActionMeta[] = [
   {
     key: 'reminder',
@@ -1070,7 +1078,13 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             ledgerNote = ` The payment ledger row did not save (${
               caught instanceof Error ? caught.message : 'recordPayment failed'
             }), so this payment will not appear on the Payments screen. The invoice itself is correct.`;
+            // #866: the confirmation rides on this call, and since #866 nothing
+            // else sends one for a payment recorded here.
+            if (paidSendConfirmation) ledgerNote += CONFIRMATION_NOT_SENT_WITH_LEDGER;
           }
+        }
+        if ((thisPaymentCents === null || thisPaymentCents <= 0) && paidSendConfirmation) {
+          ledgerNote += CONFIRMATION_NOT_SENT_WITH_LEDGER;
         }
 
         // WHAT THE SERVER SAYS HAPPENED, not what the button was called. The

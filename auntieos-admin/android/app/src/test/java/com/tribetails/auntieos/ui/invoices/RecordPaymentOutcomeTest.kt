@@ -124,4 +124,26 @@ class RecordPaymentOutcomeTest {
             recordPaymentToast(settlement("unpaid")),
         )
     }
+
+    // ── #866: the confirmation has one sender, so its failure is said ────────
+
+    @Test
+    fun `a confirmation nobody asked for, or one that went out, adds nothing`() {
+        assertEquals("", recordPaymentConfirmationNote(requested = false, confirmationSent = false))
+        assertEquals("", recordPaymentConfirmationNote(requested = false, confirmationSent = null))
+        assertEquals("", recordPaymentConfirmationNote(requested = true, confirmationSent = true))
+    }
+
+    @Test
+    fun `a requested confirmation the server did not send is named`() {
+        val msg = recordPaymentConfirmationNote(requested = true, confirmationSent = false)
+        assertTrue(msg, msg.contains("confirmation email did not go out"))
+    }
+
+    @Test
+    fun `a requested confirmation lost with a failed ledger row is named with its cause`() {
+        val msg = recordPaymentConfirmationNote(requested = true, confirmationSent = null)
+        assertTrue(msg, msg.contains("confirmation email did not go out"))
+        assertTrue(msg, msg.contains("ledger row did not save"))
+    }
 }

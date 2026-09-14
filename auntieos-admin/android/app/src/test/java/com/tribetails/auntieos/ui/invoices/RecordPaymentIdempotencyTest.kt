@@ -67,7 +67,8 @@ class RecordPaymentIdempotencyTest {
         coEvery { kinCareRepo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { repo.getBusinessSettings() } returns Result.failure(RuntimeException("not under test"))
         coEvery { repo.logActivity(any()) } returns Result.success(Unit)
-        coEvery { invoiceRepo.createPayment(any(), any()) } returns Result.success("pay-1")
+        coEvery { invoiceRepo.recordInvoicePayment(any(), any()) } returns
+            Result.success(com.tribetails.auntieos.data.contracts.decodeRecordPaymentResult(mapOf("ok" to true, "paymentId" to "pay-1")))
     }
 
     @After
@@ -121,7 +122,7 @@ class RecordPaymentIdempotencyTest {
     private fun displayKeys(times: Int): List<String?> {
         val keys = mutableListOf<String?>()
         coVerify(exactly = times) {
-            invoiceRepo.createPayment(any(), captureNullable(keys))
+            invoiceRepo.recordInvoicePayment(any(), captureNullable(keys))
         }
         return keys
     }
@@ -263,7 +264,7 @@ class RecordPaymentIdempotencyTest {
         runTest(testDispatcher) {
             coEvery { invoiceRepo.markInvoicePaid(any(), any(), any(), any(), any()) } returns
                 Result.success(settled())
-            coEvery { invoiceRepo.createPayment(any(), any()) } returns
+            coEvery { invoiceRepo.recordInvoicePayment(any(), any()) } returns
                 Result.failure(RuntimeException("internal"))
             val vm = loaded()
             advanceUntilIdle()

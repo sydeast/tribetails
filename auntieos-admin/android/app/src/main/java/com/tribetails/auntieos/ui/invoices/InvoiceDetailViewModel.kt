@@ -341,8 +341,14 @@ class InvoiceDetailViewModel(
             // Best-effort: the money has already landed server-side, so a failure
             // here costs this screen's list row, not the payment. Logged, never
             // swallowed.
-            invoiceRepository.createPayment(payment, idempotencyKey = displayKey)
+            val ledgerRow = invoiceRepository.recordInvoicePayment(payment, idempotencyKey = displayKey)
                 .onFailure { AuntieLog.e("Legacy payment row failed for invoice $invoiceId", it) }
+            // #866: this call is the household confirmation's only sender, so a
+            // confirmation she asked for and did not get is said in the toast.
+            val confirmationNote = recordPaymentConfirmationNote(
+                requested = payment.sendConfirmationEmail,
+                confirmationSent = ledgerRow.getOrNull()?.confirmationEmailSent,
+            )
 
             com.tribetails.auntieos.data.admin.AuditLog.fire(
                 scope            = viewModelScope,
@@ -364,7 +370,7 @@ class InvoiceDetailViewModel(
             _uiState.value = _uiState.value.copy(
                 recordingPayment = false,
                 showRecordPayment = false,
-                toastMessage = recordPaymentToast(settlement),
+                toastMessage = recordPaymentToast(settlement) + confirmationNote,
                 toastVisible = true,
                 toastIsError = false,
             )
@@ -963,6 +969,24 @@ internal fun recordPaymentToast(settlement: MarkInvoicePaidResult): String = whe
     "" ->
         "Payment recorded. The server did not report where the invoice now stands, so open it to check what is still owed."
     else -> "Payment recorded. The invoice is paid in full."
+}
+
+/**
+ * #866: what the operator is told about the household's confirmation, appended
+ * to [recordPaymentToast].
+ *
+ * The `recordPayment` step is the only sender of that confirmation for a payment
+ * recorded on this screen, so a confirmation she asked for and did not get has
+ * to be said out loud. [confirmationSent] is null when that step failed and
+ * never answered. Nothing is said when she did not ask, or when it went out.
+ * Pure; unit-tested.
+ */
+internal fun recordPaymentConfirmationNote(requested: Boolean, confirmationSent: Boolean?): String = when {
+    !requested || confirmationSent == true -> ""
+    confirmationSent == null ->
+        " The confirmation email did not go out, because the payment ledger row did not save. Let the household know another way."
+    else ->
+        " The confirmation email did not go out (the household may have no portal account)."
 }
 /**
  * The audit line for one recorded payment. Says whether the invoice was settled
