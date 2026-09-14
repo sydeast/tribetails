@@ -72,6 +72,15 @@ export interface WriteAuditArgs {
   clientRequestId?: string;
   ip?: string;
   userAgent?: string;
+  /**
+   * #866: a deterministic `activity_log` document id for an entry that must be
+   * written AT MOST ONCE, such as the Stripe webhook's paid or failed audit for
+   * one event. When the document already exists the call writes nothing (no
+   * entry, no chain advance) and returns its id, so a retry whose first attempt
+   * wrote the entry and then lost its own stamp cannot record the event twice.
+   * Omitted, the entry gets an auto id, exactly as before.
+   */
+  docId?: string;
 }
 
 export const CHAIN_HEAD_COLLECTION = 'activity_log_chain_head';
@@ -154,6 +163,14 @@ export async function writeAuditEntry(args: WriteAuditArgs): Promise<string> {
 
   const id = await db().runTransaction(async (tx) => {
     const headRef = db().collection(CHAIN_HEAD_COLLECTION).doc(CHAIN_HEAD_DOC_ID);
+    // #866: an at-most-once entry. Read before any write, as Firestore requires;
+    // an existing entry means an earlier attempt already recorded this, so the
+    // chain is left exactly where it is.
+    if (args.docId !== undefined) {
+      const existingRef = db().collection('activity_log').doc(args.docId);
+      const existing = await tx.get(existingRef);
+      if (existing.exists) return existingRef.id;
+    }
     const headSnap = await tx.get(headRef);
     const headData = headSnap.exists ? (headSnap.data() as ChainHeadDoc | undefined) : undefined;
     const prevSeq = typeof headData?.seq === 'number' ? headData.seq : 0;
@@ -164,7 +181,10 @@ export async function writeAuditEntry(args: WriteAuditArgs): Promise<string> {
     const seq = prevSeq + 1;
     const entryHash = computeEntryHash(seq, prevHash, hashableDoc);
 
-    const logRef = db().collection('activity_log').doc();
+    const logRef =
+      args.docId !== undefined
+        ? db().collection('activity_log').doc(args.docId)
+        : db().collection('activity_log').doc();
     const fullDoc = {
       ...hashableDoc,
       seq,
@@ -172,7 +192,10 @@ export async function writeAuditEntry(args: WriteAuditArgs): Promise<string> {
       entryHash,
       createdAt: FieldValue.serverTimestamp(),
     };
-    tx.set(logRef, fullDoc);
+    // A fixed id is created, never set: if two attempts race past the existence
+    // check above, Firestore refuses the second rather than overwriting the first.
+    if (args.docId !== undefined) tx.create(logRef, fullDoc);
+    else tx.set(logRef, fullDoc);
     tx.set(headRef, {
       seq,
       lastHash: entryHash,

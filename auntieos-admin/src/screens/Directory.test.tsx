@@ -238,6 +238,20 @@ describe('Directory screen, Kinfolk tab', () => {
     await userEvent.selectOptions(screen.getByRole('combobox', { name: /sort/i }), 'Z → A');
     expect(names()).toEqual(['Zack Young', 'Amy Adams']);
   });
+
+  it('#829 flags a household card with no Emergency Contact, and only that one', () => {
+    kinfolkAsync = {
+      status: 'ready',
+      data: [
+        kinfolkRow({ _id: 'kf1', firstName: 'Jamie', lastName: 'Halbrook' }),
+        kinfolkRow({ _id: 'kf2', firstName: 'Dana', lastName: 'Mercer', emergencyContacts: [{ name: 'Rae', phone: '+18055550199' }] }),
+        kinfolkRow({ _id: 'kf3', firstName: 'Lee', lastName: 'Park', emergencyContactPhone: '805-555-0100' }),
+      ],
+    };
+    kinAsync = { status: 'ready', data: [] };
+    render(<Directory />);
+    expect(screen.getAllByText('No Emergency Contact')).toHaveLength(1);
+  });
 });
 
 describe('Directory screen, the mock on the glass ground (#755)', () => {

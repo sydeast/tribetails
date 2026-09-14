@@ -27,6 +27,9 @@ import com.tribetails.auntieos.ui.admin.scheduling.calendarSyncRunFrom
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.voice.VoiceAccessToken
 import kotlinx.coroutines.async
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.coroutineScope
@@ -40,6 +43,15 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.util.*
+
+/** See [AuntieRepository.kinfolkCreatePayload]. */
+private val KINFOLK_CREATE_EXCLUDED_FIELDS = setOf(
+    "id",
+    "emergencyContacts",
+    "emergencyContactName",
+    "emergencyContactPhone",
+    "emergencyContactRelation",
+)
 
 class AuntieRepository(
     private val n8n: N8nApi,
@@ -78,7 +90,17 @@ class AuntieRepository(
      * and the claim cache move together.
      */
     authProvider: () -> FirebaseAuth = { FirebaseAuth.getInstance() },
+    /**
+     * #886: where a failed sign-in's `recordFailedLogin` report runs, detached
+     * from the sign-in so the error reaches the screen without waiting on it.
+     * Production shares [failedLoginReportScope], so a repository rebuilt on a
+     * base-URL change never leaves an orphaned job; a test passes `Unconfined`.
+     */
+    private val reportScope: CoroutineScope = failedLoginReportScope,
 ) {
+    /** Test seam: which scope reports run in. */
+    internal val reportScopeForTest: CoroutineScope get() = reportScope
+
     private val firestore by lazy(firestoreProvider)
     private val storage by lazy { FirebaseStorage.getInstance() }
     private val auth by lazy(authProvider)
@@ -103,7 +125,17 @@ class AuntieRepository(
         require(email.isNotBlank()) { "Email is required." }
         require(password.isNotBlank()) { "Password is required." }
         authMutex.withLock {
-            auth.signInWithEmailAndPassword(email.trim(), password).await()
+            try {
+                auth.signInWithEmailAndPassword(email.trim(), password).await()
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                // #886: count a guessed password toward the lockout, in the
+                // background, and say "locked" plainly when beforeSignIn refused.
+                if (isCredentialSignInFailure(t)) reportFailedLoginInBackground(email.trim())
+                if (isAccountLockedFailure(t)) throw IllegalStateException(ACCOUNT_LOCKED_MSG, t)
+                throw t
+            }
             val token = auth.currentUser?.getIdToken(true)?.await()
             if (token?.claims?.get("admin") != true) {
                 endSession()
@@ -113,6 +145,35 @@ class AuntieRepository(
         }
         Unit
     }.onFailure { AuntieLog.e("Admin sign-in failed", it) }
+
+    /** #886: fire and forget. Never throws into the sign-in that called it. */
+    private fun reportFailedLoginInBackground(email: String) {
+        try {
+            reportScope.launch { reportFailedLogin(email) }
+        } catch (t: Throwable) {
+            AuntieLog.w("recordFailedLogin report could not start", t)
+        }
+    }
+
+    /**
+     * #886: tells `recordFailedLogin` a sign-in failed on a credential error.
+     * Unauthenticated; the server answers `{ ok: true }` for every email, so
+     * nothing reads the result. Swallows its own failures after logging them.
+     */
+    internal suspend fun reportFailedLogin(email: String) {
+        try {
+            functions.getHttpsCallable("recordFailedLogin").call(mapOf("email" to email)).awaitCallable()
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            when (failedLoginReportLog(t)) {
+                // The server refused the report (rate limit, 500). Not a defect: breadcrumb only.
+                FailedLoginReportLog.Breadcrumb ->
+                    AuntieLog.i("recordFailedLogin report refused: ${t.javaClass.simpleName}: ${t.message}")
+                FailedLoginReportLog.Warning -> AuntieLog.w("recordFailedLogin report failed", t)
+            }
+        }
+    }
 
     suspend fun sendPasswordReset(email: String): Result<Unit> = runCatching {
         require(email.isNotBlank()) { "Email is required." }
@@ -297,25 +358,39 @@ class AuntieRepository(
         )
     }.onFailure { AuntieLog.e("Error finding kinfolk by phone", it) }
 
-    suspend fun createKinfolk(firstName: String, lastName: String, phone: String): Result<Kinfolk> = runCatching {
-        AuntieLog.i("Creating new kinfolk phone=${AuntieLog.redactPhone(phone)}")
-        authGate.ensureAuthenticated()
-        val newKinfolk = Kinfolk(
-            firstName = firstName,
-            lastName = lastName,
-            phoneNumber = phone,
-            internalNotes = "Prospect converted on Firebase"
-        )
-        val docRef = firestore.collection("kinfolk").add(newKinfolk).await()
-        newKinfolk.copy(id = docRef.id).also {
-            AuntieLog.i("Created kinfolk id=${it.id}")
-        }
-    }.onFailure { AuntieLog.e("Failed to create kinfolk", it) }
+    /**
+     * #829 Fix round 1. The whole-object create writers below used to hand
+     * `.add()` the raw [Kinfolk] POJO, which wrote `emergencyContacts: null`
+     * and the three flat Emergency Contact keys blank on every new
+     * household - a write no client may make, even an "empty" one (the plan's
+     * Global Constraints: no client writes `kinfolk.emergencyContacts` or the
+     * flat fields directly, ever).
+     *
+     * Reflects the model's own declared fields (the same technique
+     * `DirectoryFieldChangesTest`'s drift guard uses against [Kinfolk]) into a
+     * plain map, dropping the four Emergency Contact keys and the document id
+     * (never part of the document's own content; `@DocumentId` fields are
+     * never serialised, and a hand-built map has to drop it explicitly to
+     * match). Every OTHER field the create writes today rides along exactly
+     * as it did through the POJO, because this reads the same fields the POJO
+     * would have serialised.
+     */
+    private fun kinfolkCreatePayload(kinfolk: Kinfolk): Map<String, Any?> =
+        Kinfolk::class.java.declaredFields
+            .filter {
+                !java.lang.reflect.Modifier.isStatic(it.modifiers) &&
+                    !it.isSynthetic &&
+                    it.name !in KINFOLK_CREATE_EXCLUDED_FIELDS
+            }
+            .associate { field ->
+                field.isAccessible = true
+                field.name to field.get(kinfolk)
+            }
 
     suspend fun createKinfolkComplete(kinfolk: Kinfolk): Result<Kinfolk> = runCatching {
         AuntieLog.i("Creating kinfolk complete phone=${AuntieLog.redactPhone(kinfolk.phoneNumber)}")
         authGate.ensureAuthenticated()
-        val docRef = firestore.collection("kinfolk").add(kinfolk).await()
+        val docRef = firestore.collection("kinfolk").add(kinfolkCreatePayload(kinfolk)).await()
         kinfolk.copy(id = docRef.id).also {
             AuntieLog.i("Created kinfolk id=${it.id}")
         }
@@ -430,6 +505,40 @@ class AuntieRepository(
             ?: error("inviteKinfolkToPortal: non-map payload")
         raw["status"] as? String ?: error("inviteKinfolkToPortal: missing status")
     }.onFailure { AuntieLog.e("inviteKinfolkToPortal failed", it) }
+
+    /**
+     * #829: current Emergency Contacts, plus whether the caller may edit them
+     * (`home_access`) and whether the household is still on the flat legacy
+     * triple. Fail-loud: a missing `contacts` array is an error, never "none".
+     */
+    suspend fun listEmergencyContacts(kinfolkId: String): Result<EmergencyContactsResult> = runCatching {
+        require(kinfolkId.isNotBlank()) { "listEmergencyContacts requires a household id" }
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("listEmergencyContacts")
+            .call(mapOf("kinfolkId" to kinfolkId)).awaitCallable().data as? Map<String, Any?>
+            ?: error("listEmergencyContacts: non-map payload")
+        EmergencyContactsResult(decodeEmergencyContacts(raw), raw["canEdit"] == true, raw["legacy"] == true)
+    }.onFailure { AuntieLog.e("AuntieRepository.listEmergencyContacts failed", it) }
+
+    /**
+     * #829: the only path that may write `kinfolk.emergencyContacts` (or the
+     * legacy flat triple). Server refuses a blank list and a contact who is
+     * actually a household member; see `EMERGENCY_CONTACT_REQUIRED` /
+     * `EMERGENCY_CONTACT_OUTSIDE`.
+     */
+    suspend fun saveEmergencyContacts(kinfolkId: String, drafts: List<EmergencyContactDraft>): Result<List<EmergencyContact>> = runCatching {
+        require(kinfolkId.isNotBlank()) { "saveEmergencyContacts requires a household id" }
+        authGate.ensureAuthenticated()
+        val contacts = drafts.map {
+            mapOf("name" to it.name.trim(), "phone" to it.phone.trim(), "relationship" to it.relationship.trim().ifBlank { null })
+        }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("saveEmergencyContacts")
+            .call(mapOf("kinfolkId" to kinfolkId, "contacts" to contacts)).awaitCallable().data as? Map<String, Any?>
+            ?: error("saveEmergencyContacts: non-map payload")
+        decodeEmergencyContacts(raw)
+    }.onFailure { AuntieLog.e("AuntieRepository.saveEmergencyContacts failed", it) }
 
     suspend fun unarchiveKinfolk(kinfolkId: String): Result<Unit> = runCatching {
         AuntieLog.i("Unarchiving kinfolk: $kinfolkId")

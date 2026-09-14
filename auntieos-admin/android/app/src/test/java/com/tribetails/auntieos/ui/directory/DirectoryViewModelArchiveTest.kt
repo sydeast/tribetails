@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.directory
 
+import com.tribetails.auntieos.data.model.EmergencyContactDraft
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
@@ -120,6 +121,8 @@ class DirectoryViewModelArchiveTest {
     @Test
     fun `saveKinfolk defaults blank status to prospect`() = runTest(testDispatcher) {
         coEvery { repository.createKinfolkComplete(any()) } returns Result.success(Kinfolk(id = "new-id"))
+        coEvery { repository.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
+        viewModel.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         viewModel.updateFirstName("Pat")
 
         viewModel.saveKinfolk()
@@ -133,6 +136,8 @@ class DirectoryViewModelArchiveTest {
     @Test
     fun `saveKinfolk respects explicit status`() = runTest(testDispatcher) {
         coEvery { repository.createKinfolkComplete(any()) } returns Result.success(Kinfolk(id = "new-id"))
+        coEvery { repository.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
+        viewModel.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         viewModel.updateFirstName("Pat")
         viewModel.updateAddStatus("active")
 

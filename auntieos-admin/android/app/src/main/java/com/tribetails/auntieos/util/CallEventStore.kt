@@ -32,6 +32,13 @@ object CallEventStore {
         }
     }
 
+    /** Links the call [callSid] to the household created from it (#829). */
+    fun linkKinfolk(callSid: String, kinfolkId: String, kinfolkName: String) {
+        _events.update { list ->
+            list.map { if (it.callSid == callSid) it.copy(kinfolkId = kinfolkId, kinfolkName = kinfolkName) else it }
+        }
+    }
+
     fun resolveActiveCall(action: String) {
         val active = _activeCall.value ?: return
         _events.update { list ->

@@ -464,6 +464,54 @@ const CATALOG_LIST: NotificationDef[] = [
   },
   {
     // Run-4 #13 audit: Kinfolk sees "Payment/credit applied"; Business sees "Invoice Paid".
+    //
+    // #866: ONE SENDER PER PAYMENT PATH. Each payment gets at most one of these.
+    //
+    //   Path                                   Pays the invoice with   Sends this notice
+    //   -------------------------------------  ----------------------  ---------------------------------
+    //   Card (Stripe), full or the remainder   stripeWebhook patch     stripeWebhook, once per payment
+    //   Admin: markInvoicePaid, then           markInvoicePaid         recordPayment (household only
+    //     recordPayment (React, Android)                                 when Send Confirmation is ticked)
+    //   Admin: recordPayment with `apply`      stageApply              recordPayment (household only
+    //                                                                    when ticked)
+    //   Admin partial (bill stays open)        (not paid)              recordPayment (household only
+    //                                                                    when ticked)
+    //   Android Payments screen: recordPayment (not paid by it)        recordPayment (household only
+    //     without `apply`                                                when ticked; the screen has no
+    //                                                                    toggle, so never)
+    //   Account credit draw: onInvoiceAutoApply drawAccountCredit      onInvoicesWrite
+    //     trigger or the runAutoApply callable
+    //   Any other write that pays the bill     (unstamped)             onInvoicesWrite
+    //
+    // WHO GETS A COPY (operator ruling on #866, as on main). Every enqueue writes
+    // the office copy (`businessAdmins`) beside any household copy (`kinfolkAcct`).
+    //   - Card and account credit: household and office, once per payment.
+    //   - Admin, ticked, household has a portal account: household and office,
+    //     full or partial. The office copy is the same "Payment received" template
+    //     the household gets, not an "Invoice Paid" message.
+    //   - Admin, unticked or no portal account: the office alone, and only when
+    //     this payment paid the invoice off. recordPayment enqueues with no
+    //     household uid. In the two-step flow it learns that by claiming the
+    //     `markInvoicePaid:<id>` owner stamp (`paymentAppliedNoticeClaim`) in its
+    //     own transaction, where `<id>` is the `settledByInvoicePaymentId` both
+    //     admin clients pass from step 1. No id, or another id, never claims.
+    //   - An unticked partial, or a payment that paid nothing off: nobody.
+    //
+    // The first three stamp `paymentAppliedNoticeOwner` in the write that pays the
+    // invoice, and `onInvoicesWrite` stays silent for a write that changed it.
+    // The rule and its reasons: lib/paymentAppliedOwner.ts.
+    //
+    // A CRASH AFTER THE COMMIT.
+    //   - stripeWebhook, for `invoice.payment.applied` and `invoice.charge.failed`
+    //     alike, writes `followupTracked` with the event record, then stamps
+    //     `auditWrittenAt` and `noticeSentAt` on `stripeEvents/{id}`, answering
+    //     500 until both are done. A retry of a TRACKED event finishes what is
+    //     missing; an event recorded before this code is never followed up again.
+    //     The audit entry has a deterministic id, so it is written at most once.
+    //     A notice nobody can receive is final: `noticeSkippedReason`, and 200.
+    //   - recordPayment stamps `confirmationEmailSent` and `officeNoticeSentAt` on
+    //     its row, and a same-key retry sends whichever copy is due and not
+    //     stamped, never an office-only copy that is already stamped.
     key: 'invoice.payment.applied',
     label: 'Payment or credit applied to an invoice',
     audience: 'both',

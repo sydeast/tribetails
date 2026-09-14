@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.ui.directory
 
 import com.tribetails.auntieos.data.admin.ActivityLogEntry
+import com.tribetails.auntieos.data.model.EmergencyContactDraft
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
@@ -54,6 +55,8 @@ class DirectoryViewModelAuditLogTest {
     fun `saveKinfolk fires CREATE_KINFOLK audit entry`() = runTest(testDispatcher) {
         coEvery { repository.createKinfolkComplete(any()) } returns
             Result.success(Kinfolk(id = "new-id", firstName = "Pat", lastName = "S"))
+        coEvery { repository.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
+        viewModel.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         viewModel.updateFirstName("Pat")
 
         viewModel.saveKinfolk()
@@ -115,6 +118,8 @@ class DirectoryViewModelAuditLogTest {
     fun `failed save does NOT fire audit entry`() = runTest(testDispatcher) {
         coEvery { repository.createKinfolkComplete(any()) } returns
             Result.failure(RuntimeException("nope"))
+        coEvery { repository.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
+        viewModel.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         viewModel.updateFirstName("Pat")
 
         viewModel.saveKinfolk()

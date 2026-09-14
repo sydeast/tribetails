@@ -41,6 +41,8 @@ const mocks = vi.hoisted(() => ({
   listHouseholdContacts: vi.fn(),
   saveHouseholdContact: vi.fn(),
   removeHouseholdContact: vi.fn(),
+  listEmergencyContacts: vi.fn(),
+  saveEmergencyContacts: vi.fn(),
   getBusinessContact: vi.fn(),
 }));
 
@@ -60,6 +62,8 @@ vi.mock('../api/tribeApi', async () => {
     listHouseholdContacts: (...a: unknown[]) => mocks.listHouseholdContacts(...a),
     saveHouseholdContact: (...a: unknown[]) => mocks.saveHouseholdContact(...a),
     removeHouseholdContact: (...a: unknown[]) => mocks.removeHouseholdContact(...a),
+    listEmergencyContacts: (...a: unknown[]) => mocks.listEmergencyContacts(...a),
+    saveEmergencyContacts: (...a: unknown[]) => mocks.saveEmergencyContacts(...a),
   };
 });
 
@@ -105,6 +109,7 @@ beforeEach(() => {
   mocks.listHouseholdContacts.mockResolvedValue([]);
   mocks.saveHouseholdContact.mockResolvedValue({ contactId: 'c9', created: true });
   mocks.removeHouseholdContact.mockResolvedValue(undefined);
+  mocks.listEmergencyContacts.mockResolvedValue({ contacts: [], canEdit: true, legacy: false });
 });
 
 afterEach(() => {
@@ -138,9 +143,9 @@ describe('TribeProfile household contacts (#818)', () => {
     await renderProfile();
     await userEvent.click(await screen.findByRole('button', { name: 'Add a contact' }));
 
-    await userEvent.type(screen.getByLabelText('Name'), 'Ada Rivera');
+    await userEvent.type(screen.getByLabelText('Name', { selector: '#hc-name' }), 'Ada Rivera');
     await userEvent.type(screen.getByLabelText('What they are to your Tribe'), 'Sister');
-    await userEvent.type(screen.getByLabelText('Phone'), '805 555 0143');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#hc-phone' }), '805 555 0143');
     await userEvent.click(screen.getByRole('button', { name: 'Save contact' }));
     await flush();
 
@@ -162,7 +167,7 @@ describe('TribeProfile household contacts (#818)', () => {
     await renderProfile();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Edit' }));
-    const phone = screen.getByLabelText('Phone');
+    const phone = screen.getByLabelText('Phone', { selector: '#hc-phone' });
     await userEvent.clear(phone);
     await userEvent.click(screen.getByRole('button', { name: 'Save contact' }));
     await flush();
@@ -202,7 +207,7 @@ describe('TribeProfile household contacts (#818)', () => {
   it('ABANDONS a save with no signal: nothing is sent, and the card says nothing changed', async () => {
     await renderProfile();
     await userEvent.click(await screen.findByRole('button', { name: 'Add a contact' }));
-    await userEvent.type(screen.getByLabelText('Name'), 'Ada Rivera');
+    await userEvent.type(screen.getByLabelText('Name', { selector: '#hc-name' }), 'Ada Rivera');
 
     onlineManager.setOnline(false);
     await act(() => void screen.getByRole('button', { name: 'Save contact' }).click());

@@ -1088,8 +1088,9 @@ internal val PERMISSION_ROWS: List<PermissionRow> = listOf(
     ),
     PermissionRow(
         MembersRepository.PermissionKey.HOME_ACCESS,
-        "Home access",
-        "Sees the household home details, including entry notes.",
+        // #829 review item 11: the same label admin web and the portals show.
+        "Home access (gate code, Wi-Fi, Emergency Contacts)",
+        "Sees and edits the household home details: entry notes and Emergency Contacts.",
     ),
     PermissionRow(
         null,

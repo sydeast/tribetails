@@ -50,6 +50,9 @@ import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.KinCareReport
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.Kinfolk
+import com.tribetails.auntieos.web.data.NO_EMERGENCY_CONTACT
+import com.tribetails.auntieos.web.data.emergencyContactsOf
+import com.tribetails.auntieos.web.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
@@ -269,13 +272,19 @@ fun KinfolkProfileScreen(
                 FactRow(label = "Entry notes",     value = kinfolk.entryNotes, last = true)
             }
             // ---- Emergency ----
-            if (kinfolk.emergencyContactName.isNotBlank() ||
-                kinfolk.emergencyContactPhone.isNotBlank()) {
-                Spacer(Modifier.height(18.dp))
-                Panel(title = "Emergency", icon = Lucide.ShieldAlert, tone = AuntieStatusTone.Orange) {
-                    FactRow(label = "Name",     value = kinfolk.emergencyContactName)
-                    FactRow(label = "Phone",    value = kinfolk.emergencyContactPhone, mono = true)
-                    FactRow(label = "Relation", value = kinfolk.emergencyContactRelation, last = true)
+            // #829: always rendered. A household with none shows the flag rather
+            // than hiding the panel, so the gap is visible.
+            Spacer(Modifier.height(18.dp))
+            Panel(title = "Emergency Contacts", icon = Lucide.ShieldAlert, tone = AuntieStatusTone.Orange) {
+                val emergencyContacts = emergencyContactsOf(kinfolk)
+                if (emergencyContacts.isEmpty()) {
+                    AuntieStatusPill(label = NO_EMERGENCY_CONTACT, tone = AuntieStatusTone.Orange)
+                } else {
+                    emergencyContacts.forEachIndexed { i, ec ->
+                        FactRow(label = if (i == 0) "Called first" else "Called second", value = ec.name)
+                        FactRow(label = "Phone",        value = ec.phone, mono = true)
+                        FactRow(label = "Relationship", value = ec.relationship.orEmpty(), last = i == emergencyContacts.lastIndex)
+                    }
                 }
             }
             // ---- Vet Clinic (household-level) ----

@@ -75,6 +75,11 @@ export interface Kinfolk {
    * `tagNamesOf`, never directly.
    */
   tags?: unknown;
+  /** #829. Read through `hasEmergencyContact`; typed unknown like `tags`. */
+  emergencyContacts?: unknown;
+  /** Legacy flat fields, read only as a fallback until the migration is verified. */
+  emergencyContactName?: unknown;
+  emergencyContactPhone?: unknown;
 }
 
 /** Mirrors the Kotlin `Kinfolk.displayName` getter exactly. */

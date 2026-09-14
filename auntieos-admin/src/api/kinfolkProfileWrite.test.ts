@@ -13,6 +13,7 @@ const { getAuthState } = vi.hoisted(() => ({ getAuthState: vi.fn() }));
 vi.mock('../lib/auth', () => ({ getAuthState }));
 
 import {
+  changedKinfolkEditFields,
   updateKinfolkProfile,
   archiveKinfolk,
   unarchiveKinfolk,
@@ -36,9 +37,6 @@ function patch(over: Partial<KinfolkEditPatch> = {}): KinfolkEditPatch {
     entryNotes: 'Side gate sticks.',
     wifiName: 'Halbrook Home',
     wifiPassword: 'sunflower-porch',
-    emergencyContactName: 'Rae Halbrook',
-    emergencyContactPhone: '512-555-9090',
-    emergencyContactRelation: 'Sister',
     ...over,
   };
 }
@@ -71,6 +69,27 @@ describe('updateKinfolkProfile', () => {
     await updateKinfolkProfile('kf1', patch());
     const keys = Object.keys(writtenFields()).sort();
     expect(keys).toEqual([...KINFOLK_EDIT_FIELDS, 'updatedAt'].sort());
+  });
+
+  // #829 review item 5: a save sends only what changed, and nothing at all when nothing did.
+  it('writes only the fields it is given, and makes no write for an empty patch', async () => {
+    expect(await updateKinfolkProfile('kf1', { phoneNumber: ' 8055550100 ' })).toBe(true);
+    expect(Object.keys(writtenFields()).sort()).toEqual(['phoneNumber', 'updatedAt']);
+    expect(writtenFields()['phoneNumber']).toBe('8055550100');
+
+    updateDoc.mockReset();
+    expect(await updateKinfolkProfile('kf1', {})).toBe(false);
+    expect(updateDoc).not.toHaveBeenCalled();
+  });
+});
+
+describe('changedKinfolkEditFields', () => {
+  it('returns only what differs from the stored record, trimming exactly the fields the write trims', () => {
+    const stored = patch({ firstName: 'Jamie ', entryNotes: 'Side gate sticks.' });
+    expect(changedKinfolkEditFields(stored, patch())).toEqual({});
+    expect(changedKinfolkEditFields(stored, patch({ phoneNumber: '8055550100' }))).toEqual({ phoneNumber: '8055550100' });
+    // Free-text notes are compared as typed: a trailing space there is an edit.
+    expect(changedKinfolkEditFields(stored, patch({ entryNotes: 'Side gate sticks. ' }))).toEqual({ entryNotes: 'Side gate sticks. ' });
   });
 
   /**

@@ -73,6 +73,8 @@ function paymentMoney(over: Record<string, unknown> = {}): Record<string, unknow
     application: null,
     creditedToAccountCents: 0,
     confirmationEmailSent: false,
+    householdNoPortalAccount: false,
+    officeNoticePending: false,
     ...over,
   };
 }

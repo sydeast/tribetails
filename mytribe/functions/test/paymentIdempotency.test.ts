@@ -46,7 +46,15 @@ vi.mock('firebase-admin/firestore', async () => {
   };
 });
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveKinfolkUid }));
-vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: mocks.enqueueNotification }));
+// #866: recordPayment calls the detailed variant; it delegates to the same mock.
+vi.mock('../src/notifications/dispatcher', () => ({
+  enqueueNotification: mocks.enqueueNotification,
+  enqueueNotificationDetailed: async (args: unknown) => ({
+    written: ((await mocks.enqueueNotification(args)) as string[] | undefined) ?? [],
+    suppressed: [],
+    unresolved: [],
+  }),
+}));
 vi.mock('../src/lib/payMethodSnapshot', () => ({
   payMethodSnapshotForIssue: mocks.payMethodSnapshot,
   readLivePayMethodSettings: vi.fn().mockResolvedValue({}),
@@ -84,9 +92,26 @@ function req(data: unknown, uid = 'admin1'): CallableRequest<unknown> {
   } as unknown as CallableRequest<unknown>;
 }
 
-/** Writes to the root `payments` collection, by path. */
-const paymentRows = (ctx: { writes: Array<{ path: string }> }) =>
-  ctx.writes.filter((w) => w.path.startsWith('payments/')).map((w) => w.path);
+/**
+ * Payment ROWS written to the root `payments` collection, by path.
+ *
+ * Merge writes are excluded: they are updates to a row that already exists, not
+ * a second row. Since #866 `recordPayment` stamps which notice copies went out
+ * (`confirmationEmailSent`, `officeNoticeSentAt`) on its own row with `update`,
+ * and counting that stamp as a payment would make "one key, one payment" fail
+ * for a reason unrelated to money.
+ */
+const NOTICE_STAMP_FIELDS = ['confirmationEmailSent', 'officeNoticeSentAt', 'officeNoticeSkippedReason'];
+const paymentRows = (ctx: { writes: Array<{ path: string; merge?: boolean; data?: Record<string, unknown> }> }) => {
+  const rows = ctx.writes.filter((w) => w.path.startsWith('payments/') && w.merge !== true).map((w) => w.path);
+  // And every merge write under `payments/` is only a notice stamp on a row this
+  // run wrote: it may not touch money, and it may not land on some other doc.
+  for (const w of ctx.writes.filter((x) => x.path.startsWith('payments/') && x.merge === true)) {
+    expect(Object.keys(w.data ?? {}).filter((k) => !NOTICE_STAMP_FIELDS.includes(k)), `merge write to ${w.path}`).toEqual([]);
+    expect(rows, `merge write to ${w.path} has no row`).toContain(w.path);
+  }
+  return rows;
+};
 
 /** Writes that move `families/{id}.accountBalanceCents`. THE INVENTED-CREDIT CHECK. */
 const balanceMoves = (ctx: { writes: Array<{ path: string; data: Record<string, unknown> }> }) =>

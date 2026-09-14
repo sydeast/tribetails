@@ -21,6 +21,7 @@ import {
 import { useCollection } from '../lib/firestore';
 import { str } from '../lib/coerce';
 import { useRovingTabs } from '../lib/useRovingTabs';
+import { hasEmergencyContact } from '../api/emergencyContacts';
 import { DenScreenHeading, StatusPill, EmptyHint, type DenTone } from '../components/DenScreenKit';
 import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -28,6 +29,7 @@ import { Banner } from '../components/Banner';
 import { Avatar } from '../components/Avatar';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { AddKinfolkDialog } from '../components/AddKinfolkDialog';
+import { NoEmergencyContactFlag } from '../components/NoEmergencyContactFlag';
 import { AddKinDialog, type KinfolkOption } from '../components/AddKinDialog';
 import { EntityCardGrid } from '../components/EntityCardGrid';
 import { KinfolkProfile } from './KinfolkProfile';
@@ -167,6 +169,12 @@ function KinfolkCard({ kf, kin, kinPending, onClick }: KinfolkCardProps) {
             {subtitle !== '' && <span className="directory__card-sub">{subtitle}</span>}
           </span>
         </span>
+
+        {!hasEmergencyContact(kf as unknown as Record<string, unknown>) && (
+          <span className="directory__ec-flag">
+            <NoEmergencyContactFlag compact />
+          </span>
+        )}
 
         <span className="directory__pets">
           {kin.length === 0 ? (
@@ -398,6 +406,12 @@ export function Directory({
   // the new row appears in the grid the instant the write lands.
   const [showAddKinfolk, setShowAddKinfolk] = useState(false);
   const [showAddKin, setShowAddKin] = useState(false);
+  /**
+   * #829 review item 6: a household Add created but left without its Emergency
+   * Contact (the contact save failed and the operator closed the dialog). Named
+   * here with a link, so it is fixed on that household rather than Added again.
+   */
+  const [leftWithoutContactId, setLeftWithoutContactId] = useState<string | null>(null);
 
   // "Add kin" needs a household picker; Directory already subscribes to the
   // full Kinfolk stream for its own tab, so the picker's options are derived
@@ -568,6 +582,26 @@ export function Directory({
           }
         />
       </div>
+
+      {leftWithoutContactId !== null && (
+        <Banner
+          tone="warning"
+          title="A household was created without an Emergency Contact"
+          onDismiss={() => setLeftWithoutContactId(null)}
+          trailing={
+            <GhostButton
+              label="Open the household"
+              onClick={() => {
+                const id = leftWithoutContactId;
+                setLeftWithoutContactId(null);
+                void navigate({ to: '/directory/$kinfolkId', params: { kinfolkId: id } });
+              }}
+            />
+          }
+        >
+          Its contact did not save. Add the contact on that household rather than adding the household again.
+        </Banner>
+      )}
 
       <div className="directory__controls d2">
         <div className="directory__tabs" role="tablist" aria-label="Directory view">
@@ -757,7 +791,11 @@ export function Directory({
       {showAddKinfolk && (
         <AddKinfolkDialog
           onClose={() => setShowAddKinfolk(false)}
-          onCreated={() => setShowAddKinfolk(false)}
+          onCreated={() => {
+            setLeftWithoutContactId(null);
+            setShowAddKinfolk(false);
+          }}
+          onLeftWithoutContact={setLeftWithoutContactId}
         />
       )}
 

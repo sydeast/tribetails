@@ -35,6 +35,19 @@ import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.UserCog
 import com.composables.icons.lucide.UserPlus
 import com.tribetails.auntieos.web.data.AuditLog
+import com.tribetails.auntieos.web.data.EMERGENCY_CONTACT_WHO_GETS_CALLED
+import com.tribetails.auntieos.web.data.EmergencyContactDraft
+import com.tribetails.auntieos.web.data.NO_EMERGENCY_CONTACT
+import com.tribetails.auntieos.web.ui.components.AuntieInfoTip
+import com.tribetails.auntieos.web.data.draftsEqual
+import com.tribetails.auntieos.web.data.emergencyContactsOf
+import com.tribetails.auntieos.web.data.kinfolkChanges
+import com.tribetails.auntieos.web.data.isBlankDrafts
+import com.tribetails.auntieos.web.data.toDrafts
+import com.tribetails.auntieos.web.data.validateEmergencyContactDrafts
+import com.tribetails.auntieos.web.ui.components.AuntieStatusPill
+import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
+import androidx.compose.ui.draw.alpha
 import com.tribetails.auntieos.web.data.CloudFormSchemaRepository
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
@@ -91,6 +104,12 @@ fun KinfolkEditScreen(
     onBack: () -> Unit,
     onSaved: (kinfolkId: String) -> Unit,
     onArchived: () -> Unit,
+    /**
+     * #829 review item 6: leaving Add after the household was created but its
+     * Emergency Contact did not save. Receives that household's id so the caller
+     * can take the operator to it; without a handler it is an ordinary back.
+     */
+    onLeftWithoutContact: ((kinfolkId: String) -> Unit)? = null,
 ) {
     val client = remember { FirestoreClient() }
     val scope  = rememberReportingScope()
@@ -118,6 +137,10 @@ fun KinfolkEditScreen(
     }
 
     var initialized by remember(kinfolkId) { mutableStateOf(false) }
+    // #829 review: the record as this screen read it, frozen at prefill (the
+    // stream keeps polling). Saves build from it and send only the fields that
+    // differ from it; it advances to what was written after each successful save.
+    var loaded by remember(kinfolkId) { mutableStateOf<Kinfolk?>(null) }
 
     var firstName      by remember(kinfolkId) { mutableStateOf("") }
     var lastName       by remember(kinfolkId) { mutableStateOf("") }
@@ -132,9 +155,15 @@ fun KinfolkEditScreen(
     var entryNotes     by remember(kinfolkId) { mutableStateOf("") }
     var wifiName       by remember(kinfolkId) { mutableStateOf("") }
     var wifiPass       by remember(kinfolkId) { mutableStateOf("") }
-    var emName         by remember(kinfolkId) { mutableStateOf("") }
-    var emPhone        by remember(kinfolkId) { mutableStateOf("") }
-    var emRel          by remember(kinfolkId) { mutableStateOf("") }
+    // #829: Emergency Contacts are edited here but saved ONLY through the
+    // saveEmergencyContacts callable. The baseline is what is on file, so an
+    // unchanged editor never calls it.
+    var ecDrafts       by remember(kinfolkId) { mutableStateOf(listOf(EmergencyContactDraft())) }
+    var ecBaseline     by remember(kinfolkId) { mutableStateOf(listOf(EmergencyContactDraft())) }
+    // #829: set when Add created the household but the contact save failed. From
+    // then on Save retries ONLY the contacts (never a second household) and the
+    // household fields lock, as admin web and Android do.
+    var createdKinfolkId by remember(kinfolkId) { mutableStateOf<String?>(null) }
     var internalNotes  by remember(kinfolkId) { mutableStateOf("") }
     var referral       by remember(kinfolkId) { mutableStateOf("") }
     var vetName        by remember(kinfolkId) { mutableStateOf("") }
@@ -186,9 +215,8 @@ fun KinfolkEditScreen(
             entryNotes     = existing.entryNotes
             wifiName       = existing.wifiName
             wifiPass       = existing.wifiPassword
-            emName         = existing.emergencyContactName
-            emPhone        = existing.emergencyContactPhone
-            emRel          = existing.emergencyContactRelation
+            ecDrafts       = emergencyContactsOf(existing).toDrafts()
+            ecBaseline     = ecDrafts
             internalNotes  = existing.internalNotes
             referral       = existing.referralSource
             vetName        = existing.vetClinicName
@@ -197,11 +225,14 @@ fun KinfolkEditScreen(
             photoUrl       = existing.profilePictureUrl
             formValues.clear()
             formValues.putAll(existing.formValues)
+            loaded = existing
             initialized = true
         }
     }
 
     var saving       by remember { mutableStateOf(false) }
+    /** #829 review: a contact refusal or failed contact save, shown under the contact editor. */
+    var ecError      by remember(kinfolkId) { mutableStateOf<String?>(null) }
     var toast        by remember { mutableStateOf("") }
     var toastVisible by remember { mutableStateOf(false) }
     var toastKind    by remember { mutableStateOf(ToastKind.Info) }
@@ -210,33 +241,42 @@ fun KinfolkEditScreen(
         toast = msg; toastKind = kind; toastVisible = true
     }
 
-    fun build(): Kinfolk = (existing ?: Kinfolk(_id = kinfolkId.orEmpty())).copy(
-        firstName                = firstName.trim(),
-        lastName                 = lastName.trim(),
-        phoneNumber              = phoneNumber.trim(),
-        secondaryPhone           = secondaryPhone.trim(),
-        email                    = email.trim(),
-        secondaryEmail           = secondaryEmail.trim(),
+    /** Back and Cancel. A household created without its contact goes to [onLeftWithoutContact]. */
+    fun leave() {
+        val pending = createdKinfolkId
+        if (pending != null && onLeftWithoutContact != null) onLeftWithoutContact(pending) else onBack()
+    }
+
+    // #829 review: trimmed fields go through keepStoredUnlessEdited, so stray
+    // whitespace on file is neither shown as an unsaved change nor rewritten.
+    fun build(): Kinfolk = (loaded ?: existing ?: Kinfolk(_id = kinfolkId.orEmpty())).let { base -> base.copy(
+        firstName                = keepStoredUnlessEdited(firstName, base.firstName),
+        lastName                 = keepStoredUnlessEdited(lastName, base.lastName),
+        phoneNumber              = keepStoredUnlessEdited(phoneNumber, base.phoneNumber),
+        secondaryPhone           = keepStoredUnlessEdited(secondaryPhone, base.secondaryPhone),
+        email                    = keepStoredUnlessEdited(email, base.email),
+        secondaryEmail           = keepStoredUnlessEdited(secondaryEmail, base.secondaryEmail),
         // preferredContactMethod / bestTimeToContact intentionally NOT overwritten
         // here (item 2: editor removed); existing values are preserved via copy().
-        serviceAddress           = serviceAddr.trim(),
-        gateCode                 = gateCode.trim(),
-        parkingInstructions      = parking.trim(),
+        serviceAddress           = keepStoredUnlessEdited(serviceAddr, base.serviceAddress),
+        gateCode                 = keepStoredUnlessEdited(gateCode, base.gateCode),
+        parkingInstructions      = keepStoredUnlessEdited(parking, base.parkingInstructions),
         entryNotes               = entryNotes,
-        wifiName                 = wifiName.trim(),
+        wifiName                 = keepStoredUnlessEdited(wifiName, base.wifiName),
         wifiPassword             = wifiPass,
-        emergencyContactName     = emName.trim(),
-        emergencyContactPhone    = emPhone.trim(),
-        emergencyContactRelation = emRel.trim(),
+        // #829: no Emergency Contact field here. The four keys are dropped from
+        // every kinfolk write (kinfolkWriteJson); contacts go through the callable.
         internalNotes            = internalNotes,
-        referralSource           = referral.trim(),
-        vetClinicName            = vetName.trim(),
-        vetClinicPhone           = vetPhone.trim(),
-        vetClinicAddress         = vetAddress.trim(),
+        referralSource           = keepStoredUnlessEdited(referral, base.referralSource),
+        vetClinicName            = keepStoredUnlessEdited(vetName, base.vetClinicName),
+        vetClinicPhone           = keepStoredUnlessEdited(vetPhone, base.vetClinicPhone),
+        vetClinicAddress         = keepStoredUnlessEdited(vetAddress, base.vetClinicAddress),
         profilePictureUrl        = photoUrl,
-        status                   = status,
+        // The status picker exists only on Add. On edit the loaded status stands,
+        // so a stored blank status is not rewritten as "active" by a save.
+        status                   = if (isNew) status else base.status,
         formValues               = formValues.toMap(),
-    )
+    ) }
 
     var attemptedSave  by remember { mutableStateOf(false) }
     // P1-FORMS hardening 2026-05-26: require Last name; reject alpha in phone;
@@ -249,33 +289,39 @@ fun KinfolkEditScreen(
     val secondaryPhoneError = secondaryPhone.isNotBlank() && !isValidPhone(secondaryPhone)
     val emailError     = !isValidEmail(email)
     val secondaryEmailError = secondaryEmail.isNotBlank() && !isValidEmail(secondaryEmail)
-    // item 3: service address + emergency name/phone are REQUIRED now.
+    // item 3: service address is REQUIRED. The Emergency Contact requirement
+    // (#829) is checked by validateEmergencyContactDrafts in onSave, with the
+    // server's own messages.
     val serviceAddrError = serviceAddr.isBlank()
-    val emNameError    = emName.isBlank()
-    val emPhoneError   = emPhone.isBlank() || !isValidPhone(emPhone)
     val vetPhoneError  = vetPhone.isNotBlank() && !isValidPhone(vetPhone)
     val canSave = !firstNameError && !lastNameError && !phoneError && !emailError &&
         !secondaryPhoneError && !secondaryEmailError && !serviceAddrError &&
-        !emNameError && !emPhoneError && !vetPhoneError
+        !vetPhoneError
 
-    // SUGGESTION: live dirty indicator for the sticky save bar. The original
-    // screen has no unsaved-changes tracking; this drives only the pip + label
-    // and never gates the save itself.
-    val dirty = remember(
-        firstName, lastName, phoneNumber, secondaryPhone, email, secondaryEmail,
-        status, serviceAddr, gateCode, parking, entryNotes,
-        wifiName, wifiPass, emName, emPhone, emRel, internalNotes, referral,
-        vetName, vetPhone, vetAddress, existing,
-    ) {
-        if (isNew) {
-            listOf(
-                firstName, lastName, phoneNumber, secondaryPhone, email, secondaryEmail,
-                serviceAddr, gateCode, parking, entryNotes, wifiName, wifiPass,
-                emName, emPhone, emRel, internalNotes, referral, vetName, vetPhone, vetAddress,
-            ).any { it.isNotBlank() }
-        } else {
-            existing != null && build() != existing
-        }
+    // #829: household fields lock while a save is in flight and, on Add, once the
+    // household exists and only its Emergency Contact is left to retry. Setters
+    // for controls with no `enabled` parameter go through [unlessLocked].
+    val householdFieldsEnabled = !saving && createdKinfolkId == null
+    fun unlessLocked(set: () -> Unit) { if (householdFieldsEnabled) set() }
+
+    // Live unsaved-changes indicator for the sticky save bar. It drives only the
+    // pip + label and never gates the save itself.
+    //
+    // #829 review: computed on every recomposition from the SAME diff the save
+    // sends (kinfolkChanges against the loaded record), so the indicator and the
+    // write can never disagree. It used to be a `remember` keyed on a hand-kept
+    // list of fields that left out `formValues`, so editing only a custom field
+    // never lit it and the operator could leave believing the change was saved.
+    // build() reads every form state, the custom-field map included, so
+    // Compose recomputes this whenever any of them changes.
+    val dirty = if (isNew) {
+        createdKinfolkId != null || !ecDrafts.isBlankDrafts() || formValues.values.any { it.isNotBlank() } || listOf(
+            firstName, lastName, phoneNumber, secondaryPhone, email, secondaryEmail,
+            serviceAddr, gateCode, parking, entryNotes, wifiName, wifiPass,
+            internalNotes, referral, vetName, vetPhone, vetAddress,
+        ).any { it.isNotBlank() }
+    } else {
+        loaded?.let { base -> kinfolkChanges(base, build()).isNotEmpty() || !draftsEqual(ecDrafts, ecBaseline) } ?: false
     }
 
     // Save handler shared by the sticky save bar. Behavior verbatim from the
@@ -283,42 +329,71 @@ fun KinfolkEditScreen(
     // failure), upsert any new vet clinic into the shared catalog, then
     // create / update the Kinfolk and fire the audit log.
     fun onSave() {
+        if (saving) return
         attemptedSave = true
-        if (!canSave) {
+        val retryId = createdKinfolkId
+        // The retry skips the household checks (those fields are locked and
+        // already saved) but still validates the contacts, so a refusal reads as
+        // the plain rule rather than a wrapped callable failure.
+        if (retryId == null && !canSave) {
             showToast(
                 "Fix the highlighted fields. First+Last name required; phone must be digits only; email must be a real address.",
                 ToastKind.Error,
             )
             return
         }
+        val saveContacts = retryId != null || emergencyContactsNeedSaving(isNew, ecDrafts, ecBaseline)
+        val contactProblem = if (saveContacts) {
+            validateEmergencyContactDrafts(ecDrafts, listOf("$firstName $lastName"), listOf(phoneNumber, secondaryPhone))
+        } else null
+        // Add (and an Add retry) requires a valid contact before anything is
+        // written. On Edit the contact never blocks the household (#829 review
+        // item 14, operator ruling): the household saves below, then the contact
+        // problem is shown on the contact editor.
+        if (contactBlocksSave(isNew, retryId, contactProblem) && contactProblem != null) {
+            ecError = contactProblem
+            showToast(contactProblem, ToastKind.Error)
+            return
+        }
+        ecError = null
         saving = true
         scope.launch {
-            // If the entered clinic name is new (or has new details),
-            // write it to the shared catalog so other households see it
-            // next time. Match by case-insensitive name.
-            val typedClinic = vetName.trim()
-            if (typedClinic.isNotBlank() &&
-                vetClinics.none { it.name.equals(typedClinic, ignoreCase = true) }
-            ) {
-                client.createVetClinic(
-                    VetClinic(
-                        name    = typedClinic,
-                        phone   = vetPhone.trim(),
-                        address = vetAddress.trim(),
-                    )
-                )
-            }
-
             val draft = build()
-            val result = if (isNew) client.createKinfolk(draft) else {
-                when (val r = client.updateKinfolk(draft)) {
-                    is WriteResult.Ok  -> WriteResult.Ok(draft._id)
-                    is WriteResult.Err -> r
-                }
-            }
-            saving = false
-            when (result) {
-                is WriteResult.Ok  -> {
+            val outcome = saveKinfolkWithContacts(
+                retryKinfolkId = retryId,
+                saveContacts   = saveContacts && contactProblem == null,
+                writeHousehold = {
+                    // If the entered clinic name is new (or has new details),
+                    // write it to the shared catalog so other households see it
+                    // next time. Match by case-insensitive name.
+                    val typedClinic = vetName.trim()
+                    if (typedClinic.isNotBlank() &&
+                        vetClinics.none { it.name.equals(typedClinic, ignoreCase = true) }
+                    ) {
+                        client.createVetClinic(
+                            VetClinic(
+                                name    = typedClinic,
+                                phone   = vetPhone.trim(),
+                                address = vetAddress.trim(),
+                            )
+                        )
+                    }
+                    if (isNew) {
+                        when (val r = client.createKinfolk(draft)) {
+                            is WriteResult.Ok  -> WriteResult.Ok(HouseholdWrite(r.value))
+                            is WriteResult.Err -> WriteResult.Err(r.message)
+                        }
+                    } else {
+                        // #829 review: only the fields the form changed; `wrote` is
+                        // false when nothing did, so no audit entry is logged.
+                        when (val r = client.updateKinfolk(loaded ?: existing ?: draft, draft)) {
+                            is WriteResult.Ok  -> { loaded = draft; WriteResult.Ok(HouseholdWrite(draft._id, wrote = r.value)) }
+                            is WriteResult.Err -> WriteResult.Err(r.message)
+                        }
+                    }
+                },
+                writeContacts = { id -> client.saveEmergencyContacts(id, ecDrafts) },
+                onHouseholdWritten = { id ->
                     AuditLog.fire(
                         scope            = scope,
                         client           = client,
@@ -328,13 +403,31 @@ fun KinfolkEditScreen(
                             "Added Kinfolk ${draft.displayName}"
                         else
                             "Updated Kinfolk ${draft.displayName}",
-                        targetId         = result.value,
+                        targetId         = id,
                         targetCollection = "kinfolk",
                     )
-                    showToast(if (isNew) "Kinfolk added." else "Saved.", ToastKind.Success)
-                    onSaved(result.value)
+                },
+            )
+            saving = false
+            ecError = contactErrorAfterSave(outcome, isNew, contactProblem)
+            when (outcome) {
+                is KinfolkSaveOutcome.Saved -> {
+                    if (contactProblem != null) {
+                        // Edit: the household is saved; the contact still needs fixing
+                        // and the screen stays open for it.
+                        showToast("The household is saved. The Emergency Contact still needs attention.", ToastKind.Info)
+                    } else {
+                        if (saveContacts) ecBaseline = ecDrafts
+                        showToast(if (isNew) "Kinfolk added." else "Saved.", ToastKind.Success)
+                        onSaved(outcome.kinfolkId)
+                    }
                 }
-                is WriteResult.Err -> showToast("Save failed: ${result.message}", ToastKind.Error)
+                is KinfolkSaveOutcome.HouseholdFailed ->
+                    showToast("Save failed: ${outcome.message}", ToastKind.Error)
+                is KinfolkSaveOutcome.ContactsFailed -> {
+                    if (isNew) createdKinfolkId = outcome.kinfolkId
+                    showToast(ecError.orEmpty(), ToastKind.Error)
+                }
             }
         }
     }
@@ -345,7 +438,7 @@ fun KinfolkEditScreen(
             subtitle = if (isNew) "A new household joining the Tribe"
                        else        existing?.displayName?.let { "Updating $it" } ?: "Updating profile",
             icon     = if (isNew) Lucide.UserPlus else Lucide.UserCog,
-            onBack   = onBack,
+            onBack   = { leave() },
             breadcrumbs = if (isNew) listOf("Directory") else listOf("Directory", "Profile"),
         )
 
@@ -386,7 +479,12 @@ fun KinfolkEditScreen(
                                     is WriteResult.Ok -> {
                                         val url = r.value.storageUrl
                                         photoUrl = url
-                                        client.updateKinfolk(build().copy(profilePictureUrl = url))
+                                        // Diffed like every update, so untouched fields are not
+                                        // rewritten. It still sends any unsaved form edits
+                                        // along with the photo: that is issue #853.
+                                        val base = loaded ?: existing
+                                        val sent = build().copy(profilePictureUrl = url)
+                                        if (base != null && client.updateKinfolk(base, sent) is WriteResult.Ok) loaded = sent
                                         showToast("Photo updated.", ToastKind.Success)
                                     }
                                     is WriteResult.Err -> showToast("Photo upload failed: ${r.message}", ToastKind.Error)
@@ -416,17 +514,19 @@ fun KinfolkEditScreen(
         }
 
         // ── 01 · Identity ─────────────────────────────────────────────────────
-        SubsectionPanel(index = "01", title = "Identity") {
+        SubsectionPanel(index = "01", title = "Identity", enabled = householdFieldsEnabled) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 BottomBorderField(
                     firstName, { firstName = it },
                     label    = "First name *",
+                    enabled  = householdFieldsEnabled,
                     isError  = firstNameError && attemptedSave,
                     modifier = Modifier.weight(1f),
                 )
                 BottomBorderField(
                     lastName, { lastName = it },
                     label    = "Last name *",
+                    enabled  = householdFieldsEnabled,
                     isError  = lastNameError && attemptedSave,
                     modifier = Modifier.weight(1f),
                 )
@@ -438,7 +538,7 @@ fun KinfolkEditScreen(
                 SegmentedPicker(
                     options  = listOf("prospect", "active"),
                     selected = status,
-                    onSelect = { status = it },
+                    onSelect = { unlessLocked { status = it } },
                     label    = { it.replaceFirstChar { c -> c.uppercaseChar() } },
                 )
             }
@@ -449,6 +549,7 @@ fun KinfolkEditScreen(
                 BottomBorderField(
                     phoneNumber, { phoneNumber = it },
                     label        = "Phone *",
+                    enabled      = householdFieldsEnabled,
                     isError      = phoneError && attemptedSave,
                     modifier     = Modifier.weight(1f),
                     keyboardType = KeyboardType.Phone,
@@ -456,6 +557,7 @@ fun KinfolkEditScreen(
                 BottomBorderField(
                     email, { email = it },
                     label        = "Email *",
+                    enabled      = householdFieldsEnabled,
                     isError      = emailError && attemptedSave,
                     modifier     = Modifier.weight(1f),
                     keyboardType = KeyboardType.Email,
@@ -465,8 +567,9 @@ fun KinfolkEditScreen(
             AuntieFieldLabel(text = "Service address *")
             AddressAutofillField(
                 value         = serviceAddr,
-                onValueChange = { serviceAddr = it },
+                onValueChange = { unlessLocked { serviceAddr = it } },
                 scope         = scope,
+                enabled       = householdFieldsEnabled,
             )
             if (serviceAddrError && attemptedSave) {
                 Spacer(Modifier.height(4.dp))
@@ -476,29 +579,40 @@ fun KinfolkEditScreen(
 
         // ── 02 · Other Contacts ───────────────────────────────────────────────
         SubsectionPanel(index = "02", title = "Other Contacts") {
-            AuntieFieldLabel(text = "Emergency contact")
+            // #829 review item 14: the section title with the who-gets-called
+            // tip beside it (a tap opens it), as on every client.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AuntieFieldLabel(text = "Emergency Contacts")
+                AuntieInfoTip(EMERGENCY_CONTACT_WHO_GETS_CALLED)
+            }
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                BottomBorderField(
-                    emName, { emName = it },
-                    label    = "Name *",
-                    isError  = emNameError && attemptedSave,
-                    modifier = Modifier.weight(1f),
-                )
-                BottomBorderField(
-                    emPhone, { emPhone = it },
-                    label        = "Phone *",
-                    isError      = emPhoneError && attemptedSave,
-                    modifier     = Modifier.weight(1f),
-                    keyboardType = KeyboardType.Phone,
-                )
-                BottomBorderField(emRel, { emRel = it }, label = "Relationship", modifier = Modifier.weight(1f))
+            if (!isNew && ecBaseline.isBlankDrafts()) {
+                AuntieStatusPill(label = NO_EMERGENCY_CONTACT, tone = AuntieStatusTone.Orange, compact = true)
+                Spacer(Modifier.height(8.dp))
+            }
+            // Stays live during an Add retry: the contact is the one thing a
+            // retry exists to fix.
+            EmergencyContactsEditor(
+                drafts      = ecDrafts,
+                onChange    = { i, d -> ecDrafts = ecDrafts.mapIndexed { j, x -> if (j == i) d else x }; ecError = null },
+                onAdd       = { if (ecDrafts.size < com.tribetails.auntieos.web.data.EMERGENCY_CONTACTS_MAX) ecDrafts = ecDrafts + EmergencyContactDraft(); ecError = null },
+                onRemove    = { i -> ecDrafts = ecDrafts.filterIndexed { j, _ -> j != i }.ifEmpty { listOf(EmergencyContactDraft()) }; ecError = null },
+                onMoveFirst = { i -> ecDrafts = listOf(ecDrafts[i]) + ecDrafts.filterIndexed { j, _ -> j != i }; ecError = null },
+                enabled     = !saving,
+            )
+            ecError?.let {
+                Spacer(Modifier.height(6.dp))
+                Text(it, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.error)
             }
             Spacer(Modifier.height(16.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.alpha(if (householdFieldsEnabled) 1f else 0.5f),
+            ) {
                 BottomBorderField(
                     secondaryPhone, { secondaryPhone = it },
                     label        = "Secondary phone",
+                    enabled      = householdFieldsEnabled,
                     isError      = secondaryPhoneError && attemptedSave,
                     modifier     = Modifier.weight(1f),
                     keyboardType = KeyboardType.Phone,
@@ -506,6 +620,7 @@ fun KinfolkEditScreen(
                 BottomBorderField(
                     secondaryEmail, { secondaryEmail = it },
                     label        = "Secondary email",
+                    enabled      = householdFieldsEnabled,
                     isError      = secondaryEmailError && attemptedSave,
                     modifier     = Modifier.weight(1f),
                     keyboardType = KeyboardType.Email,
@@ -518,44 +633,48 @@ fun KinfolkEditScreen(
         // edited here; build() preserves the existing values.
 
         // ── 03 · Home & access (optional) ─────────────────────────────────────
-        SubsectionPanel(index = "03", title = "Home & access") {
+        SubsectionPanel(index = "03", title = "Home & access", enabled = householdFieldsEnabled) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                BottomBorderField(gateCode, { gateCode = it }, label = "Gate / door code", modifier = Modifier.weight(1f))
-                BottomBorderField(parking,  { parking  = it }, label = "Parking",          modifier = Modifier.weight(1f))
+                BottomBorderField(gateCode, { gateCode = it }, label = "Gate / door code", enabled = householdFieldsEnabled, modifier = Modifier.weight(1f))
+                BottomBorderField(parking,  { parking  = it }, label = "Parking",          enabled = householdFieldsEnabled, modifier = Modifier.weight(1f))
             }
             Spacer(Modifier.height(16.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                BottomBorderField(wifiName, { wifiName = it }, label = "Wi-Fi name",     modifier = Modifier.weight(1f))
-                BottomBorderField(wifiPass, { wifiPass = it }, label = "Wi-Fi password", modifier = Modifier.weight(1f))
+                BottomBorderField(wifiName, { wifiName = it }, label = "Wi-Fi name",     enabled = householdFieldsEnabled, modifier = Modifier.weight(1f))
+                BottomBorderField(wifiPass, { wifiPass = it }, label = "Wi-Fi password", enabled = householdFieldsEnabled, modifier = Modifier.weight(1f))
             }
             Spacer(Modifier.height(16.dp))
-            MultilineField(entryNotes, { entryNotes = it }, label = "Entry notes", placeholder = "Anything Auntie should know walking up to the door", minLines = 3)
+            MultilineField(entryNotes, { unlessLocked { entryNotes = it } }, label = "Entry notes", placeholder = "Anything Auntie should know walking up to the door", minLines = 3)
         }
 
-        // 04/05 · Emergency contact MOVED up into Identity (item 3, now required).
+        // Emergency Contacts live in "02 · Other Contacts" (#829).
 
         // ── 04 · Vet Clinic (optional, attaches to the HOUSEHOLD) ─────────────
-        SubsectionPanel(index = "04", title = "Vet Clinic") {
+        SubsectionPanel(index = "04", title = "Vet Clinic", enabled = householdFieldsEnabled) {
             VetClinicPicker(
                 clinics = vetClinics,
                 name = vetName,
                 onNameChange = { vetName = it },
                 onPick = { picked ->
-                    vetName    = picked.name
-                    vetPhone   = picked.phone
-                    vetAddress = picked.address
+                    unlessLocked {
+                        vetName    = picked.name
+                        vetPhone   = picked.phone
+                        vetAddress = picked.address
+                    }
                 },
+                enabled = householdFieldsEnabled,
             )
             Spacer(Modifier.height(16.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 BottomBorderField(
                     vetPhone, { vetPhone = it },
                     label        = "Clinic phone",
+                    enabled      = householdFieldsEnabled,
                     isError      = vetPhoneError && attemptedSave,
                     modifier     = Modifier.weight(1f),
                     keyboardType = KeyboardType.Phone,
                 )
-                BottomBorderField(vetAddress, { vetAddress = it }, label = "Clinic address", modifier = Modifier.weight(2f))
+                BottomBorderField(vetAddress, { vetAddress = it }, label = "Clinic address", enabled = householdFieldsEnabled, modifier = Modifier.weight(2f))
             }
             if (vetName.isNotBlank() && vetClinics.none { it.name.equals(vetName, ignoreCase = true) }) {
                 Spacer(Modifier.height(10.dp))
@@ -566,17 +685,17 @@ fun KinfolkEditScreen(
         }
 
         // ── 05 · Notes (optional) ─────────────────────────────────────────────
-        SubsectionPanel(index = "05", title = "Notes") {
-            MultilineField(internalNotes, { internalNotes = it }, label = "Internal notes", placeholder = "Anything that doesn't belong on the dossier yet", minLines = 4)
+        SubsectionPanel(index = "05", title = "Notes", enabled = householdFieldsEnabled) {
+            MultilineField(internalNotes, { unlessLocked { internalNotes = it } }, label = "Internal notes", placeholder = "Anything that doesn't belong on the dossier yet", minLines = 4)
             Spacer(Modifier.height(16.dp))
-            BottomBorderField(referral, { referral = it }, label = "Referral source", modifier = Modifier.fillMaxWidth())
+            BottomBorderField(referral, { referral = it }, label = "Referral source", enabled = householdFieldsEnabled, modifier = Modifier.fillMaxWidth())
         }
 
         // ── 06 · Custom fields (admin-authored KINFOLK form_schemas, Phase 14) ─
         // Only shown when a KINFOLK schema exists or a load failed; an empty panel
         // would just be noise. Answers persist into Kinfolk.formValues.
         if (kinfolkSchemas.isNotEmpty() || schemaError != null) {
-            SubsectionPanel(index = "06", title = "Custom fields") {
+            SubsectionPanel(index = "06", title = "Custom fields", enabled = householdFieldsEnabled) {
                 when {
                     // Fail loud: surface a schema load failure, never swallow it.
                     schemaError != null -> AuntieBanner(
@@ -588,7 +707,7 @@ fun KinfolkEditScreen(
                     else -> DynamicFormFields(
                         schemas = kinfolkSchemas,
                         values = formValues,
-                        onValueChange = { k, v -> formValues[k] = v },
+                        onValueChange = { k, v -> unlessLocked { formValues[k] = v } },
                     )
                 }
             }
@@ -644,12 +763,21 @@ fun KinfolkEditScreen(
 
         // Sticky-style save bar (SUGGESTION). Save disabled while a write is in
         // flight; canSave is still enforced inside onSave with a fail-loud toast.
+        // #829: pessimistic save with a visible cue while the write is in flight;
+        // after a failed contact save on Add, the button says what the retry does.
         AuntieSaveBar(
             dirty       = dirty,
             saveEnabled = !saving,
-            onCancel    = onBack,
+            onCancel    = { leave() },
             onSave      = { onSave() },
-            saveLabel   = if (isNew) "Create Kinfolk" else "Save changes",
+            saveLabel   = when {
+                saving && createdKinfolkId != null -> "Saving…"
+                saving && isNew                    -> "Adding…"
+                saving                             -> "Saving…"
+                createdKinfolkId != null           -> "Save Emergency Contact"
+                isNew                              -> "Create Kinfolk"
+                else                               -> "Save changes"
+            },
         )
     }
 }
@@ -662,9 +790,12 @@ fun KinfolkEditScreen(
 private fun SubsectionPanel(
     index: String,
     title: String,
+    enabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
-    GlassSurface(cornerRadius = 20.dp, modifier = Modifier.fillMaxWidth()) {
+    // #829: a locked panel (Add retry, or a save in flight) dims, the cue for
+    // controls with no `enabled` state of their own.
+    GlassSurface(cornerRadius = 20.dp, modifier = Modifier.fillMaxWidth().alpha(if (enabled) 1f else 0.5f)) {
         Column(modifier = Modifier.fillMaxWidth().padding(22.dp)) {
             AuntieFieldLabel(text = title, index = index)
             Spacer(Modifier.height(14.dp))
@@ -689,6 +820,7 @@ private fun AddressAutofillField(
     value: String,
     onValueChange: (String) -> Unit,
     scope: CoroutineScope,
+    enabled: Boolean = true,
 ) {
     val c = AuntieTheme.colors
     val mapbox = remember { MapboxClient() }
@@ -736,6 +868,7 @@ private fun AddressAutofillField(
         value         = value,
         onValueChange = { onValueChange(it) },
         label         = "Service address",
+        enabled       = enabled,
         modifier      = Modifier.fillMaxWidth(),
     )
 
@@ -856,13 +989,15 @@ private fun VetClinicPicker(
     name: String,
     onNameChange: (String) -> Unit,
     onPick: (VetClinic) -> Unit,
+    enabled: Boolean = true,
 ) {
-    val matches = vetClinicSuggestions(name, clinics)
+    val matches = if (enabled) vetClinicSuggestions(name, clinics) else emptyList()
     val exact = clinics.any { it.name.equals(name.trim(), ignoreCase = true) }
     Column(Modifier.fillMaxWidth()) {
         BottomBorderField(
             value = name,
             onValueChange = onNameChange,
+            enabled = enabled,
             label = "Clinic name",
             placeholder = if (clinics.isEmpty()) "" else "Type to search ${clinics.size} clinics",
             modifier = Modifier.fillMaxWidth(),

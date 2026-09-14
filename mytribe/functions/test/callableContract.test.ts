@@ -42,6 +42,8 @@ import { Args as ArchiveVetClinicArgs } from '../src/admin/archiveVetClinic';
 // not fail loudly, it strips the WRONG collection, so the shape is frozen from
 // birth.
 import { Args as RemoveBusinessTagArgs } from '../src/admin/removeBusinessTag';
+// #886: the failed-login report, sent unauthenticated by every sign-in client.
+import { RecordFailedLoginArgs } from '../src/auth/loginSecurity';
 // 17.3 Home dashboard layout (added 2026-07-25). Three surfaces parse the SAME
 // stored token list: the React admin (auntieos-admin/src/lib/dashboardLayout.ts),
 // android (ui/home/DashboardLayout.kt) and the superseded Compose web build.
@@ -52,6 +54,10 @@ import { Args as SaveDashboardLayoutArgs } from '../src/admin/saveDashboardLayou
 // a RECURSIVE key-path signature so a nested rename fails the guard too.
 import { Args as SaveFormSchemaArgs } from '../src/admin/saveFormSchema';
 import { Args as SaveTemplateArgs } from '../src/admin/saveTemplate';
+// #829: five hand-built clients (admin web, admin Android, desktop, portal web,
+// portal Android) mirror this payload, and `contacts[]` is nested, so it gets
+// the recursive signature.
+import { Args as SaveEmergencyContactsArgs } from '../src/portal/emergencyContacts';
 import { Args as ImportSeedTemplatesArgs } from '../src/admin/importSeedTemplates';
 import { Args as BroadcastMessageArgs } from '../src/admin/broadcastMessage';
 // Marketing blasts (2026-09-12). Frozen from birth: the callable now takes the
@@ -261,10 +267,13 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
     // makes this callable safe to retry: it becomes the id of the
     // `payments/{key}` row, so a second attempt at one payment finds the first
     // attempt's row instead of recording a second payment AND a second credit.
+    // `settledByInvoicePaymentId` (#866) is optional too: the id `markInvoicePaid`
+    // returned to the same submission, the only thing that lets this call claim
+    // that settlement and tell the office "paid".
     keys: [
       'address', 'amount', 'apply', 'autoApply', 'client', 'date', 'email', 'fee',
       'idempotencyKey', 'invoiceId', 'invoiceNumber', 'kinfolkId', 'kinfolkName', 'notes',
-      'paymentMethod', 'referenceNumber', 'sendConfirmationEmail', 'tip',
+      'paymentMethod', 'referenceNumber', 'sendConfirmationEmail', 'settledByInvoicePaymentId', 'tip',
     ],
   },
   assignTemplate: { schema: AssignTemplateArgs, keys: ['active', 'audience', 'catalogKey', 'templateId', 'triggerKey'] },
@@ -315,6 +324,11 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   // cascade rewrites `kinfolk` or `kin`. A client that stopped sending it would
   // otherwise fall to a default and clear the wrong half of the directory.
   removeBusinessTag: { schema: RemoveBusinessTagArgs, keys: ['name', 'scope'] },
+  // #886: unauthenticated, sent after a credential failure by both web apps, both
+  // Android apps and both desktop clients. They send `email` only; `ip` and
+  // `userAgent` stay optional and the server never uses a client `ip` for its
+  // rate limits.
+  recordFailedLogin: { schema: RecordFailedLoginArgs, keys: ['email', 'ip', 'userAgent'] },
 
   // 17.3 operator dashboard layout. One key, so the top-level freeze is thin on
   // its own; the token-VALUE freeze below is the part that actually matters.
@@ -393,6 +407,10 @@ const FROZEN_DEEP_SHAPES: Record<string, { schema: z.ZodTypeAny; signature: stri
       'sectionDefinitions[].description', 'sectionDefinitions[].title',
       'subject', 'tags[]', 'templateId', 'title', 'usageInstructions',
     ],
+  },
+  saveEmergencyContacts: {
+    schema: SaveEmergencyContactsArgs,
+    signature: ['contacts[].name', 'contacts[].phone', 'contacts[].relationship', 'kinfolkId'],
   },
   // Issue #468. Frozen from birth, because two hand-built clients mirror it:
   // the React admin's import view and the Android Templates screen.
@@ -1009,7 +1027,11 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'confirmationEmailSent',
       'creditedToAccountCents',
       'feeCents',
+      // #866: why a household copy did not go out, and whether the office copy
+      // is still owed after a failed roster read.
+      'householdNoPortalAccount',
       'kinfolkId',
+      'officeNoticePending',
       'ok',
       'paymentId',
       'proceedsCents',
