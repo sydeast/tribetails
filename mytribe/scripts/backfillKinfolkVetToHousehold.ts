@@ -64,8 +64,7 @@
  * --allow-prod. This script has NOT been run against production as part of the
  * PR that ships it; it is a runbook step.
  */
-import { getApps, initializeApp } from 'firebase-admin/app';
-import { getFirestore, FieldValue, type Firestore } from 'firebase-admin/firestore';
+import { getApps, initializeApp, getFirestore, FieldValue, type Firestore } from './lib/firebaseAdmin';
 type Mode = 'dry-run' | 'apply';
 export interface Args {
   mode: Mode;

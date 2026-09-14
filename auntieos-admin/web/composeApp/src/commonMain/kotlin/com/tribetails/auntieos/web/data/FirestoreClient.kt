@@ -884,6 +884,9 @@ class FirestoreClient {
                 put("bookingId", legacyBookingId!!)
             }
             put("event", "report_sent")
+            // #832: the server names the notification by the report, so a second
+            // KinTale for one visit reaches the household and a retry does not.
+            put("reportId", report._id)
         }
         val dispatchId = when (
             val r = platformInvokeCallable(
@@ -1130,20 +1133,23 @@ class FirestoreClient {
     /**
      * Stage 2 tail: on-demand resend of an invoice reminder for ONE invoice via
      * the sendInvoiceReminder admin callable (reuses the cron's per-invoice
-     * dispatch path; stamps reminderNotifiedAtMs for idempotency). Returns the
-     * invoiceId on success. Fail-loud: the server message (already-paid,
-     * not-found, etc.) is surfaced verbatim.
+     * dispatch path; stamps reminderNotifiedAtMs for idempotency). Fail-loud:
+     * the server message (already-paid, not-found, etc.) is surfaced verbatim.
+     *
+     * #832: returns what the server DECIDED. A reminder inside the server's
+     * window comes back `sent = false` with the time of the one that already
+     * went out; that is an Ok, not an Err, because the household has been
+     * reminded. See [decodeReminderOutcome] for the pre-#832 response rule.
      */
-    suspend fun sendInvoiceReminder(invoiceId: String): WriteResult<String> {
+    suspend fun sendInvoiceReminder(
+        invoiceId: String,
+        nowMs: Long = reminderNowMs(),
+    ): WriteResult<ReminderOutcome> {
         val payload = buildJsonObject { put("invoiceId", JsonPrimitive(invoiceId)) }
         return when (val r = platformInvokeCallable("sendInvoiceReminder", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
-                WriteResult.Ok(
-                    callableJson.parseToJsonElement(r.value).jsonObject["invoiceId"]
-                        ?.jsonPrimitive?.contentOrNull ?: invoiceId
-                )
-            }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+            is WriteResult.Ok -> runCatching { WriteResult.Ok(decodeReminderOutcome(r.value, nowMs)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
     }
 
@@ -3132,6 +3138,13 @@ data class Invoice(
     val sessionIds: List<String> = emptyList(),
     @SerialName("_attribution") val attribution: String = "",
     @SerialName("_attributionAt") val attributionAt: String = "",
+    /**
+     * When the household was last reminded about this invoice (ms epoch),
+     * written by `sendInvoiceReminder` and the daily reminder cron. Nullable:
+     * absent on invoices never reminded, and an explicit null when a failed
+     * send released its claim (#832). Read through [lastReminderLabel].
+     */
+    val reminderNotifiedAtMs: Long? = null,
 )
 
 /**

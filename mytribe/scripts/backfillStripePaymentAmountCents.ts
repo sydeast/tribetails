@@ -94,9 +94,10 @@
 // The MODULAR admin API, matching every other script in this directory: the
 // installed firebase-admin no longer exports the legacy namespace at
 // runtime, so `import * as admin from 'firebase-admin'` throws the moment
-// it's called.
-import { getApps, initializeApp } from 'firebase-admin/app';
-import { getFirestore, FieldValue, type Firestore } from 'firebase-admin/firestore';
+// it's called. Imported from './lib/firebaseAdmin' (issue #846) rather than
+// directly, so a stray firebase-admin copy is caught at startup and
+// Timestamp/FieldValue stay the same module instance as the Firestore client.
+import { getApps, initializeApp, getFirestore, FieldValue, type Firestore } from './lib/firebaseAdmin';
 import { resolveLedgerAmountCents } from '../functions/src/lib/paymentMoney';
 
 export const PAYMENTS_COLLECTION = 'payments';

@@ -129,6 +129,13 @@ export interface InvoiceEntry {
   quoteDecision?: 'accepted' | 'denied';
   /** When they answered. Absent alongside the field above, never a zero. */
   quoteDecidedAt?: Timestamp;
+  /**
+   * When the household was last reminded about this invoice (ms epoch), written
+   * by `sendInvoiceReminder` and by the daily reminder cron. Absent when no
+   * reminder was ever sent; `null` when a failed send released its claim. Read
+   * through `lastReminderLabel`, which treats both as "none sent" (#832).
+   */
+  reminderNotifiedAtMs?: number | null;
   createdAt: Timestamp | null;
   /**
    * Stamped by Task 5.1's `archiveInvoice` callable, cleared by `unarchiveInvoice`.

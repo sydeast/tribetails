@@ -53,8 +53,7 @@
  * with --allow-prod. This script has NOT been run against production as part of
  * the PR that ships it; it is a runbook step the operator performs.
  */
-import { getApps, initializeApp } from 'firebase-admin/app';
-import { getFirestore, type Firestore } from 'firebase-admin/firestore';
+import { getApps, initializeApp, getFirestore, type Firestore } from './lib/firebaseAdmin';
 
 type Mode = 'dry-run' | 'apply';
 

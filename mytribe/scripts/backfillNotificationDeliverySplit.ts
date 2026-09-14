@@ -79,8 +79,7 @@
  * it; it is a runbook step.
  */
 
-import { getApps, initializeApp } from 'firebase-admin/app';
-import { getFirestore, FieldValue, type Firestore } from 'firebase-admin/firestore';
+import { getApps, initializeApp, getFirestore, FieldValue, type Firestore } from './lib/firebaseAdmin';
 
 type Mode = 'dry-run' | 'apply';
 

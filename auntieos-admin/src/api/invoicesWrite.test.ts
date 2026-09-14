@@ -110,9 +110,20 @@ describe('#825 the retry opt-in follows the key, not the callable', () => {
 describe('sendInvoiceReminder', () => {
   it('sends only { invoiceId }, matching the backend contract', async () => {
     call.mockReset();
-    call.mockResolvedValue({ ok: true, invoiceId: 'inv-3' });
+    call.mockResolvedValue({ ok: true, invoiceId: 'inv-3', sent: true, lastReminderAtMs: 5, nextReminderAllowedAtMs: 9 });
     await sendInvoiceReminder('inv-3');
     expect(call).toHaveBeenCalledWith('sendInvoiceReminder', { invoiceId: 'inv-3' });
+  });
+
+  it('#832: returns an already-sent answer instead of throwing', async () => {
+    call.mockReset();
+    call.mockResolvedValue({ ok: true, invoiceId: 'inv-3', sent: false, reason: 'recent', lastReminderAtMs: 5, nextReminderAllowedAtMs: 9 });
+    await expect(sendInvoiceReminder('inv-3')).resolves.toEqual({
+      sent: false,
+      reason: 'recent',
+      lastReminderAtMs: 5,
+      nextReminderAllowedAtMs: 9,
+    });
   });
 
   it('fails loud when the invoice is already paid', async () => {

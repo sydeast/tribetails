@@ -588,20 +588,34 @@ class InvoiceDetailViewModel(
         _uiState.value = _uiState.value.copy(sendingReminder = true)
         viewModelScope.launch {
             invoiceRepository.sendInvoiceReminder(invoiceId)
-                .onSuccess {
-                    com.tribetails.auntieos.data.admin.AuditLog.fire(
-                        scope            = viewModelScope,
-                        repository       = repository,
-                        actionType       = "SEND_INVOICE_REMINDER",
-                        description      = "Sent payment reminder for invoice ${_uiState.value.invoice?.invoiceNumber?.ifBlank { invoiceId } ?: invoiceId}",
-                        targetId         = invoiceId,
-                        targetCollection = "invoices",
-                    )
-                    _uiState.value = _uiState.value.copy(
+                .onSuccess { outcome ->
+                    // #832: only a reminder THIS press sent is audited as sent.
+                    if (outcome.sent) {
+                        com.tribetails.auntieos.data.admin.AuditLog.fire(
+                            scope            = viewModelScope,
+                            repository       = repository,
+                            actionType       = "SEND_INVOICE_REMINDER",
+                            description      = "Sent payment reminder for invoice ${_uiState.value.invoice?.invoiceNumber?.ifBlank { invoiceId } ?: invoiceId}",
+                            targetId         = invoiceId,
+                            targetCollection = "invoices",
+                        )
+                    }
+                    val current = _uiState.value
+                    _uiState.value = current.copy(
                         sendingReminder = false,
-                        toastMessage = "Reminder sent.",
+                        // COPY of the loaded model with the one server-written
+                        // field moved, never a rebuild: every other field on the
+                        // invoice stays exactly as the server sent it.
+                        // Only a real time moves it: null means no reminder on
+                        // record and must never blank a stamp the model holds.
+                        invoice = current.invoice?.let { inv ->
+                            outcome.lastReminderAtMs?.let { inv.copy(reminderNotifiedAtMs = it) } ?: inv
+                        },
+                        toastMessage = com.tribetails.auntieos.domain.reminderOutcomeMessage(outcome),
                         toastVisible = true,
-                        toastIsError = false,
+                        // A refusal is not a failure, but it must not read as a
+                        // success toast either: nothing was sent by this press.
+                        toastIsError = !outcome.sent,
                     )
                 }
                 .onFailure { err ->

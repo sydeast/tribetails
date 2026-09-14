@@ -103,7 +103,7 @@ class KinTaleSendValidationTest {
             vm.uiState.value.error,
         )
         // The kinfolk is not told about a KinTale the rules refused.
-        coVerify(exactly = 0) { notifier.notify(any(), any()) }
+        coVerify(exactly = 0) { notifier.notify(any(), any(), any(), any(), any(), any()) }
         coVerify(exactly = 0) { kinCareRepo.markReportSent(any(), any(), any(), any()) }
     }
 
@@ -152,6 +152,6 @@ class KinTaleSendValidationTest {
         advanceUntilIdle()
 
         assertEquals("Keep the headline under 120 characters.", vm.uiState.value.error)
-        coVerify(exactly = 0) { notifier.notify(any(), any()) }
+        coVerify(exactly = 0) { notifier.notify(any(), any(), any(), any(), any(), any()) }
     }
 }

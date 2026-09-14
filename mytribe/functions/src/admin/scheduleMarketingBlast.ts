@@ -229,6 +229,11 @@ export function blastSender(ctx: {
         // is kept from the original shape so nothing downstream that read it
         // starts seeing undefined.
         data: { ...ctx.data, audienceUid: uid, blastId: ctx.blastId },
+        // #832: the blast IS the event. `ctx.data` is caller-shaped, and an id in
+        // it listed ahead of `blastId` (a messageId, say) would otherwise become
+        // the identity and collapse two blasts built from one template. A resumed
+        // fan-out retrying the same uid for the same blast still dedupes.
+        dedupeKey: `blast:${ctx.blastId}`,
         fireAtMs: ctx.fireAtMs,
         actorUid: ctx.actorUid,
       });

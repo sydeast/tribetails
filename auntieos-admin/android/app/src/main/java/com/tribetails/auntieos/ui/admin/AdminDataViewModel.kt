@@ -773,22 +773,42 @@ class AdminDataViewModel(
      * sendInvoiceReminder callable. Fail-loud: server preconditions (already-paid,
      * not-found) surface verbatim through [_error].
      */
+    /**
+     * #832: invoices with a reminder press still waiting on the server. The row
+     * button reads it to show "Sending…" and stay disabled, and a second call for
+     * the same id is dropped here, so a double-tap fires one callable.
+     */
+    private val _remindingInvoiceIds = MutableStateFlow<Set<String>>(emptySet())
+    val remindingInvoiceIds: StateFlow<Set<String>> = _remindingInvoiceIds.asStateFlow()
+
     fun sendInvoiceReminder(invoiceId: String) {
         if (invoiceId.isBlank()) return
+        if (invoiceId in _remindingInvoiceIds.value) return
+        _remindingInvoiceIds.value = _remindingInvoiceIds.value + invoiceId
         viewModelScope.launch {
-            invoiceRepository.sendInvoiceReminder(invoiceId).onSuccess {
-                com.tribetails.auntieos.data.admin.AuditLog.fire(
-                    scope = viewModelScope,
-                    repository = repository,
-                    actionType = "SEND_INVOICE_REMINDER",
-                    description = "Sent payment reminder for invoice $invoiceId",
-                    targetId = invoiceId,
-                    targetCollection = "invoices",
-                )
-                _invoiceActionMessage.value = "Reminder sent."
+            invoiceRepository.sendInvoiceReminder(invoiceId).onSuccess { outcome ->
+                if (outcome.sent) {
+                    com.tribetails.auntieos.data.admin.AuditLog.fire(
+                        scope = viewModelScope,
+                        repository = repository,
+                        actionType = "SEND_INVOICE_REMINDER",
+                        description = "Sent payment reminder for invoice $invoiceId",
+                        targetId = invoiceId,
+                        targetCollection = "invoices",
+                    )
+                }
+                // The row's "reminded ..." line reads the loaded model, so move
+                // the one server-written field on it (copy, never a rebuild).
+                outcome.lastReminderAtMs?.let { at ->
+                    _invoices.value = _invoices.value.map {
+                        if (it.id == invoiceId) it.copy(reminderNotifiedAtMs = at) else it
+                    }
+                }
+                _invoiceActionMessage.value = com.tribetails.auntieos.domain.reminderOutcomeMessage(outcome)
             }.onFailure { throwable ->
                 _error.value = throwable.message ?: "Failed to send reminder"
             }
+            _remindingInvoiceIds.value = _remindingInvoiceIds.value - invoiceId
         }
     }
 

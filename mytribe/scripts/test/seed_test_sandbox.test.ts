@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Timestamp } from 'firebase-admin/firestore';
+import { Timestamp } from '../lib/firebaseAdmin';
 import {
   TEST_TRIBE_ID,
   TEST_ADMIN_EMAIL,

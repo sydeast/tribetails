@@ -535,6 +535,18 @@ data class Invoice(
      * operator withdrew it rather than the household turning it down.
      */
     var quoteDecision: String? = null,
+    /**
+     * When the household was last reminded about this invoice (ms epoch), written
+     * by the `sendInvoiceReminder` callable and the daily reminder cron, never by
+     * this app (#832).
+     *
+     * NULLABLE per the Class B decode rule above: absent on every invoice never
+     * reminded, and an explicit null when a failed send released its claim. A
+     * non-null setter meeting that null would blank the whole invoice query.
+     * No edit screen writes an Invoice model back, so no save can wipe it; the
+     * view models only ever `copy` it forward from the server's answer.
+     */
+    var reminderNotifiedAtMs: Long? = null,
     var viewed: String = "",
     // Attribution fields written by backfill_structural_links.py
     var sessionIds: List<String> = emptyList(),

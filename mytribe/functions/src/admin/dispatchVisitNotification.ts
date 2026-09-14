@@ -4,7 +4,7 @@ import { db } from '../lib/firestoreAdmin';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
-import { enqueueNotification } from '../notifications/dispatcher';
+import { contentDedupeKey, enqueueNotification } from '../notifications/dispatcher';
 import { logEvent } from '../lib/logger';
 import { resolveKinCareRef } from '../lib/resolveKinCareRef';
 import { TRIBETAILS_CORS } from '../lib/cors';
@@ -21,6 +21,19 @@ const Args = z
     event: EventArg,
     etaMinutes: z.number().int().nonnegative().optional(),
     reportPreviewUrl: z.string().url().optional(),
+    /**
+     * When the lifecycle step happened (ms epoch): the `onMyWayAt` / `arrivedAt`
+     * / `departedAt` the caller just stamped. Every live caller sends it (the
+     * web admin's lifecycle patch, `setVisitLifecycle`, Android `VisitNotifier`),
+     * and it is what tells a re-arrival from a retry of the first (#832).
+     * Optional so an older client still dispatches.
+     */
+    eventAtMs: z.number().int().nonnegative().optional(),
+    /**
+     * The KinTale a `report_sent` announces. Two reports for one visit are two
+     * notifications; a retry of one report is one (#832).
+     */
+    reportId: z.string().min(1).max(200).optional(),
   })
   .refine((a) => (a.batchId && a.visitId) || a.bookingId, {
     message: 'Provide batchId+visitId (preferred) or a legacy bookingId.',
@@ -35,6 +48,27 @@ const EVENT_TO_KEY: Record<z.infer<typeof EventArg>, string> = {
   departed: 'kincare.auntie.departed',
   report_sent: 'kincare.report.sent',
 };
+
+/**
+ * #832: the dispatcher identity of one visit notification. All of them target
+ * the visit, so without this an Auntie's second "on my way" with a new ETA, or
+ * an arrival after an undone arrival, inside the dispatcher window was dropped.
+ *
+ * Named by the step and what it says: the ETA, the step's stamped time, and
+ * for a report the report id (or its link from an older client). A retry of one
+ * tap carries the same stamped time and dedupes; a re-arrival carries a new one
+ * and sends.
+ */
+export function visitDedupeKey(
+  visitId: string,
+  args: Pick<Args, 'event' | 'etaMinutes' | 'eventAtMs' | 'reportPreviewUrl' | 'reportId'>,
+): string {
+  return contentDedupeKey(`visit:${visitId}:${args.event}`, {
+    eta: args.etaMinutes ?? null,
+    at: args.eventAtMs ?? null,
+    report: args.reportId ?? args.reportPreviewUrl ?? null,
+  });
+}
 
 export interface DispatchVisitNotificationOutcome {
   ok: true;
@@ -128,6 +162,7 @@ export async function dispatchVisitNotificationCore(
     recipientUid,
     data,
     actorUid,
+    dedupeKey: visitDedupeKey(visitId, args),
   });
 
   await writeAuditEntry({

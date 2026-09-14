@@ -48,6 +48,8 @@ import com.tribetails.auntieos.web.data.BusinessSettings
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.Payment
 import com.tribetails.auntieos.web.data.WriteResult
+import com.tribetails.auntieos.web.data.lastReminderLabel
+import com.tribetails.auntieos.web.data.reminderOutcomeMessage
 import com.tribetails.auntieos.web.data.mintPaymentIdempotencyKey
 import com.tribetails.auntieos.web.util.openUrl
 import com.tribetails.auntieos.web.theme.AuntieTheme
@@ -232,6 +234,8 @@ private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
     var saveLoading  by remember { mutableStateOf(false) }
     var receiptLoading  by remember { mutableStateOf(false) }
     var reminderLoading by remember { mutableStateOf(false) }
+    // Seeded from the stored stamp, moved to the server's answer after a press.
+    var lastReminderAtMs by remember(invoice._id, invoice.reminderNotifiedAtMs) { mutableStateOf(invoice.reminderNotifiedAtMs) }
     var pdfLoading      by remember { mutableStateOf(false) }
     var toastMsg     by remember { mutableStateOf("") }
     var toastVisible by remember { mutableStateOf(false) }
@@ -410,7 +414,14 @@ private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
                     scope.launch {
                         when (val r = client.sendInvoiceReminder(invoice._id)) {
                             is WriteResult.Err -> showToast("Couldn't send reminder: ${r.message}", true)
-                            is WriteResult.Ok  -> showToast("Reminder sent.", false)
+                            // #832: a refusal inside the server's window is not a
+                            // failure, but it is not "sent" either. Say which,
+                            // and when, and move the Last reminder row now.
+                            is WriteResult.Ok  -> {
+                                // Only a real time moves the row; null never blanks a stamp.
+                                r.value.lastReminderAtMs?.let { lastReminderAtMs = it }
+                                showToast(reminderOutcomeMessage(r.value), !r.value.sent)
+                            }
                         }
                         reminderLoading = false
                     }
@@ -446,6 +457,7 @@ private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
                 DetailRow("Client",   invoice.client.ifBlank { "-" })
                 DetailRow("Date",     invoice.date.ifBlank { "-" })
                 DetailRow("Due date", invoice.dueDate.ifBlank { "-" })
+                DetailRow("Last reminder", lastReminderLabel(lastReminderAtMs))
                 if (invoice.terms.isNotBlank()) DetailRow("Terms", invoice.terms)
                 if (invoice.address.isNotBlank()) DetailRow("Address", invoice.address)
             }

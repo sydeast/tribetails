@@ -967,7 +967,7 @@ describe('Invoices row quick action', () => {
     expect(sendInvoiceReminder).not.toHaveBeenCalled();
   });
   it('fires the callable only once the confirm step is confirmed', async () => {
-    sendInvoiceReminder.mockResolvedValue(undefined);
+    sendInvoiceReminder.mockResolvedValue({ sent: true, reason: 'sent', lastReminderAtMs: 1, nextReminderAllowedAtMs: 2 });
     usePagedCollection.mockReturnValue(paged([entry({ status: 'open' })]));
     render(<Invoices />);
     await userEvent.click(within(rowOf('1042')).getByRole('button', { name: 'Send reminder' }));

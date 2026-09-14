@@ -16,8 +16,12 @@
 # `node -v 2>/dev/null | sed ...` under `set -euo pipefail` and the redirect ate
 # the only clue. Two ticks and silence reads as success.
 #
-# Exit codes: 0 everything required is present, 1 something required is missing.
-# Optional tools never fail the run; they are reported and the reason is given.
+# Exit codes: 0 everything required is present; 1 something required is
+# missing and installing dependencies will not fix it; 2 the ONLY thing
+# missing is dependency drift (node_modules out of sync with a lockfile),
+# which `npm ci` does fix: bootstrap.sh reads this distinction to decide
+# whether to proceed to install or refuse to start. Optional tools never fail
+# the run; they are reported and the reason is given.
 
 set -uo pipefail   # deliberately NOT -e: this script's whole job is to keep
                    # going and report EVERY problem, not to stop at the first.
@@ -32,6 +36,15 @@ hdr() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 
 MISSING=0
 NOTES=()
+
+# DRIFT_ONLY_OK tracks whether every failure found is dependency drift (an
+# install that does not match its lockfile) as opposed to something installing
+# cannot fix (a missing tool, a missing lockfile, an old Java). It starts true
+# and a failure of the SECOND kind, and only that kind, sets it to 0. Read at
+# the bottom to choose exit 1 (something else is wrong) vs exit 2 (drift only,
+# and `npm ci` is the whole fix); see the comment at the exit codes for why
+# bootstrap.sh needs that distinction and could not get it from exit 1 alone.
+DRIFT_ONLY_OK=1
 
 case "$(uname -s)" in
   Darwin) OS=mac ;;
@@ -75,6 +88,7 @@ require() {
     red "$tool" "MISSING. Needed for: $why"
     NOTES+=("$tool is REQUIRED: $why. Install with: $(how_to "$tool")")
     MISSING=1
+    DRIFT_ONLY_OK=0
   fi
   return 1
 }
@@ -93,6 +107,7 @@ if command -v node >/dev/null 2>&1; then
     red "node ver" "v$HAVE is OLDER than the deployed runtime v$WANT"
     NOTES+=("Node v$HAVE is older than v$WANT. Run: nvm install $WANT && nvm use")
     MISSING=1
+    DRIFT_ONLY_OK=0
   elif [ -n "$HAVE" ] && [ "$HAVE" != "$WANT" ]; then
     ylw "node ver" "v$HAVE, deployed runtime is v$WANT. Suites run; deploys use v$WANT."
   else
@@ -116,6 +131,7 @@ if java -version >/dev/null 2>&1; then
     red "java" "$JAVA_VER_RAW is older than the required $JAVA_MIN"
     NOTES+=("Java $JAVA_MAJOR is too old; Gradle needs $JAVA_MIN or newer. Install with: $(how_to java)")
     MISSING=1
+    DRIFT_ONLY_OK=0
   else
     grn "java" "$JAVA_VER_RAW"
   fi
@@ -129,6 +145,7 @@ else
   fi
   NOTES+=("Java is REQUIRED: Firebase emulators and Gradle builds. Without it the emulator fails with a message that never mentions Java. Install with: $(how_to java)")
   MISSING=1
+  DRIFT_ONLY_OK=0
 fi
 
 require firebase "test:rules, e2e, and every deploy"
@@ -255,23 +272,17 @@ fi
 
 hdr "Repo"
 
+# The lockfile-vs-installed comparison lives in one shared place
+# (scripts/lib/dep-drift.sh) so release.sh's step 0 can refuse on the exact
+# same drift this reports, rather than carrying a second copy that could
+# disagree with this one.
+# shellcheck source=scripts/lib/dep-drift.sh
+. "$ROOT/scripts/lib/dep-drift.sh"
+
 # mytribe/functions is NOT an npm workspace member (PR25a): Cloud Functions
 # deploy as a self-contained artifact with their own package.json and
 # lockfile, and hoisting their deps into the root tree would ship a broken
 # deploy. It keeps its own lockfile and install, checked exactly as before.
-p="mytribe/functions"
-
-# `npm ci` REFUSES to run without a lockfile. Catch that here rather than
-# three minutes into an install.
-if [ -f "$p/package-lock.json" ]; then
-  grn "$(basename "$p")" "lockfile present"
-else
-  red "$(basename "$p")" "NO package-lock.json. 'npm ci' cannot run in $p"
-  NOTES+=("$p has no package-lock.json. Use 'npm install' there, or restore the lockfile.")
-  MISSING=1
-fi
-
-# IS WHAT IS INSTALLED WHAT THE LOCKFILE SAYS?
 #
 # A lockfile can be present and correct while node_modules is neither. On
 # 2026-08-04 PR #250 swapped `googleapis` for `@googleapis/calendar`, the
@@ -285,104 +296,140 @@ fi
 # and bootstrap.sh runs this script before it installs anything. Failing there
 # would refuse to start the very thing that fixes it. Only a PARTIAL or STALE
 # install fails, because that is the state that lies.
-if [ ! -d "$p/node_modules" ]; then
-  ylw "$(basename "$p")" "not installed yet. 'npm run setup' will do it."
-  NOTES+=("$p has no node_modules. Run 'npm run setup' (or 'npm ci' in $p).")
-elif ! command -v node >/dev/null 2>&1; then
-  ylw "$(basename "$p")" "installed, but node is missing so it cannot be verified"
+p="mytribe/functions"
+if standalone_pkg_drift "$p"; then
+  case "$DEP_DRIFT_STATE" in
+    ok)
+      ylw "$(basename "$p")" "not installed yet. 'npm run setup' will do it."
+      NOTES+=("$p has no node_modules. Run 'npm run setup' (or 'npm ci' in $p).")
+      ;;
+    no-node)
+      ylw "$(basename "$p")" "installed, but node is missing so it cannot be verified"
+      ;;
+    clean)
+      grn "$(basename "$p")" "lockfile present, install matches it"
+      ;;
+  esac
 else
-  # Every name in package.json against what is on disk, and each one's version
-  # against the lockfile's resolved entry. Reports the first few by name: an
-  # operator who can read "@googleapis/calendar" fixes this in one command.
-  DRIFT="$(node -e '
-    const fs = require("fs"), path = require("path");
-    const root = process.argv[1];
-    const read = (f) => JSON.parse(fs.readFileSync(path.join(root, f), "utf8"));
-    let pj, lock;
-    try { pj = read("package.json"); lock = read("package-lock.json"); }
-    catch { process.exit(0); }
-    const want = { ...(pj.dependencies || {}), ...(pj.devDependencies || {}) };
-    const locked = lock.packages || {};
-    const bad = [];
-    for (const name of Object.keys(want)) {
-      const p = path.join(root, "node_modules", name, "package.json");
-      if (!fs.existsSync(p)) { bad.push(name + " (absent)"); continue; }
-      const want2 = locked["node_modules/" + name];
-      if (!want2 || !want2.version) continue;
-      let got;
-      try { got = JSON.parse(fs.readFileSync(p, "utf8")).version; } catch { continue; }
-      if (got !== want2.version) bad.push(name + " (" + got + ", lockfile says " + want2.version + ")");
-    }
-    if (bad.length) console.log(bad.slice(0, 4).join(", ") + (bad.length > 4 ? ", +" + (bad.length - 4) + " more" : ""));
-  ' "$p" 2>/dev/null)"
-  if [ -z "$DRIFT" ]; then
-    grn "$(basename "$p")" "lockfile present, install matches it"
-  else
-    red "$(basename "$p")" "install does NOT match the lockfile: $DRIFT"
-    NOTES+=("$p is installed but out of sync with its lockfile ($DRIFT). Run: npm ci --prefix $p")
-    MISSING=1
-  fi
+  case "$DEP_DRIFT_STATE" in
+    no-lock)
+      red "$(basename "$p")" "NO package-lock.json. 'npm ci' cannot run in $p"
+      NOTES+=("$p has no package-lock.json. Use 'npm install' there, or restore the lockfile.")
+      MISSING=1
+      DRIFT_ONLY_OK=0
+      ;;
+    unreadable)
+      red "$(basename "$p")" "cannot be checked: $DEP_DRIFT_DETAIL"
+      NOTES+=("$p: $DEP_DRIFT_DETAIL")
+      MISSING=1
+      DRIFT_ONLY_OK=0
+      ;;
+    drift)
+      red "$(basename "$p")" "install does NOT match the lockfile: $DEP_DRIFT_DETAIL"
+      NOTES+=("$p is installed but out of sync with its lockfile ($DEP_DRIFT_DETAIL). Run: npm ci --prefix $p")
+      MISSING=1
+      # Drift-only left as-is: installing IS the fix, which is exactly the
+      # distinction bootstrap.sh needs (see DRIFT_ONLY_OK above).
+      ;;
+  esac
 fi
 
-# mytribe/web, auntieos-admin, and packages/geo ARE npm workspace members
-# (PR25a): one lockfile and one node_modules at the repo root cover all
-# three, and it's how both apps reach @tribetails/geo. Checked as ONE
-# workspace, not per-app: `npm ci` at the root installs (or fails) for all
-# three together.
-if [ -f package-lock.json ]; then
-  grn "workspace" "root package-lock.json present (mytribe/web, auntieos-admin, packages/geo)"
+# mytribe/web, auntieos-admin, packages/geo, packages/issue-recorder, and any
+# OTHER npm workspace member ARE real npm workspaces (PR25a): one lockfile
+# and one node_modules at the repo root cover all of them, and it's how they
+# reach @tribetails/geo. Checked as ONE workspace, not per-member: `npm ci`
+# at the root installs (or fails) for all of them together. The member list
+# itself is not named here at all: workspace_pkg_drift reads it from the root
+# package.json's own "workspaces" field, so a member added later is checked
+# without this file changing.
+if workspace_pkg_drift "$ROOT"; then
+  case "$DEP_DRIFT_STATE" in
+    ok)
+      ylw "workspace" "not installed yet. 'npm run setup' will do it."
+      NOTES+=("Root node_modules is missing. Run 'npm run setup' (or 'npm ci' at the repo root).")
+      ;;
+    no-node)
+      ylw "workspace" "installed, but node is missing so it cannot be verified"
+      ;;
+    clean)
+      grn "workspace" "lockfile present, install matches it"
+      ;;
+  esac
 else
-  red "workspace" "NO root package-lock.json. 'npm ci' cannot run for mytribe/web, auntieos-admin, or packages/geo"
-  NOTES+=("Root package-lock.json is missing. Run 'npm install' at the repo root.")
-  MISSING=1
+  case "$DEP_DRIFT_STATE" in
+    no-lock)
+      red "workspace" "NO root package-lock.json. 'npm ci' cannot run for any workspace member"
+      NOTES+=("Root package-lock.json is missing. Run 'npm install' at the repo root.")
+      MISSING=1
+      DRIFT_ONLY_OK=0
+      ;;
+    unreadable)
+      red "workspace" "cannot be checked: $DEP_DRIFT_DETAIL"
+      NOTES+=("workspace: $DEP_DRIFT_DETAIL")
+      MISSING=1
+      DRIFT_ONLY_OK=0
+      ;;
+    drift)
+      red "workspace" "install does NOT match the lockfile: $DEP_DRIFT_DETAIL"
+      NOTES+=("The workspace install is out of sync with root package-lock.json ($DEP_DRIFT_DETAIL). Run: npm ci")
+      MISSING=1
+      ;;
+  esac
 fi
 
-if [ ! -d node_modules ]; then
-  ylw "workspace" "not installed yet. 'npm run setup' will do it."
-  NOTES+=("Root node_modules is missing. Run 'npm run setup' (or 'npm ci' at the repo root).")
-elif ! command -v node >/dev/null 2>&1; then
-  ylw "workspace" "installed, but node is missing so it cannot be verified"
-else
-  # Same idea as the functions check above, run over the three workspace
-  # package.jsons against the ROOT lockfile. Node resolution is approximated,
-  # not modeled exactly: check each app's own node_modules first (npm nests
-  # a dep there only when a version conflict forces it), then fall back to
-  # the hoisted root node_modules.
-  DRIFT="$(node -e '
-    const fs = require("fs"), path = require("path");
-    const dirs = ["mytribe/web", "auntieos-admin", "packages/geo"];
-    let lock;
-    try { lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8")); }
-    catch { process.exit(0); }
-    const locked = lock.packages || {};
-    const bad = [];
-    for (const dir of dirs) {
-      let pj;
-      try { pj = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")); }
-      catch { continue; }
-      const want = { ...(pj.dependencies || {}), ...(pj.devDependencies || {}) };
-      for (const name of Object.keys(want)) {
-        // @tribetails/geo itself is a workspace symlink to packages/geo, not
-        // a versioned install; it has no lockfile "version" to drift against.
-        if (name === "@tribetails/geo") continue;
-        let found = path.join(dir, "node_modules", name, "package.json");
-        if (!fs.existsSync(found)) found = path.join("node_modules", name, "package.json");
-        if (!fs.existsSync(found)) { bad.push(dir + "/" + name + " (absent)"); continue; }
-        const entry = locked[dir + "/node_modules/" + name] || locked["node_modules/" + name];
-        if (!entry || !entry.version) continue;
-        let got;
-        try { got = JSON.parse(fs.readFileSync(found, "utf8")).version; } catch { continue; }
-        if (got !== entry.version) bad.push(dir + "/" + name + " (" + got + ", lockfile says " + entry.version + ")");
-      }
-    }
-    if (bad.length) console.log(bad.slice(0, 4).join(", ") + (bad.length > 4 ? ", +" + (bad.length - 4) + " more" : ""));
-  ' 2>/dev/null)"
-  if [ -z "$DRIFT" ]; then
-    grn "workspace" "lockfile present, install matches it"
+# auntieos-admin/web/functions: the SAME standalone shape as mytribe/functions
+# (own package.json, own lockfile, own node_modules), for the "default"
+# Firebase Functions codebase declared in auntieos-admin/web/firebase.json.
+# Checked only when the directory exists, the same guard the Python codebase
+# check above uses: a repo state (or a synthetic test repo) that never grew
+# this tree reports nothing about it, rather than inventing a requirement.
+#
+# TREATED THE SAME AS mytribe/functions (#841 follow-up), not as a warning:
+# `scripts/bootstrap.sh` installs this codebase too now, regardless of
+# RELEASE_INCLUDE_ADMIN_FUNCTIONS, so its drift is exactly as fixable by
+# `npm run setup` as mytribe/functions' is, and a preflight that only warned
+# about it never exited 2 -- so `npm run setup` never installed it, and the
+# real repo carried real drift here (@anthropic-ai/sdk, firebase-admin) that
+# nothing ever prompted anyone to fix. release.sh's own step 0a still only
+# REFUSES a release over this when RELEASE_INCLUDE_ADMIN_FUNCTIONS=1 is
+# actually going to deploy it; preflight has no such release-time flag to
+# read, and bootstrap installs it unconditionally, so preflight checks it
+# unconditionally too.
+AFN="auntieos-admin/web/functions"
+if [ -d "$AFN" ]; then
+  if standalone_pkg_drift "$AFN"; then
+    case "$DEP_DRIFT_STATE" in
+      ok)
+        ylw "adminfn" "not installed yet. 'npm run setup' will do it."
+        NOTES+=("$AFN has no node_modules. Run 'npm run setup' (or 'npm ci' in $AFN).")
+        ;;
+      no-node)
+        ylw "adminfn" "installed, but node is missing so it cannot be verified"
+        ;;
+      clean)
+        grn "adminfn" "lockfile present, install matches it"
+        ;;
+    esac
   else
-    red "workspace" "install does NOT match the lockfile: $DRIFT"
-    NOTES+=("The workspace install is out of sync with root package-lock.json ($DRIFT). Run: npm ci")
-    MISSING=1
+    case "$DEP_DRIFT_STATE" in
+      no-lock)
+        red "adminfn" "NO package-lock.json. 'npm ci' cannot run in $AFN"
+        NOTES+=("$AFN has no package-lock.json. Use 'npm install' there, or restore the lockfile.")
+        MISSING=1
+        DRIFT_ONLY_OK=0
+        ;;
+      unreadable)
+        red "adminfn" "cannot be checked: $DEP_DRIFT_DETAIL"
+        NOTES+=("$AFN: $DEP_DRIFT_DETAIL")
+        MISSING=1
+        DRIFT_ONLY_OK=0
+        ;;
+      drift)
+        red "adminfn" "install does NOT match the lockfile: $DEP_DRIFT_DETAIL"
+        NOTES+=("$AFN is installed but out of sync with its lockfile ($DEP_DRIFT_DETAIL). Run: npm ci --prefix $AFN")
+        MISSING=1
+        ;;
+    esac
   fi
 fi
 
@@ -393,6 +440,17 @@ fi
 
 printf '\n'
 if [ "$MISSING" -eq 1 ]; then
+  # Exit code carries a distinction bootstrap.sh needs and cannot get from a
+  # bare pass/fail: 2 means the ONLY thing wrong is dependency drift, which
+  # `npm ci` fixes outright, so refusing to even START the install would be
+  # refusing the fix for the exact thing that failed. 1 means something else
+  # is wrong (a missing tool, a missing lockfile, an old JDK) that installing
+  # dependencies does nothing for. See scripts/bootstrap.sh step 0.
+  if [ "$DRIFT_ONLY_OK" -eq 1 ]; then
+    printf '\033[31mPreflight FAILED, but only on dependency drift: installing IS the fix.\033[0m\n'
+    printf '\033[31mRun: npm run setup (it installs past a drift-only failure and re-checks)\033[0m\n'
+    exit 2
+  fi
   printf '\033[31mPreflight FAILED. Install the REQUIRED items above, then re-run.\033[0m\n'
   exit 1
 fi
