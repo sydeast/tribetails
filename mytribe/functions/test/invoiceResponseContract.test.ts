@@ -445,8 +445,16 @@ const CASES: Array<{
   {
     name: 'sendInvoiceReminder',
     schema: SendInvoiceReminderResult,
-    accepts: [['the reminded id', { ok: true, invoiceId: 'inv1' }]],
-    refuses: [['an empty invoiceId', { ok: true, invoiceId: '' }]],
+    accepts: [
+      ['a reminder sent now', { ok: true, invoiceId: 'inv1', sent: true, lastReminderAtMs: 1000, nextReminderAllowedAtMs: 86_401_000 }],
+      // #832: refused as a duplicate is still a successful answer, not an error.
+      ['a reminder already sent', { ok: true, invoiceId: 'inv1', sent: false, lastReminderAtMs: 500, nextReminderAllowedAtMs: 86_400_500 }],
+    ],
+    refuses: [
+      ['an empty invoiceId', { ok: true, invoiceId: '', sent: true, lastReminderAtMs: 1000, nextReminderAllowedAtMs: 86_401_000 }],
+      // The pre-#832 bare echo: a client could not tell a send from a refusal.
+      ['no word on whether it sent', { ok: true, invoiceId: 'inv1' }],
+    ],
   },
   {
     name: 'generateReceipt',
