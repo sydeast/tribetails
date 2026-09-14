@@ -22,7 +22,7 @@ vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockResolvedValue('audit-1') }));
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveUid }));
-vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: mocks.enqueue }));
+vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotificationDetailed: mocks.enqueue }));
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<any>('firebase-admin/firestore');
   return {
@@ -42,7 +42,7 @@ import { writeAuditEntry } from '../src/lib/writeAuditEntry';
 beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.resolveUid.mockReset().mockResolvedValue('kin-uid-1');
-  mocks.enqueue.mockReset().mockResolvedValue(['n1']);
+  mocks.enqueue.mockReset().mockResolvedValue({ written: ['n1'], suppressed: [] });
   (writeAuditEntry as any).mockClear();
 });
 
@@ -141,8 +141,49 @@ describe('resendQuote happy path', () => {
         targetType: 'invoice',
         targetId: 'q1',
         data: expect.objectContaining({ kinfolkId: 'fam1', invoiceId: 'q1', isQuote: true, resent: true }),
+        // #832: its own identity, distinct from createQuote's invoice:q1.
+        dedupeKey: 'quote:q1:resend:1',
       }),
     );
+  });
+
+  it('#832: the resend ordinal follows the stored count, so the next real resend is a new identity', async () => {
+    const ctx = ctxFor(declinedQuote({ quoteResendCount: 2 }));
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await resendQuoteHandler(req({ invoiceId: 'q1' }));
+
+    expect(mocks.enqueue).toHaveBeenCalledWith(expect.objectContaining({ dedupeKey: 'quote:q1:resend:3' }));
+  });
+
+  it('#832: FAILS LOUD, and leaves the quote declined, when the dispatcher refuses a duplicate', async () => {
+    const ctx = ctxFor(declinedQuote());
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.enqueue.mockResolvedValue({
+      written: [],
+      suppressed: [{ recipientUid: 'kin-uid-1', reason: 'duplicate', existingId: 'n0', lastAtMs: 1 }],
+    });
+
+    const err = await resendQuoteHandler(req({ invoiceId: 'q1' })).catch((e) => e);
+
+    expect(err.code).toBe('failed-precondition');
+    expect(err.details).toMatchObject({ code: 'quote_resend_duplicate' });
+    expect(quoteWrite(ctx)).toBeUndefined();
+  });
+
+  it('#832: FAILS LOUD when the household copy was suppressed by prefs, even though the office copy went', async () => {
+    const ctx = ctxFor(declinedQuote());
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.enqueue.mockResolvedValue({
+      written: ['admin-copy'],
+      suppressed: [{ recipientUid: 'kin-uid-1', reason: 'prefs' }],
+    });
+
+    const err = await resendQuoteHandler(req({ invoiceId: 'q1' })).catch((e) => e);
+
+    expect(err.code).toBe('failed-precondition');
+    expect(err.details).toMatchObject({ code: 'quote_resend_suppressed' });
+    expect(quoteWrite(ctx)).toBeUndefined();
   });
 
   it('writes a BILLING_QUOTE_RESENT audit entry, the only lasting record of the decline', async () => {

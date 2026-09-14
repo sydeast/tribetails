@@ -8,7 +8,7 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
-import { enqueueNotification } from '../notifications/dispatcher';
+import { enqueueNotificationDetailed } from '../notifications/dispatcher';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { validateResponse } from '../lib/callableResponse';
@@ -204,7 +204,18 @@ export async function resendQuoteHandler(
   // quote without telling the household would look like it worked and reach
   // nobody, and a retry after a swallowed failure would refuse as
   // "not declined" because the first attempt had already cleared the decision.
-  await enqueueNotification({
+  //
+  // #832: THIS RESEND HAS ITS OWN IDENTITY. `createQuote` sends the same key
+  // for the same invoice, so without a `dedupeKey` a resend inside the
+  // dispatcher's window of the original issue (or of an earlier resend) was
+  // refused as a duplicate and the dispatcher returned nothing, silently. The
+  // key is the resend's ordinal: a retry of THIS resend (the transaction below
+  // never committed, so the count did not move) carries the same number and is
+  // deduped, while the next real resend, after the household declines again,
+  // carries the next one and sends.
+  const resendNumber =
+    (typeof data['quoteResendCount'] === 'number' ? (data['quoteResendCount'] as number) : 0) + 1;
+  const dispatched = await enqueueNotificationDetailed({
     // There is no quote.issued key; `invoice.new` is the catalog's
     // "New invoice/quote issued." row, and it is what createQuote sends when it
     // issues one in the first place.
@@ -214,7 +225,35 @@ export async function resendQuoteHandler(
     actorUid: uid,
     targetType: 'invoice',
     targetId: args.invoiceId,
+    dedupeKey: `quote:${args.invoiceId}:resend:${resendNumber}`,
   });
+
+  // STILL FAIL LOUD when the dispatcher answered without sending: the header's
+  // reasoning applies to "nothing was enqueued" exactly as to "it threw".
+  const householdMiss =
+    recipientUid !== null ? dispatched.suppressed.find((s) => s.recipientUid === recipientUid) : undefined;
+  if (dispatched.written.length === 0 || householdMiss) {
+    const reason = householdMiss?.reason ?? dispatched.suppressed[0]?.reason ?? null;
+    if (reason === 'duplicate') {
+      throw new HttpsError(
+        'failed-precondition',
+        'This quote was just sent again, so it was not sent a second time. Refresh to see where it stands.',
+        { code: 'quote_resend_duplicate' },
+      );
+    }
+    if (reason === 'prefs') {
+      throw new HttpsError(
+        'failed-precondition',
+        "The household's notification settings block new quote messages, so a resend would reach nobody. The quote is still declined.",
+        { code: 'quote_resend_suppressed' },
+      );
+    }
+    throw new HttpsError(
+      'failed-precondition',
+      'Nobody could be notified about this quote, so it was not sent again. The quote is still declined.',
+      { code: 'quote_resend_unreachable' },
+    );
+  }
 
   const status = await firestore.runTransaction(async (tx) => {
     const txSnap = await tx.get(ref);
