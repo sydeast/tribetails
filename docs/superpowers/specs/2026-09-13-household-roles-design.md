@@ -7,13 +7,15 @@ Issue #829. Operator rulings 2026-09-13. Status: draft, awaiting operator approv
 | Role | Portal access | Messages | Who |
 |---|---|---|---|
 | Primary kinfolk | Yes | Yes | Household admin |
-| Secondary kinfolk | Only if the primary grants it | See open question 2 | Household member |
-| Emergency Contact | Never | Never | The person admin calls when neither kinfolk answers |
+| Secondary kinfolk | Only if the primary grants it | Whatever the primary sets when editing their access | Household member |
+| Emergency Contact | Never | Never | Required. Someone outside the household, called when neither kinfolk answers |
 
 - "Secondary contact" (PR #817 admin, PR #828 portal) is removed. A secondary kinfolk covers it.
 - A secondary kinfolk can be added **without** an invite. The primary grants portal access later, or never.
 - Up to **two** Emergency Contacts per household, in call order.
 - Emergency Contacts are edited by admin, the primary, and a secondary kinfolk who has portal access **and** has been given permission by the primary to edit household details.
+- Ruling 2026-09-13 (second round): **an Emergency Contact is required**, and **cannot be a household member**. "Emergency contacts usually travel together" with the household, so the person called must be someone else.
+- Ruling 2026-09-13 (second round): **a secondary kinfolk's communications are set by the primary** when editing that secondary's access.
 
 ## What prod holds today (read-only counts, 2026-09-13)
 
@@ -50,6 +52,13 @@ Name and phone are required. Relationship is optional and clearable, per "persis
 
 **One write path.** A new callable `saveEmergencyContacts({ kinfolkId, contacts })` in `mytribe/functions`, used by all five clients. It validates with a strict schema (max 2, name and phone required, no unknown keys) and replaces the array whole, so reordering is one write. Gate: staff; or the household's PRIMARY; or an ACTIVE SECONDARY whose permissions include `household_edit` (section 3). A read callable `listEmergencyContacts` uses the same gate plus any ACTIVE member for reading.
 
+**Required.** A household must have at least one Emergency Contact.
+- `saveEmergencyContacts` refuses an empty list (`failed-precondition`, "A household needs at least one Emergency Contact").
+- Creating a household (admin Add Kinfolk on all three admin clients) requires one before the household saves.
+- The 5 of 13 prod households with none are not blocked from unrelated edits. Admin sees a "No Emergency Contact" flag on the household and in the directory. The primary sees a prompt on the portal Tribe screen until one is added.
+
+**Not a household member.** The callable refuses a contact whose phone matches the primary's or any secondary kinfolk's phone (compared after normalising with `libphonenumber-js`, already a functions dependency), or whose name matches a member's name exactly (case and spacing ignored). The message says why: "An Emergency Contact has to be someone outside the household." The clients show the same check before saving.
+
 **Never messaged.** Emergency Contacts are not recipients of anything. No broadcast, blast, reminder or notification audience reads `emergencyContacts`. A test on each audience builder asserts an Emergency Contact's phone never appears in the resolved recipients.
 
 **Migration of the 8 records.** A one-shot script moves each `kinfolk/{id}` flat triple into `emergencyContacts[0]`. `recordedAt` takes the kinfolk doc's existing `updatedAt` (the closest real date the old record has), never the migration date. Dry run first, printing a per-household diff. The operator runs the write. Old flat fields stay readable until the migration is verified, then stop being read and written.
@@ -67,6 +76,10 @@ Name and phone are required. Relationship is optional and clearable, per "persis
 - **Give portal access** mints the existing invite with `personId` attached. `acceptInvite` still creates `members/{uid}` exactly as today, and additionally sets the person record to `ACTIVE` with `memberUid`.
 - Removing access deletes the member doc and returns the person to `NONE`. Removing the person removes both.
 - The Members screen lists person records, showing access state on each row.
+
+**Communications are the primary's call.** When editing a secondary kinfolk's access, the primary also sets what that person receives (the existing `messaging_direct` and `messaging_group` flags, plus notifications), independent of whether they have portal access.
+- With portal access: delivery works as it does for members today.
+- Without portal access: the notification dispatcher addresses members by uid, and this person has none. Delivering to them means sending by SMS or email to the phone and email on the person record. That is new dispatcher work, scoped in PR 2, and those toggles stay hidden for a no-access secondary until it ships, per "feature flags ship functional".
 
 Uid-keyed members and every gate stay untouched. The alternative (member docs with optional uid and a new status) touches every member lookup in the backend and was rejected for that reason.
 
@@ -101,7 +114,7 @@ Two PRs, each a full vertical (callables, rules, all five clients, tests), neith
 1. **Emergency Contact**: storage, callables, `household_edit`, five clients, audience-builder tests, migration script (dry run in the PR, write run by the operator after release).
 2. **Secondary kinfolk**: person record, access grant, `acceptInvite` link, five clients, removal of secondary contact.
 
-## Open questions for the operator
+## Answered questions
 
-1. **"Emergency contacts priority"** is a free-text field on Household Data today. With call order built into the two slots, remove it, or keep it as a note?
-2. **Does a secondary kinfolk with no portal access get notifications** (texts, emails), or nothing until access is granted?
+1. **"Emergency contacts priority"** (free-text on Household Data) stays as a note. Operator answer: "Emergency Contact still needs to remain". Read as keep; the two ordered slots still carry who is called first.
+2. **Secondary kinfolk communications** are set by the primary when editing access (section 2).
