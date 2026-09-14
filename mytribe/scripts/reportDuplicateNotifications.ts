@@ -51,8 +51,11 @@
  * Needs GOOGLE_APPLICATION_CREDENTIALS (or gcloud application-default login)
  * with read access, or FIRESTORE_EMULATOR_HOST for a local run.
  */
-import { getApps, initializeApp } from 'firebase-admin/app';
-import { getFirestore, type Firestore, type QueryDocumentSnapshot } from 'firebase-admin/firestore';
+// The single firebase-admin import point (#846): it resolves firebase-admin from
+// mytribe/functions and runs the stray-copy guard before the first Firestore
+// read. This script only reads, but it reads prod, and a stray copy is the same
+// hazard for a report as for a write.
+import { getApps, initializeApp, getFirestore, type Firestore, type QueryDocumentSnapshot } from './lib/firebaseAdmin';
 import {
   NOTIFICATION_DEDUPE_WINDOW_MS,
   dedupeIdentityOf,
