@@ -116,4 +116,56 @@ describe('rules: /kinfolk/{kinfolkId}', () => {
       asKinfolk(env, 'kin-1').firestore().doc('kinfolk/kin-1').update({ internalNotes: 'lovely people' }),
     );
   });
+
+  // #829 review: the staff branches used to allow ANY kinfolk write, so an admin
+  // client could put an array of five contacts, or a household member's own
+  // number, straight onto the document and skip every check the callable makes.
+  describe('no client writes an Emergency Contact key, staff included (#829)', () => {
+    const ARRAY = { emergencyContacts: [{ name: 'Rae Mercer', phone: '+18055550199', relationship: null }] };
+
+    it('an Auntie cannot update the emergencyContacts array', async () => {
+      const env = await getEnv();
+      await seedKinfolk('kin-1');
+      await assertFails(asAuntie(env).firestore().doc('kinfolk/kin-1').update(ARRAY));
+    });
+
+    it('an Auntie cannot update any flat Emergency Contact key', async () => {
+      const env = await getEnv();
+      await seedKinfolk('kin-1');
+      await assertFails(asAuntie(env).firestore().doc('kinfolk/kin-1').update({ emergencyContactPhone: '805-555-0198' }));
+      await assertFails(asAuntie(env).firestore().doc('kinfolk/kin-1').update({ emergencyContactRelation: 'Sister' }));
+    });
+
+    it('an Auntie cannot create a household carrying any Emergency Contact key', async () => {
+      const env = await getEnv();
+      await assertFails(asAuntie(env).firestore().doc('kinfolk/kin-new').set({ firstName: 'Lee', ...ARRAY }));
+      await assertFails(asAuntie(env).firestore().doc('kinfolk/kin-new').set({ firstName: 'Lee', emergencyContactName: '' }));
+      await assertFails(asAuntie(env).firestore().collection('kinfolk').add({ firstName: 'Lee', emergencyContactPhone: '805-555-0198' }));
+    });
+
+    it('an Auntie still creates, updates and deletes a household without those keys', async () => {
+      const env = await getEnv();
+      await seedKinfolk('kin-1');
+      await assertSucceeds(asAuntie(env).firestore().doc('kinfolk/kin-new').set({ firstName: 'Lee', lastName: 'Park' }));
+      // The seed carries flat keys already; an update that leaves them alone is fine.
+      await assertSucceeds(asAuntie(env).firestore().doc('kinfolk/kin-1').update({ firstName: 'Dana M.' }));
+      await assertSucceeds(asAuntie(env).firestore().doc('kinfolk/kin-new').delete());
+    });
+
+    it('a test admin cannot write an Emergency Contact key on its own household, and can write anything else', async () => {
+      const env = await getEnv();
+      await seedKinfolk('kin-test');
+      const asTestAdmin = env.authenticatedContext('test-admin-uid', { testTribeId: 'kin-test' });
+      await assertFails(asTestAdmin.firestore().doc('kinfolk/kin-test').update(ARRAY));
+      await assertFails(asTestAdmin.firestore().doc('kinfolk/kin-test').update({ emergencyContactName: 'Sam Ortiz' }));
+      await assertSucceeds(asTestAdmin.firestore().doc('kinfolk/kin-test').update({ firstName: 'Dana M.' }));
+    });
+
+    it('a test admin cannot create its household with an Emergency Contact key', async () => {
+      const env = await getEnv();
+      const asTestAdmin = env.authenticatedContext('test-admin-uid', { testTribeId: 'kin-test' });
+      await assertFails(asTestAdmin.firestore().doc('kinfolk/kin-test').set({ firstName: 'Lee', ...ARRAY }));
+      await assertSucceeds(asTestAdmin.firestore().doc('kinfolk/kin-test').set({ firstName: 'Lee' }));
+    });
+  });
 });

@@ -291,6 +291,10 @@ service cloud.firestore {
  // ── AuntieOS flat collections ─────────────────────────────────────────────
  // Kinfolk profile - the AuntieOS canonical household record. A kinfolk writes a
  // short allowlist of their own contact fields; a kinfolk does NOT read the doc.
+    function emergencyContactKeys() {
+      return ['emergencyContacts', 'emergencyContactName', 'emergencyContactPhone', 'emergencyContactRelation'];
+    }
+
     function onlyAllowedKinfolkFields() {
       // #829: the three flat emergencyContact* keys left this list. Emergency
       // Contacts are written only by the saveEmergencyContacts callable.
@@ -326,10 +330,21 @@ service cloud.firestore {
     match /kinfolk/{kinfolkId} {
       allow read: if isAuntie()
                   || (isTestAdmin() && kinfolkId == testScope());
-      allow write: if isAuntie()
-                   || (isKinfolk() && kinfolkId == request.auth.token.kinfolkId
-                       && onlyAllowedKinfolkFields())
-                   || (isTestAdmin() && kinfolkId == testScope());
+      // #829: no client writes an Emergency Contact key, staff included. The
+      // saveEmergencyContacts callable (Admin SDK, rules bypassed) is the only
+      // writer, so its limits (at most two, not a household member, a valid
+      // phone) cannot be skipped by a direct write. `diff()` needs an existing
+      // document, so create checks the incoming keys instead. The kinfolk
+      // branch stays update-only: on a create or delete its diff() has no
+      // resource to compare and it never allowed either.
+      allow create: if (isAuntie() || (isTestAdmin() && kinfolkId == testScope()))
+                    && !request.resource.data.keys().hasAny(emergencyContactKeys());
+      allow update: if ((isAuntie() || (isTestAdmin() && kinfolkId == testScope()))
+                        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(emergencyContactKeys()))
+                    || (isKinfolk() && kinfolkId == request.auth.token.kinfolkId
+                        && onlyAllowedKinfolkFields());
+      allow delete: if isAuntie()
+                    || (isTestAdmin() && kinfolkId == testScope());
     }
 
     match /kin/{docId} {
