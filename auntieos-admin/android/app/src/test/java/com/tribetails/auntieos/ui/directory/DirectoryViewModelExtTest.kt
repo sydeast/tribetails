@@ -98,7 +98,7 @@ class DirectoryViewModelExtTest {
         advanceUntilIdle()
 
         coEvery { mockRepo.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
-        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125559090"))
+        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         vm.updateFirstName("New")
         vm.updatePhoneNumber("555-9999")
         vm.saveKinfolk()
@@ -115,7 +115,7 @@ class DirectoryViewModelExtTest {
         advanceUntilIdle()
 
         coEvery { mockRepo.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
-        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125559090"))
+        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         vm.updateFirstName("New")
         vm.updatePhoneNumber("555-9999")
         vm.saveKinfolk()

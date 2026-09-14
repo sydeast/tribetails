@@ -122,7 +122,7 @@ class DirectoryViewModelArchiveTest {
     fun `saveKinfolk defaults blank status to prospect`() = runTest(testDispatcher) {
         coEvery { repository.createKinfolkComplete(any()) } returns Result.success(Kinfolk(id = "new-id"))
         coEvery { repository.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
-        viewModel.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125559090"))
+        viewModel.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         viewModel.updateFirstName("Pat")
 
         viewModel.saveKinfolk()
@@ -137,7 +137,7 @@ class DirectoryViewModelArchiveTest {
     fun `saveKinfolk respects explicit status`() = runTest(testDispatcher) {
         coEvery { repository.createKinfolkComplete(any()) } returns Result.success(Kinfolk(id = "new-id"))
         coEvery { repository.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
-        viewModel.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125559090"))
+        viewModel.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         viewModel.updateFirstName("Pat")
         viewModel.updateAddStatus("active")
 

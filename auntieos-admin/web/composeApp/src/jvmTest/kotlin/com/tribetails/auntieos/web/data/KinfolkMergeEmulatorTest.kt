@@ -45,7 +45,7 @@ class KinfolkMergeEmulatorTest {
             {"firstName":"Ada","lastName":"Moss","status":"active",
              "formValues":{"pet.name":"Rex","a":"1","keep":"k"},
              "portalOnly":"untouched",
-             "emergencyContacts":[{"name":"Rae Halbrook","phone":"+15125559090","relationship":null}]}
+             "emergencyContacts":[{"name":"Rae Halbrook","phone":"+15125550190","relationship":null}]}
             """.trimIndent(),
         )
     }

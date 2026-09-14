@@ -37,7 +37,7 @@ import { sendSmsChannel } from '../src/notifications/senders/smsChannel';
 /** Phones that belong to Emergency Contacts, in both the new and the legacy store. */
 const EC_PHONE = '+18055550199';
 const EC_FLAT_PHONE = '+18055550198';
-const PRIMARY_PHONE = '+14155552671';
+const PRIMARY_PHONE = '+14155550142';
 
 const KINFOLK_WITH_EC = {
   status: 'active',

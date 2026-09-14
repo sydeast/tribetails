@@ -291,7 +291,7 @@ describe('Emergency Contacts panel (#829)', () => {
         firstName: 'Jamie',
         lastName: 'Halbrook',
         emergencyContacts: [
-          { name: 'Rae Halbrook', phone: '+15125559090', relationship: 'Sister' },
+          { name: 'Rae Halbrook', phone: '+15125550190', relationship: 'Sister' },
           { name: 'Lee Park', phone: '+15125550177', relationship: null },
         ],
       }),

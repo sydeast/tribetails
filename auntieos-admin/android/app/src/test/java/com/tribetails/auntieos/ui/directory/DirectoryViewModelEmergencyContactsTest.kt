@@ -67,9 +67,9 @@ class DirectoryViewModelEmergencyContactsTest {
         coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(firstArg<Kinfolk>().copy(id = "kf-new")) }
         coEvery { repo.saveEmergencyContacts("kf-new", any()) } returns Result.success(emptyList())
         vm.updateFirstName("Jamie")
-        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125559090"))
+        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         vm.saveKinfolk()
-        coVerify { repo.saveEmergencyContacts("kf-new", listOf(EmergencyContactDraft("Rae Halbrook", "5125559090"))) }
+        coVerify { repo.saveEmergencyContacts("kf-new", listOf(EmergencyContactDraft("Rae Halbrook", "5125550190"))) }
         assertTrue(vm.addKinfolkState.value.isSuccess)
     }
 
@@ -78,7 +78,7 @@ class DirectoryViewModelEmergencyContactsTest {
         coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(firstArg<Kinfolk>().copy(id = "kf-new")) }
         coEvery { repo.saveEmergencyContacts("kf-new", any()) } returnsMany listOf(Result.failure(Exception("offline")), Result.success(emptyList()))
         vm.updateFirstName("Jamie")
-        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125559090"))
+        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         vm.saveKinfolk()
         assertEquals("kf-new", vm.addKinfolkState.value.createdKinfolkId)
         // #829 review item 4: the server's message first, no call-name prefix.
@@ -168,7 +168,7 @@ class DirectoryViewModelEmergencyContactsTest {
         coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(firstArg<Kinfolk>().copy(id = "kf-new")) }
         coEvery { repo.saveEmergencyContacts("kf-new", any()) } returns Result.failure(Exception("offline"))
         vm.updateFirstName("Jamie")
-        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125559090"))
+        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         vm.saveKinfolk()
         assertEquals("kf-new", vm.addKinfolkState.value.createdKinfolkId)
 
@@ -195,8 +195,8 @@ class DirectoryViewModelEmergencyContactsTest {
         coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(firstArg<Kinfolk>().copy(id = "kf-new")) }
         coEvery { repo.saveEmergencyContacts("kf-new", any()) } returnsMany listOf(Result.failure(Exception("offline")), Result.success(emptyList()))
         vm.updateFirstName("Jamie")
-        vm.updatePhoneNumber("5125551234")
-        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125559090"))
+        vm.updatePhoneNumber("5125550134")
+        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         vm.saveKinfolk()
         assertEquals("kf-new", vm.addKinfolkState.value.createdKinfolkId)
 
@@ -209,18 +209,18 @@ class DirectoryViewModelEmergencyContactsTest {
         val locked = vm.addKinfolkState.value
         assertEquals("Jamie", locked.firstName)
         assertEquals("", locked.lastName)
-        assertEquals("5125551234", locked.phoneNumber)
+        assertEquals("5125550134", locked.phoneNumber)
         assertEquals("", locked.serviceAddress)
         assertEquals("prospect", locked.status)
 
         vm.saveKinfolk()
-        coVerify { repo.saveEmergencyContacts("kf-new", listOf(EmergencyContactDraft("Rae Halbrook", "5125559090"))) }
+        coVerify { repo.saveEmergencyContacts("kf-new", listOf(EmergencyContactDraft("Rae Halbrook", "5125550190"))) }
         assertTrue(vm.addKinfolkState.value.isSuccess)
     }
 
     @Test
     fun `edit with no other change still saves a changed contact list, and never puts it in the diff`() {
-        val stored = Kinfolk(id = "kf1", firstName = "Jamie", phoneNumber = "5125551234", emergencyContactName = "Rae", emergencyContactPhone = "5125559090")
+        val stored = Kinfolk(id = "kf1", firstName = "Jamie", phoneNumber = "5125550134", emergencyContactName = "Rae", emergencyContactPhone = "5125550190")
         coEvery { repo.getKinfolk() } returns Result.success(listOf(stored))
         coEvery { repo.saveEmergencyContacts("kf1", any()) } returns Result.success(emptyList())
         vm.loadKinfolkForEdit("kf1")
@@ -228,12 +228,12 @@ class DirectoryViewModelEmergencyContactsTest {
         vm.updateEditEmergencyContact(1, EmergencyContactDraft("Lee Park", "5125550177"))
         vm.saveKinfolkChanges()
         coVerify(exactly = 0) { repo.updateKinfolkFields(any(), any()) }
-        coVerify { repo.saveEmergencyContacts("kf1", listOf(EmergencyContactDraft("Rae", "5125559090"), EmergencyContactDraft("Lee Park", "5125550177"))) }
+        coVerify { repo.saveEmergencyContacts("kf1", listOf(EmergencyContactDraft("Rae", "5125550190"), EmergencyContactDraft("Lee Park", "5125550177"))) }
     }
 
     @Test
     fun `a household with none saves unrelated edits without being asked for one`() {
-        val stored = Kinfolk(id = "kf1", firstName = "Jamie", phoneNumber = "5125551234")
+        val stored = Kinfolk(id = "kf1", firstName = "Jamie", phoneNumber = "5125550134")
         coEvery { repo.getKinfolk() } returns Result.success(listOf(stored))
         coEvery { repo.updateKinfolkFields("kf1", any()) } returns Result.success(Unit)
         vm.loadKinfolkForEdit("kf1")

@@ -73,14 +73,14 @@ function household(over: Record<string, unknown> = {}): KinfolkProfile {
   return mergeKinfolkProfile('kf1', {
     firstName: 'Jamie',
     lastName: 'Halbrook',
-    phoneNumber: '(512) 555-1234',
+    phoneNumber: '(512) 555-0134',
     email: 'jamie@example.com',
     status: 'active',
     serviceAddress: '123 Bark Ave',
     gateCode: '4242',
     wifiPassword: 'sunflower-porch',
     emergencyContactName: 'Rae Halbrook',
-    emergencyContactPhone: '512-555-9090',
+    emergencyContactPhone: '512-555-0190',
     ...over,
   });
 }
@@ -142,7 +142,7 @@ describe('KinfolkEdit: rendering from data', () => {
     mount();
     expect(await screen.findByLabelText('First name')).toHaveValue('Jamie');
     expect(fieldByLabel('Last name')).toHaveValue('Halbrook');
-    expect(fieldByLabel('Primary phone')).toHaveValue('(512) 555-1234');
+    expect(fieldByLabel('Primary phone')).toHaveValue('(512) 555-0134');
     expect(fieldByLabel('Service address')).toHaveValue('123 Bark Ave');
     expect(await screen.findByLabelText('Name', { selector: '#kfedit-ec-0-name' })).toHaveValue('Rae Halbrook');
   });
@@ -552,7 +552,7 @@ describe('Emergency Contacts on the edit form (#829)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(saveEmergencyContacts).toHaveBeenCalledTimes(1));
     expect(saveEmergencyContacts).toHaveBeenCalledWith('kf1', [
-      { name: 'Rae Halbrook', phone: '512-555-9090', relationship: '' },
+      { name: 'Rae Halbrook', phone: '512-555-0190', relationship: '' },
       { name: 'Lee Park', phone: '5125550177', relationship: '' },
     ]);
     // Contacts only: the kinfolk document is not written at all (#829 review item 5).
@@ -565,7 +565,7 @@ describe('Emergency Contacts on the edit form (#829)', () => {
     render(<KinfolkEdit kinfolkId="kf1" kinfolkName="Jamie Halbrook" onDone={onDone} onCancel={vi.fn()} />);
     const phone = await screen.findByLabelText('Phone', { selector: '#kfedit-ec-0-phone' });
     await userEvent.clear(phone);
-    await userEvent.type(phone, '(512) 555-1234');
+    await userEvent.type(phone, '(512) 555-0134');
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     expect(await screen.findByTestId('kfedit-ec-error')).toHaveTextContent('An Emergency Contact has to be someone outside the household.');
     // Nothing else changed, so there is no household write either.

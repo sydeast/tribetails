@@ -65,7 +65,7 @@ class AuntieRepositoryCreateKinfolkTest {
         val input = Kinfolk(
             firstName = "Jamie",
             lastName = "Halbrook",
-            phoneNumber = "5125551234",
+            phoneNumber = "5125550134",
             serviceAddress = "1 Bark Ave",
             internalNotes = "Referred by a neighbor",
         )
@@ -83,7 +83,7 @@ class AuntieRepositoryCreateKinfolkTest {
         assertFalse("the document id is never part of the document's own content", payload.containsKey("id"))
         assertEquals("Jamie", payload["firstName"])
         assertEquals("Halbrook", payload["lastName"])
-        assertEquals("5125551234", payload["phoneNumber"])
+        assertEquals("5125550134", payload["phoneNumber"])
         assertEquals("1 Bark Ave", payload["serviceAddress"])
         assertEquals("Referred by a neighbor", payload["internalNotes"])
         assertEquals("active", payload["status"])
@@ -96,7 +96,7 @@ class AuntieRepositoryCreateKinfolkTest {
         every { collection.add(capture(addSlot)) } returns Tasks.forResult(docRef)
         every { docRef.id } returns "kf-quick"
 
-        val result = repo().createKinfolk("Pat", "Nguyen", "5125550000")
+        val result = repo().createKinfolk("Pat", "Nguyen", "5125550102")
 
         assertTrue(result.isSuccess)
         @Suppress("UNCHECKED_CAST")
@@ -106,6 +106,6 @@ class AuntieRepositoryCreateKinfolkTest {
         }
         assertEquals("Pat", payload["firstName"])
         assertEquals("Nguyen", payload["lastName"])
-        assertEquals("5125550000", payload["phoneNumber"])
+        assertEquals("5125550102", payload["phoneNumber"])
     }
 }

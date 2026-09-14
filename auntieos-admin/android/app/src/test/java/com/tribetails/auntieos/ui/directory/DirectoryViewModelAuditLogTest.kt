@@ -56,7 +56,7 @@ class DirectoryViewModelAuditLogTest {
         coEvery { repository.createKinfolkComplete(any()) } returns
             Result.success(Kinfolk(id = "new-id", firstName = "Pat", lastName = "S"))
         coEvery { repository.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
-        viewModel.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125559090"))
+        viewModel.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         viewModel.updateFirstName("Pat")
 
         viewModel.saveKinfolk()
@@ -119,7 +119,7 @@ class DirectoryViewModelAuditLogTest {
         coEvery { repository.createKinfolkComplete(any()) } returns
             Result.failure(RuntimeException("nope"))
         coEvery { repository.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
-        viewModel.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125559090"))
+        viewModel.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         viewModel.updateFirstName("Pat")
 
         viewModel.saveKinfolk()

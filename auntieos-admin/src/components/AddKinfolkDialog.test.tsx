@@ -31,7 +31,7 @@ import { EMERGENCY_CONTACT_REQUIRED } from '../api/emergencyContacts';
 async function fillHousehold() {
   await userEvent.type(screen.getByLabelText('First name'), 'Jamie');
   await userEvent.type(screen.getByLabelText('Last name'), 'Halbrook');
-  await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-phone' }), '(512) 555-1234');
+  await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-phone' }), '(512) 555-0134');
 }
 
 beforeEach(() => {
@@ -65,11 +65,11 @@ describe('AddKinfolkDialog', () => {
 
     await userEvent.type(screen.getByLabelText('First name'), '  Jamie  ');
     await userEvent.type(screen.getByLabelText('Last name'), '  Halbrook  ');
-    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-phone' }), '(512) 555-1234');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-phone' }), '(512) 555-0134');
     await userEvent.type(screen.getByLabelText('Email'), 'jamie@example.com');
     await userEvent.type(screen.getByLabelText('Address'), '123 Bark Ave');
     await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
-    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125559090');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
 
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
 
@@ -77,7 +77,7 @@ describe('AddKinfolkDialog', () => {
       expect(createKinfolk).toHaveBeenCalledWith({
         firstName: '  Jamie  ',
         lastName: '  Halbrook  ',
-        phoneNumber: '(512) 555-1234',
+        phoneNumber: '(512) 555-0134',
         email: 'jamie@example.com',
         status: 'active',
         serviceAddress: '123 Bark Ave',
@@ -98,7 +98,7 @@ describe('AddKinfolkDialog', () => {
     await userEvent.type(screen.getByLabelText('Last name'), 'Halbrook');
     await userEvent.type(screen.getByLabelText('Address'), '123 Bark');
     await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
-    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125559090');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
 
     await userEvent.click(await screen.findByRole('button', { name: /Bark House/ }));
     await waitFor(() => expect(screen.getByLabelText('Address')).toHaveValue('123 Bark Ave, Austin TX 78701'));
@@ -121,7 +121,7 @@ describe('AddKinfolkDialog', () => {
     await userEvent.type(screen.getByLabelText('Address'), '9 Unmapped Rd');
     expect(await screen.findByText(/address lookup failed: mapbox_502/i)).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
-    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125559090');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
 
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
     await waitFor(() =>
@@ -156,7 +156,7 @@ describe('AddKinfolkDialog', () => {
     await userEvent.type(screen.getByLabelText('First name'), 'Jamie');
     await userEvent.type(screen.getByLabelText('Last name'), 'Halbrook');
     await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
-    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125559090');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
 
     expect(screen.getByRole('button', { name: /adding/i })).toBeDisabled();
@@ -175,7 +175,7 @@ describe('AddKinfolkDialog', () => {
     await userEvent.type(screen.getByLabelText('First name'), 'Jamie');
     await userEvent.type(screen.getByLabelText('Last name'), 'Halbrook');
     await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
-    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125559090');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
 
     expect(await screen.findByText(/createKinfolk failed:.*permission-denied/i)).toBeInTheDocument();
@@ -239,10 +239,10 @@ describe('AddKinfolkDialog', () => {
     render(<AddKinfolkDialog onClose={vi.fn()} onCreated={onCreated} />);
     await fillHousehold();
     await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
-    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125559090');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith('new-kf-1'));
-    expect(saveEmergencyContacts).toHaveBeenCalledWith('new-kf-1', [{ name: 'Rae Halbrook', phone: '5125559090', relationship: '' }]);
+    expect(saveEmergencyContacts).toHaveBeenCalledWith('new-kf-1', [{ name: 'Rae Halbrook', phone: '5125550190', relationship: '' }]);
   });
 
   it('when the contact save fails, says so and retries only the contact, never a second household', async () => {
@@ -252,7 +252,7 @@ describe('AddKinfolkDialog', () => {
     render(<AddKinfolkDialog onClose={vi.fn()} onCreated={onCreated} />);
     await fillHousehold();
     await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
-    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125559090');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
     expect(await screen.findByText(/^network The household was created/)).toBeInTheDocument();
     expect(screen.queryByText(/saveEmergencyContacts failed/)).toBeNull();
@@ -269,7 +269,7 @@ describe('AddKinfolkDialog', () => {
     render(<AddKinfolkDialog onClose={vi.fn()} onCreated={onCreated} />);
     await fillHousehold();
     await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
-    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125559090');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
     expect(await screen.findByText(/^network The household was created/)).toBeInTheDocument();
     expect(screen.queryByText(/saveEmergencyContacts failed/)).toBeNull();
