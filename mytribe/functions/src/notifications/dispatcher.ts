@@ -99,6 +99,9 @@ const EVENT_ID_FIELDS = [
   // `onFamilyKinWrite` targets the HOUSEHOLD and names the pet only here, so
   // two different pets marked inactive back to back would otherwise collapse.
   'kinId',
+  // `expireStaleInvites` targets the TRIBE and names the invite only here, so
+  // two invites for one tribe expiring in the same nightly run would collapse.
+  'inviteId',
 ] as const;
 
 /**

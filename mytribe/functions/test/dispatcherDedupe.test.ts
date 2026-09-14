@@ -166,6 +166,23 @@ describe('dispatcher dedupe on (key, target, recipient)', () => {
     expect(inbox(ctx.writes)).toHaveLength(2);
   });
 
+  it('two invites for one tribe expiring in the same run both notify; a retry of one does not', async () => {
+    // expireStaleInvites passes { kinfolkId: tribeId, inviteId } with no explicit
+    // target, so every invite in a tribe derives the same kinfolk target.
+    const ctx = buildDbMock({ writeThrough: true, docs: { 'businessSettings/admins': { uids: ['admin1'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const expired = (inviteId: string) => ({
+      key: 'invite.expired',
+      data: { kinfolkId: 'tribe1', inviteId, invitedEmail: 'x@example.com' },
+    });
+
+    await enqueueNotification(expired('i1'));
+    await enqueueNotification(expired('i2'));
+    await enqueueNotification(expired('i1'));
+
+    expect(inbox(ctx.writes)).toHaveLength(2);
+  });
+
   it('an explicit dedupeKey replaces the derived identity', async () => {
     const ctx = buildDbMock({ writeThrough: true });
     mocks.dbFn.mockReturnValue(ctx.db);
