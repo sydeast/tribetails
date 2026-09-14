@@ -686,7 +686,16 @@ const auditMock = vi.hoisted(() => ({ writeAuditEntry: vi.fn() }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: auditMock.writeAuditEntry }));
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: vi.fn().mockResolvedValue('recipient-uid') }));
 const notifyMock = vi.hoisted(() => ({ enqueueNotification: vi.fn() }));
-vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: notifyMock.enqueueNotification }));
+// #866: the webhook calls the detailed variant. It delegates to the same counted
+// mock, so every assertion below on `enqueueNotification` still counts the send.
+vi.mock('../src/notifications/dispatcher', () => ({
+  enqueueNotification: notifyMock.enqueueNotification,
+  enqueueNotificationDetailed: async (args: unknown) => ({
+    written: ((await notifyMock.enqueueNotification(args)) as string[] | undefined) ?? [],
+    suppressed: [],
+    unresolved: [],
+  }),
+}));
 const logMock = vi.hoisted(() => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: logMock.logEvent }));
 

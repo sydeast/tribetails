@@ -341,8 +341,23 @@ class InvoiceDetailViewModel(
             // Best-effort: the money has already landed server-side, so a failure
             // here costs this screen's list row, not the payment. Logged, never
             // swallowed.
-            invoiceRepository.createPayment(payment, idempotencyKey = displayKey)
+            // #866: `settlement.paymentId` is the row `markInvoicePaid` just wrote.
+            // The server claims that settlement, and tells the office "paid", only
+            // for this id, so no later payment linked to the invoice can claim it.
+            val ledgerRow = invoiceRepository.recordInvoicePayment(
+                payment,
+                idempotencyKey = displayKey,
+                settledByInvoicePaymentId = settlement.paymentId.ifBlank { null },
+            )
                 .onFailure { AuntieLog.e("Legacy payment row failed for invoice $invoiceId", it) }
+            // #866: this call is the household confirmation's only sender, so a
+            // confirmation she asked for and did not get is said in the toast.
+            val confirmationNote = recordPaymentConfirmationNote(
+                requested = payment.sendConfirmationEmail,
+                confirmationSent = ledgerRow.getOrNull()?.confirmationEmailSent,
+                householdNoPortalAccount = ledgerRow.getOrNull()?.householdNoPortalAccount == true,
+                officeNoticePending = ledgerRow.getOrNull()?.officeNoticePending == true,
+            )
 
             com.tribetails.auntieos.data.admin.AuditLog.fire(
                 scope            = viewModelScope,
@@ -364,7 +379,7 @@ class InvoiceDetailViewModel(
             _uiState.value = _uiState.value.copy(
                 recordingPayment = false,
                 showRecordPayment = false,
-                toastMessage = recordPaymentToast(settlement),
+                toastMessage = recordPaymentToast(settlement) + confirmationNote,
                 toastVisible = true,
                 toastIsError = false,
             )
@@ -963,6 +978,44 @@ internal fun recordPaymentToast(settlement: MarkInvoicePaidResult): String = whe
     "" ->
         "Payment recorded. The server did not report where the invoice now stands, so open it to check what is still owed."
     else -> "Payment recorded. The invoice is paid in full."
+}
+
+/**
+ * #866: what the operator is told about the household's confirmation, appended
+ * to [recordPaymentToast].
+ *
+ * The `recordPayment` step is the only sender of that confirmation for a payment
+ * recorded on this screen, so a confirmation she asked for and did not get has
+ * to be said out loud. [confirmationSent] is null when that step failed and
+ * never answered. Nothing is said when she did not ask, or when it went out.
+ *
+ * #866 fourth review: the server now says WHY, so the note no longer guesses.
+ * [householdNoPortalAccount] is the household having no account to send to;
+ * [officeNoticePending] is the office copy not going out because the admin
+ * roster could not be read, which has nothing to do with the household.
+ * Pure; unit-tested.
+ */
+internal fun recordPaymentConfirmationNote(
+    requested: Boolean,
+    confirmationSent: Boolean?,
+    householdNoPortalAccount: Boolean = false,
+    officeNoticePending: Boolean = false,
+): String {
+    val household = when {
+        !requested || confirmationSent == true -> ""
+        confirmationSent == null ->
+            " The confirmation email did not go out, because the payment ledger row did not save. Let the household know another way."
+        householdNoPortalAccount ->
+            " The confirmation email did not go out: the household has no portal account."
+        else ->
+            " The confirmation email did not go out. Let the household know another way."
+    }
+    val office = if (officeNoticePending) {
+        " The office copy of the payment notice did not go out, because the admin roster could not be read. The household copy is not affected."
+    } else {
+        ""
+    }
+    return household + office
 }
 /**
  * The audit line for one recorded payment. Says whether the invoice was settled

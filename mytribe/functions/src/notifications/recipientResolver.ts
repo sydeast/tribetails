@@ -1,4 +1,5 @@
 import { resolveBusinessAdminUids } from '../lib/businessAdmins';
+import { RecipientsUnavailableError } from './recipientErrors';
 import type { EnqueueArgs, NotificationDef, RecipientResolver } from './types';
 
 export interface ResolvedRecipient {
@@ -14,7 +15,10 @@ export interface ResolvedRecipient {
  * - 'businessAdmins'              → reads businessSettings/admins.uids, treated as staff.
  * - 'auntieAssignedToKincare'     → reads args.data.assignedAuntieUid, treated as staff.
  *
- * Throws on misuse, callers must pass the right resolver hints in `args.data`.
+ * A resolver with nobody BY DEFINITION (no uid given, no assigned Auntie, an empty
+ * roster) throws `RecipientsUnavailableError` (#866), which the dispatcher reads
+ * as "this resolver is empty". Any other throw, such as a failed roster read, is
+ * a real failure and the dispatcher rethrows it.
  */
 export async function resolveRecipients(
   def: NotificationDef,
@@ -26,7 +30,7 @@ export async function resolveRecipients(
     case 'kinfolkAcct':
     case 'specificUid': {
       if (!args.recipientUid) {
-        throw new Error(`recipientResolver(${def.key}): recipientUid required for ${resolver}`);
+        throw new RecipientsUnavailableError(`recipientResolver(${def.key}): recipientUid required for ${resolver}`);
       }
       return [{ uid: args.recipientUid, collection: 'clients' }];
     }
@@ -42,7 +46,7 @@ export async function resolveRecipients(
     case 'auntieAssignedToKincare': {
       const auntieUid = args.data['assignedAuntieUid'];
       if (typeof auntieUid !== 'string' || !auntieUid) {
-        throw new Error(
+        throw new RecipientsUnavailableError(
           `recipientResolver(${def.key}): args.data.assignedAuntieUid required for auntieAssignedToKincare`,
         );
       }

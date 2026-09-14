@@ -148,4 +148,24 @@ describe('resendQuote over the real dispatcher', () => {
     expect(ctx.writes.some((w) => w.path.startsWith('notifications/'))).toBe(false);
     expect((await ctx.db.collection('invoices').doc('q1').get()).data()?.quoteDecision).toBe('denied');
   });
+
+  // #866 fourth review: a failed office-roster read must not stop the resend.
+  // The household resolved, so it gets its copy and the quote reopens, as on
+  // main; only the office copy is missed, and that is logged by the dispatcher.
+  it('only the office roster read fails: the household still gets the resend and the quote reopens', async () => {
+    const ctx = buildDbMock({ writeThrough: true, docs: { 'invoices/q1': declined() } });
+    const readError = Object.assign(new Error('14 UNAVAILABLE: deadline exceeded'), { code: 14 });
+    mocks.dbFn.mockReturnValue({
+      ...ctx.db,
+      collection: (path: string) => {
+        const real = ctx.db.collection(path);
+        if (path !== 'businessSettings') return real;
+        return { ...real, doc: (id?: string) => (id === 'admins' ? { get: async () => { throw readError; } } : real.doc(id)) };
+      },
+    });
+
+    await expect(resendQuoteHandler(req())).resolves.toMatchObject({ ok: true });
+    expect(householdQuoteMessages(ctx.writes)).toHaveLength(1);
+    expect((await ctx.db.collection('invoices').doc('q1').get()).data()?.quoteDecision).not.toBe('denied');
+  });
 });

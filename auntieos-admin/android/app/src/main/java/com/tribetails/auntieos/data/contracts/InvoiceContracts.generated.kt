@@ -1270,6 +1270,8 @@ data class RecordPaymentArgs(
     val sendConfirmationEmail: Boolean = false,
     /** Optional: omitted from the payload when null. */
     val idempotencyKey: String? = null,
+    /** Optional: omitted from the payload when null. */
+    val settledByInvoicePaymentId: String? = null,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -1294,6 +1296,7 @@ data class RecordPaymentArgs(
         put("autoApply", autoApply)
         put("sendConfirmationEmail", sendConfirmationEmail)
         if (idempotencyKey != null) put("idempotencyKey", idempotencyKey)
+        if (settledByInvoicePaymentId != null) put("settledByInvoicePaymentId", settledByInvoicePaymentId)
     }
 }
 
@@ -1347,6 +1350,8 @@ data class RecordPaymentResult(
     val application: RecordPaymentResultApplication?,
     val creditedToAccountCents: Long,
     val confirmationEmailSent: Boolean,
+    val householdNoPortalAccount: Boolean,
+    val officeNoticePending: Boolean,
 )
 
 /**
@@ -1371,6 +1376,8 @@ internal fun decodeRecordPaymentResult(raw: Map<String, Any?>?): RecordPaymentRe
         application = contractRawMap(raw?.get("application"))?.let { nested -> decodeRecordPaymentResultApplication(nested) },
         creditedToAccountCents = (raw?.get("creditedToAccountCents") as? Number)?.toLong() ?: 0L,
         confirmationEmailSent = raw?.get("confirmationEmailSent") as? Boolean ?: false,
+        householdNoPortalAccount = raw?.get("householdNoPortalAccount") as? Boolean ?: false,
+        officeNoticePending = raw?.get("officeNoticePending") as? Boolean ?: false,
     )
 
 // ---------- redeemCredit ----------

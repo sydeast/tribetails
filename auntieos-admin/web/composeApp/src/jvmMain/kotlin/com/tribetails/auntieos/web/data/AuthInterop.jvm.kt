@@ -75,6 +75,38 @@ internal fun parseRefreshedToken(bodyText: String): RefreshedToken? = runCatchin
     )
 }.getOrNull()
 
+/**
+ * Map an Identity Toolkit error body to the `auth/...` code AuthClient.friendly understands.
+ * Internal (not private) so jvmTest can pin it, like [encodeSignInRequestBody].
+ *
+ * #886: `beforeSignIn`'s refusal of a locked account comes back as
+ * `BLOCKING_FUNCTION_ERROR_RESPONSE : ((... {"error":{"message":"This account is locked. ..."}}))`
+ * (verbatim from the Auth emulator). It is checked first and becomes
+ * [ACCOUNT_LOCKED_CODE]; left to the `else` branch it would have been painted
+ * as "Couldn't sign you in: BLOCKING_FUNCTION_ERROR_RESPONSE : ((HTTP request...".
+ */
+internal fun mapIdentityToolkitError(errBody: String): String {
+    val message = runCatching {
+        authRestJson.parseToJsonElement(errBody).jsonObject["error"]?.jsonObject
+            ?.get("message")?.jsonPrimitive?.content
+    }.getOrNull() ?: ""
+    return when {
+        message.startsWith("BLOCKING_FUNCTION_ERROR_RESPONSE") &&
+            message.contains("account is locked", ignoreCase = true) -> ACCOUNT_LOCKED_CODE
+        message.startsWith("EMAIL_NOT_FOUND") -> "auth/user-not-found"
+        message.startsWith("INVALID_PASSWORD") -> "auth/wrong-password"
+        message.startsWith("INVALID_LOGIN_CREDENTIALS") -> "auth/invalid-credential"
+        message.startsWith("INVALID_EMAIL") -> "auth/invalid-email"
+        message.startsWith("TOO_MANY_ATTEMPTS_TRY_LATER") -> "auth/too-many-requests"
+        message.startsWith("USER_DISABLED") -> "auth/user-disabled"
+        message.startsWith("EMAIL_EXISTS") -> "auth/email-already-in-use"
+        message.startsWith("WEAK_PASSWORD") -> "auth/weak-password"
+        message.startsWith("CREDENTIAL_TOO_OLD") || message.startsWith("TOKEN_EXPIRED") -> "auth/requires-recent-login"
+        message.isBlank() -> "auth/unknown"
+        else -> message
+    }
+}
+
 private object FirebaseRestAuth {
     private const val API_KEY = "AIzaSyBnR7D4gORVehTr_-WB42_NyFeNO7acDTo"
     private const val IDENTITY = "https://identitytoolkit.googleapis.com/v1/accounts"
@@ -221,25 +253,7 @@ private object FirebaseRestAuth {
     }.getOrNull()
 
     /** Map an Identity Toolkit error body to the `auth/...` code AuthClient.friendly understands. */
-    private fun mapError(errBody: String): String {
-        val message = runCatching {
-            json.parseToJsonElement(errBody).jsonObject["error"]?.jsonObject
-                ?.get("message")?.jsonPrimitive?.content
-        }.getOrNull() ?: ""
-        return when {
-            message.startsWith("EMAIL_NOT_FOUND") -> "auth/user-not-found"
-            message.startsWith("INVALID_PASSWORD") -> "auth/wrong-password"
-            message.startsWith("INVALID_LOGIN_CREDENTIALS") -> "auth/invalid-credential"
-            message.startsWith("INVALID_EMAIL") -> "auth/invalid-email"
-            message.startsWith("TOO_MANY_ATTEMPTS_TRY_LATER") -> "auth/too-many-requests"
-            message.startsWith("USER_DISABLED") -> "auth/user-disabled"
-            message.startsWith("EMAIL_EXISTS") -> "auth/email-already-in-use"
-            message.startsWith("WEAK_PASSWORD") -> "auth/weak-password"
-            message.startsWith("CREDENTIAL_TOO_OLD") || message.startsWith("TOKEN_EXPIRED") -> "auth/requires-recent-login"
-            message.isBlank() -> "auth/unknown"
-            else -> message
-        }
-    }
+    private fun mapError(errBody: String): String = mapIdentityToolkitError(errBody)
 
     @Serializable
     private data class UpdatePasswordRequest(val idToken: String, val password: String, val returnSecureToken: Boolean = true)
@@ -312,6 +326,17 @@ internal fun jvmFirebaseUid(): String? = FirebaseRestAuth.currentUid
 internal actual fun platformAuthStateStream(): Flow<AuthUser?> = FirebaseRestAuth.authState
 internal actual suspend fun platformSignIn(email: String, password: String): SignInResult =
     FirebaseRestAuth.signIn(email, password)
+
+/**
+ * #886: POSTs `{"data":{"email":...}}` to the `recordFailedLogin` callable. Straight to
+ * [JvmFirestoreRest.callable], not through the revocation-aware seam: there is no
+ * session to end, and no signed-in token rides along after a failed sign-in.
+ */
+internal actual suspend fun platformReportFailedLogin(email: String) {
+    val payload = "{\"email\":${kotlinx.serialization.json.JsonPrimitive(email)}}"
+    val result = JvmFirestoreRest.callable("recordFailedLogin", payload)
+    if (result is WriteResult.Err) throw IllegalStateException("recordFailedLogin failed: $result")
+}
 internal actual suspend fun platformSignOut() = FirebaseRestAuth.signOut()
 internal actual suspend fun platformSendPasswordReset(email: String): Boolean =
     FirebaseRestAuth.sendPasswordReset(email)

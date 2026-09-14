@@ -172,9 +172,10 @@ export async function generateReceipt(invoiceId: string): Promise<void> {
  * Throws `failed-precondition` when the invoice is already settled, when it is
  * marked paid with no recorded payments to reconcile against, when it is still a
  * draft or quote, or when it is cancelled or a credit. `not-found` if the id is
- * wrong. The `invoice.payment.applied` notification is dispatched by the
- * backend's `onInvoicesWrite` trigger off the resulting write, not by this
- * callable, and it does not fire for a partial because the invoice is not paid.
+ * wrong. This callable sends the household no `invoice.payment.applied`, and
+ * since #866 neither does the invoice trigger for a bill it settles: the
+ * confirmation belongs to the `recordPayment` call this panel makes next, and
+ * goes out only when Send Confirmation is ticked, for a full or partial payment.
  *
  * ── #825: THE RETRY, AND WHAT EARNS IT ────────────────────────────────────
  *

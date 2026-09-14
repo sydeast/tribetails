@@ -385,10 +385,18 @@ export async function resolveBusinessAdminUidsFrom(
       note: 'businessSettings/admins.uids is empty and AUNTIE_OPERATOR_UIDS is unset in this function',
     },
   });
-  throw new Error(
-    `${context}: businessSettings/admins.uids is empty, so this business notification has no recipient. `
-      + 'Seed the roster by calling the provisionBusinessAdmins callable as an operator, '
-      + 'or bind AUNTIE_OPERATOR_UIDS on this function to let it self-heal.',
+  // #866: nobody by definition, not a failed read, so the dispatcher treats this
+  // resolver as empty (code 'recipients-unavailable', see
+  // notifications/recipientErrors.ts). The code is set inline rather than by
+  // importing that module, so this lib keeps no dependency on the notifications
+  // tree.
+  throw Object.assign(
+    new Error(
+      `${context}: businessSettings/admins.uids is empty, so this business notification has no recipient. `
+        + 'Seed the roster by calling the provisionBusinessAdmins callable as an operator, '
+        + 'or bind AUNTIE_OPERATOR_UIDS on this function to let it self-heal.',
+    ),
+    { code: 'recipients-unavailable' },
   );
 }
 

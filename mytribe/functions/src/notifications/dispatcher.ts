@@ -2,11 +2,13 @@ import { createHash } from 'node:crypto';
 import { FieldValue, Timestamp, type DocumentReference, type Transaction } from 'firebase-admin/firestore';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
+import { captureFunctionError } from '../lib/sentry';
 import { resolveActor, type ResolvedActor } from '../lib/resolveActor';
 import { buildNotificationDetail } from './buildNotificationDetail';
 import { getNotificationDef } from './catalog';
 import { loadBusinessOverride, loadUserPrefs, resolveChannels, streamForRecipient } from './prefs';
 import { resolveRecipients } from './recipientResolver';
+import { NoRecipientsError, isRecipientsUnavailable } from './recipientErrors';
 import type {
   AudienceStream,
   Channel,
@@ -213,11 +215,24 @@ export interface Suppression {
   lastAtMs?: number;
 }
 
+/** #866: a resolver whose lookup FAILED (not one with nobody by definition). */
+export interface UnresolvedResolver {
+  resolver: string;
+  error: string;
+}
+
 export interface EnqueueOutcome {
   /** Doc ids written, one per recipient that was delivered to. */
   written: string[];
   /** Every recipient that was NOT delivered to, and why. */
   suppressed: Suppression[];
+  /**
+   * #866: resolvers whose lookup failed while another resolver still found
+   * recipients. Those recipients were delivered to; this audience was not, and a
+   * caller that owns a retry (the Stripe webhook, `recordPayment`) retries it.
+   * Empty when every resolver answered.
+   */
+  unresolved: UnresolvedResolver[];
 }
 
 /**
@@ -304,20 +319,36 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
         message: `[external] skipping ${def.key}, delivered by external system`,
       },
     });
-    return { written: [], suppressed: [] };
+    return { written: [], suppressed: [], unresolved: [] };
   }
 
+  // #866: TWO KINDS OF "THIS RESOLVER FOUND NOBODY", KEPT APART.
+  //   - nobody BY DEFINITION (`recipients-unavailable`: no household uid, no
+  //     assigned Auntie, an empty roster): that resolver is empty, as always.
+  //   - the lookup FAILED (the office roster read, say): that resolver is empty
+  //     for THIS delivery too, so every other audience still gets its copy, as
+  //     main delivered it, but the failure is recorded in `unresolved`, logged at
+  //     error and reported to Sentry, and a caller that owns a retry can retry it.
+  // Only when nobody at all was found does the difference decide the throw: a
+  // failed lookup rethrows its own (retryable) error; nobody by definition throws
+  // `NoRecipientsError` (final). See notifications/recipientErrors.ts.
+  const unresolvedErrors: Array<{ resolver: string; err: unknown }> = [];
   const tryResolve = async (resolver?: typeof def.recipientResolver) => {
+    const name = resolver ?? def.recipientResolver;
     try {
       return await resolveRecipients(def, args, resolver);
     } catch (err) {
+      if (!isRecipientsUnavailable(err)) {
+        unresolvedErrors.push({ resolver: name, err });
+        return [];
+      }
       logEvent({
         severity: 'info',
         function: 'enqueueNotification',
         event: 'resolver.skipped',
         extra: {
           key: def.key,
-          resolver: resolver ?? def.recipientResolver,
+          resolver: name,
           err: (err as Error)?.message,
         },
       });
@@ -327,9 +358,31 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
   const primary = await tryResolve();
   const secondary = def.secondaryResolver ? await tryResolve(def.secondaryResolver) : [];
   if (primary.length === 0 && secondary.length === 0) {
-    throw new Error(
+    if (unresolvedErrors.length > 0) throw unresolvedErrors[0]!.err;
+    throw new NoRecipientsError(
       `enqueueNotification(${def.key}): no recipients resolved from any resolver`,
     );
+  }
+  const unresolved: UnresolvedResolver[] = unresolvedErrors.map((u) => ({
+    resolver: u.resolver,
+    error: (u.err as Error)?.message ?? String(u.err),
+  }));
+  if (unresolved.length > 0) {
+    logEvent({
+      severity: 'error',
+      function: 'enqueueNotification',
+      event: 'resolver.lookup.failed',
+      extra: { key: def.key, unresolved, deliveredToOthers: true },
+    });
+    try {
+      captureFunctionError(unresolvedErrors[0]!.err, {
+        function: 'enqueueNotification',
+        key: def.key,
+        unresolved,
+      });
+    } catch {
+      // Reporting must never undo a delivery; the error log above already has it.
+    }
   }
   const seen = new Set<string>();
   const recipients = [...primary, ...secondary].filter((r) => {
@@ -342,7 +395,7 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
   // written NotificationEntry can render who caused it with an avatar.
   const actor = await resolveActor(args.actorUid);
 
-  const outcome: EnqueueOutcome = { written: [], suppressed: [] };
+  const outcome: EnqueueOutcome = { written: [], suppressed: [], unresolved };
   for (const recipient of recipients) {
     const [userPrefs, businessOverride] = await Promise.all([
       loadUserPrefs(recipient.uid, recipient.collection),

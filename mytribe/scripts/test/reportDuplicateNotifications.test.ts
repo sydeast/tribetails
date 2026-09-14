@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   INVOICE_REMINDER_WINDOW_MS,
+  PAYMENT_APPLIED_PAIR_WINDOW_MS,
   findDuplicates,
+  findPaymentAppliedPairs,
   parseArgs,
   rowOf,
   windowMsFor,
@@ -34,6 +36,7 @@ function row(over: Partial<NotificationRow>): NotificationRow {
     key: 'invoice.updated',
     recipientUid: 'client_1',
     identity: 'invoice:inv1',
+    invoiceId: 'inv1',
     atMs: T,
     ...over,
   };
@@ -76,6 +79,10 @@ describe('windows', () => {
     expect(windowMsFor('invoice.reminder', null)).toBe(INVOICE_REMINDER_RESEND_WINDOW_MS);
     expect(windowMsFor('invoice.reminder', 7)).toBe(7);
   });
+
+  it('pairs #866 payment confirmations over the 10 minutes the issue names', () => {
+    expect(PAYMENT_APPLIED_PAIR_WINDOW_MS).toBe(10 * MIN);
+  });
 });
 
 describe('rowOf derives what the dispatcher dedupes on', () => {
@@ -94,6 +101,7 @@ describe('rowOf derives what the dispatcher dedupes on', () => {
       key: 'message.received',
       recipientUid: 'staff_1',
       identity: 'kinfolk:fam1#messageId:m7',
+      invoiceId: '',
       atMs: T,
     });
   });
@@ -106,6 +114,7 @@ describe('rowOf derives what the dispatcher dedupes on', () => {
       fireAtMs: T,
     });
     expect(r.identity).toBe('invoice:inv1');
+    expect(r.invoiceId).toBe('inv1');
     expect(r.atMs).toBe(T);
   });
 });
@@ -146,5 +155,44 @@ describe('findDuplicates', () => {
   it('skips rows nothing can identify: no identity or no time', () => {
     expect(findDuplicates([row({ identity: '' }), row({ identity: '', atMs: T + 1 })], null)).toEqual([]);
     expect(findDuplicates([row({ atMs: null }), row({ atMs: null })], null)).toEqual([]);
+  });
+});
+
+describe('findPaymentAppliedPairs (#866)', () => {
+  const applied = (over: Partial<NotificationRow>) => row({ key: 'invoice.payment.applied', ...over });
+
+  it("reports the webhook's copy and the trigger's copy of one card payment, which findDuplicates cannot see", () => {
+    const rows = [
+      applied({ path: 'notifications/hook', identity: 'invoice:inv1#stripeEventId:evt_1' }),
+      applied({ path: 'notifications/trig', identity: 'invoice:inv1', atMs: T + 30_000 }),
+    ];
+    expect(findDuplicates(rows, null)).toEqual([]);
+    const pairs = findPaymentAppliedPairs(rows);
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0]).toMatchObject({ recipientUid: 'client_1', invoiceId: 'inv1', extraCopies: 1, closestGapMs: 30_000 });
+    expect(pairs[0].rows.map((r) => r.identity)).toEqual(['invoice:inv1#stripeEventId:evt_1', 'invoice:inv1']);
+  });
+
+  it('does not report two confirmations 10 minutes or more apart', () => {
+    expect(
+      findPaymentAppliedPairs([applied({}), applied({ path: 'notifications/b', atMs: T + PAYMENT_APPLIED_PAIR_WINDOW_MS })]),
+    ).toEqual([]);
+  });
+
+  it('never pairs different invoices, different recipients, other keys, or queued rows', () => {
+    const rows = [
+      applied({}),
+      applied({ invoiceId: 'inv2', identity: 'invoice:inv2', atMs: T + 1000 }),
+      applied({ recipientUid: 'client_2', atMs: T + 2000 }),
+      row({ key: 'invoice.updated', atMs: T + 3000 }),
+      applied({ collection: 'scheduledNotifications', atMs: T + 4000 }),
+    ];
+    expect(findPaymentAppliedPairs(rows)).toEqual([]);
+  });
+
+  it('skips rows with no invoice, no recipient or no time', () => {
+    expect(findPaymentAppliedPairs([applied({ invoiceId: '' }), applied({ invoiceId: '', atMs: T + 1 })])).toEqual([]);
+    expect(findPaymentAppliedPairs([applied({ recipientUid: '' }), applied({ recipientUid: '', atMs: T + 1 })])).toEqual([]);
+    expect(findPaymentAppliedPairs([applied({ atMs: null }), applied({ atMs: null })])).toEqual([]);
   });
 });

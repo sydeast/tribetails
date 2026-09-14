@@ -1419,6 +1419,18 @@ describe('the record-payment form: fee, gross tip, notes and the two switches', 
     await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
     expect(recordPayment.mock.calls[0]![0]).not.toHaveProperty('apply');
   });
+  it('passes the settlement row markInvoicePaid returned, so only this payment can claim it (#866)', async () => {
+    // The server tells the office "paid" for a markInvoicePaid settlement only
+    // when step 2 names that settlement's payment id. Without it, any later
+    // payment linked to the invoice could claim it.
+    markInvoicePaid.mockResolvedValue(settledResult());
+    await openForm();
+    await submit();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    expect(recordPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ invoiceId: 'inv1', settledByInvoicePaymentId: 'pay1' }),
+    );
+  });
   it('sends zero for an untouched tip and fee, which is what a blank box means', async () => {
     markInvoicePaid.mockResolvedValue(settledResult());
     await openForm();
@@ -1596,14 +1608,71 @@ describe('what the operator is told after the payment lands', () => {
       application: null,
       creditedToAccountCents: 0,
       confirmationEmailSent: false,
+      householdNoPortalAccount: true,
+      officeNoticePending: false,
     });
     render(<InvoiceDetail invoice={entry({ amountDue: 127.5, total: 127.5 })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await userEvent.click(screen.getByLabelText(/send a confirmation email/i));
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     expect(
-      await screen.findByText(/confirmation email did not go out/i),
+      await screen.findByText(/confirmation email did not go out: the household has no portal account/i),
     ).toBeInTheDocument();
+    // Nothing was pending for the office, so nothing is said about it.
+    expect(screen.queryByText(/office copy of the payment notice/i)).not.toBeInTheDocument();
+  });
+  // #866 fourth review: the two reasons are not the same, and the note used to
+  // blame a missing portal account for both.
+  it('says the OFFICE copy did not go out when the roster could not be read, without blaming the household', async () => {
+    markInvoicePaid.mockResolvedValue(settledResult());
+    recordPayment.mockResolvedValue({
+      ok: true,
+      paymentId: 'led1',
+      kinfolkId: 'kf1',
+      amountCents: 12750,
+      tipCents: 0,
+      feeCents: 0,
+      tipBasis: 'gross',
+      appliedCents: 0,
+      unappliedCents: 12750,
+      proceedsCents: 12750,
+      tipNetCents: 0,
+      autoApply: false,
+      application: null,
+      creditedToAccountCents: 0,
+      confirmationEmailSent: true,
+      householdNoPortalAccount: false,
+      officeNoticePending: true,
+    });
+    render(<InvoiceDetail invoice={entry({ amountDue: 127.5, total: 127.5 })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await userEvent.click(screen.getByLabelText(/send a confirmation email/i));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(
+      await screen.findByText(/office copy of the payment notice did not go out, because the admin roster could not be read/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/portal account/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/confirmation email did not go out/i)).not.toBeInTheDocument();
+  });
+  // #866: the ledger step is now the only sender of the household's
+  // confirmation, so when it fails the operator must hear about both losses.
+  it('says the confirmation did not go out when the ledger step itself failed', async () => {
+    markInvoicePaid.mockResolvedValue(settledResult());
+    recordPayment.mockRejectedValue(new Error('internal'));
+    render(<InvoiceDetail invoice={entry({ amountDue: 127.5, total: 127.5 })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await userEvent.click(screen.getByLabelText(/send a confirmation email/i));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(await screen.findByText(/confirmation email did not go out either/i)).toBeInTheDocument();
+  });
+  it('says nothing about a confirmation nobody asked for when the ledger step failed', async () => {
+    markInvoicePaid.mockResolvedValue(settledResult());
+    recordPayment.mockRejectedValue(new Error('internal'));
+    render(<InvoiceDetail invoice={entry({ amountDue: 127.5, total: 127.5 })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(await screen.findByText(/payment ledger row did not save/i)).toBeInTheDocument();
+    expect(screen.queryByText(/confirmation email did not go out/i)).not.toBeInTheDocument();
   });
 });
 /**

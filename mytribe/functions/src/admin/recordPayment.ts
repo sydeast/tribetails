@@ -27,7 +27,9 @@ import {
 import { creditAccount } from '../lib/accountCredit';
 import { PaymentIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
-import { enqueueNotification } from '../notifications/dispatcher';
+import { enqueueNotificationDetailed } from '../notifications/dispatcher';
+import { isNoRecipientsError } from '../notifications/recipientErrors';
+import { PAYMENT_APPLIED_CLAIM_FIELD, claimableMarkInvoicePaidOwner } from '../lib/paymentAppliedOwner';
 
 /**
  * Creates a row in the ROOT `payments` collection. W2-1 of ADR-0002
@@ -235,6 +237,21 @@ export const Args = z.object({
    * valid while the three admin clients adopt this one at a time.
    */
   idempotencyKey: PaymentIdempotencyKeyArg,
+  /**
+   * #866: the `paymentId` that `markInvoicePaid` returned to THIS submission,
+   * in the two-step admin flow (settle first, then this ledger row).
+   *
+   * It is how this call learns that its own first step paid the invoice off, so
+   * the office is told "paid" exactly once, under this payment. The server
+   * claims the invoice's `markInvoicePaid:<id>` owner stamp only when it matches
+   * this id; a call without it never claims, so a later, unrelated payment
+   * linked to the same invoice cannot.
+   *
+   * OPTIONAL, like every addition here. A client that does not send it gets the
+   * household confirmation it ticked, and the office is not told for its
+   * settlement.
+   */
+  settledByInvoicePaymentId: z.string().min(1).max(200).optional(),
 });
 
 /**
@@ -326,6 +343,19 @@ export const Result = z
      * of lie this whole surface is being cleaned of.
      */
     confirmationEmailSent: z.boolean(),
+    /**
+     * #866: Send Confirmation was ticked, and the household has no portal
+     * account, so there was no household copy to send. Lets a client say that,
+     * rather than guess it from `confirmationEmailSent: false`.
+     */
+    householdNoPortalAccount: z.boolean(),
+    /**
+     * #866: the office copy of this payment's notice is owed and did not go out,
+     * because the office roster could not be read. The household copy, if any,
+     * is unaffected. A retry of the same submission (same `idempotencyKey`) sends
+     * the office copy; nothing else resends it.
+     */
+    officeNoticePending: z.boolean(),
   })
   .strict();
 export type RecordPaymentResult = z.infer<typeof Result>;
@@ -378,7 +408,7 @@ export async function recordPaymentHandler(
         uid: actor.uid,
         extra: { paymentId: ref.id, kinfolkId: stored['kinfolkId'], idempotencyKey: args.idempotencyKey },
       });
-      return replayResult(ref.id, stored);
+      return replayWithConfirmation(ref, stored, args.sendConfirmationEmail, actor.uid);
     }
   }
 
@@ -467,9 +497,29 @@ export async function recordPaymentHandler(
       if (snap.exists) {
         const stored = (snap.data() ?? {}) as Record<string, unknown>;
         assertSameCaller(stored, actor.uid, 'recordedBy');
-        return { replayed: stored, application: null as ApplyOutcome | null };
+        return { replayed: stored, application: null as ApplyOutcome | null, settlesInvoice: false };
       }
     }
+    // #866: DID THIS SUBMISSION'S OWN `markInvoicePaid` STEP PAY THE INVOICE OFF?
+    // Both admin clients settle with `markInvoicePaid` and then call this with
+    // the invoice as a display link, passing the payment id that step returned.
+    // The office is told only for a payment that paid the bill off, so this call
+    // claims THAT settlement's owner stamp (`markInvoicePaid:<id>`), in the same
+    // transaction, and only once. A call without the id never claims.
+    // An older installed client sends no id; it may still claim a settlement
+    // stamped within the last few minutes, which is its own step 1 landing just
+    // before this (OLD_CLIENT_CLAIM_WINDOW_MS in lib/paymentAppliedOwner.ts).
+    const linkedInvoiceRef =
+      !plannedStep && args.invoiceId !== '' ? db().collection('invoices').doc(args.invoiceId) : null;
+    const linkedInvoiceSnap = linkedInvoiceRef ? await tx.get(linkedInvoiceRef) : null;
+    const claimedOwner = linkedInvoiceSnap?.exists
+      ? claimableMarkInvoicePaidOwner(
+          (linkedInvoiceSnap.data() ?? {}) as Record<string, unknown>,
+          kinfolkId,
+          args.settledByInvoicePaymentId,
+          Date.now(),
+        )
+      : null;
     // THE APPLY AND THE PAYMENT ROW LAND TOGETHER. `markInvoicePaid` and this
     // callable were two steps on purpose (the money first, the display row
     // second and best-effort), and that stays true for the flow that calls them
@@ -549,17 +599,30 @@ export async function recordPaymentHandler(
       // Stamped `false` here and updated after the commit, because whether the
       // household's confirmation went out is not known until it has been tried,
       // and it is tried only once the money has landed. A replay reports what
-      // is stored and sends nothing: this callable's own header says a
-      // confirmation is sent because the operator ticked a box, and "the reply
-      // to her first attempt was lost" is not her ticking it twice.
+      // is stored and sends nothing new: "the reply to her first attempt was
+      // lost" is not her ticking the box twice. The one exception (#866) is a
+      // ticked confirmation this field does not record as sent, which the
+      // replay finishes because nothing else will; see `replayWithConfirmation`.
       confirmationEmailSent: false,
     };
+    // #866: WHETHER THIS PAYMENT PAID THE INVOICE OFF, decided in this
+    // transaction and stored, so a same-key retry that finishes a lost office
+    // copy reads the same answer instead of re-deriving it from a later state.
+    // Either this call's own apply settled it, or it claimed the settlement
+    // `markInvoicePaid` stamped just before it.
+    const settlesInvoice = staged
+      ? staged.state === 'settled' || staged.state === 'overpaid'
+      : claimedOwner !== null;
+    row['settlesInvoice'] = settlesInvoice;
+    if (linkedInvoiceRef && claimedOwner !== null) {
+      tx.set(linkedInvoiceRef, { [PAYMENT_APPLIED_CLAIM_FIELD]: claimedOwner }, { merge: true });
+    }
     // `create` WHEN THERE IS A KEY, so two attempts that somehow reach the
     // write together are refereed by the server rather than by the read above.
     // A keyless call keeps `set`: its id is server-minted and cannot collide.
     if (args.idempotencyKey !== undefined) tx.create(ref, row);
     else tx.set(ref, row);
-    return { replayed: null, application: staged };
+    return { replayed: null, application: staged, settlesInvoice };
   });
 
   if (committed.replayed !== null) {
@@ -570,7 +633,7 @@ export async function recordPaymentHandler(
       uid: actor.uid,
       extra: { paymentId: ref.id, kinfolkId, idempotencyKey: args.idempotencyKey, raced: true },
     });
-    return replayResult(ref.id, committed.replayed);
+    return replayWithConfirmation(ref, committed.replayed, args.sendConfirmationEmail, actor.uid);
   }
   const application = committed.application;
 
@@ -628,25 +691,35 @@ export async function recordPaymentHandler(
   // provider having a bad minute must not throw away the record of it or offer
   // a retry that would collect a second time. What actually happened comes back
   // in `confirmationEmailSent` so the operator can send it another way.
-  let confirmationEmailSent = false;
-  if (args.sendConfirmationEmail) {
-    confirmationEmailSent = await sendPaymentConfirmation({
-      kinfolkId,
-      // The invoice the confirmation is ABOUT: the one this payment was
-      // applied to, or the display link when nothing was applied. The catalog's
-      // `invoice.payment.applied` template needs one.
-      invoiceId: application?.invoiceId ?? args.invoiceId,
-      paymentId: ref.id,
-      uid: actor.uid,
-    });
-    // STAMPED ON THE ROW, so a replay can report it (#825). Outside the
-    // transaction because it is not known inside one: the send is attempted
-    // only after the money has landed. Best-effort like the send itself — a
-    // failed stamp must not throw away a payment that is already recorded, and
-    // the only cost is that a replay then reports `false` for a confirmation
-    // that did go out, which is the safe direction to be wrong in.
-    if (args.idempotencyKey !== undefined && confirmationEmailSent) {
-      await ref.update({ confirmationEmailSent: true }).catch((err) => {
+  //
+  // #866: this callable is the only sender of `invoice.payment.applied` for the
+  // payment it records. Ticked, the household and the office are told, full or
+  // partial. Unticked (or no portal account), the household gets nothing from
+  // any path, and the office is told only when this payment paid the invoice
+  // off (`settlesInvoice`, decided in the transaction above), as on main.
+  const sent = await sendPaymentConfirmation({
+    kinfolkId,
+    // The invoice the confirmation is ABOUT: the one this payment was
+    // applied to, or the display link when nothing was applied. The catalog's
+    // `invoice.payment.applied` template needs one.
+    invoiceId: application?.invoiceId ?? args.invoiceId,
+    paymentId: ref.id,
+    uid: actor.uid,
+    householdRequested: args.sendConfirmationEmail,
+    settlesInvoice: committed.settlesInvoice,
+    officeDue: true,
+  });
+  const confirmationEmailSent = sent.household;
+  {
+    // STAMPED ON THE ROW, so a replay can report it (#825) and a same-key retry
+    // knows what is left to send (#866). Outside the transaction because it is
+    // not known inside one: the send is attempted only after the money has
+    // landed. Best-effort like the send itself; a failed stamp must not throw
+    // away a payment that is already recorded, and within
+    // PAYMENT_CONFIRMATION_DEDUPE_WINDOW_MS the ledger stops a retry repeating
+    // a copy that did go out.
+    if (args.idempotencyKey !== undefined && (sent.household || sent.office || sent.skipped)) {
+      await ref.update(noticeStamps(sent)).catch((err) => {
         logEvent({
           severity: 'warn',
           function: 'recordPayment',
@@ -697,6 +770,8 @@ export async function recordPaymentHandler(
     application,
     creditedToAccountCents,
     confirmationEmailSent,
+    householdNoPortalAccount: sent.noPortalAccount,
+    officeNoticePending: sent.officePending,
   });
 }
 
@@ -725,6 +800,108 @@ function storedCents(stored: Record<string, unknown>, field: string): number {
  * through `paymentMoneyOf` rather than being read field by field, so a replayed
  * answer and a first answer are produced by the same arithmetic.
  */
+/**
+ * How long the dispatcher ledger remembers one payment's confirmation copies,
+ * for every enqueue this callable makes (the ledger's `expiresAt` follows the
+ * window, so the first attempt's entry lives as long as a retry looks back).
+ *
+ * 7 DAYS, well past any realistic client retry of one submission. It is what
+ * stops a second office copy when the household gains a portal account between
+ * attempts: the retry then owes the household its copy, and the office copy
+ * that rides the same enqueue is caught by the ledger, however many hours
+ * later the retry lands. The identity names one payment, so a week can never
+ * merge two.
+ */
+export const PAYMENT_CONFIRMATION_DEDUPE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * #866: the row fields that record which copies of `invoice.payment.applied`
+ * went out for this payment. `confirmationEmailSent` is the household copy (and
+ * the #825 answer field); `officeNoticeSentAt` is the office copy;
+ * `officeNoticeSkippedReason` records an office-only copy that nobody exists to
+ * receive, which a retry must not keep trying.
+ */
+function noticeStamps(sent: ConfirmationOutcome): Record<string, unknown> {
+  return {
+    ...(sent.household ? { confirmationEmailSent: true } : {}),
+    ...(sent.office ? { officeNoticeSentAt: FieldValue.serverTimestamp() } : {}),
+    ...(sent.skipped ? { officeNoticeSkippedReason: 'no-recipients' } : {}),
+  };
+}
+
+/**
+ * THE ANSWER A RETRY GETS, plus the copies of the first attempt's notice a retry
+ * may finish (#866). Since #866 this callable is the only sender of both copies
+ * for the payment it records, so a first attempt that recorded the payment and
+ * then crashed, or whose enqueue failed, would otherwise leave them untold for
+ * good.
+ *
+ *   - household copy: due when this submission was ticked and the row does not
+ *     say `confirmationEmailSent: true`.
+ *   - office copy: due when the payment paid the invoice off (`settlesInvoice`,
+ *     decided in the first attempt's transaction) or was ticked, and the row has
+ *     no `officeNoticeSentAt`. An unticked partial is never due.
+ *
+ * Nothing else is redone. A first attempt that enqueued and died before its
+ * stamps is caught by the ledger identity (`invoice:<id>#paymentId:<id>`) for
+ * PAYMENT_CONFIRMATION_DEDUPE_WINDOW_MS.
+ */
+async function replayWithConfirmation(
+  ref: { id: string; update: (data: Record<string, unknown>) => Promise<unknown> },
+  stored: Record<string, unknown>,
+  householdRequested: boolean,
+  actorUid: string,
+): Promise<z.infer<typeof Result>> {
+  const answer = replayResult(ref.id, stored);
+  const settlesInvoice = stored['settlesInvoice'] === true;
+  const householdDue = householdRequested && stored['confirmationEmailSent'] !== true;
+  const officeDue =
+    (settlesInvoice || householdRequested) &&
+    stored['officeNoticeSentAt'] == null &&
+    // Nobody existed to receive it last time; that is final, not unfinished.
+    stored['officeNoticeSkippedReason'] == null;
+  if (!householdDue && !officeDue) return answer;
+  const sent = await sendPaymentConfirmation({
+    kinfolkId: answer.kinfolkId,
+    invoiceId: answer.application?.invoiceId ?? (typeof stored['invoiceId'] === 'string' ? stored['invoiceId'] : ''),
+    paymentId: ref.id,
+    uid: actorUid,
+    householdRequested: householdDue,
+    settlesInvoice,
+    // A ticked retry whose office copy is already stamped still owes the
+    // household one; with no household uid, it must not send the office a second.
+    officeDue,
+    // #866: the first attempt told the household and its office copy did not go
+    // out (the roster could not be read). The office is owed that copy alone,
+    // settled invoice or not, because the ticked first attempt owed it one.
+    officeOwedWithoutHousehold: householdRequested && stored['confirmationEmailSent'] === true,
+  });
+  const reported = {
+    ...answer,
+    confirmationEmailSent: answer.confirmationEmailSent || sent.household,
+    householdNoPortalAccount: sent.noPortalAccount,
+    officeNoticePending: sent.officePending,
+  };
+  if (!sent.household && !sent.office && !sent.skipped) return reported;
+  await ref.update(noticeStamps(sent)).catch((err) => {
+    logEvent({
+      severity: 'warn',
+      function: 'recordPayment',
+      event: 'payment.confirmation.stamp.failed',
+      uid: actorUid,
+      extra: { paymentId: ref.id, replay: true, err: (err as Error)?.message },
+    });
+  });
+  logEvent({
+    severity: 'warn',
+    function: 'recordPayment',
+    event: 'payment.confirmation.recovered',
+    uid: actorUid,
+    extra: { paymentId: ref.id, household: sent.household, office: sent.office },
+  });
+  return { ...answer, confirmationEmailSent: answer.confirmationEmailSent || sent.household };
+}
+
 function replayResult(paymentId: string, stored: Record<string, unknown>): z.infer<typeof Result> {
   const money = paymentMoneyOf({
     amountCents: storedCents(stored, 'amountCents'),
@@ -754,6 +931,10 @@ function replayResult(paymentId: string, stored: Record<string, unknown>): z.inf
     application,
     creditedToAccountCents: storedCents(stored, 'creditedToAccountCents'),
     confirmationEmailSent: stored['confirmationEmailSent'] === true,
+    // A replay answers from the row. What a retry itself sends is folded in by
+    // `replayWithConfirmation`; the row alone cannot say either of these.
+    householdNoPortalAccount: false,
+    officeNoticePending: false,
   });
 }
 
@@ -763,48 +944,138 @@ function replayResult(paymentId: string, stored: Record<string, unknown>): z.inf
  *
  * `invoice.payment.applied` IS THE EXISTING CONFIRMATION and no new catalog key
  * was minted for this toggle. That key already has an email template, a push
- * template, a prefs entry and a category, and both `onInvoicesWrite` and
- * `stripeWebhook.ts` fire it for the same event: money landed on a bill. A
- * second key saying the same thing would give the household two independent
- * switches for one message and let them mute one of the two.
+ * template, a prefs entry and a category, and `stripeWebhook.ts` and
+ * `onInvoicesWrite` fire it for the same event on other paths: money landed on
+ * a bill. A second key saying the same thing would give the household two
+ * independent switches for one message and let them mute one of the two.
  *
- * Returns whether it went out. A household that has never installed MyTribe has
+ * #866: FOR AN ADMIN-RECORDED PAYMENT THIS IS THE ONLY SENDER. The write that
+ * pays the invoice (`stageApply` here, or `markInvoicePaid` in the two-step
+ * flow) stamps `paymentAppliedNoticeOwner`, so `onInvoicesWrite` does not send
+ * a second copy, and does not send one when the box was left unticked either.
+ * A partial payment that leaves the bill open is confirmed here too, because
+ * no trigger fires for it. See the ownership table in notifications/catalog.ts.
+ *
+ * Reports which copies went out. A household that has never installed MyTribe has
  * no uid to deliver to, which is a fact about them and not a failure here.
+ *
+ * #866 OPERATOR RULING, AS ON MAIN. The office copy rides every enqueue (the
+ * catalog's `businessAdmins` secondary resolver), so:
+ *   - ticked, household has an account: household and office are told, for a
+ *     full or a partial payment. The office copy is the same "Payment received"
+ *     template the household gets, not an "Invoice Paid" message, so a partial
+ *     may carry it, and main sent it.
+ *   - unticked, or no household account: the office alone is told, and only
+ *     when this payment paid the invoice off (`settlesInvoice`). An enqueue with
+ *     no household uid writes only the office copy, the shape the Stripe webhook
+ *     uses. A partial, or a payment that paid nothing off, tells nobody.
  */
+interface ConfirmationOutcome {
+  /** The household copy was enqueued. */
+  household: boolean;
+  /** The office copy was enqueued: it rides every enqueue, unless its roster lookup failed. */
+  office: boolean;
+  /**
+   * #866: nobody exists to receive it (no household uid and no office roster),
+   * as the dispatcher's `NoRecipientsError` says. Final: stamped so a retry does
+   * not keep trying. A failed READ is not this; it stays retryable.
+   */
+  skipped?: boolean;
+  /** #866: the household copy was asked for and the household has no portal account. */
+  noPortalAccount: boolean;
+  /**
+   * #866: the office copy was owed and did not go out, because a lookup or the
+   * dispatch failed. Left unstamped, so a same-key retry sends it.
+   */
+  officePending: boolean;
+}
+
 async function sendPaymentConfirmation(input: {
   kinfolkId: string;
   invoiceId: string;
   paymentId: string;
   uid: string;
-}): Promise<boolean> {
-  if (input.kinfolkId === '') return false;
+  /** The Send Confirmation toggle (or, on a retry, a household copy still owed). */
+  householdRequested: boolean;
+  /** This payment paid the invoice off, so the office is told even when the household is not. */
+  settlesInvoice: boolean;
+  /**
+   * #866: the office copy is still owed. False on a retry whose row already
+   * carries `officeNoticeSentAt`. The office copy rides every enqueue, so an
+   * enqueue with no household uid would be a second office copy and nothing
+   * else; it is skipped.
+   */
+  officeDue: boolean;
+  /**
+   * #866: on a retry, the household copy already went out on the first attempt
+   * and the office copy did not. An office-only enqueue is then owed even for a
+   * payment that did not settle the invoice, because the ticked first attempt
+   * owed the office a copy too.
+   */
+  officeOwedWithoutHousehold?: boolean;
+}): Promise<ConfirmationOutcome> {
+  const none: ConfirmationOutcome = { household: false, office: false, noPortalAccount: false, officePending: false };
+  if (input.kinfolkId === '') return none;
+  let recipientUid: string | null = null;
+  let noPortalAccount = false;
+  const officeOnlyAllowed = input.settlesInvoice || input.officeOwedWithoutHousehold === true;
   try {
-    const recipientUid = await resolveKinfolkUid(input.kinfolkId);
-    if (recipientUid === null) {
-      logEvent({
-        severity: 'info',
-        function: 'recordPayment',
-        event: 'payment.confirmation.norecipient',
-        uid: input.uid,
-        extra: { kinfolkId: input.kinfolkId, paymentId: input.paymentId },
-      });
-      return false;
+    if (input.householdRequested) {
+      recipientUid = await resolveKinfolkUid(input.kinfolkId);
+      if (recipientUid === null) {
+        noPortalAccount = true;
+        logEvent({
+          severity: 'info',
+          function: 'recordPayment',
+          event: 'payment.confirmation.norecipient',
+          uid: input.uid,
+          extra: { kinfolkId: input.kinfolkId, paymentId: input.paymentId },
+        });
+      }
     }
-    await enqueueNotification({
+    // With no household copy to send, an enqueue is the office copy alone: only
+    // when it is owed without one, and only while it is still owed.
+    if (recipientUid === null && (!officeOnlyAllowed || !input.officeDue)) return { ...none, noPortalAccount };
+    const outcome = await enqueueNotificationDetailed({
       key: 'invoice.payment.applied',
-      recipientUid,
+      recipientUid: recipientUid ?? '',
       data: {
         kinfolkId: input.kinfolkId,
         invoiceId: input.invoiceId,
         paymentId: input.paymentId,
       },
+      // A retry of the same submission may land hours later (#866 replay
+      // recovery below); the ledger has to remember this payment's copies that long.
+      dedupeWindowMs: PAYMENT_CONFIRMATION_DEDUPE_WINDOW_MS,
     });
-    return true;
+    // #866: a failed lookup (the office roster read) leaves that audience out of
+    // this delivery. The household copy went out; the office copy did not, and
+    // stays unstamped for a retry.
+    const officeUnresolved = (outcome.unresolved ?? []).length > 0;
+    if (officeUnresolved) {
+      logEvent({
+        severity: 'error',
+        function: 'recordPayment',
+        event: 'payment.confirmation.office.pending',
+        uid: input.uid,
+        extra: { kinfolkId: input.kinfolkId, paymentId: input.paymentId, unresolved: outcome.unresolved },
+      });
+    }
+    return {
+      household: recipientUid !== null,
+      office: !officeUnresolved,
+      noPortalAccount,
+      officePending: officeUnresolved,
+    };
   } catch (err) {
+    // #866: only "nobody exists to receive it" is final. Any other failure (a
+    // roster read with no household copy to send, the dispatcher itself) is left
+    // unstamped so a same-key retry finishes it.
+    const final = isNoRecipientsError(err);
     logEvent({
-      severity: 'warn',
+      severity: final ? 'error' : 'warn',
       function: 'recordPayment',
-      event: 'payment.confirmation.failed',
+      event: final ? 'payment.confirmation.unreachable' : 'payment.confirmation.failed',
       uid: input.uid,
       extra: {
         kinfolkId: input.kinfolkId,
@@ -812,7 +1083,9 @@ async function sendPaymentConfirmation(input: {
         err: (err as Error)?.message,
       },
     });
-    return false;
+    return final
+      ? { ...none, noPortalAccount, skipped: true }
+      : { ...none, noPortalAccount, officePending: recipientUid !== null || officeOnlyAllowed };
   }
 }
 

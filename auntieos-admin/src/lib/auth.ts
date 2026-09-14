@@ -12,6 +12,7 @@ import {
 } from 'firebase/auth';
 import { useSyncExternalStore } from 'react';
 import { decideAttestation } from './boot';
+import { reportCredentialFailure } from './failedLogin';
 import { auth } from './firebase';
 
 /**
@@ -38,10 +39,21 @@ import { auth } from './firebase';
  * answers "is someone signed in".
  */
 
-/** Email/password sign-in. */
+/**
+ * Email/password sign-in.
+ *
+ * #886: a credential failure is reported to `recordFailedLogin` (fire and
+ * forget, see `failedLogin.ts`) and the original error is rethrown on the same
+ * tick, so the screen's message is neither delayed nor replaced.
+ */
 export async function signIn(email: string, password: string): Promise<User> {
-  const cred = await signInWithEmailAndPassword(auth, email, password);
-  return cred.user;
+  try {
+    const cred = await signInWithEmailAndPassword(auth, email, password);
+    return cred.user;
+  } catch (err) {
+    reportCredentialFailure(email, err);
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------

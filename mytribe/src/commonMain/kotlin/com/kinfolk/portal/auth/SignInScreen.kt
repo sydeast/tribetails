@@ -105,7 +105,13 @@ fun SignInScreen(
         error = null
         scope.launch {
             try { repo.signInWithEmailPassword(email, password) }
-            catch (t: Throwable) { error = ErrorEnvelope.opaque(t) }
+            // #886: a locked account is told so, with the reset link named, not the opaque banner.
+            catch (locked: AccountLockedException) { error = ErrorEnvelope.message(locked.message ?: ACCOUNT_LOCKED_MESSAGE) }
+            // #886: a wrong password is the kinfolk's mistake, not a fault, so it gets
+            // the portal web's sentence rather than the opaque "reported to Auntie" banner.
+            catch (t: Throwable) {
+                error = if (repo.isCredentialFailure(t)) ErrorEnvelope.message(WRONG_CREDENTIALS_MESSAGE) else ErrorEnvelope.opaque(t)
+            }
             finally { inFlight = false }
         }
     }
@@ -214,7 +220,9 @@ fun SignInScreen(
                                 error = null
                                 scope.launch {
                                     try {
-                                        repo.sendPasswordReset(email)
+                                        // #886 review: a mobile keyboard's trailing space made
+                                        // requestPasswordReset refuse the address (400).
+                                        repo.sendPasswordReset(email.trim())
                                         resetSuccess = true
                                     } catch (t: Throwable) {
                                         error = ErrorEnvelope.message("Couldn't send reset email.")

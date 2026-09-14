@@ -22,6 +22,7 @@ import com.tribetails.auntieos.data.contracts.MarkInvoicePaidArgs
 import com.tribetails.auntieos.data.contracts.MarkInvoicePaidResult
 import com.tribetails.auntieos.data.contracts.PostInvoiceEventArgs
 import com.tribetails.auntieos.data.contracts.RecordPaymentArgs
+import com.tribetails.auntieos.data.contracts.RecordPaymentResult
 import com.tribetails.auntieos.data.contracts.ResendQuoteArgs
 import com.tribetails.auntieos.data.contracts.SendInvoiceReminderArgs
 import com.tribetails.auntieos.data.contracts.SetSessionDoNotInvoiceArgs
@@ -662,14 +663,37 @@ class InvoiceRepository(
      * old server-minted-id behaviour, which is what the callers that have not
      * adopted a key still get.
      */
-    suspend fun createPayment(payment: Payment, idempotencyKey: String? = null): Result<String> = runCatching {
+    suspend fun createPayment(payment: Payment, idempotencyKey: String? = null): Result<String> =
+        recordInvoicePayment(payment, idempotencyKey).map { it.paymentId }
+
+    /**
+     * [createPayment], answering with the whole `recordPayment` result.
+     *
+     * #866: the invoice screen needs `confirmationEmailSent`. Since #866 this call
+     * is the only thing that sends the household their payment confirmation for
+     * a payment recorded here (the invoice trigger no longer sends one for the
+     * bill `markInvoicePaid` settled), so the operator has to be told when it did
+     * not go out.
+     */
+    suspend fun recordInvoicePayment(
+        payment: Payment,
+        idempotencyKey: String? = null,
+        /**
+         * #866: the `paymentId` `markInvoicePaid` returned to this submission. The
+         * server tells the office "paid" for that settlement only when it gets
+         * this id, so no later payment linked to the invoice can claim it.
+         */
+        settledByInvoicePaymentId: String? = null,
+    ): Result<RecordPaymentResult> = runCatching {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("recordPayment")
-            .call(recordPaymentArgs(payment, idempotencyKey).toPayload())
+            .call(recordPaymentArgs(payment, idempotencyKey, settledByInvoicePaymentId).toPayload())
             .awaitCallable().data as? Map<String, Any?>
             ?: error("recordPayment: non-map payload")
-        decodeRecordPaymentResult(raw).paymentId.ifBlank { error("recordPayment: missing paymentId") }
+        val result = decodeRecordPaymentResult(raw)
+        result.paymentId.ifBlank { error("recordPayment: missing paymentId") }
+        result
     }.onFailure { AuntieLog.e("Failed to record payment", it) }
 }
 
@@ -828,7 +852,14 @@ internal fun archiveInvoiceArgs(invoiceId: String, force: Boolean): ArchiveInvoi
  * collection. No TestMode anywhere: the sandbox kinfolkId stamp is the server's
  * job now.
  */
-internal fun recordPaymentArgs(payment: Payment, idempotencyKey: String? = null): RecordPaymentArgs = RecordPaymentArgs(
+internal fun recordPaymentArgs(
+    payment: Payment,
+    idempotencyKey: String? = null,
+    // #866: the `markInvoicePaid` payment id of this submission; null, and so
+    // omitted from the payload, for a payment no settlement step preceded.
+    settledByInvoicePaymentId: String? = null,
+): RecordPaymentArgs = RecordPaymentArgs(
+    settledByInvoicePaymentId = settledByInvoicePaymentId,
     kinfolkId = payment.kinfolkId,
     kinfolkName = payment.kinfolkName,
     client = payment.client,
