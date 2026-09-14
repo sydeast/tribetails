@@ -34,6 +34,9 @@ import { FULL_CPU } from '../lib/runtimeOptions';
  * stores the burst or lock start with a pending marker, both copies carry a
  * dedupe key built from that stored start, and a later failed login re-sends
  * whatever did not go out. The marker is cleared once both copies are accepted.
+ * A pending warning is retried only while its 10-minute burst is open and the
+ * account is not locked: once the account locks, later failures only retry the
+ * lock alerts, which tell both audiences more than the warning would.
  *
  * The reset-PW link must remain on the login screen at all times (frontend
  * responsibility) so a locked user has a recovery path.
@@ -305,13 +308,15 @@ async function clearPendingAlertMarker(
 /**
  * Sends both copies of one saved warning burst (#877), then clears its marker.
  *
- * Same contract as `sendLockAlerts`. The household copy has no catch: its
- * failure fails the call, as it always has, and the marker stays so the next
- * failed login retries. The operator copy is caught (a resolver failure must
- * never fail the household's warning) but also leaves the marker. Both carry
- * the burst's dedupe key with a window as long as the burst, so a retry after a
- * partial success sends only the copy that is still missing. A retry sends the
- * current `attemptsInWindow`, which may be higher than when the burst started.
+ * Both copies are caught, and either failure leaves the marker so the next
+ * failed login in the burst retries. The household copy is caught (#877
+ * review) because `recordFailedLogin` is unauthenticated: an error thrown only
+ * for a real account's warning would tell the caller the email exists. Its
+ * failure is logged at error. The operator copy is caught so a resolver
+ * failure never fails the call. Both carry the burst's dedupe key with a window
+ * as long as the burst, so a retry after a partial success sends only the copy
+ * that is still missing. A retry sends the current `attemptsInWindow`, which
+ * may be higher than when the burst started.
  */
 async function sendWarningAlerts(
   uid: string,
@@ -320,12 +325,22 @@ async function sendWarningAlerts(
   attemptsInWindow: number,
 ): Promise<void> {
   const dedupeKey = failedLoginWarningDedupeKey(uid, warnStartedAtMs);
+  let householdAccepted = true;
   await enqueueNotification({
     key: 'auth.failedLogin.attempts',
     recipientUid: uid,
     data: { email, attemptsInWindow },
     dedupeKey,
     dedupeWindowMs: WINDOW_WARN_MS,
+  }).catch((err) => {
+    householdAccepted = false;
+    logEvent({
+      severity: 'error',
+      function: 'recordFailedLogin',
+      event: 'auth.warn.notify.failed',
+      uid,
+      errorMessage: (err as Error)?.message,
+    });
   });
 
   let operatorAccepted = true;
@@ -348,7 +363,7 @@ async function sendWarningAlerts(
       errorMessage: (err as Error)?.message,
     });
   });
-  if (!operatorAccepted) return;
+  if (!householdAccepted || !operatorAccepted) return;
 
   await clearPendingAlertMarker(uid, 'warnAlertsPendingForMs', warnStartedAtMs, 'admin.warn.pending.clear.failed');
 }

@@ -15,15 +15,18 @@
  *
  * #877 split the operator copy into `security.failedLogin.attempts.operator`
  * and made the old key kinfolk-only. The operator copy now reads the NEW key's
- * override, so an operator who had turned the warning off, or turned a channel
- * off, would silently start receiving it again.
+ * override, so an operator who had turned the warning off, turned a channel
+ * off, or locked a channel would silently get the catalog default again.
  *
- * WHAT THIS COPIES. From `businessSettings/notifications.byKey`, the business
- * view of the old key's override: `enabled` and `channels`, with the
- * `streams.business` overlay winning field by field over the flat fields,
- * exactly as `overrideForStream` resolves it. It is written as the new key's
- * flat `enabled` and `channels`, because the new key serves the business
- * stream only.
+ * WHAT THIS COPIES. From `businessSettings/notifications.byKey`, the whole
+ * business view of the old key's override, exactly as the dispatcher reads it:
+ * the real `overrideForStream(source, 'business')` from functions/src, so
+ * `enabled`, `channels`, `lockedEnabled`, `locked` and `lockReason`, with the
+ * `streams.business` overlay already folded in. Locks are part of it on
+ * purpose: in `resolveChannels` a locked channel takes its value from
+ * `channels` in both directions, so copying `channels` without the lock can
+ * change what is delivered. It is written as the new key's flat fields, because
+ * the new key serves the business stream only.
  *
  * WHAT IT NEVER DOES.
  *   - It never overwrites an override the new key already has. The check runs
@@ -32,16 +35,17 @@
  *   - It never edits or deletes the old key's override. The household copy
  *     still reads its flat fields on the kinfolk stream.
  *   - It copies nothing when the old key's business view is the catalog
- *     default (enabled, no channel set), so no row turns "customized" for
- *     nothing.
- *   - Locks (`lockedEnabled`, `locked`) and `lockReason` are not copied. They
- *     are reported when present, so the operator can re-set them by hand.
+ *     default (enabled, no channel, no lock, no lock reason), so no row turns
+ *     "customized" for nothing. A lock-only override is not the default and is
+ *     copied.
  *
  * Modes:
- *   default           DRY RUN. Prints the target, the doc, each value, and the
- *                     planned write. Writes nothing.
- *   --allow-prod      writes to production. Refused while FIRESTORE_EMULATOR_HOST
- *                     is set, so an emulator shell can never be mistaken for prod.
+ *   default           DRY RUN. Prints the project, the target, the doc, each
+ *                     value, and the planned write. Writes nothing.
+ *   --allow-prod      writes to production. Needs --project <id>, or a
+ *                     GOOGLE_APPLICATION_CREDENTIALS file carrying project_id.
+ *                     Refused while FIRESTORE_EMULATOR_HOST is set, so an
+ *                     emulator shell can never be mistaken for prod.
  *   --emulator-write  writes to the emulator. Refused unless
  *                     FIRESTORE_EMULATOR_HOST is set.
  *   --dry-run         forces the dry run, and BEATS both write flags in either order.
@@ -52,13 +56,17 @@
  *
  *   0. npm run test:scripts:emulator
  *   1. npm --prefix mytribe/functions run backfill:operator-warning-override
- *      Reads only. Check the printed target, the old value, and the planned value.
+ *      Reads only. Check the printed project and target, the old value, and
+ *      the planned value.
  *   2. npm --prefix mytribe/functions run backfill:operator-warning-override -- --allow-prod
  *      Writes. Needs GOOGLE_APPLICATION_CREDENTIALS.
  *   3. Re-run step 1. A clean second run reports `target-exists` (or the same
  *      no-op it reported before).
  */
+import * as fs from 'fs';
 import { getApps, initializeApp, getFirestore, type Firestore } from './lib/firebaseAdmin';
+import { overrideForStream } from '../functions/src/notifications/prefs';
+import type { BusinessNotificationOverride } from '../functions/src/notifications/types';
 
 export const SETTINGS_COLLECTION = 'businessSettings';
 export const SETTINGS_DOC = 'notifications';
@@ -68,14 +76,6 @@ export const SOURCE_KEY = 'auth.failedLogin.attempts';
 /** The operator key #877 added. */
 export const TARGET_KEY = 'security.failedLogin.attempts.operator';
 
-export const CHANNELS = ['email', 'sms', 'push'] as const;
-export type Channel = (typeof CHANNELS)[number];
-
-export interface CopiedOverride {
-  enabled: boolean;
-  channels: Partial<Record<Channel, boolean>>;
-}
-
 type Loose = Record<string, unknown>;
 
 function asRecord(v: unknown): Loose | undefined {
@@ -83,40 +83,32 @@ function asRecord(v: unknown): Loose | undefined {
 }
 
 /**
- * The business stream's view of a stored override: `enabled` and `channels`,
- * the `streams.business` overlay first and the flat field second, field by
- * field. Mirrors `overrideForStream` in functions/src/notifications/prefs.ts;
- * the unit test checks the two agree. Null when neither field holds a boolean.
+ * The business stream's view of a stored override, from the dispatcher's own
+ * `overrideForStream`. Null for something that is not an override object.
+ *
+ * One normalisation: a stored override with no boolean `enabled` (the save
+ * callable always writes one, so only a hand-edited doc lacks it) gets
+ * `enabled: true`. `resolveChannels` only suppresses on `enabled === false`,
+ * so the two mean the same delivery, and Firestore refuses an `undefined` field.
  */
-export function businessView(stored: unknown): CopiedOverride | null {
-  const flat = asRecord(stored);
-  if (!flat) return null;
-  const overlay = asRecord(asRecord(flat['streams'])?.['business']);
-  const pick = (a: unknown, b: unknown): boolean | undefined =>
-    typeof a === 'boolean' ? a : typeof b === 'boolean' ? b : undefined;
-
-  const enabled = pick(overlay?.['enabled'], flat['enabled']);
-  const channels: Partial<Record<Channel, boolean>> = {};
-  for (const ch of CHANNELS) {
-    const v = pick(asRecord(overlay?.['channels'])?.[ch], asRecord(flat['channels'])?.[ch]);
-    if (v !== undefined) channels[ch] = v;
-  }
-  if (enabled === undefined && Object.keys(channels).length === 0) return null;
-  return { enabled: enabled ?? true, channels };
+export function businessView(stored: unknown): BusinessNotificationOverride | null {
+  const record = asRecord(stored);
+  if (!record) return null;
+  const view = overrideForStream(record as unknown as BusinessNotificationOverride, 'business');
+  if (!view) return null;
+  if (typeof view.enabled !== 'boolean') view.enabled = true;
+  return view;
 }
 
-/** Lock fields on the source override that this script does not copy, for the report. */
-export function uncopiedFields(stored: unknown): string[] {
-  const flat = asRecord(stored);
-  if (!flat) return [];
-  const out: string[] = [];
-  if (flat['lockedEnabled'] !== undefined) out.push('lockedEnabled');
-  if (flat['locked'] !== undefined) out.push('locked');
-  if (flat['lockReason'] !== undefined) out.push('lockReason');
-  const overlay = asRecord(asRecord(flat['streams'])?.['business']);
-  if (overlay?.['lockedEnabled'] !== undefined) out.push('streams.business.lockedEnabled');
-  if (overlay?.['locked'] !== undefined) out.push('streams.business.locked');
-  return out;
+/** True when the view changes nothing about delivery or display: the catalog default. */
+export function isCatalogDefault(view: BusinessNotificationOverride): boolean {
+  return (
+    view.enabled !== false &&
+    Object.keys(view.channels ?? {}).length === 0 &&
+    view.lockedEnabled === undefined &&
+    view.locked === undefined &&
+    view.lockReason === undefined
+  );
 }
 
 export type Plan =
@@ -124,7 +116,7 @@ export type Plan =
   | { action: 'no-source' }
   | { action: 'target-exists'; source: unknown; existing: unknown }
   | { action: 'default-only'; source: unknown }
-  | { action: 'copy'; source: unknown; value: CopiedOverride };
+  | { action: 'copy'; source: unknown; value: BusinessNotificationOverride };
 
 /** What to do, given the overrides doc as stored. Pure. */
 export function planCopy(docData: unknown, docExists: boolean): Plan {
@@ -135,9 +127,7 @@ export function planCopy(docData: unknown, docExists: boolean): Plan {
   const existing = byKey[TARGET_KEY];
   if (existing !== undefined) return { action: 'target-exists', source, existing };
   const view = businessView(source);
-  if (!view || (view.enabled && Object.keys(view.channels).length === 0)) {
-    return { action: 'default-only', source };
-  }
+  if (!view || isCatalogDefault(view)) return { action: 'default-only', source };
   return { action: 'copy', source, value: view };
 }
 
@@ -173,7 +163,8 @@ export function parseArgs(argv: string[]): Args {
           '  npm --prefix mytribe/functions run backfill:operator-warning-override -- --emulator-write',
           '',
           '--dry-run overrides both write flags regardless of flag order.',
-          '--allow-prod is refused while FIRESTORE_EMULATOR_HOST is set.',
+          '--allow-prod needs --project <id> or project_id in the credentials file,',
+          'and is refused while FIRESTORE_EMULATOR_HOST is set.',
         ].join('\n'),
       );
       process.exit(0);
@@ -195,14 +186,48 @@ export interface Env {
   GOOGLE_CLOUD_PROJECT?: string;
 }
 
+export type ReadFile = (path: string) => string;
+const readFileUtf8: ReadFile = (p) => fs.readFileSync(p, 'utf8');
+
 /**
- * Checks the flags against the environment and names the target, before any
- * Firestore call. Throws on every combination that could write somewhere the
- * operator did not mean.
+ * The project a run will touch. A production write never guesses it from the
+ * ambient GCLOUD_PROJECT: it is `--project`, else the `project_id` in the
+ * service account file the write authenticates with, else the run is refused.
  */
-export function describeTarget(args: Args, env: Env): { projectId: string | null; line: string } {
+export function resolveProjectId(args: Args, env: Env, readFile: ReadFile = readFileUtf8): string | null {
+  if (args.projectId) return args.projectId;
+  if (args.mode !== 'allow-prod') return env.GCLOUD_PROJECT ?? env.GOOGLE_CLOUD_PROJECT ?? null;
+
+  const credentials = env.GOOGLE_APPLICATION_CREDENTIALS;
+  if (!credentials) {
+    throw new Error('--allow-prod needs --project <id>, or GOOGLE_APPLICATION_CREDENTIALS pointing at a file with project_id');
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFile(credentials));
+  } catch (err) {
+    throw new Error(
+      `--allow-prod could not read project_id from ${credentials} (${(err as Error).message}). Pass --project <id>.`,
+    );
+  }
+  const id = asRecord(parsed)?.['project_id'];
+  if (typeof id !== 'string' || id.trim() === '') {
+    throw new Error(`--allow-prod found no project_id in ${credentials}. Pass --project <id>.`);
+  }
+  return id.trim();
+}
+
+/**
+ * Checks the flags against the environment and names the project and target,
+ * before any Firestore call. Throws on every combination that could write
+ * somewhere the operator did not mean. `lines[0]` is the project id.
+ */
+export function describeTarget(
+  args: Args,
+  env: Env,
+  readFile: ReadFile = readFileUtf8,
+): { projectId: string | null; lines: [string, string] } {
   const emulator = env.FIRESTORE_EMULATOR_HOST;
-  const projectId = args.projectId ?? env.GCLOUD_PROJECT ?? env.GOOGLE_CLOUD_PROJECT ?? null;
   if (args.mode === 'allow-prod' && emulator) {
     throw new Error(
       `refusing --allow-prod while FIRESTORE_EMULATOR_HOST is set (${emulator}): this shell points at an emulator. ` +
@@ -215,11 +240,15 @@ export function describeTarget(args: Args, env: Env): { projectId: string | null
   if (args.mode === 'allow-prod' && !env.GOOGLE_APPLICATION_CREDENTIALS) {
     throw new Error('a production write needs GOOGLE_APPLICATION_CREDENTIALS (fail loud, not a silent no-op)');
   }
-  const where = emulator
-    ? `EMULATOR ${emulator}`
-    : 'PRODUCTION';
-  const project = projectId ?? '(project from credentials)';
-  return { projectId, line: `TARGET: ${where}, project ${project}, doc ${OVERRIDES_PATH}, mode ${args.mode.toUpperCase()}` };
+  const projectId = resolveProjectId(args, env, readFile);
+  const where = emulator ? `EMULATOR ${emulator}` : 'PRODUCTION';
+  return {
+    projectId,
+    lines: [
+      `PROJECT: ${projectId ?? '(not set; the SDK will pick it from the environment)'}`,
+      `TARGET: ${where}, doc ${OVERRIDES_PATH}, mode ${args.mode.toUpperCase()}`,
+    ],
+  };
 }
 
 /** Reads the doc and plans. Reads only. */
@@ -266,19 +295,14 @@ export function report(plan: Plan, log: (line: string) => void = console.log): v
     case 'default-only':
       log(`  byKey['${SOURCE_KEY}']: ${show(plan.source)}`);
       log(`  business view: ${show(businessView(plan.source))}`);
-      log('  the business view is the catalog default (enabled, no channel set). Nothing to copy.');
+      log('  the business view is the catalog default (enabled, no channel, no lock). Nothing to copy.');
       return;
-    case 'copy': {
+    case 'copy':
       log(`  byKey['${SOURCE_KEY}']: ${show(plan.source)}`);
       log(`  business view: ${show(plan.value)}`);
       log(`  byKey['${TARGET_KEY}']: absent`);
       log(`  WRITE byKey['${TARGET_KEY}'] = ${show(plan.value)}`);
-      const skipped = uncopiedFields(plan.source);
-      if (skipped.length > 0) {
-        log(`  NOT COPIED (re-set by hand on the Business tab if still wanted): ${skipped.join(', ')}`);
-      }
       return;
-    }
     default: {
       const never: never = plan;
       throw new Error(`unknown plan ${show(never)}`);
@@ -289,7 +313,7 @@ export function report(plan: Plan, log: (line: string) => void = console.log): v
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const target = describeTarget(args, process.env as Env);
-  console.log(target.line);
+  for (const line of target.lines) console.log(line);
   if (getApps().length === 0) initializeApp(target.projectId ? { projectId: target.projectId } : {});
   const db = getFirestore();
 

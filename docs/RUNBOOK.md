@@ -1117,22 +1117,24 @@ write, run `npm run test:scripts:emulator` and read the pass count.**
 
 | Backfill | Added by | What it fixes |
 |---|---|---|
-| `backfill:operator-warning-override` | #877 | An operator who turned off the failed-login warning, or one of its channels, on the Business tab saved that on `auth.failedLogin.attempts`. That key is household-only now, so the setting stopped applying to operators. This copies it to `security.failedLogin.attempts.operator`, only where that key has no setting yet. |
+| `backfill:operator-warning-override` | #877 | An operator who turned off or locked the failed-login warning, or one of its channels, on the Business tab saved that on `auth.failedLogin.attempts`. That key is household-only now, so the setting stopped applying to operators. This copies it to `security.failedLogin.attempts.operator`, only where that key has no setting yet. |
 
 For `backfill:operator-warning-override`:
 
 1. `npm run test:scripts:emulator`
 2. `npm --prefix mytribe/functions run backfill:operator-warning-override`
-   Reads only. The first line names the target: check it says `PRODUCTION` and
-   the right project. Then read the old value and the planned `WRITE` line.
+   Reads only. The first line is the project and the second the target: check
+   they name the right project and `PRODUCTION`. Then read the old value and
+   the planned `WRITE` line.
 3. `npm --prefix mytribe/functions run backfill:operator-warning-override -- --allow-prod`
-   Needs `GOOGLE_APPLICATION_CREDENTIALS`, and refuses to run while
-   `FIRESTORE_EMULATOR_HOST` is set.
+   Needs `GOOGLE_APPLICATION_CREDENTIALS`. It takes the project from `--project <id>`
+   or from `project_id` in that credentials file and refuses to guess, and it
+   refuses to run while `FIRESTORE_EMULATOR_HOST` is set.
 4. Re-run step 2. It reports `target-exists`, or the same no-op as before.
 
-The script never overwrites a setting the new key already has, and never copies
-locks. If step 2 prints `NOT COPIED`, re-set those locks by hand on the Business
-tab.
+The script never overwrites a setting the new key already has. It copies the
+whole business-stream setting, locks and lock reason included, because a
+locked channel delivers differently from an unlocked one.
 
 ### Merged branches are deleted after the tag
 

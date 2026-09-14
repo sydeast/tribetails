@@ -2,16 +2,17 @@ import { describe, it, expect } from 'vitest';
 import {
   businessView,
   describeTarget,
+  isCatalogDefault,
   parseArgs,
   planCopy,
   report,
-  uncopiedFields,
+  resolveProjectId,
   SOURCE_KEY,
   TARGET_KEY,
   type Args,
 } from '../backfillOperatorFailedLoginWarningOverride';
 import { NOTIFICATION_CATALOG } from '../../functions/src/notifications/catalog';
-import { overrideForStream } from '../../functions/src/notifications/prefs';
+import { resolveChannels } from '../../functions/src/notifications/prefs';
 import type { BusinessNotificationOverride } from '../../functions/src/notifications/types';
 
 /**
@@ -30,41 +31,77 @@ describe('the script targets the keys #877 split', () => {
   });
 });
 
-describe('businessView reads the override the way the dispatcher does', () => {
-  const fixtures: BusinessNotificationOverride[] = [
-    { enabled: false, channels: {} },
-    { enabled: true, channels: { sms: false, push: true } },
-    { enabled: true, channels: { email: true }, streams: { business: { enabled: false } } },
-    { enabled: false, channels: { sms: true }, streams: { business: { channels: { sms: false } } } },
-    { enabled: true, channels: { push: false }, streams: { kinfolk: { enabled: false, channels: { push: true } } } },
-  ];
-
-  it.each(fixtures.map((f, i) => [i, f] as const))('agrees with overrideForStream(business), fixture %i', (_i, f) => {
-    const theirs = overrideForStream(f, 'business')!;
-    expect(businessView(f)).toEqual({ enabled: theirs.enabled, channels: theirs.channels });
+describe("businessView is the dispatcher's business view, locks included", () => {
+  it('folds the business overlay in and ignores the kinfolk overlay', () => {
+    expect(
+      businessView({
+        enabled: true,
+        channels: { sms: true, push: false },
+        locked: { email: true },
+        lockReason: 'Security alerts stay on',
+        streams: {
+          business: { channels: { sms: false }, lockedEnabled: true },
+          kinfolk: { enabled: false, locked: { push: true } },
+        },
+      }),
+    ).toEqual({
+      enabled: true,
+      channels: { sms: false, push: false },
+      lockedEnabled: true,
+      locked: { email: true },
+      lockReason: 'Security alerts stay on',
+    });
   });
 
-  it('ignores the kinfolk overlay entirely', () => {
-    expect(
-      businessView({ enabled: true, channels: {}, streams: { kinfolk: { enabled: false } } }),
-    ).toEqual({ enabled: true, channels: {} });
+  it('keeps a lock that only the business overlay sets', () => {
+    expect(businessView({ enabled: true, channels: {}, streams: { business: { locked: { sms: true } } } })).toEqual({
+      enabled: true,
+      channels: {},
+      locked: { sms: true },
+    });
+  });
+
+  it('fills a missing enabled with true, which delivers the same', () => {
+    expect(businessView({ channels: { push: false } })).toEqual({ enabled: true, channels: { push: false } });
   });
 
   it('returns null for something that is not an override', () => {
     expect(businessView(null)).toBeNull();
     expect(businessView('off')).toBeNull();
-    expect(businessView({ lockReason: 'x' })).toBeNull();
   });
 
-  it('names the lock fields it does not copy', () => {
-    expect(
-      uncopiedFields({
-        enabled: true,
-        locked: { sms: true },
-        lockReason: 'Required',
-        streams: { business: { lockedEnabled: true } },
-      }),
-    ).toEqual(['locked', 'lockReason', 'streams.business.lockedEnabled']);
+  it('copying the view onto the new key delivers what the old key delivered to operators', () => {
+    // Why locks are copied: a locked channel ignores the staff member's own
+    // opt-in, and an unlocked one does not.
+    const oldDef = { ...NOTIFICATION_CATALOG[SOURCE_KEY]!, audiences: { kinfolk: true, business: true } as const };
+    const newDef = NOTIFICATION_CATALOG[TARGET_KEY]!;
+    const staffPrefs = { byKey: { [SOURCE_KEY]: { push: true }, [TARGET_KEY]: { push: true } } };
+    // Locked, with no explicit channel value: push takes the catalog default.
+    const source: BusinessNotificationOverride = { enabled: true, channels: {}, locked: { sms: true } };
+    const before = resolveChannels(oldDef, staffPrefs, source, 'business');
+
+    const copied = planCopy({ byKey: { [SOURCE_KEY]: source } }, true);
+    expect(copied.action).toBe('copy');
+    const value = (copied as { value: BusinessNotificationOverride }).value;
+    const after = resolveChannels(newDef, staffPrefs, value, 'business');
+    expect(after.sms).toBe(before.sms);
+
+    // Channels alone, without the lock, would leave sms to the staff prefs.
+    const withoutLock: BusinessNotificationOverride = { enabled: value.enabled, channels: value.channels };
+    const staffOptIn = { byKey: { [TARGET_KEY]: { sms: true } } };
+    expect(resolveChannels(newDef, staffOptIn, withoutLock, 'business').sms).toBe(true);
+    expect(resolveChannels(newDef, staffOptIn, value, 'business').sms).toBe(false);
+  });
+});
+
+describe('isCatalogDefault', () => {
+  it('is true only for enabled with nothing else set', () => {
+    expect(isCatalogDefault({ enabled: true, channels: {} })).toBe(true);
+    expect(isCatalogDefault({ enabled: false, channels: {} })).toBe(false);
+    expect(isCatalogDefault({ enabled: true, channels: { sms: true } })).toBe(false);
+    expect(isCatalogDefault({ enabled: true, channels: {}, locked: { email: true } })).toBe(false);
+    expect(isCatalogDefault({ enabled: true, channels: {}, lockedEnabled: true })).toBe(false);
+    expect(isCatalogDefault({ enabled: true, channels: {}, lockReason: 'why' })).toBe(false);
   });
 });
 
@@ -98,12 +135,26 @@ describe('planCopy', () => {
     });
   });
 
-  it('copies channel toggles, with the business overlay winning', () => {
-    const source = { enabled: true, channels: { sms: true, push: false }, streams: { business: { channels: { sms: false } } } };
+  it('copies a lock-only override', () => {
+    const source = { enabled: true, channels: {}, lockedEnabled: true };
     expect(planCopy({ byKey: { [SOURCE_KEY]: source } }, true)).toEqual({
       action: 'copy',
       source,
-      value: { enabled: true, channels: { sms: false, push: false } },
+      value: { enabled: true, channels: {}, lockedEnabled: true },
+    });
+  });
+
+  it('copies channel toggles and locks, with the business overlay winning', () => {
+    const source = {
+      enabled: true,
+      channels: { sms: true, push: false },
+      locked: { push: true },
+      streams: { business: { channels: { sms: false } } },
+    };
+    expect(planCopy({ byKey: { [SOURCE_KEY]: source } }, true)).toEqual({
+      action: 'copy',
+      source,
+      value: { enabled: true, channels: { sms: false, push: false }, locked: { push: true } },
     });
   });
 });
@@ -126,12 +177,50 @@ describe('parseArgs', () => {
   });
 });
 
+describe('resolveProjectId', () => {
+  const prod: Args = { mode: 'allow-prod', projectId: null };
+  const noFile = (): string => {
+    throw new Error('ENOENT');
+  };
+
+  it('uses --project first, without reading the credentials file', () => {
+    expect(
+      resolveProjectId({ mode: 'allow-prod', projectId: 'auntieos-ttpc' }, { GOOGLE_APPLICATION_CREDENTIALS: '/k.json' }, noFile),
+    ).toBe('auntieos-ttpc');
+  });
+
+  it('reads project_id from the credentials file for a prod write, and ignores GCLOUD_PROJECT', () => {
+    const read = (p: string): string => {
+      expect(p).toBe('/k.json');
+      return JSON.stringify({ type: 'service_account', project_id: 'auntieos-ttpc' });
+    };
+    expect(resolveProjectId(prod, { GOOGLE_APPLICATION_CREDENTIALS: '/k.json', GCLOUD_PROJECT: 'other' }, read)).toBe(
+      'auntieos-ttpc',
+    );
+  });
+
+  it('refuses a prod write when neither --project nor project_id gives one', () => {
+    expect(() => resolveProjectId(prod, { GOOGLE_APPLICATION_CREDENTIALS: '/k.json' }, noFile)).toThrow(
+      /could not read project_id from \/k\.json.*Pass --project/,
+    );
+    expect(() =>
+      resolveProjectId(prod, { GOOGLE_APPLICATION_CREDENTIALS: '/k.json' }, () => JSON.stringify({ type: 'x' })),
+    ).toThrow(/found no project_id/);
+    expect(() => resolveProjectId(prod, {}, noFile)).toThrow(/needs --project/);
+  });
+
+  it('a dry run falls back to the environment', () => {
+    expect(resolveProjectId({ mode: 'dry-run', projectId: null }, { GOOGLE_CLOUD_PROJECT: 'demo' }, noFile)).toBe('demo');
+  });
+});
+
 describe('describeTarget', () => {
-  const prod: Args = { mode: 'allow-prod', projectId: 'auntieos-ttpc' };
+  const prod: Args = { mode: 'allow-prod', projectId: null };
+  const creds = (): string => JSON.stringify({ project_id: 'auntieos-ttpc' });
 
   it('refuses --allow-prod while FIRESTORE_EMULATOR_HOST is set', () => {
     expect(() =>
-      describeTarget(prod, { FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080', GOOGLE_APPLICATION_CREDENTIALS: '/k.json' }),
+      describeTarget(prod, { FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080', GOOGLE_APPLICATION_CREDENTIALS: '/k.json' }, creds),
     ).toThrow(/refusing --allow-prod while FIRESTORE_EMULATOR_HOST is set/);
   });
 
@@ -140,36 +229,44 @@ describe('describeTarget', () => {
   });
 
   it('refuses a production write without credentials', () => {
-    expect(() => describeTarget(prod, {})).toThrow(/GOOGLE_APPLICATION_CREDENTIALS/);
+    expect(() => describeTarget(prod, {}, creds)).toThrow(/GOOGLE_APPLICATION_CREDENTIALS/);
   });
 
-  it('names production, the project and the doc for a prod write', () => {
-    expect(describeTarget(prod, { GOOGLE_APPLICATION_CREDENTIALS: '/k.json' }).line).toBe(
-      'TARGET: PRODUCTION, project auntieos-ttpc, doc businessSettings/notifications, mode ALLOW-PROD',
-    );
+  it('prints the resolved project first, then production and the doc', () => {
+    const t = describeTarget(prod, { GOOGLE_APPLICATION_CREDENTIALS: '/k.json' }, creds);
+    expect(t.projectId).toBe('auntieos-ttpc');
+    expect(t.lines).toEqual([
+      'PROJECT: auntieos-ttpc',
+      'TARGET: PRODUCTION, doc businessSettings/notifications, mode ALLOW-PROD',
+    ]);
   });
 
   it('names the emulator for a dry run inside an emulator shell', () => {
     const t = describeTarget({ mode: 'dry-run', projectId: null }, { FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080', GCLOUD_PROJECT: 'demo' });
-    expect(t.projectId).toBe('demo');
-    expect(t.line).toBe('TARGET: EMULATOR 127.0.0.1:8080, project demo, doc businessSettings/notifications, mode DRY-RUN');
+    expect(t.lines).toEqual([
+      'PROJECT: demo',
+      'TARGET: EMULATOR 127.0.0.1:8080, doc businessSettings/notifications, mode DRY-RUN',
+    ]);
   });
 });
 
 describe('report', () => {
-  it('prints the doc, the old value, and the exact write', () => {
+  it('prints the doc, the old value, and the exact write, locks included', () => {
     const lines: string[] = [];
     report(
-      { action: 'copy', source: { enabled: false, locked: { email: true } }, value: { enabled: false, channels: {} } },
+      {
+        action: 'copy',
+        source: { enabled: false, locked: { email: true } },
+        value: { enabled: false, channels: {}, locked: { email: true } },
+      },
       (l) => lines.push(l),
     );
     expect(lines).toEqual([
       'doc businessSettings/notifications',
       `  byKey['${SOURCE_KEY}']: {"enabled":false,"locked":{"email":true}}`,
-      '  business view: {"enabled":false,"channels":{}}',
+      '  business view: {"enabled":false,"channels":{},"locked":{"email":true}}',
       `  byKey['${TARGET_KEY}']: absent`,
-      `  WRITE byKey['${TARGET_KEY}'] = {"enabled":false,"channels":{}}`,
-      '  NOT COPIED (re-set by hand on the Business tab if still wanted): locked',
+      `  WRITE byKey['${TARGET_KEY}'] = {"enabled":false,"channels":{},"locked":{"email":true}}`,
     ]);
   });
 });

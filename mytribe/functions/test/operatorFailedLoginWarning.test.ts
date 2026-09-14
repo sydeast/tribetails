@@ -297,7 +297,13 @@ describe('#877 operator warning always names the household (same chain as the lo
 });
 
 describe('#877 warning bursts: one alert per burst, retried until it goes out', () => {
-  it('a household enqueue that throws leaves the burst saved; the next failed login sends each copy exactly once, for the same burst', async () => {
+  it('a household enqueue that throws returns the same response as success; the next failed login sends each copy exactly once, for the same burst', async () => {
+    // The response a 5th failure gets when its warning goes out, on a fresh account.
+    const control = buildDbMock({ writeThrough: true, docs: baseDocs() });
+    mocks.dbFn.mockReturnValue(control.db);
+    await failures(4);
+    const success = await fail(WARN_AT);
+
     const ctx = buildDbMock({ writeThrough: true, docs: baseDocs() });
     mocks.dbFn.mockReturnValue(ctx.db);
 
@@ -308,11 +314,15 @@ describe('#877 warning bursts: one alert per burst, retried until it goes out', 
     mocks.onInjectedFailure = async () => {
       docWhenWarningFailed = (await ctx.db.doc(SECURITY_DOC).get()).data();
     };
-    await expect(fail(WARN_AT)).rejects.toThrow(/injected auth\.failedLogin\.attempts failure/);
+    // #877 review: an unauthenticated caller must not learn from an error that
+    // the account exists, so the failure is swallowed and the response matches.
+    const failed = await fail(WARN_AT);
+    expect(failed).toEqual(success);
 
-    // The burst was already saved when the warning failed, with the pending marker.
+    // The burst was already saved when the warning failed, and its marker stays.
     expect(docWhenWarningFailed).toMatchObject({ warnSentAtMs: WARN_AT, warnAlertsPendingForMs: WARN_AT });
-    expect(warningCopies(ctx.writes as Write[]).operator).toHaveLength(0);
+    expect((await storedSecurityDoc(ctx)).warnAlertsPendingForMs).toBe(WARN_AT);
+    expect(warningCopies(ctx.writes as Write[]).household).toHaveLength(0);
 
     await fail(WARN_AT + 60_000);
     await fail(WARN_AT + 120_000);
@@ -447,6 +457,22 @@ describe('#877 warning bursts: one alert per burst, retried until it goes out', 
     const stored = await storedSecurityDoc(ctx);
     expect(isDeleted(stored.warnAlertsPendingForMs)).toBe(true);
     expect(isDeleted(stored.warnSentAtMs)).toBe(true);
+  });
+
+  it('one run of 10 failures sends the warning and the lock alert to both the household and the operator', async () => {
+    const ctx = buildDbMock({ writeThrough: true, docs: baseDocs() });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await failures(10);
+
+    // Read from the stored lock, not the response, which #886 is reshaping.
+    expect((await storedSecurityDoc(ctx)).lockStartedAtMs).toBe(NOW + 9000);
+    const writes = ctx.writes as Write[];
+    const keysFor = (uid: string) => inboxFor(writes, uid).map((w) => w.data.key as string).sort();
+    expect(keysFor('kin1'), 'household: warning and lock').toEqual([HOUSEHOLD_KEY, 'auth.account.locked'].sort());
+    expect(keysFor('op1'), 'operator: warning and lock').toEqual(
+      [OPERATOR_KEY, 'security.account.locked.operator'].sort(),
+    );
   });
 
   it('the dedupe key names both the household and the burst start', () => {

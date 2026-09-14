@@ -13,8 +13,8 @@ import {
 /**
  * The #877 override backfill against a real Firestore:
  *
- *  1. The write merges ONE key into `byKey` and leaves every other key's
- *     override, including the old key's, exactly as it was.
+ *  1. The write merges ONE key into `byKey`, locks included, and leaves every
+ *     other key's override, including the old key's, exactly as it was.
  *  2. It never overwrites an override the new key already has, even one saved
  *     after the dry run.
  *  3. A second run plans nothing.
@@ -43,11 +43,12 @@ describe.runIf(EMULATOR)('the #877 override backfill copies once and never overw
     await Promise.all(getApps().map((a) => deleteApp(a)));
   });
 
-  it("copies the business view to the new key and leaves every other key's override alone", async () => {
+  it("copies the business view, locks included, and leaves every other key's override alone", async () => {
     const source = {
       enabled: true,
       channels: { sms: true, push: false },
       locked: { email: true },
+      lockReason: 'Security alerts stay on',
       streams: { business: { channels: { sms: false } }, kinfolk: { enabled: false } },
     };
     const other = { enabled: false, channels: { email: false } };
@@ -57,15 +58,16 @@ describe.runIf(EMULATOR)('the #877 override backfill copies once and never overw
     // A dry run only reads.
     expect((await read())['updatedAtMs']).toBe(1);
 
-    const applied = await applyCopy(db, WRITE_AT);
-    expect(applied).toMatchObject({ action: 'copy', value: { enabled: true, channels: { sms: false, push: false } } });
+    const expected = {
+      enabled: true,
+      channels: { sms: false, push: false },
+      locked: { email: true },
+      lockReason: 'Security alerts stay on',
+    };
+    expect(await applyCopy(db, WRITE_AT)).toMatchObject({ action: 'copy', value: expected });
 
     expect(await read()).toEqual({
-      byKey: {
-        [SOURCE_KEY]: source,
-        'invoice.new': other,
-        [TARGET_KEY]: { enabled: true, channels: { sms: false, push: false } },
-      },
+      byKey: { [SOURCE_KEY]: source, 'invoice.new': other, [TARGET_KEY]: expected },
       updatedAtMs: WRITE_AT,
     });
 
@@ -73,6 +75,17 @@ describe.runIf(EMULATOR)('the #877 override backfill copies once and never overw
     expect((await buildPlan(db)).action).toBe('target-exists');
     expect((await applyCopy(db, WRITE_AT + 1)).action).toBe('target-exists');
     expect((await read())['updatedAtMs']).toBe(WRITE_AT);
+  }, EMULATOR_TIMEOUT_MS);
+
+  it('copies a lock-only override', async () => {
+    await doc().set({
+      byKey: { [SOURCE_KEY]: { enabled: true, channels: {}, streams: { business: { lockedEnabled: true } } } },
+      updatedAtMs: 1,
+    });
+
+    expect((await applyCopy(db, WRITE_AT)).action).toBe('copy');
+    const byKey = (await read())['byKey'] as Record<string, unknown>;
+    expect(byKey[TARGET_KEY]).toEqual({ enabled: true, channels: {}, lockedEnabled: true });
   }, EMULATOR_TIMEOUT_MS);
 
   it('never overwrites an override the operator saved after the dry run', async () => {
