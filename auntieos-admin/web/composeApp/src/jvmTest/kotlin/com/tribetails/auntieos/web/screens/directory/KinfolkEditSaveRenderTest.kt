@@ -50,9 +50,19 @@ class KinfolkEditSaveRenderTest {
         },
     )
 
+    /**
+     * The screen loads custom-field schemas through the `listFormSchemas` callable on
+     * open. A callable with no fixture goes to the live Cloud Functions endpoint, so
+     * every test here answers it: no test may reach the network.
+     */
+    private fun noCustomFields() {
+        JvmFirestoreFixtures.callableResponses = mapOf("listFormSchemas" to """{"schemas":[]}""")
+    }
+
     /** The loaded record has a non-default balance, status and tags; none of them is in the mask. */
     @Test
     fun editingTheGateCodeSavesOnlyTheGateCode() = runDesktopComposeUiTest {
+        noCustomFields()
         JvmFirestoreFixtures.kinfolk = listOf(household())
         setContent {
             AuntieAppTheme(themeMode = ThemeMode.DARK) {
@@ -78,6 +88,7 @@ class KinfolkEditSaveRenderTest {
      */
     @Test
     fun strayWhitespaceOnFileIsNotAnEdit() = runDesktopComposeUiTest {
+        noCustomFields()
         JvmFirestoreFixtures.kinfolk = listOf(household(firstName = "Dana ", gateCode = "1234 "))
         var saved: String? = null
         setContent {
@@ -94,5 +105,38 @@ class KinfolkEditSaveRenderTest {
         waitUntil(timeoutMillis = 5_000) { saved != null }
         assertEquals("kf1", saved)
         assertNull(JvmFirestoreFixtures.lastWrite, "a save with no edits wrote ${JvmFirestoreFixtures.lastWrite}")
+    }
+
+    /**
+     * #829 review: the unsaved indicator tracks custom fields (formValues) through
+     * the same diff the save uses. Editing only a custom field turns it on;
+     * changing the field back to the stored value turns it off.
+     */
+    @Test
+    fun editingOnlyACustomFieldTurnsTheIndicatorOnAndBackOff() = runDesktopComposeUiTest {
+        JvmFirestoreFixtures.callableResponses = mapOf(
+            "listFormSchemas" to """{"schemas":[{"id":"household-extra","name":"Household extras","appliesTo":"KINFOLK","version":1}]}""",
+            "getFormSchema" to """{"schema":{"id":"household-extra","name":"Household extras","appliesTo":"KINFOLK","version":1,"sections":[{"title":"Extras","fields":[{"key":"petName","label":"Favourite treat","type":"text"}]}]}}""",
+        )
+        JvmFirestoreFixtures.kinfolk = listOf(household().copy(formValues = mapOf("petName" to "Biscuit")))
+        setContent {
+            AuntieAppTheme(themeMode = ThemeMode.DARK) {
+                KinfolkEditScreen(kinfolkId = "kf1", onBack = {}, onSaved = {}, onArchived = {})
+            }
+        }
+        val customField = hasSetTextAction() and hasText("Biscuit")
+        waitUntil(timeoutMillis = 5_000) { onAllNodes(customField).fetchSemanticsNodes().isNotEmpty() }
+        onNodeWithText("ALL CHANGES SAVED").assertExists()
+
+        onNode(customField).performScrollTo().performTextReplacement("Pepper")
+        waitForIdle()
+        onNodeWithText("UNSAVED CHANGES").assertExists()
+        assertTrue(onAllNodesWithText("ALL CHANGES SAVED").fetchSemanticsNodes().isEmpty(), "the indicator did not turn on for a custom field edit")
+
+        onNode(hasSetTextAction() and hasText("Pepper")).performScrollTo().performTextReplacement("Biscuit")
+        waitForIdle()
+        onNodeWithText("ALL CHANGES SAVED").assertExists()
+        assertTrue(onAllNodesWithText("UNSAVED CHANGES").fetchSemanticsNodes().isEmpty(), "the indicator stayed on after the custom field went back to the stored value")
+        assertNull(JvmFirestoreFixtures.lastWrite, "no save was pressed, so nothing may be written")
     }
 }

@@ -288,24 +288,24 @@ fun KinfolkEditScreen(
     val householdFieldsEnabled = !saving && createdKinfolkId == null
     fun unlessLocked(set: () -> Unit) { if (householdFieldsEnabled) set() }
 
-    // SUGGESTION: live dirty indicator for the sticky save bar. The original
-    // screen has no unsaved-changes tracking; this drives only the pip + label
-    // and never gates the save itself.
-    val dirty = remember(
-        firstName, lastName, phoneNumber, secondaryPhone, email, secondaryEmail,
-        status, serviceAddr, gateCode, parking, entryNotes,
-        wifiName, wifiPass, ecDrafts, ecBaseline, internalNotes, referral,
-        vetName, vetPhone, vetAddress, loaded, createdKinfolkId,
-    ) {
-        if (isNew) {
-            createdKinfolkId != null || !ecDrafts.isBlankDrafts() || listOf(
-                firstName, lastName, phoneNumber, secondaryPhone, email, secondaryEmail,
-                serviceAddr, gateCode, parking, entryNotes, wifiName, wifiPass,
-                internalNotes, referral, vetName, vetPhone, vetAddress,
-            ).any { it.isNotBlank() }
-        } else {
-            loaded?.let { base -> kinfolkChanges(base, build()).isNotEmpty() || !draftsEqual(ecDrafts, ecBaseline) } ?: false
-        }
+    // Live unsaved-changes indicator for the sticky save bar. It drives only the
+    // pip + label and never gates the save itself.
+    //
+    // #829 review: computed on every recomposition from the SAME diff the save
+    // sends (kinfolkChanges against the loaded record), so the indicator and the
+    // write can never disagree. It used to be a `remember` keyed on a hand-kept
+    // list of fields that left out `formValues`, so editing only a custom field
+    // never lit it and the operator could leave believing the change was saved.
+    // build() reads every form state, the custom-field map included, so
+    // Compose recomputes this whenever any of them changes.
+    val dirty = if (isNew) {
+        createdKinfolkId != null || !ecDrafts.isBlankDrafts() || formValues.values.any { it.isNotBlank() } || listOf(
+            firstName, lastName, phoneNumber, secondaryPhone, email, secondaryEmail,
+            serviceAddr, gateCode, parking, entryNotes, wifiName, wifiPass,
+            internalNotes, referral, vetName, vetPhone, vetAddress,
+        ).any { it.isNotBlank() }
+    } else {
+        loaded?.let { base -> kinfolkChanges(base, build()).isNotEmpty() || !draftsEqual(ecDrafts, ecBaseline) } ?: false
     }
 
     // Save handler shared by the sticky save bar. Behavior verbatim from the
