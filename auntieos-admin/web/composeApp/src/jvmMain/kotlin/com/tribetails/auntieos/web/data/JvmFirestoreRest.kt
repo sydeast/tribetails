@@ -62,19 +62,25 @@ internal object JvmFirestoreRest {
      * emulator instead of production, so the merge writes below can be proven
      * against a real Firestore. Unset, this is the production endpoint.
      */
-    private val EMULATOR_HOST: String? = System.getenv("FIRESTORE_EMULATOR_HOST")?.takeIf { it.isNotBlank() }
-    private val BASE =
+    // #867 review: only a loopback or private address is trusted. Anything else is
+    // refused loudly and ignored, so the `owner` token never goes to a real host.
+    private val EMULATOR_HOST: String? = trustedEmulatorHost("FIRESTORE_EMULATOR_HOST", System.getenv("FIRESTORE_EMULATOR_HOST"))
+    private val LIVE_BASE =
         if (EMULATOR_HOST != null) "http://$EMULATOR_HOST/v1/projects/$PROJECT/databases/(default)/documents"
         else "https://firestore.googleapis.com/v1/projects/$PROJECT/databases/(default)/documents"
+    private val BASE: String get() = JvmFirestoreFixtures.restTransport?.base ?: LIVE_BASE
 
     /** The emulator's admin token when [EMULATOR_HOST] is set; otherwise the signed-in user's ID token. */
-    private suspend fun bearerToken(): String? = if (EMULATOR_HOST != null) "owner" else jvmFirebaseIdToken()
+    private suspend fun bearerToken(): String? {
+        JvmFirestoreFixtures.restTransport?.let { return it.token }
+        return if (EMULATOR_HOST != null) "owner" else jvmFirebaseIdToken()
+    }
     /**
      * #867: `FUNCTIONS_EMULATOR_HOST` points callables at a local Functions
      * emulator, the twin of [EMULATOR_HOST] for Firestore. Unset, this is the
      * production endpoint.
      */
-    private val FUNCTIONS = functionsBaseUrl(System.getenv("FUNCTIONS_EMULATOR_HOST"))
+    private val FUNCTIONS = functionsBaseUrl(trustedEmulatorHost("FUNCTIONS_EMULATOR_HOST", System.getenv("FUNCTIONS_EMULATOR_HOST")))
 
     /** Pure: the callable base URL for an emulator `host:port`, or production when it is null or blank. */
     internal fun functionsBaseUrl(emulatorHost: String?): String {
@@ -87,7 +93,8 @@ internal object JvmFirestoreRest {
     internal val codec = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
 
     // #867: connect and request timeouts, and the test network guard, come from the shared factory.
-    private val http = auntieHttpClient { install(ContentNegotiation) { json(codec) } }
+    private val liveHttp = auntieHttpClient { install(ContentNegotiation) { json(codec) } }
+    private val http get() = JvmFirestoreFixtures.restTransport?.http ?: liveHttp
 
     // ── read: collection ────────────────────────────────────────────────────
 
@@ -483,20 +490,24 @@ internal object JvmFirestoreRest {
         return name?.substringAfterLast('/') ?: ""
     }
 
-    /** Hard-delete a doc (REST DELETE). Returns true on success. */
+    /**
+     * Hard-delete a doc (REST DELETE). Returns true on success. #867 review: no
+     * token throws "Not signed in" (as [setDoc] does), so the screen says that
+     * rather than "delete failed".
+     */
     suspend fun deleteDoc(collection: String, id: String): Boolean {
         JvmFirestoreFixtures.lastWrite = RestWrite("DELETE", collection, id)
-        val token = bearerToken() ?: return false
+        val token = bearerToken() ?: error("Not signed in")
         val resp = http.delete("$BASE/$collection/$id") {
             header(HttpHeaders.Authorization, "Bearer $token")
         }
         return resp.status.isSuccess()
     }
 
-    /** PATCH only the given fields of a doc (field-level update via updateMask). */
+    /** PATCH only the given fields of a doc (field-level update via updateMask). No token throws "Not signed in". */
     suspend fun patchFields(collection: String, id: String, fields: Map<String, JsonElement>): Boolean {
         JvmFirestoreFixtures.lastWrite = RestWrite("PATCH", collection, id, fields.keys.toSet())
-        val token = bearerToken() ?: return false
+        val token = bearerToken() ?: error("Not signed in")
         val resp = http.patch("$BASE/$collection/$id") {
             header(HttpHeaders.Authorization, "Bearer $token")
             fields.keys.forEach { parameter("updateMask.fieldPaths", it) }
@@ -525,7 +536,8 @@ internal object JvmFirestoreRest {
         sentAtIso: String,
         updatedAtIso: String,
     ): Boolean {
-        val token = bearerToken() ?: return false
+        // #867 review: no token throws "Not signed in" rather than reading as a refused write.
+        val token = bearerToken() ?: error("Not signed in")
         val reportName = "$BASE/kin_care_reports/$reportId"
         val sessionName = "$BASE/kin_care_sessions/$sessionId"
         val body = buildJsonObject {

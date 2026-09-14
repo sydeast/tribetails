@@ -40,24 +40,22 @@ object NetworkGuard {
     @Volatile
     var onBlocked: (String) -> Unit = { System.err.println(it) }
 
-    private val LOOPBACK = setOf("localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1")
-
     private fun emulatorHosts(): List<String?> =
         listOf(System.getenv("FIRESTORE_EMULATOR_HOST"), System.getenv("FUNCTIONS_EMULATOR_HOST"))
 
-    /** Pure: why a request to [host] is refused, or null when it may go. [emulatorHosts] are `host:port` values. */
+    /**
+     * Pure: why a request to [host] is refused, or null when it may go. [emulatorHosts]
+     * are `host:port` values. An emulator host only counts when it is itself a
+     * loopback or private address, so a stale variable naming a real host allows nothing.
+     */
     fun blockReason(host: String, emulatorHosts: List<String?>): String? {
         val h = host.trim().removePrefix("[").removeSuffix("]").lowercase()
-        if (h in LOOPBACK) return null
-        val allowed = emulatorHosts.mapNotNull { it?.trim()?.takeIf { v -> v.isNotEmpty() }?.let(::hostOf) }
+        if (isLoopbackHost(h)) return null
+        val allowed = emulatorHosts
+            .mapNotNull { it?.trim()?.takeIf { v -> v.isNotEmpty() }?.let(::emulatorHostOf) }
+            .filter(::isLoopbackOrPrivateHost)
         if (h in allowed) return null
         return "$host is not loopback or a configured emulator host"
-    }
-
-    private fun hostOf(hostPort: String): String {
-        val v = hostPort.trim()
-        val bare = if (v.startsWith("[")) v.substringAfter("[").substringBefore("]") else v.substringBeforeLast(':', v)
-        return bare.lowercase()
     }
 
     internal fun check(method: String, url: String, host: String) {
@@ -68,6 +66,58 @@ object NetworkGuard {
         throw NetworkBlockedError(line)
     }
 }
+
+/** The bare, lower-cased host of an emulator `host:port` value (`[::1]:8080` gives `::1`). */
+internal fun emulatorHostOf(hostPort: String): String {
+    val v = hostPort.trim()
+    val bare = if (v.startsWith("[")) v.substringAfter("[").substringBefore("]") else v.substringBeforeLast(':', v)
+    return bare.lowercase()
+}
+
+/** Four dotted decimal octets, or null. A literal parse only: nothing here resolves a name. */
+private fun ipv4Octets(host: String): List<Int>? {
+    val parts = host.split('.')
+    if (parts.size != 4) return null
+    val octets = parts.map { p -> if (p.isEmpty() || p.length > 3 || !p.all(Char::isDigit)) return null else p.toInt() }
+    return octets.takeIf { o -> o.all { it in 0..255 } }
+}
+
+/** `localhost`, 127.0.0.0/8 or `::1`. */
+internal fun isLoopbackHost(host: String): Boolean {
+    val h = host.trim().removePrefix("[").removeSuffix("]").lowercase()
+    if (h == "localhost" || h == "::1" || h == "0:0:0:0:0:0:0:1") return true
+    return ipv4Octets(h)?.first() == 127
+}
+
+/**
+ * #867: loopback, or a literal private IPv4 address (10/8, 172.16/12, 192.168/16).
+ * A host name other than `localhost` is refused without a lookup, so a stale
+ * emulator variable naming a real host can never be trusted.
+ */
+internal fun isLoopbackOrPrivateHost(host: String): Boolean {
+    if (isLoopbackHost(host)) return true
+    val o = ipv4Octets(host.trim().lowercase()) ?: return false
+    return o[0] == 10 || (o[0] == 172 && o[1] in 16..31) || (o[0] == 192 && o[1] == 168)
+}
+
+/**
+ * #867: the value of an emulator variable when it may be used, or null. A value
+ * naming anything but a loopback or private address is refused loudly: printed to
+ * stderr and reported, and then treated as unset, so the emulator's `owner` token
+ * and a signed-in ID token never go to a real host.
+ */
+internal fun trustedEmulatorHost(variable: String, value: String?, report: (String) -> Unit = ::reportEmulatorRefusal): String? {
+    val v = value?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    if (isLoopbackOrPrivateHost(emulatorHostOf(v))) return v
+    report("[AuntieOS][emulator] $variable=$v is not a loopback or private address. Ignoring it and using production.")
+    return null
+}
+
+private fun reportEmulatorRefusal(line: String) {
+    System.err.println(line)
+    com.tribetails.auntieos.web.observability.reportMessage(line, fatal = false)
+}
+
 
 /**
  * Runs in the Send pipeline, after every request transform (a `defaultRequest`
@@ -107,18 +157,6 @@ private val LONG_CALLABLE_TIMEOUT_MS = mapOf(
 
 internal fun callableRequestTimeoutMs(name: String): Long = LONG_CALLABLE_TIMEOUT_MS[name] ?: AUNTIE_REQUEST_TIMEOUT_MS
 
-private fun Throwable.isTimeout(): Boolean =
+internal actual fun Throwable.isTransportTimeout(): Boolean =
     this is HttpRequestTimeoutException || this is ConnectTimeoutException ||
         this is java.net.SocketTimeoutException || this is java.net.http.HttpTimeoutException
-
-/** #867: the message to show for a failed request. A timeout anywhere in the cause chain reads as [AUNTIE_TIMEOUT_MESSAGE]. */
-internal fun Throwable.transportMessage(fallback: String): String {
-    var cursor: Throwable? = this
-    var depth = 0
-    while (cursor != null && depth < 8) {
-        if (cursor.isTimeout()) return AUNTIE_TIMEOUT_MESSAGE
-        cursor = cursor.cause
-        depth++
-    }
-    return message ?: fallback
-}

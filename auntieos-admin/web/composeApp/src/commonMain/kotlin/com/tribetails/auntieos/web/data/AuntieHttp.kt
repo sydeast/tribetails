@@ -20,6 +20,25 @@ const val AUNTIE_REQUEST_TIMEOUT_MS: Long = 90_000L
 /** #867: what a screen shows when a request ran out of time. */
 const val AUNTIE_TIMEOUT_MESSAGE: String = "Timed out reaching the server. Check your connection and try again."
 
+/** #867: true when this throwable, not its causes, is a connect, socket or request timeout on this platform. */
+internal expect fun Throwable.isTransportTimeout(): Boolean
+
+/**
+ * #867: the message to show for a failed request. A timeout anywhere in the cause
+ * chain reads as [AUNTIE_TIMEOUT_MESSAGE]; anything else keeps its own message.
+ * Common code, so the n8n client maps a timeout the same way the REST layer does.
+ */
+internal fun Throwable.transportMessage(fallback: String): String {
+    var cursor: Throwable? = this
+    var depth = 0
+    while (cursor != null && depth < 8) {
+        if (cursor.isTransportTimeout()) return AUNTIE_TIMEOUT_MESSAGE
+        cursor = cursor.cause
+        depth++
+    }
+    return message ?: fallback
+}
+
 /**
  * #867: every HTTP client the admin console builds comes from here, so every one
  * of them has connect and request timeouts, and on desktop every one of them is

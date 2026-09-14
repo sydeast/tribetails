@@ -77,6 +77,14 @@ object JvmFirestoreFixtures {
      */
     var lastWrite: RestWrite? = null
 
+    /**
+     * #867 review: points [JvmFirestoreRest] at a test server with a token, so a
+     * test can give a real write actual a slow server and see what the screen gets.
+     * Null (the app, and every other test) leaves the live endpoint and sign-in alone.
+     */
+    @Volatile
+    var restTransport: RestTestTransport? = null
+
     /** True when ANY fixture is set, i.e. we are inside a screenshot test, not the live app. */
     val active: Boolean
         get() = kinfolk != null || allKin != null || sessions != null || reports != null ||
@@ -100,8 +108,13 @@ object JvmFirestoreFixtures {
         kinCareAssignments = emptyMap()
         lastCallableName = null; lastCallablePayloadJson = null
         lastWrite = null
+        restTransport = null
     }
 }
+
+/** Where [JvmFirestoreFixtures.restTransport] sends REST calls: a client, a documents base URL and a bearer token. */
+class RestTestTransport(val http: io.ktor.client.HttpClient, val base: String, val token: String)
+
 /** One direct-REST write, as [JvmFirestoreFixtures.lastWrite] records it. */
 data class RestWrite(
     val op: String,
@@ -136,6 +149,22 @@ private fun <T> stubWriteResult(reason: String = "Not available on desktop"): Wr
 internal suspend fun transportWrite(failure: String, block: suspend () -> Boolean): WriteResult<Unit> =
     try {
         if (block()) WriteResult.Ok(Unit) else WriteResult.Err(failure)
+    } catch (c: kotlin.coroutines.cancellation.CancellationException) {
+        throw c
+    } catch (e: Exception) {
+        WriteResult.Err(e.transportMessage(failure))
+    }
+
+/**
+ * #867 review: [transportWrite] for an actual that builds its own result. A thrown
+ * failure becomes `Err`, with a timeout read as [AUNTIE_TIMEOUT_MESSAGE] instead of
+ * Ktor's text. It catches `Exception` only, so cancellation and
+ * [NetworkBlockedError] still propagate (the `runCatching` these replaced caught
+ * `Throwable` and turned a test network leak into a quiet Err).
+ */
+internal suspend fun <T> transportResult(failure: String, block: suspend () -> WriteResult<T>): WriteResult<T> =
+    try {
+        block()
     } catch (c: kotlin.coroutines.cancellation.CancellationException) {
         throw c
     } catch (e: Exception) {
@@ -339,25 +368,25 @@ internal actual suspend fun platformUpdateMediaTags(mediaId: String, taggedKinId
 
 // #829: the create body carries no Emergency Contact key (kinfolkWriteJson).
 internal actual suspend fun platformCreateKinfolk(k: Kinfolk): WriteResult<String> =
-    runCatching { WriteResult.Ok(JvmFirestoreRest.addDoc("kinfolk", kinfolkWriteJson(k))) }.getOrElse { WriteResult.Err(it.message ?: "create failed") }
+    transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("kinfolk", kinfolkWriteJson(k))) }
 // #829: a MERGE write, not setDoc. setDoc replaced the whole document, which
 // deleted every field the model does not send. The body is only the fields the
 // caller changed (FirestoreClient.updateKinfolk diffs against its read), so the
 // mask never names an untouched field or an Emergency Contact key. Every desktop
 // kinfolk update (edit form, photo, tags) goes through here.
 internal actual suspend fun platformUpdateKinfolkFields(kinfolkId: String, changes: List<KinfolkFieldChange>): WriteResult<Unit> =
-    runCatching {
+    transportResult("update failed") {
         require(kinfolkId.isNotBlank()) { "updateKinfolk requires a kinfolk id" }
         require(changes.none { it.path.first() == "_id" || it.path.first() in KINFOLK_WRITE_EXCLUDED_KEYS }) { "updateKinfolk: a reserved key reached the write" }
         if (changes.isNotEmpty()) JvmFirestoreRest.mergeFieldChanges("kinfolk", kinfolkId, changes)
         WriteResult.Ok(Unit)
-    }.getOrElse { WriteResult.Err(it.message ?: "update failed") }
+    }
 internal actual suspend fun platformArchiveKinfolk(id: String): WriteResult<Unit> =
     transportWrite("archive failed") { JvmFirestoreRest.patchFields("kinfolk", id, mapOf("status" to JsonPrimitive("archived"))) }
 internal actual suspend fun platformCreateKin(k: Kin): WriteResult<String> =
-    runCatching { WriteResult.Ok(JvmFirestoreRest.addDoc("kin", jsonOut.encodeToString(k))) }.getOrElse { WriteResult.Err(it.message ?: "create failed") }
+    transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("kin", jsonOut.encodeToString(k))) }
 internal actual suspend fun platformUpdateKin(k: Kin): WriteResult<Unit> =
-    runCatching { JvmFirestoreRest.setDoc("kin", k._id, jsonOut.encodeToString(k)); WriteResult.Ok(Unit) }.getOrElse { WriteResult.Err(it.message ?: "update failed") }
+    transportResult("update failed") { JvmFirestoreRest.setDoc("kin", k._id, jsonOut.encodeToString(k)); WriteResult.Ok(Unit) }
 internal actual suspend fun platformArchiveKin(id: String): WriteResult<Unit> =
     transportWrite("archive failed") { JvmFirestoreRest.patchFields("kin", id, mapOf("status" to JsonPrimitive("archived"))) }
 internal actual suspend fun platformPatchKinCare(id: String, patch: Map<String, String>): WriteResult<Unit> =
@@ -387,9 +416,9 @@ internal actual suspend fun platformMarkVoicemailDismissed(voicemailId: String):
 internal actual fun platformTemplatesStream(): Flow<FirestoreResult<List<KinTaleTemplate>>> =
     JvmFirestoreRest.pollingStream { JvmFirestoreRest.list<KinTaleTemplate>("kintale_templates") }
 internal actual suspend fun platformCreateKinTaleReport(report: KinCareReport): WriteResult<String> =
-    runCatching { WriteResult.Ok(JvmFirestoreRest.addDoc("kin_care_reports", jsonOut.encodeToString(report))) }.getOrElse { WriteResult.Err(it.message ?: "create failed") }
+    transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("kin_care_reports", jsonOut.encodeToString(report))) }
 internal actual suspend fun platformUpdateKinTaleReport(report: KinCareReport): WriteResult<Unit> =
-    runCatching { JvmFirestoreRest.setDoc("kin_care_reports", report._id, jsonOut.encodeToString(report)); WriteResult.Ok(Unit) }.getOrElse { WriteResult.Err(it.message ?: "update failed") }
+    transportResult("update failed") { JvmFirestoreRest.setDoc("kin_care_reports", report._id, jsonOut.encodeToString(report)); WriteResult.Ok(Unit) }
 internal actual suspend fun platformMarkKinTaleReportSent(reportId: String, sessionId: String, sentVia: String, deliveryReceiptId: String, sentAtIso: String): WriteResult<Unit> {
     // WARNING-15: one atomic Firestore :commit. The report side flips status to
     // "SENT" (uppercase to match the wasm bridge + the report screen's
@@ -470,9 +499,9 @@ internal actual suspend fun platformUploadMedia(entityId: String, entityType: St
 internal actual suspend fun platformPickAndUploadMedia(entityId: String, entityType: String, max: Int): WriteResult<List<MediaFile>> =
     stubWriteResult("Bulk media upload is mobile-only")
 internal actual suspend fun platformCreateKinTaleTemplate(template: KinTaleTemplate): WriteResult<String> =
-    runCatching { WriteResult.Ok(JvmFirestoreRest.addDoc("kintale_templates", jsonOut.encodeToString(template))) }.getOrElse { WriteResult.Err(it.message ?: "create failed") }
+    transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("kintale_templates", jsonOut.encodeToString(template))) }
 internal actual suspend fun platformUpdateKinTaleTemplate(template: KinTaleTemplate): WriteResult<Unit> =
-    runCatching { JvmFirestoreRest.setDoc("kintale_templates", template._id, jsonOut.encodeToString(template)); WriteResult.Ok(Unit) }.getOrElse { WriteResult.Err(it.message ?: "update failed") }
+    transportResult("update failed") { JvmFirestoreRest.setDoc("kintale_templates", template._id, jsonOut.encodeToString(template)); WriteResult.Ok(Unit) }
 // ISSUE #616. This was patchFields("kintale_templates", id, {"deleted": true}), a
 // soft-delete flag NOTHING in this repo reads: not the React admin's
 // `api/kinTaleTemplates.ts`, not `TemplateService.kt`, not Android's
@@ -504,13 +533,13 @@ internal actual suspend fun platformDeleteKinTaleTemplate(templateId: String): W
 // The unkeyed branch is untouched. It is the path every caller took before #825
 // and the one a caller with no key still takes.
 internal actual suspend fun platformRecordPayment(payment: Payment, idempotencyKey: String?): WriteResult<String> =
-    runCatching {
+    transportResult("record failed") {
         val json = jsonOut.encodeToString(payment)
         WriteResult.Ok(
             if (idempotencyKey.isNullOrBlank()) JvmFirestoreRest.addDoc("payments", json)
             else JvmFirestoreRest.setDoc("payments", idempotencyKey, json),
         )
-    }.getOrElse { WriteResult.Err(it.message ?: "record failed") }
+    }
 /**
  * Always write the canonical doc id `business_settings`, and write ONLY the
  * fields that changed since this console read the document.
@@ -533,16 +562,16 @@ internal actual suspend fun platformRecordPayment(payment: Payment, idempotencyK
  * field at its shipped value.
  */
 internal actual suspend fun platformSaveBusinessSettings(settings: BusinessSettings): WriteResult<Unit> =
-    runCatching {
+    transportResult("save failed") {
         val baseline = lastLoadedBusinessSettings
         val stampedAt = com.tribetails.auntieos.web.util.nowIso()
         if (baseline == null) {
             val stamped = settings.copy(_id = BUSINESS_SETTINGS_DOC_ID, updatedAt = stampedAt)
             JvmFirestoreRest.mergeDoc("business_settings", BUSINESS_SETTINGS_DOC_ID, jsonOut.encodeToString(stamped))
-            return@runCatching WriteResult.Ok(Unit)
+            return@transportResult WriteResult.Ok(Unit)
         }
         val changes = businessSettingsChangedFields(baseline, settings, jsonOut)
-        if (changes.isEmpty()) return@runCatching WriteResult.Ok(Unit)
+        if (changes.isEmpty()) return@transportResult WriteResult.Ok(Unit)
         val ok = JvmFirestoreRest.patchFields(
             "business_settings",
             BUSINESS_SETTINGS_DOC_ID,
@@ -554,33 +583,32 @@ internal actual suspend fun platformSaveBusinessSettings(settings: BusinessSetti
         // step later.
         lastLoadedBusinessSettings = settings
         WriteResult.Ok(Unit)
-    }.getOrElse { WriteResult.Err(it.message ?: "save failed") }
+    }
 internal actual suspend fun platformApproveBooking(bookingId: String): WriteResult<Unit> =
     transportWrite("approve failed") { JvmFirestoreRest.patchFields("kin_care_sessions", bookingId, mapOf("status" to JsonPrimitive("SCHEDULED"))) }
 internal actual suspend fun platformRejectBooking(bookingId: String): WriteResult<Unit> =
     transportWrite("reject failed") { JvmFirestoreRest.patchFields("kin_care_sessions", bookingId, mapOf("status" to JsonPrimitive("REJECTED"))) }
 internal actual suspend fun platformCreateBookingRequest(booking: KinCareSession): WriteResult<String> =
-    runCatching { WriteResult.Ok(JvmFirestoreRest.addDoc("kin_care_sessions", jsonOut.encodeToString(booking))) }.getOrElse { WriteResult.Err(it.message ?: "create failed") }
+    transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("kin_care_sessions", jsonOut.encodeToString(booking))) }
 internal actual suspend fun platformSaveUserProfile(profile: UserProfile): WriteResult<Unit> =
-    runCatching { JvmFirestoreRest.setDoc("users", profile.uid, jsonOut.encodeToString(profile)); WriteResult.Ok(Unit) }.getOrElse { WriteResult.Err(it.message ?: "save failed") }
+    transportResult("save failed") { JvmFirestoreRest.setDoc("users", profile.uid, jsonOut.encodeToString(profile)); WriteResult.Ok(Unit) }
 internal actual suspend fun platformCreateVetClinic(clinic: VetClinic): WriteResult<String> =
-    runCatching { WriteResult.Ok(JvmFirestoreRest.addDoc("vet_clinics", jsonOut.encodeToString(clinic))) }.getOrElse { WriteResult.Err(it.message ?: "create failed") }
+    transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("vet_clinics", jsonOut.encodeToString(clinic))) }
 internal actual suspend fun platformUpdateVetClinic(clinic: VetClinic): WriteResult<Unit> =
-    runCatching { JvmFirestoreRest.setDoc("vet_clinics", clinic._id, jsonOut.encodeToString(clinic)); WriteResult.Ok(Unit) }.getOrElse { WriteResult.Err(it.message ?: "update failed") }
+    transportResult("update failed") { JvmFirestoreRest.setDoc("vet_clinics", clinic._id, jsonOut.encodeToString(clinic)); WriteResult.Ok(Unit) }
 internal actual suspend fun platformDeleteVetClinic(id: String): WriteResult<Unit> =
-    runCatching { if (JvmFirestoreRest.deleteDoc("vet_clinics", id)) WriteResult.Ok(Unit) else WriteResult.Err("delete failed") }
-        .getOrElse { WriteResult.Err(it.message ?: "delete failed") }
+    transportResult("delete failed") { if (JvmFirestoreRest.deleteDoc("vet_clinics", id)) WriteResult.Ok(Unit) else WriteResult.Err("delete failed") }
 internal actual suspend fun platformLogActivity(entry: ActivityLogEntry): WriteResult<String> =
     JvmFirestoreRest.callable("logActivity", jsonOut.encodeToString(entry)).let { if (it is WriteResult.Ok) WriteResult.Ok("ok") else WriteResult.Err((it as WriteResult.Err).message) }
 
 internal actual suspend fun platformGetHouseholdData(kinfolkId: String): WriteResult<HouseholdData?> =
-    runCatching { WriteResult.Ok(JvmFirestoreRest.first<HouseholdData>("household_data") { it["kinfolkId"]?.jsonPrimitive?.content == kinfolkId }) }.getOrElse { WriteResult.Err(it.message ?: "read failed") }
+    transportResult("read failed") { WriteResult.Ok(JvmFirestoreRest.first<HouseholdData>("household_data") { it["kinfolkId"]?.jsonPrimitive?.content == kinfolkId }) }
 internal actual suspend fun platformSaveHouseholdData(data: HouseholdData): WriteResult<Unit> =
-    runCatching { JvmFirestoreRest.setDoc("household_data", data._id.ifBlank { data.kinfolkId }, jsonOut.encodeToString(data)); WriteResult.Ok(Unit) }.getOrElse { WriteResult.Err(it.message ?: "save failed") }
+    transportResult("save failed") { JvmFirestoreRest.setDoc("household_data", data._id.ifBlank { data.kinfolkId }, jsonOut.encodeToString(data)); WriteResult.Ok(Unit) }
 internal actual suspend fun platformCreateDynamicField(field: DynamicField): WriteResult<String> =
-    runCatching { WriteResult.Ok(JvmFirestoreRest.addDoc("dynamic_fields", jsonOut.encodeToString(field))) }.getOrElse { WriteResult.Err(it.message ?: "create failed") }
+    transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("dynamic_fields", jsonOut.encodeToString(field))) }
 internal actual suspend fun platformUpdateDynamicField(field: DynamicField): WriteResult<Unit> =
-    runCatching { JvmFirestoreRest.setDoc("dynamic_fields", field._id, jsonOut.encodeToString(field)); WriteResult.Ok(Unit) }.getOrElse { WriteResult.Err(it.message ?: "update failed") }
+    transportResult("update failed") { JvmFirestoreRest.setDoc("dynamic_fields", field._id, jsonOut.encodeToString(field)); WriteResult.Ok(Unit) }
 internal actual suspend fun platformArchiveDynamicField(id: String): WriteResult<Unit> =
     transportWrite("archive failed") { JvmFirestoreRest.patchFields("dynamic_fields", id, mapOf("status" to JsonPrimitive("archived"))) }
 
@@ -605,7 +633,7 @@ internal actual suspend fun platformPatchKinCareDoc(familyId: String, batchId: S
 // doc is absent so the UI renders "Unassigned" rather than an error banner.
 internal actual suspend fun platformGetKinCareAssignment(familyId: String, batchId: String, visitId: String): WriteResult<KinCareAssignment?> {
     JvmFirestoreFixtures.kinCareAssignments["$familyId/$batchId/$visitId"]?.let { return WriteResult.Ok(it) }
-    return runCatching {
+    return transportResult("read failed") {
         val doc = JvmFirestoreRest.getDocPlain("families/$familyId/bookings/$batchId/kinCares", visitId)
         WriteResult.Ok(doc?.let {
             KinCareAssignment(
@@ -613,7 +641,7 @@ internal actual suspend fun platformGetKinCareAssignment(familyId: String, batch
                 auntieDisplayName = it["auntieDisplayName"]?.jsonPrimitive?.contentOrNull,
             )
         })
-    }.getOrElse { WriteResult.Err(it.message ?: "read failed") }
+    }
 }
 
 // KinTale comment thread. Desktop has no live Firestore listener, so it polls the

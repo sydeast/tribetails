@@ -67,14 +67,46 @@ class DesktopTransportTest {
 
     @Test
     fun theGuardAllowsLoopbackAndTheConfiguredEmulatorHosts() {
-        val emulators = listOf("10.0.0.7:8080", null, "emu.local:5001")
+        val emulators = listOf("10.0.0.7:8080", null, "192.168.1.20:5001")
         assertEquals(null, NetworkGuard.blockReason("127.0.0.1", emulators))
+        assertEquals(null, NetworkGuard.blockReason("127.4.5.6", emulators))
         assertEquals(null, NetworkGuard.blockReason("localhost", emulators))
         assertEquals(null, NetworkGuard.blockReason("[::1]", emulators))
         assertEquals(null, NetworkGuard.blockReason("10.0.0.7", emulators))
-        assertEquals(null, NetworkGuard.blockReason("emu.local", emulators))
+        assertEquals(null, NetworkGuard.blockReason("192.168.1.20", emulators))
+        assertTrue(NetworkGuard.blockReason("10.0.0.8", emulators) != null, "a private host no variable names is still refused")
         assertTrue(NetworkGuard.blockReason("firestore.googleapis.com", emulators) != null)
         assertTrue(NetworkGuard.blockReason("n8n.tribetails.com", emulators) != null)
+    }
+
+    /** #867 review: a stale emulator variable naming a real host must not open the guard for that host. */
+    @Test
+    fun anEmulatorVariableNamingARealHostAllowsNothing() {
+        val stale = listOf("firestore.googleapis.com:443", "emu.local:5001", "8.8.8.8:8080", "172.32.0.1:8080")
+        assertTrue(NetworkGuard.blockReason("firestore.googleapis.com", stale) != null)
+        assertTrue(NetworkGuard.blockReason("emu.local", stale) != null)
+        assertTrue(NetworkGuard.blockReason("8.8.8.8", stale) != null)
+        assertTrue(NetworkGuard.blockReason("172.32.0.1", stale) != null)
+    }
+
+    @Test
+    fun onlyLoopbackAndPrivateLiteralsCountAsEmulatorHosts() {
+        listOf("localhost", "127.0.0.1", "127.255.0.9", "::1", "[::1]", "10.1.2.3", "172.16.0.1", "172.31.255.255", "192.168.0.10")
+            .forEach { assertTrue(isLoopbackOrPrivateHost(it), "$it should be trusted") }
+        listOf("172.15.0.1", "172.32.0.1", "192.169.0.1", "11.0.0.1", "8.8.8.8", "emu.local", "firestore.googleapis.com", "10.0.0", "10.0.0.256", "")
+            .forEach { assertTrue(!isLoopbackOrPrivateHost(it), "$it should be refused") }
+    }
+
+    @Test
+    fun anUntrustedEmulatorVariableIsRefusedLoudlyAndIgnored() {
+        val reports = mutableListOf<String>()
+        assertEquals("127.0.0.1:8080", trustedEmulatorHost("FIRESTORE_EMULATOR_HOST", "127.0.0.1:8080") { reports += it })
+        assertEquals("[::1]:5001", trustedEmulatorHost("FUNCTIONS_EMULATOR_HOST", "[::1]:5001") { reports += it })
+        assertEquals(null, trustedEmulatorHost("FIRESTORE_EMULATOR_HOST", "  ") { reports += it })
+        assertTrue(reports.isEmpty(), "$reports")
+        assertEquals(null, trustedEmulatorHost("FIRESTORE_EMULATOR_HOST", "firestore.googleapis.com:443") { reports += it })
+        assertEquals(1, reports.size)
+        assertTrue(reports.single().contains("FIRESTORE_EMULATOR_HOST=firestore.googleapis.com:443"), reports.single())
     }
 
     @Test
