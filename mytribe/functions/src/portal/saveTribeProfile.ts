@@ -9,7 +9,6 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
-import { hasKinfolkPerm } from '../lib/memberGate';
 
 const CustomFieldZ = z.object({
   key: z.string().min(1).max(80),
@@ -59,27 +58,38 @@ export async function saveTribeProfileHandler(req: CallableRequest<unknown>): Pr
     actorRole = role === 'SECONDARY' ? 'SECONDARY' : 'PRIMARY';
   }
 
-  // #843: the Emergency Contact is a home detail. saveHomeAccess gates the gate
-  // code and Wi-Fi on `home_access`, and this callable used to let any member
-  // of the household overwrite the Emergency Contact beside them. Only a CHANGE
-  // is refused: the portal re-sends the stored values on every save, so a
-  // secondary without the permission can still save the rest of the profile.
-  if (args.customFields !== undefined && !isOperator) {
+  // #829: Emergency Contacts live on the kinfolk record, written only by
+  // saveEmergencyContacts (gated on `home_access` there). The
+  // `emergencyContact*` rows in these customFields are a store nothing reads, so
+  // this callable no longer judges them: it strips them from EVERY payload and
+  // never writes a value a client sent. An old portal bundle or portal Android
+  // still sends them; that save goes through with them removed.
+  //
+  // Why the #843 comparison is gone rather than taught to ignore absent keys:
+  // once sent keys are stripped, nothing this callable writes can change an
+  // Emergency Contact, so there is nothing left to gate. Keeping the comparison
+  // would keep a permission check over a dead store, and it is what locked every
+  // secondary without Home access out of profile saves once the new portal
+  // stopped sending the keys.
+  //
+  // A STORED copy is carried through unchanged instead of being dropped, because
+  // `customFields` is replaced whole and a profile save must not destroy the
+  // only copy before the migration (scripts/backfillKinfolkEmergencyContacts.ts)
+  // moves it onto the kinfolk record and deletes it.
+  let customFields = args.customFields;
+  if (customFields !== undefined) {
+    const sentStale = customFields.filter((f) => isEmergencyContactKey(f.key)).length;
     const stored = await firestore.collection('families').doc(kinfolkId).get();
-    const before = emergencyContactSnapshot((stored.data() ?? {})['customFields']);
-    const after = emergencyContactSnapshot(args.customFields);
-    if (before !== after) {
-      const allowed = await hasKinfolkPerm(uid, kinfolkId, 'home_access', req.auth?.token?.admin === true, 'saveTribeProfile');
-      if (!allowed) {
-        logEvent({ severity: 'warn', function: 'saveTribeProfile', event: 'portal.tribe.emergency_contact.denied', uid, extra: { kinfolkId } });
-        throw new HttpsError('permission-denied', 'Only someone with Home access can change the Emergency Contact.');
-      }
+    const carried = storedEmergencyContactRows((stored.data() ?? {})['customFields']);
+    customFields = [...customFields.filter((f) => !isEmergencyContactKey(f.key)), ...carried];
+    if (sentStale > 0) {
+      logEvent({ severity: 'info', function: 'saveTribeProfile', event: 'portal.tribe.emergency_contact_keys.stripped', uid, extra: { kinfolkId, stripped: sentStale } });
     }
   }
 
   const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
   if (args.displayName !== undefined) update['displayName'] = args.displayName;
-  if (args.customFields !== undefined) update['customFields'] = args.customFields;
+  if (customFields !== undefined) update['customFields'] = customFields;
   if (Object.keys(update).length === 1) {
     return { ok: true }; // only timestamp would be written; skip
   }
@@ -107,18 +117,24 @@ export async function saveTribeProfileHandler(req: CallableRequest<unknown>): Pr
   return { ok: true };
 }
 
-const EMERGENCY_CONTACT_KEYS = ['emergencyContactName', 'emergencyContactPhone', 'emergencyContactRelation'] as const;
+const EMERGENCY_CONTACT_KEYS: ReadonlySet<string> = new Set(['emergencyContactName', 'emergencyContactPhone', 'emergencyContactRelation']);
 
-/** The three Emergency Contact values as one comparable string; absent reads as empty. */
-function emergencyContactSnapshot(fields: unknown): string {
+function isEmergencyContactKey(key: string): boolean {
+  return EMERGENCY_CONTACT_KEYS.has(key);
+}
+
+/** The stored emergencyContact* rows, exactly as stored, for carrying through a save. */
+function storedEmergencyContactRows(fields: unknown): Array<z.infer<typeof CustomFieldZ>> {
   const list = Array.isArray(fields) ? fields : [];
-  const valueOf = (key: string): string => {
-    const hit = list.find((f) => typeof f === 'object' && f !== null && (f as { key?: unknown }).key === key) as
-      | { value?: unknown }
-      | undefined;
-    return typeof hit?.value === 'string' ? hit.value.trim() : '';
-  };
-  return JSON.stringify(EMERGENCY_CONTACT_KEYS.map(valueOf));
+  return list.filter(
+    (f): f is z.infer<typeof CustomFieldZ> =>
+      typeof f === 'object' &&
+      f !== null &&
+      typeof (f as { key?: unknown }).key === 'string' &&
+      isEmergencyContactKey((f as { key: string }).key) &&
+      typeof (f as { label?: unknown }).label === 'string' &&
+      typeof (f as { value?: unknown }).value === 'string',
+  );
 }
 
 export const saveTribeProfile = onCall(
