@@ -56,6 +56,9 @@ import { Args as SaveTemplateArgs } from '../src/admin/saveTemplate';
 // portal Android) mirror this payload, and `contacts[]` is nested, so it gets
 // the recursive signature.
 import { Args as SaveEmergencyContactsArgs } from '../src/portal/emergencyContacts';
+// #890: three admin clients (React admin, Android, desktop) now create a
+// household through this callable instead of a direct write.
+import { Args as CreateKinfolkArgs } from '../src/admin/createKinfolk';
 import { Args as ImportSeedTemplatesArgs } from '../src/admin/importSeedTemplates';
 import { Args as BroadcastMessageArgs } from '../src/admin/broadcastMessage';
 // Marketing blasts (2026-09-12). Frozen from birth: the callable now takes the
@@ -315,6 +318,11 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   // purpose: a hard delete would strand every household's `vetClinicId`, so the
   // absence of that key is part of the contract, not an omission.
   archiveVetClinic: { schema: ArchiveVetClinicArgs, keys: ['archived', 'clinicId'] },
+  // #890: admin web, admin Android and the desktop console all create a household
+  // through this one key. The household fields ride inside it as the clients
+  // already wrote them, so the freeze is the envelope, and the server-owned keys
+  // it drops are pinned in test/createKinfolk.test.ts.
+  createKinfolk: { schema: CreateKinfolkArgs, keys: ['kinfolk'] },
   // Two keys, and `scope` must stay one of them: it is what decides whether the
   // cascade rewrites `kinfolk` or `kin`. A client that stopped sending it would
   // otherwise fall to a default and clear the wrong half of the directory.

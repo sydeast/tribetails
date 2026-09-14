@@ -1250,6 +1250,20 @@ every client in both directions: these callables are the only door.
 - NEVER a recipient: no audience builder reads these fields (`test/emergencyContactsNeverMessaged.test.ts`). NEVER logged: name or phone.
 - Clients: `auntieos-admin/src/api/emergencyContacts.ts`, Android `AuntieRepository.listEmergencyContacts / saveEmergencyContacts`, desktop `FirestoreClient.listEmergencyContacts / saveEmergencyContacts`, `mytribe/web/src/api/tribeApi.ts`, `PortalApi.listEmergencyContacts / saveEmergencyContacts`.
 
+### createKinfolk (#890, admin-gated)
+- req `{ kinfolk: Record<string, unknown> }` (strict envelope). The household fields as each client already wrote them: web's six (`firstName`, `lastName`, `phoneNumber`, `email`, `status`, `serviceAddress`, plus `profilePictureUrl`/`joinDate` blanks), the Android and desktop models whole.
+- res `{ kinfolkId: string, duplicateOf: string | null }`
+- `kinfolk.firstName` must be a non-blank string, else `invalid-argument` "A household needs a first name."
+- Dropped before the write, whatever the client sent: `emergencyContacts`, `emergencyContactName`, `emergencyContactPhone`, `emergencyContactRelation` (only `saveEmergencyContacts` writes those), `id`, `_id`, `createdAt`, `createdAtSource`, `createdByUid`, `myTribeLinkedAt`, `isTestData`. Every other field is written as sent; `updatedAt` is not touched.
+- Stamps `createdAt` (server time), `createdAtSource: 'live'`, `createdByUid` (the caller).
+- **DUPLICATE RULE.** Before creating, in one transaction, it reads `kinfolk` where `createdAt >= now - 10 minutes`. A document counts as the same household when `createdByUid` is the caller AND it has the same primary phone (E.164 digits, or the digits when it does not parse; fewer than 7 digits never match) OR the same primary email (trimmed, lower-cased; must contain `@`). A blank never matches a blank. On a match nothing is written and the answer is `{ kinfolkId: <existing id>, duplicateOf: <existing id> }` (the newest match when several). Otherwise the household is created and `duplicateOf` is `null`. Rule: `src/lib/kinfolkDuplicate.ts`.
+- Clients treat `duplicateOf` as "this household already exists": they continue Add Kinfolk against that id (save its Emergency Contact) and do not log a second CREATE.
+- Logs `kinfolk.created` or `kinfolk.create.duplicate` (`warn`) with the id and the kind of match. NEVER logged: name, phone or email.
+- GATE: `wrapAdminCallable` (`isStaff`). Secrets `SENTRY_DSN`, `AUNTIE_OPERATOR_UIDS`.
+- NOT CLOSED: `firestore.rules` still allows a staff direct create of `kinfolk/{id}`, so an old client install goes around the duplicate check.
+- Households made before #890 have no `createdAt`; `npm --prefix mytribe/functions run report:duplicate-kinfolk -- --allow-prod --project <id>` (read-only) finds the duplicates among them by document create time.
+- Clients: `auntieos-admin/src/api/directoryWrite.ts#createKinfolk`, Android `AuntieRepository.createKinfolkComplete`, desktop `FirestoreClient.createKinfolk`.
+
 ### expireStaleInvites (scheduled, NOT a callable)
 - `onSchedule('every day 02:00', 'America/New_York')`. There is no client trigger,
   and no admin "expire now" button exists or should be built: nothing in the
