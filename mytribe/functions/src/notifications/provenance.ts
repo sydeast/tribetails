@@ -564,7 +564,8 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'invoice.payment.applied': [
     {
-      trigger: 'An admin records a payment, full or partial, with Send Confirmation ticked.',
+      trigger:
+        'An admin records a payment against an invoice. The household is told only when Send Confirmation is ticked; the office is always told.',
       source: 'src/admin/recordPayment.ts',
       dataKeys: ['kinfolkId', 'invoiceId', 'paymentId'],
     },

@@ -420,11 +420,23 @@ describe('recordPayment: the Send Confirmation Email toggle', () => {
       }),
     );
   });
-  it('sends NOTHING by default: a message to a real person needs a deliberate tick', async () => {
+  it('sends the HOUSEHOLD nothing by default: a message to a real person needs a deliberate tick', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await recordPaymentHandler(req(feeArgs));
     expect(res.confirmationEmailSent).toBe(false);
+    // #866 operator ruling: the office keeps its "Invoice Paid" copy on every
+    // path, so the notice is still enqueued, with no household recipient.
+    expect(mocks.resolveKinfolkUid).not.toHaveBeenCalled();
+    expect(mocks.enqueueNotification).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'invoice.payment.applied', recipientUid: '' }),
+    );
+  });
+  it('sends no office copy for a standalone payment that names no invoice', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await recordPaymentHandler(req({ ...feeArgs, invoiceId: '', invoiceNumber: '' }));
     expect(mocks.enqueueNotification).not.toHaveBeenCalled();
   });
   it('reports FALSE for a household with no portal account, without failing the payment', async () => {

@@ -378,7 +378,7 @@ export async function recordPaymentHandler(
         uid: actor.uid,
         extra: { paymentId: ref.id, kinfolkId: stored['kinfolkId'], idempotencyKey: args.idempotencyKey },
       });
-      return replayResult(ref.id, stored);
+      return replayWithConfirmation(ref, stored, args.sendConfirmationEmail, actor.uid);
     }
   }
 
@@ -549,9 +549,10 @@ export async function recordPaymentHandler(
       // Stamped `false` here and updated after the commit, because whether the
       // household's confirmation went out is not known until it has been tried,
       // and it is tried only once the money has landed. A replay reports what
-      // is stored and sends nothing: this callable's own header says a
-      // confirmation is sent because the operator ticked a box, and "the reply
-      // to her first attempt was lost" is not her ticking it twice.
+      // is stored and sends nothing new: "the reply to her first attempt was
+      // lost" is not her ticking the box twice. The one exception (#866) is a
+      // ticked confirmation this field does not record as sent, which the
+      // replay finishes because nothing else will; see `replayWithConfirmation`.
       confirmationEmailSent: false,
     };
     // `create` WHEN THERE IS A KEY, so two attempts that somehow reach the
@@ -570,7 +571,7 @@ export async function recordPaymentHandler(
       uid: actor.uid,
       extra: { paymentId: ref.id, kinfolkId, idempotencyKey: args.idempotencyKey, raced: true },
     });
-    return replayResult(ref.id, committed.replayed);
+    return replayWithConfirmation(ref, committed.replayed, args.sendConfirmationEmail, actor.uid);
   }
   const application = committed.application;
 
@@ -628,17 +629,22 @@ export async function recordPaymentHandler(
   // provider having a bad minute must not throw away the record of it or offer
   // a retry that would collect a second time. What actually happened comes back
   // in `confirmationEmailSent` so the operator can send it another way.
-  let confirmationEmailSent = false;
-  if (args.sendConfirmationEmail) {
-    confirmationEmailSent = await sendPaymentConfirmation({
-      kinfolkId,
-      // The invoice the confirmation is ABOUT: the one this payment was
-      // applied to, or the display link when nothing was applied. The catalog's
-      // `invoice.payment.applied` template needs one.
-      invoiceId: application?.invoiceId ?? args.invoiceId,
-      paymentId: ref.id,
-      uid: actor.uid,
-    });
+  //
+  // #866: this callable is the only sender of `invoice.payment.applied` for the
+  // payment it records. Ticked, the household and the office are told. Unticked
+  // (or no portal account), the office still gets its copy and the household
+  // gets nothing, from any path.
+  const confirmationEmailSent = await sendPaymentConfirmation({
+    kinfolkId,
+    // The invoice the confirmation is ABOUT: the one this payment was
+    // applied to, or the display link when nothing was applied. The catalog's
+    // `invoice.payment.applied` template needs one.
+    invoiceId: application?.invoiceId ?? args.invoiceId,
+    paymentId: ref.id,
+    uid: actor.uid,
+    householdRequested: args.sendConfirmationEmail,
+  });
+  {
     // STAMPED ON THE ROW, so a replay can report it (#825). Outside the
     // transaction because it is not known inside one: the send is attempted
     // only after the money has landed. Best-effort like the send itself — a
@@ -725,6 +731,61 @@ function storedCents(stored: Record<string, unknown>, field: string): number {
  * through `paymentMoneyOf` rather than being read field by field, so a replayed
  * answer and a first answer are produced by the same arithmetic.
  */
+/**
+ * How long the dispatcher ledger remembers one payment's confirmation copies.
+ * A same-key retry that finishes a lost confirmation (below) can land hours
+ * after the first attempt; the identity names one payment, so a day can never
+ * merge two.
+ */
+export const PAYMENT_CONFIRMATION_DEDUPE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * THE ANSWER A RETRY GETS, plus the one piece of the first attempt a retry may
+ * finish (#866): a confirmation the operator ticked that the row does not record
+ * as sent. Since #866 this callable is that confirmation's only sender, so a
+ * first attempt that recorded the payment and then crashed, or whose enqueue
+ * failed, would otherwise leave the household untold for good.
+ *
+ * Nothing else is redone. An unticked retry sends nothing, and a row already
+ * saying `confirmationEmailSent: true` sends nothing. A first attempt that
+ * enqueued and died before its stamp is caught by the ledger identity
+ * (`invoice:<id>#paymentId:<id>`) for PAYMENT_CONFIRMATION_DEDUPE_WINDOW_MS.
+ */
+async function replayWithConfirmation(
+  ref: { id: string; update: (data: Record<string, unknown>) => Promise<unknown> },
+  stored: Record<string, unknown>,
+  householdRequested: boolean,
+  actorUid: string,
+): Promise<z.infer<typeof Result>> {
+  const answer = replayResult(ref.id, stored);
+  if (!householdRequested || stored['confirmationEmailSent'] === true) return answer;
+  const sent = await sendPaymentConfirmation({
+    kinfolkId: answer.kinfolkId,
+    invoiceId: answer.application?.invoiceId ?? (typeof stored['invoiceId'] === 'string' ? stored['invoiceId'] : ''),
+    paymentId: ref.id,
+    uid: actorUid,
+    householdRequested: true,
+  });
+  if (!sent) return answer;
+  await ref.update({ confirmationEmailSent: true }).catch((err) => {
+    logEvent({
+      severity: 'warn',
+      function: 'recordPayment',
+      event: 'payment.confirmation.stamp.failed',
+      uid: actorUid,
+      extra: { paymentId: ref.id, replay: true, err: (err as Error)?.message },
+    });
+  });
+  logEvent({
+    severity: 'warn',
+    function: 'recordPayment',
+    event: 'payment.confirmation.recovered',
+    uid: actorUid,
+    extra: { paymentId: ref.id },
+  });
+  return { ...answer, confirmationEmailSent: true };
+}
+
 function replayResult(paymentId: string, stored: Record<string, unknown>): z.infer<typeof Result> {
   const money = paymentMoneyOf({
     amountCents: storedCents(stored, 'amountCents'),
@@ -783,30 +844,44 @@ async function sendPaymentConfirmation(input: {
   invoiceId: string;
   paymentId: string;
   uid: string;
+  /** The Send Confirmation toggle. Off means the household is not told; the office still is. */
+  householdRequested: boolean;
 }): Promise<boolean> {
   if (input.kinfolkId === '') return false;
+  // #866 OPERATOR RULING: the office keeps its "Invoice Paid" copy on every
+  // path. The catalog's `businessAdmins` secondary resolver sends it, and it
+  // needs only an enqueue with no household uid, the same shape the Stripe
+  // webhook uses for a household with no account. A standalone payment that
+  // names no invoice has nothing to call paid, so it sends nothing unasked.
+  if (!input.householdRequested && input.invoiceId === '') return false;
   try {
-    const recipientUid = await resolveKinfolkUid(input.kinfolkId);
-    if (recipientUid === null) {
-      logEvent({
-        severity: 'info',
-        function: 'recordPayment',
-        event: 'payment.confirmation.norecipient',
-        uid: input.uid,
-        extra: { kinfolkId: input.kinfolkId, paymentId: input.paymentId },
-      });
-      return false;
+    let recipientUid: string | null = null;
+    if (input.householdRequested) {
+      recipientUid = await resolveKinfolkUid(input.kinfolkId);
+      if (recipientUid === null) {
+        logEvent({
+          severity: 'info',
+          function: 'recordPayment',
+          event: 'payment.confirmation.norecipient',
+          uid: input.uid,
+          extra: { kinfolkId: input.kinfolkId, paymentId: input.paymentId },
+        });
+        if (input.invoiceId === '') return false;
+      }
     }
     await enqueueNotification({
       key: 'invoice.payment.applied',
-      recipientUid,
+      recipientUid: recipientUid ?? '',
       data: {
         kinfolkId: input.kinfolkId,
         invoiceId: input.invoiceId,
         paymentId: input.paymentId,
       },
+      // A retry of the same submission may land hours later (#866 replay
+      // recovery below); the ledger has to remember this payment's copies that long.
+      dedupeWindowMs: PAYMENT_CONFIRMATION_DEDUPE_WINDOW_MS,
     });
-    return true;
+    return recipientUid !== null;
   } catch (err) {
     logEvent({
       severity: 'warn',

@@ -467,20 +467,38 @@ const CATALOG_LIST: NotificationDef[] = [
     //
     // #866: ONE SENDER PER PAYMENT PATH. Each payment gets at most one of these.
     //
-    //   Path                                  Pays the invoice with   Sends this notice
-    //   ------------------------------------  ----------------------  --------------------------------
-    //   Card (Stripe), full or the remainder  stripeWebhook patch     stripeWebhook, once per payment
-    //   Admin: markInvoicePaid, then          markInvoicePaid         recordPayment, only when the
-    //     recordPayment (React, Android)                                Send Confirmation box is ticked
-    //   Admin: recordPayment with `apply`     stageApply              recordPayment, only when ticked
-    //   Admin partial (bill stays open)       (not paid)              recordPayment, only when ticked
-    //   Account credit draw (auto-apply)      drawAccountCredit       onInvoicesWrite
-    //   Any other write that pays the bill    (unstamped)             onInvoicesWrite
+    //   Path                                   Pays the invoice with   Sends this notice
+    //   -------------------------------------  ----------------------  ---------------------------------
+    //   Card (Stripe), full or the remainder   stripeWebhook patch     stripeWebhook, once per payment
+    //   Admin: markInvoicePaid, then           markInvoicePaid         recordPayment (household only
+    //     recordPayment (React, Android)                                 when Send Confirmation is ticked)
+    //   Admin: recordPayment with `apply`      stageApply              recordPayment (household only
+    //                                                                    when ticked)
+    //   Admin partial (bill stays open)        (not paid)              recordPayment (household only
+    //                                                                    when ticked)
+    //   Android Payments screen: recordPayment (not paid by it)        recordPayment (household only
+    //     without `apply`                                                when ticked; the screen has no
+    //                                                                    toggle, so never)
+    //   Account credit draw: onInvoiceAutoApply drawAccountCredit      onInvoicesWrite
+    //     trigger or the runAutoApply callable
+    //   Any other write that pays the bill     (unstamped)             onInvoicesWrite
+    //
+    // WHO GETS A COPY. The household copy (`kinfolkAcct`) follows the toggle on
+    // admin paths. The office copy (`businessAdmins`, "Invoice Paid") goes out on
+    // EVERY path (operator ruling on #866): an unticked admin payment, or one for a
+    // household with no portal account, still enqueues with no household uid, so
+    // only the office copy is written. A standalone payment naming no invoice sends
+    // nothing unless ticked.
     //
     // The first three stamp `paymentAppliedNoticeOwner` in the write that pays the
     // invoice, and `onInvoicesWrite` stays silent for a write that changed it.
-    // An unticked admin payment therefore tells the household nothing, from any
-    // path. The rule and its reasons: lib/paymentAppliedOwner.ts.
+    // The rule and its reasons: lib/paymentAppliedOwner.ts.
+    //
+    // A CRASH AFTER THE COMMIT. The webhook stamps `noticeSentAt` on
+    // `stripeEvents/{id}` once the notice is enqueued and answers 500 until then,
+    // and a Stripe retry of a PAID event without that stamp sends it. recordPayment
+    // does the same for a same-key retry of a ticked submission whose row does not
+    // say `confirmationEmailSent: true`.
     key: 'invoice.payment.applied',
     label: 'Payment or credit applied to an invoice',
     audience: 'both',
