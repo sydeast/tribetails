@@ -17,13 +17,17 @@ const mocks = vi.hoisted(() => ({
   dbFn: vi.fn(),
   resolveUid: vi.fn(),
   enqueue: vi.fn(),
+  enqueueDetailed: vi.fn(),
   logEvent: vi.fn(),
 }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: mocks.logEvent }));
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveUid }));
-vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: mocks.enqueue }));
+vi.mock('../src/notifications/dispatcher', () => ({
+  enqueueNotification: mocks.enqueue,
+  enqueueNotificationDetailed: mocks.enqueueDetailed,
+}));
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<any>('firebase-admin/firestore');
   return { ...actual, FieldValue: { serverTimestamp: () => '__TS__' } };
@@ -37,6 +41,7 @@ beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.resolveUid.mockReset().mockResolvedValue('kin-uid');
   mocks.enqueue.mockReset().mockResolvedValue(['n1']);
+  mocks.enqueueDetailed.mockReset().mockResolvedValue({ written: ['n1'], suppressed: [] });
   mocks.logEvent.mockReset();
 });
 
@@ -111,13 +116,59 @@ describe('WARNING-25: invoice reminder cron paginates past the cap', () => {
     const reminded = await runInvoiceRemindersScan(now);
 
     expect(reminded).toBe(1200);
-    expect(mocks.enqueue).toHaveBeenCalledTimes(1200);
+    expect(mocks.enqueueDetailed).toHaveBeenCalledTimes(1200);
     // Every doc got its idempotency stamp written.
     expect(ctx.writes).toHaveLength(1200);
     // No cap log — we drained cleanly below the safety ceiling.
     expect(
       mocks.logEvent.mock.calls.some((c) => c[0]?.event === 'cron.pagination.cap-hit'),
     ).toBe(false);
+  });
+
+  it('#832: stamps only a reminder that went out; prefs suppression leaves the invoice unstamped', async () => {
+    const now = 1_000_000_000_000;
+    const dueSoon = new Date(now + 24 * 60 * 60 * 1000).toISOString();
+    const ctx = pagedDbMock([
+      { id: 'inv-muted', data: { status: 'open', amountDue: 100, dueDate: dueSoon, kinfolkId: 'fam-muted' } },
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.enqueueDetailed.mockResolvedValue({ written: [], suppressed: [{ recipientUid: 'kin-uid', reason: 'prefs' }] });
+
+    const reminded = await runInvoiceRemindersScan(now);
+
+    expect(reminded).toBe(0);
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('#832: a duplicate of a button send is stamped with THAT send time, never the cron run time', async () => {
+    const now = 1_000_000_000_000;
+    const buttonSentAt = now - 90_000;
+    const dueSoon = new Date(now + 24 * 60 * 60 * 1000).toISOString();
+    const ctx = pagedDbMock([
+      { id: 'inv-pressed', data: { status: 'open', amountDue: 100, dueDate: dueSoon, kinfolkId: 'fam-pressed' } },
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.enqueueDetailed.mockResolvedValue({
+      written: [],
+      suppressed: [{ recipientUid: 'kin-uid', reason: 'duplicate', existingId: 's1', lastAtMs: buttonSentAt }],
+    });
+
+    const reminded = await runInvoiceRemindersScan(now);
+
+    expect(reminded).toBe(0);
+    expect(ctx.writes).toEqual([{ id: 'inv-pressed', data: { reminderNotifiedAtMs: buttonSentAt } }]);
+  });
+
+  it('#832: a reminder that went out is stamped with this run time', async () => {
+    const now = 1_000_000_000_000;
+    const dueSoon = new Date(now + 24 * 60 * 60 * 1000).toISOString();
+    const ctx = pagedDbMock([
+      { id: 'inv-sent', data: { status: 'open', amountDue: 100, dueDate: dueSoon, kinfolkId: 'fam-sent' } },
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    expect(await runInvoiceRemindersScan(now)).toBe(1);
+    expect(ctx.writes).toEqual([{ id: 'inv-sent', data: { reminderNotifiedAtMs: now } }]);
   });
 
   it('overdue scan also drains every past-due invoice across pages', async () => {

@@ -4,7 +4,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
-import { enqueueNotification } from '../notifications/dispatcher';
+import { enqueueNotification, enqueueNotificationDetailed } from '../notifications/dispatcher';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 
@@ -51,6 +51,14 @@ function isPaid(d: InvoiceDoc): boolean {
  * Reminds on one invoice doc if it is unpaid, due within the reminder window,
  * and not yet reminded. Exported for unit testing of the per-doc decision.
  * Returns true when a reminder was enqueued.
+ *
+ * #832: `reminderNotifiedAtMs` means "a reminder reached this household", and
+ * the reminder button, the cron's own skip and every client's "Last reminder"
+ * row all read it that way. So it is written only for a reminder that really
+ * went out: now, when this run's was written; or the earlier send's time, when
+ * the dispatcher reports a duplicate (a button press whose own stamp did not
+ * land). When prefs suppressed every recipient nothing went out and nothing is
+ * stamped, so the invoice stays eligible if the household turns reminders on.
  */
 export async function processReminderInvoice(
   docSnap: QueryDocumentSnapshot,
@@ -69,7 +77,7 @@ export async function processReminderInvoice(
   if (!familyId) return false;
   const recipientUid = await resolveKinfolkUid(familyId);
   try {
-    await enqueueNotification({
+    const outcome = await enqueueNotificationDetailed({
       key: 'invoice.reminder',
       recipientUid: recipientUid ?? '',
       data: {
@@ -81,8 +89,22 @@ export async function processReminderInvoice(
       },
       fireAtMs: now,
     });
-    await docSnap.ref.set({ [NOTIFIED_FIELD_REMINDER]: now }, { merge: true });
-    return true;
+    if (outcome.written.length > 0) {
+      await docSnap.ref.set({ [NOTIFIED_FIELD_REMINDER]: now }, { merge: true });
+      return true;
+    }
+    const duplicate = outcome.suppressed.find((s) => s.reason === 'duplicate');
+    if (duplicate) {
+      // A reminder already reached this household; record THAT one.
+      await docSnap.ref.set({ [NOTIFIED_FIELD_REMINDER]: duplicate.lastAtMs ?? now }, { merge: true });
+    }
+    logEvent({
+      severity: 'info',
+      function: 'invoiceRemindersCron',
+      event: duplicate ? 'reminder.already-delivered' : 'reminder.suppressed',
+      extra: { familyId, invoiceId: docSnap.id, lastAtMs: duplicate?.lastAtMs ?? null },
+    });
+    return false;
   } catch (err) {
     logEvent({
       severity: 'warn',
