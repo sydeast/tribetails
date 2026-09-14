@@ -57,6 +57,18 @@ type InvoiceDoc = {
  *
  * `open` includes an `overdue` or `past_due` label with a balance: the classifier
  * reads the money, so paying off an overdue bill still sends.
+ *
+ * TWO LEGACY SHAPES, read as the classifier reads them (ADR-0002), not patched
+ * with a second rule here:
+ *   - A doc with a `total` and no `amountDue` (`{ status: 'open', total: 40 }`)
+ *     classifies `paid`, because a missing balance is no evidence of one. So a
+ *     credit draw that pays one off (onInvoiceAutoApply accepts `amountDue`
+ *     null as collectable) is paid to paid and sends nothing. The old rule sent
+ *     for it. The portal already shows that doc as Paid and the state backfill
+ *     stamps it `paid`.
+ *   - A doc with `amountDue: 0` and no `total` classifies `zero`. Every payer
+ *     writes `status: 'paid'` in the write that pays it, so that write reads
+ *     `paid`, but from `zero`, and sends nothing unless the payer owns its notice.
  */
 export const PAYMENT_APPLIED_FROM_STATES: readonly InvoiceState[] = ['open'];
 

@@ -118,6 +118,24 @@ describe('#884 invoice.payment.applied fires only on a transition from open into
     expect(mocks.enqueue).not.toHaveBeenCalled();
   });
 
+  it('legacy: a total with no amountDue already reads paid, so paying it off is paid to paid and sends nothing', async () => {
+    // The classifier's reading (ADR-0002): a missing balance is no evidence of
+    // one. The old amountDue rule sent here; #884 does not add a second rule.
+    const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
+    await onInvoicesWriteHandler(
+      makeEvent({ kinfolkId: '3', status: 'open', total: 40 }, { kinfolkId: '3', status: 'paid', total: 40, amountDue: 0 }) as any,
+    );
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('legacy: amountDue 0 with no total reads zero, so a later paid write from it sends nothing', async () => {
+    const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
+    await onInvoicesWriteHandler(
+      makeEvent({ kinfolkId: '3', status: 'open', amountDue: 0 }, { kinfolkId: '3', status: 'paid', amountDue: 0 }) as any,
+    );
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
   it('keeps the overdue branch as it was: an overdue label with no amountDue still sends invoice.overdue', async () => {
     // invoiceStateOf reads `{ total: 40 }` with no amountDue as paid. The overdue
     // branch is not driven by the classifier (#871 owns it), so this write still
