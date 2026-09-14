@@ -35,7 +35,9 @@ class N8nClient {
         isLenient = true
     }
 
-    private val http = HttpClient {
+    // #867: built by the shared factory, so it has timeouts and the desktop test
+    // network guard. Two of these calls send no token, so nothing else stops them.
+    private val http = auntieHttpClient(requestTimeoutMs = 120_000L) {
         install(ContentNegotiation) {
             json(codec)
         }

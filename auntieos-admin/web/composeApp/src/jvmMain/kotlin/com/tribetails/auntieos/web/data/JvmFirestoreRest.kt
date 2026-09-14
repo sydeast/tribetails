@@ -1,8 +1,7 @@
 package com.tribetails.auntieos.web.data
 
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.java.Java
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -70,12 +69,25 @@ internal object JvmFirestoreRest {
 
     /** The emulator's admin token when [EMULATOR_HOST] is set; otherwise the signed-in user's ID token. */
     private suspend fun bearerToken(): String? = if (EMULATOR_HOST != null) "owner" else jvmFirebaseIdToken()
-    private const val FUNCTIONS = "https://us-central1-$PROJECT.cloudfunctions.net"
+    /**
+     * #867: `FUNCTIONS_EMULATOR_HOST` points callables at a local Functions
+     * emulator, the twin of [EMULATOR_HOST] for Firestore. Unset, this is the
+     * production endpoint.
+     */
+    private val FUNCTIONS = functionsBaseUrl(System.getenv("FUNCTIONS_EMULATOR_HOST"))
+
+    /** Pure: the callable base URL for an emulator `host:port`, or production when it is null or blank. */
+    internal fun functionsBaseUrl(emulatorHost: String?): String {
+        val host = emulatorHost?.trim()?.takeIf { it.isNotEmpty() }
+        return if (host != null) "http://$host/$PROJECT/us-central1" else "https://us-central1-$PROJECT.cloudfunctions.net"
+    }
     private const val POLL_MS = 8_000L
 
     @PublishedApi
     internal val codec = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
-    private val http = HttpClient(Java) { install(ContentNegotiation) { json(codec) } }
+
+    // #867: connect and request timeouts, and the test network guard, come from the shared factory.
+    private val http = auntieHttpClient { install(ContentNegotiation) { json(codec) } }
 
     // ── read: collection ────────────────────────────────────────────────────
 
@@ -327,7 +339,7 @@ internal object JvmFirestoreRest {
     fun <T> pollingStream(fetch: suspend () -> List<T>): Flow<FirestoreResult<List<T>>> = flow {
         while (true) {
             val r = runCatching { fetch() }
-            emit(r.fold({ FirestoreResult.Data(it) }, { FirestoreResult.Error(it.message ?: "Firestore read failed") }))
+            emit(r.fold({ FirestoreResult.Data(it) }, { FirestoreResult.Error(it.transportMessage("Firestore read failed")) }))
             delay(POLL_MS)
         }
     }
@@ -335,7 +347,7 @@ internal object JvmFirestoreRest {
     fun <T> pollingScalar(fetch: suspend () -> T): Flow<FirestoreResult<T>> = flow {
         while (true) {
             val r = runCatching { fetch() }
-            emit(r.fold({ FirestoreResult.Data(it) }, { FirestoreResult.Error(it.message ?: "Firestore read failed") }))
+            emit(r.fold({ FirestoreResult.Data(it) }, { FirestoreResult.Error(it.transportMessage("Firestore read failed")) }))
             delay(POLL_MS)
         }
     }
@@ -577,10 +589,13 @@ internal object JvmFirestoreRest {
 
     /** Invoke a 2nd-gen onCall HTTPS function. payloadJson is the `data` object. */
     suspend fun callable(name: String, payloadJson: String): WriteResult<String> {
-        val token = jvmFirebaseIdToken()
+        // #867: no token, no request. Every desktop callable needs a signed-in admin,
+        // and sending one without a token only earns a refusal (in a test, from prod).
+        val token = jvmFirebaseIdToken() ?: return WriteResult.Err("Not signed in")
         return try {
             val resp = http.post("$FUNCTIONS/$name") {
-                if (token != null) header(HttpHeaders.Authorization, "Bearer $token")
+                header(HttpHeaders.Authorization, "Bearer $token")
+                timeout { requestTimeoutMillis = callableRequestTimeoutMs(name) }
                 contentType(ContentType.Application.Json)
                 setBody("{\"data\":$payloadJson}")
             }
@@ -596,7 +611,7 @@ internal object JvmFirestoreRest {
                 WriteResult.Ok(result?.toString() ?: "{}")
             }
         } catch (e: Exception) {
-            WriteResult.Err(e.message ?: "callable failed")
+            WriteResult.Err(e.transportMessage("callable failed"))
         }
     }
 }

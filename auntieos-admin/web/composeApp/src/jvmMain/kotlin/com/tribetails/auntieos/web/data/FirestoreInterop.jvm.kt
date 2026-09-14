@@ -126,6 +126,22 @@ private fun <T> stubFlow(reason: String = "Desktop Firestore not yet implemented
 
 private fun <T> stubWriteResult(reason: String = "Not available on desktop"): WriteResult<T> = WriteResult.Err(reason)
 
+/**
+ * #867: a write whose REST call answers true/false. A refused write is
+ * `Err(failure)`, and a failed REQUEST (a timeout, a dropped connection, a missing
+ * precondition) is an `Err` with its message too, rather than a throw. A throw
+ * here ended the screen's coroutine with its saving flag still set and nothing on
+ * screen. Cancellation and [NetworkBlockedError] (an Error) still propagate.
+ */
+internal suspend fun transportWrite(failure: String, block: suspend () -> Boolean): WriteResult<Unit> =
+    try {
+        if (block()) WriteResult.Ok(Unit) else WriteResult.Err(failure)
+    } catch (c: kotlin.coroutines.cancellation.CancellationException) {
+        throw c
+    } catch (e: Exception) {
+        WriteResult.Err(e.transportMessage(failure))
+    }
+
 // ── reads: fixture (test) else live REST ────────────────────────────────────
 
 internal actual fun platformKinfolkStream(): Flow<FirestoreResult<List<Kinfolk>>> =
@@ -317,8 +333,7 @@ internal actual fun platformMediaForKinfolkStream(kinfolkId: String): Flow<Fires
     }
 
 internal actual suspend fun platformUpdateMediaTags(mediaId: String, taggedKinIds: List<String>): WriteResult<Unit> =
-    if (JvmFirestoreRest.patchFields("media_files", mediaId, mapOf("taggedKinIds" to JsonArray(taggedKinIds.map { JsonPrimitive(it) }))))
-        WriteResult.Ok(Unit) else WriteResult.Err("tag update failed")
+    transportWrite("tag update failed") { JvmFirestoreRest.patchFields("media_files", mediaId, mapOf("taggedKinIds" to JsonArray(taggedKinIds.map { JsonPrimitive(it) }))) }
 
 // ── writes: live REST ───────────────────────────────────────────────────────
 
@@ -338,15 +353,15 @@ internal actual suspend fun platformUpdateKinfolkFields(kinfolkId: String, chang
         WriteResult.Ok(Unit)
     }.getOrElse { WriteResult.Err(it.message ?: "update failed") }
 internal actual suspend fun platformArchiveKinfolk(id: String): WriteResult<Unit> =
-    if (JvmFirestoreRest.patchFields("kinfolk", id, mapOf("status" to JsonPrimitive("archived")))) WriteResult.Ok(Unit) else WriteResult.Err("archive failed")
+    transportWrite("archive failed") { JvmFirestoreRest.patchFields("kinfolk", id, mapOf("status" to JsonPrimitive("archived"))) }
 internal actual suspend fun platformCreateKin(k: Kin): WriteResult<String> =
     runCatching { WriteResult.Ok(JvmFirestoreRest.addDoc("kin", jsonOut.encodeToString(k))) }.getOrElse { WriteResult.Err(it.message ?: "create failed") }
 internal actual suspend fun platformUpdateKin(k: Kin): WriteResult<Unit> =
     runCatching { JvmFirestoreRest.setDoc("kin", k._id, jsonOut.encodeToString(k)); WriteResult.Ok(Unit) }.getOrElse { WriteResult.Err(it.message ?: "update failed") }
 internal actual suspend fun platformArchiveKin(id: String): WriteResult<Unit> =
-    if (JvmFirestoreRest.patchFields("kin", id, mapOf("status" to JsonPrimitive("archived")))) WriteResult.Ok(Unit) else WriteResult.Err("archive failed")
+    transportWrite("archive failed") { JvmFirestoreRest.patchFields("kin", id, mapOf("status" to JsonPrimitive("archived"))) }
 internal actual suspend fun platformPatchKinCare(id: String, patch: Map<String, String>): WriteResult<Unit> =
-    if (JvmFirestoreRest.patchFields("kin_care_sessions", id, patch.mapValues { JsonPrimitive(it.value) })) WriteResult.Ok(Unit) else WriteResult.Err("patch failed")
+    transportWrite("patch failed") { JvmFirestoreRest.patchFields("kin_care_sessions", id, patch.mapValues { JsonPrimitive(it.value) }) }
 
 // ── voicemail reply state: `replyStatus`, and only `replyStatus` ────────────
 //
@@ -363,11 +378,11 @@ internal actual suspend fun platformPatchKinCare(id: String, patch: Map<String, 
 // `repliedAt` is blank for read and for dismissed: neither is a reply, and a
 // reply timestamp on either would make the field a lie.
 internal actual suspend fun platformMarkVoicemailReplied(voicemailId: String, repliedAtIso: String, replyLogId: String): WriteResult<Unit> =
-    if (JvmFirestoreRest.patchFields("voicemails", voicemailId, mapOf("replyStatus" to JsonPrimitive("replied"), "repliedAt" to JsonPrimitive(repliedAtIso), "replyLogId" to JsonPrimitive(replyLogId)))) WriteResult.Ok(Unit) else WriteResult.Err("update failed")
+    transportWrite("update failed") { JvmFirestoreRest.patchFields("voicemails", voicemailId, mapOf("replyStatus" to JsonPrimitive("replied"), "repliedAt" to JsonPrimitive(repliedAtIso), "replyLogId" to JsonPrimitive(replyLogId))) }
 internal actual suspend fun platformMarkVoicemailRead(voicemailId: String): WriteResult<Unit> =
-    if (JvmFirestoreRest.patchFields("voicemails", voicemailId, mapOf("replyStatus" to JsonPrimitive("read"), "repliedAt" to JsonPrimitive(""), "replyLogId" to JsonPrimitive("")))) WriteResult.Ok(Unit) else WriteResult.Err("update failed")
+    transportWrite("update failed") { JvmFirestoreRest.patchFields("voicemails", voicemailId, mapOf("replyStatus" to JsonPrimitive("read"), "repliedAt" to JsonPrimitive(""), "replyLogId" to JsonPrimitive(""))) }
 internal actual suspend fun platformMarkVoicemailDismissed(voicemailId: String): WriteResult<Unit> =
-    if (JvmFirestoreRest.patchFields("voicemails", voicemailId, mapOf("replyStatus" to JsonPrimitive("dismissed"), "repliedAt" to JsonPrimitive(""), "replyLogId" to JsonPrimitive("")))) WriteResult.Ok(Unit) else WriteResult.Err("update failed")
+    transportWrite("update failed") { JvmFirestoreRest.patchFields("voicemails", voicemailId, mapOf("replyStatus" to JsonPrimitive("dismissed"), "repliedAt" to JsonPrimitive(""), "replyLogId" to JsonPrimitive(""))) }
 
 internal actual fun platformTemplatesStream(): Flow<FirestoreResult<List<KinTaleTemplate>>> =
     JvmFirestoreRest.pollingStream { JvmFirestoreRest.list<KinTaleTemplate>("kintale_templates") }
@@ -382,17 +397,18 @@ internal actual suspend fun platformMarkKinTaleReportSent(reportId: String, sess
     // increment(1) field-transforms so concurrent sends never clobber the
     // cumulative reportIds / sentReportCount (NOTE-52: the client no longer
     // computes these). Mirrors the wasm bridge's writeBatch exactly.
-    require(reportId.isNotBlank()) { "markKinTaleReportSent requires a non-blank reportId" }
-    require(sessionId.isNotBlank()) { "markKinTaleReportSent requires a non-blank sessionId" }
-    val ok = JvmFirestoreRest.markReportSentAtomic(
-        reportId = reportId,
-        sessionId = sessionId,
-        sentVia = sentVia,
-        deliveryReceiptId = deliveryReceiptId,
-        sentAtIso = sentAtIso,
-        updatedAtIso = com.tribetails.auntieos.web.util.nowIso(),
-    )
-    return if (ok) WriteResult.Ok(Unit) else WriteResult.Err("mark sent failed")
+    return transportWrite("mark sent failed") {
+        require(reportId.isNotBlank()) { "markKinTaleReportSent requires a non-blank reportId" }
+        require(sessionId.isNotBlank()) { "markKinTaleReportSent requires a non-blank sessionId" }
+        JvmFirestoreRest.markReportSentAtomic(
+            reportId = reportId,
+            sessionId = sessionId,
+            sentVia = sentVia,
+            deliveryReceiptId = deliveryReceiptId,
+            sentAtIso = sentAtIso,
+            updatedAtIso = com.tribetails.auntieos.web.util.nowIso(),
+        )
+    }
 }
 // Orphan-triage (M5): route through the `triageOrphanReport` callable, exactly
 // like the wasm bridge. The server (functions/src/admin/triageOrphanReport.ts)
@@ -436,7 +452,7 @@ internal actual suspend fun platformArchiveOrphanReportAsBadData(reportId: Strin
     }
 }
 internal actual suspend fun platformApproveGeneratedDraft(draftId: String, editedCopy: String): WriteResult<Unit> =
-    if (JvmFirestoreRest.patchFields("generated_drafts", draftId, mapOf("status" to JsonPrimitive("approved"), "generatedCopy" to JsonPrimitive(editedCopy)))) WriteResult.Ok(Unit) else WriteResult.Err("approve failed")
+    transportWrite("approve failed") { JvmFirestoreRest.patchFields("generated_drafts", draftId, mapOf("status" to JsonPrimitive("approved"), "generatedCopy" to JsonPrimitive(editedCopy))) }
 
 // GPS / media byte pipelines: not part of the desktop admin surface, kept honest fail-loud.
 internal actual suspend fun platformPickAndUploadKinTaleMedia(sessionId: String, remainingSlots: Int): WriteResult<List<MediaFile>> = stubWriteResult("Media upload is mobile-only")
@@ -469,7 +485,7 @@ internal actual suspend fun platformUpdateKinTaleTemplate(template: KinTaleTempl
 // spells that out), and `allow write: if isAuntie()` in firestore.rules covers
 // delete. Android has always done exactly this (`AuntieRepository.kt`).
 internal actual suspend fun platformDeleteKinTaleTemplate(templateId: String): WriteResult<Unit> =
-    if (JvmFirestoreRest.deleteDoc("kintale_templates", templateId)) WriteResult.Ok(Unit) else WriteResult.Err("delete failed")
+    transportWrite("delete failed") { JvmFirestoreRest.deleteDoc("kintale_templates", templateId) }
 // ISSUE #825. `addDoc` POSTs to the collection and lets Firestore mint the id,
 // so the SAME payment submitted twice became two rows in `payments` -- two
 // records of money that arrived once. With a key the write becomes a PATCH at
@@ -540,9 +556,9 @@ internal actual suspend fun platformSaveBusinessSettings(settings: BusinessSetti
         WriteResult.Ok(Unit)
     }.getOrElse { WriteResult.Err(it.message ?: "save failed") }
 internal actual suspend fun platformApproveBooking(bookingId: String): WriteResult<Unit> =
-    if (JvmFirestoreRest.patchFields("kin_care_sessions", bookingId, mapOf("status" to JsonPrimitive("SCHEDULED")))) WriteResult.Ok(Unit) else WriteResult.Err("approve failed")
+    transportWrite("approve failed") { JvmFirestoreRest.patchFields("kin_care_sessions", bookingId, mapOf("status" to JsonPrimitive("SCHEDULED"))) }
 internal actual suspend fun platformRejectBooking(bookingId: String): WriteResult<Unit> =
-    if (JvmFirestoreRest.patchFields("kin_care_sessions", bookingId, mapOf("status" to JsonPrimitive("REJECTED")))) WriteResult.Ok(Unit) else WriteResult.Err("reject failed")
+    transportWrite("reject failed") { JvmFirestoreRest.patchFields("kin_care_sessions", bookingId, mapOf("status" to JsonPrimitive("REJECTED"))) }
 internal actual suspend fun platformCreateBookingRequest(booking: KinCareSession): WriteResult<String> =
     runCatching { WriteResult.Ok(JvmFirestoreRest.addDoc("kin_care_sessions", jsonOut.encodeToString(booking))) }.getOrElse { WriteResult.Err(it.message ?: "create failed") }
 internal actual suspend fun platformSaveUserProfile(profile: UserProfile): WriteResult<Unit> =
@@ -566,7 +582,7 @@ internal actual suspend fun platformCreateDynamicField(field: DynamicField): Wri
 internal actual suspend fun platformUpdateDynamicField(field: DynamicField): WriteResult<Unit> =
     runCatching { JvmFirestoreRest.setDoc("dynamic_fields", field._id, jsonOut.encodeToString(field)); WriteResult.Ok(Unit) }.getOrElse { WriteResult.Err(it.message ?: "update failed") }
 internal actual suspend fun platformArchiveDynamicField(id: String): WriteResult<Unit> =
-    if (JvmFirestoreRest.patchFields("dynamic_fields", id, mapOf("status" to JsonPrimitive("archived")))) WriteResult.Ok(Unit) else WriteResult.Err("archive failed")
+    transportWrite("archive failed") { JvmFirestoreRest.patchFields("dynamic_fields", id, mapOf("status" to JsonPrimitive("archived"))) }
 
 // GPS breadcrumb subcollections: not part of the desktop admin surface.
 internal actual fun platformBreadcrumbsStream(sessionId: String): Flow<FirestoreResult<List<Breadcrumb>>> = stubFlow("GPS breadcrumbs are captured on mobile")
@@ -696,6 +712,6 @@ internal actual suspend fun platformInvokeCallable(name: String, payloadJson: St
     revocationAwareCallables.invoke(name, payloadJson)
 
 internal actual suspend fun platformUpdateInvoiceSessionIds(invoiceId: String, sessionIds: List<String>): WriteResult<Unit> =
-    if (JvmFirestoreRest.patchFields("invoices", invoiceId, mapOf("sessionIds" to kotlinx.serialization.json.JsonArray(sessionIds.map { JsonPrimitive(it) })))) WriteResult.Ok(Unit) else WriteResult.Err("update failed")
+    transportWrite("update failed") { JvmFirestoreRest.patchFields("invoices", invoiceId, mapOf("sessionIds" to kotlinx.serialization.json.JsonArray(sessionIds.map { JsonPrimitive(it) }))) }
 internal actual suspend fun platformUpdateSessionInvoiceId(sessionId: String, invoiceId: String): WriteResult<Unit> =
-    if (JvmFirestoreRest.patchFields("kin_care_sessions", sessionId, mapOf("invoiceId" to JsonPrimitive(invoiceId)))) WriteResult.Ok(Unit) else WriteResult.Err("update failed")
+    transportWrite("update failed") { JvmFirestoreRest.patchFields("kin_care_sessions", sessionId, mapOf("invoiceId" to JsonPrimitive(invoiceId))) }
