@@ -39,6 +39,8 @@ import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.Kinfolk
+import com.tribetails.auntieos.web.data.NO_EMERGENCY_CONTACT
+import com.tribetails.auntieos.web.data.emergencyContactsOf
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
@@ -677,7 +679,17 @@ private fun KinfolkCard(
                         )
                     }
                 }
-                StatusPill(status = kf.status)
+                // #829: beside the status pill, not a new row, because the card
+                // height is fixed.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (emergencyContactsOf(kf).isEmpty()) {
+                        AuntieStatusPill(label = NO_EMERGENCY_CONTACT, tone = AuntieStatusTone.Orange)
+                    }
+                    StatusPill(status = kf.status)
+                }
             }
         }
     }
