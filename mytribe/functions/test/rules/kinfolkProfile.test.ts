@@ -82,8 +82,29 @@ describe('rules: /kinfolk/{kinfolkId}', () => {
     await seedKinfolk('kin-1');
     await assertSucceeds(
       asKinfolk(env, 'kin-1').firestore().doc('kinfolk/kin-1').update({
-        emergencyContactPhone: '805-555-0199',
         preferredContactMethod: 'text',
+        bestTimeToContact: 'Mornings',
+      }),
+    );
+  });
+
+  // #829: the callable `saveEmergencyContacts` is the only way in. A household
+  // writing its own flat field would put a second, unvalidated copy beside the
+  // array that nobody checks against household members.
+  it('a household cannot write a flat Emergency Contact field', async () => {
+    const env = await getEnv();
+    await seedKinfolk('kin-1');
+    await assertFails(
+      asKinfolk(env, 'kin-1').firestore().doc('kinfolk/kin-1').update({ emergencyContactPhone: '805-555-0199' }),
+    );
+  });
+
+  it('a household cannot write the emergencyContacts array', async () => {
+    const env = await getEnv();
+    await seedKinfolk('kin-1');
+    await assertFails(
+      asKinfolk(env, 'kin-1').firestore().doc('kinfolk/kin-1').update({
+        emergencyContacts: [{ name: 'Rae Mercer', phone: '+18055550199', relationship: null }],
       }),
     );
   });

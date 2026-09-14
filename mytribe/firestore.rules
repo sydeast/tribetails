@@ -292,8 +292,9 @@ service cloud.firestore {
  // Kinfolk profile - the AuntieOS canonical household record. A kinfolk writes a
  // short allowlist of their own contact fields; a kinfolk does NOT read the doc.
     function onlyAllowedKinfolkFields() {
-      let allowed = ['emergencyContactName', 'emergencyContactPhone', 'emergencyContactRelation',
-                     'preferredContactMethod', 'bestTimeToContact', 'secondaryPhone', 'secondaryEmail'];
+      // #829: the three flat emergencyContact* keys left this list. Emergency
+      // Contacts are written only by the saveEmergencyContacts callable.
+      let allowed = ['preferredContactMethod', 'bestTimeToContact', 'secondaryPhone', 'secondaryEmail'];
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowed);
     }
 
