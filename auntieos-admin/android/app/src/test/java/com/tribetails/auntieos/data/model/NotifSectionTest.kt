@@ -105,6 +105,25 @@ class NotifSectionTest {
         assertEquals(listOf("Messages"), grouped.map { it.first })
         assertEquals(listOf("broadcast.message"), grouped.single().second.map { it.key })
     }
+    /**
+     * #869: the operator's lockout alert is a business-only `security` row. It
+     * belongs on the Business tab under Account and security, and nowhere else.
+     */
+    @Test
+    fun operatorLockAlertLandsUnderAccountAndSecurityOnBusinessOnly() {
+        val lock = NotificationCatalogEntry(
+            key = "security.account.locked.operator",
+            category = "security",
+            audiences = setOf(STREAM_BUSINESS),
+        )
+        assertTrue(lock.inAudience(NotifAudience.Business))
+        assertTrue(!lock.inAudience(NotifAudience.Staff))
+        assertTrue(!lock.inAudience(NotifAudience.Kinfolk))
+        val grouped = sectionedNotifEntries(listOf(lock), STREAM_BUSINESS)
+        assertEquals(listOf("Account and security"), grouped.map { it.first })
+        assertEquals(listOf("security.account.locked.operator"), grouped.single().second.map { it.key })
+    }
+
     @Test
     fun unknownStreamPutsEverythingUnderOther() {
         val grouped = sectionedNotifEntries(listOf(entry("visit.report", "visit")), "nope")

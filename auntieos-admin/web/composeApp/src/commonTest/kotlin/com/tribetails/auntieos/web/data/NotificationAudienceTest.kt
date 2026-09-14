@@ -18,6 +18,23 @@ class NotificationAudienceTest {
 
     private fun entry(audiences: Set<String>) = NotificationCatalogEntry(key = "k", audiences = audiences)
 
+    /**
+     * #869: the operator's lockout alert is a business-only `security` row. It
+     * appears on the Business tab under Account and security, and on no other tab.
+     */
+    @Test
+    fun operatorLockAlertIsBusinessOnlyUnderAccountAndSecurity() {
+        val lock = NotificationCatalogEntry(
+            key = "security.account.locked.operator",
+            category = "security",
+            audiences = setOf("business"),
+        )
+        assertEquals(setOf(NotifAudience.Business), lock.notifAudiences())
+        val grouped = sectionedNotifications(listOf(lock), NotifAudience.Business)
+        assertEquals(listOf("Account and security"), grouped.map { it.first.title })
+        assertEquals(listOf("security.account.locked.operator"), grouped.single().second.map { it.key })
+    }
+
     @Test
     fun audiencesDriveTheTabsDirectly() {
         assertEquals(setOf(NotifAudience.Business), entry(setOf("business")).notifAudiences())
