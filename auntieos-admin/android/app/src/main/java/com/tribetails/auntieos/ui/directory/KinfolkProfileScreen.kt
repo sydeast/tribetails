@@ -562,7 +562,8 @@ private fun EmergencyContactsPanel(kinfolk: Kinfolk) {
     val contacts = emergencyContactsOf(kinfolk)
     DenPanel(title = "Emergency Contacts") {
         if (contacts.isEmpty()) {
-            AuntieStatusPill(label = "No Emergency Contact", tone = AuntieStatusTone.Orange)
+            // #829 review item 14: the compact pill, as on every other surface.
+            AuntieStatusPill(label = "No Emergency Contact", tone = AuntieStatusTone.Orange, compact = true)
         } else {
             contacts.forEachIndexed { i, c ->
                 FieldRows(

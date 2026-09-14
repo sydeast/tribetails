@@ -81,10 +81,78 @@ class DirectoryViewModelEmergencyContactsTest {
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125559090"))
         vm.saveKinfolk()
         assertEquals("kf-new", vm.addKinfolkState.value.createdKinfolkId)
-        assertTrue(vm.addKinfolkState.value.error.orEmpty().startsWith("saveEmergencyContacts failed"))
+        // #829 review item 4: the server's message first, no call-name prefix.
+        assertTrue(vm.addKinfolkState.value.error.orEmpty().startsWith("offline The household was created"))
+        assertFalse(vm.addKinfolkState.value.error.orEmpty().contains("saveEmergencyContacts failed"))
         vm.saveKinfolk()
         coVerify(exactly = 1) { repo.createKinfolkComplete(any()) }
         assertTrue(vm.addKinfolkState.value.isSuccess)
+    }
+
+    // #829 review item 6.
+    @Test
+    fun `leaving Add with a created household keeps it, so coming back continues that household`() {
+        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(firstArg<Kinfolk>().copy(id = "kf-new")) }
+        coEvery { repo.saveEmergencyContacts("kf-new", any()) } returnsMany listOf(Result.failure(Exception("offline")), Result.success(emptyList()))
+        vm.updateFirstName("Jamie")
+        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "8055550199"))
+        vm.saveKinfolk()
+
+        vm.leaveAddKinfolk()
+        assertEquals("kf-new", vm.addKinfolkState.value.createdKinfolkId)
+        assertEquals("Jamie", vm.addKinfolkState.value.firstName)
+
+        vm.saveKinfolk()
+        coVerify(exactly = 1) { repo.createKinfolkComplete(any()) }
+        assertTrue(vm.addKinfolkState.value.isSuccess)
+    }
+
+    @Test
+    fun `leaving Add with only a draft clears it`() {
+        vm.updateFirstName("Jamie")
+        vm.leaveAddKinfolk()
+        assertEquals("", vm.addKinfolkState.value.firstName)
+    }
+
+    @Test
+    fun `the CREATE audit waits for the contact outcome and says when the contact did not save`() {
+        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(firstArg<Kinfolk>().copy(id = "kf-new", firstName = "Jamie")) }
+        coEvery { repo.saveEmergencyContacts("kf-new", any()) } returnsMany listOf(Result.failure(Exception("offline")), Result.success(emptyList()))
+        coEvery { repo.logActivity(any()) } returns Result.success(Unit)
+        vm.updateFirstName("Jamie")
+        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "8055550199"))
+        vm.saveKinfolk()
+        coVerify(exactly = 1) {
+            repo.logActivity(match { it.actionType == "CREATE_KINFOLK" && it.targetId == "kf-new" && it.description.contains("without an Emergency Contact: offline") })
+        }
+        // The retry succeeds, and the household is not logged as created twice.
+        vm.saveKinfolk()
+        coVerify(exactly = 1) { repo.logActivity(match { it.actionType == "CREATE_KINFOLK" }) }
+    }
+
+    // #829 review item 16.
+    @Test
+    fun `a call prefills Add Kinfolk, which still requires the contact`() {
+        vm.prefillAddKinfolkFromCall("  Jamie   Halbrook ", " +18055550100 ")
+        val s = vm.addKinfolkState.value
+        assertEquals("Jamie", s.firstName)
+        assertEquals("Halbrook", s.lastName)
+        assertEquals("+18055550100", s.phoneNumber)
+        vm.saveKinfolk()
+        assertEquals(EMERGENCY_CONTACT_REQUIRED, vm.addKinfolkState.value.error)
+        coVerify(exactly = 0) { repo.createKinfolkComplete(any()) }
+    }
+
+    @Test
+    fun `a call never overwrites a household still waiting on its contact`() {
+        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(firstArg<Kinfolk>().copy(id = "kf-new")) }
+        coEvery { repo.saveEmergencyContacts("kf-new", any()) } returns Result.failure(Exception("offline"))
+        vm.updateFirstName("Jamie")
+        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "8055550199"))
+        vm.saveKinfolk()
+        vm.prefillAddKinfolkFromCall("Someone Else", "+18055550111")
+        assertEquals("kf-new", vm.addKinfolkState.value.createdKinfolkId)
+        assertEquals("Jamie", vm.addKinfolkState.value.firstName)
     }
 
     /**
@@ -174,5 +242,56 @@ class DirectoryViewModelEmergencyContactsTest {
         coVerify { repo.updateKinfolkFields("kf1", mapOf("firstName" to "Jamey")) }
         coVerify(exactly = 0) { repo.saveEmergencyContacts(any(), any()) }
         assertFalse(vm.editKinfolkState.value.error != null)
+    }
+
+    // #829 review item 14: the flag never blocks other edits.
+    @Test
+    fun `a half-filled contact does not block the household save, and the problem shows on the contact editor`() {
+        val stored = Kinfolk(id = "kf1", firstName = "Jamie", phoneNumber = "8055550100", emergencyContactName = "Rae", emergencyContactPhone = "8055550199")
+        coEvery { repo.getKinfolk() } returns Result.success(listOf(stored))
+        coEvery { repo.updateKinfolkFields("kf1", any()) } returns Result.success(Unit)
+        vm.loadKinfolkForEdit("kf1")
+        vm.updateEditFirstName("Jamey")
+        vm.updateEditEmergencyContact(0, EmergencyContactDraft("Rae", ""))
+        vm.saveKinfolkChanges()
+
+        coVerify { repo.updateKinfolkFields("kf1", mapOf("firstName" to "Jamey")) }
+        coVerify(exactly = 0) { repo.saveEmergencyContacts(any(), any()) }
+        val s = vm.editKinfolkState.value
+        assertEquals("An Emergency Contact needs a phone number.", s.emergencyContactsError)
+        assertFalse(s.isSuccess)
+        assertEquals(null, s.error)
+
+        // Fixing the contact sends only the contact: the household field already landed.
+        coEvery { repo.saveEmergencyContacts("kf1", any()) } returns Result.success(emptyList())
+        vm.updateEditEmergencyContact(0, EmergencyContactDraft("Rae", "8055550188"))
+        assertEquals(null, vm.editKinfolkState.value.emergencyContactsError)
+        vm.saveKinfolkChanges()
+        coVerify(exactly = 1) { repo.updateKinfolkFields(any(), any()) }
+        coVerify(exactly = 1) { repo.saveEmergencyContacts("kf1", any()) }
+    }
+
+    @Test
+    fun `a refused contact save shows the server message on the contact editor, unprefixed`() {
+        val stored = Kinfolk(id = "kf1", firstName = "Jamie", phoneNumber = "8055550100")
+        coEvery { repo.getKinfolk() } returns Result.success(listOf(stored))
+        coEvery { repo.saveEmergencyContacts("kf1", any()) } returns Result.failure(Exception("An Emergency Contact has to be someone outside the household."))
+        vm.loadKinfolkForEdit("kf1")
+        vm.updateEditEmergencyContact(0, EmergencyContactDraft("Sam Ortiz", "8055550177"))
+        vm.saveKinfolkChanges()
+        assertEquals("An Emergency Contact has to be someone outside the household.", vm.editKinfolkState.value.emergencyContactsError)
+        assertFalse(vm.editKinfolkState.value.isSuccess)
+    }
+
+    @Test
+    fun `unsaved changes follow the save's own diff, ignoring whitespace on a contact`() {
+        val stored = Kinfolk(id = "kf1", firstName = "Jamie", phoneNumber = "8055550100", emergencyContactName = "Rae", emergencyContactPhone = "8055550199")
+        coEvery { repo.getKinfolk() } returns Result.success(listOf(stored))
+        vm.loadKinfolkForEdit("kf1")
+        assertFalse(vm.editHasUnsavedChanges())
+        vm.updateEditEmergencyContact(0, EmergencyContactDraft("Rae ", " 8055550199"))
+        assertFalse(vm.editHasUnsavedChanges())
+        vm.updateEditEmergencyContact(0, EmergencyContactDraft("Rae", "8055550199", "Sister"))
+        assertTrue(vm.editHasUnsavedChanges())
     }
 }

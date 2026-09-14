@@ -34,6 +34,7 @@ import com.tribetails.auntieos.data.model.TagScope
 import com.tribetails.auntieos.data.model.addAssigned
 import com.tribetails.auntieos.data.model.VetClinic
 import com.tribetails.auntieos.data.model.normalizeTagName
+import com.tribetails.auntieos.data.model.isBlankDrafts
 import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.ui.theme.AuntieTheme
@@ -290,6 +291,23 @@ fun EditKinfolkScreen(
                     }
                 }
 
+                // #829 review items 10 and 14: the Emergency Contacts get their
+                // own titled card, with the flag, an unsaved line and the
+                // contact refusal, the same card Add Kinfolk shows.
+                item {
+                    EmergencyContactsSection(
+                        drafts = state.emergencyContacts,
+                        onChange = viewModel::updateEditEmergencyContact,
+                        onAdd = viewModel::addEditEmergencyContact,
+                        onRemove = viewModel::removeEditEmergencyContact,
+                        onMoveFirst = viewModel::moveEditEmergencyContactFirst,
+                        enabled = !state.isSaving,
+                        showNoneOnFile = state.emergencyContactsBaseline.isBlankDrafts(),
+                        unsaved = viewModel.editHasUnsavedChanges(state),
+                        error = state.emergencyContactsError,
+                    )
+                }
+
                 // Contact & Preferences
                 item {
                     AuntieCard(modifier = Modifier.fillMaxWidth()) {
@@ -301,16 +319,6 @@ fun EditKinfolkScreen(
                                 "OTHER CONTACTS",
                                 style = AuntieTheme.typography.labelSmall,
                                 color = AuntieTheme.colors.kinfolkOrange
-                            )
-
-                            // Run 4: emergency contact lives here (first), not under Identity.
-                            EmergencyContactsEditor(
-                                drafts = state.emergencyContacts,
-                                onChange = viewModel::updateEditEmergencyContact,
-                                onAdd = viewModel::addEditEmergencyContact,
-                                onRemove = viewModel::removeEditEmergencyContact,
-                                onMoveFirst = viewModel::moveEditEmergencyContactFirst,
-                                enabled = !state.isSaving,
                             )
 
                             AuntieField(

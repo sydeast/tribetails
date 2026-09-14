@@ -37,7 +37,21 @@ class EmergencyContactsTest {
     fun `validation mirrors the server`() {
         val (names, phones) = household
         assertEquals(EMERGENCY_CONTACT_REQUIRED, validateEmergencyContactDrafts(listOf(EmergencyContactDraft()), names, phones))
-        assertEquals("Each Emergency Contact needs a phone number.", validateEmergencyContactDrafts(listOf(EmergencyContactDraft(name = "Rae")), names, phones))
+        assertEquals("A household needs at least one Emergency Contact.", EMERGENCY_CONTACT_REQUIRED)
+        assertEquals("An Emergency Contact needs a phone number.", validateEmergencyContactDrafts(listOf(EmergencyContactDraft(name = "Rae")), names, phones))
+        assertEquals("An Emergency Contact needs a name.", validateEmergencyContactDrafts(listOf(EmergencyContactDraft(phone = "8055550199")), names, phones))
+        assertEquals(
+            "An Emergency Contact's name can be at most 80 characters.",
+            validateEmergencyContactDrafts(listOf(EmergencyContactDraft("R".repeat(81), "8055550199")), names, phones),
+        )
+        assertEquals(
+            "An Emergency Contact's phone number can be at most 32 characters.",
+            validateEmergencyContactDrafts(listOf(EmergencyContactDraft("Rae", "8".repeat(33))), names, phones),
+        )
+        assertEquals(
+            "A relationship can be at most 40 characters.",
+            validateEmergencyContactDrafts(listOf(EmergencyContactDraft("Rae", "8055550199", "S".repeat(41))), names, phones),
+        )
         assertEquals(
             "The two Emergency Contacts need different phone numbers.",
             validateEmergencyContactDrafts(listOf(EmergencyContactDraft("Rae", "8055550199"), EmergencyContactDraft("Lee", "(805) 555-0199")), names, phones),

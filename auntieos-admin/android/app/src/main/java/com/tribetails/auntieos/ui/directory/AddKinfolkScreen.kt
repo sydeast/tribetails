@@ -228,27 +228,17 @@ fun AddKinfolkScreen(
             // household with none is a defect state the Add flow must never
             // produce.
             item {
-                AuntieCard(modifier = Modifier.fillMaxWidth()) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Text(
-                            "EMERGENCY CONTACT",
-                            style = AuntieTheme.typography.labelSmall,
-                            color = AuntieTheme.colors.kinfolkOrange
-                        )
-
-                        EmergencyContactsEditor(
-                            drafts = state.emergencyContacts,
-                            onChange = viewModel::updateAddEmergencyContact,
-                            onAdd = viewModel::addAddEmergencyContact,
-                            onRemove = viewModel::removeAddEmergencyContact,
-                            onMoveFirst = viewModel::moveAddEmergencyContactFirst,
-                            enabled = !state.isSaving,
-                        )
-                    }
-                }
+                // #829 review item 14: titled "Emergency Contacts", the same
+                // card Edit Kinfolk shows.
+                EmergencyContactsSection(
+                    drafts = state.emergencyContacts,
+                    onChange = viewModel::updateAddEmergencyContact,
+                    onAdd = viewModel::addAddEmergencyContact,
+                    onRemove = viewModel::removeAddEmergencyContact,
+                    onMoveFirst = viewModel::moveAddEmergencyContactFirst,
+                    enabled = !state.isSaving,
+                    showNoneOnFile = state.createdKinfolkId != null,
+                )
             }
 
             // Internal Notes

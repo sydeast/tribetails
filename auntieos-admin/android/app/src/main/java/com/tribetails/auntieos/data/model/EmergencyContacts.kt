@@ -6,8 +6,24 @@ package com.tribetails.auntieos.data.model
  * the `saveEmergencyContacts` callable. Index 0 is called first.
  */
 const val EMERGENCY_CONTACTS_MAX = 2
-const val EMERGENCY_CONTACT_REQUIRED = "A household needs at least one Emergency Contact"
+const val EMERGENCY_CONTACT_NAME_MAX = 80
+const val EMERGENCY_CONTACT_PHONE_MAX = 32
+const val EMERGENCY_CONTACT_RELATIONSHIP_MAX = 40
+
+// #829 review item 4: the server's wording, word for word
+// (mytribe/functions/src/lib/emergencyContacts.ts), so a refusal reads the same
+// whether this pre-check or the callable caught it.
+const val EMERGENCY_CONTACT_REQUIRED = "A household needs at least one Emergency Contact."
 const val EMERGENCY_CONTACT_OUTSIDE = "An Emergency Contact has to be someone outside the household."
+const val EMERGENCY_CONTACT_NAME_REQUIRED = "An Emergency Contact needs a name."
+const val EMERGENCY_CONTACT_PHONE_REQUIRED = "An Emergency Contact needs a phone number."
+const val EMERGENCY_CONTACT_NAME_TOO_LONG = "An Emergency Contact's name can be at most $EMERGENCY_CONTACT_NAME_MAX characters."
+const val EMERGENCY_CONTACT_PHONE_TOO_LONG = "An Emergency Contact's phone number can be at most $EMERGENCY_CONTACT_PHONE_MAX characters."
+const val EMERGENCY_CONTACT_RELATIONSHIP_TOO_LONG = "A relationship can be at most $EMERGENCY_CONTACT_RELATIONSHIP_MAX characters."
+const val EMERGENCY_CONTACTS_TOO_MANY = "A household can have at most two Emergency Contacts."
+const val EMERGENCY_CONTACTS_SAME_PHONE = "The two Emergency Contacts need different phone numbers."
+/** The tip beside the Emergency Contacts title on every client. */
+const val EMERGENCY_CONTACT_WHO_GETS_CALLED = "Called only when no kinfolk can be reached. The first one is called first."
 
 data class EmergencyContact(
     val name: String,
@@ -75,11 +91,14 @@ fun validateEmergencyContactDrafts(
     householdPhones: List<String>,
 ): String? {
     if (drafts.isEmpty() || drafts.isBlankDrafts()) return EMERGENCY_CONTACT_REQUIRED
-    if (drafts.size > EMERGENCY_CONTACTS_MAX) return "A household can have at most two Emergency Contacts."
-    if (drafts.any { it.name.isBlank() }) return "Each Emergency Contact needs a name."
-    if (drafts.any { it.phone.isBlank() }) return "Each Emergency Contact needs a phone number."
+    if (drafts.size > EMERGENCY_CONTACTS_MAX) return EMERGENCY_CONTACTS_TOO_MANY
+    if (drafts.any { it.name.isBlank() }) return EMERGENCY_CONTACT_NAME_REQUIRED
+    if (drafts.any { it.phone.isBlank() }) return EMERGENCY_CONTACT_PHONE_REQUIRED
+    if (drafts.any { it.name.trim().length > EMERGENCY_CONTACT_NAME_MAX }) return EMERGENCY_CONTACT_NAME_TOO_LONG
+    if (drafts.any { it.phone.trim().length > EMERGENCY_CONTACT_PHONE_MAX }) return EMERGENCY_CONTACT_PHONE_TOO_LONG
+    if (drafts.any { it.relationship.trim().length > EMERGENCY_CONTACT_RELATIONSHIP_MAX }) return EMERGENCY_CONTACT_RELATIONSHIP_TOO_LONG
     if (drafts.size == 2 && comparablePhone(drafts[0].phone) == comparablePhone(drafts[1].phone)) {
-        return "The two Emergency Contacts need different phone numbers."
+        return EMERGENCY_CONTACTS_SAME_PHONE
     }
     val names = householdNames.map(::comparableName).filter { it.isNotEmpty() }.toSet()
     val phones = householdPhones.map(::comparablePhone).filter { it.isNotEmpty() }.toSet()

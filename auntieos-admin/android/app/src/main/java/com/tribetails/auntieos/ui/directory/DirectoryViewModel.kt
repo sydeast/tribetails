@@ -258,6 +258,8 @@ data class EditKinfolkUiState(
     // successful save, same rule as the household `loadedKinfolk` baseline.
     val emergencyContacts: List<EmergencyContactDraft> = listOf(EmergencyContactDraft()),
     val emergencyContactsBaseline: List<EmergencyContactDraft> = listOf(EmergencyContactDraft()),
+    /** #829 review item 14: a contact refusal, shown on the contact editor; the household save is not blocked by it. */
+    val emergencyContactsError: String? = null,
 
     // NO VET FIELDS. The household vet is authored on Household Data, against
     // the shared `vet_clinics` catalog (operator ruling 2026-08-01). Keeping
@@ -836,15 +838,9 @@ class DirectoryViewModel(
 
             repository.createKinfolkComplete(newKinfolk).onSuccess { saved ->
                 AuntieLog.i("Kinfolk saved: $finalStatus")
-                com.tribetails.auntieos.data.admin.AuditLog.fire(
-                    scope            = viewModelScope,
-                    repository       = repository,
-                    actionType       = "CREATE_KINFOLK",
-                    description      = "Created kinfolk ${saved.displayName}",
-                    targetId         = saved.id,
-                    targetCollection = "kinfolk",
-                )
-                saveNewHouseholdContacts(saved.id, state.copy(isSaving = true, createdKinfolkId = saved.id))
+                // #829 review item 6: the CREATE audit waits for the contact
+                // outcome, so the log says whether the household got its contact.
+                saveNewHouseholdContacts(saved.id, state.copy(isSaving = true, createdKinfolkId = saved.id), auditCreatedName = saved.displayName)
             }.onFailure { error ->
                 AuntieLog.e("Failed to save kinfolk", error)
                 _addKinfolkState.value = state.copy(
@@ -862,25 +858,68 @@ class DirectoryViewModel(
      * rather than reporting the whole Add as failed and inviting a retry that
      * would create a second household.
      */
-    private fun saveNewHouseholdContacts(id: String, state: AddKinfolkUiState) {
+    private fun saveNewHouseholdContacts(id: String, state: AddKinfolkUiState, auditCreatedName: String? = null) {
         viewModelScope.launch {
             _addKinfolkState.value = state.copy(isSaving = true, error = null, createdKinfolkId = id)
             repository.saveEmergencyContacts(id, state.emergencyContacts).onSuccess {
+                auditCreatedName?.let { name -> auditCreate(id, "Created kinfolk $name") }
                 _addKinfolkState.value = AddKinfolkUiState(isSuccess = true)
                 loadDirectory()
             }.onFailure { e ->
+                // #829 review item 4: the server's own message, as the portals show it.
+                val reason = e.message?.takeIf { it.isNotBlank() } ?: "The Emergency Contact was not saved."
+                auditCreatedName?.let { name -> auditCreate(id, "Created kinfolk $name without an Emergency Contact: $reason") }
                 _addKinfolkState.value = state.copy(
                     isSaving = false,
                     createdKinfolkId = id,
-                    error = "saveEmergencyContacts failed: ${e.message ?: "Save failed"}. The household was created and shows No Emergency Contact until this is saved.",
+                    error = "$reason The household was created and shows No Emergency Contact until this is saved.",
                 )
                 loadDirectory()
             }
         }
     }
 
+    private fun auditCreate(id: String, description: String) {
+        com.tribetails.auntieos.data.admin.AuditLog.fire(
+            scope            = viewModelScope,
+            repository       = repository,
+            actionType       = "CREATE_KINFOLK",
+            description      = description,
+            targetId         = id,
+            targetCollection = "kinfolk",
+        )
+    }
+
     fun clearAddKinfolkForm() {
         _addKinfolkState.value = AddKinfolkUiState()
+    }
+
+    /**
+     * #829 review item 6: leaving Add Kinfolk. A household created without its
+     * Emergency Contact (the contact save failed) is KEPT in the Add state, so
+     * opening Add again continues that household, locked fields and "Save
+     * Emergency Contact" included, instead of creating a second one. Anything
+     * else is a draft and is cleared as before.
+     */
+    fun leaveAddKinfolk() {
+        val state = _addKinfolkState.value
+        if (state.createdKinfolkId == null) clearAddKinfolkForm() else _addKinfolkState.value = state.copy(isSaving = false)
+    }
+
+    /**
+     * #829 review item 16: a caller becomes a household through Add Kinfolk, so
+     * "required on Add" holds for them too. The name typed on the call splits
+     * into first and last; the caller's number is the phone. A household already
+     * waiting on its contact is never overwritten.
+     */
+    fun prefillAddKinfolkFromCall(displayName: String, callerNumber: String) {
+        if (_addKinfolkState.value.createdKinfolkId != null) return
+        val parts = displayName.trim().split(Regex("\\s+"), limit = 2)
+        _addKinfolkState.value = AddKinfolkUiState(
+            firstName = parts.getOrElse(0) { "" },
+            lastName = parts.getOrElse(1) { "" },
+            phoneNumber = callerNumber.trim(),
+        )
     }
 
     // Edit Kinfolk Form Methods
@@ -901,10 +940,23 @@ class DirectoryViewModel(
     fun updateEditEntryNotes(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(entryNotes = value) }
     fun updateEditWifiName(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(wifiName = value) }
     fun updateEditWifiPassword(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(wifiPassword = value) }
-    fun updateEditEmergencyContact(i: Int, d: EmergencyContactDraft) { _editKinfolkState.value = _editKinfolkState.value.let { it.copy(emergencyContacts = it.emergencyContacts.replaced(i, d)) } }
-    fun addEditEmergencyContact() { _editKinfolkState.value = _editKinfolkState.value.let { if (it.emergencyContacts.size >= EMERGENCY_CONTACTS_MAX) it else it.copy(emergencyContacts = it.emergencyContacts + EmergencyContactDraft()) } }
-    fun removeEditEmergencyContact(i: Int) { _editKinfolkState.value = _editKinfolkState.value.let { it.copy(emergencyContacts = it.emergencyContacts.filterIndexed { j, _ -> j != i }.ifEmpty { listOf(EmergencyContactDraft()) }) } }
-    fun moveEditEmergencyContactFirst(i: Int) { _editKinfolkState.value = _editKinfolkState.value.let { it.copy(emergencyContacts = it.emergencyContacts.movedFirst(i)) } }
+    // Each contact edit clears a contact error, so a stale refusal never outlives the change it described.
+    fun updateEditEmergencyContact(i: Int, d: EmergencyContactDraft) { _editKinfolkState.value = _editKinfolkState.value.let { it.copy(emergencyContacts = it.emergencyContacts.replaced(i, d), emergencyContactsError = null) } }
+    fun addEditEmergencyContact() { _editKinfolkState.value = _editKinfolkState.value.let { if (it.emergencyContacts.size >= EMERGENCY_CONTACTS_MAX) it else it.copy(emergencyContacts = it.emergencyContacts + EmergencyContactDraft(), emergencyContactsError = null) } }
+    fun removeEditEmergencyContact(i: Int) { _editKinfolkState.value = _editKinfolkState.value.let { it.copy(emergencyContacts = it.emergencyContacts.filterIndexed { j, _ -> j != i }.ifEmpty { listOf(EmergencyContactDraft()) }, emergencyContactsError = null) } }
+    fun moveEditEmergencyContactFirst(i: Int) { _editKinfolkState.value = _editKinfolkState.value.let { it.copy(emergencyContacts = it.emergencyContacts.movedFirst(i), emergencyContactsError = null) } }
+
+    /**
+     * #829 review item 10: whether Save would change anything, from the same
+     * field diff and trimmed contact comparison the save itself uses, so the
+     * edit screen's "Unsaved changes" line and the write never disagree.
+     */
+    fun editHasUnsavedChanges(state: EditKinfolkUiState = _editKinfolkState.value): Boolean {
+        val baseline = loadedKinfolk ?: return false
+        if (baseline.id != state.kinfolkId) return false
+        return kinfolkFieldChanges(baseline, buildKinfolkFromEditState(state)).isNotEmpty() ||
+            !draftsEqual(state.emergencyContacts, state.emergencyContactsBaseline)
+    }
     fun updateEditReferralSource(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(referralSource = value) }
     /** Picked from the calendar, so the legacy note has been answered and goes away. */
     fun updateEditJoinDate(value: String) {
@@ -1165,24 +1217,36 @@ class DirectoryViewModel(
         // KINFOLK_SERVER_OWNED. "Skipped" is the one case where the household
         // had none before AND has none now - unrelated edits must still save
         // without ever being asked for a contact.
+        //
+        // #829 review item 14: THE CONTACT NEVER BLOCKS THE HOUSEHOLD (operator
+        // ruling). A cleared or half-filled contact used to stop the whole save.
+        // Now the household fields save first, and a contact that fails the
+        // pre-check or is refused by the server is reported on the contact
+        // editor (`emergencyContactsError`) with the server's own words, while
+        // the screen stays open to fix it.
         val ecChanged = !draftsEqual(state.emergencyContacts, state.emergencyContactsBaseline)
         val ecSkipped = state.emergencyContactsBaseline.isBlankDrafts() && state.emergencyContacts.isBlankDrafts()
-        if (ecChanged && !ecSkipped) {
+        val saveContacts = ecChanged && !ecSkipped
+        val contactProblem = if (saveContacts) {
             validateEmergencyContactDrafts(
                 state.emergencyContacts,
                 listOf("${state.firstName} ${state.lastName}"),
                 listOf(state.phoneNumber, state.secondaryPhone),
-            )?.let { _editKinfolkState.value = state.copy(error = it); return }
-        }
+            )
+        } else null
 
-        if (changes.isEmpty() && (!ecChanged || ecSkipped)) {
-            _editKinfolkState.value = state.copy(isSaving = false, isSuccess = true, error = null)
+        if (changes.isEmpty() && !saveContacts) {
+            _editKinfolkState.value = state.copy(isSaving = false, isSuccess = true, error = null, emergencyContactsError = null)
+            return
+        }
+        if (changes.isEmpty() && contactProblem != null) {
+            _editKinfolkState.value = state.copy(error = null, emergencyContactsError = contactProblem)
             return
         }
 
         AuntieLog.i("Saving changes for kinfolk: ${state.kinfolkId}")
         viewModelScope.launch {
-            _editKinfolkState.value = state.copy(isSaving = true, error = null)
+            _editKinfolkState.value = state.copy(isSaving = true, error = null, emergencyContactsError = null)
 
             if (changes.isNotEmpty()) {
                 val fieldsResult = repository.updateKinfolkFields(state.kinfolkId, changes)
@@ -1209,13 +1273,14 @@ class DirectoryViewModel(
                 )
             }
 
-            if (ecChanged && !ecSkipped) {
-                val ecResult = repository.saveEmergencyContacts(state.kinfolkId, state.emergencyContacts)
-                if (ecResult.isFailure) {
-                    _editKinfolkState.value = state.copy(
-                        isSaving = false,
-                        error = "saveEmergencyContacts failed: ${ecResult.exceptionOrNull()?.message ?: "Save failed"}",
-                    )
+            if (saveContacts) {
+                val problem = contactProblem
+                    ?: repository.saveEmergencyContacts(state.kinfolkId, state.emergencyContacts).exceptionOrNull()?.let { e ->
+                        e.message?.takeIf { it.isNotBlank() } ?: "The Emergency Contacts were not saved. Try again."
+                    }
+                if (problem != null) {
+                    _editKinfolkState.value = state.copy(isSaving = false, error = null, emergencyContactsError = problem)
+                    if (changes.isNotEmpty()) loadDirectory()
                     return@launch
                 }
             }
