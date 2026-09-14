@@ -24,7 +24,7 @@ import kotlin.test.assertTrue
  * the web portal's `InvoiceDetail.test.tsx` "holds one checkout key across a
  * re-tap after a failure": the server's own session reuse (#826) can only
  * hand back a session it can find, through the id it writes AFTER Stripe
- * replies, so a call whose reply was lost on the way back stored nothing —
+ * replies, so a call whose reply was lost on the way back stored nothing:
  * the next tap needs to carry the SAME key for that case to be closed.
  */
 class InvoicesControllerTest {
@@ -100,8 +100,8 @@ class InvoicesControllerTest {
         assertEquals(2, fake.calls.size)
         // Unlike the failure case above: a checkout that actually opened must
         // not hand a LATER, independent attempt at the same bill a key Stripe
-        // already has a session for — the body would differ and Stripe would
-        // refuse it (see CheckoutIdempotency.kt).
+        // already has a session for (the body would differ and Stripe would
+        // refuse it; see CheckoutIdempotency.kt).
         assertNotEquals(keyOf(fake.calls[0]), keyOf(fake.calls[1]))
     }
 

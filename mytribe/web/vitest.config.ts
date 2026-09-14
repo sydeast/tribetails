@@ -18,7 +18,7 @@ export default defineConfig({
     setupFiles: ['./test-setup.ts'],
     // #842: pinned explicitly rather than left to Vitest's own default so a
     // future major version can't silently flip it. This is what clears a
-    // module-level `vi.fn()`'s call count and arguments before every test —
+    // module-level `vi.fn()`'s call count and arguments before every test:
     // without it, a test's `toHaveBeenCalledTimes`/`toHaveBeenCalledWith`
     // assertion can pass or fail depending on what the PREVIOUS test in the
     // file called the same mock with. `mockReset`/`restoreMocks` stay off:

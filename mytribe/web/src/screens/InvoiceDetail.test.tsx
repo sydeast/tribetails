@@ -55,7 +55,7 @@ vi.mock('../api/portal', () => ({
 
 // payInvoice, redeemCredit and getMyInvoicePdf are module-level vi.fn()s, so
 // without an explicit reset a call count left over from the test that ran
-// before carries into the next one's assertion (#842 — this is what made the
+// before carries into the next one's assertion (#842: this is what made the
 // #825 checkout-key test depend on its neighbour and pass or fail by which
 // runner default vitest happened to apply, rather than by what it asserts).
 // getMyInvoices and getBusinessContact don't need the same treatment: every
