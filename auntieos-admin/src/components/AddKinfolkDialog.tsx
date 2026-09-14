@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { createKinfolk, NEW_KINFOLK_STATUS_OPTIONS, type NewKinfolkStatus } from '../api/directoryWrite';
+import { createKinfolk, NEW_KINFOLK_STATUS_OPTIONS, type NewKinfolkInput, type NewKinfolkStatus } from '../api/directoryWrite';
 import {
   EMERGENCY_CONTACT_WHO_GETS_CALLED,
   saveEmergencyContacts,
@@ -7,6 +7,13 @@ import {
   validateEmergencyContactDrafts,
   type EmergencyContactDraft,
 } from '../api/emergencyContacts';
+import {
+  clearPendingAddKinfolk,
+  pendingHouseholdName,
+  readPendingAddKinfolk,
+  savePendingAddKinfolk,
+  type PendingAddKinfolk,
+} from '../lib/pendingAddKinfolk';
 import { AddressAutofillField } from './AddressAutofillField';
 import { InfoTip } from './DenScreenKit';
 import { Dialog } from './Dialog';
@@ -31,6 +38,13 @@ interface AddKinfolkDialogProps {
    * there is a contact-less household on file and does not Add it a second time.
    */
   onLeftWithoutContact?: (kinfolkId: string) => void;
+  /**
+   * #890: the signed-in operator. A household created without its Emergency
+   * Contact is kept under this uid (lib/pendingAddKinfolk.ts), so opening Add
+   * again offers to continue it instead of creating a second household. Without
+   * a uid nothing is kept, which is the behavior before #890.
+   */
+  operatorUid?: string | null;
 }
 
 /**
@@ -38,16 +52,26 @@ interface AddKinfolkDialogProps {
  * header button. Mirrors `KinfolkEditScreen.kt`'s create path for exactly the
  * fields this trimmed-down form collects (name/first/last, phone, email,
  * status, address); see api/directoryWrite.ts's `createKinfolk` doc for the
- * confirmed write path (a direct, rules-backed `kinfolk` collection create,
- * not a callable) and for which of the full wasm Kinfolk fields are
- * deliberately left at their real default here rather than fabricated.
+ * write path (the `createKinfolk` callable since #890) and for which of the full
+ * wasm Kinfolk fields are deliberately left at their real default here rather
+ * than fabricated.
  *
  * Same shape as the other Dialog editors (HouseholdSectionDialog,
  * MediaUploadDialog): disabled-while-busy, fail-loud on a
  * rejected write (names the failing call, leaves the form exactly as typed),
  * Escape/backdrop-close routed through Dialog but suppressed mid-save.
+ *
+ * #890, THE PENDING HOUSEHOLD. From the moment the household is created until its
+ * Emergency Contact saves, it is kept outside this dialog. Closing and reopening
+ * Add then asks first: continue adding the Emergency Contact for that household,
+ * or Discard, which starts a blank Add and leaves the household as it was created
+ * (it shows No Emergency Contact). A `duplicateOf` answer from the server is the
+ * same situation reached from the other side, so the dialog simply continues
+ * with that household.
  */
-export function AddKinfolkDialog({ onClose, onCreated, onLeftWithoutContact }: AddKinfolkDialogProps) {
+export function AddKinfolkDialog({ onClose, onCreated, onLeftWithoutContact, operatorUid = null }: AddKinfolkDialogProps) {
+  /** Read once, when the dialog opens: the household this operator left waiting on its contact. */
+  const [offered, setOffered] = useState<PendingAddKinfolk | null>(() => readPendingAddKinfolk(operatorUid));
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -85,6 +109,37 @@ export function AddKinfolkDialog({ onClose, onCreated, onLeftWithoutContact }: A
     onClose();
   }, [saving, onClose, createdId, onLeftWithoutContact]);
 
+  function householdInput(): NewKinfolkInput {
+    return { firstName, lastName, phoneNumber, email, status, serviceAddress };
+  }
+
+  /** #890: keep the created household, with the contact as typed, until the contact saves. */
+  function keepPending(id: string, contacts: EmergencyContactDraft[]) {
+    savePendingAddKinfolk(operatorUid, { kinfolkId: id, household: householdInput(), contacts });
+  }
+
+  function changeContacts(next: EmergencyContactDraft[]) {
+    setEcDrafts(next);
+    if (createdId !== null) keepPending(createdId, next);
+  }
+
+  function continuePending(pending: PendingAddKinfolk) {
+    setFirstName(pending.household.firstName);
+    setLastName(pending.household.lastName);
+    setPhoneNumber(pending.household.phoneNumber);
+    setEmail(pending.household.email);
+    setStatus(pending.household.status);
+    setServiceAddress(pending.household.serviceAddress);
+    setEcDrafts(pending.contacts.length > 0 ? pending.contacts : toDrafts([]));
+    setCreatedId(pending.kinfolkId);
+    setOffered(null);
+  }
+
+  function discardPending() {
+    clearPendingAddKinfolk(operatorUid);
+    setOffered(null);
+  }
+
   /**
    * The Emergency Contact write, split from household creation so a failed
    * save retries ONLY the contact (#829): `createdId`, once set, never resets,
@@ -93,9 +148,11 @@ export function AddKinfolkDialog({ onClose, onCreated, onLeftWithoutContact }: A
   async function saveContact(id: string) {
     try {
       await saveEmergencyContacts(id, ecDrafts);
+      clearPendingAddKinfolk(operatorUid);
       setSaving(false);
       onCreated(id);
     } catch (err) {
+      keepPending(id, ecDrafts);
       setSaving(false);
       // #829 review item 4: the server's own message, as the portals show it,
       // then what state that leaves the household in.
@@ -141,14 +198,41 @@ export function AddKinfolkDialog({ onClose, onCreated, onLeftWithoutContact }: A
     setSaveError(null);
     let id: string;
     try {
-      id = await createKinfolk({ firstName, lastName, phoneNumber, email, status, serviceAddress });
+      // #890: a `duplicateOf` answer means this operator created this household
+      // minutes ago. `kinfolkId` is that household, and Add carries on with it.
+      id = (await createKinfolk(householdInput())).kinfolkId;
     } catch (err) {
       setSaving(false);
       setSaveError(`createKinfolk failed: ${err instanceof Error ? err.message : 'Create failed'}`);
       return;
     }
     setCreatedId(id);
+    // Kept before the contact save even starts, so a tab closed mid-save still
+    // offers this household the next time Add opens.
+    keepPending(id, ecDrafts);
     await saveContact(id);
+  }
+
+  if (offered !== null) {
+    const name = pendingHouseholdName(offered);
+    return (
+      <Dialog
+        title="Add kinfolk"
+        onClose={onClose}
+        footer={
+          <>
+            <GhostButton label="Discard" onClick={discardPending} />
+            <PrimaryButton label={`Continue adding the Emergency Contact for ${name}`} onClick={() => continuePending(offered)} />
+          </>
+        }
+      >
+        <p className="add-kinfolk__pending">
+          {name} was created, but the Emergency Contact did not save. The household shows No Emergency Contact until it
+          is saved.
+        </p>
+        <p className="add-kinfolk__pending">Discard starts a new Add and leaves {name} as it is.</p>
+      </Dialog>
+    );
   }
 
   return (
@@ -290,7 +374,7 @@ export function AddKinfolkDialog({ onClose, onCreated, onLeftWithoutContact }: A
         <h3 className="add-kinfolk__label add-kinfolk__section-title">
           Emergency Contacts <InfoTip text={EMERGENCY_CONTACT_WHO_GETS_CALLED} />
         </h3>
-        <EmergencyContactsEditor idPrefix="add-kinfolk" value={ecDrafts} onChange={setEcDrafts} disabled={saving} />
+        <EmergencyContactsEditor idPrefix="add-kinfolk" value={ecDrafts} onChange={changeContacts} disabled={saving} />
       </div>
 
       {saveError !== null && (

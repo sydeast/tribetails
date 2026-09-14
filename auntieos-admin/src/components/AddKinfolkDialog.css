@@ -87,6 +87,14 @@
   margin: 0;
 }
 
+/* #890: the question asked when Add opens on a household still waiting on its
+   Emergency Contact. */
+.add-kinfolk__pending {
+  margin: 0 0 var(--space-3);
+  color: var(--color-text-primary);
+  font-size: var(--type-body-md-size);
+}
+
 .add-kinfolk__banner {
   margin: var(--space-4) 0 0;
   padding: var(--space-3);

@@ -9,6 +9,8 @@ const { addDoc, collection, serverTimestamp, doc, updateDoc } = vi.hoisted(() =>
 }));
 vi.mock('firebase/firestore', () => ({ addDoc, collection, serverTimestamp, doc, updateDoc }));
 vi.mock('../lib/firebase', () => ({ db: {} }));
+const { call } = vi.hoisted(() => ({ call: vi.fn() }));
+vi.mock('../lib/fns', () => ({ call }));
 
 import {
   createKinfolk,
@@ -44,6 +46,7 @@ function kinInput(over: Partial<NewKinInput> = {}): NewKinInput {
 }
 
 beforeEach(() => {
+  call.mockReset();
   addDoc.mockReset();
   collection.mockReset();
   serverTimestamp.mockReset();
@@ -55,35 +58,49 @@ beforeEach(() => {
 });
 
 describe('createKinfolk', () => {
-  it('adds to the top-level kinfolk collection with the trimmed fields plus real Kinfolk model defaults', async () => {
-    addDoc.mockResolvedValue({ id: 'new-kf-1' });
-    const id = await createKinfolk(kinfolkInput({ firstName: '  Jamie  ', lastName: '  Halbrook  ' }));
-    expect(id).toBe('new-kf-1');
-    expect(collection).toHaveBeenCalledWith({}, 'kinfolk');
-    expect(addDoc).toHaveBeenCalledWith('collection-ref:kinfolk', {
-      firstName: 'Jamie',
-      lastName: 'Halbrook',
-      phoneNumber: '(512) 555-1234',
-      email: 'jamie@example.com',
-      status: 'active',
-      serviceAddress: '123 Bark Ave',
-      profilePictureUrl: '',
-      joinDate: '',
+  // #890: through the createKinfolk callable, never a direct add, so the server
+  // can hand back a household this operator just created instead of a second one.
+  it('creates through the createKinfolk callable with the trimmed fields plus real Kinfolk model defaults', async () => {
+    call.mockResolvedValue({ kinfolkId: 'new-kf-1', duplicateOf: null });
+    const res = await createKinfolk(kinfolkInput({ firstName: '  Jamie  ', lastName: '  Halbrook  ' }));
+    expect(res).toEqual({ kinfolkId: 'new-kf-1', duplicateOf: null });
+    expect(call).toHaveBeenCalledWith('createKinfolk', {
+      kinfolk: {
+        firstName: 'Jamie',
+        lastName: 'Halbrook',
+        phoneNumber: '(512) 555-1234',
+        email: 'jamie@example.com',
+        status: 'active',
+        serviceAddress: '123 Bark Ave',
+        profilePictureUrl: '',
+        joinDate: '',
+      },
     });
+    expect(addDoc).not.toHaveBeenCalled();
   });
 
-  it('rejects a blank first name without calling addDoc', async () => {
+  it('passes on duplicateOf when the server hands back a household this operator just created', async () => {
+    call.mockResolvedValue({ kinfolkId: 'kf-existing', duplicateOf: 'kf-existing' });
+    expect(await createKinfolk(kinfolkInput())).toEqual({ kinfolkId: 'kf-existing', duplicateOf: 'kf-existing' });
+  });
+
+  it('refuses an answer with no household id', async () => {
+    call.mockResolvedValue({ duplicateOf: null });
+    await expect(createKinfolk(kinfolkInput())).rejects.toThrow(/no household id/);
+  });
+
+  it('rejects a blank first name without calling the callable', async () => {
     await expect(createKinfolk(kinfolkInput({ firstName: '   ' }))).rejects.toThrow(/first name/i);
-    expect(addDoc).not.toHaveBeenCalled();
+    expect(call).not.toHaveBeenCalled();
   });
 
-  it('rejects a blank last name without calling addDoc', async () => {
+  it('rejects a blank last name without calling the callable', async () => {
     await expect(createKinfolk(kinfolkInput({ lastName: '' }))).rejects.toThrow(/last name/i);
-    expect(addDoc).not.toHaveBeenCalled();
+    expect(call).not.toHaveBeenCalled();
   });
 
-  it('propagates a genuine write failure for the caller to surface fail-loud', async () => {
-    addDoc.mockRejectedValue(new Error('permission-denied'));
+  it('propagates a genuine failure for the caller to surface fail-loud', async () => {
+    call.mockRejectedValue(new Error('permission-denied'));
     await expect(createKinfolk(kinfolkInput())).rejects.toThrow('permission-denied');
   });
 });

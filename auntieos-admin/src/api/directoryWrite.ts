@@ -1,15 +1,23 @@
 import { collection, doc, serverTimestamp } from 'firebase/firestore';
 import { addDoc, updateDoc } from '../lib/firestoreWrite';
 import { db } from '../lib/firebase';
+import { call } from '../lib/fns';
 
 /**
  * The write half of api/directory.ts (that file stays read-only, matching the
  * account.ts / accountWrite.ts split). Directory's two "Add" flows create the
  * households (`kinfolk`) and pets (`kin`) the read side already streams.
  *
- * CREATE PATH, confirmed against BOTH ends before writing a line here:
+ * HOUSEHOLD CREATE, since #890: the `createKinfolk` callable
+ * (mytribe/functions/src/admin/createKinfolk.ts), not a direct add. A direct add
+ * gave the server no chance to notice a retry, so an Add whose Emergency Contact
+ * failed and was tried again made a second household. The callable hands back
+ * the household this operator created in the last 10 minutes with the same phone
+ * or email (`duplicateOf`). Everything below about the kin create still holds.
  *
- *   No `createKinfolk` / `addKinfolk` / `createKin` callable exists anywhere in
+ * CREATE PATH, as it was confirmed before #890:
+ *
+ *   No `createKinfolk` / `addKinfolk` / `createKin` callable existed anywhere in
  *   MyTribe/functions/src (grepped the whole tree). The only kin-create
  *   callable that exists, `addKin` in functions/src/portal/kinWrites.ts, is the
  *   KINFOLK PORTAL's own self-service callable: it resolves the target
@@ -85,23 +93,38 @@ export interface NewKinfolkInput {
  * the two fields the wasm's `canSave` always enforces regardless of which
  * other optional fields this trimmed-down form omits).
  */
-export async function createKinfolk(input: NewKinfolkInput): Promise<string> {
+export interface CreateKinfolkResult {
+  kinfolkId: string;
+  /**
+   * #890: set when the server found a household this operator created in the
+   * last 10 minutes with the same phone or email, and handed that one back
+   * instead of creating another. `kinfolkId` is then that household.
+   */
+  duplicateOf: string | null;
+}
+
+export async function createKinfolk(input: NewKinfolkInput): Promise<CreateKinfolkResult> {
   const firstName = input.firstName.trim();
   const lastName = input.lastName.trim();
   if (firstName === '') throw new Error('createKinfolk requires a first name');
   if (lastName === '') throw new Error('createKinfolk requires a last name');
 
-  const ref = await addDoc(collection(db, 'kinfolk'), {
-    firstName,
-    lastName,
-    phoneNumber: input.phoneNumber.trim(),
-    email: input.email.trim(),
-    status: input.status,
-    serviceAddress: input.serviceAddress.trim(),
-    profilePictureUrl: '',
-    joinDate: '',
+  const res = await call<{ kinfolk: Record<string, unknown> }, Partial<CreateKinfolkResult> | null>('createKinfolk', {
+    kinfolk: {
+      firstName,
+      lastName,
+      phoneNumber: input.phoneNumber.trim(),
+      email: input.email.trim(),
+      status: input.status,
+      serviceAddress: input.serviceAddress.trim(),
+      profilePictureUrl: '',
+      joinDate: '',
+    },
   });
-  return ref.id;
+  if (typeof res?.kinfolkId !== 'string' || res.kinfolkId === '') {
+    throw new Error('createKinfolk returned no household id');
+  }
+  return { kinfolkId: res.kinfolkId, duplicateOf: typeof res.duplicateOf === 'string' ? res.duplicateOf : null };
 }
 
 // ── Kin (pet) ────────────────────────────────────────────────────────────────
