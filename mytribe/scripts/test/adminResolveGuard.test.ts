@@ -11,7 +11,7 @@ import {
 
 /**
  * These tests never touch the real filesystem's $HOME or the real
- * node_modules trees — see the memory rule "do NOT create or touch
+ * node_modules trees: see the memory rule "do NOT create or touch
  * $HOME/node_modules" in the issue. Two independent techniques are used:
  *
  *   - A fully in-memory fake `fs` (FsLike) plus a fake require.cache key
@@ -219,7 +219,7 @@ describe('locateLoadedCopies / locateReachableCopies (unit)', () => {
 });
 
 describe('assertSingleFirebaseAdminResolution (real temp-directory fixture)', () => {
-  // Real fs, real directories, all under a fresh mkdtemp — never $HOME.
+  // Real fs, real directories, all under a fresh mkdtemp, never $HOME.
   const tmpDirs: string[] = [];
   afterEach(() => {
     for (const d of tmpDirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
@@ -259,7 +259,7 @@ describe('assertSingleFirebaseAdminResolution (real temp-directory fixture)', ()
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'admin-guard-stray-'));
     tmpDirs.push(root);
     // "home" is a real ANCESTOR of the repo path here, exactly like the
-    // operator's actual $HOME is an ancestor of the checkout — this is what
+    // operator's actual $HOME is an ancestor of the checkout: this is what
     // makes ancestor walk-up beat NODE_PATH in the real bug.
     const home = root;
     const repo = path.join(home, 'repo');

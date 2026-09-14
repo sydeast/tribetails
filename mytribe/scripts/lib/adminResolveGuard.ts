@@ -8,7 +8,7 @@
  * comment in `mytribe/scripts/tsconfig.json`), so a bare `require('firebase-admin')`
  * issued from a file under `mytribe/scripts` walks UP the directory tree
  * looking for a `node_modules/firebase-admin` before it ever consults
- * `NODE_PATH` — and `$HOME` sits on that walk-up path whenever the repo is
+ * `NODE_PATH`, and `$HOME` sits on that walk-up path whenever the repo is
  * checked out under the operator's home directory, which it always is here.
  * Verified empirically (see the PR description) that a real ancestor
  * `node_modules` wins over `NODE_PATH`, so `NODE_PATH=node_modules` on the
@@ -17,12 +17,12 @@
  * If a backfill script ends up with a `Timestamp`/`FieldValue` class from a
  * DIFFERENT firebase-admin copy than the one its `Firestore` client instance
  * was constructed from, the real write can be rejected or serialised wrong,
- * while a dry run (reads only) passes clean — the defect only shows up on
+ * while a dry run (reads only) passes clean: the defect only shows up on
  * the write path, which is exactly the run an operator cannot easily retry
  * blind.
  *
  * This module never fixes the stray directory itself (the operator does
- * that by hand — needs an admin password, the directory is root-owned). It
+ * that by hand (needs an admin password, the directory is root-owned). It
  * only refuses to let a write-capable script proceed while the resolution
  * is unsafe, and says exactly what is wrong and how to fix it.
  */
@@ -90,7 +90,7 @@ function ancestorNodeModulesDirs(fromDir: string): string[] {
 function nodePathDirs(nodePathEnv: string | undefined): string[] {
   if (!nodePathEnv) return [];
   // Resolved against cwd, same as Node resolves NODE_PATH entries at process
-  // start — so a relative NODE_PATH=node_modules (as the npm scripts set)
+  // start, so a relative NODE_PATH=node_modules (as the npm scripts set)
   // still reports an absolute, readable path in an error message.
   return nodePathEnv
     .split(path.delimiter)
@@ -106,7 +106,7 @@ function readVersion(fsImpl: FsLike, pkgJsonPath: string): string {
       if (typeof v === 'string') return v;
     }
   } catch {
-    // Unreadable/unparseable package.json — report as unknown rather than throw.
+    // Unreadable/unparseable package.json: report as unknown rather than throw.
   }
   return 'unknown';
 }
