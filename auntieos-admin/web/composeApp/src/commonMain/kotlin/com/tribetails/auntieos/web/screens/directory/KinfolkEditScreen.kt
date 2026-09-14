@@ -54,6 +54,7 @@ import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.FormSchema
 import com.tribetails.auntieos.web.data.HouseholdData
 import com.tribetails.auntieos.web.data.Kinfolk
+import com.tribetails.auntieos.web.data.MediaFile
 import com.tribetails.auntieos.web.data.appliesToSchemaIds
 import com.tribetails.auntieos.web.data.MapboxClient
 import com.tribetails.auntieos.web.data.MapboxRetrieveResult
@@ -231,6 +232,9 @@ fun KinfolkEditScreen(
     }
 
     var saving       by remember { mutableStateOf(false) }
+    /** #853: true while a photo upload + write is in flight, so the change-photo
+     * control shows a loading cue and cannot be clicked again mid-save. */
+    var photoSaving  by remember(kinfolkId) { mutableStateOf(false) }
     /** #829 review: a contact refusal or failed contact save, shown under the contact editor. */
     var ecError      by remember(kinfolkId) { mutableStateOf<String?>(null) }
     var toast        by remember { mutableStateOf("") }
@@ -468,26 +472,32 @@ fun KinfolkEditScreen(
                     gradientSeed = firstName.ifBlank { "kinfolk" },
                 )
                 Text(
-                    text = if (photoUrl.isBlank()) "Add photo" else "Change photo",
+                    text = when {
+                        photoSaving        -> "Uploading…"
+                        photoUrl.isBlank() -> "Add photo"
+                        else               -> "Change photo"
+                    },
                     style = AuntieTheme.typography.labelLarge,
-                    color = AuntieTheme.colors.primary,
+                    color = if (photoSaving) AuntieTheme.colors.textDim else AuntieTheme.colors.primary,
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
-                        .clickable {
-                            scope.launch {
-                                when (val r = client.uploadMedia(kinfolkId, "KINFOLK", ByteArray(0), "")) {
-                                    is WriteResult.Ok -> {
-                                        val url = r.value.storageUrl
-                                        photoUrl = url
-                                        // Diffed like every update, so untouched fields are not
-                                        // rewritten. It still sends any unsaved form edits
-                                        // along with the photo: that is issue #853.
-                                        val base = loaded ?: existing
-                                        val sent = build().copy(profilePictureUrl = url)
-                                        if (base != null && client.updateKinfolk(base, sent) is WriteResult.Ok) loaded = sent
-                                        showToast("Photo updated.", ToastKind.Success)
-                                    }
-                                    is WriteResult.Err -> showToast("Photo upload failed: ${r.message}", ToastKind.Error)
+                        .clickable(enabled = !photoSaving) {
+                            val base = loaded ?: existing
+                            if (base == null) {
+                                showToast("Photo update failed: record not loaded yet.", ToastKind.Error)
+                            } else {
+                                photoSaving = true
+                                val previousUrl = photoUrl
+                                scope.launch {
+                                    runKinfolkPhotoUploadPipeline(
+                                        previousUrl = previousUrl,
+                                        upload      = { client.uploadMedia(kinfolkId, "KINFOLK", ByteArray(0), "") },
+                                        write       = { url -> writeKinfolkPhoto(client, base, url) },
+                                        onPhotoUrl  = { photoUrl = it },
+                                        onLoaded    = { loaded = it },
+                                        onToast     = { (msg, kind) -> showToast(msg, kind) },
+                                    )
+                                    photoSaving = false
                                 }
                             }
                         }
@@ -1070,4 +1080,59 @@ private fun ArchivePanel(
         }
     }
     Spacer(Modifier.height(16.dp))
+}
+
+/**
+ * #853: the write behind a Kinfolk photo change. [base] is always the
+ * last-loaded record ([loaded] or [existing]), never the live form draft, so
+ * whatever the operator has typed elsewhere on the screen cannot ride along
+ * with the photo. Sent through [FirestoreClient.updateKinfolk] as a merge
+ * naming only `profilePictureUrl`.
+ */
+internal suspend fun writeKinfolkPhoto(client: FirestoreClient, base: Kinfolk, url: String): WriteResult<Kinfolk> {
+    val edited = base.copy(profilePictureUrl = url)
+    return when (val w = client.updateKinfolk(base, edited)) {
+        is WriteResult.Ok  -> WriteResult.Ok(edited)
+        is WriteResult.Err -> WriteResult.Err(w.message)
+    }
+}
+
+/**
+ * #853: the photo-change pipeline behind KinfolkEditScreen's "Change photo"
+ * control, extracted so a fake [upload]/[write] can drive every outcome
+ * without a live Cloudinary upload or Firestore write (mirrors
+ * `runAvatarUploadPipeline` in SettingsScreen.kt). The preview is set
+ * optimistically once the upload succeeds and reverted to [previousUrl] if
+ * the write then fails; "Photo updated." shows only once the write itself
+ * comes back Ok, never on upload success alone.
+ */
+internal suspend fun runKinfolkPhotoUploadPipeline(
+    previousUrl: String,
+    upload: suspend () -> WriteResult<MediaFile>,
+    write: suspend (url: String) -> WriteResult<Kinfolk>,
+    onPhotoUrl: (String) -> Unit,
+    onLoaded: (Kinfolk) -> Unit,
+    onToast: (Pair<String, ToastKind>) -> Unit,
+) {
+    when (val up = upload()) {
+        is WriteResult.Err -> onToast("Photo upload failed: ${up.message}" to ToastKind.Error)
+        is WriteResult.Ok -> {
+            val url = up.value.storageUrl
+            if (url.isBlank()) {
+                onToast("No photo selected" to ToastKind.Error)
+                return
+            }
+            onPhotoUrl(url)
+            when (val w = write(url)) {
+                is WriteResult.Ok -> {
+                    onLoaded(w.value)
+                    onToast("Photo updated." to ToastKind.Success)
+                }
+                is WriteResult.Err -> {
+                    onPhotoUrl(previousUrl)
+                    onToast("Photo update failed: ${w.message}" to ToastKind.Error)
+                }
+            }
+        }
+    }
 }
