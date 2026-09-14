@@ -2,7 +2,7 @@ import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { logEvent } from '../lib/logger';
 import { wrapTrigger } from '../lib/wrapTrigger';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
-import { enqueueNotification } from '../notifications/dispatcher';
+import { contentDedupeKey, enqueueNotification } from '../notifications/dispatcher';
 import {
   buildVisitDateData,
   formatBookingDate,
@@ -32,6 +32,9 @@ type BookingDoc = {
   rescheduleRequestedAt?: unknown;
   rescheduleRequestReason?: string | null;
   rescheduleRequestStatus?: string | null;
+  /** The time the household proposed (requestBookingReschedule); part of the ask's identity (#832). */
+  rescheduleRequestedStartTime?: unknown;
+  rescheduleRequestedEndTime?: unknown;
   notes?: string;
   endTime?: { toMillis?: () => number } | null;
   batchId?: string;
@@ -191,6 +194,54 @@ export function cancellationDispatches(
   return [];
 }
 
+/**
+ * #832: WHAT MAKES TWO BOOKING NOTIFICATIONS DIFFERENT.
+ *
+ * Every dispatch here targets the visit, so without these every key would share
+ * one identity per visit and the dispatcher would drop a second REAL event
+ * inside its window: a second edit, a new ask after a decline, a confirm after
+ * an undo. Each helper names one event so a retry of it dedupes and the next
+ * event sends.
+ *
+ * `kincare.changed` is named by what changed and to what, so a replay of the
+ * same edit is one notification and a different edit is another.
+ */
+export function changeDedupeKey(
+  visitId: string,
+  after: BookingDoc,
+  changedFields: ReadonlyArray<keyof BookingDoc>,
+): string {
+  const values: Record<string, unknown> = {};
+  for (const f of changedFields) values[f] = after[f] ?? null;
+  return contentDedupeKey(`booking:${visitId}:changed`, { fields: [...changedFields].sort(), values });
+}
+
+/**
+ * `kincare.reschedule.requested` is named by the ask itself: when it was made
+ * (`rescheduleRequestedAt` is a fresh server timestamp per request), the time
+ * proposed, and the reason. A re-request after a decline is a new ask and
+ * sends; a trigger replay of the same ask does not.
+ */
+export function rescheduleDedupeKey(visitId: string, after: BookingDoc): string {
+  return contentDedupeKey(`booking:${visitId}:reschedule`, {
+    requestedAt: after.rescheduleRequestedAt ?? null,
+    start: after.rescheduleRequestedStartTime ?? null,
+    end: after.rescheduleRequestedEndTime ?? null,
+    reason: after.rescheduleRequestReason ?? null,
+  });
+}
+
+/**
+ * Every other key here (confirm, cancel, unavailable, the cancellation ask and
+ * answer, assignment) is a status TRANSITION, and one write is one transition.
+ * The Firestore event id is stable across the platform's redeliveries of that
+ * write and distinct for the next write, which is exactly "retries dedupe,
+ * real changes send" (a confirm, an undo and a re-confirm are three events).
+ */
+export function bookingEventDedupeKey(visitId: string, key: string, eventId: string | undefined): string | undefined {
+  return eventId ? `booking:${visitId}:${key}:event:${eventId}` : undefined;
+}
+
 function fieldChanged(
   before: BookingDoc | undefined,
   after: BookingDoc,
@@ -315,7 +366,7 @@ export const onBookingsWrite = onDocumentWritten(
       startTimeMs: after.startTime?.toMillis?.() ?? null,
     };
 
-    const dispatch = async (key: string, extra: Record<string, unknown> = {}) => {
+    const dispatch = async (key: string, extra: Record<string, unknown> = {}, dedupeKey?: string) => {
       try {
         await enqueueNotification({
           key: key as never,
@@ -323,6 +374,8 @@ export const onBookingsWrite = onDocumentWritten(
           data: { ...baseData, ...extra },
           targetType: 'booking',
           targetId: visitId,
+          // #832: see changeDedupeKey / rescheduleDedupeKey / bookingEventDedupeKey.
+          dedupeKey: dedupeKey ?? bookingEventDedupeKey(visitId, key, event.id),
         });
       } catch (err) {
         logEvent({
@@ -384,9 +437,11 @@ export const onBookingsWrite = onDocumentWritten(
       !before?.rescheduleRequestedAt ||
       (before?.rescheduleRequestStatus !== 'pending' && after.rescheduleRequestStatus === 'pending');
     if (after.rescheduleRequestedAt && after.rescheduleRequestStatus === 'pending' && rescheduleAskIsNew) {
-      await dispatch('kincare.reschedule.requested', {
-        reason: after.rescheduleRequestReason ?? null,
-      });
+      await dispatch(
+        'kincare.reschedule.requested',
+        { reason: after.rescheduleRequestReason ?? null },
+        rescheduleDedupeKey(visitId, after),
+      );
     }
     if (beforeStatus !== afterStatus) {
       if (afterStatus === 'confirmed' || afterStatus === 'approved') {
@@ -434,7 +489,11 @@ export const onBookingsWrite = onDocumentWritten(
 
     if (afterStatus === 'confirmed' || afterStatus === 'approved') {
       if (changedFieldsAll.length > 0) {
-        await dispatch('kincare.changed', { changedFields: changedFieldsAll });
+        await dispatch(
+          'kincare.changed',
+          { changedFields: changedFieldsAll },
+          changeDedupeKey(visitId, after, changedFieldsAll),
+        );
       }
     }
   }),

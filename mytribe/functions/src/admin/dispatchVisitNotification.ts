@@ -4,7 +4,7 @@ import { db } from '../lib/firestoreAdmin';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
-import { enqueueNotification } from '../notifications/dispatcher';
+import { contentDedupeKey, enqueueNotification } from '../notifications/dispatcher';
 import { logEvent } from '../lib/logger';
 import { resolveKinCareRef } from '../lib/resolveKinCareRef';
 import { TRIBETAILS_CORS } from '../lib/cors';
@@ -21,6 +21,12 @@ const Args = z
     event: EventArg,
     etaMinutes: z.number().int().nonnegative().optional(),
     reportPreviewUrl: z.string().url().optional(),
+    /**
+     * When the lifecycle step happened (ms epoch). Optional: the web admin's
+     * `setVisitLifecycle` passes the time it stamps; the Android callable path
+     * does not, and then the ETA alone tells two events apart (#832).
+     */
+    eventAtMs: z.number().int().nonnegative().optional(),
   })
   .refine((a) => (a.batchId && a.visitId) || a.bookingId, {
     message: 'Provide batchId+visitId (preferred) or a legacy bookingId.',
@@ -35,6 +41,27 @@ const EVENT_TO_KEY: Record<z.infer<typeof EventArg>, string> = {
   departed: 'kincare.auntie.departed',
   report_sent: 'kincare.report.sent',
 };
+
+/**
+ * #832: the dispatcher identity of one visit notification. All of them target
+ * the visit, so without this an Auntie's second "on my way" with a new ETA, or
+ * an arrival after an undone arrival, inside the dispatcher window was dropped.
+ *
+ * Named by the step and what it says: the ETA, the step's time when the caller
+ * knows it (`setVisitLifecycle` does), and the report link for a report. Two
+ * taps of the same step with the same ETA and no time from the Android callable
+ * path are one event and deliver once.
+ */
+export function visitDedupeKey(
+  visitId: string,
+  args: Pick<Args, 'event' | 'etaMinutes' | 'eventAtMs' | 'reportPreviewUrl'>,
+): string {
+  return contentDedupeKey(`visit:${visitId}:${args.event}`, {
+    eta: args.etaMinutes ?? null,
+    at: args.eventAtMs ?? null,
+    report: args.reportPreviewUrl ?? null,
+  });
+}
 
 export interface DispatchVisitNotificationOutcome {
   ok: true;
@@ -128,6 +155,7 @@ export async function dispatchVisitNotificationCore(
     recipientUid,
     data,
     actorUid,
+    dedupeKey: visitDedupeKey(visitId, args),
   });
 
   await writeAuditEntry({

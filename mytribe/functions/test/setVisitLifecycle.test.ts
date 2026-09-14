@@ -95,7 +95,15 @@ describe('clocking a visit in', () => {
     // written, and `firestore.rules` would refuse it from a client anyway.
     expect(write?.data).not.toHaveProperty('completedAt');
     expect(mocks.dispatch).toHaveBeenCalledWith(
-      { familyId: 'fam1', batchId: 'batch1', visitId: 'visit1', event: 'arrived' },
+      // #832: the stamped time rides along as the notification's event time, so
+      // an arrival after an undone arrival is a new notification.
+      {
+        familyId: 'fam1',
+        batchId: 'batch1',
+        visitId: 'visit1',
+        event: 'arrived',
+        eventAtMs: Date.parse('2026-08-24T14:02:00Z'),
+      },
       'admin1',
       'Auntie Jo',
     );

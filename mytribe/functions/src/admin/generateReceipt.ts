@@ -37,12 +37,23 @@ export async function generateReceiptHandler(
   if (!snap.exists) {
     throw new HttpsError('not-found', `invoice ${args.invoiceId} not found`);
   }
-  const familyId = (snap.data() as { kinfolkId?: string } | undefined)?.kinfolkId ?? '';
+  const stored = snap.data() as { kinfolkId?: string; receiptVersion?: unknown } | undefined;
+  const familyId = stored?.kinfolkId ?? '';
+  // #832: each issue of a receipt is a VERSION of it, and the version is the
+  // notification's identity. Every receipt for one invoice used to share
+  // `invoice:<id>`, so a receipt re-issued inside the dispatcher window (a
+  // correction, a household asking again) was dropped. Read-then-write rather
+  // than an increment on purpose: two presses racing each other read the same
+  // version and deliver once, while an issue after the first one landed gets
+  // the next version and sends.
+  const receiptVersion =
+    (typeof stored?.receiptVersion === 'number' && Number.isFinite(stored.receiptVersion) ? stored.receiptVersion : 0) + 1;
 
   await ref.set(
     {
       receiptIssuedAt: FieldValue.serverTimestamp(),
       receiptIssuedBy: req.auth!.uid,
+      receiptVersion,
       updatedAt: FieldValue.serverTimestamp(),
     },
     { merge: true },
@@ -61,6 +72,7 @@ export async function generateReceiptHandler(
       key: 'invoice.receipt',
       recipientUid: recipientUid ?? '',
       data: { kinfolkId: familyId, invoiceId: args.invoiceId },
+      dedupeKey: `invoice:${args.invoiceId}:receipt:${receiptVersion}`,
     });
   } catch (err) {
     logEvent({

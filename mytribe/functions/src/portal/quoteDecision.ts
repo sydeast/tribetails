@@ -167,6 +167,12 @@ interface DecisionOutcome {
   kinfolkId: string;
   status: z.infer<typeof InvoiceStateSchema>;
   invoiceNumber: string;
+  /**
+   * Which round of the quote this decision answers: how many times the office
+   * had resent it. A decline, a resend and a second decline are two different
+   * answers, and this is what keeps their notifications apart (#832).
+   */
+  round: number;
 }
 
 /**
@@ -243,6 +249,7 @@ async function decideQuote(
       kinfolkId: invKinfolkId,
       status: stamp.status,
       invoiceNumber: typeof txInv['invoiceNumber'] === 'string' ? txInv['invoiceNumber'] : '',
+      round: typeof txInv['quoteResendCount'] === 'number' ? txInv['quoteResendCount'] : 0,
     };
   });
 
@@ -291,6 +298,9 @@ async function decideQuote(
       actorUid: uid,
       targetType: 'invoice',
       targetId: outcome.invoiceId,
+      // #832: one answer per round (see DecisionOutcome.round). The transaction
+      // above already refuses a second answer to the same round.
+      dedupeKey: `quote:${outcome.invoiceId}:${key}:round:${outcome.round}`,
     });
   } catch (err) {
     logEvent({

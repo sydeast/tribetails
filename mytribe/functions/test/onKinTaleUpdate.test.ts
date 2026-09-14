@@ -13,7 +13,10 @@ vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError:
 vi.mock('../src/lib/wrapTrigger', () => ({
   wrapTrigger: (_name: string, fn: (...args: unknown[]) => unknown) => fn,
 }));
-vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: mocks.enqueue }));
+vi.mock('../src/notifications/dispatcher', async () => {
+  const actual = await vi.importActual<typeof import('../src/notifications/dispatcher')>('../src/notifications/dispatcher');
+  return { contentDedupeKey: actual.contentDedupeKey, enqueueNotification: mocks.enqueue };
+});
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveUid }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: mocks.writeAuditEntryFn }));
 // Only the Firestore-backed claim is mocked; `clientAlreadyAnnouncedSend` is a
@@ -37,7 +40,7 @@ beforeEach(() => {
   mocks.dbFn.mockReset().mockReturnValue(buildDbMock({}).db);
 });
 
-import { onKinTaleUpdateHandler } from '../src/triggers/onKinTaleUpdate';
+import { kinTaleNoteDedupeKey, onKinTaleUpdateHandler } from '../src/triggers/onKinTaleUpdate';
 
 function makeEvent(before: any, after: any, reportId = 'r1') {
   return {
@@ -141,6 +144,8 @@ describe('onKinTaleUpdate trigger — post-publish notes', () => {
         key: 'kintale.note.added',
         recipientUid: 'uid_kinfolk',
         data: expect.objectContaining({ kinfolkId: 'fam1', taleId: 'r1', bodyChanged: true, mediaAdded: false }),
+        // #832: named by the note's content, not just the tale.
+        dedupeKey: kinTaleNoteDedupeKey('r1', 'first note. midway update.', []),
       }),
     );
     expect(mocks.writeAuditEntryFn).toHaveBeenCalledWith(
