@@ -135,23 +135,37 @@ function dedupeDocId(key: string, identity: string, recipientUid: string): strin
   return createHash('sha256').update(`${key}|${identity}|${recipientUid}`).digest('hex');
 }
 
+/** Timestamp-likes become millis and object keys are sorted, so equal content hashes equally. */
+function canonical(value: unknown): unknown {
+  if (value === undefined || value === null) return null;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'object') {
+    const o = value as Record<string, unknown>;
+    if (typeof o['toMillis'] === 'function') return (o['toMillis'] as () => number)();
+    if (Array.isArray(value)) return value.map(canonical);
+    return Object.keys(o)
+      .sort()
+      .reduce<Record<string, unknown>>((acc, k) => {
+        acc[k] = canonical(o[k]);
+        return acc;
+      }, {});
+  }
+  return value;
+}
+
 /**
- * When `args` last reached `recipientUid` according to the dedupe ledger, or
- * null if it never did (or has no identity to look up).
+ * A `dedupeKey` that names an event by WHAT IT SAYS (#832).
  *
- * ADVISORY, NOT A GUARD. This is a plain read, so it must never be the thing
- * that stops a duplicate of the SAME key: `enqueueNotification` already does
- * that atomically. It exists for a caller comparing ACROSS keys, which the
- * ledger cannot do on its own because the key is part of the identity (#832:
- * `postInvoiceEvent` asking "did this household just get `invoice.new` for this
- * invoice?" before sending `invoice.updated`).
+ * For callers whose events repeat on one target with no per-event id: an
+ * invoice edited twice, a visit changed twice, a note added twice. A retry of
+ * the same event carries the same content and so the same key, and is deduped;
+ * a second real event carries different content and sends. `scope` names the
+ * entity and the kind of event, e.g. `invoice:inv1:updated`, because the key
+ * REPLACES the derived identity rather than extending it.
  */
-export async function lastDeliveredAtMs(args: EnqueueArgs & { recipientUid: string }): Promise<number | null> {
-  const identity = dedupeIdentityOf(args, resolveTargetRef(args));
-  if (identity === '' || args.recipientUid === '') return null;
-  const snap = await db().collection(DEDUPE_COLLECTION).doc(dedupeDocId(args.key, identity, args.recipientUid)).get();
-  const v = snap.exists ? (snap.data() as { lastAtMs?: unknown }).lastAtMs : undefined;
-  return typeof v === 'number' ? v : null;
+export function contentDedupeKey(scope: string, content: unknown): string {
+  const digest = createHash('sha256').update(JSON.stringify(canonical(content))).digest('hex').slice(0, 32);
+  return `${scope}#${digest}`;
 }
 
 /** Why a recipient got nothing from one enqueue. */
