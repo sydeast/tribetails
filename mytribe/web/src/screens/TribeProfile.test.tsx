@@ -178,7 +178,7 @@ describe('TribeProfile: Emergency Contacts follow Home access (#843, #829)', () 
 
   it('never reads the old customFields copy: a stale value there is not shown', async () => {
     const view = await renderTribeProfile({ profile: STALE_EC });
-    await waitFor(() => expect(view.getByText('A household needs at least one Emergency Contact')).toBeInTheDocument());
+    await waitFor(() => expect(view.getByText('A household needs at least one Emergency Contact.')).toBeInTheDocument());
     expect(view.queryByDisplayValue('Stale')).toBeNull();
     expect(view.queryByText('Stale')).toBeNull();
   });
@@ -216,7 +216,7 @@ describe('TribeProfile: Emergency Contacts follow Home access (#843, #829)', () 
 
   it('a household with none is prompted, and the rest of the profile still saves', async () => {
     const view = await renderTribeProfile({});
-    await waitFor(() => expect(view.getByText('A household needs at least one Emergency Contact')).toBeInTheDocument());
+    await waitFor(() => expect(view.getByText('A household needs at least one Emergency Contact.')).toBeInTheDocument());
     await userEvent.click(view.getByRole('button', { name: /Save Changes/ }));
     const { saveTribeProfile, saveHomeAccess } = await import('../api/tribeApi');
     await waitFor(() => expect(saveHomeAccess).toHaveBeenCalledTimes(1));

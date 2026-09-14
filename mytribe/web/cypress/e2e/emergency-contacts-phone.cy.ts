@@ -86,9 +86,19 @@ for (const width of [390, 360]) {
 
     it('a household with none is prompted, and the single slot fits', () => {
       openTribeProfile({ contacts: [], canEdit: true, legacy: false });
-      cy.contains('.ec-card', 'A household needs at least one Emergency Contact').should('be.visible');
+      cy.contains('.ec-card', 'A household needs at least one Emergency Contact.').should('be.visible');
       cy.get('#ec-0-name').should('be.visible');
       cy.contains('button', 'Add a second Emergency Contact').should('be.visible');
+      assertFitsWidth(width);
+    });
+
+    // #829 review item 12: without Home access, read-only wording that says who can add one.
+    it('without Home access and none on file: the read-only sentence fits, with no inputs', () => {
+      openTribeProfile({ contacts: [], canEdit: false, legacy: false });
+      cy.get('[data-testid="ec-none-read-only"]')
+        .should('be.visible')
+        .and('have.text', 'No Emergency Contact on file. Someone with Home access can add one.');
+      cy.get('.ec-card input').should('not.exist');
       assertFitsWidth(width);
     });
 

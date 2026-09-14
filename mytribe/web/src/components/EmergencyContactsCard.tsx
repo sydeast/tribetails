@@ -17,20 +17,48 @@ interface Draft {
 }
 
 const MAX_CONTACTS = 2;
-const REQUIRED = 'A household needs at least one Emergency Contact';
+const NAME_MAX = 80;
+const PHONE_MAX = 32;
+const RELATIONSHIP_MAX = 40;
+/**
+ * #829 review item 4: the server's own wording, word for word
+ * (`mytribe/functions/src/lib/emergencyContacts.ts`), so a refusal reads the same
+ * whether this pre-check or the callable caught it.
+ */
+const REQUIRED = 'A household needs at least one Emergency Contact.';
+const NAME_REQUIRED = 'An Emergency Contact needs a name.';
+const PHONE_REQUIRED = 'An Emergency Contact needs a phone number.';
+const NAME_TOO_LONG = `An Emergency Contact's name can be at most ${NAME_MAX} characters.`;
+const PHONE_TOO_LONG = `An Emergency Contact's phone number can be at most ${PHONE_MAX} characters.`;
+const RELATIONSHIP_TOO_LONG = `A relationship can be at most ${RELATIONSHIP_MAX} characters.`;
+const SAME_PHONE = 'The two Emergency Contacts need different phone numbers.';
 /** Same sentence admin web, admin Android, desktop and portal Android show. */
 const WHO_GETS_CALLED = 'Called only when no kinfolk can be reached. The first one is called first.';
 /** The #844 explanation, word for word, so web and Android say the same thing. */
 const LOCKED = 'Only someone with Home access can change the Emergency Contact.';
+/**
+ * #829 review item 12: what a member without Home access reads when the
+ * household has none. Read-only: it names who can fix it, and never asks this
+ * member to do something they cannot.
+ */
+const NONE_READ_ONLY = 'No Emergency Contact on file. Someone with Home access can add one.';
 
 const EMPTY_DRAFT: Draft = { name: '', phone: '', relationship: '' };
 
 const toDrafts = (c: EmergencyContactDto[]): Draft[] =>
   c.length > 0 ? c.map((x) => ({ name: x.name, phone: x.phone, relationship: x.relationship ?? '' })) : [{ ...EMPTY_DRAFT }];
 
-/** True when the drafts on screen are exactly what the server copy seeds. */
+/**
+ * True when the drafts on screen say what the server copy says. #829 review item
+ * 14: compared trimmed, as the save trims them and as every admin client
+ * compares, so a stray space is never shown as an unsaved change.
+ */
 const sameDrafts = (a: Draft[], b: Draft[]) =>
-  a.length === b.length && a.every((d, i) => d.name === b[i]?.name && d.phone === b[i]?.phone && d.relationship === b[i]?.relationship);
+  a.length === b.length &&
+  a.every(
+    (d, i) =>
+      d.name.trim() === b[i]?.name.trim() && d.phone.trim() === b[i]?.phone.trim() && d.relationship.trim() === b[i]?.relationship.trim(),
+  );
 
 /** Digits only, a bare 10-digit US number read as +1, so two spellings of one phone compare equal. */
 const digits = (p: string) => p.replace(/\D/g, '').replace(/^(\d{10})$/, '1$1');
@@ -42,10 +70,13 @@ const digits = (p: string) => p.replace(/\D/g, '').replace(/^(\d{10})$/, '1$1');
  */
 function precheck(drafts: Draft[]): string | null {
   if (drafts.every((d) => d.name.trim() === '' && d.phone.trim() === '')) return REQUIRED;
-  if (drafts.some((d) => d.name.trim() === '')) return 'Each Emergency Contact needs a name.';
-  if (drafts.some((d) => d.phone.trim() === '')) return 'Each Emergency Contact needs a phone number.';
+  if (drafts.some((d) => d.name.trim() === '')) return NAME_REQUIRED;
+  if (drafts.some((d) => d.phone.trim() === '')) return PHONE_REQUIRED;
+  if (drafts.some((d) => d.name.trim().length > NAME_MAX)) return NAME_TOO_LONG;
+  if (drafts.some((d) => d.phone.trim().length > PHONE_MAX)) return PHONE_TOO_LONG;
+  if (drafts.some((d) => d.relationship.trim().length > RELATIONSHIP_MAX)) return RELATIONSHIP_TOO_LONG;
   const [first, second] = drafts;
-  if (first && second && digits(first.phone) === digits(second.phone)) return 'The two Emergency Contacts need different phone numbers.';
+  if (first && second && digits(first.phone) === digits(second.phone)) return SAME_PHONE;
   return null;
 }
 
@@ -243,10 +274,15 @@ function EmergencyContactsCardFor({
           <BusyLabel>Loading Emergency Contacts…</BusyLabel>
         </p>
       ) : !view.data.canEdit ? (
+        view.data.contacts.length === 0 ? (
+          // #829 review item 12: none on file and no Home access. One read-only
+          // sentence that says who can add one, not the editor's prompt.
+          <p className="sub" data-testid="ec-none-read-only">
+            {NONE_READ_ONLY}
+          </p>
+        ) : (
         <>
-          {view.data.contacts.length === 0 ? (
-            <p className="sub">{REQUIRED}</p>
-          ) : (
+          {(
             <ol className="ec-list">
               {view.data.contacts.map((c, i) => (
                 <li key={`${c.phone}-${i}`}>
@@ -264,6 +300,7 @@ function EmergencyContactsCardFor({
             {LOCKED}
           </p>
         </>
+        )
       ) : (
         <>
           {view.data.contacts.length === 0 && (
@@ -277,7 +314,7 @@ function EmergencyContactsCardFor({
               <div className="grid2">
                 <div className="field">
                   <label htmlFor={`ec-${i}-name`}>Name</label>
-                  <input id={`ec-${i}-name`} className="inp" type="text" maxLength={80} autoComplete="off" value={d.name} onChange={(e) => set(i, { name: e.target.value })} />
+                  <input id={`ec-${i}-name`} className="inp" type="text" maxLength={NAME_MAX} autoComplete="off" value={d.name} onChange={(e) => set(i, { name: e.target.value })} />
                 </div>
                 <div className="field">
                   <label htmlFor={`ec-${i}-phone`}>Phone</label>

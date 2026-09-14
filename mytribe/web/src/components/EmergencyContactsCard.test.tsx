@@ -44,7 +44,7 @@ describe('EmergencyContactsCard', () => {
   it('prompts a household with none, and saves the first contact through the callable', async () => {
     mocks.listEmergencyContacts.mockResolvedValue({ contacts: [], canEdit: true, legacy: false });
     mount();
-    expect(await screen.findByText('A household needs at least one Emergency Contact')).toBeInTheDocument();
+    expect(await screen.findByText('A household needs at least one Emergency Contact.')).toBeInTheDocument();
     expect(mocks.listEmergencyContacts).toHaveBeenCalledWith('kin-fam-1');
     await userEvent.type(screen.getByLabelText('Name', { selector: '#ec-0-name' }), 'Rae Mercer');
     await userEvent.type(screen.getByLabelText('Phone', { selector: '#ec-0-phone' }), '805 555 0199');
@@ -99,11 +99,11 @@ describe('EmergencyContactsCard', () => {
     await screen.findByLabelText('Name', { selector: '#ec-0-name' });
     await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contacts' }));
     // The prompt already says it; the refusal does not repeat it.
-    expect(screen.getAllByText('A household needs at least one Emergency Contact')).toHaveLength(1);
+    expect(screen.getAllByText('A household needs at least one Emergency Contact.')).toHaveLength(1);
     expect(screen.queryByRole('alert')).toBeNull();
     await userEvent.type(screen.getByLabelText('Name', { selector: '#ec-0-name' }), 'Rae Mercer');
     await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contacts' }));
-    expect(await screen.findByText('Each Emergency Contact needs a phone number.')).toBeInTheDocument();
+    expect(await screen.findByText('An Emergency Contact needs a phone number.')).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText('Phone', { selector: '#ec-0-phone' }), '(805) 555-0199');
     await userEvent.click(screen.getByRole('button', { name: 'Add a second Emergency Contact' }));
     await userEvent.type(screen.getByLabelText('Name', { selector: '#ec-1-name' }), 'Lee Park');
@@ -151,12 +151,37 @@ describe('EmergencyContactsCard', () => {
     expect(screen.queryByRole('button', { name: 'Add a second Emergency Contact' })).toBeNull();
   });
 
-  it('without Home access and none on file: still prompts, and says who can add one', async () => {
+  // #829 review item 12: read-only wording that names who can add one.
+  it('without Home access and none on file: one read-only sentence saying who can add one, and no editor prompt', async () => {
     mocks.listEmergencyContacts.mockResolvedValue({ contacts: [], canEdit: false, legacy: false });
     mount();
-    expect(await screen.findByText('A household needs at least one Emergency Contact')).toBeInTheDocument();
-    expect(screen.getByTestId('ec-locked')).toHaveTextContent(LOCKED);
+    expect(await screen.findByTestId('ec-none-read-only')).toHaveTextContent(
+      'No Emergency Contact on file. Someone with Home access can add one.',
+    );
+    expect(screen.queryByText('A household needs at least one Emergency Contact.')).toBeNull();
+    expect(screen.queryByTestId('ec-locked')).toBeNull();
     expect(screen.queryByRole('textbox')).toBeNull();
+  });
+
+  it('refuses a value over the server limit with the server message', async () => {
+    mocks.listEmergencyContacts.mockResolvedValue({ contacts: [RAE], canEdit: true, legacy: false });
+    mount();
+    const rel = await screen.findByLabelText('Relationship (optional)', { selector: '#ec-0-relationship' });
+    // The input caps typing at 40; a pasted or programmatic value past it is still refused.
+    fireEvent.change(rel, { target: { value: 'S'.repeat(41) } });
+    await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contacts' }));
+    expect(await screen.findByText('A relationship can be at most 40 characters.')).toBeInTheDocument();
+    expect(mocks.saveEmergencyContacts).not.toHaveBeenCalled();
+  });
+
+  it('a stray space is not an unsaved change', async () => {
+    mocks.listEmergencyContacts.mockResolvedValue({ contacts: [RAE], canEdit: true, legacy: false });
+    mount();
+    const name = await screen.findByDisplayValue('Rae Mercer');
+    await userEvent.type(name, ' ');
+    expect(screen.queryByTestId('ec-unsaved')).toBeNull();
+    await userEvent.type(name, 'x');
+    expect(screen.getByTestId('ec-unsaved')).toBeInTheDocument();
   });
 
   it('with Home access there is no lock line', async () => {
@@ -236,7 +261,7 @@ describe('EmergencyContactsCard', () => {
     expect(screen.getByLabelText('Phone', { selector: '#ec-0-phone' })).toHaveValue('+18055550100');
     expect(qc.getQueryData(['emergencyContacts', 'kin-fam-1'])).toEqual({ contacts: [stored], canEdit: true, legacy: false });
     expect(mocks.listEmergencyContacts).toHaveBeenCalledTimes(1);
-    expect(screen.queryByText('A household needs at least one Emergency Contact')).toBeNull();
+    expect(screen.queryByText('A household needs at least one Emergency Contact.')).toBeNull();
     expect(screen.queryByTestId('ec-unsaved')).toBeNull();
   });
 
@@ -297,7 +322,7 @@ describe('EmergencyContactsCard', () => {
     mocks.listEmergencyContacts.mockRejectedValue(new Error('boom'));
     mount();
     expect(await screen.findByText(/Couldn.t load your Emergency Contacts/)).toBeInTheDocument();
-    expect(screen.queryByText('A household needs at least one Emergency Contact')).toBeNull();
+    expect(screen.queryByText('A household needs at least one Emergency Contact.')).toBeNull();
     expect(screen.queryByRole('textbox')).toBeNull();
   });
 
@@ -315,13 +340,13 @@ describe('EmergencyContactsCard', () => {
     mocks.listEmergencyContacts.mockResolvedValue({ contacts: [RAE], canEdit: true, legacy: false });
     mount();
     await screen.findByDisplayValue('Rae Mercer');
-    expect(screen.queryByText('A household needs at least one Emergency Contact')).toBeNull();
+    expect(screen.queryByText('A household needs at least one Emergency Contact.')).toBeNull();
     await userEvent.clear(screen.getByLabelText('Name', { selector: '#ec-0-name' }));
     await userEvent.clear(screen.getByLabelText('Phone', { selector: '#ec-0-phone' }));
     await userEvent.clear(screen.getByLabelText('Relationship (optional)', { selector: '#ec-0-relationship' }));
     await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contacts' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('A household needs at least one Emergency Contact');
-    expect(screen.getAllByText('A household needs at least one Emergency Contact')).toHaveLength(1);
+    expect(await screen.findByRole('alert')).toHaveTextContent('A household needs at least one Emergency Contact.');
+    expect(screen.getAllByText('A household needs at least one Emergency Contact.')).toHaveLength(1);
     expect(mocks.saveEmergencyContacts).not.toHaveBeenCalled();
   });
 
