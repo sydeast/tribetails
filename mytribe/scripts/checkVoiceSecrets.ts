@@ -137,19 +137,43 @@ async function twilioStatus(url: string, user: string, pass: string): Promise<nu
   }
 }
 
-export function parseProject(argv: string[]): string {
+/** Where the project id came from, in priority order. */
+export type ProjectSource = 'flag' | 'environment' | 'default';
+
+export interface ProjectChoice {
+  readonly project: string;
+  readonly source: ProjectSource;
+}
+
+/**
+ * `--project` beats `GCLOUD_PROJECT` beats the hardcoded default. Returns the
+ * source alongside the value so the caller can say out loud where a secrets
+ * check is actually pointed, rather than leave that to whatever the shell
+ * happened to export. See `describeProjectChoice`.
+ */
+export function parseProject(argv: string[]): ProjectChoice {
   const i = argv.indexOf('--project');
   if (i >= 0) {
     const v = argv[i + 1];
     if (!v || v.startsWith('--')) throw new Error('--project requires a value');
-    return v;
+    return { project: v, source: 'flag' };
   }
-  return process.env.GCLOUD_PROJECT || 'auntieos-ttpc';
+  const fromEnv = process.env.GCLOUD_PROJECT;
+  if (fromEnv) {
+    return { project: fromEnv, source: 'environment' };
+  }
+  return { project: 'auntieos-ttpc', source: 'default' };
+}
+
+/** Pulled out so the announcement can be asserted without running `main`. */
+export function describeProjectChoice(choice: ProjectChoice): string {
+  return `Checking Twilio voice secrets in ${choice.project} (from ${choice.source})`;
 }
 
 export async function main(argv: string[]): Promise<void> {
-  const project = parseProject(argv);
-  console.log(`Checking Twilio voice secrets in ${project}\n`);
+  const choice = parseProject(argv);
+  console.log(`${describeProjectChoice(choice)}\n`);
+  const project = choice.project;
 
   const values = new Map<string, string | null>();
   const findings: Finding[] = [];

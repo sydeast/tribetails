@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
   apiKeyProbeUrl,
   checkShape,
+  describeProjectChoice,
   parseProject,
   VOICE_SECRETS,
   type SecretSpec,
@@ -94,17 +95,56 @@ describe('VOICE_SECRETS', () => {
 });
 
 describe('parseProject', () => {
-  it('defaults to the production project', () => {
-    expect(parseProject([])).toBe('auntieos-ttpc');
+  // `firebase emulators:exec --project X` exports GCLOUD_PROJECT=X into every
+  // command it runs, this test suite included. Reading the value at import
+  // time captures whatever the real shell set (or did not), so restoring it
+  // after each case never clobbers the harness's own environment.
+  const ORIGINAL_GCLOUD_PROJECT = process.env.GCLOUD_PROJECT;
+
+  afterEach(() => {
+    if (ORIGINAL_GCLOUD_PROJECT === undefined) {
+      delete process.env.GCLOUD_PROJECT;
+    } else {
+      process.env.GCLOUD_PROJECT = ORIGINAL_GCLOUD_PROJECT;
+    }
   });
 
-  it('takes an explicit --project', () => {
-    expect(parseProject(['--project', 'other'])).toBe('other');
+  it('defaults to the production project when GCLOUD_PROJECT is unset', () => {
+    delete process.env.GCLOUD_PROJECT;
+    expect(parseProject([])).toEqual({ project: 'auntieos-ttpc', source: 'default' });
+  });
+
+  it('an unset --project lets the environment win', () => {
+    process.env.GCLOUD_PROJECT = 'from-the-shell';
+    expect(parseProject([])).toEqual({ project: 'from-the-shell', source: 'environment' });
+  });
+
+  it('an explicit --project wins even when GCLOUD_PROJECT is also set', () => {
+    process.env.GCLOUD_PROJECT = 'from-the-shell';
+    expect(parseProject(['--project', 'other'])).toEqual({ project: 'other', source: 'flag' });
   });
 
   it('refuses a flag as the value', () => {
+    delete process.env.GCLOUD_PROJECT;
     expect(() => parseProject(['--project', '--verbose'])).toThrow('--project requires a value');
     expect(() => parseProject(['--project'])).toThrow('--project requires a value');
+  });
+});
+
+describe('describeProjectChoice', () => {
+  // Printed before checkVoiceSecrets reads a single secret, so an operator
+  // sees which project is about to be checked and why, rather than trusting
+  // whatever their shell happened to export.
+  it('names the project and says where the choice came from', () => {
+    expect(describeProjectChoice({ project: 'auntieos-ttpc', source: 'default' })).toBe(
+      'Checking Twilio voice secrets in auntieos-ttpc (from default)',
+    );
+    expect(describeProjectChoice({ project: 'from-the-shell', source: 'environment' })).toBe(
+      'Checking Twilio voice secrets in from-the-shell (from environment)',
+    );
+    expect(describeProjectChoice({ project: 'other', source: 'flag' })).toBe(
+      'Checking Twilio voice secrets in other (from flag)',
+    );
   });
 });
 
