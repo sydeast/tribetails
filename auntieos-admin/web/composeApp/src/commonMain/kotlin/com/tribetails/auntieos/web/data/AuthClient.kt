@@ -1,6 +1,11 @@
 package com.tribetails.auntieos.web.data
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 
 /**
@@ -8,13 +13,47 @@ import kotlinx.serialization.Serializable
  * (defined in `wasmJsMain/resources/index.html`). Future Android target will swap to GitLive
  * Firebase Auth or the official Android SDK.
  */
-class AuthClient {
+class AuthClient(
+    /** Test seam: the platform sign-in. Production passes nothing. */
+    private val signInImpl: suspend (String, String) -> SignInResult = { e, p -> platformSignIn(e, p) },
+    /** #886 test seam: where a credential failure is reported. Production posts to `recordFailedLogin`. */
+    private val failedLoginReporter: suspend (String) -> Unit = { platformReportFailedLogin(it) },
+    /** #886: where that report runs, detached so the failure reaches the screen without waiting on it. */
+    private val reportScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+) {
     /** Hot stream of the current auth state. Emits null when signed out. */
     fun authStateStream(): Flow<AuthUser?> = platformAuthStateStream()
 
-    /** @return SignInResult.Ok with user, or SignInResult.Failure with code/message. */
-    suspend fun signIn(email: String, password: String): SignInResult =
-        platformSignIn(email, password)
+    /**
+     * @return SignInResult.Ok with user, or SignInResult.Failure with code/message.
+     *
+     * #886: a credential failure is reported to `recordFailedLogin` in the
+     * background (fire and forget) and the same Failure is returned at once.
+     */
+    suspend fun signIn(email: String, password: String): SignInResult {
+        val result = signInImpl(email, password)
+        if (result is SignInResult.Failure && shouldReportFailedLogin(result.code)) {
+            reportInBackground(email.trim())
+        }
+        return result
+    }
+
+    /** Swallows and logs its own failures. */
+    private fun reportInBackground(email: String) {
+        try {
+            reportScope.launch {
+                try {
+                    failedLoginReporter(email)
+                } catch (c: CancellationException) {
+                    throw c
+                } catch (t: Throwable) {
+                    println("[AuntieOS][auth] recordFailedLogin report failed: ${t.message}")
+                }
+            }
+        } catch (t: Throwable) {
+            println("[AuntieOS][auth] recordFailedLogin report could not start: ${t.message}")
+        }
+    }
 
     suspend fun signOut() = platformSignOut()
 
@@ -76,10 +115,31 @@ data class AuthUser(
     val email: String?,
 )
 
+/**
+ * #886: the code [mapIdentityToolkitError] gives `beforeSignIn`'s refusal of a
+ * locked account. Not a Firebase code; Identity Toolkit reports the refusal as
+ * `BLOCKING_FUNCTION_ERROR_RESPONSE` and only the server's sentence says why.
+ */
+const val ACCOUNT_LOCKED_CODE = "auth/account-locked"
+
+/** Names the control on the sign-in screen that clears a lock: a password reset. */
+const val ACCOUNT_LOCKED_MSG =
+    "This account is locked after too many sign-in attempts. Use \"Forgot password?\" below to reset the password, then sign in with the new one."
+
+/**
+ * #886: the sign-in failures that count toward a lockout. Wrong password, no
+ * such user, and the enumeration-protected form of either. Never a network
+ * failure, too-many-requests, a disabled user, a malformed email or the locked
+ * refusal.
+ */
+fun shouldReportFailedLogin(code: String): Boolean =
+    code == "auth/wrong-password" || code == "auth/user-not-found" || code == "auth/invalid-credential"
+
 sealed class SignInResult {
     data class Ok(val user: AuthUser) : SignInResult()
     data class Failure(val code: String) : SignInResult() {
         val friendly: String get() = when (code) {
+            ACCOUNT_LOCKED_CODE         -> ACCOUNT_LOCKED_MSG
             "auth/invalid-email"        -> "That email doesn't look right."
             "auth/user-not-found",
             "auth/invalid-credential",
@@ -93,6 +153,8 @@ sealed class SignInResult {
 
 internal expect fun platformAuthStateStream(): Flow<AuthUser?>
 internal expect suspend fun platformSignIn(email: String, password: String): SignInResult
+/** #886: unauthenticated `recordFailedLogin` report. Throws on failure; [AuthClient] swallows it. */
+internal expect suspend fun platformReportFailedLogin(email: String)
 internal expect suspend fun platformSignOut()
 internal expect suspend fun platformSendPasswordReset(email: String): Boolean
 internal expect suspend fun platformIdToken(forceRefresh: Boolean): String?
