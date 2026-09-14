@@ -109,7 +109,9 @@ describe('no emitter can land undocumented', () => {
    * that the operator can see in the gate, so the guard admits both shapes
    * rather than pretending broadcasts have no trigger.
    */
-  const DISPATCH_CALLS = ['enqueueNotification', 'resolveChannels'];
+  // `enqueueNotificationDetailed` (#832) is the same dispatcher entry point,
+  // reporting what it suppressed; a caller using it dispatches just as much.
+  const DISPATCH_CALLS = ['enqueueNotification', 'enqueueNotificationDetailed', 'resolveChannels'];
 
   function dispatchingFiles(): string[] {
     return SOURCE_FILES.filter((f) => {

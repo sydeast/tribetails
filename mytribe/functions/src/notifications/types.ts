@@ -169,6 +169,22 @@ export interface EnqueueArgs {
   targetType?: NotificationTargetType;
   /** Originating entity id. When omitted the dispatcher derives it from `data`. */
   targetId?: string;
+  /**
+   * #832: names THIS event for the dispatcher's duplicate check, replacing the
+   * identity it would otherwise derive from the target plus any per-event id in
+   * `data` (messageId, commentId, paymentId, ...). Pass it when two genuinely
+   * different events share a key, a target, a recipient and every id in `data`,
+   * and must both be delivered. See `dedupeIdentityOf` in dispatcher.ts.
+   */
+  dedupeKey?: string;
+  /**
+   * #832: how far back THIS call's duplicate check looks, in ms. Defaults to the
+   * dispatcher's NOTIFICATION_DEDUPE_WINDOW_MS. A caller whose own rule spans
+   * longer passes it, so a delivery its own records lost (a crash between the
+   * send and the stamp) is still found and reported with the ledger's
+   * last-sent time instead of being sent again.
+   */
+  dedupeWindowMs?: number;
 }
 
 /**

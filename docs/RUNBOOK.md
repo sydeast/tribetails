@@ -18,7 +18,11 @@ bash scripts/preflight.sh
 
 Changes nothing. Reports every tool, and for each missing one prints the install
 command for your platform. Run it before anything else; `npm run setup` runs it
-too and refuses to start if anything required is absent.
+too and refuses to start if anything required is absent, **except** when the
+only thing wrong is dependency drift (node_modules out of sync with a
+lockfile, exit code 2 rather than 1): installing is exactly the fix for that,
+so setup proceeds to install and re-checks preflight afterward rather than
+refusing to start the one thing that would fix it. See below.
 
 | Tool | Needed for | Install (macOS) |
 |---|---|---|
@@ -76,6 +80,71 @@ BEFORE installing. A PARTIAL or STALE install fails, because that is the state
 that looks installed and is not. The first run of this check found two more
 instances nobody knew about, including a Fraunces font version that had been
 producing an unexplained e2e failure.
+
+**The comparison lives in one place** (`scripts/lib/dep-drift.sh`), sourced by
+both `preflight.sh` (report only) and `release.sh` step 0a (refuse), so they
+cannot silently disagree about what counts as drift. It checks the workspace
+root (every npm workspace member, read from the root `package.json`'s
+`workspaces` field and expanded rather than hardcoded, so a new member is
+never missed), `mytribe/functions`, and `auntieos-admin/web/functions`.
+`release.sh` only refuses on the last one when `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1`
+is actually going to build and deploy it; `preflight.sh` and `bootstrap.sh`
+check and install it unconditionally, since setup asks "is this machine
+ready", not "is this run shipping it".
+
+**A drift-only failure does not stop `npm run setup`.** On 2026-09-13 the
+release Mac's `node_modules` was installed 2026-09-10, before Dependabot moved
+vitest 4.1.11 → 5.0.0 and about twenty other packages, `stripe` in
+`mytribe/functions` included. `scripts/release.sh` had nothing checking this
+before its test step, so the third release attempt that day died three minutes
+into `npm run check` on a portal test CI had already passed on the same
+commit. Fixing it needed `npm ci` and `npm ci --prefix mytribe/functions`,
+but `npm run setup`'s OWN preflight check refused to even start over the exact
+drift installing would fix, so the operator ran both by hand.
+
+`preflight.sh` now exits **2**, not 1, when the ONLY thing wrong is dependency
+drift (1 still means something installing will not fix: a missing tool, a
+missing lockfile, an old JDK). `bootstrap.sh` reads that: on exit 2 it prints
+why, forces a reinstall of ONLY the units preflight found drifted (never every
+unit: drift in `mytribe/functions` alone must not force a root reinstall too),
+and re-runs preflight afterward to prove the drift is actually gone rather
+than assuming it. Any other preflight failure still refuses to start,
+unchanged. See `scripts/bootstrap.test.sh` and `scripts/preflight.test.sh` for
+the cases.
+
+`scripts/release.sh` runs the same comparison as its own precondition (step
+0a, placed BEFORE the "release this commit?" confirm so an operator who says
+yes is not then told no, and before step 1 builds or tests anything) and
+refuses outright: a release is not a machine you want fixing itself mid-run.
+It names every drifted directory and the exact `npm ci` command for each:
+
+```
+REFUSED: installed dependencies do not match their lockfile(s):
+  - mytribe/functions: stripe (17.0.0, lockfile says 18.5.0)
+
+  This is exactly what stopped the 2026-09-13 release 3 minutes into
+  step 1, on a commit CI had already passed: ...
+
+    npm ci --prefix mytribe/functions
+```
+
+See `scripts/release.test.sh` for the cases: drift refuses and names the
+directory and fix, a clean install proceeds silently, and
+`auntieos-admin/web/functions` drift is checked only when
+`RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` is actually shipping it.
+
+**Never run `npm ci` INSIDE a workspace member** (`mytribe/web`,
+`auntieos-admin`, `packages/geo`). They share the ROOT's
+`package-lock.json`/`node_modules` and carry no lockfile of their own, and
+that absence is normal, not a defect. Another agent working in parallel on this
+same issue saw `npm ci` run inside `mytribe/web` exit 0 and SILENTLY DROP
+`@tiptap/*` and `@vitejs/plugin-react` from its `node_modules`, because with
+no lockfile there `npm ci` falls back to a plain (and much smaller) install
+rather than refusing. The fix, every time, is `npm ci` at the **root**. The
+drift check follows this: a workspace member's drift is always reported as
+"workspace root: ..." with the fix `npm ci`, never `npm ci --prefix
+mytribe/web`, and `scripts/release.test.sh` and `scripts/preflight.test.sh`
+each assert that no per-member `--prefix` command is ever suggested.
 
 Two of the tool checks above fail in ways that do not name themselves, which is
 why preflight checks them by RUNNING them rather than by looking for the binary:
@@ -285,6 +354,7 @@ and prints `resumed:` instead of refusing. It uses the same rule as the release
 | # | Step | Why here |
 |---|---|---|
 | 0 | Preconditions | Clean tree, on `main`, synced with origin. Shipping uncommitted or stale code is the classic incident. Falls back to `gh` if the SSH agent is down, since it must verify the fact, not one transport. |
+| 0a | Dependency drift | Is `node_modules` what each `package-lock.json` says it should be, for every root this run builds, tests, or deploys? Refuses and names the exact `npm ci` command, before step 1 tests anything against tools it cannot trust. See below. |
 | 0b | CI verdict for HEAD | Asks GitHub whether every check is green for this exact commit, **e2e included**. `npm run check` does not run e2e, so until this existed a red e2e could not stop a release. See below. |
 | 1 | `npm run check` | Typecheck, lint, test, build. Not optional theatre: this is what produces the `dist/` that step 6 uploads. |
 | 1b | Secret preflight | Every secret the code DECLARES must exist. Firebase validates these before uploading, and one missing name fails the whole codebase. Refuses here, before any deploy. |
@@ -597,7 +667,8 @@ the real script against a throwaway repo with `gh`, `gcloud`, `firebase`, `curl`
 and `npm` stubbed, plus a fake `gradlew` per Android app so the two-app build
 and distribution path runs wet without an SDK. It also covers the admin deploy
 retry and its error classifier, the per-commit resume, and the checkout checks
-around every deploy (#840). 145 cases.
+around every deploy (#840), and the step 0a dependency-drift checks (#841). 188
+cases.
 Run it after touching `scripts/release.sh`. `bash scripts/release-bg.test.sh`
 (26 cases) covers the detached wrapper, including a resumed run with changed
 indexes and each reason a resume is refused.
@@ -1295,9 +1366,10 @@ credentials and no network.
 
 ### What stops a release and what only gets named
 
-A release **refuses** when a REQUIRED variable resolves to nothing, or when its
-stored secret exists and the latest version is empty. It names the variable, the
-secret and the command that fixes it. Two are required today:
+A release **refuses** when a REQUIRED variable resolves to nothing, when its
+stored secret exists and the latest version is empty, or when Secret Manager
+never answered for it at all (see the timeout paragraph below). It names the
+variable, the secret and the command that fixes it. Two are required today:
 `ADMIN_WEB_APPCHECK_SITE_KEY` and `PORTAL_WEB_MAPBOX_PUBLIC_TOKEN`. Both back a
 feature that is live and that fails invisibly without them: App Check reads
 `unconfigured`, and the visit route silently drops to the SVG polyline.
@@ -1315,6 +1387,30 @@ to force.
 
 `RELEASE_SKIP_CLIENT_SECRETS=1` skips the check entirely if you know what is
 missing.
+
+**Every gcloud call in this step carries a 30-second timeout.** On 2026-09-13
+release step 0c sat silent for 16 minutes: a gcloud child had one socket in
+SYN_SENT to Google over IPv6 (a VPN was installed; IPv4 answered instantly),
+and nothing printed, so the hang read as an auth prompt (#839). It now prints a
+line per secret as it fetches, and `CLIENT_SECRETS_GCLOUD_TIMEOUT_MS` (a
+positive integer, milliseconds) overrides the default on a network known to be
+slower. Whether it is the LIST call or one secret's ACCESS call that times out,
+every affected variable is marked **unreadable, never missing**: reporting it
+as missing would tell you to create a secret that may already exist. A
+REQUIRED value that is unreadable refuses with its own exit code, 4, and
+release.sh says the store did not answer rather than "has no value". An
+OPTIONAL value that is unreadable warns instead, the same call the declaration
+already makes for a value confirmed absent. Either way the advice is the same
+IPv4/IPv6 check, never `gcloud secrets create`:
+
+```bash
+curl -4 -sS -o /dev/null -w '%{http_code}\n' https://secretmanager.googleapis.com
+curl -6 -sS -o /dev/null -w '%{http_code}\n' https://secretmanager.googleapis.com
+```
+
+After the first secret's ACCESS call times out, the rest are marked unreadable
+without being spawned: a dead route stays dead for the whole run, so the worst
+case is one 30-second wait, not one per secret.
 
 Two names are deliberately outside all of this, and **neither is in Secret
 Manager, so do not go looking for them there**. `VITE_SENTRY_RELEASE` is derived:
@@ -2226,6 +2322,15 @@ npm run setup
 newer, announcing it as STALE rather than skipping. (It used to check only that
 the directory existed, which is exactly how this hid for an hour.)
 
+It also does not refuse to START over this (#841): `npm run setup` runs
+`preflight.sh` first, and a preflight failure that is ONLY this drift exits 2
+rather than 1 and no longer stops `setup` before it can install; see
+"An install either matches its lockfile or it does not" above. **Never** fix
+this by running `npm ci` inside `mytribe/web`, `auntieos-admin`, or
+`packages/geo` directly: they carry no lockfile of their own, so `npm ci`
+there exits 0 and silently installs a smaller tree than the root's. Always
+`npm run setup` (or `npm ci` at the repo root).
+
 **Gradle: "SDK location not found".** Run `npm run setup`.
 
 **Release build complains about signing.** `local.properties` needs
@@ -2240,6 +2345,71 @@ Run `npm run e2e`.
 and it is release step 0b. Fix the named job on main and release the commit that
 fixes it. `RELEASE_SKIP_CI_GATE=1` is for a gate that cannot answer, not for one
 that answered no; using it that way reproduces 2026-08-01 exactly.
+
+**A release refuses with "GitHub reports no check runs at all for `<sha>`".**
+Also step 0b, and also working as intended, but check which of two causes it
+is before doing anything else: `release.sh` swallows `gh`'s own errors (`2>/dev/null
+|| true`, so it cannot tell "genuinely no run" from "could not ask" apart from
+the refusal text you already got), and the fix is different for each. From a
+signed-in shell, run:
+
+```bash
+gh api "repos/sydeast/tribetails/actions/workflows/ci.yml/runs?head_sha=<sha>" --jq .total_count
+```
+
+The same query the gate itself uses now, not `commits/<sha>/check-runs`: that
+endpoint counts every check run on the commit, including the watcher's own and
+`main-channel.yml`'s, so it is almost never 0 and would not tell you anything.
+An error (not signed in, network unreachable) means `gh` itself could not be
+asked; fix that (`gh auth status`, `gh auth login`) and re-run the release. A
+clean `0` means `gh` is fine and `ci.yml` genuinely has no run for this
+commit: read on. Any other number means `ci.yml` does have a run and the
+release gate should have found it too; re-run the release before digging
+further.
+
+This happened for real on 2026-09-13 (#838): PR #837's merge landed on main as
+`92786e7` during a GitHub outage, where the merge API call itself came back a
+gateway error but the merge had actually completed server-side. It is a
+genuine GitHub merge, not one crafted to look like one: `gh api
+repos/<owner>/<repo>/commits/92786e7 --jq .commit.verification` reports
+`verified: true`, signed with a key that matches one of the two published at
+`https://github.com/web-flow.gpg`, GitHub's own merge-commit identity. The
+bookkeeping a merge normally does alongside that git write never finished,
+though: the PR was never marked merged, and the `push` event `ci.yml`'s
+`on: push` listens for never fired. `gh api
+repos/<owner>/<repo>/commits/92786e7/check-suites` shows exactly one check
+suite for that SHA (the operator's own hand-dispatched run, hours later),
+which is proof no push-triggered suite, and so no push event, was ever
+created for it, not just an absence in a best-effort log.
+`.github/workflows/ci.yml` has no path filter on `push`, no `[skip ci]`-style
+marker stopped it, and its push concurrency group keys on `github.run_id`
+(unique per run), so none of those repo-side knobs caused it either. The
+push event was simply never delivered.
+
+Recover by hand with:
+
+```bash
+gh workflow run ci.yml --ref main
+```
+
+`.github/workflows/ci-run-watch.yml` does this automatically now. It runs
+every 20 minutes on a **schedule**, deliberately not on `push` or
+`check_suite`: whatever swallows a push event runs through the same delivery
+pipeline a webhook-triggered watcher would also depend on, and a cron tick
+does not. Once main's HEAD has zero `ci.yml` runs on record and is older than
+10 minutes (`scripts/ci-run-watch.mjs`, `DEFAULT_MAX_AGE_MINUTES`), it
+dispatches `ci.yml` for `main` itself and writes a warning to the run's job
+summary. It will not fire twice for the same commit: before dispatching it
+asks whether `ci.yml` has ANY run at all for that SHA, of any event or
+status, so a run it dispatched on a previous tick already counts and stands
+the next tick down. That same workflow-scoped question
+(`actions/workflows/ci.yml/runs?head_sha=<sha>`) is also how `release.sh`
+itself reads CI's verdict now: not every check run on the commit (a scheduled
+watcher's own run, or `main-channel.yml`'s, used to count and could make a
+green HEAD look pending or red), only `ci.yml`'s. `RELEASE_SKIP_CI_GATE=1` is
+still there for when the gate itself cannot be asked at all (`gh` down,
+unauthenticated); this is for when it can be asked and the honest answer is
+"nothing has judged this commit yet".
 
 ---
 

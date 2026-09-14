@@ -32,12 +32,17 @@ describe('enqueueNotification fan-out (audience:both)', () => {
 
     expect(ids.length).toBe(3); // 1 kinfolk + 2 admins
     // R5: each copy is now a PAIR: the inbox doc and its id-matched work order.
+    // #832 adds one dedupe-ledger entry per copy, written in the same commit.
     const writtenPaths = ctx.writes.map((w) => w.path);
     expect(
       writtenPaths.every(
-        (p) => p.startsWith('notifications/') || p.startsWith('notificationDispatch/'),
+        (p) =>
+          p.startsWith('notifications/') ||
+          p.startsWith('notificationDispatch/') ||
+          p.startsWith('notificationDedupe/'),
       ),
     ).toBe(true);
+    expect(writtenPaths.filter((p) => p.startsWith('notificationDedupe/'))).toHaveLength(3);
     const notifIds = writtenPaths
       .filter((p) => p.startsWith('notifications/'))
       .map((p) => p.slice('notifications/'.length))

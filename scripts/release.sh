@@ -15,6 +15,12 @@
 # WHAT IT DOES, in this order and for these reasons:
 #   0. preconditions  - clean tree, on main, synced with origin. Shipping
 #                       uncommitted or stale code is the classic incident.
+#  0a. dependency     - is node_modules what each package-lock.json says it
+#      drift            should be, for every root this run builds, tests, or
+#                       deploys? A checkout whose install predates a
+#                       dependency bump tests stale tools against code CI
+#                       already judged with the new ones. See
+#                       scripts/lib/dep-drift.sh.
 #  0b. ci verdict    - ask GitHub whether CI is green for THIS commit. Step 1
 #                       does not run e2e and never did, so until this existed a
 #                       red e2e job could not stop a release. One didn't, on
@@ -193,6 +199,9 @@ RELEASE_TREE_BASELINE=""
 RELEASE_TREE_BASELINE_STATUS=""
 # Deploys run since the checkout was last checked (see release_note_deploy).
 RELEASE_UNCHECKED_DEPLOYS=""
+# 1 once this run has started any deploy, so a stop before the first one can say
+# plainly that nothing was deployed (a step 0a refusal, for one).
+RELEASE_DEPLOYED_ANY=0
 # What git printed when a working-tree read failed, kept for the refusal to show.
 # A file, not a variable: the fingerprint runs in a command substitution.
 RELEASE_GIT_ERR_FILE="${TMPDIR:-/tmp}/release-git-err.$$"
@@ -312,6 +321,9 @@ progress_report_stop() {
     red "Nothing after those has shipped, and the step named above may be"
     red "PARTIALLY shipped. Fix the cause and re-run on this same commit: the"
     red "recorded backend steps are skipped (RELEASE_NO_RESUME=1 runs them all)."
+  elif [ "$RELEASE_DEPLOYED_ANY" = "0" ]; then
+    red "Nothing was deployed by this run: it stopped before its first deploy, so"
+    red "production is unchanged by it."
   else
     red "No deploy step completed for $short. Production may still be PARTIALLY"
     red "shipped by the step named above. Check what completed above before retrying."
@@ -453,6 +465,7 @@ release_print_git_error() {
 # that followed. On a refusal, the list is exactly the deploys that may have used
 # the changed checkout, whichever check caught it (#840 third review).
 release_note_deploy() {
+  RELEASE_DEPLOYED_ANY=1
   case " $RELEASE_UNCHECKED_DEPLOYS " in
     *" $1 "*) ;;
     *) RELEASE_UNCHECKED_DEPLOYS="${RELEASE_UNCHECKED_DEPLOYS:+$RELEASE_UNCHECKED_DEPLOYS }$1" ;;
@@ -1086,9 +1099,148 @@ if [ "$LOCAL" != "$REMOTE" ]; then
   exit 1
 fi
 grn "sync: main == origin/main ($RELEASE_SHORT, via $SYNC_VIA)"
+fi  # end of the tree/branch/sync guards skipped under RELEASE_PREFLIGHT_ONLY
+# From here on, every step boundary refuses if HEAD has left RELEASE_SHA. Step 0
+# has just compared HEAD with RELEASE_SHA itself (above, as LOCAL), so the first
+# banner that checks is 0a's.
+RELEASE_HEAD_GUARD=1
 
-# What is actually about to ship, so the operator can recognise it. A release
-# whose contents are a surprise is one nobody can sanity-check.
+# ---------------------------------------------------------------------------
+# 0a. Dependency drift: is node_modules what each lockfile says it should be?
+# ---------------------------------------------------------------------------
+# BEFORE the "release this commit?" confirm, deliberately: an operator who
+# says yes should not then be told no. This runs unconditionally (including
+# under RELEASE_PREFLIGHT_ONLY, via its own accommodation below), the same
+# reason step 0b's CI-gate check does not live inside the tree/branch/sync
+# guard above.
+banner "0a. Dependency drift"
+
+# WHY THIS EXISTS
+# On 2026-09-13 the third release attempt died about 3 minutes into step 1, on
+# mytribe/web/src/screens/InvoiceDetail.test.tsx, on a commit CI had already
+# passed all 923 portal tests on. Cause: the release Mac's node_modules was
+# installed 2026-09-10, before Dependabot moved vitest 4.1.11 -> 5.0.0 (merged
+# 09-11) and about twenty other packages, `stripe` in mytribe/functions
+# included. scripts/preflight.sh already reports this exactly ("does NOT match
+# the lockfile ... Run: npm ci"), but nothing here ever asked it before
+# spending time on a tree it could not trust. So: ask, before step 1 builds or
+# tests anything, using the SAME comparison preflight.sh reports with
+# (scripts/lib/dep-drift.sh), never a second copy that could disagree with it.
+STEP="checking installed dependencies match their lockfiles"
+# shellcheck source=scripts/lib/dep-drift.sh
+. "$ROOT/scripts/lib/dep-drift.sh"
+
+# Under RELEASE_PREFLIGHT_ONLY, a real release would refuse here but this run
+# ships nothing, so it reports what would happen and continues, the same
+# accommodation ci_refuse (below, in step 0b) makes, for the same reason: this
+# is the one mode that exists to exercise refusal paths without a real commit
+# GitHub has judged, and refusing here would make it unable to reach them.
+DRIFT_NAMES=()
+DRIFT_FIXES=()
+
+# report_drift <label> <what npm ci to run>: called only when a unit is
+# broken (no-lock or drift); ok/no-node/clean print their own line and never
+# reach here.
+report_drift() {
+  DRIFT_NAMES+=("$1")
+  DRIFT_FIXES+=("$2")
+}
+
+# mytribe/functions: standalone, own lockfile, own node_modules. The exact
+# unit named in the 2026-09-13 incident (stripe).
+if standalone_pkg_drift "$ROOT/mytribe/functions"; then
+  case "$DEP_DRIFT_STATE" in
+    ok)      ylw "deps: mytribe/functions not installed yet (fresh checkout; npm ci will do it)" ;;
+    no-node) ylw "deps: mytribe/functions installed, but node is missing so it cannot be verified" ;;
+    clean)   grn "deps: mytribe/functions matches its lockfile" ;;
+  esac
+else
+  case "$DEP_DRIFT_STATE" in
+    no-lock)    report_drift "mytribe/functions has no package-lock.json" "npm ci --prefix mytribe/functions" ;;
+    unreadable) report_drift "mytribe/functions: $DEP_DRIFT_DETAIL" "npm ci --prefix mytribe/functions" ;;
+    drift)      report_drift "mytribe/functions: $DEP_DRIFT_DETAIL" "npm ci --prefix mytribe/functions" ;;
+  esac
+fi
+
+# The workspace root: every npm workspace member (mytribe/web, auntieos-admin,
+# packages/geo, packages/issue-recorder, and any other declared in the root
+# package.json's "workspaces" field -- workspace_pkg_drift reads that field
+# itself rather than being told the members, so a new one is checked without
+# this file changing) shares ONE lockfile and node_modules (PR25a). The other
+# unit named in the incident (vitest, ~20 packages, all reached through this
+# root). The fix for drift here is ALWAYS plain `npm ci` at the root, never a
+# `--prefix`'d install inside a member: a workspace member carries no
+# lockfile of its own, so `npm ci` run inside one exits 0 and silently
+# installs a smaller tree than the root's.
+if workspace_pkg_drift "$ROOT"; then
+  case "$DEP_DRIFT_STATE" in
+    ok)      ylw "deps: workspace root not installed yet (fresh checkout; npm ci will do it)" ;;
+    no-node) ylw "deps: workspace root installed, but node is missing so it cannot be verified" ;;
+    clean)   grn "deps: workspace root (every npm workspace member) matches its lockfile" ;;
+  esac
+else
+  case "$DEP_DRIFT_STATE" in
+    no-lock)    report_drift "the workspace root has no package-lock.json" "npm ci" ;;
+    unreadable) report_drift "workspace root: $DEP_DRIFT_DETAIL" "npm ci" ;;
+    drift)      report_drift "workspace root: $DEP_DRIFT_DETAIL" "npm ci" ;;
+  esac
+fi
+
+# auntieos-admin/web/functions: the second Firebase Functions codebase (see
+# step 5), which THIS RUN builds and deploys only under
+# RELEASE_INCLUDE_ADMIN_FUNCTIONS=1. Checked only then: testing a codebase
+# this run is not going to ship would refuse releases over drift nothing here
+# reads. preflight.sh checks it unconditionally (scripts/bootstrap.sh installs
+# it unconditionally too, since 2026-09), because setup and release ask
+# different questions -- "is this machine ready" vs. "is this run shipping
+# it" -- and only the second one has a flag to read.
+if [ "${RELEASE_INCLUDE_ADMIN_FUNCTIONS:-0}" = "1" ]; then
+  if standalone_pkg_drift "$ROOT/auntieos-admin/web/functions"; then
+    case "$DEP_DRIFT_STATE" in
+      ok)      ylw "deps: auntieos-admin/web/functions not installed yet (fresh checkout; npm ci will do it)" ;;
+      no-node) ylw "deps: auntieos-admin/web/functions installed, but node is missing so it cannot be verified" ;;
+      clean)   grn "deps: auntieos-admin/web/functions matches its lockfile" ;;
+    esac
+  else
+    case "$DEP_DRIFT_STATE" in
+      no-lock)    report_drift "auntieos-admin/web/functions has no package-lock.json" "npm ci --prefix auntieos-admin/web/functions" ;;
+      unreadable) report_drift "auntieos-admin/web/functions: $DEP_DRIFT_DETAIL" "npm ci --prefix auntieos-admin/web/functions" ;;
+      drift)      report_drift "auntieos-admin/web/functions: $DEP_DRIFT_DETAIL" "npm ci --prefix auntieos-admin/web/functions" ;;
+    esac
+  fi
+else
+  ylw "deps: auntieos-admin/web/functions NOT CHECKED: RELEASE_INCLUDE_ADMIN_FUNCTIONS is"
+  ylw "  off, so this run will not build or deploy it, and checking dependency"
+  ylw "  drift in a codebase nothing here ships would refuse releases over"
+  ylw "  drift nothing here reads. A full release sets this flag and checks it."
+fi
+
+if [ "${#DRIFT_NAMES[@]}" -gt 0 ]; then
+  if [ "$PREFLIGHT_ONLY" = "1" ]; then
+    ylw ""
+    ylw "preflight: a real release would REFUSE here."
+    for n in "${DRIFT_NAMES[@]}"; do ylw "  $n"; done
+  else
+    red ""
+    red "REFUSED: dependency state could not be trusted for one or more units"
+    red "(installed does not match the lockfile, or a manifest could not be read):"
+    for n in "${DRIFT_NAMES[@]}"; do red "  - $n"; done
+    red ""
+    red "  This is exactly what stopped the 2026-09-13 release 3 minutes into"
+    red "  step 1, on a commit CI had already passed: the checkout's"
+    red "  node_modules predated a dependency bump, so the test step ran"
+    red "  against stale tools instead of the code CI tested. Fix it before"
+    red "  anything here builds or tests:"
+    red ""
+    for f in "${DRIFT_FIXES[@]}"; do red "    $f"; done
+    exit 1
+  fi
+fi
+
+# What is actually about to ship, so the operator can recognise it, and the
+# confirm itself. AFTER 0a: an operator who says yes should not immediately
+# be told the release refuses over drift that was already known.
+if [ "$PREFLIGHT_ONLY" != "1" ]; then
 STEP="summarising the release"
 cyan ""
 cyan "HEAD: $(git log -1 --format='%h %s' "$RELEASE_SHA" | cut -c1-100)"
@@ -1097,9 +1249,7 @@ if [ "$DRY_RUN" = "1" ]; then
 fi
 
 confirm "Release this commit to production (auntieos-ttpc)?"
-fi  # end of the guards skipped under RELEASE_PREFLIGHT_ONLY
-# From here on, every step boundary refuses if HEAD has left RELEASE_SHA.
-RELEASE_HEAD_GUARD=1
+fi  # end of the summary/confirm guard skipped under RELEASE_PREFLIGHT_ONLY
 
 # ---------------------------------------------------------------------------
 # 0b. What CI thinks of THIS commit, before anything is built or shipped.
@@ -1158,12 +1308,34 @@ banner "0b. CI verdict for HEAD"
 CI_E2E_MATCH='e2e'
 CI_E2E_LOOKBACK=15
 
-# ci_check_runs <sha>: one "name<TAB>status<TAB>conclusion" line per check run.
-# The API's default filter is `latest`, one run per check name, so a re-run
-# supersedes the run it replaced rather than both being counted.
+# ci_check_runs <sha>: one "name<TAB>status<TAB>conclusion" line per JOB of
+# ci.yml's OWN run for this commit, not every check run on it (#838/#856).
+#
+# The first version of this asked `commits/<sha>/check-runs`, which counts
+# every check run on a commit regardless of which workflow created it: a
+# scheduled workflow's own run counts too (ci-run-watch.yml, #838, ticks every
+# 20 minutes; nightly-release.yml would be the same trap once #851 turns it
+# on), and so does main-channel.yml's push-triggered run. That meant a
+# watcher tick still `in_progress` made this gate say "CI has not finished"
+# for a HEAD whose actual CI was long since green, a watcher tick that failed
+# to run `gh` made HEAD look red, and all of it shared ONE page of 100 with
+# CI's own runs, so on a busy day CI's real jobs (and the e2e job the lookback
+# below depends on) could fall off the page entirely.
+#
+# So this asks for ci.yml's OWN run for the commit first, the same
+# workflow-scoped query scripts/ci-run-watch.mjs uses, and reads THAT run's
+# jobs. A commit can only ever have a handful of ci.yml runs (a push run,
+# maybe a hand re-run after a fix), so this needs no pagination past the
+# default page, and `.workflow_runs[0]` is the most recent one if there is
+# more than one, the same "latest wins" rule the old check-runs query got from
+# the API's own default filter.
 ci_check_runs() {
-  gh api "repos/{owner}/{repo}/commits/$1/check-runs?per_page=100" \
-    --jq '.check_runs[] | [.name, .status, (.conclusion // "")] | @tsv' 2>/dev/null || true
+  local sha="$1" run_id
+  run_id="$(gh api "repos/{owner}/{repo}/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=1" \
+    --jq '.workflow_runs[0].id // empty' 2>/dev/null || true)"
+  [ -n "$run_id" ] || return 0
+  gh api "repos/{owner}/{repo}/actions/runs/$run_id/jobs?per_page=100" \
+    --jq '.jobs[] | [.name, .status, (.conclusion // "")] | @tsv' 2>/dev/null || true
 }
 
 # ci_verdict <status> <conclusion>: pass | pending | fail.
@@ -1355,11 +1527,13 @@ else
   # stored, because a release tag kept by hand in a .env is a tag that names the
   # last release someone remembered to edit it for.
   #
-  # THE EXIT CODE IS READ, not just its truthiness, because there are three
-  # answers and only one of them is good: resolved (0), refused (1), and could
-  # not look at all (3). Collapsing the third into the first is the same mistake
-  # step 1b's comment warns about: "no secrets found" and "could not look" must
-  # never print the same.
+  # THE EXIT CODE IS READ, not just its truthiness, because there are four
+  # answers and only one of them is good: resolved (0), refused for a bad
+  # value (1), could not look at all (3), and refused because Secret Manager
+  # never answered for a required secret (4, #839/#852). Collapsing any of
+  # these into another is the same mistake step 1b's comment warns about:
+  # "no secrets found" and "could not look" must never print the same, and now
+  # neither must "the value is bad" and "nobody could check the value".
   CLIENT_RC=0
   node "$ROOT/scripts/client-secrets.mjs" --write \
     --project "$PROJECT" --release "$RELEASE_SHORT" || CLIENT_RC=$?
@@ -1372,6 +1546,16 @@ else
       ylw "client config: NOT CHECKED. Neither Secret Manager nor the apps' own"
       ylw "  .env files could be read, so nothing here judged what the build will"
       ylw "  compile in. The names it could not verify are listed above."
+      ;;
+    4)
+      red ""
+      red "REFUSED: Secret Manager did not answer for a required secret in time."
+      red "  This is NOT the same as missing: the secret may exist and hold a good"
+      red "  value, gcloud simply never answered. The names and the IPv4/IPv6 check"
+      red "  are listed above; run them before creating or setting anything."
+      red ""
+      red "  To ship anyway, knowing what could not be verified: RELEASE_SKIP_CLIENT_SECRETS=1"
+      exit 1
       ;;
     *)
       red ""

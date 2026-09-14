@@ -198,6 +198,20 @@ class SendReportDispatchTest {
         assertEquals("kf-99", lastDispatchPayload()["familyId"]?.jsonPrimitive?.content)
     }
 
+    /**
+     * #832: the report id rides in the payload, so the server can tell a second
+     * KinTale for the same visit from a retry of this one.
+     */
+    @Test
+    fun reportIdIsInPayloadSoEachReportIsItsOwnNotification() = runBlocking {
+        JvmFirestoreFixtures.callableResponses = mapOf("dispatchVisitNotification" to dispatchOkJson)
+        FirestoreClient().sendReport(report(), session(batchId = "b1", visitId = "v1"))
+        assertEquals("report-1", lastDispatchPayload()["reportId"]?.jsonPrimitive?.content)
+
+        FirestoreClient().sendReport(report().copy(_id = "report-2"), session(batchId = "b1", visitId = "v1"))
+        assertEquals("report-2", lastDispatchPayload()["reportId"]?.jsonPrimitive?.content)
+    }
+
     // ── helpers ───────────────────────────────────────────────────────────────
 
     /** Parse the last captured callable payload as a JsonObject for assertions. */

@@ -605,6 +605,8 @@ private fun invoiceDetailBody(
                 DetailRow("Client",   invoice.client.ifBlank { "-" })
                 DetailRow("Date",     invoice.date.ifBlank { "-" })
                 DetailRow("Due date", invoice.dueDate.ifBlank { "-" })
+                // #832: when the household was last reminded (cron or button).
+                DetailRow("Last reminder", com.tribetails.auntieos.domain.lastReminderLabel(invoice.reminderNotifiedAtMs))
                 if (invoice.terms.isNotBlank()) DetailRow("Terms", invoice.terms)
                 if (invoice.address.isNotBlank()) DetailRow("Address", invoice.address)
             }

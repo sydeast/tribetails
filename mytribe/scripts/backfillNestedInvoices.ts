@@ -33,8 +33,7 @@
  *   - Deletes happen ONLY after a successful copy and ONLY with --allow-prod.
  */
 
-import { getApps, initializeApp } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { getApps, initializeApp, getFirestore, FieldValue } from './lib/firebaseAdmin';
 
 type Mode = 'dry-run' | 'apply';
 

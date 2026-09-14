@@ -59,8 +59,7 @@
  * Runbook: DRY first, read the plan and the refusals, then re-run with
  * --allow-prod.
  */
-import { getApps, initializeApp } from 'firebase-admin/app';
-import { getFirestore, type Firestore } from 'firebase-admin/firestore';
+import { getApps, initializeApp, getFirestore, type Firestore } from './lib/firebaseAdmin';
 
 export const SESSIONS_COLLECTION = 'kin_care_sessions';
 
