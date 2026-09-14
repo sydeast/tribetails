@@ -1,6 +1,0 @@
-{
-  "key": "share.passcode-set",
-  "subject": "KinTale share link created",
-  "body": "Your share link is live: {{shareUrl}}\n\nPasscode required: {{passcode}}\n\nExpires {{expiresOn}}.",
-  "html": null
-}

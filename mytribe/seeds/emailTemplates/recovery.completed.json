@@ -1,6 +1,0 @@
-{
-  "key": "recovery.completed",
-  "subject": "Account recovery for {{tribeName}}",
-  "body": "Your access to {{tribeName}} has been restored.\n\nClaim your account: {{claimUrl}}",
-  "html": null
-}

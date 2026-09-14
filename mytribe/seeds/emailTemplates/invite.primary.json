@@ -1,6 +1,0 @@
-{
-  "key": "invite.primary",
-  "subject": "Welcome to {{tribeName}}",
-  "body": "Hello {{primaryDisplayName}},\n\nAuntie has set up your MyTribe portal for {{tribeName}}.\n\nClaim your account: {{claimUrl}}\n\nThis link expires in {{expiresInDays}} days.\n\n— Auntie",
-  "html": null
-}

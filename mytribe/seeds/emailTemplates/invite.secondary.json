@@ -1,6 +1,0 @@
-{
-  "key": "invite.secondary",
-  "subject": "{{primaryDisplayName}} added you to {{tribeName}}",
-  "body": "Hello {{secondaryDisplayName}},\n\n{{primaryDisplayName}} has invited you as Kin {{secondaryLabel}} on {{tribeName}}.\n\nClaim your access: {{claimUrl}}\n\nThis link expires in {{expiresInDays}} days.\n\n— Auntie",
-  "html": null
-}
