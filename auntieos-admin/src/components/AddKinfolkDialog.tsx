@@ -96,9 +96,22 @@ export function AddKinfolkDialog({ onClose, onCreated }: AddKinfolkDialogProps) 
     setTouched({ firstName: true, lastName: true });
     if (saving) return;
     if (createdId !== null) {
-      // Retry path: the household already exists, so only the contact save
-      // runs again. The household fields are disabled while this is true (see
-      // the fieldset below), so there is nothing left to re-validate.
+      // Retry path: the household already exists, so `createKinfolk` never
+      // runs again. But the Emergency Contact editor sits OUTSIDE the locked
+      // household fieldset on purpose (#829: it must stay usable for exactly
+      // this retry), so it is still live, an operator can clear it or type
+      // the household's own phone before pressing this button. The same gate
+      // the first-save path runs, so a bad retry is refused with the plain
+      // spec message instead of a round trip that comes back wrapped as
+      // "saveEmergencyContacts failed: ...".
+      const retryEcError = validateEmergencyContactDrafts(ecDrafts, {
+        names: [`${firstName} ${lastName}`],
+        phones: [phoneNumber],
+      });
+      if (retryEcError) {
+        setSaveError(retryEcError);
+        return;
+      }
       setSaving(true);
       setSaveError(null);
       await saveContact(createdId);

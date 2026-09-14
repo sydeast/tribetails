@@ -32,6 +32,7 @@ import {
 import type { KinDetail } from '../../api/kinView';
 import type { KinfolkProfile } from '../../api/kinfolkProfile';
 import type { SessionEntry } from '../../api/sessions';
+import { emergencyContactsOf } from '../../api/emergencyContacts';
 
 /**
  * The slice of a session the engine reads (only the service type, for
@@ -210,10 +211,17 @@ function readKinfolkAttribute(kinfolk: KinfolkProfile, key: string): string {
       return kinfolk.parkingInstructions;
     case 'entryNotes':
       return kinfolk.entryNotes;
-    // NO emergencyContactName/emergencyContactPhone (#829): Emergency Contacts
-    // is now a list (`kinfolk.emergencyContacts`), not a single flat string, so
-    // it has no value this single-string attribute reader can return. Removed
-    // from `kinfolkAttributeCatalog` below along with these two cases.
+    // #829: Emergency Contacts is now a list, but Android and Kotlin web both
+    // still resolve these two keys off the FIRST (called-first) contact, and a
+    // template's persisted condition has to keep meaning the same thing on
+    // every client. `emergencyContactsOf` is Task 5's array-first-with-flat-
+    // fallback reader, the same one `kinfolkProfile.ts` itself now resolves
+    // `emergencyContacts` through, so a legacy household with only the old flat
+    // fields still resolves here exactly as it does everywhere else.
+    case 'emergencyContactName':
+      return emergencyContactsOf(kinfolk as unknown as Record<string, unknown>)[0]?.name ?? '';
+    case 'emergencyContactPhone':
+      return emergencyContactsOf(kinfolk as unknown as Record<string, unknown>)[0]?.phone ?? '';
     default:
       return '';
   }
@@ -284,6 +292,8 @@ export const kinfolkAttributeCatalog: readonly ConditionAttribute[] = [
   { key: 'gateCode', label: 'Gate code' },
   { key: 'parkingInstructions', label: 'Parking instructions' },
   { key: 'entryNotes', label: 'Entry notes' },
+  { key: 'emergencyContactName', label: 'Emergency contact' },
+  { key: 'emergencyContactPhone', label: 'Emergency contact phone' },
 ];
 
 /** One selectable condition source, for the editor's source picker. */

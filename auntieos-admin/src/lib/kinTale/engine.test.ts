@@ -253,12 +253,68 @@ describe('KinTale engine (I7 household sources)', () => {
       gateCode: '4417',
       parkingInstructions: 'driveway',
       entryNotes: 'side door',
+      emergencyContactName: 'Sam',
+      emergencyContactPhone: '555-0199',
       vetClinicName: 'Paws Clinic',
     });
     for (const attr of kinfolkAttributeCatalog) {
       const cond = item([fc({ source: 'KINFOLK_ATTRIBUTE', op: 'EXISTS', attributeKey: attr.key })], 'PER_VISIT');
       expect(isChecklistItemVisible(cond, session(), [], loadedHome)).toBe(true);
     }
+  });
+
+  /**
+   * #829, controller ruling: `emergencyContactName`/`emergencyContactPhone`
+   * were briefly removed from this catalog on the (wrong) theory that a list
+   * has no single value to resolve. Android and Kotlin web still resolve both
+   * keys off the FIRST (called-first) contact, and a persisted template
+   * condition has to keep meaning the same thing on every client. Restored,
+   * resolved through Task 5's `emergencyContactsOf` (array first, legacy flat
+   * fallback) so a legacy household resolves identically here and everywhere
+   * else `emergencyContactsOf` is the reader.
+   */
+  it('KINFOLK_ATTRIBUTE resolves the first Emergency Contact, array shape and legacy flat shape alike', () => {
+    const arrayShape = mergeKinfolkProfile('h6', {
+      emergencyContacts: [
+        { name: 'Rae Halbrook', phone: '+15125559090', relationship: 'Sister' },
+        { name: 'Lee Park', phone: '+15125550177', relationship: null },
+      ],
+    });
+    const legacyFlatShape = mergeKinfolkProfile('h7', {
+      emergencyContactName: 'Priya Shah',
+      emergencyContactPhone: '805-555-0199',
+    });
+    const noContact = mergeKinfolkProfile('h8', {});
+
+    const nameEqualsRae = item(
+      [fc({ source: 'KINFOLK_ATTRIBUTE', op: 'EQUALS', value: 'Rae Halbrook', attributeKey: 'emergencyContactName' })],
+      'PER_VISIT',
+    );
+    const phoneEqualsRae = item(
+      [fc({ source: 'KINFOLK_ATTRIBUTE', op: 'EQUALS', value: '+15125559090', attributeKey: 'emergencyContactPhone' })],
+      'PER_VISIT',
+    );
+    // Array shape: resolves the FIRST contact, not the second.
+    expect(isChecklistItemVisible(nameEqualsRae, session(), [dog], arrayShape)).toBe(true);
+    expect(isChecklistItemVisible(phoneEqualsRae, session(), [dog], arrayShape)).toBe(true);
+
+    const nameEqualsPriya = item(
+      [fc({ source: 'KINFOLK_ATTRIBUTE', op: 'EQUALS', value: 'Priya Shah', attributeKey: 'emergencyContactName' })],
+      'PER_VISIT',
+    );
+    const phoneEqualsPriya = item(
+      [fc({ source: 'KINFOLK_ATTRIBUTE', op: 'EQUALS', value: '805-555-0199', attributeKey: 'emergencyContactPhone' })],
+      'PER_VISIT',
+    );
+    // Legacy flat shape resolves through the same fallback `emergencyContactsOf` uses everywhere.
+    expect(isChecklistItemVisible(nameEqualsPriya, session(), [dog], legacyFlatShape)).toBe(true);
+    expect(isChecklistItemVisible(phoneEqualsPriya, session(), [dog], legacyFlatShape)).toBe(true);
+
+    const hasEmergencyContactName = item(
+      [fc({ source: 'KINFOLK_ATTRIBUTE', op: 'EXISTS', attributeKey: 'emergencyContactName' })],
+      'PER_VISIT',
+    );
+    expect(isChecklistItemVisible(hasEmergencyContactName, session(), [dog], noContact)).toBe(false);
   });
 
   it('conditionSummary: household attribute exists is readable', () => {

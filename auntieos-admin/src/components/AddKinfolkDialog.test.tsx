@@ -26,6 +26,7 @@ vi.mock('../api/emergencyContacts', async () => {
 });
 
 import { AddKinfolkDialog } from './AddKinfolkDialog';
+import { EMERGENCY_CONTACT_REQUIRED } from '../api/emergencyContacts';
 
 async function fillHousehold() {
   await userEvent.type(screen.getByLabelText('First name'), 'Jamie');
@@ -225,5 +226,29 @@ describe('AddKinfolkDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contact' }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith('new-kf-1'));
     expect(createKinfolk).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-validates the contact on retry: clearing it after a failed save refuses locally, never a second callable call', async () => {
+    createKinfolk.mockResolvedValue('new-kf-1');
+    saveEmergencyContacts.mockRejectedValueOnce(new Error('network'));
+    const onCreated = vi.fn();
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={onCreated} />);
+    await fillHousehold();
+    await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125559090');
+    await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
+    expect(await screen.findByText(/saveEmergencyContacts failed: network/)).toBeInTheDocument();
+    expect(saveEmergencyContacts).toHaveBeenCalledTimes(1);
+
+    // The editor is still live during the retry (#829): clear it, then retry.
+    await userEvent.clear(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }));
+    await userEvent.clear(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contact' }));
+
+    expect(await screen.findByText(EMERGENCY_CONTACT_REQUIRED)).toBeInTheDocument();
+    // Refused locally: no second round trip, and never a second household.
+    expect(saveEmergencyContacts).toHaveBeenCalledTimes(1);
+    expect(createKinfolk).toHaveBeenCalledTimes(1);
+    expect(onCreated).not.toHaveBeenCalled();
   });
 });
