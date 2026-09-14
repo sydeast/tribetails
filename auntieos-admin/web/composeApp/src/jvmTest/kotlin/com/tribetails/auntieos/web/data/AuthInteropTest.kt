@@ -25,6 +25,22 @@ class AuthInteropTest {
         assertTrue(body.contains("\"email\":\"admin@example.com\""), "email must be trimmed; got: $body")
     }
 
+    /**
+     * #892: the reset link opens the portal's email action page (one callbackUri per
+     * project), so the continue URL is what brings staff back to the admin sign-in.
+     * It must be on the wire, which is the encodeDefaults trap signIn already hit.
+     */
+    @Test fun passwordResetBody_continuesToAdminSignIn() {
+        val body = encodePasswordResetRequestBody("  admin@example.com ")
+        assertTrue(body.contains("\"requestType\":\"PASSWORD_RESET\""), "requestType; got: $body")
+        assertTrue(body.contains("\"email\":\"admin@example.com\""), "email trimmed; got: $body")
+        assertTrue(
+            body.contains("\"continueUrl\":\"https://auntie.tribetails.com/signin\""),
+            "continueUrl must be serialized; got: $body",
+        )
+        assertTrue(body.contains("\"canHandleCodeInApp\":false"), "canHandleCodeInApp; got: $body")
+    }
+
     @Test fun parseRefreshedToken_readsFields() {
         val body = """{"id_token":"ID123","refresh_token":"RT456","expires_in":"3600"}"""
         val t = parseRefreshedToken(body)

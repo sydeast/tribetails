@@ -232,6 +232,9 @@ export async function changeEmail(currentPassword: string, newEmail: string): Pr
   }
 }
 
+/** Where an admin reset link continues once the password is set (#892). */
+export const ADMIN_SIGN_IN_URL = 'https://auntie.tribetails.com/signin';
+
 /**
  * Sends the Firebase password-reset email.
  *
@@ -240,7 +243,10 @@ export async function changeEmail(currentPassword: string, newEmail: string): Pr
  */
 export async function sendReset(email: string): Promise<void> {
   try {
-    await sendPasswordResetEmail(auth, email.trim());
+    // #892: the link opens the project's email action page on the portal
+    // (Identity Toolkit callbackUri is one URL per project). The continue URL
+    // is what sends staff back to this app's sign-in afterwards.
+    await sendPasswordResetEmail(auth, email.trim(), { url: ADMIN_SIGN_IN_URL, handleCodeInApp: false });
   } catch (err) {
     throw toSecurityError(err);
   }

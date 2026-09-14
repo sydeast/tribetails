@@ -1,8 +1,12 @@
 import {
+  applyActionCode,
+  checkActionCode,
+  confirmPasswordReset,
   initializeRecaptchaConfig,
   onAuthStateChanged,
   sendEmailVerification,
   sendPasswordResetEmail,
+  verifyPasswordResetCode,
   signInWithCustomToken,
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
@@ -102,10 +106,53 @@ export async function signInWithToken(token: string): Promise<User> {
   return cred.user;
 }
 
-/** Sends the Firebase password-reset email. */
-export async function sendReset(email: string): Promise<void> {
+/**
+ * Where a portal reset link continues once the password is set (#892). The
+ * link itself opens the project's email action page (/account/secure-reset);
+ * this only decides where its "sign in" link goes.
+ */
+export const PORTAL_SIGN_IN_URL = 'https://kinfolk.tribetails.com/signin';
+
+/**
+ * Sends the Firebase password-reset email.
+ *
+ * `continueUrl` defaults to the portal sign-in. The email action page passes
+ * the continue target of an expired link through, so a staff member who asks
+ * for a fresh link there still ends on the admin sign-in.
+ */
+export async function sendReset(email: string, continueUrl: string = PORTAL_SIGN_IN_URL): Promise<void> {
   await ensureRecaptcha();
-  await sendPasswordResetEmail(auth, email);
+  await sendPasswordResetEmail(auth, email, { url: continueUrl, handleCodeInApp: false });
+}
+
+/** Checks a reset link's oobCode without using it. Resolves the account email. */
+export async function verifyResetCode(oobCode: string): Promise<string> {
+  await ensureRecaptcha();
+  return verifyPasswordResetCode(auth, oobCode);
+}
+
+/** Uses a reset link's oobCode to set the new password. */
+export async function completeReset(oobCode: string, newPassword: string): Promise<void> {
+  await ensureRecaptcha();
+  await confirmPasswordReset(auth, oobCode, newPassword);
+}
+
+/**
+ * Reads an email link's oobCode (verifyEmail, verifyAndChangeEmail,
+ * recoverEmail) without using it.
+ */
+export async function readActionCode(
+  oobCode: string,
+): Promise<{ email: string | null; previousEmail: string | null }> {
+  await ensureRecaptcha();
+  const info = await checkActionCode(auth, oobCode);
+  return { email: info.data.email ?? null, previousEmail: info.data.previousEmail ?? null };
+}
+
+/** Uses an email link's oobCode (confirms, changes or restores the address). */
+export async function applyEmailAction(oobCode: string): Promise<void> {
+  await ensureRecaptcha();
+  await applyActionCode(auth, oobCode);
 }
 
 /**
