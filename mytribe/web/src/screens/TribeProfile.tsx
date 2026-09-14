@@ -154,7 +154,8 @@ export function TribeProfile() {
   const [saving, setSaving] = useState(false);
   /** The Emergency Contacts card has edits its own Save has not sent. Save Changes never sends them. */
   const [ecDirty, setEcDirty] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
+  /** The page save's outcome. Coloured by `ok`, never by how the sentence starts. */
+  const [status, setStatus] = useState<{ text: string; ok: boolean } | null>(null);
 
   // Seed local edit state once the profile load resolves.
   useEffect(() => {
@@ -330,15 +331,16 @@ export function TribeProfile() {
       });
 
       // The card saves on its own button, so "Saved." here would be false about
-      // any contact edit still sitting in it (#829).
-      setStatus(
-        ecDirty
-          ? 'Profile saved. Your Emergency Contacts are not saved yet: use Save Emergency Contacts.'
-          : 'Saved. Auntie will be notified.',
-      );
+      // any contact edit still sitting in it (#829). No "Auntie will be
+      // notified": neither saveTribeProfile nor saveHomeAccess notifies anyone,
+      // and portal Android says "Saved." too.
+      setStatus({
+        text: ecDirty ? 'Profile saved. Your Emergency Contacts are not saved yet: use Save Emergency Contacts.' : 'Saved.',
+        ok: true,
+      });
       void queryClient.invalidateQueries({ queryKey: ['tribeProfile', kinfolkId] });
     } catch (err) {
-      setStatus(`Save failed: ${err instanceof Error ? err.message : 'unknown error'}`);
+      setStatus({ text: `Save failed: ${err instanceof Error ? err.message : 'unknown error'}`, ok: false });
     } finally {
       setSaving(false);
     }
@@ -650,9 +652,9 @@ export function TribeProfile() {
                     {'\u{1F4BE}'} {saving ? <BusyLabel>Saving…</BusyLabel> : 'Save Changes'}
                   </button>
                   {status && (
-                    <span className={`status ${status.startsWith('Saved') ? '' : 'err'}`}>
+                    <span className={`status ${status.ok ? '' : 'err'}`} data-testid="page-save-status">
                       <span className="dot" />
-                      {status}
+                      {status.text}
                     </span>
                   )}
                   {effectiveDisplayName.trim().length === 0 && <span className="sub">Add a display name to save.</span>}

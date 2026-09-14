@@ -2,17 +2,26 @@
 
 package com.kinfolk.portal.screens.tribe
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.ComposeUiTest
+import androidx.compose.ui.test.assertAll
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isNotEnabled
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -22,6 +31,8 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.runComposeUiTest
+import androidx.compose.ui.unit.dp
+import com.kinfolk.portal.components.KIN_INFO_TIP_TAG
 import com.kinfolk.portal.firebase.FakeFunctionsClient
 import com.kinfolk.portal.firebase.FunctionsClient
 import com.kinfolk.portal.portal.PortalApi
@@ -43,9 +54,10 @@ import kotlin.test.assertTrue
 /**
  * #829. The portal Android Emergency Contacts card, held to what portal web's
  * `EmergencyContactsCard.test.tsx` holds its twin to: two slots in call order,
- * a pessimistic card Save that locks the inputs, the server's refusal word for
- * word with the typing kept, an "Unsaved changes" cue, and a read-only list with
- * the #844 sentence for a member without Home access.
+ * a pessimistic card Save that locks every control, the server's refusal word
+ * for word with the typing kept, an "Unsaved changes" cue, a read-only list with
+ * the #844 sentence for a member without Home access, a load failure that can be
+ * retried, and a reply that never lands on a household it was not sent for.
  */
 class EmergencyContactsCardTest {
 
@@ -54,17 +66,24 @@ class EmergencyContactsCardTest {
         Column(Modifier.verticalScroll(rememberScrollState())) { content() }
     }
 
-    private val locked ="Only someone with Home access can change the Emergency Contact."
+    private val locked = "Only someone with Home access can change the Emergency Contact."
     private val required = "A household needs at least one Emergency Contact"
 
-    private fun raeJson() = buildJsonObject {
-        put("name", "Rae Mercer"); put("phone", "+18055550199"); put("relationship", "Sister"); put("recordedAt", JsonNull); put("updatedAt", JsonNull)
+    private fun contactJson(name: String, phone: String, relationship: String? = null) = buildJsonObject {
+        put("name", name); put("phone", phone)
+        if (relationship == null) put("relationship", JsonNull) else put("relationship", relationship)
+        put("recordedAt", JsonNull); put("updatedAt", JsonNull)
     }
 
-    private fun FakeFunctionsClient.list(canEdit: Boolean, withRae: Boolean) = stub("listEmergencyContacts", buildJsonObject {
-        put("contacts", buildJsonArray { if (withRae) add(raeJson()) })
+    private fun raeJson() = contactJson("Rae Mercer", "+18055550199", "Sister")
+
+    private fun listJson(canEdit: Boolean, vararg contacts: JsonObject) = buildJsonObject {
+        put("contacts", buildJsonArray { contacts.forEach { add(it) } })
         put("canEdit", canEdit); put("legacy", false)
-    })
+    }
+
+    private fun FakeFunctionsClient.list(canEdit: Boolean, withRae: Boolean) =
+        stub("listEmergencyContacts", if (withRae) listJson(canEdit, raeJson()) else listJson(canEdit))
 
     @Test
     fun promptsAHouseholdWithNoneAndSavesTheFirstContact() = runComposeUiTest {
@@ -93,7 +112,7 @@ class EmergencyContactsCardTest {
     }
 
     @Test
-    fun anEmptyCardIsRefusedBeforeDialling() = runComposeUiTest {
+    fun anEmptyCardIsRefusedBeforeDiallingAndSaysItOnce() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.list(canEdit = true, withRae = false)
         setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
@@ -101,7 +120,25 @@ class EmergencyContactsCardTest {
         onNodeWithText("Save Emergency Contacts").performScrollTo().performClick()
         waitForIdle()
         assertTrue(fake.calls.none { it.first == "saveEmergencyContacts" })
-        assertEquals(2, onAllNodesWithText(required).fetchSemanticsNodes().size)
+        // The prompt already says it; the refusal does not repeat it.
+        assertEquals(1, onAllNodesWithText(required).fetchSemanticsNodes().size)
+    }
+
+    @Test
+    fun clearingTheContactsOnFileIsRefusedWithTheSentence() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.list(canEdit = true, withRae = true)
+        setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
+        waitForIdle()
+        // No prompt while the server holds one.
+        onNodeWithText(required).assertDoesNotExist()
+        onNodeWithTag("ec-0-name").performTextReplacement("")
+        onNodeWithTag("ec-0-phone").performTextReplacement("")
+        onNodeWithTag("ec-0-relationship").performTextReplacement("")
+        onNodeWithText("Save Emergency Contacts").performScrollTo().performClick()
+        waitForIdle()
+        assertTrue(fake.calls.none { it.first == "saveEmergencyContacts" })
+        assertEquals(1, onAllNodesWithText(required).fetchSemanticsNodes().size)
     }
 
     @Test
@@ -218,34 +255,117 @@ class EmergencyContactsCardTest {
     }
 
     @Test
-    fun aSaveInFlightSaysSoAndLocksTheInputs() = runComposeUiTest {
+    fun aSaveInFlightSaysSoAndLocksEveryControl() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.list(canEdit = true, withRae = true)
-        val gate = CompletableDeferred<JsonObject>()
+        var gate = CompletableDeferred<JsonObject>()
         val gated = object : FunctionsClient {
             override suspend fun call(name: String, payload: JsonObject?): JsonObject =
                 if (name == "saveEmergencyContacts") gate.await() else fake.call(name, payload)
         }
         setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(gated)) }
         waitForIdle()
+
+        // One slot: Save, Add and the inputs are on screen.
         onNodeWithText("Save Emergency Contacts").performScrollTo().performClick()
         mainClock.advanceTimeBy(100L)
-        onNodeWithText("Saving…").assertIsDisplayed()
+        onNodeWithText("Saving…").assertIsDisplayed().assertIsNotEnabled()
+        onNodeWithText("Add a second Emergency Contact").assertIsNotEnabled()
         onNodeWithTag("ec-0-name").assertIsNotEnabled()
         onNodeWithTag("ec-0-phone").assertIsNotEnabled()
         onNodeWithTag("ec-0-relationship").assertIsNotEnabled()
         gate.complete(buildJsonObject { put("contacts", buildJsonArray { add(raeJson()) }) })
         waitForIdle()
         onNodeWithText("Saved.").assertIsDisplayed()
+        onNodeWithText("Save Emergency Contacts").assertIsEnabled()
+
+        // Two slots: Call first and both Removes are on screen.
+        gate = CompletableDeferred()
+        onNodeWithText("Add a second Emergency Contact").performScrollTo().performClick()
+        onNodeWithTag("ec-1-name").performTextInput("Lee Park")
+        onNodeWithTag("ec-1-phone").performTextInput("8055550177")
+        onNodeWithText("Save Emergency Contacts").performScrollTo().performClick()
+        mainClock.advanceTimeBy(100L)
+        onNodeWithText("Saving…").assertIsNotEnabled()
+        onNodeWithText("Call first").assertIsNotEnabled()
+        assertEquals(2, onAllNodesWithText("Remove").fetchSemanticsNodes().size)
+        onAllNodesWithText("Remove").assertAll(isNotEnabled())
+        onNodeWithTag("ec-1-name").assertIsNotEnabled()
+        gate.complete(buildJsonObject {
+            put("contacts", buildJsonArray { add(raeJson()); add(contactJson("Lee Park", "+18055550177")) })
+        })
+        waitForIdle()
+        onNodeWithText("Call first").assertIsEnabled()
     }
 
     @Test
-    fun aLoadFailureSaysSo() = runComposeUiTest {
+    fun aLoadFailureSaysSoAndCanBeTriedAgain() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.stubError("listEmergencyContacts", IllegalStateException("boom"))
         setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
         waitForIdle()
         onNodeWithText("Couldn't load your Emergency Contacts right now.").assertIsDisplayed()
         assertTrue(onAllNodesWithText("Save Emergency Contacts").fetchSemanticsNodes().isEmpty())
+
+        fake.list(canEdit = true, withRae = true)
+        onNodeWithText("Try again").performClick()
+        waitForIdle()
+        onNodeWithText("Couldn't load your Emergency Contacts right now.").assertDoesNotExist()
+        onNodeWithTag("ec-0-name").assertTextEquals("Rae Mercer")
+        assertEquals(2, fake.calls.count { it.first == "listEmergencyContacts" })
+    }
+
+    @Test
+    fun aReplyForAHouseholdNoLongerOnScreenIsDropped() = runComposeUiTest {
+        val gate = CompletableDeferred<JsonObject>()
+        val client = object : FunctionsClient {
+            override suspend fun call(name: String, payload: JsonObject?): JsonObject = when (name) {
+                "listEmergencyContacts" ->
+                    if (payload?.get("kinfolkId")?.jsonPrimitive?.content == "fam2") {
+                        listJson(true, contactJson("Lee Park", "+18055550177"))
+                    } else {
+                        listJson(true, raeJson())
+                    }
+                "saveEmergencyContacts" -> gate.await()
+                else -> error("unexpected $name")
+            }
+        }
+        var household by mutableStateOf("fam1")
+        setCard { EmergencyContactsCard(kinfolkId = household, portalApi = PortalApi(client)) }
+        waitForIdle()
+        onNodeWithTag("ec-0-name").performTextReplacement("Rae Mercer Jr")
+        onNodeWithText("Save Emergency Contacts").performScrollTo().performClick()
+        mainClock.advanceTimeBy(100L)
+        onNodeWithText("Saving…").assertIsDisplayed()
+
+        household = "fam2"
+        waitForIdle()
+        onNodeWithTag("ec-0-name").assertTextEquals("Lee Park")
+        // The busy Save belonged to the other household.
+        onNodeWithText("Save Emergency Contacts").assertIsEnabled()
+
+        gate.complete(buildJsonObject { put("contacts", buildJsonArray { add(contactJson("Rae Mercer Jr", "+18055550199")) }) })
+        waitForIdle()
+        onNodeWithTag("ec-0-name").assertTextEquals("Lee Park")
+        onNodeWithText("Saved.").assertDoesNotExist()
+        onNodeWithText("Unsaved changes").assertDoesNotExist()
+        onNodeWithText("Save Emergency Contacts").assertIsEnabled()
+    }
+
+    @Test
+    fun atPhoneWidthTheTitleAndTipBothShowAndDoNotOverlap() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.list(canEdit = true, withRae = true)
+        setThemedContent {
+            Box(Modifier.width(360.dp)) { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
+        }
+        waitForIdle()
+        val title = onNodeWithText("Emergency Contacts").assertIsDisplayed().getUnclippedBoundsInRoot()
+        val tip = onNodeWithTag(KIN_INFO_TIP_TAG).assertIsDisplayed().getUnclippedBoundsInRoot()
+        assertTrue(tip.right - tip.left > 0.dp && title.right - title.left > 0.dp, "title $title, tip $tip")
+        val apartSideways = title.right <= tip.left || tip.right <= title.left
+        val apartUpDown = title.bottom <= tip.top || tip.bottom <= title.top
+        assertTrue(apartSideways || apartUpDown, "title $title overlaps tip $tip")
+        assertTrue(tip.right <= 360.dp && title.right <= 360.dp, "title $title, tip $tip past 360dp")
     }
 }

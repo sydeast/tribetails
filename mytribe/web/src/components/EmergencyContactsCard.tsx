@@ -116,13 +116,27 @@ function InfoTip({ text, label }: { text: string; label: string }) {
  * nothing unsaved, and a save writes the reply into the query cache instead of
  * refetching, so the household sees exactly what the server stored.
  */
-export function EmergencyContactsCard({
+export function EmergencyContactsCard(props: { kinfolkId: string | undefined; onDirtyChange?: (dirty: boolean) => void }) {
+  // Keyed on the household: a switch starts a fresh card, so no draft, busy Save
+  // or message from one household is ever shown on another.
+  return <EmergencyContactsCardFor key={props.kinfolkId ?? ''} {...props} />;
+}
+
+function EmergencyContactsCardFor({
   kinfolkId,
   onDirtyChange,
 }: {
   kinfolkId: string | undefined;
   onDirtyChange?: (dirty: boolean) => void;
 }) {
+  /** False once this household's card has left the screen; a save reply that lands after that is not applied. */
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
   const queryClient = useQueryClient();
   const queryKey = ['emergencyContacts', kinfolkId];
   const q = useQuery({ queryKey, queryFn: () => listEmergencyContacts(kinfolkId) });
@@ -157,7 +171,11 @@ export function EmergencyContactsCard({
   async function save() {
     const problem = precheck(drafts);
     if (problem) {
-      setMessage({ text: problem, ok: false });
+      // With none on file the prompt above already says this; a second copy
+      // under Save reads as an echo. Kept when the server holds contacts and the
+      // household cleared them, where no prompt shows.
+      const promptShowing = problem === REQUIRED && (q.data?.contacts.length ?? 0) === 0;
+      setMessage(promptShowing ? null : { text: problem, ok: false });
       return;
     }
     setSaving(true);
@@ -174,19 +192,24 @@ export function EmergencyContactsCard({
           relationship: d.relationship.trim() === '' ? null : d.relationship.trim(),
         })),
       });
-      // The reply is what the server stored (E.164 phones, trimmed names). Seed
-      // from it and write it into the cache instead of refetching. The cancel
-      // above is what keeps an earlier refetch from landing over it.
-      setBaseline(res.contacts);
-      setDrafts(toDrafts(res.contacts));
+      // The reply is what the server stored (E.164 phones, trimmed names). Write
+      // it into the cache instead of refetching. The cancel above is what keeps
+      // an earlier refetch from landing over it. `queryKey` is the household the
+      // save was sent for, so this is correct even after a switch.
       queryClient.setQueryData<ListEmergencyContactsResult>(queryKey, (old) =>
         old ? { ...old, contacts: res.contacts, legacy: false } : old,
       );
+      // The household changed while the save was away: its card is gone, and
+      // the reply must not seed another household's slots or say "Saved.".
+      if (!alive.current) return;
+      setBaseline(res.contacts);
+      setDrafts(toDrafts(res.contacts));
       setMessage({ text: 'Saved.', ok: true });
     } catch (err) {
+      if (!alive.current) return;
       setMessage({ text: err instanceof Error && err.message ? err.message : 'The Emergency Contacts were not saved. Try again.', ok: false });
     } finally {
-      setSaving(false);
+      if (alive.current) setSaving(false);
     }
   }
 
@@ -204,9 +227,17 @@ export function EmergencyContactsCard({
       {view.kind === 'offline' ? (
         <OfflineNotice what="your Emergency Contacts" compact />
       ) : view.kind === 'error' ? (
-        <p className="sub" role="alert" style={{ color: 'var(--coral)' }}>
-          Couldn&rsquo;t load your Emergency Contacts right now.
-        </p>
+        <>
+          <p className="sub" role="alert" style={{ color: 'var(--coral)' }}>
+            Couldn&rsquo;t load your Emergency Contacts right now.
+          </p>
+          {/* Not a dead end: ask again, with a busy label while it runs. */}
+          <div className="contactactions">
+            <button type="button" className="btn ghost" disabled={q.isFetching} onClick={() => void q.refetch()}>
+              {q.isFetching ? <BusyLabel>Trying again…</BusyLabel> : 'Try again'}
+            </button>
+          </div>
+        </>
       ) : view.kind !== 'data' ? (
         <p className="sub">
           <BusyLabel>Loading Emergency Contacts…</BusyLabel>

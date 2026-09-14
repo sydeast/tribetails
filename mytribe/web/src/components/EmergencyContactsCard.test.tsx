@@ -98,7 +98,9 @@ describe('EmergencyContactsCard', () => {
     mount();
     await screen.findByLabelText('Name', { selector: '#ec-0-name' });
     await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contacts' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('A household needs at least one Emergency Contact');
+    // The prompt already says it; the refusal does not repeat it.
+    expect(screen.getAllByText('A household needs at least one Emergency Contact')).toHaveLength(1);
+    expect(screen.queryByRole('alert')).toBeNull();
     await userEvent.type(screen.getByLabelText('Name', { selector: '#ec-0-name' }), 'Rae Mercer');
     await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contacts' }));
     expect(await screen.findByText('Each Emergency Contact needs a phone number.')).toBeInTheDocument();
@@ -297,5 +299,70 @@ describe('EmergencyContactsCard', () => {
     expect(await screen.findByText(/Couldn.t load your Emergency Contacts/)).toBeInTheDocument();
     expect(screen.queryByText('A household needs at least one Emergency Contact')).toBeNull();
     expect(screen.queryByRole('textbox')).toBeNull();
+  });
+
+  it('a load failure offers Try again, and a retry that succeeds shows the contacts', async () => {
+    mocks.listEmergencyContacts.mockRejectedValueOnce(new Error('boom')).mockResolvedValue({ contacts: [RAE], canEdit: true, legacy: false });
+    mount();
+    expect(await screen.findByText(/Couldn.t load your Emergency Contacts/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByDisplayValue('Rae Mercer')).toBeInTheDocument();
+    expect(screen.queryByText(/Couldn.t load your Emergency Contacts/)).toBeNull();
+    expect(mocks.listEmergencyContacts).toHaveBeenCalledTimes(2);
+  });
+
+  it('clearing the contacts on file is refused with the sentence, said once', async () => {
+    mocks.listEmergencyContacts.mockResolvedValue({ contacts: [RAE], canEdit: true, legacy: false });
+    mount();
+    await screen.findByDisplayValue('Rae Mercer');
+    expect(screen.queryByText('A household needs at least one Emergency Contact')).toBeNull();
+    await userEvent.clear(screen.getByLabelText('Name', { selector: '#ec-0-name' }));
+    await userEvent.clear(screen.getByLabelText('Phone', { selector: '#ec-0-phone' }));
+    await userEvent.clear(screen.getByLabelText('Relationship (optional)', { selector: '#ec-0-relationship' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contacts' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('A household needs at least one Emergency Contact');
+    expect(screen.getAllByText('A household needs at least one Emergency Contact')).toHaveLength(1);
+    expect(mocks.saveEmergencyContacts).not.toHaveBeenCalled();
+  });
+
+  it('a household switched mid-save never gets the other household reply', async () => {
+    const LEE = { name: 'Lee Park', phone: '+18055550177', relationship: null, recordedAt: null, updatedAt: null };
+    mocks.listEmergencyContacts.mockImplementation((id: unknown) =>
+      Promise.resolve({ contacts: [id === 'kin-fam-2' ? LEE : RAE], canEdit: true, legacy: false }),
+    );
+    let settle: (v: unknown) => void = () => undefined;
+    mocks.saveEmergencyContacts.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(
+      <QueryClientProvider client={qc}>
+        <EmergencyContactsCard kinfolkId="kin-fam-1" />
+      </QueryClientProvider>,
+    );
+    const name = await screen.findByDisplayValue('Rae Mercer');
+    await userEvent.clear(name);
+    await userEvent.type(name, 'Rae Changed');
+    await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contacts' }));
+    await screen.findByRole('button', { name: /Saving/ });
+
+    view.rerender(
+      <QueryClientProvider client={qc}>
+        <EmergencyContactsCard kinfolkId="kin-fam-2" />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByDisplayValue('Lee Park')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save Emergency Contacts' })).not.toBeDisabled();
+
+    const saved = { ...RAE, name: 'Rae Changed' };
+    await act(async () => {
+      settle({ contacts: [saved] });
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    expect(screen.getByLabelText('Name', { selector: '#ec-0-name' })).toHaveValue('Lee Park');
+    expect(screen.queryByText('Saved.')).toBeNull();
+    expect(screen.queryByTestId('ec-unsaved')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Save Emergency Contacts' })).not.toBeDisabled();
+    // Each household's cache holds its own copy.
+    expect(qc.getQueryData(['emergencyContacts', 'kin-fam-2'])).toEqual({ contacts: [LEE], canEdit: true, legacy: false });
+    expect(qc.getQueryData(['emergencyContacts', 'kin-fam-1'])).toEqual({ contacts: [saved], canEdit: true, legacy: false });
   });
 });

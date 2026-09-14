@@ -206,7 +206,9 @@ describe('TribeProfile: Emergency Contacts follow Home access (#843, #829)', () 
     expect(
       await view.findByText('Profile saved. Your Emergency Contacts are not saved yet: use Save Emergency Contacts.'),
     ).toBeInTheDocument();
-    expect(view.queryByText('Saved. Auntie will be notified.')).toBeNull();
+    // A saved profile is a success, whatever the sentence starts with.
+    expect(view.getByTestId('page-save-status')).not.toHaveClass('err');
+    expect(view.queryByText('Saved.')).toBeNull();
     expect(view.getByTestId('ec-unsaved')).toBeInTheDocument();
     expect(view.container.querySelector('#ec-0-name')).toHaveValue('Rae Halbrook Jr');
     expect(saveEmergencyContacts).not.toHaveBeenCalled();
@@ -219,7 +221,19 @@ describe('TribeProfile: Emergency Contacts follow Home access (#843, #829)', () 
     const { saveTribeProfile, saveHomeAccess } = await import('../api/tribeApi');
     await waitFor(() => expect(saveHomeAccess).toHaveBeenCalledTimes(1));
     expect(saveTribeProfile).toHaveBeenCalledTimes(1);
-    expect(await view.findByText('Saved. Auntie will be notified.')).toBeInTheDocument();
+    expect(await view.findByText('Saved.')).toBeInTheDocument();
+  });
+
+  it('the page save status is coloured by outcome: a failure is an error, a success is not', async () => {
+    const view = await renderTribeProfile({});
+    const { saveHomeAccess } = await import('../api/tribeApi');
+    vi.mocked(saveHomeAccess).mockRejectedValueOnce(new Error('nope'));
+    await userEvent.click(await view.findByRole('button', { name: /Save Changes/ }));
+    expect(await view.findByText('Save failed: nope')).toBeInTheDocument();
+    expect(view.getByTestId('page-save-status')).toHaveClass('err');
+    await userEvent.click(view.getByRole('button', { name: /Save Changes/ }));
+    expect(await view.findByText('Saved.')).toBeInTheDocument();
+    expect(view.getByTestId('page-save-status')).not.toHaveClass('err');
   });
 
   it('both Home access toggles, member row and invite, name Emergency Contacts', async () => {

@@ -37,6 +37,7 @@ import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.openExternalUrl
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /** The server's own `EMERGENCY_CONTACT_REQUIRED_MESSAGE`, and portal web's prompt. */
@@ -110,9 +111,13 @@ fun EmergencyContactsCard(
     var drafts by remember(kinfolkId) { mutableStateOf(listOf(EMPTY_DRAFT)) }
     /** The server copy the drafts were last seeded from; null until the first load. */
     var baseline by remember(kinfolkId) { mutableStateOf<List<EmergencyContactDto>?>(null) }
-    var saving by remember { mutableStateOf(false) }
-    var message by remember { mutableStateOf<String?>(null) }
-    var messageOk by remember { mutableStateOf(false) }
+    // Keyed on the household like everything above, so a busy Save or a message
+    // from one household is never shown on another.
+    var saving by remember(kinfolkId) { mutableStateOf(false) }
+    var message by remember(kinfolkId) { mutableStateOf<String?>(null) }
+    var messageOk by remember(kinfolkId) { mutableStateOf(false) }
+    /** The household on screen now, read by a save when its reply lands. */
+    val currentKinfolkId by rememberUpdatedState(kinfolkId)
 
     val dirty = baseline?.let { drafts != toDrafts(it) } ?: false
     val reportDirty by rememberUpdatedState(onDirtyChange)
@@ -121,14 +126,15 @@ fun EmergencyContactsCard(
     LaunchedEffect(kinfolkId, reloadKey) {
         try {
             val r = portalApi.listEmergencyContacts(kinfolkId)
+            // Seeds unconditionally. A load only runs before the card has drafts:
+            // the first read, tap to sync while still loading, and Try again after
+            // a failure. None of those has typing on screen to protect.
             loaded = r
             loadError = null
-            // A reload never overwrites typing that has not been saved.
-            val unsaved = baseline?.let { drafts != toDrafts(it) } ?: false
-            if (!unsaved) {
-                baseline = r.contacts
-                drafts = toDrafts(r.contacts)
-            }
+            baseline = r.contacts
+            drafts = toDrafts(r.contacts)
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             loadError = "Couldn't load your Emergency Contacts right now."
         }
@@ -157,10 +163,21 @@ fun EmergencyContactsCard(
             )
             val r = loaded
             when {
-                loadError != null -> Text(
-                    loadError!!,
-                    style = type.sansLabel.copy(color = KinfolkBrand.SnuggleCoral),
-                )
+                loadError != null -> Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+                    Text(
+                        loadError!!,
+                        style = type.sansLabel.copy(color = KinfolkBrand.SnuggleCoral),
+                    )
+                    // Not a dead end: clearing the error puts the loading cue back
+                    // (with its own tap to sync) while the read runs again.
+                    KinGhostButton(
+                        label = "Try again",
+                        onClick = {
+                            loadError = null
+                            reloadKey += 1
+                        },
+                    )
+                }
 
                 r == null -> KinLoading(
                     text = "Loading Emergency Contacts…",
@@ -258,26 +275,47 @@ fun EmergencyContactsCard(
                             enabled = !saving,
                             onClick = {
                                 val problem = precheck(drafts)
-                                if (problem != null) {
-                                    message = problem
-                                    messageOk = false
-                                } else {
-                                    saving = true
-                                    message = null
-                                    val sent = drafts
-                                    scope.launch {
-                                        try {
-                                            val stored = portalApi.saveEmergencyContacts(kinfolkId, sent)
+                                when {
+                                    // With none on file the prompt above already says
+                                    // this; a second copy under Save reads as an echo.
+                                    // Kept when the server holds contacts and the
+                                    // household cleared them, where no prompt shows.
+                                    problem == REQUIRED && r.contacts.isEmpty() -> message = null
+
+                                    problem != null -> {
+                                        message = problem
+                                        messageOk = false
+                                    }
+
+                                    else -> {
+                                        saving = true
+                                        message = null
+                                        val sent = drafts
+                                        val sentFor = kinfolkId
+                                        scope.launch {
+                                            val stored = try {
+                                                portalApi.saveEmergencyContacts(sentFor, sent)
+                                            } catch (c: CancellationException) {
+                                                throw c
+                                            } catch (t: Throwable) {
+                                                // Dropped if the household changed while it was away.
+                                                if (currentKinfolkId == sentFor) {
+                                                    messageOk = false
+                                                    message = t.message?.takeIf { it.isNotBlank() }
+                                                        ?: "The Emergency Contacts were not saved. Try again."
+                                                    saving = false
+                                                }
+                                                return@launch
+                                            }
+                                            // A reply for a household no longer on screen is
+                                            // not applied: it would seed another household's
+                                            // slots and say "Saved." about them.
+                                            if (currentKinfolkId != sentFor) return@launch
                                             baseline = stored
                                             drafts = toDrafts(stored)
                                             loaded = loaded?.copy(contacts = stored, legacy = false)
                                             messageOk = true
                                             message = "Saved."
-                                        } catch (t: Throwable) {
-                                            messageOk = false
-                                            message = t.message?.takeIf { it.isNotBlank() }
-                                                ?: "The Emergency Contacts were not saved. Try again."
-                                        } finally {
                                             saving = false
                                         }
                                     }
