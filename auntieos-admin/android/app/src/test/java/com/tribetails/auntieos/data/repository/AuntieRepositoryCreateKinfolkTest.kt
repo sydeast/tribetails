@@ -18,7 +18,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * #829 Fix round 1. `createKinfolk` / `createKinfolkComplete` used to hand
+ * #829 Fix round 1. `createKinfolkComplete` used to hand
  * `.add()` the whole [Kinfolk] POJO, which wrote `emergencyContacts: null`
  * and the three flat Emergency Contact keys blank on every new household -
  * a write no client may make, even an "empty" one (the plan's Global
@@ -87,25 +87,5 @@ class AuntieRepositoryCreateKinfolkTest {
         assertEquals("1 Bark Ave", payload["serviceAddress"])
         assertEquals("Referred by a neighbor", payload["internalNotes"])
         assertEquals("active", payload["status"])
-    }
-
-    @Test
-    fun `createKinfolk (the 3-arg quick-add) also never writes the four Emergency Contact keys`() = runBlocking {
-        val addSlot = slot<Any>()
-        every { firestore.collection("kinfolk") } returns collection
-        every { collection.add(capture(addSlot)) } returns Tasks.forResult(docRef)
-        every { docRef.id } returns "kf-quick"
-
-        val result = repo().createKinfolk("Pat", "Nguyen", "5125550102")
-
-        assertTrue(result.isSuccess)
-        @Suppress("UNCHECKED_CAST")
-        val payload = addSlot.captured as Map<String, Any?>
-        for (key in excludedKeys) {
-            assertFalse("$key must never be written by the client (#829)", payload.containsKey(key))
-        }
-        assertEquals("Pat", payload["firstName"])
-        assertEquals("Nguyen", payload["lastName"])
-        assertEquals("5125550102", payload["phoneNumber"])
     }
 }

@@ -796,8 +796,8 @@ private fun AuthenticatedNavHost(
                         navController.navigate(Screen.Communicate.route) { launchSingleTop = true }
                     },
                     // #829 review item 16: through Add Kinfolk, where the contact is required.
-                    onCreateKinfolkFromCall = { name, callerNumber ->
-                        directoryVm.prefillAddKinfolkFromCall(name, callerNumber)
+                    onCreateKinfolkFromCall = { name, callerNumber, callSid ->
+                        directoryVm.prefillAddKinfolkFromCall(name, callerNumber, callSid)
                         navController.navigate(Screen.AddKinfolk.route) { launchSingleTop = true }
                     },
                 )

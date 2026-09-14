@@ -335,21 +335,6 @@ class AuntieRepository(
                 field.name to field.get(kinfolk)
             }
 
-    suspend fun createKinfolk(firstName: String, lastName: String, phone: String): Result<Kinfolk> = runCatching {
-        AuntieLog.i("Creating new kinfolk phone=${AuntieLog.redactPhone(phone)}")
-        authGate.ensureAuthenticated()
-        val newKinfolk = Kinfolk(
-            firstName = firstName,
-            lastName = lastName,
-            phoneNumber = phone,
-            internalNotes = "Prospect converted on Firebase"
-        )
-        val docRef = firestore.collection("kinfolk").add(kinfolkCreatePayload(newKinfolk)).await()
-        newKinfolk.copy(id = docRef.id).also {
-            AuntieLog.i("Created kinfolk id=${it.id}")
-        }
-    }.onFailure { AuntieLog.e("Failed to create kinfolk", it) }
-
     suspend fun createKinfolkComplete(kinfolk: Kinfolk): Result<Kinfolk> = runCatching {
         AuntieLog.i("Creating kinfolk complete phone=${AuntieLog.redactPhone(kinfolk.phoneNumber)}")
         authGate.ensureAuthenticated()

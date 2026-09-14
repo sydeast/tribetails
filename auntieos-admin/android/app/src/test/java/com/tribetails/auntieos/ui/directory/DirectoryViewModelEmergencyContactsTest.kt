@@ -1,11 +1,13 @@
 package com.tribetails.auntieos.ui.directory
 
+import com.tribetails.auntieos.data.model.CallEvent
 import com.tribetails.auntieos.data.model.EmergencyContactDraft
 import com.tribetails.auntieos.data.model.EMERGENCY_CONTACT_REQUIRED
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
+import com.tribetails.auntieos.util.CallEventStore
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -17,6 +19,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -133,7 +136,7 @@ class DirectoryViewModelEmergencyContactsTest {
     // #829 review item 16.
     @Test
     fun `a call prefills Add Kinfolk, which still requires the contact`() {
-        vm.prefillAddKinfolkFromCall("  Jamie   Halbrook ", " +18055550100 ")
+        vm.prefillAddKinfolkFromCall("  Jamie   Halbrook ", " +18055550100 ", "CA829prefill")
         val s = vm.addKinfolkState.value
         assertEquals("Jamie", s.firstName)
         assertEquals("Halbrook", s.lastName)
@@ -150,9 +153,56 @@ class DirectoryViewModelEmergencyContactsTest {
         vm.updateFirstName("Jamie")
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "8055550199"))
         vm.saveKinfolk()
-        vm.prefillAddKinfolkFromCall("Someone Else", "+18055550111")
+        vm.prefillAddKinfolkFromCall("Someone Else", "+18055550111", "CA829waiting")
         assertEquals("kf-new", vm.addKinfolkState.value.createdKinfolkId)
         assertEquals("Jamie", vm.addKinfolkState.value.firstName)
+    }
+
+    // A household made from a call is linked onto that call event, as the Calls
+    // screen's direct create did on main before calls went through Add.
+    @Test
+    fun `a household created from a call is linked on the call event`() {
+        CallEventStore.addEvent(CallEvent(callSid = "CA829linked", callerNumber = "+18055550122", transcript = "", popupUrl = ""))
+        CallEventStore.clearActiveCall()
+        var created: Kinfolk? = null
+        coEvery { repo.createKinfolkComplete(any()) } answers {
+            Result.success(firstArg<Kinfolk>().copy(id = "kf-from-call").also { created = it })
+        }
+        coEvery { repo.saveEmergencyContacts("kf-from-call", any()) } returns Result.success(emptyList())
+
+        vm.prefillAddKinfolkFromCall("Jamie Halbrook", "+18055550122", "CA829linked")
+        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
+        vm.saveKinfolk()
+
+        assertTrue(vm.addKinfolkState.value.isSuccess)
+        assertEquals("+18055550122", created?.phoneNumber)
+        val event = CallEventStore.events.value.first { it.callSid == "CA829linked" }
+        assertEquals("kf-from-call", event.kinfolkId)
+        assertEquals(created?.displayName, event.kinfolkName)
+    }
+
+    @Test
+    fun `cancelling Add from a call leaves the call unlinked, and a later Add does not link it`() {
+        CallEventStore.addEvent(CallEvent(callSid = "CA829cancelled", callerNumber = "+18055550133", transcript = "", popupUrl = ""))
+        CallEventStore.clearActiveCall()
+        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(firstArg<Kinfolk>().copy(id = "kf-later")) }
+        coEvery { repo.saveEmergencyContacts("kf-later", any()) } returns Result.success(emptyList())
+
+        vm.prefillAddKinfolkFromCall("Jamie Halbrook", "+18055550133", "CA829cancelled")
+        vm.leaveAddKinfolk()
+
+        assertNull(vm.addKinfolkState.value.sourceCallSid)
+        coVerify(exactly = 0) { repo.createKinfolkComplete(any()) }
+        val afterCancel = CallEventStore.events.value.first { it.callSid == "CA829cancelled" }
+        assertNull(afterCancel.kinfolkId)
+        assertNull(afterCancel.kinfolkName)
+
+        // An ordinary Add opened from the Directory afterwards is not the call's household.
+        vm.updateFirstName("Pat")
+        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Lee Park", "8055550144"))
+        vm.saveKinfolk()
+        assertTrue(vm.addKinfolkState.value.isSuccess)
+        assertNull(CallEventStore.events.value.first { it.callSid == "CA829cancelled" }.kinfolkId)
     }
 
     /**

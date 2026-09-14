@@ -48,9 +48,10 @@ fun CallsScreen(
     /**
      * #829 review item 16: a caller becomes a household through the Add Kinfolk
      * screen, prefilled with this name and the caller's number, so the
-     * Emergency Contact it requires is asked for like any other Add.
+     * Emergency Contact it requires is asked for like any other Add. `callSid`
+     * lets Add link the new household back onto this call.
      */
-    onCreateKinfolkFromCall: (name: String, callerNumber: String) -> Unit = { _, _ -> },
+    onCreateKinfolkFromCall: (name: String, callerNumber: String, callSid: String) -> Unit = { _, _, _ -> },
 ) {
     val state    by viewModel.uiState.collectAsState()
     val jumpToVm by viewModel.jumpToVoicemails.collectAsState()
@@ -101,7 +102,7 @@ fun CallsScreen(
         AddKinfolkDialog(
             onDismiss = { showAddKinfolkDialog = null },
             onConfirm = { name ->
-                showAddKinfolkDialog?.let { onCreateKinfolkFromCall(name, it.callerNumber) }
+                showAddKinfolkDialog?.let { onCreateKinfolkFromCall(name, it.callerNumber, it.callSid) }
                 showAddKinfolkDialog = null
             }
         )

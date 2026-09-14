@@ -146,6 +146,8 @@ class CallsViewModel(
     // the one Add path that skipped "required on Add": no Emergency Contact was
     // ever asked for. A call now opens the Add Kinfolk screen prefilled
     // (DirectoryViewModel.prefillAddKinfolkFromCall), where the contact is required.
+    // The call's sid rides along, and Add links the created household onto this
+    // call through CallEventStore.linkKinfolk, as the old direct create did.
 
     fun consumeVoicemailJump() { _jumpToVoicemails.value = false }
     fun clearActionResult()    { _actionResult.value = null }

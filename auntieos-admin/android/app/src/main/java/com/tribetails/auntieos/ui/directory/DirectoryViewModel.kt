@@ -227,6 +227,10 @@ data class AddKinfolkUiState(
     // the contact save failed. A retry with this set must save contacts
     // against THIS id, never call createKinfolkComplete a second time.
     val createdKinfolkId: String? = null,
+    // #829: the call this Add was opened from (`CallEvent.callSid`), or null.
+    // Once the household is created, that call event is linked to it, as the
+    // Calls screen's direct create did before calls went through Add.
+    val sourceCallSid: String? = null,
 )
 
 data class EditKinfolkUiState(
@@ -838,6 +842,12 @@ class DirectoryViewModel(
 
             repository.createKinfolkComplete(newKinfolk).onSuccess { saved ->
                 AuntieLog.i("Kinfolk saved: $finalStatus")
+                // A household opened from a call is linked onto that call as soon
+                // as it exists, whatever its contact save does next: the
+                // household is real either way.
+                state.sourceCallSid?.let { callSid ->
+                    com.tribetails.auntieos.util.CallEventStore.linkKinfolk(callSid, saved.id, saved.displayName)
+                }
                 // #829 review item 6: the CREATE audit waits for the contact
                 // outcome, so the log says whether the household got its contact.
                 saveNewHouseholdContacts(saved.id, state.copy(isSaving = true, createdKinfolkId = saved.id), auditCreatedName = saved.displayName)
@@ -909,16 +919,19 @@ class DirectoryViewModel(
     /**
      * #829 review item 16: a caller becomes a household through Add Kinfolk, so
      * "required on Add" holds for them too. The name typed on the call splits
-     * into first and last; the caller's number is the phone. A household already
-     * waiting on its contact is never overwritten.
+     * into first and last; the caller's number is the phone. `callSid` names the
+     * call, so the household is linked onto it once created. Leaving Add before
+     * the household exists clears the draft, and the call stays unlinked. A
+     * household already waiting on its contact is never overwritten.
      */
-    fun prefillAddKinfolkFromCall(displayName: String, callerNumber: String) {
+    fun prefillAddKinfolkFromCall(displayName: String, callerNumber: String, callSid: String) {
         if (_addKinfolkState.value.createdKinfolkId != null) return
         val parts = displayName.trim().split(Regex("\\s+"), limit = 2)
         _addKinfolkState.value = AddKinfolkUiState(
             firstName = parts.getOrElse(0) { "" },
             lastName = parts.getOrElse(1) { "" },
             phoneNumber = callerNumber.trim(),
+            sourceCallSid = callSid,
         )
     }
 
