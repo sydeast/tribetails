@@ -194,6 +194,24 @@ describe('TribeProfile: Emergency Contacts follow Home access (#843, #829)', () 
     expect(saveEmergencyContacts).not.toHaveBeenCalled();
   });
 
+  it('#829: an edited contact is still unsaved after the page Save, and the page says so', async () => {
+    const view = await renderTribeProfile({ emergencyContacts: { contacts: [RAE], canEdit: true, legacy: false } });
+    const name = await view.findByDisplayValue('Rae Halbrook');
+    expect(view.queryByTestId('ec-unsaved-page')).toBeNull();
+    await userEvent.type(name, ' Jr');
+    expect(view.getByTestId('ec-unsaved-page')).toHaveTextContent('Your Emergency Contacts have unsaved changes.');
+    await userEvent.click(view.getByRole('button', { name: /Save Changes/ }));
+    const { saveHomeAccess, saveEmergencyContacts } = await import('../api/tribeApi');
+    await waitFor(() => expect(saveHomeAccess).toHaveBeenCalledTimes(1));
+    expect(
+      await view.findByText('Profile saved. Your Emergency Contacts are not saved yet: use Save Emergency Contacts.'),
+    ).toBeInTheDocument();
+    expect(view.queryByText('Saved. Auntie will be notified.')).toBeNull();
+    expect(view.getByTestId('ec-unsaved')).toBeInTheDocument();
+    expect(view.container.querySelector('#ec-0-name')).toHaveValue('Rae Halbrook Jr');
+    expect(saveEmergencyContacts).not.toHaveBeenCalled();
+  });
+
   it('a household with none is prompted, and the rest of the profile still saves', async () => {
     const view = await renderTribeProfile({});
     await waitFor(() => expect(view.getByText('A household needs at least one Emergency Contact')).toBeInTheDocument());

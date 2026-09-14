@@ -152,6 +152,8 @@ export function TribeProfile() {
   const [submitClinicMsg, setSubmitClinicMsg] = useState<string | null>(null);
 
   const [saving, setSaving] = useState(false);
+  /** The Emergency Contacts card has edits its own Save has not sent. Save Changes never sends them. */
+  const [ecDirty, setEcDirty] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
   // Seed local edit state once the profile load resolves.
@@ -327,7 +329,13 @@ export function TribeProfile() {
         customFields: homeCustomFields,
       });
 
-      setStatus('Saved. Auntie will be notified.');
+      // The card saves on its own button, so "Saved." here would be false about
+      // any contact edit still sitting in it (#829).
+      setStatus(
+        ecDirty
+          ? 'Profile saved. Your Emergency Contacts are not saved yet: use Save Emergency Contacts.'
+          : 'Saved. Auntie will be notified.',
+      );
       void queryClient.invalidateQueries({ queryKey: ['tribeProfile', kinfolkId] });
     } catch (err) {
       setStatus(`Save failed: ${err instanceof Error ? err.message : 'unknown error'}`);
@@ -601,7 +609,7 @@ export function TribeProfile() {
 
               {/* EMERGENCY CONTACTS (#829): its own callables and its own Save.
                   Locked with the #843 sentence when the caller lacks Home access. */}
-              <EmergencyContactsCard kinfolkId={kinfolkId} />
+              <EmergencyContactsCard kinfolkId={kinfolkId} onDirtyChange={setEcDirty} />
 
               {/* HOUSEHOLD MEMBERS — no mockup coverage; ported from HouseholdMembersCard in TribeScreen.kt.
                   PRIMARY-only: listMembers denies a SECONDARY caller, so this card degrades to an
@@ -648,6 +656,11 @@ export function TribeProfile() {
                     </span>
                   )}
                   {effectiveDisplayName.trim().length === 0 && <span className="sub">Add a display name to save.</span>}
+                  {ecDirty && (
+                    <span className="sub" data-testid="ec-unsaved-page">
+                      Your Emergency Contacts have unsaved changes.
+                    </span>
+                  )}
                 </div>
               </section>
             </>

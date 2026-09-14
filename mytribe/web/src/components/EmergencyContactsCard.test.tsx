@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { EmergencyContactsCard } from './EmergencyContactsCard';
@@ -21,13 +21,14 @@ vi.mock('../api/tribeApi', async () => {
   };
 });
 
-function mount() {
+function mount(props: { onDirtyChange?: (dirty: boolean) => void } = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const view = render(
     <QueryClientProvider client={qc}>
-      <EmergencyContactsCard kinfolkId="kin-fam-1" />
+      <EmergencyContactsCard kinfolkId="kin-fam-1" {...props} />
     </QueryClientProvider>,
   );
+  return { ...view, qc };
 }
 
 const RAE = { name: 'Rae Mercer', phone: '+18055550199', relationship: 'Sister', recordedAt: null, updatedAt: null };
@@ -176,6 +177,92 @@ describe('EmergencyContactsCard', () => {
     expect(screen.getByRole('tooltip')).toHaveTextContent(WHO_GETS_CALLED);
     await userEvent.click(tip);
     expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('a tap anywhere outside closes the tip (iOS Safari never blurs a tapped button), a tap on the tip does not', async () => {
+    mocks.listEmergencyContacts.mockResolvedValue({ contacts: [RAE], canEdit: false, legacy: false });
+    mount();
+    await screen.findByText('Rae Mercer');
+    const tip = screen.getByRole('button', { name: 'Who gets called' });
+    await userEvent.click(tip);
+    fireEvent.pointerDown(screen.getByRole('tooltip'));
+    expect(screen.getByRole('tooltip')).toHaveTextContent(WHO_GETS_CALLED);
+    fireEvent.pointerDown(tip);
+    expect(tip).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    expect(tip).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('marks unsaved edits, reports them to the page, and an edit after a save clears "Saved."', async () => {
+    const onDirtyChange = vi.fn();
+    mocks.listEmergencyContacts.mockResolvedValue({ contacts: [RAE], canEdit: true, legacy: false });
+    mount({ onDirtyChange });
+    const name = await screen.findByDisplayValue('Rae Mercer');
+    expect(screen.queryByTestId('ec-unsaved')).toBeNull();
+    await userEvent.type(name, 'x');
+    expect(screen.getByTestId('ec-unsaved')).toHaveTextContent('Unsaved changes');
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contacts' }));
+    expect(await screen.findByText('Saved.')).toBeInTheDocument();
+    expect(screen.queryByTestId('ec-unsaved')).toBeNull();
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+    await userEvent.type(screen.getByLabelText('Name', { selector: '#ec-0-name' }), 'y');
+    expect(screen.queryByText('Saved.')).toBeNull();
+    expect(screen.getByTestId('ec-unsaved')).toBeInTheDocument();
+  });
+
+  it('adding or removing a slot is an unsaved change too', async () => {
+    mocks.listEmergencyContacts.mockResolvedValue({ contacts: [RAE], canEdit: true, legacy: false });
+    mount();
+    await screen.findByDisplayValue('Rae Mercer');
+    await userEvent.click(screen.getByRole('button', { name: 'Add a second Emergency Contact' }));
+    expect(screen.getByTestId('ec-unsaved')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Remove Emergency Contact 2' }));
+    expect(screen.queryByTestId('ec-unsaved')).toBeNull();
+  });
+
+  it('a save writes the reply into the cache instead of refetching, and shows what the server stored', async () => {
+    mocks.listEmergencyContacts.mockResolvedValue({ contacts: [], canEdit: true, legacy: false });
+    const stored = { ...RAE, phone: '+18055550100', relationship: null };
+    mocks.saveEmergencyContacts.mockResolvedValue({ contacts: [stored] });
+    const { qc } = mount();
+    await userEvent.type(await screen.findByLabelText('Name', { selector: '#ec-0-name' }), 'Rae Mercer');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#ec-0-phone' }), '805 555 0100');
+    await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contacts' }));
+    expect(await screen.findByText('Saved.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Phone', { selector: '#ec-0-phone' })).toHaveValue('+18055550100');
+    expect(qc.getQueryData(['emergencyContacts', 'kin-fam-1'])).toEqual({ contacts: [stored], canEdit: true, legacy: false });
+    expect(mocks.listEmergencyContacts).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('A household needs at least one Emergency Contact')).toBeNull();
+    expect(screen.queryByTestId('ec-unsaved')).toBeNull();
+  });
+
+  it('a background refetch never overwrites unsaved typing', async () => {
+    mocks.listEmergencyContacts.mockResolvedValue({ contacts: [RAE], canEdit: true, legacy: false });
+    const { qc } = mount();
+    const name = await screen.findByDisplayValue('Rae Mercer');
+    await userEvent.clear(name);
+    await userEvent.type(name, 'Rae M');
+    mocks.listEmergencyContacts.mockResolvedValue({ contacts: [{ ...RAE, name: 'Renamed Elsewhere' }], canEdit: true, legacy: false });
+    await act(async () => {
+      await qc.refetchQueries({ queryKey: ['emergencyContacts', 'kin-fam-1'] });
+    });
+    expect(mocks.listEmergencyContacts).toHaveBeenCalledTimes(2);
+    expect(screen.getByLabelText('Name', { selector: '#ec-0-name' })).toHaveValue('Rae M');
+    expect(screen.getByTestId('ec-unsaved')).toBeInTheDocument();
+  });
+
+  it('a background refetch with no unsaved edits does show the newer copy', async () => {
+    mocks.listEmergencyContacts.mockResolvedValue({ contacts: [RAE], canEdit: true, legacy: false });
+    const { qc } = mount();
+    await screen.findByDisplayValue('Rae Mercer');
+    mocks.listEmergencyContacts.mockResolvedValue({ contacts: [{ ...RAE, name: 'Renamed Elsewhere' }], canEdit: true, legacy: false });
+    await act(async () => {
+      await qc.refetchQueries({ queryKey: ['emergencyContacts', 'kin-fam-1'] });
+    });
+    expect(await screen.findByDisplayValue('Renamed Elsewhere')).toBeInTheDocument();
+    expect(screen.queryByTestId('ec-unsaved')).toBeNull();
   });
 
   it('a load failure says so instead of drawing an empty household', async () => {

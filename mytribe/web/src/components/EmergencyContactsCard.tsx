@@ -1,6 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { listEmergencyContacts, saveEmergencyContacts, type EmergencyContactDto } from '../api/tribeApi';
+import {
+  listEmergencyContacts,
+  saveEmergencyContacts,
+  type EmergencyContactDto,
+  type ListEmergencyContactsResult,
+} from '../api/tribeApi';
 import { viewOfQuery } from '../lib/queryState';
 import { BusyLabel } from './Loading';
 import { OfflineNotice } from './OfflineNotice';
@@ -23,6 +28,10 @@ const EMPTY_DRAFT: Draft = { name: '', phone: '', relationship: '' };
 const toDrafts = (c: EmergencyContactDto[]): Draft[] =>
   c.length > 0 ? c.map((x) => ({ name: x.name, phone: x.phone, relationship: x.relationship ?? '' })) : [{ ...EMPTY_DRAFT }];
 
+/** True when the drafts on screen are exactly what the server copy seeds. */
+const sameDrafts = (a: Draft[], b: Draft[]) =>
+  a.length === b.length && a.every((d, i) => d.name === b[i]?.name && d.phone === b[i]?.phone && d.relationship === b[i]?.relationship);
+
 /** Digits only, a bare 10-digit US number read as +1, so two spellings of one phone compare equal. */
 const digits = (p: string) => p.replace(/\D/g, '').replace(/^(\d{10})$/, '1$1');
 
@@ -44,11 +53,25 @@ function precheck(drafts: Draft[]): string | null {
  * Small info icon beside the card title. `title` covers a mouse hover; a tap
  * toggles the sentence open, because a phone has no hover and iOS kinfolk only
  * have this web portal (portal Android's `KinInfoTip` opens on a tap too).
+ *
+ * A tap anywhere outside closes it. `onBlur` alone is not enough: iOS Safari
+ * does not focus a tapped button, so it never blurs and the tip stayed open.
  */
 function InfoTip({ text, label }: { text: string; label: string }) {
   const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutside = (e: Event) => {
+      if (ref.current && e.target instanceof Node && !ref.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOnOutside);
+    return () => document.removeEventListener('pointerdown', closeOnOutside);
+  }, [open]);
+
   return (
-    <span className="ec-tip">
+    <span className="ec-tip" ref={ref}>
       <button
         type="button"
         className="ec-tip__icon"
@@ -85,23 +108,51 @@ function InfoTip({ text, label }: { text: string; label: string }) {
  * Saves are pessimistic: the inputs lock and Save reads "Saving..." until the
  * server answers. A refusal leaves every typed value in place under the server's
  * own message.
+ *
+ * UNSAVED EDITS. The drafts are compared with the server copy they were seeded
+ * from (`baseline`). While they differ the card says "Unsaved changes" and tells
+ * the page through `onDirtyChange`, because the page's own Save Changes never
+ * sends contacts. A background refetch only reseeds the drafts when there is
+ * nothing unsaved, and a save writes the reply into the query cache instead of
+ * refetching, so the household sees exactly what the server stored.
  */
-export function EmergencyContactsCard({ kinfolkId }: { kinfolkId: string | undefined }) {
+export function EmergencyContactsCard({
+  kinfolkId,
+  onDirtyChange,
+}: {
+  kinfolkId: string | undefined;
+  onDirtyChange?: (dirty: boolean) => void;
+}) {
   const queryClient = useQueryClient();
-  const q = useQuery({ queryKey: ['emergencyContacts', kinfolkId], queryFn: () => listEmergencyContacts(kinfolkId) });
+  const queryKey = ['emergencyContacts', kinfolkId];
+  const q = useQuery({ queryKey, queryFn: () => listEmergencyContacts(kinfolkId) });
   const view = viewOfQuery(q);
   const [drafts, setDrafts] = useState<Draft[]>(toDrafts([]));
+  /** The server copy the drafts were last seeded from; null until the first load. */
+  const [baseline, setBaseline] = useState<EmergencyContactDto[] | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
 
+  const dirty = baseline !== null && !sameDrafts(drafts, toDrafts(baseline));
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+
   useEffect(() => {
-    if (q.data) setDrafts(toDrafts(q.data.contacts));
+    if (!q.data || dirtyRef.current) return;
+    setBaseline(q.data.contacts);
+    setDrafts(toDrafts(q.data.contacts));
   }, [q.data]);
 
-  const set = (i: number, patch: Partial<Draft>) => {
-    setDrafts((ds) => ds.map((d, j) => (j === i ? { ...d, ...patch } : d)));
-    if (message && !message.ok) setMessage(null);
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+
+  /** Every user edit goes through here, so a stale "Saved." or error never outlives the change it described. */
+  const edit = (next: (ds: Draft[]) => Draft[]) => {
+    setDrafts(next);
+    setMessage(null);
   };
+  const set = (i: number, patch: Partial<Draft>) => edit((ds) => ds.map((d, j) => (j === i ? { ...d, ...patch } : d)));
 
   async function save() {
     const problem = precheck(drafts);
@@ -112,7 +163,7 @@ export function EmergencyContactsCard({ kinfolkId }: { kinfolkId: string | undef
     setSaving(true);
     setMessage(null);
     try {
-      await saveEmergencyContacts({
+      const res = await saveEmergencyContacts({
         ...(kinfolkId !== undefined ? { kinfolkId } : {}),
         contacts: drafts.map((d) => ({
           name: d.name.trim(),
@@ -120,8 +171,14 @@ export function EmergencyContactsCard({ kinfolkId }: { kinfolkId: string | undef
           relationship: d.relationship.trim() === '' ? null : d.relationship.trim(),
         })),
       });
+      // The reply is what the server stored (E.164 phones, trimmed names). Seed
+      // from it and put it in the cache; no refetch, so nothing can race it.
+      setBaseline(res.contacts);
+      setDrafts(toDrafts(res.contacts));
+      queryClient.setQueryData<ListEmergencyContactsResult>(queryKey, (old) =>
+        old ? { ...old, contacts: res.contacts, legacy: false } : old,
+      );
       setMessage({ text: 'Saved.', ok: true });
-      void queryClient.invalidateQueries({ queryKey: ['emergencyContacts', kinfolkId] });
     } catch (err) {
       setMessage({ text: err instanceof Error && err.message ? err.message : 'The Emergency Contacts were not saved. Try again.', ok: false });
     } finally {
@@ -204,7 +261,7 @@ export function EmergencyContactsCard({ kinfolkId }: { kinfolkId: string | undef
                       className="btn ghost"
                       aria-label={`Call ${d.name.trim() || 'this contact'} first`}
                       onClick={() =>
-                        setDrafts((ds) => {
+                        edit((ds) => {
                           const chosen = ds[i];
                           return chosen === undefined ? ds : [chosen, ...ds.filter((_, j) => j !== i)];
                         })
@@ -218,7 +275,7 @@ export function EmergencyContactsCard({ kinfolkId }: { kinfolkId: string | undef
                       type="button"
                       className="btn ghost"
                       aria-label={`Remove Emergency Contact ${i + 1}`}
-                      onClick={() => setDrafts((ds) => ds.filter((_, j) => j !== i))}
+                      onClick={() => edit((ds) => ds.filter((_, j) => j !== i))}
                     >
                       Remove
                     </button>
@@ -227,9 +284,14 @@ export function EmergencyContactsCard({ kinfolkId }: { kinfolkId: string | undef
               )}
             </fieldset>
           ))}
+          {dirty && (
+            <p className="sub ec-unsaved" data-testid="ec-unsaved" role="status">
+              Unsaved changes
+            </p>
+          )}
           <div className="contactactions ec-actions">
             {drafts.length < MAX_CONTACTS && (
-              <button type="button" className="btn ghost" disabled={saving} onClick={() => setDrafts((ds) => [...ds, { ...EMPTY_DRAFT }])}>
+              <button type="button" className="btn ghost" disabled={saving} onClick={() => edit((ds) => [...ds, { ...EMPTY_DRAFT }])}>
                 Add a second Emergency Contact
               </button>
             )}
