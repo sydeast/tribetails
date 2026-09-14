@@ -43,6 +43,8 @@ make_repo() {
   mkdir -p "$dir/scripts" "$dir/mytribe"
 
   cp "$HERE/release-bg.sh" "$dir/scripts/"
+  # The wrapper sources the resume rule it shares with release.sh (#840).
+  cp "$HERE/release-progress.sh" "$dir/scripts/"
 
   cat > "$dir/scripts/release.sh" <<'STUB'
 #!/usr/bin/env bash
@@ -57,6 +59,10 @@ STUB
   chmod +x "$dir/scripts/release.sh"
 
   printf '{"indexes":[]}\n' > "$dir/mytribe/firestore.indexes.json"
+
+  # The same ignores the real repo has. The resume rule requires a clean tree,
+  # so without these the untracked .release-state alone would read as dirty.
+  printf '.release-state\n.release-progress\n.release-logs/\n' > "$dir/.gitignore"
 
   ( cd "$dir"
     git init -q -b main .
@@ -229,6 +235,70 @@ else
   bad "cwd leaked into where the release ran"; printf '%s\n' "$OUT5"
 fi
 wait_for_stub "$D5"
+
+# ---------------------------------------------------------------------------
+# 6. A RESUMED release (#840). The operator's documented command is deploy:bg.
+#    When an earlier run of this exact commit passed the index step and stopped
+#    later, .release-state still names the previous release, so the index diff
+#    says "changed". The wrapper must let that resume through, and only that.
+# ---------------------------------------------------------------------------
+
+# index_change_repo: a repo whose HEAD adds an index since .release-state.
+index_change_repo() {
+  local d
+  d="$(make_repo)"
+  ( cd "$d"
+    printf '{"indexes":[{"collectionGroup":"bookings"}]}\n' > mytribe/firestore.indexes.json
+    git add -A && git commit -qm "add an index" ) >/dev/null 2>&1
+  printf '%s' "$d"
+}
+
+D6="$(index_change_repo)"
+( cd "$D6" && printf '%s indexes\n' "$(git rev-parse HEAD)" > .release-progress )
+OUT6="$(cd "$D6" && bash scripts/release-bg.sh 2>&1)"
+RC6=$?
+if [ "$RC6" -eq 0 ] && has "$OUT6" "release started: pid" && has "$OUT6" "resumed: an earlier run"; then
+  ok "a resumed run with changed indexes proceeds, and says it is resuming"
+else
+  bad "a resumed run was refused; rc=$RC6"; printf '%s\n' "$OUT6"
+fi
+if has "$OUT6" "on your say-so"; then
+  bad "a resumed run claimed RELEASE_BG_FORCE"
+else
+  ok "a resumed run is not reported as forced"
+fi
+wait_for_stub "$D6"
+
+# The record names the PREVIOUS commit: a different sha never resumes.
+D7="$(index_change_repo)"
+( cd "$D7" && printf '%s indexes\n' "$(git rev-parse HEAD~1)" > .release-progress )
+OUT7="$(cd "$D7" && bash scripts/release-bg.sh 2>&1)"
+RC7=$?
+if [ "$RC7" -ne 0 ] && has "$OUT7" "REFUSED" && [ -z "$(ls "$D7"/.release-logs/release-*.log 2>/dev/null)" ]; then
+  ok "index progress recorded for a different commit still refuses"
+else
+  bad "a different commit's progress let changed indexes through; rc=$RC7"; printf '%s\n' "$OUT7"
+fi
+
+D8="$(index_change_repo)"
+( cd "$D8" && printf '%s indexes\n' "$(git rev-parse HEAD)" > .release-progress )
+OUT8="$(cd "$D8" && RELEASE_NO_RESUME=1 bash scripts/release-bg.sh 2>&1)"
+RC8=$?
+if [ "$RC8" -ne 0 ] && has "$OUT8" "REFUSED"; then
+  ok "RELEASE_NO_RESUME=1 still refuses changed indexes"
+else
+  bad "RELEASE_NO_RESUME=1 let changed indexes through; rc=$RC8"; printf '%s\n' "$OUT8"
+fi
+
+D9="$(index_change_repo)"
+( cd "$D9" && printf '%s indexes\n' "$(git rev-parse HEAD)" > .release-progress && printf 'x\n' > stray.txt )
+OUT9="$(cd "$D9" && bash scripts/release-bg.sh 2>&1)"
+RC9=$?
+if [ "$RC9" -ne 0 ] && has "$OUT9" "REFUSED"; then
+  ok "a dirty tree never resumes, so changed indexes still refuse"
+else
+  bad "a dirty tree let changed indexes through; rc=$RC9"; printf '%s\n' "$OUT9"
+fi
 
 echo
 echo "release-bg tests: $PASS passed, $FAIL failed"

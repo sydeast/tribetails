@@ -272,6 +272,15 @@ if there is no baseline to compare against, it refuses and sends you to the
 foreground run. `RELEASE_BG_FORCE=1` overrides once you have checked the console
 yourself, and says in its output that it did.
 
+One exception, and it needs no flag: a **resumed** release. When an earlier run
+of the exact commit at HEAD got past step 3 and stopped later, `.release-progress`
+records the index step, the rerun skips steps 2 and 3, and there is no prompt
+left to skip. `.release-state` still names the previous release until a run
+finishes, so the diff says "changed" anyway; the wrapper lets that run through
+and prints `resumed:` instead of refusing. It uses the same rule as the release
+(exact HEAD sha, clean tree, `RELEASE_NO_RESUME` unset), from the one copy in
+`scripts/release-progress.sh`. See "A stopped release resumes on the same commit".
+
 | # | Step | Why here |
 |---|---|---|
 | 0 | Preconditions | Clean tree, on `main`, synced with origin. Shipping uncommitted or stale code is the classic incident. Falls back to `gh` if the SSH agent is down, since it must verify the fact, not one transport. |
@@ -586,8 +595,10 @@ right names, survives, and refuses honestly when the quota never lifts. It runs
 the real script against a throwaway repo with `gh`, `gcloud`, `firebase`, `curl`
 and `npm` stubbed, plus a fake `gradlew` per Android app so the two-app build
 and distribution path runs wet without an SDK. It also covers the admin deploy
-retry and its error classifier, and the per-commit resume (#840). 117 cases.
-Run it after touching `scripts/release.sh`.
+retry and its error classifier, and the per-commit resume (#840). 118 cases.
+Run it after touching `scripts/release.sh`. `bash scripts/release-bg.test.sh`
+(19 cases) covers the detached wrapper, including a resumed run with changed
+indexes.
 
 Knobs, all off by default:
 
@@ -674,8 +685,17 @@ skip prints a `RESUMED:` line naming the commit. The file is deleted once the
 release finishes and `.release-state` is written. A dry run neither writes nor
 deletes it. `RELEASE_FORCE_FUNCTIONS=1` also overrides the step 5 skip.
 
+A resumed step 5 deploys nothing, but it still names functions that left the
+code since the last release, with the `firebase functions:delete` line for each.
+It recomputes the list from the built `lib/` and `.release-functions`, which is
+two file reads and nothing else.
+
 A different commit never skips anything: its sha is not in the file, and the
 first step it records clears the old lines.
+
+The rule lives in `scripts/release-progress.sh`, sourced by both `release.sh`
+and `release-bg.sh`, so `npm run deploy:bg` resumes the same way the foreground
+run does.
 
 **The stop message names what is live.** A stopped run lists every step recorded
 for the commit:

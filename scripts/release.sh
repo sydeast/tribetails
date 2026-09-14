@@ -206,7 +206,12 @@ trap 'code=$?; cleanup_client_env; if [ "$code" -ne 0 ]; then red ""; red "RELEA
 #
 # Written under the same DRY_RUN rule as .release-state, because it is the same
 # kind of file: an input that makes a later run skip work.
-PROGRESS_FILE="$ROOT/.release-progress"
+#
+# The file format and the skip rule (progress_mark, progress_done) live in
+# scripts/release-progress.sh, shared with scripts/release-bg.sh so the two
+# cannot disagree about when a step may be skipped. It sets PROGRESS_FILE.
+# shellcheck source=scripts/release-progress.sh
+. "$ROOT/scripts/release-progress.sh"
 
 progress_label() {
   case "$1" in
@@ -220,38 +225,6 @@ progress_label() {
     android-*)                 printf 'android %s, distributed (step 6b)' "${1#android-}" ;;
     *)                         printf '%s' "$1" ;;
   esac
-}
-
-# progress_mark <step>: record that <step> completed for HEAD. Lines for any
-# other commit are dropped first, so the file only ever describes one release.
-progress_mark() {
-  local key="$1" sha
-  if [ "$DRY_RUN" = "1" ]; then
-    return 0
-  fi
-  sha="$(git rev-parse HEAD 2>/dev/null || true)"
-  [ -n "$sha" ] || return 0
-  if [ -f "$PROGRESS_FILE" ] &&
-     ! awk -v s="$sha" '$1 != s { other = 1 } END { exit other ? 1 : 0 }' "$PROGRESS_FILE" 2>/dev/null; then
-    : > "$PROGRESS_FILE" 2>/dev/null || true
-  fi
-  if ! grep -qxF "$sha $key" "$PROGRESS_FILE" 2>/dev/null; then
-    printf '%s %s\n' "$sha" "$key" >> "$PROGRESS_FILE" 2>/dev/null ||
-      ylw "could not record '$key' in .release-progress; a rerun will redo it."
-  fi
-  return 0
-}
-
-# progress_done <step>: true only when <step> is recorded for HEAD, the tree is
-# clean, and RELEASE_NO_RESUME is not set.
-progress_done() {
-  local key="$1" sha dirty
-  [ "${RELEASE_NO_RESUME:-0}" = "1" ] && return 1
-  [ -f "$PROGRESS_FILE" ] || return 1
-  dirty="$(git status --porcelain 2>/dev/null)" || return 1
-  [ -z "$dirty" ] || return 1
-  sha="$(git rev-parse HEAD 2>/dev/null)" || return 1
-  grep -qxF "$sha $key" "$PROGRESS_FILE" 2>/dev/null
 }
 
 # progress_report_stop: the rest of the stop message. Names every step recorded
@@ -595,6 +568,23 @@ deploy_admin_codebase() {
     fi
     attempt=$((attempt + 1))
   done
+}
+
+# report_removed_functions <fleet-file>: name every function the last release
+# shipped (.release-functions) that is no longer in <fleet-file>, the functions
+# the built lib/ exports now. Reads two files and prints; deletes nothing and
+# deploys nothing. A function so the resumed step 5, which deploys nothing, can
+# still say it (#840), with the same text the deploy path always printed.
+report_removed_functions() {
+  local fleet="$1" manifest="$ROOT/.release-functions" gone g
+  if [ ! -s "$manifest" ] || [ ! -s "$fleet" ]; then
+    return 0
+  fi
+  gone="$(grep -vxF -f "$fleet" "$manifest" 2>/dev/null || true)"
+  [ -n "$gone" ] || return 0
+  ylw "functions: these were deployed by the last release and are no longer"
+  ylw "  in the code. Nothing here deletes them, so they are still serving:"
+  for g in $gone; do ylw "    firebase functions:delete $g --project $PROJECT"; done
 }
 
 # verify_deployed_fleet <names-file> <started-epoch-ms>: did the deploy deliver?
@@ -1527,6 +1517,19 @@ if [ "$RESUMED_FUNCTIONS" = "1" ]; then
   # step 1 just built from this same commit; if that fails the manifest is left
   # as it was, which is what the unchanged-skip below does too.
   FLEET_LIST="$(node "$ROOT/scripts/function-targets.js" 2>/dev/null || true)"
+  # The removed-functions check normally runs inside the deploy branch below,
+  # so a resume would skip it. It only reads lib/ and the manifest, so it runs
+  # here too, from the same list.
+  if [ -n "$FLEET_LIST" ]; then
+    RESUME_FLEET="$(mktemp)"
+    printf '%s\n' "$FLEET_LIST" > "$RESUME_FLEET"
+    report_removed_functions "$RESUME_FLEET"
+    rm -f "$RESUME_FLEET"
+  else
+    ylw "  Could not enumerate the functions, so functions removed from the code"
+    ylw "  since the last release were not re-checked. To list them:"
+    ylw "    node scripts/function-targets.js | grep -vxF -f /dev/stdin .release-functions"
+  fi
 elif [ "$FUNCTIONS_CHANGED" -eq 0 ]; then
   ylw "SKIPPED: mytribe/functions is unchanged since the last release"
   ylw "  ($(git rev-parse --short "$LAST_RELEASED")). The deployed functions are"
@@ -1623,15 +1626,7 @@ else
   # a name that has since left the code is named here with the command that
   # removes it. Reported, never done automatically: deleting a live function is
   # not something a release should decide on its own.
-  FN_MANIFEST="$ROOT/.release-functions"
-  if [ -s "$FN_MANIFEST" ]; then
-    GONE="$(grep -vxF -f "$FN_WORK/fleet" "$FN_MANIFEST" 2>/dev/null || true)"
-    if [ -n "$GONE" ]; then
-      ylw "functions: these were deployed by the last release and are no longer"
-      ylw "  in the code. Nothing here deletes them, so they are still serving:"
-      for g in $GONE; do ylw "    firebase functions:delete $g --project $PROJECT"; done
-    fi
-  fi
+  report_removed_functions "$FN_WORK/fleet"
 
   # WHICH OF THEM THIS RELEASE ACTUALLY HAS TO TOUCH.
   #

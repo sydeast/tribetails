@@ -33,6 +33,14 @@ grn() { printf '\033[32m%s\033[0m\n' "$*"; }
 ylw() { printf '\033[33m%s\033[0m\n' "$*"; }
 cyan() { printf '\033[36m%s\033[0m\n' "$*"; }
 
+# The resume rule release.sh skips steps on (#840), shared rather than copied so
+# this wrapper and the release cannot disagree about it.
+# shellcheck source=scripts/release-progress.sh
+. "$ROOT/scripts/release-progress.sh" || {
+  red "REFUSED: cannot load scripts/release-progress.sh."
+  exit 1
+}
+
 LOG_DIR="$ROOT/.release-logs"
 PIDFILE="$LOG_DIR/current.pid"
 mkdir -p "$LOG_DIR"
@@ -77,7 +85,20 @@ else
   INDEXES_CHANGED=1
 fi
 
-if [ "$INDEXES_CHANGED" = "1" ] && [ "${RELEASE_BG_FORCE:-0}" != "1" ]; then
+# A RESUMED RUN HAS ALREADY ANSWERED THE INDEX QUESTION (#840). When an earlier
+# run of this exact commit got past step 3 and stopped later, release.sh
+# recorded the index step, and the rerun skips steps 2 and 3, so there is no
+# prompt left for a detached run to skip. The diff above still says "changed",
+# because .release-state names the previous release until a run finishes. Without
+# this, the operator's documented command (npm run deploy:bg) could not resume
+# the 2026-09-13 release at all. progress_done is the same rule release.sh skips
+# on: exact HEAD sha, clean tree, RELEASE_NO_RESUME unset.
+INDEXES_RESUMED=0
+if [ "$INDEXES_CHANGED" = "1" ] && progress_done indexes; then
+  INDEXES_RESUMED=1
+fi
+
+if [ "$INDEXES_CHANGED" = "1" ] && [ "$INDEXES_RESUMED" = "0" ] && [ "${RELEASE_BG_FORCE:-0}" != "1" ]; then
   red "REFUSED: this release changes Firestore indexes (or the baseline is unknown)."
   red ""
   red "  Step 3 asks you to confirm every index reads Enabled before the code"
@@ -118,6 +139,11 @@ cyan ""
 cyan "  watch:   tail -f $LOG"
 cyan "  status:  ps -p $PID"
 cyan "  stop:    kill $PID"
-[ "$INDEXES_CHANGED" = "1" ] && ylw "  RELEASE_BG_FORCE=1: index confirmation was skipped on your say-so."
+if [ "$INDEXES_RESUMED" = "1" ]; then
+  ylw "  resumed: an earlier run of $SHA deployed the indexes and passed step 3;"
+  ylw "  this run skips steps 2 and 3 (RELEASE_NO_RESUME=1 redoes them)."
+elif [ "$INDEXES_CHANGED" = "1" ]; then
+  ylw "  RELEASE_BG_FORCE=1: index confirmation was skipped on your say-so."
+fi
 cyan ""
 cyan "It runs 20 to 40 minutes and survives this shell closing."

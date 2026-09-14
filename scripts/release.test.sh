@@ -1528,6 +1528,9 @@ else
 fi
 
 # Resume: the SAME commit, the secret fixed. Nothing already live redeploys.
+# A manifest from an earlier release that still lists a function since removed
+# from the code, so the resumed step 5 has something to report.
+printf 'alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\nretiredFn\n' > "$DB/repo/.release-functions"
 RCB2="$(run_release "$DB" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DB/calls2")"
 if [ "$RCB2" = "0" ]; then
   ok "a rerun of the same commit completes"
@@ -1538,6 +1541,13 @@ if [ -z "$(fn_deploys "$DB/calls2")" ] && grep -q "RESUMED: SKIPPED the mytribe 
   ok "the rerun skips the already-verified mytribe functions, and says so"
 else
   bad "the rerun redeployed '$(fn_deploys "$DB/calls2" | tr '\n' ' ')'"
+fi
+if grep -q "firebase functions:delete retiredFn" "$DB/out" &&
+   ! grep -q "functions:delete" "$DB/calls2" 2>/dev/null &&
+   ! grep -q "firebase functions:delete alpha" "$DB/out"; then
+  ok "the resumed step 5 still names a function removed from the code, and deletes nothing"
+else
+  bad "the resumed step 5 did not report the removed function"; grep -n "retiredFn\|functions:delete" "$DB/out" "$DB/calls2"
 fi
 if grep -q 'firestore:indexes\|firestore:rules' "$DB/calls2"; then
   bad "the rerun redeployed indexes or rules it had already shipped"
