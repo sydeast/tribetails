@@ -114,10 +114,16 @@ export async function saveTribeProfileHandler(
       if (!isEcho) {
         if (await hasKinfolkPerm(uid, kinfolkId, 'home_access', isAdmin, 'saveTribeProfile')) {
           // Validated before anything is written; a refusal throws out of this call.
-          const contacts = parseEmergencyContactsInput([
-            sent,
+          // Only the slot being written is parsed. A stored slot 2 is carried
+          // through as stored: one that no longer parses (a hand-typed phone the
+          // migration carried) must not block a slot 1 edit. Both slots still go
+          // through the outside-the-household and different-phone checks.
+          const [slot1Input] = parseEmergencyContactsInput([sent]);
+          if (slot1Input === undefined) throw new HttpsError('invalid-argument', 'Invalid arguments.');
+          const contacts = [
+            slot1Input,
             ...current.slice(1).map((c) => ({ name: c.name, phone: c.phone, relationship: c.relationship })),
-          ]);
+          ];
           emergencyContactWrite = await prepareEmergencyContactsSave(firestore, kinfolkId, contacts);
           outcome = 'applied';
         } else {

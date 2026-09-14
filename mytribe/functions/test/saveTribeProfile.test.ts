@@ -244,13 +244,17 @@ describe('saveTribeProfileHandler: an old client editing the Emergency Contact',
     ],
   };
 
-  function oldClientHousehold(member: keyof typeof MEMBERS, familiesFields: Array<Record<string, string>> = [K1]) {
+  function oldClientHousehold(
+    member: keyof typeof MEMBERS,
+    familiesFields: Array<Record<string, string>> = [K1],
+    kinfolk: Record<string, unknown> = KINFOLK,
+  ) {
     return buildDbMock({
       docs: {
         'clients/u9': { kinfolkIds: ['3'] },
         'families/3': { displayName: 'The Foster', customFields: familiesFields },
         'families/3/members/u9': MEMBERS[member],
-        'kinfolk/3': KINFOLK,
+        'kinfolk/3': kinfolk,
       },
       queryDocs: { 'families/3/members': [{ id: 'u9', data: MEMBERS[member] }] },
     });
@@ -288,6 +292,20 @@ describe('saveTribeProfileHandler: an old client editing the Emergency Contact',
         payload: expect.objectContaining({ fields: expect.arrayContaining(['emergencyContacts']) }),
       }),
     );
+  });
+
+  it('only the slot being written is validated: a stored slot 2 with an invalid phone is carried through unchanged', async () => {
+    const withBadSlot2 = {
+      ...KINFOLK,
+      emergencyContacts: [KINFOLK.emergencyContacts[0], { name: 'Lee Park', phone: 'ask the neighbour', relationship: null, recordedAt: T2, updatedAt: T2 }],
+    };
+    const ctx = oldClientHousehold('primary', [K1], withBadSlot2);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(save({ customFields: [K1, ...ec('Sam Ortiz', '805-555-0111')] })).resolves.toEqual({ ok: true });
+    const stored = ctx.writes.find((w) => w.path === 'kinfolk/3')?.data.emergencyContacts as Array<Record<string, any>>;
+    expect(stored[0]).toMatchObject({ name: 'Sam Ortiz', phone: '+18055550111', relationship: null });
+    expect(stored[1]).toMatchObject({ name: 'Lee Park', phone: 'ask the neighbour', relationship: null });
+    expect(stored[1]!.recordedAt).toEqual(T2);
   });
 
   it('a secondary with Home access edits it the same way, audited as SECONDARY', async () => {

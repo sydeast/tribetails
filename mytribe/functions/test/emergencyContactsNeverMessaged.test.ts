@@ -78,12 +78,16 @@ describe('Emergency Contacts are never a recipient (#829)', () => {
       'lib/emergencyContacts.ts',
       'portal/emergencyContacts.ts',
       'index.ts',
-      // #843 gates writes to the OLDER, unrelated `families/{id}.customFields`
-      // generic profile fields (a name/value bag the portal's Tribe Profile
-      // screen predates this feature with); it reads no phone into any
-      // recipient and never touches `kinfolk/{id}.emergencyContacts` or the
+      // The two portal Tribe Profile callables speak the legacy
+      // emergencyContact* customFields rows that old clients (portal Android
+      // before Task 10, cached portal web bundles) still show and send.
+      // saveTribeProfile strips them and applies an old client's edit through
+      // portal/emergencyContacts.ts; getMyTribeProfile serves kinfolk slot 1
+      // back as those rows. Both answer only the signed-in household member who
+      // called, and neither feeds a phone into any recipient or the
       // audience/notification code this test guards.
       'portal/saveTribeProfile.ts',
+      'portal/getMyTribeProfile.ts',
     ]);
     const offenders = walk(src)
       .map((f) => relative(src, f).split('\\').join('/'))

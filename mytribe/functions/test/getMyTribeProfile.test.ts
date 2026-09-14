@@ -223,3 +223,68 @@ describe('getMyTribeProfileHandler', () => {
     expect(primary.canEditHomeDetails).toBe(true);
   });
 });
+
+/**
+ * #829, old clients. Portal Android before Task 10 and cached portal web bundles
+ * show and re-send the Emergency Contact as emergencyContact* rows in
+ * profile.customFields. Those rows now come from kinfolk.emergencyContacts slot 1,
+ * the real store, so an old client shows the current contact and its echo on
+ * save matches slot 1. The families copy is served only until the migration has
+ * given the kinfolk a contact.
+ */
+describe('getMyTribeProfileHandler: legacy Emergency Contact rows for old clients', () => {
+  const STALE_FAMILIES_EC = [
+    { key: 'k1', label: 'Anniversary', value: 'Oct 14' },
+    { key: 'emergencyContactName', label: 'Emergency Contact', value: 'Old Name' },
+    { key: 'emergencyContactPhone', label: 'Emergency Contact Phone', value: '555-0133' },
+    { key: 'emergencyContactRelation', label: 'Emergency Contact Relation', value: 'Neighbour' },
+  ];
+
+  async function profileFor(docs: Record<string, unknown>) {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] }, 'families/3/members/u1': PRIMARY_MEMBER, ...docs } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyTribeProfileHandler } = await import('../src/portal/getMyTribeProfile');
+    return getMyTribeProfileHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+  }
+
+  it('serves kinfolk slot 1 as the legacy rows, overriding a different families copy, and keeps every other field', async () => {
+    const res = await profileFor({
+      'families/3': { displayName: 'The Foster', customFields: STALE_FAMILIES_EC },
+      'kinfolk/3': {
+        firstName: 'Dana',
+        emergencyContacts: [
+          { name: 'Rae Mercer', phone: '+18055550199', relationship: 'Sister', recordedAt: null, updatedAt: null },
+          { name: 'Lee Park', phone: '+18055550177', relationship: null, recordedAt: null, updatedAt: null },
+        ],
+      },
+    });
+    expect(res.profile.customFields).toEqual([
+      { key: 'k1', label: 'Anniversary', value: 'Oct 14' },
+      { key: 'emergencyContactName', label: 'Emergency Contact', value: 'Rae Mercer' },
+      { key: 'emergencyContactPhone', label: 'Emergency Contact Phone', value: '+18055550199' },
+      { key: 'emergencyContactRelation', label: 'Emergency Contact Relation', value: 'Sister' },
+    ]);
+  });
+
+  it('a slot 1 with no relationship serves no relation row, even when the families copy had one', async () => {
+    const res = await profileFor({
+      'families/3': { displayName: 'The Foster', customFields: STALE_FAMILIES_EC },
+      'kinfolk/3': { emergencyContacts: [{ name: 'Lee Park', phone: '+18055550177', relationship: null, recordedAt: null, updatedAt: null }] },
+    });
+    expect(res.profile.customFields.map((f) => f.key)).toEqual(['k1', 'emergencyContactName', 'emergencyContactPhone']);
+    expect(JSON.stringify(res.profile.customFields)).not.toContain('Neighbour');
+  });
+
+  it('with no kinfolk contacts yet (not migrated), serves the families copy as stored', async () => {
+    const res = await profileFor({
+      'families/3': { displayName: 'The Foster', customFields: STALE_FAMILIES_EC },
+      'kinfolk/3': { firstName: 'Dana' },
+    });
+    expect(res.profile.customFields).toEqual(STALE_FAMILIES_EC);
+  });
+
+  it('with neither a kinfolk contact nor a families copy, serves no Emergency Contact rows', async () => {
+    const res = await profileFor({ 'families/3': FAMILY_DOC, 'kinfolk/3': { firstName: 'Dana' } });
+    expect(res.profile.customFields.map((f) => f.key)).toEqual(['k1']);
+  });
+});
