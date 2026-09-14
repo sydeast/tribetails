@@ -248,6 +248,11 @@ export const onFamilyKinWrite = onDocumentWritten(
           key: key as never,
           recipientUid: recipientUid ?? '',
           data: { kinfolkId, kinId, ...extra },
+          // #832: one write is one event. The Firestore event id is stable across
+          // redeliveries of this write and new for the next one, so a pet marked
+          // inactive, restored and marked inactive again is three notifications'
+          // worth of events, not one. (pets.updated is debounced and exempt.)
+          dedupeKey: `kin:${kinfolkId}:${kinId}:${key}:event:${event.id}`,
         });
       } catch (err) {
         logEvent({

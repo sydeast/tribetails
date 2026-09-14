@@ -209,7 +209,7 @@ class KinTaleReportViewModelTest {
         coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(emptyList())
         coEvery { mockKinCareRepo.createKinCareReport(any()) } returns Result.success("rep-1")
         coEvery { mockKinCareRepo.updateKinCareReportFields(any(), any()) } returns Result.success(Unit)
-        coEvery { mockNotifier.notify(VisitNotifier.Event.REPORT_SENT, any(), any(), any()) } returns
+        coEvery { mockNotifier.notify(VisitNotifier.Event.REPORT_SENT, any(), any(), any(), any(), any()) } returns
             Result.success(VisitNotifier.DispatchResult(dispatchIds = listOf("n8n_77", "n8n_88"), suppressed = false))
 
         val viaSlot = slot<String>()
@@ -229,6 +229,11 @@ class KinTaleReportViewModelTest {
         assertEquals("catalog", viaSlot.captured)
         assertEquals("n8n_77", receiptSlot.captured)
         assertNull(vm.uiState.value.error)
+        // #832: the dispatch names the report it announces, so a second KinTale
+        // for the same visit is its own notification.
+        coVerify(exactly = 1) {
+            mockNotifier.notify(VisitNotifier.Event.REPORT_SENT, any(), any(), any(), any(), "rep-1")
+        }
     }
 
     @Test
@@ -240,7 +245,7 @@ class KinTaleReportViewModelTest {
         coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(emptyList())
         coEvery { mockKinCareRepo.createKinCareReport(any()) } returns Result.success("rep-1")
         coEvery { mockKinCareRepo.updateKinCareReportFields(any(), any()) } returns Result.success(Unit)
-        coEvery { mockNotifier.notify(VisitNotifier.Event.REPORT_SENT, any(), any(), any()) } returns
+        coEvery { mockNotifier.notify(VisitNotifier.Event.REPORT_SENT, any(), any(), any(), any(), any()) } returns
             Result.failure(IllegalStateException("session not booking-originated"))
 
         val vm = buildViewModel()

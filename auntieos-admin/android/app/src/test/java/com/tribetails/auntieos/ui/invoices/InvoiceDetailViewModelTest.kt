@@ -90,6 +90,49 @@ class InvoiceDetailViewModelTest {
         assertTrue(state.error!!.isNotBlank())
     }
 
+    // ── #832: the already-sent answer ────────────────────────────────────────
+    @Test
+    fun `sendReminder refused as already sent says when, not Reminder sent, and moves only the stamp`() = runTest {
+        val invoice = Invoice(id = "inv832", invoiceNumber = "INV-832", kinfolkName = "The Whitfields", total = 40.0, amountDue = 40.0)
+        coEvery { invoiceRepository.getInvoiceById("inv832") } returns Result.success(invoice)
+        viewModel.loadInvoice("inv832")
+        advanceUntilIdle()
+
+        val earlier = 1_757_840_400_000L
+        coEvery { invoiceRepository.sendInvoiceReminder("inv832", any()) } returns Result.success(
+            com.tribetails.auntieos.domain.ReminderOutcome(sent = false, reason = "recent", lastReminderAtMs = earlier, nextReminderAllowedAtMs = earlier + 86_400_000L),
+        )
+        viewModel.sendReminder()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertFalse(state.sendingReminder)
+        assertTrue(state.toastVisible)
+        assertTrue(state.toastMessage!!.startsWith("Not sent: a reminder already went out"))
+        assertTrue(state.toastIsError)
+        assertEquals(earlier, state.invoice!!.reminderNotifiedAtMs)
+        // Every other field survives: a copy of the loaded model, never a rebuild.
+        assertEquals(invoice.copy(reminderNotifiedAtMs = earlier), state.invoice)
+    }
+
+    @Test
+    fun `sendReminder is pessimistic, a second tap while in flight fires nothing`() = runTest {
+        val invoice = Invoice(id = "inv833", invoiceNumber = "INV-833")
+        coEvery { invoiceRepository.getInvoiceById("inv833") } returns Result.success(invoice)
+        viewModel.loadInvoice("inv833")
+        advanceUntilIdle()
+        coEvery { invoiceRepository.sendInvoiceReminder("inv833", any()) } returns Result.success(
+            com.tribetails.auntieos.domain.ReminderOutcome(sent = false, reason = "recent", lastReminderAtMs = 1L, nextReminderAllowedAtMs = 2L),
+        )
+
+        viewModel.sendReminder()
+        assertTrue(viewModel.uiState.value.sendingReminder)
+        viewModel.sendReminder()
+        advanceUntilIdle()
+
+        io.mockk.coVerify(exactly = 1) { invoiceRepository.sendInvoiceReminder("inv833", any()) }
+    }
+
     @Test
     fun `loadInvoice sets isLoading then clears it`() = runTest {
         val invoice = Invoice(id = "inv999", invoiceNumber = "INV-999")

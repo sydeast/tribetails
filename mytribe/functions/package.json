@@ -39,6 +39,7 @@
     "backfill:stripe-payment-cents": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/backfillStripePaymentAmountCents.ts",
     "repair:blocked-slots": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/repairBlockedTimeSlotShape.ts",
     "repair:business-timezone": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/repairBusinessTimeZone.ts",
+    "report:duplicate-notifications": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/reportDuplicateNotifications.ts",
     "check:voice-secrets": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/checkVoiceSecrets.ts",
     "seed:notif-templates": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/seedNotificationTemplates.ts",
     "seed:demo-kinfolk": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/seedDemoKinfolk.ts"

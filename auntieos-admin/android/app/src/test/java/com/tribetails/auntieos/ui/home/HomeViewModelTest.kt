@@ -195,9 +195,71 @@ class HomeViewModelTest {
         coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(TestFixtures.session1))
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
         coEvery { mockRepo.getBusinessSettings() } returns Result.success(settings)
-        coEvery { mockKinCareRepo.markSessionArrived(any(), any()) } returns Result.success(Unit)
+        coEvery { mockKinCareRepo.markSessionArrived(any(), any()) } returns Result.success(ARRIVED_AT)
         coEvery { mockRepo.logActivity(any()) } returns Result.success(Unit)
         return context
+    }
+
+    // ── #832: the household notification carries the time just stamped ──────
+
+    @Test
+    fun `arriving notifies with the arrivedAt it just wrote`() = runTest(testDispatcher) {
+        val context = arriveWithSettings(BusinessSettings())
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.arrived("ses1", context)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            mockNotifier.notify(VisitNotifier.Event.ARRIVED, any(), any(), any(), ARRIVED_AT, any())
+        }
+    }
+
+    @Test
+    fun `a re-arrival sends a new time, so the server treats it as a new notification`() = runTest(testDispatcher) {
+        val context = arriveWithSettings(BusinessSettings())
+        coEvery { mockKinCareRepo.markSessionArrived(any(), any()) } returnsMany
+            listOf(Result.success(ARRIVED_AT), Result.success(REARRIVED_AT))
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.arrived("ses1", context)
+        advanceUntilIdle()
+        vm.arrived("ses1", context)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { mockNotifier.notify(VisitNotifier.Event.ARRIVED, any(), any(), any(), ARRIVED_AT, any()) }
+        coVerify(exactly = 1) { mockNotifier.notify(VisitNotifier.Event.ARRIVED, any(), any(), any(), REARRIVED_AT, any()) }
+    }
+
+    @Test
+    fun `departing notifies with the departedAt it just wrote`() = runTest(testDispatcher) {
+        val context = arriveWithSettings(BusinessSettings())
+        coEvery { mockKinCareRepo.markSessionDeparted(any()) } returns Result.success(DEPARTED_AT)
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.departed("ses1", context)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            mockNotifier.notify(VisitNotifier.Event.DEPARTED, any(), any(), any(), DEPARTED_AT, any())
+        }
+    }
+
+    @Test
+    fun `the stamped time converts to the epoch millis the server names the notification by`() {
+        assertEquals(java.time.Instant.parse(ARRIVED_AT).toEpochMilli(), VisitNotifier.epochMillisOrNull(ARRIVED_AT))
+        assertNull(VisitNotifier.epochMillisOrNull(null))
+        assertNull(VisitNotifier.epochMillisOrNull(""))
+        assertNull(VisitNotifier.epochMillisOrNull("not a time"))
+    }
+
+    private companion object {
+        const val ARRIVED_AT = "2026-09-14T15:00:00Z"
+        const val REARRIVED_AT = "2026-09-14T15:03:00Z"
+        const val DEPARTED_AT = "2026-09-14T16:00:00Z"
     }
     @Test
     fun `arriving does NOT start tracking when auto-start is off`() = runTest(testDispatcher) {

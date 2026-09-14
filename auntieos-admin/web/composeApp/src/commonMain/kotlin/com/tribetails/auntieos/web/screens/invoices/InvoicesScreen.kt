@@ -39,7 +39,9 @@ import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Invoice
 import com.tribetails.auntieos.web.data.WriteResult
+import com.tribetails.auntieos.web.data.lastReminderLabel
 import com.tribetails.auntieos.web.data.mintInvoiceIdempotencyKey
+import com.tribetails.auntieos.web.data.reminderOutcomeMessage
 import com.tribetails.auntieos.web.data.mintQuoteIdempotencyKey
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
@@ -169,6 +171,13 @@ fun InvoicesScreen(
     var actionError by remember { mutableStateOf<String?>(null) }
 
     var actionNotice by remember { mutableStateOf<String?>(null) }
+    /**
+     * #832: the notice text of a reminder the server refused. The banner turns
+     * Warning only while the notice on screen IS that text, so any later action
+     * that sets its own notice gets its own (Success) tone without every call
+     * site having to clear a flag.
+     */
+    var reminderRefusalNotice by remember { mutableStateOf<String?>(null) }
 
     /**
      * #825: the submission each key was minted for, and the key. ONE KEY PER
@@ -217,12 +226,28 @@ fun InvoicesScreen(
         }
     }
 
-    val onSendReminder: (String) -> Unit = { invoiceId ->
+    /**
+     * #832: invoices with a reminder press still waiting on the server. The row
+     * button reads this to show "Sending..." and ignore further taps, so a
+     * double-tap cannot fire two calls (the server would refuse the second, but
+     * the operator should never have been able to send it).
+     */
+    var remindingIds by remember { mutableStateOf(emptySet<String>()) }
+
+    val onSendReminder: (String) -> Unit = onSendReminder@{ invoiceId ->
+        if (invoiceId in remindingIds) return@onSendReminder
+        remindingIds = remindingIds + invoiceId
         scope.launch {
             when (val r = client.sendInvoiceReminder(invoiceId)) {
                 is WriteResult.Err -> actionError = r.message
-                is WriteResult.Ok -> { actionError = null; actionNotice = "Reminder sent." }
+                is WriteResult.Ok -> {
+                    actionError = null
+                    val message = reminderOutcomeMessage(r.value)
+                    actionNotice = message
+                    reminderRefusalNotice = if (r.value.sent) null else message
+                }
             }
+            remindingIds = remindingIds - invoiceId
         }
     }
 
@@ -264,9 +289,10 @@ fun InvoicesScreen(
         }
 
         actionNotice?.let { msg ->
+            val refused = msg == reminderRefusalNotice
             AuntieBanner(
-                tone  = AuntieBannerTone.Success,
-                title = "Done",
+                tone  = if (refused) AuntieBannerTone.Warning else AuntieBannerTone.Success,
+                title = if (refused) "Reminder not sent" else "Done",
                 icon  = Lucide.ReceiptText,
                 onDismiss = { actionNotice = null },
                 body  = { Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim) },
@@ -346,6 +372,7 @@ fun InvoicesScreen(
                                 onReceipt = onReceipt,
                                 onSendReminder = onSendReminder,
                                 onReviewSend = onReviewSend,
+                                remindingIds = remindingIds,
                             )
                         }
                     }
@@ -550,6 +577,7 @@ private fun InvoiceList(
     onReceipt: (String) -> Unit,
     onSendReminder: (String) -> Unit,
     onReviewSend: (Invoice) -> Unit,
+    remindingIds: Set<String> = emptySet(),
 ) {
     Column {
         invoices.forEachIndexed { idx, invoice ->
@@ -560,6 +588,7 @@ private fun InvoiceList(
                 onReceipt = onReceipt,
                 onSendReminder = onSendReminder,
                 onReviewSend = onReviewSend,
+                reminding = invoice._id in remindingIds,
             )
             if (idx < invoices.lastIndex) {
                 Box(
@@ -581,6 +610,7 @@ private fun InvoiceRow(
     onReceipt: (String) -> Unit,
     onSendReminder: (String) -> Unit,
     onReviewSend: (Invoice) -> Unit,
+    reminding: Boolean = false,
 ) {
     val c = AuntieTheme.colors
     val quote   = invoiceIsQuote(invoice)
@@ -674,6 +704,15 @@ private fun InvoiceRow(
                 style = AuntieTheme.typography.mono.copy(fontSize = 11.sp),
                 color = if (overdue) c.error else c.textDim,
             )
+            // #832: when the household was last chased about this bill, so the
+            // operator can see it before pressing Send reminder, not after.
+            if (unpaid && !quote && !draft) {
+                Text(
+                    text  = "reminded ${lastReminderLabel(invoice.reminderNotifiedAtMs)}",
+                    style = AuntieTheme.typography.mono.copy(fontSize = 11.sp),
+                    color = c.textDim,
+                )
+            }
             val visitCount = invoice.sessionIds.size
             if (visitCount > 0) {
                 Text(
@@ -702,6 +741,7 @@ private fun InvoiceRow(
                 onReceipt = { onReceipt(invoice._id) },
                 onSendReminder = { onSendReminder(invoice._id) },
                 onReviewSend = { onReviewSend(invoice) },
+                reminding = reminding,
             )
         }
     }
@@ -723,6 +763,7 @@ private fun RowAction(
     onReceipt: () -> Unit,
     onSendReminder: () -> Unit,
     onReviewSend: () -> Unit,
+    reminding: Boolean = false,
 ) {
     val c = AuntieTheme.colors
     val flags = LocalFeatureFlags.current
@@ -731,7 +772,11 @@ private fun RowAction(
         // payable action (no reminder/receipt), so the row carries no action button.
         quote -> { /* status pill alone conveys the quote state */ }
         draft -> PrimaryButton(label = "Review & send", onClick = onReviewSend)
-        unpaid -> PrimaryButton(label = "Send reminder", onClick = onSendReminder, leading = {
+        unpaid -> PrimaryButton(
+            label = if (reminding) "Sending..." else "Send reminder",
+            onClick = { if (!reminding) onSendReminder() },
+            enabled = !reminding,
+            leading = {
             Icon(
                 imageVector = Lucide.Bell,
                 contentDescription = null,

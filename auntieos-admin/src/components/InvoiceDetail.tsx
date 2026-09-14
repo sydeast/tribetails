@@ -22,6 +22,7 @@ import {
   type InvoiceAction,
 } from '../lib/invoiceFormat';
 import { checkInvoiceTotal, formatCentsUsd, storedTotalSourceLabel } from '../lib/invoiceReconcile';
+import { lastReminderLabel, reminderOutcomeMessage } from '../lib/invoiceReminder';
 import {
   markInvoicePaid,
   sendInvoiceReminder,
@@ -502,6 +503,19 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
    * be the last thing to know the action was partly refused.
    */
   const [noticeIncomplete, setNoticeIncomplete] = useState(false);
+  /**
+   * When the household was last reminded about this invoice (#832). Seeded
+   * from the stored stamp (the cron and this button both write it) and moved
+   * to whatever the server answers, so the fact below is right the moment a
+   * press lands, sent or refused, without waiting for the list to reload.
+   */
+  const [lastReminderAt, setLastReminderAt] = useState<unknown>(invoice.reminderNotifiedAtMs);
+  // The invoice prop is the live row, so a stamp written while the panel is open
+  // (the cron, another operator's press, another tab) arrives here and must
+  // replace what the panel showed.
+  useEffect(() => {
+    setLastReminderAt(invoice.reminderNotifiedAtMs);
+  }, [invoice.reminderNotifiedAtMs]);
   const [paidMethod, setPaidMethod] = useState('');
   const [paidReference, setPaidReference] = useState('');
   // Free text, not a number input, so a half-typed "2" is never read as $2.
@@ -905,8 +919,16 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       // words can never disagree.
       let incomplete = false;
 
-      if (meta.key === 'reminder') await sendInvoiceReminder(invoice._id);
-      else if (meta.key === 'reviewSend') await reviewAndSendDraftInvoice(invoice._id);
+      if (meta.key === 'reminder') {
+        const reminder = await sendInvoiceReminder(invoice._id);
+        // Only a real time moves the fact. `null` means no reminder is on record,
+        // which is what the panel already shows; it never blanks a stamp.
+        if (reminder.lastReminderAtMs !== null) setLastReminderAt(reminder.lastReminderAtMs);
+        outcome = reminderOutcomeMessage(reminder);
+        // A refusal is not a failure (the household HAS been reminded), but it
+        // is not "Done" either: nothing was sent by this press.
+        if (!reminder.sent) incomplete = true;
+      } else if (meta.key === 'reviewSend') await reviewAndSendDraftInvoice(invoice._id);
       else if (meta.key === 'markPaid') {
         const method = paidMethod.trim();
         const reference = paidReference.trim();
@@ -1109,6 +1131,10 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           <div className="invoice-detail__fact">
             <dt>Due date</dt>
             <dd>{invoice.dueDate.trim() === '' ? 'not set' : invoice.dueDate}</dd>
+          </div>
+          <div className="invoice-detail__fact">
+            <dt>Last reminder</dt>
+            <dd>{lastReminderLabel(lastReminderAt)}</dd>
           </div>
         </dl>
 

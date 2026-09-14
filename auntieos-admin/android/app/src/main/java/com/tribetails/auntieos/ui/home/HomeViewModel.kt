@@ -465,7 +465,7 @@ class HomeViewModel(
 
     fun onMyWay(sessionId: String, etaMinutes: Int) {
         runOnSession(sessionId) { card ->
-            kinCareRepo.markSessionOnMyWay(sessionId, etaMinutes).onSuccess {
+            kinCareRepo.markSessionOnMyWay(sessionId, etaMinutes).onSuccess { onMyWayAt ->
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
                     scope            = viewModelScope,
                     repository       = repo,
@@ -478,6 +478,7 @@ class HomeViewModel(
                     event = VisitNotifier.Event.ON_MY_WAY,
                     session = card.session,
                     etaMinutes = etaMinutes,
+                    eventAtIso = onMyWayAt,
                 )
             }
         }
@@ -486,7 +487,7 @@ class HomeViewModel(
     fun arrived(sessionId: String, context: Context) {
         runOnSession(sessionId) { card ->
             // Mark arrived first; the GPS service will fill in visitRouteId once tracking starts
-            kinCareRepo.markSessionArrived(sessionId, visitRouteId = "").onSuccess {
+            kinCareRepo.markSessionArrived(sessionId, visitRouteId = "").onSuccess { arrivedAt ->
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
                     scope            = viewModelScope,
                     repository       = repo,
@@ -506,7 +507,8 @@ class HomeViewModel(
                 if (settings.enableGPSTrackingForAllVisits && settings.autoStartTrackingOnVisitStart) {
                     startGpsForSession(context, card.session)
                 }
-                notifier.notify(VisitNotifier.Event.ARRIVED, card.session)
+                // #832: the arrivedAt just written names this notification.
+                notifier.notify(VisitNotifier.Event.ARRIVED, card.session, eventAtIso = arrivedAt)
                 // ISSUE #582. AFTER the arrival, never before it, and never
                 // gated on it: the arrival is a direct patch on an offline
                 // write queue and this is a callable, so anything that goes
@@ -557,7 +559,7 @@ class HomeViewModel(
 
     fun departed(sessionId: String, context: Context) {
         runOnSession(sessionId) { card ->
-            kinCareRepo.markSessionDeparted(sessionId).onSuccess {
+            kinCareRepo.markSessionDeparted(sessionId).onSuccess { departedAt ->
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
                     scope            = viewModelScope,
                     repository       = repo,
@@ -569,7 +571,8 @@ class HomeViewModel(
                 if (_uiState.value.businessSettings.enableGPSTrackingForAllVisits) {
                     stopGpsTracking(context)
                 }
-                notifier.notify(VisitNotifier.Event.DEPARTED, card.session)
+                // #832: the departedAt just written names this notification.
+                notifier.notify(VisitNotifier.Event.DEPARTED, card.session, eventAtIso = departedAt)
             }
         }
     }

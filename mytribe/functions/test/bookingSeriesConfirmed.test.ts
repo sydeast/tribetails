@@ -241,6 +241,18 @@ describe('approveBookingSeriesCore: one confirmation per REQUEST (#536)', () => 
     expect(mocks.enqueue).toHaveBeenCalledTimes(1);
   });
 
+  it('#832: names the confirmation by the claim it took, so a re-approval after a cancel is a new notification', async () => {
+    const ctx = threeVisitEnvelope();
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await approve();
+
+    const claim = ctx.writes.find((w) => w.path === PARENT && 'confirmNotifiedAtMs' in w.data);
+    const claimMs = claim!.data.confirmNotifiedAtMs as number;
+    expect(typeof claimMs).toBe('number');
+    expect(mocks.enqueue.mock.calls[0]![0].dedupeKey).toBe(`booking:req_1:approve:${claimMs}`);
+  });
+
   it('the claim alone stops the second sender, with no help from the envelope status', async () => {
     // The genuine race, isolated. Two approvals in flight both read the envelope
     // as `requested`, so `wasAlreadyConfirmed` lets both through and the claim is

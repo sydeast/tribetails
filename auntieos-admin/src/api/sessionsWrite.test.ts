@@ -175,7 +175,26 @@ describe('the audit and the household push run AFTER the write, and cannot fail 
       batchId: 'batch1',
       visitId: 'visit1',
       event: 'departed',
+      eventAtMs: Date.parse(NOW),
     });
+  });
+
+  it('#832: sends the stamped time, so a re-arrival is a new notification and a retry of one tap is not', async () => {
+    const eventAtOf = () =>
+      (call.mock.calls.filter((c) => c[0] === 'dispatchVisitNotification').at(-1)?.[1] as { eventAtMs?: number })
+        ?.eventAtMs;
+    const onTheWay = { ...SCHEDULED_SESSION, status: 'ON_MY_WAY', onMyWayAt: '2026-09-12T13:40:00Z' };
+
+    await (await patchVisitLifecycle(onTheWay, 'ARRIVED', { nowIso: '2026-09-12T14:02:00Z' })).notification;
+    const first = eventAtOf();
+    await (await patchVisitLifecycle(onTheWay, 'ARRIVED', { nowIso: '2026-09-12T14:05:00Z' })).notification;
+    const second = eventAtOf();
+    await (await patchVisitLifecycle(onTheWay, 'ARRIVED', { nowIso: '2026-09-12T14:02:00Z' })).notification;
+    const retry = eventAtOf();
+
+    expect(first).toBe(Date.parse('2026-09-12T14:02:00Z'));
+    expect(second).toBe(Date.parse('2026-09-12T14:05:00Z'));
+    expect(retry).toBe(first);
   });
 
   it('falls back to the legacy flat bookingId when there is no envelope', async () => {
@@ -189,6 +208,7 @@ describe('the audit and the household push run AFTER the write, and cannot fail 
       familyId: 'fam1',
       bookingId: 'legacy1',
       event: 'departed',
+      eventAtMs: Date.parse(NOW),
     });
   });
 

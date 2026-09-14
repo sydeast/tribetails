@@ -2,11 +2,13 @@ package com.tribetails.auntieos.web.screens.stage2tail
 
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.JvmFirestoreFixtures
+import com.tribetails.auntieos.web.data.ReminderOutcome
 import com.tribetails.auntieos.web.data.WriteResult
 import kotlinx.coroutines.runBlocking
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -22,19 +24,37 @@ class Stage2TailClientTest {
 
     // ---- sendInvoiceReminder ----
     @Test
-    fun sendInvoiceReminderReturnsInvoiceId() = runBlocking {
-        JvmFirestoreFixtures.callableResponses = mapOf("sendInvoiceReminder" to """{"ok":true,"invoiceId":"inv_7"}""")
-        val r = FirestoreClient().sendInvoiceReminder("inv_7")
+    fun sendInvoiceReminderDecodesASend() = runBlocking {
+        JvmFirestoreFixtures.callableResponses = mapOf(
+            "sendInvoiceReminder" to
+                """{"ok":true,"invoiceId":"inv_7","sent":true,"reason":"sent","lastReminderAtMs":1000,"nextReminderAllowedAtMs":86401000}""",
+        )
+        val r = FirestoreClient().sendInvoiceReminder("inv_7", nowMs = 5L)
         assertTrue(r is WriteResult.Ok)
-        assertEquals("inv_7", (r as WriteResult.Ok).value)
+        assertEquals(ReminderOutcome(sent = true, reason = "sent", lastReminderAtMs = 1000L, nextReminderAllowedAtMs = 86_401_000L), (r as WriteResult.Ok).value)
     }
 
+    /** #832: the server refused a second reminder inside its window. An Ok, carrying when. */
     @Test
-    fun sendInvoiceReminderFallsBackToArgIdWhenOmitted() = runBlocking {
-        JvmFirestoreFixtures.callableResponses = mapOf("sendInvoiceReminder" to """{"ok":true}""")
-        val r = FirestoreClient().sendInvoiceReminder("inv_arg")
+    fun sendInvoiceReminderDecodesAlreadySentAsOkNotErr() = runBlocking {
+        JvmFirestoreFixtures.callableResponses = mapOf(
+            "sendInvoiceReminder" to
+                """{"ok":true,"invoiceId":"inv_7","sent":false,"reason":"recent","lastReminderAtMs":500,"nextReminderAllowedAtMs":86400500}""",
+        )
+        val r = FirestoreClient().sendInvoiceReminder("inv_7", nowMs = 5L)
         assertTrue(r is WriteResult.Ok)
-        assertEquals("inv_arg", (r as WriteResult.Ok).value)
+        val outcome = (r as WriteResult.Ok).value
+        assertFalse(outcome.sent)
+        assertEquals(500L, outcome.lastReminderAtMs)
+    }
+
+    /** A pre-#832 function answered only after sending, so no `sent` reads as sent, now. */
+    @Test
+    fun sendInvoiceReminderWithoutSentFieldReadsAsSent() = runBlocking {
+        JvmFirestoreFixtures.callableResponses = mapOf("sendInvoiceReminder" to """{"ok":true,"invoiceId":"inv_7"}""")
+        val r = FirestoreClient().sendInvoiceReminder("inv_arg", nowMs = 42L)
+        assertTrue(r is WriteResult.Ok)
+        assertEquals(ReminderOutcome(sent = true, reason = "sent", lastReminderAtMs = 42L, nextReminderAllowedAtMs = null), (r as WriteResult.Ok).value)
     }
 
     @Test

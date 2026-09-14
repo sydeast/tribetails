@@ -16,13 +16,18 @@ const mocks = vi.hoisted(() => ({
   dbFn: vi.fn(),
   resolveUid: vi.fn(),
   enqueue: vi.fn(),
+  lastDelivered: vi.fn(),
 }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockResolvedValue('audit-1') }));
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveUid }));
-vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: mocks.enqueue }));
+vi.mock('../src/notifications/dispatcher', () => ({
+  NOTIFICATION_DEDUPE_WINDOW_MS: 5 * 60 * 1000,
+  enqueueNotificationDetailed: mocks.enqueue,
+  lastDeliveredAtMs: mocks.lastDelivered,
+}));
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<any>('firebase-admin/firestore');
   return {
@@ -42,7 +47,7 @@ import { writeAuditEntry } from '../src/lib/writeAuditEntry';
 beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.resolveUid.mockReset().mockResolvedValue('kin-uid-1');
-  mocks.enqueue.mockReset().mockResolvedValue(['n1']);
+  mocks.enqueue.mockReset().mockResolvedValue({ written: ['n1'], suppressed: [] });
   (writeAuditEntry as any).mockClear();
 });
 
@@ -141,8 +146,78 @@ describe('resendQuote happy path', () => {
         targetType: 'invoice',
         targetId: 'q1',
         data: expect.objectContaining({ kinfolkId: 'fam1', invoiceId: 'q1', isQuote: true, resent: true }),
+        // #832: its own identity, distinct from createQuote's invoice:q1.
+        dedupeKey: 'quote:q1:resend:1',
       }),
     );
+  });
+
+  it('#832: the resend ordinal follows the stored count, so the next real resend is a new identity', async () => {
+    const ctx = ctxFor(declinedQuote({ quoteResendCount: 2 }));
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await resendQuoteHandler(req({ invoiceId: 'q1' }));
+
+    expect(mocks.enqueue).toHaveBeenCalledWith(expect.objectContaining({ dedupeKey: 'quote:q1:resend:3' }));
+  });
+
+  it('#832: when an earlier attempt already reached the household, reopens the quote and answers ok', async () => {
+    // A household `duplicate` is this same resend delivered by an attempt whose
+    // reopening transaction never landed. They have the quote, so finish.
+    const ctx = ctxFor(declinedQuote());
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.enqueue.mockResolvedValue({
+      written: [],
+      suppressed: [{ recipientUid: 'kin-uid-1', reason: 'duplicate', existingId: 'n0', lastAtMs: 1 }],
+    });
+
+    await expect(resendQuoteHandler(req({ invoiceId: 'q1' }))).resolves.toMatchObject({ ok: true });
+
+    const data = quoteWrite(ctx)!;
+    expect(data).toBeDefined();
+    expect(data.quoteDecision).toBe('__DELETE__');
+    expect(data.quoteResendCount).toEqual({ __increment: 1 });
+  });
+
+  it('#832: a household with no portal account is unreachable, refused before anything is sent', async () => {
+    // The office copy alone would otherwise count as "written" and reopen the
+    // quote with no household told.
+    const ctx = ctxFor(declinedQuote());
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.resolveUid.mockResolvedValue(null);
+
+    const err = await resendQuoteHandler(req({ invoiceId: 'q1' })).catch((e) => e);
+
+    expect(err.code).toBe('failed-precondition');
+    expect(err.details).toMatchObject({ code: 'quote_resend_unreachable' });
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(quoteWrite(ctx)).toBeUndefined();
+  });
+
+  it('#832: still unreachable when the dispatcher wrote nothing and did not name the household', async () => {
+    const ctx = ctxFor(declinedQuote());
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.enqueue.mockResolvedValue({ written: [], suppressed: [] });
+
+    const err = await resendQuoteHandler(req({ invoiceId: 'q1' })).catch((e) => e);
+
+    expect(err.details).toMatchObject({ code: 'quote_resend_unreachable' });
+    expect(quoteWrite(ctx)).toBeUndefined();
+  });
+
+  it('#832: FAILS LOUD when the household copy was suppressed by prefs, even though the office copy went', async () => {
+    const ctx = ctxFor(declinedQuote());
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.enqueue.mockResolvedValue({
+      written: ['admin-copy'],
+      suppressed: [{ recipientUid: 'kin-uid-1', reason: 'prefs' }],
+    });
+
+    const err = await resendQuoteHandler(req({ invoiceId: 'q1' })).catch((e) => e);
+
+    expect(err.code).toBe('failed-precondition');
+    expect(err.details).toMatchObject({ code: 'quote_resend_suppressed' });
+    expect(quoteWrite(ctx)).toBeUndefined();
   });
 
   it('writes a BILLING_QUOTE_RESENT audit entry, the only lasting record of the decline', async () => {
@@ -187,6 +262,30 @@ describe('resendQuote refusals', () => {
     expect(err.details).toMatchObject({ code: 'quote_not_declined' });
     expect(err.message).toContain('reminder');
     expect(quoteWrite(ctx)).toBeUndefined();
+  });
+
+  it('#832: a client retry of a resend that completed a minute ago answers ok, and sends and writes nothing', async () => {
+    // Already reopened by the resend it is retrying: no decision, count 1.
+    const ctx = ctxFor(declinedQuote({ quoteDecision: undefined, quoteDecidedAt: undefined, quoteResendCount: 1 }));
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.lastDelivered.mockResolvedValue(Date.now() - 60_000);
+
+    const res = await resendQuoteHandler(req({ invoiceId: 'q1' }));
+
+    expect(res).toMatchObject({ ok: true, invoiceId: 'q1' });
+    expect(mocks.lastDelivered).toHaveBeenCalledWith('invoice.new', 'quote:q1:resend:1', 'kin-uid-1');
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(quoteWrite(ctx)).toBeUndefined();
+  });
+
+  it('#832: a quote whose last resend reached the household longer ago than the window gets the ordinary refusal', async () => {
+    const ctx = ctxFor(declinedQuote({ quoteDecision: undefined, quoteDecidedAt: undefined, quoteResendCount: 1 }));
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.lastDelivered.mockResolvedValue(Date.now() - 6 * 60_000);
+
+    const err = await resendQuoteHandler(req({ invoiceId: 'q1' })).catch((e) => e);
+
+    expect(err.details).toMatchObject({ code: 'quote_not_declined' });
   });
 
   it('refuses an ordinary invoice', async () => {

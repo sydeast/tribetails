@@ -4,7 +4,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapTrigger } from '../lib/wrapTrigger';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
-import { enqueueNotification } from '../notifications/dispatcher';
+import { contentDedupeKey, enqueueNotification } from '../notifications/dispatcher';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { claimKinTalePublish, clientAlreadyAnnouncedSend } from '../lib/kinTalePublishClaim';
@@ -21,6 +21,16 @@ const NOTIFY_DEBOUNCE_MS = 60 * 1000;
 function notifyDigest(bodyCopy: string, mediaIds: string[]): string {
   const sortedMedia = [...mediaIds].sort().join(',');
   return `${bodyCopy.length}|${sortedMedia}`;
+}
+
+/**
+ * #832: the dispatcher identity of one `kintale.note.added`. Every note targets
+ * the tale, so without this a second note inside the dispatcher window was
+ * dropped. The body TEXT is hashed, not its length the tracker digest above
+ * uses, because two different notes of the same length are two notes.
+ */
+export function kinTaleNoteDedupeKey(reportId: string, bodyCopy: string, mediaIds: readonly string[]): string {
+  return contentDedupeKey(`kintale:${reportId}:note`, { body: bodyCopy, media: [...mediaIds].sort() });
 }
 
 type KinCareReportDoc = {
@@ -156,6 +166,9 @@ export async function onKinTaleUpdateHandler(event: any): Promise<void> {
         mediaAdded,
         addedMediaCount: afterMediaCount - beforeMediaCount,
       },
+      // #832: named by the note's content, so a second note on the same tale
+      // sends and a replay of this one does not.
+      dedupeKey: kinTaleNoteDedupeKey(reportId, after.bodyCopy ?? '', after.mediaFileIds ?? []),
     });
   } catch (err) {
     logEvent({
