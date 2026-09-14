@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { Timestamp } from '../lib/firebaseAdmin';
-import { parseArgs, planEmergencyContactMigration, planFamiliesEmergencyContacts } from '../backfillKinfolkEmergencyContacts';
+import {
+  describeTarget,
+  parseArgs,
+  planEmergencyContactMigration,
+  planFamiliesEmergencyContacts,
+  refuseRun,
+} from '../backfillKinfolkEmergencyContacts';
 
 const OTHER = { key: 'vetClinicId', label: 'Vet Clinic', value: 'clinic-1' };
 const FAMILY_EC = [
@@ -87,6 +93,33 @@ describe('parseArgs', () => {
   it('refuses an unknown arg and a valueless --project', () => {
     expect(() => parseArgs(['--wipe'])).toThrow(/unknown arg/);
     expect(() => parseArgs(['--project', '--dry-run'])).toThrow(/--project requires a value/);
+  });
+});
+
+describe('describeTarget and refuseRun (#829 review)', () => {
+  const EMU = { FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080' };
+  const CREDS = { GOOGLE_APPLICATION_CREDENTIALS: '/tmp/sa.json' };
+
+  it('names the project and says emulator or production on every run', () => {
+    expect(describeTarget(parseArgs(['--project', 'demo']), EMU)).toBe(
+      'TARGET: project demo, Firestore EMULATOR at 127.0.0.1:8080, DRY-RUN',
+    );
+    expect(describeTarget(parseArgs(['--allow-prod']), { GCLOUD_PROJECT: 'auntieos-ttpc', ...CREDS })).toBe(
+      'TARGET: project auntieos-ttpc, PRODUCTION Firestore, APPLY',
+    );
+    expect(describeTarget(parseArgs([]), {})).toBe('TARGET: project (from credentials), PRODUCTION Firestore, DRY-RUN');
+  });
+
+  it('refuses --allow-prod while FIRESTORE_EMULATOR_HOST is set, even with --dry-run and credentials', () => {
+    expect(refuseRun(parseArgs(['--allow-prod']), { ...EMU, ...CREDS })).toMatch(/refusing --allow-prod while FIRESTORE_EMULATOR_HOST is set/);
+    expect(refuseRun(parseArgs(['--allow-prod', '--dry-run']), EMU)).toMatch(/refusing --allow-prod/);
+  });
+
+  it('lets a dry run go anywhere, and a production write only with credentials', () => {
+    expect(refuseRun(parseArgs([]), EMU)).toBeNull();
+    expect(refuseRun(parseArgs([]), {})).toBeNull();
+    expect(refuseRun(parseArgs(['--allow-prod']), {})).toMatch(/GOOGLE_APPLICATION_CREDENTIALS/);
+    expect(refuseRun(parseArgs(['--allow-prod']), CREDS)).toBeNull();
   });
 });
 

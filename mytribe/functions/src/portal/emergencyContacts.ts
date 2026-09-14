@@ -14,10 +14,18 @@ import type { MemberDoc } from '../lib/schema';
 import {
   comparablePhone,
   EMERGENCY_CONTACTS_MAX,
+  EMERGENCY_CONTACTS_SAME_PHONE_MESSAGE,
+  EMERGENCY_CONTACTS_TOO_MANY_MESSAGE,
   EMERGENCY_CONTACT_NAME_MAX,
+  EMERGENCY_CONTACT_NAME_REQUIRED_MESSAGE,
+  EMERGENCY_CONTACT_NAME_TOO_LONG_MESSAGE,
   EMERGENCY_CONTACT_OUTSIDE_MESSAGE,
+  EMERGENCY_CONTACT_PHONE_INVALID_MESSAGE,
   EMERGENCY_CONTACT_PHONE_MAX,
+  EMERGENCY_CONTACT_PHONE_REQUIRED_MESSAGE,
+  EMERGENCY_CONTACT_PHONE_TOO_LONG_MESSAGE,
   EMERGENCY_CONTACT_RELATIONSHIP_MAX,
+  EMERGENCY_CONTACT_RELATIONSHIP_TOO_LONG_MESSAGE,
   EMERGENCY_CONTACT_REQUIRED_MESSAGE,
   householdClash,
   householdIdentity,
@@ -37,16 +45,16 @@ import {
 
 const ContactZ = z
   .object({
-    name: z.string().trim().min(1, 'An Emergency Contact needs a name.').max(EMERGENCY_CONTACT_NAME_MAX),
+    name: z.string().trim().min(1, EMERGENCY_CONTACT_NAME_REQUIRED_MESSAGE).max(EMERGENCY_CONTACT_NAME_MAX, EMERGENCY_CONTACT_NAME_TOO_LONG_MESSAGE),
     phone: z
       .string()
       .trim()
-      .min(1, 'An Emergency Contact needs a phone number.')
-      .max(EMERGENCY_CONTACT_PHONE_MAX)
-      .refine((p) => isValidPhone(p), 'That phone number is not a valid number.')
+      .min(1, EMERGENCY_CONTACT_PHONE_REQUIRED_MESSAGE)
+      .max(EMERGENCY_CONTACT_PHONE_MAX, EMERGENCY_CONTACT_PHONE_TOO_LONG_MESSAGE)
+      .refine((p) => isValidPhone(p), EMERGENCY_CONTACT_PHONE_INVALID_MESSAGE)
       .transform((p) => normalizeE164(p) as string),
     relationship: z
-      .union([z.string().max(EMERGENCY_CONTACT_RELATIONSHIP_MAX), z.null()])
+      .union([z.string().max(EMERGENCY_CONTACT_RELATIONSHIP_MAX, EMERGENCY_CONTACT_RELATIONSHIP_TOO_LONG_MESSAGE), z.null()])
       .optional()
       .transform((v) => {
         const t = (v ?? '').trim();
@@ -58,7 +66,7 @@ const ContactZ = z
 const SaveArgs = z
   .object({
     kinfolkId: z.string().optional(),
-    contacts: z.array(ContactZ).max(EMERGENCY_CONTACTS_MAX, 'A household can have at most two Emergency Contacts.'),
+    contacts: z.array(ContactZ).max(EMERGENCY_CONTACTS_MAX, EMERGENCY_CONTACTS_TOO_MANY_MESSAGE),
   })
   .strict();
 
@@ -70,9 +78,9 @@ const ListArgs = z.object({ kinfolkId: z.string().optional() }).strict();
 function parseArgs<T extends z.ZodTypeAny>(schema: T, data: unknown): z.infer<T> {
   const parsed = schema.safeParse(data ?? {});
   if (parsed.success) return parsed.data;
-  const issue = parsed.error.issues[0];
-  const where = issue?.path.length ? ` (${issue.path.join('.')})` : '';
-  throw new HttpsError('invalid-argument', `${issue?.message ?? 'Invalid arguments.'}${where}`);
+  // #829 review: the message alone, never a ` (contacts.0.phone)` path. Clients
+  // show it as-is, and a household should not read a field path.
+  throw new HttpsError('invalid-argument', parsed.error.issues[0]?.message ?? 'Invalid arguments.');
 }
 
 export interface EmergencyContactDTO {
@@ -119,7 +127,7 @@ export async function prepareEmergencyContactsSave(
     throw new HttpsError('failed-precondition', EMERGENCY_CONTACT_REQUIRED_MESSAGE);
   }
   if (second && comparablePhone(first.phone) === comparablePhone(second.phone)) {
-    throw new HttpsError('invalid-argument', 'The two Emergency Contacts need different phone numbers.');
+    throw new HttpsError('invalid-argument', EMERGENCY_CONTACTS_SAME_PHONE_MESSAGE);
   }
 
   const ref = firestore.doc(`kinfolk/${kinfolkId}`);

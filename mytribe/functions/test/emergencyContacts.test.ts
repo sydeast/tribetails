@@ -19,7 +19,12 @@ import {
   normaliseName,
   readStoredEmergencyContacts,
   recordedAtForLegacy,
+  EMERGENCY_CONTACT_NAME_REQUIRED_MESSAGE,
+  EMERGENCY_CONTACT_NAME_TOO_LONG_MESSAGE,
   EMERGENCY_CONTACT_OUTSIDE_MESSAGE,
+  EMERGENCY_CONTACT_PHONE_REQUIRED_MESSAGE,
+  EMERGENCY_CONTACT_PHONE_TOO_LONG_MESSAGE,
+  EMERGENCY_CONTACT_RELATIONSHIP_TOO_LONG_MESSAGE,
   EMERGENCY_CONTACT_REQUIRED_MESSAGE,
 } from '../src/lib/emergencyContacts';
 import {
@@ -155,6 +160,34 @@ describe('saveEmergencyContactsHandler', () => {
     await expect(saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [{ name: '  ', phone: '8055550199' }] }))).rejects.toMatchObject({ code: 'invalid-argument' });
     await expect(saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [{ name: 'Rae', phone: '12' }] }))).rejects.toMatchObject({ code: 'invalid-argument' });
     expect(ctx.writes).toHaveLength(0);
+  });
+
+  // #829 review: one wording, shown as-is by all five clients, so no field path
+  // rides on the message and every limit says what it is.
+  it('WORDING: each refusal is the exact shared message, with no field path suffix', async () => {
+    const ctx = household();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const refuse = (contacts: unknown[]) => saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts }));
+    await expect(refuse([{ name: '  ', phone: '8055550199' }])).rejects.toMatchObject({ code: 'invalid-argument', message: EMERGENCY_CONTACT_NAME_REQUIRED_MESSAGE });
+    await expect(refuse([{ name: 'Rae', phone: ' ' }])).rejects.toMatchObject({ message: EMERGENCY_CONTACT_PHONE_REQUIRED_MESSAGE });
+    await expect(refuse([{ name: 'R'.repeat(81), phone: '8055550199' }])).rejects.toMatchObject({ message: EMERGENCY_CONTACT_NAME_TOO_LONG_MESSAGE });
+    await expect(refuse([{ name: 'Rae', phone: '8'.repeat(33) }])).rejects.toMatchObject({ message: EMERGENCY_CONTACT_PHONE_TOO_LONG_MESSAGE });
+    await expect(refuse([{ name: 'Rae', phone: '8055550199', relationship: 'S'.repeat(41) }])).rejects.toMatchObject({
+      message: EMERGENCY_CONTACT_RELATIONSHIP_TOO_LONG_MESSAGE,
+    });
+    for (const bad of [[{ name: '', phone: '8055550199' }], [{ name: 'Rae', phone: '12' }]]) {
+      await expect(refuse(bad)).rejects.toSatisfy((e: { message: string }) => !e.message.includes('(contacts'));
+    }
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('WORDING: the messages read as sentences, the required one included', () => {
+    expect(EMERGENCY_CONTACT_REQUIRED_MESSAGE).toBe('A household needs at least one Emergency Contact.');
+    expect(EMERGENCY_CONTACT_NAME_REQUIRED_MESSAGE).toBe('An Emergency Contact needs a name.');
+    expect(EMERGENCY_CONTACT_PHONE_REQUIRED_MESSAGE).toBe('An Emergency Contact needs a phone number.');
+    expect(EMERGENCY_CONTACT_NAME_TOO_LONG_MESSAGE).toBe("An Emergency Contact's name can be at most 80 characters.");
+    expect(EMERGENCY_CONTACT_PHONE_TOO_LONG_MESSAGE).toBe("An Emergency Contact's phone number can be at most 32 characters.");
+    expect(EMERGENCY_CONTACT_RELATIONSHIP_TOO_LONG_MESSAGE).toBe('A relationship can be at most 40 characters.');
   });
 
   it('refuses the same phone twice', async () => {

@@ -399,16 +399,45 @@ export async function applyPlan(
   return { migrated: kinfolkWrites.size, familiesCleaned: familiesWrites.size };
 }
 
+type Env = Record<string, string | undefined>;
+
+function projectOf(args: Args, env: Env): string | null {
+  return args.projectId ?? env['GCLOUD_PROJECT'] ?? env['GOOGLE_CLOUD_PROJECT'] ?? null;
+}
+
+/**
+ * The line every run prints first (#829 review), so nobody reads a dry run or
+ * starts a write without seeing which Firestore it points at. Pure.
+ */
+export function describeTarget(args: Args, env: Env): string {
+  const emulator = env['FIRESTORE_EMULATOR_HOST'];
+  const where = emulator ? `Firestore EMULATOR at ${emulator}` : 'PRODUCTION Firestore';
+  return `TARGET: project ${projectOf(args, env) ?? '(from credentials)'}, ${where}, ${args.mode.toUpperCase()}`;
+}
+
+/**
+ * Why this run must not start, or null. `--allow-prod` with
+ * FIRESTORE_EMULATOR_HOST set is refused (#829 review): the flag says "write
+ * production" and the variable says "this is the emulator", and a run that
+ * quietly picked one would surprise someone either way. Pure.
+ */
+export function refuseRun(args: Args, env: Env): string | null {
+  const emulator = env['FIRESTORE_EMULATOR_HOST'];
+  if (args.allowProd && emulator) {
+    return `refusing --allow-prod while FIRESTORE_EMULATOR_HOST is set (${emulator}). Unset it to write production, or drop --allow-prod for a dry run against the emulator.`;
+  }
+  if (args.mode === 'apply' && !env['GOOGLE_APPLICATION_CREDENTIALS']) {
+    return 'a real write needs GOOGLE_APPLICATION_CREDENTIALS (fail loud, not a silent no-op)';
+  }
+  return null;
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const emulator = process.env['FIRESTORE_EMULATOR_HOST'];
-  if (args.mode === 'apply' && !args.allowProd && !emulator) {
-    throw new Error('refusing to write without --allow-prod (or FIRESTORE_EMULATOR_HOST)');
-  }
-  if (args.mode === 'apply' && !emulator && !process.env['GOOGLE_APPLICATION_CREDENTIALS']) {
-    throw new Error('a real write needs GOOGLE_APPLICATION_CREDENTIALS (fail loud, not a silent no-op)');
-  }
-  const projectId = args.projectId ?? process.env['GCLOUD_PROJECT'] ?? process.env['GOOGLE_CLOUD_PROJECT'] ?? null;
+  console.log(describeTarget(args, process.env));
+  const refusal = refuseRun(args, process.env);
+  if (refusal) throw new Error(refusal);
+  const projectId = projectOf(args, process.env);
   if (getApps().length === 0) initializeApp(projectId ? { projectId } : {});
   const db = getFirestore();
   const rows = await buildPlan(db);

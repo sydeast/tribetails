@@ -8,6 +8,7 @@ import { wrapCallable } from '../lib/wrapCallable';
 import { requireKinfolkPerm } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
+import { LEGACY_EMERGENCY_CONTACT_KEYS } from '../lib/emergencyContacts';
 
 const CustomFieldZ = z.object({
   key: z.string().min(1).max(80),
@@ -51,7 +52,13 @@ export async function saveHomeAccessHandler(req: CallableRequest<unknown>): Prom
   if (args.gateCode !== undefined) update['gateCode'] = args.gateCode;
   if (args.keyLocation !== undefined) update['keyLocation'] = args.keyLocation;
   if (args.wifiPassword !== undefined) update['wifiPassword'] = args.wifiPassword;
-  if (args.customFields !== undefined) update['customFields'] = args.customFields;
+  // #829 review: the emergencyContact* rows never ride along, the same strip
+  // saveTribeProfile does. Emergency Contacts are written only by
+  // saveEmergencyContacts, and a stale copy here would be a second store nobody
+  // validates.
+  if (args.customFields !== undefined) {
+    update['customFields'] = args.customFields.filter((f) => !LEGACY_EMERGENCY_CONTACT_KEYS.has(f.key));
+  }
 
   await firestore.doc(`families/${kinfolkId}/homeAccess/current`).set(update, { merge: true });
   logEvent({ severity: 'info', function: 'saveHomeAccess', event: 'portal.homeAccess.saved', uid, extra: { kinfolkId, fields: Object.keys(update) } });

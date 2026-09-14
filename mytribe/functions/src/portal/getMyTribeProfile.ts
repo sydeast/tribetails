@@ -7,6 +7,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { hasKinfolkPerm } from '../lib/memberGate';
+import { isStaff } from '../lib/staffGate';
 import {
   LEGACY_EMERGENCY_CONTACT_KEYS,
   legacyContactFromRows,
@@ -70,10 +71,28 @@ export async function getMyTribeProfileHandler(
   // #829: remember, server-side, which contact this caller was just served, so
   // saveTribeProfile can tell an old client's untouched echo of it from an edit
   // even after the office changes slot 1. Never part of this response.
-  const served = canReadContacts ? legacyContactFromRows(profile.customFields) : null;
-  if (served !== null) {
-    await recordLegacyServed(firestore, kinfolkId, uid, legacyServedKey(served));
-  }
+  //
+  // #829 review: bookkeeping, so it never blocks or fails the read. It starts
+  // here and runs beside the home-access reads below; a failure is caught and
+  // logged, and the profile is returned regardless. It is settled before the
+  // return rather than left dangling, because a v2 function can be frozen as
+  // soon as it responds and an unawaited write may never land. Staff are never
+  // an old portal client, so they leave no record.
+  const isAdmin = req.auth?.token?.admin === true;
+  const served =
+    canReadContacts && !isStaff(uid, isAdmin, 'getMyTribeProfile') ? legacyContactFromRows(profile.customFields) : null;
+  const bookkeeping: Promise<void> =
+    served === null
+      ? Promise.resolve()
+      : recordLegacyServed(firestore, kinfolkId, uid, legacyServedKey(served)).catch((err: unknown) => {
+          logEvent({
+            severity: 'warn',
+            function: 'getMyTribeProfile',
+            event: 'portal.tribe.legacyServedFailed',
+            uid,
+            extra: { kinfolkId, message: err instanceof Error ? err.message : String(err) },
+          });
+        });
 
   const [accessSnap, canSeeHome] = await Promise.all([
     firestore.doc(`families/${kinfolkId}/homeAccess/current`).get(),
@@ -88,6 +107,7 @@ export async function getMyTribeProfileHandler(
     updatedAtMs: canSeeHome ? tsMillis(acc['updatedAt']) : null,
   };
 
+  await bookkeeping;
   logEvent({ severity: 'info', function: 'getMyTribeProfile', event: 'portal.tribe.resolved', uid, extra: { kinfolkId } });
   return { profile, homeAccess, canEditHomeDetails: canSeeHome };
 }

@@ -16,8 +16,21 @@ export const EMERGENCY_CONTACTS_MAX = 2;
 export const EMERGENCY_CONTACT_NAME_MAX = 80;
 export const EMERGENCY_CONTACT_PHONE_MAX = 32;
 export const EMERGENCY_CONTACT_RELATIONSHIP_MAX = 40;
-export const EMERGENCY_CONTACT_REQUIRED_MESSAGE = 'A household needs at least one Emergency Contact';
+/**
+ * The validation wording, one source (#829 review). All five clients pre-check
+ * with these exact strings, so a refusal reads the same whether the client or
+ * the server caught it.
+ */
+export const EMERGENCY_CONTACT_REQUIRED_MESSAGE = 'A household needs at least one Emergency Contact.';
 export const EMERGENCY_CONTACT_OUTSIDE_MESSAGE = 'An Emergency Contact has to be someone outside the household.';
+export const EMERGENCY_CONTACT_NAME_REQUIRED_MESSAGE = 'An Emergency Contact needs a name.';
+export const EMERGENCY_CONTACT_PHONE_REQUIRED_MESSAGE = 'An Emergency Contact needs a phone number.';
+export const EMERGENCY_CONTACT_PHONE_INVALID_MESSAGE = 'That phone number is not a valid number.';
+export const EMERGENCY_CONTACT_NAME_TOO_LONG_MESSAGE = `An Emergency Contact's name can be at most ${EMERGENCY_CONTACT_NAME_MAX} characters.`;
+export const EMERGENCY_CONTACT_PHONE_TOO_LONG_MESSAGE = `An Emergency Contact's phone number can be at most ${EMERGENCY_CONTACT_PHONE_MAX} characters.`;
+export const EMERGENCY_CONTACT_RELATIONSHIP_TOO_LONG_MESSAGE = `A relationship can be at most ${EMERGENCY_CONTACT_RELATIONSHIP_MAX} characters.`;
+export const EMERGENCY_CONTACTS_TOO_MANY_MESSAGE = 'A household can have at most two Emergency Contacts.';
+export const EMERGENCY_CONTACTS_SAME_PHONE_MESSAGE = 'The two Emergency Contacts need different phone numbers.';
 
 export interface EmergencyContactInput {
   name: string;

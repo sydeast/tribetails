@@ -88,6 +88,10 @@ describe('Emergency Contacts are never a recipient (#829)', () => {
       // audience/notification code this test guards.
       'portal/saveTribeProfile.ts',
       'portal/getMyTribeProfile.ts',
+      // #829 review item 15: saveHomeAccess imports the key set only to strip
+      // those rows from home-access customFields. It reads no phone and sends
+      // nothing.
+      'portal/saveHomeAccess.ts',
     ]);
     const offenders = walk(src)
       .map((f) => relative(src, f).split('\\').join('/'))

@@ -410,6 +410,38 @@ describe('getMyTribeProfileHandler: the record of what each caller was served', 
     expect(servedKeys(docs)).toEqual([legacyServedKey(contact('Old Name', '555-0133'))]);
   });
 
+  // #829 review: the served record is bookkeeping for old clients. A failure to
+  // write it must never cost a household its profile.
+  it('still returns the profile when writing the served record fails, and logs the failure', async () => {
+    const { ctx } = household({ slot1: contact('Rae Mercer', '+18055550199') });
+    const realDoc = ctx.db.doc.bind(ctx.db);
+    ctx.db.doc = ((path: string) => {
+      const ref = realDoc(path);
+      if (path !== SERVED_PATH) return ref;
+      return { ...ref, get: () => Promise.reject(new Error('deadline exceeded')), set: () => Promise.reject(new Error('deadline exceeded')) };
+    }) as typeof ctx.db.doc;
+    const { logEvent } = await import('../src/lib/logger');
+    vi.mocked(logEvent).mockClear();
+
+    const res = await load();
+    expect(res.profile.displayName).toBe('The Foster');
+    expect(res.profile.customFields.find((f) => f.key === 'emergencyContactName')?.value).toBe('Rae Mercer');
+    expect(vi.mocked(logEvent)).toHaveBeenCalledWith(expect.objectContaining({ event: 'portal.tribe.legacyServedFailed' }));
+  });
+
+  it('records nothing for staff: an operator is never an old portal client', async () => {
+    const { ctx, docs } = household({ slot1: contact('Rae Mercer', '+18055550199') });
+    const { getMyTribeProfileHandler } = await import('../src/portal/getMyTribeProfile');
+    const res = await getMyTribeProfileHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1', token: { admin: true } } } as any);
+    expect(res.profile.displayName).toBe('The Foster');
+    expect(docs[SERVED_PATH]).toBeUndefined();
+    expect(ctx.writes.find((w) => w.path.includes('legacyEcServed'))).toBeUndefined();
+
+    process.env.AUNTIE_OPERATOR_UIDS = 'u1';
+    await load();
+    expect(ctx.writes.find((w) => w.path.includes('legacyEcServed'))).toBeUndefined();
+  });
+
   it('records nothing when no contact was served, or for a member who is not ACTIVE', async () => {
     const none = household();
     await load();
