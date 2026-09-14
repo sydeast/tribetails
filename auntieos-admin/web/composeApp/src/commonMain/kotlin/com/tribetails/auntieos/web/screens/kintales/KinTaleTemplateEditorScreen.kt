@@ -65,6 +65,7 @@ import com.tribetails.auntieos.web.ui.components.AuntieSelectField
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
+import com.tribetails.auntieos.web.ui.components.LoadErrorBanner
 import com.tribetails.auntieos.web.ui.components.AuntieChip
 import com.tribetails.auntieos.web.ui.components.AuntieChipTone
 import com.tribetails.auntieos.web.ui.components.AuntieDashedAddButton
@@ -245,6 +246,11 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
 
         val current = draft
         if (current == null) {
+            // #867: a failed read shows its error, not a shimmer that never ends.
+            (templatesRes as? FirestoreResult.Error)?.let {
+                LoadErrorBanner("Couldn't load templates", it.message)
+                return@ScreenScaffold
+            }
             ShimmerCard(height = 200.dp)
             return@ScreenScaffold
         }

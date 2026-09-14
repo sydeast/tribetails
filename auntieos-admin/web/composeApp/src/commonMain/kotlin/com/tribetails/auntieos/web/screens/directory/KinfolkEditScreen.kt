@@ -68,6 +68,7 @@ import com.tribetails.auntieos.web.util.isValidEmail
 import com.tribetails.auntieos.web.util.isValidPhone
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
+import com.tribetails.auntieos.web.ui.components.LoadErrorBanner
 import com.tribetails.auntieos.web.ui.components.AuntieFieldLabel
 import com.tribetails.auntieos.web.ui.components.AuntieNoteCallout
 import com.tribetails.auntieos.web.ui.components.AuntieSaveBar
@@ -447,6 +448,11 @@ fun KinfolkEditScreen(
         // While editing, wait for the live doc to land before showing the form
         // (otherwise the user briefly sees blank fields before the prefill).
         if (!isNew && existing == null) {
+            // #867: a failed read shows its error, not a shimmer that never ends.
+            (state as? FirestoreResult.Error)?.let {
+                LoadErrorBanner("Couldn't load this household", it.message)
+                return@ScreenScaffold
+            }
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 repeat(4) { ShimmerCard(height = 56.dp) }
             }

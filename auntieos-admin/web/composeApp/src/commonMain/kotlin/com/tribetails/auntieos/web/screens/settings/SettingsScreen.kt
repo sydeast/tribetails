@@ -130,6 +130,7 @@ import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
+import com.tribetails.auntieos.web.ui.components.LoadErrorBanner
 import com.tribetails.auntieos.web.ui.components.AuntieChip
 import com.tribetails.auntieos.web.ui.components.AuntieDialog
 import com.tribetails.auntieos.web.ui.components.AuntieIconTile
@@ -361,6 +362,13 @@ fun SettingsScreen(
             subtitle   = "Pick a section on the left to edit your profile, business details, hours, notifications and more.",
         )
         Spacer(Modifier.height(dims.space5))
+
+        // #867: the panels wait on business settings ("Loading settings…"). When
+        // that read fails, say so once at the top instead of every panel waiting forever.
+        (uiState.settingsResult as? FirestoreResult.Error)?.let {
+            LoadErrorBanner("Couldn't load business settings", it.message)
+            Spacer(Modifier.height(dims.space5))
+        }
 
         // ── Two-column: section nav (real switch) + the selected panel ─────────
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {

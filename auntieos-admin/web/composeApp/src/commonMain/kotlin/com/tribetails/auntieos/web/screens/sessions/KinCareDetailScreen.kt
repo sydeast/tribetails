@@ -53,6 +53,7 @@ import com.tribetails.auntieos.web.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.web.ui.components.GhostButton
 import com.tribetails.auntieos.web.ui.components.KeyValueStyle
+import com.tribetails.auntieos.web.ui.components.LoadErrorBanner
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.SectionHeader
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
@@ -103,6 +104,12 @@ fun KinCareDetailScreen(
 
     ScreenScaffold {
         if (session == null) {
+            // #867: a failed read shows its error, not a shimmer that never ends.
+            (sessions as? FirestoreResult.Error)?.let {
+                SectionHeader(title = "Kin Care", subtitle = "", icon = Lucide.PawPrint, onBack = onBack)
+                LoadErrorBanner("Couldn't load this Kin Care", it.message)
+                return@ScreenScaffold
+            }
             SectionHeader(title = "Loading…", subtitle = "Pulling Kin Care detail", icon = Lucide.PawPrint)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 repeat(4) { ShimmerCard(height = 72.dp) }

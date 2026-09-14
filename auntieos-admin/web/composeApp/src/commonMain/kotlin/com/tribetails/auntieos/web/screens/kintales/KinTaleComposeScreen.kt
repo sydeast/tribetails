@@ -70,6 +70,7 @@ import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
+import com.tribetails.auntieos.web.ui.components.LoadErrorBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBreadcrumbs
 import com.tribetails.auntieos.web.ui.components.AuntieChip
 import com.tribetails.auntieos.web.ui.components.AuntieChipTone
@@ -157,6 +158,12 @@ fun KinTaleComposeScreen(
 
     if (session == null) {
         ScreenScaffold {
+            // #867: a failed read shows its error, not a shimmer that never ends.
+            (sessions as? FirestoreResult.Error)?.let {
+                SectionHeader(title = "KinTale", subtitle = "", icon = Lucide.ClipboardList, onBack = onClose)
+                LoadErrorBanner("Couldn't load this Kin Care", it.message)
+                return@ScreenScaffold
+            }
             SectionHeader(title = "Loading…", subtitle = "Pulling Kin Care", icon = Lucide.ClipboardList)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 repeat(3) { ShimmerCard(height = 100.dp) }
