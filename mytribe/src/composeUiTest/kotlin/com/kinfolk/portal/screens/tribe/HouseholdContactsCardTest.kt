@@ -54,6 +54,7 @@ class HouseholdContactsCardTest {
         })
         stub("getVetClinics", buildJsonObject { put("clinics", buildJsonArray {}) })
         stub("listMembers", buildJsonObject { put("members", buildJsonArray {}) })
+        stub("listEmergencyContacts", buildJsonObject { put("contacts", buildJsonArray {}); put("canEdit", true); put("legacy", false) })
     }
 
     private fun contact() = buildJsonObject {
