@@ -907,9 +907,10 @@ jobs:
             echo "scripts/workflow-budget.test.sh not present yet, skipping."
           fi
       # The decision logic ci-run-watch.yml runs on a schedule: whether a
-      # check-run-less HEAD is old enough to act on, and whether it has
-      # already been dispatched once. Tested against fixture JSON shaped like
-      # `gh api`'s own responses so every branch runs with no network (#838).
+      # commit with no ci.yml run for HEAD is old enough to act on, and
+      # whether it has already been dispatched once. Tested against fixture
+      # JSON shaped like `gh api`'s own responses so every branch runs with
+      # no network (#838).
       - name: Run the CI-run-watch decision test if present
         run: |
           if [ -f scripts/ci-run-watch.test.mjs ]; then

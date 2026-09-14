@@ -64,9 +64,10 @@ concurrency:
 jobs:
   watch:
     name: Check main HEAD has a CI run
-    # Measured well under a minute: a checkout of one file plus one `gh api`
-    # call and, rarely, one `gh workflow run`. Generous headroom over a job
-    # this small still buys nothing past a few minutes' hang.
+    # Measured well under a minute: a checkout of one file plus two `gh api`
+    # calls (the commit, then ci.yml's runs for it) and, rarely, one
+    # `gh workflow run`. Generous headroom over a job this small still buys
+    # nothing past a few minutes' hang.
     timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:

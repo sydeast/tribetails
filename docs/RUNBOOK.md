@@ -2079,13 +2079,18 @@ the refusal text you already got), and the fix is different for each. From a
 signed-in shell, run:
 
 ```bash
-gh api repos/sydeast/tribetails/commits/<sha>/check-runs --jq .total_count
+gh api "repos/sydeast/tribetails/actions/workflows/ci.yml/runs?head_sha=<sha>" --jq .total_count
 ```
 
+The same query the gate itself uses now, not `commits/<sha>/check-runs`: that
+endpoint counts every check run on the commit, including the watcher's own and
+`main-channel.yml`'s, so it is almost never 0 and would not tell you anything.
 An error (not signed in, network unreachable) means `gh` itself could not be
 asked; fix that (`gh auth status`, `gh auth login`) and re-run the release. A
-clean number, even a small one, means `gh` is fine and GitHub genuinely has
-nothing for this commit: read on.
+clean `0` means `gh` is fine and `ci.yml` genuinely has no run for this
+commit: read on. Any other number means `ci.yml` does have a run and the
+release gate should have found it too; re-run the release before digging
+further.
 
 This happened for real on 2026-09-13 (#838): PR #837's merge landed on main as
 `92786e7` during a GitHub outage, where the merge API call itself came back a

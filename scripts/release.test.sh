@@ -220,8 +220,14 @@ write_stubs() {
   # ci_check_runs (#838/#856) is a two-hop lookup: first the workflow-scoped
   # run for the sha (`actions/workflows/ci.yml/runs?head_sha=`), then that
   # run's jobs (`actions/runs/<id>/jobs`). The stub uses the sha itself as the
-  # fake run id, so both hops read the SAME fixture file and every existing
-  # fixture in this suite keeps working unchanged.
+  # fake run id BY DEFAULT, so both hops read the SAME fixture file and every
+  # existing single-run fixture in this suite keeps working unchanged.
+  #
+  # A case that needs MORE THAN ONE ci.yml run for a sha (a re-run after a
+  # fix, say) writes `$GH_FIXTURES/<sha>.runs`: one run id per line, newest
+  # first, exactly the order the real API returns. The first hop then answers
+  # with that file's FIRST line, the same as the real `.workflow_runs[0].id`,
+  # and each run id names its own jobs fixture (`$GH_FIXTURES/<run-id>`).
   #
   # `commits/<sha>/check-runs` is the OLD, unscoped endpoint ci_check_runs
   # used to read, which counted every check run on a commit regardless of
@@ -236,7 +242,11 @@ for a in "$@"; do
   case "$a" in
     *actions/workflows/ci.yml/runs*head_sha=*)
       sha="${a#*head_sha=}"; sha="${sha%%&*}"
-      [ -f "$GH_FIXTURES/$sha" ] && printf '%s' "$sha"
+      if [ -f "$GH_FIXTURES/$sha.runs" ]; then
+        head -n1 "$GH_FIXTURES/$sha.runs" | tr -d '\n'
+      elif [ -f "$GH_FIXTURES/$sha" ]; then
+        printf '%s' "$sha"
+      fi
       exit 0
       ;;
     *actions/runs/*/jobs*)
@@ -644,6 +654,37 @@ if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "no check runs at all"; then
   ok "a commit ci.yml never ran for refuses, with gh answering fine"
 else
   bad "a missing ci.yml run did not refuse cleanly"; echo "$OUT" | tail -20
+fi
+
+# ---------------------------------------------------------------------------
+# 8d/8e. TWO ci.yml runs for the same sha (a re-run after a fix, say). The
+#     API returns them newest first, and `ci_check_runs` reads
+#     `.workflow_runs[0]`, so the NEWER run's jobs are what the gate sees,
+#     whichever way its own verdict differs from the older one's.
+# ---------------------------------------------------------------------------
+D10="$(make_repo)"; write_stubs "$D10"
+HEAD10="$(cd "$D10/repo" && git rev-parse HEAD)"
+
+printf 'run-newer\nrun-older\n' > "$D10/fixtures/$HEAD10.runs"
+printf 'React admin e2e\tcompleted\tcancelled\n' > "$D10/fixtures/run-older"
+fixture_all_green "$D10/fixtures/run-newer"
+RC="$(run_release "$D10" DRY_RUN=1 RELEASE_YES=1)"
+OUT="$(cat "$D10/out")"
+if [ "$RC" -eq 0 ]; then
+  ok "an older cancelled run does not block once a newer run is green: the gate reads [0]"
+else
+  bad "a green NEWER run did not release past an older cancelled one"; echo "$OUT" | tail -20
+fi
+
+printf 'run-newer\nrun-older\n' > "$D10/fixtures/$HEAD10.runs"
+fixture_all_green "$D10/fixtures/run-older"
+printf 'React admin e2e\tcompleted\tfailure\n' > "$D10/fixtures/run-newer"
+RC="$(run_release "$D10" DRY_RUN=1 RELEASE_YES=1)"
+OUT="$(cat "$D10/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "React admin e2e"; then
+  ok "a red NEWER run still refuses even though an older run for the same sha was green: the gate reads [0]"
+else
+  bad "a red newer run did not refuse past a green older one"; echo "$OUT" | tail -20
 fi
 
 # ---------------------------------------------------------------------------
