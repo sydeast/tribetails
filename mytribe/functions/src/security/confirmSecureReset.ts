@@ -5,11 +5,13 @@
  * unsolicited password-reset email. The user is signed-out; no auth token.
  *
  * Flow:
- *   1. Validate input.
- *   2. Consume oobCode via Identity Toolkit REST (verifies + sets new password atomically).
- *   3. Write securityIncidents/{auto} Firestore doc.
- *   4. Dispatch security.breach_attempt.kinfolk notification to business admins.
- *   5. Return { ok: true, incidentId }.
+ *   1. Validate input ({ oobCode, newPassword }; any client-sent email is ignored).
+ *   2. Verify the oobCode via Identity Toolkit REST and derive the account email from it.
+ *   3. Rate-limit on the derived email.
+ *   4. Consume oobCode via Identity Toolkit REST (sets the new password).
+ *   5. Write securityIncidents/{auto} Firestore doc.
+ *   6. Dispatch security.breach_attempt.kinfolk notification to business admins.
+ *   7. Return { ok: true, incidentId }.
  *
  * Fail-loud: auth/Firestore errors propagate as 4xx/5xx.
  * Notification errors are logged loudly but MUST NOT block the reset response
@@ -89,14 +91,28 @@ async function checkEmailRateLimit(email: string): Promise<boolean> {
 interface ResetBody {
   /** Firebase oobCode from the password-reset link. */
   oobCode: string;
-  /** New password chosen by the kinfolk. */
+  /** New password chosen by the account holder. */
   newPassword: string;
-  /** Kinfolk email (pre-filled from query-param in the UI). */
-  email: string;
+  /**
+   * IGNORED for identity (#892). Older clients (the KMP SecureResetFetcher)
+   * still send it. The account is always derived from the oobCode; a supplied
+   * value is only compared against it so a spoof attempt is logged.
+   */
+  email?: string;
   /** navigator.userAgent from the browser (optional; best-effort). */
   userAgent?: string;
 }
-
+/**
+ * Identity Toolkit base URL. Under the Auth emulator the same REST surface is
+ * served at http://<host>/identitytoolkit.googleapis.com, so an emulator run
+ * never reaches production.
+ */
+function identityToolkitBase(): string {
+  const emulator = process.env.FIREBASE_AUTH_EMULATOR_HOST;
+  return emulator
+    ? `http://${emulator}/identitytoolkit.googleapis.com/v1`
+    : 'https://identitytoolkit.googleapis.com/v1';
+}
 // ── Handler (exported for unit tests) ────────────────────────────────────────
 export interface MinimalReq {
   method?: string;
@@ -108,7 +124,6 @@ export interface MinimalRes {
   status(code: number): MinimalRes;
   json(payload: Record<string, unknown>): void;
 }
-
 export async function confirmSecureResetHandler(
   req: MinimalReq,
   res: MinimalRes,
@@ -117,48 +132,23 @@ export async function confirmSecureResetHandler(
     res.status(405).json({ error: 'method_not_allowed' });
     return;
   }
-
   const body = (req.body ?? {}) as Partial<ResetBody>;
-  const { oobCode, newPassword, email, userAgent } = body;
-
-  if (!oobCode || !newPassword || !email) {
-    res.status(400).json({ error: 'missing_required', fields: { oobCode: !oobCode, newPassword: !newPassword, email: !email } });
+  const { oobCode, newPassword, userAgent } = body;
+  const suppliedEmail = typeof body.email === 'string' ? body.email : null;
+  if (!oobCode || !newPassword) {
+    res.status(400).json({ error: 'missing_required', fields: { oobCode: !oobCode, newPassword: !newPassword } });
     return;
   }
   if (newPassword.length < 8) {
     res.status(400).json({ error: 'password_too_short', minLength: 8 });
     return;
   }
-  if (!emailSchema.safeParse(email).success) {
-    res.status(400).json({ error: 'invalid_email' });
-    return;
-  }
-
   const ts = new Date().toISOString();
   const ip =
     (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ||
     req.socket.remoteAddress ||
     'unknown';
   const ua = userAgent || (req.headers['user-agent'] as string | undefined) || 'unknown';
-
-  // ── Rate-limit check (BEFORE Identity Toolkit call) ───────────────────────────
-  // Max 3 confirmSecureReset attempts per email per 24h. This prevents a
-  // single address from being used to flood breach-incident writes or to brute-
-  // force oobCode verification. Returns HTTP 429, fail-loud, not silent.
-  const rateLimited = await checkEmailRateLimit(email);
-  if (rateLimited) {
-    // Log hash only, raw email in Cloud Logging is PII leakage (CWE-532).
-    logEvent({
-      severity: 'warn',
-      function: 'confirmSecureReset',
-      event: 'security.secureResetRateLimited',
-      extra: { emailHash: hashEmail(email), ip },
-    });
-    res.status(429).json({ ok: false, reason: 'rate_limited' });
-    return;
-  }
-
-  // ── Step 1: Consume oobCode + set new password via Identity Toolkit REST ──────
   const apiKey = process.env.WEB_API_KEY ?? '';
   if (!apiKey) {
     // Fail-loud: never attempt the reset without the key, we'd silently skip
@@ -172,17 +162,43 @@ export async function confirmSecureResetHandler(
     res.status(503).json({ error: 'server_misconfigured', detail: 'WEB_API_KEY not set' });
     return;
   }
-
-  let resetResp: Response;
+  const resetUrl = `${identityToolkitBase()}/accounts:resetPassword?key=${apiKey}`;
+  // ── Step 1: Verify the oobCode and DERIVE the account email ─────────────────
+  // accounts:resetPassword with only an oobCode checks the code and returns
+  // { email, requestType } WITHOUT consuming it (the client SDK's
+  // verifyPasswordResetCode is this same call). The email a client sends is
+  // never trusted (#892, CWE-345): the incident, the notification and the rate
+  // limit all name the account that actually owns the code.
+  let canonicalEmail: string;
   try {
-    resetResp = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:resetPassword?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ oobCode, newPassword }),
-      },
-    );
+    const verifyResp = await fetch(resetUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ oobCode }),
+    });
+    if (!verifyResp.ok) {
+      const detail = await verifyResp.text();
+      logEvent({
+        severity: 'warn',
+        function: 'confirmSecureReset',
+        event: 'security.oobCodeRejected',
+        extra: { stage: 'verify', status: verifyResp.status, detail },
+      });
+      res.status(400).json({ error: 'reset_failed', detail });
+      return;
+    }
+    const verified = (await verifyResp.json().catch(() => ({}))) as { email?: unknown };
+    if (typeof verified.email !== 'string' || !emailSchema.safeParse(verified.email).success) {
+      logEvent({
+        severity: 'warn',
+        function: 'confirmSecureReset',
+        event: 'security.oobCodeRejected',
+        extra: { stage: 'verify', note: 'Identity Toolkit named no account for this oobCode' },
+      });
+      res.status(400).json({ error: 'reset_failed', detail: 'no_account_for_code' });
+      return;
+    }
+    canonicalEmail = verified.email;
   } catch (e) {
     logEvent({
       severity: 'error',
@@ -193,62 +209,73 @@ export async function confirmSecureResetHandler(
     res.status(502).json({ error: 'auth_unreachable', detail: String(e) });
     return;
   }
-
+  // ── Step 2: Rate-limit on the derived email (BEFORE the code is consumed) ───
+  // Max 3 confirmSecureReset attempts per account per 24h, so one account
+  // cannot be used to flood breach-incident writes. Keyed on the derived email,
+  // so rotating a client-sent address no longer buys fresh attempts.
+  const rateLimited = await checkEmailRateLimit(canonicalEmail);
+  if (rateLimited) {
+    // Log hash only, raw email in Cloud Logging is PII leakage (CWE-532).
+    logEvent({
+      severity: 'warn',
+      function: 'confirmSecureReset',
+      event: 'security.secureResetRateLimited',
+      extra: { emailHash: hashEmail(canonicalEmail), ip },
+    });
+    res.status(429).json({ ok: false, reason: 'rate_limited' });
+    return;
+  }
+  // ── Step 3: Consume oobCode + set new password via Identity Toolkit REST ────
+  let resetResp: Response;
+  try {
+    resetResp = await fetch(resetUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ oobCode, newPassword }),
+    });
+  } catch (e) {
+    logEvent({
+      severity: 'error',
+      function: 'confirmSecureReset',
+      event: 'security.authUnreachable',
+      extra: { error: String(e) },
+    });
+    res.status(502).json({ error: 'auth_unreachable', detail: String(e) });
+    return;
+  }
   if (!resetResp.ok) {
     const detail = await resetResp.text();
     logEvent({
       severity: 'warn',
       function: 'confirmSecureReset',
       event: 'security.oobCodeRejected',
-      extra: { status: resetResp.status, detail, emailHash: hashEmail(email) },
+      extra: { stage: 'consume', status: resetResp.status, detail, emailHash: hashEmail(canonicalEmail) },
     });
     res.status(400).json({ error: 'reset_failed', detail });
     return;
   }
-
-  // Derive the CANONICAL email from the Identity Toolkit response, NOT the
-  // URL-supplied param. The caller can spoof `email` in the request body to
-  // trick the incident doc / notification into naming a different account
-  // than the one whose password actually got reset (M8 / CWE-345). The
-  // response.email field is the email tied to the oobCode and is therefore
-  // authoritative.
-  let canonicalEmail = email;
-  try {
-    const parsed = await resetResp.clone().json() as { email?: string };
-    if (parsed.email && typeof parsed.email === 'string') {
-      canonicalEmail = parsed.email;
-    }
-  } catch {
-    // Fall back to URL-supplied email + log so the gap is observable.
-    logEvent({
-      severity: 'warn',
-      function: 'confirmSecureReset',
-      event: 'security.canonicalEmailMissing',
-      extra: { emailHash: hashEmail(email), note: 'Identity Toolkit response did not include email field; falling back to caller-supplied value' },
-    });
-  }
-  const emailMismatch = canonicalEmail.toLowerCase() !== email.toLowerCase();
+  const emailMismatch =
+    suppliedEmail !== null && suppliedEmail.toLowerCase() !== canonicalEmail.toLowerCase();
   if (emailMismatch) {
     logEvent({
       severity: 'warn',
       function: 'confirmSecureReset',
       event: 'security.emailMismatch',
       extra: {
-        suppliedHash: hashEmail(email),
+        suppliedHash: hashEmail(suppliedEmail),
         canonicalHash: hashEmail(canonicalEmail),
         ip,
         note: 'Caller-supplied email does not match oobCode owner, possible spoof',
       },
     });
   }
-
   // ── Step 2: Write securityIncidents doc ───────────────────────────────────────
   const db = getFirestore();
   const incidentRef = db.collection('securityIncidents').doc();
   await incidentRef.set({
     type: 'unsolicited_password_reset',
     kinfolkEmail: canonicalEmail,
-    suppliedEmail: emailMismatch ? email : null,
+    suppliedEmail: emailMismatch ? suppliedEmail : null,
     timestampIso: ts,
     ip,
     userAgent: ua,
@@ -283,14 +310,14 @@ export async function confirmSecureResetHandler(
     // can correlate via Cloud Logging → incidentId.
     console.error('[confirmSecureReset] NOTIFICATION DISPATCH FAILED, admin alert not delivered', {
       incidentId: incidentRef.id,
-      kinfolkEmail: email,
+      emailHash: hashEmail(canonicalEmail),
       error: String(e),
     });
     logEvent({
       severity: 'error',
       function: 'confirmSecureReset',
       event: 'security.notificationDispatchFailed',
-      extra: { incidentId: incidentRef.id, kinfolkEmail: email, error: String(e) },
+      extra: { incidentId: incidentRef.id, emailHash: hashEmail(canonicalEmail), error: String(e) },
     });
   }
 
