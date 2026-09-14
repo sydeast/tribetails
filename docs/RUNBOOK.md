@@ -1100,6 +1100,28 @@ push carry content-free copy pointing at AuntieOS, and **SMS is skipped**
 |---|---|---|
 | `security.account.locked.operator` | #869 | The operator's lockout alert names neither the household nor the account email, and sends no SMS. |
 | `security.failedLogin.attempts.operator` | #877 | The operator's 5-failure warning does not name the household, the account email or the attempt count, and sends no SMS. |
+| `security.failedLogin.budgetExhausted.operator` | #891 | The alert that an account's failed sign-ins stopped counting for 24 hours names neither the household nor the account email, and sends no SMS. |
+| `security.account.locked.spike.operator` | #891 | The alert that 3 or more accounts locked within 30 minutes does not give the count or the window, and sends no SMS. |
+
+#### What the failed-login lock does and does not see (#891)
+
+The lock counts only failures our own sign-in clients report to
+`recordFailedLogin`. A script that calls Firebase Auth directly never reports,
+so it never warns or locks anyone here; against that, the only protection is
+Firebase Auth's own throttling (`TOO_MANY_ATTEMPTS_TRY_LATER`). The reports
+themselves are limited to 30 per client IP per 5 minutes (the IP Google
+appended, not one the caller wrote) and 15 per email per 24 hours. When a real
+account uses its 15, you get `security.failedLogin.budgetExhausted.operator`,
+because for the next 24 hours nothing warns or locks that account. When 3 or
+more accounts lock within 30 minutes, you get `security.account.locked.spike.operator`
+on top of each lock's own alert. A locked account can still request up to 10
+resets per lock from portal Android and portal desktop.
+
+To confirm the IP key after a release, send one `recordFailedLogin` report with
+a forged header, for example `X-Forwarded-For: 1.2.3.4`, and read the `ip` on
+its `AUTH_LOGIN_FAIL` row in the Activity Log. It must be your real address. If
+it is `1.2.3.4`, or every row shows the same Google address, `TRUSTED_PROXY_HOPS`
+in `loginSecurity.ts` does not match what is in front of the function.
 
 To import, follow [the template import list](#importing-notification-templates):
 Admin, then **Templates**, then **Import from repo** on web or the **Import** tab

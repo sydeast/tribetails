@@ -144,6 +144,26 @@ class NotifSectionTest {
         assertEquals(listOf("security.failedLogin.attempts.operator"), grouped.single().second.map { it.key })
     }
 
+    /**
+     * #891: the operator's two new failed-login signals, a spent report budget
+     * and a spike of locks, are business-only `security` rows next to the lock
+     * alert. Both belong on the Business tab under Account and security, and
+     * nowhere else.
+     */
+    @Test
+    fun operatorBudgetAndLockSpikeAlertsLandUnderAccountAndSecurityOnBusinessOnly() {
+        val keys = listOf("security.failedLogin.budgetExhausted.operator", "security.account.locked.spike.operator")
+        val entries = keys.map { NotificationCatalogEntry(key = it, category = "security", audiences = setOf(STREAM_BUSINESS)) }
+        for (e in entries) {
+            assertTrue(e.key, e.inAudience(NotifAudience.Business))
+            assertTrue(e.key, !e.inAudience(NotifAudience.Staff))
+            assertTrue(e.key, !e.inAudience(NotifAudience.Kinfolk))
+        }
+        val grouped = sectionedNotifEntries(entries, STREAM_BUSINESS)
+        assertEquals(listOf("Account and security"), grouped.map { it.first })
+        assertEquals(keys.toSet(), grouped.single().second.map { it.key }.toSet())
+    }
+
     @Test
     fun unknownStreamPutsEverythingUnderOther() {
         val grouped = sectionedNotifEntries(listOf(entry("visit.report", "visit")), "nope")

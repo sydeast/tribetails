@@ -99,6 +99,8 @@ describe('getNotificationCatalogHandler', () => {
       'security.breach_attempt.kinfolk', // business
       'security.account.locked.operator', // business (#869)
       'security.failedLogin.attempts.operator', // business (#877)
+      'security.failedLogin.budgetExhausted.operator', // business (#891)
+      'security.account.locked.spike.operator', // business (#891)
       'rating.submitted.bad', // business
       'rating.submitted.good', // business
       'pet.marked.inactive', // business

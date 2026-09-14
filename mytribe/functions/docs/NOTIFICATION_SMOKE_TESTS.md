@@ -102,6 +102,9 @@ batchKey + batchWindowMs, marketing-class keys live in marketing category.
    - 5th fail within 10 min → `auth.failedLogin.attempts` fires to the kinfolk only, and `security.failedLogin.attempts.operator` fires to every uid in `businessSettings/admins.uids` as staff (#877); `warnSentAtMs` is stamped. More failures inside the same 10 minutes send no second warning.
    - Continue to 10 fails within 20 min → `auth.account.locked` fires to the kinfolk, and `security.account.locked.operator` fires to every uid in `businessSettings/admins.uids` as staff (#869). `clients/{uid}/security/loginAttempts.lockedUntilMs` set to the lock start plus 30 minutes.
    - An unknown email writes only `unknownLoginAttempts/{emailHash}` and never a `clients/` doc.
+   - Report budget (#891): on a second test kinfolk, post 15 failures at least 3 minutes apart (no warning, no lock), then a 16th. It is refused `resource-exhausted`, and `security.failedLogin.budgetExhausted.operator` fires once to every uid in `businessSettings/admins.uids`. More refusals within 24 hours send nothing more.
+   - Lock spike (#891): lock 3 different test kinfolk within 30 minutes. Each lock sends its own `security.account.locked.operator`, and the 3rd also sends one `security.account.locked.spike.operator`. A 4th lock inside the same 30 minutes sends no second spike alert.
+   - Reset while locked (#891): on a locked test kinfolk, call `requestPasswordReset` 4 times. All 4 send a reset email (an unlocked account gets 3), up to 10 per lock, and every call answers `{ ok: true }`.
 2. Attempt Firebase Auth sign-in for the locked kinfolk → `beforeSignIn` blocking function rejects with `permission-denied: This account is locked.`
 3. Trigger Firebase Auth password reset for the kinfolk (out of band).
 4. Sign in successfully → `beforeSignIn` detects `tokensValidAfterTime > lockStartedAtMs`, clears the lock + counter, allows sign-in.

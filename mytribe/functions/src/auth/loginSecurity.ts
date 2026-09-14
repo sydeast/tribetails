@@ -84,24 +84,56 @@ function hashEmail(email: string): string {
   return createHash('sha256').update(email.toLowerCase().trim()).digest('hex').slice(0, 32);
 }
 
-export async function checkEmailRateLimit(email: string): Promise<void> {
-  const key = hashEmail(email);
-  const ref = db().collection('failedLoginEmailRateLimits').doc(key);
-  const nowMs = Date.now();
-  const cutoff = nowMs - EMAIL_RATE_WINDOW_MS;
-  await db().runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    const timestamps: number[] = (snap.data()?.timestamps as number[] | undefined) ?? [];
-    const recent = timestamps.filter((t) => t >= cutoff);
-    if (recent.length >= EMAIL_RATE_LIMIT) {
-      throw new HttpsError(
-        'resource-exhausted',
-        'Too many failed login reports for this account. Try again later.',
-      );
+const EMAIL_RATE_LIMIT_MESSAGE = 'Too many failed login reports for this account. Try again later.';
+
+function emailRateLimitRef(email: string) {
+  return db().collection('failedLoginEmailRateLimits').doc(hashEmail(email));
+}
+
+type EmailReportDecision =
+  | { allowed: true }
+  | {
+      allowed: false;
+      /** The saved exhaustion whose operator alert to send now (new or pending), else null. */
+      alertExhaustedAtMs: number | null;
+    };
+
+/**
+ * Counts one report against the email's daily budget, or refuses it.
+ *
+ * #891: a refusal no longer throws inside the transaction, so it can save
+ * `budgetExhaustedAtMs` and its pending marker in the same write, before the
+ * operator alert is sent. One exhaustion is open for EMAIL_RATE_WINDOW_MS
+ * (24 hours) after it starts; inside it, a refusal only retries an alert that is
+ * still pending. The caller still throws the same `resource-exhausted`.
+ */
+async function reserveFailedLoginReport(email: string): Promise<EmailReportDecision> {
+  const ref = emailRateLimitRef(email);
+  return db().runTransaction(async (tx): Promise<EmailReportDecision> => {
+    const nowMs = Date.now();
+    const data = (await tx.get(ref)).data() ?? {};
+    const timestamps: number[] = Array.isArray(data['timestamps']) ? (data['timestamps'] as number[]) : [];
+    const recent = timestamps.filter((t) => t >= nowMs - EMAIL_RATE_WINDOW_MS);
+    if (recent.length < EMAIL_RATE_LIMIT) {
+      recent.push(nowMs);
+      tx.set(ref, { timestamps: recent, updatedAtMs: nowMs }, { merge: true });
+      return { allowed: true };
     }
-    recent.push(nowMs);
-    tx.set(ref, { timestamps: recent, updatedAtMs: nowMs }, { merge: true });
+    const exhaustedAt = typeof data['budgetExhaustedAtMs'] === 'number' ? (data['budgetExhaustedAtMs'] as number) : undefined;
+    if (exhaustedAt === undefined || exhaustedAt <= nowMs - EMAIL_RATE_WINDOW_MS) {
+      tx.set(ref, { budgetExhaustedAtMs: nowMs, budgetAlertPendingForMs: nowMs, updatedAtMs: nowMs }, { merge: true });
+      return { allowed: false, alertExhaustedAtMs: nowMs };
+    }
+    return {
+      allowed: false,
+      alertExhaustedAtMs: data['budgetAlertPendingForMs'] === exhaustedAt ? exhaustedAt : null,
+    };
   });
+}
+
+export async function checkEmailRateLimit(email: string): Promise<void> {
+  const decision = await reserveFailedLoginReport(email);
+  if (!decision.allowed) throw new HttpsError('resource-exhausted', EMAIL_RATE_LIMIT_MESSAGE);
 }
 
 /**
@@ -541,6 +573,177 @@ async function sendLockAlerts(uid: string, email: string, lockStartedAtMs: numbe
   await clearPendingAlertMarker(uid, 'lockAlertsPendingForMs', lockStartedAtMs, 'admin.lock.pending.clear.failed');
 }
 
+/**
+ * Deletes `field` on `ref`, but only while it still names `startedAtMs`, so a
+ * newer exhaustion or spike that replaced the marker keeps its retry. The
+ * `clearPendingAlertMarker` rule, for the #891 signal docs.
+ */
+async function clearSignalMarker(
+  ref: FirebaseFirestore.DocumentReference,
+  field: 'budgetAlertPendingForMs' | 'spikeAlertPendingForMs',
+  startedAtMs: number,
+  failedEvent: string,
+): Promise<void> {
+  await db()
+    .runTransaction(async (tx) => {
+      if ((await tx.get(ref)).data()?.[field] !== startedAtMs) return;
+      tx.set(ref, { [field]: FieldValue.delete() }, { merge: true });
+    })
+    .catch((err) => {
+      logEvent({
+        severity: 'warn',
+        function: 'recordFailedLogin',
+        event: failedEvent,
+        errorMessage: (err as Error)?.message,
+      });
+    });
+}
+
+/**
+ * The #832 dedupe identity of one report-budget alert (#891): the account and
+ * the moment its budget was found spent, read from the saved exhaustion. One
+ * per account per 24 hours, since a new exhaustion can only start after the
+ * previous one's 24 hours.
+ */
+export function reportBudgetAlertDedupeKey(kinfolkUid: string, budgetExhaustedAtMs: number): string {
+  return `auth.budget:${kinfolkUid}:${budgetExhaustedAtMs}`;
+}
+
+/**
+ * #891: tells the operator that an account's failed-login reports stopped
+ * counting.
+ *
+ * Fifteen slow reports (under 5 in 10 minutes) spend an email's daily budget
+ * without warning anyone, and every later report, the owner's real failures
+ * included, is refused for 24 hours: no warning, no lock. So the refusal itself
+ * is the signal. Sent for real accounts only. An address that is not an account
+ * has nobody to protect, and alerting on it would let anyone flood the operator
+ * with one alert per made-up address. Both kinds still do the same account
+ * lookup here, and both get the same refusal afterwards.
+ *
+ * Never throws: the caller's answer is the refusal, whatever happens here.
+ */
+async function sendReportBudgetAlert(email: string, budgetExhaustedAtMs: number | null): Promise<void> {
+  try {
+    const uid = await uidForEmail(email);
+    if (!uid || budgetExhaustedAtMs === null) return;
+    await enqueueNotification({
+      key: 'security.failedLogin.budgetExhausted.operator',
+      data: {
+        ...(await operatorHouseholdData(uid, email, 'admin.budget.household.lookup.failed')),
+        reportLimit: EMAIL_RATE_LIMIT,
+        budgetExhaustedAtMs,
+      },
+      dedupeKey: reportBudgetAlertDedupeKey(uid, budgetExhaustedAtMs),
+      dedupeWindowMs: EMAIL_RATE_WINDOW_MS,
+    });
+    await clearSignalMarker(
+      emailRateLimitRef(email),
+      'budgetAlertPendingForMs',
+      budgetExhaustedAtMs,
+      'admin.budget.pending.clear.failed',
+    );
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'recordFailedLogin',
+      event: 'admin.budget.notify.failed',
+      errorMessage: (err as Error)?.message,
+    });
+  }
+}
+
+/**
+ * #891 operator decision: a lock spike is LOCK_SPIKE_ACCOUNTS distinct accounts
+ * locking inside LOCK_SPIKE_WINDOW_MS.
+ *
+ * Tribe Tails has about 13 households. A lock takes 10 failed sign-ins in 20
+ * minutes, and one household locking itself is rare; two in half an hour can
+ * still be coincidence. Three distinct accounts in 30 minutes (the length of a
+ * lock) is roughly a quarter of the households and is not a normal day. Every
+ * lock still sends its own alert; this is one extra alert per spike.
+ */
+export const LOCK_SPIKE_ACCOUNTS = 3;
+export const LOCK_SPIKE_WINDOW_MS = 30 * 60 * 1000;
+
+function lockSpikeRef() {
+  return db().collection('securitySignals').doc('lockSpike');
+}
+
+/** The #832 dedupe identity of one spike's alert (#891): the moment the spike was saved. */
+export function lockSpikeAlertDedupeKey(spikeStartedAtMs: number): string {
+  return `auth.lockSpike:${spikeStartedAtMs}`;
+}
+
+interface SpikeLock {
+  uid: string;
+  ts: number;
+}
+
+/**
+ * #891: records one lock on `securitySignals/lockSpike` and alerts the operator
+ * once per spike.
+ *
+ * The doc keeps the locks of the last LOCK_SPIKE_WINDOW_MS. The lock that
+ * brings the distinct accounts to LOCK_SPIKE_ACCOUNTS, with no spike open,
+ * saves `spikeStartedAtMs` and a pending marker in the same transaction, before
+ * the alert is sent. A spike is open for the window after it starts; a later
+ * lock inside it retries the alert only while its marker is pending. The doc is
+ * server-only: no rule matches `securitySignals`, so clients are denied.
+ *
+ * Never throws: a lock must hold, and its own alerts must go out, whatever
+ * happens here.
+ */
+async function recordLockForSpike(uid: string, lockStartedAtMs: number): Promise<void> {
+  const ref = lockSpikeRef();
+  try {
+    const decision = await db().runTransaction(async (tx): Promise<{ startedAtMs: number; accounts: number } | null> => {
+      const nowMs = Date.now();
+      const data = (await tx.get(ref)).data() ?? {};
+      const prior: SpikeLock[] = Array.isArray(data['locks'])
+        ? (data['locks'] as unknown[]).filter(
+            (l): l is SpikeLock =>
+              !!l && typeof (l as SpikeLock).uid === 'string' && typeof (l as SpikeLock).ts === 'number',
+          )
+        : [];
+      const locks = [...prior.filter((l) => !(l.uid === uid && l.ts === lockStartedAtMs)), { uid, ts: lockStartedAtMs }]
+        .filter((l) => l.ts > nowMs - LOCK_SPIKE_WINDOW_MS)
+        .map((l) => ({ uid: l.uid, ts: l.ts }));
+      const accounts = new Set(locks.map((l) => l.uid)).size;
+      const startedAt = typeof data['spikeStartedAtMs'] === 'number' ? (data['spikeStartedAtMs'] as number) : undefined;
+      const open = startedAt !== undefined && startedAt > nowMs - LOCK_SPIKE_WINDOW_MS;
+
+      if (accounts >= LOCK_SPIKE_ACCOUNTS && !open) {
+        tx.set(ref, { locks, spikeStartedAtMs: nowMs, spikeAlertPendingForMs: nowMs, updatedAtMs: nowMs }, { merge: true });
+        return { startedAtMs: nowMs, accounts };
+      }
+      tx.set(ref, { locks, updatedAtMs: nowMs }, { merge: true });
+      return open && data['spikeAlertPendingForMs'] === startedAt ? { startedAtMs: startedAt, accounts } : null;
+    });
+    if (!decision) return;
+
+    await enqueueNotification({
+      key: 'security.account.locked.spike.operator',
+      data: {
+        lockedAccounts: decision.accounts,
+        windowMinutes: LOCK_SPIKE_WINDOW_MS / 60_000,
+        spikeStartedAtMs: decision.startedAtMs,
+      },
+      dedupeKey: lockSpikeAlertDedupeKey(decision.startedAtMs),
+      dedupeWindowMs: LOCK_SPIKE_WINDOW_MS,
+    });
+    await clearSignalMarker(ref, 'spikeAlertPendingForMs', decision.startedAtMs, 'admin.lockSpike.pending.clear.failed');
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'recordFailedLogin',
+      event: 'admin.lockSpike.notify.failed',
+      uid,
+      errorMessage: (err as Error)?.message,
+    });
+  }
+}
+
 type LockDecision =
   | { kind: 'alreadyLocked'; lockedUntilMs: number; pendingLockStartedAtMs: number | null }
   | { kind: 'lockedNow'; lockedUntilMs: number; lockStartedAtMs: number }
@@ -570,8 +773,14 @@ export async function recordFailedLoginHandler(
   }
   const args = parsed.data;
   // Per-target rate limit. Even if the attacker rotates IPs, a single target
-  // email can only be reported EMAIL_RATE_LIMIT times per window.
-  await checkEmailRateLimit(args.email);
+  // email can only be reported EMAIL_RATE_LIMIT times per window. #891: a
+  // refusal alerts the operator once per exhaustion, then answers exactly as
+  // before.
+  const budget = await reserveFailedLoginReport(args.email);
+  if (!budget.allowed) {
+    await sendReportBudgetAlert(args.email, budget.alertExhaustedAtMs);
+    throw new HttpsError('resource-exhausted', EMAIL_RATE_LIMIT_MESSAGE);
+  }
 
   // #886: from here on nothing reaches the caller but `{ ok: true }`. A failure
   // below (a Firestore transaction, a household alert the dispatcher refused)
@@ -773,7 +982,12 @@ async function recordAccountFailure(
       return;
     }
     case 'lockedNow': {
-      await sendLockAlerts(uid, args.email, decision.lockStartedAtMs);
+      try {
+        await sendLockAlerts(uid, args.email, decision.lockStartedAtMs);
+      } finally {
+        // #891: counted even when this lock's own household alert failed.
+        await recordLockForSpike(uid, decision.lockStartedAtMs);
+      }
       return;
     }
     case 'counted': {
