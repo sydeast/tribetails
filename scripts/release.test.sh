@@ -263,6 +263,14 @@ for a in "$@"; do
   esac
 done
 
+# FIREBASE_MOVE_HEAD_ON=<target> commits to the checkout while deploying that
+# target, which is what another shell doing git work in the SAME checkout looks
+# like to a release mid-run (#840 review). safe-deploy has already cd'd into the
+# repo, so git here acts on it.
+if [ -n "${FIREBASE_MOVE_HEAD_ON:-}" ] && [ "$only" = "$FIREBASE_MOVE_HEAD_ON" ]; then
+  git commit --allow-empty -qm "moved while the release ran" >/dev/null 2>&1
+fi
+
 # FIREBASE_ADMIN_FAIL_TEXT makes an admin codebase deploy fail printing that
 # text (printf %b, so \n works), FIREBASE_ADMIN_FAIL_TIMES times (default:
 # every time), counted in FIREBASE_ADMIN_FAIL_COUNTER because each call is a
@@ -1436,6 +1444,11 @@ expect_class transient "a connection reset" 'Error: request to https://cloudfunc
 expect_class transient "a DNS failure, whose ENOTFOUND is not a not-found" 'getaddrinfo ENOTFOUND secretmanager.googleapis.com'
 expect_class transient "a mutation rate limit" "HTTP Error: 429, Quota exceeded for quota metric 'Per project mutation requests'"
 expect_class permanent "a minimum-bill refusal" 'Error: Pass the --force option to deploy functions that increase the minimum bill'
+# Both markers in one log. This is the case the ordering exists for: checking
+# transient first would retry a secret that genuinely has no versions.
+expect_class permanent "a log with BOTH a dropped request and a no-versions secret" 'Error: Failed to validate secret versions:\n- FirebaseError Failed to make request to https://secretmanager.googleapis.com/v1/projects/auntieos-ttpc/secrets/A/versions/latest\n- FirebaseError Secret projects/auntieos-ttpc/secrets/B has no versions'
+expect_class permanent "a lowercase permission denied" 'Error: permission denied on resource project auntieos-ttpc'
+expect_class transient "an internal error" 'Error: Internal error encountered.'
 expect_class unknown "a predeploy build error" 'Error: functions predeploy error: Command terminated with non-zero exit code 2'
 : > "$CLS_DIR/log"
 if [ "$(classify_deploy_failure "$CLS_DIR/log")" = "unknown" ]; then
@@ -1554,6 +1567,13 @@ if grep -q 'firestore:indexes\|firestore:rules' "$DB/calls2"; then
 else
   ok "the rerun skips indexes and rules it had already shipped"
 fi
+# Step 3 was answered by RELEASE_YES in the first run, so nothing may say the
+# indexes were confirmed Enabled.
+if grep -q "confirmed" "$DB/out" || ! grep -q "answered by RELEASE_YES=1" "$DB/out"; then
+  bad "the index resume claims a confirmation RELEASE_YES never gave"; grep -n "RESUMED" "$DB/out"
+else
+  ok "the index resume says step 3 was answered by RELEASE_YES, not confirmed"
+fi
 if [ "$(admin_calls "$DB/calls2" functions:default)" = "1" ] && grep -q 'hosting:app' "$DB/calls2"; then
   ok "the rerun deploys the step that failed and everything after it"
 else
@@ -1607,11 +1627,112 @@ if grep -q " rules$" "$DE/repo/.release-progress" 2>/dev/null &&
 else
   bad "an unverified functions deploy was recorded"; cat "$DE/repo/.release-progress" 2>/dev/null
 fi
+if grep -q " functions-mytribe-unverified$" "$DE/repo/.release-progress" 2>/dev/null &&
+   grep -q "functions:mytribe, deployed, not verified" "$DE/out" &&
+   ! grep -q "functions:mytribe, fleet verified" "$DE/out"; then
+  ok "the stop message lists the unverified functions as deployed, not verified"
+else
+  bad "the stop message did not say the functions were deployed but not verified"; tail -12 "$DE/out"
+fi
 RCE="$(run_release "$DE" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DE/calls2")"
 if [ "$RCE" = "0" ] && [ -n "$(fn_deploys "$DE/calls2")" ] && ! grep -q 'firestore:rules' "$DE/calls2"; then
   ok "the rerun redeploys the unverified functions and skips the recorded rules"
 else
   bad "the rerun after an unverified deploy was wrong (rc=$RCE)"; cat "$DE/calls2"
+fi
+
+# ---------------------------------------------------------------------------
+# #840 review. HEAD moves WHILE the release runs: the agent shell and the
+# operator's terminal share one checkout. Every record must name the commit
+# step 0 checked, and the run must refuse at the next step boundary.
+# ---------------------------------------------------------------------------
+DF="$(admin_repo)"
+HEAD_F="$(cd "$DF/repo" && git rev-parse HEAD)"
+RCF="$(run_release "$DF" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DF/calls" \
+  FIREBASE_MOVE_HEAD_ON=firestore:rules)"
+MOVED_F="$(cd "$DF/repo" && git rev-parse HEAD)"
+if [ "$MOVED_F" != "$HEAD_F" ]; then
+  ok "precondition: the stub moved HEAD during the rules deploy"
+else
+  bad "precondition failed: HEAD did not move"
+fi
+if [ "$RCF" != "0" ] && grep -q "REFUSED: HEAD moved during the release" "$DF/out"; then
+  ok "a HEAD that moves mid-release is refused at the next step boundary"
+else
+  bad "the release carried on after HEAD moved (rc=$RCF)"; tail -20 "$DF/out"
+fi
+if grep -qxF "$HEAD_F rules" "$DF/repo/.release-progress" 2>/dev/null &&
+   grep -qxF "$HEAD_F indexes" "$DF/repo/.release-progress" 2>/dev/null &&
+   ! grep -q "^$MOVED_F " "$DF/repo/.release-progress" 2>/dev/null; then
+  ok "progress marked after HEAD moved still names the step-0 commit"
+else
+  bad "progress names the wrong commit"; cat "$DF/repo/.release-progress" 2>/dev/null
+fi
+if [ -z "$(fn_deploys "$DF/calls")" ] && ! grep -q 'hosting' "$DF/calls" 2>/dev/null; then
+  ok "nothing after the moved-HEAD boundary deploys"
+else
+  bad "work deployed after HEAD moved"; cat "$DF/calls"
+fi
+if grep -q "Completed and LIVE for $(printf '%s' "$HEAD_F" | cut -c1-7)" "$DF/out"; then
+  ok "the stop message lists what shipped for the step-0 commit"
+else
+  bad "the stop message did not name the step-0 commit"; tail -12 "$DF/out"
+fi
+
+# #840 review. deploy:bg let changed indexes through because it expected a
+# resume, and release.sh no longer sees one: it must stop before deploying them.
+DG="$(make_repo)"; write_stubs "$DG"; arm_ci "$DG"
+RCG="$(run_release "$DG" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
+  RELEASE_BG_EXPECTS_INDEX_RESUME=1 FIREBASE_CALL_LOG="$DG/calls")"
+if [ "$RCG" != "0" ] && grep -q "launched this run as a RESUME of steps 2 and 3" "$DG/out" &&
+   ! grep -q 'firestore:indexes' "$DG/calls" 2>/dev/null; then
+  ok "an expected index resume that is not recorded stops step 2 before indexes deploy"
+else
+  bad "step 2 deployed indexes the wrapper expected to resume (rc=$RCG)"; tail -15 "$DG/out"
+fi
+
+# #840 review. RELEASE_SHA from deploy:bg that no longer matches HEAD at step 0.
+DH="$(make_repo)"; write_stubs "$DH"; arm_ci "$DH"
+PREV_H="$(cd "$DH/repo" && git rev-parse HEAD~1)"
+RCH="$(run_release "$DH" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
+  RELEASE_SHA="$PREV_H" FIREBASE_CALL_LOG="$DH/calls")"
+if [ "$RCH" != "0" ] && grep -q "but this run was started for" "$DH/out" && [ ! -s "$DH/calls" ]; then
+  ok "a RELEASE_SHA that is not HEAD refuses at step 0, before anything deploys"
+else
+  bad "a mismatched RELEASE_SHA was not refused at step 0 (rc=$RCH)"; tail -15 "$DH/out"
+fi
+
+# #840 review. Step 5 with nothing to deploy is its own record, and says so in
+# the stop message, the resume and the tag. It never claims a verified deploy.
+DI="$(admin_repo)"
+mkdir -p "$DI/repo/mytribe/functions/test"
+printf 'it("works", () => {});\n' > "$DI/repo/mytribe/functions/test/alpha.test.ts"
+( cd "$DI/repo" && git add -A && git commit -qm "add a test" && git push -q origin main ) >/dev/null 2>&1
+(cd "$DI/repo" && git rev-parse HEAD) > "$DI/repo/.release-state"
+commit_change "$DI" "mytribe/functions/test/alpha.test.ts" 'it("also works", () => {});'
+arm_ci "$DI"
+HEAD_I="$(cd "$DI/repo" && git rev-parse HEAD)"
+RCI="$(run_release "$DI" "${ADMIN_ENV[@]}" FIREBASE_ADMIN_FAIL_TEXT="$MISSING_TEXT")"
+if [ "$RCI" != "0" ] &&
+   grep -qxF "$HEAD_I functions-mytribe-none" "$DI/repo/.release-progress" 2>/dev/null &&
+   ! grep -qxF "$HEAD_I functions-mytribe" "$DI/repo/.release-progress" 2>/dev/null; then
+  ok "step 5 with nothing to deploy is recorded under its own key"
+else
+  bad "nothing-to-deploy was recorded as a deploy"; cat "$DI/repo/.release-progress" 2>/dev/null
+fi
+if grep -q "functions:mytribe, nothing to deploy" "$DI/out" && ! grep -q "fleet verified" "$DI/out"; then
+  ok "the stop message says nothing to deploy, not fleet verified"
+else
+  bad "the stop message misdescribed an empty step 5"; tail -12 "$DI/out"
+fi
+RCI2="$(run_release "$DI" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DI/calls2")"
+TAG_I="$(cd "$DI/repo" && git for-each-ref refs/tags --format='%(contents)')"
+if [ "$RCI2" = "0" ] && grep -q "found nothing to deploy" "$DI/out" &&
+   printf '%s' "$TAG_I" | grep -q "resumed: nothing to deploy" &&
+   ! printf '%s' "$TAG_I" | grep -q "fleet-verified"; then
+  ok "the resume and the tag message say nothing to deploy, not deployed and verified"
+else
+  bad "the resume or tag misdescribed an empty step 5 (rc=$RCI2)"; printf '%s\n' "$TAG_I"; grep -n "RESUMED" "$DI/out"
 fi
 
 echo

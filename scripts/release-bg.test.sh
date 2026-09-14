@@ -50,6 +50,8 @@ make_repo() {
 #!/usr/bin/env bash
 echo "STUB release ran"
 echo "RELEASE_YES=${RELEASE_YES:-unset}"
+echo "RELEASE_SHA=${RELEASE_SHA:-unset}"
+echo "RELEASE_BG_EXPECTS_INDEX_RESUME=${RELEASE_BG_EXPECTS_INDEX_RESUME:-unset}"
 # Reading stdin proves the wrapper detached it: from /dev/null this is an
 # instant EOF, from a terminal it would suspend the job.
 if read -r _line; then echo "stdin: got data"; else echo "stdin: eof"; fi
@@ -132,6 +134,18 @@ if grep -q "stdin: eof" "$LOG1" 2>/dev/null; then
   ok "detaches stdin, so a tty read cannot suspend the run"
 else
   bad "stdin was not detached"; cat "$LOG1" 2>/dev/null
+fi
+
+# The commit the wrapper decided about travels with the run, in full (#840).
+if grep -qx "RELEASE_SHA=$(cd "$D1" && git rev-parse HEAD)" "$LOG1" 2>/dev/null; then
+  ok "passes the full sha it launched for as RELEASE_SHA"
+else
+  bad "RELEASE_SHA was not the full launch sha"; cat "$LOG1" 2>/dev/null
+fi
+if grep -qx "RELEASE_BG_EXPECTS_INDEX_RESUME=unset" "$LOG1" 2>/dev/null; then
+  ok "a run that is not a resume carries no index-resume expectation"
+else
+  bad "a plain launch claimed an index resume"; cat "$LOG1" 2>/dev/null
 fi
 
 # ---------------------------------------------------------------------------
@@ -268,6 +282,17 @@ else
   ok "a resumed run is not reported as forced"
 fi
 wait_for_stub "$D6"
+LOG6="$(ls "$D6"/.release-logs/release-*.log 2>/dev/null | head -1)"
+if grep -qx "RELEASE_BG_EXPECTS_INDEX_RESUME=1" "$LOG6" 2>/dev/null; then
+  ok "a resumed launch tells release.sh to expect the index resume"
+else
+  bad "the resumed launch did not pass RELEASE_BG_EXPECTS_INDEX_RESUME=1"; cat "$LOG6" 2>/dev/null
+fi
+if has "$OUT6" "passed step 3" || has "$OUT6" "confirmed"; then
+  bad "the resume claims step 3 was passed or confirmed"; printf '%s\n' "$OUT6"
+else
+  ok "the resume says 'got past step 3', not that anyone confirmed it"
+fi
 
 # The record names the PREVIOUS commit: a different sha never resumes.
 D7="$(index_change_repo)"
@@ -279,6 +304,13 @@ if [ "$RC7" -ne 0 ] && has "$OUT7" "REFUSED" && [ -z "$(ls "$D7"/.release-logs/r
 else
   bad "a different commit's progress let changed indexes through; rc=$RC7"; printf '%s\n' "$OUT7"
 fi
+PREV7="$(cd "$D7" && git rev-parse HEAD~1 | cut -c1-7)"
+NOW7="$(cd "$D7" && git rev-parse HEAD | cut -c1-7)"
+if has "$OUT7" "not resuming 'indexes': it is recorded for $PREV7, and this release is $NOW7"; then
+  ok "the refusal says the record is for a different commit, naming both"
+else
+  bad "the sha-mismatch reason was not printed"; printf '%s\n' "$OUT7"
+fi
 
 D8="$(index_change_repo)"
 ( cd "$D8" && printf '%s indexes\n' "$(git rev-parse HEAD)" > .release-progress )
@@ -289,6 +321,11 @@ if [ "$RC8" -ne 0 ] && has "$OUT8" "REFUSED"; then
 else
   bad "RELEASE_NO_RESUME=1 let changed indexes through; rc=$RC8"; printf '%s\n' "$OUT8"
 fi
+if has "$OUT8" "not resuming 'indexes': RELEASE_NO_RESUME=1 is set"; then
+  ok "the refusal says RELEASE_NO_RESUME=1 is why"
+else
+  bad "the RELEASE_NO_RESUME reason was not printed"; printf '%s\n' "$OUT8"
+fi
 
 D9="$(index_change_repo)"
 ( cd "$D9" && printf '%s indexes\n' "$(git rev-parse HEAD)" > .release-progress && printf 'x\n' > stray.txt )
@@ -298,6 +335,11 @@ if [ "$RC9" -ne 0 ] && has "$OUT9" "REFUSED"; then
   ok "a dirty tree never resumes, so changed indexes still refuse"
 else
   bad "a dirty tree let changed indexes through; rc=$RC9"; printf '%s\n' "$OUT9"
+fi
+if has "$OUT9" "not resuming 'indexes': the working tree is not clean" && has "$OUT9" "?? stray.txt"; then
+  ok "the refusal says the tree is dirty and shows git status --short"
+else
+  bad "the dirty-tree reason or its status listing was not printed"; printf '%s\n' "$OUT9"
 fi
 
 echo

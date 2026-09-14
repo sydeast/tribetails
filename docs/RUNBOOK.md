@@ -595,10 +595,10 @@ right names, survives, and refuses honestly when the quota never lifts. It runs
 the real script against a throwaway repo with `gh`, `gcloud`, `firebase`, `curl`
 and `npm` stubbed, plus a fake `gradlew` per Android app so the two-app build
 and distribution path runs wet without an SDK. It also covers the admin deploy
-retry and its error classifier, and the per-commit resume (#840). 118 cases.
+retry and its error classifier, and the per-commit resume (#840). 133 cases.
 Run it after touching `scripts/release.sh`. `bash scripts/release-bg.test.sh`
-(19 cases) covers the detached wrapper, including a resumed run with changed
-indexes.
+(26 cases) covers the detached wrapper, including a resumed run with changed
+indexes and each reason a resume is refused.
 
 Knobs, all off by default:
 
@@ -658,8 +658,8 @@ its batches. Whether to retry is read from the error text:
 
 | Error text contains | Verdict | Retried |
 |---|---|---|
-| `not found`, `NOT_FOUND`, `has no versions`, `PERMISSION_DENIED`, `increase the minimum bill` | permanent | no |
-| `Failed to make request`, `HTTP Error: 429` or `5xx`, `ECONNRESET`, `ETIMEDOUT`, `ECONNREFUSED`, `EAI_AGAIN`, `ENOTFOUND`, `socket hang up`, `DEADLINE_EXCEEDED`, `Service Unavailable`, `Bad Gateway`, `Gateway Timeout` | transient | yes |
+| `not found`, `NOT_FOUND`, `has no versions`, `PERMISSION_DENIED`, `permission denied`, `increase the minimum bill` | permanent | no |
+| `Failed to make request`, `HTTP Error: 429` or `5xx`, `ECONNRESET`, `ETIMEDOUT`, `ECONNREFUSED`, `EAI_AGAIN`, `ENOTFOUND`, `socket hang up`, `DEADLINE_EXCEEDED`, `Service Unavailable`, `Bad Gateway`, `Gateway Timeout`, `Internal error encountered` | transient | yes |
 | anything else | unknown | no |
 
 A permanent marker wins even when a transient one is also in the log. A secret
@@ -669,15 +669,36 @@ refusal. An unknown error stops the run, as every failure did before.
 
 **Finished steps are recorded per commit.** As steps complete, the release
 appends `<sha> <step>` lines to `.release-progress` (gitignored, per machine). A
-rerun skips a recorded step only when the line names the exact commit at HEAD,
-the tree is clean, and `RELEASE_NO_RESUME=1` is not set. Skippable:
+rerun skips a recorded step only when the line names the exact commit the run is
+releasing, the tree is clean, and `RELEASE_NO_RESUME=1` is not set. When a record
+for the step exists but one of those fails, the run prints which: `RELEASE_NO_RESUME=1
+is set`, `it is recorded for <sha>, and this release is <sha>`, or `the working
+tree is not clean` followed by `git status --short`. Skippable:
 
-- indexes (steps 2 and 3, including the "are all indexes Enabled?" prompt)
+- indexes (steps 2 and 3, including the "are all indexes Enabled?" prompt). The
+  resume says whether the operator typed yes at that prompt or `RELEASE_YES=1`
+  answered it. `deploy:bg` and `RELEASE_BG_FORCE=1` both run with `RELEASE_YES=1`,
+  so neither is recorded as a confirmation
 - rules (step 4)
-- the `mytribe` functions (step 5), recorded **only when the fleet verify
-  passed**. "Could not verify", `RELEASE_SKIP_FLEET_VERIFY=1` and a dry run leave
-  it unrecorded, so the rerun deploys them again
+- the `mytribe` functions (step 5), recorded as done **only when the fleet
+  verify passed**. A step 5 with nothing to deploy has its own record, and the
+  resume and the tag say "nothing to deploy". A deploy whose verify could not run
+  ("could not verify", `RELEASE_SKIP_FLEET_VERIFY=1`) is recorded as unverified:
+  the stop message lists it as "deployed, not verified", and a rerun deploys again
 - each admin codebase, separately
+
+**The commit is pinned when the run starts.** `release.sh` reads HEAD once, as
+`RELEASE_SHA`, and uses it for the progress record, the diffs, `.release-state`
+and the tag. The agent shell and the operator's terminal share one checkout, so a
+checkout or commit during a 20 to 40 minute run would otherwise mark the new
+commit done for work the old one deployed. If HEAD moves, the run stops at the
+next step boundary with `REFUSED: HEAD moved during the release`, and what shipped
+stays recorded against the original commit. `npm run deploy:bg` passes the sha it
+launched for, and step 0 refuses if HEAD is no longer that commit. When the
+wrapper let changed indexes through because of a resume, it also passes
+`RELEASE_BG_EXPECTS_INDEX_RESUME=1`, and step 2 refuses if the index step is no
+longer resumable by then, rather than deploying indexes and letting step 3 answer
+itself.
 
 Hosting and Android are recorded but never skipped: they are cheap to redo, and
 step 7 has to compare the live sites against the bundle the rerun built. Every
@@ -2122,6 +2143,18 @@ the release for a dirty tree.
 Write `.release-state` by hand only when the functions really are all live.
 The next release reads it to decide whether to deploy functions at all, so a
 premature write makes that release skip work it needed to do.
+
+**After ANY hand `firebase deploy`, clear the progress record.** Either delete
+it or make the next run ignore it:
+
+```bash
+rm .release-progress                  # or:
+RELEASE_NO_RESUME=1 npm run deploy
+```
+
+`.release-progress` describes what the release script itself shipped for a
+commit. A hand deploy changes production without touching it, so a resume would
+skip steps on the strength of a record that no longer describes what is live.
 
 **The release stopped AFTER step 5 verified** (on an admin codebase, hosting,
 Android or step 7). Do not write `.release-state` by hand. Run `npm run deploy`

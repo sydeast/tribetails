@@ -41,6 +41,19 @@ cyan() { printf '\033[36m%s\033[0m\n' "$*"; }
   exit 1
 }
 
+# The commit this wrapper decides about, pinned once and handed to release.sh
+# as RELEASE_SHA, which refuses at step 0 if HEAD has moved since. Every read
+# below uses it, and so does the resume rule (#840 review).
+RELEASE_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
+if [ -z "$RELEASE_SHA" ]; then
+  red "REFUSED: cannot read HEAD."
+  exit 1
+fi
+export RELEASE_SHA
+# Only this wrapper may say a run is expected to resume the index step; an
+# inherited value from the operator's shell must not.
+unset RELEASE_BG_EXPECTS_INDEX_RESUME
+
 LOG_DIR="$ROOT/.release-logs"
 PIDFILE="$LOG_DIR/current.pid"
 mkdir -p "$LOG_DIR"
@@ -76,7 +89,7 @@ LAST_RELEASED=""
 
 INDEXES_CHANGED=0
 if [ -n "$LAST_RELEASED" ] && git rev-parse --verify --quiet "$LAST_RELEASED^{commit}" >/dev/null 2>&1; then
-  if ! git diff --quiet "$LAST_RELEASED" HEAD -- '*firestore.indexes.json' 2>/dev/null; then
+  if ! git diff --quiet "$LAST_RELEASED" "$RELEASE_SHA" -- '*firestore.indexes.json' 2>/dev/null; then
     INDEXES_CHANGED=1
   fi
 else
@@ -85,14 +98,19 @@ else
   INDEXES_CHANGED=1
 fi
 
-# A RESUMED RUN HAS ALREADY ANSWERED THE INDEX QUESTION (#840). When an earlier
-# run of this exact commit got past step 3 and stopped later, release.sh
-# recorded the index step, and the rerun skips steps 2 and 3, so there is no
-# prompt left for a detached run to skip. The diff above still says "changed",
-# because .release-state names the previous release until a run finishes. Without
-# this, the operator's documented command (npm run deploy:bg) could not resume
-# the 2026-09-13 release at all. progress_done is the same rule release.sh skips
-# on: exact HEAD sha, clean tree, RELEASE_NO_RESUME unset.
+# A RESUMED RUN IS ALREADY PAST STEP 3 (#840). When an earlier run of this exact
+# commit got past step 3 and stopped later, release.sh recorded the index step,
+# and the rerun skips steps 2 and 3, so there is no prompt left for a detached
+# run to skip. Whether a person or RELEASE_YES answered step 3 in that earlier
+# run is recorded separately, and the rerun says which. The diff above still
+# says "changed", because .release-state names the previous release until a run
+# finishes. Without this, the operator's documented command (npm run deploy:bg)
+# could not resume the 2026-09-13 release at all. progress_done is the same rule
+# release.sh skips on: exact RELEASE_SHA, clean tree, RELEASE_NO_RESUME unset.
+#
+# release.sh decides again at step 2, possibly minutes later. The wrapper hands
+# it RELEASE_BG_EXPECTS_INDEX_RESUME=1 so that if the two disagree, release.sh
+# stops instead of deploying indexes nobody will confirm.
 INDEXES_RESUMED=0
 if [ "$INDEXES_CHANGED" = "1" ] && progress_done indexes; then
   INDEXES_RESUMED=1
@@ -115,7 +133,7 @@ if [ "$INDEXES_CHANGED" = "1" ] && [ "$INDEXES_RESUMED" = "0" ] && [ "${RELEASE_
 fi
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
-SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+SHA="$(git rev-parse --short "$RELEASE_SHA" 2>/dev/null || echo unknown)"
 LOG="$LOG_DIR/release-$STAMP-$SHA.log"
 
 # stdin from /dev/null, not the terminal. This is the SIGTTIN fix: a background
@@ -128,6 +146,11 @@ LOG="$LOG_DIR/release-$STAMP-$SHA.log"
 RUNNER="nohup"
 command -v setsid >/dev/null 2>&1 && RUNNER="setsid"
 
+# RELEASE_SHA is exported above. The resume expectation is passed only when this
+# wrapper let changed indexes through on the strength of a resume.
+if [ "$INDEXES_RESUMED" = "1" ]; then
+  export RELEASE_BG_EXPECTS_INDEX_RESUME=1
+fi
 RELEASE_YES=1 $RUNNER bash "$ROOT/scripts/release.sh" </dev/null >"$LOG" 2>&1 &
 PID=$!
 echo "$PID" > "$PIDFILE"
@@ -140,7 +163,7 @@ cyan "  watch:   tail -f $LOG"
 cyan "  status:  ps -p $PID"
 cyan "  stop:    kill $PID"
 if [ "$INDEXES_RESUMED" = "1" ]; then
-  ylw "  resumed: an earlier run of $SHA deployed the indexes and passed step 3;"
+  ylw "  resumed: an earlier run of $SHA deployed the indexes and got past step 3;"
   ylw "  this run skips steps 2 and 3 (RELEASE_NO_RESUME=1 redoes them)."
 elif [ "$INDEXES_CHANGED" = "1" ]; then
   ylw "  RELEASE_BG_FORCE=1: index confirmation was skipped on your say-so."

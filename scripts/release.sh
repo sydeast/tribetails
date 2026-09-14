@@ -163,6 +163,29 @@ ylw()  { printf '\033[33m%s\033[0m\n' "$*"; }
 
 STEP="starting up"
 
+# THE COMMIT THIS RUN RELEASES, pinned once, here (#840 review).
+#
+# The release runs 20 to 40 minutes, and the agent shell and the operator's
+# terminal share ONE checkout. Anything that re-reads HEAD later (the progress
+# record, .release-state, the tag) would name whatever happened to be checked
+# out at that moment, and could mark commit B done for work commit A deployed.
+# So HEAD is read once, every later use reads RELEASE_SHA, and banner() refuses
+# at the next step boundary if HEAD has moved (release_head_guard).
+#
+# npm run deploy:bg passes RELEASE_SHA in the environment: the commit it made
+# its resume decision for. Step 0 refuses if that is not the commit checked out.
+RELEASE_SHA="${RELEASE_SHA:-$(git rev-parse HEAD 2>/dev/null || true)}"
+if [ -z "$RELEASE_SHA" ]; then
+  red "REFUSED: cannot read HEAD, so this run cannot say which commit it releases."
+  exit 1
+fi
+RELEASE_SHORT="$(git rev-parse --short "$RELEASE_SHA" 2>/dev/null || printf '%s' "${RELEASE_SHA:0:7}")"
+export RELEASE_SHA
+# Off until step 0 has compared HEAD with RELEASE_SHA itself, so a mismatch at
+# launch gets step 0's specific refusal rather than the generic one; on from
+# there until the release is over, so the closing banners do not re-check.
+RELEASE_HEAD_GUARD=0
+
 # The generated .env.production.local files (step 0c) exist only for the length
 # of this run. They are gitignored and hold nothing a browser cannot already
 # read out of the deployed bundle, but leaving them behind would mean the next
@@ -194,8 +217,9 @@ trap 'code=$?; cleanup_client_env; if [ "$code" -ne 0 ]; then red ""; red "RELEA
 # another round of Cloud Run revisions, for code already live and verified.
 #
 # .release-progress holds one "<full sha> <step>" line per step that completed
-# for the commit being released. A rerun skips a recorded step only when:
-#   - the line names the EXACT commit at HEAD (a different commit never skips),
+# for the commit being released (RELEASE_SHA, pinned above, never a later read
+# of HEAD). A rerun skips a recorded step only when:
+#   - the line names that EXACT commit (a different commit never skips),
 #   - the tree is clean (step 0 refuses a dirty one anyway; this does not lean
 #     on that), and
 #   - RELEASE_NO_RESUME=1 is not set.
@@ -216,8 +240,11 @@ trap 'code=$?; cleanup_client_env; if [ "$code" -ne 0 ]; then red ""; red "RELEA
 progress_label() {
   case "$1" in
     indexes)                   printf 'firestore indexes (steps 2-3)' ;;
+    indexes-confirmed)         printf 'firestore indexes confirmed Enabled by the operator at the step 3 prompt' ;;
     rules)                     printf 'firestore rules (step 4)' ;;
     functions-mytribe)         printf 'functions:mytribe, fleet verified (step 5)' ;;
+    functions-mytribe-none)    printf 'functions:mytribe, nothing to deploy (step 5)' ;;
+    functions-mytribe-unverified) printf 'functions:mytribe, deployed, not verified (step 5)' ;;
     functions-admin-default)   printf 'functions:default, admin codebase' ;;
     functions-admin-reconcile) printf 'functions:reconcile, admin codebase' ;;
     hosting-admin)             printf 'hosting:app, operator admin (step 6)' ;;
@@ -228,11 +255,9 @@ progress_label() {
 }
 
 # progress_report_stop: the rest of the stop message. Names every step recorded
-# for HEAD, so an operator reading a failed run knows what is live.
+# for RELEASE_SHA, so an operator reading a failed run knows what is live.
 progress_report_stop() {
-  local sha short line_sha key done_list=""
-  sha="$(git rev-parse HEAD 2>/dev/null || true)"
-  short="$(git rev-parse --short HEAD 2>/dev/null || true)"
+  local sha="$RELEASE_SHA" short="$RELEASE_SHORT" line_sha key done_list=""
   if [ -n "$sha" ] && [ -f "$PROGRESS_FILE" ]; then
     while read -r line_sha key; do
       if [ "$line_sha" = "$sha" ] && [ -n "$key" ]; then
@@ -254,7 +279,29 @@ progress_report_stop() {
   fi
 }
 
+# release_head_guard: refuse if HEAD is no longer RELEASE_SHA. Called from
+# banner(), so it runs at every step boundary, and explicitly before the two
+# places that act without a banner of their own (the admin codebases and
+# .release-state).
+release_head_guard() {
+  local now
+  [ "${RELEASE_HEAD_GUARD:-1}" = "1" ] || return 0
+  [ -n "${RELEASE_SHA:-}" ] || return 0
+  now="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+  [ "$now" = "$RELEASE_SHA" ] && return 0
+  STEP="checking HEAD has not moved since the release started"
+  red "REFUSED: HEAD moved during the release."
+  red "  This run is releasing $RELEASE_SHORT; HEAD is now ${now:-unreadable}."
+  red "  Something checked out, committed or pulled in this checkout while the"
+  red "  release ran. Everything deployed so far came from $RELEASE_SHORT, and"
+  red "  .release-progress records it against $RELEASE_SHORT, not the new HEAD."
+  red "  To resume, re-run once main is back at $RELEASE_SHORT. The new commit"
+  red "  gets a full run of its own: a different commit never resumes."
+  exit 1
+}
+
 banner() {
+  release_head_guard
   printf '\n'
   cyan "─────────────────────────────────────────────────────────────"
   cyan "  $*"
@@ -266,12 +313,17 @@ banner() {
 confirm() {
   if [ "${RELEASE_YES:-0}" = "1" ]; then
     ylw "RELEASE_YES=1: continuing without prompting."
+    # Who answered, so a record never says "confirmed" when nobody looked.
+    CONFIRM_BY="RELEASE_YES"
     return 0
   fi
   printf '\033[33m%s [y/N] \033[0m' "$1"
   read -r reply </dev/tty || reply=""
   case "$reply" in
-    [yY]|[yY][eE][sS]) return 0 ;;
+    [yY]|[yY][eE][sS])
+      CONFIRM_BY="operator"
+      return 0
+      ;;
     *)
       cleanup_client_env
       trap - EXIT
@@ -710,6 +762,13 @@ grn "branch: main"
 # unverifiable sync is exactly the state that strands a merged PR off main.
 STEP="checking main is in sync with origin"
 LOCAL="$(git rev-parse HEAD)"
+if [ "$LOCAL" != "$RELEASE_SHA" ]; then
+  red "REFUSED: HEAD is $(git rev-parse --short HEAD), but this run was started for $RELEASE_SHORT."
+  red "  RELEASE_SHA names the commit a run releases; npm run deploy:bg sets it at"
+  red "  launch, and HEAD has moved since. Start the release again from the"
+  red "  commit you mean to ship (and unset RELEASE_SHA if you exported it)."
+  exit 1
+fi
 REMOTE=""
 if git fetch origin main --quiet 2>/dev/null; then
   REMOTE="$(git rev-parse origin/main)"
@@ -750,6 +809,8 @@ fi
 
 confirm "Release this commit to production (auntieos-ttpc)?"
 fi  # end of the guards skipped under RELEASE_PREFLIGHT_ONLY
+# From here on, every step boundary refuses if HEAD has left RELEASE_SHA.
+RELEASE_HEAD_GUARD=1
 
 # ---------------------------------------------------------------------------
 # 0b. What CI thinks of THIS commit, before anything is built or shipped.
@@ -861,8 +922,8 @@ ci_refuse() {
 }
 
 STEP="reading CI's verdict for HEAD"
-HEAD_SHA="$(git rev-parse HEAD)"
-HEAD_SHORT="$(git rev-parse --short HEAD)"
+HEAD_SHA="$RELEASE_SHA"
+HEAD_SHORT="$RELEASE_SHORT"
 
 # Tracked so the closing summary can say what this run actually established
 # instead of listing the steps it walked past. Same rule as the release tag,
@@ -1012,7 +1073,7 @@ else
   # never print the same.
   CLIENT_RC=0
   node "$ROOT/scripts/client-secrets.mjs" --write \
-    --project "$PROJECT" --release "$(git rev-parse --short HEAD)" || CLIENT_RC=$?
+    --project "$PROJECT" --release "$RELEASE_SHORT" || CLIENT_RC=$?
   case "$CLIENT_RC" in
     0)
       grn "client config: every declared VITE_* value resolved, and written where"
@@ -1352,14 +1413,44 @@ STEP="deploying firestore indexes"
 RESUMED_INDEXES=0
 if progress_done indexes; then
   RESUMED_INDEXES=1
-  ylw "RESUMED: an earlier run of $(git rev-parse --short HEAD) deployed the indexes and"
-  ylw "  had them confirmed Enabled. Skipping steps 2 and 3."
+fi
+
+# THE WRAPPER AND THIS STEP MUST AGREE (#840 review). npm run deploy:bg decides
+# at launch that this run RESUMES steps 2 and 3, which is the only reason it did
+# not refuse a detached run with changed indexes. If the record has changed since
+# (deleted, tree gone dirty, RELEASE_NO_RESUME), deploying indexes here would
+# let step 3's prompt answer itself under RELEASE_YES=1, which is exactly what
+# the wrapper exists to prevent. So stop, before anything deploys.
+if [ "${RELEASE_BG_EXPECTS_INDEX_RESUME:-0}" = "1" ] && [ "$RESUMED_INDEXES" = "0" ]; then
+  red "REFUSED: npm run deploy:bg launched this run as a RESUME of steps 2 and 3,"
+  red "  but .release-progress no longer lets $RELEASE_SHORT resume the index step"
+  red "  (the reason, if there is one, is printed above). Deploying indexes now"
+  red "  would let step 3's 'are all indexes Enabled?' answer itself."
+  red "  Run it in the foreground and answer step 3 yourself:  npm run deploy"
+  exit 1
+fi
+
+if [ "$RESUMED_INDEXES" = "1" ]; then
+  # Worded from what the record proves. An operator typing "y" at step 3 is
+  # recorded separately from RELEASE_YES (or deploy:bg, or RELEASE_BG_FORCE)
+  # answering it, and only the first is a confirmation anyone made.
+  if progress_has indexes-confirmed; then
+    ylw "RESUMED: an earlier run of $RELEASE_SHORT deployed the indexes, and the"
+    ylw "  operator confirmed them Enabled at step 3. Skipping steps 2 and 3."
+  else
+    ylw "RESUMED: an earlier run of $RELEASE_SHORT deployed the indexes. Step 3 was"
+    ylw "  answered by RELEASE_YES=1 there, not by a look at the console. If this"
+    ylw "  release changed indexes, check they read Enabled. Skipping steps 2 and 3."
+  fi
   ylw "  RELEASE_NO_RESUME=1 redoes them."
 else
   deploy mytribe firestore:indexes
   grn "indexes: submitted"
 fi
 
+# Filled by confirm() below: "operator" or "RELEASE_YES". Empty when step 3
+# asked nothing (a resume, or a dry run).
+CONFIRM_BY=""
 banner "3. Wait for indexes to finish building"
 
 # The CLI returns as soon as the index is ACCEPTED, not when it is Enabled.
@@ -1378,7 +1469,12 @@ else
   ylw "  https://console.firebase.google.com/project/auntieos-ttpc/firestore/indexes"
   confirm "Are all indexes Enabled?"
 fi
-[ "$RESUMED_INDEXES" = "1" ] || progress_mark indexes
+if [ "$RESUMED_INDEXES" != "1" ]; then
+  progress_mark indexes
+  if [ "$CONFIRM_BY" = "operator" ]; then
+    progress_mark indexes-confirmed
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # 4. Rules.
@@ -1390,7 +1486,7 @@ banner "4. Firestore rules"
 # overwriting live rules with a stale file.
 STEP="deploying firestore rules"
 if progress_done rules; then
-  ylw "RESUMED: an earlier run of $(git rev-parse --short HEAD) deployed the rules. Skipping."
+  ylw "RESUMED: an earlier run of $RELEASE_SHORT deployed the rules. Skipping."
   ylw "  RELEASE_NO_RESUME=1 redeploys them."
 else
   deploy mytribe firestore:rules
@@ -1439,15 +1535,26 @@ FLEET_LIST=""
 # because .release-state still names the PREVIOUS release, so that diff says
 # "changed" and would redeploy everything that is already live.
 # RELEASE_FORCE_FUNCTIONS=1 means "deploy them", so it wins over a resume.
+#
+# Two records resume it, and they say different things: functions-mytribe (a
+# deploy whose fleet verify PASSED) and functions-mytribe-none (the diff reached
+# no deployed function, so nothing was deployed). functions-mytribe-unverified
+# never resumes anything; it exists so the stop message can say it.
 RESUMED_FUNCTIONS=0
-if [ "${RELEASE_FORCE_FUNCTIONS:-0}" != "1" ] && progress_done functions-mytribe; then
-  RESUMED_FUNCTIONS=1
+RESUMED_FUNCTIONS_NONE=0
+if [ "${RELEASE_FORCE_FUNCTIONS:-0}" != "1" ]; then
+  if progress_done functions-mytribe; then
+    RESUMED_FUNCTIONS=1
+  elif progress_done functions-mytribe-none; then
+    RESUMED_FUNCTIONS=1
+    RESUMED_FUNCTIONS_NONE=1
+  fi
 fi
 
 if [ "${RELEASE_FORCE_FUNCTIONS:-0}" = "1" ]; then
   ylw "functions: forced (RELEASE_FORCE_FUNCTIONS=1)"
 elif [ -n "$LAST_RELEASED" ] && git cat-file -e "$LAST_RELEASED^{commit}" 2>/dev/null; then
-  if git diff --quiet "$LAST_RELEASED" HEAD -- mytribe/functions 2>/dev/null; then
+  if git diff --quiet "$LAST_RELEASED" "$RELEASE_SHA" -- mytribe/functions 2>/dev/null; then
     FUNCTIONS_CHANGED=0
   fi
 fi
@@ -1508,11 +1615,17 @@ fi
 
 if [ "$RESUMED_FUNCTIONS" = "1" ]; then
   FUNCTIONS_CHANGED=1
-  ylw "RESUMED: SKIPPED the mytribe functions. An earlier run of"
-  ylw "  $(git rev-parse --short HEAD) deployed them and the fleet verify PASSED."
-  ylw "  Redeploying would mint Cloud Run revisions to change nothing."
+  if [ "$RESUMED_FUNCTIONS_NONE" = "1" ]; then
+    ylw "RESUMED: SKIPPED the mytribe functions. An earlier run of $RELEASE_SHORT"
+    ylw "  found nothing to deploy: no deployed function loads what changed."
+    FUNCTIONS_SHIPPED_DESC="resumed: nothing to deploy, per an earlier run of this commit"
+  else
+    ylw "RESUMED: SKIPPED the mytribe functions. An earlier run of"
+    ylw "  $RELEASE_SHORT deployed them and the fleet verify PASSED."
+    ylw "  Redeploying would mint Cloud Run revisions to change nothing."
+    FUNCTIONS_SHIPPED_DESC="resumed: deployed and fleet-verified by an earlier run of this commit"
+  fi
   ylw "  RELEASE_NO_RESUME=1 (or RELEASE_FORCE_FUNCTIONS=1) deploys them again."
-  FUNCTIONS_SHIPPED_DESC="resumed: deployed and fleet-verified by an earlier run of this commit"
   # FLEET_LIST feeds .release-functions at the end. Read it from the lib/ that
   # step 1 just built from this same commit; if that fails the manifest is left
   # as it was, which is what the unchanged-skip below does too.
@@ -1671,7 +1784,7 @@ else
       ylw "  Deploying the whole fleet, because an unbound secret is silent."
     fi
   elif [ -n "$LAST_RELEASED" ] && git cat-file -e "$LAST_RELEASED^{commit}" 2>/dev/null; then
-    git diff --name-status "$LAST_RELEASED" HEAD -- mytribe/functions > "$FN_WORK/changed" 2>/dev/null || true
+    git diff --name-status "$LAST_RELEASED" "$RELEASE_SHA" -- mytribe/functions > "$FN_WORK/changed" 2>/dev/null || true
     if node "$ROOT/scripts/function-targets.js" \
          --changed-from "$FN_WORK/changed" --base "$LAST_RELEASED" > "$FN_WORK/narrowed"; then
       cp "$FN_WORK/narrowed" "$FN_WORK/targets"
@@ -1695,8 +1808,10 @@ else
     # commits land here, and they used to cost a 227-function deploy.
     grn "functions: nothing to deploy. No deployed function loads the code that"
     grn "  changed since the last release."
-    FUNCTIONS_SHIPPED_DESC="none needed ($FN_SCOPE reaches no deployed function)"
-    progress_mark functions-mytribe
+    FUNCTIONS_SHIPPED_DESC="nothing to deploy ($FN_SCOPE reaches no deployed function)"
+    # Its own record, never functions-mytribe: nothing was deployed or verified,
+    # and the resume, the stop message and the tag must not say it was.
+    progress_mark functions-mytribe-none
   else
     # PRUNE BEFORE, NOT ONLY AFTER, and be honest about what it buys.
     #
@@ -1744,10 +1859,15 @@ else
       grn "functions:mytribe: all $FN_COUNT deployed"
       FUNCTIONS_SHIPPED_DESC="$FN_COUNT of $FLEET_COUNT, batched in $FN_BATCH ($FN_SCOPE)"
       verify_deployed_fleet "$FN_WORK/deployed-names" "$FN_DEPLOY_STARTED_MS"
-      # Recorded ONLY on a verify that passed. "Could not verify", a skipped
-      # verify and a dry run all leave it unrecorded, so a rerun redeploys.
+      # functions-mytribe ONLY on a verify that passed. "Could not verify" and a
+      # skipped verify record functions-mytribe-unverified instead, which the
+      # stop message names and no rerun skips on. A dry run records nothing.
       if [ "$FLEET_VERIFIED" = "1" ]; then
+        progress_forget functions-mytribe-unverified
         progress_mark functions-mytribe
+      else
+        progress_mark functions-mytribe-unverified
+        FUNCTIONS_SHIPPED_DESC="$FUNCTIONS_SHIPPED_DESC, fleet NOT verified"
       fi
     else
       red "REFUSED: $(awk 'NF{n++} END{print n+0}' "$FN_WORK/targets") function(s) did not deploy after $FN_ROUNDS round(s)."
@@ -1791,6 +1911,8 @@ else
   rm -rf "$FN_WORK"
 fi
 
+# No banner of its own, so the moved-HEAD check is called here directly.
+release_head_guard
 STEP="deploying the admin functions codebases"
 if [ "${RELEASE_INCLUDE_ADMIN_FUNCTIONS:-0}" = "1" ]; then
   # Two codebases, declared in auntieos-admin/web, deployed one at a time
@@ -1803,7 +1925,7 @@ if [ "${RELEASE_INCLUDE_ADMIN_FUNCTIONS:-0}" = "1" ]; then
   for ADMIN_CODEBASE in default reconcile; do
     STEP="deploying the admin functions codebases (functions:$ADMIN_CODEBASE)"
     if progress_done "functions-admin-$ADMIN_CODEBASE"; then
-      ylw "RESUMED: an earlier run of $(git rev-parse --short HEAD) deployed functions:$ADMIN_CODEBASE."
+      ylw "RESUMED: an earlier run of $RELEASE_SHORT deployed functions:$ADMIN_CODEBASE."
       ylw "  Skipping. RELEASE_NO_RESUME=1 redeploys it."
       continue
     fi
@@ -1859,7 +1981,7 @@ STEP="distributing the Android releases"
 if [ "$ANDROID_ANY_BUILT" != "1" ]; then
   ylw "SKIPPED: no APK was assembled in step 1c."
 else
-  ANDROID_NOTES="$(git log -1 --format='%h %s')"
+  ANDROID_NOTES="$(git log -1 --format='%h %s' "$RELEASE_SHA")"
 
   # The audience was resolved and proven non-empty in 1c. Passing it is what
   # turns an upload into a distribution: without one of these two flags the
@@ -2062,7 +2184,11 @@ if [ "$DRY_RUN" = "1" ]; then
   ylw "  the next real release skip the functions deploy for code that never"
   ylw "  shipped, and believe a fleet it never saw."
 else
-  git rev-parse HEAD > "$ROOT/.release-state"
+  # The commit this run released, not whatever is checked out now; and refuse
+  # rather than record if HEAD moved, since this step has no banner to check it.
+  release_head_guard
+  STEP="recording the released commit"
+  printf '%s\n' "$RELEASE_SHA" > "$ROOT/.release-state"
   # The fleet as it stood when it last shipped. Deploying by explicit name never
   # removes anything, so without this nothing would ever notice a function that
   # was deleted from the source and left running in production. Written under the
@@ -2091,7 +2217,7 @@ if [ "$DRY_RUN" = "1" ]; then
   ylw "DRY_RUN=1: skipping the release tag. Nothing shipped in this run, so"
   ylw "  there is nothing to tag or push."
 else
-  TAG="release/$(date +%Y.%m.%d)-$(git rev-parse --short HEAD)"
+  TAG="release/$(date +%Y.%m.%d)-$RELEASE_SHORT"
 
   # Named honestly from the same state the run already tracked, not a
   # blanket "shipped everything": a skipped or failed piece says so here too.
@@ -2127,14 +2253,14 @@ android (${ANDROID_NAMES[$ANDROID_IDX]}): skipped"
     ANDROID_IDX=$((ANDROID_IDX + 1))
   done
 
-  TAG_MSG="$(git log -1 --format='%h %s')
+  TAG_MSG="$(git log -1 --format='%h %s' "$RELEASE_SHA")
 
 Shipped:
 $SHIPPED"
 
   if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1; then
     ylw "tag: $TAG already exists locally; not recreating it."
-  elif ! git tag -a "$TAG" -m "$TAG_MSG"; then
+  elif ! git tag -a "$TAG" -m "$TAG_MSG" "$RELEASE_SHA"; then
     ylw "tag: could not create $TAG (see above)."
     ylw "  The release itself is fine; tag it by hand once you see why:"
     ylw "  git tag -a $TAG -m '...' && git push origin $TAG"
@@ -2166,6 +2292,7 @@ fi
 cleanup_client_env
 trap - EXIT
 STEP="done"
+RELEASE_HEAD_GUARD=0
 
 # A DRY RUN GETS ITS OWN ENDING, because the one below is a claim and a dry run
 # has not earned it. "Commit e4f0245 is live and verified" printed at the end of
@@ -2177,7 +2304,7 @@ STEP="done"
 if [ "$DRY_RUN" = "1" ]; then
   banner "Dry run finished"
   ylw "NOTHING SHIPPED. Nothing was deployed, verified, tagged or recorded."
-  ylw "  $(git rev-parse --short HEAD) is not live as a result of this run, and"
+  ylw "  $RELEASE_SHORT is not live as a result of this run, and"
   ylw "  .release-state still names whatever last actually shipped."
   ylw ""
   # Listed from what actually ran, not from the steps this run walked past. A
@@ -2201,7 +2328,7 @@ if [ "$DRY_RUN" = "1" ]; then
 fi
 
 banner "Released"
-grn "Commit $(git rev-parse --short HEAD) is live and verified."
+grn "Commit $RELEASE_SHORT is live and verified."
 if [ "$TAG_PUSHED" -eq 1 ]; then
   grn "Tagged $TAG and pushed it to origin."
 fi
