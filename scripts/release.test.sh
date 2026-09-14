@@ -258,6 +258,22 @@ write_stubs() {
 #!/usr/bin/env bash
 [ "${GH_UNAVAILABLE:-0}" = "1" ] && exit 1
 [ -n "${GH_CALL_LOG:-}" ] && printf '%s\n' "$*" >> "$GH_CALL_LOG"
+# `gh auth status` (#850): signed in by default. GH_AUTH_FAIL=1 prints the real
+# unauthenticated text (read off gh 2.98.0 with no token, 2026-09-14) and
+# fails. GH_API_FAIL=1 leaves auth fine but fails every `gh api` call, which is
+# a signed-in gh that cannot reach the API.
+if [ "${1:-} ${2:-}" = "auth status" ]; then
+  if [ "${GH_AUTH_FAIL:-0}" = "1" ]; then
+    echo "You are not logged into any GitHub hosts. To log in, run: gh auth login" >&2
+    exit 1
+  fi
+  printf 'github.com\n  Logged in to github.com account test (GH_TOKEN)\n'
+  exit 0
+fi
+if [ "${1:-}" = "api" ] && [ "${GH_API_FAIL:-0}" = "1" ]; then
+  echo "error connecting to api.github.com" >&2
+  exit 1
+fi
 for a in "$@"; do
   case "$a" in
     *actions/workflows/ci.yml/runs*head_sha=*)
@@ -710,10 +726,15 @@ fi
 rm -f "$D3/fixtures/$HEAD3" "$D3/fixtures/$PARENT3"
 RC="$(run_release "$D3" DRY_RUN=1 RELEASE_YES=1 GH_UNAVAILABLE=1)"
 OUT="$(cat "$D3/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "no check runs"; then
-  ok "a gate that cannot answer refuses"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "gh could not ask GitHub"; then
+  ok "a gate that cannot answer refuses, saying gh could not ask"
 else
-  bad "an unavailable gate did not refuse"; echo "$OUT" | tail -20
+  bad "an unavailable gate did not refuse as could-not-ask"; echo "$OUT" | tail -20
+fi
+if printf '%s' "$OUT" | grep -q "no check runs"; then
+  bad "an unavailable gh was reported as CI having no check runs (#850)"; echo "$OUT" | tail -20
+else
+  ok "an unavailable gh is never reported as CI having no check runs"
 fi
 
 RC="$(run_release "$D3" DRY_RUN=1 RELEASE_YES=1 GH_UNAVAILABLE=1 RELEASE_SKIP_CI_GATE=1)"
@@ -768,6 +789,73 @@ if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "no check runs at all"; then
   ok "a commit ci.yml never ran for refuses, with gh answering fine"
 else
   bad "a missing ci.yml run did not refuse cleanly"; echo "$OUT" | tail -20
+fi
+if printf '%s' "$OUT" | grep -q "gh could not ask GitHub"; then
+  bad "a genuine no-run was reported as gh being unable to ask"; echo "$OUT" | tail -20
+else
+  ok "a genuine no-run is not reported as gh being unable to ask"
+fi
+
+# ---------------------------------------------------------------------------
+# 8f. #850: gh with NO token. The nightly runner had no GH_TOKEN, and step 0b
+#     printed "no check runs at all" for a commit CI had passed. The auth
+#     check must fire BEFORE the lookup, print gh's own words, and say how to
+#     sign in, never "no check runs".
+# ---------------------------------------------------------------------------
+D8F="$(make_repo)"; write_stubs "$D8F"
+HEAD8F="$(cd "$D8F/repo" && git rev-parse HEAD)"
+fixture_all_green "$D8F/fixtures/$HEAD8F"
+RC="$(run_release "$D8F" DRY_RUN=1 RELEASE_YES=1 GH_AUTH_FAIL=1 GH_CALL_LOG="$D8F/gh-calls.log")"
+OUT="$(cat "$D8F/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "gh could not ask GitHub.*not authenticated"; then
+  ok "an unauthenticated gh refuses as could-not-ask, even for a green commit"
+else
+  bad "an unauthenticated gh did not refuse as could-not-ask (rc $RC)"; echo "$OUT" | tail -20
+fi
+if printf '%s' "$OUT" | grep -q "You are not logged into any GitHub hosts" &&
+   printf '%s' "$OUT" | grep -q "gh auth login"; then
+  ok "the refusal prints gh's own error and the sign-in fix"
+else
+  bad "the refusal swallowed gh's error or the fix"; echo "$OUT" | tail -20
+fi
+if printf '%s' "$OUT" | grep -q "no check runs"; then
+  bad "an unauthenticated gh still printed 'no check runs' (#850)"
+else
+  ok "an unauthenticated gh never prints 'no check runs'"
+fi
+if [ -f "$D8F/gh-calls.log" ] && grep -q "actions/workflows" "$D8F/gh-calls.log"; then
+  bad "the CI lookup ran even though gh auth status had failed"
+else
+  ok "the CI lookup is not attempted once gh auth status fails"
+fi
+
+# ---------------------------------------------------------------------------
+# 8g. #850: gh signed in, but the lookup call itself fails (API unreachable).
+#     Still could-not-ask, with gh's error, never "no check runs".
+# ---------------------------------------------------------------------------
+RC="$(run_release "$D8F" DRY_RUN=1 RELEASE_YES=1 GH_API_FAIL=1)"
+OUT="$(cat "$D8F/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "the lookup failed" &&
+   printf '%s' "$OUT" | grep -q "error connecting to api.github.com"; then
+  ok "a failed CI lookup refuses as could-not-ask and prints gh's error"
+else
+  bad "a failed CI lookup was not reported as could-not-ask (rc $RC)"; echo "$OUT" | tail -20
+fi
+if printf '%s' "$OUT" | grep -q "no check runs"; then
+  bad "a failed CI lookup printed 'no check runs' (#850)"
+else
+  ok "a failed CI lookup never prints 'no check runs'"
+fi
+
+# 8h. Preflight reports the auth refusal and carries on, like every ci_refuse.
+RC="$(run_release "$D8F" DRY_RUN=1 RELEASE_YES=1 RELEASE_PREFLIGHT_ONLY=1 GH_AUTH_FAIL=1)"
+OUT="$(cat "$D8F/out")"
+if printf '%s' "$OUT" | grep -q "a real release would REFUSE here" &&
+   printf '%s' "$OUT" | grep -q "gh could not ask GitHub" &&
+   ! printf '%s' "$OUT" | grep -q "no check runs"; then
+  ok "preflight names the auth refusal a real release would hit, and not 'no check runs'"
+else
+  bad "preflight did not report the auth refusal cleanly (rc $RC)"; echo "$OUT" | tail -20
 fi
 
 # ---------------------------------------------------------------------------
@@ -2719,7 +2807,8 @@ if [ "$RC" -ne 0 ]; then
 else
   bad "a LIST timeout shipped a release (rc $RC)"; echo "$OUT" | tail -25
 fi
-if printf '%s' "$OUT" | grep -q "Secret Manager did not answer for a required secret in time"; then
+if printf '%s' "$OUT" | grep -q "Secret Manager could not be read for a required secret" &&
+   printf '%s' "$OUT" | grep -q "did not answer for these REQUIRED secrets in time"; then
   ok "a LIST timeout gets its own refusal wording, not \"has no value\""
 else
   bad "a LIST timeout printed the wrong refusal wording"; echo "$OUT" | tail -25

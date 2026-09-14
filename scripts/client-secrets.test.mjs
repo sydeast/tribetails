@@ -30,6 +30,7 @@ import {
   PRODUCTION_ENV_FILE,
   ROOT,
   SECRET_UNREADABLE,
+  classifyListResult,
   declaredSecretNames,
   fixCommands,
   isGcloudTimeout,
@@ -753,6 +754,137 @@ test('CLI: a genuinely MISSING secret and an UNREADABLE one print separate REFUS
   );
   assert.match(out, /curl -4/);
   assert.match(out, /curl -6/);
+});
+
+// ---------------------------------------------------------------------------
+// #850: no gcloud, no credentials, or an empty answer. The nightly preflight
+// ran on a hosted runner with no Google credentials three nights running, and
+// every required value printed `is missing` plus `gcloud secrets create` for
+// secrets that all existed. Each shape below must refuse with exit 4, name the
+// secret as unreadable, print the auth check, and never advise create or set.
+// ---------------------------------------------------------------------------
+
+test('classifyListResult tells no gcloud, no credentials, an empty answer and another failure apart', () => {
+  assert.deepEqual(
+    classifyListResult({ error: Object.assign(new Error('spawnSync gcloud ENOENT'), { code: 'ENOENT' }) }),
+    { reason: 'no-gcloud', detail: '' },
+  );
+  const noAuth = classifyListResult({
+    status: 1,
+    stdout: '',
+    stderr:
+      'ERROR: (gcloud.secrets.list) You do not currently have an active account selected.\nPlease run:\n\n  $ gcloud auth login\n',
+  });
+  assert.equal(noAuth.reason, 'not-authenticated');
+  assert.match(noAuth.detail, /active account selected/);
+  assert.equal(classifyListResult({ status: 0, stdout: '\n', stderr: '' }).reason, 'no-answer');
+  const denied = classifyListResult({
+    status: 1,
+    stdout: '',
+    stderr: 'ERROR: (gcloud.secrets.list) PERMISSION_DENIED: Permission denied on resource project x.\n',
+  });
+  assert.equal(denied.reason, 'gcloud-failed');
+  assert.match(denied.detail, /PERMISSION_DENIED/);
+  assert.deepEqual(classifyListResult({ status: 0, stdout: 'A\nB\n' }).names, ['A', 'B']);
+  assert.equal(classifyListResult(timeoutResult()).reason, 'timeout');
+});
+
+test('listSecretsWithGcloud still returns null for a store it could not ask, and reports why', () => {
+  const seen = [];
+  const r = listSecretsWithGcloud('auntieos-ttpc', {
+    spawn: () => ({ status: 1, stdout: '', stderr: 'ERROR: You do not currently have an active account selected.' }),
+    log: () => {},
+    onUnavailable: (s) => seen.push(s),
+  });
+  assert.equal(r, null);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].reason, 'not-authenticated');
+});
+
+test('with no fetcher and nothing local, a Secret Manager value is UNREADABLE with the reason, and its advice is the auth check', () => {
+  const { rows, refusals } = resolveClientVars({
+    fetchSecret: null,
+    localEnv: {},
+    release: 'abc1234',
+    storeReason: 'not-authenticated',
+  });
+  const smRows = rows.filter((r) => r.kind === 'secret-manager');
+  assert.ok(smRows.every((r) => r.status === 'unreadable' && r.reason === 'not-authenticated'));
+  assert.ok(refusals.length > 0);
+  for (const r of refusals) {
+    const cmds = fixCommands(r, 'auntieos-ttpc');
+    assert.deepEqual(cmds, ['gcloud auth list', 'gcloud secrets list --project auntieos-ttpc --limit 1']);
+  }
+});
+
+/**
+ * Run the real CLI from a throwaway copy of the repo with NO .env files, so the
+ * result does not depend on whether this machine has a developer's .env (the
+ * operator's checkout does). node_modules is symlinked so `import('vite')`
+ * resolves and the run is not the "blind" exit-3 path. `bin` is the only
+ * directory on PATH besides /usr/bin and /bin, so a gcloud installed on the
+ * machine running the test cannot answer.
+ */
+function runCliWithoutStore(gcloudScript) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'client-secrets-850-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'scripts'));
+    fs.mkdirSync(path.join(dir, 'bin'));
+    for (const d of Object.values(APP_DIRS)) fs.mkdirSync(path.join(dir, d), { recursive: true });
+    fs.copyFileSync(path.join(ROOT, 'scripts', 'client-secrets.mjs'), path.join(dir, 'scripts', 'client-secrets.mjs'));
+    fs.symlinkSync(path.join(ROOT, 'node_modules'), path.join(dir, 'node_modules'));
+    if (gcloudScript !== null) {
+      fs.writeFileSync(path.join(dir, 'bin', 'gcloud'), gcloudScript);
+      fs.chmodSync(path.join(dir, 'bin', 'gcloud'), 0o755);
+    }
+    const env = { HOME: process.env.HOME || dir, PATH: `${path.join(dir, 'bin')}:/usr/bin:/bin` };
+    const r = spawnSync(
+      process.execPath,
+      [path.join(dir, 'scripts', 'client-secrets.mjs'), '--check', '--project', 'auntieos-ttpc', '--release', 'abc1234'],
+      { encoding: 'utf8', timeout: 15_000, env, cwd: dir },
+    );
+    return { status: r.status, out: `${r.stdout || ''}\n${r.stderr || ''}` };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function assertUnreadableNotMissing({ status, out }, why) {
+  assert.equal(status, 4, `expected exit 4 (refused because unreadable), got ${status}:\n${out}`);
+  assert.match(out, /REFUSED: Secret Manager could not be read for these REQUIRED secrets/);
+  for (const secret of ['ADMIN_WEB_APPCHECK_SITE_KEY', 'ADMIN_WEB_MAPBOX_PUBLIC_TOKEN', 'PORTAL_WEB_MAPBOX_PUBLIC_TOKEN']) {
+    assert.match(out, new RegExp(`${secret} could not be read`), `${secret} was not named as unreadable:\n${out}`);
+    assert.ok(!out.includes(`gcloud secrets create ${secret}`), `advised creating ${secret}:\n${out}`);
+    assert.ok(!out.includes(`secrets versions add ${secret}`), `advised setting ${secret}:\n${out}`);
+  }
+  assert.ok(!/is missing/.test(out), `an unasked store must never print "is missing":\n${out}`);
+  assert.ok(!/has no value/.test(out), `the missing-value refusal must not appear:\n${out}`);
+  assert.ok(!/gcloud secrets create/.test(out), `no create advice at all:\n${out}`);
+  assert.match(out, /gcloud auth list/);
+  assert.match(out, /gcloud secrets list --project auntieos-ttpc --limit 1/);
+  assert.match(out, why);
+}
+
+test('CLI: NO gcloud on PATH refuses as unreadable (exit 4), says gcloud is not installed, and never advises create', () => {
+  assertUnreadableNotMissing(runCliWithoutStore(null), /gcloud is not installed/);
+});
+
+test('CLI: gcloud with NO credentials refuses as unreadable (exit 4), quotes gcloud, and never advises create', () => {
+  const script = [
+    '#!/bin/sh',
+    'echo "ERROR: (gcloud.secrets.list) You do not currently have an active account selected." >&2',
+    'echo "Please run:" >&2',
+    'echo "  \\$ gcloud auth login" >&2',
+    'exit 1',
+    '',
+  ].join('\n');
+  const res = runCliWithoutStore(script);
+  assertUnreadableNotMissing(res, /no usable credentials/);
+  assert.match(res.out, /active account selected/);
+});
+
+test('CLI: gcloud that exits 0 and lists NOTHING refuses as unreadable (exit 4), and never advises create', () => {
+  assertUnreadableNotMissing(runCliWithoutStore('#!/bin/sh\nexit 0\n'), /listed no secrets at all/);
 });
 
 // ---------------------------------------------------------------------------
