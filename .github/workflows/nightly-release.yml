@@ -24,12 +24,9 @@ name: Nightly release
 on:
   schedule:
     # 01:00 UTC is 20:00 America/Chicago the previous evening in CDT, and 19:00
-    # in CST once DST ends. Evening, not the small hours, because the only
-    # runner is a Mac that sleeps overnight. The 08:00 UTC schedule this
-    # replaces fired at 03:00 local and failed on both 2026-08-31 and
-    # 2026-09-01 with "the self-hosted runner lost communication with the
-    # server", each time at exactly ten minutes in. A release scheduled for an
-    # hour when nobody's machine is awake is not a release.
+    # in CST once DST ends. The hour dates from the self-hosted runner, which
+    # was stopped on 2026-09-11; the job runs on a GitHub-hosted ubuntu runner
+    # now. An evening release still lands while someone is awake to read it.
     #
     # GitHub's scheduler is best-effort and drifts under load, which is fine
     # for a nightly.
@@ -78,11 +75,13 @@ jobs:
       #                          that CI's verdict is green, without deploying.
       #   on                     the real thing.
       #
-      # Run it in `preflight` for a few nights first. The runner is the
-      # operator's own Mac and inherits whatever Firebase and gcloud login that
-      # machine holds; nobody has ever proved a release works unattended from
-      # it, and preflight is how that gets proved without production as the
-      # test subject.
+      # The runner is GitHub-hosted ubuntu and holds NO credentials: no Google
+      # Cloud login and no GH_TOKEN. Operator ruling 2026-09-14:
+      # NIGHTLY_RELEASE stays `off` until #851 wires Workload Identity. Until
+      # then any mode but `off` stops at the credentials check below, because a
+      # preflight without them reports secrets that exist as unreadable and a
+      # CI verdict it could not fetch (#850). Once credentials exist, run
+      # `preflight` for a few nights before `on`.
       #
       # A manual run's `mode` input wins over the variable, so you can force a
       # preflight or a full release without touching settings.
@@ -102,6 +101,43 @@ jobs:
           fi
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "Mode: $mode"
+
+      # FAIL FAST WITHOUT CREDENTIALS (#850). On 2026-09-12, 13 and 14 the
+      # preflight ran here with no Google Cloud login and no GH_TOKEN, and got
+      # as far as release steps 0b and 0c before failing with messages that
+      # read as "your secrets are missing" and "CI never ran". Both were false.
+      # This step adds no credentials and no permissions; it only says plainly
+      # that they are absent, before `npm ci` spends minutes. #851 is where
+      # Workload Identity gets wired.
+      - name: Check the runner can authenticate
+        if: steps.decide.outputs.mode != 'off'
+        run: |
+          missing=""
+          google=""
+          if [ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ] && [ -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
+            google="GOOGLE_APPLICATION_CREDENTIALS"
+          elif command -v gcloud >/dev/null 2>&1; then
+            account="$(gcloud auth list --filter=status:ACTIVE --format='value(account)' 2>/dev/null || true)"
+            [ -n "$account" ] && google="gcloud account $account"
+          fi
+          [ -n "$google" ] || missing="$missing
+            Google Cloud: no GOOGLE_APPLICATION_CREDENTIALS file and no active gcloud account"
+          [ -n "${GH_TOKEN:-}" ] || missing="$missing
+            GitHub: no GH_TOKEN"
+          if [ -n "$missing" ]; then
+            echo "::error title=Nightly release has no credentials::This runner cannot authenticate to Google Cloud or GitHub. See #851."
+            echo "REFUSED: this runner has no credentials for a release. Missing:$missing"
+            echo
+            echo "A release run here would report Secret Manager values as unreadable and"
+            echo "CI's verdict as unavailable, and would not be telling you anything about"
+            echo "the secrets or CI. Workload Identity for this workflow is #851:"
+            echo "  https://github.com/${GITHUB_REPOSITORY}/issues/851"
+            echo "Until it lands, keep NIGHTLY_RELEASE off and release by hand:"
+            echo "  gh variable set NIGHTLY_RELEASE --body off"
+            exit 1
+          fi
+          echo "Google Cloud: $google"
+          echo "GitHub: GH_TOKEN present"
 
       # Nothing merged since the last release means nothing to ship. Releasing
       # an unchanged commit would still take an hour, still churn ~280 Cloud Run
