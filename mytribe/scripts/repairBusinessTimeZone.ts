@@ -56,8 +56,7 @@
  * Runbook: run DRY first, read the before/after, then re-run with --allow-prod.
  * The real write is an operator step, never an agent's.
  */
-import { getApps, initializeApp } from 'firebase-admin/app';
-import { getFirestore, type Firestore } from 'firebase-admin/firestore';
+import { getApps, initializeApp, getFirestore, type Firestore } from './lib/firebaseAdmin';
 
 export const SETTINGS_DOC = 'business_settings/business_settings';
 

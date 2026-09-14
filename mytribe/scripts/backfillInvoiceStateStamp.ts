@@ -57,8 +57,13 @@
 // installed firebase-admin ^14 no longer exports the legacy namespace
 // (`admin.firestore` is undefined at runtime), so the older scripts' pattern
 // throws the moment it is called. Verified against the emulator.
-import { getApps, initializeApp } from 'firebase-admin/app';
-import { getFirestore, FieldValue, type Firestore } from 'firebase-admin/firestore';
+//
+// Imported from './lib/firebaseAdmin' (issue #846), not directly from
+// 'firebase-admin/app' / 'firebase-admin/firestore': that module guards
+// against a stray firebase-admin copy resolving ahead of this project's, and
+// guarantees Timestamp/FieldValue come from the same instance as the
+// Firestore client this script writes through.
+import { getApps, initializeApp, getFirestore, FieldValue, type Firestore } from './lib/firebaseAdmin';
 import {
   invoiceStateStampOf,
   invoiceStampIsCurrent,

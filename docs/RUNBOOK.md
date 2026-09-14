@@ -1213,9 +1213,10 @@ credentials and no network.
 
 ### What stops a release and what only gets named
 
-A release **refuses** when a REQUIRED variable resolves to nothing, or when its
-stored secret exists and the latest version is empty. It names the variable, the
-secret and the command that fixes it. Two are required today:
+A release **refuses** when a REQUIRED variable resolves to nothing, when its
+stored secret exists and the latest version is empty, or when Secret Manager
+never answered for it at all (see the timeout paragraph below). It names the
+variable, the secret and the command that fixes it. Two are required today:
 `ADMIN_WEB_APPCHECK_SITE_KEY` and `PORTAL_WEB_MAPBOX_PUBLIC_TOKEN`. Both back a
 feature that is live and that fails invisibly without them: App Check reads
 `unconfigured`, and the visit route silently drops to the SVG polyline.
@@ -1233,6 +1234,30 @@ to force.
 
 `RELEASE_SKIP_CLIENT_SECRETS=1` skips the check entirely if you know what is
 missing.
+
+**Every gcloud call in this step carries a 30-second timeout.** On 2026-09-13
+release step 0c sat silent for 16 minutes: a gcloud child had one socket in
+SYN_SENT to Google over IPv6 (a VPN was installed; IPv4 answered instantly),
+and nothing printed, so the hang read as an auth prompt (#839). It now prints a
+line per secret as it fetches, and `CLIENT_SECRETS_GCLOUD_TIMEOUT_MS` (a
+positive integer, milliseconds) overrides the default on a network known to be
+slower. Whether it is the LIST call or one secret's ACCESS call that times out,
+every affected variable is marked **unreadable, never missing**: reporting it
+as missing would tell you to create a secret that may already exist. A
+REQUIRED value that is unreadable refuses with its own exit code, 4, and
+release.sh says the store did not answer rather than "has no value". An
+OPTIONAL value that is unreadable warns instead, the same call the declaration
+already makes for a value confirmed absent. Either way the advice is the same
+IPv4/IPv6 check, never `gcloud secrets create`:
+
+```bash
+curl -4 -sS -o /dev/null -w '%{http_code}\n' https://secretmanager.googleapis.com
+curl -6 -sS -o /dev/null -w '%{http_code}\n' https://secretmanager.googleapis.com
+```
+
+After the first secret's ACCESS call times out, the rest are marked unreadable
+without being spawned: a dead route stays dead for the whole run, so the worst
+case is one 30-second wait, not one per secret.
 
 Two names are deliberately outside all of this, and **neither is in Secret
 Manager, so do not go looking for them there**. `VITE_SENTRY_RELEASE` is derived:
@@ -2149,6 +2174,71 @@ Run `npm run e2e`.
 and it is release step 0b. Fix the named job on main and release the commit that
 fixes it. `RELEASE_SKIP_CI_GATE=1` is for a gate that cannot answer, not for one
 that answered no; using it that way reproduces 2026-08-01 exactly.
+
+**A release refuses with "GitHub reports no check runs at all for `<sha>`".**
+Also step 0b, and also working as intended, but check which of two causes it
+is before doing anything else: `release.sh` swallows `gh`'s own errors (`2>/dev/null
+|| true`, so it cannot tell "genuinely no run" from "could not ask" apart from
+the refusal text you already got), and the fix is different for each. From a
+signed-in shell, run:
+
+```bash
+gh api "repos/sydeast/tribetails/actions/workflows/ci.yml/runs?head_sha=<sha>" --jq .total_count
+```
+
+The same query the gate itself uses now, not `commits/<sha>/check-runs`: that
+endpoint counts every check run on the commit, including the watcher's own and
+`main-channel.yml`'s, so it is almost never 0 and would not tell you anything.
+An error (not signed in, network unreachable) means `gh` itself could not be
+asked; fix that (`gh auth status`, `gh auth login`) and re-run the release. A
+clean `0` means `gh` is fine and `ci.yml` genuinely has no run for this
+commit: read on. Any other number means `ci.yml` does have a run and the
+release gate should have found it too; re-run the release before digging
+further.
+
+This happened for real on 2026-09-13 (#838): PR #837's merge landed on main as
+`92786e7` during a GitHub outage, where the merge API call itself came back a
+gateway error but the merge had actually completed server-side. It is a
+genuine GitHub merge, not one crafted to look like one: `gh api
+repos/<owner>/<repo>/commits/92786e7 --jq .commit.verification` reports
+`verified: true`, signed with a key that matches one of the two published at
+`https://github.com/web-flow.gpg`, GitHub's own merge-commit identity. The
+bookkeeping a merge normally does alongside that git write never finished,
+though: the PR was never marked merged, and the `push` event `ci.yml`'s
+`on: push` listens for never fired. `gh api
+repos/<owner>/<repo>/commits/92786e7/check-suites` shows exactly one check
+suite for that SHA (the operator's own hand-dispatched run, hours later),
+which is proof no push-triggered suite, and so no push event, was ever
+created for it, not just an absence in a best-effort log.
+`.github/workflows/ci.yml` has no path filter on `push`, no `[skip ci]`-style
+marker stopped it, and its push concurrency group keys on `github.run_id`
+(unique per run), so none of those repo-side knobs caused it either. The
+push event was simply never delivered.
+
+Recover by hand with:
+
+```bash
+gh workflow run ci.yml --ref main
+```
+
+`.github/workflows/ci-run-watch.yml` does this automatically now. It runs
+every 20 minutes on a **schedule**, deliberately not on `push` or
+`check_suite`: whatever swallows a push event runs through the same delivery
+pipeline a webhook-triggered watcher would also depend on, and a cron tick
+does not. Once main's HEAD has zero `ci.yml` runs on record and is older than
+10 minutes (`scripts/ci-run-watch.mjs`, `DEFAULT_MAX_AGE_MINUTES`), it
+dispatches `ci.yml` for `main` itself and writes a warning to the run's job
+summary. It will not fire twice for the same commit: before dispatching it
+asks whether `ci.yml` has ANY run at all for that SHA, of any event or
+status, so a run it dispatched on a previous tick already counts and stands
+the next tick down. That same workflow-scoped question
+(`actions/workflows/ci.yml/runs?head_sha=<sha>`) is also how `release.sh`
+itself reads CI's verdict now: not every check run on the commit (a scheduled
+watcher's own run, or `main-channel.yml`'s, used to count and could make a
+green HEAD look pending or red), only `ci.yml`'s. `RELEASE_SKIP_CI_GATE=1` is
+still there for when the gate itself cannot be asked at all (`gh` down,
+unauthenticated); this is for when it can be asked and the honest answer is
+"nothing has judged this commit yet".
 
 ---
 

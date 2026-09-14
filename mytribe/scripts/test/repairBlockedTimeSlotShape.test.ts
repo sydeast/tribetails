@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Timestamp } from 'firebase-admin/firestore';
+import { Timestamp } from '../lib/firebaseAdmin';
 import { parseArgs, planRepair, VALID_SYNC_STATES } from '../repairBlockedTimeSlotShape';
 
 /**

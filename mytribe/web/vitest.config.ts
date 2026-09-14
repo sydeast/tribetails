@@ -16,6 +16,17 @@ export default defineConfig({
     // 'node' environment.
     include: ['src/**/*.test.{ts,tsx}'],
     setupFiles: ['./test-setup.ts'],
+    // #842: pinned explicitly rather than left to Vitest's own default so a
+    // future major version can't silently flip it. This is what clears a
+    // module-level `vi.fn()`'s call count and arguments before every test:
+    // without it, a test's `toHaveBeenCalledTimes`/`toHaveBeenCalledWith`
+    // assertion can pass or fail depending on what the PREVIOUS test in the
+    // file called the same mock with. `mockReset`/`restoreMocks` stay off:
+    // several mocks across this suite carry a default implementation set
+    // once in their `vi.mock(...)` factory (e.g. `getBusinessContact` in
+    // InvoiceDetail.test.tsx) that no per-test `beforeEach` re-establishes,
+    // and either option wipes that default before the file's own first test.
+    clearMocks: true,
     // Bound how much of the machine ONE run takes. See #492, which is #455
     // applied here: the admin suite got this treatment and this one, with the
     // same shape of specs, did not.
