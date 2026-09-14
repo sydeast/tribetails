@@ -134,7 +134,6 @@ describe('saveTribeProfileHandler: the old Emergency Contact keys are stripped, 
     home_access: false,
   };
   const SECONDARY_NO_HOME = { role: 'SECONDARY', status: 'ACTIVE', permissions: PERMS_OFF };
-  const SECONDARY_WITH_HOME = { role: 'SECONDARY', status: 'ACTIVE', permissions: { ...PERMS_OFF, home_access: true } };
   const STORED_EC = [
     { key: 'emergencyContactName', label: 'Emergency Contact', value: 'Rae Halbrook' },
     { key: 'emergencyContactPhone', label: 'Emergency Contact Phone', value: '555-0100' },
