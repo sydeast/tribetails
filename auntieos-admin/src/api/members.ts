@@ -79,7 +79,7 @@ export const PERMISSION_META: readonly PermissionMeta[] = [
   {
     key: 'home_access',
     label: 'Home access',
-    description: 'Sees the household home details, including entry notes.',
+    description: 'Sees and edits the household home details: entry notes and Emergency Contacts.',
   },
   {
     key: 'kintales_only',

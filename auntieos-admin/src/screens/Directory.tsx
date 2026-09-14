@@ -21,6 +21,7 @@ import {
 import { useCollection } from '../lib/firestore';
 import { str } from '../lib/coerce';
 import { useRovingTabs } from '../lib/useRovingTabs';
+import { hasEmergencyContact } from '../api/emergencyContacts';
 import { DenScreenHeading, StatusPill, EmptyHint, type DenTone } from '../components/DenScreenKit';
 import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -28,6 +29,7 @@ import { Banner } from '../components/Banner';
 import { Avatar } from '../components/Avatar';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { AddKinfolkDialog } from '../components/AddKinfolkDialog';
+import { NoEmergencyContactFlag } from '../components/NoEmergencyContactFlag';
 import { AddKinDialog, type KinfolkOption } from '../components/AddKinDialog';
 import { EntityCardGrid } from '../components/EntityCardGrid';
 import { KinfolkProfile } from './KinfolkProfile';
@@ -167,6 +169,12 @@ function KinfolkCard({ kf, kin, kinPending, onClick }: KinfolkCardProps) {
             {subtitle !== '' && <span className="directory__card-sub">{subtitle}</span>}
           </span>
         </span>
+
+        {!hasEmergencyContact(kf as unknown as Record<string, unknown>) && (
+          <span className="directory__ec-flag">
+            <NoEmergencyContactFlag compact />
+          </span>
+        )}
 
         <span className="directory__pets">
           {kin.length === 0 ? (

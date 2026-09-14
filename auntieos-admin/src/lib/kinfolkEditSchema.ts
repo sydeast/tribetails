@@ -141,14 +141,10 @@ export const kinfolkEditSchema = z.object({
   wifiName: z.string(),
   wifiPassword: z.string(),
 
-  /** Required, per the source's `isError` markers at :299 / :305 and its save gate at :610. */
-  emergencyContactName: z
-    .string()
-    .refine((v) => v.trim() !== '', { message: 'An emergency contact name is required.' }),
-  emergencyContactPhone: z
-    .string()
-    .refine((v) => isValidPhone(v), { message: 'An emergency contact phone is required.' }),
-  emergencyContactRelation: z.string(),
+  // NO EMERGENCY CONTACT FIELDS (#829). Emergency Contacts moved to their own
+  // two-slot editor (`components/EmergencyContactsEditor.tsx`), validated by
+  // `validateEmergencyContactDrafts` in `api/emergencyContacts.ts`, not by this
+  // schema: they are saved through a separate callable, not this form's patch.
 
   // NO VET FIELDS. The household vet moved to `household_data`, catalog-linked
   // by clinic id (operator ruling 2026-08-01, page-specs 04 item 3). This

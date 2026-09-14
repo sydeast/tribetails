@@ -95,6 +95,19 @@
   font-family: var(--font-mono);
 }
 
+/* #829: up to two Emergency Contact groups, each its own `.kprofile__facts`
+   list, with a rule between the groups matching the hairline between rows. */
+.kprofile__ec-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.kprofile__ec-list > li + li {
+  border-top: var(--border-hairline) solid var(--color-hairline);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+}
+
 .kprofile__kin {
   list-style: none;
   margin: 0;

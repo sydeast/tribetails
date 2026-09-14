@@ -1,8 +1,15 @@
 import { useCallback, useState } from 'react';
 import { createKinfolk, NEW_KINFOLK_STATUS_OPTIONS, type NewKinfolkStatus } from '../api/directoryWrite';
+import {
+  saveEmergencyContacts,
+  toDrafts,
+  validateEmergencyContactDrafts,
+  type EmergencyContactDraft,
+} from '../api/emergencyContacts';
 import { AddressAutofillField } from './AddressAutofillField';
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
+import { EmergencyContactsEditor } from './EmergencyContactsEditor';
 import './AddKinfolkDialog.css';
 
 interface AddKinfolkDialogProps {
@@ -38,6 +45,9 @@ export function AddKinfolkDialog({ onClose, onCreated }: AddKinfolkDialogProps) 
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<NewKinfolkStatus>('active');
   const [serviceAddress, setServiceAddress] = useState('');
+  const [ecDrafts, setEcDrafts] = useState<EmergencyContactDraft[]>(toDrafts([]));
+  /** Set once the household exists, so a failed contact save retries the contact alone. */
+  const [createdId, setCreatedId] = useState<string | null>(null);
 
   const [saving, setSaving] = useState(false);
   // AO-44: per-field touched, so a required field's error surfaces the moment
@@ -64,19 +74,57 @@ export function AddKinfolkDialog({ onClose, onCreated }: AddKinfolkDialogProps) 
     if (!saving) onClose();
   }, [saving, onClose]);
 
-  async function handleSave() {
-    setTouched({ firstName: true, lastName: true });
-    if (firstName.trim() === '' || lastName.trim() === '' || saving) return;
-    setSaving(true);
-    setSaveError(null);
+  /**
+   * The Emergency Contact write, split from household creation so a failed
+   * save retries ONLY the contact (#829): `createdId`, once set, never resets,
+   * so this can never run `createKinfolk` a second time.
+   */
+  async function saveContact(id: string) {
     try {
-      const id = await createKinfolk({ firstName, lastName, phoneNumber, email, status, serviceAddress });
+      await saveEmergencyContacts(id, ecDrafts);
       setSaving(false);
       onCreated(id);
     } catch (err) {
       setSaving(false);
-      setSaveError(`createKinfolk failed: ${err instanceof Error ? err.message : 'Create failed'}`);
+      setSaveError(
+        `saveEmergencyContacts failed: ${err instanceof Error ? err.message : 'Save failed'}. The household was created and shows No Emergency Contact until this is saved.`,
+      );
     }
+  }
+
+  async function handleSave() {
+    setTouched({ firstName: true, lastName: true });
+    if (saving) return;
+    if (createdId !== null) {
+      // Retry path: the household already exists, so only the contact save
+      // runs again. The household fields are disabled while this is true (see
+      // the fieldset below), so there is nothing left to re-validate.
+      setSaving(true);
+      setSaveError(null);
+      await saveContact(createdId);
+      return;
+    }
+    if (firstName.trim() === '' || lastName.trim() === '') return;
+    const ecError = validateEmergencyContactDrafts(ecDrafts, {
+      names: [`${firstName} ${lastName}`],
+      phones: [phoneNumber],
+    });
+    if (ecError) {
+      setSaveError(ecError);
+      return;
+    }
+    setSaving(true);
+    setSaveError(null);
+    let id: string;
+    try {
+      id = await createKinfolk({ firstName, lastName, phoneNumber, email, status, serviceAddress });
+    } catch (err) {
+      setSaving(false);
+      setSaveError(`createKinfolk failed: ${err instanceof Error ? err.message : 'Create failed'}`);
+      return;
+    }
+    setCreatedId(id);
+    await saveContact(id);
   }
 
   return (
@@ -87,7 +135,15 @@ export function AddKinfolkDialog({ onClose, onCreated }: AddKinfolkDialogProps) 
         <>
           <GhostButton label="Cancel" onClick={onClose} disabled={saving} />
           <PrimaryButton
-            label={saving ? 'Adding…' : 'Add kinfolk'}
+            label={
+              saving
+                ? createdId !== null
+                  ? 'Saving…'
+                  : 'Adding…'
+                : createdId !== null
+                  ? 'Save Emergency Contact'
+                  : 'Add kinfolk'
+            }
             onClick={() => void handleSave()}
             disabled={saving}
             busy={saving}
@@ -95,7 +151,10 @@ export function AddKinfolkDialog({ onClose, onCreated }: AddKinfolkDialogProps) 
         </>
       }
     >
-      <fieldset className="add-kinfolk__fields" disabled={saving}>
+      {/* Disabled once the household exists (a failed contact save retries the
+          contact alone, #829): there is nothing left on this half of the form
+          to change or re-send. */}
+      <fieldset className="add-kinfolk__fields" disabled={saving || createdId !== null}>
         <legend className="add-kinfolk__legend">New household</legend>
 
         <div className="add-kinfolk__row">
@@ -199,6 +258,14 @@ export function AddKinfolkDialog({ onClose, onCreated }: AddKinfolkDialogProps) 
           disabled={saving}
         />
       </fieldset>
+
+      {/* Outside the household fieldset on purpose: once the household exists
+          (`createdId !== null`) this editor is the only thing left to retry, so
+          it stays enabled while the fields above it are locked. */}
+      <div className="add-kinfolk__section">
+        <h3 className="add-kinfolk__label">Emergency Contact</h3>
+        <EmergencyContactsEditor idPrefix="add-kinfolk" value={ecDrafts} onChange={setEcDrafts} disabled={saving} />
+      </div>
 
       {saveError !== null && (
         <p className="add-kinfolk__banner" role="alert">

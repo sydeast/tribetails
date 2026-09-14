@@ -36,9 +36,6 @@ function patch(over: Partial<KinfolkEditPatch> = {}): KinfolkEditPatch {
     entryNotes: 'Side gate sticks.',
     wifiName: 'Halbrook Home',
     wifiPassword: 'sunflower-porch',
-    emergencyContactName: 'Rae Halbrook',
-    emergencyContactPhone: '512-555-9090',
-    emergencyContactRelation: 'Sister',
     ...over,
   };
 }

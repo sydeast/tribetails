@@ -210,10 +210,10 @@ function readKinfolkAttribute(kinfolk: KinfolkProfile, key: string): string {
       return kinfolk.parkingInstructions;
     case 'entryNotes':
       return kinfolk.entryNotes;
-    case 'emergencyContactName':
-      return kinfolk.emergencyContactName;
-    case 'emergencyContactPhone':
-      return kinfolk.emergencyContactPhone;
+    // NO emergencyContactName/emergencyContactPhone (#829): Emergency Contacts
+    // is now a list (`kinfolk.emergencyContacts`), not a single flat string, so
+    // it has no value this single-string attribute reader can return. Removed
+    // from `kinfolkAttributeCatalog` below along with these two cases.
     default:
       return '';
   }
@@ -284,8 +284,6 @@ export const kinfolkAttributeCatalog: readonly ConditionAttribute[] = [
   { key: 'gateCode', label: 'Gate code' },
   { key: 'parkingInstructions', label: 'Parking instructions' },
   { key: 'entryNotes', label: 'Entry notes' },
-  { key: 'emergencyContactName', label: 'Emergency contact' },
-  { key: 'emergencyContactPhone', label: 'Emergency contact phone' },
 ];
 
 /** One selectable condition source, for the editor's source picker. */

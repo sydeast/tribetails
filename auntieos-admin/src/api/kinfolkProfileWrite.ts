@@ -84,9 +84,8 @@ export interface KinfolkEditPatch {
   entryNotes: string;
   wifiName: string;
   wifiPassword: string;
-  emergencyContactName: string;
-  emergencyContactPhone: string;
-  emergencyContactRelation: string;
+  // NO EMERGENCY CONTACT FIELDS (#829). They are written only by the
+  // `saveEmergencyContacts` callable, which validates them against the household.
   // NO VET FIELDS. The household vet lives on `household_data`, catalog-linked
   // by clinic id (operator ruling 2026-08-01, page-specs 04 item 3). This
   // patch used to carry all eight `vetClinic*` / `emergencyVetClinic*` keys,
@@ -119,9 +118,6 @@ export const KINFOLK_EDIT_FIELDS = [
   'entryNotes',
   'wifiName',
   'wifiPassword',
-  'emergencyContactName',
-  'emergencyContactPhone',
-  'emergencyContactRelation',
 ] as const satisfies readonly (keyof KinfolkEditPatch)[];
 
 /** Trimmed on the way out, matching `createKinfolk`'s treatment of the same fields. */
@@ -133,8 +129,6 @@ const TRIMMED: ReadonlySet<keyof KinfolkEditPatch> = new Set<keyof KinfolkEditPa
   'secondaryPhone',
   'secondaryEmail',
   'serviceAddress',
-  'emergencyContactName',
-  'emergencyContactPhone',
 ]);
 
 /**

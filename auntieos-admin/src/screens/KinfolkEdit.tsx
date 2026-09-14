@@ -17,6 +17,14 @@ import {
 } from '../lib/kinfolkEditSchema';
 import { joinDateForEdit } from '../lib/joinDate';
 import { type Async } from '../lib/async';
+import {
+  draftsEqual,
+  isBlankDrafts,
+  saveEmergencyContacts,
+  toDrafts,
+  validateEmergencyContactDrafts,
+  type EmergencyContactDraft,
+} from '../api/emergencyContacts';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { AddressAutofillField } from '../components/AddressAutofillField';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -25,6 +33,8 @@ import { Dialog } from '../components/Dialog';
 import { MaskedValue } from '../components/MaskedValue';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { ProfileTagsSection } from '../components/ProfileTagsSection';
+import { EmergencyContactsEditor } from '../components/EmergencyContactsEditor';
+import { NoEmergencyContactFlag } from '../components/NoEmergencyContactFlag';
 import { useToast } from '../components/Toast';
 import './KinfolkEdit.css';
 
@@ -109,9 +119,6 @@ function toForm(p: KinfolkProfile): FormState {
     entryNotes: p.entryNotes,
     wifiName: p.wifiName,
     wifiPassword: p.wifiPassword,
-    emergencyContactName: p.emergencyContactName,
-    emergencyContactPhone: p.emergencyContactPhone,
-    emergencyContactRelation: p.emergencyContactRelation,
   };
 }
 
@@ -136,12 +143,6 @@ const CONTACT_FIELDS = [
   ['secondaryEmail', 'Secondary email'],
 ] as const;
 
-const EMERGENCY_FIELDS = [
-  ['emergencyContactName', 'Emergency contact name'],
-  ['emergencyContactPhone', 'Emergency contact phone'],
-  ['emergencyContactRelation', 'Relationship'],
-] as const;
-
 export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: KinfolkEditProps) {
   const [loaded, setLoaded] = useState<Async<KinfolkProfile>>({ status: 'loading' });
   const [form, setForm] = useState<FormState | null>(null);
@@ -154,6 +155,12 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
   const [error, setError] = useState<string | null>(null);
   const { showToast } = useToast();
 
+  // Emergency Contacts (#829): drafts editable independently of the rest of the
+  // form, seeded from the profile this screen already loads (the same place the
+  // form state below is seeded from `loaded`, no second read, no callable).
+  const [ecDrafts, setEcDrafts] = useState<EmergencyContactDraft[]>(toDrafts([]));
+  const [ecBaseline, setEcBaseline] = useState<EmergencyContactDraft[]>(toDrafts([]));
+
   const load = useCallback(() => {
     let live = true;
     setLoaded({ status: 'loading' });
@@ -163,6 +170,14 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
         if (live) {
           setLoaded({ status: 'ready', data });
           setForm(toForm(data));
+          // Seeded in the SAME commit as the form above (no second read, no
+          // callable), not a separate effect keyed on `loaded`: that shape
+          // committed the ready state (and thus rendered the editor with a
+          // still-blank draft) one render ahead of the seed landing, a real
+          // window where a fast interaction could type into the blank slot
+          // just before the seeding effect overwrote it.
+          setEcDrafts(toDrafts(data.emergencyContacts));
+          setEcBaseline(toDrafts(data.emergencyContacts));
         }
       } catch (err) {
         if (live) {
@@ -229,6 +244,22 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
       setError('Some details still need fixing. The fields below say which.');
       return;
     }
+
+    const ecChanged = !draftsEqual(ecDrafts, ecBaseline);
+    // A household that has none and is not adding one right now is not blocked
+    // from saving anything else (#829). Everyone else must end with a valid list.
+    const ecSkipped = isBlankDrafts(ecBaseline) && isBlankDrafts(ecDrafts);
+    if (!ecSkipped && ecChanged) {
+      const ecError = validateEmergencyContactDrafts(ecDrafts, {
+        names: [`${form.firstName} ${form.lastName}`],
+        phones: [form.phoneNumber, form.secondaryPhone],
+      });
+      if (ecError) {
+        setError(ecError);
+        return;
+      }
+    }
+
     setSaving(true);
     setError(null);
     try {
@@ -249,11 +280,18 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
         entryNotes: form.entryNotes,
         wifiName: form.wifiName,
         wifiPassword: form.wifiPassword,
-        emergencyContactName: form.emergencyContactName,
-        emergencyContactPhone: form.emergencyContactPhone,
-        emergencyContactRelation: form.emergencyContactRelation,
       };
       await updateKinfolkProfile(kinfolkId, patch);
+      if (!ecSkipped && ecChanged) {
+        try {
+          await saveEmergencyContacts(kinfolkId, ecDrafts);
+          setEcBaseline(ecDrafts);
+        } catch (err) {
+          setSaving(false);
+          setError(`saveEmergencyContacts failed: ${err instanceof Error ? err.message : 'Save failed'}`);
+          return;
+        }
+      }
       setSaving(false);
       showToast(`Saved ${displayName}.`);
       onDone();
@@ -461,19 +499,8 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
               </DenPanel>
 
               <DenPanel title="Emergency Contacts" subtitle="Who Auntie calls if something goes wrong.">
-                <fieldset className="kfedit__grid" disabled={busy}>
-                  {EMERGENCY_FIELDS.map(([key, label]) => (
-                    <TextField
-                      key={key}
-                      name={key}
-                      label={label}
-                      value={form[key]}
-                      error={errorFor(key)}
-                      onChange={(v) => set(key, v)}
-                      onBlur={() => markTouched(key)}
-                    />
-                  ))}
-                </fieldset>
+                {isBlankDrafts(ecBaseline) && <NoEmergencyContactFlag />}
+                <EmergencyContactsEditor idPrefix="kfedit" value={ecDrafts} onChange={setEcDrafts} disabled={saving} />
               </DenPanel>
 
               {/* THE VET PANEL IS GONE, and its absence is the fix.

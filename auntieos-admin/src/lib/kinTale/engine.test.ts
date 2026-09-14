@@ -253,8 +253,6 @@ describe('KinTale engine (I7 household sources)', () => {
       gateCode: '4417',
       parkingInstructions: 'driveway',
       entryNotes: 'side door',
-      emergencyContactName: 'Sam',
-      emergencyContactPhone: '555-0199',
       vetClinicName: 'Paws Clinic',
     });
     for (const attr of kinfolkAttributeCatalog) {
