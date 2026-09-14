@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { auth, db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { enqueueNotification } from '../notifications';
-import { checkIpRateLimit } from './loginSecurity';
+import { activeLockStartedAtMs, checkIpRateLimit } from './loginSecurity';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { wrapCallable } from '../lib/wrapCallable';
@@ -35,23 +35,50 @@ function hashEmail(email: string): string {
   return createHash('sha256').update(email.toLowerCase().trim()).digest('hex').slice(0, 32);
 }
 
-async function checkPasswordResetEmailRateLimit(email: string): Promise<void> {
-  const key = hashEmail(email);
-  const ref = db().collection('passwordResetEmailRateLimits').doc(key);
+// #891: a locked account's own cap, per lock. Above the daily 3 so the owner
+// can still reset after an attacker has spent some, low enough that the reset
+// path cannot be used to flood the owner's inbox during a 30-minute lock.
+const LOCKED_RESET_LIMIT = 10;
+
+/**
+ * Reserves one reset for `email`, or answers false when its cap is spent.
+ *
+ * Unlocked: 3 per email per rolling 24 hours (`timestamps`).
+ *
+ * Locked (#891): exempt from the daily cap, with its own cap of 10 counted
+ * against THAT lock (`lockWindowStartedAtMs` / `lockWindowCount`). Resets sent
+ * during a lock are not added to `timestamps`, or an attacker who locked the
+ * account could spend its daily budget and leave the owner without a reset for
+ * 24 hours after the lock clears. A different lock start resets the count.
+ *
+ * Never throws for being over a cap. Before #891 the 4th request was a 429,
+ * and with the lock exemption the same 4th request would have been a 429 for an
+ * unlocked email and `{ ok: true }` for a locked one, which tells a stranger the
+ * account is real and locked. Over a cap the handler answers `{ ok: true }` and
+ * sends nothing, for every email alike.
+ */
+async function reservePasswordReset(email: string, lockStartedAtMs: number | null): Promise<boolean> {
+  const ref = db().collection('passwordResetEmailRateLimits').doc(hashEmail(email));
   const nowMs = Date.now();
-  const cutoff = nowMs - EMAIL_RATE_WINDOW_MS;
-  await db().runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    const timestamps: number[] = (snap.data()?.timestamps as number[] | undefined) ?? [];
-    const recent = timestamps.filter((t) => t >= cutoff);
-    if (recent.length >= EMAIL_RATE_LIMIT) {
-      throw new HttpsError(
-        'resource-exhausted',
-        'Too many password reset requests for this account. Try again later.',
+  return db().runTransaction(async (tx) => {
+    const data = (await tx.get(ref)).data() ?? {};
+    if (lockStartedAtMs !== null) {
+      const sameLock = data['lockWindowStartedAtMs'] === lockStartedAtMs;
+      const count = sameLock && typeof data['lockWindowCount'] === 'number' ? (data['lockWindowCount'] as number) : 0;
+      if (count >= LOCKED_RESET_LIMIT) return false;
+      tx.set(
+        ref,
+        { lockWindowStartedAtMs: lockStartedAtMs, lockWindowCount: count + 1, updatedAtMs: FieldValue.serverTimestamp() },
+        { merge: true },
       );
+      return true;
     }
+    const timestamps: number[] = Array.isArray(data['timestamps']) ? (data['timestamps'] as number[]) : [];
+    const recent = timestamps.filter((t) => t >= nowMs - EMAIL_RATE_WINDOW_MS);
+    if (recent.length >= EMAIL_RATE_LIMIT) return false;
     recent.push(nowMs);
     tx.set(ref, { timestamps: recent, updatedAtMs: FieldValue.serverTimestamp() }, { merge: true });
+    return true;
   });
 }
 
@@ -72,15 +99,12 @@ export async function requestPasswordResetHandler(
   }
   const { email } = parsed.data;
 
-  // Per-email rate-limit BEFORE any auth lookup so an attacker can't iterate
-  // emails to enumerate accounts via the rate-limit response code either.
-  await checkPasswordResetEmailRateLimit(email);
-
   // Constant-work pattern. Both branches always invoke getUserByEmail +
   // generatePasswordResetLink (catching all errors to hide which threw).
   // Trailing constant-work sleep below floors total latency so hit + miss
   // paths are timing-indistinguishable, closes the auth/user-not-found
-  // fast-throw oracle (~5ms miss vs ~500ms hit prior to this).
+  // fast-throw oracle (~5ms miss vs ~500ms hit prior to this). #891: the lock
+  // read and the per-email cap now sit inside the padded time too.
   const startMs = Date.now();
   let user: import('firebase-admin/auth').UserRecord | null;
   let link: string | null;
@@ -89,6 +113,22 @@ export async function requestPasswordResetHandler(
   } catch {
     user = null;
   }
+
+  // #891: a locked account is exempt from the daily cap (see
+  // reservePasswordReset). Over any cap the call still does the same work and
+  // answers the same `{ ok: true }`; it just sends nothing, because `user` is
+  // cleared and the send below needs it.
+  const lockStartedAtMs = user ? await activeLockStartedAtMs(user.uid) : null;
+  if (!(await reservePasswordReset(email, lockStartedAtMs))) {
+    logEvent({
+      severity: 'info',
+      function: 'requestPasswordReset',
+      event: 'password.reset.capped',
+      extra: { emailHash: hashEmail(email), locked: lockStartedAtMs !== null },
+    });
+    user = null;
+  }
+
   try {
     link = await auth().generatePasswordResetLink(email, {
       url: `${CONTINUE_URL}?email=${encodeURIComponent(email)}`,

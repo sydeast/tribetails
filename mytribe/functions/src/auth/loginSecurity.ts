@@ -302,6 +302,31 @@ async function readSecurityDoc(uid: string): Promise<LoginSecurityDoc> {
 }
 
 /**
+ * #891: when the account's current lock started, or null when it is not locked.
+ *
+ * `requestPasswordReset` reads this to exempt a locked account from its daily
+ * cap, so the lock start names the lock window that gets its own cap. A lock
+ * saved without `lockStartedAtMs` is dated from its end. Any read failure
+ * answers null, which only means the ordinary cap applies.
+ */
+export async function activeLockStartedAtMs(uid: string, nowMs: number = Date.now()): Promise<number | null> {
+  try {
+    const doc = await readSecurityDoc(uid);
+    if (typeof doc.lockedUntilMs !== 'number' || doc.lockedUntilMs <= nowMs) return null;
+    return typeof doc.lockStartedAtMs === 'number' ? doc.lockStartedAtMs : doc.lockedUntilMs - LOCKOUT_DURATION_MS;
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'requestPasswordReset',
+      event: 'reset.lock.read.failed',
+      uid,
+      errorMessage: (err as Error)?.message,
+    });
+    return null;
+  }
+}
+
+/**
  * The #832 dedupe identity of one lock's alerts: the household account and the
  * moment its lock started, read from the saved lock rather than the current
  * call. A retry for the same lock carries the same pair and is refused; a second
