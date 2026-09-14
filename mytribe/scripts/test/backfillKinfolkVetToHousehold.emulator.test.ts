@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { getApps, initializeApp, deleteApp } from 'firebase-admin/app';
-import { getFirestore, type Firestore } from 'firebase-admin/firestore';
+// Through the shared module, never 'firebase-admin/*' directly: the script's
+// FieldValue.delete() comes from lib/firebaseAdmin's copy, and a client from any
+// other copy refuses to serialize it (#870).
+import { getApps, initializeApp, deleteApp, getFirestore, type Firestore } from '../lib/firebaseAdmin';
 import { buildPlan, applyPlan, RETIRED_KINFOLK_VET_FIELDS } from '../backfillKinfolkVetToHousehold';
 /**
  * TRAP 1, PROVEN RATHER THAN REASONED ABOUT.
@@ -16,7 +18,7 @@ import { buildPlan, applyPlan, RETIRED_KINFOLK_VET_FIELDS } from '../backfillKin
  * old fields, runs the migration against the emulator, reads the document back,
  * and asserts the fields are actually gone and the new ids actually landed.
  *
- * Runs only against the emulator (`vitest.rules.config.ts` starts one). It
+ * Runs only against the emulator (`npm run test:scripts:emulator` starts one). It
  * refuses to run without FIRESTORE_EMULATOR_HOST rather than risk touching
  * anything real.
  */
