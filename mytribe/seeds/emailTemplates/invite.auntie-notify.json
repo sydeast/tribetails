@@ -1,6 +1,0 @@
-{
-  "key": "invite.auntie-notify",
-  "subject": "Heads up: {{primaryDisplayName}} added a Kinfolk to {{tribeName}}",
-  "body": "{{primaryDisplayName}} added {{invitedEmail}} as Kin {{secondaryLabel}} on {{tribeName}}.\n\nPermissions granted: {{permissionsCsv}}.\n\nReview: {{auntieReviewUrl}}",
-  "html": null
-}

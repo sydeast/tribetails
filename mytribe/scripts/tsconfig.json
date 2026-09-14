@@ -3,6 +3,7 @@
   "//paths": "LOAD-BEARING, and not merely legacy node10 scaffolding. mytribe/scripts has no node_modules of its own and is a SIBLING of mytribe/functions, so nothing on the walk-up path carries these packages; this block is the compile-time twin of the `NODE_PATH=node_modules` those npm scripts set at run time (tsc ignores NODE_PATH). Verified under nodenext: dropping the block entirely fails 18 files with TS2307 on 'vitest'. The explicit 'firebase-admin/*' entry is separately load-bearing, because the catch-all substitutes '../functions/node_modules/firebase-admin/app', a path with no file, after which tsc falls back to a walk-up that on a developer machine can reach a STRAY $HOME/node_modules/firebase-admin (observed: v13.8 shadowing the project's 14.2.0) and on CI resolves to nothing at all. It bypasses the package's `exports` map, but lands on exactly the './lib/app/index.d.ts' that map's `require` condition points at, so nothing is masked.",
   "//baseUrl": "Deliberately absent. 'baseUrl' is deprecated in TS 6 and removed in TS 7, the same deadline that retires node10 resolution. `paths` has been resolved relative to this file since TS 4.1, so the only entry that needed it was the catch-all's own-directory fallback, rewritten from '*' to './*' to be relative.",
   "//ts-node": "Must track the module setting above; 'commonjs' here against 'nodenext' resolution is the TS5110 pairing error and every backfill would fail to start. 'nodenext' still emits CommonJS, since no package.json above these files sets `type: module`.",
+  "//rootDir": "TypeScript 6 requires rootDir to be explicit once the inferred common source directory (here, '../functions', because these scripts import functions/src code) no longer matches the directory containing this tsconfig.json; without it every backfill/seed/repair script fails to start with TS5011.",
   "compilerOptions": {
     "target": "ES2022",
     "module": "nodenext",
@@ -12,6 +13,7 @@
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "moduleResolution": "nodenext",
+    "rootDir": "..",
     "paths": {
       "vitest": ["../functions/node_modules/vitest"],
       "firebase-admin/*": ["../functions/node_modules/firebase-admin/lib/*"],

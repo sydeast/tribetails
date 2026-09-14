@@ -1,6 +1,0 @@
-{
-  "key": "error.daily-digest",
-  "subject": "MyTribe error digest — {{date}}",
-  "body": "Last 24h:\n\n{{summary}}\n\nView in Sentry: {{sentryUrl}}",
-  "html": null
-}
