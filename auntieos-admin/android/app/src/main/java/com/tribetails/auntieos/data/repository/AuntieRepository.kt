@@ -84,10 +84,14 @@ class AuntieRepository(
     /**
      * #886: where a failed sign-in's `recordFailedLogin` report runs, detached
      * from the sign-in so the error reaches the screen without waiting on it.
-     * Production passes nothing; a test passes `Unconfined` to observe the call.
+     * Production shares [failedLoginReportScope], so a repository rebuilt on a
+     * base-URL change never leaves an orphaned job; a test passes `Unconfined`.
      */
-    private val reportScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    private val reportScope: CoroutineScope = failedLoginReportScope,
 ) {
+    /** Test seam: which scope reports run in. */
+    internal val reportScopeForTest: CoroutineScope get() = reportScope
+
     private val firestore by lazy(firestoreProvider)
     private val storage by lazy { FirebaseStorage.getInstance() }
     private val auth by lazy(authProvider)

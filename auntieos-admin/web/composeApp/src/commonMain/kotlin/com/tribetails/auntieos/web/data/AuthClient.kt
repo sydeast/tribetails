@@ -13,14 +13,28 @@ import kotlinx.serialization.Serializable
  * (defined in `wasmJsMain/resources/index.html`). Future Android target will swap to GitLive
  * Firebase Auth or the official Android SDK.
  */
+/**
+ * #886: the ONE scope every [AuthClient] launches its failed-login reports in.
+ *
+ * `AuthClient()` is constructed in App.kt, N8nClient and three screens, often
+ * inside `remember`, so a scope per instance meant a fresh `SupervisorJob` for
+ * every one of them that nothing ever cancelled. The console is a single process
+ * and a report is one short callable that must outlive the screen that fired it,
+ * so a single process-lifetime scope is the app lifecycle here.
+ */
+internal val sharedAuthReportScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
 class AuthClient(
     /** Test seam: the platform sign-in. Production passes nothing. */
     private val signInImpl: suspend (String, String) -> SignInResult = { e, p -> platformSignIn(e, p) },
     /** #886 test seam: where a credential failure is reported. Production posts to `recordFailedLogin`. */
     private val failedLoginReporter: suspend (String) -> Unit = { platformReportFailedLogin(it) },
-    /** #886: where that report runs, detached so the failure reaches the screen without waiting on it. */
-    private val reportScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    /** #886: where that report runs. Production shares [sharedAuthReportScope]; tests pass `Unconfined`. */
+    private val reportScope: CoroutineScope = sharedAuthReportScope,
 ) {
+    /** Test seam: which scope reports run in. */
+    internal val reportScopeForTest: CoroutineScope get() = reportScope
+
     /** Hot stream of the current auth state. Emits null when signed out. */
     fun authStateStream(): Flow<AuthUser?> = platformAuthStateStream()
 

@@ -68,6 +68,19 @@ class AuthClientFailedLoginTest {
         assertEquals(listOf("auntie@tribetails.test"), reported)
     }
 
+    /**
+     * #886 review: App.kt, N8nClient and three screens each construct `AuthClient()`.
+     * They must all share one report scope, so building a client never creates a
+     * `SupervisorJob` that nothing cancels.
+     */
+    @Test
+    fun everyDefaultClient_sharesOneReportScope() {
+        val clients = List(5) { AuthClient() }
+        val scopes = clients.map { it.reportScopeForTest }.toSet()
+        assertEquals(1, scopes.size)
+        assertSame(sharedAuthReportScope, scopes.single())
+    }
+
     @Test
     fun aSuccessfulSignIn_reportsNothing() {
         val ok = SignInResult.Ok(AuthUser("uid-1", "auntie@tribetails.test"))

@@ -1,6 +1,17 @@
 package com.tribetails.auntieos.data.repository
 
 import com.google.firebase.auth.FirebaseAuthException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+
+/**
+ * #886: the one process-lifetime scope every [AuntieRepository] launches its
+ * failed-login reports in. `AuntieOSApp.buildRepo` rebuilds the repository on a
+ * base-URL change, and a scope per instance would leave each old one's job
+ * behind. A report is one short callable that must outlive the screen.
+ */
+internal val failedLoginReportScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
 /**
  * #886: which sign-in failures count toward a lockout, and how the lockout

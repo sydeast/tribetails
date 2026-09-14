@@ -66,6 +66,14 @@ class AuntieRepositoryFailedLoginTest {
     }
 
     @Test
+    fun `every production repository shares one report scope, so a rebuilt one leaves no orphaned job`() {
+        val first = AuntieRepository(n8n = mockk<N8nApi>(), authGate = AuthGate { auth }, authProvider = { auth })
+        val second = AuntieRepository(n8n = mockk<N8nApi>(), authGate = AuthGate { auth }, authProvider = { auth })
+        assertTrue(first.reportScopeForTest === second.reportScopeForTest)
+        assertTrue(first.reportScopeForTest === failedLoginReportScope)
+    }
+
+    @Test
     fun `a wrong password reports the trimmed email and returns the same error without waiting`() {
         val wrong = FirebaseAuthInvalidCredentialsException("ERROR_WRONG_PASSWORD", "The password is invalid.")
         signInFailsWith(wrong)
