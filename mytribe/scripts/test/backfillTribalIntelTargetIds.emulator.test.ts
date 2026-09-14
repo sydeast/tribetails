@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { getApps, initializeApp, deleteApp } from 'firebase-admin/app';
-import { getFirestore, type Firestore } from 'firebase-admin/firestore';
+// Through the shared module, never 'firebase-admin/*' directly: the script
+// builds its writes from lib/firebaseAdmin's copy, so the client must come from
+// the same one (#870).
+import { getApps, initializeApp, deleteApp, getFirestore, type Firestore } from '../lib/firebaseAdmin';
 import { buildPlan, applyPlan, CREATED_BY_BACKFILL } from '../backfillTribalIntelTargetIds';
 
 /**
@@ -14,7 +16,7 @@ import { buildPlan, applyPlan, CREATED_BY_BACKFILL } from '../backfillTribalInte
  *     names it, so no reader can catch the collection mid-repair in the exact
  *     unresolvable state this script exists to end.
  *
- * Runs only against the emulator (`npm run test:rules` starts one). It refuses
+ * Runs only against the emulator (`npm run test:scripts:emulator` starts one). It refuses
  * to run without FIRESTORE_EMULATOR_HOST rather than risk touching anything
  * real, the same gate its sibling emulator test uses.
  */

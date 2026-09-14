@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { getApps, initializeApp } from 'firebase-admin/app';
-import { getFirestore, Timestamp, type Firestore } from 'firebase-admin/firestore';
+// Through the shared module, never 'firebase-admin/*' directly: the client and
+// the seeded Timestamps must come from the same copy the script reads with, and
+// emulatorTestImports.test.ts fails on a direct import (#870).
+import { getApps, initializeApp, getFirestore, Timestamp, type Firestore } from '../lib/firebaseAdmin';
 import { buildReport } from '../reportDuplicateNotifications';
 
 /**

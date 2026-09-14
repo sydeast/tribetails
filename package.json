@@ -25,6 +25,7 @@
     "test:portal": "npm --prefix mytribe/web test",
     "test:android": "cd auntieos-admin/android && ./gradlew testDebugUnitTest",
     "test:rules": "npm --prefix mytribe/functions run test:rules",
+    "test:scripts:emulator": "npm --prefix mytribe/functions run test:scripts:emulator",
 
     "typecheck": "npm run typecheck:functions && npm run typecheck:geo && npm run typecheck:admin && npm run typecheck:portal",
     "typecheck:functions": "npm --prefix mytribe/functions run typecheck",

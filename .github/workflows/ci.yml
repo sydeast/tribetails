@@ -83,6 +83,7 @@ jobs:
       android: ${{ steps.filter.outputs.android }}
       mytribe: ${{ steps.filter.outputs.mytribe }}
       mytribeRules: ${{ steps.filter.outputs.mytribeRules }}
+      mytribeScriptsEmulator: ${{ steps.filter.outputs.mytribeScriptsEmulator }}
       portal: ${{ steps.filter.outputs.portal }}
       mytribeGradle: ${{ steps.filter.outputs.mytribeGradle }}
       recorder: ${{ steps.filter.outputs.recorder }}
@@ -230,6 +231,24 @@ jobs:
             mytribeRules:
               - 'mytribe/functions/**'
               - 'mytribe/firestore.rules'
+              - 'mytribe/firebase.json'
+              - '.github/workflows/ci.yml'
+            # The backfill emulator tests (#870). Separate from `mytribeRules`
+            # because it answers a different question (does a backfill's real
+            # write land) and from `mytribe` because it boots an emulator.
+            # functions/src/lib is a forward guard: none of the scripts with an
+            # emulator test imports functions/src today, but several other
+            # backfills do, and the day a covered script starts to, a change
+            # there must re-run its write test. package.json and the lockfile
+            # are here because they pin the
+            # firebase-admin copy the scripts and tests share; firebase.json
+            # because `emulators:exec` reads its emulator ports from it.
+            mytribeScriptsEmulator:
+              - 'mytribe/scripts/**'
+              - 'mytribe/functions/src/lib/**'
+              - 'mytribe/functions/package.json'
+              - 'mytribe/functions/package-lock.json'
+              - 'mytribe/functions/vitest.scripts-emulator.config.ts'
               - 'mytribe/firebase.json'
               - '.github/workflows/ci.yml'
             portal:
@@ -747,6 +766,49 @@ jobs:
       # data even if a test is wrong.
       - name: Firestore rules tests
         run: npm run test:rules
+
+  # mytribe/scripts/test/*.emulator.test.ts are the only tests that prove a
+  # backfill's real write lands on Firestore. Every one is
+  # `describe.runIf(FIRESTORE_EMULATOR_HOST)`, so the `mytribe functions` job
+  # reports them skipped, and until #870 nothing started an emulator for them.
+  # When one was finally run by hand it had never passed: the tests built their
+  # Firestore client from a different firebase-admin copy than the scripts built
+  # their writes from.
+  #
+  # A copy of `mytribe-rules`, step for step, for the same reasons: a JDK for the
+  # emulator JAR, the same pinned firebase-tools, no credentials. The
+  # vitest.scripts-emulator.config.ts it runs refuses to start without
+  # FIRESTORE_EMULATOR_HOST, so running it outside the npm script fails rather
+  # than reporting green on zero tests.
+  mytribe-scripts-emulator:
+    name: MyTribe backfill emulator tests
+    needs: changes
+    if: needs.changes.outputs.mytribeScriptsEmulator == 'true' || github.event_name == 'workflow_dispatch'
+    # Same shape and install cost as `mytribe-rules`, which carries 10. The
+    # tests themselves run in seconds against the emulator; the floor is npm
+    # and the JDK, per the note at the top of `jobs:`.
+    timeout-minutes: 10
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    defaults:
+      run:
+        working-directory: mytribe/functions
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mytribe/functions/package-lock.json
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      # Pinned to the same version as `mytribe-rules` and the e2e job.
+      - name: Install firebase-tools
+        run: npm install -g firebase-tools@15.18.0
+      - name: Backfill emulator tests
+        run: npm run test:scripts:emulator
 
   portal:
     name: Kinfolk portal
