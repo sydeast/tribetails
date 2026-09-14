@@ -9,10 +9,22 @@
 # .release-state, and read for the same reason: to tell what production holds
 # that this code no longer does.
 .release-functions
+# Which release steps completed for the commit being released (#840), so a
+# stopped release of the same commit resumes. Per machine, like .release-state.
+.release-progress
 # Per-run release logs and the running-release pidfile, written by
 # scripts/release-bg.sh. Machine-local by nature: they record what one operator's
 # machine did on one night, and the durable record of a release is its tag.
 .release-logs/
+# Firebase CLI and emulator debug logs, written into whatever directory the CLI
+# runs from and kept on a failure or with DEBUG set. mytribe/ and auntieos-admin/
+# already ignore them through *.log; the root did not, so a CLI call run from the
+# root during a release left a file that refused the release's working-tree
+# check (#840).
+firebase-debug.log
+firebase-debug.*.log
+firestore-debug.log
+ui-debug.log
 __pycache__/
 node_modules/
 node_modules
