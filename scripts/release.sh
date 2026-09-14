@@ -831,11 +831,13 @@ else
   # stored, because a release tag kept by hand in a .env is a tag that names the
   # last release someone remembered to edit it for.
   #
-  # THE EXIT CODE IS READ, not just its truthiness, because there are three
-  # answers and only one of them is good: resolved (0), refused (1), and could
-  # not look at all (3). Collapsing the third into the first is the same mistake
-  # step 1b's comment warns about: "no secrets found" and "could not look" must
-  # never print the same.
+  # THE EXIT CODE IS READ, not just its truthiness, because there are four
+  # answers and only one of them is good: resolved (0), refused for a bad
+  # value (1), could not look at all (3), and refused because Secret Manager
+  # never answered for a required secret (4, #839/#852). Collapsing any of
+  # these into another is the same mistake step 1b's comment warns about:
+  # "no secrets found" and "could not look" must never print the same, and now
+  # neither must "the value is bad" and "nobody could check the value".
   CLIENT_RC=0
   node "$ROOT/scripts/client-secrets.mjs" --write \
     --project "$PROJECT" --release "$(git rev-parse --short HEAD)" || CLIENT_RC=$?
@@ -848,6 +850,16 @@ else
       ylw "client config: NOT CHECKED. Neither Secret Manager nor the apps' own"
       ylw "  .env files could be read, so nothing here judged what the build will"
       ylw "  compile in. The names it could not verify are listed above."
+      ;;
+    4)
+      red ""
+      red "REFUSED: Secret Manager did not answer for a required secret in time."
+      red "  This is NOT the same as missing: the secret may exist and hold a good"
+      red "  value, gcloud simply never answered. The names and the IPv4/IPv6 check"
+      red "  are listed above; run them before creating or setting anything."
+      red ""
+      red "  To ship anyway, knowing what could not be verified: RELEASE_SKIP_CLIENT_SECRETS=1"
+      exit 1
       ;;
     *)
       red ""
