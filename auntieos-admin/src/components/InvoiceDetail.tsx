@@ -372,6 +372,14 @@ interface ActionMeta {
   callableName: string;
 }
 
+/**
+ * #866: the household's payment confirmation is sent by the `recordPayment`
+ * step and by nothing else, so when that step fails or cannot run, the operator
+ * has to hear that the confirmation did not go out either.
+ */
+export const CONFIRMATION_NOT_SENT_WITH_LEDGER =
+  ' The confirmation email did not go out either, because it is sent with the ledger row. Let the household know another way.';
+
 const ACTIONS: readonly ActionMeta[] = [
   {
     key: 'reminder',
@@ -1051,16 +1059,27 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
               sendConfirmationEmail: paidSendConfirmation,
               invoiceId: invoice._id,
               invoiceNumber: invoice.invoiceNumber,
+              // #866: the settlement row step 1 just wrote. The server claims
+              // that settlement, and tells the office "paid", only for this id,
+              // so no later payment linked to the invoice can claim it.
+              settledByInvoicePaymentId: res.paymentId,
               idempotencyKey: ledgerKey.current,
             });
             // NO `apply` FIELD, deliberately. `markInvoicePaid` has already
             // settled this invoice two steps up; sending an apply here would put
             // the same money against the same bill a second time. The Apply
             // amount for this flow IS what markInvoicePaid collected.
+            // #866: the server says WHY, so the note does not have to guess.
             if (paidSendConfirmation && !ledgerRow.confirmationEmailSent) {
               incomplete = true;
+              ledgerNote += ledgerRow.householdNoPortalAccount
+                ? ' The confirmation email did not go out: the household has no portal account. The payment itself is recorded.'
+                : ' The confirmation email did not go out. The payment itself is recorded; let the household know another way.';
+            }
+            if (ledgerRow.officeNoticePending) {
+              incomplete = true;
               ledgerNote +=
-                ' The confirmation email did not go out (the household may have no portal account). The payment itself is recorded.';
+                ' The office copy of the payment notice did not go out, because the admin roster could not be read. The household copy is not affected.';
             }
             if (ledgerRow.creditedToAccountCents > 0) {
               ledgerNote += ` ${formatUsd(ledgerRow.creditedToAccountCents / 100)} was left over and has been added to the household's account credit, which goes onto their next invoice automatically.`;
@@ -1070,7 +1089,13 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             ledgerNote = ` The payment ledger row did not save (${
               caught instanceof Error ? caught.message : 'recordPayment failed'
             }), so this payment will not appear on the Payments screen. The invoice itself is correct.`;
+            // #866: the confirmation rides on this call, and since #866 nothing
+            // else sends one for a payment recorded here.
+            if (paidSendConfirmation) ledgerNote += CONFIRMATION_NOT_SENT_WITH_LEDGER;
           }
+        }
+        if ((thisPaymentCents === null || thisPaymentCents <= 0) && paidSendConfirmation) {
+          ledgerNote += CONFIRMATION_NOT_SENT_WITH_LEDGER;
         }
 
         // WHAT THE SERVER SAYS HAPPENED, not what the button was called. The

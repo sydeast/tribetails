@@ -536,8 +536,8 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 - Audit `BILLING_INVOICE_SESSIONS_LINKED` with the full added/removed delta.
 
 ### recordPayment
-- req `{ amount: number /* DOLLARS, float, the legacy shape of this collection. THE WHOLE TRANSACTION, gross tip included */, kinfolkId?: string /* <=120, default '' */, kinfolkName?: string, client?: string, address?: string, date?: string /* free text */, paymentMethod?: string, referenceNumber?: string, email?: string, tip?: number /* default 0. GROSS: what the client tipped, BEFORE the processor fee */, fee?: number /* default 0. The processor's cut, off the business's proceeds. NOT part of amount */, notes?: string /* STAFF ONLY */, invoiceId?: string /* '' = standalone payment. A DISPLAY LINK, never an apply */, invoiceNumber?: string, apply?: { invoiceId: string, invoiceNumber?: string, amount: number } /* the "Apply: $" box. ONE invoice; omitted = no balance is touched */, autoApply?: boolean /* default false */, sendConfirmationEmail?: boolean /* default false */, idempotencyKey?: string /* #825, `pay_<millis>_<suffix>`; becomes the `payments/{key}` row id, so a retry records neither a second payment nor a second account credit */ }` (every `?` defaults to `''`/`0`/`false`; `apply` and `idempotencyKey` are omitted, not defaulted)
-- res `{ ok: true, paymentId: string, kinfolkId: string /* what was actually stored; the sandbox id for a test admin */, amountCents: number, tipCents: number, feeCents: number, tipBasis: 'gross'|'net'|'unknown', appliedCents: number, unappliedCents: number /* SIGNED */, proceedsCents: number, tipNetCents: number /* SIGNED */, autoApply: boolean, application: { invoiceId, invoiceNumber, paymentId, appliedCents, state, totalCents, paidCents, amountDueCents, overpaidCents }|null, creditedToAccountCents: number, confirmationEmailSent: boolean }`
+- req `{ amount: number /* DOLLARS, float, the legacy shape of this collection. THE WHOLE TRANSACTION, gross tip included */, kinfolkId?: string /* <=120, default '' */, kinfolkName?: string, client?: string, address?: string, date?: string /* free text */, paymentMethod?: string, referenceNumber?: string, email?: string, tip?: number /* default 0. GROSS: what the client tipped, BEFORE the processor fee */, fee?: number /* default 0. The processor's cut, off the business's proceeds. NOT part of amount */, notes?: string /* STAFF ONLY */, invoiceId?: string /* '' = standalone payment. A DISPLAY LINK, never an apply */, invoiceNumber?: string, apply?: { invoiceId: string, invoiceNumber?: string, amount: number } /* the "Apply: $" box. ONE invoice; omitted = no balance is touched */, autoApply?: boolean /* default false */, sendConfirmationEmail?: boolean /* default false */, idempotencyKey?: string /* #825, `pay_<millis>_<suffix>`; becomes the `payments/{key}` row id, so a retry records neither a second payment nor a second account credit */, settledByInvoicePaymentId?: string /* #866: the paymentId markInvoicePaid returned to this submission; only with it (or, from an older client, within 5 minutes of the settlement) may this call claim that settlement and tell the office "paid" */ }` (every `?` defaults to `''`/`0`/`false`; `apply` and `idempotencyKey` are omitted, not defaulted)
+- res `{ ok: true, paymentId: string, kinfolkId: string /* what was actually stored; the sandbox id for a test admin */, amountCents: number, tipCents: number, feeCents: number, tipBasis: 'gross'|'net'|'unknown', appliedCents: number, unappliedCents: number /* SIGNED */, proceedsCents: number, tipNetCents: number /* SIGNED */, autoApply: boolean, application: { invoiceId, invoiceNumber, paymentId, appliedCents, state, totalCents, paidCents, amountDueCents, overpaidCents }|null, creditedToAccountCents: number, confirmationEmailSent: boolean, householdNoPortalAccount: boolean /* #866: ticked, and the household has no portal account */, officeNoticePending: boolean /* #866: the office copy did not go out (the admin roster could not be read); a same-key retry sends it */ }`
 - W2-1 (ADR-0002): replaces `AuntieRepository.createPayment`, the direct create
   on the ROOT `payments` collection. This is the DISPLAY LEDGER the payment
   screens read (`getPayments`, `getPaymentsForKinfolk`, the invoice detail's
@@ -1037,6 +1037,51 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
     other invite functions) and the `invite.verify-email` document in the
     Firestore `emailTemplates` collection. The operator edits email templates in
     the admin UI; there is no seed script for them (operator ruling 2026-09-13, #847).
+
+### recordFailedLogin (pre-existing; response made constant and clients wired 2026-09-14, #886)
+- req `{ email: string /* email */, ip?: string /* max 256 */, userAgent?: string /* max 256 */ }`.
+  Clients send `email` only. Frozen in `test/callableContract.test.ts`.
+- res `{ ok: true }`, ALWAYS, exported as `RecordFailedLoginResult` (strict). No
+  generated artifact: the auth surface is in no contract registry, the same as
+  `signOutAllDevices`.
+- GATE: none, `wrapCallable` only. The caller has just failed to sign in, so there
+  is no token to check. Per-IP (30 per 5 minutes) and per-email (15 per 24 hours)
+  rate limits refuse with `resource-exhausted`; a malformed request is
+  `invalid-argument` (never `internal`, so it is not captured to Sentry). The IP
+  limit runs BEFORE the request is parsed, so malformed requests spend the same
+  per-IP budget. None of these depends on whether the email is an account. The
+  audit row for an address that is not an account stores `emailHash`, never the
+  address.
+- The lock only counts failures reported by our own clients. A script that calls
+  Firebase Auth directly never reports, and relies on Firebase Auth's own
+  throttling instead.
+- **The response says nothing about the account.** Until #886 it returned
+  `remainingBeforeLock` (10 for an unknown email, counting down for a real one)
+  and `lockedUntilMs`, which told an unauthenticated caller that an address was an
+  account and when its lock would end. Now a real account, an unknown email, a
+  call that warns, a call that locks and a call whose alert failed to send all
+  answer `{ ok: true }`. A failure after the rate limits is logged
+  (`recordFailedLogin.failed`) and sent to Sentry, never thrown: an alert that did
+  not go out is retried off the saved `lockAlertsPendingForMs` marker by the next
+  failed login.
+- Timing: an unknown email runs the same work as a real account (audit write plus
+  one read-prune-write transaction on `unknownLoginAttempts/{emailHash}`). The
+  residual difference is notification work on a real account's threshold calls
+  (5th and 10th failures); see the comment on `recordUnknownEmailFailure`.
+- CLIENTS report only credential failures (wrong password, user not found,
+  invalid credential; `INVALID_PASSWORD`, `EMAIL_NOT_FOUND` and
+  `INVALID_LOGIN_CREDENTIALS` over REST), never network errors, too-many-requests,
+  a disabled user or a `beforeSignIn` refusal. The report is fire and forget: it
+  never delays or replaces the error the user sees.
+- LOCKED STATE is not read from this callable. `beforeSignIn` refuses a locked
+  account with `permission-denied` "This account is locked. Use the reset password
+  link or contact support.", which reaches clients inside Identity Toolkit's
+  `BLOCKING_FUNCTION_ERROR_RESPONSE`. Every sign-in screen maps it to a locked
+  message that names its "Forgot password?" control.
+- Mirrors: `mytribe/web/src/api/authApi.ts`, `auntieos-admin/src/lib/failedLogin.ts`,
+  `AuntieRepository.reportFailedLogin` (admin Android), `AuthBackend.reportFailedLogin`
+  (portal Android and portal desktop), `AuthClient` in `auntieos-admin/web/composeApp`
+  (desktop console).
 
 ### mintInvite (PRIMARY-only since 2026-08-04)
 - req `{ familyId: string, invitedEmail: string /* email */, proposedRole?: 'PRIMARY' }`

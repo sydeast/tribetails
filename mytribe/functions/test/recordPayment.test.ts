@@ -22,7 +22,16 @@ vi.mock('firebase-admin/firestore', async () => {
   };
 });
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveKinfolkUid }));
-vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: mocks.enqueueNotification }));
+// #866: recordPayment calls the detailed variant. It delegates to the same
+// counted mock, so every assertion below on `enqueueNotification` still holds.
+vi.mock('../src/notifications/dispatcher', () => ({
+  enqueueNotification: mocks.enqueueNotification,
+  enqueueNotificationDetailed: async (args: unknown) => ({
+    written: ((await mocks.enqueueNotification(args)) as string[] | undefined) ?? [],
+    suppressed: [],
+    unresolved: [],
+  }),
+}));
 
 import { recordPaymentHandler } from '../src/admin/recordPayment';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
@@ -420,11 +429,31 @@ describe('recordPayment: the Send Confirmation Email toggle', () => {
       }),
     );
   });
-  it('sends NOTHING by default: a message to a real person needs a deliberate tick', async () => {
+  it('sends NOTHING by default for a payment that does not pay the invoice off', async () => {
+    // #866 operator ruling, as on main: unticked, the household is never told,
+    // and the office is told only when this payment paid the invoice off. This
+    // one names an open invoice and applies nothing, so nobody is told.
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await recordPaymentHandler(req(feeArgs));
     expect(res.confirmationEmailSent).toBe(false);
+    expect(mocks.resolveKinfolkUid).not.toHaveBeenCalled();
+    expect(mocks.enqueueNotification).not.toHaveBeenCalled();
+  });
+  it('unticked, but this payment paid the invoice off: the office copy alone goes out', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await recordPaymentHandler(req({ ...feeArgs, invoiceId: '', apply: { invoiceId: 'inv1', amount: 127.5 } }));
+    expect(mocks.resolveKinfolkUid).not.toHaveBeenCalled();
+    expect(mocks.enqueueNotification).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'invoice.payment.applied', recipientUid: '' }),
+    );
+  });
+  it('sends no office copy for a standalone payment that names no invoice', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await recordPaymentHandler(req({ ...feeArgs, invoiceId: '', invoiceNumber: '' }));
     expect(mocks.enqueueNotification).not.toHaveBeenCalled();
   });
   it('reports FALSE for a household with no portal account, without failing the payment', async () => {

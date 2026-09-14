@@ -111,6 +111,21 @@ internal class RestAuthClient {
         if (!res.status.isSuccess()) throw FirebaseRestException("sendPasswordReset", res.status.value, res.bodyAsText())
     }
 
+    /**
+     * #886: tells `recordFailedLogin` a sign-in failed on a credential error. No
+     * Authorization header: the caller has just failed to sign in, and the
+     * callable is unauthenticated. Same endpoint shape as [sendPasswordReset].
+     */
+    suspend fun reportFailedLogin(email: String) {
+        val url = "https://us-central1-${FirebaseRestConfig.PROJECT_ID}.cloudfunctions.net/recordFailedLogin"
+        val body = """{"data":{"email":${kotlinx.serialization.json.JsonPrimitive(email)}}}"""
+        val res: HttpResponse = RestHttp.client.post(url) {
+            contentType(ContentType.Application.Json)
+            setBody(body)
+        }
+        if (!res.status.isSuccess()) throw FirebaseRestException("recordFailedLogin", res.status.value, res.bodyAsText())
+    }
+
     suspend fun lookup(idToken: String): LookupUser? {
         val url = "${FirebaseRestConfig.IDENTITY_TOOLKIT_BASE}/accounts:lookup?key=${FirebaseRestConfig.API_KEY}"
         val res: HttpResponse = RestHttp.client.post(url) {

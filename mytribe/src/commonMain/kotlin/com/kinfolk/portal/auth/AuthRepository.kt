@@ -1,6 +1,10 @@
 package com.kinfolk.portal.auth
 
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -47,9 +51,57 @@ interface AuthBackend {
      * subscribe to needs to override it.
      */
     fun authStateChanges(): Flow<AuthState> = flow { emit(currentUser()) }
+
+    /**
+     * #886: what a failed [signInWithEmailPassword] means for the lockout. The
+     * default reads this platform's error code off [t] ([platformAuthErrorCode])
+     * and the refusal text, which is right for the Firebase and REST backends and
+     * harmless for a fake: a fake's plain exception classifies as
+     * [SignInFailureKind.Other] and is never reported.
+     */
+    fun classifySignInFailure(t: Throwable): SignInFailureKind =
+        classifySignInFailure(platformAuthErrorCode(t), t.message ?: t.toString())
+
+    /**
+     * #886: tell `recordFailedLogin` that a sign-in failed on a credential error.
+     * Unauthenticated; the server answers `{ ok: true }` for every email, so
+     * nothing reads a result. Default no-op for backends with no server to tell.
+     */
+    suspend fun reportFailedLogin(email: String) {}
 }
 
-class AuthRepository(private val backend: AuthBackend) {
+/**
+ * #886: the one scope every [AuthRepository] launches its failed-login reports
+ * in. Process-lifetime on purpose: a report is a single short callable that
+ * must outlive the screen that fired it, and one shared scope means a rebuilt
+ * repository never leaves an orphaned `SupervisorJob` behind.
+ */
+internal val sharedAuthReportScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+class AuthRepository(
+    private val backend: AuthBackend,
+    /**
+     * #886: where a failed sign-in's report runs, detached from the sign-in so
+     * the error reaches the screen without waiting on it. Production shares
+     * [sharedAuthReportScope]; tests pass `Unconfined`.
+     */
+    private val reportScope: CoroutineScope = sharedAuthReportScope,
+) {
+    /** Test seam: which scope reports run in. */
+    internal val reportScopeForTest: CoroutineScope get() = reportScope
+
+    /**
+     * #886: whether [t], thrown by [signInWithEmailPassword], was a wrong password
+     * or unknown email, so a screen can say so plainly instead of treating it as
+     * a fault. Never throws.
+     */
+    fun isCredentialFailure(t: Throwable): Boolean =
+        try {
+            backend.classifySignInFailure(t) == SignInFailureKind.Credentials
+        } catch (_: Throwable) {
+            false
+        }
+
     private val _state = MutableStateFlow<AuthState>(AuthState.Loading)
     val state: StateFlow<AuthState> = _state.asStateFlow()
 
@@ -109,8 +161,50 @@ class AuthRepository(private val backend: AuthBackend) {
         }
     }
 
+    /**
+     * #886: a credential failure is reported to `recordFailedLogin` in the
+     * background and the original error is rethrown at once; `beforeSignIn`'s
+     * locked refusal becomes [AccountLockedException] so the screen can say so.
+     * Classified OUTSIDE [withRecaptchaGuard], after its one transparent retry,
+     * so a reCAPTCHA-shaped rejection is never counted as a guessed password.
+     * SignInScreen and ClaimInviteScreen both sign in through here.
+     */
     suspend fun signInWithEmailPassword(email: String, password: String) {
-        _state.value = withRecaptchaGuard { backend.signInWithEmailPassword(email, password) }
+        val signedIn = try {
+            withRecaptchaGuard { backend.signInWithEmailPassword(email, password) }
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            val kind = try {
+                backend.classifySignInFailure(t)
+            } catch (_: Throwable) {
+                SignInFailureKind.Other
+            }
+            when (kind) {
+                SignInFailureKind.Credentials -> reportInBackground(email.trim())
+                SignInFailureKind.Locked -> throw AccountLockedException(t)
+                SignInFailureKind.Other -> Unit
+            }
+            throw t
+        }
+        _state.value = signedIn
+    }
+
+    /** Fire and forget. Swallows and logs its own failures. */
+    private fun reportInBackground(email: String) {
+        try {
+            reportScope.launch {
+                try {
+                    backend.reportFailedLogin(email)
+                } catch (c: CancellationException) {
+                    throw c
+                } catch (t: Throwable) {
+                    println("[Auth] recordFailedLogin report failed: ${t::class.simpleName}: ${t.message}")
+                }
+            }
+        } catch (t: Throwable) {
+            println("[Auth] recordFailedLogin report could not start: ${t.message}")
+        }
     }
 
     /** Claim flow: server mints the account (claimInviteSignup) and hands back a custom token. */

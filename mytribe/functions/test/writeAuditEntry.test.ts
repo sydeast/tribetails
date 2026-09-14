@@ -42,13 +42,18 @@ const txSetMock = vi.fn((ref: FakeRef, data: Record<string, unknown>) => {
   }
 });
 
+// #866: a fixed-id entry is written with `create`, recorded like a set.
+const txCreateMock = vi.fn((ref: FakeRef, data: Record<string, unknown>) => {
+  writes.push({ ref, data, created: true } as { ref: FakeRef; data: Record<string, unknown> });
+});
+
 const dbMock = {
   collection: (name: string) => ({
     doc: (id?: string) => makeRef(name, id ?? nextAutoId()),
   }),
   runTransaction: async (
-    cb: (tx: { get: typeof txGetMock; set: typeof txSetMock }) => Promise<unknown>,
-  ) => cb({ get: txGetMock, set: txSetMock }),
+    cb: (tx: { get: typeof txGetMock; set: typeof txSetMock; create: typeof txCreateMock }) => Promise<unknown>,
+  ) => cb({ get: txGetMock, set: txSetMock, create: txCreateMock }),
 };
 
 vi.mock('../src/lib/firestoreAdmin', () => ({
@@ -258,5 +263,47 @@ describe('writeAuditEntry', () => {
     expect(logWrite!.data.prevHash).toBe(GENESIS_PREV_HASH);
     // Seq still advances so the verifier sees a gap.
     expect(logWrite!.data.seq).toBe(8);
+  });
+
+  // #866: the Stripe webhook's paid and failed audits are written at most once
+  // per event, so a retry whose first attempt wrote the entry and lost its
+  // stamp does not record the event twice.
+  it('writes an entry with a caller-supplied docId at exactly that id', async () => {
+    const { writeAuditEntry } = await import('../src/lib/writeAuditEntry');
+    const id = await writeAuditEntry({
+      status: 'SUCCESS',
+      event: 'BILLING_INVOICE_PAID' as AuditEvent,
+      severity: 'info',
+      actorRole: 'SYSTEM',
+      docId: 'stripe_evt_1_paid',
+    });
+    expect(id).toBe('stripe_evt_1_paid');
+    const logWrite = writes.find((w) => w.ref.collection === 'activity_log');
+    expect(logWrite!.ref.id).toBe('stripe_evt_1_paid');
+    expect(logWrite!.data.seq).toBe(1);
+  });
+
+  it('writes nothing, and does not advance the chain, when the docId entry already exists', async () => {
+    headState = { exists: true, data: { seq: 4, lastHash: 'a'.repeat(64), lastEntryId: 'stripe_evt_1_paid' } };
+    txGetMock.mockImplementation((ref: FakeRef) => {
+      if (ref.collection === 'activity_log' && ref.id === 'stripe_evt_1_paid') {
+        return Promise.resolve({ exists: true, data: () => ({ seq: 4 }) });
+      }
+      if (ref.collection === 'activity_log_chain_head' && ref.id === 'current') {
+        return Promise.resolve({ exists: headState.exists, data: () => headState.data });
+      }
+      return Promise.resolve({ exists: false, data: () => undefined });
+    });
+    const { writeAuditEntry } = await import('../src/lib/writeAuditEntry');
+    const id = await writeAuditEntry({
+      status: 'SUCCESS',
+      event: 'BILLING_INVOICE_PAID' as AuditEvent,
+      severity: 'info',
+      actorRole: 'SYSTEM',
+      docId: 'stripe_evt_1_paid',
+    });
+    expect(id).toBe('stripe_evt_1_paid');
+    expect(writes).toHaveLength(0);
+    expect(headState.data!['seq']).toBe(4);
   });
 });

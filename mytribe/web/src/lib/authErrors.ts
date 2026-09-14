@@ -7,8 +7,18 @@ export interface FriendlyError {
   /** Short, grandma-friendly message for the inline error banner. */
   message: string;
   /** Coarse category, lets screens choose behavior (e.g. retry hint). */
-  kind: 'credentials' | 'rateLimit' | 'network' | 'unknown';
+  kind: 'locked' | 'credentials' | 'rateLimit' | 'network' | 'unknown';
 }
+
+/**
+ * #886: what a kinfolk reads when `beforeSignIn` refuses a locked account.
+ *
+ * It names the control that is actually on the screen, because the point of
+ * the message is the way out: a password reset clears the lock, and "Forgot
+ * password?" is always under the Sign In button.
+ */
+export const ACCOUNT_LOCKED_MESSAGE =
+  'This account is locked after too many sign-in attempts. Tap "Forgot password?" below to reset your password, then sign in with the new one.';
 
 /** Extracts a Firebase-style error code ("auth/wrong-password") if present. */
 function codeOf(err: unknown): string {
@@ -28,10 +38,60 @@ function messageOf(err: unknown): string {
   return '';
 }
 
+/**
+ * #886: `beforeSignIn` refused the sign-in because the account is locked.
+ *
+ * The refusal is an HttpsError thrown from a blocking function. Identity
+ * Toolkit wraps it as `BLOCKING_FUNCTION_ERROR_RESPONSE : ((HTTP request to
+ * .../beforeSignIn returned HTTP error 403: {"error":{"message":"This account
+ * is locked. ...","status":"PERMISSION_DENIED"}}))` (captured verbatim from the
+ * Auth emulator), and the JS SDK turns that into `auth/internal-error` carrying
+ * the text after " : ". The code alone is every internal error, so the server's
+ * own sentence is what identifies it.
+ */
+export function isAccountLockedError(err: unknown): boolean {
+  return messageOf(err).includes('account is locked');
+}
+
+/**
+ * #886: the sign-in failures that count toward a lock.
+ *
+ * Wrong password and no such user only (`auth/invalid-credential` is both, under
+ * email enumeration protection). NOT `auth/invalid-email`, which is a malformed
+ * address that never reached an account, and never a network failure,
+ * `auth/too-many-requests`, `auth/user-disabled` or a `beforeSignIn` refusal:
+ * reporting those would lock people out for problems that are not a guessed
+ * password.
+ */
+export function isCredentialSignInError(err: unknown): boolean {
+  if (isAccountLockedError(err)) return false;
+  const code = codeOf(err);
+  if (
+    code === 'auth/wrong-password' ||
+    code === 'auth/user-not-found' ||
+    code === 'auth/invalid-credential' ||
+    code === 'auth/invalid-login-credentials'
+  ) {
+    return true;
+  }
+  const msg = messageOf(err);
+  return (
+    msg.includes('invalid_login_credentials') ||
+    msg.includes('invalid_password') ||
+    msg.includes('email_not_found')
+  );
+}
+
 export function mapAuthError(err: unknown): FriendlyError {
   const code = codeOf(err);
   const msg = messageOf(err);
   const all = `${code} ${msg}`;
+
+  // First: the refusal text mentions an HTTP request, which the network branch
+  // below would otherwise claim.
+  if (isAccountLockedError(err)) {
+    return { kind: 'locked', message: ACCOUNT_LOCKED_MESSAGE };
+  }
 
   if (
     code === 'auth/invalid-credential' ||

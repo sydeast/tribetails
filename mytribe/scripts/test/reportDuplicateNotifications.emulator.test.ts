@@ -6,8 +6,9 @@ import { getApps, initializeApp, getFirestore, Timestamp, type Firestore } from 
 import { buildReport } from '../reportDuplicateNotifications';
 
 /**
- * The #832 duplicate report against a real Firestore (the emulator), seeded
- * with duplicates of each shape the report must and must not find.
+ * The #832 duplicate report, and its #866 payment-confirmation pass, against a
+ * real Firestore (the emulator), seeded with duplicates of each shape the report
+ * must and must not find.
  *
  * The seeded data is deliberately LEFT IN PLACE after the run, so the npm
  * command can be run against the same emulator straight afterwards and its
@@ -43,6 +44,7 @@ describe.runIf(EMULATOR)('the #832 duplicate report reads real stored notificati
     const at = (ms: number) => Timestamp.fromMillis(ms);
 
     await db.collection('clients').doc('client_1').set({ email: 'household@example.com' });
+    await db.collection('clients').doc('client_2').set({ email: 'second@example.com' });
     // No clients/staff_1: that is what makes the staff copy below a staff copy.
 
     const n = db.collection('notifications');
@@ -59,8 +61,18 @@ describe.runIf(EMULATOR)('the #832 duplicate report reads real stored notificati
     await n.doc('staff_a').set({ key: 'invoice.payment.applied', recipientUid: 'staff_1', data: { invoiceId: 'inv3' }, createdAt: at(T) });
     await n.doc('staff_b').set({ key: 'invoice.payment.applied', recipientUid: 'staff_1', data: { invoiceId: 'inv3' }, createdAt: at(T + 5_000) });
 
+    // #866 5. One card payment, two confirmations to a household: the webhook's
+    // (stripeEventId) and the invoice trigger's (no per-event id), 30s apart.
+    // Different identities, so the #832 pass cannot pair them.
+    await n.doc('pay_hook').set({ key: 'invoice.payment.applied', recipientUid: 'client_1', targetType: 'invoice', targetId: 'inv5', data: { kinfolkId: 'fam1', invoiceId: 'inv5', stripeEventId: 'evt_5' }, createdAt: at(T) });
+    await n.doc('pay_trig').set({ key: 'invoice.payment.applied', recipientUid: 'client_1', targetType: 'invoice', targetId: 'inv5', data: { kinfolkId: 'fam1', invoiceId: 'inv5', amountDue: 0 }, createdAt: at(T + 30_000) });
+    // #866 6. An admin payment confirmed, and a card payment on the same invoice
+    // 20 minutes later: two real payments, outside the 10-minute window.
+    await n.doc('pay_admin').set({ key: 'invoice.payment.applied', recipientUid: 'client_2', targetType: 'invoice', targetId: 'inv6', data: { kinfolkId: 'fam2', invoiceId: 'inv6', paymentId: 'p6' }, createdAt: at(T) });
+    await n.doc('pay_card').set({ key: 'invoice.payment.applied', recipientUid: 'client_2', targetType: 'invoice', targetId: 'inv6', data: { kinfolkId: 'fam2', invoiceId: 'inv6', stripeEventId: 'evt_6' }, createdAt: at(T + 20 * MIN) });
+
     const s = db.collection('scheduledNotifications');
-    // 5. Two reminders about one invoice to a household, 6 hours apart: a duplicate.
+    // 7. Two reminders about one invoice to a household, 6 hours apart: a duplicate.
     await s.doc('rem_a').set({ key: 'invoice.reminder', recipientUid: 'client_1', data: { kinfolkId: 'fam1', invoiceId: 'inv4' }, fireAtMs: T, createdAt: at(T) });
     await s.doc('rem_b').set({ key: 'invoice.reminder', recipientUid: 'client_1', data: { kinfolkId: 'fam1', invoiceId: 'inv4' }, fireAtMs: T + 6 * 60 * MIN, createdAt: at(T + 6 * 60 * MIN) });
   }, EMULATOR_TIMEOUT_MS);
@@ -71,7 +83,7 @@ describe.runIf(EMULATOR)('the #832 duplicate report reads real stored notificati
     const after = await allDocs(db);
 
     expect(after).toEqual(before);
-    expect(report.scanned).toEqual({ notifications: 8, scheduledNotifications: 2 });
+    expect(report.scanned).toEqual({ notifications: 12, scheduledNotifications: 2 });
 
     const found = report.groups.map((g) => `${g.household ? 'H' : 'S'} ${g.key} ${g.rows.map((r) => r.path.split('/')[1]).join(',')}`).sort();
     expect(found).toEqual([
@@ -82,5 +94,19 @@ describe.runIf(EMULATOR)('the #832 duplicate report reads real stored notificati
     expect(report.householdsAffected).toBe(1);
     expect(report.householdGroups).toBe(2);
     expect(report.staffGroups).toBe(1);
+  }, EMULATOR_TIMEOUT_MS);
+
+  it('#866: finds the household confirmed twice for one invoice by two senders, and nothing else', async () => {
+    const report = await buildReport(db, null);
+    const found = report.paymentApplied.groups
+      .map((g) => `${g.household ? 'H' : 'S'} ${g.invoiceId} ${g.rows.map((r) => r.path.split('/')[1]).join(',')}`)
+      .sort();
+    expect(found).toEqual(['H inv5 pay_hook,pay_trig', 'S inv3 staff_a,staff_b']);
+    expect(report.paymentApplied.householdsAffected).toBe(1);
+    expect(report.paymentApplied.householdInvoices).toBe(1);
+    expect(report.paymentApplied.extraHouseholdCopies).toBe(1);
+    expect(report.paymentApplied.staffGroups).toBe(1);
+    // The #832 pass alone would have missed it.
+    expect(report.groups.some((g) => g.identity.startsWith('invoice:inv5'))).toBe(false);
   }, EMULATOR_TIMEOUT_MS);
 });

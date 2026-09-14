@@ -654,6 +654,7 @@ export interface RecordPaymentArgs {
   /** Optional in the request; the server defaults it to false. */
   sendConfirmationEmail?: boolean;
   idempotencyKey?: string;
+  settledByInvoicePaymentId?: string;
 }
 
 /**
@@ -690,6 +691,8 @@ export interface RecordPaymentResult {
   application: RecordPaymentResultApplication | null;
   creditedToAccountCents: number;
   confirmationEmailSent: boolean;
+  householdNoPortalAccount: boolean;
+  officeNoticePending: boolean;
 }
 
 // ---------- redeemCredit ----------
