@@ -433,6 +433,21 @@ current draw, and the 2026-08-03 release deployed 202 functions with zero quota
 errors. Read the numbers above as what a 1-vCPU fleet did against a 200 vCPU
 ceiling, and nothing about today.
 
+### The nightly release stays off until it can authenticate
+
+`.github/workflows/nightly-release.yml` is off (`NIGHTLY_RELEASE=off`,
+operator ruling 2026-09-14), and releases run by hand from the operator Mac.
+Before anyone sets it to `preflight` or `on`, the hosted ubuntu runner needs
+two credentials it does not have today: Google Cloud access that can read
+Secret Manager and deploy (Workload Identity, #851), and a `GH_TOKEN` that can
+read this repo's Actions runs, for step 0b. Without them the preflight fails
+and blames the wrong thing: on 2026-09-12, 13 and 14 it reported
+existing secrets as missing and a green commit as having no CI run (#850). The
+workflow now stops at its first real step, "Check the runner can authenticate",
+and names whichever credential is absent. That is the expected result until
+#851 lands, not something to fix by re-creating secrets. Once both exist, run
+`preflight` for a few nights before `on`.
+
 ### The quota that was actually refusing the deploy
 
 **It was never the Cloud Run CPU quota, and it is not a capacity limit at all.**
@@ -1412,6 +1427,29 @@ After the first secret's ACCESS call times out, the rest are marked unreadable
 without being spawned: a dead route stays dead for the whole run, so the worst
 case is one 30-second wait, not one per secret.
 
+**"Could not be read" is not "is missing", so check which one you got
+before creating anything (#850).** When gcloud is not installed, has no
+credentials, or lists nothing at all, the step still takes values from the
+apps' own `.env` files, but a required value that is not there either is
+reported as `could not be read`, with the reason (`gcloud is not installed`,
+`no usable credentials` plus gcloud's own line, or `listed no secrets at all`).
+It refuses with exit 4. The advice is the auth check, never
+`gcloud secrets create`:
+
+```bash
+gcloud auth list
+gcloud secrets list --project auntieos-ttpc --limit 1
+```
+
+If the first shows no active account or the second errors or prints nothing,
+the fix is signing this machine in (`gcloud auth login`), and the secrets are
+probably fine. Only `REFUSED: the web apps declare client build config that has
+no value ... is missing` means the store answered and does not hold the value,
+and only that message prints `gcloud secrets create`. The nightly preflight
+printed `is missing` on 2026-09-12, 13 and 14 for three secrets that all
+existed, because its runner had no Google credentials, and they were
+re-created for nothing.
+
 Two names are deliberately outside all of this, and **neither is in Secret
 Manager, so do not go looking for them there**. `VITE_SENTRY_RELEASE` is derived:
 step 0c sets it to the commit being released, because a release tag maintained by
@@ -2346,12 +2384,20 @@ and it is release step 0b. Fix the named job on main and release the commit that
 fixes it. `RELEASE_SKIP_CI_GATE=1` is for a gate that cannot answer, not for one
 that answered no; using it that way reproduces 2026-08-01 exactly.
 
+**A release refuses with "gh could not ask GitHub for CI's verdict".** Step
+0b, and it says nothing about CI. Since #850 the step runs `gh auth status`
+before the lookup and prints its output. "not authenticated, or GitHub
+unreachable" means that check failed: run `gh auth login` (or export
+`GH_TOKEN`) and re-run. "the lookup failed" means gh is signed in but the API
+call errored; the error is printed, so check the network and re-run. Neither
+means CI has no run. The nightly preflight had no `GH_TOKEN` on 2026-09-12, 13
+and 14, and before #850 it printed "no check runs at all" for a commit CI had
+passed.
+
 **A release refuses with "GitHub reports no check runs at all for `<sha>`".**
-Also step 0b, and also working as intended, but check which of two causes it
-is before doing anything else: `release.sh` swallows `gh`'s own errors (`2>/dev/null
-|| true`, so it cannot tell "genuinely no run" from "could not ask" apart from
-the refusal text you already got), and the fix is different for each. From a
-signed-in shell, run:
+Also step 0b, and also working as intended. gh is signed in and answered, and
+`ci.yml` has no run for this commit (the could-not-ask case above now prints
+its own message). To confirm from a signed-in shell, run:
 
 ```bash
 gh api "repos/sydeast/tribetails/actions/workflows/ci.yml/runs?head_sha=<sha>" --jq .total_count
