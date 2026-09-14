@@ -105,6 +105,8 @@ fun SignInScreen(
         error = null
         scope.launch {
             try { repo.signInWithEmailPassword(email, password) }
+            // #886: a locked account is told so, with the reset link named, not the opaque banner.
+            catch (locked: AccountLockedException) { error = ErrorEnvelope.message(locked.message ?: ACCOUNT_LOCKED_MESSAGE) }
             catch (t: Throwable) { error = ErrorEnvelope.opaque(t) }
             finally { inFlight = false }
         }

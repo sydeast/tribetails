@@ -1,0 +1,74 @@
+@file:OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
+
+package com.kinfolk.portal.auth
+
+import androidx.compose.ui.test.ComposeUiTest
+import androidx.compose.ui.test.assertHasClickAction
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.runComposeUiTest
+import com.kinfolk.portal.screens.setThemedContent
+import kotlin.test.AfterTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+
+/**
+ * #886: when `beforeSignIn` refuses a locked account, the portal sign-in screen
+ * shows the locked message instead of the opaque banner, and "Forgot password?"
+ * stays on screen and sends the reset.
+ */
+private class RefusingBackend(private val failure: Throwable) : AuthBackend by FakeAuthBackend() {
+    val resets = mutableListOf<String>()
+    override suspend fun signInWithEmailPassword(email: String, password: String): AuthState.SignedIn = throw failure
+    override suspend fun sendPasswordReset(email: String) {
+        resets += email
+    }
+}
+
+class SignInScreenLockedTest {
+
+    @AfterTest
+    fun tearDown() {
+        SessionEndedNotice.clear()
+    }
+
+    private fun ComposeUiTest.signInWith(backend: AuthBackend) {
+        setThemedContent { SignInScreen(repo = AuthRepository(backend), onSignedIn = {}) }
+        waitForIdle()
+        val fields = onAllNodes(hasSetTextAction())
+        fields[0].performTextInput("pat@household.test")
+        fields[1].performTextInput("right-password")
+        onNodeWithText("Jump back in!").performClick()
+        waitForIdle()
+    }
+
+    @Test
+    fun aLockedAccount_showsTheLockedMessage_andTheResetLinkWorks() = runComposeUiTest {
+        val backend = RefusingBackend(
+            RuntimeException(
+                "BLOCKING_FUNCTION_ERROR_RESPONSE : ((HTTP request to https://example.test/beforeSignIn returned HTTP error 403: " +
+                    "{\"error\":{\"message\":\"This account is locked. Use the reset password link or contact support.\"," +
+                    "\"status\":\"PERMISSION_DENIED\"}}))",
+            ),
+        )
+        signInWith(backend)
+
+        onNodeWithText(ACCOUNT_LOCKED_MESSAGE).assertExists()
+        onNodeWithText("An error occurred. It's been reported to Auntie.").assertDoesNotExist()
+
+        onNodeWithText("Forgot password?").assertExists().assertHasClickAction().performClick()
+        waitForIdle()
+        assertEquals(listOf("pat@household.test"), backend.resets)
+        onNodeWithText("Reset link sent. Check your inbox.").assertExists()
+    }
+
+    @Test
+    fun anOrdinaryFailure_stillShowsTheSameBannerAsBefore() = runComposeUiTest {
+        signInWith(RefusingBackend(RuntimeException("Firebase REST signIn failed: HTTP 400")))
+
+        onNodeWithText("An error occurred. It's been reported to Auntie.").assertExists()
+        onNodeWithText(ACCOUNT_LOCKED_MESSAGE).assertDoesNotExist()
+    }
+}

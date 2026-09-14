@@ -12,7 +12,12 @@ import kotlinx.coroutines.sync.withLock
  */
 internal class RestAuthBackend(
     private val rest: RestAuthClient = RestAuthClient(),
+    /** #886 test seam: where a credential failure is reported. Production posts to `recordFailedLogin`. */
+    private val failedLoginReporter: suspend (String) -> Unit = { rest.reportFailedLogin(it) },
 ) : AuthBackend {
+
+    /** #886: see [AuthBackend.reportFailedLogin]. Classification is the interface default over the REST body. */
+    override suspend fun reportFailedLogin(email: String) = failedLoginReporter(email)
 
     private val mutex = Mutex()
     @Volatile private var cachedIdToken: String? = null

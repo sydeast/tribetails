@@ -91,6 +91,11 @@ class FirebaseAuthBackend : AuthBackend {
         fn.invoke(mapOf("email" to email))
     }
 
+    /** #886: unauthenticated report of a credential failure; see [AuthBackend.reportFailedLogin]. */
+    override suspend fun reportFailedLogin(email: String) {
+        Firebase.functions.httpsCallable("recordFailedLogin").invoke(mapOf("email" to email))
+    }
+
     override suspend fun changePassword(currentPassword: String, newPassword: String) {
         val user = auth.currentUser ?: throw IllegalStateException("not-signed-in")
         val email = user.email ?: throw IllegalStateException("no-email-on-account")
