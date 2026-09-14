@@ -58,12 +58,28 @@ internal object FirebaseRestConfig {
         if (emulatorHost != null) "http://$emulatorHost/$PROJECT_ID/$region/$name"
         else "https://$region-$PROJECT_ID.cloudfunctions.net/$name"
 
-    // NOT emulator-aware: no FIRESTORE_EMULATOR_HOST switch on this path.
-    // RestFirestoreClient (this package) always reads production Firestore.
-    // Out of scope for #889 (its to-do names the callable + Auth REST URLs
-    // only); flagged in the #889 report as a defect for a follow-up issue.
-    const val FIRESTORE_BASE = "https://firestore.googleapis.com/v1"
+    /**
+     * `FIRESTORE_EMULATOR_HOST` (host:port, e.g. "127.0.0.1:8080"): the same
+     * variable the admin desktop console's `JvmFirestoreRest` (#829/#874)
+     * reads. Set, [firestoreBase] routes through the documented emulator REST
+     * shape — http://<host>/v1/projects/<project>/databases/(default)/documents
+     * (https://firebase.google.com/docs/emulator-suite/connect_firestore).
+     * Unset, production. Was left out of the first #889 pass (its to-do
+     * named the callable + Auth REST URLs only); RestFirestoreClient reached
+     * production Firestore under an emulator session until this landed.
+     */
+    val FIRESTORE_EMULATOR_HOST: String? = System.getenv("FIRESTORE_EMULATOR_HOST")?.takeIf { it.isNotBlank() }
 
-    fun firestoreDocumentsRoot() =
-        "$FIRESTORE_BASE/projects/$PROJECT_ID/databases/$DATABASE_ID/documents"
+    /**
+     * The Firestore documents root, emulator-aware. `RestFirestoreClient`
+     * (this package) is read-only and always sends the signed-in kinfolk's
+     * real ID token, emulator or not — deliberately NOT the emulator's
+     * `Bearer owner` admin-bypass credential, which the emulator also
+     * accepts, so that `firestore.rules` still gates a read against the
+     * emulator exactly as it does in production. `owner` would make an
+     * emulator session silently permissive in a way production never is.
+     */
+    fun firestoreBase(emulatorHost: String? = FIRESTORE_EMULATOR_HOST): String =
+        if (emulatorHost != null) "http://$emulatorHost/v1/projects/$PROJECT_ID/databases/$DATABASE_ID/documents"
+        else "https://firestore.googleapis.com/v1/projects/$PROJECT_ID/databases/$DATABASE_ID/documents"
 }

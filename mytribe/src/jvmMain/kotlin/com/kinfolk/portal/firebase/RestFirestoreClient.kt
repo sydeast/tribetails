@@ -31,12 +31,17 @@ import kotlinx.serialization.json.longOrNull
  *
  * We only implement read paths used by AdminHomeScreen + LaunchRouter.
  * Writes can be added later.
+ *
+ * #889: every request here carries the signed-in kinfolk's own ID token
+ * ([auth.idToken]), never the Firestore emulator's `Bearer owner` bypass, on
+ * purpose — see [FirebaseRestConfig.firestoreBase]. `root` is emulator-aware
+ * (`FIRESTORE_EMULATOR_HOST`); the auth header is not.
  */
 internal class RestFirestoreClient(
     private val auth: RestAuthBackend,
 ) : FirestoreClient {
 
-    private val root = FirebaseRestConfig.firestoreDocumentsRoot()
+    private val root = FirebaseRestConfig.firestoreBase()
 
     /** REST has no listen channel — return an empty flow so jvm dev runs don't crash.
      *  Live tracking only works on android/js builds (gitlive). */

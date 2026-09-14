@@ -75,4 +75,20 @@ class FirebaseRestConfigTest {
             FirebaseRestConfig.secureTokenBase(emulatorHost = null),
         )
     }
+
+    @Test
+    fun firestoreBaseUsesTheFirestoreEmulatorWhenAHostIsGiven() {
+        assertEquals(
+            "http://127.0.0.1:8080/v1/projects/auntieos-ttpc/databases/(default)/documents",
+            FirebaseRestConfig.firestoreBase(emulatorHost = "127.0.0.1:8080"),
+        )
+    }
+
+    @Test
+    fun firestoreBaseUsesProductionWhenNoHostIsGiven() {
+        assertEquals(
+            "https://firestore.googleapis.com/v1/projects/auntieos-ttpc/databases/(default)/documents",
+            FirebaseRestConfig.firestoreBase(emulatorHost = null),
+        )
+    }
 }
