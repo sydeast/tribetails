@@ -1,6 +1,0 @@
-{
-  "key": "recovery.requested",
-  "subject": "Recovery requested for {{tribeName}}",
-  "body": "A recovery request was filed for {{tribeName}}. Auntie will be in touch to validate.\n\nIf this wasn't you, contact Auntie immediately.",
-  "html": null
-}

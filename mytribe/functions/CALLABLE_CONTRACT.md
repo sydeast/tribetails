@@ -1034,8 +1034,9 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
     still carries `email_verified: false` for up to an hour, so a plain retry is
     refused again and reads as a broken verification link.
   - Needs `SMTP2GO_API_KEY` + `EMAIL_FROM` (already created, already bound to the
-    other invite functions) and the `invite.verify-email` template in
-    `mytribe/seeds/emailTemplates/`, seeded by `npm run seed:emails`.
+    other invite functions) and the `invite.verify-email` document in the
+    Firestore `emailTemplates` collection. The operator edits email templates in
+    the admin UI; there is no seed script for them (operator ruling 2026-09-13, #847).
 
 ### mintInvite (PRIMARY-only since 2026-08-04)
 - req `{ familyId: string, invitedEmail: string /* email */, proposedRole?: 'PRIMARY' }`
