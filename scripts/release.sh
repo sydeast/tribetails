@@ -1342,8 +1342,17 @@ ci_check_runs() {
     return 3
   fi
   [ -n "$run_id" ] || return 0
-  gh api "repos/{owner}/{repo}/actions/runs/$run_id/jobs?per_page=100" \
-    --jq '.jobs[] | [.name, .status, (.conclusion // "")] | @tsv' 2>/dev/null || true
+  local jobs
+  jobs="$(gh api "repos/{owner}/{repo}/actions/runs/$run_id/jobs?per_page=100" \
+    --jq '.jobs[] | [.name, .status, (.conclusion // "")] | @tsv' 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    # The run exists and its jobs could not be read. Also "could not ask",
+    # never an empty answer that step 0b would print as "no check runs".
+    printf '%s\n' "$jobs" | head -3 >&2
+    return 3
+  fi
+  [ -n "$jobs" ] && printf '%s\n' "$jobs"
+  return 0
 }
 
 # ci_verdict <status> <conclusion>: pass | pending | fail.

@@ -261,7 +261,8 @@ write_stubs() {
 # `gh auth status` (#850): signed in by default. GH_AUTH_FAIL=1 prints the real
 # unauthenticated text (read off gh 2.98.0 with no token, 2026-09-14) and
 # fails. GH_API_FAIL=1 leaves auth fine but fails every `gh api` call, which is
-# a signed-in gh that cannot reach the API.
+# a signed-in gh that cannot reach the API. GH_API_FAIL=jobs fails only the
+# second hop (a run's jobs), after the run itself was found.
 if [ "${1:-} ${2:-}" = "auth status" ]; then
   if [ "${GH_AUTH_FAIL:-0}" = "1" ]; then
     echo "You are not logged into any GitHub hosts. To log in, run: gh auth login" >&2
@@ -273,6 +274,11 @@ fi
 if [ "${1:-}" = "api" ] && [ "${GH_API_FAIL:-0}" = "1" ]; then
   echo "error connecting to api.github.com" >&2
   exit 1
+fi
+if [ "${1:-}" = "api" ] && [ "${GH_API_FAIL:-0}" = "jobs" ]; then
+  case "${2:-}" in
+    *actions/runs/*/jobs*) echo "HTTP 502: Bad Gateway (jobs)" >&2; exit 1 ;;
+  esac
 fi
 for a in "$@"; do
   case "$a" in
@@ -845,6 +851,17 @@ if printf '%s' "$OUT" | grep -q "no check runs"; then
   bad "a failed CI lookup printed 'no check runs' (#850)"
 else
   ok "a failed CI lookup never prints 'no check runs'"
+fi
+
+# 8g2. The run is found but its JOBS call fails. Same could-not-ask refusal.
+RC="$(run_release "$D8F" DRY_RUN=1 RELEASE_YES=1 GH_API_FAIL=jobs)"
+OUT="$(cat "$D8F/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "the lookup failed" &&
+   printf '%s' "$OUT" | grep -q "Bad Gateway (jobs)" &&
+   ! printf '%s' "$OUT" | grep -q "no check runs"; then
+  ok "a failed jobs lookup refuses as could-not-ask, with gh's error, never 'no check runs'"
+else
+  bad "a failed jobs lookup was not reported as could-not-ask (rc $RC)"; echo "$OUT" | tail -20
 fi
 
 # 8h. Preflight reports the auth refusal and carries on, like every ci_refuse.

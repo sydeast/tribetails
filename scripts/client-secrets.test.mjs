@@ -821,9 +821,11 @@ test('with no fetcher and nothing local, a Secret Manager value is UNREADABLE wi
  * Run the real CLI from a throwaway copy of the repo with NO .env files, so the
  * result does not depend on whether this machine has a developer's .env (the
  * operator's checkout does). node_modules is symlinked so `import('vite')`
- * resolves and the run is not the "blind" exit-3 path. `bin` is the only
- * directory on PATH besides /usr/bin and /bin, so a gcloud installed on the
- * machine running the test cannot answer.
+ * resolves and the run is not the "blind" exit-3 path. `bin` is the ONLY
+ * directory on PATH, so a gcloud installed on the machine running the test
+ * cannot answer: GitHub's ubuntu image ships one at /usr/bin/gcloud. Nothing
+ * else needs PATH. node is spawned by absolute path, the stubs are #!/bin/sh
+ * (resolved by absolute path), and echo and exit are shell builtins.
  */
 function runCliWithoutStore(gcloudScript) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'client-secrets-850-'));
@@ -837,7 +839,7 @@ function runCliWithoutStore(gcloudScript) {
       fs.writeFileSync(path.join(dir, 'bin', 'gcloud'), gcloudScript);
       fs.chmodSync(path.join(dir, 'bin', 'gcloud'), 0o755);
     }
-    const env = { HOME: process.env.HOME || dir, PATH: `${path.join(dir, 'bin')}:/usr/bin:/bin` };
+    const env = { HOME: process.env.HOME || dir, PATH: path.join(dir, 'bin') };
     const r = spawnSync(
       process.execPath,
       [path.join(dir, 'scripts', 'client-secrets.mjs'), '--check', '--project', 'auntieos-ttpc', '--release', 'abc1234'],
