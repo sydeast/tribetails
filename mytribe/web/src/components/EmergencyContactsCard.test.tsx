@@ -265,6 +265,32 @@ describe('EmergencyContactsCard', () => {
     expect(screen.queryByTestId('ec-unsaved')).toBeNull();
   });
 
+  it('a refetch already in flight when Save is pressed never lands over the saved reply', async () => {
+    mocks.listEmergencyContacts.mockResolvedValue({ contacts: [RAE], canEdit: true, legacy: false });
+    const stored = { ...RAE, name: 'Rae Saved' };
+    mocks.saveEmergencyContacts.mockResolvedValue({ contacts: [stored] });
+    const { qc } = mount();
+    const name = await screen.findByDisplayValue('Rae Mercer');
+
+    let releaseRefetch: (v: unknown) => void = () => undefined;
+    mocks.listEmergencyContacts.mockReturnValue(new Promise((resolve) => (releaseRefetch = resolve)));
+    void qc.refetchQueries({ queryKey: ['emergencyContacts', 'kin-fam-1'] }).catch(() => undefined);
+    await waitFor(() => expect(mocks.listEmergencyContacts).toHaveBeenCalledTimes(2));
+
+    await userEvent.clear(name);
+    await userEvent.type(name, 'Rae Saved');
+    await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contacts' }));
+    expect(await screen.findByText('Saved.')).toBeInTheDocument();
+
+    await act(async () => {
+      releaseRefetch({ contacts: [{ ...RAE, name: 'Stale From Refetch' }], canEdit: true, legacy: false });
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    expect(screen.getByLabelText('Name', { selector: '#ec-0-name' })).toHaveValue('Rae Saved');
+    expect(screen.queryByDisplayValue('Stale From Refetch')).toBeNull();
+    expect(qc.getQueryData(['emergencyContacts', 'kin-fam-1'])).toEqual({ contacts: [stored], canEdit: true, legacy: false });
+  });
+
   it('a load failure says so instead of drawing an empty household', async () => {
     mocks.listEmergencyContacts.mockRejectedValue(new Error('boom'));
     mount();

@@ -163,6 +163,9 @@ export function EmergencyContactsCard({
     setSaving(true);
     setMessage(null);
     try {
+      // A refetch already in flight would otherwise resolve after the reply
+      // below and put the older server copy back in the cache and the inputs.
+      await queryClient.cancelQueries({ queryKey });
       const res = await saveEmergencyContacts({
         ...(kinfolkId !== undefined ? { kinfolkId } : {}),
         contacts: drafts.map((d) => ({
@@ -172,7 +175,8 @@ export function EmergencyContactsCard({
         })),
       });
       // The reply is what the server stored (E.164 phones, trimmed names). Seed
-      // from it and put it in the cache; no refetch, so nothing can race it.
+      // from it and write it into the cache instead of refetching. The cancel
+      // above is what keeps an earlier refetch from landing over it.
       setBaseline(res.contacts);
       setDrafts(toDrafts(res.contacts));
       queryClient.setQueryData<ListEmergencyContactsResult>(queryKey, (old) =>
