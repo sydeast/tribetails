@@ -113,6 +113,43 @@ class DirectoryViewModelEmergencyContactsTest {
         coVerify(exactly = 1) { repo.saveEmergencyContacts(any(), any()) }
     }
 
+    /**
+     * The household already exists once `createdKinfolkId` is set; only the
+     * Emergency Contact should still be editable. Before the fix, every
+     * household updater kept writing state.value regardless, so an edit made
+     * during the retry was silently dropped on success (the form resets to
+     * `AddKinfolkUiState(isSuccess = true)`, never carrying it to the server)
+     * and the "outside the household" check compared the contact against
+     * whatever was typed just now rather than what was actually saved.
+     */
+    @Test
+    fun `household fields ignore updates once the household is created, so a retry cannot silently change what was saved`() {
+        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(firstArg<Kinfolk>().copy(id = "kf-new")) }
+        coEvery { repo.saveEmergencyContacts("kf-new", any()) } returnsMany listOf(Result.failure(Exception("offline")), Result.success(emptyList()))
+        vm.updateFirstName("Jamie")
+        vm.updatePhoneNumber("5125551234")
+        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125559090"))
+        vm.saveKinfolk()
+        assertEquals("kf-new", vm.addKinfolkState.value.createdKinfolkId)
+
+        vm.updateFirstName("Someone Else")
+        vm.updateLastName("Someone Else")
+        vm.updatePhoneNumber("0000000000")
+        vm.updateServiceAddress("A different address")
+        vm.updateAddStatus("active")
+
+        val locked = vm.addKinfolkState.value
+        assertEquals("Jamie", locked.firstName)
+        assertEquals("", locked.lastName)
+        assertEquals("5125551234", locked.phoneNumber)
+        assertEquals("", locked.serviceAddress)
+        assertEquals("prospect", locked.status)
+
+        vm.saveKinfolk()
+        coVerify { repo.saveEmergencyContacts("kf-new", listOf(EmergencyContactDraft("Rae Halbrook", "5125559090"))) }
+        assertTrue(vm.addKinfolkState.value.isSuccess)
+    }
+
     @Test
     fun `edit with no other change still saves a changed contact list, and never puts it in the diff`() {
         val stored = Kinfolk(id = "kf1", firstName = "Jamie", phoneNumber = "5125551234", emergencyContactName = "Rae", emergencyContactPhone = "5125559090")

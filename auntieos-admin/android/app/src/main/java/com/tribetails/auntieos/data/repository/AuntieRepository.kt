@@ -41,6 +41,15 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.util.*
 
+/** See [AuntieRepository.kinfolkCreatePayload]. */
+private val KINFOLK_CREATE_EXCLUDED_FIELDS = setOf(
+    "id",
+    "emergencyContacts",
+    "emergencyContactName",
+    "emergencyContactPhone",
+    "emergencyContactRelation",
+)
+
 class AuntieRepository(
     private val n8n: N8nApi,
     /**
@@ -297,6 +306,35 @@ class AuntieRepository(
         )
     }.onFailure { AuntieLog.e("Error finding kinfolk by phone", it) }
 
+    /**
+     * #829 Fix round 1. The whole-object create writers below used to hand
+     * `.add()` the raw [Kinfolk] POJO, which wrote `emergencyContacts: null`
+     * and the three flat Emergency Contact keys blank on every new
+     * household - a write no client may make, even an "empty" one (the plan's
+     * Global Constraints: no client writes `kinfolk.emergencyContacts` or the
+     * flat fields directly, ever).
+     *
+     * Reflects the model's own declared fields (the same technique
+     * `DirectoryFieldChangesTest`'s drift guard uses against [Kinfolk]) into a
+     * plain map, dropping the four Emergency Contact keys and the document id
+     * (never part of the document's own content; `@DocumentId` fields are
+     * never serialised, and a hand-built map has to drop it explicitly to
+     * match). Every OTHER field the create writes today rides along exactly
+     * as it did through the POJO, because this reads the same fields the POJO
+     * would have serialised.
+     */
+    private fun kinfolkCreatePayload(kinfolk: Kinfolk): Map<String, Any?> =
+        Kinfolk::class.java.declaredFields
+            .filter {
+                !java.lang.reflect.Modifier.isStatic(it.modifiers) &&
+                    !it.isSynthetic &&
+                    it.name !in KINFOLK_CREATE_EXCLUDED_FIELDS
+            }
+            .associate { field ->
+                field.isAccessible = true
+                field.name to field.get(kinfolk)
+            }
+
     suspend fun createKinfolk(firstName: String, lastName: String, phone: String): Result<Kinfolk> = runCatching {
         AuntieLog.i("Creating new kinfolk phone=${AuntieLog.redactPhone(phone)}")
         authGate.ensureAuthenticated()
@@ -306,7 +344,7 @@ class AuntieRepository(
             phoneNumber = phone,
             internalNotes = "Prospect converted on Firebase"
         )
-        val docRef = firestore.collection("kinfolk").add(newKinfolk).await()
+        val docRef = firestore.collection("kinfolk").add(kinfolkCreatePayload(newKinfolk)).await()
         newKinfolk.copy(id = docRef.id).also {
             AuntieLog.i("Created kinfolk id=${it.id}")
         }
@@ -315,7 +353,7 @@ class AuntieRepository(
     suspend fun createKinfolkComplete(kinfolk: Kinfolk): Result<Kinfolk> = runCatching {
         AuntieLog.i("Creating kinfolk complete phone=${AuntieLog.redactPhone(kinfolk.phoneNumber)}")
         authGate.ensureAuthenticated()
-        val docRef = firestore.collection("kinfolk").add(kinfolk).await()
+        val docRef = firestore.collection("kinfolk").add(kinfolkCreatePayload(kinfolk)).await()
         kinfolk.copy(id = docRef.id).also {
             AuntieLog.i("Created kinfolk id=${it.id}")
         }

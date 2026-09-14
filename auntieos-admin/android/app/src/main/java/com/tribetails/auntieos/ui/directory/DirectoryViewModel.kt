@@ -729,18 +729,41 @@ class DirectoryViewModel(
     }
 
     // Add Kinfolk Form Methods
-    fun updateFirstName(value: String) { _addKinfolkState.value = _addKinfolkState.value.copy(firstName = value) }
-    fun updateLastName(value: String) { _addKinfolkState.value = _addKinfolkState.value.copy(lastName = value) }
-    fun updatePhoneNumber(value: String) { _addKinfolkState.value = _addKinfolkState.value.copy(phoneNumber = value) }
-    fun updateEmail(value: String) { _addKinfolkState.value = _addKinfolkState.value.copy(email = value) }
-    fun updateSecondaryPhone(value: String) { _addKinfolkState.value = _addKinfolkState.value.copy(secondaryPhone = value) }
-    fun updatePreferredContactMethod(value: String) { _addKinfolkState.value = _addKinfolkState.value.copy(preferredContactMethod = value) }
-    fun updateAddStatus(value: String) { _addKinfolkState.value = _addKinfolkState.value.copy(status = value) }
-    fun updateServiceAddress(value: String) { _addKinfolkState.value = _addKinfolkState.value.copy(serviceAddress = value) }
-    fun updateGateCode(value: String) { _addKinfolkState.value = _addKinfolkState.value.copy(gateCode = value) }
-    fun updateEntryNotes(value: String) { _addKinfolkState.value = _addKinfolkState.value.copy(entryNotes = value) }
-    fun updateWifiName(value: String) { _addKinfolkState.value = _addKinfolkState.value.copy(wifiName = value) }
-    fun updateWifiPassword(value: String) { _addKinfolkState.value = _addKinfolkState.value.copy(wifiPassword = value) }
+    //
+    // #829 Fix round 1: EVERY household field here is locked once
+    // `createdKinfolkId` is set (the household already exists, the retry only
+    // resaves the Emergency Contact). Without this guard the operator could
+    // keep editing the name/phone/address while retrying the contact save,
+    // and the edits would be silently dropped on success (the form resets to
+    // `AddKinfolkUiState(isSuccess = true)`, which never carries them to the
+    // server) - and the "outside the household" check would compare the
+    // contact against whatever was typed just now, not what was actually
+    // saved, letting a genuinely-outside contact get refused or a
+    // genuinely-matching one slip through. Web locks the same fields
+    // (`AddKinfolkDialog.tsx`, `disabled={saving || createdId !== null}`).
+    // `EmergencyContactsEditor`'s own updaters below are deliberately NOT
+    // routed through this guard: that editor is the one thing a retry exists
+    // to fix.
+    private inline fun updateAddHouseholdField(update: (AddKinfolkUiState) -> AddKinfolkUiState) {
+        val state = _addKinfolkState.value
+        if (state.createdKinfolkId != null) return
+        _addKinfolkState.value = update(state)
+    }
+
+    fun updateFirstName(value: String) = updateAddHouseholdField { it.copy(firstName = value) }
+    fun updateLastName(value: String) = updateAddHouseholdField { it.copy(lastName = value) }
+    fun updatePhoneNumber(value: String) = updateAddHouseholdField { it.copy(phoneNumber = value) }
+    fun updateEmail(value: String) = updateAddHouseholdField { it.copy(email = value) }
+    fun updateSecondaryPhone(value: String) = updateAddHouseholdField { it.copy(secondaryPhone = value) }
+    fun updatePreferredContactMethod(value: String) = updateAddHouseholdField { it.copy(preferredContactMethod = value) }
+    fun updateAddStatus(value: String) = updateAddHouseholdField { it.copy(status = value) }
+    fun updateServiceAddress(value: String) = updateAddHouseholdField { it.copy(serviceAddress = value) }
+    fun updateGateCode(value: String) = updateAddHouseholdField { it.copy(gateCode = value) }
+    fun updateEntryNotes(value: String) = updateAddHouseholdField { it.copy(entryNotes = value) }
+    fun updateWifiName(value: String) = updateAddHouseholdField { it.copy(wifiName = value) }
+    fun updateWifiPassword(value: String) = updateAddHouseholdField { it.copy(wifiPassword = value) }
+    fun updateInternalNotes(value: String) = updateAddHouseholdField { it.copy(internalNotes = value) }
+
     private fun List<EmergencyContactDraft>.replaced(i: Int, d: EmergencyContactDraft) = mapIndexed { j, x -> if (j == i) d else x }
     private fun List<EmergencyContactDraft>.movedFirst(i: Int) = listOf(this[i]) + filterIndexed { j, _ -> j != i }
 
@@ -748,7 +771,6 @@ class DirectoryViewModel(
     fun addAddEmergencyContact() { _addKinfolkState.value = _addKinfolkState.value.let { if (it.emergencyContacts.size >= EMERGENCY_CONTACTS_MAX) it else it.copy(emergencyContacts = it.emergencyContacts + EmergencyContactDraft()) } }
     fun removeAddEmergencyContact(i: Int) { _addKinfolkState.value = _addKinfolkState.value.let { it.copy(emergencyContacts = it.emergencyContacts.filterIndexed { j, _ -> j != i }.ifEmpty { listOf(EmergencyContactDraft()) }) } }
     fun moveAddEmergencyContactFirst(i: Int) { _addKinfolkState.value = _addKinfolkState.value.let { it.copy(emergencyContacts = it.emergencyContacts.movedFirst(i)) } }
-    fun updateInternalNotes(value: String) { _addKinfolkState.value = _addKinfolkState.value.copy(internalNotes = value) }
 
     /**
      * Creating a household REQUIRES an Emergency Contact (operator ruling,
@@ -981,6 +1003,9 @@ class DirectoryViewModel(
      * other's state.
      */
     fun pickAddressSuggestionForAdd(s: com.tribetails.auntieos.data.api.MapboxSuggestion) {
+        // #829 Fix round 1: this writes serviceAddress directly, bypassing
+        // updateServiceAddress's own lock guard, so it needs its own check.
+        if (_addKinfolkState.value.createdKinfolkId != null) return
         retrieveAddress(s) { resolved ->
             _addKinfolkState.value = _addKinfolkState.value.copy(serviceAddress = resolved)
         }
