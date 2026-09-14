@@ -443,14 +443,16 @@ ceiling, and nothing about today.
 `.github/workflows/nightly-release.yml` is off (`NIGHTLY_RELEASE=off`,
 operator ruling 2026-09-14), and releases run by hand from the operator Mac.
 Before anyone sets it to `preflight` or `on`, the hosted ubuntu runner needs
-two credentials it does not have today: Google Cloud access that can read
-Secret Manager and deploy (Workload Identity, #851), and a `GH_TOKEN` that can
+what it does not have today, all tracked in #851: Google Cloud access that can
+read Secret Manager and deploy (Workload Identity), the Android signing
+secrets step 1c assembles the release builds with (`KEYSTORE_PATH`,
+`KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`), and a `GH_TOKEN` that can
 read this repo's Actions runs, for step 0b. Without them the preflight fails
 and blames the wrong thing: on 2026-09-12, 13 and 14 it reported
 existing secrets as missing and a green commit as having no CI run (#850). The
 workflow now stops at its first real step, "Check the runner can authenticate",
 and names whichever credential is absent. That is the expected result until
-#851 lands, not something to fix by re-creating secrets. Once both exist, run
+#851 lands, not something to fix by re-creating secrets. Once all three exist, run
 `preflight` for a few nights before `on`.
 
 ### The quota that was actually refusing the deploy

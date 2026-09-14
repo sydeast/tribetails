@@ -19,8 +19,9 @@
  *   1  a required value is missing or empty. The names are on stderr.
  *   3  neither source could be READ, so nothing was checked. Not a pass.
  *   4  Secret Manager could not be read for a REQUIRED secret: gcloud timed
- *      out (#839), is not installed, has no credentials, or listed nothing
- *      (#850). NOT the same as 1: the secret may exist and hold a good value.
+ *      out (#839), is not installed, has no credentials, listed nothing, or
+ *      listed the secret and then could not read its value (#850). NOT the
+ *      same as 1: the secret may exist and hold a good value.
  *      The names, the reason and the check that matches it are on stderr.
  *
  * WHY THIS EXISTS
@@ -128,6 +129,15 @@
  * gcloud-failed), refuses with exit 4 when required, and its advice is the
  * auth check (`gcloud auth list`, `gcloud secrets list --limit 1`), never
  * create or set.
+ *
+ * A LISTED SECRET WHOSE VALUE CANNOT BE READ IS 'unreadable' TOO (#850). The
+ * LIST call proved the secret exists, so an ACCESS failure that is not a
+ * timeout used to come back as null and print `gcloud secrets create` for a
+ * secret the store had just named. It now carries a reason read from gcloud's
+ * stderr (permission-denied, no-enabled-version, not-found, access-failed) and
+ * advice that fits it: the secretAccessor role and `get-iam-policy`, or
+ * `versions list` plus adding a version. Create advice is printed only for a
+ * name the LIST did not contain.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -383,11 +393,7 @@ export function classifyListResult(r) {
     return { reason: 'gcloud-failed', detail: String(r.error.message || r.error.code || '') };
   }
   const stderr = String(r?.stderr || '');
-  const firstError =
-    stderr
-      .split('\n')
-      .map((s) => s.trim())
-      .find(Boolean) || '';
+  const firstError = gcloudLine(stderr);
   if (r?.status !== 0) {
     if (NOT_AUTHENTICATED.test(stderr)) return { reason: 'not-authenticated', detail: firstError };
     return { reason: 'gcloud-failed', detail: firstError || `gcloud exited ${r?.status}` };
@@ -398,6 +404,66 @@ export function classifyListResult(r) {
     .filter(Boolean);
   if (names.length === 0) return { reason: 'no-answer', detail: '' };
   return { reason: '', detail: '', names };
+}
+
+/**
+ * The first line of gcloud's error, without the parts that do not belong in a
+ * release log: gcloud appends "This command is authenticated as <email> ..."
+ * and a Troubleshooter URL to Secret Manager errors (both seen on a real
+ * gcloud, 2026-09-14). Capped so one error cannot flood the refusal.
+ */
+function gcloudLine(text) {
+  const line =
+    String(text || '')
+      .split('\n')
+      .map((s) => s.trim())
+      .find(Boolean) || '';
+  return line
+    .replace(/\s*Remediate access with this Troubleshooter URL.*$/i, '')
+    .replace(/\s*This command is authenticated as .*$/i, '')
+    .slice(0, 240);
+}
+
+/**
+ * Why an ACCESS call failed for a secret the LIST call DID name (#850). The
+ * PERMISSION_DENIED and NOT_FOUND wording was read off a real gcloud on
+ * 2026-09-14:
+ *   PERMISSION_DENIED: Permission 'secretmanager.versions.access' denied on
+ *     resource (or it may not exist).
+ *   NOT_FOUND: Secret [projects/<n>/secrets/<name>] not found or has no versions.
+ * A disabled or destroyed latest version is FAILED_PRECONDITION ("... is in
+ * DISABLED state"); that one could not be reproduced without changing the
+ * store, so it is matched on both the code and the state words.
+ */
+export function classifyAccessFailure(r) {
+  if (r?.error) return { reason: 'access-failed', detail: String(r.error.message || r.error.code || '') };
+  const stderr = String(r?.stderr || '');
+  const detail = gcloudLine(stderr) || `gcloud exited ${r?.status}`;
+  if (/PERMISSION_DENIED|versions\.access' denied/i.test(stderr)) return { reason: 'permission-denied', detail };
+  if (/FAILED_PRECONDITION|is in (DISABLED|DESTROYED) state/i.test(stderr)) {
+    return { reason: 'no-enabled-version', detail };
+  }
+  if (/NOT_FOUND/.test(stderr)) return { reason: 'not-found', detail };
+  if (NOT_AUTHENTICATED.test(stderr)) return { reason: 'not-authenticated', detail };
+  return { reason: 'access-failed', detail };
+}
+
+/** Reasons that belong to ONE secret rather than to the whole store. */
+const PER_SECRET_REASONS = new Set(['permission-denied', 'no-enabled-version', 'not-found', 'access-failed']);
+
+const UNREADABLE_BRAND = Symbol('client-secrets:unreadable-with-reason');
+
+/**
+ * What a fetcher returns when a listed secret could not be read, carrying the
+ * reason. SECRET_UNREADABLE alone still means a timeout, which is what the
+ * #839 tests pin.
+ */
+export function unreadableValue(reason, detail = '') {
+  return Object.freeze({ [UNREADABLE_BRAND]: true, reason, detail });
+}
+
+export function isUnreadableValue(v) {
+  return Boolean(v && typeof v === 'object' && v[UNREADABLE_BRAND]);
 }
 
 /** One sentence per reason, for the refusal and the warning. */
@@ -418,6 +484,20 @@ export function unreadableWhy(reason, detail = '') {
       );
     case 'gcloud-failed':
       return `gcloud failed while listing secrets.${said}`;
+    case 'permission-denied':
+      return (
+        'gcloud listed the secret but was refused its value: the account running this ' +
+        `needs roles/secretmanager.secretAccessor on it.${said}`
+      );
+    case 'no-enabled-version':
+      return `the secret exists but its latest version is disabled or destroyed, so there is no value to read.${said}`;
+    case 'not-found':
+      return (
+        'gcloud listed the secret and then found no readable version of it: it has no ' +
+        `versions, or it was deleted between the two calls.${said}`
+      );
+    case 'access-failed':
+      return `gcloud listed the secret but failed reading its value.${said}`;
     default:
       return 'Secret Manager could not be asked.';
   }
@@ -502,6 +582,16 @@ export function resolveClientVars({
         rows.push(row);
         continue;
       }
+      if (isUnreadableValue(fetched)) {
+        // Listed, then not readable (#850). The store named it, so this is
+        // never 'missing' and never gets create advice.
+        row.source = 'secret-manager';
+        row.status = 'unreadable';
+        row.reason = fetched.reason;
+        row.detail = fetched.detail;
+        rows.push(row);
+        continue;
+      }
       if (fetched === null || fetched === undefined) {
         // The store answered and does not have it. Do NOT fall through to a
         // local file: the point of the ruling is that the store is the source
@@ -579,8 +669,28 @@ export function fixCommands(row, project) {
     // right one is finding out why gcloud never answered. A timeout is a
     // network question (#839); every other reason is "can this machine read
     // the store at all" (#850).
-    if (row.reason === 'timeout') return [IPV4_CHECK, IPV6_CHECK];
-    return authChecks(project);
+    switch (row.reason) {
+      case 'timeout':
+        return [IPV4_CHECK, IPV6_CHECK];
+      case 'permission-denied':
+        return [
+          `gcloud secrets get-iam-policy ${row.secret} --project ${project}`,
+          `gcloud secrets add-iam-policy-binding ${row.secret} --project ${project} ` +
+            '--member="user:<the account running the release>" --role=roles/secretmanager.secretAccessor',
+        ];
+      case 'no-enabled-version':
+        return [
+          `gcloud secrets versions list ${row.secret} --project ${project}`,
+          `printf %s "<value>" | gcloud secrets versions add ${row.secret} --project ${project} --data-file=-`,
+        ];
+      case 'not-found':
+        return [
+          `gcloud secrets versions list ${row.secret} --project ${project}`,
+          `gcloud secrets list --project ${project} --filter=name:${row.secret}`,
+        ];
+      default:
+        return authChecks(project);
+    }
   }
   const create = `gcloud secrets create ${row.secret} --project ${project} --replication-policy=automatic`;
   const set = `printf %s "<value>" | gcloud secrets versions add ${row.secret} --project ${project} --data-file=-`;
@@ -725,7 +835,13 @@ export function makeGcloudFetcher(
       log(`    ${IPV6_CHECK}`);
       return SECRET_UNREADABLE;
     }
-    if (r.error || r.status !== 0) return null;
+    if (r.error || r.status !== 0) {
+      // The LIST named this secret, so a failed ACCESS is not "does not
+      // exist" (#850). Say why, from gcloud's own words.
+      const { reason, detail } = classifyAccessFailure(r);
+      log(`client config: reading ${name} failed (${reason})${detail ? `: ${detail}` : ''}`);
+      return unreadableValue(reason, detail);
+    }
     return r.stdout ?? '';
   };
 }
@@ -842,7 +958,7 @@ async function main(argv) {
     release,
     storeReason: store.reason || 'unavailable',
   });
-  const whyFor = (r) => unreadableWhy(r.reason, r.reason === store.reason ? store.detail : '');
+  const whyFor = (r) => unreadableWhy(r.reason, r.detail || (r.reason === store.reason ? store.detail : ''));
 
   // "COULD NOT LOOK" IS NOT "NOT THERE", and the whole point of the sibling
   // check in release.sh step 1b is that the two must never print the same. When
@@ -940,20 +1056,41 @@ async function main(argv) {
       for (const c of fixCommands(timedOut[0], project)) console.error(`    ${c}`);
     }
 
-    if (notAsked.length > 0) {
+    // One block per reason: the store-wide reasons share one check, and the
+    // per-secret ones (#850) print advice naming each secret.
+    const groups = new Map();
+    for (const r of notAsked) {
+      if (!groups.has(r.reason)) groups.set(r.reason, []);
+      groups.get(r.reason).push(r);
+    }
+    for (const [reason, group] of groups) {
       console.error('');
       console.error('REFUSED: Secret Manager could not be read for these REQUIRED secrets:');
-      for (const r of notAsked) {
+      for (const r of group) {
         console.error(`    ${r.variable} (${r.app})${r.secret ? ` <- ${r.secret}` : ''} could not be read`);
       }
       console.error('');
-      console.error(`  Why: ${whyFor(notAsked[0])}`);
-      console.error('');
-      console.error('  This is not the same as missing. The secret may exist and hold a good');
-      console.error("  value; this machine could not ask, and the apps' own .env files had no");
-      console.error('  value to fall back to. Do not create these secrets on the strength of');
-      console.error('  this message. Check that this machine can read the store:');
-      for (const c of fixCommands(notAsked[0], project)) console.error(`    ${c}`);
+      if (PER_SECRET_REASONS.has(reason)) {
+        console.error(`  Why: ${unreadableWhy(reason)}`);
+        for (const r of group) {
+          if (r.detail) console.error(`    ${r.secret}: gcloud said "${r.detail}"`);
+        }
+        console.error('');
+        console.error('  This is not the same as missing. Secret Manager LISTED each of these a');
+        console.error('  moment earlier; reading the value is what failed. Do not create them.');
+        console.error('  Check:');
+        for (const r of group) {
+          for (const c of fixCommands(r, project)) console.error(`    ${c}`);
+        }
+      } else {
+        console.error(`  Why: ${whyFor(group[0])}`);
+        console.error('');
+        console.error('  This is not the same as missing. The secret may exist and hold a good');
+        console.error("  value; this machine could not ask, and the apps' own .env files had no");
+        console.error('  value to fall back to. Do not create these secrets on the strength of');
+        console.error('  this message. Check that this machine can read the store:');
+        for (const c of fixCommands(group[0], project)) console.error(`    ${c}`);
+      }
     }
 
     // Exit 4, not 1, whenever at least one refusal could not even be checked:

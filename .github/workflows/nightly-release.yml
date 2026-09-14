@@ -229,12 +229,11 @@ jobs:
             echo "| Commit | \`$(git rev-parse --short HEAD)\` |"
             echo
             if [ "${MODE:-off}" = "off" ]; then
-              echo "Nothing ran. Set the repository variable \`NIGHTLY_RELEASE\` to"
-              echo "\`preflight\` to prove this works, then to \`on\` to let it ship:"
-              echo
-              echo '```'
-              echo "gh variable set NIGHTLY_RELEASE --body preflight"
-              echo '```'
+              echo "Nothing ran. The nightly release is off (operator ruling 2026-09-14)."
+              echo "Before it can run, this runner needs the Google Cloud setup and the"
+              echo "signing secrets it does not have today: [#851](https://github.com/${GITHUB_REPOSITORY}/issues/851)."
+              echo "See [the RUNBOOK](https://github.com/${GITHUB_REPOSITORY}/blob/main/docs/RUNBOOK.md#the-nightly-release-stays-off-until-it-can-authenticate)"
+              echo "for what it needs. Leave \`NIGHTLY_RELEASE\` off until then."
             elif [ "${NEW:-}" = "false" ]; then
               echo "Nothing has merged since the last release tag, so nothing shipped."
             fi

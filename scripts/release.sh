@@ -1598,9 +1598,10 @@ else
       red ""
       red "REFUSED: Secret Manager could not be read for a required secret."
       red "  This is NOT the same as missing: the secret may exist and hold a good"
-      red "  value. gcloud timed out, is not installed, has no credentials, or listed"
-      red "  nothing (#839/#850). The names, the reason and the check that matches"
-      red "  it are listed above; run that check before creating or setting anything."
+      red "  value. gcloud timed out, is not installed, has no credentials, listed"
+      red "  nothing, or listed a secret and was refused its value (#839/#850). The"
+      red "  names, the reason and the check that matches it are listed above; run"
+      red "  that check before creating or setting anything."
       red ""
       red "  To ship anyway, knowing what could not be verified: RELEASE_SKIP_CLIENT_SECRETS=1"
       exit 1

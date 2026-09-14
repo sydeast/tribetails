@@ -30,7 +30,9 @@ import {
   PRODUCTION_ENV_FILE,
   ROOT,
   SECRET_UNREADABLE,
+  classifyAccessFailure,
   classifyListResult,
+  isUnreadableValue,
   declaredSecretNames,
   fixCommands,
   isGcloudTimeout,
@@ -528,14 +530,158 @@ test('makeGcloudFetcher passes the timeout and kill signal to spawnSync, and a t
   assert.ok(logs.some((l) => l.includes('curl -6')));
 });
 
-test('an ordinary gcloud failure, with no timeout, still resolves to null rather than unreadable', () => {
-  const spawn = () => ({ status: 1, error: undefined, signal: null, stdout: '' });
+test('an ACCESS failure for a LISTED secret is unreadable with a reason, never null; a name the LIST lacks is still null', () => {
+  // This used to assert null for the listed secret, which printed `gcloud
+  // secrets create` for a secret the store had just named (#850).
+  const spawn = () => ({ status: 1, error: undefined, signal: null, stdout: '', stderr: 'ERROR: something odd' });
 
   const fetcher = makeGcloudFetcher('auntieos-ttpc', ['SECRET_A'], { spawn, timeoutMs: 5, log: () => {} });
-  assert.equal(fetcher('SECRET_A'), null);
+  const v = fetcher('SECRET_A');
+  assert.notEqual(v, null);
+  assert.ok(isUnreadableValue(v));
+  assert.equal(v.reason, 'access-failed');
+  // Not on the list: the store answered that it does not exist, and create
+  // advice is right for that one.
+  assert.equal(fetcher('NOT_LISTED'), null);
 
   const listResult = listSecretsWithGcloud('auntieos-ttpc', { spawn, timeoutMs: 5, log: () => {} });
   assert.equal(listResult, null);
+});
+
+// Real gcloud stderr, captured 2026-09-14, with the account email replaced.
+// DISABLED_STDERR is NOT captured: producing it needs a store change.
+const PERMISSION_DENIED_STDERR =
+  "ERROR: (gcloud.secrets.versions.access) PERMISSION_DENIED: Permission 'secretmanager.versions.access' denied on resource (or it may not exist). Remediate access with this Troubleshooter URL or share it with your administrator - https://console.cloud.google.com/iam-admin/troubleshooter/summary;errorId=X . This command is authenticated as someone@example.com which is the active account specified by the [core/account] property.\n- '@type': type.googleapis.com/google.rpc.ErrorInfo\n  reason: IAM_PERMISSION_DENIED\n";
+const NOT_FOUND_STDERR =
+  'ERROR: (gcloud.secrets.versions.access) NOT_FOUND: Secret [projects/153396971788/secrets/X] not found or has no versions. This command is authenticated as someone@example.com which is the active account specified by the [core/account] property.\n';
+const DISABLED_STDERR =
+  'ERROR: (gcloud.secrets.versions.access) FAILED_PRECONDITION: Secret Version [projects/153396971788/secrets/X/versions/3] is in DISABLED state.\n';
+
+test('classifyAccessFailure reads permission denied, no enabled version and not found from gcloud stderr, without the account email', () => {
+  const perm = classifyAccessFailure({ status: 1, stderr: PERMISSION_DENIED_STDERR });
+  assert.equal(perm.reason, 'permission-denied');
+  assert.match(perm.detail, /PERMISSION_DENIED/);
+  assert.ok(!perm.detail.includes('someone@example.com'), perm.detail);
+  assert.ok(!perm.detail.includes('troubleshooter'), perm.detail);
+
+  const gone = classifyAccessFailure({ status: 1, stderr: NOT_FOUND_STDERR });
+  assert.equal(gone.reason, 'not-found');
+  assert.ok(!gone.detail.includes('someone@example.com'), gone.detail);
+
+  assert.equal(classifyAccessFailure({ status: 1, stderr: DISABLED_STDERR }).reason, 'no-enabled-version');
+  assert.equal(
+    classifyAccessFailure({ status: 1, stderr: 'ERROR: FAILED_PRECONDITION: Secret Version [x] is in DESTROYED state.' }).reason,
+    'no-enabled-version',
+  );
+  assert.equal(classifyAccessFailure({ status: 1, stderr: 'ERROR: something new' }).reason, 'access-failed');
+});
+
+test('each ACCESS failure shape: a REQUIRED value refuses and an OPTIONAL one warns, with advice that fits and never create', () => {
+  const shapes = {
+    'permission-denied': PERMISSION_DENIED_STDERR,
+    'no-enabled-version': DISABLED_STDERR,
+    'not-found': NOT_FOUND_STDERR,
+  };
+  for (const [reason, stderr] of Object.entries(shapes)) {
+    const listed = declaredSecretNames();
+    const fetcher = makeGcloudFetcher('auntieos-ttpc', listed, {
+      spawn: () => ({ status: 1, stdout: '', stderr }),
+      timeoutMs: 5,
+      log: () => {},
+    });
+    const { rows, refusals, warnings } = resolveClientVars({ fetchSecret: fetcher, release: 'abc1234' });
+    const sm = rows.filter((r) => r.kind === 'secret-manager');
+    assert.ok(sm.every((r) => r.status === 'unreadable' && r.reason === reason), `${reason}: not every row unreadable`);
+    assert.deepEqual(
+      refusals.map((r) => r.variable).sort(),
+      sm.filter((r) => r.required).map((r) => r.variable).sort(),
+    );
+    assert.deepEqual(
+      warnings.map((r) => r.variable).sort(),
+      sm.filter((r) => !r.required).map((r) => r.variable).sort(),
+    );
+
+    for (const r of [...refusals, ...warnings]) {
+      const cmds = fixCommands(r, 'auntieos-ttpc').join('\n');
+      assert.ok(!cmds.includes('gcloud secrets create'), `${reason}: create advice for listed ${r.secret}`);
+      if (reason === 'permission-denied') {
+        assert.ok(cmds.includes(`gcloud secrets get-iam-policy ${r.secret} --project auntieos-ttpc`), cmds);
+        assert.ok(cmds.includes('roles/secretmanager.secretAccessor'), cmds);
+      } else if (reason === 'no-enabled-version') {
+        assert.ok(cmds.includes(`gcloud secrets versions list ${r.secret} --project auntieos-ttpc`), cmds);
+        assert.ok(cmds.includes(`secrets versions add ${r.secret}`), cmds);
+      } else {
+        assert.ok(cmds.includes(`gcloud secrets versions list ${r.secret} --project auntieos-ttpc`), cmds);
+      }
+    }
+  }
+});
+
+test('CLI: listed secrets whose ACCESS fails refuse with exit 4, per-secret advice, no create, no account email', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'client-secrets-access-'));
+  for (const [name, text] of [
+    ['perm', PERMISSION_DENIED_STDERR],
+    ['gone', NOT_FOUND_STDERR],
+    ['disabled', DISABLED_STDERR],
+  ]) {
+    fs.writeFileSync(path.join(dir, `${name}.txt`), text);
+  }
+  const fakeGcloud = path.join(dir, 'gcloud');
+  fs.writeFileSync(
+    fakeGcloud,
+    [
+      '#!/bin/sh',
+      `D='${dir}'`,
+      'case "$1 $2 $3" in',
+      '  "secrets list --project")',
+      "    printf '%s\\n' ADMIN_WEB_APPCHECK_SITE_KEY ADMIN_WEB_MAPBOX_PUBLIC_TOKEN PORTAL_WEB_MAPBOX_PUBLIC_TOKEN ADMIN_WEB_SENTRY_DSN PORTAL_WEB_SENTRY_DSN",
+      '    exit 0',
+      '    ;;',
+      '  "secrets versions access")',
+      '    name=""',
+      '    for a in "$@"; do case "$a" in --secret=*) name="${a#--secret=}" ;; esac; done',
+      '    case "$name" in',
+      '      ADMIN_WEB_APPCHECK_SITE_KEY|ADMIN_WEB_SENTRY_DSN) cat "$D/perm.txt" >&2; exit 1 ;;',
+      '      ADMIN_WEB_MAPBOX_PUBLIC_TOKEN) cat "$D/disabled.txt" >&2; exit 1 ;;',
+      '      PORTAL_WEB_MAPBOX_PUBLIC_TOKEN) cat "$D/gone.txt" >&2; exit 1 ;;',
+      "      PORTAL_WEB_SENTRY_DSN) printf 'https://example@o0.ingest.us.sentry.io/1\\n'; exit 0 ;;",
+      '    esac',
+      '    ;;',
+      'esac',
+      'exit 1',
+      '',
+    ].join('\n'),
+  );
+  fs.chmodSync(fakeGcloud, 0o755);
+
+  let r;
+  try {
+    r = spawnSync(
+      process.execPath,
+      [path.join(ROOT, 'scripts', 'client-secrets.mjs'), '--check', '--project', 'auntieos-ttpc', '--release', 'abc1234'],
+      { encoding: 'utf8', timeout: 15_000, env: { ...process.env, PATH: `${dir}:${process.env.PATH}` } },
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  const out = `${r.stdout || ''}\n${r.stderr || ''}`;
+
+  assert.equal(r.status, 4, `expected exit 4, got ${r.status}:\n${out}`);
+  assert.ok(!/gcloud secrets create/.test(out), `create advice for a listed secret:\n${out}`);
+  assert.ok(!/is missing/.test(out), `"is missing" for a listed secret:\n${out}`);
+  assert.ok(!/has no value/.test(out), `the missing-value refusal appeared:\n${out}`);
+  assert.ok(!out.includes('someone@example.com'), `the account email reached the output:\n${out}`);
+  assert.match(out, /ADMIN_WEB_APPCHECK_SITE_KEY could not be read/);
+  assert.match(out, /ADMIN_WEB_MAPBOX_PUBLIC_TOKEN could not be read/);
+  assert.match(out, /PORTAL_WEB_MAPBOX_PUBLIC_TOKEN could not be read/);
+  assert.match(out, /roles\/secretmanager\.secretAccessor/);
+  assert.match(out, /gcloud secrets get-iam-policy ADMIN_WEB_APPCHECK_SITE_KEY --project auntieos-ttpc/);
+  assert.match(out, /gcloud secrets versions list ADMIN_WEB_MAPBOX_PUBLIC_TOKEN --project auntieos-ttpc/);
+  assert.match(out, /secrets versions add ADMIN_WEB_MAPBOX_PUBLIC_TOKEN/);
+  assert.match(out, /gcloud secrets versions list PORTAL_WEB_MAPBOX_PUBLIC_TOKEN --project auntieos-ttpc/);
+  // The optional admin DSN is refused its value too: it warns, it does not refuse.
+  assert.match(out, /WARNING: VITE_SENTRY_DSN \(admin\) could not be read/);
+  assert.match(out, /gcloud secrets get-iam-policy ADMIN_WEB_SENTRY_DSN/);
 });
 
 test('a timed-out ACCESS refuses the release, and the fix commands never suggest `gcloud secrets create`', () => {
