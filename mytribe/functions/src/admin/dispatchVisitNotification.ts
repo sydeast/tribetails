@@ -22,11 +22,18 @@ const Args = z
     etaMinutes: z.number().int().nonnegative().optional(),
     reportPreviewUrl: z.string().url().optional(),
     /**
-     * When the lifecycle step happened (ms epoch). Optional: the web admin's
-     * `setVisitLifecycle` passes the time it stamps; the Android callable path
-     * does not, and then the ETA alone tells two events apart (#832).
+     * When the lifecycle step happened (ms epoch): the `onMyWayAt` / `arrivedAt`
+     * / `departedAt` the caller just stamped. Every live caller sends it (the
+     * web admin's lifecycle patch, `setVisitLifecycle`, Android `VisitNotifier`),
+     * and it is what tells a re-arrival from a retry of the first (#832).
+     * Optional so an older client still dispatches.
      */
     eventAtMs: z.number().int().nonnegative().optional(),
+    /**
+     * The KinTale a `report_sent` announces. Two reports for one visit are two
+     * notifications; a retry of one report is one (#832).
+     */
+    reportId: z.string().min(1).max(200).optional(),
   })
   .refine((a) => (a.batchId && a.visitId) || a.bookingId, {
     message: 'Provide batchId+visitId (preferred) or a legacy bookingId.',
@@ -47,19 +54,19 @@ const EVENT_TO_KEY: Record<z.infer<typeof EventArg>, string> = {
  * the visit, so without this an Auntie's second "on my way" with a new ETA, or
  * an arrival after an undone arrival, inside the dispatcher window was dropped.
  *
- * Named by the step and what it says: the ETA, the step's time when the caller
- * knows it (`setVisitLifecycle` does), and the report link for a report. Two
- * taps of the same step with the same ETA and no time from the Android callable
- * path are one event and deliver once.
+ * Named by the step and what it says: the ETA, the step's stamped time, and
+ * for a report the report id (or its link from an older client). A retry of one
+ * tap carries the same stamped time and dedupes; a re-arrival carries a new one
+ * and sends.
  */
 export function visitDedupeKey(
   visitId: string,
-  args: Pick<Args, 'event' | 'etaMinutes' | 'eventAtMs' | 'reportPreviewUrl'>,
+  args: Pick<Args, 'event' | 'etaMinutes' | 'eventAtMs' | 'reportPreviewUrl' | 'reportId'>,
 ): string {
   return contentDedupeKey(`visit:${visitId}:${args.event}`, {
     eta: args.etaMinutes ?? null,
     at: args.eventAtMs ?? null,
-    report: args.reportPreviewUrl ?? null,
+    report: args.reportId ?? args.reportPreviewUrl ?? null,
   });
 }
 

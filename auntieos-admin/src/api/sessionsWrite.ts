@@ -199,6 +199,12 @@ async function notifyHousehold(args: {
   action: VisitLifecycleAction;
   session: VisitLifecycleSession;
   etaMinutes: number | undefined;
+  /**
+   * The time this step was stamped (ms epoch). The server names the household
+   * notification by it, so a re-arrival after an undo is a new message while a
+   * retry of this tap is not (#832).
+   */
+  eventAtMs: number | undefined;
 }): Promise<VisitNotifyOutcome> {
   const event = notificationEventFor(args.action);
   if (event === null) return { notified: false, notifySkipped: 'no_event_for_action' };
@@ -222,6 +228,7 @@ async function notifyHousehold(args: {
         ...(useEnvelope ? { batchId, visitId } : { bookingId }),
         event,
         ...(args.etaMinutes !== undefined ? { etaMinutes: args.etaMinutes } : {}),
+        ...(args.eventAtMs !== undefined ? { eventAtMs: args.eventAtMs } : {}),
       },
     );
     const suppressed = res.suppressed ?? (res.dispatchIds ?? []).length === 0;
@@ -362,7 +369,13 @@ export async function patchVisitLifecycle(
     from: decision.from,
     status: decision.to,
     changed: true,
-    notification: notifyHousehold({ action, session, etaMinutes: options.etaMinutes }),
+    notification: notifyHousehold({
+      action,
+      session,
+      etaMinutes: options.etaMinutes,
+      // The same instant that was just written to the session.
+      eventAtMs: Number.isFinite(Date.parse(options.nowIso)) ? Date.parse(options.nowIso) : undefined,
+    }),
   };
 }
 

@@ -823,6 +823,9 @@ class FirestoreClient {
                 put("bookingId", legacyBookingId!!)
             }
             put("event", "report_sent")
+            // #832: the server names the notification by the report, so a second
+            // KinTale for one visit reaches the household and a retry does not.
+            put("reportId", report._id)
         }
         val dispatchId = when (
             val r = platformInvokeCallable(
