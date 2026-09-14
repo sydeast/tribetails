@@ -807,11 +807,15 @@ const CATALOG_LIST: NotificationDef[] = [
     description: 'Password reset link, generated server-side via Admin SDK, delivered by SendGrid dispatcher.',
   },
   {
-    // Run-4 #13 audit: in BOTH bucket lists ("repeated fail login attempts").
+    // The household's copy only. Business admins get
+    // `security.failedLogin.attempts.operator` below (#877). This row used to
+    // fan out to them through `secondaryResolver: 'businessAdmins'` with the
+    // household's own template, so an operator read a warning about "your
+    // Tribe Tails account" that named no household.
     key: 'auth.failedLogin.attempts',
     label: 'Repeated failed login attempts',
-    audience: 'both',
-    audiences: { kinfolk: true, business: true },
+    audience: 'kinfolk',
+    audiences: { kinfolk: true },
     category: 'account',
     allowedChannels: ['email', 'sms', 'push'],
     required: { email: true },
@@ -819,8 +823,6 @@ const CATALOG_LIST: NotificationDef[] = [
     kinfolkFacing: false,
     deliveryMode: 'trigger',
     recipientResolver: 'specificUid',
-    // Run-4 #13: in BOTH buckets -> the business is also told about repeated fails.
-    secondaryResolver: 'businessAdmins',
     templates: { email: 'auth.failedLogin.attempts', sms: 'auth.failedLogin.attempts', push: 'auth.failedLogin.attempts' },
     description: 'Repeated failed login attempts detected (5 in 10 min).',
   },
@@ -872,6 +874,31 @@ const CATALOG_LIST: NotificationDef[] = [
     },
     description:
       'A kinfolk account locked after 10 failed sign-in attempts in 20 minutes. It clears after 30 minutes or on a password reset.',
+  },
+  {
+    // #877: the operator's copy of the 5-failure warning, shaped like the lock
+    // alert above. Resolved through the business admin roster, so recipients
+    // are STAFF. Fired by auth/loginSecurity.ts with a dedupeKey naming the
+    // household and the saved burst start, so a retry of one burst is refused
+    // and a later burst sends.
+    key: 'security.failedLogin.attempts.operator',
+    label: 'Repeated failed sign-ins on a kinfolk account',
+    audience: 'business',
+    audiences: { business: true },
+    category: 'security',
+    allowedChannels: ['email', 'sms', 'push'],
+    required: { email: true, push: true },
+    alwaysEnabled: true,
+    kinfolkFacing: false,
+    deliveryMode: 'trigger',
+    recipientResolver: 'businessAdmins',
+    templates: {
+      email: 'security.failedLogin.attempts.operator',
+      sms: 'security.failedLogin.attempts.operator',
+      push: 'security.failedLogin.attempts.operator',
+    },
+    description:
+      'A kinfolk account had 5 failed sign-in attempts in 10 minutes. It is not locked yet; it locks at 10 in 20 minutes.',
   },
   {
     key: 'security.breach_attempt.kinfolk',

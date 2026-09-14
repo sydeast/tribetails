@@ -1,0 +1,1 @@
+Failed sign-ins on a kinfolk account. {{kinfolkName}} ({{kinfolkEmail}}) has {{attemptsInWindow}} in 10 minutes. Not locked yet. Check whether it was them.
