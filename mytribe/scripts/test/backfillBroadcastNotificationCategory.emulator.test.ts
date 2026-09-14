@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { getApps, initializeApp, deleteApp } from 'firebase-admin/app';
-import { getFirestore, type Firestore } from 'firebase-admin/firestore';
+// Through the shared module, never 'firebase-admin/*' directly: the script
+// builds its writes from lib/firebaseAdmin's copy, so the client must come from
+// the same one (#870).
+import { getApps, initializeApp, deleteApp, getFirestore, type Firestore } from '../lib/firebaseAdmin';
 import {
   buildPlan,
   applyPlan,
@@ -23,8 +25,7 @@ import {
  *
  * Runs only with an emulator (the harness sets FIRESTORE_EMULATOR_HOST):
  *
- *   npx firebase emulators:exec --only firestore --project broadcast-443-test \
- *     "npx vitest run ../scripts/test/backfillBroadcastNotificationCategory.emulator.test.ts"
+ *   npm run test:scripts:emulator
  *
  * It refuses to run without one rather than risk touching anything real, the
  * same gate its sibling emulator tests in this directory use.

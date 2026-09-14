@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { getApps, initializeApp, deleteApp } from 'firebase-admin/app';
-import { getFirestore, type Firestore } from 'firebase-admin/firestore';
+// Through the shared module, never 'firebase-admin/*' directly: the script
+// builds its writes from lib/firebaseAdmin's copy, so the client must come from
+// the same one (#870).
+import { getApps, initializeApp, deleteApp, getFirestore, type Firestore } from '../lib/firebaseAdmin';
 import {
   buildPlan,
   applyPlan,
@@ -20,8 +22,8 @@ import {
  * So this seeds real documents carrying the production shapes, runs the real
  * migration against a real Firestore, and reads them back.
  *
- * Runs only with FIRESTORE_EMULATOR_HOST set, and refuses otherwise rather than
- * risk touching anything real.
+ * Runs only with FIRESTORE_EMULATOR_HOST set (`npm run test:scripts:emulator`
+ * starts one), and refuses otherwise rather than risk touching anything real.
  */
 const EMULATOR = process.env['FIRESTORE_EMULATOR_HOST'];
 
