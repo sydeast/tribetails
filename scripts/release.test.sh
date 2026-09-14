@@ -188,7 +188,7 @@ STUB
   # The same entries the real .gitignore carries for these, because step 0
   # refuses a dirty tree and .release-state and the APK are both untracked
   # by design. Without this the test would be testing the dirty-tree guard.
-  printf '.release-state\n.release-functions\nauntieos-admin/android/app/build/\nmytribe/build/\n' > "$r/.gitignore"
+  printf '.release-state\n.release-functions\n.release-progress\nauntieos-admin/android/app/build/\nmytribe/build/\n' > "$r/.gitignore"
 
   ( cd "$r"
     git init -q -b main .
@@ -262,6 +262,21 @@ for a in "$@"; do
     --only=*) only="${a#--only=}" ;;
   esac
 done
+
+# FIREBASE_ADMIN_FAIL_TEXT makes an admin codebase deploy fail printing that
+# text (printf %b, so \n works), FIREBASE_ADMIN_FAIL_TIMES times (default:
+# every time), counted in FIREBASE_ADMIN_FAIL_COUNTER because each call is a
+# fresh process. FIREBASE_ADMIN_FAIL_TARGET picks the codebase (#840).
+if [ -n "${FIREBASE_ADMIN_FAIL_TEXT:-}" ] && [ "$only" = "${FIREBASE_ADMIN_FAIL_TARGET:-functions:default}" ]; then
+  counter="${FIREBASE_ADMIN_FAIL_COUNTER:-}"
+  seen=0
+  if [ -n "$counter" ] && [ -f "$counter" ]; then seen="$(cat "$counter")"; fi
+  if [ "$seen" -lt "${FIREBASE_ADMIN_FAIL_TIMES:-9999}" ]; then
+    if [ -n "$counter" ]; then echo $((seen + 1)) > "$counter"; fi
+    printf '%b\n' "$FIREBASE_ADMIN_FAIL_TEXT"
+    exit 2
+  fi
+fi
 
 case "$only" in
   functions:mytribe:*) ;;
@@ -433,6 +448,13 @@ if (cd "$D/repo" && git tag -l | grep -q .); then
   bad "dry run created a git tag"
 else
   ok "dry run created no git tag"
+fi
+# .release-progress makes a later run SKIP steps (#840), so it is the same kind
+# of file as .release-state and a rehearsal must not write it either.
+if [ -e "$D/repo/.release-progress" ]; then
+  bad "dry run wrote .release-progress"
+else
+  ok "dry run writes no .release-progress"
 fi
 
 # ---------------------------------------------------------------------------
@@ -1373,6 +1395,213 @@ if printf '%s' "$OUT" | grep -q "every declared VITE_\* value resolved"; then
   bad "an unreadable store reported the client config as resolved"
 else
   ok "an unreadable store never claims the client config resolved"
+fi
+
+# ---------------------------------------------------------------------------
+# #840. On 2026-09-13 a release shipped indexes, rules and all 279 mytribe
+# functions, verified the fleet, then died on ONE dropped Secret Manager request
+# while deploying the admin codebases, which had no retry. The rerun would have
+# redeployed all 279 functions, because nothing recorded that they had shipped.
+# ---------------------------------------------------------------------------
+
+# The classifier, lifted straight out of release.sh, so this tests the function
+# the script runs and not a copy of it.
+CLASSIFIER="$(awk '/^classify_deploy_failure\(\) \{/,/^}/' "$REPO_SCRIPTS/release.sh")"
+if [ -n "$CLASSIFIER" ]; then
+  eval "$CLASSIFIER"
+  ok "classify_deploy_failure can be lifted out of release.sh"
+else
+  bad "classify_deploy_failure is not at column 0 in release.sh"
+fi
+CLS_DIR="$(mktemp -d)"
+INCIDENT_TEXT='Error: Failed to validate secret versions:\n- FirebaseError Failed to make request to https://secretmanager.googleapis.com/v1/projects/auntieos-ttpc/secrets/CLOUDINARY_API_KEY/versions/latest'
+MISSING_TEXT='Error: Failed to validate secret versions:\n- FirebaseError HTTP Error: 404, Secret [projects/auntieos-ttpc/secrets/CLOUDINARY_API_KEY] not found or has no versions.'
+
+# expect_class <class> <label> <log text>
+expect_class() {
+  local want="$1" label="$2" got
+  printf '%b\n' "$3" > "$CLS_DIR/log"
+  got="$(classify_deploy_failure "$CLS_DIR/log" 2>/dev/null || true)"
+  if [ "$got" = "$want" ]; then
+    ok "classifier: $label is $want"
+  else
+    bad "classifier: $label is '$got', expected $want"
+  fi
+}
+expect_class transient "the 2026-09-13 dropped Secret Manager request" "$INCIDENT_TEXT"
+expect_class permanent "a secret that is not found, under the same header" "$MISSING_TEXT"
+expect_class permanent "a secret with no versions" 'Error: Failed to validate secret versions:\n- FirebaseError Secret projects/auntieos-ttpc/secrets/X has no versions'
+expect_class transient "an HTTP 503" 'HTTP Error: 503, The service is currently unavailable.'
+expect_class transient "a connection reset" 'Error: request to https://cloudfunctions.googleapis.com failed, reason: read ECONNRESET'
+expect_class transient "a DNS failure, whose ENOTFOUND is not a not-found" 'getaddrinfo ENOTFOUND secretmanager.googleapis.com'
+expect_class transient "a mutation rate limit" "HTTP Error: 429, Quota exceeded for quota metric 'Per project mutation requests'"
+expect_class permanent "a minimum-bill refusal" 'Error: Pass the --force option to deploy functions that increase the minimum bill'
+expect_class unknown "a predeploy build error" 'Error: functions predeploy error: Command terminated with non-zero exit code 2'
+: > "$CLS_DIR/log"
+if [ "$(classify_deploy_failure "$CLS_DIR/log")" = "unknown" ]; then
+  ok "classifier: an empty log is unknown"
+else
+  bad "classifier: an empty log was not unknown"
+fi
+rm -rf "$CLS_DIR"
+
+# admin_repo: a synthetic repo that can deploy the admin codebases (safe-deploy
+# refuses without auntieos-admin/web/firebase.json) and whose step 5 fleet verify
+# PASSES, so step 5 is recorded as done. Echoes the directory.
+admin_repo() {
+  local d
+  d="$(make_repo)"; write_stubs "$d"
+  commit_change "$d" "auntieos-admin/web/firebase.json" '{}'
+  arm_ci "$d"
+  stub_npm_verify "$d" 0
+  stub_npx_fleet "$d"
+  printf '%s' "$d"
+}
+ADMIN_ENV=(RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 RELEASE_INCLUDE_ADMIN_FUNCTIONS=1
+  RELEASE_FUNCTIONS_BATCH=4 RELEASE_FUNCTIONS_SETTLE=0 RELEASE_RETRY_KEEP=0)
+
+# admin_calls <call-log> <target>: how many times firebase was asked for <target>.
+admin_calls() {
+  grep -cF -- "--only $2 " "$1" 2>/dev/null || true
+}
+
+# Retry then succeed: the incident's exact text, once.
+DA="$(admin_repo)"
+RCA="$(run_release "$DA" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DA/calls" \
+  FIREBASE_ADMIN_FAIL_TEXT="$INCIDENT_TEXT" FIREBASE_ADMIN_FAIL_TIMES=1 \
+  FIREBASE_ADMIN_FAIL_COUNTER="$DA/admin-fails")"
+if [ "$RCA" = "0" ]; then
+  ok "a dropped request on the admin deploy is retried and the release completes"
+else
+  bad "a dropped request on the admin deploy failed the release (rc=$RCA)"; tail -25 "$DA/out"
+fi
+if [ "$(admin_calls "$DA/calls" functions:default)" = "2" ] &&
+   [ "$(admin_calls "$DA/calls" functions:reconcile)" = "1" ]; then
+  ok "functions:default was tried twice, functions:reconcile once"
+else
+  bad "admin deploy attempts: default $(admin_calls "$DA/calls" functions:default), reconcile $(admin_calls "$DA/calls" functions:reconcile)"
+fi
+if grep -q "transient failure" "$DA/out"; then
+  ok "the retry says the failure was transient"
+else
+  bad "the retry did not say why it retried"
+fi
+if [ ! -e "$DA/repo/.release-progress" ] &&
+   [ "$(cat "$DA/repo/.release-state" 2>/dev/null)" = "$(cd "$DA/repo" && git rev-parse HEAD)" ]; then
+  ok "a completed release records .release-state and clears .release-progress"
+else
+  bad "a completed release left .release-progress behind or did not record .release-state"
+fi
+
+# No retry on a genuinely missing secret, and the stop names what shipped.
+DB="$(admin_repo)"
+HEAD_B="$(cd "$DB/repo" && git rev-parse HEAD)"
+RCB="$(run_release "$DB" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DB/calls1" \
+  FIREBASE_ADMIN_FAIL_TEXT="$MISSING_TEXT")"
+if [ "$RCB" != "0" ]; then
+  ok "a secret that is not found fails the release"
+else
+  bad "a not-found secret did not fail the release"
+fi
+if [ "$(admin_calls "$DB/calls1" functions:default)" = "1" ] && grep -q "NOT retrying" "$DB/out"; then
+  ok "a not-found secret is not retried, and the run says so"
+else
+  bad "a not-found secret was retried ($(admin_calls "$DB/calls1" functions:default) attempts)"; tail -25 "$DB/out"
+fi
+if grep -q 'hosting' "$DB/calls1" 2>/dev/null; then
+  bad "hosting shipped after the admin codebase failed"
+else
+  ok "hosting does not ship after the admin codebase failed"
+fi
+if grep -qxF "$HEAD_B functions-mytribe" "$DB/repo/.release-progress" 2>/dev/null &&
+   [ ! -e "$DB/repo/.release-state" ]; then
+  ok "the verified mytribe functions are recorded for this commit, and nothing is recorded as released"
+else
+  bad "progress after the failed admin deploy is wrong"; cat "$DB/repo/.release-progress" 2>/dev/null
+fi
+if grep -q "Completed and LIVE for $(cd "$DB/repo" && git rev-parse --short HEAD)" "$DB/out" &&
+   grep -q "functions:mytribe, fleet verified" "$DB/out" &&
+   grep -q "firestore rules" "$DB/out"; then
+  ok "the stop message names the steps that completed for this commit"
+else
+  bad "the stop message does not name what shipped"; tail -15 "$DB/out"
+fi
+
+# Resume: the SAME commit, the secret fixed. Nothing already live redeploys.
+RCB2="$(run_release "$DB" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DB/calls2")"
+if [ "$RCB2" = "0" ]; then
+  ok "a rerun of the same commit completes"
+else
+  bad "a rerun of the same commit failed (rc=$RCB2)"; tail -25 "$DB/out"
+fi
+if [ -z "$(fn_deploys "$DB/calls2")" ] && grep -q "RESUMED: SKIPPED the mytribe functions" "$DB/out"; then
+  ok "the rerun skips the already-verified mytribe functions, and says so"
+else
+  bad "the rerun redeployed '$(fn_deploys "$DB/calls2" | tr '\n' ' ')'"
+fi
+if grep -q 'firestore:indexes\|firestore:rules' "$DB/calls2"; then
+  bad "the rerun redeployed indexes or rules it had already shipped"
+else
+  ok "the rerun skips indexes and rules it had already shipped"
+fi
+if [ "$(admin_calls "$DB/calls2" functions:default)" = "1" ] && grep -q 'hosting:app' "$DB/calls2"; then
+  ok "the rerun deploys the step that failed and everything after it"
+else
+  bad "the rerun did not pick up at the failed step"; cat "$DB/calls2"
+fi
+if [ ! -e "$DB/repo/.release-progress" ] &&
+   [ "$(cat "$DB/repo/.release-state" 2>/dev/null)" = "$HEAD_B" ] &&
+   grep -qx alpha "$DB/repo/.release-functions" 2>/dev/null; then
+  ok "the resumed release records .release-state and the fleet, and clears progress"
+else
+  bad "the resumed release did not record itself"
+fi
+
+# A DIFFERENT commit never skips, whatever the progress file says.
+DC="$(admin_repo)"
+run_release "$DC" "${ADMIN_ENV[@]}" FIREBASE_ADMIN_FAIL_TEXT="$MISSING_TEXT" >/dev/null
+if grep -q " functions-mytribe$" "$DC/repo/.release-progress" 2>/dev/null; then
+  ok "precondition: the first commit's functions are recorded"
+else
+  bad "precondition failed: nothing recorded after the first run"
+fi
+commit_change "$DC" "note.txt" "a later commit"
+arm_ci "$DC"
+RCC="$(run_release "$DC" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DC/calls2")"
+if [ "$RCC" = "0" ] && [ -n "$(fn_deploys "$DC/calls2")" ] &&
+   grep -q 'firestore:rules' "$DC/calls2" && ! grep -q "RESUMED" "$DC/out"; then
+  ok "a different commit redeploys everything and resumes nothing"
+else
+  bad "a different commit skipped work (rc=$RCC, functions '$(fn_deploys "$DC/calls2" | tr '\n' ' ')')"
+fi
+
+# RELEASE_NO_RESUME=1 forces the full run on the same commit.
+DD="$(admin_repo)"
+run_release "$DD" "${ADMIN_ENV[@]}" FIREBASE_ADMIN_FAIL_TEXT="$MISSING_TEXT" >/dev/null
+RCD="$(run_release "$DD" "${ADMIN_ENV[@]}" RELEASE_NO_RESUME=1 FIREBASE_CALL_LOG="$DD/calls2")"
+if [ "$RCD" = "0" ] && [ -n "$(fn_deploys "$DD/calls2")" ] &&
+   grep -q 'firestore:rules' "$DD/calls2" && ! grep -q "RESUMED" "$DD/out"; then
+  ok "RELEASE_NO_RESUME=1 redeploys every step on the same commit"
+else
+  bad "RELEASE_NO_RESUME=1 still skipped work (rc=$RCD)"
+fi
+
+# A fleet the verify could not read is not a verified fleet: not recorded, so a
+# rerun redeploys the functions even though it skips the rules.
+DE="$(admin_repo)"
+stub_npm_verify "$DE" 2
+run_release "$DE" "${ADMIN_ENV[@]}" FIREBASE_ADMIN_FAIL_TEXT="$MISSING_TEXT" >/dev/null
+if grep -q " rules$" "$DE/repo/.release-progress" 2>/dev/null &&
+   ! grep -q " functions-mytribe$" "$DE/repo/.release-progress" 2>/dev/null; then
+  ok "an unverified functions deploy is not recorded as done"
+else
+  bad "an unverified functions deploy was recorded"; cat "$DE/repo/.release-progress" 2>/dev/null
+fi
+RCE="$(run_release "$DE" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DE/calls2")"
+if [ "$RCE" = "0" ] && [ -n "$(fn_deploys "$DE/calls2")" ] && ! grep -q 'firestore:rules' "$DE/calls2"; then
+  ok "the rerun redeploys the unverified functions and skips the recorded rules"
+else
+  bad "the rerun after an unverified deploy was wrong (rc=$RCE)"; cat "$DE/calls2"
 fi
 
 echo

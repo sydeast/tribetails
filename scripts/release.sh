@@ -67,7 +67,18 @@
 #                                       default because they live in a second
 #                                       tree with their own deploy semantics;
 #                                       the run SAYS when it skipped them.
-#   RELEASE_YES=1                       do not prompt (CI). Preconditions still
+#                                       Each codebase deploy is retried on a
+#                                       transient error (dropped request, 5xx,
+#                                       rate limit): RELEASE_FUNCTIONS_ROUNDS
+#                                       attempts, RELEASE_FUNCTIONS_SETTLE apart.
+#   RELEASE_NO_RESUME=1                 run every step even when an earlier run of
+#                                       this SAME commit already completed it.
+#                                       Without it a rerun skips what
+#                                       .release-progress records as done for
+#                                       HEAD (indexes, rules, fleet-verified
+#                                       mytribe functions, admin codebases) and
+#                                       says so.
+#   RELEASE_YES=1                      do not prompt (CI). Preconditions still
 #                                       apply; nothing is bypassed.
 #   RELEASE_SKIP_CLIENT_SECRETS=1       skip step 0c and build both web apps
 #                                       from whatever their own .env files hold.
@@ -166,7 +177,109 @@ cleanup_client_env() {
 # Any exit that is not the clean end of this script names the step it died in.
 # A release that stops silently mid-way leaves production half-shipped, which is
 # worse than not starting: functions ahead of hosting is a state nobody chose.
-trap 'code=$?; cleanup_client_env; if [ "$code" -ne 0 ]; then red ""; red "RELEASE STOPPED during: $STEP"; red "Production may be PARTIALLY shipped. Check what completed above before retrying."; fi' EXIT
+#
+# The stop message names what DID ship for this commit (#840), read from the
+# progress file below, so "partially shipped" is a list rather than a shrug.
+trap 'code=$?; cleanup_client_env; if [ "$code" -ne 0 ]; then red ""; red "RELEASE STOPPED during: $STEP"; progress_report_stop || true; fi' EXIT
+
+# ---------------------------------------------------------------------------
+# Progress for THIS commit, so a stopped release resumes instead of redoing the
+# half that already shipped (#840).
+# ---------------------------------------------------------------------------
+#
+# WHY. On 2026-09-13 a release shipped indexes, rules and all 279 mytribe
+# functions, verified the fleet, then died on one dropped Secret Manager request
+# while deploying the admin codebases. .release-state is written only at the very
+# end, so the rerun would redeploy all 279 functions again: ~30 minutes and
+# another round of Cloud Run revisions, for code already live and verified.
+#
+# .release-progress holds one "<full sha> <step>" line per step that completed
+# for the commit being released. A rerun skips a recorded step only when:
+#   - the line names the EXACT commit at HEAD (a different commit never skips),
+#   - the tree is clean (step 0 refuses a dirty one anyway; this does not lean
+#     on that), and
+#   - RELEASE_NO_RESUME=1 is not set.
+# Only completion that was proven is recorded: step 5 only when the fleet verify
+# PASSED, never on "could not verify". Hosting and Android are recorded so the
+# stop message can name them, and are never skipped: they are cheap, and step 7
+# verifies hosting against the bundle THIS run built.
+#
+# Written under the same DRY_RUN rule as .release-state, because it is the same
+# kind of file: an input that makes a later run skip work.
+PROGRESS_FILE="$ROOT/.release-progress"
+
+progress_label() {
+  case "$1" in
+    indexes)                   printf 'firestore indexes (steps 2-3)' ;;
+    rules)                     printf 'firestore rules (step 4)' ;;
+    functions-mytribe)         printf 'functions:mytribe, fleet verified (step 5)' ;;
+    functions-admin-default)   printf 'functions:default, admin codebase' ;;
+    functions-admin-reconcile) printf 'functions:reconcile, admin codebase' ;;
+    hosting-admin)             printf 'hosting:app, operator admin (step 6)' ;;
+    hosting-portal)            printf 'hosting:kinfolk_portal (step 6)' ;;
+    android-*)                 printf 'android %s, distributed (step 6b)' "${1#android-}" ;;
+    *)                         printf '%s' "$1" ;;
+  esac
+}
+
+# progress_mark <step>: record that <step> completed for HEAD. Lines for any
+# other commit are dropped first, so the file only ever describes one release.
+progress_mark() {
+  local key="$1" sha
+  if [ "$DRY_RUN" = "1" ]; then
+    return 0
+  fi
+  sha="$(git rev-parse HEAD 2>/dev/null || true)"
+  [ -n "$sha" ] || return 0
+  if [ -f "$PROGRESS_FILE" ] &&
+     ! awk -v s="$sha" '$1 != s { other = 1 } END { exit other ? 1 : 0 }' "$PROGRESS_FILE" 2>/dev/null; then
+    : > "$PROGRESS_FILE" 2>/dev/null || true
+  fi
+  if ! grep -qxF "$sha $key" "$PROGRESS_FILE" 2>/dev/null; then
+    printf '%s %s\n' "$sha" "$key" >> "$PROGRESS_FILE" 2>/dev/null ||
+      ylw "could not record '$key' in .release-progress; a rerun will redo it."
+  fi
+  return 0
+}
+
+# progress_done <step>: true only when <step> is recorded for HEAD, the tree is
+# clean, and RELEASE_NO_RESUME is not set.
+progress_done() {
+  local key="$1" sha dirty
+  [ "${RELEASE_NO_RESUME:-0}" = "1" ] && return 1
+  [ -f "$PROGRESS_FILE" ] || return 1
+  dirty="$(git status --porcelain 2>/dev/null)" || return 1
+  [ -z "$dirty" ] || return 1
+  sha="$(git rev-parse HEAD 2>/dev/null)" || return 1
+  grep -qxF "$sha $key" "$PROGRESS_FILE" 2>/dev/null
+}
+
+# progress_report_stop: the rest of the stop message. Names every step recorded
+# for HEAD, so an operator reading a failed run knows what is live.
+progress_report_stop() {
+  local sha short line_sha key done_list=""
+  sha="$(git rev-parse HEAD 2>/dev/null || true)"
+  short="$(git rev-parse --short HEAD 2>/dev/null || true)"
+  if [ -n "$sha" ] && [ -f "$PROGRESS_FILE" ]; then
+    while read -r line_sha key; do
+      if [ "$line_sha" = "$sha" ] && [ -n "$key" ]; then
+        done_list="$done_list
+    - $(progress_label "$key")"
+      fi
+    done < "$PROGRESS_FILE"
+  fi
+  if [ "$DRY_RUN" = "1" ]; then
+    red "DRY_RUN=1: nothing was deployed by this run."
+  elif [ -n "$done_list" ]; then
+    red "Completed and LIVE for $short:$done_list"
+    red "Nothing after those has shipped, and the step named above may be"
+    red "PARTIALLY shipped. Fix the cause and re-run on this same commit: the"
+    red "recorded backend steps are skipped (RELEASE_NO_RESUME=1 runs them all)."
+  else
+    red "No deploy step completed for $short. Production may still be PARTIALLY"
+    red "shipped by the step named above. Check what completed above before retrying."
+  fi
+}
 
 banner() {
   printf '\n'
@@ -246,6 +359,10 @@ fi
 # of re-sending the identical rejected request twice more.
 FN_REFUSED_BILL=0
 FN_RETRY_KEEP="${RELEASE_RETRY_KEEP:-2}"
+
+# Set only by a fleet verify that PASSED. Step 5 records itself in
+# .release-progress on this and nothing weaker (#840).
+FLEET_VERIFIED=0
 
 # deploy_one_function_batch <names-file> <failed-file>
 # Deploys one batch by explicit name and appends every function firebase did not
@@ -394,6 +511,92 @@ deploy_function_names() {
   done
 }
 
+# ---------------------------------------------------------------------------
+# The admin functions codebases, retried when the failure is transient (#840).
+# ---------------------------------------------------------------------------
+
+# classify_deploy_failure <log>: permanent | transient | unknown, read from the
+# text a failed firebase deploy printed.
+#
+# THE HEADER IS THE SAME EITHER WAY, which is why this reads past it. On
+# 2026-09-13 the admin deploy printed
+#
+#   Error: Failed to validate secret versions:
+#   - FirebaseError Failed to make request to https://secretmanager.googleapis.com/v1/projects/auntieos-ttpc/secrets/CLOUDINARY_API_KEY/versions/latest
+#
+# for a secret that HAD an enabled version: one dropped request, and
+# `functions:secrets:get` worked minutes later. A secret that genuinely is not
+# there fails under the same header, saying "not found" or "has no versions", and
+# retrying that is retrying a verdict.
+#
+# So a permanent marker anywhere in the log wins, then a transient marker, and
+# anything else is unknown. Unknown is NOT retried: a compile error or a refused
+# config does not improve by asking again, and stopping is the safe answer to an
+# error nobody has classified.
+#
+# Kept at column 0 and self-contained so release.test.sh can lift it out of this
+# file and test it directly, with no test-only path in the script.
+classify_deploy_failure() {
+  local log="$1"
+  if [ ! -s "$log" ]; then
+    printf 'unknown'
+    return 0
+  fi
+  if grep -Eqi 'not found|NOT_FOUND|has no versions|PERMISSION_DENIED|permission denied|increase the minimum bill' "$log"; then
+    printf 'permanent'
+  elif grep -Eqi 'Failed to make request|HTTP Error: (429|5[0-9][0-9])|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|socket hang up|DEADLINE_EXCEEDED|Service Unavailable|Bad Gateway|Gateway Timeout|Internal error encountered' "$log"; then
+    printf 'transient'
+  else
+    printf 'unknown'
+  fi
+}
+
+# deploy_admin_codebase <target>: one admin codebase through safe-deploy, retried
+# the way step 5 retries its batches: up to RELEASE_FUNCTIONS_ROUNDS attempts,
+# RELEASE_FUNCTIONS_SETTLE seconds apart, and only while the failure reads as
+# transient. Returns 0 when the deploy succeeded.
+deploy_admin_codebase() {
+  local target="$1" attempt=1 log class
+  log="$(mktemp)"
+  while :; do
+    cyan "deploy: auntieos-admin -> $target (attempt $attempt of $FN_ROUNDS)"
+    if DRY_RUN="$DRY_RUN" bash "$SAFE_DEPLOY" auntieos-admin -- firebase deploy --only "$target" 2>&1 | tee "$log"; then
+      rm -f "$log"
+      return 0
+    fi
+    class="$(classify_deploy_failure "$log")"
+    case "$class" in
+      permanent)
+        red "$target: NOT retrying. The error reads as a verdict, not a blip: a"
+        red "  secret that is not found or has no versions, a permission refusal,"
+        red "  or a minimum-bill refusal. Asking again gets the same answer."
+        rm -f "$log"
+        return 1
+        ;;
+      unknown)
+        red "$target: NOT retrying. The error above is not one this script knows"
+        red "  to be transient (dropped request, 5xx, rate limit), so it stops"
+        red "  rather than guess. If it was a blip, re-run: finished steps skip."
+        rm -f "$log"
+        return 1
+        ;;
+    esac
+    if [ "$attempt" -ge "$FN_ROUNDS" ]; then
+      red "$target: still failing after $attempt attempt(s), every one transient."
+      rm -f "$log"
+      return 1
+    fi
+    ylw "$target: transient failure (dropped request, 5xx or rate limit)."
+    if [ "$FN_SETTLE" -gt 0 ] && [ "$DRY_RUN" != "1" ]; then
+      ylw "  Retrying in ${FN_SETTLE}s."
+      sleep "$FN_SETTLE"
+    else
+      ylw "  Retrying now."
+    fi
+    attempt=$((attempt + 1))
+  done
+}
+
 # verify_deployed_fleet <names-file> <started-epoch-ms>: did the deploy deliver?
 #
 # ISSUE #503. On 2026-08-11 a hand-run deploy lost one 25-function batch and did
@@ -450,7 +653,10 @@ verify_deployed_fleet() {
   set -e
 
   case "$rc" in
-    0) grn "fleet verified: everything this run deployed is live and current." ;;
+    0)
+      grn "fleet verified: everything this run deployed is live and current."
+      FLEET_VERIFIED=1
+      ;;
     1)
       red ""
       red "REFUSED: the functions deploy reported success and the fleet disagrees."
@@ -1153,15 +1359,25 @@ fi
 banner "2. Firestore indexes"
 
 STEP="deploying firestore indexes"
-deploy mytribe firestore:indexes
-grn "indexes: submitted"
+RESUMED_INDEXES=0
+if progress_done indexes; then
+  RESUMED_INDEXES=1
+  ylw "RESUMED: an earlier run of $(git rev-parse --short HEAD) deployed the indexes and"
+  ylw "  had them confirmed Enabled. Skipping steps 2 and 3."
+  ylw "  RELEASE_NO_RESUME=1 redoes them."
+else
+  deploy mytribe firestore:indexes
+  grn "indexes: submitted"
+fi
 
 banner "3. Wait for indexes to finish building"
 
 # The CLI returns as soon as the index is ACCEPTED, not when it is Enabled.
 # Shipping the querying code against a still-building index is the failure this
 # whole ordering exists to prevent, and it is invisible at build time.
-if [ "$DRY_RUN" = "1" ]; then
+if [ "$RESUMED_INDEXES" = "1" ]; then
+  ylw "RESUMED: skipped, see step 2."
+elif [ "$DRY_RUN" = "1" ]; then
   ylw "DRY_RUN=1: skipping the index wait."
 else
   ylw "Index builds are ASYNCHRONOUS. The deploy above returned when Firestore"
@@ -1172,6 +1388,7 @@ else
   ylw "  https://console.firebase.google.com/project/auntieos-ttpc/firestore/indexes"
   confirm "Are all indexes Enabled?"
 fi
+[ "$RESUMED_INDEXES" = "1" ] || progress_mark indexes
 
 # ---------------------------------------------------------------------------
 # 4. Rules.
@@ -1182,8 +1399,14 @@ banner "4. Firestore rules"
 # mytribe's copy, so a drifted mirror stops the release here rather than
 # overwriting live rules with a stale file.
 STEP="deploying firestore rules"
-deploy mytribe firestore:rules
-grn "rules: deployed"
+if progress_done rules; then
+  ylw "RESUMED: an earlier run of $(git rev-parse --short HEAD) deployed the rules. Skipping."
+  ylw "  RELEASE_NO_RESUME=1 redeploys them."
+else
+  deploy mytribe firestore:rules
+  grn "rules: deployed"
+  progress_mark rules
+fi
 
 # ---------------------------------------------------------------------------
 # 5. Functions, before the clients that call them.
@@ -1220,6 +1443,17 @@ NEWER_SECRETS=""
 # state rather than round up.
 FUNCTIONS_SHIPPED_DESC=""
 FLEET_LIST=""
+
+# RESUMED (#840): this exact commit's functions were deployed AND fleet-verified
+# by an earlier run that then stopped. Checked before the .release-state diff,
+# because .release-state still names the PREVIOUS release, so that diff says
+# "changed" and would redeploy everything that is already live.
+# RELEASE_FORCE_FUNCTIONS=1 means "deploy them", so it wins over a resume.
+RESUMED_FUNCTIONS=0
+if [ "${RELEASE_FORCE_FUNCTIONS:-0}" != "1" ] && progress_done functions-mytribe; then
+  RESUMED_FUNCTIONS=1
+fi
+
 if [ "${RELEASE_FORCE_FUNCTIONS:-0}" = "1" ]; then
   ylw "functions: forced (RELEASE_FORCE_FUNCTIONS=1)"
 elif [ -n "$LAST_RELEASED" ] && git cat-file -e "$LAST_RELEASED^{commit}" 2>/dev/null; then
@@ -1247,7 +1481,7 @@ fi
 # are normalised to YYYYMMDDTHHMMSS (git's committer time forced to UTC, gcloud's
 # createTime already UTC) because one carries an offset and the other a fraction,
 # and comparing those as raw strings is wrong in a way that looks right.
-if [ "$FUNCTIONS_CHANGED" -eq 0 ]; then
+if [ "$FUNCTIONS_CHANGED" -eq 0 ] && [ "$RESUMED_FUNCTIONS" = "0" ]; then
   STEP="checking whether a declared secret changed since the last release"
   SINCE="$(TZ=UTC git show -s --format=%cd --date=iso-strict-local "$LAST_RELEASED" 2>/dev/null || true)"
   SINCE_N="$(printf '%s' "$SINCE" | tr -d ':-' | cut -c1-15)"
@@ -1282,7 +1516,18 @@ if [ "$FUNCTIONS_CHANGED" -eq 0 ]; then
   fi
 fi
 
-if [ "$FUNCTIONS_CHANGED" -eq 0 ]; then
+if [ "$RESUMED_FUNCTIONS" = "1" ]; then
+  FUNCTIONS_CHANGED=1
+  ylw "RESUMED: SKIPPED the mytribe functions. An earlier run of"
+  ylw "  $(git rev-parse --short HEAD) deployed them and the fleet verify PASSED."
+  ylw "  Redeploying would mint Cloud Run revisions to change nothing."
+  ylw "  RELEASE_NO_RESUME=1 (or RELEASE_FORCE_FUNCTIONS=1) deploys them again."
+  FUNCTIONS_SHIPPED_DESC="resumed: deployed and fleet-verified by an earlier run of this commit"
+  # FLEET_LIST feeds .release-functions at the end. Read it from the lib/ that
+  # step 1 just built from this same commit; if that fails the manifest is left
+  # as it was, which is what the unchanged-skip below does too.
+  FLEET_LIST="$(node "$ROOT/scripts/function-targets.js" 2>/dev/null || true)"
+elif [ "$FUNCTIONS_CHANGED" -eq 0 ]; then
   ylw "SKIPPED: mytribe/functions is unchanged since the last release"
   ylw "  ($(git rev-parse --short "$LAST_RELEASED")). The deployed functions are"
   ylw "  already this code. Redeploying would mint ~200 Cloud Run revisions and"
@@ -1456,6 +1701,7 @@ else
     grn "functions: nothing to deploy. No deployed function loads the code that"
     grn "  changed since the last release."
     FUNCTIONS_SHIPPED_DESC="none needed ($FN_SCOPE reaches no deployed function)"
+    progress_mark functions-mytribe
   else
     # PRUNE BEFORE, NOT ONLY AFTER, and be honest about what it buys.
     #
@@ -1503,6 +1749,11 @@ else
       grn "functions:mytribe: all $FN_COUNT deployed"
       FUNCTIONS_SHIPPED_DESC="$FN_COUNT of $FLEET_COUNT, batched in $FN_BATCH ($FN_SCOPE)"
       verify_deployed_fleet "$FN_WORK/deployed-names" "$FN_DEPLOY_STARTED_MS"
+      # Recorded ONLY on a verify that passed. "Could not verify", a skipped
+      # verify and a dry run all leave it unrecorded, so a rerun redeploys.
+      if [ "$FLEET_VERIFIED" = "1" ]; then
+        progress_mark functions-mytribe
+      fi
     else
       red "REFUSED: $(awk 'NF{n++} END{print n+0}' "$FN_WORK/targets") function(s) did not deploy after $FN_ROUNDS round(s)."
       red "  These are STALE: production is still serving their previous revision."
@@ -1550,8 +1801,24 @@ if [ "${RELEASE_INCLUDE_ADMIN_FUNCTIONS:-0}" = "1" ]; then
   # Two codebases, declared in auntieos-admin/web, deployed one at a time
   # because safe-deploy refuses a bare `--only functions` (it would ship both
   # at once) and refuses mixing functions with non-functions targets.
-  deploy auntieos-admin functions:default
-  deploy auntieos-admin functions:reconcile
+  #
+  # RETRIED, AND RECORDED, SINCE #840. These two had no retry while step 5's
+  # batches did, so on 2026-09-13 one dropped Secret Manager request stopped a
+  # release whose indexes, rules and 279 functions had already shipped.
+  for ADMIN_CODEBASE in default reconcile; do
+    STEP="deploying the admin functions codebases (functions:$ADMIN_CODEBASE)"
+    if progress_done "functions-admin-$ADMIN_CODEBASE"; then
+      ylw "RESUMED: an earlier run of $(git rev-parse --short HEAD) deployed functions:$ADMIN_CODEBASE."
+      ylw "  Skipping. RELEASE_NO_RESUME=1 redeploys it."
+      continue
+    fi
+    if ! deploy_admin_codebase "functions:$ADMIN_CODEBASE"; then
+      red "REFUSED: functions:$ADMIN_CODEBASE did not deploy (see above)."
+      exit 1
+    fi
+    progress_mark "functions-admin-$ADMIN_CODEBASE"
+  done
+  STEP="deploying the admin functions codebases"
   grn "admin functions: deployed"
 else
   # Named, not silent. A release that quietly omits a target reads as complete
@@ -1569,10 +1836,12 @@ banner "6. Hosting"
 STEP="deploying the operator admin (hosting:app)"
 deploy auntieos-admin hosting:app
 grn "admin: deployed"
+progress_mark hosting-admin
 
 STEP="deploying the kinfolk portal (hosting:kinfolk_portal)"
 deploy mytribe hosting:kinfolk_portal
 grn "portal: deployed"
+progress_mark hosting-portal
 
 # ---------------------------------------------------------------------------
 # 6b. The other two clients, shipped in the same run as the web.
@@ -1637,6 +1906,7 @@ else
         "${ANDROID_AUDIENCE_ARGS[@]}"; then
         grn "android/$ANDROID_NAME: distributed to $ANDROID_AUDIENCE_DESC"
         ANDROID_DISTRIBUTED[$ANDROID_IDX]=1
+        progress_mark "android-$ANDROID_NAME"
       else
         # The APK is built and signed on disk either way. Failing the release
         # here would report a landed web deploy as broken; saying nothing would
@@ -1805,6 +2075,9 @@ else
   if [ -n "$FLEET_LIST" ]; then
     printf '%s\n' "$FLEET_LIST" > "$ROOT/.release-functions"
   fi
+  # The release is recorded whole now, so per-step progress has nothing left to
+  # say, and leaving it would only let a later rerun of this commit skip steps.
+  rm -f "$PROGRESS_FILE"
 fi
 
 # ---------------------------------------------------------------------------
