@@ -17,7 +17,6 @@ import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.util.emailOkOrBlank
-import com.tribetails.auntieos.util.isValidPhone
 import com.tribetails.auntieos.util.phoneOkOrBlank
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 
@@ -193,7 +192,9 @@ fun AddKinfolkScreen(
                 }
             }
 
-            // Emergency Contact
+            // Emergency Contact. Required to create the household (#829): a
+            // household with none is a defect state the Add flow must never
+            // produce.
             item {
                 AuntieCard(modifier = Modifier.fillMaxWidth()) {
                     Column(
@@ -206,18 +207,13 @@ fun AddKinfolkScreen(
                             color = AuntieTheme.colors.kinfolkOrange
                         )
 
-                        AuntieField(
-                            value = state.emergencyContactName,
-                            onValueChange = viewModel::updateEmergencyContactName,
-                            label = "Contact Name",
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-
-                        AuntieField(
-                            value = state.emergencyContactPhone,
-                            onValueChange = viewModel::updateEmergencyContactPhone,
-                            label = "Contact Phone",
-                            modifier = Modifier.fillMaxWidth(),
+                        EmergencyContactsEditor(
+                            drafts = state.emergencyContacts,
+                            onChange = viewModel::updateAddEmergencyContact,
+                            onAdd = viewModel::addAddEmergencyContact,
+                            onRemove = viewModel::removeAddEmergencyContact,
+                            onMoveFirst = viewModel::moveAddEmergencyContactFirst,
+                            enabled = !state.isSaving,
                         )
                     }
                 }
@@ -268,14 +264,14 @@ fun AddKinfolkScreen(
             // Single Save button (matches web canonical - status = prospect when
             // incomplete, active when full; no separate draft path).
             item {
-                // item 3: service address + emergency name/phone required.
+                // item 3: service address required. Emergency Contacts are
+                // validated by the view model (validateEmergencyContactDrafts).
                 val canSave = !state.isSaving && state.firstName.isNotBlank() &&
                     phoneOkOrBlank(state.phoneNumber) && phoneOkOrBlank(state.secondaryPhone) &&
                     emailOkOrBlank(state.email) &&
-                    state.serviceAddress.isNotBlank() &&
-                    state.emergencyContactName.isNotBlank() && isValidPhone(state.emergencyContactPhone)
+                    state.serviceAddress.isNotBlank()
                 PrimaryButton(
-                    label    = "Save",
+                    label    = if (state.createdKinfolkId != null) "Save Emergency Contact" else "Save",
                     onClick  = viewModel::saveKinfolk,
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                     enabled  = canSave,

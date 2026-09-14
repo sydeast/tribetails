@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.ui.directory
 
 import com.tribetails.auntieos.TestFixtures
+import com.tribetails.auntieos.data.model.EmergencyContactDraft
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
@@ -96,6 +97,8 @@ class DirectoryViewModelExtTest {
         val vm = buildViewModel()
         advanceUntilIdle()
 
+        coEvery { mockRepo.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
+        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125559090"))
         vm.updateFirstName("New")
         vm.updatePhoneNumber("555-9999")
         vm.saveKinfolk()
@@ -111,6 +114,8 @@ class DirectoryViewModelExtTest {
         val vm = buildViewModel()
         advanceUntilIdle()
 
+        coEvery { mockRepo.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
+        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125559090"))
         vm.updateFirstName("New")
         vm.updatePhoneNumber("555-9999")
         vm.saveKinfolk()

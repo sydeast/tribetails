@@ -213,10 +213,16 @@ data class Kinfolk(
     var wifiName: String = "",
     var wifiPassword: String = "",
 
-    // Emergency Contacts
+    // Emergency Contacts. The flat triple is legacy and now READ-ONLY: kept so
+    // an older doc still decodes, never written by this client again.
     var emergencyContactName: String = "",
     var emergencyContactPhone: String = "",
     var emergencyContactRelation: String = "",
+    // #829. The ordered array written ONLY by the saveEmergencyContacts callable.
+    // Held raw (Class A pattern, same as `tags`): a list of maps holding
+    // Timestamps, absent on every doc until the migration. Read via
+    // `emergencyContactsOf`. Never diffed (see KINFOLK_SERVER_OWNED).
+    var emergencyContacts: Any? = null,
 
     // NO VET FIELDS. The household vet lives on `household_data`, catalog-linked
     // by clinic id (operator ruling 2026-08-01: "vet info lives on household

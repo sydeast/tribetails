@@ -35,6 +35,7 @@ import com.tribetails.auntieos.data.model.Kin411
 import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kinfolk
+import com.tribetails.auntieos.data.model.emergencyContactsOf
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BookingNotesRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
@@ -433,12 +434,15 @@ fun KinCareDetailScreen(
                         }
                     }
                 }
-                if (kf.emergencyContactName.isNotBlank() || kf.emergencyContactPhone.isNotBlank()) {
+                val ec = emergencyContactsOf(kf)
+                if (ec.isNotEmpty()) {
                     item {
                         DetailSection("Emergency contact") {
-                            FactRow(Lucide.Phone, "Name",         kf.emergencyContactName)
-                            FactRow(Lucide.Phone, "Phone",        kf.emergencyContactPhone)
-                            FactRow(Lucide.Phone, "Relationship", kf.emergencyContactRelation)
+                            ec.forEach { c ->
+                                FactRow(Lucide.Phone, "Name", c.name)
+                                FactRow(Lucide.Phone, "Phone", c.phone)
+                                FactRow(Lucide.Phone, "Relationship", c.relationship.orEmpty())
+                            }
                         }
                     }
                 }

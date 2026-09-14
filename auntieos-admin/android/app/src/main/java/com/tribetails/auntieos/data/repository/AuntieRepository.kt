@@ -431,6 +431,40 @@ class AuntieRepository(
         raw["status"] as? String ?: error("inviteKinfolkToPortal: missing status")
     }.onFailure { AuntieLog.e("inviteKinfolkToPortal failed", it) }
 
+    /**
+     * #829: current Emergency Contacts, plus whether the caller may edit them
+     * (`home_access`) and whether the household is still on the flat legacy
+     * triple. Fail-loud: a missing `contacts` array is an error, never "none".
+     */
+    suspend fun listEmergencyContacts(kinfolkId: String): Result<EmergencyContactsResult> = runCatching {
+        require(kinfolkId.isNotBlank()) { "listEmergencyContacts requires a household id" }
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("listEmergencyContacts")
+            .call(mapOf("kinfolkId" to kinfolkId)).awaitCallable().data as? Map<String, Any?>
+            ?: error("listEmergencyContacts: non-map payload")
+        EmergencyContactsResult(decodeEmergencyContacts(raw), raw["canEdit"] == true, raw["legacy"] == true)
+    }.onFailure { AuntieLog.e("AuntieRepository.listEmergencyContacts failed", it) }
+
+    /**
+     * #829: the only path that may write `kinfolk.emergencyContacts` (or the
+     * legacy flat triple). Server refuses a blank list and a contact who is
+     * actually a household member; see `EMERGENCY_CONTACT_REQUIRED` /
+     * `EMERGENCY_CONTACT_OUTSIDE`.
+     */
+    suspend fun saveEmergencyContacts(kinfolkId: String, drafts: List<EmergencyContactDraft>): Result<List<EmergencyContact>> = runCatching {
+        require(kinfolkId.isNotBlank()) { "saveEmergencyContacts requires a household id" }
+        authGate.ensureAuthenticated()
+        val contacts = drafts.map {
+            mapOf("name" to it.name.trim(), "phone" to it.phone.trim(), "relationship" to it.relationship.trim().ifBlank { null })
+        }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("saveEmergencyContacts")
+            .call(mapOf("kinfolkId" to kinfolkId, "contacts" to contacts)).awaitCallable().data as? Map<String, Any?>
+            ?: error("saveEmergencyContacts: non-map payload")
+        decodeEmergencyContacts(raw)
+    }.onFailure { AuntieLog.e("AuntieRepository.saveEmergencyContacts failed", it) }
+
     suspend fun unarchiveKinfolk(kinfolkId: String): Result<Unit> = runCatching {
         AuntieLog.i("Unarchiving kinfolk: $kinfolkId")
         authGate.ensureAuthenticated()

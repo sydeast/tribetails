@@ -304,25 +304,13 @@ fun EditKinfolkScreen(
                             )
 
                             // Run 4: emergency contact lives here (first), not under Identity.
-                            AuntieField(
-                                value = state.emergencyContactName,
-                                onValueChange = viewModel::updateEditEmergencyContactName,
-                                label = "Emergency Contact Name *",
-                                isError = state.emergencyContactName.isBlank(),
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            AuntieField(
-                                value = state.emergencyContactPhone,
-                                onValueChange = viewModel::updateEditEmergencyContactPhone,
-                                label = "Emergency Contact Phone *",
-                                isError = !isValidPhone(state.emergencyContactPhone),
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            AuntieField(
-                                value = state.emergencyContactRelation,
-                                onValueChange = viewModel::updateEditEmergencyContactRelation,
-                                label = "Emergency Contact Relationship",
-                                modifier = Modifier.fillMaxWidth(),
+                            EmergencyContactsEditor(
+                                drafts = state.emergencyContacts,
+                                onChange = viewModel::updateEditEmergencyContact,
+                                onAdd = viewModel::addEditEmergencyContact,
+                                onRemove = viewModel::removeEditEmergencyContact,
+                                onMoveFirst = viewModel::moveEditEmergencyContactFirst,
+                                enabled = !state.isSaving,
                             )
 
                             AuntieField(
@@ -553,12 +541,14 @@ fun EditKinfolkScreen(
                         text      = "Save Changes",
                         isLoading = state.isSaving,
                         modifier  = Modifier.fillMaxWidth(),
-                        // item 3: service address + emergency name/phone are required.
+                        // item 3: service address is required. Emergency Contacts are
+                        // validated by the view model (validateEmergencyContactDrafts),
+                        // which names the problem in state.error rather than merely
+                        // disabling the button.
                         enabled   = state.firstName.isNotBlank() && isValidPhone(state.phoneNumber) &&
                             phoneOkOrBlank(state.secondaryPhone) &&
                             emailOkOrBlank(state.email) && emailOkOrBlank(state.secondaryEmail) &&
-                            state.serviceAddress.isNotBlank() &&
-                            state.emergencyContactName.isNotBlank() && isValidPhone(state.emergencyContactPhone)
+                            state.serviceAddress.isNotBlank()
                     )
                 }
             }

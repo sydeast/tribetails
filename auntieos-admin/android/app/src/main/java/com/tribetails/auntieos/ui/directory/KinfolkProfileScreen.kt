@@ -31,6 +31,7 @@ import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kin411
 import com.tribetails.auntieos.data.model.Kinfolk
+import com.tribetails.auntieos.data.model.emergencyContactsOf
 import com.tribetails.auntieos.data.model.FormSchema
 // Tags (2026-07-19): the vocabulary lives on business_settings, so the scope ->
 // field mapping is shared with the Den's Tags editor rather than duplicated.
@@ -161,9 +162,7 @@ fun KinfolkProfileScreen(
                 // point on the household profile is gone.
                 item { ContactPanel(kinfolk) }
                 item { HomeAccessPanel(kinfolk) }
-                if (listOf(kinfolk.emergencyContactName, kinfolk.emergencyContactPhone, kinfolk.emergencyContactRelation).any { it.isNotBlank() }) {
-                    item { EmergencyContactsPanel(kinfolk) }
-                }
+                item { EmergencyContactsPanel(kinfolk) }
                 item { VetPanel(state.householdVet) }
                 if (hasDynamicFieldValues(state.kinfolkSchemas, kinfolk.formValues)) {
                     item { AdditionalInfoPanel(state.kinfolkSchemas, kinfolk.formValues) }
@@ -552,16 +551,27 @@ private fun HomeAccessPanel(kinfolk: Kinfolk) {
 /**
  * #680 (parity with the React admin): "Emergency Contacts", so it reads apart
  * from the emergency vet below rather than the singular that could be misread
- * as naming the same thing. Rendered only when at least one part is filled.
+ * as naming the same thing.
+ *
+ * #829: always rendered, even with none on file - a household with no
+ * Emergency Contact is a defect state the panel flags rather than hides, the
+ * same way the directory card's badge does.
  */
 @Composable
 private fun EmergencyContactsPanel(kinfolk: Kinfolk) {
+    val contacts = emergencyContactsOf(kinfolk)
     DenPanel(title = "Emergency Contacts") {
-        FieldRows(
-            Field("Name", kinfolk.emergencyContactName),
-            Field("Phone", kinfolk.emergencyContactPhone, mono = true),
-            Field("Relation", kinfolk.emergencyContactRelation),
-        )
+        if (contacts.isEmpty()) {
+            AuntieStatusPill(label = "No Emergency Contact", tone = AuntieStatusTone.Orange)
+        } else {
+            contacts.forEachIndexed { i, c ->
+                FieldRows(
+                    Field(if (i == 0) "Called first" else "Called second", c.name),
+                    Field("Phone", c.phone, mono = true),
+                    Field("Relationship", c.relationship.orEmpty()),
+                )
+            }
+        }
     }
 }
 
