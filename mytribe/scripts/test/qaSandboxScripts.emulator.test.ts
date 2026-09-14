@@ -1,17 +1,21 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { getApps, initializeApp, deleteApp } from 'firebase-admin/app';
-import { getFirestore, type Firestore } from 'firebase-admin/firestore';
-import { getAuth, type Auth } from 'firebase-admin/auth';
+// Through the shared module, never 'firebase-admin/*' directly (#870): the
+// client and the account this test signs into must come from the same copy
+// the scripts read with, and emulatorTestImports.test.ts fails on a direct
+// import.
+import { getApps, initializeApp, deleteApp, getFirestore, getAuth, type Firestore, type Auth } from '../lib/firebaseAdmin';
 import { run as runEnableLogin, TEST_TRIBE_ID, TEST_ADMIN_UID, TEST_ADMIN_EMAIL } from '../qa_enable_sandbox_login';
 import { run as runSetPassword } from '../qa_set_sandbox_password';
 
 /**
  * Proves qa_enable_sandbox_login.ts and qa_set_sandbox_password.ts's actual
  * write behavior (issue #860) against the Auth + Firestore emulators. Never
- * against production - see the header note on `run` in each script for why
- * this imports firebase-admin/app|firestore|auth directly instead of going
- * through the guarded ./lib/firebaseAdmin, exactly like
- * backfillKinfolkVetToHousehold.emulator.test.ts already does.
+ * against production. Imports getApps/initializeApp/getFirestore/getAuth and
+ * the Firestore/Auth types from ../lib/firebaseAdmin, never from
+ * 'firebase-admin/*' directly (#846, and #870's emulatorTestImports.test.ts
+ * enforces it statically): the client this test signs into must resolve from
+ * the same firebase-admin copy the scripts themselves write with, and a
+ * direct import would also skip the #846 resolve guard.
  *
  * ONE file for both scripts, deliberately, not one each. mytribe/firebase.json
  * sets emulators.singleProjectMode: true, and the Auth emulator's
@@ -32,8 +36,9 @@ import { run as runSetPassword } from '../qa_set_sandbox_password';
  * in separate forked processes.
  *
  * Run (from mytribe/functions):
- *   firebase emulators:exec --only auth,firestore --project qa-sandbox-emulator-test \
- *     "npm run test:ci"
+ *   npm run test:scripts:emulator
+ * which wraps `firebase emulators:exec --only auth,firestore --project
+ * mytribe-scripts-emulator-test "vitest run --config vitest.scripts-emulator.config.ts"`.
  *
  * Skips (describe.runIf) only when NEITHER emulator host is set, so a plain
  * `npm test` never touches anything real. When exactly ONE is set - e.g. a
