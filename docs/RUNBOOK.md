@@ -146,6 +146,16 @@ drift check follows this: a workspace member's drift is always reported as
 mytribe/web`, and `scripts/release.test.sh` and `scripts/preflight.test.sh`
 each assert that no per-member `--prefix` command is ever suggested.
 
+Since #862 this is enforced, not just documented: every lockfile-less member
+carries a `preinstall` guard (`scripts/lib/refuse-member-install.js`) that
+refuses with "run `npm ci` at the repo root instead" when npm was invoked
+from inside that member, and stays silent for a root install, a `-w` filter
+run from the root, CI, or `bootstrap.sh` -- see
+`scripts/refuse-member-install.test.sh` for the cases. `npm ci`'s own
+unconditional node_modules clear still runs before any preinstall script can
+object, so a refused `npm ci` inside a member leaves the root `node_modules`
+gutted regardless; the fix is the same root `npm ci` either way.
+
 Two of the tool checks above fail in ways that do not name themselves, which is
 why preflight checks them by RUNNING them rather than by looking for the binary:
 
