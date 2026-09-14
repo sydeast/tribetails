@@ -116,14 +116,22 @@ jobs:
           google=""
           if [ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ] && [ -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
             google="GOOGLE_APPLICATION_CREDENTIALS"
+          elif [ -n "${CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE:-}" ] && [ -f "$CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE" ]; then
+            google="CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE"
           elif command -v gcloud >/dev/null 2>&1; then
             account="$(gcloud auth list --filter=status:ACTIVE --format='value(account)' 2>/dev/null || true)"
-            [ -n "$account" ] && google="gcloud account $account"
+            [ -n "$account" ] && google="an active gcloud account"
           fi
           [ -n "$google" ] || missing="$missing
-            Google Cloud: no GOOGLE_APPLICATION_CREDENTIALS file and no active gcloud account"
-          [ -n "${GH_TOKEN:-}" ] || missing="$missing
-            GitHub: no GH_TOKEN"
+            Google Cloud: no GOOGLE_APPLICATION_CREDENTIALS or CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE file, and no active gcloud account"
+          github=""
+          if [ -n "${GH_TOKEN:-}" ]; then
+            github="GH_TOKEN"
+          elif [ -n "${GITHUB_TOKEN:-}" ]; then
+            github="GITHUB_TOKEN"
+          fi
+          [ -n "$github" ] || missing="$missing
+            GitHub: no GH_TOKEN or GITHUB_TOKEN"
           if [ -n "$missing" ]; then
             echo "::error title=Nightly release has no credentials::This runner cannot authenticate to Google Cloud or GitHub. See #851."
             echo "REFUSED: this runner has no credentials for a release. Missing:$missing"
@@ -137,7 +145,7 @@ jobs:
             exit 1
           fi
           echo "Google Cloud: $google"
-          echo "GitHub: GH_TOKEN present"
+          echo "GitHub: $github present"
 
       # Nothing merged since the last release means nothing to ship. Releasing
       # an unchanged commit would still take an hour, still churn ~280 Cloud Run

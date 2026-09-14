@@ -138,6 +138,14 @@
  * advice that fits it: the secretAccessor role and `get-iam-policy`, or
  * `versions list` plus adding a version. Create advice is printed only for a
  * name the LIST did not contain.
+ *
+ * --write DOES NOT SHIP A LOCAL .env VALUE THE STORE NEVER CONFIRMED (#850
+ * review). --write is what release step 0c runs. With the store unreadable and
+ * a laptop's .env holding the values, it used to exit 0, release.sh printed
+ * "every declared VITE_* value resolved", and the bundle compiled the laptop's
+ * values in. Under --write those rows are now unreadable too (required refuses
+ * with exit 4, optional warns). --check keeps the .env fallback, and
+ * RELEASE_SKIP_CLIENT_SECRETS=1 is still the operator's way to ship anyway.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -384,13 +392,13 @@ export const SECRET_UNREADABLE = Symbol('client-secrets:unreadable');
  * than a guess.
  */
 const NOT_AUTHENTICATED =
-  /active account selected|gcloud auth login|Reauthentication (is )?required|problem refreshing your current auth tokens|could not find default credentials/i;
+  /active account selected|gcloud auth login|Reauthentication (is )?required|problem refreshing (your current )?auth tokens|does not have any valid credentials|could not find default credentials/i;
 
 export function classifyListResult(r) {
   if (isGcloudTimeout(r)) return { reason: 'timeout', detail: '' };
   if (r?.error) {
     if (r.error.code === 'ENOENT') return { reason: 'no-gcloud', detail: '' };
-    return { reason: 'gcloud-failed', detail: String(r.error.message || r.error.code || '') };
+    return { reason: 'gcloud-failed', detail: gcloudLine(String(r.error.message || r.error.code || '')) };
   }
   const stderr = String(r?.stderr || '');
   const firstError = gcloudLine(stderr);
@@ -411,7 +419,16 @@ export function classifyListResult(r) {
  * release log: gcloud appends "This command is authenticated as <email> ..."
  * and a Troubleshooter URL to Secret Manager errors (both seen on a real
  * gcloud, 2026-09-14). Capped so one error cannot flood the refusal.
+ *
+ * The phrase strip alone is not enough: gcloud names the account in other
+ * shapes too ("Your current active account [x@y] does not have any valid
+ * credentials", "There was a problem refreshing auth tokens for account x@y:
+ * ..."). So after the strip, ANY email-shaped token becomes <account>. A
+ * pattern, not a list of phrases, because the next gcloud release can add a
+ * phrase and a list would leak it.
  */
+const EMAIL_SHAPED = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
+
 function gcloudLine(text) {
   const line =
     String(text || '')
@@ -421,6 +438,7 @@ function gcloudLine(text) {
   return line
     .replace(/\s*Remediate access with this Troubleshooter URL.*$/i, '')
     .replace(/\s*This command is authenticated as .*$/i, '')
+    .replace(EMAIL_SHAPED, '<account>')
     .slice(0, 240);
 }
 
@@ -436,14 +454,17 @@ function gcloudLine(text) {
  * store, so it is matched on both the code and the state words.
  */
 export function classifyAccessFailure(r) {
-  if (r?.error) return { reason: 'access-failed', detail: String(r.error.message || r.error.code || '') };
+  if (r?.error) return { reason: 'access-failed', detail: gcloudLine(String(r.error.message || r.error.code || '')) };
   const stderr = String(r?.stderr || '');
   const detail = gcloudLine(stderr) || `gcloud exited ${r?.status}`;
-  if (/PERMISSION_DENIED|versions\.access' denied/i.test(stderr)) return { reason: 'permission-denied', detail };
-  if (/FAILED_PRECONDITION|is in (DISABLED|DESTROYED) state/i.test(stderr)) {
+  // gRPC codes are UPPERCASE whole words in gcloud's output. Matching them
+  // case-sensitively on word boundaries keeps a lowercase `permission_denied`
+  // in a docs URL, or PERMISSION_DENIED_HELP in a path, from being read as one.
+  if (/\bPERMISSION_DENIED\b|versions\.access' denied/.test(stderr)) return { reason: 'permission-denied', detail };
+  if (/\bFAILED_PRECONDITION\b|is in (DISABLED|DESTROYED) state/.test(stderr)) {
     return { reason: 'no-enabled-version', detail };
   }
-  if (/NOT_FOUND/.test(stderr)) return { reason: 'not-found', detail };
+  if (/\bNOT_FOUND\b/.test(stderr)) return { reason: 'not-found', detail };
   if (NOT_AUTHENTICATED.test(stderr)) return { reason: 'not-authenticated', detail };
   return { reason: 'access-failed', detail };
 }
@@ -654,6 +675,41 @@ export function resolveClientVars({
     refusals: [...bad.filter((r) => r.required), ...unreadable.filter((r) => r.required)],
     warnings: [...bad.filter((r) => !r.required), ...unreadable.filter((r) => !r.required)],
   };
+}
+
+/**
+ * The same required/optional split resolveClientVars returns, for rows the CLI
+ * has re-judged after resolving (the --write rule below, #850).
+ */
+export function splitRefusals(rows) {
+  const bad = rows.filter((r) => r.status === 'missing' || r.status === 'empty');
+  const unreadable = rows.filter((r) => r.status === 'unreadable');
+  return {
+    refusals: [...bad.filter((r) => r.required), ...unreadable.filter((r) => r.required)],
+    warnings: [...bad.filter((r) => !r.required), ...unreadable.filter((r) => !r.required)],
+  };
+}
+
+/**
+ * --write IS THE RELEASE PATH, so a value this run found only in a local .env
+ * is not a value it may ship (#850 review). When Secret Manager could not be
+ * read at all, mark every Secret Manager-backed row that resolved from a local
+ * file as unreadable, flagged `localUnconfirmed`, with its value cleared. A
+ * REQUIRED one then refuses with exit 4 and an OPTIONAL one warns. --check and
+ * local development keep the .env fallback; only --write changes. An explicit
+ * process.env value is left alone: it is rank 1 on purpose, and it is how CI
+ * passes a value in.
+ */
+export function refuseUnconfirmedLocalValues(rows, reason) {
+  for (const r of rows) {
+    if (r.kind === 'secret-manager' && r.source === 'local-file') {
+      r.status = 'unreadable';
+      r.reason = reason || 'unavailable';
+      r.localUnconfirmed = true;
+      r.value = '';
+    }
+  }
+  return rows;
 }
 
 /**
@@ -945,19 +1001,25 @@ async function main(argv) {
   if (existing === null) {
     console.error(
       `client config: could not read Secret Manager. ${unreadableWhy(store.reason, store.detail)}\n` +
-        "  Falling back to each app's own .env files for the values this machine holds\n" +
-        '  locally. A REQUIRED value that is not there either is reported as UNREADABLE,\n' +
-        '  not missing, and still stops this: nobody asked the store about it.',
+        (mode === 'write'
+          ? '  This is --write, the release path, so a value found only in a local .env is NOT\n' +
+            '  accepted: the store could not confirm it. Every Secret Manager-backed value is\n' +
+            '  reported as UNREADABLE, and a REQUIRED one stops this.'
+          : "  Falling back to each app's own .env files for the values this machine holds\n" +
+            '  locally (--check only; --write refuses them). A REQUIRED value that is not\n' +
+            '  there either is reported as UNREADABLE, not missing, and still stops this.'),
     );
   }
 
-  const { rows, refusals: found, warnings } = resolveClientVars({
+  const { rows } = resolveClientVars({
     fetchSecret,
     processEnv: process.env,
     localEnv,
     release,
     storeReason: store.reason || 'unavailable',
   });
+  if (mode === 'write' && existing === null) refuseUnconfirmedLocalValues(rows, store.reason);
+  const { refusals: found, warnings } = splitRefusals(rows);
   const whyFor = (r) => unreadableWhy(r.reason, r.detail || (r.reason === store.reason ? store.detail : ''));
 
   // "COULD NOT LOOK" IS NOT "NOT THERE", and the whole point of the sibling
@@ -1000,8 +1062,11 @@ async function main(argv) {
   }
   for (const w of unreadableWarnings) {
     console.error(
-      `WARNING: ${w.variable} (${w.app}) could not be read from Secret Manager. It is ` +
-        'OPTIONAL, so this warns rather than refuses (the same call the declaration ' +
+      `WARNING: ${w.variable} (${w.app}) could not be read from Secret Manager. ` +
+        (w.localUnconfirmed
+          ? 'A local .env has a value for it, which Vite will still read, but the store could not confirm it. '
+          : '') +
+        'It is OPTIONAL, so this warns rather than refuses (the same call the declaration ' +
         `already makes for a confirmed-absent value). ${whyFor(w)} Check:`,
     );
     for (const c of fixCommands(w, project)) console.error(`    ${c}`);
@@ -1041,7 +1106,27 @@ async function main(argv) {
     // One block per reason. A run can hold a timeout for one secret and, in
     // principle, a different reason for another, and the check to run differs.
     const timedOut = unreadable.filter((r) => r.reason === 'timeout');
-    const notAsked = unreadable.filter((r) => r.reason !== 'timeout');
+    const unconfirmed = unreadable.filter((r) => r.localUnconfirmed);
+    const notAsked = unreadable.filter((r) => r.reason !== 'timeout' && !r.localUnconfirmed);
+
+    if (unconfirmed.length > 0) {
+      console.error('');
+      console.error('REFUSED: Secret Manager could not confirm these REQUIRED values, and a release');
+      console.error("  does not build from a local .env the store never confirmed:");
+      for (const r of unconfirmed) {
+        console.error(`    ${r.variable} (${r.app}) <- ${r.secret} could not be read (a local .env has a value)`);
+      }
+      console.error('');
+      console.error(`  Why: ${whyFor(unconfirmed[0])}`);
+      console.error('');
+      console.error('  This is not the same as missing, and the local values may well be right.');
+      console.error('  The store is the source of truth for a release build and it was not asked.');
+      console.error('  Check that this machine can read the store:');
+      for (const c of fixCommands(unconfirmed[0], project)) console.error(`    ${c}`);
+      console.error('');
+      console.error('  To ship with the local .env values anyway, knowing the store never confirmed them:');
+      console.error('    RELEASE_SKIP_CLIENT_SECRETS=1 npm run deploy');
+    }
 
     if (timedOut.length > 0) {
       console.error('');

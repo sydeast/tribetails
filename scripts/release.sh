@@ -1415,12 +1415,15 @@ if [ "${RELEASE_SKIP_CI_GATE:-0}" = "1" ]; then
 elif ! command -v gh >/dev/null 2>&1; then
   ci_refuse "gh is not installed, so CI's verdict for $HEAD_SHORT cannot be read." \
     "Install it and sign in:  brew install gh && gh auth login"
-elif ! GH_AUTH_OUT="$(gh auth status 2>&1)"; then
-  # ASK WHETHER gh CAN ASK, BEFORE ASKING (#850). The lookup below swallows
+elif ! GH_AUTH_OUT="$(gh auth status --hostname github.com 2>&1)"; then
+  # ASK WHETHER gh CAN ASK, BEFORE ASKING (#850). The lookup used to swallow
   # gh's errors, so a gh with no token printed "no check runs at all" for a
   # commit CI had passed, three nights running on the hosted nightly runner.
   # `gh auth status` is one cheap call, fails when there is no token, a bad
   # token or no route to GitHub, and its own words are printed, not hidden.
+  # --hostname github.com because plain `gh auth status` also fails when ANY
+  # other configured host (a GitHub Enterprise login, say) has a bad token,
+  # even though github.com, the only host this asks, is fine (gh 2.98.0).
   # Bash 3.2 with `set -u` treats an empty array expansion as unbound, and a gh
   # that fails silently prints nothing, hence the placeholder line.
   CI_AUTH_LINES=("    ${GH_AUTH_OUT:-<gh auth status printed nothing>}")
@@ -1565,10 +1568,18 @@ banner "0c. Client build config (VITE_*)"
 # This step writes the middle one from Secret Manager, so the store beats a
 # developer's local files for a RELEASE build while local development keeps
 # working with no gcloud, no credentials and no network.
+#
+# A RELEASE DOES NOT FALL BACK TO A LAPTOP'S .env (#850 review). This step runs
+# `--write`, and when Secret Manager cannot be read, `--write` refuses a
+# required value that only a local .env holds (exit 4) instead of resolving it
+# from there: the store never confirmed it. `--check` still falls back, for a
+# developer. RELEASE_SKIP_CLIENT_SECRETS=1 is how to ship the local values
+# anyway, knowingly.
 STEP="resolving client build config from Secret Manager"
 if [ "${RELEASE_SKIP_CLIENT_SECRETS:-0}" = "1" ]; then
   ylw "SKIPPED (RELEASE_SKIP_CLIENT_SECRETS=1). Both web bundles will be built"
-  ylw "  from whatever each app's own .env files hold."
+  ylw "  from whatever each app's own .env files hold, which Secret Manager has"
+  ylw "  not confirmed."
 else
   # --release is what VITE_SENTRY_RELEASE becomes: derived here rather than
   # stored, because a release tag kept by hand in a .env is a tag that names the
@@ -1599,9 +1610,10 @@ else
       red "REFUSED: Secret Manager could not be read for a required secret."
       red "  This is NOT the same as missing: the secret may exist and hold a good"
       red "  value. gcloud timed out, is not installed, has no credentials, listed"
-      red "  nothing, or listed a secret and was refused its value (#839/#850). The"
-      red "  names, the reason and the check that matches it are listed above; run"
-      red "  that check before creating or setting anything."
+      red "  nothing, or listed a secret and was refused its value (#839/#850). A"
+      red "  value only a local .env holds is refused too: the store never confirmed"
+      red "  it. The names, the reason and the check that matches it are listed"
+      red "  above; run that check before creating or setting anything."
       red ""
       red "  To ship anyway, knowing what could not be verified: RELEASE_SKIP_CLIENT_SECRETS=1"
       exit 1

@@ -834,6 +834,13 @@ if [ -f "$D8F/gh-calls.log" ] && grep -q "actions/workflows" "$D8F/gh-calls.log"
 else
   ok "the CI lookup is not attempted once gh auth status fails"
 fi
+# Plain `gh auth status` fails when ANY configured host has a bad token, even
+# with github.com fine (gh 2.98.0), so the check must name github.com.
+if [ -f "$D8F/gh-calls.log" ] && grep -qx "auth status --hostname github.com" "$D8F/gh-calls.log"; then
+  ok "step 0b asks gh auth status about github.com only"
+else
+  bad "step 0b did not call 'gh auth status --hostname github.com'"; cat "$D8F/gh-calls.log" 2>/dev/null
+fi
 
 # ---------------------------------------------------------------------------
 # 8g. #850: gh signed in, but the lookup call itself fails (API unreachable).

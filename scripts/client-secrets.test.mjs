@@ -38,8 +38,10 @@ import {
   isGcloudTimeout,
   listSecretsWithGcloud,
   makeGcloudFetcher,
+  refuseUnconfirmedLocalValues,
   renderEnvFile,
   resolveClientVars,
+  splitRefusals,
 } from './client-secrets.mjs';
 
 // Obviously-fake values. Nothing real belongs in a test file: it would be a
@@ -973,25 +975,29 @@ test('with no fetcher and nothing local, a Secret Manager value is UNREADABLE wi
  * else needs PATH. node is spawned by absolute path, the stubs are #!/bin/sh
  * (resolved by absolute path), and echo and exit are shell builtins.
  */
-function runCliWithoutStore(gcloudScript) {
+function runCliWithoutStore(gcloudScript, { mode = '--check', envFiles = {}, extraEnv = {} } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'client-secrets-850-'));
   try {
     fs.mkdirSync(path.join(dir, 'scripts'));
     fs.mkdirSync(path.join(dir, 'bin'));
     for (const d of Object.values(APP_DIRS)) fs.mkdirSync(path.join(dir, d), { recursive: true });
+    for (const [rel, body] of Object.entries(envFiles)) fs.writeFileSync(path.join(dir, rel), body);
     fs.copyFileSync(path.join(ROOT, 'scripts', 'client-secrets.mjs'), path.join(dir, 'scripts', 'client-secrets.mjs'));
     fs.symlinkSync(path.join(ROOT, 'node_modules'), path.join(dir, 'node_modules'));
     if (gcloudScript !== null) {
       fs.writeFileSync(path.join(dir, 'bin', 'gcloud'), gcloudScript);
       fs.chmodSync(path.join(dir, 'bin', 'gcloud'), 0o755);
     }
-    const env = { HOME: process.env.HOME || dir, PATH: path.join(dir, 'bin') };
+    const env = { HOME: process.env.HOME || dir, PATH: path.join(dir, 'bin'), ...extraEnv };
     const r = spawnSync(
       process.execPath,
-      [path.join(dir, 'scripts', 'client-secrets.mjs'), '--check', '--project', 'auntieos-ttpc', '--release', 'abc1234'],
-      { encoding: 'utf8', timeout: 15_000, env, cwd: dir },
+      [path.join(dir, 'scripts', 'client-secrets.mjs'), mode, '--project', 'auntieos-ttpc', '--release', 'abc1234'],
+      { encoding: 'utf8', timeout: 60_000, env, cwd: dir },
     );
-    return { status: r.status, out: `${r.stdout || ''}\n${r.stderr || ''}` };
+    const written = Object.fromEntries(
+      Object.entries(APP_DIRS).map(([app, d]) => [app, fs.existsSync(path.join(dir, d, PRODUCTION_ENV_FILE))]),
+    );
+    return { status: r.status, stderr: r.stderr || '', out: `${r.stdout || ''}\n${r.stderr || ''}`, written };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -1033,6 +1039,165 @@ test('CLI: gcloud with NO credentials refuses as unreadable (exit 4), quotes gcl
 
 test('CLI: gcloud that exits 0 and lists NOTHING refuses as unreadable (exit 4), and never advises create', () => {
   assertUnreadableNotMissing(runCliWithoutStore('#!/bin/sh\nexit 0\n'), /listed no secrets at all/);
+});
+
+// ---------------------------------------------------------------------------
+// #850 review: account emails, gRPC code matching, a mixed run, and --write.
+// ---------------------------------------------------------------------------
+
+// Two gcloud shapes that name the account outside the "authenticated as"
+// phrase. example.com only.
+const EXPIRED_CREDS_STDERR =
+  'ERROR: (gcloud.secrets.list) Your current active account [person@example.com] does not have any valid credentials\nPlease run:\n\n  $ gcloud auth login\n';
+const REFRESH_FAILED_STDERR =
+  'ERROR: (gcloud.secrets.list) There was a problem refreshing auth tokens for account person@example.com: Reauthentication failed.\nPlease run:\n  $ gcloud auth login\n';
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/;
+
+test('the account email is redacted from gcloud detail in every shape, not only after "authenticated as"', () => {
+  for (const stderr of [EXPIRED_CREDS_STDERR, REFRESH_FAILED_STDERR, PERMISSION_DENIED_STDERR, NOT_FOUND_STDERR]) {
+    const list = classifyListResult({ status: 1, stdout: '', stderr });
+    const access = classifyAccessFailure({ status: 1, stderr });
+    assert.ok(!EMAIL_RE.test(list.detail), `LIST detail leaked an address: ${list.detail}`);
+    assert.ok(!EMAIL_RE.test(access.detail), `ACCESS detail leaked an address: ${access.detail}`);
+  }
+  assert.equal(classifyListResult({ status: 1, stdout: '', stderr: EXPIRED_CREDS_STDERR }).reason, 'not-authenticated');
+  assert.equal(classifyListResult({ status: 1, stdout: '', stderr: REFRESH_FAILED_STDERR }).reason, 'not-authenticated');
+  assert.match(classifyListResult({ status: 1, stdout: '', stderr: EXPIRED_CREDS_STDERR }).detail, /<account>/);
+});
+
+/** A gcloud stub that prints `text` on stderr and fails, using only builtins. */
+function failingGcloud(text) {
+  const lines = text.split('\n').filter((l) => l !== '');
+  return ['#!/bin/sh', ...lines.map((l) => `printf '%s\\n' '${l}' >&2`), 'exit 1', ''].join('\n');
+}
+
+test('CLI: no email address reaches any Why: or WARNING line, for either account-naming gcloud shape', () => {
+  for (const stderr of [EXPIRED_CREDS_STDERR, REFRESH_FAILED_STDERR]) {
+    const { status, out } = runCliWithoutStore(failingGcloud(stderr));
+    assert.equal(status, 4, out);
+    const lines = out.split('\n').filter((l) => /Why:|WARNING|gcloud said|could not read Secret Manager/.test(l));
+    assert.ok(lines.some((l) => /Why:/.test(l)), `no Why: line to check:\n${out}`);
+    assert.ok(lines.some((l) => /WARNING/.test(l)), `no WARNING line to check:\n${out}`);
+    for (const l of lines) assert.ok(!EMAIL_RE.test(l), `an address reached the output: ${l}`);
+    assert.ok(!out.includes('person@example.com'), `the account email reached the output:\n${out}`);
+  }
+});
+
+test('gRPC codes match only as uppercase whole words, so a code in a URL or prose is not a reason', () => {
+  const reason = (stderr) => classifyAccessFailure({ status: 1, stderr }).reason;
+  assert.equal(reason('ERROR: see https://cloud.google.com/secret-manager/docs/permission_denied for help'), 'access-failed');
+  assert.equal(reason('ERROR: https://cloud.google.com/docs/not_found and failed_precondition notes'), 'access-failed');
+  assert.equal(reason('ERROR: https://cloud.google.com/help/PERMISSION_DENIED_HELP'), 'access-failed');
+  assert.equal(reason('ERROR: (gcloud.secrets.versions.access) PERMISSION_DENIED: denied'), 'permission-denied');
+  assert.equal(reason('ERROR: (gcloud.secrets.versions.access) NOT_FOUND: gone'), 'not-found');
+});
+
+// Folded in from the PR #885 review (r885/mixed.test.mjs): one secret MISSING
+// from the LIST, one DENIED, one that HANGS. Three REFUSED blocks, each with
+// its own advice, and each secret in exactly one of them.
+test('CLI mixed: missing + permission denied + timeout exit 4 with three blocks and the right advice in each', () => {
+  const perm =
+    "ERROR: (gcloud.secrets.versions.access) PERMISSION_DENIED: Permission 'secretmanager.versions.access' denied on resource (or it may not exist). This command is authenticated as reviewer@example.com which is the active account specified by the [core/account] property.";
+  const stub = [
+    '#!/bin/sh',
+    'case "$1 $2 $3" in',
+    '  "secrets list --project")',
+    "    printf '%s\\n' ADMIN_WEB_MAPBOX_PUBLIC_TOKEN PORTAL_WEB_MAPBOX_PUBLIC_TOKEN ADMIN_WEB_SENTRY_DSN PORTAL_WEB_SENTRY_DSN; exit 0 ;;",
+    '  "secrets versions access")',
+    '    name=""',
+    '    for a in "$@"; do case "$a" in --secret=*) name="${a#--secret=}" ;; esac; done',
+    '    case "$name" in',
+    `      ADMIN_WEB_MAPBOX_PUBLIC_TOKEN) printf "%s\\n" "${perm}" >&2; exit 1 ;;`,
+    '      PORTAL_WEB_MAPBOX_PUBLIC_TOKEN) exec /bin/sleep 20 ;;',
+    "      *) printf 'https://k@o0.ingest.us.sentry.io/1\\n'; exit 0 ;;",
+    '    esac ;;',
+    'esac',
+    'exit 1',
+    '',
+  ].join('\n');
+  const { status, stderr, out } = runCliWithoutStore(stub, { extraEnv: { CLIENT_SECRETS_GCLOUD_TIMEOUT_MS: '1500' } });
+  assert.equal(status, 4, out);
+
+  // A: missing, create advice for A only.
+  assert.match(out, /REFUSED: the web apps declare client build config that has no value:/);
+  assert.match(out, /ADMIN_WEB_APPCHECK_SITE_KEY is missing/);
+  assert.match(out, /gcloud secrets create ADMIN_WEB_APPCHECK_SITE_KEY --project auntieos-ttpc/);
+  assert.ok(!/gcloud secrets create ADMIN_WEB_MAPBOX_PUBLIC_TOKEN/.test(out), 'create advice for the denied secret');
+  assert.ok(!/gcloud secrets create PORTAL_WEB_MAPBOX_PUBLIC_TOKEN/.test(out), 'create advice for the hung secret');
+
+  // B: the per-secret permission block.
+  assert.match(
+    out,
+    /REFUSED: Secret Manager could not be read for these REQUIRED secrets:\n\s+VITE_MAPBOX_PUBLIC_TOKEN \(admin\) <- ADMIN_WEB_MAPBOX_PUBLIC_TOKEN could not be read/,
+  );
+  assert.match(out, /gcloud secrets get-iam-policy ADMIN_WEB_MAPBOX_PUBLIC_TOKEN --project auntieos-ttpc/);
+  assert.ok(!out.includes('reviewer@example.com'), 'email leaked');
+
+  // C: the timeout block with the curl checks.
+  assert.match(
+    out,
+    /REFUSED: Secret Manager did not answer for these REQUIRED secrets in time:\n\s+VITE_MAPBOX_PUBLIC_TOKEN \(portal\) <- PORTAL_WEB_MAPBOX_PUBLIC_TOKEN could not be read/,
+  );
+  assert.match(out, /curl -4 -sS/);
+  assert.match(out, /curl -6 -sS/);
+
+  const blocks = stderr.split(/\nREFUSED: /).slice(1);
+  assert.equal(blocks.length, 3, `expected 3 REFUSED blocks, got ${blocks.length}:\n${out}`);
+});
+
+const NO_ACCOUNT_GCLOUD = failingGcloud(
+  'ERROR: (gcloud.secrets.list) You do not currently have an active account selected.\nPlease run:\n  $ gcloud auth login\n',
+);
+const LAPTOP_ENV = {
+  [path.join(APP_DIRS.admin, '.env')]:
+    'VITE_ADMIN_APPCHECK_SITE_KEY=laptop-appcheck\nVITE_MAPBOX_PUBLIC_TOKEN=pk.laptop-admin\nVITE_SENTRY_DSN=https://laptop@o0.ingest.us.sentry.io/0\n',
+  [path.join(APP_DIRS.portal, '.env')]: 'VITE_MAPBOX_PUBLIC_TOKEN=pk.laptop-portal\n',
+};
+
+test('CLI --write: a signed-out store with the values in a local .env refuses (exit 4), writes nothing, and names the skip', () => {
+  const { status, out, written } = runCliWithoutStore(NO_ACCOUNT_GCLOUD, { mode: '--write', envFiles: LAPTOP_ENV });
+  assert.equal(status, 4, `--write must not ship values the store never confirmed:\n${out}`);
+  assert.match(out, /REFUSED: Secret Manager could not confirm these REQUIRED values/);
+  for (const secret of ['ADMIN_WEB_APPCHECK_SITE_KEY', 'ADMIN_WEB_MAPBOX_PUBLIC_TOKEN', 'PORTAL_WEB_MAPBOX_PUBLIC_TOKEN']) {
+    assert.match(out, new RegExp(`${secret} could not be read \\(a local \\.env has a value\\)`), out);
+  }
+  assert.match(out, /RELEASE_SKIP_CLIENT_SECRETS=1/);
+  assert.match(out, /gcloud auth list/);
+  assert.ok(!/gcloud secrets create/.test(out), out);
+  assert.ok(!/is missing/.test(out), out);
+  assert.ok(!/wrote /.test(out), `a file was written:\n${out}`);
+  assert.deepEqual(written, { admin: false, portal: false });
+  // The optional DSN held locally warns, and says a local value exists.
+  assert.match(out, /WARNING: VITE_SENTRY_DSN \(admin\) could not be read from Secret Manager\. A local \.env has a value for it/);
+  assert.ok(!out.includes('pk.laptop'), `a local value was printed:\n${out}`);
+});
+
+test('CLI --check: the same signed-out store with the values in a local .env still falls back to .env and exits 0', () => {
+  const { status, out, written } = runCliWithoutStore(NO_ACCOUNT_GCLOUD, { mode: '--check', envFiles: LAPTOP_ENV });
+  assert.equal(status, 0, `--check keeps the local .env fallback:\n${out}`);
+  assert.match(out, /VITE_ADMIN_APPCHECK_SITE_KEY\s+local-file\s+ok/);
+  assert.ok(!/REFUSED/.test(out), out);
+  assert.deepEqual(written, { admin: false, portal: false });
+});
+
+test('refuseUnconfirmedLocalValues marks only local-file Secret Manager rows, and leaves process.env and derived rows alone', () => {
+  const { rows } = resolveClientVars({
+    fetchSecret: null,
+    processEnv: { VITE_ADMIN_APPCHECK_SITE_KEY: 'from-ci' },
+    localEnv: { admin: { VITE_MAPBOX_PUBLIC_TOKEN: 'pk.local' }, portal: { VITE_MAPBOX_PUBLIC_TOKEN: 'pk.local' } },
+    release: 'abc1234',
+    storeReason: 'not-authenticated',
+  });
+  refuseUnconfirmedLocalValues(rows, 'not-authenticated');
+  const find = (app, v) => rows.find((r) => r.app === app && r.variable === v);
+  assert.equal(find('admin', 'VITE_ADMIN_APPCHECK_SITE_KEY').status, 'ok');
+  assert.equal(find('admin', 'VITE_ADMIN_APPCHECK_SITE_KEY').source, 'process-env');
+  assert.equal(find('admin', 'VITE_MAPBOX_PUBLIC_TOKEN').status, 'unreadable');
+  assert.equal(find('admin', 'VITE_MAPBOX_PUBLIC_TOKEN').localUnconfirmed, true);
+  assert.equal(find('admin', 'VITE_MAPBOX_PUBLIC_TOKEN').value, '');
+  assert.equal(find('admin', 'VITE_SENTRY_RELEASE').status, 'ok');
+  const { refusals } = splitRefusals(rows);
+  assert.deepEqual(refusals.map((r) => `${r.app}:${r.variable}`).sort(), ['admin:VITE_MAPBOX_PUBLIC_TOKEN', 'portal:VITE_MAPBOX_PUBLIC_TOKEN']);
 });
 
 // ---------------------------------------------------------------------------
