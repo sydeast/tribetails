@@ -1099,6 +1099,7 @@ push carry content-free copy pointing at AuntieOS, and **SMS is skipped**
 | Template | Added by | What is missing until it is imported |
 |---|---|---|
 | `security.account.locked.operator` | #869 | The operator's lockout alert names neither the household nor the account email, and sends no SMS. |
+| `security.failedLogin.attempts.operator` | #877 | The operator's 5-failure warning does not name the household, the account email or the attempt count, and sends no SMS. |
 
 To import, follow [the template import list](#importing-notification-templates):
 Admin, then **Templates**, then **Import from repo** on web or the **Import** tab
@@ -1106,6 +1107,34 @@ on Android, then read the plan before pressing **Import**. A template new to
 Firestore shows `create` on every channel and needs nothing ticked. Do not tick
 **Replace the stored copy with the repo wording** on an unrelated `skipped` row to
 get it in.
+
+### Backfills to run after a release
+
+Some merges change which key a stored setting belongs to. Run each row once,
+after the first release that contains it and after that release's template
+import above. Every backfill here is a dry run by default, and **before any
+write, run `npm run test:scripts:emulator` and read the pass count.**
+
+| Backfill | Added by | What it fixes |
+|---|---|---|
+| `backfill:operator-warning-override` | #877 | An operator who turned off or locked the failed-login warning, or one of its channels, on the Business tab saved that on `auth.failedLogin.attempts`. That key is household-only now, so the setting stopped applying to operators. This copies it to `security.failedLogin.attempts.operator`, only where that key has no setting yet. |
+
+For `backfill:operator-warning-override`:
+
+1. `npm run test:scripts:emulator`
+2. `npm --prefix mytribe/functions run backfill:operator-warning-override`
+   Reads only. The first line is the project and the second the target: check
+   they name the right project and `PRODUCTION`. Then read the old value and
+   the planned `WRITE` line.
+3. `npm --prefix mytribe/functions run backfill:operator-warning-override -- --allow-prod`
+   Needs `GOOGLE_APPLICATION_CREDENTIALS`. It takes the project from `--project <id>`
+   or from `project_id` in that credentials file and refuses to guess, and it
+   refuses to run while `FIRESTORE_EMULATOR_HOST` is set.
+4. Re-run step 2. It reports `target-exists`, or the same no-op as before.
+
+The script never overwrites a setting the new key already has. It copies the
+whole business-stream setting, locks and lock reason included, because a
+locked channel delivers differently from an unlocked one.
 
 ### Merged branches are deleted after the tag
 

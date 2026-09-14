@@ -98,6 +98,7 @@ describe('getNotificationCatalogHandler', () => {
       'invite.expired', // business
       'security.breach_attempt.kinfolk', // business
       'security.account.locked.operator', // business (#869)
+      'security.failedLogin.attempts.operator', // business (#877)
       'rating.submitted.bad', // business
       'rating.submitted.good', // business
       'pet.marked.inactive', // business

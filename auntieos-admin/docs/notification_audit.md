@@ -35,8 +35,8 @@ Legend: ✓ wired catalog path, ⚪ Firebase-native (no catalog dispatch by desi
 
 | Key | Resolver(s) | Audience | Channels | Mode | Req | AE | Status | Call Site |
 |---|---|---|---|---|---|---|---|---|
-| `auth.failedLogin.attempts` | specificUid | kinfolk | e,s,p | trigger | email | ✓ | ✓ | `loginSecurity.ts:168` |
-| `auth.account.locked` | specificUid | kinfolk | e,s,p | trigger | email | ✓ | ✓ | `loginSecurity.ts:139` + `:148` |
+| `auth.failedLogin.attempts` | specificUid | kinfolk | e,s,p | trigger | email | ✓ | ✓ | `loginSecurity.ts` `sendWarningAlerts`, from `recordFailedLoginHandler` at 5 failures in 10 min. The household's copy only; business admins get `security.failedLogin.attempts.operator` (#877) |
+| `auth.account.locked` | specificUid | kinfolk | e,s,p | trigger | email | ✓ | ✓ | `loginSecurity.ts` `sendLockAlerts`, from `recordFailedLoginHandler` at 10 failures in 20 min. The household's copy only; the lock clears after 30 min, on admin unlock, or on a password reset |
 | `auth.password.reset` | specificUid | kinfolk | e | trigger | email | ✓ | ⚪ | Firebase Auth native `sendPasswordResetEmail()`. Catalog entry kept dormant for future custom-flow option |
 | `account.welcome.kinfolk` | specificUid | kinfolk | e | trigger | email | ✓ | ✓ | `acceptInvite.ts` post-accept |
 | ~~`account.welcome.business`~~ | n/a | n/a | n/a | n/a | n/a | n/a | n/a | **RETIRED 2026-08-18.** The operator does not want this notification. Catalog row, both emitters (`setKinfolkClaim.ts`, `acceptInvite.ts`) and seed template all removed; see `RETIRED_NOTIFICATION_KEYS` in `mytribe/functions/src/notifications/catalog.ts` |
@@ -101,6 +101,16 @@ Legend: ✓ wired catalog path, ⚪ Firebase-native (no catalog dispatch by desi
 | `survey.event` | specificUid | kinfolk | e,p | scheduled | `survey` | ✓ | `admin/scheduleMarketingBlast.ts` |
 | `marketing.optin` | specificUid | kinfolk | e | scheduled | `marketing` | ✓ | `admin/scheduleMarketingBlast.ts` |
 
+### 1.8 Security
+
+Every `security.*` key in the catalog as of 2026-09-14. All three go to business admins only, from the `businessSettings/admins.uids` roster as staff, and sit under Account and security on the Business tab.
+
+| Key | Resolver(s) | Audience | Channels | Mode | Req | AE | Status | Call Site |
+|---|---|---|---|---|---|---|---|---|
+| `security.account.locked.operator` | businessAdmins | business | e,s,p | trigger | email, push | ✓ | ✓ | `loginSecurity.ts` `sendLockAlerts`, same call as the household's `auth.account.locked` (#869). Dedupe key per lock start |
+| `security.failedLogin.attempts.operator` | businessAdmins | business | e,s,p | trigger | email, push | ✓ | ✓ | `loginSecurity.ts` `sendWarningAlerts`, same call as the household's `auth.failedLogin.attempts` (#877). Dedupe key per warning burst |
+| `security.breach_attempt.kinfolk` | businessAdmins | business | e,p | trigger | email, push | ✓ | ✓ | `security/confirmSecureReset.ts`, when a secure-reset confirmation is attempted against an account that did not ask |
+
 ---
 
 ## SECTION 2 — Dispatch infrastructure
@@ -153,8 +163,8 @@ Each uses a `*NotifiedAtMs` field on source doc to prevent re-dispatch.
 
 | File | Key |
 |---|---|
-| `auth/loginSecurity.ts:139,148` | `auth.account.locked` |
-| `auth/loginSecurity.ts:168` | `auth.failedLogin.attempts` |
+| `auth/loginSecurity.ts` (`sendLockAlerts`) | `auth.account.locked`, `security.account.locked.operator` |
+| `auth/loginSecurity.ts` (`sendWarningAlerts`) | `auth.failedLogin.attempts`, `security.failedLogin.attempts.operator` |
 | `billing/stripeWebhook.ts` | `invoice.charge.failed`, `invoice.payment.applied` |
 
 ### 2.6 Sweepers
