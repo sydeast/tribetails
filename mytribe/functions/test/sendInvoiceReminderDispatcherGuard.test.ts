@@ -20,8 +20,8 @@ vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockResolvedValue('audit-1') }));
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: vi.fn().mockResolvedValue('kin-uid-1') }));
 
-import { sendInvoiceReminderHandler } from '../src/admin/sendInvoiceReminder';
-import { enqueueNotification } from '../src/notifications/dispatcher';
+import { INVOICE_REMINDER_RESEND_WINDOW_MS, sendInvoiceReminderHandler } from '../src/admin/sendInvoiceReminder';
+import { enqueueNotification, enqueueNotificationDetailed } from '../src/notifications/dispatcher';
 
 const NOW = Date.UTC(2026, 8, 14, 15, 0, 0);
 
@@ -94,5 +94,35 @@ describe('sendInvoiceReminder over the real dispatcher', () => {
 
     expect(press.sent).toBe(false);
     expect(scheduledReminders(ctx.writes)).toHaveLength(1);
+  });
+
+  it('a crash after the dispatch and before the stamp: a press 10 minutes later answers recent and records the real reminder', async () => {
+    // What the crashed press left: its lease, and a reminder the dispatcher
+    // delivered and recorded in the ledger. The stamp never landed.
+    const ctx = buildDbMock({
+      writeThrough: true,
+      docs: { 'invoices/inv1': { kinfolkId: 'fam1', invoiceNumber: 'INV-9', reminderClaimAtMs: NOW } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await enqueueNotificationDetailed({
+      key: 'invoice.reminder',
+      recipientUid: 'kin-uid-1',
+      data: { kinfolkId: 'fam1', invoiceId: 'inv1' },
+      fireAtMs: NOW,
+      dedupeWindowMs: INVOICE_REMINDER_RESEND_WINDOW_MS,
+    });
+
+    // Past the 3-minute lease AND past the dispatcher's 5-minute default.
+    vi.setSystemTime(NOW + 10 * 60_000);
+    const press = await sendInvoiceReminderHandler(req());
+
+    expect(press).toMatchObject({
+      sent: false,
+      reason: 'recent',
+      lastReminderAtMs: NOW,
+      nextReminderAllowedAtMs: NOW + INVOICE_REMINDER_RESEND_WINDOW_MS,
+    });
+    expect(scheduledReminders(ctx.writes)).toHaveLength(1);
+    expect((await ctx.db.collection('invoices').doc('inv1').get()).data()?.reminderNotifiedAtMs).toBe(NOW);
   });
 });

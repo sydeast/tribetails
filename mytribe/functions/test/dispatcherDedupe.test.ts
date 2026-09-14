@@ -183,6 +183,36 @@ describe('dispatcher dedupe on (key, target, recipient)', () => {
     expect(inbox(ctx.writes)).toHaveLength(2);
   });
 
+  it('a caller can widen the window for its own call; the default is untouched for everyone else', async () => {
+    const ctx = buildDbMock({ writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const args = { key: 'kincare.auntie.on_my_way', recipientUid: 'kinUid', data: { bookingId: 'b1' } };
+
+    await enqueueNotification(args);
+    vi.setSystemTime(BASE_MS + 10 * 60_000);
+    const widened = await enqueueNotificationDetailed({ ...args, dedupeWindowMs: 60 * 60_000 });
+    expect(widened.written).toEqual([]);
+    expect(widened.suppressed[0]).toMatchObject({ reason: 'duplicate', lastAtMs: BASE_MS });
+
+    // The same notification without the widened window is past the default.
+    expect(await enqueueNotification(args)).toHaveLength(1);
+  });
+
+  it('a delivery checked under a long window keeps its ledger entry at least that long', async () => {
+    const ctx = buildDbMock({ writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const twoDays = 48 * 60 * 60 * 1000;
+    await enqueueNotification({
+      key: 'kincare.auntie.on_my_way',
+      recipientUid: 'kinUid',
+      data: { bookingId: 'b1' },
+      dedupeWindowMs: twoDays,
+    });
+    const ledger = ctx.writes.find((w) => w.path.startsWith(`${DEDUPE_COLLECTION}/`));
+    expect((ledger?.data.expiresAt as { toMillis: () => number }).toMillis()).toBe(BASE_MS + twoDays);
+    expect(ledger?.data.windowMs).toBe(twoDays);
+  });
+
   it('an explicit dedupeKey replaces the derived identity', async () => {
     const ctx = buildDbMock({ writeThrough: true });
     mocks.dbFn.mockReturnValue(ctx.db);

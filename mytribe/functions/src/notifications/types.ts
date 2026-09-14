@@ -177,6 +177,14 @@ export interface EnqueueArgs {
    * and must both be delivered. See `dedupeIdentityOf` in dispatcher.ts.
    */
   dedupeKey?: string;
+  /**
+   * #832: how far back THIS call's duplicate check looks, in ms. Defaults to the
+   * dispatcher's NOTIFICATION_DEDUPE_WINDOW_MS. A caller whose own rule spans
+   * longer passes it, so a delivery its own records lost (a crash between the
+   * send and the stamp) is still found and reported with the ledger's
+   * last-sent time instead of being sent again.
+   */
+  dedupeWindowMs?: number;
 }
 
 /**

@@ -364,7 +364,7 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
           identity: routed.identity,
           existingId: routed.existingId,
           lastAtMs: routed.lastAtMs,
-          windowMs: NOTIFICATION_DEDUPE_WINDOW_MS,
+          windowMs: dedupeWindowOf(args),
         },
       });
       outcome.suppressed.push({
@@ -400,10 +400,17 @@ interface Writer {
   set(ref: DocumentReference, data: Record<string, unknown>): unknown;
 }
 
+/** The duplicate-check window for one call: the caller's own when it passed one, else the default. */
+export function dedupeWindowOf(args: Pick<EnqueueArgs, 'dedupeWindowMs'>): number {
+  const w = args.dedupeWindowMs;
+  return typeof w === 'number' && Number.isFinite(w) && w > 0 ? w : NOTIFICATION_DEDUPE_WINDOW_MS;
+}
+
 async function writeOnce(
   key: string,
   identity: string,
   recipientUid: string,
+  windowMs: number,
   write: (w: Writer) => string,
   collectionPath: string,
 ): Promise<Routed> {
@@ -421,7 +428,7 @@ async function writeOnce(
     const snap = await tx.get(ledgerRef);
     const prior = snap.exists ? (snap.data() as { lastAtMs?: unknown; notificationId?: unknown }) : undefined;
     const lastAtMs = typeof prior?.lastAtMs === 'number' ? prior.lastAtMs : null;
-    if (lastAtMs !== null && nowMs - lastAtMs < NOTIFICATION_DEDUPE_WINDOW_MS) {
+    if (lastAtMs !== null && nowMs - lastAtMs < windowMs) {
       return {
         kind: 'duplicate',
         identity,
@@ -437,10 +444,12 @@ async function writeOnce(
       notificationId: id,
       collection: collectionPath,
       lastAtMs: nowMs,
-      windowMs: NOTIFICATION_DEDUPE_WINDOW_MS,
+      windowMs,
       // The TTL field. Refreshed on every delivery, so a notification that keeps
-      // recurring keeps its entry; see DEDUPE_LEDGER_RETENTION_MS.
-      expiresAt: Timestamp.fromMillis(nowMs + DEDUPE_LEDGER_RETENTION_MS),
+      // recurring keeps its entry; see DEDUPE_LEDGER_RETENTION_MS. Never shorter
+      // than the window this delivery was checked under, so a caller that looks
+      // back further finds the entry for as long as it looks.
+      expiresAt: Timestamp.fromMillis(nowMs + Math.max(DEDUPE_LEDGER_RETENTION_MS, windowMs)),
       updatedAt: FieldValue.serverTimestamp(),
     });
     return { kind: 'written', id };
@@ -465,6 +474,7 @@ async function routeByDeliveryMode(
 ): Promise<Routed> {
   const { targetType, targetId } = resolveTargetRef(args);
   const identity = dedupeIdentityOf(args, { targetType, targetId });
+  const windowMs = dedupeWindowOf(args);
   // R5: the entity detail the CARD renders, resolved server-side once, here.
   // Every value in it (household, pets, service, date, time, notes, amount) was
   // already being computed downstream for outbound templates and thrown away;
@@ -524,7 +534,7 @@ async function routeByDeliveryMode(
 
   switch (def.deliveryMode) {
     case 'trigger': {
-      return writeOnce(def.key, identity, recipientUid, (w) => {
+      return writeOnce(def.key, identity, recipientUid, windowMs, (w) => {
         const ref = db().collection('notifications').doc();
         w.set(ref, content);
         // The work order is written under the same id. Its onCreate trigger fans
@@ -588,7 +598,7 @@ async function routeByDeliveryMode(
       // the sweep's docstring. Renaming or dropping it silently ages every
       // item off `createTime` instead.
       const batchKey = def.batchKey;
-      return writeOnce(def.key, identity, recipientUid, (w) => {
+      return writeOnce(def.key, identity, recipientUid, windowMs, (w) => {
         const ref = db()
           .collection('notificationBatch')
           .doc(recipientUid)
@@ -613,7 +623,7 @@ async function routeByDeliveryMode(
       // Deduped HERE, at enqueue, and not at promotion: the sweep that turns
       // this row into a notification already promotes and deletes inside one
       // transaction, so the only place a second copy can be born is this write.
-      return writeOnce(def.key, identity, recipientUid, (w) => {
+      return writeOnce(def.key, identity, recipientUid, windowMs, (w) => {
         const ref = db().collection('scheduledNotifications').doc();
         w.set(ref, { ...queueDoc, status: 'pending', mode: 'scheduled', fireAtMs });
         return ref.id;

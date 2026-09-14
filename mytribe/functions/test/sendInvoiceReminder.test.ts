@@ -70,7 +70,12 @@ describe('sendInvoiceReminder happy path', () => {
       nextReminderAllowedAtMs: NOW + INVOICE_REMINDER_RESEND_WINDOW_MS,
     });
     expect(mocks.enqueue).toHaveBeenCalledWith(
-      expect.objectContaining({ key: 'invoice.reminder', recipientUid: 'kin-uid-1' }),
+      // #832: the dispatcher looks back the whole reminder window for this call.
+      expect.objectContaining({
+        key: 'invoice.reminder',
+        recipientUid: 'kin-uid-1',
+        dedupeWindowMs: INVOICE_REMINDER_RESEND_WINDOW_MS,
+      }),
     );
   });
 

@@ -72,10 +72,11 @@ export const INVOICE_REMINDER_RESEND_WINDOW_MS = 24 * 60 * 60 * 1000;
  *
  *   - LONGER than a callable can live (the 60s default timeout), so a claim is
  *     never taken over while its own send is still running.
- *   - SHORTER than the dispatcher's 5-minute window, so if the instance died
- *     AFTER the dispatcher delivered but before the stamp was written, the
- *     press that takes the claim over still hits the dispatcher's duplicate
- *     refusal and records the real reminder instead of sending a second one.
+ *   - A crash AFTER the dispatcher delivered but before the stamp was written
+ *     does not rely on the lease at all: the dispatch asks the dispatcher to
+ *     look back INVOICE_REMINDER_RESEND_WINDOW_MS, so any press inside the 24
+ *     hours meets the ledger's record of that reminder, stamps it, and answers
+ *     `recent` instead of sending a second one.
  */
 export const INVOICE_REMINDER_CLAIM_LEASE_MS = 3 * 60 * 1000;
 
@@ -286,6 +287,12 @@ export async function sendInvoiceReminderHandler(
         currency: data.currency ?? null,
       },
       fireAtMs: now,
+      // #832: look back the whole reminder window, not the dispatcher's 5
+      // minutes. If an earlier press delivered and then died before writing the
+      // stamp, the ledger still holds that reminder; the duplicate answer below
+      // carries its time, the stamp is written from it, and the admin is told
+      // `recent`, however long after the crash the next press comes.
+      dedupeWindowMs: INVOICE_REMINDER_RESEND_WINDOW_MS,
     });
   } catch (err) {
     await settle(null).catch((releaseErr) => {
