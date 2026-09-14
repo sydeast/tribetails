@@ -431,6 +431,52 @@ class FirestoreClient {
      * honoring opt-outs. Fail-loud: the no_recipients / broadcast_all_failed
      * sentinels and provider errors surface verbatim via [WriteResult.Err].
      */
+    /**
+     * #829: Emergency Contacts go through the home_access-gated callables
+     * (mytribe/functions/src/portal/emergencyContacts.ts), never a direct write.
+     * A missing `contacts` array is an error, never "none on file".
+     */
+    suspend fun listEmergencyContacts(kinfolkId: String): WriteResult<EmergencyContactsResult> {
+        val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
+        return when (val r = platformInvokeCallable("listEmergencyContacts", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatching {
+                val o = callableJson.parseToJsonElement(r.value).jsonObject
+                val rows = o["contacts"] as? JsonArray ?: error("listEmergencyContacts: no contacts array in the answer")
+                WriteResult.Ok(
+                    EmergencyContactsResult(
+                        contacts = rows.mapNotNull { (it as? JsonObject)?.let(::contactFromJson) },
+                        canEdit = (o["canEdit"] as? JsonPrimitive)?.booleanOrNull == true,
+                        legacy = (o["legacy"] as? JsonPrimitive)?.booleanOrNull == true,
+                    ),
+                )
+            }.getOrElse { WriteResult.Err(it.message ?: "listEmergencyContacts decode failed") }
+        }
+    }
+
+    suspend fun saveEmergencyContacts(kinfolkId: String, drafts: List<EmergencyContactDraft>): WriteResult<List<EmergencyContact>> {
+        val payload = buildJsonObject {
+            put("kinfolkId", JsonPrimitive(kinfolkId))
+            put("contacts", buildJsonArray {
+                drafts.forEach { d ->
+                    add(buildJsonObject {
+                        put("name", JsonPrimitive(d.name.trim()))
+                        put("phone", JsonPrimitive(d.phone.trim()))
+                        put("relationship", d.relationship.trim().ifBlank { null }?.let { JsonPrimitive(it) } ?: JsonNull)
+                    })
+                }
+            })
+        }
+        return when (val r = platformInvokeCallable("saveEmergencyContacts", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatching {
+                val rows = callableJson.parseToJsonElement(r.value).jsonObject["contacts"] as? JsonArray
+                    ?: error("saveEmergencyContacts: no contacts array in the answer")
+                WriteResult.Ok(rows.mapNotNull { (it as? JsonObject)?.let(::contactFromJson) })
+            }.getOrElse { WriteResult.Err(it.message ?: "saveEmergencyContacts decode failed") }
+        }
+    }
+
     suspend fun listAudienceSegments(): WriteResult<List<com.tribetails.auntieos.web.screens.communicate.AudienceSegment>> {
         return when (val r = platformInvokeCallable("listAudienceSegments", "{}")) {
             is WriteResult.Err -> WriteResult.Err(r.message)
@@ -2696,6 +2742,13 @@ data class Kinfolk(
     val emergencyContactName: String = "",
     val emergencyContactPhone: String = "",
     val emergencyContactRelation: String = "",
+    /**
+     * #829. Read-only here: written ONLY by the saveEmergencyContacts callable.
+     * Raw JSON because REST decodes its Timestamps to strings; `kinfolkWriteJson`
+     * removes it (and the flat triple above) from every kinfolk write so a desktop
+     * save cannot rewrite or delete it. Read through `emergencyContactsOf`.
+     */
+    val emergencyContacts: JsonElement? = null,
 
     // Household-level Vet Clinic (lives on Kinfolk, not Kin)
     val vetClinicName: String = "",

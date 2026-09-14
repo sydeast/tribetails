@@ -387,8 +387,11 @@ internal object JvmFirestoreRest {
      * Returns the id. Field paths are backtick-quoted to be safe for any key.
      */
     suspend fun mergeDoc(collection: String, id: String, modelJson: String): String {
-        val token = jvmFirebaseIdToken() ?: error("Not signed in")
+        // #829: recorded BEFORE the token fetch, as [setDoc] and [addDoc] do, so a
+        // test with no credentials can assert which fields the mask names.
         val plain = codec.parseToJsonElement(modelJson).jsonObject
+        JvmFirestoreFixtures.lastWrite = RestWrite("MERGE", collection, id, plain.keys.filter { it != "_id" }.toSet())
+        val token = jvmFirebaseIdToken() ?: error("Not signed in")
         val paths = mergeFieldPaths(plain)
         val resp = http.patch("$BASE/$collection/$id") {
             header(HttpHeaders.Authorization, "Bearer $token")
@@ -413,9 +416,11 @@ internal object JvmFirestoreRest {
         // #825: the twin of [setDoc]'s record above. The id is blank because
         // there is no id yet -- Firestore mints it -- and an unkeyed write having
         // no id of its own is precisely what the keyed path exists to change.
-        JvmFirestoreFixtures.lastWrite = RestWrite("POST", collection, "")
-        val token = jvmFirebaseIdToken() ?: error("Not signed in")
+        // #829: also records the body's top-level keys, so a test can assert what a
+        // create writes (a new household must not write the Emergency Contact keys).
         val plain = codec.parseToJsonElement(modelJson).jsonObject
+        JvmFirestoreFixtures.lastWrite = RestWrite("POST", collection, "", plain.keys.filter { it != "_id" }.toSet())
+        val token = jvmFirebaseIdToken() ?: error("Not signed in")
         val resp = http.post("$BASE/$collection") {
             header(HttpHeaders.Authorization, "Bearer $token")
             contentType(ContentType.Application.Json)
