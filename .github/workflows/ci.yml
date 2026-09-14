@@ -236,8 +236,11 @@ jobs:
             # The backfill emulator tests (#870). Separate from `mytribeRules`
             # because it answers a different question (does a backfill's real
             # write land) and from `mytribe` because it boots an emulator.
-            # functions/src/lib is here because the scripts import shared code
-            # from it; package.json and the lockfile because they pin the
+            # functions/src/lib is a forward guard: none of the scripts with an
+            # emulator test imports functions/src today, but several other
+            # backfills do, and the day a covered script starts to, a change
+            # there must re-run its write test. package.json and the lockfile
+            # are here because they pin the
             # firebase-admin copy the scripts and tests share; firebase.json
             # because `emulators:exec` reads its emulator ports from it.
             mytribeScriptsEmulator:
