@@ -1,4 +1,5 @@
 import { call } from '../lib/fns';
+import { reminderOutcomeOf, type ReminderOutcome } from '../lib/invoiceReminder';
 import type {
   ArchiveInvoiceArgs,
   ArchiveInvoiceResult,
@@ -131,8 +132,11 @@ export async function createQuote(
  * swallowed) `failed-precondition` if the invoice is already paid, `not-found`
  * if the id is wrong.
  */
-export async function sendInvoiceReminder(invoiceId: string): Promise<void> {
-  await call<SendInvoiceReminderArgs, SendInvoiceReminderResult>('sendInvoiceReminder', { invoiceId });
+export async function sendInvoiceReminder(invoiceId: string): Promise<ReminderOutcome> {
+  // #832: a reminder inside the server's window is answered `sent: false`, not
+  // thrown, so the caller can say when the earlier one went out.
+  const res = await call<SendInvoiceReminderArgs, SendInvoiceReminderResult>('sendInvoiceReminder', { invoiceId });
+  return reminderOutcomeOf(res, Date.now());
 }
 
 /**

@@ -192,6 +192,18 @@ describe('approveBookingSeriesCore: the Auntie hears once, about her own days (#
     expect(sent('assignment.assigned')).toHaveLength(1);
   });
 
+  it("#832: her copy carries the same approval identity as the household's, so a re-approval reaches her too", async () => {
+    const ctx = envelopeAssignedTo(['auntie-a', 'auntie-a', 'auntie-a']);
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await approve();
+
+    const claim = ctx.writes.find((w) => w.path === PARENT && 'confirmNotifiedAtMs' in w.data);
+    const expected = `booking:req_1:approve:${claim!.data.confirmNotifiedAtMs as number}`;
+    expect(sent('kincare.booking.confirm')[0].dedupeKey).toBe(expected);
+    expect(sent('assignment.assigned')[0].dedupeKey).toBe(expected);
+  });
+
   it('two Aunties splitting one envelope each hear once, about their own dates', async () => {
     // `admin/assignAuntie` is per visit, so a half-reassigned envelope really
     // does owe two people two different lists.

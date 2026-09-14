@@ -18,7 +18,11 @@ bash scripts/preflight.sh
 
 Changes nothing. Reports every tool, and for each missing one prints the install
 command for your platform. Run it before anything else; `npm run setup` runs it
-too and refuses to start if anything required is absent.
+too and refuses to start if anything required is absent, **except** when the
+only thing wrong is dependency drift (node_modules out of sync with a
+lockfile, exit code 2 rather than 1): installing is exactly the fix for that,
+so setup proceeds to install and re-checks preflight afterward rather than
+refusing to start the one thing that would fix it. See below.
 
 | Tool | Needed for | Install (macOS) |
 |---|---|---|
@@ -77,6 +81,71 @@ that looks installed and is not. The first run of this check found two more
 instances nobody knew about, including a Fraunces font version that had been
 producing an unexplained e2e failure.
 
+**The comparison lives in one place** (`scripts/lib/dep-drift.sh`), sourced by
+both `preflight.sh` (report only) and `release.sh` step 0a (refuse), so they
+cannot silently disagree about what counts as drift. It checks the workspace
+root (every npm workspace member, read from the root `package.json`'s
+`workspaces` field and expanded rather than hardcoded, so a new member is
+never missed), `mytribe/functions`, and `auntieos-admin/web/functions`.
+`release.sh` only refuses on the last one when `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1`
+is actually going to build and deploy it; `preflight.sh` and `bootstrap.sh`
+check and install it unconditionally, since setup asks "is this machine
+ready", not "is this run shipping it".
+
+**A drift-only failure does not stop `npm run setup`.** On 2026-09-13 the
+release Mac's `node_modules` was installed 2026-09-10, before Dependabot moved
+vitest 4.1.11 → 5.0.0 and about twenty other packages, `stripe` in
+`mytribe/functions` included. `scripts/release.sh` had nothing checking this
+before its test step, so the third release attempt that day died three minutes
+into `npm run check` on a portal test CI had already passed on the same
+commit. Fixing it needed `npm ci` and `npm ci --prefix mytribe/functions`,
+but `npm run setup`'s OWN preflight check refused to even start over the exact
+drift installing would fix, so the operator ran both by hand.
+
+`preflight.sh` now exits **2**, not 1, when the ONLY thing wrong is dependency
+drift (1 still means something installing will not fix: a missing tool, a
+missing lockfile, an old JDK). `bootstrap.sh` reads that: on exit 2 it prints
+why, forces a reinstall of ONLY the units preflight found drifted (never every
+unit: drift in `mytribe/functions` alone must not force a root reinstall too),
+and re-runs preflight afterward to prove the drift is actually gone rather
+than assuming it. Any other preflight failure still refuses to start,
+unchanged. See `scripts/bootstrap.test.sh` and `scripts/preflight.test.sh` for
+the cases.
+
+`scripts/release.sh` runs the same comparison as its own precondition (step
+0a, placed BEFORE the "release this commit?" confirm so an operator who says
+yes is not then told no, and before step 1 builds or tests anything) and
+refuses outright: a release is not a machine you want fixing itself mid-run.
+It names every drifted directory and the exact `npm ci` command for each:
+
+```
+REFUSED: installed dependencies do not match their lockfile(s):
+  - mytribe/functions: stripe (17.0.0, lockfile says 18.5.0)
+
+  This is exactly what stopped the 2026-09-13 release 3 minutes into
+  step 1, on a commit CI had already passed: ...
+
+    npm ci --prefix mytribe/functions
+```
+
+See `scripts/release.test.sh` for the cases: drift refuses and names the
+directory and fix, a clean install proceeds silently, and
+`auntieos-admin/web/functions` drift is checked only when
+`RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` is actually shipping it.
+
+**Never run `npm ci` INSIDE a workspace member** (`mytribe/web`,
+`auntieos-admin`, `packages/geo`). They share the ROOT's
+`package-lock.json`/`node_modules` and carry no lockfile of their own, and
+that absence is normal, not a defect. Another agent working in parallel on this
+same issue saw `npm ci` run inside `mytribe/web` exit 0 and SILENTLY DROP
+`@tiptap/*` and `@vitejs/plugin-react` from its `node_modules`, because with
+no lockfile there `npm ci` falls back to a plain (and much smaller) install
+rather than refusing. The fix, every time, is `npm ci` at the **root**. The
+drift check follows this: a workspace member's drift is always reported as
+"workspace root: ..." with the fix `npm ci`, never `npm ci --prefix
+mytribe/web`, and `scripts/release.test.sh` and `scripts/preflight.test.sh`
+each assert that no per-member `--prefix` command is ever suggested.
+
 Two of the tool checks above fail in ways that do not name themselves, which is
 why preflight checks them by RUNNING them rather than by looking for the binary:
 
@@ -134,6 +203,7 @@ From the repo root. Each fans out to the project that owns it.
 | `npm test` | Every JS suite (functions, geo, admin, portal) |
 | `npm run test:android` | Gradle unit tests |
 | `npm run test:rules` | Firestore rules, against the emulator |
+| `npm run test:scripts:emulator` | Every backfill's `*.emulator.test.ts`, against the emulator. **Run it before any backfill's prod write.** |
 | `npm run typecheck` | All four projects |
 | `npm run build` | Functions, admin, portal. `packages/geo` has no build step — both apps consume its TypeScript source directly. |
 | `npm run build:android` | `compileDebugKotlin` |
@@ -147,6 +217,10 @@ From the repo root. Each fans out to the project that owns it.
 
 Suffix any of `test`, `typecheck`, `build` with `:functions`, `:admin` or
 `:portal` to run one project.
+
+**Before a backfill writes to prod, run `npm run test:scripts:emulator` and
+read the pass count.** A dry run only reads, so it cannot catch a write that
+Firestore rejects. The emulator test runs the real write path.
 
 All suites pass on `main`. The counts move every day, so `npm test` is the
 authority rather than a number written here; as of 2026-08-04 the functions
@@ -272,9 +346,20 @@ if there is no baseline to compare against, it refuses and sends you to the
 foreground run. `RELEASE_BG_FORCE=1` overrides once you have checked the console
 yourself, and says in its output that it did.
 
+One exception, and it needs no flag: a **resumed** release. When an earlier run
+of the exact commit being released (the pinned `RELEASE_SHA`) got past step 3
+and stopped later, `.release-progress`
+records the index step, the rerun skips steps 2 and 3, and there is no prompt
+left to skip. `.release-state` still names the previous release until a run
+finishes, so the diff says "changed" anyway; the wrapper lets that run through
+and prints `resumed:` instead of refusing. It uses the same rule as the release
+(exact `RELEASE_SHA`, clean tree, `RELEASE_NO_RESUME` unset), from the one copy in
+`scripts/release-progress.sh`. See "A stopped release resumes on the same commit".
+
 | # | Step | Why here |
 |---|---|---|
 | 0 | Preconditions | Clean tree, on `main`, synced with origin. Shipping uncommitted or stale code is the classic incident. Falls back to `gh` if the SSH agent is down, since it must verify the fact, not one transport. |
+| 0a | Dependency drift | Is `node_modules` what each `package-lock.json` says it should be, for every root this run builds, tests, or deploys? Refuses and names the exact `npm ci` command, before step 1 tests anything against tools it cannot trust. See below. |
 | 0b | CI verdict for HEAD | Asks GitHub whether every check is green for this exact commit, **e2e included**. `npm run check` does not run e2e, so until this existed a red e2e could not stop a release. See below. |
 | 1 | `npm run check` | Typecheck, lint, test, build. Not optional theatre: this is what produces the `dist/` that step 6 uploads. |
 | 1b | Secret preflight | Every secret the code DECLARES must exist. Firebase validates these before uploading, and one missing name fails the whole codebase. Refuses here, before any deploy. |
@@ -282,7 +367,7 @@ yourself, and says in its output that it did.
 | 2 | Firestore indexes | Before the code that queries them. A query with no index fails at RUNTIME, not at build. |
 | 3 | Wait for indexes | The CLI returns when Firestore ACCEPTS an index, not when it is Enabled. The run blocks; the CLI will not. |
 | 4 | Firestore rules | From `mytribe` only. Refused outright if the admin mirror has drifted. |
-| 5 | Functions | Before the clients that call them. **Skipped when `mytribe/functions` is unchanged since the last release AND no declared secret is newer than it**. Otherwise deployed **by name, in batches of 25, with retries**, because the whole fleet does not fit the regional CPU quota. See below. |
+| 5 | Functions | Before the clients that call them. **Skipped when `mytribe/functions` is unchanged since the last release AND no declared secret is newer than it**. Otherwise deployed **by name, in batches of 25, with retries**, because the whole fleet does not fit the regional CPU quota. See below. A rerun of the **same commit** skips it once its fleet verify passed; see "A stopped release resumes on the same commit". |
 | 6 | Hosting | Admin, then portal. |
 | 6b | Android | Uploads both APKs from step 1c to App Distribution, each to its own Firebase app, in the same run as the web. |
 | 7 | Verify | Fetches both live sites and compares the hashed bundle they reference against the one just built. |
@@ -585,8 +670,13 @@ past it exactly as the quota did, and the suite proves the release retries the
 right names, survives, and refuses honestly when the quota never lifts. It runs
 the real script against a throwaway repo with `gh`, `gcloud`, `firebase`, `curl`
 and `npm` stubbed, plus a fake `gradlew` per Android app so the two-app build
-and distribution path runs wet without an SDK. 54 cases. Run it after touching
-`scripts/release.sh`.
+and distribution path runs wet without an SDK. It also covers the admin deploy
+retry and its error classifier, the per-commit resume, and the checkout checks
+around every deploy (#840), and the step 0a dependency-drift checks (#841). 188
+cases.
+Run it after touching `scripts/release.sh`. `bash scripts/release-bg.test.sh`
+(26 cases) covers the detached wrapper, including a resumed run with changed
+indexes and each reason a resume is refused.
 
 Knobs, all off by default:
 
@@ -595,7 +685,8 @@ Knobs, all off by default:
 | `DRY_RUN=1` | Rehearse: print every firebase command, run none, write nothing, claim nothing |
 | `RELEASE_SKIP_CHECK=1` | Skip step 1. Then `dist/` is whatever was last built, which may not match HEAD |
 | `RELEASE_SKIP_CI_GATE=1` | Release without CI's verdict for HEAD. For when the gate is unavailable, not for when it says no |
-| `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` | Also ship the AuntieOS `default` and `reconcile` codebases. `reconcile` needs the Python venv above |
+| `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` | Also ship the AuntieOS `default` and `reconcile` codebases. `reconcile` needs the Python venv above. Each deploy is retried on a transient error; see "A stopped release resumes on the same commit" |
+| `RELEASE_NO_RESUME=1` | Run every step, including the ones `.release-progress` records as already done for this commit |
 | `RELEASE_FUNCTIONS_FORCE=1` | Pass `--force` to the functions deploy. Needed when a change RAISES the minimum bill; see below. Also lets firebase DELETE functions missing from source, so read the diff |
 | `RELEASE_PRUNE_BRANCHES=0` | Skip deleting merged remote branches after the tag |
 | `BRANCH_PRUNE_MIN_AGE_DAYS=N` | How long a merged branch stays quiet before the prune takes it (default 1) |
@@ -621,6 +712,142 @@ Knobs, all off by default:
 | `RELEASE_FUNCTIONS_ROUNDS=N` | Retry rounds for functions that did not land (default 3) |
 | `RELEASE_FUNCTIONS_SETTLE=S` | Seconds between batches (default 30) |
 | `RELEASE_RETRY_KEEP=N` | Prune depth between retry rounds (default 2, `0` disables) |
+
+### A stopped release resumes on the same commit
+
+On 2026-09-13 a release shipped indexes, rules and all 279 `mytribe` functions,
+verified the fleet, then stopped on one dropped Secret Manager request while
+deploying the admin codebases (#840):
+
+```
+Error: Failed to validate secret versions:
+- FirebaseError Failed to make request to https://secretmanager.googleapis.com/v1/projects/auntieos-ttpc/secrets/CLOUDINARY_API_KEY/versions/latest
+```
+
+The secret had an enabled version. The blip stopped the release because the
+admin deploys had no retry, and a rerun would have redeployed all 279 functions
+(about 30 minutes, another round of Cloud Run revisions) because nothing
+recorded that they had shipped.
+
+**The admin codebase deploys retry transient errors.** `functions:default` and
+`functions:reconcile` get up to `RELEASE_FUNCTIONS_ROUNDS` attempts (3),
+`RELEASE_FUNCTIONS_SETTLE` seconds apart (30), the same numbers step 5 uses for
+its batches. Whether to retry is read from the error text:
+
+| Error text contains | Verdict | Retried |
+|---|---|---|
+| `not found`, `NOT_FOUND`, `has no versions`, `PERMISSION_DENIED`, `permission denied`, `increase the minimum bill` | permanent | no |
+| `Failed to make request`, `HTTP Error: 429` or `5xx`, `ECONNRESET`, `ETIMEDOUT`, `ECONNREFUSED`, `EAI_AGAIN`, `ENOTFOUND`, `socket hang up`, `DEADLINE_EXCEEDED`, `Service Unavailable`, `Bad Gateway`, `Gateway Timeout`, `Internal error encountered` | transient | yes |
+| anything else | unknown | no |
+
+A permanent marker wins even when a transient one is also in the log. A secret
+that is genuinely missing fails under the same `Failed to validate secret
+versions` header as the blip, and three attempts would only delay the same
+refusal. An unknown error stops the run, as every failure did before.
+
+**Finished steps are recorded per commit.** As steps complete, the release
+appends `<sha> <step>` lines to `.release-progress` (gitignored, per machine). A
+rerun skips a recorded step only when the line names the exact commit the run is
+releasing, the tree is clean, and `RELEASE_NO_RESUME=1` is not set. When a record
+for the step exists but one of those fails, the run prints which: `RELEASE_NO_RESUME=1
+is set`, `it is recorded for <sha>, and this release is <sha>`, or `the working
+tree is not clean` followed by `git status --short`. Skippable:
+
+- indexes (steps 2 and 3, including the "are all indexes Enabled?" prompt). The
+  resume says whether the operator typed yes at that prompt or `RELEASE_YES=1`
+  answered it. `deploy:bg` and `RELEASE_BG_FORCE=1` both run with `RELEASE_YES=1`,
+  so neither is recorded as a confirmation
+- rules (step 4)
+- the `mytribe` functions (step 5), recorded as done **only when the fleet
+  verify passed**. A step 5 with nothing to deploy has its own record, and the
+  resume and the tag say "nothing to deploy". A deploy whose verify could not run
+  ("could not verify", `RELEASE_SKIP_FLEET_VERIFY=1`) is recorded as unverified:
+  the stop message lists it as "deployed, not verified", and a rerun deploys again
+- each admin codebase, separately
+
+**The commit is pinned when the run starts.** `release.sh` reads HEAD once, as
+`RELEASE_SHA`, and uses it for the progress record, the diffs, `.release-state`
+and the tag. The agent shell and the operator's terminal share one checkout, so a
+checkout or commit during a 20 to 40 minute run would otherwise mark the new
+commit done for work the old one deployed. If HEAD moves, or the working tree
+changes after the first deploy, the run stops at the next check with `REFUSED:
+HEAD moved during the release` (or `the working tree changed during the
+release`), naming where it was caught. The checks run at every step boundary,
+before and after each functions batch, after the rules deploy, before each admin
+codebase attempt and after its deploy, before step 5 is recorded, and before
+`.release-state` is written.
+
+They are that dense because the deploys read the working tree: `firebase deploy`
+rebuilds `lib/` for every functions batch (the predeploy in
+`mytribe/firebase.json`), the rules deploy reads `firestore.rules`, and the admin
+`default` codebase uploads plain JS. A checkout that changes mid-step-5 ships the
+later batches from the other commit, and the fleet verify cannot tell. The run
+keeps a list of the deploys since the last passing check. When a check fails, the
+refusal and the stop message name those deploys as possibly from the other commit,
+name both shas, and drop their records, so a rerun deploys them again. When no
+deploy ran since the last passing check, the refusal says every deploy so far was
+checked.
+
+What the working-tree check compares: `git status --porcelain`, `git diff HEAD`,
+and a fingerprint of every untracked, non-ignored entry: a regular file by its
+contents (`git hash-object`), a symlink by its target, a directory (git lists an
+untracked nested repository as `sub/`) by its name, and a file that cannot be read
+by its mode. So a changed untracked file's contents count, and a dangling
+symlink, an unreadable file or a nested repository never makes the check fail.
+It costs 0.09 to 0.10s on the real checkout (measured 2026-09-14, no untracked
+files) and 0.17 to 0.22s with 500 untracked 4KB files.
+
+If one of the three git reads itself exits non-zero, the check retries once a
+second later, then refuses with `git could not read the working tree` and prints
+the command, its exit code and git's own message. That is not a claim that
+anything changed. A held `.git/index.lock` is not a cause: all three reads exit 0
+with a lock present. The release's own outputs are gitignored
+(checked with `git check-ignore`: both `.env.production.local` files, `lib/`,
+both `dist/`, both Android build dirs, `.release-*`, and the Firebase debug logs,
+which the root only ignores since #840). The two Firebase CLI calls that run
+from outside a deploy tree (`appdistribution`) now run from `mytribe/`.
+
+A change made and undone inside a single deploy is invisible to every check; the
+only defence against that is not working in the checkout while a release runs.
+`npm run deploy:bg` passes the sha it
+launched for, and step 0 refuses if HEAD is no longer that commit. When the
+wrapper let changed indexes through because of a resume, it also passes
+`RELEASE_BG_EXPECTS_INDEX_RESUME=1`, and step 2 refuses if the index step is no
+longer resumable by then, rather than deploying indexes and letting step 3 answer
+itself.
+
+Hosting and Android are recorded but never skipped: they are cheap to redo, and
+step 7 has to compare the live sites against the bundle the rerun built. Every
+skip prints a `RESUMED:` line naming the commit. The file is deleted once the
+release finishes and `.release-state` is written. A dry run neither writes nor
+deletes it. `RELEASE_FORCE_FUNCTIONS=1` also overrides the step 5 skip.
+
+A resumed step 5 deploys nothing, but it still names functions that left the
+code since the last release, with the `firebase functions:delete` line for each.
+It recomputes the list from the built `lib/` and `.release-functions`, which is
+two file reads and nothing else.
+
+A different commit never skips anything: its sha is not in the file, and the
+first step it records clears the old lines.
+
+The rule lives in `scripts/release-progress.sh`, sourced by both `release.sh`
+and `release-bg.sh`, so `npm run deploy:bg` resumes the same way the foreground
+run does.
+
+**The stop message names what is live.** A stopped run lists every step recorded
+for the commit:
+
+```
+RELEASE STOPPED during: deploying the admin functions codebases (functions:default)
+Completed and LIVE for e245053:
+    - firestore indexes (steps 2-3)
+    - firestore rules (step 4)
+    - functions:mytribe, fleet verified (step 5)
+```
+
+Fix the cause and run `npm run deploy` again on the same commit. If `main` has
+moved on in the meantime, the new commit gets a full run, because nothing
+recorded was verified for that code.
 
 ### The release checks that the deploy actually delivered
 
@@ -662,7 +889,8 @@ it off; a dry run skips it, having deployed nothing to check.
 
 **What it does not cover.** The AuntieOS codebases behind
 `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` (`default`, `reconcile`) are deployed in
-step 5b and are not verified. Extending to them is worth doing and is not done.
+step 5b and are not verified. They are retried on transient errors (#840), which
+is not the same thing. Extending the verify to them is worth doing and is not done.
 
 **Why there is no scheduled version.** A cron check would catch a hand-run
 deploy, which is what 2026-08-11 was and what this gate cannot see. It needs a
@@ -1143,9 +1371,10 @@ credentials and no network.
 
 ### What stops a release and what only gets named
 
-A release **refuses** when a REQUIRED variable resolves to nothing, or when its
-stored secret exists and the latest version is empty. It names the variable, the
-secret and the command that fixes it. Two are required today:
+A release **refuses** when a REQUIRED variable resolves to nothing, when its
+stored secret exists and the latest version is empty, or when Secret Manager
+never answered for it at all (see the timeout paragraph below). It names the
+variable, the secret and the command that fixes it. Two are required today:
 `ADMIN_WEB_APPCHECK_SITE_KEY` and `PORTAL_WEB_MAPBOX_PUBLIC_TOKEN`. Both back a
 feature that is live and that fails invisibly without them: App Check reads
 `unconfigured`, and the visit route silently drops to the SVG polyline.
@@ -1163,6 +1392,30 @@ to force.
 
 `RELEASE_SKIP_CLIENT_SECRETS=1` skips the check entirely if you know what is
 missing.
+
+**Every gcloud call in this step carries a 30-second timeout.** On 2026-09-13
+release step 0c sat silent for 16 minutes: a gcloud child had one socket in
+SYN_SENT to Google over IPv6 (a VPN was installed; IPv4 answered instantly),
+and nothing printed, so the hang read as an auth prompt (#839). It now prints a
+line per secret as it fetches, and `CLIENT_SECRETS_GCLOUD_TIMEOUT_MS` (a
+positive integer, milliseconds) overrides the default on a network known to be
+slower. Whether it is the LIST call or one secret's ACCESS call that times out,
+every affected variable is marked **unreadable, never missing**: reporting it
+as missing would tell you to create a secret that may already exist. A
+REQUIRED value that is unreadable refuses with its own exit code, 4, and
+release.sh says the store did not answer rather than "has no value". An
+OPTIONAL value that is unreadable warns instead, the same call the declaration
+already makes for a value confirmed absent. Either way the advice is the same
+IPv4/IPv6 check, never `gcloud secrets create`:
+
+```bash
+curl -4 -sS -o /dev/null -w '%{http_code}\n' https://secretmanager.googleapis.com
+curl -6 -sS -o /dev/null -w '%{http_code}\n' https://secretmanager.googleapis.com
+```
+
+After the first secret's ACCESS call times out, the rest are marked unreadable
+without being spawned: a dead route stays dead for the whole run, so the worst
+case is one 30-second wait, not one per secret.
 
 Two names are deliberately outside all of this, and **neither is in Secret
 Manager, so do not go looking for them there**. `VITE_SENTRY_RELEASE` is derived:
@@ -2032,6 +2285,24 @@ Write `.release-state` by hand only when the functions really are all live.
 The next release reads it to decide whether to deploy functions at all, so a
 premature write makes that release skip work it needed to do.
 
+**After ANY hand `firebase deploy`, clear the progress record.** Either delete
+it or make the next run ignore it:
+
+```bash
+rm .release-progress                  # or:
+RELEASE_NO_RESUME=1 npm run deploy
+```
+
+`.release-progress` describes what the release script itself shipped for a
+commit. A hand deploy changes production without touching it, so a resume would
+skip steps on the strength of a record that no longer describes what is live.
+
+**The release stopped AFTER step 5 verified** (on an admin codebase, hosting,
+Android or step 7). Do not write `.release-state` by hand. Run `npm run deploy`
+again on the same commit: `.release-progress` skips the steps that already
+shipped, and the stop message listed them. See "A stopped release resumes on the
+same commit".
+
 **A client mirror test goes red after a backend change.** The contract freeze
 doing its job. Update the doc, the frozen set and every mirror together.
 
@@ -2056,6 +2327,15 @@ npm run setup
 newer, announcing it as STALE rather than skipping. (It used to check only that
 the directory existed, which is exactly how this hid for an hour.)
 
+It also does not refuse to START over this (#841): `npm run setup` runs
+`preflight.sh` first, and a preflight failure that is ONLY this drift exits 2
+rather than 1 and no longer stops `setup` before it can install; see
+"An install either matches its lockfile or it does not" above. **Never** fix
+this by running `npm ci` inside `mytribe/web`, `auntieos-admin`, or
+`packages/geo` directly: they carry no lockfile of their own, so `npm ci`
+there exits 0 and silently installs a smaller tree than the root's. Always
+`npm run setup` (or `npm ci` at the repo root).
+
 **Gradle: "SDK location not found".** Run `npm run setup`.
 
 **Release build complains about signing.** `local.properties` needs
@@ -2070,6 +2350,71 @@ Run `npm run e2e`.
 and it is release step 0b. Fix the named job on main and release the commit that
 fixes it. `RELEASE_SKIP_CI_GATE=1` is for a gate that cannot answer, not for one
 that answered no; using it that way reproduces 2026-08-01 exactly.
+
+**A release refuses with "GitHub reports no check runs at all for `<sha>`".**
+Also step 0b, and also working as intended, but check which of two causes it
+is before doing anything else: `release.sh` swallows `gh`'s own errors (`2>/dev/null
+|| true`, so it cannot tell "genuinely no run" from "could not ask" apart from
+the refusal text you already got), and the fix is different for each. From a
+signed-in shell, run:
+
+```bash
+gh api "repos/sydeast/tribetails/actions/workflows/ci.yml/runs?head_sha=<sha>" --jq .total_count
+```
+
+The same query the gate itself uses now, not `commits/<sha>/check-runs`: that
+endpoint counts every check run on the commit, including the watcher's own and
+`main-channel.yml`'s, so it is almost never 0 and would not tell you anything.
+An error (not signed in, network unreachable) means `gh` itself could not be
+asked; fix that (`gh auth status`, `gh auth login`) and re-run the release. A
+clean `0` means `gh` is fine and `ci.yml` genuinely has no run for this
+commit: read on. Any other number means `ci.yml` does have a run and the
+release gate should have found it too; re-run the release before digging
+further.
+
+This happened for real on 2026-09-13 (#838): PR #837's merge landed on main as
+`92786e7` during a GitHub outage, where the merge API call itself came back a
+gateway error but the merge had actually completed server-side. It is a
+genuine GitHub merge, not one crafted to look like one: `gh api
+repos/<owner>/<repo>/commits/92786e7 --jq .commit.verification` reports
+`verified: true`, signed with a key that matches one of the two published at
+`https://github.com/web-flow.gpg`, GitHub's own merge-commit identity. The
+bookkeeping a merge normally does alongside that git write never finished,
+though: the PR was never marked merged, and the `push` event `ci.yml`'s
+`on: push` listens for never fired. `gh api
+repos/<owner>/<repo>/commits/92786e7/check-suites` shows exactly one check
+suite for that SHA (the operator's own hand-dispatched run, hours later),
+which is proof no push-triggered suite, and so no push event, was ever
+created for it, not just an absence in a best-effort log.
+`.github/workflows/ci.yml` has no path filter on `push`, no `[skip ci]`-style
+marker stopped it, and its push concurrency group keys on `github.run_id`
+(unique per run), so none of those repo-side knobs caused it either. The
+push event was simply never delivered.
+
+Recover by hand with:
+
+```bash
+gh workflow run ci.yml --ref main
+```
+
+`.github/workflows/ci-run-watch.yml` does this automatically now. It runs
+every 20 minutes on a **schedule**, deliberately not on `push` or
+`check_suite`: whatever swallows a push event runs through the same delivery
+pipeline a webhook-triggered watcher would also depend on, and a cron tick
+does not. Once main's HEAD has zero `ci.yml` runs on record and is older than
+10 minutes (`scripts/ci-run-watch.mjs`, `DEFAULT_MAX_AGE_MINUTES`), it
+dispatches `ci.yml` for `main` itself and writes a warning to the run's job
+summary. It will not fire twice for the same commit: before dispatching it
+asks whether `ci.yml` has ANY run at all for that SHA, of any event or
+status, so a run it dispatched on a previous tick already counts and stands
+the next tick down. That same workflow-scoped question
+(`actions/workflows/ci.yml/runs?head_sha=<sha>`) is also how `release.sh`
+itself reads CI's verdict now: not every check run on the commit (a scheduled
+watcher's own run, or `main-channel.yml`'s, used to count and could make a
+green HEAD look pending or red), only `ci.yml`'s. `RELEASE_SKIP_CI_GATE=1` is
+still there for when the gate itself cannot be asked at all (`gh` down,
+unauthenticated); this is for when it can be asked and the honest answer is
+"nothing has judged this commit yet".
 
 ---
 

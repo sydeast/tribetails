@@ -215,6 +215,8 @@ async function notifyHousehold(args: {
   uid: string;
   actorName: string | undefined;
   etaMinutes: number | undefined;
+  /** When this step was stamped (ms epoch): part of the notification's identity (#832). */
+  eventAtMs: number | undefined;
 }): Promise<{ notified: boolean; notifySkipped: string | null }> {
   const event = notificationEventFor(args.action);
   if (event === null) return { notified: false, notifySkipped: 'no_event_for_action' };
@@ -237,6 +239,7 @@ async function notifyHousehold(args: {
         ...(useEnvelope ? { batchId, visitId } : { bookingId }),
         event,
         ...(args.etaMinutes !== undefined ? { etaMinutes: args.etaMinutes } : {}),
+        ...(args.eventAtMs !== undefined ? { eventAtMs: args.eventAtMs } : {}),
       },
       args.uid,
       args.actorName,
@@ -427,6 +430,7 @@ export async function setVisitLifecycleHandler(
     uid,
     actorName: req.auth?.token?.name,
     etaMinutes: args.etaMinutes,
+    eventAtMs: Number.isFinite(Date.parse(stampedAt)) ? Date.parse(stampedAt) : undefined,
   });
 
   await writeAuditEntry({

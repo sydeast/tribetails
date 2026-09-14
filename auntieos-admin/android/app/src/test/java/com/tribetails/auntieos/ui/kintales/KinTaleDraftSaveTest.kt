@@ -478,7 +478,7 @@ class KinTaleDraftSaveTest {
         vm.send()
         advanceUntilIdle()
 
-        coVerify(exactly = 0) { notifier.notify(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { notifier.notify(any(), any(), any(), any(), any(), any()) }
         assertFalse(vm.uiState.value.sentSuccessfully)
         assertNotNull(vm.uiState.value.error)
     }

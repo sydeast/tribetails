@@ -83,6 +83,7 @@ jobs:
       android: ${{ steps.filter.outputs.android }}
       mytribe: ${{ steps.filter.outputs.mytribe }}
       mytribeRules: ${{ steps.filter.outputs.mytribeRules }}
+      mytribeScriptsEmulator: ${{ steps.filter.outputs.mytribeScriptsEmulator }}
       portal: ${{ steps.filter.outputs.portal }}
       mytribeGradle: ${{ steps.filter.outputs.mytribeGradle }}
       recorder: ${{ steps.filter.outputs.recorder }}
@@ -232,6 +233,24 @@ jobs:
               - 'mytribe/firestore.rules'
               - 'mytribe/firebase.json'
               - '.github/workflows/ci.yml'
+            # The backfill emulator tests (#870). Separate from `mytribeRules`
+            # because it answers a different question (does a backfill's real
+            # write land) and from `mytribe` because it boots an emulator.
+            # functions/src/lib is a forward guard: none of the scripts with an
+            # emulator test imports functions/src today, but several other
+            # backfills do, and the day a covered script starts to, a change
+            # there must re-run its write test. package.json and the lockfile
+            # are here because they pin the
+            # firebase-admin copy the scripts and tests share; firebase.json
+            # because `emulators:exec` reads its emulator ports from it.
+            mytribeScriptsEmulator:
+              - 'mytribe/scripts/**'
+              - 'mytribe/functions/src/lib/**'
+              - 'mytribe/functions/package.json'
+              - 'mytribe/functions/package-lock.json'
+              - 'mytribe/functions/vitest.scripts-emulator.config.ts'
+              - 'mytribe/firebase.json'
+              - '.github/workflows/ci.yml'
             portal:
               - 'mytribe/web/**'
               # Same reason as `auntieos-admin/firebase.json` on the `admin`
@@ -288,6 +307,11 @@ jobs:
               # change that dropped one of those mappings would sail through:
               # the test that catches it would not have run.
               - '.github/workflows/preview.yml'
+              # workflow-budget.test.sh (also in deploy-guard) scans every file
+              # in .github/workflows/, ci-run-watch.yml included, for a
+              # timeout-minutes on every job. A change to that file alone,
+              # touching nothing under scripts/**, must still run it.
+              - '.github/workflows/ci-run-watch.yml'
 
   admin:
     name: React admin
@@ -743,6 +767,49 @@ jobs:
       - name: Firestore rules tests
         run: npm run test:rules
 
+  # mytribe/scripts/test/*.emulator.test.ts are the only tests that prove a
+  # backfill's real write lands on Firestore. Every one is
+  # `describe.runIf(FIRESTORE_EMULATOR_HOST)`, so the `mytribe functions` job
+  # reports them skipped, and until #870 nothing started an emulator for them.
+  # When one was finally run by hand it had never passed: the tests built their
+  # Firestore client from a different firebase-admin copy than the scripts built
+  # their writes from.
+  #
+  # A copy of `mytribe-rules`, step for step, for the same reasons: a JDK for the
+  # emulator JAR, the same pinned firebase-tools, no credentials. The
+  # vitest.scripts-emulator.config.ts it runs refuses to start without
+  # FIRESTORE_EMULATOR_HOST, so running it outside the npm script fails rather
+  # than reporting green on zero tests.
+  mytribe-scripts-emulator:
+    name: MyTribe backfill emulator tests
+    needs: changes
+    if: needs.changes.outputs.mytribeScriptsEmulator == 'true' || github.event_name == 'workflow_dispatch'
+    # Same shape and install cost as `mytribe-rules`, which carries 10. The
+    # tests themselves run in seconds against the emulator; the floor is npm
+    # and the JDK, per the note at the top of `jobs:`.
+    timeout-minutes: 10
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    defaults:
+      run:
+        working-directory: mytribe/functions
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mytribe/functions/package-lock.json
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      # Pinned to the same version as `mytribe-rules` and the e2e job.
+      - name: Install firebase-tools
+        run: npm install -g firebase-tools@15.18.0
+      - name: Backfill emulator tests
+        run: npm run test:scripts:emulator
+
   portal:
     name: Kinfolk portal
     needs: changes
@@ -900,6 +967,18 @@ jobs:
             bash scripts/workflow-budget.test.sh
           else
             echo "scripts/workflow-budget.test.sh not present yet, skipping."
+          fi
+      # The decision logic ci-run-watch.yml runs on a schedule: whether a
+      # commit with no ci.yml run for HEAD is old enough to act on, and
+      # whether it has already been dispatched once. Tested against fixture
+      # JSON shaped like `gh api`'s own responses so every branch runs with
+      # no network (#838).
+      - name: Run the CI-run-watch decision test if present
+        run: |
+          if [ -f scripts/ci-run-watch.test.mjs ]; then
+            node --test scripts/ci-run-watch.test.mjs
+          else
+            echo "scripts/ci-run-watch.test.mjs not present yet, skipping."
           fi
   mytribe-gradle:
     name: Portal shared (jvm + android unit + js)

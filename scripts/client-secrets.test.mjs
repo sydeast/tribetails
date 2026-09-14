@@ -26,10 +26,15 @@ import test from 'node:test';
 import {
   APP_DIRS,
   CLIENT_VARS,
+  DEFAULT_GCLOUD_TIMEOUT_MS,
   PRODUCTION_ENV_FILE,
   ROOT,
+  SECRET_UNREADABLE,
   declaredSecretNames,
   fixCommands,
+  isGcloudTimeout,
+  listSecretsWithGcloud,
+  makeGcloudFetcher,
   renderEnvFile,
   resolveClientVars,
 } from './client-secrets.mjs';
@@ -342,6 +347,412 @@ test('a value that cannot be quoted refuses rather than writing a broken line', 
     { app: 'admin', variable: 'VITE_X', secret: 'X', kind: 'secret-manager', source: 'secret-manager', status: 'ok', value: "a'b" },
   ];
   assert.throws(() => renderEnvFile(rows), /quote or a newline/);
+});
+
+// ---------------------------------------------------------------------------
+// #839: every gcloud spawn carries a timeout, a timeout is never mistaken for
+// an ordinary failure, and a timed-out ACCESS refuses without ever advising
+// `gcloud secrets create` on a secret that may already exist. A FAKE `spawn`
+// stands in for spawnSync throughout, so none of this waits out a real 30s.
+// ---------------------------------------------------------------------------
+
+/** What a spawnSync result looks like when Node's own `timeout` option fired
+ * and killed the child with `killSignal`. */
+function timeoutResult() {
+  return {
+    status: null,
+    signal: 'SIGKILL',
+    error: Object.assign(new Error('spawnSync gcloud ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+    stdout: '',
+    stderr: '',
+  };
+}
+
+test('isGcloudTimeout recognizes both shapes a timed-out spawnSync can take, and no ordinary failure', () => {
+  assert.equal(isGcloudTimeout(timeoutResult()), true);
+  // A fake spawn in a test may set the signal without the ETIMEDOUT error
+  // object; that has to count too, or a test double becomes unable to assert
+  // the timeout path.
+  assert.equal(isGcloudTimeout({ status: null, signal: 'SIGTERM' }), true);
+  assert.equal(isGcloudTimeout({ status: 1, signal: null, error: undefined }), false);
+  assert.equal(isGcloudTimeout({ status: 0 }), false);
+  // An OOM kill (or anything else that kills the child and populates `error`
+  // with a code other than ETIMEDOUT) must not be reported as a timeout just
+  // because a signal happens to be present too.
+  assert.equal(
+    isGcloudTimeout({
+      status: null,
+      signal: 'SIGKILL',
+      error: Object.assign(new Error('spawnSync gcloud ENOMEM'), { code: 'ENOMEM' }),
+    }),
+    false,
+    'an error present with a non-ETIMEDOUT code must never be reported as a timeout',
+  );
+});
+
+test('listSecretsWithGcloud passes the timeout and kill signal to spawnSync, and a LIST timeout returns SECRET_UNREADABLE, not null', () => {
+  const calls = [];
+  const logs = [];
+  const spawn = (cmd, args, opts) => {
+    calls.push({ cmd, args, opts });
+    return timeoutResult();
+  };
+
+  const result = listSecretsWithGcloud('auntieos-ttpc', { spawn, timeoutMs: 5, log: (l) => logs.push(l) });
+
+  // A timed-out LIST is NOT the same claim as "no gcloud, no credentials":
+  // collapsing both into `null` is what made a LIST timeout fall back to a
+  // local .env and get reported as plain 'missing' (#852 review).
+  assert.equal(result, SECRET_UNREADABLE);
+  assert.notEqual(result, null);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].cmd, 'gcloud');
+  assert.equal(calls[0].opts.timeout, 5);
+  assert.equal(calls[0].opts.killSignal, 'SIGKILL');
+  assert.ok(logs.some((l) => l.includes('listing secrets')), 'no progress line before the call');
+  assert.ok(logs.some((l) => l.includes('timed out after 5ms')));
+  assert.ok(logs.some((l) => l.includes('curl -4')));
+  assert.ok(logs.some((l) => l.includes('curl -6')));
+});
+
+test('the gcloud timeout defaults to DEFAULT_GCLOUD_TIMEOUT_MS and CLIENT_SECRETS_GCLOUD_TIMEOUT_MS overrides it with a valid value', () => {
+  const calls = [];
+  const spawn = (cmd, args, opts) => {
+    calls.push(opts);
+    return { status: 0, stdout: 'SOME_SECRET\n' };
+  };
+
+  listSecretsWithGcloud('auntieos-ttpc', { spawn, log: () => {} });
+  assert.equal(calls[0].timeout, DEFAULT_GCLOUD_TIMEOUT_MS);
+
+  process.env.CLIENT_SECRETS_GCLOUD_TIMEOUT_MS = '5000';
+  try {
+    listSecretsWithGcloud('auntieos-ttpc', { spawn, log: () => {} });
+    assert.equal(calls[1].timeout, 5000, 'the env override never reached spawnSync');
+  } finally {
+    delete process.env.CLIENT_SECRETS_GCLOUD_TIMEOUT_MS;
+  }
+});
+
+test('the env override rejects a non-integer, zero or a negative value, and falls back to the default', () => {
+  const calls = [];
+  const spawn = (cmd, args, opts) => {
+    calls.push(opts.timeout);
+    return { status: 0, stdout: 'X\n' };
+  };
+
+  for (const bad of ['1500.5', '0', '-100', 'garbage']) {
+    process.env.CLIENT_SECRETS_GCLOUD_TIMEOUT_MS = bad;
+    try {
+      listSecretsWithGcloud('auntieos-ttpc', { spawn, log: () => {} });
+    } finally {
+      delete process.env.CLIENT_SECRETS_GCLOUD_TIMEOUT_MS;
+    }
+  }
+
+  assert.ok(
+    calls.every((t) => t === DEFAULT_GCLOUD_TIMEOUT_MS),
+    `a fractional, zero, negative or garbage override reached spawnSync: ${calls.join(', ')}`,
+  );
+});
+
+test('makeGcloudFetcher prints one progress line per secret as it is fetched, on stderr, before the call resolves', () => {
+  const logs = [];
+  const spawn = () => ({ status: 0, stdout: 'a-value\n' });
+  const fetcher = makeGcloudFetcher('auntieos-ttpc', ['SECRET_A'], {
+    spawn,
+    timeoutMs: 5,
+    log: (l) => logs.push(l),
+  });
+
+  assert.equal(fetcher('SECRET_A'), 'a-value\n');
+  assert.ok(
+    logs.some((l) => l.includes('fetching SECRET_A')),
+    'the step stayed silent while fetching a secret, which is the defect #839 is about',
+  );
+});
+
+test('after the first ACCESS timeout, later secrets are marked unreadable without spawning gcloud again', () => {
+  const calls = [];
+  const spawn = () => {
+    calls.push(1);
+    return timeoutResult();
+  };
+  const logs = [];
+  const fetcher = makeGcloudFetcher('auntieos-ttpc', ['SECRET_A', 'SECRET_B', 'SECRET_C'], {
+    spawn,
+    timeoutMs: 5,
+    log: (l) => logs.push(l),
+  });
+
+  assert.equal(fetcher('SECRET_A'), SECRET_UNREADABLE);
+  assert.equal(calls.length, 1, 'the first fetch should spawn gcloud exactly once');
+
+  assert.equal(fetcher('SECRET_B'), SECRET_UNREADABLE);
+  assert.equal(fetcher('SECRET_C'), SECRET_UNREADABLE);
+  assert.equal(
+    calls.length,
+    1,
+    'later secrets must not spawn gcloud again after a timeout: the worst case must be one timeout, not one per secret',
+  );
+  assert.ok(logs.some((l) => l.includes('skipping SECRET_B')));
+  assert.ok(logs.some((l) => l.includes('skipping SECRET_C')));
+});
+
+test('makeGcloudFetcher passes the timeout and kill signal to spawnSync, and a timed-out ACCESS is unreadable, not missing', () => {
+  const calls = [];
+  const logs = [];
+  const spawn = (cmd, args, opts) => {
+    calls.push(opts);
+    return timeoutResult();
+  };
+  const fetcher = makeGcloudFetcher('auntieos-ttpc', ['PORTAL_WEB_MAPBOX_PUBLIC_TOKEN'], {
+    spawn,
+    timeoutMs: 7,
+    log: (l) => logs.push(l),
+  });
+
+  const result = fetcher('PORTAL_WEB_MAPBOX_PUBLIC_TOKEN');
+
+  assert.equal(result, SECRET_UNREADABLE, 'a timed-out ACCESS must not resolve to null (= "does not exist")');
+  assert.equal(calls[0].timeout, 7);
+  assert.equal(calls[0].killSignal, 'SIGKILL');
+  assert.ok(logs.some((l) => l.includes('fetching PORTAL_WEB_MAPBOX_PUBLIC_TOKEN')));
+  assert.ok(logs.some((l) => l.includes('timed out after 7ms')));
+  assert.ok(
+    logs.some((l) => l.includes('does not mean PORTAL_WEB_MAPBOX_PUBLIC_TOKEN is missing')),
+    'the secret name has to be in the message, or an operator cannot tell which one stalled',
+  );
+  assert.ok(logs.some((l) => l.includes('curl -4')));
+  assert.ok(logs.some((l) => l.includes('curl -6')));
+});
+
+test('an ordinary gcloud failure, with no timeout, still resolves to null rather than unreadable', () => {
+  const spawn = () => ({ status: 1, error: undefined, signal: null, stdout: '' });
+
+  const fetcher = makeGcloudFetcher('auntieos-ttpc', ['SECRET_A'], { spawn, timeoutMs: 5, log: () => {} });
+  assert.equal(fetcher('SECRET_A'), null);
+
+  const listResult = listSecretsWithGcloud('auntieos-ttpc', { spawn, timeoutMs: 5, log: () => {} });
+  assert.equal(listResult, null);
+});
+
+test('a timed-out ACCESS refuses the release, and the fix commands never suggest `gcloud secrets create`', () => {
+  const store = fullStore();
+  const { rows, refusals } = resolveClientVars({
+    fetchSecret: (name) => (name === 'PORTAL_WEB_MAPBOX_PUBLIC_TOKEN' ? SECRET_UNREADABLE : store(name)),
+    release: 'abc1234',
+  });
+
+  const row = rows.find((r) => r.app === 'portal' && r.variable === 'VITE_MAPBOX_PUBLIC_TOKEN');
+  assert.equal(row.status, 'unreadable');
+  assert.ok(refusals.includes(row), 'a secret Secret Manager never answered about must still refuse the release');
+
+  const cmds = fixCommands(row, 'auntieos-ttpc');
+  assert.ok(
+    !cmds.some((c) => c.includes('gcloud secrets create') || c.includes('secrets versions add')),
+    `advised creating or setting a secret that may already exist: ${cmds.join(' | ')}`,
+  );
+  assert.ok(cmds.some((c) => c.includes('curl -4')));
+  assert.ok(cmds.some((c) => c.includes('curl -6')));
+});
+
+test('a timed-out ACCESS on an OPTIONAL variable WARNS, the same as the declaration already does for a confirmed-absent value', () => {
+  // The declaration's "REQUIRED IS NOT THE DEFAULT" paragraph, and both
+  // Sentry DSN rows above, argue that a value nothing depends on must not
+  // stop a release. That reasoning
+  // does not change just because gcloud stalled instead of answering "not
+  // found": 'unreadable' follows the SAME required/optional split as
+  // 'missing' and 'empty' (#852 review).
+  const { rows, refusals, warnings } = resolveClientVars({
+    fetchSecret: (name) => (name.endsWith('_SENTRY_DSN') ? SECRET_UNREADABLE : fullStore()(name)),
+    release: 'abc1234',
+  });
+
+  const dsnRows = rows.filter((r) => r.variable === 'VITE_SENTRY_DSN');
+  assert.equal(dsnRows.length, 2);
+  assert.ok(dsnRows.every((r) => r.status === 'unreadable'));
+  assert.equal(
+    refusals.filter((r) => r.variable === 'VITE_SENTRY_DSN').length,
+    0,
+    'an OPTIONAL value nobody could check must not refuse the release',
+  );
+  assert.equal(warnings.filter((w) => w.variable === 'VITE_SENTRY_DSN').length, 2);
+
+  // The warning's fix commands must be the network check, never a create/set
+  // pair the operator has no way to know is correct advice.
+  const dsnWarning = warnings.find((w) => w.variable === 'VITE_SENTRY_DSN');
+  const cmds = fixCommands(dsnWarning, 'auntieos-ttpc');
+  assert.ok(!cmds.some((c) => c.includes('gcloud secrets create')));
+  assert.ok(cmds.some((c) => c.includes('curl -4')));
+  assert.ok(cmds.some((c) => c.includes('curl -6')));
+});
+
+test('a REQUIRED value that is unreadable refuses; an OPTIONAL one warns, even when EVERY secret is unreadable (the shape a LIST timeout produces)', () => {
+  const { rows, refusals, warnings } = resolveClientVars({
+    fetchSecret: () => SECRET_UNREADABLE,
+    release: 'abc1234',
+  });
+
+  const secretManagerRows = rows.filter((r) => r.kind === 'secret-manager');
+  assert.ok(secretManagerRows.length > 0);
+  assert.ok(
+    secretManagerRows.every((r) => r.status === 'unreadable'),
+    'every Secret Manager-backed row must be unreadable, never missing, when the store never answered',
+  );
+
+  const requiredNames = secretManagerRows.filter((r) => r.required).map((r) => r.variable).sort();
+  const optionalNames = secretManagerRows.filter((r) => !r.required).map((r) => r.variable).sort();
+  assert.deepEqual(refusals.map((r) => r.variable).sort(), requiredNames);
+  assert.deepEqual(warnings.map((w) => w.variable).sort(), optionalNames);
+
+  for (const r of refusals) {
+    const cmds = fixCommands(r, 'auntieos-ttpc');
+    assert.ok(
+      !cmds.some((c) => c.includes('gcloud secrets create')),
+      `${r.variable}: advised creating a secret that may already exist`,
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// End-to-end: the actual CLI, a real gcloud that sleeps on PATH, and a real
+// (short) timeout. This is the exact reproduction that found the #852 review
+// blocker: a LIST timeout used to return the same `null` as "no gcloud", fall
+// back to a local .env, and refuse every value as 'missing' with `gcloud
+// secrets create` advice for a store that may hold every one of them.
+// ---------------------------------------------------------------------------
+
+test('CLI: a LIST timeout refuses (exit 4), marks Secret Manager rows unreadable, and never advises `gcloud secrets create`', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'client-secrets-cli-'));
+  const fakeGcloud = path.join(dir, 'gcloud');
+  fs.writeFileSync(fakeGcloud, '#!/bin/sh\nsleep 5\n');
+  fs.chmodSync(fakeGcloud, 0o755);
+
+  let r;
+  try {
+    r = spawnSync(
+      process.execPath,
+      // --release given, so the unrelated 'derived' VITE_SENTRY_RELEASE rows
+      // resolve too: the only refusal left standing is the one this test is
+      // about, and "has no value" cannot appear for a reason unrelated to
+      // gcloud.
+      [path.join(ROOT, 'scripts', 'client-secrets.mjs'), '--check', '--project', 'auntieos-ttpc', '--release', 'abc1234'],
+      {
+        encoding: 'utf8',
+        timeout: 15_000,
+        env: {
+          ...process.env,
+          PATH: `${dir}:${process.env.PATH}`,
+          CLIENT_SECRETS_GCLOUD_TIMEOUT_MS: '200',
+        },
+      },
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  const out = `${r.stdout || ''}\n${r.stderr || ''}`;
+  assert.equal(r.status, 4, `expected exit 4 (refused because unreadable), got ${r.status}:\n${out}`);
+  assert.ok(
+    !/gcloud secrets create/.test(out),
+    `a LIST timeout must never advise creating a secret that may already exist:\n${out}`,
+  );
+  assert.ok(!/secrets versions add/.test(out), `a LIST timeout must never advise setting a secret:\n${out}`);
+  assert.match(out, /unreadable/);
+  assert.match(out, /curl -4/);
+  assert.match(out, /curl -6/);
+  // Not "has no value": that wording claims the store answered, and it did
+  // not. The unreadable paragraph has its own wording.
+  assert.match(out, /did not answer/);
+  assert.ok(!/has no value/.test(out), `the missing-value refusal must not appear for an unreadable store:\n${out}`);
+});
+
+test('CLI: a genuinely MISSING secret and an UNREADABLE one print separate REFUSED blocks, get different advice, and exit 4', () => {
+  // LIST answers and leaves ADMIN_WEB_MAPBOX_PUBLIC_TOKEN off the list (the
+  // store answered: that one plainly does not exist). PORTAL_WEB_MAPBOX_
+  // PUBLIC_TOKEN IS on the list, but its ACCESS call sleeps and times out.
+  // One secret missing and one unreadable in the SAME run must not collapse
+  // into one message or one kind of advice (#852 review, item 2).
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'client-secrets-cli-mixed-'));
+  const fakeGcloud = path.join(dir, 'gcloud');
+  fs.writeFileSync(
+    fakeGcloud,
+    [
+      '#!/bin/sh',
+      'case "$1 $2 $3" in',
+      '  "secrets list --project")',
+      '    printf \'%s\\n\' ADMIN_WEB_APPCHECK_SITE_KEY PORTAL_WEB_MAPBOX_PUBLIC_TOKEN ADMIN_WEB_SENTRY_DSN PORTAL_WEB_SENTRY_DSN',
+      '    exit 0',
+      '    ;;',
+      '  "secrets versions access")',
+      '    name=""',
+      '    for a in "$@"; do case "$a" in --secret=*) name="${a#--secret=}" ;; esac; done',
+      '    case "$name" in',
+      '      PORTAL_WEB_MAPBOX_PUBLIC_TOKEN) sleep 5 ;;',
+      '      ADMIN_WEB_APPCHECK_SITE_KEY) printf \'fake-site-key\\n\'; exit 0 ;;',
+      '      ADMIN_WEB_SENTRY_DSN) printf \'https://example@o0.ingest.us.sentry.io/0\\n\'; exit 0 ;;',
+      '      PORTAL_WEB_SENTRY_DSN) printf \'https://example@o0.ingest.us.sentry.io/1\\n\'; exit 0 ;;',
+      '      *) exit 1 ;;',
+      '    esac',
+      '    ;;',
+      'esac',
+      'exit 1',
+      '',
+    ].join('\n'),
+  );
+  fs.chmodSync(fakeGcloud, 0o755);
+
+  let r;
+  try {
+    r = spawnSync(
+      process.execPath,
+      [path.join(ROOT, 'scripts', 'client-secrets.mjs'), '--check', '--project', 'auntieos-ttpc', '--release', 'abc1234'],
+      {
+        encoding: 'utf8',
+        timeout: 15_000,
+        env: {
+          ...process.env,
+          PATH: `${dir}:${process.env.PATH}`,
+          // A larger budget than the LIST-only test above: this run also
+          // makes three FAST, real ACCESS spawns before the one that sleeps,
+          // and a freshly spawned child process's first few spawns can be
+          // slower than a warm process's, so 200ms cut it too close and this
+          // test flaked on the fast calls, not the slow one.
+          CLIENT_SECRETS_GCLOUD_TIMEOUT_MS: '1500',
+        },
+      },
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  const out = `${r.stdout || ''}\n${r.stderr || ''}`;
+  assert.equal(r.status, 4, `expected exit 4 (at least one refusal is unreadable), got ${r.status}:\n${out}`);
+
+  // Both REFUSED blocks have to print. One says "has no value" (the store
+  // answered and does not have it); the other says the store never answered.
+  assert.match(out, /REFUSED: the web apps declare client build config that has no value/);
+  assert.match(out, /REFUSED: Secret Manager did not answer for these REQUIRED secrets in time/);
+  assert.match(out, /VITE_MAPBOX_PUBLIC_TOKEN \(admin\).*ADMIN_WEB_MAPBOX_PUBLIC_TOKEN is missing/);
+  assert.match(out, /VITE_MAPBOX_PUBLIC_TOKEN \(portal\).*PORTAL_WEB_MAPBOX_PUBLIC_TOKEN could not be read/);
+
+  // The MISSING one gets create/set advice, by name.
+  assert.match(out, /gcloud secrets create ADMIN_WEB_MAPBOX_PUBLIC_TOKEN/);
+  assert.match(out, /secrets versions add ADMIN_WEB_MAPBOX_PUBLIC_TOKEN/);
+
+  // The UNREADABLE one gets ONLY the curl checks, never create/set advice for
+  // its own name: it may already exist and hold a good value.
+  assert.ok(
+    !out.includes('gcloud secrets create PORTAL_WEB_MAPBOX_PUBLIC_TOKEN'),
+    `advised creating a secret Secret Manager never answered about:\n${out}`,
+  );
+  assert.ok(
+    !out.includes('secrets versions add PORTAL_WEB_MAPBOX_PUBLIC_TOKEN'),
+    `advised setting a secret Secret Manager never answered about:\n${out}`,
+  );
+  assert.match(out, /curl -4/);
+  assert.match(out, /curl -6/);
 });
 
 // ---------------------------------------------------------------------------
