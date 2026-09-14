@@ -1,0 +1,72 @@
+package com.tribetails.auntieos.data.repository
+
+import com.google.firebase.auth.FirebaseAuthException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+
+/**
+ * #886: the one process-lifetime scope every [AuntieRepository] launches its
+ * failed-login reports in. `AuntieOSApp.buildRepo` rebuilds the repository on a
+ * base-URL change, and a scope per instance would leave each old one's job
+ * behind. A report is one short callable that must outlive the screen.
+ */
+internal val failedLoginReportScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+/**
+ * #886: which sign-in failures count toward a lockout, and how the lockout
+ * itself is recognised, for the AuntieOS Android admin.
+ *
+ * `recordFailedLogin` counts failures, warns at 5 and locks at 10, and
+ * `beforeSignIn` refuses a locked account. Neither did anything while no client
+ * reported a failure. Mirrors `auntieos-admin/src/lib/failedLogin.ts`.
+ */
+
+/** Names the control on the sign-in screen that clears a lock: a password reset. */
+internal const val ACCOUNT_LOCKED_MSG =
+    "This account is locked after too many sign-in attempts. Use \"Forgot password?\" below to reset the password, then sign in with the new one."
+
+/**
+ * Wrong password, no such user, and the enumeration-protected form that is
+ * either. `ERROR_USER_DISABLED` and `ERROR_INVALID_EMAIL` are deliberately
+ * absent, and a network or too-many-requests failure is not a
+ * [FirebaseAuthException] at all.
+ */
+private val CREDENTIAL_ERROR_CODES = setOf(
+    "ERROR_WRONG_PASSWORD",
+    "ERROR_USER_NOT_FOUND",
+    "ERROR_INVALID_CREDENTIAL",
+    "ERROR_INVALID_LOGIN_CREDENTIALS",
+)
+
+/**
+ * `beforeSignIn` refused a locked account. The refusal arrives wrapped in
+ * Identity Toolkit's `BLOCKING_FUNCTION_ERROR_RESPONSE`, whose error code is a
+ * generic internal one, so the server's own sentence ("This account is locked.
+ * ...") is what identifies it. Checked down the cause chain.
+ */
+internal fun isAccountLockedFailure(t: Throwable): Boolean =
+    generateSequence(t) { it.cause }
+        .take(8)
+        .any { it.message?.contains("account is locked", ignoreCase = true) == true }
+
+/**
+ * #886 review: how a failed `recordFailedLogin` report is logged.
+ *
+ * A [FirebaseFunctionsException] is the server answering (a 429 rate limit, a
+ * 500): expected, handled, and not an app defect, so it is a breadcrumb only.
+ * Anything else (a transport failure, an unexpected throw) keeps going through
+ * `AuntieLog.w`, which already breadcrumbs transport failures and captures the rest.
+ */
+internal enum class FailedLoginReportLog { Breadcrumb, Warning }
+
+internal fun failedLoginReportLog(t: Throwable): FailedLoginReportLog =
+    if (t is com.google.firebase.functions.FirebaseFunctionsException) FailedLoginReportLog.Breadcrumb
+    else FailedLoginReportLog.Warning
+
+/** True only for the failures a guessed password produces. */
+internal fun isCredentialSignInFailure(t: Throwable): Boolean {
+    if (isAccountLockedFailure(t)) return false
+    val code = (t as? FirebaseAuthException)?.errorCode ?: return false
+    return code in CREDENTIAL_ERROR_CODES
+}

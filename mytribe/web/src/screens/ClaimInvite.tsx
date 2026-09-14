@@ -6,6 +6,7 @@ import { parseInviteId, stepForPreview, validateNewPassword, withTimeout, type C
 import {
   refreshEmailVerification,
   resendVerificationEmail,
+  sendReset,
   signIn,
   signInWithToken,
   useAuth,
@@ -42,6 +43,7 @@ export function ClaimInvite() {
   // to retry, it is a step the invitee has to take, and the two need different
   // cards. The invite stays live the whole time.
   const [needsVerification, setNeedsVerification] = useState(false);
+  const [resetState, setResetState] = useState<'idle' | 'sending' | 'sent'>('idle');
   const acceptedForUid = useRef<string | null>(null);
   const { signOut, signingOut } = useSignOut();
 
@@ -121,6 +123,24 @@ export function ClaimInvite() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step?.kind, uid]);
+
+  /**
+   * #886: the reset path. A locked account's message names "Forgot password?",
+   * and a returning invitee who is locked out has no other screen to find it on.
+   * Sent to the invited address, the only account this card signs in.
+   */
+  async function handleForgot(invitedEmail: string) {
+    if (resetState === 'sending' || inFlight) return;
+    setActionError(null);
+    setResetState('sending');
+    try {
+      await sendReset(invitedEmail);
+      setResetState('sent');
+    } catch {
+      setResetState('idle');
+      setActionError("Couldn't send reset email. Try again in a moment.");
+    }
+  }
 
   async function handleCreateOrSignIn(invitedEmail: string, password: string) {
     setActionError(null);
@@ -230,6 +250,8 @@ export function ClaimInvite() {
             setActionError(null);
           }}
           onSubmit={(password) => void handleCreateOrSignIn(step.invitedEmail, password)}
+          resetState={resetState}
+          onForgotPassword={() => void handleForgot(step.invitedEmail)}
         />
       ) : actionError !== null ? (
         <ErrorCard
@@ -425,6 +447,8 @@ function CreateAccountCard(props: {
   error: string | null;
   onToggleMode: () => void;
   onSubmit: (password: string) => void;
+  resetState: 'idle' | 'sending' | 'sent';
+  onForgotPassword: () => void;
 }) {
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -517,6 +541,20 @@ function CreateAccountCard(props: {
           {props.inFlight ? <BusyLabel>Working…</BusyLabel> : props.signInMode ? 'Sign in & join' : 'Create account & join'}
         </button>
       </form>
+
+      {props.signInMode && (
+        <div className="forgotrow">
+          {/* #886: the reset path the locked message names ("below"). */}
+          <a onClick={props.onForgotPassword}>
+            {props.resetState === 'sending' ? 'Sending reset link…' : 'Forgot password?'}
+          </a>
+          {props.resetState === 'sent' && (
+            <p className="subline" role="status">
+              Reset link sent. Check your inbox.
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="forgotrow">
         <a onClick={props.onToggleMode}>

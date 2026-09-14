@@ -37,8 +37,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.kinfolk.portal.auth.ACCOUNT_LOCKED_MESSAGE
+import com.kinfolk.portal.auth.AccountLockedException
 import com.kinfolk.portal.auth.AuthRepository
 import com.kinfolk.portal.auth.AuthState
+import com.kinfolk.portal.auth.WRONG_CREDENTIALS_MESSAGE
 import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.firebase.FunctionsClient
 import com.kinfolk.portal.theme.KinfolkBrand
@@ -83,6 +86,8 @@ fun ClaimInviteScreen(
     var done by remember { mutableStateOf(false) }
     var claimedFamilyId by remember { mutableStateOf("") }
     var acceptedForUid by remember { mutableStateOf<String?>(null) }
+    var resetting by remember { mutableStateOf(false) }
+    var resetSent by remember { mutableStateOf(false) }
 
     LaunchedEffect(inviteId) {
         try {
@@ -242,11 +247,35 @@ fun ClaimInviteScreen(
                                         if (!signInMode && isEmailAlreadyInUse(t.message)) {
                                             signInMode = true
                                             actionError = "You already have an account. Enter your password to sign in."
+                                        } else if (t is AccountLockedException) {
+                                            // #886: names "Forgot password?", which this card now has.
+                                            actionError = t.message ?: ACCOUNT_LOCKED_MESSAGE
+                                        } else if (signInMode && repo.isCredentialFailure(t)) {
+                                            actionError = WRONG_CREDENTIALS_MESSAGE
                                         } else {
                                             actionError = t.message ?: "Could not continue. Try again."
                                         }
                                     } finally {
                                         inFlight = false
+                                    }
+                                }
+                            },
+                            resetting = resetting,
+                            resetSent = resetSent,
+                            // #886: a locked invitee's way out, sent to the invited address
+                            // the same way SignInScreen's link sends it.
+                            onForgotPassword = {
+                                resetSent = false
+                                actionError = null
+                                scope.launch {
+                                    resetting = true
+                                    try {
+                                        repo.sendPasswordReset(step.invitedEmail)
+                                        resetSent = true
+                                    } catch (t: Throwable) {
+                                        actionError = "Couldn't send reset email. Try again in a moment."
+                                    } finally {
+                                        resetting = false
                                     }
                                 }
                             },
@@ -332,6 +361,9 @@ private fun ClaimCreateAccount(
     error: String?,
     onToggleMode: () -> Unit,
     onSubmit: (password: String) -> Unit,
+    resetting: Boolean = false,
+    resetSent: Boolean = false,
+    onForgotPassword: () -> Unit = {},
 ) {
     val type = LocalKinfolkTypography.current
     var password by remember { mutableStateOf("") }
@@ -402,6 +434,18 @@ private fun ClaimCreateAccount(
                     else -> "Create account & join"
                 },
             )
+        }
+        if (signInMode) {
+            // #886: the reset path a locked account's message names. Sent to the
+            // invited address, which is the only account this card signs in.
+            Text(
+                if (resetting) "Sending reset link…" else "Forgot password?",
+                style = type.sansMeta.copy(color = KinfolkBrand.KinfolkOrange),
+                modifier = Modifier.clickable(enabled = !resetting && !inFlight, onClick = onForgotPassword),
+            )
+            if (resetSent) {
+                Text("Reset link sent. Check your inbox.", style = type.sansMeta, textAlign = TextAlign.Center)
+            }
         }
         Text(
             if (signInMode) "New here? Set a password instead" else "Already have a password? Sign in",

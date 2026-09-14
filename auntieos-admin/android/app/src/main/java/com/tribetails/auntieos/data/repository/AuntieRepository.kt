@@ -27,6 +27,9 @@ import com.tribetails.auntieos.ui.admin.scheduling.calendarSyncRunFrom
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.voice.VoiceAccessToken
 import kotlinx.coroutines.async
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.coroutineScope
@@ -87,7 +90,17 @@ class AuntieRepository(
      * and the claim cache move together.
      */
     authProvider: () -> FirebaseAuth = { FirebaseAuth.getInstance() },
+    /**
+     * #886: where a failed sign-in's `recordFailedLogin` report runs, detached
+     * from the sign-in so the error reaches the screen without waiting on it.
+     * Production shares [failedLoginReportScope], so a repository rebuilt on a
+     * base-URL change never leaves an orphaned job; a test passes `Unconfined`.
+     */
+    private val reportScope: CoroutineScope = failedLoginReportScope,
 ) {
+    /** Test seam: which scope reports run in. */
+    internal val reportScopeForTest: CoroutineScope get() = reportScope
+
     private val firestore by lazy(firestoreProvider)
     private val storage by lazy { FirebaseStorage.getInstance() }
     private val auth by lazy(authProvider)
@@ -112,7 +125,17 @@ class AuntieRepository(
         require(email.isNotBlank()) { "Email is required." }
         require(password.isNotBlank()) { "Password is required." }
         authMutex.withLock {
-            auth.signInWithEmailAndPassword(email.trim(), password).await()
+            try {
+                auth.signInWithEmailAndPassword(email.trim(), password).await()
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                // #886: count a guessed password toward the lockout, in the
+                // background, and say "locked" plainly when beforeSignIn refused.
+                if (isCredentialSignInFailure(t)) reportFailedLoginInBackground(email.trim())
+                if (isAccountLockedFailure(t)) throw IllegalStateException(ACCOUNT_LOCKED_MSG, t)
+                throw t
+            }
             val token = auth.currentUser?.getIdToken(true)?.await()
             if (token?.claims?.get("admin") != true) {
                 endSession()
@@ -122,6 +145,35 @@ class AuntieRepository(
         }
         Unit
     }.onFailure { AuntieLog.e("Admin sign-in failed", it) }
+
+    /** #886: fire and forget. Never throws into the sign-in that called it. */
+    private fun reportFailedLoginInBackground(email: String) {
+        try {
+            reportScope.launch { reportFailedLogin(email) }
+        } catch (t: Throwable) {
+            AuntieLog.w("recordFailedLogin report could not start", t)
+        }
+    }
+
+    /**
+     * #886: tells `recordFailedLogin` a sign-in failed on a credential error.
+     * Unauthenticated; the server answers `{ ok: true }` for every email, so
+     * nothing reads the result. Swallows its own failures after logging them.
+     */
+    internal suspend fun reportFailedLogin(email: String) {
+        try {
+            functions.getHttpsCallable("recordFailedLogin").call(mapOf("email" to email)).awaitCallable()
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            when (failedLoginReportLog(t)) {
+                // The server refused the report (rate limit, 500). Not a defect: breadcrumb only.
+                FailedLoginReportLog.Breadcrumb ->
+                    AuntieLog.i("recordFailedLogin report refused: ${t.javaClass.simpleName}: ${t.message}")
+                FailedLoginReportLog.Warning -> AuntieLog.w("recordFailedLogin report failed", t)
+            }
+        }
+    }
 
     suspend fun sendPasswordReset(email: String): Result<Unit> = runCatching {
         require(email.isNotBlank()) { "Email is required." }

@@ -1182,6 +1182,9 @@ service cloud.firestore {
  // monitoring; client writes denied (admin SDK in Cloud Functions bypasses).
     match /ipRateLimits/{key}                   { allow read: if isAuntie(); allow write: if false; }
     match /failedLoginEmailRateLimits/{key}     { allow read: if isAuntie(); allow write: if false; }
+ // #886: failed sign-ins against addresses that are not accounts, keyed by email
+ // hash. Written only by recordFailedLogin through the admin SDK.
+    match /unknownLoginAttempts/{id}            { allow read: if isAuntie(); allow write: if false; }
     match /passwordResetEmailRateLimits/{key}   { allow read: if isAuntie(); allow write: if false; }
     match /stripeEvents/{eventId}               { allow read: if isAuntie(); allow write: if false; }
  // `stripeEvents` is keyed per EVENT; this one is keyed per PAYMENTINTENT, so

@@ -5,6 +5,7 @@ import { createHash } from 'crypto';
 import { z } from 'zod';
 import { auth, db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
+import { captureFunctionError } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { enqueueNotification } from '../notifications';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
@@ -155,11 +156,41 @@ interface LoginSecurityDoc {
   updatedAtMs: number;
 }
 
-const RecordFailedArgs = z.object({
+/**
+ * #886 review: `ip` and `userAgent` are optional and no client sends them, but
+ * when sent they are stored on every attempt entry. Capped so nine oversized
+ * reports cannot push `clients/{uid}/security/loginAttempts` toward the 1 MiB
+ * document limit.
+ */
+const CALLER_FIELD_MAX = 256;
+
+export const RecordFailedLoginArgs = z.object({
   email: z.string().email(),
-  ip: z.string().optional(),
-  userAgent: z.string().optional(),
+  ip: z.string().max(CALLER_FIELD_MAX).optional(),
+  userAgent: z.string().max(CALLER_FIELD_MAX).optional(),
 });
+
+/**
+ * #886: the whole response, for every caller and every outcome.
+ *
+ * The caller is unauthenticated, so anything that varies here tells a stranger
+ * something about an account. The old response did: an unknown email came back
+ * `remainingBeforeLock: 10` while a real one counted down, and `lockedUntilMs`
+ * said exactly when a locked account would open again. So the callable answers
+ * `{ ok: true }` whether or not the email is an account, whether or not this
+ * call warned or locked, and whether or not an alert failed to send. The
+ * signed-in client never needed the numbers: a locked account is told so by
+ * `beforeSignIn`'s refusal on its next sign-in, which only the person holding
+ * the right password can reach.
+ *
+ * The only errors left are ones that say nothing about the account: a malformed
+ * request (`invalid-argument`) and the per-IP and per-email rate limits
+ * (`resource-exhausted`), which count reports for unknown emails exactly as
+ * they count them for real ones.
+ */
+export const RecordFailedLoginResult = z.object({ ok: z.literal(true) }).strict();
+export type RecordFailedLoginResponse = z.infer<typeof RecordFailedLoginResult>;
+const RECORDED: RecordFailedLoginResponse = { ok: true };
 
 async function uidForEmail(email: string): Promise<string | null> {
   try {
@@ -429,50 +460,133 @@ type LockDecision =
       warnStartedAtMs: number | null;
     };
 
-export interface RecordFailedLoginResult {
-  /** Remaining failures within 20-min window before lockout fires. */
-  remainingBeforeLock: number;
-  locked: boolean;
-  lockedUntilMs: number | null;
-}
-
 export async function recordFailedLoginHandler(
   req: CallableRequest<unknown>,
-): Promise<RecordFailedLoginResult> {
-  const args = RecordFailedArgs.parse(req.data);
-
+): Promise<RecordFailedLoginResponse> {
   // Server-side IP (not the client-supplied args.ip which can be spoofed).
   const remoteIp =
-    (req.rawRequest.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ??
-    req.rawRequest.ip ??
+    (req.rawRequest?.headers?.['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ??
+    req.rawRequest?.ip ??
     'unknown';
+  // #886 review: the IP limit runs BEFORE the request is parsed, so malformed
+  // requests spend the same per-IP budget as well-formed ones. And a bad request
+  // is `invalid-argument`, not a thrown ZodError: `wrapCallable` turns anything
+  // that is not an HttpsError into `internal`, captures it to Sentry and writes an
+  // audit failure row, so an unauthenticated caller could mint unlimited Sentry
+  // events. Same order and code as `requestPasswordReset`.
   await checkIpRateLimit(remoteIp);
+  const parsed = RecordFailedLoginArgs.safeParse(req.data);
+  if (!parsed.success) {
+    throw new HttpsError('invalid-argument', 'email (valid email address) is required');
+  }
+  const args = parsed.data;
   // Per-target rate limit. Even if the attacker rotates IPs, a single target
   // email can only be reported EMAIL_RATE_LIMIT times per window.
   await checkEmailRateLimit(args.email);
 
-  const uid = await uidForEmail(args.email);
-  if (!uid) {
-    // Audit: failed login attempt against unknown email. Admin must see this
-    // to detect credential-stuffing patterns even when no real account hit.
-    await writeAuditEntry({
-      event: AUDIT_EVENTS.AUTH_LOGIN_FAIL,
-      severity: 'warn',
-      actorRole: 'SYSTEM',
-      description: `Failed login (no matching account) for ${args.email}`,
-      payload: { email: args.email, ip: remoteIp, reason: 'no-such-user' },
-      status: 'FAILURE',
-    }).catch((err) => {
-      logEvent({
-        severity: 'warn',
-        function: 'recordFailedLogin',
-        event: 'audit.write.failed',
-        errorMessage: (err as Error)?.message,
-      });
+  // #886: from here on nothing reaches the caller but `{ ok: true }`. A failure
+  // below (a Firestore transaction, a household alert the dispatcher refused)
+  // used to fail the call, and only a REAL account can get that far, so an
+  // error was itself an answer to "is this an account". It is logged and sent
+  // to Sentry instead. Nothing depends on the throw: an alert that did not go
+  // out is retried off the saved `lockAlertsPendingForMs` marker by the next
+  // failed login, not by the client retrying this call.
+  try {
+    const uid = await uidForEmail(args.email);
+    if (uid) {
+      await recordAccountFailure(uid, args, remoteIp);
+    } else {
+      await recordUnknownEmailFailure(args.email, remoteIp);
+    }
+  } catch (err) {
+    logEvent({
+      severity: 'error',
+      function: 'recordFailedLogin',
+      event: 'recordFailedLogin.failed',
+      errorMessage: (err as Error)?.message,
     });
-    return { remainingBeforeLock: THRESHOLD_LOCK, locked: false, lockedUntilMs: null };
+    try {
+      captureFunctionError(err, { function: 'recordFailedLogin' });
+    } catch {
+      // Reporting is best-effort; the response is the same either way.
+    }
   }
+  return { ...RECORDED };
+}
 
+/**
+ * #886: a failed sign-in for an email that is not an account.
+ *
+ * TIMING. This does the same WORK as the real-account path rather than
+ * returning early, so the two are not told apart by how fast the call answers:
+ * both have already paid for the IP and email rate-limit transactions and the
+ * `getUserByEmail` lookup, and both now pay for one audit write and one
+ * read-prune-write transaction over an `attempts` array. Here that transaction
+ * runs on `unknownLoginAttempts/{emailHash}` (hashed like the rate limits, no
+ * address stored), which also keeps a per-address count for spotting
+ * credential stuffing against addresses that are not accounts.
+ *
+ * WHAT STILL DIFFERS, stated rather than hidden: on the calls that cross a
+ * threshold for a REAL account (the 5th failure's warning, the 10th's lock
+ * alerts, and a retry of either while their marker is pending) the real path
+ * enqueues notifications and this one does not, so those few calls take longer.
+ * Seeing it takes five reports against one address inside ten minutes, the
+ * per-email limit allows fifteen a day, and every one of those calls warns or
+ * locks the real owner, so the probe announces itself to the household.
+ */
+async function recordUnknownEmailFailure(email: string, remoteIp: string): Promise<void> {
+  // Audit: failed login attempt against unknown email. Admin must see this
+  // to detect credential-stuffing patterns even when no real account hit.
+  await writeAuditEntry({
+    event: AUDIT_EVENTS.AUTH_LOGIN_FAIL,
+    severity: 'warn',
+    actorRole: 'SYSTEM',
+    // #886 review: an address that is not an account is typed by a stranger and
+    // may be someone else's; it is stored hashed, as `requestPasswordReset` does,
+    // still stable per address for spotting credential stuffing.
+    description: 'Failed login (no matching account)',
+    payload: { emailHash: hashEmail(email), ip: remoteIp, reason: 'no-such-user' },
+    status: 'FAILURE',
+  }).catch((err) => {
+    logEvent({
+      severity: 'warn',
+      function: 'recordFailedLogin',
+      event: 'audit.write.failed',
+      errorMessage: (err as Error)?.message,
+    });
+  });
+
+  const ref = db().collection('unknownLoginAttempts').doc(hashEmail(email));
+  await db().runTransaction(async (tx) => {
+    const nowMs = Date.now();
+    const prior = ((await tx.get(ref)).data()?.attempts as LoginAttempt[] | undefined) ?? [];
+    const attempts = pruneAttempts([...prior, { ts: nowMs }], nowMs);
+    tx.set(ref, { attempts, updatedAtMs: nowMs }, { merge: true });
+  });
+}
+
+/**
+ * #886: the caller-supplied `ip` and `userAgent`, only when they were sent.
+ *
+ * Every sign-in client sends `{ email }` alone. Spreading `args.ip` straight
+ * into a stored object put `undefined` in it, and real Firestore refuses the
+ * whole write ("Cannot use undefined as a Firestore value"), so the attempt was
+ * never counted and the account could never lock. The emulator run caught it;
+ * the write-through test mock stores `undefined` without complaint.
+ */
+function optionalCallerFields(args: z.infer<typeof RecordFailedLoginArgs>): { ip?: string; userAgent?: string } {
+  return {
+    ...(args.ip !== undefined ? { ip: args.ip } : {}),
+    ...(args.userAgent !== undefined ? { userAgent: args.userAgent } : {}),
+  };
+}
+
+/** A failed sign-in for a real account: count it, then warn, lock and alert as the thresholds say. */
+async function recordAccountFailure(
+  uid: string,
+  args: z.infer<typeof RecordFailedLoginArgs>,
+  remoteIp: string,
+): Promise<void> {
   // Audit: failed login for a real account. Per-attempt entry. The lock event
   // below (if it fires) gets its own entry.
   await writeAuditEntry({
@@ -481,7 +595,7 @@ export async function recordFailedLoginHandler(
     actorRole: 'PRIMARY',
     actorUid: uid,
     description: `Failed login for ${args.email}`,
-    payload: { email: args.email, ip: remoteIp, userAgent: args.userAgent },
+    payload: { email: args.email, ip: remoteIp, ...optionalCallerFields(args) },
     status: 'FAILURE',
   }).catch((err) => {
     logEvent({
@@ -513,7 +627,7 @@ export async function recordFailedLoginHandler(
     }
 
     const nextAttempts = pruneAttempts(
-      [...current.attempts, { ts: nowMs, ip: args.ip, userAgent: args.userAgent }],
+      [...current.attempts, { ts: nowMs, ...optionalCallerFields(args) }],
       nowMs,
     );
     const countWarn = attemptsInWindow(nextAttempts, WINDOW_WARN_MS, nowMs);
@@ -567,21 +681,17 @@ export async function recordFailedLoginHandler(
       if (decision.pendingLockStartedAtMs !== null) {
         await sendLockAlerts(uid, args.email, decision.pendingLockStartedAtMs);
       }
-      return { remainingBeforeLock: 0, locked: true, lockedUntilMs: decision.lockedUntilMs };
+      return;
     }
     case 'lockedNow': {
       await sendLockAlerts(uid, args.email, decision.lockStartedAtMs);
-      return { remainingBeforeLock: 0, locked: true, lockedUntilMs: decision.lockedUntilMs };
+      return;
     }
     case 'counted': {
       if (decision.warnStartedAtMs !== null) {
         await sendWarningAlerts(uid, args.email, decision.warnStartedAtMs, decision.countWarn);
       }
-      return {
-        remainingBeforeLock: Math.max(0, THRESHOLD_LOCK - decision.countLock),
-        locked: false,
-        lockedUntilMs: null,
-      };
+      return;
     }
     default: {
       const exhaustive: never = decision;

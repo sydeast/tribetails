@@ -14,8 +14,9 @@ import { useCallback, useRef, useState, useSyncExternalStore } from 'react';
 // neither side touches an uninitialized binding during module evaluation. The
 // old dynamic import here never split a chunk anyway — activeTribe is
 // statically imported by the router and most screens.
-import { signOutAllDevices } from '../api/authApi';
+import { reportFailedLogin, signOutAllDevices } from '../api/authApi';
 import { clearAccess, clearActiveTribeSession } from './activeTribe';
+import { isCredentialSignInError } from './authErrors';
 import { auth, activateAppCheck } from './firebase';
 import { queryClient } from './queryClient';
 
@@ -62,11 +63,36 @@ export function ensureRecaptcha(): Promise<void> {
   return recaptchaReady;
 }
 
-/** Email/password sign-in. Waits for the reCAPTCHA interceptor first. */
+/**
+ * Email/password sign-in. Waits for the reCAPTCHA interceptor first.
+ *
+ * #886: a credential failure is reported to `recordFailedLogin` on the way out,
+ * so the lockout and the household warning actually happen. Here and not in the
+ * screens, because SignIn and ClaimInvite both sign in through this function.
+ * The report never holds up or replaces the error: the original rejection is
+ * rethrown on the same tick.
+ */
 export async function signIn(email: string, password: string): Promise<User> {
   await ensureRecaptcha();
-  const cred = await signInWithEmailAndPassword(auth, email, password);
-  return cred.user;
+  try {
+    const cred = await signInWithEmailAndPassword(auth, email, password);
+    return cred.user;
+  } catch (err) {
+    reportCredentialFailure(email, err);
+    throw err;
+  }
+}
+
+/** Fire and forget. Swallows its own failures after logging them. */
+function reportCredentialFailure(email: string, err: unknown): void {
+  if (!isCredentialSignInError(err)) return;
+  try {
+    reportFailedLogin(email).catch((reportErr: unknown) => {
+      console.warn('[Auth] recordFailedLogin report failed:', reportErr);
+    });
+  } catch (reportErr) {
+    console.warn('[Auth] recordFailedLogin report failed:', reportErr);
+  }
 }
 
 /** Custom-token sign-in (claim flow: claimInviteSignup returns the token). */
