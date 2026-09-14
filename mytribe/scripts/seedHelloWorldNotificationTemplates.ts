@@ -12,8 +12,7 @@
  * `gcloud auth application-default login` or a service-account key
  * referenced via GOOGLE_APPLICATION_CREDENTIALS).
  */
-import { initializeApp } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { initializeApp, getFirestore, FieldValue } from './lib/firebaseAdmin';
 import { NOTIFICATION_CATALOG } from '../functions/src/notifications/catalog';
 
 async function main(): Promise<void> {

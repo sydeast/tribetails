@@ -30,8 +30,7 @@
  * Application Default Credentials. Fails loud if creds missing.
  */
 
-import { initializeApp } from 'firebase-admin/app';
-import { getFirestore, type Firestore } from 'firebase-admin/firestore';
+import { initializeApp, getFirestore, type Firestore } from './lib/firebaseAdmin';
 
 // ---------------------------------------------------------------------------
 // Demo family ids — these must match the placeholders already in the

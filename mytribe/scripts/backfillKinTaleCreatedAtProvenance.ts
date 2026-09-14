@@ -129,8 +129,7 @@
  * Runbook: run DRY first, read the plan and the refusals, then re-run with
  * --allow-prod. The real write is an operator step, never an agent's.
  */
-import { getApps, initializeApp } from 'firebase-admin/app';
-import { getFirestore, type Firestore } from 'firebase-admin/firestore';
+import { getApps, initializeApp, getFirestore, type Firestore } from './lib/firebaseAdmin';
 import {
   CREATED_AT_SOURCE_FIELD,
   canonicalInstant,

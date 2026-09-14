@@ -74,8 +74,7 @@
  * Runbook: run DRY first, read the count and the refusals, then re-run with
  * --allow-prod. The real write is an operator step, never an agent's.
  */
-import { getApps, initializeApp } from 'firebase-admin/app';
-import { getFirestore, Timestamp, type Firestore } from 'firebase-admin/firestore';
+import { getApps, initializeApp, getFirestore, Timestamp, type Firestore } from './lib/firebaseAdmin';
 
 export const SLOTS_COLLECTION = 'booking_time_slots';
 

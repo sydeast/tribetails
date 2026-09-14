@@ -612,12 +612,34 @@ banner "0b. CI verdict for HEAD"
 CI_E2E_MATCH='e2e'
 CI_E2E_LOOKBACK=15
 
-# ci_check_runs <sha>: one "name<TAB>status<TAB>conclusion" line per check run.
-# The API's default filter is `latest`, one run per check name, so a re-run
-# supersedes the run it replaced rather than both being counted.
+# ci_check_runs <sha>: one "name<TAB>status<TAB>conclusion" line per JOB of
+# ci.yml's OWN run for this commit, not every check run on it (#838/#856).
+#
+# The first version of this asked `commits/<sha>/check-runs`, which counts
+# every check run on a commit regardless of which workflow created it: a
+# scheduled workflow's own run counts too (ci-run-watch.yml, #838, ticks every
+# 20 minutes; nightly-release.yml would be the same trap once #851 turns it
+# on), and so does main-channel.yml's push-triggered run. That meant a
+# watcher tick still `in_progress` made this gate say "CI has not finished"
+# for a HEAD whose actual CI was long since green, a watcher tick that failed
+# to run `gh` made HEAD look red, and all of it shared ONE page of 100 with
+# CI's own runs, so on a busy day CI's real jobs (and the e2e job the lookback
+# below depends on) could fall off the page entirely.
+#
+# So this asks for ci.yml's OWN run for the commit first, the same
+# workflow-scoped query scripts/ci-run-watch.mjs uses, and reads THAT run's
+# jobs. A commit can only ever have a handful of ci.yml runs (a push run,
+# maybe a hand re-run after a fix), so this needs no pagination past the
+# default page, and `.workflow_runs[0]` is the most recent one if there is
+# more than one, the same "latest wins" rule the old check-runs query got from
+# the API's own default filter.
 ci_check_runs() {
-  gh api "repos/{owner}/{repo}/commits/$1/check-runs?per_page=100" \
-    --jq '.check_runs[] | [.name, .status, (.conclusion // "")] | @tsv' 2>/dev/null || true
+  local sha="$1" run_id
+  run_id="$(gh api "repos/{owner}/{repo}/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=1" \
+    --jq '.workflow_runs[0].id // empty' 2>/dev/null || true)"
+  [ -n "$run_id" ] || return 0
+  gh api "repos/{owner}/{repo}/actions/runs/$run_id/jobs?per_page=100" \
+    --jq '.jobs[] | [.name, .status, (.conclusion // "")] | @tsv' 2>/dev/null || true
 }
 
 # ci_verdict <status> <conclusion>: pass | pending | fail.
@@ -809,11 +831,13 @@ else
   # stored, because a release tag kept by hand in a .env is a tag that names the
   # last release someone remembered to edit it for.
   #
-  # THE EXIT CODE IS READ, not just its truthiness, because there are three
-  # answers and only one of them is good: resolved (0), refused (1), and could
-  # not look at all (3). Collapsing the third into the first is the same mistake
-  # step 1b's comment warns about: "no secrets found" and "could not look" must
-  # never print the same.
+  # THE EXIT CODE IS READ, not just its truthiness, because there are four
+  # answers and only one of them is good: resolved (0), refused for a bad
+  # value (1), could not look at all (3), and refused because Secret Manager
+  # never answered for a required secret (4, #839/#852). Collapsing any of
+  # these into another is the same mistake step 1b's comment warns about:
+  # "no secrets found" and "could not look" must never print the same, and now
+  # neither must "the value is bad" and "nobody could check the value".
   CLIENT_RC=0
   node "$ROOT/scripts/client-secrets.mjs" --write \
     --project "$PROJECT" --release "$(git rev-parse --short HEAD)" || CLIENT_RC=$?
@@ -826,6 +850,16 @@ else
       ylw "client config: NOT CHECKED. Neither Secret Manager nor the apps' own"
       ylw "  .env files could be read, so nothing here judged what the build will"
       ylw "  compile in. The names it could not verify are listed above."
+      ;;
+    4)
+      red ""
+      red "REFUSED: Secret Manager did not answer for a required secret in time."
+      red "  This is NOT the same as missing: the secret may exist and hold a good"
+      red "  value, gcloud simply never answered. The names and the IPv4/IPv6 check"
+      red "  are listed above; run them before creating or setting anything."
+      red ""
+      red "  To ship anyway, knowing what could not be verified: RELEASE_SKIP_CLIENT_SECRETS=1"
+      exit 1
       ;;
     *)
       red ""

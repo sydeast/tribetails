@@ -129,8 +129,13 @@
  *     the runner at the bottom and is untested by vitest on purpose.
  */
 
-import { getApps, initializeApp, applicationDefault } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import {
+  getApps,
+  initializeApp,
+  applicationDefault,
+  getFirestore,
+  FieldValue,
+} from './lib/firebaseAdmin';
 import {
   MIRROR_ORIGIN_FAMILY,
   MIRROR_ORIGIN_FLAT,

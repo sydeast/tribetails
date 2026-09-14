@@ -41,8 +41,14 @@
  *   ts-node --project ../scripts/tsconfig.json ../scripts/unify_settings_docs.ts --apply
  */
 
-import { getApps, initializeApp, applicationDefault, getApp } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import {
+  getApps,
+  initializeApp,
+  applicationDefault,
+  getApp,
+  getFirestore,
+  FieldValue,
+} from './lib/firebaseAdmin';
 import * as fs from 'fs';
 import * as path from 'path';
 
