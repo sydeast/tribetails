@@ -189,6 +189,13 @@ describe('#908 the per-IP key: IPv6 /64, IPv4-mapped IPv6 as IPv4, IPv4 unchange
     expect(mocks.logEvent).not.toHaveBeenCalled();
   });
 
+  it('ipRateLimitKey, called directly, keys every spelling on the same /64 (#910 will call it on raw input)', () => {
+    for (const s of ['[2001:db8:1:2::aaaa]:443', '[2001:db8:1:2::aaaa]', '2001:DB8:1:2::AAAA', '2001:0db8:0001:0002::aaaa%eth0']) {
+      expect(ipRateLimitKey(s), s).toBe('2001:db8:1:2::/64');
+    }
+    expect(ipRateLimitKey('[::ffff:203.0.113.9]:443')).toBe('203.0.113.9');
+  });
+
   it('a bracketed address with a port is keyed on its /64, not on a whole-address string', async () => {
     await checkIpRateLimit(raw('[2001:db8:1:2::aaaa]:443'));
     await checkIpRateLimit(raw('2001:db8:1:2::bbbb'));
