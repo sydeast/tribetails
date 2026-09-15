@@ -27,7 +27,13 @@ vi.mock('../src/lib/firestoreAdmin', () => ({
 }));
 vi.mock('../src/notifications', () => ({ enqueueNotification: enqueueMock }));
 vi.mock('../src/lib/logger', () => ({ logEvent: logEventMock }));
-vi.mock('../src/auth/loginSecurity', () => ({ checkIpRateLimit: checkIpRateLimitMock }));
+vi.mock('../src/auth/loginSecurity', () => ({
+  checkIpRateLimit: checkIpRateLimitMock,
+  // #891: no account in this file is locked; requestPasswordResetLocked.test.ts covers locks.
+  activeLockStartedAtMs: vi.fn(async () => null),
+  // #908: the TTL stamp; rateLimitTtl.test.ts asserts its value.
+  rateLimitExpiresAt: vi.fn(() => 'expires-at'),
+}));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: writeAuditEntryMock }));
 
 const TEST_EMAIL = 'pepper@tribetails.com';

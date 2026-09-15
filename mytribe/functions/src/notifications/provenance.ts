@@ -751,6 +751,29 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'saved lock start, and re-sent for that same lock by a later failed login if it did not go out.',
     },
   ],
+  'security.failedLogin.budgetExhausted.operator': [
+    {
+      trigger:
+        'recordFailedLogin refuses a report because a real kinfolk account used its 15 reports for the day. One copy goes to each business admin on the roster (AUNTIE_OPERATOR_UIDS only while the roster is empty). Addresses that are not accounts never alert.',
+      source: 'src/auth/loginSecurity.ts',
+      dataKeys: ['kinfolkUid', 'kinfolkEmail', 'kinfolkName', 'reportLimit', 'budgetExhaustedAtMs'],
+      dataNote:
+        'Plus `kinfolkId` when the account holds exactly one household. Saved on failedLoginEmailRateLimits/{emailHash} ' +
+        'before it is sent, sent with a dedupeKey naming the account and that saved moment, and re-sent by a later ' +
+        'refusal within 24 hours if it did not go out.',
+    },
+  ],
+  'security.account.locked.spike.operator': [
+    {
+      trigger:
+        '3 or more distinct kinfolk accounts lock within 30 minutes. One copy goes to each business admin on the roster (AUNTIE_OPERATOR_UIDS only while the roster is empty).',
+      source: 'src/auth/loginSecurity.ts',
+      dataKeys: ['lockedAccounts', 'windowMinutes', 'spikeStartedAtMs'],
+      dataNote:
+        'Saved on securitySignals/lockSpike before it is sent, sent with a dedupeKey naming that saved moment, and ' +
+        're-sent by a later lock within the 30 minutes if it did not go out. A re-send carries the count at that moment.',
+    },
+  ],
   'security.breach_attempt.kinfolk': [
     {
       trigger: 'A secure-reset confirmation is attempted against an account that did not ask.',
