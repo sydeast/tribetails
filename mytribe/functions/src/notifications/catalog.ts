@@ -479,9 +479,16 @@ const CATALOG_LIST: NotificationDef[] = [
     //   Android Payments screen: recordPayment (not paid by it)        recordPayment (household only
     //     without `apply`                                                when ticked; the screen has no
     //                                                                    toggle, so never)
-    //   Account credit draw: onInvoiceAutoApply drawAccountCredit      onInvoicesWrite
-    //     trigger or the runAutoApply callable
+    //   Account credit draw: onInvoiceAutoApply drawAccountCredit,     drawAccountCredit, once, when the
+    //     trigger or the runAutoApply callable   stamps                  draw pays the bill off (#884 review)
+    //                                            accountCredit:<id>
     //   Any other write that pays the bill     (unstamped)             onInvoicesWrite
+    //   updateInvoice lowering the total to    updateInvoice, stamps   nobody (#884): no money moved; the
+    //     what was already paid                  updateInvoice:<uuid>    audit (`settledByEdit`) is the record
+    //
+    // #884: onInvoicesWrite sends only when the write moves the invoice from
+    // `open` into `paid`, both read by invoiceStateOf. Never on create, never for
+    // a $0 invoice, a quote, a draft, a credit or a redeemed credit.
     //
     // WHO GETS A COPY (operator ruling on #866, as on main). Every enqueue writes
     // the office copy (`businessAdmins`) beside any household copy (`kinfolkAcct`).
@@ -497,8 +504,10 @@ const CATALOG_LIST: NotificationDef[] = [
     //     admin clients pass from step 1. No id, or another id, never claims.
     //   - An unticked partial, or a payment that paid nothing off: nobody.
     //
-    // The first three stamp `paymentAppliedNoticeOwner` in the write that pays the
-    // invoice, and `onInvoicesWrite` stays silent for a write that changed it.
+    // Card, markInvoicePaid, recordPayment's apply and the account credit draw
+    // stamp `paymentAppliedNoticeOwner` in the write that pays the invoice, and so
+    // does updateInvoice when an edit settles it (#884, an owner that sends
+    // nothing). `onInvoicesWrite` stays silent for a write that changed the stamp.
     // The rule and its reasons: lib/paymentAppliedOwner.ts.
     //
     // A CRASH AFTER THE COMMIT.
@@ -899,6 +908,54 @@ const CATALOG_LIST: NotificationDef[] = [
     },
     description:
       'A kinfolk account had 5 failed sign-in attempts in 10 minutes. It is not locked yet; it locks at 10 in 20 minutes.',
+  },
+  {
+    // #891: the operator's signal that an account's failed-login reports stopped
+    // counting. recordFailedLogin takes 15 reports per email per 24 hours; slow
+    // reports can spend that without warning, and then nothing warns or locks
+    // for a day. Fired by auth/loginSecurity.ts on the refusal, once per account
+    // per exhaustion (dedupeKey names the account and the saved exhaustion).
+    key: 'security.failedLogin.budgetExhausted.operator',
+    label: 'Sign-in protection paused on a kinfolk account',
+    audience: 'business',
+    audiences: { business: true },
+    category: 'security',
+    allowedChannels: ['email', 'sms', 'push'],
+    required: { email: true, push: true },
+    alwaysEnabled: true,
+    kinfolkFacing: false,
+    deliveryMode: 'trigger',
+    recipientResolver: 'businessAdmins',
+    templates: {
+      email: 'security.failedLogin.budgetExhausted.operator',
+      sms: 'security.failedLogin.budgetExhausted.operator',
+      push: 'security.failedLogin.budgetExhausted.operator',
+    },
+    description:
+      'A kinfolk account used its 15 failed sign-in reports for the day. For 24 hours more failures neither warn nor lock.',
+  },
+  {
+    // #891: one alert when LOCK_SPIKE_ACCOUNTS (3) distinct kinfolk accounts
+    // lock inside LOCK_SPIKE_WINDOW_MS (30 minutes). Each lock still sends
+    // security.account.locked.operator; this is the pattern across them. Fired
+    // by auth/loginSecurity.ts with a dedupeKey naming the saved spike start.
+    key: 'security.account.locked.spike.operator',
+    label: 'Several kinfolk accounts locked at once',
+    audience: 'business',
+    audiences: { business: true },
+    category: 'security',
+    allowedChannels: ['email', 'sms', 'push'],
+    required: { email: true, push: true },
+    alwaysEnabled: true,
+    kinfolkFacing: false,
+    deliveryMode: 'trigger',
+    recipientResolver: 'businessAdmins',
+    templates: {
+      email: 'security.account.locked.spike.operator',
+      sms: 'security.account.locked.spike.operator',
+      push: 'security.account.locked.spike.operator',
+    },
+    description: '3 or more kinfolk accounts locked within 30 minutes.',
   },
   {
     key: 'security.breach_attempt.kinfolk',

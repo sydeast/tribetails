@@ -14,6 +14,47 @@ import {
 const STANDINGS: InvoicePaymentStanding[] = ['none', 'partial', 'settled'];
 const ACCEPTANCES: QuoteAcceptance[] = ['undecided', 'accepted', 'denied'];
 
+/**
+ * #884: the invoice trigger decides "payment applied" from this classifier, so
+ * every state it can return is pinned here, with the doc shapes that reach it.
+ */
+describe('invoiceStateOf table (#884)', () => {
+  const TABLE: Array<[InvoiceState, Record<string, unknown>, string]> = [
+    ['quote', { status: 'quote' }, 'an amount-less quote'],
+    ['quote', { status: 'QUOTE', amountDue: 0, total: 0 }, 'a $0 quote, any case'],
+    ['draft', { status: 'draft', amountDue: 40, total: 40 }, 'a draft with a balance'],
+    ['draft', { status: 'draft', amountDue: 0, total: 0 }, 'a $0 draft'],
+    ['cancelled', { status: 'cancelled', amountDue: 0, total: 40 }, 'a cancelled bill'],
+    ['credit', { amountDue: -25, total: -25 }, 'an unlabeled negative balance'],
+    ['credit', { status: 'open', amountDue: -25, total: -25 }, 'a negative balance labelled open'],
+    ['credit', { status: 'credit', amountDue: 25 }, 'a credit label on a positive amount'],
+    ['redeemed', { status: 'credit', amountDue: -25, total: -25, creditRedeemedAt: 'ts' }, 'a redeemed credit'],
+    ['redeemed', { status: 'redeemed', amountDue: -25, creditRedeemedAt: 'ts' }, 'its own stamp'],
+    ['paid', { status: 'paid', amountDue: 0, total: 40 }, 'a paid label'],
+    ['paid', { status: 'paid', amountDue: 20, total: 40 }, 'a paid label on a part-paid bill (the corruption)'],
+    ['paid', { status: 'open', amountDue: 0, total: 40 }, 'an open label with nothing left due'],
+    ['paid', { status: 'overdue', total: 40 }, 'a total with no amountDue (no balance evidence)'],
+    ['zero', { status: 'open', amountDue: 0, total: 0 }, 'a $0 comped invoice'],
+    ['zero', {}, 'a doc with no fields'],
+    ['open', { status: 'open', amountDue: 40, total: 40 }, 'an open bill'],
+    ['open', { status: 'overdue', amountDue: 40, total: 40 }, 'an overdue label with a balance'],
+  ];
+
+  it('covers every state the classifier can return', () => {
+    expect(new Set(TABLE.map(([s]) => s))).toEqual(new Set(INVOICE_STATES));
+  });
+
+  for (const [state, doc, why] of TABLE) {
+    it(`${state}: ${why}`, () => {
+      expect(invoiceStateOf(doc)).toBe(state);
+    });
+  }
+
+  it('an explicit paid label wins over a positive balance', () => {
+    expect(invoiceStateOf({ status: 'paid ', amountDue: 40, total: 40 })).toBe('paid');
+  });
+});
+
 describe('invoiceStateOf (server-side twin of the admin lib/invoiceFormat.ts enumerator)', () => {
   it('reads an explicit status first, case-insensitively and trimmed', () => {
     expect(invoiceStateOf({ status: ' QUOTE ' })).toBe('quote');

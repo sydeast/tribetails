@@ -1,0 +1,11 @@
+Subject: {{lockedAccounts}} kinfolk accounts locked in {{windowMinutes}} minutes
+
+{{lockedAccounts}} different kinfolk accounts have locked after failed sign-ins within {{windowMinutes}} minutes.
+
+You got a separate alert for each lock, naming the household. One household locking itself happens; several at once usually means someone is trying passwords across accounts.
+
+Look at the failed sign-ins in the Activity Log for an IP the locks share, and check with the households. Each lock clears by itself after 30 minutes, or when the household resets their password.
+
+You will not get another of these for the next {{windowMinutes}} minutes, even if more accounts lock.
+
+Tribe Tails Pet Care. Your Kin's Favorite Auntie.

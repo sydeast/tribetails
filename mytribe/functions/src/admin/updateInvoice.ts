@@ -1,5 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
-import { FieldValue } from 'firebase-admin/firestore';
+import { FieldValue, type DocumentReference, type Transaction } from 'firebase-admin/firestore';
 import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
@@ -15,6 +15,8 @@ import {
   quoteAcceptanceOf,
 } from '../lib/invoiceEditPolicy';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
+import { PAYMENT_APPLIED_OWNER_FIELD, paymentAppliedOwner } from '../lib/paymentAppliedOwner';
+import { randomUUID } from 'node:crypto';
 import { InvoiceTermsCodeArg } from '../lib/invoiceTerms';
 import { resolveStructuredTerms, serviceDaysForSessions } from '../lib/invoiceCreateFields';
 import { validateResponse } from '../lib/callableResponse';
@@ -205,7 +207,29 @@ export async function updateInvoiceHandler(
 
   const { invoiceId, patch } = args;
   const ref = db().collection('invoices').doc(invoiceId);
-  const snap = await ref.get();
+  // #884 review: THE READ, THE DECISION AND THE WRITE SHARE ONE TRANSACTION.
+  // Everything this edit writes (the money, the state stamp, and the owner
+  // stamp that says the edit settled the bill) is computed from the invoice and
+  // its payments as read. As separate round trips, a markInvoicePaid committing
+  // between that read and this write was overwritten by a stale snapshot: its
+  // `paidCents`, and its `markInvoicePaid:<id>` owner stamp, which recordPayment
+  // then could not claim, so the office never heard about a real payment. In a
+  // transaction that commit re-runs this plan against what B wrote.
+  const edit = await db().runTransaction((tx) => planEdit(tx, ref, patch));
+  return finishEdit(uid, invoiceId, patch, edit);
+}
+
+type EditPatch = z.infer<typeof Args>['patch'];
+
+/**
+ * Reads the invoice and its payments, decides the edit, and stages the one
+ * write, all inside the caller's transaction. Firestore re-runs it when either
+ * read changed before the commit. Nothing here may have a side effect beyond
+ * `tx`: the audit entry and the log line wait for the commit (`finishEdit`).
+ */
+async function planEdit(tx: Transaction, ref: DocumentReference, patch: EditPatch) {
+  const invoiceId = ref.id;
+  const snap = await tx.get(ref);
   if (!snap.exists) throw new HttpsError('not-found', `Invoice '${invoiceId}' not found.`);
   const data = snap.data() as InvoiceDoc;
 
@@ -213,7 +237,7 @@ export async function updateInvoiceHandler(
   // markInvoicePaid zeroed that scalar even for a partial payment, so on any
   // invoice it touched the scalar cannot answer either "has anyone paid" or
   // "how much came in".
-  const paymentsSnap = await ref.collection('payments').get();
+  const paymentsSnap = await tx.get(ref.collection('payments'));
   const payments = paymentsSnap.docs.map((d) => d.data() as PaymentAmount);
   const paidCents = paidCentsFromPayments(payments);
 
@@ -344,7 +368,36 @@ export async function updateInvoiceHandler(
   const stamp = invoiceStateStampOf({ ...data, ...update }, paidCents);
   update['status'] = stamp.status;
   update['editScope'] = stamp.editScope;
-  await ref.set(update, { merge: true });
+
+  // #884: SETTLED BY AN EDIT, NOT A PAYMENT. Lowering the total to what has
+  // already been paid turns the invoice paid with no money moving, so nobody is
+  // told: the household did not pay anything just now, and the audit entry
+  // below (`settledByEdit`) is the office's record. The owner stamp, in this
+  // same write, is how `onInvoicesWrite` knows to stay silent. A fresh id every
+  // time, and only on the move INTO paid, for the reasons in
+  // lib/paymentAppliedOwner.ts.
+  const stateBefore = invoiceStateOf(data);
+  const settledByEdit = stateBefore !== 'paid' && stamp.status === 'paid';
+  if (settledByEdit) {
+    update[PAYMENT_APPLIED_OWNER_FIELD] = paymentAppliedOwner('updateInvoice', randomUUID());
+  }
+  tx.set(ref, update, { merge: true });
+  return { data, lines, totals, stamp, stateBefore, settledByEdit };
+}
+
+/**
+ * After the commit: the audit entry and the log line. The audit stays outside
+ * the edit's transaction on purpose: `writeAuditEntry` runs its own
+ * transaction over the activity-log hash chain head, and a transaction cannot
+ * nest another. A failed audit write is logged and the edit stands, as before.
+ */
+async function finishEdit(
+  uid: string,
+  invoiceId: string,
+  patch: EditPatch,
+  edit: Awaited<ReturnType<typeof planEdit>>,
+): Promise<z.infer<typeof Result>> {
+  const { data, lines, totals, stamp, stateBefore, settledByEdit } = edit;
 
   await writeAuditEntry({
     status: 'SUCCESS',
@@ -361,6 +414,10 @@ export async function updateInvoiceHandler(
       fields: Object.keys(patch),
       itemized: lines !== null,
       totalCents: lines !== null ? totals.totalCents : null,
+      // #884: the office's record of a bill settled by an edit, which sends no notice.
+      stateBefore,
+      stateAfter: stamp.status,
+      settledByEdit,
     },
   }).catch((err) => {
     logEvent({

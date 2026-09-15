@@ -756,6 +756,90 @@ describe('updateInvoice structured terms', () => {
     expect(invoiceWrite(ctx)?.data.terms).toBe('Due 14 days after the invoice date');
   });
 });
+/**
+ * #884: an edit that lowers the total to what has already been paid settles the
+ * invoice, but no money moved. It stamps itself as the owner of the
+ * payment-applied notice and sends none, so the invoice trigger stays silent.
+ * The audit entry is the staff record.
+ */
+describe('updateInvoice settling a balance by lowering the total (#884)', () => {
+  const PART_PAID = {
+    ...OPEN_INVOICE,
+    total: 100,
+    amountDue: 40,
+    lineItems: [{ description: 'Dog walking', qty: 4, unitCents: 2500 }],
+  };
+
+  function auditPayload() {
+    return (writeAuditEntry as any).mock.calls[0][0].payload as Record<string, unknown>;
+  }
+
+  it('stamps an updateInvoice owner in the write that turns the invoice paid, and audits the settlement', async () => {
+    const ctx = seed(PART_PAID, [{ id: 'p1', data: { amount: 60 } }]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(
+      req({ invoiceId: 'inv1', patch: { lineItems: [{ description: 'Dog walking', qty: 1, unitCents: 6000 }] } }),
+    );
+    const w = invoiceWrite(ctx)!;
+    expect(w.data.status).toBe('paid');
+    expect(w.data.paymentAppliedNoticeOwner).toMatch(/^updateInvoice:.+/);
+    expect(auditPayload()).toMatchObject({ settledByEdit: true, stateBefore: 'open', stateAfter: 'paid' });
+  });
+
+  it('an edit that leaves a balance stamps no owner', async () => {
+    const ctx = seed(PART_PAID, [{ id: 'p1', data: { amount: 60 } }]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(
+      req({ invoiceId: 'inv1', patch: { lineItems: [{ description: 'Dog walking', qty: 3, unitCents: 2500 }] } }),
+    );
+    const w = invoiceWrite(ctx)!;
+    expect(w.data.status).toBe('open');
+    expect('paymentAppliedNoticeOwner' in w.data).toBe(false);
+    expect(auditPayload()).toMatchObject({ settledByEdit: false, stateBefore: 'open', stateAfter: 'open' });
+  });
+
+  it('an edit to an invoice that was already paid never overwrites the owner a payment stamped', async () => {
+    // Labelled paid but only part-collected, so it is editable. It stays paid,
+    // so the markInvoicePaid stamp its recordPayment step claims must survive.
+    const ctx = seed(
+      { ...PART_PAID, status: 'paid', amountDue: 0, paymentAppliedNoticeOwner: 'markInvoicePaid:pay1' },
+      [{ id: 'p1', data: { amount: 60 } }],
+    );
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { terms: 'Net 7' } }));
+    const w = invoiceWrite(ctx)!;
+    expect(w.data.status).toBe('paid');
+    expect('paymentAppliedNoticeOwner' in w.data).toBe(false);
+    expect(auditPayload()).toMatchObject({ settledByEdit: false });
+  });
+
+  it('a second settle-by-edit after a reopen writes a DIFFERENT stamp, so the trigger reads it as changed', async () => {
+    const ctx = seed(
+      { ...PART_PAID, paymentAppliedNoticeOwner: 'updateInvoice:earlier' },
+      [{ id: 'p1', data: { amount: 60 } }],
+    );
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(
+      req({ invoiceId: 'inv1', patch: { lineItems: [{ description: 'Dog walking', qty: 1, unitCents: 2500 }] } }),
+    );
+    const w = invoiceWrite(ctx)!;
+    expect(w.data.status).toBe('paid');
+    expect(w.data.paymentAppliedNoticeOwner).toMatch(/^updateInvoice:.+/);
+    expect(w.data.paymentAppliedNoticeOwner).not.toBe('updateInvoice:earlier');
+  });
+
+  it('an edit down to $0 with nothing paid is zero, not paid, and stamps no owner', async () => {
+    const ctx = seed({ ...OPEN_INVOICE, lineItems: [{ description: 'Dog walking', qty: 1, unitCents: 4000 }] });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(
+      req({ invoiceId: 'inv1', patch: { lineItems: [{ description: 'Comped walk', qty: 1, unitCents: 0 }] } }),
+    );
+    const w = invoiceWrite(ctx)!;
+    expect(w.data.status).toBe('zero');
+    expect('paymentAppliedNoticeOwner' in w.data).toBe(false);
+  });
+});
+
 /** #408: editing an invoice must not cut its lines loose from their visits. */
 describe('updateInvoice bound line items', () => {
   it('keeps the binding on a line the patch carries', async () => {
