@@ -170,6 +170,9 @@ export function KinfolkProfile({
   onDuplicateAddApplied,
 }: KinfolkProfileProps) {
   const [view, setView] = useState<ProfileView>(() => (duplicateAdd !== null ? 'edit' : 'profile'));
+  // #907 review item 1(b): held here and let go once the editor has used it, so
+  // Cancel then Edit never lays the dropped typing over the form a second time.
+  const [pendingDuplicate, setPendingDuplicate] = useState<DuplicateAddKinfolk | null>(duplicateAdd);
   const [profile, setProfile] = useState<Async<Profile>>({ status: 'loading' });
 
   const load = useCallback(() => {
@@ -246,8 +249,11 @@ export function KinfolkProfile({
       <KinfolkEdit
         kinfolkId={kinfolkId}
         kinfolkName={kinfolkName}
-        duplicateAdd={duplicateAdd}
-        onDuplicateAddApplied={onDuplicateAddApplied}
+        duplicateAdd={pendingDuplicate}
+        onDuplicateAddApplied={() => {
+          setPendingDuplicate(null);
+          onDuplicateAddApplied?.();
+        }}
         onDone={() => {
           setView('profile');
           // Re-read so the profile shows what was just saved, not the values it

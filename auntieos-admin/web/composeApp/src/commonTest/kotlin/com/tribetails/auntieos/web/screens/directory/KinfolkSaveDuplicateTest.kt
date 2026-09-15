@@ -1,6 +1,5 @@
 package com.tribetails.auntieos.web.screens.directory
 
-import com.tribetails.auntieos.web.data.EmergencyContactDraft
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.WriteResult
 import kotlinx.coroutines.test.runTest
@@ -104,6 +103,5 @@ class KinfolkSaveDuplicateTest {
             duplicateAddNotice(stored, Kinfolk(status = "active")),
         )
         assertTrue(duplicateAddNotice(stored, Kinfolk(status = "prospect")).endsWith("Status on Add was prospect; this household is active, and status is not changed here."))
-        assertTrue(listOf(EmergencyContactDraft()).isNotEmpty())
     }
 }

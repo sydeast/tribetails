@@ -268,7 +268,7 @@ data class DuplicateAddPrefill(val kinfolkId: String, val typed: AddKinfolkUiSta
 fun duplicateAddOverlay(edit: EditKinfolkUiState, typed: AddKinfolkUiState): EditKinfolkUiState {
     fun pick(t: String, s: String): String = if (t.isNotBlank() && t.trim() != s.trim()) t.trim() else s
     val typedContacts = typed.emergencyContacts
-    val contacts = if (!draftsEqual(typedContacts, listOf(EmergencyContactDraft())) && !draftsEqual(typedContacts, edit.emergencyContactsBaseline)) {
+    val contacts = if (!typedContacts.isBlankDrafts() && !draftsEqual(typedContacts, edit.emergencyContactsBaseline)) {
         typedContacts
     } else edit.emergencyContacts
     val name = "${edit.firstName.trim()} ${edit.lastName.trim()}".trim().ifBlank { "This household" }

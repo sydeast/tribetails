@@ -124,7 +124,7 @@ class KinfolkAddPendingRenderTest {
     }
 
     @Test
-    fun aDuplicateOfAnswerContinuesThatHousehold() = runDesktopComposeUiTest {
+    fun aDuplicateOfAnswerIsNeverASuccessAndHandsTheTypingToThatHousehold() = runDesktopComposeUiTest {
         answers(
             "createKinfolk" to """{"kinfolkId":"kf-existing","duplicateOf":"kf-existing"}""",
             "saveEmergencyContacts" to """{"contacts":[]}""",
