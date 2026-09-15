@@ -61,6 +61,21 @@ vi.mock('firebase-admin/firestore', async () => {
 vi.mock('firebase-admin/auth', () => ({ getAuth: () => ({ getUserByEmail: mocks.getUserByEmail }) }));
 vi.mock('../src/notifications/dispatcher.js', () => ({ enqueueNotification: mocks.enqueueNotification }));
 vi.mock('../src/lib/logger.js', () => ({ logEvent: mocks.logEvent }));
+// The handler takes `clientIpOf` and `ipRateLimitKey` from auth/loginSecurity.ts
+// (#908). That module also imports the notification stack, Sentry, the audit log
+// and firestoreAdmin; none of them is exercised here, so they are stubbed rather
+// than loaded.
+// The handler reaches Firestore and Auth only through this module's lazy `db()`
+// and `auth()` (#903 review: no bare admin getters). confirmSecureResetAppInit.test.ts
+// covers the real module in a process with no initialized app.
+vi.mock('../src/lib/firestoreAdmin', () => ({
+  db: () => mocks.getFirestore(),
+  auth: () => ({ getUserByEmail: mocks.getUserByEmail }),
+  getAdmin: vi.fn(),
+}));
+vi.mock('../src/notifications', () => ({ enqueueNotification: vi.fn() }));
+vi.mock('../src/lib/sentry', () => ({ captureFunctionError: vi.fn(), initSentry: vi.fn() }));
+vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn() }));
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -313,6 +328,20 @@ describe('confirmSecureResetHandler: per-IP limit before verify (#892 review)', 
     }
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mocks.store.has(ipDoc('198.51.100.1'))).toBe(false);
+  });
+
+  it('keys IPv6 on its /64, so rotating addresses inside one /64 does not reset it (#908 key)', async () => {
+    mocks.store.set(ipDoc('2001:db8:1:2::/64'), { timestamps: tenRecent() });
+    const fetchMock = identityToolkit();
+    for (const rotated of ['2001:db8:1:2::1', '2001:db8:1:2:ffff:ffff:ffff:ffff', '2001:db8:1:2:abcd::9']) {
+      const captured = await run(VALID_BODY, { xff: rotated });
+      expect(captured.status, rotated).toBe(429);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // A different /64 has its own budget.
+    expect((await run(VALID_BODY, { xff: '2001:db8:1:3::1' })).status).toBe(200);
+    expect((mocks.store.get(ipDoc('2001:db8:1:3::/64'))?.timestamps as number[]).length).toBe(1);
   });
 
   it('names the trusted IP in the incident, not the forged first entry', async () => {

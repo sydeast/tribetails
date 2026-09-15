@@ -30,14 +30,19 @@
  */
 
 import { onRequest } from 'firebase-functions/v2/https';
-import { getAuth } from 'firebase-admin/auth';
-import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { createHash, randomUUID } from 'crypto';
 import { z } from 'zod';
 import { enqueueNotification } from '../notifications/dispatcher.js';
 import { logEvent } from '../lib/logger.js';
 import { TRIBETAILS_CORS } from '../lib/cors';
-import { clientIpOf } from '../lib/clientIp';
+// Lazy Admin SDK access (#903 review). This function deploys as its own Cloud Run
+// service and nothing else initializes the default app in its process, so a bare
+// getFirestore() or getAuth() here throws "The default Firebase app does not exist".
+import { auth, db } from '../lib/firestoreAdmin';
+// #891 (PR #908): the trusted client IP and the per-IP limit key. The copy this
+// file used before #908 merged is gone (#910).
+import { clientIpOf, ipRateLimitKey } from '../auth/loginSecurity';
 
 // ── Limits ────────────────────────────────────────────────────────────────────
 // Account limit: at most 3 applied secure resets per account per 24h, so one
@@ -89,8 +94,13 @@ function hashEmail(email: string): string {
   return createHash('sha256').update(canonicalizeEmail(email)).digest('hex').slice(0, 32);
 }
 
+/**
+ * Keyed through #908's `ipRateLimitKey`, the same as loginSecurity's own limit:
+ * IPv4 is the address, IPv6 is its /64 (one subscriber usually holds a whole
+ * /64), and the `untrusted` sentinel from `clientIpOf` is one shared bucket.
+ */
 function hashIp(ip: string): string {
-  return createHash('sha256').update(ip).digest('hex').slice(0, 32);
+  return createHash('sha256').update(ipRateLimitKey(ip)).digest('hex').slice(0, 32);
 }
 
 /** Strict Zod email validator. Rejects garbage like `@`, `a@`, `@b`. */
@@ -105,9 +115,9 @@ const emailSchema = z.string().email();
  * and a flag set by a discarded attempt would outlive it.
  */
 async function ipIsRateLimited(ip: string): Promise<boolean> {
-  const db = getFirestore();
-  const ref = db.collection('securityRateLimits').doc(`secureResetIp_${hashIp(ip)}`);
-  return db.runTransaction(async (tx) => {
+  const firestore = db();
+  const ref = firestore.collection('securityRateLimits').doc(`secureResetIp_${hashIp(ip)}`);
+  return firestore.runTransaction(async (tx) => {
     const nowMs = Date.now();
     const snap = await tx.get(ref);
     const timestamps: number[] = (snap.data()?.timestamps as number[] | undefined) ?? [];
@@ -139,7 +149,7 @@ function livePending(raw: unknown, nowMs: number): PendingAttempt[] {
 }
 
 function emailLimitRef(email: string) {
-  return getFirestore().collection('securityRateLimits').doc(`secureReset_${hashEmail(email)}`);
+  return db().collection('securityRateLimits').doc(`secureReset_${hashEmail(email)}`);
 }
 
 /**
@@ -158,9 +168,9 @@ function emailLimitRef(email: string) {
  * @returns the hold id, or null when the account is at its limit.
  */
 async function holdEmailAttempt(email: string): Promise<string | null> {
-  const db = getFirestore();
+  const firestore = db();
   const ref = emailLimitRef(email);
-  return db.runTransaction(async (tx) => {
+  return firestore.runTransaction(async (tx) => {
     const nowMs = Date.now();
     const data = (await tx.get(ref)).data();
     const timestamps: number[] = (data?.timestamps as number[] | undefined) ?? [];
@@ -180,10 +190,10 @@ async function holdEmailAttempt(email: string): Promise<string | null> {
 
 /** Release a held slot, recording it as a used attempt only when the reset was applied. */
 async function settleEmailAttempt(email: string, id: string, applied: boolean): Promise<void> {
-  const db = getFirestore();
+  const firestore = db();
   const ref = emailLimitRef(email);
   try {
-    await db.runTransaction(async (tx) => {
+    await firestore.runTransaction(async (tx) => {
       const nowMs = Date.now();
       const data = (await tx.get(ref)).data();
       const timestamps: number[] = (data?.timestamps as number[] | undefined) ?? [];
@@ -248,7 +258,7 @@ type AccountRole = 'staff' | 'kinfolk' | 'unknown';
  */
 async function accountRoleOf(email: string): Promise<AccountRole> {
   try {
-    const user = await getAuth().getUserByEmail(email);
+    const user = await auth().getUserByEmail(email);
     return user.customClaims?.['admin'] === true ? 'staff' : 'kinfolk';
   } catch (e) {
     logEvent({
@@ -288,7 +298,7 @@ async function consumeOutcomeAfterThrow(
     // Unreachable again; fall through to the account record.
   }
   try {
-    const user = await getAuth().getUserByEmail(email);
+    const user = await auth().getUserByEmail(email);
     const validSinceMs = user.tokensValidAfterTime ? Date.parse(user.tokensValidAfterTime) : NaN;
     // validSince has one-second precision, so allow the second the call started in.
     if (Number.isFinite(validSinceMs) && validSinceMs >= startedAtMs - 1000) return 'applied';
@@ -492,8 +502,8 @@ export async function confirmSecureResetHandler(
   const role = await accountRoleOf(canonicalEmail);
 
   // ── Step 6: Write securityIncidents doc ──────────────────────────────────────
-  const db = getFirestore();
-  const incidentRef = db.collection('securityIncidents').doc();
+  const firestore = db();
+  const incidentRef = firestore.collection('securityIncidents').doc();
   await incidentRef.set({
     type: 'unsolicited_password_reset',
     // 'applied' when the new password is known to be set; 'unknown' when the
