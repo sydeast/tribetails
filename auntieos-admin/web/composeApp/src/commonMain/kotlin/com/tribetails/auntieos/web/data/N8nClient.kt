@@ -29,23 +29,28 @@ import kotlinx.serialization.json.Json
  * communication_type contract (n8n workflow SIg2KsWn0oyRkSzR):
  *   sms, email, visit_report, social_post, blog_post, general
  */
-class N8nClient {
-    private val codec = Json {
-        ignoreUnknownKeys = true
-        isLenient = true
-    }
+class N8nClient internal constructor(private val http: HttpClient) {
 
-    private val http = HttpClient {
-        install(ContentNegotiation) {
-            json(codec)
+    // #867: built by the shared factory, so it has timeouts and the desktop test
+    // network guard. Two of these calls send no token, so nothing else stops them.
+    constructor() : this(n8nHttpClient(requestTimeoutMs = 120_000L, protocol = URLProtocol.HTTPS, host = "n8n.tribetails.com"))
+
+    private val codec = n8nCodec
+
+    /**
+     * #867 review: a failed request reads the way the REST layer's do. A timeout
+     * becomes [AUNTIE_TIMEOUT_MESSAGE] instead of Ktor's text, which the callers
+     * show after "Generate failed:". Cancellation still propagates.
+     */
+    private suspend fun <T> readable(fallback: String, block: suspend () -> T): T =
+        try {
+            block()
+        } catch (c: kotlin.coroutines.cancellation.CancellationException) {
+            throw c
+        } catch (e: Exception) {
+            val message = e.transportMessage(fallback)
+            if (message == AUNTIE_TIMEOUT_MESSAGE) throw IllegalStateException(message, e) else throw e
         }
-        defaultRequest {
-            url {
-                protocol = URLProtocol.HTTPS
-                host = "n8n.tribetails.com"
-            }
-        }
-    }
 
     /**
      * Generate Auntie copy. When [useFunction] is true (the default; gated at the
@@ -58,19 +63,23 @@ class N8nClient {
      */
     suspend fun generate(req: GenerateRequest, useFunction: Boolean = true): GenerateResponse {
         if (!useFunction) {
-            return http.post("/webhook/auntie-generate") {
-                contentType(ContentType.Application.Json)
-                setBody(req)
-            }.body()
+            return readable("generate failed") {
+                http.post("/webhook/auntie-generate") {
+                    contentType(ContentType.Application.Json)
+                    setBody(req)
+                }.body()
+            }
         }
         val idToken = AuthClient().idToken(forceRefresh = false)
             ?: throw IllegalStateException("Admin sign-in required before generate")
-        val response = http.post("https://auntieos-ttpc.web.app/api/generate") {
-            contentType(ContentType.Application.Json)
-            header("Authorization", "Bearer $idToken")
-            setBody(req)
+        val (response, rawBody) = readable("generate failed") {
+            val r = http.post("https://auntieos-ttpc.web.app/api/generate") {
+                contentType(ContentType.Application.Json)
+                header("Authorization", "Bearer $idToken")
+                setBody(req)
+            }
+            r to r.bodyAsText()
         }
-        val rawBody = response.bodyAsText()
         val parsed = runCatching { codec.decodeFromString<GenerateResponse>(rawBody) }.getOrNull()
         if (parsed != null) return parsed
         if (!response.status.isSuccess()) {
@@ -95,12 +104,14 @@ class N8nClient {
     suspend fun sendMessage(req: SendMessageRequest): SendMessageResponse {
         val idToken = AuthClient().idToken(forceRefresh = false)
             ?: throw IllegalStateException("Admin sign-in required before sendMessage")
-        val response = http.post("/api/send-message") {
-            contentType(ContentType.Application.Json)
-            header("Authorization", "Bearer $idToken")
-            setBody(req)
+        val (response, rawBody) = readable("sendMessage failed") {
+            val r = http.post("/api/send-message") {
+                contentType(ContentType.Application.Json)
+                header("Authorization", "Bearer $idToken")
+                setBody(req)
+            }
+            r to r.bodyAsText()
         }
-        val rawBody = response.bodyAsText()
         val parsed = runCatching { codec.decodeFromString<SendMessageResponse>(rawBody) }.getOrNull()
         if (!response.status.isSuccess()) {
             val detail = parsed?.error ?: parsed?.message ?: rawBody.take(220)
@@ -109,6 +120,26 @@ class N8nClient {
         return parsed ?: throw IllegalStateException("sendMessage returned non-JSON body")
     }
 }
+
+private val n8nCodec = Json {
+    ignoreUnknownKeys = true
+    isLenient = true
+}
+
+/** The n8n client's HTTP client. Relative paths resolve against [protocol]://[host]:[port]; a test points it at a local socket. */
+internal fun n8nHttpClient(requestTimeoutMs: Long, protocol: URLProtocol, host: String, port: Int? = null): HttpClient =
+    auntieHttpClient(requestTimeoutMs = requestTimeoutMs) {
+        install(ContentNegotiation) {
+            json(n8nCodec)
+        }
+        defaultRequest {
+            url {
+                this.protocol = protocol
+                this.host = host
+                if (port != null) this.port = port
+            }
+        }
+    }
 
 @Serializable
 data class GenerateRequest(

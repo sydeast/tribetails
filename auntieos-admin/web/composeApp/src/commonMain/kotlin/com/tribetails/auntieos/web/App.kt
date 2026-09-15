@@ -60,10 +60,7 @@ import com.tribetails.auntieos.web.theme.AuntieAppTheme
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.screens.settings.hydratedTheme
 import com.tribetails.auntieos.web.screens.settings.hydratedPersonalization
-import coil3.ImageLoader
-import coil3.SingletonImageLoader
-import coil3.network.ktor3.KtorNetworkFetcherFactory
-import coil3.request.crossfade
+import com.tribetails.auntieos.web.data.installAuntieImageLoader
 import com.tribetails.auntieos.web.ui.shell.AppShell
 import com.tribetails.auntieos.web.ui.shell.Destination
 import com.tribetails.auntieos.web.ui.shell.Route
@@ -86,15 +83,10 @@ private sealed interface AuthGateState {
 
 @Composable
 fun App() {
-    // One-time Coil 3 image-loader registration. Uses the Ktor 3 fetcher so
-    // KinTale composer thumbnails (Cloudinary URLs) load on wasmJs without
-    // pulling a separate HTTP client.
-    SingletonImageLoader.setSafe { ctx ->
-        ImageLoader.Builder(ctx)
-            .components { add(KtorNetworkFetcherFactory()) }
-            .crossfade(true)
-            .build()
-    }
+    // One-time Coil 3 image-loader registration (KinTale thumbnails, media, avatars).
+    // #867 review: built on auntieHttpClient, so image loads have timeouts and the
+    // desktop test guard. AuntieAppTheme installs the same loader.
+    installAuntieImageLoader()
 
     // FOUC fix (2026-06-09): warm-start the theme from the synchronous local cache
     // (localStorage on web / JVM prefs on desktop) so the FIRST paint already matches
@@ -130,6 +122,8 @@ fun App() {
             adminVerified = false
             testMode = com.tribetails.auntieos.web.data.TestMode.OFF
             com.tribetails.auntieos.web.data.FirestoreClient.setSessionTestMode(com.tribetails.auntieos.web.data.TestMode.OFF)
+            // #867 re-review: a broadcast draft and its key belong to the admin who wrote it.
+            com.tribetails.auntieos.web.screens.communicate.BroadcastDraftSession.clear()
         } else {
             // Stage 0I: a single forced token read resolves BOTH the admin flag and the
             // testTribeId claim. A test admin (claim present, admin:false) is allowed in

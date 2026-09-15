@@ -113,7 +113,8 @@ private object FirebaseRestAuth {
     private const val SECURETOKEN = "https://securetoken.googleapis.com/v1/token"
 
     private val json = authRestJson
-    private val http = HttpClient(Java) {
+    // #867: timeouts and the test network guard come from the shared factory.
+    private val http = auntieHttpClient {
         install(ContentNegotiation) { json(json) }
     }
 

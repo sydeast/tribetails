@@ -27,7 +27,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
 import com.tribetails.auntieos.web.theme.AuntieColors
 import com.tribetails.auntieos.web.theme.AuntieTheme
@@ -94,7 +93,7 @@ fun AuntieAvatar(
         contentAlignment = Alignment.Center,
     ) {
         if (showImage && cleanUrl != null) {
-            AsyncImage(
+            AuntieAsyncImage(
                 model = cleanUrl,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,

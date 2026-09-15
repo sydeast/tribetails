@@ -31,6 +31,9 @@ fun AuntieAppTheme(
     personalization: ThemePersonalization = ThemePersonalization(),
     content:  @Composable () -> Unit,
 ) {
+    // #867 review: every image an Auntie component loads goes through the console's
+    // guarded, time-limited loader, in the app and in every render test.
+    com.tribetails.auntieos.web.data.installAuntieImageLoader()
     val systemDark = isSystemInDarkTheme()
     val modeDark = when (themeMode) {
         ThemeMode.LIGHT  -> false
