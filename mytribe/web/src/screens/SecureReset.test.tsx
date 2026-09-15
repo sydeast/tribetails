@@ -12,7 +12,6 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
  */
 
 const mocks = vi.hoisted(() => ({
-  verifyResetCode: vi.fn(),
   completeReset: vi.fn(),
   readActionCode: vi.fn(),
   applyEmailAction: vi.fn(),
@@ -21,7 +20,6 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/auth', () => ({
-  verifyResetCode: mocks.verifyResetCode,
   completeReset: mocks.completeReset,
   readActionCode: mocks.readActionCode,
   applyEmailAction: mocks.applyEmailAction,
@@ -49,7 +47,7 @@ const NATIVE = '?mode=resetPassword&oobCode=CODE-1&apiKey=AIzaFake&lang=en';
 
 beforeEach(() => {
   Object.values(mocks).forEach((m) => m.mockReset());
-  mocks.verifyResetCode.mockResolvedValue('pepper@example.com');
+  mocks.readActionCode.mockResolvedValue({ operation: 'PASSWORD_RESET', email: 'pepper@example.com', previousEmail: null });
   mocks.completeReset.mockResolvedValue(undefined);
   mocks.sendReset.mockResolvedValue(undefined);
   mocks.applyEmailAction.mockResolvedValue(undefined);
@@ -65,7 +63,7 @@ describe('SecureReset: a normal requested reset', () => {
     openLink(NATIVE);
 
     expect(await screen.findByText('pepper@example.com')).toBeInTheDocument();
-    expect(mocks.verifyResetCode).toHaveBeenCalledWith('CODE-1');
+    expect(mocks.readActionCode).toHaveBeenCalledWith('CODE-1');
     expect(screen.queryByText(/incomplete/i)).toBeNull();
 
     typePasswords('new-password-1');
@@ -84,7 +82,7 @@ describe('SecureReset: a normal requested reset', () => {
   });
 
   it('a bare expired link asks for a bare new link, so the next page still offers both sign-ins (#892 review)', async () => {
-    mocks.verifyResetCode.mockRejectedValue(authError('auth/expired-action-code'));
+    mocks.readActionCode.mockRejectedValue(authError('auth/expired-action-code'));
     openLink(NATIVE);
     await screen.findByText('This reset link has expired.');
     fireEvent.change(screen.getByLabelText('Email address'), { target: { value: 'ops@tribetails.com' } });
@@ -153,7 +151,7 @@ describe('SecureReset: a normal requested reset', () => {
 
 describe('SecureReset: a code that cannot be used', () => {
   it('says an expired link has expired and offers a new one, keeping the continue target', async () => {
-    mocks.verifyResetCode.mockRejectedValue(authError('auth/expired-action-code'));
+    mocks.readActionCode.mockRejectedValue(authError('auth/expired-action-code'));
     const continueUrl = encodeURIComponent('https://auntie.tribetails.com/signin');
     openLink(`?mode=resetPassword&oobCode=OLD&continueUrl=${continueUrl}`);
 
@@ -166,7 +164,7 @@ describe('SecureReset: a code that cannot be used', () => {
   });
 
   it('says a used or invalid link cannot be used again', async () => {
-    mocks.verifyResetCode.mockRejectedValue(authError('auth/invalid-action-code'));
+    mocks.readActionCode.mockRejectedValue(authError('auth/invalid-action-code'));
     openLink(NATIVE);
     expect(await screen.findByText('This reset link has already been used or is not valid.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Send a new link' })).toBeInTheDocument();
@@ -182,12 +180,24 @@ describe('SecureReset: a code that cannot be used', () => {
   });
 
   it('lets the reader retry when the check fails on the network, without calling the link bad', async () => {
-    mocks.verifyResetCode.mockRejectedValueOnce(authError('auth/network-request-failed'));
+    mocks.readActionCode.mockRejectedValueOnce(authError('auth/network-request-failed'));
     openLink(NATIVE);
     fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
     expect(await screen.findByText('pepper@example.com')).toBeInTheDocument();
-    expect(mocks.verifyResetCode).toHaveBeenCalledTimes(2);
+    expect(mocks.readActionCode).toHaveBeenCalledTimes(2);
   });
+
+  it.each(['VERIFY_EMAIL', 'RECOVER_EMAIL', 'VERIFY_AND_CHANGE_EMAIL'])(
+    'refuses a mode=resetPassword link whose code is really %s, with no form (#892 review 2)',
+    async (operation) => {
+      mocks.readActionCode.mockResolvedValue({ operation, email: 'pepper@example.com', previousEmail: null });
+      openLink(NATIVE);
+      expect(await screen.findByText("This link can't be completed here.")).toBeInTheDocument();
+      expect(screen.queryByLabelText('New password')).toBeNull();
+      expect(screen.queryByRole('button')).toBeNull();
+      expect(mocks.completeReset).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe('SecureReset: "I did not ask for this reset"', () => {

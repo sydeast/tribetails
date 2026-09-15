@@ -13,7 +13,8 @@
  *      from it, and require a PASSWORD_RESET code.
  *   4. Hold a slot in the account's 3-per-24h limit.
  *   5. Consume the oobCode (sets the new password), then record the slot as used
- *      only if that succeeded.
+ *      only if that succeeded. If the consume call throws, find out whether the
+ *      change landed anyway (#892 review 2) before deciding.
  *   6. Write securityIncidents/{auto}.
  *   7. Alert business admins under the key for the account's role:
  *      security.breach_attempt.staff for an admin-claim account, else
@@ -30,7 +31,7 @@
 
 import { onRequest } from 'firebase-functions/v2/https';
 import { getAuth } from 'firebase-admin/auth';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { createHash, randomUUID } from 'crypto';
 import { z } from 'zod';
 import { enqueueNotification } from '../notifications/dispatcher.js';
@@ -42,7 +43,7 @@ import { clientIpOf } from '../lib/clientIp';
 // Account limit: at most 3 applied secure resets per account per 24h, so one
 // account cannot be used to flood breach-incident writes. Keyed on sha256 of the
 // DERIVED email so no plaintext email is stored in the rate-limit doc.
-const EMAIL_RATE_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const EMAIL_RATE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const EMAIL_RATE_LIMIT = 3;
 /**
  * How long a held slot counts before it is ignored. Long enough to cover the
@@ -53,8 +54,21 @@ const PENDING_LEASE_MS = 5 * 60 * 1000;
 
 // IP limit (#892 review): verify is an unauthenticated Identity Toolkit call, so
 // it is throttled per client IP before it runs.
-const IP_RATE_WINDOW_MS = 15 * 60 * 1000;
+export const IP_RATE_WINDOW_MS = 15 * 60 * 1000;
 const IP_RATE_LIMIT = 10;
+
+/**
+ * #892 review 2: how long after its last write a limit doc may be deleted by
+ * Firestore TTL (`securityRateLimits.expiresAt`, declared in
+ * firestore.indexes.json), beyond the window it is read over. The same margin as
+ * #908's ledgers. Nothing reads `expiresAt`: the windows filter on their own
+ * timestamps, so a doc the TTL has not reached yet can never refuse a call.
+ */
+export const RATE_LIMIT_TTL_MARGIN_MS = 60 * 60 * 1000;
+
+function expiresAtFor(nowMs: number, windowMs: number): Timestamp {
+  return Timestamp.fromMillis(nowMs + windowMs + RATE_LIMIT_TTL_MARGIN_MS);
+}
 
 /**
  * Canonicalize an email for rate-limit bucket derivation. Lowercases AND
@@ -85,25 +99,30 @@ const emailSchema = z.string().email();
 /**
  * Count and record one call from this IP. Every call spends budget, including
  * one whose code turns out to be bad, because probing codes is what this limits.
- * Transactional, so concurrent calls from one IP cannot overshoot it.
+ *
+ * The verdict is the value the transaction RESOLVES to, never a variable the
+ * callback sets (#892 review 2): Firestore re-runs the callback on contention,
+ * and a flag set by a discarded attempt would outlive it.
  */
 async function ipIsRateLimited(ip: string): Promise<boolean> {
   const db = getFirestore();
   const ref = db.collection('securityRateLimits').doc(`secureResetIp_${hashIp(ip)}`);
-  const nowMs = Date.now();
-  let limited = false;
-  await db.runTransaction(async (tx) => {
+  return db.runTransaction(async (tx) => {
+    const nowMs = Date.now();
     const snap = await tx.get(ref);
     const timestamps: number[] = (snap.data()?.timestamps as number[] | undefined) ?? [];
     const recent = timestamps.filter((t) => t >= nowMs - IP_RATE_WINDOW_MS);
     if (recent.length >= IP_RATE_LIMIT) {
-      limited = true;
-      return; // do not record, don't let the array grow unboundedly on abuse
+      return true; // do not record, don't let the array grow unboundedly on abuse
     }
     recent.push(nowMs);
-    tx.set(ref, { timestamps: recent, updatedAtMs: nowMs }, { merge: true });
+    tx.set(
+      ref,
+      { timestamps: recent, updatedAtMs: nowMs, expiresAt: expiresAtFor(nowMs, IP_RATE_WINDOW_MS) },
+      { merge: true },
+    );
+    return false;
   });
-  return limited;
 }
 
 interface PendingAttempt {
@@ -132,40 +151,50 @@ function emailLimitRef(email: string) {
  * checked and held in one transaction so concurrent calls cannot exceed it.
  * `settleEmailAttempt` turns the hold into a used slot only if the apply worked.
  *
+ * #892 review 2: the hold id is what the transaction RESOLVES to. A retried
+ * callback that finds the account full returns null, and that null is the
+ * answer, whatever an earlier discarded attempt had decided.
+ *
  * @returns the hold id, or null when the account is at its limit.
  */
 async function holdEmailAttempt(email: string): Promise<string | null> {
   const db = getFirestore();
   const ref = emailLimitRef(email);
-  const nowMs = Date.now();
-  const id = randomUUID();
-  let held: string | null = null;
-  await db.runTransaction(async (tx) => {
+  return db.runTransaction(async (tx) => {
+    const nowMs = Date.now();
     const data = (await tx.get(ref)).data();
     const timestamps: number[] = (data?.timestamps as number[] | undefined) ?? [];
     const recent = timestamps.filter((t) => t >= nowMs - EMAIL_RATE_WINDOW_MS);
     const pending = livePending(data?.pending, nowMs);
-    if (recent.length + pending.length >= EMAIL_RATE_LIMIT) return;
+    if (recent.length + pending.length >= EMAIL_RATE_LIMIT) return null;
+    const id = randomUUID();
     pending.push({ id, atMs: nowMs });
-    tx.set(ref, { timestamps: recent, pending, updatedAtMs: nowMs }, { merge: true });
-    held = id;
+    tx.set(
+      ref,
+      { timestamps: recent, pending, updatedAtMs: nowMs, expiresAt: expiresAtFor(nowMs, EMAIL_RATE_WINDOW_MS) },
+      { merge: true },
+    );
+    return id;
   });
-  return held;
 }
 
 /** Release a held slot, recording it as a used attempt only when the reset was applied. */
 async function settleEmailAttempt(email: string, id: string, applied: boolean): Promise<void> {
   const db = getFirestore();
   const ref = emailLimitRef(email);
-  const nowMs = Date.now();
   try {
     await db.runTransaction(async (tx) => {
+      const nowMs = Date.now();
       const data = (await tx.get(ref)).data();
       const timestamps: number[] = (data?.timestamps as number[] | undefined) ?? [];
       const recent = timestamps.filter((t) => t >= nowMs - EMAIL_RATE_WINDOW_MS);
       if (applied) recent.push(nowMs);
       const pending = livePending(data?.pending, nowMs).filter((p) => p.id !== id);
-      tx.set(ref, { timestamps: recent, pending, updatedAtMs: nowMs }, { merge: true });
+      tx.set(
+        ref,
+        { timestamps: recent, pending, updatedAtMs: nowMs, expiresAt: expiresAtFor(nowMs, EMAIL_RATE_WINDOW_MS) },
+        { merge: true },
+      );
     });
   } catch (e) {
     // The reset itself already succeeded or failed; a lost settle only means the
@@ -207,12 +236,15 @@ function identityToolkitBase(): string {
     : 'https://identitytoolkit.googleapis.com/v1';
 }
 
-type AccountRole = 'staff' | 'kinfolk';
+type AccountRole = 'staff' | 'kinfolk' | 'unknown';
 
 /**
  * Whose account this is, for the alert's key and label (#892 review). Staff hold
- * the `admin` custom claim (firestore.rules `isAuntie()`). A failed lookup falls
- * back to the kinfolk key, logged, so the alert still goes out.
+ * the `admin` custom claim (firestore.rules `isAuntie()`).
+ *
+ * #892 review 2: a failed lookup is 'unknown', not 'kinfolk', so the incident
+ * does not claim a role nobody checked. The alert still goes out, under the
+ * kinfolk key, so the operator hears about it either way.
  */
 async function accountRoleOf(email: string): Promise<AccountRole> {
   try {
@@ -225,8 +257,45 @@ async function accountRoleOf(email: string): Promise<AccountRole> {
       event: 'security.roleLookupFailed',
       extra: { emailHash: hashEmail(email), error: String(e) },
     });
-    return 'kinfolk';
+    return 'unknown';
   }
+}
+
+/**
+ * #892 review 2: the consume call threw, which does not mean Identity Toolkit
+ * did nothing. It may have used the code and changed the password before the
+ * connection dropped.
+ *
+ *   - The code still verifies: it was not used, so nothing changed.
+ *   - The account's `tokensValidAfterTime` (validSince, which a password change
+ *     moves) is at or after the call started: the change landed.
+ *   - Otherwise nobody can say.
+ */
+async function consumeOutcomeAfterThrow(
+  resetUrl: string,
+  oobCode: string,
+  email: string,
+  startedAtMs: number,
+): Promise<'not_applied' | 'applied' | 'unknown'> {
+  try {
+    const recheck = await fetch(resetUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ oobCode }),
+    });
+    if (recheck.ok) return 'not_applied';
+  } catch {
+    // Unreachable again; fall through to the account record.
+  }
+  try {
+    const user = await getAuth().getUserByEmail(email);
+    const validSinceMs = user.tokensValidAfterTime ? Date.parse(user.tokensValidAfterTime) : NaN;
+    // validSince has one-second precision, so allow the second the call started in.
+    if (Number.isFinite(validSinceMs) && validSinceMs >= startedAtMs - 1000) return 'applied';
+  } catch {
+    // Could not read the account either.
+  }
+  return 'unknown';
 }
 
 // ── Handler (exported for unit tests) ────────────────────────────────────────
@@ -365,35 +434,42 @@ export async function confirmSecureResetHandler(
   }
 
   // ── Step 5: Consume oobCode + set new password via Identity Toolkit REST ────
-  let resetResp: Response;
+  const consumeStartedAtMs = Date.now();
+  let outcome: 'applied' | 'unknown' = 'applied';
   try {
-    resetResp = await fetch(resetUrl, {
+    const resetResp = await fetch(resetUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ oobCode, newPassword }),
     });
+    if (!resetResp.ok) {
+      await settleEmailAttempt(canonicalEmail, holdId, false);
+      const detail = await resetResp.text();
+      logEvent({
+        severity: 'warn',
+        function: 'confirmSecureReset',
+        event: 'security.oobCodeRejected',
+        extra: { stage: 'consume', status: resetResp.status, detail, emailHash: hashEmail(canonicalEmail) },
+      });
+      res.status(400).json({ error: 'reset_failed', detail });
+      return;
+    }
   } catch (e) {
-    await settleEmailAttempt(canonicalEmail, holdId, false);
+    const after = await consumeOutcomeAfterThrow(resetUrl, oobCode, canonicalEmail, consumeStartedAtMs);
     logEvent({
       severity: 'error',
       function: 'confirmSecureReset',
       event: 'security.authUnreachable',
-      extra: { error: String(e) },
+      extra: { stage: 'consume', outcomeAfterThrow: after, emailHash: hashEmail(canonicalEmail), error: String(e) },
     });
-    res.status(502).json({ error: 'auth_unreachable', detail: String(e) });
-    return;
-  }
-  if (!resetResp.ok) {
-    await settleEmailAttempt(canonicalEmail, holdId, false);
-    const detail = await resetResp.text();
-    logEvent({
-      severity: 'warn',
-      function: 'confirmSecureReset',
-      event: 'security.oobCodeRejected',
-      extra: { stage: 'consume', status: resetResp.status, detail, emailHash: hashEmail(canonicalEmail) },
-    });
-    res.status(400).json({ error: 'reset_failed', detail });
-    return;
+    if (after === 'not_applied') {
+      await settleEmailAttempt(canonicalEmail, holdId, false);
+      res.status(502).json({ error: 'auth_unreachable', detail: String(e) });
+      return;
+    }
+    // Landed, or cannot tell: count the slot, file the incident and alert, so a
+    // password change never goes unreported.
+    outcome = after;
   }
   await settleEmailAttempt(canonicalEmail, holdId, true);
 
@@ -420,9 +496,12 @@ export async function confirmSecureResetHandler(
   const incidentRef = db.collection('securityIncidents').doc();
   await incidentRef.set({
     type: 'unsolicited_password_reset',
+    // 'applied' when the new password is known to be set; 'unknown' when the
+    // consume call threw and nothing could confirm either way (#892 review 2).
+    outcome,
     accountRole: role,
     accountEmail: canonicalEmail,
-    // Kept for existing readers of kinfolk incidents; null for a staff account.
+    // Kept for existing readers of kinfolk incidents; null unless the role is known kinfolk.
     kinfolkEmail: role === 'kinfolk' ? canonicalEmail : null,
     staffEmail: role === 'staff' ? canonicalEmail : null,
     suppliedEmail: emailMismatch ? suppliedEmail : null,
@@ -438,7 +517,7 @@ export async function confirmSecureResetHandler(
     severity: 'warn',
     function: 'confirmSecureReset',
     event: 'security.breachAttemptRecorded',
-    extra: { incidentId: incidentRef.id, emailHash: hashEmail(canonicalEmail), role, ipHash: hashIp(ip) },
+    extra: { incidentId: incidentRef.id, emailHash: hashEmail(canonicalEmail), role, outcome, ipHash: hashIp(ip) },
   });
 
   // ── Step 7: Dispatch notification ────────────────────────────────────────────
@@ -467,6 +546,12 @@ export async function confirmSecureResetHandler(
     });
   }
 
+  if (outcome === 'unknown') {
+    // The page must not tell the account holder their password is set when
+    // nobody knows. The incident and alert above are already filed.
+    res.status(502).json({ error: 'outcome_unknown', incidentId: incidentRef.id });
+    return;
+  }
   res.status(200).json({ ok: true, incidentId: incidentRef.id });
 }
 

@@ -207,6 +207,13 @@ function ImportRow({
         </span>
       </div>
 
+      {/* #892 review 2: the reason sits with the row, not only in the banner above. */}
+      {row.blocked && (row.issues?.length ?? 0) > 0 && (
+        <p className="template-import__issues" data-testid={`issues-${row.templateId}`}>
+          {row.issues!.join(' ')}
+        </p>
+      )}
+
       {row.aliasOf && (
         <p className="template-import__alias">
           A retired key. Live sends now go through <code>{row.aliasOf}</code>, and this copy is kept

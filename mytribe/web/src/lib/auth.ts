@@ -6,7 +6,6 @@ import {
   onAuthStateChanged,
   sendEmailVerification,
   sendPasswordResetEmail,
-  verifyPasswordResetCode,
   signInWithCustomToken,
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
@@ -130,12 +129,6 @@ export async function sendReset(email: string, continueUrl: string | null = PORT
     return;
   }
   await sendPasswordResetEmail(auth, email, { url: continueUrl, handleCodeInApp: false });
-}
-
-/** Checks a reset link's oobCode without using it. Resolves the account email. */
-export async function verifyResetCode(oobCode: string): Promise<string> {
-  await ensureRecaptcha();
-  return verifyPasswordResetCode(auth, oobCode);
 }
 
 /** Uses a reset link's oobCode to set the new password. */

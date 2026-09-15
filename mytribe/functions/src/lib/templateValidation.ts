@@ -55,13 +55,22 @@ export function tripleStashIssue(field: string, value: string | null | undefined
  */
 const UNQUOTED_ATTRIBUTE_MERGE = /\s[a-zA-Z][\w:-]*\s*=\s*\{\{/;
 
-/** The complaint about one field's unquoted attribute merge, or null when it is clean. */
-export function unquotedAttributeIssue(field: string, value: string | null | undefined): string | null {
-  if (!value || !UNQUOTED_ATTRIBUTE_MERGE.test(value)) return null;
+/** True when the text has no merge field in an unquoted attribute (or is absent). */
+export function noUnquotedAttributeMerge(s: string | null | undefined): boolean {
+  return !s || !UNQUOTED_ATTRIBUTE_MERGE.test(s);
+}
+
+/** What an operator is told when one field puts a merge field in an unquoted attribute. */
+export function unquotedAttributeMessage(field: string): string {
   return (
     `${field} puts a merge field straight into an attribute without quotes, like href={{link}}. ` +
     `Quote it, href="{{link}}", so the value cannot break out of the attribute.`
   );
+}
+
+/** The complaint about one field's unquoted attribute merge, or null when it is clean. */
+export function unquotedAttributeIssue(field: string, value: string | null | undefined): string | null {
+  return noUnquotedAttributeMerge(value) ? null : unquotedAttributeMessage(field);
 }
 
 /** A template id is a document id in three collections, so it is kept narrow. */

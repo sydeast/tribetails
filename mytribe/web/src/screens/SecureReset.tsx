@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { confirmSecureReset } from '../api/portal';
 import { validateNewPassword } from '../api/claimFlow';
 import { BusyLabel } from '../components/Loading';
-import { applyEmailAction, completeReset, readActionCode, sendReset, verifyResetCode } from '../lib/auth';
+import { applyEmailAction, completeReset, readActionCode, sendReset } from '../lib/auth';
 import { parseEmailActionLink, type EmailActionLink } from '../lib/emailAction';
 
 /**
@@ -250,6 +250,7 @@ function ResendLink({ continueUrl }: { continueUrl: string | null }) {
 type ResetPhase =
   | { kind: 'checking' }
   | { kind: 'problem'; problem: CodeProblem }
+  | { kind: 'mismatch' }
   | { kind: 'ready'; email: string }
   | { kind: 'done'; secured: boolean };
 
@@ -266,9 +267,20 @@ function ResetPasswordFlow({ link }: { link: EmailActionLink }) {
   useEffect(() => {
     let live = true;
     setPhase({ kind: 'checking' });
-    verifyResetCode(link.oobCode).then(
-      (email) => {
-        if (live) setPhase({ kind: 'ready', email });
+    // #892 review 2: read what the code really is, as EmailLinkFlow does. A
+    // mode=resetPassword link carrying any other kind of code is not a reset.
+    readActionCode(link.oobCode).then(
+      (info) => {
+        if (!live) return;
+        if (info.operation !== 'PASSWORD_RESET') {
+          setPhase({ kind: 'mismatch' });
+          return;
+        }
+        if (!info.email) {
+          setPhase({ kind: 'problem', problem: 'invalid' });
+          return;
+        }
+        setPhase({ kind: 'ready', email: info.email });
       },
       (err: unknown) => {
         if (live) setPhase({ kind: 'problem', problem: codeProblemOf(err) ?? 'unreachable' });
@@ -315,6 +327,14 @@ function ResetPasswordFlow({ link }: { link: EmailActionLink }) {
   }
 
   if (phase.kind === 'checking') return <Checking />;
+
+  if (phase.kind === 'mismatch') {
+    return (
+      <Notice title="This link can't be completed here.">
+        Go back to the app or site where you started and try again from there.
+      </Notice>
+    );
+  }
 
   if (phase.kind === 'problem') {
     if (phase.problem === 'unreachable') return <Unreachable onRetry={() => setAttempt((n) => n + 1)} />;

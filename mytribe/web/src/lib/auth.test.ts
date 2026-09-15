@@ -27,7 +27,6 @@ vi.mock('firebase/auth', () => ({
   initializeRecaptchaConfig: vi.fn().mockResolvedValue(undefined),
   onAuthStateChanged: vi.fn().mockReturnValue(vi.fn()),
   sendPasswordResetEmail: vi.fn(),
-  verifyPasswordResetCode: vi.fn(),
   signInWithCustomToken: vi.fn(),
   signInWithEmailAndPassword: vi.fn(),
   signOut: vi.fn().mockResolvedValue(undefined),
@@ -245,13 +244,6 @@ describe('email action helpers', () => {
     await sendReset('ops@example.com', null);
     expect(vi.mocked(sendPasswordResetEmail).mock.calls[0]).toHaveLength(2);
     expect(sendPasswordResetEmail).toHaveBeenCalledWith(expect.anything(), 'ops@example.com');
-  });
-  it('verifyResetCode resolves the account email from the code', async () => {
-    const { verifyPasswordResetCode } = await import('firebase/auth');
-    vi.mocked(verifyPasswordResetCode).mockResolvedValue('pepper@example.com');
-    const { verifyResetCode } = await import('./auth');
-    await expect(verifyResetCode('CODE')).resolves.toBe('pepper@example.com');
-    expect(verifyPasswordResetCode).toHaveBeenCalledWith(expect.anything(), 'CODE');
   });
   it('completeReset sets the password with the code', async () => {
     const { confirmPasswordReset } = await import('firebase/auth');
