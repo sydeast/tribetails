@@ -51,6 +51,8 @@ object JvmFirestoreFixtures {
     var dynamicFields: List<DynamicField>? = null
     var businessSettings: BusinessSettings? = null
     var callableResponses: Map<String, String> = emptyMap()
+    /** #867 review: callables that answer with this Err message, so a test can show a screen a failed call (a timeout). */
+    var callableErrors: Map<String, String> = emptyMap()
     var incomingKinCares: List<KinCareVisit>? = null
     /** Keyed by "familyId/batchId/visitId"; answers platformGetKinCareAssignment in tests. */
     var kinCareAssignments: Map<String, KinCareAssignment> = emptyMap()
@@ -104,7 +106,7 @@ object JvmFirestoreFixtures {
         provideUserProfile = false; userProfile = null
         voicemails = null; calls = null; sms = null; emails = null
         activity = null; trainingDocs = null; dynamicFields = null; businessSettings = null
-        callableResponses = emptyMap(); incomingKinCares = null
+        callableResponses = emptyMap(); callableErrors = emptyMap(); incomingKinCares = null
         kinCareAssignments = emptyMap()
         lastCallableName = null; lastCallablePayloadJson = null
         lastWrite = null
@@ -732,6 +734,7 @@ private suspend fun rawInvokeCallable(name: String, payloadJson: String): WriteR
     // are cheap writes; the live path (else branch) still hits real REST).
     JvmFirestoreFixtures.lastCallableName = name
     JvmFirestoreFixtures.lastCallablePayloadJson = payloadJson
+    JvmFirestoreFixtures.callableErrors[name]?.let { return WriteResult.Err(it) }
     return JvmFirestoreFixtures.callableResponses[name]?.let { WriteResult.Ok(it) }
         ?: JvmFirestoreRest.callable(name, payloadJson)
 }
