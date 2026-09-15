@@ -42,8 +42,8 @@ import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.MediaFile
 import com.tribetails.auntieos.web.data.Payment
 import androidx.compose.ui.layout.ContentScale
-import coil3.compose.AsyncImage
 import com.tribetails.auntieos.web.theme.AuntieTheme
+import com.tribetails.auntieos.web.ui.components.AuntieAsyncImage
 import com.tribetails.auntieos.web.ui.components.AuntieDialog
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
@@ -395,7 +395,7 @@ private fun MediaViewerDialog(
         maxWidth = 900.dp,
     ) {
         if (isImageOrVideo) {
-            AsyncImage(
+            AuntieAsyncImage(
                 model = url,
                 contentDescription = title,
                 contentScale = ContentScale.Fit,

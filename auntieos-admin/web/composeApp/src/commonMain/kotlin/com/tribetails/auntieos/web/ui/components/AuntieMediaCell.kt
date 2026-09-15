@@ -45,7 +45,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
 import com.tribetails.auntieos.web.data.MediaFile
 import com.tribetails.auntieos.web.theme.AuntieTheme
@@ -135,7 +134,7 @@ fun AuntieMediaCell(
         ) {
             // ---- preview / glyph body ----
             if (canShowImage && previewUrl != null) {
-                AsyncImage(
+                AuntieAsyncImage(
                     model = previewUrl,
                     contentDescription = media.description.ifBlank { media.originalFileName.ifBlank { "Media" } },
                     contentScale = ContentScale.Crop,

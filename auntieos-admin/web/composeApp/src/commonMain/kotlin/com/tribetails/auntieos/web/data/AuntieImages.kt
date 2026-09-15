@@ -14,8 +14,12 @@ import coil3.serviceLoaderEnabled
  *
  * `serviceLoaderEnabled(false)` matters: coil-network-ktor3 registers its own
  * fetcher through ServiceLoader, and that one builds a plain `HttpClient()` with
- * no timeouts and no guard. The only ServiceLoader component on this classpath is
- * that fetcher (the Skia decoder is added directly), so nothing else is lost.
+ * no timeouts and no guard. The only other ServiceLoader component on this
+ * classpath is the console's own guarded fetcher, which this loader adds directly.
+ * The Skia decoder is added directly by Coil, so nothing else is lost.
+ *
+ * Builds a new client and memory cache on every call. Screens use
+ * [sharedAuntieImageLoader] instead.
  */
 fun auntieImageLoader(context: PlatformContext): ImageLoader =
     ImageLoader.Builder(context)
@@ -24,12 +28,22 @@ fun auntieImageLoader(context: PlatformContext): ImageLoader =
         .crossfade(true)
         .build()
 
+private var sharedLoader: ImageLoader? = null
+
 /**
- * Installs [auntieImageLoader] as Coil's singleton unless one is already set.
- * Called from `AuntieAppTheme`, which every screen and every render test sits
- * inside (the theme colors throw without it), so Coil's own default loader, and
- * its unguarded client, never gets built.
+ * #867 re-review: the one [auntieImageLoader] every image in the console uses,
+ * built on first use. `AuntieAsyncImage` passes it explicitly, and it is also
+ * Coil's singleton, so both paths share one client and one memory cache.
+ */
+fun sharedAuntieImageLoader(context: PlatformContext): ImageLoader =
+    sharedLoader ?: auntieImageLoader(context).also { sharedLoader = it }
+
+/**
+ * Installs [sharedAuntieImageLoader] as Coil's singleton unless one is already set.
+ * Called at app start and from `AuntieAppTheme`. Images no longer depend on it,
+ * since `AuntieAsyncImage` passes the loader explicitly; it is there for anything
+ * that asks Coil for its singleton.
  */
 fun installAuntieImageLoader() {
-    SingletonImageLoader.setSafe { auntieImageLoader(it) }
+    SingletonImageLoader.setSafe { sharedAuntieImageLoader(it) }
 }

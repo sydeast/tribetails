@@ -22,7 +22,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import coil3.compose.AsyncImagePainter
-import coil3.compose.SubcomposeAsyncImage
 import coil3.compose.SubcomposeAsyncImageContent
 import com.tribetails.auntieos.web.theme.AuntieTheme
 
@@ -123,7 +122,7 @@ private fun AvatarCircle(
         contentAlignment = Alignment.Center,
     ) {
         if (url.isNotBlank()) {
-            SubcomposeAsyncImage(
+            AuntieSubcomposeAsyncImage(
                 model = url,
                 contentDescription = if (initials.isNotBlank()) initials else "Avatar",
                 contentScale = ContentScale.Crop,
