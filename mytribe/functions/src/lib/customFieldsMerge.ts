@@ -172,7 +172,7 @@ export function customFieldsBytes(list: unknown): number {
  *
  * The size refusal fires only when the save GROWS the list past the budget. A
  * household already over it (written before this check, or by another writer)
- * can still echo, edit in place, clear and remove, because refusing those would
+ * can still echo, clear, remove, and make edits that add no bytes, because refusing those would
  * lock it out of every save over rows it has no way to see or delete.
  */
 export function mergeCustomFieldsForSave(stored: unknown, sent: readonly CustomFieldRow[], removeKeys: readonly string[]): unknown[] {

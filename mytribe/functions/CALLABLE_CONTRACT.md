@@ -1292,7 +1292,7 @@ every client in both directions: these callables are the only door.
 - `CustomField` `{ key: string /* 1..80 */, label: string /* 0..200; blank only on a stored key */, value: string /* <= 1000 */ }`
 - LIMITS (#873 review). The old `max 40` rows and `label 1..80` locked households out: current clients send every stored row back, `getMyTribeProfile` serves a missing label as `''`, and `saveFormSchema` allows 200-character labels and 50 sections of 200 fields. Now (`src/lib/customFieldsMerge.ts`):
   - the real ceiling is Firestore's 1 MiB document. The merged list may take `CUSTOM_FIELDS_MAX_BYTES` (900 KiB of its JSON, which over-counts Firestore's own size rule);
-  - a save that GROWS the list past that budget is refused with `invalid-argument`. A save that does not grow it (an echo, an in-place edit, a clear, a removal) always goes through, so a household already over the budget is never locked out over rows it cannot see or delete;
+  - a save that GROWS the list past that budget is refused with `invalid-argument`. A save that does not grow it (an echo, an edit that adds no bytes, a clear, a removal) always goes through, so a household already over the budget is never locked out over rows it cannot see or delete;
   - the request row cap, 27,927, is the budget divided by the smallest row's JSON (33 bytes). No list the server writes can hold more rows, so any stored list can be sent back. It is above the 10,009 rows the schemas can produce (50 x 200 plus 9 reserved rows), and it has to be, because office rows and rows from older schemas are not bounded by the current schema;
   - label `max 200` matches the form schema's field label;
   - a blank label on a key that is already stored keeps the stored label;
