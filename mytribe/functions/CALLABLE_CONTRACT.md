@@ -1282,14 +1282,21 @@ every client in both directions: these callables are the only door.
 
 ### saveTribeProfile / saveHomeAccess: `customFields` merge by key (#873)
 - `saveTribeProfile`
-  - req `{ kinfolkId?: string, displayName?: string /* 1..120 */, customFields?: CustomField[] /* max 40 */, removeCustomFieldKeys?: string[] /* 1..80 each, max 40 */ }`
+  - req `{ kinfolkId?: string, displayName?: string /* 1..120 */, customFields?: CustomField[] /* max 27,927 */, removeCustomFieldKeys?: string[] /* 1..80 each, max 27,927 */ }`
   - res `{ ok: true, emergencyContactIgnored?: true }`
-  - writes `families/{kinfolkId}.displayName` / `.customFields`
+  - writes `families/{kinfolkId}.displayName` / `.customFields`, and `kinfolk/{kinfolkId}.emergencyContacts` for an old client's contact edit (#829), in one transaction
 - `saveHomeAccess`
-  - req `{ kinfolkId?: string, gateCode?: string | null, keyLocation?: string | null, wifiPassword?: string | null, customFields?: CustomField[] /* max 40 */, removeCustomFieldKeys?: string[] /* 1..80 each, max 40 */ }`
+  - req `{ kinfolkId?: string, gateCode?: string | null, keyLocation?: string | null, wifiPassword?: string | null, customFields?: CustomField[] /* max 27,927 */, removeCustomFieldKeys?: string[] /* 1..80 each, max 27,927 */ }`
   - res `{ ok: true }`
-  - writes `families/{kinfolkId}/homeAccess/current`
-- `CustomField` `{ key: string /* 1..80 */, label: string /* 1..80 */, value: string /* <= 1000 */ }`
+  - writes `families/{kinfolkId}/homeAccess/current`, in a transaction when `customFields` or `removeCustomFieldKeys` is sent
+- `CustomField` `{ key: string /* 1..80 */, label: string /* 0..200; blank only on a stored key */, value: string /* <= 1000 */ }`
+- LIMITS (#873 review). The old `max 40` rows and `label 1..80` locked households out: current clients send every stored row back, `getMyTribeProfile` serves a missing label as `''`, and `saveFormSchema` allows 200-character labels and 50 sections of 200 fields. Now (`src/lib/customFieldsMerge.ts`):
+  - the real ceiling is Firestore's 1 MiB document. The merged list may take `CUSTOM_FIELDS_MAX_BYTES` (900 KiB of its JSON, which over-counts Firestore's own size rule);
+  - a save that GROWS the list past that budget is refused with `invalid-argument`. A save that does not grow it (an echo, an in-place edit, a clear, a removal) always goes through, so a household already over the budget is never locked out over rows it cannot see or delete;
+  - the request row cap, 27,927, is the budget divided by the smallest row's JSON (33 bytes). No list the server writes can hold more rows, so any stored list can be sent back. It is above the 10,009 rows the schemas can produce (50 x 200 plus 9 reserved rows), and it has to be, because office rows and rows from older schemas are not bounded by the current schema;
+  - label `max 200` matches the form schema's field label;
+  - a blank label on a key that is already stored keeps the stored label;
+  - a blank label on a NEW key that would land (value not `''`, not removed) is refused with `invalid-argument`, and nothing is written. No client sends one: web and Android fall back to the key, and old clients send the schema label (`min 1`) or a fixed card label.
 - MERGE, NEVER REPLACE. Until #873 both callables replaced `customFields` whole. The portal clients, in schema mode, rebuilt the list from the form schema's keys, so every stored row outside the schema (office-set rows shown as "Set by your Auntie", rows from an older schema, hand-added rows) was deleted on the household's next save. Now (`src/lib/customFieldsMerge.ts`):
   - a sent row replaces the stored row with the same key, in the stored row's position; later stored copies of that key fold into it;
   - a sent key with no stored row is appended, in sent order; a key sent twice, the last copy wins;
@@ -1298,7 +1305,11 @@ every client in both directions: these callables are the only door.
   - a stored row is deleted ONLY when its key is in `removeCustomFieldKeys`. Omitting a row never deletes it;
   - a stored entry with no string `key` is carried through verbatim.
   - A key both sent and named for removal is refused with `invalid-argument` and nothing is written.
-- OLD CLIENTS are safe by construction: they never send `removeCustomFieldKeys`, so the worst an old schema-mode client can do is overwrite the rows it sends. What they lose: an old client that blanks a vet or after-hours card field omits that row, and the omission no longer deletes it. The row stays until a current client saves. That is the safe direction for a data-loss fix.
+- OLD CLIENTS are safe by construction: they never send `removeCustomFieldKeys`, so the worst an old schema-mode client can do is overwrite the rows it sends. What they lose: an old client that blanks a vet or after-hours card field omits that row, and the omission no longer deletes it. The row stays until a current client saves. That is the safe direction for a data-loss fix. In particular:
+  - old portal web's `vetClinicId`, in schema mode, cannot be cleared by blanking the clinic. The blank clinic is omitted, so the stored id stays until a current client saves;
+  - old clients no longer delete a row an admin removed from the schema. They only ever sent the current schema's keys, and a row they do not send is now kept;
+  - blanking a schema field on an old client still clears it. The old client sends that key with `value: ''`, and a sent `''` over a stored row is a real clear.
+- CONCURRENT SAVES. Both callables read, merge and write `customFields` in one Firestore transaction (#873 review), and `saveTribeProfile`'s old-client Emergency Contact reads and write are in the same one. Two devices saving at once no longer lose each other's rows: the second commit is retried against the first one's list, so a row one device added and the other never saw survives. What a transaction does NOT fix is a stale screen. The merge is last write wins PER KEY: a tab or install that loaded the profile before another device saved still sends the rows it loaded, so it overwrites that device's edit to the same key, and it brings back a row that device removed (the stale client sends the row, and a sent key with no stored row is appended). Only a key named in `removeCustomFieldKeys` is deleted, and nothing compares versions.
 - `''` IS A CLEAR, NOT A NO-OP, because both old clients seed their schema form from every stored row: an untouched field echoes its stored value, and only a field the household emptied arrives as `''`. Treating `''` as "leave it" would silently undo those clears under "Saved.".
 - CLIENTS send the stored rows in order with only their own edits applied, name every blank card field that has a stored row in `removeCustomFieldKeys`, and never send an untouched schema field with no stored row as `''`. The full list (not a diff) is sent so the same payload is also right against a server that still replaces the list whole. Web `editCustomFields` / `schemaFieldRow` in `mytribe/web/src/api/tribeApi.ts`; Android `editCustomFields` / `schemaFieldRow` in `TribeScreen.kt` and the `removeCustomFieldKeys` parameter on `PortalApi.saveTribeProfile / saveHomeAccess`.
 - EMERGENCY CONTACT ROWS (#829). `saveTribeProfile` strips sent `emergencyContact*` rows (an old client's contact edit goes through the #829 path), keeps the stored copy in place for the migration, and ignores those keys in `removeCustomFieldKeys`. `saveHomeAccess` strips them from what is sent AND from the merged result, as it did when the list was replaced whole: nothing reads a copy there.

@@ -9,22 +9,23 @@ import { requireKinfolkPerm } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { LEGACY_EMERGENCY_CONTACT_KEYS } from '../lib/emergencyContacts';
-import { conflictingCustomFieldKeys, hasKeyIn, mergeCustomFields } from '../lib/customFieldsMerge';
-
-const CustomFieldZ = z.object({
-  key: z.string().min(1).max(80),
-  label: z.string().min(1).max(80),
-  value: z.string().max(1000),
-});
+import {
+  conflictingCustomFieldKeys,
+  CustomFieldsZ,
+  hasKeyIn,
+  mergeCustomFieldsForSave,
+  RemoveCustomFieldKeysZ,
+} from '../lib/customFieldsMerge';
 
 const Args = z.object({
   kinfolkId: z.string().optional(),
   gateCode: z.string().max(80).nullable().optional(),
   keyLocation: z.string().max(500).nullable().optional(),
   wifiPassword: z.string().max(200).nullable().optional(),
-  customFields: z.array(CustomFieldZ).max(40).optional(),
+  /** #873 review: sized to what can be stored, not 40. See CUSTOM_FIELDS_MAX_ROWS. */
+  customFields: CustomFieldsZ.optional(),
   /** #873: the only way to delete a stored row. */
-  removeCustomFieldKeys: z.array(z.string().min(1).max(80)).max(40).optional(),
+  removeCustomFieldKeys: RemoveCustomFieldKeysZ.optional(),
 });
 
 /**
@@ -73,16 +74,22 @@ export async function saveHomeAccessHandler(req: CallableRequest<unknown>): Prom
   // from the schema keys no longer deletes the rows it did not send.
   const ref = firestore.doc(`families/${kinfolkId}/homeAccess/current`);
   if (args.customFields !== undefined || args.removeCustomFieldKeys !== undefined) {
-    const snap = await ref.get();
-    const merged = mergeCustomFields(
-      (snap.data() ?? {})['customFields'],
-      (args.customFields ?? []).filter((f) => !LEGACY_EMERGENCY_CONTACT_KEYS.has(f.key)),
-      args.removeCustomFieldKeys ?? [],
-    );
-    update['customFields'] = merged.filter((entry) => !hasKeyIn(entry, LEGACY_EMERGENCY_CONTACT_KEYS));
+    // #873 review: read, merge and write in one transaction. Two devices saving
+    // at once used to read the same list, and the second write dropped the rows
+    // the first had added. Firestore now retries the loser against the winner's
+    // list. Nothing with a side effect runs in here, because it can run twice.
+    const sent = (args.customFields ?? []).filter((f) => !LEGACY_EMERGENCY_CONTACT_KEYS.has(f.key));
+    const removeKeys = args.removeCustomFieldKeys ?? [];
+    await firestore.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const merged = mergeCustomFieldsForSave((snap.data() ?? {})['customFields'], sent, removeKeys);
+      tx.set(ref, { ...update, customFields: merged.filter((entry) => !hasKeyIn(entry, LEGACY_EMERGENCY_CONTACT_KEYS)) }, { merge: true });
+    });
+    update['customFields'] = true;
+  } else {
+    await ref.set(update, { merge: true });
   }
 
-  await ref.set(update, { merge: true });
   logEvent({ severity: 'info', function: 'saveHomeAccess', event: 'portal.homeAccess.saved', uid, extra: { kinfolkId, fields: Object.keys(update) } });
   return { ok: true };
 }

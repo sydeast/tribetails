@@ -274,3 +274,65 @@ describe('saveHomeAccessHandler: customFields merge by key (#873)', () => {
     expect(w!.data.customFields).toBeUndefined();
   });
 });
+
+/**
+ * #873 review. The same lockouts and the same race as saveTribeProfile: a 40-row
+ * cap and a required label against clients that send every stored row back, and
+ * a read-merge-write outside a transaction.
+ */
+describe('saveHomeAccessHandler: limits and concurrent saves (#873 review)', () => {
+  const ALARM = { key: 'alarm', label: 'Alarm Code', value: '5678' };
+  const rowsOf = (n: number) => Array.from({ length: n }, (_, i) => ({ key: `field${i}`, label: `Field ${i}`, value: `v${i}` }));
+
+  function home(stored: unknown[]) {
+    const docs: Record<string, any> = {
+      'clients/u1': { kinfolkIds: ['3'] },
+      [HOME_ACCESS_PATH]: { gateCode: '1234', customFields: stored },
+    };
+    const ctx = buildDbMock({ docs, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    return { ctx, docs };
+  }
+  async function save(data: Record<string, unknown>) {
+    const { saveHomeAccessHandler } = await import('../src/portal/saveHomeAccess');
+    return saveHomeAccessHandler({ data: { kinfolkId: '3', ...data }, auth: { uid: 'u1' } } as any);
+  }
+  const storedList = (docs: Record<string, any>) => docs[HOME_ACCESS_PATH].customFields as unknown[];
+
+  it('a household with 60 stored rows saves when a current client sends every row back', async () => {
+    const sixty = rowsOf(60);
+    const { docs } = home(sixty);
+    await expect(save({ customFields: sixty.map((r, i) => (i === 0 ? { ...r, value: 'edited' } : r)), removeCustomFieldKeys: [] })).resolves.toEqual({ ok: true });
+    expect(storedList(docs)).toHaveLength(60);
+    expect(storedList(docs)[0]).toEqual({ ...sixty[0], value: 'edited' });
+  });
+
+  it("a stored row with an empty label, echoed back as '', saves and keeps the stored label", async () => {
+    const { docs } = home([{ key: 'shed', label: '', value: 'Left' }, ALARM]);
+    await expect(
+      save({ customFields: [{ key: 'shed', label: '', value: 'Right' }, { key: 'alarm', label: '', value: '9999' }], removeCustomFieldKeys: [] }),
+    ).resolves.toEqual({ ok: true });
+    expect(storedList(docs)).toEqual([{ key: 'shed', label: '', value: 'Right' }, { ...ALARM, value: '9999' }]);
+  });
+
+  it('a NEW key with a blank label and a value is refused, and nothing is written', async () => {
+    const { ctx } = home([ALARM]);
+    await expect(save({ customFields: [ALARM, { key: 'pool', label: '', value: 'Heated' }] })).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('CONCURRENT: a row another device adds between this save reading and writing survives', async () => {
+    const { ctx, docs } = home([ALARM]);
+    const { installOptimisticTransactions } = await import('./_helpers/optimisticTransaction');
+    const ANDROID = { key: 'pool', label: 'Pool', value: 'Heated' };
+    const tx = installOptimisticTransactions(ctx.db, docs, {
+      onRead: (path, attempt) => {
+        if (path !== HOME_ACCESS_PATH || attempt !== 1) return;
+        docs[HOME_ACCESS_PATH] = { ...docs[HOME_ACCESS_PATH], customFields: [...docs[HOME_ACCESS_PATH].customFields, ANDROID] };
+      },
+    });
+    await expect(save({ customFields: [{ ...ALARM, value: '9999' }], removeCustomFieldKeys: [] })).resolves.toEqual({ ok: true });
+    expect(storedList(docs)).toEqual([{ ...ALARM, value: '9999' }, ANDROID]);
+    expect(tx.attempts()).toBe(2);
+  });
+});

@@ -563,3 +563,133 @@ describe('saveTribeProfileHandler: what this caller was served decides an echo',
     },
   );
 });
+
+/**
+ * #873 review. The request schema capped rows at 40 and required a label, but
+ * current clients send every stored row back and getMyTribeProfile serves a
+ * missing label as '', so one big or unlabeled household could never save
+ * again. And the read-merge-write was not a transaction, so two devices saving
+ * at once dropped each other's rows.
+ */
+describe('saveTribeProfileHandler: limits and concurrent saves (#873 review)', () => {
+  const ALLERGY = { key: 'allergy', label: 'Allergies', value: 'Chicken' };
+  const OFFICE = { key: 'gateNote', label: 'Set by Auntie', value: 'Side gate sticks' };
+  const rowsOf = (n: number) => Array.from({ length: n }, (_, i) => ({ key: `field${i}`, label: `Field ${i}`, value: `v${i}` }));
+
+  function household(stored: unknown[], extra: Record<string, any> = {}) {
+    const docs: Record<string, any> = {
+      'clients/u1': { kinfolkIds: ['3'] },
+      'families/3': { displayName: 'The Foster', customFields: stored },
+      ...extra,
+    };
+    const ctx = buildDbMock({ docs, writeThrough: true, queryDocs: { 'families/3/members': [] } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    return { ctx, docs };
+  }
+  async function save(data: Record<string, unknown>) {
+    const { saveTribeProfileHandler } = await import('../src/portal/saveTribeProfile');
+    return saveTribeProfileHandler({ data: { kinfolkId: '3', displayName: 'The Foster', ...data }, auth: { uid: 'u1' } } as any);
+  }
+  const storedList = (docs: Record<string, any>) => docs['families/3'].customFields as unknown[];
+
+  it('a household with 60 stored rows saves when a current client sends every row back', async () => {
+    const sixty = rowsOf(60);
+    const { docs } = household(sixty);
+    const sent = sixty.map((r, i) => (i === 59 ? { ...r, value: 'edited' } : r));
+    await expect(save({ customFields: sent, removeCustomFieldKeys: [] })).resolves.toEqual({ ok: true });
+    expect(storedList(docs)).toHaveLength(60);
+    expect(storedList(docs)[59]).toEqual({ ...sixty[59], value: 'edited' });
+  });
+
+  it("a stored row with an empty or missing label, echoed back as '', saves and keeps the stored label", async () => {
+    const { docs } = household([{ key: 'legacyNote', value: 'Old' }, { key: 'blank', label: '', value: 'x' }, ALLERGY]);
+    await expect(
+      save({
+        customFields: [
+          { key: 'legacyNote', label: '', value: 'Old' },
+          { key: 'blank', label: '', value: 'y' },
+          { key: 'allergy', label: '', value: 'Beef' },
+        ],
+        removeCustomFieldKeys: [],
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(storedList(docs)).toEqual([
+      { key: 'legacyNote', label: '', value: 'Old' },
+      { key: 'blank', label: '', value: 'y' },
+      { ...ALLERGY, value: 'Beef' },
+    ]);
+  });
+
+  it('a NEW key with a blank label and a value is refused, and nothing is written', async () => {
+    const { ctx } = household([ALLERGY]);
+    await expect(save({ customFields: [ALLERGY, { key: 'pool', label: ' ', value: 'Heated' }] })).rejects.toMatchObject({
+      code: 'invalid-argument',
+      message: expect.stringContaining('pool'),
+    });
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it("a NEW key with a blank label and an empty value is not refused, and writes no row", async () => {
+    const { docs } = household([ALLERGY]);
+    await expect(save({ customFields: [ALLERGY, { key: 'pool', label: '', value: '' }] })).resolves.toEqual({ ok: true });
+    expect(storedList(docs)).toEqual([ALLERGY]);
+  });
+
+  it('a 200-character label saves, because the form schema allows one', async () => {
+    const { docs } = household([ALLERGY]);
+    const long = { key: 'pool', label: 'L'.repeat(200), value: 'Heated' };
+    await expect(save({ customFields: [ALLERGY, long] })).resolves.toEqual({ ok: true });
+    expect(storedList(docs)).toEqual([ALLERGY, long]);
+  });
+
+  it('over the size budget: growing the list is refused, shrinking or editing in place still saves', async () => {
+    const big = Array.from({ length: 950 }, (_, i) => ({ key: `k${i}`, label: 'L', value: 'x'.repeat(1000) }));
+    const { ctx, docs } = household(big);
+    await expect(save({ customFields: [...big, { key: 'pool', label: 'Pool', value: 'Heated' }] })).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(ctx.writes).toHaveLength(0);
+    await expect(save({ customFields: big.map((r, i) => (i === 0 ? { ...r, value: 'y'.repeat(1000) } : r)) })).resolves.toEqual({ ok: true });
+    await expect(save({ removeCustomFieldKeys: ['k1'] })).resolves.toEqual({ ok: true });
+    expect(storedList(docs)).toHaveLength(949);
+  });
+
+  it('CONCURRENT: a row another device adds between this save reading and writing survives', async () => {
+    const { ctx, docs } = household([OFFICE, ALLERGY]);
+    const { installOptimisticTransactions } = await import('./_helpers/optimisticTransaction');
+    const ANDROID = { key: 'pool', label: 'Pool', value: 'Heated' };
+    const tx = installOptimisticTransactions(ctx.db, docs, {
+      onRead: (path, attempt) => {
+        if (path !== 'families/3' || attempt !== 1) return;
+        docs['families/3'] = { ...docs['families/3'], customFields: [...docs['families/3'].customFields, ANDROID] };
+      },
+    });
+    await expect(save({ customFields: [OFFICE, { ...ALLERGY, value: 'Beef' }], removeCustomFieldKeys: [] })).resolves.toEqual({ ok: true });
+    expect(storedList(docs)).toEqual([OFFICE, { ...ALLERGY, value: 'Beef' }, ANDROID]);
+    expect(tx.attempts()).toBe(2);
+  });
+
+  it("CONCURRENT: an old client's contact edit reads and writes inside the same transaction as the rows", async () => {
+    const { ctx, docs } = household([ALLERGY], {
+      'kinfolk/3': { firstName: 'Dana', lastName: 'Foster', phoneNumber: '(805) 555-0100', emergencyContacts: [] },
+    });
+    const { installOptimisticTransactions } = await import('./_helpers/optimisticTransaction');
+    const ANDROID = { key: 'pool', label: 'Pool', value: 'Heated' };
+    const tx = installOptimisticTransactions(ctx.db, docs, {
+      onRead: (path, attempt) => {
+        if (path !== 'kinfolk/3' || attempt !== 1 || docs['families/3'].customFields.length > 1) return;
+        docs['families/3'] = { ...docs['families/3'], customFields: [...docs['families/3'].customFields, ANDROID] };
+      },
+    });
+    await expect(
+      save({
+        customFields: [
+          ALLERGY,
+          { key: 'emergencyContactName', label: 'Emergency Contact', value: 'Sam Ortiz' },
+          { key: 'emergencyContactPhone', label: 'Emergency Contact Phone', value: '(805) 555-0111' },
+        ],
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(docs['kinfolk/3'].emergencyContacts[0]).toMatchObject({ name: 'Sam Ortiz', phone: '+18055550111' });
+    expect(storedList(docs)).toEqual([ALLERGY, ANDROID]);
+    expect(tx.attempts()).toBe(2);
+  });
+});

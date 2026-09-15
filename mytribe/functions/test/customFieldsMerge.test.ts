@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { mergeCustomFields } from '../src/lib/customFieldsMerge';
+import {
+  CUSTOM_FIELDS_MAX_BYTES,
+  CUSTOM_FIELDS_MAX_ROWS,
+  customFieldsBytes,
+  mergeCustomFields,
+  mergeCustomFieldsForSave,
+  newKeysMissingLabel,
+} from '../src/lib/customFieldsMerge';
 
 /**
  * #873. `customFields` used to be replaced whole, so a client that rebuilt the
@@ -57,5 +64,49 @@ describe('mergeCustomFields (#873)', () => {
 
   it('stored rows that are not an array read as none', () => {
     expect(mergeCustomFields(undefined, [allergy], [])).toEqual([allergy]);
+  });
+
+  it('a blank sent label on a stored key keeps the stored label; a missing stored label stays blank', () => {
+    expect(mergeCustomFields([allergy, { key: 'x', value: '1' }], [{ ...allergy, label: '', value: 'Beef' }, { key: 'x', label: ' ', value: '2' }], [])).toEqual([
+      { ...allergy, value: 'Beef' },
+      { key: 'x', label: '', value: '2' },
+    ]);
+  });
+});
+
+/** #873 review: the refusals and the limits the callables share. */
+describe('customFields save limits (#873 review)', () => {
+  const allergy = { key: 'allergy', label: 'Allergies', value: 'Chicken' };
+
+  it('newKeysMissingLabel names only a new, labelless key that would land', () => {
+    const sent = [
+      { key: 'allergy', label: '', value: 'Beef' },
+      { key: 'pool', label: '', value: 'Heated' },
+      { key: 'shed', label: '', value: '' },
+      { key: 'gone', label: '', value: 'x' },
+      { key: 'named', label: 'Named', value: 'x' },
+    ];
+    expect(newKeysMissingLabel([allergy], sent, ['gone'])).toEqual(['pool']);
+  });
+
+  it('the row cap admits any list that fits the byte budget, and is above what the schemas can produce', () => {
+    const smallest = [{ key: 'a', label: '', value: '' }];
+    expect(customFieldsBytes(smallest)).toBe(35);
+    expect(CUSTOM_FIELDS_MAX_ROWS * 33).toBeLessThanOrEqual(CUSTOM_FIELDS_MAX_BYTES);
+    expect(CUSTOM_FIELDS_MAX_ROWS).toBeGreaterThan(50 * 200 + 9);
+  });
+
+  it('mergeCustomFieldsForSave refuses growth past the budget but never a save that does not grow an over-budget list', () => {
+    const big = Array.from({ length: 950 }, (_, i) => ({ key: `k${i}`, label: 'L', value: 'x'.repeat(1000) }));
+    expect(customFieldsBytes(big)).toBeGreaterThan(CUSTOM_FIELDS_MAX_BYTES);
+    expect(() => mergeCustomFieldsForSave(big, [{ key: 'pool', label: 'Pool', value: 'y' }], [])).toThrow(/too large/);
+    expect(mergeCustomFieldsForSave(big, big, [])).toHaveLength(950);
+    expect(mergeCustomFieldsForSave(big, [{ key: 'k0', label: 'L', value: '' }], ['k1'])).toHaveLength(949);
+  });
+
+  it('mergeCustomFieldsForSave refuses a new labelless row with invalid-argument', () => {
+    expect(() => mergeCustomFieldsForSave([allergy], [{ key: 'pool', label: '', value: 'Heated' }], [])).toThrow(
+      expect.objectContaining({ code: 'invalid-argument' }),
+    );
   });
 });

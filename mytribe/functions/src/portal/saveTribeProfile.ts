@@ -18,20 +18,21 @@ import {
   sameLegacyContact,
 } from '../lib/emergencyContacts';
 import { parseEmergencyContactsInput, prepareEmergencyContactsSave, readLegacyServedKeys } from './emergencyContacts';
-import { conflictingCustomFieldKeys, mergeCustomFields } from '../lib/customFieldsMerge';
-
-const CustomFieldZ = z.object({
-  key: z.string().min(1).max(80),
-  label: z.string().min(1).max(80),
-  value: z.string().max(1000),
-});
+import {
+  conflictingCustomFieldKeys,
+  CustomFieldsZ,
+  mergeCustomFieldsForSave,
+  RemoveCustomFieldKeysZ,
+  type CustomFieldRow,
+} from '../lib/customFieldsMerge';
 
 const Args = z.object({
   kinfolkId: z.string().optional(),
   displayName: z.string().min(1).max(120).optional(),
-  customFields: z.array(CustomFieldZ).max(40).optional(),
+  /** #873 review: sized to what can be stored, not 40. See CUSTOM_FIELDS_MAX_ROWS. */
+  customFields: CustomFieldsZ.optional(),
   /** #873: the only way to delete a stored row. Emergency Contact keys are ignored here. */
-  removeCustomFieldKeys: z.array(z.string().min(1).max(80)).max(40).optional(),
+  removeCustomFieldKeys: RemoveCustomFieldKeysZ.optional(),
 });
 
 /**
@@ -113,87 +114,101 @@ export async function saveTribeProfileHandler(
   //   - without Home access nothing is written to the contact and the reply
   //     carries emergencyContactIgnored.
   const isAdmin = req.auth?.token?.admin === true;
-  let customFields: unknown[] | undefined;
+  const familiesRef = firestore.collection('families').doc(kinfolkId);
+  const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
+  if (args.displayName !== undefined) update['displayName'] = args.displayName;
+
   let emergencyContactWrite: Awaited<ReturnType<typeof prepareEmergencyContactsSave>> | null = null;
   let emergencyContactIgnored = false;
+  let stripped: { count: number; outcome: 'echo' | 'applied' | 'ignored' } | null = null;
   if (args.customFields !== undefined || args.removeCustomFieldKeys !== undefined) {
     const sentFields = args.customFields ?? [];
     const sentRows = sentFields.filter((f) => isEmergencyContactKey(f.key));
-    const stored = await firestore.collection('families').doc(kinfolkId).get();
-    const storedFields = (stored.data() ?? {})['customFields'];
-    const carried = storedEmergencyContactRows(storedFields);
-    // #873: merged by key. Sent Emergency Contact rows never land, and stored
-    // ones are unsent and so kept where they are.
-    customFields = mergeCustomFields(
-      storedFields,
-      sentFields.filter((f) => !isEmergencyContactKey(f.key)),
-      (args.removeCustomFieldKeys ?? []).filter((k) => !isEmergencyContactKey(k)),
-    );
-
     const sent = legacyContactFromRows(sentRows);
-    // Sent none (sent === null). Either an old client cleared every contact
-    // field, or a new client (which never sends these rows) saved the profile;
-    // the rows alone cannot tell them apart. The contact stays as it is in both
-    // cases, because a household needs at least one and clearing it goes through
-    // saveEmergencyContacts' own rules. The rest of the profile saves. Nothing is
-    // logged: it would fire on every new-client save and say nothing.
-    if (sent !== null) {
-      const servedKeys = await readLegacyServedKeys(firestore, kinfolkId, uid);
-      let outcome: 'echo' | 'applied' | 'ignored' = 'echo';
-      const kinSnap = await firestore.doc(`kinfolk/${kinfolkId}`).get();
-      const current = readStoredEmergencyContacts((kinSnap.data() ?? {}) as Record<string, unknown>).contacts;
-      const loaded = legacyContactFromRows(carried);
-      const slot1 = current[0];
-      const isEcho =
-        servedKeys.includes(legacyServedKey(sent)) ||
-        (loaded !== null && sameLegacyContact(sent, loaded)) ||
-        (slot1 !== undefined && sameLegacyContact(sent, slot1));
-      if (!isEcho) {
-        if (await hasKinfolkPerm(uid, kinfolkId, 'home_access', isAdmin, 'saveTribeProfile')) {
-          // Validated before anything is written; a refusal throws out of this call.
-          // Only the slot being written is parsed. A stored slot 2 is carried
-          // through as stored: one that no longer parses (a hand-typed phone the
-          // migration carried) must not block a slot 1 edit. Both slots still go
-          // through the outside-the-household and different-phone checks.
-          const [slot1Input] = parseEmergencyContactsInput([sent]);
-          if (slot1Input === undefined) throw new HttpsError('invalid-argument', 'Invalid arguments.');
-          const contacts = [
-            slot1Input,
-            ...current.slice(1).map((c) => ({ name: c.name, phone: c.phone, relationship: c.relationship })),
-          ];
-          emergencyContactWrite = await prepareEmergencyContactsSave(firestore, kinfolkId, contacts);
-          outcome = 'applied';
-        } else {
-          emergencyContactIgnored = true;
-          outcome = 'ignored';
+    const removeKeys = (args.removeCustomFieldKeys ?? []).filter((k) => !isEmergencyContactKey(k));
+    // #873 review: the families read, the Emergency Contact reads, and both
+    // writes are one transaction. Two devices saving at once used to read the
+    // same list, and the second write dropped the rows the first had added.
+    // Firestore now retries the loser against the winner's list. Every read comes
+    // before the first write, and nothing with a side effect (a log line, the
+    // audit entry) runs in here, because the callback can run more than once.
+    const result = await firestore.runTransaction(async (tx) => {
+      const stored = await tx.get(familiesRef);
+      const storedFields = (stored.data() ?? {})['customFields'];
+      // #873: merged by key. Sent Emergency Contact rows never land, and stored
+      // ones are unsent and so kept where they are. Refusals throw from here,
+      // before anything is written.
+      const customFields = mergeCustomFieldsForSave(
+        storedFields,
+        sentFields.filter((f) => !isEmergencyContactKey(f.key)),
+        removeKeys,
+      );
+
+      // Sent none (sent === null). Either an old client cleared every contact
+      // field, or a new client (which never sends these rows) saved the profile;
+      // the rows alone cannot tell them apart. The contact stays as it is in both
+      // cases, because a household needs at least one and clearing it goes through
+      // saveEmergencyContacts' own rules. The rest of the profile saves. Nothing is
+      // logged: it would fire on every new-client save and say nothing.
+      let outcome: 'echo' | 'applied' | 'ignored' | null = null;
+      let ecWrite: Awaited<ReturnType<typeof prepareEmergencyContactsSave>> | null = null;
+      if (sent !== null) {
+        outcome = 'echo';
+        const servedKeys = await readLegacyServedKeys(firestore, kinfolkId, uid, tx);
+        const kinSnap = await tx.get(firestore.doc(`kinfolk/${kinfolkId}`));
+        const current = readStoredEmergencyContacts((kinSnap.data() ?? {}) as Record<string, unknown>).contacts;
+        const loaded = legacyContactFromRows(storedEmergencyContactRows(storedFields));
+        const slot1 = current[0];
+        const isEcho =
+          servedKeys.includes(legacyServedKey(sent)) ||
+          (loaded !== null && sameLegacyContact(sent, loaded)) ||
+          (slot1 !== undefined && sameLegacyContact(sent, slot1));
+        if (!isEcho) {
+          if (await hasKinfolkPerm(uid, kinfolkId, 'home_access', isAdmin, 'saveTribeProfile')) {
+            // Validated before anything is written; a refusal throws out of this call.
+            // Only the slot being written is parsed. A stored slot 2 is carried
+            // through as stored: one that no longer parses (a hand-typed phone the
+            // migration carried) must not block a slot 1 edit. Both slots still go
+            // through the outside-the-household and different-phone checks.
+            const [slot1Input] = parseEmergencyContactsInput([sent]);
+            if (slot1Input === undefined) throw new HttpsError('invalid-argument', 'Invalid arguments.');
+            const contacts = [
+              slot1Input,
+              ...current.slice(1).map((c) => ({ name: c.name, phone: c.phone, relationship: c.relationship })),
+            ];
+            ecWrite = await prepareEmergencyContactsSave(firestore, kinfolkId, contacts, tx);
+            outcome = 'applied';
+          } else {
+            outcome = 'ignored';
+          }
         }
       }
-      logEvent({
-        severity: outcome === 'ignored' ? 'warn' : 'info',
-        function: 'saveTribeProfile',
-        event: 'portal.tribe.emergency_contact_keys.stripped',
-        uid,
-        extra: { kinfolkId, stripped: sentRows.length, outcome },
-      });
-    }
-  }
 
-  const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
-  if (args.displayName !== undefined) update['displayName'] = args.displayName;
-  if (customFields !== undefined) update['customFields'] = customFields;
-  if (Object.keys(update).length === 1 && emergencyContactWrite === null) {
+      // Writes. The contact and the rest of the profile land together or not at all.
+      if (ecWrite !== null) {
+        tx.update(ecWrite.ref, { emergencyContacts: ecWrite.merged, updatedAt: FieldValue.serverTimestamp() });
+      }
+      tx.set(familiesRef, { ...update, customFields }, { merge: true });
+      return { ecWrite, outcome };
+    });
+    update['customFields'] = true;
+    emergencyContactWrite = result.ecWrite;
+    emergencyContactIgnored = result.outcome === 'ignored';
+    if (result.outcome !== null) stripped = { count: sentRows.length, outcome: result.outcome };
+  } else if (args.displayName !== undefined) {
+    await familiesRef.set(update, { merge: true });
+  } else {
     return { ok: true }; // only timestamp would be written; skip
   }
 
-  const familiesRef = firestore.collection('families').doc(kinfolkId);
-  if (emergencyContactWrite !== null) {
-    // One batch, so the contact and the rest of the profile land together or not at all.
-    const batch = firestore.batch();
-    batch.update(emergencyContactWrite.ref, { emergencyContacts: emergencyContactWrite.merged, updatedAt: FieldValue.serverTimestamp() });
-    batch.set(familiesRef, update, { merge: true });
-    await batch.commit();
-  } else {
-    await familiesRef.set(update, { merge: true });
+  if (stripped !== null) {
+    logEvent({
+      severity: stripped.outcome === 'ignored' ? 'warn' : 'info',
+      function: 'saveTribeProfile',
+      event: 'portal.tribe.emergency_contact_keys.stripped',
+      uid,
+      extra: { kinfolkId, stripped: stripped.count, outcome: stripped.outcome },
+    });
   }
   const fields = [...Object.keys(update).filter((k) => k !== 'updatedAt'), ...(emergencyContactWrite !== null ? ['emergencyContacts'] : [])];
   logEvent({ severity: 'info', function: 'saveTribeProfile', event: 'portal.tribe.saved', uid, extra: { kinfolkId, fields } });
@@ -238,10 +253,10 @@ function isEmergencyContactKey(key: string): boolean {
 }
 
 /** The stored emergencyContact* rows, exactly as stored, for carrying through a save. */
-function storedEmergencyContactRows(fields: unknown): Array<z.infer<typeof CustomFieldZ>> {
+function storedEmergencyContactRows(fields: unknown): CustomFieldRow[] {
   const list = Array.isArray(fields) ? fields : [];
   return list.filter(
-    (f): f is z.infer<typeof CustomFieldZ> =>
+    (f): f is CustomFieldRow =>
       typeof f === 'object' &&
       f !== null &&
       typeof (f as { key?: unknown }).key === 'string' &&
