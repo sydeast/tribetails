@@ -103,13 +103,23 @@ export interface CreateKinfolkResult {
   duplicateOf: string | null;
 }
 
-export async function createKinfolk(input: NewKinfolkInput): Promise<CreateKinfolkResult> {
+/**
+ * `ignoreDuplicateOf` (#907 review item 1a): the household this operator just
+ * Discarded on the Add prompt. Discard means the next Add is a new household, so
+ * the server's duplicate check skips that one id.
+ */
+export async function createKinfolk(input: NewKinfolkInput, ignoreDuplicateOf?: string | null): Promise<CreateKinfolkResult> {
   const firstName = input.firstName.trim();
   const lastName = input.lastName.trim();
   if (firstName === '') throw new Error('createKinfolk requires a first name');
   if (lastName === '') throw new Error('createKinfolk requires a last name');
 
-  const res = await call<{ kinfolk: Record<string, unknown> }, Partial<CreateKinfolkResult> | null>('createKinfolk', {
+  const ignore = ignoreDuplicateOf?.trim() ?? '';
+  const res = await call<
+    { kinfolk: Record<string, unknown>; ignoreDuplicateOf?: string },
+    Partial<CreateKinfolkResult> | null
+  >('createKinfolk', {
+    ...(ignore !== '' ? { ignoreDuplicateOf: ignore } : {}),
     kinfolk: {
       firstName,
       lastName,

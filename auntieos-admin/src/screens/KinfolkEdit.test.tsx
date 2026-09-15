@@ -633,6 +633,66 @@ describe('Emergency Contacts on the edit form (#829)', () => {
     expect(screen.queryByText(/saveEmergencyContacts failed/)).toBeNull();
   });
 
+  // #907 review item 1(b).
+  it('fills in what a duplicate Add typed that differs, as unsaved changes, and saves it through the normal update', async () => {
+    const onDuplicateAddApplied = vi.fn();
+    mount(
+      {},
+      {
+        duplicateAdd: {
+          kinfolkId: 'kf1',
+          household: {
+            firstName: 'Jamie',
+            lastName: 'Halbrook-Park',
+            phoneNumber: '',
+            email: 'jamie@example.com',
+            status: 'active',
+            serviceAddress: '9 New Rd',
+          },
+          contacts: [{ name: 'Rae Park', phone: '5125550199', relationship: '' }],
+        },
+        onDuplicateAddApplied,
+      },
+    );
+
+    expect(await screen.findByText('Jamie Halbrook was already added a few minutes ago.')).toBeInTheDocument();
+    expect(fieldByLabel('Last name')).toHaveValue('Halbrook-Park');
+    // A blank typed phone is "not typed", never "clear it".
+    expect(fieldByLabel('Primary phone')).toHaveValue('(512) 555-0134');
+    expect(fieldByLabel('Service address')).toHaveValue('9 New Rd');
+    expect(screen.getByTestId('kfedit-unsaved')).toHaveTextContent('Unsaved changes');
+    expect(onDuplicateAddApplied).toHaveBeenCalledOnce();
+    expect(updateKinfolkProfile).not.toHaveBeenCalled();
+    expect(saveEmergencyContacts).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(updateKinfolkProfile).toHaveBeenCalledOnce());
+    expect(updateKinfolkProfile.mock.calls[0]?.[0]).toBe('kf1');
+    expect(Object.keys((updateKinfolkProfile.mock.calls[0]?.[1] ?? {}) as object).sort()).toEqual(['lastName', 'serviceAddress']);
+    await waitFor(() =>
+      expect(saveEmergencyContacts).toHaveBeenCalledWith('kf1', [{ name: 'Rae Park', phone: '5125550199', relationship: '' }]),
+    );
+  });
+
+  it("never lays a duplicate Add's typing over a different household", async () => {
+    const onDuplicateAddApplied = vi.fn();
+    mount(
+      {},
+      {
+        duplicateAdd: {
+          kinfolkId: 'kf-other',
+          household: { firstName: 'Jamie', lastName: 'Park', phoneNumber: '', email: '', status: 'active', serviceAddress: '' },
+          contacts: [],
+        },
+        onDuplicateAddApplied,
+      },
+    );
+    await waitFor(() => expect(fieldByLabel('Last name')).toHaveValue('Halbrook'));
+    expect(screen.queryByText(/was already added a few minutes ago/)).toBeNull();
+    expect(screen.queryByTestId('kfedit-unsaved')).toBeNull();
+    expect(onDuplicateAddApplied).not.toHaveBeenCalled();
+  });
+
   it('says Unsaved changes after an edit, and not for whitespace alone', async () => {
     mount();
     await screen.findByLabelText('First name');

@@ -8,12 +8,17 @@ import {
   type EmergencyContactDraft,
 } from '../api/emergencyContacts';
 import {
+  clearDiscardedAddKinfolk,
   clearPendingAddKinfolk,
   pendingHouseholdName,
+  readDiscardedAddKinfolk,
   readPendingAddKinfolk,
+  saveDiscardedAddKinfolk,
+  saveDuplicateAddKinfolk,
   savePendingAddKinfolk,
   type PendingAddKinfolk,
 } from '../lib/pendingAddKinfolk';
+import { OfflineCallError } from '../lib/offlineWrite';
 import { AddressAutofillField } from './AddressAutofillField';
 import { InfoTip } from './DenScreenKit';
 import { Dialog } from './Dialog';
@@ -45,6 +50,20 @@ interface AddKinfolkDialogProps {
    * a uid nothing is kept, which is the behavior before #890.
    */
   operatorUid?: string | null;
+  /**
+   * #907 review item 1(b): the server answered `duplicateOf`, so this household
+   * was already added minutes ago. What was typed is kept for its edit screen
+   * (lib/pendingAddKinfolk.ts `saveDuplicateAddKinfolk`), and the caller opens
+   * that screen. Nothing is reported as created.
+   */
+  onDuplicate?: (kinfolkId: string) => void;
+}
+
+/** #907 review item 2: the server's answer when the household was deleted under a pending Add. */
+export const HOUSEHOLD_NO_LONGER_EXISTS = 'That household no longer exists.';
+
+function isNotFound(err: unknown): boolean {
+  return !!err && typeof err === 'object' && (err as { code?: unknown }).code === 'functions/not-found';
 }
 
 /**
@@ -65,11 +84,23 @@ interface AddKinfolkDialogProps {
  * Emergency Contact saves, it is kept outside this dialog. Closing and reopening
  * Add then asks first: continue adding the Emergency Contact for that household,
  * or Discard, which starts a blank Add and leaves the household as it was created
- * (it shows No Emergency Contact). A `duplicateOf` answer from the server is the
- * same situation reached from the other side, so the dialog simply continues
- * with that household.
+ * (it shows No Emergency Contact). Discard also records that household's id, and
+ * the next create sends it as `ignoreDuplicateOf`, because Discard says the next
+ * Add is a new household (#907 review item 1a).
+ *
+ * #907 review item 1(b), A `duplicateOf` ANSWER. The server found a household this
+ * operator added minutes ago with the same phone or email. The dialog does not
+ * report success and does not save the contact onto it: what was typed is kept for
+ * that household's edit screen, which opens with the differing fields filled in as
+ * unsaved changes, so nothing typed is lost and nothing is overwritten unseen.
  */
-export function AddKinfolkDialog({ onClose, onCreated, onLeftWithoutContact, operatorUid = null }: AddKinfolkDialogProps) {
+export function AddKinfolkDialog({
+  onClose,
+  onCreated,
+  onLeftWithoutContact,
+  operatorUid = null,
+  onDuplicate,
+}: AddKinfolkDialogProps) {
   /** Read once, when the dialog opens: the household this operator left waiting on its contact. */
   const [offered, setOffered] = useState<PendingAddKinfolk | null>(() => readPendingAddKinfolk(operatorUid));
   const [firstName, setFirstName] = useState('');
@@ -136,14 +167,16 @@ export function AddKinfolkDialog({ onClose, onCreated, onLeftWithoutContact, ope
   }
 
   function discardPending() {
+    if (offered !== null) saveDiscardedAddKinfolk(operatorUid, offered.kinfolkId);
     clearPendingAddKinfolk(operatorUid);
     setOffered(null);
   }
 
   /**
    * The Emergency Contact write, split from household creation so a failed
-   * save retries ONLY the contact (#829): `createdId`, once set, never resets,
-   * so this can never run `createKinfolk` a second time.
+   * save retries ONLY the contact (#829): `createdId`, once set, resets only when
+   * the server says the household is gone (#907 review item 2), so a retry can
+   * never run `createKinfolk` a second time against a household that exists.
    */
   async function saveContact(id: string) {
     try {
@@ -152,6 +185,15 @@ export function AddKinfolkDialog({ onClose, onCreated, onLeftWithoutContact, ope
       setSaving(false);
       onCreated(id);
     } catch (err) {
+      if (isNotFound(err)) {
+        // Deleted while it waited on its contact. Retrying it would fail forever,
+        // so it is dropped and the form opens for a fresh Add.
+        clearPendingAddKinfolk(operatorUid);
+        setCreatedId(null);
+        setSaving(false);
+        setSaveError(HOUSEHOLD_NO_LONGER_EXISTS);
+        return;
+      }
       keepPending(id, ecDrafts);
       setSaving(false);
       // #829 review item 4: the server's own message, as the portals show it,
@@ -197,13 +239,32 @@ export function AddKinfolkDialog({ onClose, onCreated, onLeftWithoutContact, ope
     setSaving(true);
     setSaveError(null);
     let id: string;
+    let duplicateOf: string | null;
     try {
-      // #890: a `duplicateOf` answer means this operator created this household
-      // minutes ago. `kinfolkId` is that household, and Add carries on with it.
-      id = (await createKinfolk(householdInput())).kinfolkId;
+      ({ kinfolkId: id, duplicateOf } = await createKinfolk(householdInput(), readDiscardedAddKinfolk(operatorUid)));
     } catch (err) {
       setSaving(false);
-      setSaveError(`createKinfolk failed: ${err instanceof Error ? err.message : 'Create failed'}`);
+      // #907 review item 8: an offline refusal already says what happened and
+      // what to do, so it is shown as it is, not behind a call name.
+      setSaveError(
+        err instanceof OfflineCallError
+          ? err.message
+          : `createKinfolk failed: ${err instanceof Error ? err.message : 'Create failed'}`,
+      );
+      return;
+    }
+    // The discarded id has done its job once a create has been answered.
+    clearDiscardedAddKinfolk(operatorUid);
+    if (duplicateOf !== null) {
+      setSaving(false);
+      const name = pendingHouseholdName({ kinfolkId: duplicateOf, household: householdInput(), contacts: ecDrafts });
+      if (onDuplicate && operatorUid) {
+        saveDuplicateAddKinfolk(operatorUid, { kinfolkId: duplicateOf, household: householdInput(), contacts: ecDrafts });
+        onDuplicate(duplicateOf);
+      } else {
+        // No operator to keep the typing under: the form stays exactly as typed.
+        setSaveError(`${name} was already added a few minutes ago. Open that household to make these changes.`);
+      }
       return;
     }
     setCreatedId(id);

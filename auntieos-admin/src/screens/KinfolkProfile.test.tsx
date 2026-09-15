@@ -317,6 +317,24 @@ describe('KinfolkProfile: sub-view wiring', () => {
 
   // Both screens are reached from here, not from the rail, following the same
   // local-state pattern Directory uses to open this profile in the first place.
+  // #907 review item 1(b): an Add answered `duplicateOf` lands on this household's editor.
+  it('opens straight on the editor when it carries a duplicate Add', () => {
+    render(
+      <KinfolkProfile
+        kinfolkId="k1"
+        kinfolkName="Jamie Halbrook"
+        kin={[kin()]}
+        onBack={vi.fn()}
+        duplicateAdd={{
+          kinfolkId: 'k1',
+          household: { firstName: 'Jamie', lastName: 'Park', phoneNumber: '', email: '', status: 'active', serviceAddress: '' },
+          contacts: [],
+        }}
+      />,
+    );
+    expect(screen.getByText('STUB KinfolkEdit')).toBeInTheDocument();
+  });
+
   it('swaps in the editor and back again without leaving the profile', async () => {
     const user = userEvent.setup();
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[kin()]} onBack={vi.fn()} />);

@@ -58,6 +58,17 @@ beforeEach(() => {
 });
 
 describe('createKinfolk', () => {
+  // #907 review item 1(a).
+  it('sends the discarded household as ignoreDuplicateOf, and leaves the key off when there is none', async () => {
+    call.mockResolvedValue({ kinfolkId: 'kf-new', duplicateOf: null });
+    await createKinfolk(kinfolkInput(), 'kf-left');
+    expect(call).toHaveBeenLastCalledWith('createKinfolk', expect.objectContaining({ ignoreDuplicateOf: 'kf-left' }));
+    await createKinfolk(kinfolkInput(), null);
+    expect(call.mock.calls.at(-1)?.[1]).not.toHaveProperty('ignoreDuplicateOf');
+    await createKinfolk(kinfolkInput(), '  ');
+    expect(call.mock.calls.at(-1)?.[1]).not.toHaveProperty('ignoreDuplicateOf');
+  });
+
   // #890: through the createKinfolk callable, never a direct add, so the server
   // can hand back a household this operator just created instead of a second one.
   it('creates through the createKinfolk callable with the trimmed fields plus real Kinfolk model defaults', async () => {

@@ -1,4 +1,3 @@
-import { useSyncExternalStore } from 'react';
 import type { NewKinfolkInput } from '../api/directoryWrite';
 import type { EmergencyContactDraft } from '../api/emergencyContacts';
 
@@ -16,11 +15,20 @@ import type { EmergencyContactDraft } from '../api/emergencyContacts';
  * within the tab. Every access is wrapped because storage throws outright in some
  * privacy modes, and then the in-memory copy still carries it for this page.
  *
- * DISCARD writes nothing to the server. The household stays as it was created,
- * with its No Emergency Contact flag, and is fixed from its own profile.
+ * DISCARD writes nothing to the household. It records the discarded id (#907
+ * review item 1a), because Discard means "the next Add is a new household": the
+ * next create sends that id as `ignoreDuplicateOf`, so the server's duplicate
+ * check does not hand the discarded household back.
+ *
+ * A DUPLICATE ANSWER (#907 review item 1b). When the server answers `duplicateOf`,
+ * what the operator typed is kept here, keyed by that household, so its edit
+ * screen can fill in the fields that differ as unsaved changes. Nothing typed is
+ * lost and nothing is written until the operator saves.
  */
 
 export const PENDING_ADD_KINFOLK_STORAGE_PREFIX = 'auntieos.pendingAddKinfolk.';
+export const DISCARDED_ADD_KINFOLK_STORAGE_PREFIX = 'auntieos.discardedAddKinfolk.';
+export const DUPLICATE_ADD_KINFOLK_STORAGE_PREFIX = 'auntieos.duplicateAddKinfolk.';
 
 export interface PendingAddKinfolk {
   kinfolkId: string;
@@ -30,14 +38,10 @@ export interface PendingAddKinfolk {
   contacts: EmergencyContactDraft[];
 }
 
-const memory = new Map<string, PendingAddKinfolk>();
-const listeners = new Set<() => void>();
-/** The last value handed to each uid's subscribers, so useSyncExternalStore sees a stable reference. */
-const snapshots = new Map<string, PendingAddKinfolk | null>();
+/** What the operator typed into an Add the server answered with `duplicateOf`. Same shape. */
+export type DuplicateAddKinfolk = PendingAddKinfolk;
 
-function key(uid: string): string {
-  return `${PENDING_ADD_KINFOLK_STORAGE_PREFIX}${uid}`;
-}
+const memory = new Map<string, unknown>();
 
 function isPending(v: unknown): v is PendingAddKinfolk {
   if (!v || typeof v !== 'object') return false;
@@ -51,64 +55,93 @@ function isPending(v: unknown): v is PendingAddKinfolk {
   );
 }
 
-function load(uid: string): PendingAddKinfolk | null {
+function isId(v: unknown): v is string {
+  return typeof v === 'string' && v !== '';
+}
+
+function load<T>(key: string, valid: (v: unknown) => v is T): T | null {
+  const fromMemory = (): T | null => {
+    const m = memory.get(key);
+    return valid(m) ? m : null;
+  };
   try {
-    const raw = sessionStorage.getItem(key(uid));
+    const raw = sessionStorage.getItem(key);
     if (raw !== null) {
       const parsed: unknown = JSON.parse(raw);
-      return isPending(parsed) ? parsed : null;
+      return valid(parsed) ? parsed : null;
     }
-    // Nothing stored: either there is nothing pending, or storage refused the write.
-    return memory.get(uid) ?? null;
+    // Nothing stored: either there is nothing kept, or storage refused the write.
+    return fromMemory();
   } catch {
-    return memory.get(uid) ?? null;
+    return fromMemory();
   }
 }
 
-function notify(uid: string): void {
-  snapshots.delete(uid);
-  for (const l of listeners) l();
+function store(key: string, value: unknown): void {
+  memory.set(key, value);
+  try {
+    sessionStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Storage refused. The in-memory copy still carries it for this page.
+  }
+}
+
+function remove(key: string): void {
+  memory.delete(key);
+  try {
+    sessionStorage.removeItem(key);
+  } catch {
+    // Nothing stored to remove.
+  }
 }
 
 export function readPendingAddKinfolk(uid: string | null | undefined): PendingAddKinfolk | null {
   if (!uid) return null;
-  return load(uid);
+  return load(`${PENDING_ADD_KINFOLK_STORAGE_PREFIX}${uid}`, isPending);
 }
 
 export function savePendingAddKinfolk(uid: string | null | undefined, pending: PendingAddKinfolk): void {
   if (!uid) return;
-  memory.set(uid, pending);
-  try {
-    sessionStorage.setItem(key(uid), JSON.stringify(pending));
-  } catch {
-    // Storage refused. The in-memory copy still carries it for this page.
-  }
-  notify(uid);
+  store(`${PENDING_ADD_KINFOLK_STORAGE_PREFIX}${uid}`, pending);
 }
 
 export function clearPendingAddKinfolk(uid: string | null | undefined): void {
   if (!uid) return;
-  memory.delete(uid);
-  try {
-    sessionStorage.removeItem(key(uid));
-  } catch {
-    // Nothing stored to remove.
-  }
-  notify(uid);
+  remove(`${PENDING_ADD_KINFOLK_STORAGE_PREFIX}${uid}`);
 }
 
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+/** The household this operator last Discarded, sent as `ignoreDuplicateOf` on their next create. */
+export function readDiscardedAddKinfolk(uid: string | null | undefined): string | null {
+  if (!uid) return null;
+  return load(`${DISCARDED_ADD_KINFOLK_STORAGE_PREFIX}${uid}`, isId);
 }
 
-/** The operator's pending household, re-rendering when it is saved or cleared. */
-export function usePendingAddKinfolk(uid: string | null | undefined): PendingAddKinfolk | null {
-  return useSyncExternalStore(subscribe, () => {
-    if (!uid) return null;
-    if (!snapshots.has(uid)) snapshots.set(uid, load(uid));
-    return snapshots.get(uid) ?? null;
-  });
+export function saveDiscardedAddKinfolk(uid: string | null | undefined, kinfolkId: string): void {
+  if (!uid || kinfolkId === '') return;
+  store(`${DISCARDED_ADD_KINFOLK_STORAGE_PREFIX}${uid}`, kinfolkId);
+}
+
+export function clearDiscardedAddKinfolk(uid: string | null | undefined): void {
+  if (!uid) return;
+  remove(`${DISCARDED_ADD_KINFOLK_STORAGE_PREFIX}${uid}`);
+}
+
+/** Kept for the household's edit screen. One at a time per operator: a newer duplicate replaces it. */
+export function saveDuplicateAddKinfolk(uid: string | null | undefined, typed: DuplicateAddKinfolk): void {
+  if (!uid) return;
+  store(`${DUPLICATE_ADD_KINFOLK_STORAGE_PREFIX}${uid}`, typed);
+}
+
+/** What was typed for THIS household, or null. Another household's edit screen never sees it. */
+export function readDuplicateAddKinfolk(uid: string | null | undefined, kinfolkId: string): DuplicateAddKinfolk | null {
+  if (!uid) return null;
+  const typed = load(`${DUPLICATE_ADD_KINFOLK_STORAGE_PREFIX}${uid}`, isPending);
+  return typed !== null && typed.kinfolkId === kinfolkId ? typed : null;
+}
+
+export function clearDuplicateAddKinfolk(uid: string | null | undefined): void {
+  if (!uid) return;
+  remove(`${DUPLICATE_ADD_KINFOLK_STORAGE_PREFIX}${uid}`);
 }
 
 /** How the Continue prompt names the household. */

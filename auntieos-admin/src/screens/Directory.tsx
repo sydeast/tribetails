@@ -30,6 +30,7 @@ import { Banner } from '../components/Banner';
 import { Avatar } from '../components/Avatar';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { AddKinfolkDialog } from '../components/AddKinfolkDialog';
+import { clearDuplicateAddKinfolk, readDuplicateAddKinfolk } from '../lib/pendingAddKinfolk';
 import { NoEmergencyContactFlag } from '../components/NoEmergencyContactFlag';
 import { AddKinDialog, type KinfolkOption } from '../components/AddKinDialog';
 import { EntityCardGrid } from '../components/EntityCardGrid';
@@ -376,6 +377,7 @@ export function Directory({
   const navigate = useNavigate();
   // #890: Add Kinfolk keeps a household waiting on its Emergency Contact per operator.
   const auth = useAuth();
+  const operatorUid = auth.status === 'signedIn' ? auth.user.uid : null;
 
   const [tab, setTab] = useState<DirectoryTab>('kinfolk');
   const [query, setQuery] = useState('');
@@ -530,6 +532,10 @@ export function Directory({
         // Told apart from "this household has no pets", so the profile does not
         // stamp "0 kin" on a read that has not landed.
         kinPending={kinPending}
+        // #907 review item 1(b): an Add the server answered `duplicateOf` for this
+        // household opens it on its editor with the typing filled in, unsaved.
+        duplicateAdd={readDuplicateAddKinfolk(operatorUid, openKinfolkId)}
+        onDuplicateAddApplied={() => clearDuplicateAddKinfolk(operatorUid)}
         // The mock draws every kin row on the profile as a chevroned row that
         // opens the pet. This screen already owns that swap for its own Kin tab,
         // so the profile's rows go through the same one rather than inventing a
@@ -799,7 +805,12 @@ export function Directory({
             setShowAddKinfolk(false);
           }}
           onLeftWithoutContact={setLeftWithoutContactId}
-          operatorUid={auth.status === 'signedIn' ? auth.user.uid : null}
+          operatorUid={operatorUid}
+          onDuplicate={(kinfolkId) => {
+            setLeftWithoutContactId(null);
+            setShowAddKinfolk(false);
+            void navigate({ to: '/directory/$kinfolkId', params: { kinfolkId } });
+          }}
         />
       )}
 

@@ -1,13 +1,18 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { act, renderHook } from '@testing-library/react';
 import {
+  DISCARDED_ADD_KINFOLK_STORAGE_PREFIX,
   PENDING_ADD_KINFOLK_STORAGE_PREFIX,
+  clearDiscardedAddKinfolk,
+  clearDuplicateAddKinfolk,
   clearPendingAddKinfolk,
   pendingHouseholdName,
+  readDiscardedAddKinfolk,
+  readDuplicateAddKinfolk,
   readPendingAddKinfolk,
+  saveDiscardedAddKinfolk,
+  saveDuplicateAddKinfolk,
   savePendingAddKinfolk,
-  usePendingAddKinfolk,
   type PendingAddKinfolk,
 } from './pendingAddKinfolk';
 
@@ -29,8 +34,11 @@ function pending(over: Partial<PendingAddKinfolk> = {}): PendingAddKinfolk {
 
 beforeEach(() => {
   sessionStorage.clear();
-  clearPendingAddKinfolk('op-1');
-  clearPendingAddKinfolk('op-2');
+  for (const uid of ['op-1', 'op-2']) {
+    clearPendingAddKinfolk(uid);
+    clearDiscardedAddKinfolk(uid);
+    clearDuplicateAddKinfolk(uid);
+  }
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -75,19 +83,36 @@ describe('pendingAddKinfolk (#890)', () => {
   it('keeps nothing without a signed-in operator', () => {
     savePendingAddKinfolk(null, pending());
     expect(readPendingAddKinfolk(null)).toBeNull();
-  });
-
-  it('tells a mounted component when it changes', () => {
-    const { result } = renderHook(() => usePendingAddKinfolk('op-1'));
-    expect(result.current).toBeNull();
-    act(() => savePendingAddKinfolk('op-1', pending()));
-    expect(result.current?.kinfolkId).toBe('kf-new');
-    act(() => clearPendingAddKinfolk('op-1'));
-    expect(result.current).toBeNull();
+    saveDiscardedAddKinfolk(null, 'kf-left');
+    expect(readDiscardedAddKinfolk(null)).toBeNull();
+    saveDuplicateAddKinfolk(null, pending());
+    expect(readDuplicateAddKinfolk(null, 'kf-new')).toBeNull();
   });
 
   it('names the household by its name, or says "this household" when it has none', () => {
     expect(pendingHouseholdName(pending())).toBe('Jamie Halbrook');
     expect(pendingHouseholdName(pending({ household: { ...pending().household, firstName: ' ', lastName: '' } }))).toBe('this household');
+  });
+});
+
+describe('the discarded household (#907 review item 1a)', () => {
+  it('keeps the id per operator, in session storage, until cleared', () => {
+    saveDiscardedAddKinfolk('op-1', 'kf-left');
+    expect(readDiscardedAddKinfolk('op-1')).toBe('kf-left');
+    expect(readDiscardedAddKinfolk('op-2')).toBeNull();
+    expect(JSON.parse(sessionStorage.getItem(`${DISCARDED_ADD_KINFOLK_STORAGE_PREFIX}op-1`) ?? 'null')).toBe('kf-left');
+    clearDiscardedAddKinfolk('op-1');
+    expect(readDiscardedAddKinfolk('op-1')).toBeNull();
+  });
+});
+
+describe('a duplicate Add (#907 review item 1b)', () => {
+  it('hands the typing only to the household it was for, and only to that operator', () => {
+    saveDuplicateAddKinfolk('op-1', pending({ kinfolkId: 'kf-existing' }));
+    expect(readDuplicateAddKinfolk('op-1', 'kf-existing')?.household.lastName).toBe('Halbrook');
+    expect(readDuplicateAddKinfolk('op-1', 'kf-other')).toBeNull();
+    expect(readDuplicateAddKinfolk('op-2', 'kf-existing')).toBeNull();
+    clearDuplicateAddKinfolk('op-1');
+    expect(readDuplicateAddKinfolk('op-1', 'kf-existing')).toBeNull();
   });
 });
