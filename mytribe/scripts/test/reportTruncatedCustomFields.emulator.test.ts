@@ -59,6 +59,14 @@ describe.runIf(EMULATOR)('the #873 report reads real stored customFields', () =>
     // 5. A displayName-only audit entry is not a customFields save.
     await db.doc('families/fam_nameonly').set({ displayName: 'E', customFields: rows(['allergy', 'a'], ['color', 'b']) });
     await db.doc('activity_log/a3').set({ actionType: 'PROFILE_UPDATED', targetId: 'fam_nameonly', timestamp: '2026-09-01T10:00:00.000Z', payload: { fields: ['displayName'] } });
+    // 6. #873 review lockout risks: 41 rows with one unlabeled and one long value on
+    // families, 41 rows on homeAccess. Not truncated (keys outside the schema).
+    const office = Array.from({ length: 39 }, (_, i) => ({ key: `office${i}`, label: `Office ${i}`, value: 'kept' }));
+    await db.doc('families/fam_big').set({
+      displayName: 'F',
+      customFields: [...office, { key: 'noLabel', value: 'Secret A' }, { key: 'longOne', label: 'Long', value: 'Q'.repeat(1001) }],
+    });
+    await db.doc('families/fam_big/homeAccess/current').set({ customFields: [...office, { key: 'blank', label: '', value: 'Secret B' }, { key: 'pool', label: 'Pool', value: 'Heated' }] });
   }, EMULATOR_TIMEOUT_MS);
 
   it('flags exactly the seeded truncations, splits strong from weak evidence, and writes nothing', async () => {
@@ -68,7 +76,13 @@ describe.runIf(EMULATOR)('the #873 report reads real stored customFields', () =>
 
     expect(after).toEqual(before);
     expect(report.schemas).toEqual({ tribeProfile: ['displayName', 'allergy', 'color'], homeAccess: ['gateCode', 'alarm', 'pool'] });
-    expect(report.scannedFamilies).toBe(5);
+    expect(report.scannedFamilies).toBe(6);
+    expect(report.lockoutRisks).toEqual([
+      { surface: 'families', kinfolkId: 'fam_big', path: 'families/fam_big', rows: 41, blankLabelKeys: ['noLabel'], longValueKeys: ['longOne'] },
+      { surface: 'homeAccess', kinfolkId: 'fam_big', path: 'families/fam_big/homeAccess/current', rows: 41, blankLabelKeys: ['blank'], longValueKeys: [] },
+    ]);
+    expect(JSON.stringify(report)).not.toContain('Secret');
+    expect(JSON.stringify(report)).not.toContain('QQQQ');
     const found = report.findings.map((f) => `${f.surface} ${f.kinfolkId} ${f.portalSave ? 'strong' : 'weak'}`).sort();
     expect(found).toEqual([
       'families fam_nameonly weak',

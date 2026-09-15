@@ -5,6 +5,8 @@ import {
   HOME_RESERVED_KEYS,
   PROFILE_RESERVED_KEYS,
   classifyRows,
+  lockoutRiskLines,
+  lockoutRiskOf,
   parseArgs,
   resolveTarget,
   schemaFieldKeys,
@@ -78,5 +80,38 @@ describe('classifyRows', () => {
 
   it('never flags when there is no schema to rebuild from', () => {
     expect(classifyRows(rows(['allergy', 'a']), [], HOME_RESERVED_KEYS, []).looksTruncated).toBe(false);
+  });
+});
+
+describe('lockout risk counts (#873 review)', () => {
+  const many = (n: number) => Array.from({ length: n }, (_, i) => ({ key: `k${i}`, label: `K${i}`, value: 'v' }));
+
+  it('counts rows, blank or missing labels, and values over 1000, by key', () => {
+    const v = classifyRows(
+      [{ key: 'a', label: '', value: 'x' }, { key: 'b', value: 'x' }, { key: 'c', label: ' ', value: 'x' }, { key: 'd', label: 'D', value: 'y'.repeat(1001) }, { note: 'no key' }],
+      [],
+      PROFILE_RESERVED_KEYS,
+      [],
+    );
+    expect(v).toMatchObject({ rowCount: 5, blankLabelKeys: ['a', 'b', 'c'], longValueKeys: ['d'] });
+  });
+
+  it('a list of exactly 40 clean rows is no risk; 41 rows, a blank label, or a long value each is', () => {
+    const clean = classifyRows(many(40), [], HOME_RESERVED_KEYS, []);
+    expect(lockoutRiskOf('homeAccess', 'f1', 'families/f1/homeAccess/current', clean)).toBeNull();
+    expect(lockoutRiskOf('homeAccess', 'f1', 'p', classifyRows(many(41), [], HOME_RESERVED_KEYS, []))).toMatchObject({ rows: 41 });
+    expect(lockoutRiskOf('families', 'f1', 'p', classifyRows([{ key: 'a', label: '', value: 'x' }], [], PROFILE_RESERVED_KEYS, []))).toMatchObject({ blankLabelKeys: ['a'] });
+    expect(lockoutRiskOf('families', 'f1', 'p', classifyRows([{ key: 'a', label: 'A', value: 'z'.repeat(1001) }], [], PROFILE_RESERVED_KEYS, []))).toMatchObject({ longValueKeys: ['a'] });
+  });
+
+  it('prints household and row counts per surface and keys, never a value', () => {
+    const risks = [
+      { surface: 'families' as const, kinfolkId: 'f1', path: 'families/f1', rows: 41, blankLabelKeys: ['a', 'b'], longValueKeys: [] },
+      { surface: 'homeAccess' as const, kinfolkId: 'f2', path: 'families/f2/homeAccess/current', rows: 3, blankLabelKeys: [], longValueKeys: ['gate'] },
+    ];
+    const text = lockoutRiskLines(risks, 10).join('\n');
+    expect(text).toContain('families: over 40 rows 1 household(s); empty or missing label 2 row(s) in 1 household(s); value over 1000 characters 0 row(s) in 0 household(s)');
+    expect(text).toContain('homeAccess: over 40 rows 0 household(s); empty or missing label 0 row(s) in 0 household(s); value over 1000 characters 1 row(s) in 1 household(s)');
+    expect(text).toContain('families/f1  rows=41  empty-label keys=[a, b]');
   });
 });

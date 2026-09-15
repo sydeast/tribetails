@@ -26,6 +26,12 @@
  * The schemas are read as they are NOW; a household truncated under an older
  * schema version is not recognised.
  *
+ * LOCKOUT RISK (#873 review). The same scan also counts the lists a save could
+ * have been refused over: more than 40 rows (the request cap before the review
+ * round, and current clients send every stored row back), rows with a missing or
+ * blank label (served as '', and the old request schema required one), and
+ * values longer than the 1000 characters the callables still accept.
+ *
  * NOTHING PRIVATE IS PRINTED. Output is household ids, document paths, row KEYS
  * and times. Never a value: home access rows hold gate and alarm codes.
  *
@@ -60,6 +66,11 @@ export const HOME_RESERVED_KEYS = ['afterHoursVetName', 'afterHoursVetPhone'] as
 /** Schema keys that are saved as top-level fields, never as customFields rows. */
 export const PROFILE_SCHEMA_TOP_LEVEL = ['displayName'] as const;
 export const HOME_SCHEMA_TOP_LEVEL = ['gateCode', 'keyLocation', 'wifiPassword'] as const;
+
+/** The request row cap before the #873 review round. Kept here, not imported: scripts do not import functions/src. */
+export const OLD_REQUEST_ROW_CAP = 40;
+/** The value length saveTribeProfile / saveHomeAccess accept. */
+export const VALUE_MAX = 1000;
 
 const PAGE = 500;
 const LOOKUP_CHUNK = 100;
@@ -148,6 +159,12 @@ export function schemaFieldKeys(schemaDoc: unknown): string[] {
 export interface RowsVerdict {
   /** Row keys in stored order. */
   keys: string[];
+  /** Every stored entry, readable or not. */
+  rowCount: number;
+  /** Keys of rows whose label is missing, not a string, or blank (#873 review). */
+  blankLabelKeys: string[];
+  /** Keys of rows whose value is longer than the callables accept (#873 review). */
+  longValueKeys: string[];
   /** The list is exactly what the pre-#873 schema rebuild wrote. */
   looksTruncated: boolean;
   /** Schema rows stored with '' (the rebuild wrote untouched fields that way). */
@@ -166,6 +183,8 @@ export function classifyRows(
   const keys: string[] = [];
   let unreadable = 0;
   let emptySchemaValues = 0;
+  const blankLabelKeys: string[] = [];
+  const longValueKeys: string[] = [];
   for (const entry of list) {
     const key = (entry as { key?: unknown } | null)?.key;
     if (typeof key !== 'string') {
@@ -173,11 +192,15 @@ export function classifyRows(
       continue;
     }
     keys.push(key);
+    const label = (entry as { label?: unknown }).label;
+    if (typeof label !== 'string' || label.trim() === '') blankLabelKeys.push(key);
+    const value = (entry as { value?: unknown }).value;
+    if (typeof value === 'string' && value.length > VALUE_MAX) longValueKeys.push(key);
     if (editable.includes(key) && (entry as { value?: unknown }).value === '') emptySchemaValues += 1;
   }
   const looksTruncated =
     editable.length > 0 && unreadable === 0 && keys.every((k) => allowed.has(k)) && editable.every((k) => keys.includes(k));
-  return { keys, looksTruncated, emptySchemaValues };
+  return { keys, rowCount: list.length, looksTruncated, emptySchemaValues, blankLabelKeys, longValueKeys };
 }
 
 export interface Finding {
@@ -192,12 +215,29 @@ export interface Finding {
   lastPortalSaveAt: string | null;
 }
 
+/** A list a save could be refused over (#873 review). Keys and counts only. */
+export interface LockoutRisk {
+  surface: 'families' | 'homeAccess';
+  kinfolkId: string;
+  path: string;
+  rows: number;
+  blankLabelKeys: string[];
+  longValueKeys: string[];
+}
+
 export interface Report {
   schemas: { tribeProfile: string[]; homeAccess: string[] };
   scannedFamilies: number;
   scannedHomeAccess: number;
   auditCustomFieldSaves: number;
   findings: Finding[];
+  lockoutRisks: LockoutRisk[];
+}
+
+/** The risk this list carries, or null when it carries none. */
+export function lockoutRiskOf(surface: LockoutRisk['surface'], kinfolkId: string, path: string, v: RowsVerdict): LockoutRisk | null {
+  if (v.rowCount <= OLD_REQUEST_ROW_CAP && v.blankLabelKeys.length === 0 && v.longValueKeys.length === 0) return null;
+  return { surface, kinfolkId, path, rows: v.rowCount, blankLabelKeys: v.blankLabelKeys, longValueKeys: v.longValueKeys };
 }
 
 function isoOf(v: unknown): string | null {
@@ -239,6 +279,7 @@ export async function buildReport(db: Firestore): Promise<Report> {
   const saves = await profileSavesWithCustomFields(db);
 
   const findings: Finding[] = [];
+  const lockoutRisks: LockoutRisk[] = [];
   let scannedFamilies = 0;
   let scannedHomeAccess = 0;
   let cursor: QueryDocumentSnapshot | null = null;
@@ -249,6 +290,8 @@ export async function buildReport(db: Firestore): Promise<Report> {
     scannedFamilies += snap.size;
     for (const doc of snap.docs) {
       const v = classifyRows((doc.data() as Record<string, unknown>)['customFields'], schemas.tribeProfile, PROFILE_RESERVED_KEYS, PROFILE_SCHEMA_TOP_LEVEL);
+      const risk = lockoutRiskOf('families', doc.id, doc.ref.path, v);
+      if (risk !== null) lockoutRisks.push(risk);
       if (!v.looksTruncated) continue;
       findings.push({
         surface: 'families',
@@ -267,6 +310,8 @@ export async function buildReport(db: Firestore): Promise<Report> {
         scannedHomeAccess += 1;
         const data = home.data() as Record<string, unknown>;
         const v = classifyRows(data['customFields'], schemas.homeAccess, HOME_RESERVED_KEYS, HOME_SCHEMA_TOP_LEVEL);
+        const risk = lockoutRiskOf('homeAccess', home.ref.parent.parent?.id ?? '', home.ref.path, v);
+        if (risk !== null) lockoutRisks.push(risk);
         if (!v.looksTruncated) continue;
         const byUid = typeof data['updatedByUid'] === 'string' && data['updatedByUid'] !== '';
         findings.push({
@@ -285,7 +330,8 @@ export async function buildReport(db: Firestore): Promise<Report> {
     if (!cursor) break;
   }
   findings.sort((a, b) => Number(b.portalSave) - Number(a.portalSave) || a.surface.localeCompare(b.surface) || a.kinfolkId.localeCompare(b.kinfolkId));
-  return { schemas, scannedFamilies, scannedHomeAccess, auditCustomFieldSaves: saves.size, findings };
+  lockoutRisks.sort((a, b) => a.surface.localeCompare(b.surface) || a.kinfolkId.localeCompare(b.kinfolkId));
+  return { schemas, scannedFamilies, scannedHomeAccess, auditCustomFieldSaves: saves.size, findings, lockoutRisks };
 }
 
 function printReport(r: Report, samples: number): void {
@@ -311,6 +357,38 @@ function printReport(r: Report, samples: number): void {
       );
     }
   }
+  printLockoutRisks(r.lockoutRisks, samples);
+}
+
+/** Counts per surface, then keys only. Never a value. */
+export function lockoutRiskLines(risks: LockoutRisk[], samples: number): string[] {
+  const lines: string[] = ['', 'LOCKOUT RISK (#873 review): lists a save could have been refused over.'];
+  for (const surface of ['families', 'homeAccess'] as const) {
+    const mine = risks.filter((x) => x.surface === surface);
+    const over = mine.filter((x) => x.rows > OLD_REQUEST_ROW_CAP);
+    const blank = mine.filter((x) => x.blankLabelKeys.length > 0);
+    const long = mine.filter((x) => x.longValueKeys.length > 0);
+    const rowsIn = (list: LockoutRisk[], pick: (x: LockoutRisk) => string[]) => list.reduce((n, x) => n + pick(x).length, 0);
+    lines.push(
+      `  ${surface}: over ${OLD_REQUEST_ROW_CAP} rows ${over.length} household(s); ` +
+        `empty or missing label ${rowsIn(blank, (x) => x.blankLabelKeys)} row(s) in ${blank.length} household(s); ` +
+        `value over ${VALUE_MAX} characters ${rowsIn(long, (x) => x.longValueKeys)} row(s) in ${long.length} household(s)`,
+    );
+  }
+  const shown = risks.slice(0, samples);
+  if (shown.length > 0) {
+    lines.push(`First ${shown.length} of ${risks.length}:`);
+    for (const x of shown) {
+      lines.push(
+        `  ${x.surface.padEnd(10)}  ${x.path}  rows=${x.rows}  empty-label keys=[${x.blankLabelKeys.join(', ')}]  long-value keys=[${x.longValueKeys.join(', ')}]`,
+      );
+    }
+  }
+  return lines;
+}
+
+function printLockoutRisks(risks: LockoutRisk[], samples: number): void {
+  for (const line of lockoutRiskLines(risks, samples)) console.log(line);
 }
 
 async function main(): Promise<void> {
