@@ -65,17 +65,33 @@ export const CUSTOM_FIELDS_HARD_MAX_BYTES = 900 * 1024;
 export const SMALLEST_ROW_JSON_BYTES = 33;
 
 /**
- * Rows accepted in one request, and keys in one `removeCustomFieldKeys`: the
- * growth ceiling divided by the smallest row (1,985).
- *
- * Current clients send every stored row back, so the request cap must admit any
- * list the server can have written. Growth past the ceiling is refused, and more
- * rows than this cannot fit under it, so no list written here is longer. It is
- * below the 10,009 rows the form schemas could name (50 sections of 200 fields
- * plus 9 reserved rows). That is fine: that many rows would outweigh the ceiling
- * anyway, so the byte budget is the binding limit.
+ * The row cap, 1,985: the growth ceiling divided by the smallest row. It bounds
+ * what ONE SAVE may change, never how many rows a client sends (#873 final
+ * review). Checked inside the transaction, against the stored list:
+ *   - rows that differ from the stored row with the same key, plus new keys that
+ *     would land, may not exceed it (`changedRowCount`);
+ *   - the merged list may not exceed it AND be longer than the stored one.
+ * A household migrated with more rows than this still saves: its client sends
+ * every stored row back, and only the few it edited count.
  */
 export const CUSTOM_FIELDS_MAX_ROWS = Math.floor(CUSTOM_FIELDS_GROWTH_MAX_BYTES / SMALLEST_ROW_JSON_BYTES);
+
+/**
+ * The callable request body limit this guard relies on. ASSUMED at 10 MiB, the
+ * figure for callable requests; a larger real limit only means some oversized
+ * bodies are refused by this parse instead of the transport, and any figure far
+ * above a 1 MiB document works.
+ */
+export const CALLABLE_BODY_MAX_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Rows, and `removeCustomFieldKeys` entries, a request may carry at all
+ * (317,750): no body under the transport limit holds more smallest rows. A
+ * parse-time guard against a junk request. It is far above anything a Firestore
+ * document can store, so a client sending a real stored list back is never
+ * refused here; what a save may CHANGE is bounded by CUSTOM_FIELDS_MAX_ROWS.
+ */
+export const CUSTOM_FIELDS_REQUEST_MAX_ROWS = Math.floor(CALLABLE_BODY_MAX_BYTES / SMALLEST_ROW_JSON_BYTES);
 
 /**
  * Saves per household per hour, for each of saveTribeProfile and saveHomeAccess
@@ -104,8 +120,8 @@ export const CustomFieldZ = z.object({
   label: z.string().max(CUSTOM_FIELD_LABEL_MAX),
   value: z.string().max(CUSTOM_FIELD_VALUE_MAX),
 });
-export const CustomFieldsZ = z.array(CustomFieldZ).max(CUSTOM_FIELDS_MAX_ROWS);
-export const RemoveCustomFieldKeysZ = z.array(z.string().min(1).max(CUSTOM_FIELD_KEY_MAX)).max(CUSTOM_FIELDS_MAX_ROWS);
+export const CustomFieldsZ = z.array(CustomFieldZ).max(CUSTOM_FIELDS_REQUEST_MAX_ROWS);
+export const RemoveCustomFieldKeysZ = z.array(z.string().min(1).max(CUSTOM_FIELD_KEY_MAX)).max(CUSTOM_FIELDS_REQUEST_MAX_ROWS);
 
 function keyOf(entry: unknown): string | null {
   if (typeof entry !== 'object' || entry === null) return null;
@@ -187,25 +203,69 @@ export function customFieldsBytes(list: unknown): number {
 }
 
 /**
- * The merge both callables run inside their transaction, with its two refusals.
+ * How many rows this save really changes (#873 final review): sent rows that
+ * differ from the stored row with the same key (value, or a label that is not
+ * blank, since a blank label keeps the stored one), plus new keys that would land
+ * (value not '', not removed). An unchanged echo of a stored row costs nothing,
+ * and a removal is not counted (it only shrinks the list).
+ */
+export function changedRowCount(stored: unknown, sent: readonly CustomFieldRow[], removeKeys: readonly string[]): number {
+  const first = new Map<string, unknown>();
+  for (const entry of Array.isArray(stored) ? stored : []) {
+    const key = keyOf(entry);
+    if (key !== null && !first.has(key)) first.set(key, entry);
+  }
+  const remove = new Set(removeKeys);
+  const latest = new Map<string, CustomFieldRow>();
+  for (const row of sent) latest.set(row.key, row);
+  let changed = 0;
+  for (const row of latest.values()) {
+    if (remove.has(row.key)) continue;
+    const current = first.get(row.key);
+    if (current === undefined) {
+      if (row.value !== '') changed += 1;
+      continue;
+    }
+    const value = (current as { value?: unknown }).value;
+    if (value !== row.value || (!isBlank(row.label) && row.label !== storedLabel(current))) changed += 1;
+  }
+  return changed;
+}
+
+/** True when the merged list is exactly what is stored (a missing list reads as empty). */
+export function sameAsStored(merged: readonly unknown[], stored: unknown): boolean {
+  return JSON.stringify(merged) === JSON.stringify(Array.isArray(stored) ? stored : []);
+}
+
+/**
+ * The merge both callables run inside their transaction, with its refusals.
  * Throws before anything is written.
  *
- * The size refusal fires only when the save GROWS the list past the growth
- * ceiling (or the document backstop). A household already over it (written
- * before this check, or by another writer)
- * can still echo, clear, remove, and make edits that add no bytes, because refusing those would
- * lock it out of every save over rows it has no way to see or delete.
+ * Every size refusal fires only when the save GROWS the list, in bytes or in
+ * rows, or changes more rows at once than the cap. A household already over a
+ * limit (migrated, written before these checks, or by another writer) can still
+ * echo its whole list, edit a few rows, clear and remove, because refusing those
+ * would lock it out of every save over rows it has no way to see or delete.
  */
 export function mergeCustomFieldsForSave(stored: unknown, sent: readonly CustomFieldRow[], removeKeys: readonly string[]): unknown[] {
   const unlabeled = newKeysMissingLabel(stored, sent, removeKeys);
   if (unlabeled.length > 0) {
     throw new HttpsError('invalid-argument', `A new custom field needs a label: ${unlabeled.join(', ')}.`);
   }
+  if (changedRowCount(stored, sent, removeKeys) > CUSTOM_FIELDS_MAX_ROWS) {
+    throw new HttpsError('invalid-argument', 'Too many fields changed in one save. Save fewer changes at a time.');
+  }
   const merged = mergeCustomFields(stored, sent, removeKeys);
   const bytes = customFieldsBytes(merged);
   const grows = bytes > customFieldsBytes(stored);
   if (grows && (bytes > CUSTOM_FIELDS_HARD_MAX_BYTES || bytes > CUSTOM_FIELDS_GROWTH_MAX_BYTES)) {
     throw new HttpsError('invalid-argument', 'These details are too large to save. Shorten or remove some fields, then save again.');
+  }
+  // #873 final review: a save that shrinks a few huge rows could otherwise add
+  // many small keys without growing bytes. Row count may not grow past the cap.
+  const storedRows = Array.isArray(stored) ? stored.length : 0;
+  if (merged.length > CUSTOM_FIELDS_MAX_ROWS && merged.length > storedRows) {
+    throw new HttpsError('invalid-argument', 'This household has too many fields to add more. Remove some, then save again.');
   }
   return merged;
 }

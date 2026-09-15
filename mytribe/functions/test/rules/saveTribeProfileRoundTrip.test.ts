@@ -74,6 +74,38 @@ describe.skipIf(!EMULATOR)('saveTribeProfile round trip (Firestore emulator)', (
     expect(families['customFields']).toEqual([{ ...ALLERGY, value: 'Beef' }]);
   });
 
+  it('without Home access, an old client contact edit is ignored: kinfolk unchanged, the other rows saved', async () => {
+    const fam = 'rt-873-nohome';
+    const uid = 'rt-873-sec';
+    const rae = { name: 'Rae Mercer', phone: '+18055550199', relationship: null };
+    await firestore.doc(`clients/${uid}`).set({ kinfolkIds: [fam] });
+    await firestore.doc(`families/${fam}/members/${uid}`).set({
+      role: 'SECONDARY',
+      status: 'ACTIVE',
+      permissions: { billing_full: false, messaging_direct: false, messaging_group: false, kin_edit: false, kintales_only: true, home_access: false },
+    });
+    await firestore.doc(`families/${fam}`).set({ displayName: 'The Foster', customFields: [ALLERGY] });
+    await firestore.doc(`kinfolk/${fam}`).set({ firstName: 'Dana', lastName: 'Foster', phoneNumber: '(805) 555-0100', emergencyContacts: [rae] });
+    const kinBefore = (await firestore.doc(`kinfolk/${fam}`).get()).data();
+
+    await expect(
+      save(uid, {
+        kinfolkId: fam,
+        displayName: 'The Foster',
+        customFields: [
+          { ...ALLERGY, value: 'Beef' },
+          { key: 'emergencyContactName', label: 'Emergency Contact', value: 'Sam Ortiz' },
+          { key: 'emergencyContactPhone', label: 'Emergency Contact Phone', value: '(805) 555-0111' },
+        ],
+      }),
+    ).resolves.toEqual({ ok: true, emergencyContactIgnored: true });
+
+    expect((await firestore.doc(`kinfolk/${fam}`).get()).data()).toEqual(kinBefore);
+    const families = (await firestore.doc(`families/${fam}`).get()).data() ?? {};
+    expect(families['customFields']).toEqual([{ ...ALLERGY, value: 'Beef' }]);
+    expect(families['updatedAt']).toBeTruthy();
+  });
+
   it('two saves racing on one household, each adding its own row, keep both rows', async () => {
     const fam = 'rt-873-race';
     await firestore.doc(`clients/rt-873-u2`).set({ kinfolkIds: [fam] });

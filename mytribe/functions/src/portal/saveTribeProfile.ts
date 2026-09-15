@@ -10,7 +10,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { hasKinfolkPerm } from '../lib/memberGate';
-import { enforceRateLimit } from '../lib/rateLimit';
+import { RATE_LIMITED_MESSAGE, readRateLimitInTx } from '../lib/rateLimit';
 import {
   LEGACY_EMERGENCY_CONTACT_KEYS,
   legacyContactFromRows,
@@ -25,13 +25,14 @@ import {
   mergeCustomFieldsForSave,
   PROFILE_SAVE_RATE_LIMIT,
   RemoveCustomFieldKeysZ,
+  sameAsStored,
   type CustomFieldRow,
 } from '../lib/customFieldsMerge';
 
 const Args = z.object({
   kinfolkId: z.string().optional(),
   displayName: z.string().min(1).max(120).optional(),
-  /** #873 review: sized to what can be stored, not 40. See CUSTOM_FIELDS_MAX_ROWS. */
+  /** #873 final review: a transport guard only. What a save may change is capped inside the transaction. */
   customFields: CustomFieldsZ.optional(),
   /** #873: the only way to delete a stored row. Emergency Contact keys are ignored here. */
   removeCustomFieldKeys: RemoveCustomFieldKeysZ.optional(),
@@ -121,45 +122,45 @@ export async function saveTribeProfileHandler(
   if (args.displayName !== undefined) update['displayName'] = args.displayName;
   const touchesCustomFields = args.customFields !== undefined || args.removeCustomFieldKeys !== undefined;
   if (!touchesCustomFields && args.displayName === undefined) {
-    return { ok: true }; // only timestamp would be written; skip, and spend no save
+    return { ok: true }; // nothing sent to write; spend no save
   }
-  // #873 second review: 60 saves an hour per household, in this callable's own
-  // bucket (PROFILE_SAVE_RATE_LIMIT says why not a shared one). Counted outside
-  // the save transaction, which can run twice.
-  await enforceRateLimit('profileSave', kinfolkId, PROFILE_SAVE_RATE_LIMIT.max, PROFILE_SAVE_RATE_LIMIT.windowSecs);
 
-  let emergencyContactWrite: Awaited<ReturnType<typeof prepareEmergencyContactsSave>> | null = null;
-  let emergencyContactIgnored = false;
   let stripped: { count: number; outcome: 'echo' | 'applied' | 'ignored' } | null = null;
-  if (touchesCustomFields) {
-    const sentFields = args.customFields ?? [];
-    const sentRows = sentFields.filter((f) => isEmergencyContactKey(f.key));
-    const sent = legacyContactFromRows(sentRows);
-    const removeKeys = (args.removeCustomFieldKeys ?? []).filter((k) => !isEmergencyContactKey(k));
-    // #873 second review: Home access is checked ONCE, before the transaction.
-    // Inside it, the check was a plain read the transaction did not lock, and a
-    // retry ran it again (and isStaff logged its allowlist fallback twice). A
-    // permission change racing a save is not a risk worth a transactional read:
-    // the gate is the same one saveEmergencyContacts applies without one. Only an
-    // old client that sent contact rows pays for the read.
-    const canEditContacts = sent !== null && (await hasKinfolkPerm(uid, kinfolkId, 'home_access', isAdmin, 'saveTribeProfile'));
-    // #873 review: the families read, the Emergency Contact reads, and both
-    // writes are one transaction. Two devices saving at once used to read the
-    // same list, and the second write dropped the rows the first had added.
-    // Firestore now retries the loser against the winner's list. Every read comes
-    // before the first write, and nothing with a side effect (a log line, the
-    // audit entry) runs in here, because the callback can run more than once.
-    const result = await firestore.runTransaction(async (tx) => {
-      const stored = await tx.get(familiesRef);
-      const storedFields = (stored.data() ?? {})['customFields'];
+  const sentFields = args.customFields ?? [];
+  const sentRows = sentFields.filter((f) => isEmergencyContactKey(f.key));
+  const sent = legacyContactFromRows(sentRows);
+  const removeKeys = (args.removeCustomFieldKeys ?? []).filter((k) => !isEmergencyContactKey(k));
+  // #873 second review: Home access is checked ONCE, before the transaction.
+  // Inside it, the check was a plain read the transaction did not lock, and a
+  // retry ran it again (and isStaff logged its allowlist fallback twice). A
+  // permission change racing a save is not a risk worth a transactional read:
+  // the gate is the same one saveEmergencyContacts applies without one. Only an
+  // old client that sent contact rows pays for the read.
+  const canEditContacts = sent !== null && (await hasKinfolkPerm(uid, kinfolkId, 'home_access', isAdmin, 'saveTribeProfile'));
+  // #873 review: the families read, the Emergency Contact reads, and both
+  // writes are one transaction. Two devices saving at once used to read the
+  // same list, and the second write dropped the rows the first had added.
+  // Firestore now retries the loser against the winner's list. Every read comes
+  // before the first write, and nothing with a side effect (a log line, the
+  // audit entry) runs in here, because the callback can run more than once.
+  //
+  // #873 final review: the rate limit (60 saves an hour per household, in this
+  // callable's own bucket; PROFILE_SAVE_RATE_LIMIT says why) is read and counted
+  // in the SAME transaction, so it counts only a save that commits a change. A
+  // refused save throws before any write, and a save that changes nothing
+  // writes nothing, counter included.
+  const result = await firestore.runTransaction(async (tx) => {
+    const stored = await tx.get(familiesRef);
+    const storedData = (stored.data() ?? {}) as Record<string, unknown>;
+    const storedFields = storedData['customFields'];
+    const limit = await readRateLimitInTx(tx, 'profileSave', kinfolkId, PROFILE_SAVE_RATE_LIMIT.max, PROFILE_SAVE_RATE_LIMIT.windowSecs);
+    {
       // #873: merged by key. Sent Emergency Contact rows never land, and stored
       // ones are unsent and so kept where they are. Refusals throw from here,
       // before anything is written.
-      const customFields = mergeCustomFieldsForSave(
-        storedFields,
-        sentFields.filter((f) => !isEmergencyContactKey(f.key)),
-        removeKeys,
-      );
+      const customFields = touchesCustomFields
+        ? mergeCustomFieldsForSave(storedFields, sentFields.filter((f) => !isEmergencyContactKey(f.key)), removeKeys)
+        : null;
 
       // Sent none (sent === null). Either an old client cleared every contact
       // field, or a new client (which never sends these rows) saved the profile;
@@ -201,20 +202,29 @@ export async function saveTribeProfileHandler(
         }
       }
 
-      // Writes. The contact and the rest of the profile land together or not at all.
+      // #873 final review: a save that changes nothing writes nothing (no
+      // updatedAt bump) and spends no save. Real clients always send displayName
+      // and customFields, so this, not the check above, is the no-op skip.
+      const changes =
+        (args.displayName !== undefined && args.displayName !== storedData['displayName']) ||
+        (customFields !== null && !sameAsStored(customFields, storedFields)) ||
+        ecWrite !== null;
+      if (!changes) return { ecWrite, outcome, wrote: false };
+      if (!limit.allowed) throw new HttpsError('resource-exhausted', RATE_LIMITED_MESSAGE);
+
+      // Writes. The contact, the rest of the profile and the save count land together or not at all.
       if (ecWrite !== null) {
         tx.update(ecWrite.ref, { emergencyContacts: ecWrite.merged, updatedAt: FieldValue.serverTimestamp() });
       }
-      tx.set(familiesRef, { ...update, customFields }, { merge: true });
-      return { ecWrite, outcome };
-    });
-    update['customFields'] = true;
-    emergencyContactWrite = result.ecWrite;
-    emergencyContactIgnored = result.outcome === 'ignored';
-    if (result.outcome !== null) stripped = { count: sentRows.length, outcome: result.outcome };
-  } else {
-    await familiesRef.set(update, { merge: true });
-  }
+      tx.set(familiesRef, customFields !== null ? { ...update, customFields } : update, { merge: true });
+      limit.record();
+      return { ecWrite, outcome, wrote: true };
+    }
+  });
+  if (touchesCustomFields) update['customFields'] = true;
+  const emergencyContactWrite = result.ecWrite;
+  const emergencyContactIgnored = result.outcome === 'ignored';
+  if (result.outcome !== null) stripped = { count: sentRows.length, outcome: result.outcome };
 
   if (stripped !== null) {
     logEvent({
@@ -224,6 +234,11 @@ export async function saveTribeProfileHandler(
       uid,
       extra: { kinfolkId, stripped: stripped.count, outcome: stripped.outcome },
     });
+  }
+  if (!result.wrote) {
+    // Nothing changed, so nothing was written and no audit entry is due.
+    logEvent({ severity: 'info', function: 'saveTribeProfile', event: 'portal.tribe.save.unchanged', uid, extra: { kinfolkId } });
+    return emergencyContactIgnored ? { ok: true, emergencyContactIgnored: true } : { ok: true };
   }
   const fields = [...Object.keys(update).filter((k) => k !== 'updatedAt'), ...(emergencyContactWrite !== null ? ['emergencyContacts'] : [])];
   logEvent({ severity: 'info', function: 'saveTribeProfile', event: 'portal.tribe.saved', uid, extra: { kinfolkId, fields } });

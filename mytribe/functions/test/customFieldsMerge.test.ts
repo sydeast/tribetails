@@ -2,12 +2,17 @@ import { describe, it, expect } from 'vitest';
 import {
   CUSTOM_FIELDS_GROWTH_MAX_BYTES,
   CUSTOM_FIELDS_HARD_MAX_BYTES,
+  CALLABLE_BODY_MAX_BYTES,
   CUSTOM_FIELDS_MAX_ROWS,
+  CUSTOM_FIELDS_REQUEST_MAX_ROWS,
+  CustomFieldsZ,
   SMALLEST_ROW_JSON_BYTES,
+  changedRowCount,
   customFieldsBytes,
   mergeCustomFields,
   mergeCustomFieldsForSave,
   newKeysMissingLabel,
+  sameAsStored,
 } from '../src/lib/customFieldsMerge';
 
 /**
@@ -137,3 +142,54 @@ describe('customFields save limits (#873 review)', () => {
     );
   });
 });
+
+/** #873 final review: the cap bounds what a save changes, not what a client sends. */
+describe('changed rows and the request guard (#873 final review)', () => {
+  const rows = (n: number) => Array.from({ length: n }, (_, i) => ({ key: `f${i}`, label: `F${i}`, value: `v${i}` }));
+
+  it('the request guard is the callable body limit over the smallest row, far above the row cap', () => {
+    expect(CUSTOM_FIELDS_REQUEST_MAX_ROWS).toBe(Math.floor(CALLABLE_BODY_MAX_BYTES / SMALLEST_ROW_JSON_BYTES));
+    expect(CUSTOM_FIELDS_REQUEST_MAX_ROWS).toBeGreaterThan(CUSTOM_FIELDS_MAX_ROWS * 100);
+    expect(CustomFieldsZ.safeParse(rows(2500)).success).toBe(true);
+  });
+
+  it('changedRowCount counts edits and landing new keys, never echoes, blank-label echoes, empty new keys or removals', () => {
+    const stored = rows(5);
+    const sent = [
+      stored[0],
+      { ...stored[1], label: '' },
+      { ...stored[2], value: 'changed' },
+      { ...stored[3], label: 'Relabelled' },
+      { key: 'new1', label: 'N', value: 'x' },
+      { key: 'new2', label: 'N', value: '' },
+      { key: 'gone', label: 'G', value: 'x' },
+    ];
+    expect(changedRowCount(stored, sent, ['gone'])).toBe(3);
+  });
+
+  it('a migrated list of 2,500 rows echoed with one edit merges; editing 1,986 of them at once does not', () => {
+    const stored = rows(2500);
+    expect(mergeCustomFieldsForSave(stored, stored.map((r, i) => (i === 3 ? { ...r, value: 'w3' } : r)), [])).toHaveLength(2500);
+    const tooMany = stored.map((r, i) => (i <= CUSTOM_FIELDS_MAX_ROWS ? { ...r, value: `w${r.value.slice(1)}` } : r));
+    expect(() => mergeCustomFieldsForSave(stored, tooMany, [])).toThrow(/fields changed/);
+  });
+
+  it('row count may not grow past the cap even when bytes shrink', () => {
+    const huge = Array.from({ length: 100 }, (_, i) => ({ key: `h${i}`, label: 'H', value: 'x'.repeat(1000) }));
+    const stored = [...huge, allergyRow];
+    const fresh = Array.from({ length: 1885 }, (_, i) => ({ key: `n${i}`, label: 'N', value: 'v' }));
+    const sent = [...huge.map((r) => ({ ...r, value: '' })), allergyRow, ...fresh];
+    expect(changedRowCount(stored, sent, [])).toBe(CUSTOM_FIELDS_MAX_ROWS);
+    expect(() => mergeCustomFieldsForSave(stored, sent, [])).toThrow(/too many fields to add more/);
+    // One fewer new key keeps the merged list at the cap, and it merges.
+    expect(mergeCustomFieldsForSave(stored, sent.slice(0, -1), [])).toHaveLength(CUSTOM_FIELDS_MAX_ROWS);
+  });
+
+  it('sameAsStored compares the merged list with the stored one, a missing list reading as empty', () => {
+    expect(sameAsStored([allergyRow], [allergyRow])).toBe(true);
+    expect(sameAsStored([], undefined)).toBe(true);
+    expect(sameAsStored([{ ...allergyRow, value: 'x' }], [allergyRow])).toBe(false);
+  });
+});
+
+const allergyRow = { key: 'allergy', label: 'Allergies', value: 'Chicken' };

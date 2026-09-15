@@ -1,22 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
 
-const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), enforceRateLimitFn: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dbFn: vi.fn() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
-// #873 second review. The limiter runs its own transaction; mocked so it neither
-// passes through installOptimisticTransactions nor counts across tests. The real
-// limiter is covered in rateLimit.test.ts and the emulator round trip.
-vi.mock('../src/lib/rateLimit', () => ({ enforceRateLimit: mocks.enforceRateLimitFn }));
+// #873 final review: the rate limiter is NOT mocked. It counts inside the save
+// transaction, against the same mocked documents (rate_limits/homeAccessSave:3).
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<any>('firebase-admin/firestore');
   return { ...actual, FieldValue: { serverTimestamp: () => '__SERVER_TS__' } };
 });
 beforeEach(() => {
   mocks.dbFn.mockReset();
-  mocks.enforceRateLimitFn.mockReset();
-  mocks.enforceRateLimitFn.mockResolvedValue(undefined);
   delete process.env.AUNTIE_OPERATOR_UIDS;
 });
 
@@ -337,19 +333,52 @@ describe('saveHomeAccessHandler: limits and concurrent saves (#873 review)', () 
     expect(storedList(docs)).toHaveLength(69);
   });
 
-  it('RATE LIMIT: every save counts against this household in its own homeAccessSave bucket, 60 an hour', async () => {
-    home([ALARM]);
-    await expect(save({ gateCode: '4321' })).resolves.toEqual({ ok: true });
-    expect(mocks.enforceRateLimitFn).toHaveBeenCalledTimes(1);
-    expect(mocks.enforceRateLimitFn).toHaveBeenCalledWith('homeAccessSave', '3', 60, 3600);
+  const RATE = 'rate_limits/homeAccessSave:3';
+
+  it('MIGRATED: 2,500 stored rows sent back unchanged with one row edited save', async () => {
+    const many = rowsOf(2500);
+    const { docs } = home(many);
+    const sent = many.map((r, i) => (i === 7 ? { ...r, value: 'w7' } : r));
+    await expect(save({ customFields: sent, removeCustomFieldKeys: [] })).resolves.toEqual({ ok: true });
+    expect(storedList(docs)).toHaveLength(2500);
+    expect(storedList(docs)[7]).toEqual({ ...many[7], value: 'w7' });
   });
 
-  it('RATE LIMIT: a refused save rejects with resource-exhausted and writes nothing', async () => {
-    const { ctx } = home([ALARM]);
-    const { HttpsError } = await import('firebase-functions/v2/https');
-    mocks.enforceRateLimitFn.mockRejectedValueOnce(new HttpsError('resource-exhausted', 'Too many attempts. Try again later.'));
+  it('2,000 new keys in one save are refused, and nothing is written or counted', async () => {
+    const { ctx, docs } = home([ALARM]);
+    const fresh = Array.from({ length: 2000 }, (_, i) => ({ key: `n${i}`, label: 'N', value: 'v' }));
+    await expect(save({ customFields: [ALARM, ...fresh] })).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(ctx.writes).toHaveLength(0);
+    expect(docs[RATE]).toBeUndefined();
+  });
+
+  it('RATE LIMIT: a save that writes counts once in its own homeAccessSave bucket', async () => {
+    const { docs } = home([ALARM]);
+    await expect(save({ gateCode: '4321' })).resolves.toEqual({ ok: true });
+    expect(docs[RATE]).toMatchObject({ count: 1, windowStart: expect.any(Number) });
+  });
+
+  it('RATE LIMIT: a refused save does not count', async () => {
+    const { docs } = home([ALARM]);
+    await expect(save({ customFields: [ALARM, { key: 'pool', label: '', value: 'Heated' }] })).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(docs[RATE]).toBeUndefined();
+  });
+
+  it('RATE LIMIT: over 60 in the hour, a save that would write is refused with resource-exhausted and writes nothing', async () => {
+    const { ctx, docs } = home([ALARM]);
+    docs[RATE] = { count: 60, windowStart: Date.now() };
     await expect(save({ customFields: [{ ...ALARM, value: '9999' }] })).rejects.toMatchObject({ code: 'resource-exhausted' });
     expect(ctx.writes).toHaveLength(0);
+    expect(docs[RATE]).toMatchObject({ count: 60 });
+  });
+
+  it('NO-OP: the same gate code and rows write nothing, bump no updatedAt and do not count', async () => {
+    const { ctx, docs } = home([ALARM]);
+    await expect(save({ gateCode: '1234', keyLocation: null, customFields: [ALARM], removeCustomFieldKeys: [] })).resolves.toEqual({ ok: true });
+    expect(ctx.writes).toHaveLength(0);
+    expect(docs[HOME_ACCESS_PATH].updatedAt).toBeUndefined();
+    expect(docs[HOME_ACCESS_PATH].updatedByUid).toBeUndefined();
+    expect(docs[RATE]).toBeUndefined();
   });
 
   it('CONCURRENT: a row another device adds between this save reading and writing survives', async () => {
