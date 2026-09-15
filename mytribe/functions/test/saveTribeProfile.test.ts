@@ -3,11 +3,21 @@ import { Timestamp } from 'firebase-admin/firestore';
 import { buildDbMock } from './_helpers/mockDb';
 import { EMERGENCY_CONTACT_OUTSIDE_MESSAGE } from '../src/lib/emergencyContacts';
 
-const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), writeAuditEntryFn: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), writeAuditEntryFn: vi.fn(), enforceRateLimitFn: vi.fn(), hasKinfolkPermSpy: vi.fn() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: mocks.writeAuditEntryFn }));
+// #873 second review. The limiter runs its own transaction; mocked so it neither
+// passes through installOptimisticTransactions nor counts across tests. The real
+// limiter is covered in rateLimit.test.ts and the emulator round trip.
+vi.mock('../src/lib/rateLimit', () => ({ enforceRateLimit: mocks.enforceRateLimitFn }));
+// The real gate, wrapped so a test can count how often it ran.
+vi.mock('../src/lib/memberGate', async () => {
+  const actual = await vi.importActual<typeof import('../src/lib/memberGate')>('../src/lib/memberGate');
+  mocks.hasKinfolkPermSpy.mockImplementation(actual.hasKinfolkPerm);
+  return { ...actual, hasKinfolkPerm: mocks.hasKinfolkPermSpy };
+});
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<any>('firebase-admin/firestore');
   return { ...actual, FieldValue: { serverTimestamp: () => '__SERVER_TS__' } };
@@ -16,6 +26,9 @@ beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.writeAuditEntryFn.mockReset();
   mocks.writeAuditEntryFn.mockResolvedValue('audit-id');
+  mocks.enforceRateLimitFn.mockReset();
+  mocks.enforceRateLimitFn.mockResolvedValue(undefined);
+  mocks.hasKinfolkPermSpy.mockClear();
   delete process.env.AUNTIE_OPERATOR_UIDS;
 });
 
@@ -642,14 +655,37 @@ describe('saveTribeProfileHandler: limits and concurrent saves (#873 review)', (
     expect(storedList(docs)).toEqual([ALLERGY, long]);
   });
 
-  it('over the size budget: growing the list is refused, shrinking or editing in place still saves', async () => {
-    const big = Array.from({ length: 950 }, (_, i) => ({ key: `k${i}`, label: 'L', value: 'x'.repeat(1000) }));
+  it('a household already over 64 KiB still saves without growing, and cannot grow', async () => {
+    const big = Array.from({ length: 70 }, (_, i) => ({ key: `k${i}`, label: 'L', value: 'x'.repeat(1000) }));
     const { ctx, docs } = household(big);
     await expect(save({ customFields: [...big, { key: 'pool', label: 'Pool', value: 'Heated' }] })).rejects.toMatchObject({ code: 'invalid-argument' });
     expect(ctx.writes).toHaveLength(0);
+    await expect(save({ customFields: big, removeCustomFieldKeys: [] })).resolves.toEqual({ ok: true });
     await expect(save({ customFields: big.map((r, i) => (i === 0 ? { ...r, value: 'y'.repeat(1000) } : r)) })).resolves.toEqual({ ok: true });
     await expect(save({ removeCustomFieldKeys: ['k1'] })).resolves.toEqual({ ok: true });
-    expect(storedList(docs)).toHaveLength(949);
+    expect(storedList(docs)).toHaveLength(69);
+  });
+
+  it('RATE LIMIT: every save counts against this household in the profileSave bucket, 60 an hour', async () => {
+    household([ALLERGY]);
+    await expect(save({ customFields: [ALLERGY] })).resolves.toEqual({ ok: true });
+    expect(mocks.enforceRateLimitFn).toHaveBeenCalledTimes(1);
+    expect(mocks.enforceRateLimitFn).toHaveBeenCalledWith('profileSave', '3', 60, 3600);
+  });
+
+  it('RATE LIMIT: a refused save rejects with resource-exhausted and writes nothing', async () => {
+    const { ctx } = household([ALLERGY]);
+    const { HttpsError } = await import('firebase-functions/v2/https');
+    mocks.enforceRateLimitFn.mockRejectedValueOnce(new HttpsError('resource-exhausted', 'Too many attempts. Try again later.'));
+    await expect(save({ customFields: [{ ...ALLERGY, value: 'Beef' }] })).rejects.toMatchObject({ code: 'resource-exhausted' });
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('RATE LIMIT: a save with nothing to write spends no save', async () => {
+    household([ALLERGY]);
+    const { saveTribeProfileHandler } = await import('../src/portal/saveTribeProfile');
+    await expect(saveTribeProfileHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any)).resolves.toEqual({ ok: true });
+    expect(mocks.enforceRateLimitFn).not.toHaveBeenCalled();
   });
 
   it('CONCURRENT: a row another device adds between this save reading and writing survives', async () => {
@@ -673,10 +709,18 @@ describe('saveTribeProfileHandler: limits and concurrent saves (#873 review)', (
     });
     const { installOptimisticTransactions } = await import('./_helpers/optimisticTransaction');
     const ANDROID = { key: 'pool', label: 'Pool', value: 'Heated' };
+    const kinfolkOnRetry: unknown[] = [];
     const tx = installOptimisticTransactions(ctx.db, docs, {
       onRead: (path, attempt) => {
-        if (path !== 'kinfolk/3' || attempt !== 1 || docs['families/3'].customFields.length > 1) return;
-        docs['families/3'] = { ...docs['families/3'], customFields: [...docs['families/3'].customFields, ANDROID] };
+        if (path !== 'kinfolk/3') return;
+        if (attempt === 1 && docs['families/3'].customFields.length === 1) {
+          // Another device adds a row while this save is between its reads and its commit.
+          docs['families/3'] = { ...docs['families/3'], customFields: [...docs['families/3'].customFields, ANDROID] };
+        }
+        // #873 second review: attempt 1 must not have written the contact already.
+        // A write made straight on the ref inside the callback lands here, and the
+        // retry would then read it back as an echo and pass.
+        if (attempt === 2) kinfolkOnRetry.push(docs['kinfolk/3'].emergencyContacts);
       },
     });
     await expect(
@@ -688,8 +732,21 @@ describe('saveTribeProfileHandler: limits and concurrent saves (#873 review)', (
         ],
       }),
     ).resolves.toEqual({ ok: true });
+    expect(tx.attempts()).toBe(2);
+    expect(kinfolkOnRetry.length).toBeGreaterThan(0);
+    for (const seen of kinfolkOnRetry) expect(seen).toEqual([]);
+    // Both writes went through the transaction, by the attempt that committed. A
+    // contact write made after the commit is not in this list.
+    expect(tx.committed()).toEqual(['kinfolk/3', 'families/3']);
     expect(docs['kinfolk/3'].emergencyContacts[0]).toMatchObject({ name: 'Sam Ortiz', phone: '+18055550111' });
     expect(storedList(docs)).toEqual([ALLERGY, ANDROID]);
-    expect(tx.attempts()).toBe(2);
+    // #873 second review: Home access is checked once, before the transaction, not once per attempt.
+    expect(mocks.hasKinfolkPermSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('PERMISSION: a new-client save with no contact rows never reads Home access', async () => {
+    household([ALLERGY]);
+    await expect(save({ customFields: [{ ...ALLERGY, value: 'Beef' }] })).resolves.toEqual({ ok: true });
+    expect(mocks.hasKinfolkPermSpy).not.toHaveBeenCalled();
   });
 });

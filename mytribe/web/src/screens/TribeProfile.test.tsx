@@ -236,6 +236,17 @@ describe('TribeProfile: Emergency Contacts follow Home access (#843, #829)', () 
     expect(view.getByTestId('page-save-status')).not.toHaveClass('err');
   });
 
+  it('#873: a save refused for the hourly limit says so plainly, as an error', async () => {
+    const view = await renderTribeProfile({});
+    const { saveTribeProfile, PROFILE_SAVE_RATE_LIMITED_MESSAGE } = await import('../api/tribeApi');
+    const { FirebaseError } = await import('firebase/app');
+    vi.mocked(saveTribeProfile).mockRejectedValueOnce(new FirebaseError('functions/resource-exhausted', 'Too many attempts. Try again later.'));
+    await userEvent.click(await view.findByRole('button', { name: /Save Changes/ }));
+    expect(await view.findByText(PROFILE_SAVE_RATE_LIMITED_MESSAGE)).toBeInTheDocument();
+    expect(view.getByTestId('page-save-status')).toHaveClass('err');
+    expect(view.queryByText(/Too many attempts/)).not.toBeInTheDocument();
+  });
+
   it('both Home access toggles, member row and invite, name Emergency Contacts', async () => {
     const view = await renderTribeProfile({
       members: [

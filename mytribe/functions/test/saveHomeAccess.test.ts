@@ -1,16 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
 
-const mocks = vi.hoisted(() => ({ dbFn: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), enforceRateLimitFn: vi.fn() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
+// #873 second review. The limiter runs its own transaction; mocked so it neither
+// passes through installOptimisticTransactions nor counts across tests. The real
+// limiter is covered in rateLimit.test.ts and the emulator round trip.
+vi.mock('../src/lib/rateLimit', () => ({ enforceRateLimit: mocks.enforceRateLimitFn }));
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<any>('firebase-admin/firestore');
   return { ...actual, FieldValue: { serverTimestamp: () => '__SERVER_TS__' } };
 });
 beforeEach(() => {
   mocks.dbFn.mockReset();
+  mocks.enforceRateLimitFn.mockReset();
+  mocks.enforceRateLimitFn.mockResolvedValue(undefined);
   delete process.env.AUNTIE_OPERATOR_UIDS;
 });
 
@@ -318,6 +324,31 @@ describe('saveHomeAccessHandler: limits and concurrent saves (#873 review)', () 
   it('a NEW key with a blank label and a value is refused, and nothing is written', async () => {
     const { ctx } = home([ALARM]);
     await expect(save({ customFields: [ALARM, { key: 'pool', label: '', value: 'Heated' }] })).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('a household already over 64 KiB still saves without growing, and cannot grow', async () => {
+    const big = Array.from({ length: 70 }, (_, i) => ({ key: `k${i}`, label: 'L', value: 'x'.repeat(1000) }));
+    const { ctx, docs } = home(big);
+    await expect(save({ customFields: [...big, { key: 'pool', label: 'Pool', value: 'Heated' }] })).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(ctx.writes).toHaveLength(0);
+    await expect(save({ customFields: big, removeCustomFieldKeys: [] })).resolves.toEqual({ ok: true });
+    await expect(save({ removeCustomFieldKeys: ['k1'] })).resolves.toEqual({ ok: true });
+    expect(storedList(docs)).toHaveLength(69);
+  });
+
+  it('RATE LIMIT: every save counts against this household in its own homeAccessSave bucket, 60 an hour', async () => {
+    home([ALARM]);
+    await expect(save({ gateCode: '4321' })).resolves.toEqual({ ok: true });
+    expect(mocks.enforceRateLimitFn).toHaveBeenCalledTimes(1);
+    expect(mocks.enforceRateLimitFn).toHaveBeenCalledWith('homeAccessSave', '3', 60, 3600);
+  });
+
+  it('RATE LIMIT: a refused save rejects with resource-exhausted and writes nothing', async () => {
+    const { ctx } = home([ALARM]);
+    const { HttpsError } = await import('firebase-functions/v2/https');
+    mocks.enforceRateLimitFn.mockRejectedValueOnce(new HttpsError('resource-exhausted', 'Too many attempts. Try again later.'));
+    await expect(save({ customFields: [{ ...ALARM, value: '9999' }] })).rejects.toMatchObject({ code: 'resource-exhausted' });
     expect(ctx.writes).toHaveLength(0);
   });
 

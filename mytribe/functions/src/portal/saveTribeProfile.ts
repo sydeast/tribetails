@@ -10,6 +10,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { hasKinfolkPerm } from '../lib/memberGate';
+import { enforceRateLimit } from '../lib/rateLimit';
 import {
   LEGACY_EMERGENCY_CONTACT_KEYS,
   legacyContactFromRows,
@@ -22,6 +23,7 @@ import {
   conflictingCustomFieldKeys,
   CustomFieldsZ,
   mergeCustomFieldsForSave,
+  PROFILE_SAVE_RATE_LIMIT,
   RemoveCustomFieldKeysZ,
   type CustomFieldRow,
 } from '../lib/customFieldsMerge';
@@ -117,15 +119,30 @@ export async function saveTribeProfileHandler(
   const familiesRef = firestore.collection('families').doc(kinfolkId);
   const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
   if (args.displayName !== undefined) update['displayName'] = args.displayName;
+  const touchesCustomFields = args.customFields !== undefined || args.removeCustomFieldKeys !== undefined;
+  if (!touchesCustomFields && args.displayName === undefined) {
+    return { ok: true }; // only timestamp would be written; skip, and spend no save
+  }
+  // #873 second review: 60 saves an hour per household, in this callable's own
+  // bucket (PROFILE_SAVE_RATE_LIMIT says why not a shared one). Counted outside
+  // the save transaction, which can run twice.
+  await enforceRateLimit('profileSave', kinfolkId, PROFILE_SAVE_RATE_LIMIT.max, PROFILE_SAVE_RATE_LIMIT.windowSecs);
 
   let emergencyContactWrite: Awaited<ReturnType<typeof prepareEmergencyContactsSave>> | null = null;
   let emergencyContactIgnored = false;
   let stripped: { count: number; outcome: 'echo' | 'applied' | 'ignored' } | null = null;
-  if (args.customFields !== undefined || args.removeCustomFieldKeys !== undefined) {
+  if (touchesCustomFields) {
     const sentFields = args.customFields ?? [];
     const sentRows = sentFields.filter((f) => isEmergencyContactKey(f.key));
     const sent = legacyContactFromRows(sentRows);
     const removeKeys = (args.removeCustomFieldKeys ?? []).filter((k) => !isEmergencyContactKey(k));
+    // #873 second review: Home access is checked ONCE, before the transaction.
+    // Inside it, the check was a plain read the transaction did not lock, and a
+    // retry ran it again (and isStaff logged its allowlist fallback twice). A
+    // permission change racing a save is not a risk worth a transactional read:
+    // the gate is the same one saveEmergencyContacts applies without one. Only an
+    // old client that sent contact rows pays for the read.
+    const canEditContacts = sent !== null && (await hasKinfolkPerm(uid, kinfolkId, 'home_access', isAdmin, 'saveTribeProfile'));
     // #873 review: the families read, the Emergency Contact reads, and both
     // writes are one transaction. Two devices saving at once used to read the
     // same list, and the second write dropped the rows the first had added.
@@ -164,7 +181,7 @@ export async function saveTribeProfileHandler(
           (loaded !== null && sameLegacyContact(sent, loaded)) ||
           (slot1 !== undefined && sameLegacyContact(sent, slot1));
         if (!isEcho) {
-          if (await hasKinfolkPerm(uid, kinfolkId, 'home_access', isAdmin, 'saveTribeProfile')) {
+          if (canEditContacts) {
             // Validated before anything is written; a refusal throws out of this call.
             // Only the slot being written is parsed. A stored slot 2 is carried
             // through as stored: one that no longer parses (a hand-typed phone the
@@ -195,10 +212,8 @@ export async function saveTribeProfileHandler(
     emergencyContactWrite = result.ecWrite;
     emergencyContactIgnored = result.outcome === 'ignored';
     if (result.outcome !== null) stripped = { count: sentRows.length, outcome: result.outcome };
-  } else if (args.displayName !== undefined) {
-    await familiesRef.set(update, { merge: true });
   } else {
-    return { ok: true }; // only timestamp would be written; skip
+    await familiesRef.set(update, { merge: true });
   }
 
   if (stripped !== null) {

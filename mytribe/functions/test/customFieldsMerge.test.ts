@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
-  CUSTOM_FIELDS_MAX_BYTES,
+  CUSTOM_FIELDS_GROWTH_MAX_BYTES,
+  CUSTOM_FIELDS_HARD_MAX_BYTES,
   CUSTOM_FIELDS_MAX_ROWS,
+  SMALLEST_ROW_JSON_BYTES,
   customFieldsBytes,
   mergeCustomFields,
   mergeCustomFieldsForSave,
@@ -89,19 +91,44 @@ describe('customFields save limits (#873 review)', () => {
     expect(newKeysMissingLabel([allergy], sent, ['gone'])).toEqual(['pool']);
   });
 
-  it('the row cap admits any list that fits the byte budget, and is above what the schemas can produce', () => {
-    const smallest = [{ key: 'a', label: '', value: '' }];
-    expect(customFieldsBytes(smallest)).toBe(35);
-    expect(CUSTOM_FIELDS_MAX_ROWS * 33).toBeLessThanOrEqual(CUSTOM_FIELDS_MAX_BYTES);
-    expect(CUSTOM_FIELDS_MAX_ROWS).toBeGreaterThan(50 * 200 + 9);
+  it('the row cap is the growth ceiling over the smallest row, and the ceiling sits under the document backstop', () => {
+    expect(customFieldsBytes([{ key: 'a', label: '', value: '' }])).toBe(SMALLEST_ROW_JSON_BYTES + 2);
+    expect(CUSTOM_FIELDS_GROWTH_MAX_BYTES).toBe(64 * 1024);
+    expect(CUSTOM_FIELDS_MAX_ROWS).toBe(Math.floor(CUSTOM_FIELDS_GROWTH_MAX_BYTES / SMALLEST_ROW_JSON_BYTES));
+    expect(CUSTOM_FIELDS_MAX_ROWS).toBe(1985);
+    expect(CUSTOM_FIELDS_GROWTH_MAX_BYTES).toBeLessThanOrEqual(CUSTOM_FIELDS_HARD_MAX_BYTES);
   });
 
-  it('mergeCustomFieldsForSave refuses growth past the budget but never a save that does not grow an over-budget list', () => {
-    const big = Array.from({ length: 950 }, (_, i) => ({ key: `k${i}`, label: 'L', value: 'x'.repeat(1000) }));
-    expect(customFieldsBytes(big)).toBeGreaterThan(CUSTOM_FIELDS_MAX_BYTES);
+  // 66 rows of 1000 characters is about 67 KiB: past the growth ceiling.
+  const overCeiling = () => Array.from({ length: 66 }, (_, i) => ({ key: `k${i}`, label: 'L', value: 'x'.repeat(1000) }));
+
+  it('refuses a save that grows an empty list past 64 KiB', () => {
+    const rows = overCeiling();
+    expect(customFieldsBytes(rows)).toBeGreaterThan(CUSTOM_FIELDS_GROWTH_MAX_BYTES);
+    expect(() => mergeCustomFieldsForSave([], rows, [])).toThrow(/too large/);
+    expect(mergeCustomFieldsForSave([], rows.slice(0, 60), [])).toHaveLength(60);
+  });
+
+  it('a household already over 64 KiB can echo, clear and remove, and cannot grow', () => {
+    const big = overCeiling();
+    expect(mergeCustomFieldsForSave(big, big, [])).toHaveLength(66);
+    expect(mergeCustomFieldsForSave(big, [{ key: 'k0', label: 'L', value: '' }], ['k1'])).toHaveLength(65);
     expect(() => mergeCustomFieldsForSave(big, [{ key: 'pool', label: 'Pool', value: 'y' }], [])).toThrow(/too large/);
-    expect(mergeCustomFieldsForSave(big, big, [])).toHaveLength(950);
-    expect(mergeCustomFieldsForSave(big, [{ key: 'k0', label: 'L', value: '' }], ['k1'])).toHaveLength(949);
+    expect(() => mergeCustomFieldsForSave(big, [{ key: 'k0', label: 'L', value: 'x'.repeat(1000) + 'y' }], [])).toThrow(/too large/);
+  });
+
+  it('counts UTF-8 bytes, not UTF-16 length: an emoji is 4 bytes', () => {
+    const row = [{ key: 'a', label: '', value: '😀'.repeat(500) }];
+    expect(customFieldsBytes(row)).toBeGreaterThan(2000);
+    expect(JSON.stringify(row).length).toBeLessThan(1100);
+  });
+
+  it('refuses an emoji list that is over the ceiling in bytes though under it in UTF-16 length', () => {
+    // 64 rows of 250 emoji: 500 UTF-16 units each (inside the 1000 value cap), 1000 bytes each.
+    const rows = Array.from({ length: 64 }, (_, i) => ({ key: `e${i}`, label: 'E', value: '😀'.repeat(250) }));
+    expect(JSON.stringify(rows).length).toBeLessThan(CUSTOM_FIELDS_GROWTH_MAX_BYTES);
+    expect(customFieldsBytes(rows)).toBeGreaterThan(CUSTOM_FIELDS_GROWTH_MAX_BYTES);
+    expect(() => mergeCustomFieldsForSave([], rows, [])).toThrow(/too large/);
   });
 
   it('mergeCustomFieldsForSave refuses a new labelless row with invalid-argument', () => {

@@ -6,6 +6,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { requireKinfolkPerm } from '../lib/memberGate';
+import { enforceRateLimit } from '../lib/rateLimit';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { LEGACY_EMERGENCY_CONTACT_KEYS } from '../lib/emergencyContacts';
@@ -14,6 +15,7 @@ import {
   CustomFieldsZ,
   hasKeyIn,
   mergeCustomFieldsForSave,
+  PROFILE_SAVE_RATE_LIMIT,
   RemoveCustomFieldKeysZ,
 } from '../lib/customFieldsMerge';
 
@@ -55,6 +57,9 @@ export async function saveHomeAccessHandler(req: CallableRequest<unknown>): Prom
   // inside it.
   const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, hasAdminClaim, 'saveHomeAccess');
   await requireKinfolkPerm(uid, kinfolkId, 'home_access', hasAdminClaim, 'saveHomeAccess');
+  // #873 second review: counted after the gate, so a refused caller spends no
+  // save, and outside the save transaction, which can run twice.
+  await enforceRateLimit('homeAccessSave', kinfolkId, PROFILE_SAVE_RATE_LIMIT.max, PROFILE_SAVE_RATE_LIMIT.windowSecs);
 
   const update: Record<string, unknown> = {
     updatedAt: FieldValue.serverTimestamp(),

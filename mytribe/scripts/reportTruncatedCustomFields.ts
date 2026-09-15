@@ -30,7 +30,10 @@
  * have been refused over: more than 40 rows (the request cap before the review
  * round, and current clients send every stored row back), rows with a missing or
  * blank label (served as '', and the old request schema required one), and
- * values longer than the 1000 characters the callables still accept.
+ * values longer than the 1000 characters the callables still accept. Since the
+ * second review round it also counts lists over 64 KiB (a save may not grow one
+ * further) and over 900 KiB (near the 1 MiB document limit), measured as UTF-8
+ * bytes of the list's JSON, the same way the callables measure them.
  *
  * NOTHING PRIVATE IS PRINTED. Output is household ids, document paths, row KEYS
  * and times. Never a value: home access rows hold gate and alarm codes.
@@ -71,6 +74,13 @@ export const HOME_SCHEMA_TOP_LEVEL = ['gateCode', 'keyLocation', 'wifiPassword']
 export const OLD_REQUEST_ROW_CAP = 40;
 /** The value length saveTribeProfile / saveHomeAccess accept. */
 export const VALUE_MAX = 1000;
+/**
+ * The callables' growth ceiling and document backstop (CUSTOM_FIELDS_GROWTH_MAX_BYTES
+ * and CUSTOM_FIELDS_HARD_MAX_BYTES in functions/src/lib/customFieldsMerge.ts),
+ * copied for the same reason as the row cap above.
+ */
+export const GROWTH_MAX_BYTES = 64 * 1024;
+export const HARD_MAX_BYTES = 900 * 1024;
 
 const PAGE = 500;
 const LOOKUP_CHUNK = 100;
@@ -161,6 +171,8 @@ export interface RowsVerdict {
   keys: string[];
   /** Every stored entry, readable or not. */
   rowCount: number;
+  /** UTF-8 bytes of the stored list's JSON (#873 second review). */
+  bytes: number;
   /** Keys of rows whose label is missing, not a string, or blank (#873 review). */
   blankLabelKeys: string[];
   /** Keys of rows whose value is longer than the callables accept (#873 review). */
@@ -200,7 +212,8 @@ export function classifyRows(
   }
   const looksTruncated =
     editable.length > 0 && unreadable === 0 && keys.every((k) => allowed.has(k)) && editable.every((k) => keys.includes(k));
-  return { keys, rowCount: list.length, looksTruncated, emptySchemaValues, blankLabelKeys, longValueKeys };
+  const bytes = Buffer.byteLength(JSON.stringify(list), 'utf8');
+  return { keys, rowCount: list.length, bytes, looksTruncated, emptySchemaValues, blankLabelKeys, longValueKeys };
 }
 
 export interface Finding {
@@ -221,6 +234,7 @@ export interface LockoutRisk {
   kinfolkId: string;
   path: string;
   rows: number;
+  bytes: number;
   blankLabelKeys: string[];
   longValueKeys: string[];
 }
@@ -236,8 +250,8 @@ export interface Report {
 
 /** The risk this list carries, or null when it carries none. */
 export function lockoutRiskOf(surface: LockoutRisk['surface'], kinfolkId: string, path: string, v: RowsVerdict): LockoutRisk | null {
-  if (v.rowCount <= OLD_REQUEST_ROW_CAP && v.blankLabelKeys.length === 0 && v.longValueKeys.length === 0) return null;
-  return { surface, kinfolkId, path, rows: v.rowCount, blankLabelKeys: v.blankLabelKeys, longValueKeys: v.longValueKeys };
+  if (v.rowCount <= OLD_REQUEST_ROW_CAP && v.bytes <= GROWTH_MAX_BYTES && v.blankLabelKeys.length === 0 && v.longValueKeys.length === 0) return null;
+  return { surface, kinfolkId, path, rows: v.rowCount, bytes: v.bytes, blankLabelKeys: v.blankLabelKeys, longValueKeys: v.longValueKeys };
 }
 
 function isoOf(v: unknown): string | null {
@@ -366,11 +380,14 @@ export function lockoutRiskLines(risks: LockoutRisk[], samples: number): string[
   for (const surface of ['families', 'homeAccess'] as const) {
     const mine = risks.filter((x) => x.surface === surface);
     const over = mine.filter((x) => x.rows > OLD_REQUEST_ROW_CAP);
+    const overGrowth = mine.filter((x) => x.bytes > GROWTH_MAX_BYTES);
+    const overHard = mine.filter((x) => x.bytes > HARD_MAX_BYTES);
     const blank = mine.filter((x) => x.blankLabelKeys.length > 0);
     const long = mine.filter((x) => x.longValueKeys.length > 0);
     const rowsIn = (list: LockoutRisk[], pick: (x: LockoutRisk) => string[]) => list.reduce((n, x) => n + pick(x).length, 0);
     lines.push(
       `  ${surface}: over ${OLD_REQUEST_ROW_CAP} rows ${over.length} household(s); ` +
+        `over 64 KiB ${overGrowth.length} household(s); over 900 KiB ${overHard.length} household(s); ` +
         `empty or missing label ${rowsIn(blank, (x) => x.blankLabelKeys)} row(s) in ${blank.length} household(s); ` +
         `value over ${VALUE_MAX} characters ${rowsIn(long, (x) => x.longValueKeys)} row(s) in ${long.length} household(s)`,
     );
@@ -380,7 +397,7 @@ export function lockoutRiskLines(risks: LockoutRisk[], samples: number): string[
     lines.push(`First ${shown.length} of ${risks.length}:`);
     for (const x of shown) {
       lines.push(
-        `  ${x.surface.padEnd(10)}  ${x.path}  rows=${x.rows}  empty-label keys=[${x.blankLabelKeys.join(', ')}]  long-value keys=[${x.longValueKeys.join(', ')}]`,
+        `  ${x.surface.padEnd(10)}  ${x.path}  rows=${x.rows}  bytes=${x.bytes}  empty-label keys=[${x.blankLabelKeys.join(', ')}]  long-value keys=[${x.longValueKeys.join(', ')}]`,
       );
     }
   }

@@ -401,4 +401,17 @@ class TribeScreenTest {
         assertEquals(listOf(shed, alarm) to listOf("afterHoursVetPhone"), fake.sent("saveHomeAccess"))
         assertEquals(listOf(office, allergy, vet) to emptyList<String>(), fake.sent("saveTribeProfile"))
     }
+
+    @Test
+    fun save_refusedForTheHourlyLimit_saysSoPlainly() = runComposeUiTest {
+        val (fake, api) = schemaHousehold()
+        // What the native Android SDK hands back for lib/rateLimit.ts's refusal.
+        fake.stubError("saveTribeProfile", IllegalStateException("Too many attempts. Try again later."))
+        setThemedContent { TribeScreen("The Foster", "3", api) }
+        waitForIdle()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText(PROFILE_SAVE_RATE_LIMITED_MESSAGE).performScrollTo().assertIsDisplayed()
+        onNodeWithText("Saved.").assertDoesNotExist()
+    }
 }

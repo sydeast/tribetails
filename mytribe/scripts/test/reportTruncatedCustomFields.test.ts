@@ -5,6 +5,8 @@ import {
   HOME_RESERVED_KEYS,
   PROFILE_RESERVED_KEYS,
   classifyRows,
+  GROWTH_MAX_BYTES,
+  HARD_MAX_BYTES,
   lockoutRiskLines,
   lockoutRiskOf,
   parseArgs,
@@ -104,14 +106,30 @@ describe('lockout risk counts (#873 review)', () => {
     expect(lockoutRiskOf('families', 'f1', 'p', classifyRows([{ key: 'a', label: 'A', value: 'z'.repeat(1001) }], [], PROFILE_RESERVED_KEYS, []))).toMatchObject({ longValueKeys: ['a'] });
   });
 
-  it('prints household and row counts per surface and keys, never a value', () => {
+  it('measures a list in UTF-8 bytes of its JSON, and a list over 64 KiB is a risk on its own', () => {
+    const heavy = Array.from({ length: 70 }, (_, i) => ({ key: `h${i}`, label: 'H', value: 'w'.repeat(1000) }));
+    const v = classifyRows(heavy, [], HOME_RESERVED_KEYS, []);
+    expect(v.bytes).toBe(Buffer.byteLength(JSON.stringify(heavy), 'utf8'));
+    expect(v.bytes).toBeGreaterThan(GROWTH_MAX_BYTES);
+    expect(lockoutRiskOf('homeAccess', 'f1', 'p', v)).toMatchObject({ rows: 70, bytes: v.bytes, blankLabelKeys: [], longValueKeys: [] });
+    expect(classifyRows([{ key: 'e', label: 'E', value: '😀'.repeat(10) }], [], HOME_RESERVED_KEYS, []).bytes).toBe(
+      Buffer.byteLength(JSON.stringify([{ key: 'e', label: 'E', value: '😀'.repeat(10) }]), 'utf8'),
+    );
+  });
+
+  it('prints household and row counts per surface, the 64 KiB and 900 KiB counts, and keys, never a value', () => {
     const risks = [
-      { surface: 'families' as const, kinfolkId: 'f1', path: 'families/f1', rows: 41, blankLabelKeys: ['a', 'b'], longValueKeys: [] },
-      { surface: 'homeAccess' as const, kinfolkId: 'f2', path: 'families/f2/homeAccess/current', rows: 3, blankLabelKeys: [], longValueKeys: ['gate'] },
+      { surface: 'families' as const, kinfolkId: 'f1', path: 'families/f1', rows: 41, bytes: 2_000, blankLabelKeys: ['a', 'b'], longValueKeys: [] },
+      { surface: 'families' as const, kinfolkId: 'f3', path: 'families/f3', rows: 5, bytes: HARD_MAX_BYTES + 1, blankLabelKeys: [], longValueKeys: [] },
+      { surface: 'homeAccess' as const, kinfolkId: 'f2', path: 'families/f2/homeAccess/current', rows: 3, bytes: GROWTH_MAX_BYTES + 1, blankLabelKeys: [], longValueKeys: ['gate'] },
     ];
     const text = lockoutRiskLines(risks, 10).join('\n');
-    expect(text).toContain('families: over 40 rows 1 household(s); empty or missing label 2 row(s) in 1 household(s); value over 1000 characters 0 row(s) in 0 household(s)');
-    expect(text).toContain('homeAccess: over 40 rows 0 household(s); empty or missing label 0 row(s) in 0 household(s); value over 1000 characters 1 row(s) in 1 household(s)');
-    expect(text).toContain('families/f1  rows=41  empty-label keys=[a, b]');
+    expect(text).toContain(
+      'families: over 40 rows 1 household(s); over 64 KiB 1 household(s); over 900 KiB 1 household(s); empty or missing label 2 row(s) in 1 household(s); value over 1000 characters 0 row(s) in 0 household(s)',
+    );
+    expect(text).toContain(
+      'homeAccess: over 40 rows 0 household(s); over 64 KiB 1 household(s); over 900 KiB 0 household(s); empty or missing label 0 row(s) in 0 household(s); value over 1000 characters 1 row(s) in 1 household(s)',
+    );
+    expect(text).toContain('families/f1  rows=41  bytes=2000  empty-label keys=[a, b]');
   });
 });

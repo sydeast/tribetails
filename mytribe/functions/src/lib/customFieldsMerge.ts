@@ -34,36 +34,56 @@ export interface CustomFieldRow {
   value: string;
 }
 
-/**
- * Size budget for the merged list, as UTF-8 bytes of its JSON.
- *
- * Firestore's 1 MiB document limit is the real ceiling, not a row count. JSON is
- * a conservative stand-in for Firestore's own size rule (a string costs its UTF-8
- * bytes plus 1, a map field its name plus its value): every quote, colon and
- * comma JSON adds is overhead Firestore does not charge. 900 KiB leaves about
- * 124 KiB of the document for displayName, gate codes, timestamps and whatever
- * else sits beside the list.
+/*
+ * SIZES are UTF-8 bytes of the list's JSON, never string length: an emoji is 2
+ * UTF-16 units and 4 bytes, and Firestore charges bytes. JSON over-counts
+ * Firestore's own size rule (a string costs its UTF-8 bytes plus 1, a map field
+ * its name plus its value), so a budget measured this way is on the safe side.
  */
-export const CUSTOM_FIELDS_MAX_BYTES = 900 * 1024;
+
+/**
+ * The growth ceiling (#873 second review). A save may not GROW the list past
+ * 64 KiB. A household list is a few dozen short rows, so this is far above any
+ * real one, and it keeps a runaway client or a script well away from the
+ * document limit. A save that does not grow the list is never refused, so a
+ * household already over 64 KiB can still echo, clear, remove, and make edits
+ * that add no bytes.
+ */
+export const CUSTOM_FIELDS_GROWTH_MAX_BYTES = 64 * 1024;
+
+/**
+ * The document backstop. Firestore's 1 MiB document limit is the real ceiling;
+ * 900 KiB leaves about 124 KiB for displayName, gate codes and timestamps beside
+ * the list. It is applied the same way as the growth ceiling (only to a save that
+ * grows the list), so while that ceiling sits below it this check cannot fire on
+ * its own. It is here so that raising the growth ceiling can never raise the
+ * list past the document.
+ */
+export const CUSTOM_FIELDS_HARD_MAX_BYTES = 900 * 1024;
 
 /** `{"key":"a","label":"","value":""}`: the smallest row a client can send. */
-const SMALLEST_ROW_JSON_BYTES = 33;
+export const SMALLEST_ROW_JSON_BYTES = 33;
 
 /**
- * Rows accepted in one request, and keys in one `removeCustomFieldKeys`.
+ * Rows accepted in one request, and keys in one `removeCustomFieldKeys`: the
+ * growth ceiling divided by the smallest row (1,985).
  *
- * WHY THIS NUMBER (27,927). Current clients send every stored row back, so the
- * request cap must admit any list the server can have stored, or one household
- * past the cap can never save again. Growth past `CUSTOM_FIELDS_MAX_BYTES` is
- * refused, so no list written here holds more than this many rows. It also sits
- * above what the form schemas can produce: `saveFormSchema` allows 50 sections of
- * 200 fields (10,000 keys) plus 9 reserved vet, after-hours and Emergency Contact
- * rows. A row-count cap derived from the schema alone would not hold, because
- * office rows and rows from older schemas are unbounded and cannot be deleted
- * from a client that no longer shows them. It is a guard against a junk request,
- * never the limit a household meets: the byte budget is.
+ * Current clients send every stored row back, so the request cap must admit any
+ * list the server can have written. Growth past the ceiling is refused, and more
+ * rows than this cannot fit under it, so no list written here is longer. It is
+ * below the 10,009 rows the form schemas could name (50 sections of 200 fields
+ * plus 9 reserved rows). That is fine: that many rows would outweigh the ceiling
+ * anyway, so the byte budget is the binding limit.
  */
-export const CUSTOM_FIELDS_MAX_ROWS = Math.floor(CUSTOM_FIELDS_MAX_BYTES / SMALLEST_ROW_JSON_BYTES);
+export const CUSTOM_FIELDS_MAX_ROWS = Math.floor(CUSTOM_FIELDS_GROWTH_MAX_BYTES / SMALLEST_ROW_JSON_BYTES);
+
+/**
+ * Saves per household per hour, for each of saveTribeProfile and saveHomeAccess
+ * (#873 second review). Each callable has its OWN bucket: one page Save calls
+ * both, so a shared bucket would allow 30 clicks an hour, and a click landing on
+ * its edge would save the profile and refuse the home details.
+ */
+export const PROFILE_SAVE_RATE_LIMIT = { max: 60, windowSecs: 3600 } as const;
 
 /** Matches `saveFormSchema`'s field key, which is what clients send as a row key. */
 export const CUSTOM_FIELD_KEY_MAX = 80;
@@ -161,7 +181,7 @@ export function newKeysMissingLabel(stored: unknown, sent: readonly CustomFieldR
     .map((r) => r.key);
 }
 
-/** UTF-8 bytes of the list's JSON; see `CUSTOM_FIELDS_MAX_BYTES`. */
+/** UTF-8 bytes of the list's JSON; see SIZES above. */
 export function customFieldsBytes(list: unknown): number {
   return Buffer.byteLength(JSON.stringify(Array.isArray(list) ? list : []), 'utf8');
 }
@@ -170,8 +190,9 @@ export function customFieldsBytes(list: unknown): number {
  * The merge both callables run inside their transaction, with its two refusals.
  * Throws before anything is written.
  *
- * The size refusal fires only when the save GROWS the list past the budget. A
- * household already over it (written before this check, or by another writer)
+ * The size refusal fires only when the save GROWS the list past the growth
+ * ceiling (or the document backstop). A household already over it (written
+ * before this check, or by another writer)
  * can still echo, clear, remove, and make edits that add no bytes, because refusing those would
  * lock it out of every save over rows it has no way to see or delete.
  */
@@ -182,7 +203,8 @@ export function mergeCustomFieldsForSave(stored: unknown, sent: readonly CustomF
   }
   const merged = mergeCustomFields(stored, sent, removeKeys);
   const bytes = customFieldsBytes(merged);
-  if (bytes > CUSTOM_FIELDS_MAX_BYTES && bytes > customFieldsBytes(stored)) {
+  const grows = bytes > customFieldsBytes(stored);
+  if (grows && (bytes > CUSTOM_FIELDS_HARD_MAX_BYTES || bytes > CUSTOM_FIELDS_GROWTH_MAX_BYTES)) {
     throw new HttpsError('invalid-argument', 'These details are too large to save. Shorten or remove some fields, then save again.');
   }
   return merged;

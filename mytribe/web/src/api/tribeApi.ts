@@ -4,6 +4,7 @@
  * folded into api/types.ts + api/portal.ts. Field names/types are
  * transcribed from the backend handlers; each block cites its source file.
  */
+import { FirebaseError } from 'firebase/app';
 import { call } from '../lib/fns';
 
 // ── shared custom-field shape (functions/src/portal/getMyTribeProfile.ts,
@@ -644,6 +645,21 @@ export function editCustomFields(
     placed.add(row.key);
   }
   return { customFields, removeCustomFieldKeys: [...removed] };
+}
+
+/**
+ * #873 second review. saveTribeProfile and saveHomeAccess each allow 60 saves an
+ * hour per household and refuse the next with `resource-exhausted`. Starts with
+ * "Save failed" like every other page-save failure. Same text as portal Android's
+ * PROFILE_SAVE_RATE_LIMITED_MESSAGE.
+ */
+export const PROFILE_SAVE_RATE_LIMITED_MESSAGE =
+  'Save failed: this household has saved too many times in the last hour. Wait a little, then save again.';
+
+/** The page-save failure line for a rejected saveTribeProfile or saveHomeAccess. */
+export function profileSaveErrorMessage(err: unknown): string {
+  if (err instanceof FirebaseError && err.code === 'functions/resource-exhausted') return PROFILE_SAVE_RATE_LIMITED_MESSAGE;
+  return `Save failed: ${err instanceof Error ? err.message : 'unknown error'}`;
 }
 
 /** True when a custom field has anything worth displaying (mirrors the Kotlin visibility guards). */

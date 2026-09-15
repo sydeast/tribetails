@@ -20,6 +20,7 @@ import {
   listMembers,
   memberStatusLabel,
   PROFILE_RESERVED_KEYS,
+  profileSaveErrorMessage,
   removeHouseholdContact,
   saveHomeAccess,
   saveHouseholdContact,
@@ -355,7 +356,7 @@ export function TribeProfile() {
       });
       void queryClient.invalidateQueries({ queryKey: ['tribeProfile', kinfolkId] });
     } catch (err) {
-      setStatus({ text: `Save failed: ${err instanceof Error ? err.message : 'unknown error'}`, ok: false });
+      setStatus({ text: profileSaveErrorMessage(err), ok: false });
     } finally {
       setSaving(false);
     }

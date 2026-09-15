@@ -456,7 +456,7 @@ fun TribeScreen(
                                 "Saved."
                             }
                         } catch (t: Throwable) {
-                            status = "Save failed: ${t.message ?: t}"
+                            status = profileSaveFailureMessage(t)
                         } finally {
                             saving = false
                         }
@@ -852,6 +852,30 @@ internal val LEGACY_EMERGENCY_CONTACT_KEYS = setOf("emergencyContactName", "emer
 
 /** #873: a save payload. [removeKeys] names each stored row to delete, since an omitted row is kept. */
 internal data class CustomFieldEdit(val customFields: List<CustomField>, val removeKeys: List<String>)
+
+/**
+ * #873 second review. saveTribeProfile and saveHomeAccess each allow 60 saves an
+ * hour per household. Starts with "Save failed" so the status line colours it as
+ * a failure. Same text as portal web's PROFILE_SAVE_RATE_LIMITED_MESSAGE.
+ */
+internal const val PROFILE_SAVE_RATE_LIMITED_MESSAGE =
+    "Save failed: this household has saved too many times in the last hour. Wait a little, then save again."
+
+/**
+ * True when a callable refused for its rate limit. Callable errors reach this
+ * client as a message: the native Android SDK carries the server's message ("Too
+ * many attempts. Try again later.", from lib/rateLimit.ts), and the desktop REST
+ * client carries the response body with the RESOURCE_EXHAUSTED status. Same
+ * approach as `isPermissionDenied`.
+ */
+internal fun isRateLimited(message: String?): Boolean {
+    val m = message?.lowercase() ?: return false
+    return "resource-exhausted" in m || "resource_exhausted" in m || "too many attempts" in m
+}
+
+/** The page-save status line for a failed saveTribeProfile or saveHomeAccess. */
+internal fun profileSaveFailureMessage(t: Throwable): String =
+    if (isRateLimited(t.message)) PROFILE_SAVE_RATE_LIMITED_MESSAGE else "Save failed: ${t.message ?: t}"
 
 /**
  * #873. The row a schema field saves, or null when the stored row stays as it is.
