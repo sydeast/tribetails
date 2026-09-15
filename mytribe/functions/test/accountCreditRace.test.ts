@@ -22,6 +22,7 @@ vi.mock('firebase-admin/firestore', async () => {
     FieldValue: {
       serverTimestamp: () => '__TS__',
       increment: (n: number) => ({ __increment: n }),
+      delete: () => ({ __delete: true }),
     },
   };
 });
@@ -91,7 +92,12 @@ function buildRacingDb(seedDocs: Record<string, Doc>) {
   function commitWrite(path: string, data: Doc, merge: boolean): void {
     writes.push({ path, data, merge });
     const resolved = resolveWrite(path, data);
-    store[path] = merge ? { ...(store[path] ?? {}), ...resolved } : resolved;
+    const next: Doc = merge ? { ...(store[path] ?? {}), ...resolved } : resolved;
+    // FieldValue.delete() removes the field, as it does in Firestore.
+    for (const [k, v] of Object.entries(data)) {
+      if (v !== null && typeof v === 'object' && '__delete' in (v as Doc)) delete next[k];
+    }
+    store[path] = next;
   }
 
   function makeDocRef(path: string): any {

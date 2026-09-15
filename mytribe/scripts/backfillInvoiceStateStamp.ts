@@ -189,37 +189,63 @@ export function wouldNotifyHousehold(doc: Record<string, unknown>, stamp: Invoic
  * could not be collected by any path (`alreadySettledRefusal` blocks
  * markInvoicePaid, the credit draw and payInvoice; scope none blocks
  * updateInvoice; repairInvoicePayments skips it), while unstamped the portal
- * shows it open. Refused, with no payment row to back the reading, until #902
- * rules on a missing amountDue.
+ * shows it open. Refused until #902 rules on a missing amountDue, unless
+ * something else says it was paid (#884 third review):
+ *   - its own `status` already says `paid`: its writer asserted it, and the
+ *     stamp only canonicalizes that label;
+ *   - a payment row names it, in the invoice's `payments` subcollection or in
+ *     the root `payments` collection by `invoiceId` (where the Stripe webhook
+ *     and recordPayment write theirs). A root row counts even when its amount is
+ *     unresolved: it is still a record that money came in.
+ * A non-finite `amountDue` (NaN, Infinity) is treated as missing, because the
+ * classifier reads it as 0 too.
  */
 export function wouldAssertPayment(
   doc: Record<string, unknown>,
   stamp: InvoiceStateStamp,
-  paidCents: number,
+  hasPaymentEvidence: boolean,
 ): boolean {
-  return stamp.status === 'paid' && typeof doc.amountDue !== 'number' && paidCents === 0;
+  if (stamp.status !== 'paid') return false;
+  const label = typeof doc.status === 'string' ? doc.status.trim().toLowerCase() : '';
+  if (label === 'paid') return false;
+  const amountDue = doc.amountDue;
+  const hasBalanceField = typeof amountDue === 'number' && Number.isFinite(amountDue);
+  return !hasBalanceField && !hasPaymentEvidence;
+}
+
+export interface PlanStampOptions {
+  /** Root `payments` rows whose `invoiceId` names this invoice. Evidence only: never part of the settlement. */
+  rootPayments?: readonly PaymentAmount[];
+  /**
+   * The stamp to plan. Defaults to the classifier's; a test passes another one
+   * to prove the notification guard refuses a write the trigger would announce.
+   */
+  stampOf?: (doc: Record<string, unknown>, paidCents: number) => InvoiceStateStamp;
 }
 
 /**
  * The decision for one invoice. PURE: no Firestore access, so the whole rule,
  * including both guards, is unit-testable against fixtures
- * (mytribe/scripts/test/backfillInvoiceStateStamp.test.ts). `stampOf` is the
- * classifier's stamp; a test passes another one to prove the notification guard
- * refuses a write the trigger would announce.
+ * (mytribe/scripts/test/backfillInvoiceStateStamp.test.ts). `payments` is the
+ * invoice's own subcollection, the settlement figure the stamp's edit scope is
+ * computed from; the root ledger rows in `options` are read only as evidence
+ * that a payment happened.
  */
 export function planStamp(
   doc: Record<string, unknown>,
   payments: readonly PaymentAmount[],
-  stampOf: (doc: Record<string, unknown>, paidCents: number) => InvoiceStateStamp = invoiceStateStampOf,
+  options: PlanStampOptions = {},
 ): StampDecision {
   const paidCents = paidCentsFromPayments(payments);
-  const stamp = stampOf(doc, paidCents);
+  const stamp = (options.stampOf ?? invoiceStateStampOf)(doc, paidCents);
 
   if (invoiceStampIsCurrent(doc, stamp)) {
     return { action: 'skip', reason: 'stamp_current' };
   }
 
-  if (wouldAssertPayment(doc, stamp, paidCents)) {
+  const rootPayments = options.rootPayments ?? [];
+  const hasPaymentEvidence = paidCents > 0 || rootPayments.length > 0;
+  if (wouldAssertPayment(doc, stamp, hasPaymentEvidence)) {
     return { action: 'skip', reason: 'would_assert_payment' };
   }
 
@@ -300,8 +326,12 @@ export async function run(mode: Mode, pageSize: number): Promise<RunResult> {
 
       const paymentsSnap = await docSnap.ref.collection('payments').get();
       const payments = paymentsSnap.docs.map((p) => p.data() as PaymentAmount);
+      // The root ledger by invoiceId, where the Stripe webhook and recordPayment
+      // write their rows. Evidence for the payment guard only (#884).
+      const rootSnap = await db.collection('payments').where('invoiceId', '==', docSnap.id).get();
+      const rootPayments = rootSnap.docs.map((p) => p.data() as PaymentAmount);
 
-      const decision = planStamp(data, payments);
+      const decision = planStamp(data, payments, { rootPayments });
       if (decision.action === 'skip') {
         result.skipped[decision.reason] += 1;
         if (decision.reason === 'would_notify_household') {

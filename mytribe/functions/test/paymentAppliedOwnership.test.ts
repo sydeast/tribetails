@@ -68,7 +68,14 @@ import { onInvoicesWriteHandler } from '../src/triggers/onInvoicesWrite';
 import { recordPaymentHandler } from '../src/admin/recordPayment';
 import { markInvoicePaidHandler } from '../src/admin/markInvoicePaid';
 import { stripeWebhookHandler } from '../src/billing/stripeWebhook';
-import { CREDIT_NOTICE_SWEEP_GRACE_MS, drawAccountCredit, sweepPendingCreditNotices } from '../src/lib/accountCredit';
+import {
+  CREDIT_NOTICE_DEDUPE_WINDOW_MS,
+  CREDIT_NOTICE_MAX_ATTEMPTS,
+  CREDIT_NOTICE_SWEEP_BUDGET_MS,
+  CREDIT_NOTICE_SWEEP_GRACE_MS,
+  drawAccountCredit,
+  sweepPendingCreditNotices,
+} from '../src/lib/accountCredit';
 import { updateInvoiceHandler } from '../src/admin/updateInvoice';
 import { dedupeIdentityOf, dedupeWindowOf, resolveTargetRef } from '../src/notifications/dispatcher';
 import { NoRecipientsError } from '../src/notifications/recipientErrors';
@@ -1112,6 +1119,175 @@ describe('#884 second review: the credit notice survives a crash', () => {
     expect(docs[INVOICE]!['status']).toBe('paid');
     expect(appliedCount()).toBe(1);
     expect(staffCount()).toBe(1);
+  });
+});
+
+describe('#884 third review: the credit notice sweep cannot get stuck', () => {
+  const draw = () =>
+    withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+  const sweep = (options?: Parameters<typeof sweepPendingCreditNotices>[2]) =>
+    sweepPendingCreditNotices(mocks.db.current as any, Date.now(), options);
+  const creditRowId = () =>
+    Object.keys(docs)
+      .find((p) => p.startsWith('invoices/inv1/payments/'))!
+      .split('/')
+      .pop()!;
+  const gaveUpRows = () =>
+    Object.entries(docs).filter(
+      ([p, d]) => p.startsWith('activity_log/') && d !== null && d['actionType'] === 'BILLING_PAYMENT_NOTIFICATION_GAVE_UP',
+    );
+
+  /** A credit notice still pending since `atMs`, as a crashed pass leaves it. */
+  function seedPending(invoiceId: string, paymentId: string, atMs: number, kinfolkId = 'fam1') {
+    docs[`invoices/${invoiceId}`] = {
+      kinfolkId,
+      status: 'paid',
+      amountDue: 0,
+      amountDueCents: 0,
+      paymentAppliedNoticeOwner: `accountCredit:${paymentId}`,
+      paymentAppliedNoticePending: `accountCredit:${paymentId}`,
+      paymentAppliedNoticePendingAtMs: atMs,
+    };
+  }
+
+  /** What a credit payment notice for inv1 carries, whichever sender sends it. */
+  const expectedNotice = (paymentId: string) => ({
+    key: 'invoice.payment.applied',
+    recipientUid: 'kin-uid-1',
+    data: { kinfolkId: 'fam1', invoiceId: 'inv1', amountDue: 0, currency: 'usd', dueDate: '2026-09-30', paymentId },
+    targetType: 'invoice',
+    targetId: 'inv1',
+    dedupeWindowMs: CREDIT_NOTICE_DEDUPE_WINDOW_MS,
+  });
+
+  function seedPayable() {
+    seedInvoice({ currency: 'usd', dueDate: '2026-09-30' });
+    docs['families/fam1'] = { accountBalanceCents: 5000 };
+  }
+
+  it('the direct send carries the notice every resend below must match', async () => {
+    seedPayable();
+    await draw();
+    expect(mocks.enqueue.mock.calls[0]![0]).toEqual(expectedNotice(creditRowId()));
+  });
+
+  it('a redelivered pass resends exactly what the direct send would have carried', async () => {
+    seedPayable();
+    mocks.resolveUid.mockRejectedValueOnce(new Error('instance stopped'));
+    await draw();
+    await draw();
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueue.mock.calls[0]![0]).toEqual(expectedNotice(creditRowId()));
+  });
+
+  it('the sweep resends exactly what the direct send would have carried', async () => {
+    seedPayable();
+    mocks.resolveUid.mockRejectedValueOnce(new Error('instance stopped'));
+    await draw();
+    later(CREDIT_NOTICE_SWEEP_GRACE_MS + MIN);
+    expect(await sweep()).toBe(1);
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueue.mock.calls[0]![0]).toEqual(expectedNotice(creditRowId()));
+  });
+
+  it('a finished notice drops its pending time, so the age query never fetches it again', async () => {
+    seedPayable();
+    await draw();
+    expect(typeof docs[INVOICE]!['paymentAppliedNoticePendingAtMs']).not.toBe('number');
+  });
+
+  it("notices still inside the grace period never take the sweep's slots from a due one", async () => {
+    const now = Date.now();
+    // 120 notices a burst of draws left pending a minute ago, whose payment ids
+    // sort before the due one's, and one notice pending for an hour.
+    for (let i = 0; i < 120; i += 1) seedPending(`a${String(i).padStart(3, '0')}`, `a${String(i).padStart(3, '0')}`, now - MIN);
+    seedPending('inv1', 'zzz', now - HOUR);
+    expect(await sweep()).toBe(1);
+    expect(appliedCount()).toBe(1);
+    expect(docs[INVOICE]!['paymentAppliedNoticePending']).toBe('');
+    expect(docs['invoices/a000']!['paymentAppliedNoticePending']).toBe('accountCredit:a000');
+  });
+
+  it('a notice that keeps failing gives up after the cap, writes one activity_log row, and is never retried again', async () => {
+    seedPayable();
+    mocks.resolveUid.mockRejectedValue(Object.assign(new Error('lookup failed'), { code: 'unavailable' }));
+    await draw();
+    const paymentId = creditRowId();
+
+    for (let i = 0; i < CREDIT_NOTICE_MAX_ATTEMPTS; i += 1) {
+      later(CREDIT_NOTICE_SWEEP_GRACE_MS + MIN);
+      expect(await sweep()).toBe(0);
+    }
+    expect(docs[INVOICE]!['paymentAppliedNoticeAttempts']).toBe(CREDIT_NOTICE_MAX_ATTEMPTS);
+    expect(docs[INVOICE]!['paymentAppliedNoticePending']).toBe(`accountCredit:${paymentId}`);
+    expect(gaveUpRows()).toHaveLength(0);
+
+    later(CREDIT_NOTICE_SWEEP_GRACE_MS + MIN);
+    expect(await sweep()).toBe(1);
+    expect(docs[INVOICE]).toMatchObject({ paymentAppliedNoticeSkippedReason: 'gave-up', paymentAppliedNoticePending: '' });
+    expect(typeof docs[INVOICE]!['paymentAppliedNoticePendingAtMs']).not.toBe('number');
+
+    const rows = gaveUpRows();
+    expect(rows).toHaveLength(1);
+    const row = rows[0]![1]!;
+    expect(row['status']).toBe('FAILURE');
+    expect(row['payload']).toEqual({
+      invoiceId: 'inv1',
+      paymentId,
+      attempts: CREDIT_NOTICE_MAX_ATTEMPTS,
+      lastErrorCode: 'unavailable',
+    });
+
+    // Never again: no sweep, no redelivery, reaches the recipient lookup.
+    const lookups = mocks.resolveUid.mock.calls.length;
+    later(HOUR);
+    expect(await sweep()).toBe(0);
+    await draw();
+    expect(mocks.resolveUid.mock.calls.length).toBe(lookups);
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(gaveUpRows()).toHaveLength(1);
+  });
+
+  it('more than 100 notices that keep failing do not block a newer one: they give up and the newer one is sent', async () => {
+    const base = Date.now() - 2 * HOUR;
+    for (let i = 0; i < 101; i += 1) seedPending(`stuck${i}`, `s${i}`, base + i, 'famStuck');
+    seedPending('inv1', 'fresh', base + HOUR);
+    mocks.resolveUid.mockImplementation(async (kinfolkId: string) => {
+      if (kinfolkId === 'famStuck') throw Object.assign(new Error('lookup failed'), { code: 'unavailable' });
+      return 'kin-uid-1';
+    });
+
+    let sweeps = 0;
+    while (appliedCount() === 0 && sweeps < 30) {
+      later(5 * MIN);
+      await sweep({ clock: () => 0 });
+      sweeps += 1;
+    }
+    expect(appliedCount()).toBe(1);
+    expect(sweeps).toBeLessThanOrEqual(CREDIT_NOTICE_MAX_ATTEMPTS + 2);
+    expect(docs[INVOICE]!['paymentAppliedNoticePending']).toBe('');
+    expect(docs['invoices/stuck0']!['paymentAppliedNoticeSkippedReason']).toBe('gave-up');
+    expect(gaveUpRows().length).toBeGreaterThanOrEqual(100);
+  });
+
+  it('the sweep stops when its time budget is spent and leaves the rest for the next run', async () => {
+    expect(CREDIT_NOTICE_SWEEP_BUDGET_MS).toBe(20_000);
+    const old = Date.now() - HOUR;
+    for (let i = 0; i < 5; i += 1) seedPending(`b${i}`, `b${i}`, old + i);
+    // Every clock reading moves 8 seconds: the start, then one reading per notice.
+    let t = 0;
+    const clock = () => {
+      const v = t;
+      t += 8_000;
+      return v;
+    };
+    expect(await sweep({ clock })).toBe(2);
+    expect(Object.keys(docs).filter((p) => /^invoices\/b\d$/.test(p) && docs[p]!['paymentAppliedNoticePending'] !== '')).toHaveLength(3);
+    t = 0;
+    expect(await sweep({ clock })).toBe(2);
+    t = 0;
+    expect(await sweep({ clock })).toBe(1);
+    expect(appliedCount()).toBe(5);
   });
 });
 

@@ -80,6 +80,15 @@ export const PAYMENT_APPLIED_PENDING_FIELD = 'paymentAppliedNoticePending';
 export const PAYMENT_APPLIED_PENDING_AT_FIELD = 'paymentAppliedNoticePendingAtMs';
 export const PAYMENT_APPLIED_SENT_AT_FIELD = 'paymentAppliedNoticeSentAt';
 export const PAYMENT_APPLIED_SKIPPED_FIELD = 'paymentAppliedNoticeSkippedReason';
+/**
+ * #884 third review: retries of a pending credit notice claimed so far (a
+ * redelivered pass or a sweep), and the short code of the last failure. After
+ * `CREDIT_NOTICE_MAX_ATTEMPTS` the notice gives up (SKIPPED 'gave-up') and the
+ * office sees one activity_log row. A finished notice deletes PENDING_AT, so
+ * the sweep's age query never fetches it again.
+ */
+export const PAYMENT_APPLIED_ATTEMPTS_FIELD = 'paymentAppliedNoticeAttempts';
+export const PAYMENT_APPLIED_LAST_ERROR_FIELD = 'paymentAppliedNoticeLastError';
 
 /** Who took ownership. The id after the colon is for a reader tracing one payment; nothing parses it. */
 export type PaymentAppliedOwnerSource =

@@ -155,17 +155,47 @@ describe('backfillInvoiceStateStamp planStamp', () => {
     expect(d).toEqual({ action: 'skip', reason: 'would_assert_payment' });
   });
 
-  it('stamps that shape paid once a payment row backs the paid reading', () => {
+  it('stamps that shape paid once a subcollection payment row backs the paid reading', () => {
     const d = planStamp({ status: 'sent', total: 40 }, [{ amountCents: 4000 }]);
     expect(d.action).toBe('stamp');
     if (d.action !== 'stamp') throw new Error('expected stamp');
     expect(d.update.status).toBe('paid');
   });
 
+  it('stamps that shape paid when a ROOT payments row names the invoice (the Stripe webhook writes there)', () => {
+    const d = planStamp({ status: 'sent', total: 40 }, [], { rootPayments: [{ amountCents: 4000 }] });
+    expect(d.action).toBe('stamp');
+    if (d.action !== 'stamp') throw new Error('expected stamp');
+    expect(d.update.status).toBe('paid');
+  });
+
+  it('a root row whose amount is unresolved still counts as a record that money came in', () => {
+    const d = planStamp({ status: 'sent', total: 40 }, [], { rootPayments: [{}] });
+    expect(d.action).toBe('stamp');
+  });
+
+  it('allows a doc its writer already labelled paid: the stamp only canonicalizes the label', () => {
+    for (const status of ['paid', ' Paid ']) {
+      const d = planStamp({ status, total: 40 }, []);
+      expect(d.action, status).toBe('stamp');
+      if (d.action !== 'stamp') throw new Error('expected stamp');
+      expect(d.update.status).toBe('paid');
+    }
+  });
+
+  it('treats a non-finite amountDue as missing, so the shape is still refused', () => {
+    for (const amountDue of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const d = planStamp({ status: 'sent', total: 40, amountDue }, []);
+      expect(d, String(amountDue)).toEqual({ action: 'skip', reason: 'would_assert_payment' });
+    }
+  });
+
   it('THE NOTIFICATION GUARD refuses a stamp write the trigger would send a notice for', () => {
     // The classifier's own stamp never changes what the trigger reads, so the
     // guard is proven with a stamp that does: it moves an open bill to paid.
-    const d = planStamp({ status: 'open', amountDue: 40, total: 40 }, [], () => ({ status: 'paid', editScope: 'none' }));
+    const d = planStamp({ status: 'open', amountDue: 40, total: 40 }, [], {
+      stampOf: () => ({ status: 'paid', editScope: 'none' }),
+    });
     expect(d).toEqual({ action: 'skip', reason: 'would_notify_household' });
   });
 
