@@ -38,15 +38,19 @@
  *     zero planned writes. The stamp itself is a classifier fixpoint
  *     (asserted in functions/test/invoiceStateStamp.test.ts), which is what
  *     makes that skip check sound.
- *   - THE NOTIFICATION GUARD. `onInvoicesWrite` fires invoice.payment.applied
- *     at the household when a write flips `resolveLifecycle` into 'paid'. A
- *     stamp write can do that in exactly one shape: a doc with NO numeric
- *     amountDue whose classifier reading is 'paid' (the lifecycle needs the
- *     status label, and the stamp is what supplies it). This script REFUSES to
- *     stamp those docs (`would_notify_household`) and lists them for the
- *     operator instead: a backfill must never text a household about a
- *     payment that happened months ago. Handle the leftovers by hand or
- *     accept the notification deliberately, per doc.
+ *   - THE PAYMENT GUARD (`would_assert_payment`, #884). invoiceStateOf reads a
+ *     missing `amountDue` as 0, so a doc with a `total`, no numeric `amountDue`
+ *     and no payment rows classifies paid although nothing was paid. A paid/none
+ *     stamp on it would block every payment path and every edit, while unstamped
+ *     the portal shows it open. This script refuses those docs and lists them for
+ *     the operator, until #902 rules on a missing amountDue.
+ *   - THE NOTIFICATION GUARD (`would_notify_household`). It asks
+ *     `onInvoicesWrite`'s own decision, `invoiceWriteNoticeKey`, whether the
+ *     trigger would send anything for the stamp write, so it follows whatever the
+ *     trigger does: a backfill must never text a household about a payment that
+ *     happened months ago. With today's classifier a stamp write never changes
+ *     what the trigger reads, so it refuses nothing; the unit test proves it
+ *     refuses a stamp that would. Refused docs are listed for the operator.
  *
  * Runbook: run DRY first, read the plan, then re-run with --allow-prod.
  * This script has NOT been run against production as part of the PR that
@@ -70,7 +74,7 @@ import {
   type InvoiceStateStamp,
 } from '../functions/src/lib/invoiceStateStamp';
 import { paidCentsFromPayments, type PaymentAmount } from '../functions/src/lib/invoiceMath';
-import { resolveLifecycle } from '../functions/src/triggers/onInvoicesWrite';
+import { invoiceWriteNoticeKey } from '../functions/src/triggers/onInvoicesWrite';
 
 type Mode = 'dry-run' | 'apply';
 
@@ -154,7 +158,7 @@ export function parseArgs(argv: string[]): Args {
 }
 
 /** Why a scanned invoice is not being stamped. Reported, never silent. */
-export type StampSkipReason = 'stamp_current' | 'would_notify_household';
+export type StampSkipReason = 'stamp_current' | 'would_assert_payment' | 'would_notify_household';
 
 export type StampDecision =
   | {
@@ -167,27 +171,86 @@ export type StampDecision =
   | { action: 'skip'; reason: StampSkipReason };
 
 /**
+ * THE NOTIFICATION GUARD: would `onInvoicesWrite` send anything for this stamp
+ * write? It asks the trigger's own decision, `invoiceWriteNoticeKey`, both of
+ * its notices and the owner stand-down included, so it follows whatever the
+ * trigger does. With the classifier's stamp it never fires today (a stamp write
+ * does not change what the trigger reads); it is kept as a real check so a later
+ * change to either side cannot make a backfill text a household.
+ */
+export function wouldNotifyHousehold(doc: Record<string, unknown>, stamp: InvoiceStateStamp): boolean {
+  return invoiceWriteNoticeKey(doc, { ...doc, ...stamp }) !== null;
+}
+
+/**
+ * #884 second review: A PAID STAMP NOTHING BUT A MISSING amountDue SUPPORTS.
+ * invoiceStateOf reads a missing `amountDue` as 0, so `{ status: 'sent',
+ * total: 40 }` classifies paid with nothing paid. Stamped paid/none, the bill
+ * could not be collected by any path (`alreadySettledRefusal` blocks
+ * markInvoicePaid, the credit draw and payInvoice; scope none blocks
+ * updateInvoice; repairInvoicePayments skips it), while unstamped the portal
+ * shows it open. Refused until #902 rules on a missing amountDue, unless
+ * something else says it was paid (#884 third review):
+ *   - its own `status` already says `paid`: its writer asserted it, and the
+ *     stamp only canonicalizes that label;
+ *   - a payment row names it, in the invoice's `payments` subcollection or in
+ *     the root `payments` collection by `invoiceId` (where the Stripe webhook
+ *     and recordPayment write theirs). A root row counts even when its amount is
+ *     unresolved: it is still a record that money came in.
+ * A non-finite `amountDue` (NaN, Infinity) is treated as missing, because the
+ * classifier reads it as 0 too.
+ */
+export function wouldAssertPayment(
+  doc: Record<string, unknown>,
+  stamp: InvoiceStateStamp,
+  hasPaymentEvidence: boolean,
+): boolean {
+  if (stamp.status !== 'paid') return false;
+  const label = typeof doc.status === 'string' ? doc.status.trim().toLowerCase() : '';
+  if (label === 'paid') return false;
+  const amountDue = doc.amountDue;
+  const hasBalanceField = typeof amountDue === 'number' && Number.isFinite(amountDue);
+  return !hasBalanceField && !hasPaymentEvidence;
+}
+
+export interface PlanStampOptions {
+  /** Root `payments` rows whose `invoiceId` names this invoice. Evidence only: never part of the settlement. */
+  rootPayments?: readonly PaymentAmount[];
+  /**
+   * The stamp to plan. Defaults to the classifier's; a test passes another one
+   * to prove the notification guard refuses a write the trigger would announce.
+   */
+  stampOf?: (doc: Record<string, unknown>, paidCents: number) => InvoiceStateStamp;
+}
+
+/**
  * The decision for one invoice. PURE: no Firestore access, so the whole rule,
- * including the notification guard, is unit-testable against fixtures
- * (mytribe/scripts/test/backfillInvoiceStateStamp.test.ts).
+ * including both guards, is unit-testable against fixtures
+ * (mytribe/scripts/test/backfillInvoiceStateStamp.test.ts). `payments` is the
+ * invoice's own subcollection, the settlement figure the stamp's edit scope is
+ * computed from; the root ledger rows in `options` are read only as evidence
+ * that a payment happened.
  */
 export function planStamp(
   doc: Record<string, unknown>,
   payments: readonly PaymentAmount[],
+  options: PlanStampOptions = {},
 ): StampDecision {
-  const stamp = invoiceStateStampOf(doc, paidCentsFromPayments(payments));
+  const paidCents = paidCentsFromPayments(payments);
+  const stamp = (options.stampOf ?? invoiceStateStampOf)(doc, paidCents);
 
   if (invoiceStampIsCurrent(doc, stamp)) {
     return { action: 'skip', reason: 'stamp_current' };
   }
 
-  // The notification guard (see the header). resolveLifecycle is the trigger's
-  // own exported function, so this check can never drift from what actually
-  // fires. The stamp cannot produce 'past_due' (not one of the eight states),
-  // so flipping INTO paid is the only notifying transition reachable here.
-  const before = resolveLifecycle(doc);
-  const after = resolveLifecycle({ ...doc, ...stamp });
-  if (after === 'paid' && before !== 'paid') {
+  const rootPayments = options.rootPayments ?? [];
+  const hasPaymentEvidence = paidCents > 0 || rootPayments.length > 0;
+  if (wouldAssertPayment(doc, stamp, hasPaymentEvidence)) {
+    return { action: 'skip', reason: 'would_assert_payment' };
+  }
+
+  // The notification guard (see the header).
+  if (wouldNotifyHousehold(doc, stamp)) {
     return { action: 'skip', reason: 'would_notify_household' };
   }
 
@@ -226,12 +289,12 @@ interface RunResult {
 /** Firestore caps a WriteBatch at 500 ops; stay comfortably under it. */
 const WRITES_PER_BATCH = 400;
 
-async function run(mode: Mode, pageSize: number): Promise<RunResult> {
+export async function run(mode: Mode, pageSize: number): Promise<RunResult> {
   const db: Firestore = getFirestore();
   const result: RunResult = {
     scanned: 0,
     stamped: 0,
-    skipped: { stamp_current: 0, would_notify_household: 0 },
+    skipped: { stamp_current: 0, would_assert_payment: 0, would_notify_household: 0 },
     byState: {},
     needsOperator: [],
   };
@@ -263,14 +326,23 @@ async function run(mode: Mode, pageSize: number): Promise<RunResult> {
 
       const paymentsSnap = await docSnap.ref.collection('payments').get();
       const payments = paymentsSnap.docs.map((p) => p.data() as PaymentAmount);
+      // The root ledger by invoiceId, where the Stripe webhook and recordPayment
+      // write their rows. Evidence for the payment guard only (#884).
+      const rootSnap = await db.collection('payments').where('invoiceId', '==', docSnap.id).get();
+      const rootPayments = rootSnap.docs.map((p) => p.data() as PaymentAmount);
 
-      const decision = planStamp(data, payments);
+      const decision = planStamp(data, payments, { rootPayments });
       if (decision.action === 'skip') {
         result.skipped[decision.reason] += 1;
         if (decision.reason === 'would_notify_household') {
           result.needsOperator.push(docSnap.id);
           console.log(
             `[skip:would_notify_household] invoices/${docSnap.id} status=${JSON.stringify(data.status ?? null)} — stamping 'paid' here would fire invoice.payment.applied at the household; handle by hand`,
+          );
+        } else if (decision.reason === 'would_assert_payment') {
+          result.needsOperator.push(docSnap.id);
+          console.log(
+            `[skip:would_assert_payment] invoices/${docSnap.id} status=${JSON.stringify(data.status ?? null)}: no amountDue and no payment rows, so a 'paid' stamp would mark an owed bill paid; left for #902`,
           );
         }
         continue;
@@ -306,9 +378,10 @@ function summarise(mode: Mode, r: RunResult): void {
   }
   console.log('  skipped :');
   console.log(`      stamp_current: ${r.skipped.stamp_current}`);
+  console.log(`      would_assert_payment: ${r.skipped.would_assert_payment}`);
   console.log(`      would_notify_household: ${r.skipped.would_notify_household}`);
   if (r.needsOperator.length > 0) {
-    console.log('  NEEDS OPERATOR (notification guard refused these):');
+    console.log('  NEEDS OPERATOR (a guard refused these):');
     for (const id of r.needsOperator) console.log(`      invoices/${id}`);
   }
 }
@@ -331,7 +404,7 @@ async function main(): Promise<void> {
     await db.collection('activity_log').add({
       timestamp: new Date().toISOString(),
       actionType: 'BACKFILL_INVOICE_STATE_STAMP',
-      description: `stamped=${result.stamped} scanned=${result.scanned} skipped_current=${result.skipped.stamp_current} needs_operator=${result.skipped.would_notify_household}`,
+      description: `stamped=${result.stamped} scanned=${result.scanned} skipped_current=${result.skipped.stamp_current} needs_operator=${result.needsOperator.length} would_assert_payment=${result.skipped.would_assert_payment} would_notify_household=${result.skipped.would_notify_household}`,
       status: 'SUCCESS',
       actorId: 'system:backfillInvoiceStateStamp',
       targetId: '',

@@ -1,7 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ dbFn: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), delivered: new Set<string>() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
+vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: async () => 'kin-uid-1' }));
+// #884: a dispatcher double that keeps the ledger's rule for these notices: one
+// delivery per (key, invoice, payment row), however many sends race.
+vi.mock('../src/notifications/dispatcher', () => ({
+  enqueueNotificationDetailed: async (args: { key: string; targetId?: string; data?: Record<string, unknown> }) => {
+    const identity = `${args.key}|${args.targetId}|${String(args.data?.['paymentId'])}`;
+    if (mocks.delivered.has(identity)) return { written: [], suppressed: [{ reason: 'duplicate' }], unresolved: [] };
+    mocks.delivered.add(identity);
+    return { written: ['n1'], suppressed: [], unresolved: [] };
+  },
+}));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('firebase-admin/firestore', async () => {
@@ -11,6 +22,7 @@ vi.mock('firebase-admin/firestore', async () => {
     FieldValue: {
       serverTimestamp: () => '__TS__',
       increment: (n: number) => ({ __increment: n }),
+      delete: () => ({ __delete: true }),
     },
   };
 });
@@ -80,7 +92,12 @@ function buildRacingDb(seedDocs: Record<string, Doc>) {
   function commitWrite(path: string, data: Doc, merge: boolean): void {
     writes.push({ path, data, merge });
     const resolved = resolveWrite(path, data);
-    store[path] = merge ? { ...(store[path] ?? {}), ...resolved } : resolved;
+    const next: Doc = merge ? { ...(store[path] ?? {}), ...resolved } : resolved;
+    // FieldValue.delete() removes the field, as it does in Firestore.
+    for (const [k, v] of Object.entries(data)) {
+      if (v !== null && typeof v === 'object' && '__delete' in (v as Doc)) delete next[k];
+    }
+    store[path] = next;
   }
 
   function makeDocRef(path: string): any {
@@ -234,6 +251,27 @@ describe('drawAccountCredit: two passes in flight over ONE invoice', () => {
 
     const loser = a.appliedCents === 0 ? a : b;
     expect(loser.skipped).toBe('invoice_not_collectable');
+  });
+});
+
+describe('drawAccountCredit: two passes that settle ONE invoice tell the household once (#884)', () => {
+  it('the winner sends the notice, and the loser finding the bill paid adds no second copy', async () => {
+    mocks.delivered.clear();
+    const { db, store } = buildRacingDb({
+      'invoices/inv2': { kinfolkId: 'fam1', status: 'open', total: 50 },
+      'families/fam1': { accountBalanceCents: 12000 },
+    });
+    mocks.dbFn.mockReturnValue(db);
+
+    const [a, b] = await Promise.all([
+      drawAccountCredit(db, { invoiceId: 'inv2', actorUid: 'admin1' }),
+      drawAccountCredit(db, { invoiceId: 'inv2', actorUid: 'system:auto-apply' }),
+    ]);
+
+    expect(a.appliedCents + b.appliedCents).toBe(5000);
+    expect(creditRows(store, 'inv2')).toHaveLength(1);
+    expect(mocks.delivered.size).toBe(1);
+    expect(store['invoices/inv2']?.paymentAppliedNoticePending).toBe('');
   });
 });
 

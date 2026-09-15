@@ -4,6 +4,7 @@ import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
 import { promoteQueuedNotification } from '../notifications/promoteQueued';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
+import { sweepPendingCreditNotices } from '../lib/accountCredit';
 
 /**
  * Drains `scheduledNotifications/{auto}` docs whose `fireAtMs` has elapsed.
@@ -32,6 +33,27 @@ export const notificationScheduledSweep = onSchedule(
   },
   wrapScheduled('notificationScheduledSweep', async () => {
     const now = Date.now();
+    // #884: account credit payment notices whose delivery never went out (a
+    // crash after the draw's commit, and no redelivered pass). Runs before the
+    // queue drain, and its own failure never blocks it.
+    try {
+      const resent = await sweepPendingCreditNotices(db(), now);
+      if (resent > 0) {
+        logEvent({
+          severity: 'info',
+          function: 'notificationScheduledSweep',
+          event: 'credit.notice.resent',
+          extra: { resent },
+        });
+      }
+    } catch (err) {
+      logEvent({
+        severity: 'warn',
+        function: 'notificationScheduledSweep',
+        event: 'credit.notice.sweep.failed',
+        extra: { error: (err as Error)?.message },
+      });
+    }
     const snap = await db()
       .collection('scheduledNotifications')
       .where('fireAtMs', '<=', now)

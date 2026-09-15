@@ -30,13 +30,79 @@
  * still carries the card's stamp, and the credit draw stamps nothing because
  * the trigger is its only sender. Reading mere presence would silence exactly
  * that notice.
+ *
+ * #884: AN OWNER THAT SENDS NOTHING. `updateInvoice` can settle a bill without
+ * a payment: an edit that lowers the total to what has already been paid. No
+ * money moved, so nobody is told, and the audit entry (`settledByEdit`) is the
+ * office's record. It stamps `updateInvoice:<uuid>` in the write that turns the
+ * invoice paid, so the trigger stands down by the same rule. Two details:
+ *   - The id is fresh on every settling edit. A constant would read as
+ *     unchanged on a second settle-by-edit after a reopen, and the trigger
+ *     would send.
+ *   - It stamps only when the edit moves the invoice INTO paid. An edit to an
+ *     invoice that is already paid must not overwrite a `markInvoicePaid:<id>`
+ *     stamp that `recordPayment` has yet to claim.
+ * The trigger also sends only on a transition from `open` into `paid`
+ * (`PAYMENT_APPLIED_FROM_STATES` in triggers/onInvoicesWrite.ts), so a created
+ * doc, a $0 invoice, a quote or a credit never needs a stamp to stay silent.
+ *
+ * #884 review: THE CREDIT DRAW OWNS ITS NOTICE TOO. `drawAccountCredit` stamps
+ * `accountCredit:<paymentId>` in the write that pays the bill off and sends the
+ * notice itself after the commit. It used to leave that to the trigger, but a
+ * legacy invoice with a `total` and no `amountDue` already reads `paid` to
+ * invoiceStateOf, and the credit draw is the one payer that accepts that shape,
+ * so the trigger saw paid to paid and a real payment went unannounced. The
+ * earlier paragraph's "the credit draw stamps nothing" describes #866; the
+ * rule it illustrates (changed in this write, not present) is unchanged.
  */
 export const PAYMENT_APPLIED_OWNER_FIELD = 'paymentAppliedNoticeOwner';
 
-/** Who took ownership. The id after the colon is for a reader tracing one payment; nothing parses it. */
-export type PaymentAppliedOwnerSource = 'stripe' | 'recordPayment' | 'markInvoicePaid';
+/**
+ * #884 second review: THE CREDIT DRAW'S NOTICE STAYS PENDING UNTIL IT IS OUT.
+ *
+ * The draw sends after its commit. A crash between the two used to lose the
+ * notice for good: a redelivered pass finds the bill paid and draws nothing, and
+ * `onInvoicesWrite` stands down on the `accountCredit:*` owner. On main the
+ * trigger sent from its own at-least-once event. So, as the Stripe webhook does
+ * with `stripeEvents/{id}` (#866):
+ *   - the settling write stamps PENDING with the owner (`accountCredit:<id>`)
+ *     and PENDING_AT, in the same commit as the payment;
+ *   - a delivered notice clears PENDING to '' and stamps SENT_AT; a notice that
+ *     can reach nobody clears it and stamps SKIPPED ('no-recipients');
+ *   - a redelivered pass that finds the bill paid, and `notificationScheduledSweep`
+ *     once PENDING is older than the grace period, resend from the stamp.
+ * Every send carries the payment row id and a long ledger window, so the
+ * dispatcher delivers one copy however many of those three race.
+ * '' rather than a deleted field, so the sweep's range query needs no index
+ * and no FieldValue sentinel.
+ */
+export const PAYMENT_APPLIED_PENDING_FIELD = 'paymentAppliedNoticePending';
+export const PAYMENT_APPLIED_PENDING_AT_FIELD = 'paymentAppliedNoticePendingAtMs';
+export const PAYMENT_APPLIED_SENT_AT_FIELD = 'paymentAppliedNoticeSentAt';
+export const PAYMENT_APPLIED_SKIPPED_FIELD = 'paymentAppliedNoticeSkippedReason';
+/**
+ * #884 third review: retries of a pending credit notice claimed so far (a
+ * redelivered pass or a sweep), and the short code of the last failure. After
+ * `CREDIT_NOTICE_MAX_ATTEMPTS` the notice gives up (SKIPPED 'gave-up') and the
+ * office sees one activity_log row. A finished notice deletes PENDING_AT, so
+ * the sweep's age query never fetches it again.
+ */
+export const PAYMENT_APPLIED_ATTEMPTS_FIELD = 'paymentAppliedNoticeAttempts';
+export const PAYMENT_APPLIED_LAST_ERROR_FIELD = 'paymentAppliedNoticeLastError';
 
-/** The stamp value: `stripe:<eventId>`, `recordPayment:<paymentId>` or `markInvoicePaid:<paymentId>`. */
+/** Who took ownership. The id after the colon is for a reader tracing one payment; nothing parses it. */
+export type PaymentAppliedOwnerSource =
+  | 'stripe'
+  | 'recordPayment'
+  | 'markInvoicePaid'
+  | 'updateInvoice'
+  | 'accountCredit';
+
+/**
+ * The stamp value: `stripe:<eventId>`, `recordPayment:<paymentId>`,
+ * `markInvoicePaid:<paymentId>`, `accountCredit:<paymentId>` (#884 review), or
+ * `updateInvoice:<uuid>` (#884, sends nothing).
+ */
 export function paymentAppliedOwner(source: PaymentAppliedOwnerSource, id: string): string {
   return `${source}:${id}`;
 }

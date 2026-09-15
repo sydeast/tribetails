@@ -25,9 +25,11 @@ import { drawAccountCredit } from '../lib/accountCredit';
  * change to both. They watch the same documents and answer different questions.
  *
  * The ORDER between them needs no arranging. This trigger's write flips the
- * invoice to paid where the credit covers it, which `onInvoicesWrite` then sees
- * as its own transition and notifies on. The household is told the invoice is
- * paid because it is paid.
+ * invoice to paid where the credit covers it, and `drawAccountCredit` sends the
+ * payment notice itself (#884): its write stamps its own owner, so
+ * `onInvoicesWrite` stands down, and a notice that did not go out is resent by a
+ * redelivered pass or by `notificationScheduledSweep`. The household is told the
+ * invoice is paid because it is paid.
  *
  * ── THE TRANSITION CHECK IS THE LOOP GUARD ────────────────────────────────
  *
