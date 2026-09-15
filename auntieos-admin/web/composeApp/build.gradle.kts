@@ -91,6 +91,30 @@ kotlin {
     }
 }
 
+// #867: no JVM test may reach a real host. Every test class runs with the network
+// guard on (NetworkGuard in AuntieHttp.jvm.kt refuses any request that is not to
+// loopback or a configured emulator), and the run fails if any test tripped it,
+// including a trip a polling read swallowed into an error state.
+tasks.withType<Test>().configureEach {
+    systemProperty("auntieos.test.blockNetwork", "true")
+    val marker = "[AuntieOS][network-guard] BLOCKED"
+    val leaks = mutableListOf<String>()
+    addTestOutputListener { descriptor, event ->
+        if (event.message.contains(marker)) {
+            synchronized(leaks) { leaks += "${descriptor.className ?: descriptor.name}: ${event.message.trim()}" }
+        }
+    }
+    doFirst { synchronized(leaks) { leaks.clear() } }
+    doLast {
+        if (leaks.isNotEmpty()) {
+            throw GradleException(
+                "#867: ${leaks.size} request(s) tried to leave the test JVM. Give each test a fixture:\n" +
+                    leaks.distinct().joinToString("\n"),
+            )
+        }
+    }
+}
+
 // Den redesign fonts (Fraunces / Hanken Grotesk / Spline Sans Mono) live in
 // commonMain/composeResources/font and are accessed via the generated Res class.
 compose.resources {

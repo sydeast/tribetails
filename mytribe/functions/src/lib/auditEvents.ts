@@ -72,6 +72,11 @@ export const AUDIT_EVENTS = {
   BILLING_QUOTE_RESENT: 'BILLING_QUOTE_RESENT',
   BILLING_INVOICE_PAID: 'BILLING_INVOICE_PAID',
   BILLING_INVOICE_FAILED: 'BILLING_INVOICE_FAILED',
+  // #884: an account credit payment notification was retried
+  // CREDIT_NOTICE_MAX_ATTEMPTS times and never delivered. The name carries
+  // NOTIFICATION so the admin activity feeds (web, Android, desktop) file it
+  // under their Notifications chip.
+  BILLING_PAYMENT_NOTIFICATION_GAVE_UP: 'BILLING_PAYMENT_NOTIFICATION_GAVE_UP',
   BILLING_RECEIPT_ISSUED: 'BILLING_RECEIPT_ISSUED',
   // Stage 3 / 16.2: a PDF render of an invoice was generated + stored (admin
   // download or kinfolk-portal download). The doc id only; no PII in payload.

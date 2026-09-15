@@ -57,6 +57,9 @@ import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
+import com.tribetails.auntieos.web.ui.components.LoadErrorBanner
+import com.tribetails.auntieos.web.ui.components.rememberReloadableRead
+import com.tribetails.auntieos.web.ui.components.settlesRetry
 import com.tribetails.auntieos.web.ui.components.AuntieChip
 import com.tribetails.auntieos.web.ui.components.AuntieChipTone
 import com.tribetails.auntieos.web.ui.components.AuntieEntityRow
@@ -106,7 +109,8 @@ fun KinfolkProfileScreen(
     onOpenTale: (sessionId: String) -> Unit = {},
 ) {
     val client = remember { FirestoreClient() }
-    val state    by remember { client.kinfolkStream() }.collectAsState(initial = FirestoreResult.Loading)
+    val reload = rememberReloadableRead()
+    val state    by remember(reload.generation) { client.kinfolkStream().settlesRetry(reload) }.collectAsState(initial = FirestoreResult.Loading)
     val dossier  by remember(kinfolkId) { client.dossierStream(kinfolkId) }.collectAsState(initial = FirestoreResult.Loading)
     val kinList  by remember(kinfolkId) { client.kinStream(kinfolkId) }.collectAsState(initial = FirestoreResult.Loading)
     // Profile feed sources: filtered by kinfolkId via the pure helpers below.
@@ -188,13 +192,19 @@ fun KinfolkProfileScreen(
             StatusToast(visible = true, message = msg, kind = kind, onDismiss = { refreshToast = null })
         }
         if (kinfolk == null) {
+            val loadError = (state as? FirestoreResult.Error)?.message
             SectionHeader(
-                title    = "Loading…",
-                subtitle = "Pulling profile from Firestore",
+                title    = if (loadError != null) "Kinfolk" else "Loading…",
+                subtitle = if (loadError != null) "" else "Pulling profile from Firestore",
                 icon     = Lucide.Users,
                 onBack   = onBack,
                 breadcrumbs = listOf("Directory", "Kinfolk"),
             )
+            // #867: a failed read shows its error, not a shimmer that never ends.
+            if (loadError != null) {
+                LoadErrorBanner("Couldn't load this household", loadError, onRetry = reload::retry, retrying = reload.retrying)
+                return@ScreenScaffold
+            }
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 repeat(4) { ShimmerCard(height = 72.dp) }
             }

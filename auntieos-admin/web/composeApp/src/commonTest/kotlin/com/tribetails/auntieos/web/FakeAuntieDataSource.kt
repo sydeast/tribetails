@@ -117,8 +117,14 @@ class FakeAuntieDataSource(
         return WriteResult.Ok(id)
     }
 
-    override fun businessSettingsStream(): Flow<FirestoreResult<BusinessSettings>> =
-        _businessSettings.asStateFlow()
+    /** How many times a caller asked for the settings stream (#867 review: Retry must ask again). */
+    var businessSettingsStreamCalls = 0
+        private set
+
+    override fun businessSettingsStream(): Flow<FirestoreResult<BusinessSettings>> {
+        businessSettingsStreamCalls++
+        return _businessSettings.asStateFlow()
+    }
 
     /** The last BusinessSettings handed to saveBusinessSettings (for assertions). */
     var lastSavedBusinessSettings: BusinessSettings? = null

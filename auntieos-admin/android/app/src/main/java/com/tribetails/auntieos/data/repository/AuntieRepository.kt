@@ -13,6 +13,7 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.storage.FirebaseStorage
+import com.google.firebase.auth.ActionCodeSettings
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.tribetails.auntieos.data.api.N8nApi
@@ -182,9 +183,18 @@ class AuntieRepository(
         }
     }
 
+    /**
+     * #892: the link opens the project's email action page on the portal
+     * (Identity Toolkit's callbackUri is one URL per project). The continue URL
+     * sends staff back to the admin sign-in instead of the kinfolk portal.
+     */
     suspend fun sendPasswordReset(email: String): Result<Unit> = runCatching {
         require(email.isNotBlank()) { "Email is required." }
-        auth.sendPasswordResetEmail(email.trim()).await()
+        val settings = ActionCodeSettings.newBuilder()
+            .setUrl("https://auntie.tribetails.com/signin")
+            .setHandleCodeInApp(false)
+            .build()
+        auth.sendPasswordResetEmail(email.trim(), settings).await()
         Unit
     }.onFailure { AuntieLog.e("Password reset failed", it) }
 

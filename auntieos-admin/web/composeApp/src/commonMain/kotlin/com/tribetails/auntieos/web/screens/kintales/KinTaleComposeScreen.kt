@@ -70,6 +70,9 @@ import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
+import com.tribetails.auntieos.web.ui.components.LoadErrorBanner
+import com.tribetails.auntieos.web.ui.components.rememberReloadableRead
+import com.tribetails.auntieos.web.ui.components.settlesRetry
 import com.tribetails.auntieos.web.ui.components.AuntieBreadcrumbs
 import com.tribetails.auntieos.web.ui.components.AuntieChip
 import com.tribetails.auntieos.web.ui.components.AuntieChipTone
@@ -132,7 +135,8 @@ fun KinTaleComposeScreen(
         return
     }
     val client   = remember { FirestoreClient() }
-    val sessions by remember { client.sessionsStream() }.collectAsState(initial = FirestoreResult.Loading)
+    val reload = rememberReloadableRead()
+    val sessions by remember(reload.generation) { client.sessionsStream().settlesRetry(reload) }.collectAsState(initial = FirestoreResult.Loading)
     val kinfolks by remember { client.kinfolkStream() }.collectAsState(initial = FirestoreResult.Loading)
 
     val session = remember(sessions, sessionId) {
@@ -157,6 +161,12 @@ fun KinTaleComposeScreen(
 
     if (session == null) {
         ScreenScaffold {
+            // #867: a failed read shows its error, not a shimmer that never ends.
+            (sessions as? FirestoreResult.Error)?.let {
+                SectionHeader(title = "KinTale", subtitle = "", icon = Lucide.ClipboardList, onBack = onClose)
+                LoadErrorBanner("Couldn't load this Kin Care", it.message, onRetry = reload::retry, retrying = reload.retrying)
+                return@ScreenScaffold
+            }
             SectionHeader(title = "Loading…", subtitle = "Pulling Kin Care", icon = Lucide.ClipboardList)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 repeat(3) { ShimmerCard(height = 100.dp) }

@@ -224,5 +224,15 @@ if (E2E_EMULATOR_HOST !== '') {
   connectFunctionsEmulator(functions, E2E_EMULATOR_HOST, E2E_FUNCTIONS_PORT);
 }
 
-/** Base URL for public onRequest endpoints (confirmSecureReset). */
-export const FUNCTIONS_HTTP_BASE = `https://${FUNCTIONS_REGION}-${firebaseConfig.projectId}.cloudfunctions.net`;
+/**
+ * Base URL for public onRequest endpoints (confirmSecureReset).
+ *
+ * Under the e2e harness it points at the same unserved functions port the
+ * callables are pinned to, in the emulator's URL shape. A plain fetch here
+ * used to resolve to production even in an emulator run (#892), which is the
+ * one thing E2E_EMULATOR_HOST exists to rule out.
+ */
+export const FUNCTIONS_HTTP_BASE =
+  E2E_EMULATOR_HOST !== ''
+    ? `http://${E2E_EMULATOR_HOST}:${E2E_FUNCTIONS_PORT}/${firebaseConfig.projectId}/${FUNCTIONS_REGION}`
+    : `https://${FUNCTIONS_REGION}-${firebaseConfig.projectId}.cloudfunctions.net`;

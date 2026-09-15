@@ -653,14 +653,17 @@ private fun BroadcastForm(
 
     var segments by remember { mutableStateOf<List<AudienceSegment>>(emptyList()) }
     var loadingSegments by remember { mutableStateOf(true) }
-    var selectedSegmentId by remember { mutableStateOf<String?>(null) } // null = ad-hoc
+    // #867 re-review: the draft, its idempotency key and the timeout state live in the
+    // session, not in this form, which leaves composition on every mode switch.
+    val draft = BroadcastDraftSession.current
+    var selectedSegmentId by draft::selectedSegmentId // null = ad-hoc
 
     // Ad-hoc criteria builder.
-    var kind by remember { mutableStateOf(SegmentKind.All) }
-    var statusesText by remember { mutableStateOf("") }
-    var selectedTags by remember { mutableStateOf<List<String>>(emptyList()) }
+    var kind by draft::kind
+    var statusesText by draft::statusesText
+    var selectedTags by draft::selectedTags
     var tagQuery by remember { mutableStateOf("") }
-    var tagMatch by remember { mutableStateOf(TagMatch.Any) }
+    var tagMatch by draft::tagMatch
     var newSegmentName by remember { mutableStateOf("") }
 
     // The household tag vocabulary the "By tag" audience picks from. HOUSEHOLD
@@ -674,14 +677,16 @@ private fun BroadcastForm(
     val vocabLoaded = settingsState is FirestoreResult.Data
     val vocabError = (settingsState as? FirestoreResult.Error)?.message
 
-    val channels = remember { mutableStateListOf(BroadcastChannel.InApp) }
-    var subject by remember { mutableStateOf("") }
-    var body by remember { mutableStateOf("") }
+    val channels = draft.channels
+    var subject by draft::subject
+    var body by draft::body
 
     var sending by remember { mutableStateOf(false) }
     var savingSegment by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<BroadcastResult?>(null) }
-    var errorText by remember { mutableStateOf<String?>(null) }
+    var errorText by draft::errorText
+    /** #867 review: whether [errorText] is a timeout, which picks the banner title. */
+    var errorIsTimeout by draft::errorIsTimeout
     /**
      * #814: one key per SUBMISSION, re-minted only when the message or its
      * audience has changed since the key was minted. An operator who sees an
@@ -690,8 +695,14 @@ private fun BroadcastForm(
      * with the key the server answers from the broadcast the first press
      * claimed. There is no automatic retry here, see `data/SendIdempotency.kt`.
      */
-    var submissionKey by remember { mutableStateOf<String?>(null) }
-    var submissionSignature by remember { mutableStateOf<String?>(null) }
+    var submissionKey by draft::submissionKey
+    var submissionSignature by draft::submissionSignature
+    /**
+     * #867 review: the signature of a draft whose send timed out, or null. While the
+     * draft still matches it, Send reuses the key and lands on that broadcast. Once
+     * the draft differs, the next Send is a second broadcast, and the screen says so.
+     */
+    var timedOutSignature by draft::timedOutSignature
 
     fun adhocCriteria(): BroadcastCriteria = BroadcastCriteria(
         kind = kind,
@@ -722,6 +733,18 @@ private fun BroadcastForm(
     }
 
     LaunchedEffect(Unit) { loadSegments() }
+
+    // #867 re-review: a broadcast this admin started, from an earlier session or a
+    // screen that was closed, may still be sending. Put it back with its own key so
+    // an unchanged Send replays onto it rather than starting a second broadcast.
+    // Checked once per session draft; a failed read leaves the form as it is.
+    LaunchedEffect(draft) {
+        if (draft.submissionKey == null && !draft.checkedForRunningBroadcast) {
+            draft.checkedForRunningBroadcast = true
+            val found = (firestore.runningBroadcasts() as? WriteResult.Ok)?.value?.firstOrNull()
+            if (found != null && draft.submissionKey == null) draft.restoreRunning(found)
+        }
+    }
 
     fun saveSegment() {
         val criteria = adhocCriteria()
@@ -760,18 +783,9 @@ private fun BroadcastForm(
         val criteria = if (selectedSegmentId == null) adhocCriteria() else null
         val effectiveCriteria = criteria ?: segments.firstOrNull { it.id == selectedSegmentId }?.criteria ?: BroadcastCriteria()
         val blocker = tagCapProblem() ?: broadcastBlocker(channels.toSet(), effectiveCriteria, subject, body)
-        if (blocker != null) { errorText = blocker; onToast(blocker, ToastKind.Error); return }
+        if (blocker != null) { errorText = blocker; errorIsTimeout = false; onToast(blocker, ToastKind.Error); return }
         sending = true
-        val signature = listOf(
-            selectedSegmentId.orEmpty(),
-            kind.name,
-            statusesText,
-            selectedTags.toString(),
-            tagMatch.name,
-            channels.map { it.wire }.sorted().toString(),
-            subject,
-            body,
-        ).joinToString("\u001F") // a separator no typed field can contain
+        val signature = broadcastSignature(selectedSegmentId, kind, statusesText, selectedTags, tagMatch, channels, subject, body)
         if (submissionKey == null || submissionSignature != signature) {
             submissionKey = mintBroadcastIdempotencyKey()
             submissionSignature = signature
@@ -790,10 +804,13 @@ private fun BroadcastForm(
                     result = r.value
                     errorText = null
                     submissionKey = null
+                    timedOutSignature = null
                     onToast(broadcastSummary(r.value), ToastKind.Success)
                 }
                 is WriteResult.Err -> {
                     result = null
+                    timedOutSignature = if (isBroadcastTimeout(r.message)) signature else null
+                    errorIsTimeout = isBroadcastTimeout(r.message)
                     errorText = broadcastErrorText(r.message)
                     onToast(broadcastErrorText(r.message), ToastKind.Error)
                 }
@@ -1010,6 +1027,15 @@ private fun BroadcastForm(
             minLines = 4,
         )
 
+        broadcastEditWarning(
+            timedOutSignature,
+            broadcastSignature(selectedSegmentId, kind, statusesText, selectedTags, tagMatch, channels, subject, body),
+        )?.let { warning ->
+            AuntieBanner(tone = AuntieBannerTone.Warning, title = "This will be a new broadcast", icon = Lucide.TriangleAlert) {
+                Text(text = warning, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
+            }
+        }
+
         PrimaryButton(
             label = "Send broadcast",
             onClick = ::send,
@@ -1020,7 +1046,9 @@ private fun BroadcastForm(
         )
 
         errorText?.let { msg ->
-            AuntieBanner(tone = AuntieBannerTone.Error, title = "Broadcast blocked", icon = Lucide.Ban) {
+            // #867 review: the title follows the error on screen now, not a timeout that came before it.
+            val title = if (errorIsTimeout) "Send may still be running" else "Broadcast blocked"
+            AuntieBanner(tone = AuntieBannerTone.Error, title = title, icon = Lucide.Ban) {
                 Text(text = msg, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
             }
         }

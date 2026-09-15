@@ -191,7 +191,8 @@ export async function confirmSecureReset(req: ConfirmSecureResetRequest): Promis
   const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok || body['ok'] !== true) {
     if (res.status === 429) {
-      throw new Error('Too many attempts for this email today. Try again tomorrow or contact Tribe Tails.');
+      // No "contact Tribe Tails": staff reach this screen too (#892).
+      throw new Error('Too many attempts for this account today. Try again tomorrow.');
     }
     throw new Error('Could not secure your account. The reset link may have expired.');
   }

@@ -1038,6 +1038,19 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
     Firestore `emailTemplates` collection. The operator edits email templates in
     the admin UI; there is no seed script for them (operator ruling 2026-09-13, #847).
 
+### requestPasswordReset (pre-existing; caps made silent and a locked account exempted 2026-09-14, #891)
+- req `{ email: string /* email */ }`. Called by portal Android and portal desktop;
+  the other clients use Firebase's native reset.
+- res `{ ok: true }` for a known, unknown, locked or capped email alike.
+- GATE: none, `wrapCallable` only. Per-IP limit (30 per 5 minutes, keyed like
+  `recordFailedLogin`) refuses with `resource-exhausted`; a malformed request is
+  `invalid-argument`.
+- Per-email cap: 3 per 24 hours. An account inside an unexpired lock is exempt
+  and has its own cap of 10 per lock, and resets during a lock do not use the
+  daily 3. Over either cap the call sends nothing and still answers `{ ok: true }`
+  (before #891 it threw `resource-exhausted`, which with the exemption would have
+  told a caller the account was locked).
+
 ### recordFailedLogin (pre-existing; response made constant and clients wired 2026-09-14, #886)
 - req `{ email: string /* email */, ip?: string /* max 256 */, userAgent?: string /* max 256 */ }`.
   Clients send `email` only. Frozen in `test/callableContract.test.ts`.
@@ -1052,6 +1065,23 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
   per-IP budget. None of these depends on whether the email is an account. The
   audit row for an address that is not an account stores `emailHash`, never the
   address.
+- #891: the per-IP limit keys on `clientIpOf`, the rightmost `X-Forwarded-For`
+  entry (the one Google's front end appended), not the caller's first entry and
+  not `rawRequest.ip` (which `trust proxy` makes that same first entry). The audit
+  row's `ip` is the same address.
+- #908: if that entry is private, loopback, link-local, unique-local,
+  IPv4-compatible IPv6, unspecified, a Google front end range (IPv4 or IPv6) or
+  not an IP, `clientIpOf` logs `clientIp.untrustedRightmost` at error (range
+  class only) and returns the sentinel `untrusted`, never an entry further left,
+  so every such call shares one bucket and the audit row records `untrusted`;
+  zero entries log `clientIp.noForwardedFor`. IPv6 is keyed on its /64 and
+  audited in RFC 5952 form, and an IPv4-mapped IPv6 address on its IPv4 address. The hop count is a parameter
+  (default 1), valid only for functions called directly, not behind a Hosting
+  rewrite. The ledgers carry `expiresAt` for a Firestore TTL.
+- #891: when a REAL account's per-email refusal finds its 15 spent, the operator
+  gets `security.failedLogin.budgetExhausted.operator`, once per exhaustion. The
+  refusal body is unchanged. When 3 distinct accounts lock within 30 minutes, the
+  operator also gets one `security.account.locked.spike.operator`.
 - The lock only counts failures reported by our own clients. A script that calls
   Firebase Auth directly never reports, and relies on Firebase Auth's own
   throttling instead.
@@ -1279,6 +1309,49 @@ every client in both directions: these callables are the only door.
   ACTIVE SECONDARY is still denied on all three. The portal card therefore reads
   `permission-denied` for what it is and says the primary keeps the list, rather
   than drawing a broken panel over a working server.
+
+### saveTribeProfile / saveHomeAccess: `customFields` merge by key (#873)
+- `saveTribeProfile`
+  - req `{ kinfolkId?: string, displayName?: string /* 1..120 */, customFields?: CustomField[] /* transport guard 317,750 */, removeCustomFieldKeys?: string[] /* 1..80 each, transport guard 317,750 */ }`
+  - res `{ ok: true, emergencyContactIgnored?: true }`
+  - writes `families/{kinfolkId}.displayName` / `.customFields`, and `kinfolk/{kinfolkId}.emergencyContacts` for an old client's contact edit (#829), in one transaction
+- `saveHomeAccess`
+  - req `{ kinfolkId?: string, gateCode?: string | null, keyLocation?: string | null, wifiPassword?: string | null, customFields?: CustomField[] /* transport guard 317,750 */, removeCustomFieldKeys?: string[] /* 1..80 each, transport guard 317,750 */ }`
+  - res `{ ok: true }`
+  - writes `families/{kinfolkId}/homeAccess/current` in a transaction, or nothing when the save changes nothing
+- `CustomField` `{ key: string /* 1..80 */, label: string /* 0..200; blank only on a stored key */, value: string /* <= 1000 */ }`
+- LIMITS (#873 review). The old `max 40` rows and `label 1..80` locked households out: current clients send every stored row back, `getMyTribeProfile` serves a missing label as `''`, and `saveFormSchema` allows 200-character labels and 50 sections of 200 fields. Now (`src/lib/customFieldsMerge.ts`):
+  - sizes are UTF-8 bytes of the merged list's JSON, never string length (an emoji is 4 bytes). JSON over-counts Firestore's own size rule;
+  - GROWTH CEILING (second review round): a save that GROWS the list past 64 KiB (`CUSTOM_FIELDS_GROWTH_MAX_BYTES`) is refused with `invalid-argument`. A save that does not grow it (an echo, an edit that adds no bytes, a clear, a removal) always goes through, so a household already over 64 KiB is never locked out over rows it cannot see or delete. The rule is one comparison: refuse when the merged list is over the ceiling AND larger than the stored one;
+  - DOCUMENT BACKSTOP: the same comparison against 900 KiB (`CUSTOM_FIELDS_HARD_MAX_BYTES`), leaving room in the 1 MiB document for the fields beside the list. While the growth ceiling is below it this check cannot fire on its own; it keeps a future raise of the growth ceiling from reaching the document limit;
+  - REQUEST GUARD (final review): `customFields` and `removeCustomFieldKeys` accept up to 317,750 entries (`CUSTOM_FIELDS_REQUEST_MAX_ROWS`, the callable body limit, assumed 10 MiB, over the 33-byte smallest row). It only refuses a junk request. Clients send every stored row back, so it must admit any list a document can hold, including a migrated one with more rows than the cap below;
+  - ROW CAP, 1,985 (`CUSTOM_FIELDS_MAX_ROWS`, the growth ceiling over the smallest row), bounds what ONE SAVE changes, checked inside the transaction against the stored list: (1) sent rows that differ from the stored row with the same key (value, or a non-blank label), plus new keys that would land, may not exceed it, refused as "Too many fields changed in one save"; an unchanged echo and a removal cost nothing; (2) the merged list may not exceed it AND be longer than the stored one, refused as "too many fields to add more", so shrinking a few huge rows cannot make room for thousands of small keys. A household migrated with 2,500 rows still echoes its list and edits a few;
+  - label `max 200` matches the form schema's field label;
+  - a blank label on a key that is already stored keeps the stored label;
+  - a blank label on a NEW key that would land (value not `''`, not removed) is refused with `invalid-argument`, and nothing is written. No client sends one: web and Android fall back to the key, and old clients send the schema label (`min 1`) or a fixed card label.
+- RATE LIMIT (second review round). 60 saves an hour per household (`rate_limits/{scope}:{kinfolkId}`), refused with `resource-exhausted` and "Too many attempts. Try again later." Each callable has its OWN bucket, `profileSave` and `homeAccessSave`: one page Save calls both, so a shared bucket would allow 30 clicks an hour, and a click landing on its edge would save the profile and refuse the home details. Since the final review the counter is read and written INSIDE the save transaction (`readRateLimitInTx`), so it counts only a save that commits a change: a refused save throws before any write, and a save that changes nothing writes nothing, counter included, and is never refused for the limit.
+- NO-OP SAVES (final review). Real clients always send `displayName` and `customFields`, so the skip compares the result with what is stored. When the merged list, `displayName` (or, on `saveHomeAccess`, `gateCode` / `keyLocation` / `wifiPassword`, a sent `null` matching a missing field) and the Emergency Contact are all unchanged, nothing is written: no `updatedAt` or `updatedByUid` bump, no rate count, no PROFILE_UPDATED audit entry. Web (`profileSaveErrorMessage`) and Android (`profileSaveFailureMessage`) show "Save failed: this household has saved too many times in the last hour. Wait a little, then save again."
+- HOME ACCESS CHECK for an old client's contact edit (`hasKinfolkPerm`) runs once, before the transaction, and only when contact rows were sent. It is a plain read either way; inside the transaction it ran again on every retry (and `isStaff` logged its allowlist fallback each time). A permission change racing a save is not a risk that needs a transactional read: `saveEmergencyContacts` applies the same gate without one.
+- MERGE, NEVER REPLACE. Until #873 both callables replaced `customFields` whole. The portal clients, in schema mode, rebuilt the list from the form schema's keys, so every stored row outside the schema (office-set rows shown as "Set by your Auntie", rows from an older schema, hand-added rows) was deleted on the household's next save. Now (`src/lib/customFieldsMerge.ts`):
+  - a sent row replaces the stored row with the same key, in the stored row's position; later stored copies of that key fold into it;
+  - a sent key with no stored row is appended, in sent order; a key sent twice, the last copy wins;
+  - a stored row the client did not send is kept as stored, value and position;
+  - a sent `value: ''` is a real clear: the row stays with an empty value. A sent `''` for a key with no stored row writes nothing, so an old client's untouched, never-set schema field no longer lands as an empty row;
+  - a stored row is deleted ONLY when its key is in `removeCustomFieldKeys`. Omitting a row never deletes it;
+  - a stored entry with no string `key` is carried through verbatim.
+  - A key both sent and named for removal is refused with `invalid-argument` and nothing is written.
+- OLD CLIENTS are safe by construction: they never send `removeCustomFieldKeys`, so the worst an old schema-mode client can do is overwrite the rows it sends. What they lose: an old client that blanks a vet or after-hours card field omits that row, and the omission no longer deletes it. The row stays until a current client saves. That is the safe direction for a data-loss fix. In particular:
+  - old portal web's `vetClinicId`, in schema mode, cannot be cleared by blanking the clinic. The blank clinic is omitted, so the stored id stays until a current client saves;
+  - old clients no longer delete a row an admin removed from the schema. They only ever sent the current schema's keys, and a row they do not send is now kept;
+  - blanking a schema field on an old client still clears it. The old client sends that key with `value: ''`, and a sent `''` over a stored row is a real clear.
+- CONCURRENT SAVES. Both callables read, merge and write `customFields` in one Firestore transaction (#873 review), and `saveTribeProfile`'s old-client Emergency Contact reads and write are in the same one. Two devices saving at once no longer lose each other's rows: the second commit is retried against the first one's list, so a row one device added and the other never saw survives. Proven on the real SDK in `test/rules/saveTribeProfileRoundTrip.test.ts` and `saveHomeAccessRoundTrip.test.ts` (`npm run test:rules`), and in unit tests with `test/_helpers/optimisticTransaction.ts`, whose `committed()` shows the contact write goes through the transaction. What a transaction does NOT fix is a stale screen. The merge is last write wins PER KEY: a tab or install that loaded the profile before another device saved still sends the rows it loaded, so it overwrites that device's edit to the same key, and it brings back a row that device removed (the stale client sends the row, and a sent key with no stored row is appended). Only a key named in `removeCustomFieldKeys` is deleted, and nothing compares versions.
+- `''` IS A CLEAR, NOT A NO-OP, because both old clients seed their schema form from every stored row: an untouched field echoes its stored value, and only a field the household emptied arrives as `''`. Treating `''` as "leave it" would silently undo those clears under "Saved.".
+- CLIENTS send the stored rows in order with only their own edits applied, name every blank card field that has a stored row in `removeCustomFieldKeys`, and never send an untouched schema field with no stored row as `''`. The full list (not a diff) is sent so the same payload is also right against a server that still replaces the list whole. Web `editCustomFields` / `schemaFieldRow` in `mytribe/web/src/api/tribeApi.ts`; Android `editCustomFields` / `schemaFieldRow` in `TribeScreen.kt` and the `removeCustomFieldKeys` parameter on `PortalApi.saveTribeProfile / saveHomeAccess`.
+- EMERGENCY CONTACT ROWS (#829). `saveTribeProfile` strips sent `emergencyContact*` rows (an old client's contact edit goes through the #829 path), keeps the stored copy in place for the migration, and ignores those keys in `removeCustomFieldKeys`. `saveHomeAccess` strips them from what is sent AND from the merged result, as it did when the list was replaced whole: nothing reads a copy there.
+- GATE: `saveTribeProfile` `resolveKinfolkAccess` (any household member or staff; contact edits need `home_access`). `saveHomeAccess` `resolveKinfolkAccess` + `requireKinfolkPerm(..., 'home_access')`. Secrets `SENTRY_DSN`, `AUNTIE_OPERATOR_UIDS`.
+- Not in `test/callableContract.test.ts`'s frozen set and not in `scripts/contracts/registry.ts`, so there is no generated mirror; `contracts:check` is unchanged.
+- Already-lost rows: `scripts/reportTruncatedCustomFields.ts` (read-only). No before-state is recorded (PROFILE_UPDATED audit carries field names only, `saveHomeAccess` writes no audit), so it lists lists that look like the old schema rebuild, with the portal-save evidence for each.
+- AFTER RELEASE, run the same report once. Its LOCKOUT RISK section finds any household, migrated or not, with a list over 40 rows (refused before the first review round) or over 64 KiB (it may not grow further), plus unlabeled rows and values over 1000 characters. Keys and counts only. None of these can lock a household out of saving now, but they are the households worth a look.
 
 ### saveEmergencyContacts / listEmergencyContacts (#829)
 - `saveEmergencyContacts`

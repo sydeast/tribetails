@@ -80,6 +80,11 @@ const ALLOWED_EAGER_PACKAGES = [
   'argon2',
   'crypto',
   'node:crypto',
+  // #908: `isIP` for the per-IP key in auth/loginSecurity.ts. A Node builtin that
+  // Node's own HTTP server has already loaded before any function code runs, so
+  // it adds nothing to a cold start.
+  'net',
+  'node:net',
   'sanitize-html',
   '@sentry/node',
   'zod',

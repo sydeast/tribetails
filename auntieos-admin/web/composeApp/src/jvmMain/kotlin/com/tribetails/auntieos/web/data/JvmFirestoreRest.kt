@@ -1,8 +1,7 @@
 package com.tribetails.auntieos.web.data
 
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.java.Java
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -63,19 +62,39 @@ internal object JvmFirestoreRest {
      * emulator instead of production, so the merge writes below can be proven
      * against a real Firestore. Unset, this is the production endpoint.
      */
-    private val EMULATOR_HOST: String? = System.getenv("FIRESTORE_EMULATOR_HOST")?.takeIf { it.isNotBlank() }
-    private val BASE =
+    // #867 review: only a loopback or private address is trusted. Anything else is
+    // refused loudly and ignored, so the `owner` token never goes to a real host.
+    private val EMULATOR_HOST: String? = trustedEmulatorHost("FIRESTORE_EMULATOR_HOST", System.getenv("FIRESTORE_EMULATOR_HOST"))
+    private val LIVE_BASE =
         if (EMULATOR_HOST != null) "http://$EMULATOR_HOST/v1/projects/$PROJECT/databases/(default)/documents"
         else "https://firestore.googleapis.com/v1/projects/$PROJECT/databases/(default)/documents"
+    private val BASE: String get() = JvmFirestoreFixtures.restTransport?.base ?: LIVE_BASE
 
     /** The emulator's admin token when [EMULATOR_HOST] is set; otherwise the signed-in user's ID token. */
-    private suspend fun bearerToken(): String? = if (EMULATOR_HOST != null) "owner" else jvmFirebaseIdToken()
-    private const val FUNCTIONS = "https://us-central1-$PROJECT.cloudfunctions.net"
+    private suspend fun bearerToken(): String? {
+        JvmFirestoreFixtures.restTransport?.let { return it.token }
+        return if (EMULATOR_HOST != null) "owner" else jvmFirebaseIdToken()
+    }
+    /**
+     * #867: `FUNCTIONS_EMULATOR_HOST` points callables at a local Functions
+     * emulator, the twin of [EMULATOR_HOST] for Firestore. Unset, this is the
+     * production endpoint.
+     */
+    private val FUNCTIONS = functionsBaseUrl(trustedEmulatorHost("FUNCTIONS_EMULATOR_HOST", System.getenv("FUNCTIONS_EMULATOR_HOST")))
+
+    /** Pure: the callable base URL for an emulator `host:port`, or production when it is null or blank. */
+    internal fun functionsBaseUrl(emulatorHost: String?): String {
+        val host = emulatorHost?.trim()?.takeIf { it.isNotEmpty() }
+        return if (host != null) "http://$host/$PROJECT/us-central1" else "https://us-central1-$PROJECT.cloudfunctions.net"
+    }
     private const val POLL_MS = 8_000L
 
     @PublishedApi
     internal val codec = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
-    private val http = HttpClient(Java) { install(ContentNegotiation) { json(codec) } }
+
+    // #867: connect and request timeouts, and the test network guard, come from the shared factory.
+    private val liveHttp = auntieHttpClient { install(ContentNegotiation) { json(codec) } }
+    private val http get() = JvmFirestoreFixtures.restTransport?.http ?: liveHttp
 
     // ── read: collection ────────────────────────────────────────────────────
 
@@ -327,7 +346,7 @@ internal object JvmFirestoreRest {
     fun <T> pollingStream(fetch: suspend () -> List<T>): Flow<FirestoreResult<List<T>>> = flow {
         while (true) {
             val r = runCatching { fetch() }
-            emit(r.fold({ FirestoreResult.Data(it) }, { FirestoreResult.Error(it.message ?: "Firestore read failed") }))
+            emit(r.fold({ FirestoreResult.Data(it) }, { FirestoreResult.Error(it.transportMessage("Firestore read failed")) }))
             delay(POLL_MS)
         }
     }
@@ -335,7 +354,7 @@ internal object JvmFirestoreRest {
     fun <T> pollingScalar(fetch: suspend () -> T): Flow<FirestoreResult<T>> = flow {
         while (true) {
             val r = runCatching { fetch() }
-            emit(r.fold({ FirestoreResult.Data(it) }, { FirestoreResult.Error(it.message ?: "Firestore read failed") }))
+            emit(r.fold({ FirestoreResult.Data(it) }, { FirestoreResult.Error(it.transportMessage("Firestore read failed")) }))
             delay(POLL_MS)
         }
     }
@@ -471,20 +490,24 @@ internal object JvmFirestoreRest {
         return name?.substringAfterLast('/') ?: ""
     }
 
-    /** Hard-delete a doc (REST DELETE). Returns true on success. */
+    /**
+     * Hard-delete a doc (REST DELETE). Returns true on success. #867 review: no
+     * token throws "Not signed in" (as [setDoc] does), so the screen says that
+     * rather than "delete failed".
+     */
     suspend fun deleteDoc(collection: String, id: String): Boolean {
         JvmFirestoreFixtures.lastWrite = RestWrite("DELETE", collection, id)
-        val token = bearerToken() ?: return false
+        val token = bearerToken() ?: error("Not signed in")
         val resp = http.delete("$BASE/$collection/$id") {
             header(HttpHeaders.Authorization, "Bearer $token")
         }
         return resp.status.isSuccess()
     }
 
-    /** PATCH only the given fields of a doc (field-level update via updateMask). */
+    /** PATCH only the given fields of a doc (field-level update via updateMask). No token throws "Not signed in". */
     suspend fun patchFields(collection: String, id: String, fields: Map<String, JsonElement>): Boolean {
         JvmFirestoreFixtures.lastWrite = RestWrite("PATCH", collection, id, fields.keys.toSet())
-        val token = bearerToken() ?: return false
+        val token = bearerToken() ?: error("Not signed in")
         val resp = http.patch("$BASE/$collection/$id") {
             header(HttpHeaders.Authorization, "Bearer $token")
             fields.keys.forEach { parameter("updateMask.fieldPaths", it) }
@@ -513,7 +536,8 @@ internal object JvmFirestoreRest {
         sentAtIso: String,
         updatedAtIso: String,
     ): Boolean {
-        val token = bearerToken() ?: return false
+        // #867 review: no token throws "Not signed in" rather than reading as a refused write.
+        val token = bearerToken() ?: error("Not signed in")
         val reportName = "$BASE/kin_care_reports/$reportId"
         val sessionName = "$BASE/kin_care_sessions/$sessionId"
         val body = buildJsonObject {
@@ -577,10 +601,13 @@ internal object JvmFirestoreRest {
 
     /** Invoke a 2nd-gen onCall HTTPS function. payloadJson is the `data` object. */
     suspend fun callable(name: String, payloadJson: String): WriteResult<String> {
-        val token = jvmFirebaseIdToken()
+        // #867: no token, no request. Every desktop callable needs a signed-in admin,
+        // and sending one without a token only earns a refusal (in a test, from prod).
+        val token = jvmFirebaseIdToken() ?: return WriteResult.Err("Not signed in")
         return try {
             val resp = http.post("$FUNCTIONS/$name") {
-                if (token != null) header(HttpHeaders.Authorization, "Bearer $token")
+                header(HttpHeaders.Authorization, "Bearer $token")
+                timeout { requestTimeoutMillis = callableRequestTimeoutMs(name) }
                 contentType(ContentType.Application.Json)
                 setBody("{\"data\":$payloadJson}")
             }
@@ -596,7 +623,7 @@ internal object JvmFirestoreRest {
                 WriteResult.Ok(result?.toString() ?: "{}")
             }
         } catch (e: Exception) {
-            WriteResult.Err(e.message ?: "callable failed")
+            WriteResult.Err(e.transportMessage("callable failed"))
         }
     }
 }

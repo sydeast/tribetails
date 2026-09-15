@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseArgs, planStamp } from '../backfillInvoiceStateStamp';
+import { parseArgs, planStamp, wouldNotifyHousehold } from '../backfillInvoiceStateStamp';
 
 describe('backfillInvoiceStateStamp parseArgs', () => {
   it('defaults to dry-run', () => {
@@ -146,18 +146,69 @@ describe('backfillInvoiceStateStamp planStamp', () => {
     expect(d.update).toEqual({ status: 'open', editScope: 'metadataOnly' });
   });
 
-  it('THE NOTIFICATION GUARD: refuses the one shape whose stamp would text the household', () => {
-    // No numeric amountDue + a positive total classifies 'paid', and the
-    // status label is what onInvoicesWrite's lifecycle would newly read as
-    // paid, firing invoice.payment.applied for money that moved months ago.
-    // The guard reports it for the operator instead.
+  it('REFUSES the legacy shape: a total, no amountDue and no payments would be stamped paid (would_assert_payment)', () => {
+    // Restored from before #884, where the old guard refused it. invoiceStateOf
+    // reads the missing amountDue as 0, so this owed bill classifies paid, and
+    // a paid/none stamp would then block every payment path and every edit.
+    // Refused until #902 rules on a missing amountDue.
     const d = planStamp({ status: 'sent', total: 40 }, []);
+    expect(d).toEqual({ action: 'skip', reason: 'would_assert_payment' });
+  });
+
+  it('stamps that shape paid once a subcollection payment row backs the paid reading', () => {
+    const d = planStamp({ status: 'sent', total: 40 }, [{ amountCents: 4000 }]);
+    expect(d.action).toBe('stamp');
+    if (d.action !== 'stamp') throw new Error('expected stamp');
+    expect(d.update.status).toBe('paid');
+  });
+
+  it('stamps that shape paid when a ROOT payments row names the invoice (the Stripe webhook writes there)', () => {
+    const d = planStamp({ status: 'sent', total: 40 }, [], { rootPayments: [{ amountCents: 4000 }] });
+    expect(d.action).toBe('stamp');
+    if (d.action !== 'stamp') throw new Error('expected stamp');
+    expect(d.update.status).toBe('paid');
+  });
+
+  it('a root row whose amount is unresolved still counts as a record that money came in', () => {
+    const d = planStamp({ status: 'sent', total: 40 }, [], { rootPayments: [{}] });
+    expect(d.action).toBe('stamp');
+  });
+
+  it('allows a doc its writer already labelled paid: the stamp only canonicalizes the label', () => {
+    for (const status of ['paid', ' Paid ']) {
+      const d = planStamp({ status, total: 40 }, []);
+      expect(d.action, status).toBe('stamp');
+      if (d.action !== 'stamp') throw new Error('expected stamp');
+      expect(d.update.status).toBe('paid');
+    }
+  });
+
+  it('treats a non-finite amountDue as missing, so the shape is still refused', () => {
+    for (const amountDue of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const d = planStamp({ status: 'sent', total: 40, amountDue }, []);
+      expect(d, String(amountDue)).toEqual({ action: 'skip', reason: 'would_assert_payment' });
+    }
+  });
+
+  it('THE NOTIFICATION GUARD refuses a stamp write the trigger would send a notice for', () => {
+    // The classifier's own stamp never changes what the trigger reads, so the
+    // guard is proven with a stamp that does: it moves an open bill to paid.
+    const d = planStamp({ status: 'open', amountDue: 40, total: 40 }, [], {
+      stampOf: () => ({ status: 'paid', editScope: 'none' }),
+    });
     expect(d).toEqual({ action: 'skip', reason: 'would_notify_household' });
   });
 
+  it('wouldNotifyHousehold asks the trigger about both of its notices', () => {
+    const doc = { status: 'open', amountDue: 40, total: 40 };
+    expect(wouldNotifyHousehold(doc, { status: 'paid', editScope: 'none' })).toBe(true);
+    expect(wouldNotifyHousehold(doc, { status: 'open', editScope: 'all' })).toBe(false);
+    expect(wouldNotifyHousehold(doc, { status: 'overdue', editScope: 'all' } as never)).toBe(true);
+  });
+
   it('does NOT trip the guard when the doc already reads paid to the trigger', () => {
-    // amountDue 0 (numeric) already resolves the lifecycle 'paid' before the
-    // stamp, so writing the label changes nothing the trigger acts on.
+    // amountDue 0 (numeric) already reads paid before the stamp, so writing
+    // the label changes nothing the trigger acts on.
     const d = planStamp({ status: 'sent', amountDue: 0, total: 40 }, []);
     expect(d.action).toBe('stamp');
     if (d.action !== 'stamp') throw new Error('expected stamp');

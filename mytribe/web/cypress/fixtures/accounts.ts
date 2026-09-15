@@ -25,3 +25,23 @@ export const KINFOLK = {
   kinfolkId: 'e2e-portal-kf-1',
   displayName: 'The Wren Household',
 } as const;
+
+/**
+ * #892: accounts whose passwords the reset spec CHANGES. Kept apart from
+ * KINFOLK because the seed runs once per run, and a spec that reset the shared
+ * login would sign every later spec out of the suite.
+ *
+ * RESET_KINFOLK carries KINFOLK's household claim, so after the reset it signs
+ * in to the same stubbed /home. STAFF carries the admin claim and never signs
+ * in to the portal: its reset link continues to the admin site.
+ */
+export const RESET_KINFOLK = {
+  email: 'e2e-reset-kinfolk@mytribe.test',
+  password: 'e2e-emulator-reset-kinfolk-pw',
+  kinfolkId: 'e2e-portal-kf-1',
+} as const;
+
+export const STAFF = {
+  email: 'e2e-staff@mytribe.test',
+  password: 'e2e-emulator-staff-pw',
+} as const;

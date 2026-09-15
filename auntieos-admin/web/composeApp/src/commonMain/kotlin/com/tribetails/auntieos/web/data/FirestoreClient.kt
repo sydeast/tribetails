@@ -542,6 +542,20 @@ class FirestoreClient {
     }
 
     /**
+     * #867 re-review: broadcasts the signed-in admin started that the server is still
+     * sending, newest first, within [com.tribetails.auntieos.web.screens.communicate.RUNNING_BROADCAST_WINDOW_MS].
+     * The Broadcast form uses the newest to put its draft and key back.
+     */
+    @OptIn(kotlin.time.ExperimentalTime::class)
+    suspend fun runningBroadcasts(
+        nowMs: Long = kotlin.time.Clock.System.now().toEpochMilliseconds(),
+    ): WriteResult<List<com.tribetails.auntieos.web.screens.communicate.RunningBroadcast>> =
+        when (val r = platformBroadcastRowsForCurrentAdmin()) {
+            is WriteResult.Err -> r
+            is WriteResult.Ok -> WriteResult.Ok(com.tribetails.auntieos.web.screens.communicate.decodeRunningBroadcasts(r.value, nowMs))
+        }
+
+    /**
      * #14 (2026-06-08): invite an existing kinfolk to the kinfolk portal. Admin
      * callable (MyTribe functions/src/admin/inviteKinfolkToPortal). Resolves the
      * kinfolk's email, ensures the family envelope, and emails a PRIMARY claim
@@ -2251,6 +2265,13 @@ internal expect suspend fun platformAddKinTaleComment(taleId: String, kinfolkId:
  * that #481 deleted.
  */
 internal expect suspend fun platformInvokeCallable(name: String, payloadJson: String): WriteResult<String>
+
+/**
+ * #867 re-review: the signed-in admin's `broadcasts` rows (`actorUid` equal to their
+ * uid), as flat JSON with `_id`. `Ok(empty)` when nobody is signed in. Rules allow an
+ * admin to read the collection; the server is its only writer.
+ */
+internal expect suspend fun platformBroadcastRowsForCurrentAdmin(): WriteResult<List<kotlinx.serialization.json.JsonObject>>
 
 private val importedCountJson = Json { ignoreUnknownKeys = true; isLenient = true }
 

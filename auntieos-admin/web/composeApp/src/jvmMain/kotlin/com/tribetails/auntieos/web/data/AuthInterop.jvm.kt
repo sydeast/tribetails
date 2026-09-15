@@ -61,6 +61,29 @@ internal data class SignInRequest(
 internal fun encodeSignInRequestBody(email: String, password: String): String =
     authRestJson.encodeToString(SignInRequest(email.trim(), password))
 
+/** Where an admin reset link continues once the password is set (#892). */
+internal const val ADMIN_SIGN_IN_URL = "https://auntie.tribetails.com/signin"
+
+/**
+ * accounts:sendOobCode body for a password reset.
+ *
+ * #892: the link opens the project's email action page on the portal
+ * (Identity Toolkit's callbackUri is one URL per project). `continueUrl` sends
+ * staff back to the admin sign-in instead of the kinfolk portal. Non-null with
+ * defaults, so `encodeDefaults = true` always puts it on the wire.
+ */
+@Serializable
+internal data class PasswordResetOobRequest(
+    val email: String,
+    val requestType: String = "PASSWORD_RESET",
+    val continueUrl: String = ADMIN_SIGN_IN_URL,
+    val canHandleCodeInApp: Boolean = false,
+)
+
+/** Serializes the password-reset sendOobCode body exactly as it is posted on the wire (test seam). */
+internal fun encodePasswordResetRequestBody(email: String): String =
+    authRestJson.encodeToString(PasswordResetOobRequest(email = email.trim()))
+
 /** Parsed securetoken refresh response. */
 internal data class RefreshedToken(val idToken: String, val refreshToken: String?, val expiresInSecs: Long)
 
@@ -113,7 +136,8 @@ private object FirebaseRestAuth {
     private const val SECURETOKEN = "https://securetoken.googleapis.com/v1/token"
 
     private val json = authRestJson
-    private val http = HttpClient(Java) {
+    // #867: timeouts and the test network guard come from the shared factory.
+    private val http = auntieHttpClient {
         install(ContentNegotiation) { json(json) }
     }
 
@@ -137,9 +161,6 @@ private object FirebaseRestAuth {
         val localId: String = "",
         val email: String = "",
     )
-
-    @Serializable
-    private data class OobRequest(val requestType: String, val email: String)
 
     suspend fun signIn(emailArg: String, password: String): SignInResult = mutex.withLock {
         val resp: HttpResponse = try {
@@ -228,7 +249,7 @@ private object FirebaseRestAuth {
             val resp = http.post("$IDENTITY:sendOobCode") {
                 parameter("key", API_KEY)
                 contentType(ContentType.Application.Json)
-                setBody(OobRequest(requestType = "PASSWORD_RESET", email = emailArg.trim()))
+                setBody(PasswordResetOobRequest(email = emailArg.trim()))
             }
             resp.status.isSuccess()
         } catch (e: Exception) {

@@ -46,6 +46,33 @@ export function tripleStashIssue(field: string, value: string | null | undefined
   return noTripleStash(value) ? null : tripleStashMessage(field);
 }
 
+/**
+ * A merge field written straight into an attribute with no quotes around it,
+ * `href={{link}}`. Handlebars escaping protects a quoted attribute, but it does
+ * not escape spaces, so an unquoted value can end the attribute and start a new
+ * one (`x onmouseover=...`). Refused at author time for the same reason as the
+ * triple stash (#892 review).
+ */
+const UNQUOTED_ATTRIBUTE_MERGE = /\s[a-zA-Z][\w:-]*\s*=\s*\{\{/;
+
+/** True when the text has no merge field in an unquoted attribute (or is absent). */
+export function noUnquotedAttributeMerge(s: string | null | undefined): boolean {
+  return !s || !UNQUOTED_ATTRIBUTE_MERGE.test(s);
+}
+
+/** What an operator is told when one field puts a merge field in an unquoted attribute. */
+export function unquotedAttributeMessage(field: string): string {
+  return (
+    `${field} puts a merge field straight into an attribute without quotes, like href={{link}}. ` +
+    `Quote it, href="{{link}}", so the value cannot break out of the attribute.`
+  );
+}
+
+/** The complaint about one field's unquoted attribute merge, or null when it is clean. */
+export function unquotedAttributeIssue(field: string, value: string | null | undefined): string | null {
+  return noUnquotedAttributeMerge(value) ? null : unquotedAttributeMessage(field);
+}
+
 /** A template id is a document id in three collections, so it is kept narrow. */
 export const TEMPLATE_ID_PATTERN = /^[a-zA-Z0-9_.-]+$/;
 export const TEMPLATE_ID_MAX_LENGTH = 120;
@@ -98,6 +125,8 @@ export function emailTemplateIssues(content: EmailTemplateContent): string[] {
     const issue = tripleStashIssue(field, value);
     if (issue) issues.push(issue);
   }
+  const attributeIssue = unquotedAttributeIssue('html', content.html);
+  if (attributeIssue) issues.push(attributeIssue);
   return issues;
 }
 

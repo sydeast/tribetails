@@ -68,7 +68,15 @@ import { onInvoicesWriteHandler } from '../src/triggers/onInvoicesWrite';
 import { recordPaymentHandler } from '../src/admin/recordPayment';
 import { markInvoicePaidHandler } from '../src/admin/markInvoicePaid';
 import { stripeWebhookHandler } from '../src/billing/stripeWebhook';
-import { drawAccountCredit } from '../src/lib/accountCredit';
+import {
+  CREDIT_NOTICE_DEDUPE_WINDOW_MS,
+  CREDIT_NOTICE_MAX_ATTEMPTS,
+  CREDIT_NOTICE_SWEEP_BUDGET_MS,
+  CREDIT_NOTICE_SWEEP_GRACE_MS,
+  drawAccountCredit,
+  sweepPendingCreditNotices,
+} from '../src/lib/accountCredit';
+import { updateInvoiceHandler } from '../src/admin/updateInvoice';
 import { dedupeIdentityOf, dedupeWindowOf, resolveTargetRef } from '../src/notifications/dispatcher';
 import { NoRecipientsError } from '../src/notifications/recipientErrors';
 import type { EnqueueArgs } from '../src/notifications/types';
@@ -882,5 +890,519 @@ describe('#866 account credit', () => {
     await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
     expect(docs[INVOICE]!['status']).toBe('paid');
     expect(appliedCount()).toBe(1);
+  });
+});
+
+describe('#884 review: updateInvoice decides and writes in one transaction', () => {
+  /**
+   * An optimistic transaction over the write-through store, as Firestore runs
+   * one: every read is remembered, writes are staged, and a commit whose reads
+   * changed underneath it discards the attempt and runs the callback again.
+   */
+  function optimisticTransactions(store: Docs) {
+    const db = mocks.db.current as any;
+    const stateOf = (path: string) =>
+      JSON.stringify(Object.entries(store).filter(([k]) => k === path || k.startsWith(`${path}/`)).sort());
+    db.runTransaction = async (fn: (tx: unknown) => Promise<unknown>) => {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const seen = new Map<string, string>();
+        const staged: Array<() => Promise<unknown>> = [];
+        const tx = {
+          get: async (ref: any) => {
+            seen.set(ref.path, stateOf(ref.path));
+            return ref.get();
+          },
+          set: (ref: any, data: any, options?: any) => void staged.push(() => ref.set(data, options)),
+          update: (ref: any, data: any) => void staged.push(() => ref.update(data)),
+          create: (ref: any, data: any) => void staged.push(() => ref.create(data)),
+          delete: (ref: any) => void staged.push(() => ref.delete()),
+        };
+        const result = await fn(tx);
+        if ([...seen].some(([path, before]) => stateOf(path) !== before)) continue;
+        for (const write of staged) await write();
+        return result;
+      }
+      throw new Error('ABORTED: contention');
+    };
+  }
+
+  it("a markInvoicePaid that commits between the edit's read and its write keeps its owner stamp", async () => {
+    // Admin A lowers the lines to the $60 already paid. Admin B's markInvoicePaid
+    // for the remaining $40 commits right after A has read the invoice.
+    const store: Docs = {
+      [INVOICE]: {
+        kinfolkId: 'fam1',
+        status: 'open',
+        invoiceNumber: '1029',
+        total: 100,
+        totalCents: 10000,
+        amountDue: 40,
+        amountDueCents: 4000,
+        lineItems: [{ description: 'Dog walking', qty: 4, unitCents: 2500 }],
+      },
+      'invoices/inv1/payments/p1': { amountCents: 6000, amount: 60 },
+    };
+    docs = store;
+    // B commits once A has read BOTH the invoice and its payments: the first
+    // time a payment row is read through the store, which is A's payments read.
+    let raced = false;
+    const racing = new Proxy(store, {
+      get(target, p, receiver) {
+        const value = Reflect.get(target, p, receiver);
+        if (!raced && p === 'invoices/inv1/payments/p1') {
+          raced = true;
+          target[INVOICE] = {
+            ...(target[INVOICE] as Record<string, unknown>),
+            status: 'paid',
+            paymentStatus: 'PAID',
+            amountDue: 0,
+            amountDueCents: 0,
+            paidCents: 10000,
+            paymentAppliedNoticeOwner: 'markInvoicePaid:p2',
+            paymentAppliedNoticeOwnerAtMs: Date.now(),
+          };
+          target['invoices/inv1/payments/p2'] = { amountCents: 4000, amount: 40 };
+        }
+        return value;
+      },
+    });
+    mocks.db.current = buildDbMock({ docs: racing, writeThrough: true }).db;
+    optimisticTransactions(store);
+
+    // A's retry reads the invoice B paid off, which is frozen, so A is refused.
+    await expect(
+      updateInvoiceHandler(
+        adminReq({ invoiceId: 'inv1', patch: { lineItems: [{ description: 'Dog walking', qty: 1, unitCents: 6000 }] } }),
+      ),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(raced).toBe(true);
+    expect(store[INVOICE]!['paymentAppliedNoticeOwner']).toBe('markInvoicePaid:p2');
+    expect(store[INVOICE]!['paidCents']).toBe(10000);
+    expect(store[INVOICE]!['status']).toBe('paid');
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+
+    // B's recordPayment step can still claim its settlement, so the office is told.
+    await recordPaymentHandler(
+      adminReq({
+        kinfolkId: 'fam1',
+        amount: 40,
+        paymentMethod: 'cash',
+        invoiceId: 'inv1',
+        sendConfirmationEmail: false,
+        settledByInvoicePaymentId: 'p2',
+      }),
+    );
+    expect(staffCount()).toBe(1);
+    expect(appliedCount()).toBe(0);
+  });
+});
+
+describe('#884 second review: the credit notice survives a crash', () => {
+  const draw = () =>
+    withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+  const pending = () => docs[INVOICE]!['paymentAppliedNoticePending'];
+  const sweep = () => sweepPendingCreditNotices(mocks.db.current as any, Date.now());
+
+  function seedPayable() {
+    seedInvoice();
+    docs['families/fam1'] = { accountBalanceCents: 5000 };
+  }
+
+  it('the normal path sends one and clears the pending stamp; a redelivery and a later sweep send nothing', async () => {
+    seedPayable();
+    await draw();
+    expect(appliedCount()).toBe(1);
+    expect(staffCount()).toBe(1);
+    expect(pending()).toBe('');
+    expect(docs[INVOICE]!['paymentAppliedNoticeSentAt']).toBeTruthy();
+    const calls = mocks.enqueue.mock.calls.length;
+
+    expect((await draw()).skipped).toBe('invoice_not_collectable');
+    later(HOUR);
+    expect(await sweep()).toBe(0);
+    expect(mocks.enqueue.mock.calls.length).toBe(calls);
+    expect(appliedCount()).toBe(1);
+  });
+
+  it('a crash after the commit and before the send: the redelivered pass sends exactly one', async () => {
+    seedPayable();
+    mocks.resolveUid.mockRejectedValueOnce(new Error('instance stopped'));
+    await draw();
+    expect(docs[INVOICE]!['status']).toBe('paid');
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(pending()).toMatch(/^accountCredit:.+/);
+
+    expect((await draw()).skipped).toBe('invoice_not_collectable');
+    expect(appliedCount()).toBe(1);
+    expect(staffCount()).toBe(1);
+    expect(pending()).toBe('');
+
+    await draw();
+    expect(appliedCount()).toBe(1);
+  });
+
+  it('a crash after the send and before its stamp: the retry is stopped by the ledger, still one', async () => {
+    seedPayable();
+    const db = mocks.db.current as any;
+    const realTransaction = db.runTransaction;
+    let calls = 0;
+    // The pass's own transaction is the first; the pending-clear is the second.
+    db.runTransaction = (fn: unknown) => {
+      calls += 1;
+      if (calls === 2) return Promise.reject(new Error('instance stopped'));
+      return realTransaction(fn);
+    };
+    await draw();
+    expect(appliedCount()).toBe(1);
+    expect(pending()).toMatch(/^accountCredit:.+/);
+
+    db.runTransaction = realTransaction;
+    await draw();
+    expect(appliedCount()).toBe(1);
+    expect(staffCount()).toBe(1);
+    expect(pending()).toBe('');
+  });
+
+  it('no retry ever arrives: the scheduled sweep sends it after the grace period, once', async () => {
+    seedPayable();
+    mocks.resolveUid.mockRejectedValueOnce(new Error('instance stopped'));
+    await draw();
+    expect(await sweep()).toBe(0);
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+
+    later(CREDIT_NOTICE_SWEEP_GRACE_MS + MIN);
+    expect(await sweep()).toBe(1);
+    expect(appliedCount()).toBe(1);
+    expect(staffCount()).toBe(1);
+    expect(await sweep()).toBe(0);
+    await draw();
+    expect(appliedCount()).toBe(1);
+  });
+
+  it('the sweep and a redelivered pass racing over one pending notice deliver it once', async () => {
+    seedPayable();
+    mocks.resolveUid.mockRejectedValueOnce(new Error('instance stopped'));
+    await draw();
+    later(CREDIT_NOTICE_SWEEP_GRACE_MS + MIN);
+    await Promise.all([sweep(), drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' })]);
+    expect(appliedCount()).toBe(1);
+    expect(staffCount()).toBe(1);
+  });
+
+  it('a notice nobody can receive is final: stamped skipped, never swept again', async () => {
+    seedPayable();
+    mocks.roster.state = 'empty';
+    mocks.resolveUid.mockResolvedValue(null);
+    await draw();
+    expect(docs[INVOICE]!['paymentAppliedNoticeSkippedReason']).toBe('no-recipients');
+    expect(pending()).toBe('');
+    later(CREDIT_NOTICE_SWEEP_GRACE_MS + MIN);
+    expect(await sweep()).toBe(0);
+  });
+
+  it('a partial credit draw, then a card payment of the rest, sends exactly one', async () => {
+    seedInvoice();
+    docs['families/fam1'] = { accountBalanceCents: 1000 };
+    await draw();
+    expect(appliedCount()).toBe(0);
+    expect(await deliver(stripeEvent('evt_1', 'checkout.session.completed', 3000))).toBe(200);
+    expect(docs[INVOICE]!['status']).toBe('paid');
+    expect(appliedCount()).toBe(1);
+    expect(staffCount()).toBe(1);
+  });
+
+  it('a partial credit draw, then recordPayment (ticked) of the rest, sends exactly one', async () => {
+    seedInvoice();
+    docs['families/fam1'] = { accountBalanceCents: 1000 };
+    await draw();
+    await adminApply(30, true);
+    expect(docs[INVOICE]!['status']).toBe('paid');
+    expect(appliedCount()).toBe(1);
+    expect(staffCount()).toBe(1);
+  });
+});
+
+describe('#884 third review: the credit notice sweep cannot get stuck', () => {
+  const draw = () =>
+    withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+  const sweep = (options?: Parameters<typeof sweepPendingCreditNotices>[2]) =>
+    sweepPendingCreditNotices(mocks.db.current as any, Date.now(), options);
+  const creditRowId = () =>
+    Object.keys(docs)
+      .find((p) => p.startsWith('invoices/inv1/payments/'))!
+      .split('/')
+      .pop()!;
+  const gaveUpRows = () =>
+    Object.entries(docs).filter(
+      ([p, d]) => p.startsWith('activity_log/') && d !== null && d['actionType'] === 'BILLING_PAYMENT_NOTIFICATION_GAVE_UP',
+    );
+
+  /** A credit notice still pending since `atMs`, as a crashed pass leaves it. */
+  function seedPending(invoiceId: string, paymentId: string, atMs: number, kinfolkId = 'fam1') {
+    docs[`invoices/${invoiceId}`] = {
+      kinfolkId,
+      status: 'paid',
+      amountDue: 0,
+      amountDueCents: 0,
+      paymentAppliedNoticeOwner: `accountCredit:${paymentId}`,
+      paymentAppliedNoticePending: `accountCredit:${paymentId}`,
+      paymentAppliedNoticePendingAtMs: atMs,
+    };
+  }
+
+  /** What a credit payment notice for inv1 carries, whichever sender sends it. */
+  const expectedNotice = (paymentId: string) => ({
+    key: 'invoice.payment.applied',
+    recipientUid: 'kin-uid-1',
+    data: { kinfolkId: 'fam1', invoiceId: 'inv1', amountDue: 0, currency: 'usd', dueDate: '2026-09-30', paymentId },
+    targetType: 'invoice',
+    targetId: 'inv1',
+    dedupeWindowMs: CREDIT_NOTICE_DEDUPE_WINDOW_MS,
+  });
+
+  function seedPayable() {
+    seedInvoice({ currency: 'usd', dueDate: '2026-09-30' });
+    docs['families/fam1'] = { accountBalanceCents: 5000 };
+  }
+
+  it('the direct send carries the notice every resend below must match', async () => {
+    seedPayable();
+    await draw();
+    expect(mocks.enqueue.mock.calls[0]![0]).toEqual(expectedNotice(creditRowId()));
+  });
+
+  it('a redelivered pass resends exactly what the direct send would have carried', async () => {
+    seedPayable();
+    mocks.resolveUid.mockRejectedValueOnce(new Error('instance stopped'));
+    await draw();
+    await draw();
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueue.mock.calls[0]![0]).toEqual(expectedNotice(creditRowId()));
+  });
+
+  it('the sweep resends exactly what the direct send would have carried', async () => {
+    seedPayable();
+    mocks.resolveUid.mockRejectedValueOnce(new Error('instance stopped'));
+    await draw();
+    later(CREDIT_NOTICE_SWEEP_GRACE_MS + MIN);
+    expect(await sweep()).toBe(1);
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueue.mock.calls[0]![0]).toEqual(expectedNotice(creditRowId()));
+  });
+
+  it('a finished notice drops its pending time, so the age query never fetches it again', async () => {
+    seedPayable();
+    await draw();
+    expect(typeof docs[INVOICE]!['paymentAppliedNoticePendingAtMs']).not.toBe('number');
+  });
+
+  it("notices still inside the grace period never take the sweep's slots from a due one", async () => {
+    const now = Date.now();
+    // 120 notices a burst of draws left pending a minute ago, whose payment ids
+    // sort before the due one's, and one notice pending for an hour.
+    for (let i = 0; i < 120; i += 1) seedPending(`a${String(i).padStart(3, '0')}`, `a${String(i).padStart(3, '0')}`, now - MIN);
+    seedPending('inv1', 'zzz', now - HOUR);
+    expect(await sweep()).toBe(1);
+    expect(appliedCount()).toBe(1);
+    expect(docs[INVOICE]!['paymentAppliedNoticePending']).toBe('');
+    expect(docs['invoices/a000']!['paymentAppliedNoticePending']).toBe('accountCredit:a000');
+  });
+
+  it('a notice that keeps failing gives up after the cap, writes one activity_log row, and is never retried again', async () => {
+    seedPayable();
+    mocks.resolveUid.mockRejectedValue(Object.assign(new Error('lookup failed'), { code: 'unavailable' }));
+    await draw();
+    const paymentId = creditRowId();
+
+    for (let i = 0; i < CREDIT_NOTICE_MAX_ATTEMPTS; i += 1) {
+      later(CREDIT_NOTICE_SWEEP_GRACE_MS + MIN);
+      expect(await sweep()).toBe(0);
+    }
+    expect(docs[INVOICE]!['paymentAppliedNoticeAttempts']).toBe(CREDIT_NOTICE_MAX_ATTEMPTS);
+    expect(docs[INVOICE]!['paymentAppliedNoticePending']).toBe(`accountCredit:${paymentId}`);
+    expect(gaveUpRows()).toHaveLength(0);
+
+    later(CREDIT_NOTICE_SWEEP_GRACE_MS + MIN);
+    expect(await sweep()).toBe(1);
+    expect(docs[INVOICE]).toMatchObject({ paymentAppliedNoticeSkippedReason: 'gave-up', paymentAppliedNoticePending: '' });
+    expect(typeof docs[INVOICE]!['paymentAppliedNoticePendingAtMs']).not.toBe('number');
+
+    const rows = gaveUpRows();
+    expect(rows).toHaveLength(1);
+    const row = rows[0]![1]!;
+    expect(row['status']).toBe('FAILURE');
+    expect(row['payload']).toEqual({
+      invoiceId: 'inv1',
+      paymentId,
+      attempts: CREDIT_NOTICE_MAX_ATTEMPTS,
+      lastErrorCode: 'unavailable',
+    });
+
+    // Never again: no sweep, no redelivery, reaches the recipient lookup.
+    const lookups = mocks.resolveUid.mock.calls.length;
+    later(HOUR);
+    expect(await sweep()).toBe(0);
+    await draw();
+    expect(mocks.resolveUid.mock.calls.length).toBe(lookups);
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(gaveUpRows()).toHaveLength(1);
+  });
+
+  it('more than 100 notices that keep failing do not block a newer one: they give up and the newer one is sent', async () => {
+    const base = Date.now() - 2 * HOUR;
+    for (let i = 0; i < 101; i += 1) seedPending(`stuck${i}`, `s${i}`, base + i, 'famStuck');
+    seedPending('inv1', 'fresh', base + HOUR);
+    mocks.resolveUid.mockImplementation(async (kinfolkId: string) => {
+      if (kinfolkId === 'famStuck') throw Object.assign(new Error('lookup failed'), { code: 'unavailable' });
+      return 'kin-uid-1';
+    });
+
+    let sweeps = 0;
+    while (appliedCount() === 0 && sweeps < 30) {
+      later(5 * MIN);
+      await sweep({ clock: () => 0 });
+      sweeps += 1;
+    }
+    expect(appliedCount()).toBe(1);
+    expect(sweeps).toBeLessThanOrEqual(CREDIT_NOTICE_MAX_ATTEMPTS + 2);
+    expect(docs[INVOICE]!['paymentAppliedNoticePending']).toBe('');
+    expect(docs['invoices/stuck0']!['paymentAppliedNoticeSkippedReason']).toBe('gave-up');
+    expect(gaveUpRows().length).toBeGreaterThanOrEqual(100);
+  });
+
+  it('the sweep stops when its time budget is spent and leaves the rest for the next run', async () => {
+    expect(CREDIT_NOTICE_SWEEP_BUDGET_MS).toBe(20_000);
+    const old = Date.now() - HOUR;
+    for (let i = 0; i < 5; i += 1) seedPending(`b${i}`, `b${i}`, old + i);
+    // Every clock reading moves 8 seconds: the start, then one reading per notice.
+    let t = 0;
+    const clock = () => {
+      const v = t;
+      t += 8_000;
+      return v;
+    };
+    expect(await sweep({ clock })).toBe(2);
+    expect(Object.keys(docs).filter((p) => /^invoices\/b\d$/.test(p) && docs[p]!['paymentAppliedNoticePending'] !== '')).toHaveLength(3);
+    t = 0;
+    expect(await sweep({ clock })).toBe(2);
+    t = 0;
+    expect(await sweep({ clock })).toBe(1);
+    expect(appliedCount()).toBe(5);
+  });
+});
+
+describe('#884 review: the credit draw owns its notice', () => {
+  it('a legacy invoice with a total and no amountDue, paid off by account credit, sends exactly one', async () => {
+    // invoiceStateOf reads this doc as paid before the draw, so the trigger sees
+    // paid to paid. The draw is a real payment and sends the notice itself.
+    docs[INVOICE] = { kinfolkId: 'fam1', status: 'open', invoiceNumber: '1029', total: 40 };
+    docs['families/fam1'] = { accountBalanceCents: 5000 };
+    await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+    expect(docs[INVOICE]!['status']).toBe('paid');
+    expect(docs[INVOICE]!['paymentAppliedNoticeOwner']).toMatch(/^accountCredit:.+/);
+    expect(appliedCount()).toBe(1);
+    expect(staffCount()).toBe(1);
+  });
+
+  it('credit that covers only part of the bill tells nobody, as before', async () => {
+    seedInvoice();
+    docs['families/fam1'] = { accountBalanceCents: 1000 };
+    await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+    expect(docs[INVOICE]!['status']).toBe('open');
+    expect(docs[INVOICE]!['paymentAppliedNoticeOwner']).toBeUndefined();
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('a second pass over the same paid invoice draws nothing and sends nothing more', async () => {
+    seedInvoice();
+    docs['families/fam1'] = { accountBalanceCents: 5000 };
+    await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+    await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+    expect(appliedCount()).toBe(1);
+    expect(staffCount()).toBe(1);
+  });
+
+  for (const label of ['past_due', 'overdue']) {
+    it(`a ${label} bill with a balance, paid off by account credit, sends exactly one`, async () => {
+      seedInvoice({ status: label });
+      docs['families/fam1'] = { accountBalanceCents: 5000 };
+      await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+      expect(docs[INVOICE]!['status']).toBe('paid');
+      expect(appliedCount()).toBe(1);
+      expect(staffCount()).toBe(1);
+    });
+
+    it(`a ${label} bill with a balance, paid off by recordPayment (ticked), sends exactly one`, async () => {
+      seedInvoice({ status: label });
+      await adminApply(40, true);
+      expect(docs[INVOICE]!['status']).toBe('paid');
+      expect(appliedCount()).toBe(1);
+      expect(staffCount()).toBe(1);
+    });
+  }
+});
+
+describe('#884 settling a balance by editing the invoice, not by paying it', () => {
+  function seedPartPaid(over: Record<string, unknown> = {}) {
+    seedInvoice({
+      total: 100,
+      totalCents: 10000,
+      amountDue: 40,
+      amountDueCents: 4000,
+      lineItems: [{ description: 'Dog walking', qty: 4, unitCents: 2500 }],
+      ...over,
+    });
+    docs['invoices/inv1/payments/p1'] = { amountCents: 6000, amount: 60 };
+  }
+
+  function editAudits(): number {
+    return Object.values(docs).filter((d) => d !== null && d['actionType'] === 'BILLING_INVOICE_UPDATED').length;
+  }
+
+  it('lowering the total to what was already paid tells nobody, and the audit is the record', async () => {
+    seedPartPaid();
+    await withTrigger(() =>
+      updateInvoiceHandler(
+        adminReq({ invoiceId: 'inv1', patch: { lineItems: [{ description: 'Dog walking', qty: 1, unitCents: 6000 }] } }),
+      ),
+    );
+    expect(docs[INVOICE]!['status']).toBe('paid');
+    expect(appliedCount()).toBe(0);
+    expect(staffCount()).toBe(0);
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(editAudits()).toBe(1);
+  });
+
+  it('lowering it BELOW what was paid tells nobody either', async () => {
+    seedPartPaid();
+    await withTrigger(() =>
+      updateInvoiceHandler(
+        adminReq({ invoiceId: 'inv1', patch: { lineItems: [{ description: 'Dog walking', qty: 1, unitCents: 2500 }] } }),
+      ),
+    );
+    expect(docs[INVOICE]!['status']).toBe('paid');
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('a bill a card paid once, reopened, then settled by an edit: the card stamp does not make the trigger send', async () => {
+    seedPartPaid({ paymentAppliedNoticeOwner: 'stripe:evt_old' });
+    await withTrigger(() =>
+      updateInvoiceHandler(
+        adminReq({ invoiceId: 'inv1', patch: { lineItems: [{ description: 'Dog walking', qty: 1, unitCents: 6000 }] } }),
+      ),
+    );
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('an edit stamp left on an open bill does not silence a later real payment (account credit)', async () => {
+    // A settled-by-edit invoice is frozen, so no edit reopens it; the stamp can
+    // still sit on an open bill (a repair reopening it). The credit draw stamps
+    // nothing, so the trigger owns that notice and must still send it.
+    seedInvoice({ paymentAppliedNoticeOwner: 'updateInvoice:earlier' });
+    docs['families/fam1'] = { accountBalanceCents: 5000 };
+    await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+    expect(docs[INVOICE]!['status']).toBe('paid');
+    expect(appliedCount()).toBe(1);
+    expect(staffCount()).toBe(1);
   });
 });

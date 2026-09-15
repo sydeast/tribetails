@@ -355,10 +355,12 @@ export interface AcceptInviteResult {
 export interface ConfirmSecureResetRequest {
   /** Firebase oobCode from the password-reset link. */
   oobCode: string;
-  /** New password chosen by the kinfolk (min 8 chars). */
+  /** New password chosen by the account holder (min 8 chars). */
   newPassword: string;
-  /** Kinfolk email (pre-filled from the reset link's query params). */
-  email: string;
+  /**
+   * No email field (#892). The server derives the account from the oobCode and
+   * ignores any email a client sends.
+   */
   /** navigator.userAgent, best effort. */
   userAgent?: string;
 }

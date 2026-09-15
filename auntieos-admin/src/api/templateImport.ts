@@ -41,6 +41,11 @@ export interface TemplateImportRow {
   channels: TemplateImportChannelRow[];
   differsFromRepo: boolean;
   blocked: boolean;
+  /**
+   * Why the template was refused, one sentence per complaint. Empty unless
+   * `blocked`; optional because a server older than #892 does not send it.
+   */
+  issues?: string[];
 }
 
 export interface TemplateImportReport {

@@ -1,0 +1,1 @@
+Several accounts locked. {{lockedAccounts}} kinfolk accounts locked within {{windowMinutes}} minutes. Check the Activity Log for a shared IP.
