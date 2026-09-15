@@ -45,10 +45,33 @@ class SettingsViewModel(private val dataSource: AuntieDataSource) {
         // that relaunched without cancelling would leave the old polling loop running.
         settingsJob?.cancel()
         settingsJob = scope.launch {
-            dataSource.businessSettingsStream().collect { result ->
-                _uiState.update { it.copy(settingsResult = result, reloadingSettings = false) }
+            activePolls.update { it + 1 }
+            try {
+                dataSource.businessSettingsStream().collect { result ->
+                    _uiState.update { it.copy(settingsResult = result, reloadingSettings = false) }
+                }
+            } finally {
+                activePolls.update { it - 1 }
             }
         }
+    }
+
+    /**
+     * #867 re-review: stops the settings read. `SettingsScreen` calls it when it
+     * leaves composition. On desktop the read is a polling loop that never ends by
+     * itself, so without this every visit to Settings left one more loop running.
+     * The scope itself stays alive, so a vet clinic save already under way finishes.
+     */
+    fun dispose() {
+        settingsJob?.cancel()
+        settingsJob = null
+    }
+
+    companion object {
+        private val activePolls = MutableStateFlow(0)
+
+        /** How many settings reads are running in this process, for the leak test. */
+        internal val activeSettingsPolls: StateFlow<Int> = activePolls.asStateFlow()
     }
 
     /** #867 review: read business settings again now, for the load error banner's Retry. */

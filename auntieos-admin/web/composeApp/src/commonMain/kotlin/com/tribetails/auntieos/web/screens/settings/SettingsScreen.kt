@@ -199,6 +199,8 @@ fun SettingsScreen(
     val client = remember { FirestoreClient() }
     val dataSource = remember { FirestoreClientSettingsDataSource(client) }
     val vm = remember { SettingsViewModel(dataSource) }
+    // #867 re-review: the settings read stops when the screen goes away.
+    androidx.compose.runtime.DisposableEffect(vm) { onDispose { vm.dispose() } }
     val uiState by vm.uiState.collectAsState()
 
     val settingsData = (uiState.settingsResult as? FirestoreResult.Data<BusinessSettings>)?.value
