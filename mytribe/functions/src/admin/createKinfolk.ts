@@ -55,6 +55,13 @@ export const SERVER_OWNED_KEYS: readonly string[] = [
 export const Args = z
   .object({
     kinfolk: z.record(z.string(), z.unknown()),
+    /**
+     * #907 review: the household the operator just chose to Discard on the Add
+     * prompt. Discard means "this is a new household", so the duplicate check
+     * skips THIS id. Only the caller's own households are candidates at all, so
+     * an id created by another operator changes nothing.
+     */
+    ignoreDuplicateOf: z.string().optional(),
   })
   .strict();
 
@@ -88,6 +95,7 @@ export async function createKinfolkHandler(req: CallableRequest<unknown>): Promi
     throw new HttpsError('invalid-argument', FIRST_NAME_REQUIRED_MESSAGE);
   }
   const body = Object.fromEntries(Object.entries(parsed.data.kinfolk).filter(([k]) => !SERVER_OWNED_KEYS.includes(k)));
+  const ignoreDuplicateOf = parsed.data.ignoreDuplicateOf?.trim() || null;
 
   const firestore = db();
   const since = Timestamp.fromMillis(Date.now() - KINFOLK_DUPLICATE_WINDOW_MS);
@@ -101,6 +109,8 @@ export async function createKinfolkHandler(req: CallableRequest<unknown>): Promi
     for (const doc of snap.docs) {
       const data = (doc.data() ?? {}) as Record<string, unknown>;
       if (data['createdByUid'] !== uid) continue;
+      // After the uid filter on purpose: only the caller's own household can be skipped.
+      if (doc.id === ignoreDuplicateOf) continue;
       const match = duplicateMatch(body, data);
       if (match === null) continue;
       const at = millisOf(data['createdAt']);

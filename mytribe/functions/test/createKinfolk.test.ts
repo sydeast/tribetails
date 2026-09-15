@@ -15,7 +15,7 @@ vi.mock('firebase-admin/firestore', async () => {
   return { ...actual, FieldValue: { serverTimestamp: () => actual.Timestamp.fromMillis(Date.now()) } };
 });
 
-import { createKinfolk, createKinfolkHandler, Args, Result } from '../src/admin/createKinfolk';
+import { createKinfolk, createKinfolkHandler, Args, Result, SERVER_OWNED_KEYS } from '../src/admin/createKinfolk';
 
 const NOW = Date.UTC(2026, 8, 14, 15, 0, 0);
 const MIN = 60_000;
@@ -97,6 +97,63 @@ describe('createKinfolk', () => {
     expect(data.createdAtSource).toBe('live');
     expect(data.gateCode).toBe('1234');
     expect(data.formValues).toEqual({ petName: 'Biscuit' });
+  });
+
+  // #907 review item 6: every field a client sends reaches the document, apart from
+  // the server-owned keys, and the only additions are the three stamps.
+  it('writes exactly the fields sent, minus the server-owned keys, plus the three stamps', async () => {
+    const mock = buildDbMock({ queryDocs: { kinfolk: [] } });
+    mocks.dbFn.mockReturnValue(mock.db);
+    const input = household({
+      joinDate: '',
+      profilePictureUrl: '',
+      secondaryPhone: '805-555-0177',
+      preferredContactMethod: 'Text',
+      updatedAt: '2026-09-14',
+      formValues: { petName: 'Biscuit' },
+      emergencyContactName: 'Rae',
+      id: 'x',
+      createdByUid: 'someone-else',
+    });
+
+    await createKinfolkHandler(call({ kinfolk: input }));
+
+    const expected = [
+      ...Object.keys(input).filter((k) => !SERVER_OWNED_KEYS.includes(k)),
+      'createdAt',
+      'createdAtSource',
+      'createdByUid',
+    ].sort();
+    expect(Object.keys(mock.writes[0].data).sort()).toEqual(expected);
+    expect(mock.writes[0].data).toMatchObject({ joinDate: '', profilePictureUrl: '' });
+  });
+
+  // #907 review item 1(a): Discard on the Add prompt means "this is a new household".
+  it('skips the household named in ignoreDuplicateOf and creates a new one', async () => {
+    const mock = buildDbMock({ queryDocs: { kinfolk: [stored('kf-discarded', {})] } });
+    mocks.dbFn.mockReturnValue(mock.db);
+    const res = await createKinfolkHandler(call({ kinfolk: household({ lastName: 'Halbrook-Park' }), ignoreDuplicateOf: 'kf-discarded' }));
+    expect(res).toEqual({ kinfolkId: 'auto-1', duplicateOf: null });
+    expect(mock.writes).toHaveLength(1);
+    expect(mock.writes[0].data.lastName).toBe('Halbrook-Park');
+  });
+
+  it('still answers duplicateOf for a different matching household than the one named', async () => {
+    const mock = buildDbMock({
+      queryDocs: { kinfolk: [stored('kf-discarded', {}), stored('kf-other', { createdAt: Timestamp.fromMillis(NOW - 4 * MIN) })] },
+    });
+    mocks.dbFn.mockReturnValue(mock.db);
+    const res = await createKinfolkHandler(call({ kinfolk: household(), ignoreDuplicateOf: 'kf-discarded' }));
+    expect(res).toEqual({ kinfolkId: 'kf-other', duplicateOf: 'kf-other' });
+    expect(mock.writes).toHaveLength(0);
+  });
+
+  it("an ignoreDuplicateOf naming someone else's household skips nothing of the caller's", async () => {
+    const mock = buildDbMock({ queryDocs: { kinfolk: [stored('kf-mine', {}), stored('kf-theirs', { createdByUid: 'op-2' })] } });
+    mocks.dbFn.mockReturnValue(mock.db);
+    const res = await createKinfolkHandler(call({ kinfolk: household(), ignoreDuplicateOf: 'kf-theirs' }));
+    expect(res).toEqual({ kinfolkId: 'kf-mine', duplicateOf: 'kf-mine' });
+    expect(mock.writes).toHaveLength(0);
   });
 
   it('refuses a household with no first name', async () => {
@@ -197,6 +254,7 @@ describe('createKinfolk', () => {
   it('exports the request and response shapes the three admin clients mirror', () => {
     expect(Args.safeParse({ kinfolk: household() }).success).toBe(true);
     expect(Args.safeParse({ kinfolk: household(), extra: 1 }).success).toBe(false);
+    expect(Args.safeParse({ kinfolk: household(), ignoreDuplicateOf: 'kf-1' }).success).toBe(true);
     expect(Result.safeParse({ kinfolkId: 'a', duplicateOf: null }).success).toBe(true);
     expect(Result.safeParse({ kinfolkId: 'a' }).success).toBe(false);
   });

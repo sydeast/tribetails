@@ -327,7 +327,7 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   // through this one key. The household fields ride inside it as the clients
   // already wrote them, so the freeze is the envelope, and the server-owned keys
   // it drops are pinned in test/createKinfolk.test.ts.
-  createKinfolk: { schema: CreateKinfolkArgs, keys: ['kinfolk'] },
+  createKinfolk: { schema: CreateKinfolkArgs, keys: ['ignoreDuplicateOf', 'kinfolk'] },
   // Two keys, and `scope` must stay one of them: it is what decides whether the
   // cascade rewrites `kinfolk` or `kin`. A client that stopped sending it would
   // otherwise fall to a default and clear the wrong half of the directory.
