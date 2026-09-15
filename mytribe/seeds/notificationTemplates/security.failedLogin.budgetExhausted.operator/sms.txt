@@ -1,0 +1,1 @@
+Tribe Tails SECURITY: {{kinfolkName}} ({{kinfolkEmail}}) hit {{reportLimit}} failed sign-in reports today. No warning or lock for 24h. Check the Activity Log.

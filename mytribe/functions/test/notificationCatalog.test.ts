@@ -207,6 +207,9 @@ describe('NOTIFICATION_CATALOG audiences streams (audience revamp 2026-07)', () 
     'security.account.locked.operator': { business: true },
     // #877: the operator's copy of the 5-failure warning, never the household's key.
     'security.failedLogin.attempts.operator': { business: true },
+    // #891: operator-only signals, a spent failed-login report budget and a spike of locks.
+    'security.failedLogin.budgetExhausted.operator': { business: true },
+    'security.account.locked.spike.operator': { business: true },
     'security.breach_attempt.kinfolk': { business: true },
     // #892 review: the staff copy of the secure-reset alert.
     'security.breach_attempt.staff': { business: true },

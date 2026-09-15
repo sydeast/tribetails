@@ -423,6 +423,39 @@ describe('myNotificationsFormat', () => {
         'security.failedLogin.attempts.operator',
       );
     });
+    /**
+     * #891: the operator's two new failed-login signals, a spent report budget
+     * and a spike of locks, are business-only rows in the `security` category.
+     * Both show under Account and security on Business and on no other stream.
+     */
+    it('shows the report-budget and lock-spike alerts under Account and security on the business stream only', () => {
+      const budget = entry({
+        key: 'security.failedLogin.budgetExhausted.operator',
+        label: 'Sign-in protection paused on a kinfolk account',
+        category: 'security',
+        audiences: new Set([STREAM_BUSINESS]),
+        required: { email: true, push: true },
+        alwaysEnabled: true,
+      });
+      const spike = entry({
+        key: 'security.account.locked.spike.operator',
+        label: 'Several kinfolk accounts locked at once',
+        category: 'security',
+        audiences: new Set([STREAM_BUSINESS]),
+        required: { email: true, push: true },
+        alwaysEnabled: true,
+      });
+      const m = matrix({ catalog: [budget, spike] });
+      const business = adminVisibleNotifications(m, STREAM_BUSINESS);
+      expect(business.map((e) => e.key).sort()).toEqual([
+        'security.account.locked.spike.operator',
+        'security.failedLogin.budgetExhausted.operator',
+      ]);
+      const rows = sectionedNotifications(business, STREAM_BUSINESS);
+      expect(rows.map(([section]) => section.title)).toEqual(['Account and security']);
+      expect(adminVisibleNotifications(m, STREAM_STAFF)).toEqual([]);
+      expect(adminVisibleNotifications(m, STREAM_KINFOLK)).toEqual([]);
+    });
     it('uses the staff-specific section set for the staff stream', () => {
       const kintale = entry({ key: 'kintale-comment', category: 'kintale' });
       const rows = sectionedNotifications([kintale], STREAM_STAFF);

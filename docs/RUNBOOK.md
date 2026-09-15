@@ -1100,6 +1100,8 @@ push carry content-free copy pointing at AuntieOS, and **SMS is skipped**
 |---|---|---|
 | `security.account.locked.operator` | #869 | The operator's lockout alert names neither the household nor the account email, and sends no SMS. |
 | `security.failedLogin.attempts.operator` | #877 | The operator's 5-failure warning does not name the household, the account email or the attempt count, and sends no SMS. |
+| `security.failedLogin.budgetExhausted.operator` | #891 | The alert that an account's failed sign-ins stopped counting for 24 hours names neither the household nor the account email, and sends no SMS. |
+| `security.account.locked.spike.operator` | #891 | The alert that 3 or more accounts locked within 30 minutes does not give the count or the window, and sends no SMS. |
 | `security.breach_attempt.staff` | #892 | When a staff account uses "I did not ask for this reset", the alert does not name the staff account, the IP or the incident record. |
 
 To import, follow [the template import list](#importing-notification-templates):
@@ -1108,6 +1110,88 @@ on Android, then read the plan before pressing **Import**. A template new to
 Firestore shows `create` on every channel and needs nothing ticked. Do not tick
 **Replace the stored copy with the repo wording** on an unrelated `skipped` row to
 get it in.
+
+#### What the failed-login lock does and does not see (#891)
+
+The lock counts only failures our own sign-in clients report to
+`recordFailedLogin`. A script that calls Firebase Auth directly never reports,
+so it never warns or locks anyone here; against that, the only protection is
+Firebase Auth's own throttling (`TOO_MANY_ATTEMPTS_TRY_LATER`). The reports
+themselves are limited to 30 per client IP per 5 minutes (the IP Google
+appended, not one the caller wrote) and 15 per email per 24 hours. When a real
+account uses its 15, you get `security.failedLogin.budgetExhausted.operator`,
+because for the next 24 hours nothing warns or locks that account. When 3 or
+more accounts lock within 30 minutes, you get `security.account.locked.spike.operator`
+on top of each lock's own alert. A locked account can still request up to 10
+resets per lock from portal Android and portal desktop.
+
+#### Confirm the IP key after the release (#891, #908)
+
+Each callable answers on two URLs, and both must key on your real address. You
+run these; they call production.
+
+1. Get the `run.app` URL of each callable:
+
+   ```bash
+   gcloud run services describe recordfailedlogin --region us-central1 --project auntieos-ttpc --format 'value(status.url)'
+   gcloud run services describe requestpasswordreset --region us-central1 --project auntieos-ttpc --format 'value(status.url)'
+   ```
+
+   If `run services describe` finds nothing, the same URL is in
+   `gcloud functions describe recordFailedLogin --gen2 --region us-central1 --project auntieos-ttpc --format 'value(serviceConfig.uri)'`.
+
+2. Send one forged report to each URL of `recordFailedLogin`. The address is not
+   an account, so nobody is warned or locked:
+
+   ```bash
+   curl -s -X POST 'https://us-central1-auntieos-ttpc.cloudfunctions.net/recordFailedLogin' -H 'Content-Type: application/json' -H 'X-Forwarded-For: 1.2.3.4' -d '{"data":{"email":"ip-probe-891@example.com"}}'
+   curl -s -X POST '<recordfailedlogin run.app URL>' -H 'Content-Type: application/json' -H 'X-Forwarded-For: 1.2.3.4' -d '{"data":{"email":"ip-probe-891@example.com"}}'
+   ```
+
+   Both answer `{"result":{"ok":true}}`. In the Activity Log, the two newest
+   `AUTH_LOGIN_FAIL` rows must each show your real address as `ip`.
+
+3. Send one forged reset to each URL of `requestPasswordReset`, using a test
+   kinfolk account you own (an audit row is written only for a real account).
+   Each sends that account a reset email and uses one of its 3 resets for the day:
+
+   ```bash
+   curl -s -X POST 'https://us-central1-auntieos-ttpc.cloudfunctions.net/requestPasswordReset' -H 'Content-Type: application/json' -H 'X-Forwarded-For: 1.2.3.4' -d '{"data":{"email":"<test kinfolk email>"}}'
+   curl -s -X POST '<requestpasswordreset run.app URL>' -H 'Content-Type: application/json' -H 'X-Forwarded-For: 1.2.3.4' -d '{"data":{"email":"<test kinfolk email>"}}'
+   ```
+
+   The two newest `AUTH_PASSWORD_RESET_REQUESTED` rows must show your real address.
+
+4. In Logs Explorer, filter on `jsonPayload.event="clientIp.untrustedRightmost"`
+   and on `jsonPayload.event="clientIp.noForwardedFor"` for the last hour. Both
+   should be empty.
+
+What a failure means:
+
+- A row shows `1.2.3.4`: that URL adds no entry of its own, so the function keys
+  on what the caller wrote. Stop and report it.
+- A `clientIp.untrustedRightmost` error, or rows showing `untrusted` as `ip`: that
+  URL adds more entries than one. Its `rangeClass` says what sat in the rightmost
+  place (`googleFrontEnd`, `private` and so on). The function refuses to guess
+  further left, so every caller on that URL shares one 30-per-5-minute bucket
+  until `TRUSTED_PROXY_HOPS` in `loginSecurity.ts` is fixed in the next release.
+  Report it.
+- Every row shows the same Google address: the hop count is wrong in a way the
+  ranges did not catch. Report it.
+
+#### Rate-limit ledgers expire by TTL (#908)
+
+`ipRateLimits`, `failedLoginEmailRateLimits`, `unknownLoginAttempts` and
+`passwordResetEmailRateLimits` now carry `expiresAt` (their longest window plus
+one hour), with TTL policies declared in `mytribe/firestore.indexes.json` next
+to `notificationDedupe.expiresAt`. That file changed, so the release's index
+step (step 3) asks before deploying it: a detached `deploy:bg` run refuses and
+tells you to run the release in the foreground. After it deploys, the Firebase
+console under Firestore, then TTL, lists the five policies; a new policy can take
+a while to show as serving. Documents written before this release have no
+`expiresAt` and stay until their next write. No backfill: they are a few hundred
+bytes each, nothing lists these collections, and every new write carries the
+field.
 
 ### Backfills to run after a release
 

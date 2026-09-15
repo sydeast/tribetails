@@ -103,12 +103,14 @@ Legend: ✓ wired catalog path, ⚪ Firebase-native (no catalog dispatch by desi
 
 ### 1.8 Security
 
-Every `security.*` key in the catalog as of 2026-09-14. All three go to business admins only, from the `businessSettings/admins.uids` roster as staff, and sit under Account and security on the Business tab.
+Every `security.*` key in the catalog as of 2026-09-14. All five go to business admins only, from the `businessSettings/admins.uids` roster as staff, and sit under Account and security on the Business tab.
 
 | Key | Resolver(s) | Audience | Channels | Mode | Req | AE | Status | Call Site |
 |---|---|---|---|---|---|---|---|---|
 | `security.account.locked.operator` | businessAdmins | business | e,s,p | trigger | email, push | ✓ | ✓ | `loginSecurity.ts` `sendLockAlerts`, same call as the household's `auth.account.locked` (#869). Dedupe key per lock start |
 | `security.failedLogin.attempts.operator` | businessAdmins | business | e,s,p | trigger | email, push | ✓ | ✓ | `loginSecurity.ts` `sendWarningAlerts`, same call as the household's `auth.failedLogin.attempts` (#877). Dedupe key per warning burst |
+| `security.failedLogin.budgetExhausted.operator` | businessAdmins | business | e,s,p | trigger | email, push | ✓ | ✓ | `loginSecurity.ts` `sendReportBudgetAlert`, when `recordFailedLoginHandler` refuses a real account's 16th report in 24 hours (#891). Once per account per exhaustion; addresses that are not accounts never alert |
+| `security.account.locked.spike.operator` | businessAdmins | business | e,s,p | trigger | email, push | ✓ | ✓ | `loginSecurity.ts` `recordLockForSpike`, when 3 or more distinct accounts lock within 30 minutes (#891). Once per spike, state on `securitySignals/lockSpike` |
 | `security.breach_attempt.kinfolk` | businessAdmins | business | e,p | trigger | email, push | ✓ | ✓ | `security/confirmSecureReset.ts`, when a secure-reset confirmation is attempted against an account that did not ask |
 | `security.breach_attempt.staff` | businessAdmins | business | e,p | trigger | email, push | ✓ | ✓ | `security/confirmSecureReset.ts`, the same flow when the account holds the admin claim (#892) |
 
@@ -166,6 +168,7 @@ Each uses a `*NotifiedAtMs` field on source doc to prevent re-dispatch.
 |---|---|
 | `auth/loginSecurity.ts` (`sendLockAlerts`) | `auth.account.locked`, `security.account.locked.operator` |
 | `auth/loginSecurity.ts` (`sendWarningAlerts`) | `auth.failedLogin.attempts`, `security.failedLogin.attempts.operator` |
+| `auth/loginSecurity.ts` (`sendReportBudgetAlert`, `recordLockForSpike`) | `security.failedLogin.budgetExhausted.operator`, `security.account.locked.spike.operator` |
 | `billing/stripeWebhook.ts` | `invoice.charge.failed`, `invoice.payment.applied` |
 
 ### 2.6 Sweepers

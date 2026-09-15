@@ -436,6 +436,20 @@ describe('rules: flat top-level collections', () => {
     await assertFails(asAuntie(env).firestore().doc('n8nIpRateLimits/hash1').get());
   });
 
+  // #891: recordFailedLogin's lock-spike record. Written only by the Admin SDK;
+  // no rule matches it, so every client, the operator included, is denied.
+  it('securitySignals: the lock-spike record is default-deny for every client', async () => {
+    const env = await getEnv();
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().doc('securitySignals/lockSpike').set({ locks: [{ uid: 'k1', ts: 1 }], updatedAtMs: 1 });
+    });
+    const auntie = asAuntie(env).firestore();
+    await assertFails(auntie.doc('securitySignals/lockSpike').get());
+    await assertFails(auntie.doc('securitySignals/lockSpike').set({ locks: [] }));
+    await assertFails(env.unauthenticatedContext().firestore().doc('securitySignals/lockSpike').get());
+    await assertFails(env.unauthenticatedContext().firestore().doc('securitySignals/lockSpike').set({ locks: [] }));
+  });
+
   // #886: recordFailedLogin's per-address counter for addresses that are not
   // accounts. Operator reads for monitoring; no client may read or forge it.
   it('unknownLoginAttempts reads for the operator only and is never client-writable', async () => {

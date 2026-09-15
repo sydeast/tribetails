@@ -53,6 +53,21 @@ class NotificationAudienceTest {
         assertEquals(listOf("security.failedLogin.attempts.operator"), grouped.single().second.map { it.key })
     }
 
+    /**
+     * #891: the operator's two new failed-login signals, a spent report budget
+     * and a spike of locks, are business-only `security` rows. They appear on
+     * the Business tab under Account and security, and on no other tab.
+     */
+    @Test
+    fun operatorBudgetAndLockSpikeAlertsAreBusinessOnlyUnderAccountAndSecurity() {
+        val keys = listOf("security.failedLogin.budgetExhausted.operator", "security.account.locked.spike.operator")
+        val entries = keys.map { NotificationCatalogEntry(key = it, category = "security", audiences = setOf("business")) }
+        for (e in entries) assertEquals(setOf(NotifAudience.Business), e.notifAudiences(), e.key)
+        val grouped = sectionedNotifications(entries, NotifAudience.Business)
+        assertEquals(listOf("Account and security"), grouped.map { it.first.title })
+        assertEquals(keys.toSet(), grouped.single().second.map { it.key }.toSet())
+    }
+
     @Test
     fun audiencesDriveTheTabsDirectly() {
         assertEquals(setOf(NotifAudience.Business), entry(setOf("business")).notifAudiences())

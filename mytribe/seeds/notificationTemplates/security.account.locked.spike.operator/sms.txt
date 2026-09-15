@@ -1,0 +1,1 @@
+Tribe Tails SECURITY: {{lockedAccounts}} kinfolk accounts locked within {{windowMinutes}} min. Possible password guessing across accounts. Check the Activity Log.

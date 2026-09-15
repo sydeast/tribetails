@@ -901,6 +901,54 @@ const CATALOG_LIST: NotificationDef[] = [
       'A kinfolk account had 5 failed sign-in attempts in 10 minutes. It is not locked yet; it locks at 10 in 20 minutes.',
   },
   {
+    // #891: the operator's signal that an account's failed-login reports stopped
+    // counting. recordFailedLogin takes 15 reports per email per 24 hours; slow
+    // reports can spend that without warning, and then nothing warns or locks
+    // for a day. Fired by auth/loginSecurity.ts on the refusal, once per account
+    // per exhaustion (dedupeKey names the account and the saved exhaustion).
+    key: 'security.failedLogin.budgetExhausted.operator',
+    label: 'Sign-in protection paused on a kinfolk account',
+    audience: 'business',
+    audiences: { business: true },
+    category: 'security',
+    allowedChannels: ['email', 'sms', 'push'],
+    required: { email: true, push: true },
+    alwaysEnabled: true,
+    kinfolkFacing: false,
+    deliveryMode: 'trigger',
+    recipientResolver: 'businessAdmins',
+    templates: {
+      email: 'security.failedLogin.budgetExhausted.operator',
+      sms: 'security.failedLogin.budgetExhausted.operator',
+      push: 'security.failedLogin.budgetExhausted.operator',
+    },
+    description:
+      'A kinfolk account used its 15 failed sign-in reports for the day. For 24 hours more failures neither warn nor lock.',
+  },
+  {
+    // #891: one alert when LOCK_SPIKE_ACCOUNTS (3) distinct kinfolk accounts
+    // lock inside LOCK_SPIKE_WINDOW_MS (30 minutes). Each lock still sends
+    // security.account.locked.operator; this is the pattern across them. Fired
+    // by auth/loginSecurity.ts with a dedupeKey naming the saved spike start.
+    key: 'security.account.locked.spike.operator',
+    label: 'Several kinfolk accounts locked at once',
+    audience: 'business',
+    audiences: { business: true },
+    category: 'security',
+    allowedChannels: ['email', 'sms', 'push'],
+    required: { email: true, push: true },
+    alwaysEnabled: true,
+    kinfolkFacing: false,
+    deliveryMode: 'trigger',
+    recipientResolver: 'businessAdmins',
+    templates: {
+      email: 'security.account.locked.spike.operator',
+      sms: 'security.account.locked.spike.operator',
+      push: 'security.account.locked.spike.operator',
+    },
+    description: '3 or more kinfolk accounts locked within 30 minutes.',
+  },
+  {
     key: 'security.breach_attempt.kinfolk',
     label: 'Unsolicited password reset attempt',
     audience: 'business',
