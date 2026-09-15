@@ -1,7 +1,9 @@
 package com.kinfolk.portal.share
 
+import com.kinfolk.portal.firebase.FirebaseRestConfig
+import com.kinfolk.portal.firebase.RestEndpoints
+import com.kinfolk.portal.firebase.RestHttp
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.get
 import io.ktor.client.request.headers
 import io.ktor.client.request.post
@@ -18,13 +20,30 @@ import kotlinx.serialization.json.put
 
 actual fun makeShareLinkFetcher(base: String): ShareLinkFetcher = JvmShareLinkFetcher(base)
 
-private class JvmShareLinkFetcher(private val base: String) : ShareLinkFetcher {
-    private val client = HttpClient(CIO)
+/**
+ * #889 review: [base] is the caller-supplied production default
+ * (DEFAULT_SHARE_BASE). This jvm actual used to build its own
+ * HttpClient(CIO) and always post/get against that hardcoded prod host, the
+ * same hole SecureResetFetcher.jvm.kt had. It now shares RestHttp.client
+ * (which carries the :jvmTest network guard) and, when an emulator is
+ * active, routes through FirebaseRestConfig.functionsBase() instead of the
+ * caller-supplied base.
+ *
+ * [client]/[endpoints] are injectable so a test can assert the outgoing URL
+ * against a MockEngine without touching process env or a real socket.
+ */
+internal class JvmShareLinkFetcher(
+    private val base: String,
+    private val client: HttpClient = RestHttp.client,
+    private val endpoints: RestEndpoints = FirebaseRestConfig,
+) : ShareLinkFetcher {
     private val json = Json { ignoreUnknownKeys = true }
+
+    private fun resolvedBase(): String = if (endpoints.emulatorActive) endpoints.functionsBase() else base
 
     override suspend fun getShareLink(shareId: String, passcode: String?): GetShareLinkResult {
         val url = buildString {
-            append(base); append("/getShareLink/"); append(shareId)
+            append(resolvedBase()); append("/getShareLink/"); append(shareId)
             if (!passcode.isNullOrBlank()) append("?passcode=").append(passcode)
         }
         val resp: HttpResponse = client.get(url)
@@ -56,7 +75,7 @@ private class JvmShareLinkFetcher(private val base: String) : ShareLinkFetcher {
             put("recaptchaToken", recaptchaToken)
             if (parentCommentId != null) put("parentCommentId", parentCommentId)
         }
-        val resp: HttpResponse = client.post("$base/addGuestKinTaleComment") {
+        val resp: HttpResponse = client.post("${resolvedBase()}/addGuestKinTaleComment") {
             headers { append(HttpHeaders.ContentType, "application/json") }
             setBody(json.encodeToString(JsonObject.serializer(), payload))
         }

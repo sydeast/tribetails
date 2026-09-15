@@ -2,6 +2,7 @@ package com.kinfolk.portal
 
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
+import com.kinfolk.portal.firebase.FirebaseRestConfig
 import com.kinfolk.portal.ui.KinfolkPortalAppGuarded
 import com.kinfolk.portal.util.SecureResetParams
 import com.kinfolk.portal.util.jvmInitialClaimInviteId
@@ -29,8 +30,15 @@ fun main(args: Array<String>) {
         jvmInitialSecureResetParams = SecureResetParams(oobCode = oob, email = srEmail)
     }
 
+    // #889 review, item 3: a visible signal that this desktop session is
+    // talking to a local Firebase emulator, not production, so an emulator
+    // run left up in the background is never mistaken for the real app. The
+    // jvm desktop target is not a delivery surface (mytribe/CLAUDE.md), so a
+    // window-title suffix is the whole feature, not a placeholder for more.
+    val windowTitle = if (FirebaseRestConfig.emulatorActive) "MyTribe [EMULATOR]" else "MyTribe"
+
     application {
-        Window(onCloseRequest = ::exitApplication, title = "MyTribe") {
+        Window(onCloseRequest = ::exitApplication, title = windowTitle) {
             KinfolkPortalAppGuarded()
         }
     }

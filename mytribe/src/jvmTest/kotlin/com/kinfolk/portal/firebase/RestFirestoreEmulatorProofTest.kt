@@ -19,18 +19,18 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * #889: proves `FirebaseRestConfig.firestoreBase()` — what `RestFirestoreClient.root`
- * is built from — actually reaches the LOCAL Firestore emulator, not production.
+ * #889: proves `FirebaseRestConfig.firestoreBase()`, what `RestFirestoreClient.root`
+ * is built from, actually reaches the LOCAL Firestore emulator, not production.
  *
  * Seeds and reads with `Bearer owner`, the Firestore emulator's own admin-bypass
  * credential. That is deliberate and test-only: `Bearer owner` is never valid
  * against production, and `RestFirestoreClient` itself never sends it (see its
- * class doc — it always carries the signed-in kinfolk's real ID token, emulator
+ * class doc: it always carries the signed-in kinfolk's real ID token, emulator
  * or not, so `firestore.rules` still gates a read). Proving the URL lands on the
  * emulator does not need a rules-permitted signed-in account; standing one up for
  * this is a separate, heavier concern this test does not take on.
  *
- * Skipped unless FIRESTORE_EMULATOR_HOST is set — the same `assumeTrue` gate
+ * Skipped unless FIRESTORE_EMULATOR_HOST is set, the same `assumeTrue` gate
  * `KinfolkMergeEmulatorTest` (auntieos-admin) uses. Run it from mytribe/ with:
  *
  *   firebase emulators:exec --project auntieos-ttpc --only firestore \

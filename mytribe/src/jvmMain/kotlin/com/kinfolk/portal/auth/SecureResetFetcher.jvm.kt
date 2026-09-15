@@ -1,7 +1,9 @@
 package com.kinfolk.portal.auth
 
+import com.kinfolk.portal.firebase.FirebaseRestConfig
+import com.kinfolk.portal.firebase.RestEndpoints
+import com.kinfolk.portal.firebase.RestHttp
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.headers
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -16,9 +18,28 @@ import kotlinx.serialization.json.put
 
 actual fun makeSecureResetFetcher(base: String): SecureResetFetcher = JvmSecureResetFetcher(base)
 
-private class JvmSecureResetFetcher(private val base: String) : SecureResetFetcher {
-    private val client = HttpClient(CIO)
+/**
+ * #889 review: [base] is the caller-supplied production default
+ * (DEFAULT_SECURE_RESET_BASE, common to jvm/android/js). This jvm actual used
+ * to build its own HttpClient(CIO) and always post to that hardcoded prod
+ * host, so a JVM test that reached confirmReset would hit production. It now
+ * shares RestHttp.client (which carries the :jvmTest network guard) and, when
+ * an emulator is active, routes through FirebaseRestConfig.functionsBase()
+ * instead of the caller-supplied base. An explicit prod base still wins when
+ * no emulator is configured.
+ *
+ * [client]/[endpoints] are injectable so a test can assert the outgoing URL
+ * against a MockEngine without touching process env or a real socket. The
+ * request payload is unchanged here; PR #903 (#892) owns that shape.
+ */
+internal class JvmSecureResetFetcher(
+    private val base: String,
+    private val client: HttpClient = RestHttp.client,
+    private val endpoints: RestEndpoints = FirebaseRestConfig,
+) : SecureResetFetcher {
     private val json = Json { ignoreUnknownKeys = true }
+
+    private fun resolvedBase(): String = if (endpoints.emulatorActive) endpoints.functionsBase() else base
 
     override suspend fun confirmReset(
         oobCode: String,
@@ -32,7 +53,7 @@ private class JvmSecureResetFetcher(private val base: String) : SecureResetFetch
             put("email", email)
             put("userAgent", userAgent)
         }
-        val resp = client.post("$base/confirmSecureReset") {
+        val resp = client.post("${resolvedBase()}/confirmSecureReset") {
             headers { append(HttpHeaders.ContentType, "application/json") }
             setBody(json.encodeToString(JsonObject.serializer(), payload))
         }

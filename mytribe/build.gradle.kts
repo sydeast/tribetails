@@ -182,6 +182,11 @@ kotlin {
             dependencies {
                 implementation(compose.desktop.currentOs)
                 implementation(compose.desktop.uiTestJUnit4)
+                // #889 review: lets a test build a RestHttp client backed by a
+                // scripted engine instead of CIO, so a call site's outgoing
+                // URL can be asserted with no real socket and no dependency
+                // on process env for the emulator switches.
+                implementation("io.ktor:ktor-client-mock:3.5.2")
             }
         }
         androidMain.dependencies {
@@ -382,9 +387,9 @@ compose.desktop {
 
 // #889: arms RestHttp's test-runtime network guard for exactly the Gradle
 // Test task CLAUDE.md names as the gate (":jvmTest"), not testDebugUnitTest or
-// any other Test task. The property has no effect outside a test JVM — a
-// shipped desktop build never sets it — so this is the "shared test setup"
-// that installs the guard: one place, not one fixture per test class.
+// any other Test task. The property has no effect outside a test JVM: a
+// shipped desktop build never sets it, so this is the "shared test setup"
+// that installs the guard, one place, not one fixture per test class.
 tasks.withType<Test>().matching { it.name == "jvmTest" }.configureEach {
     systemProperty("kinfolk.portal.testRuntime", "true")
 }

@@ -91,4 +91,21 @@ class FirebaseRestConfigTest {
             FirebaseRestConfig.firestoreBase(emulatorHost = null),
         )
     }
+
+    /** #889 review, item 1: SecureResetFetcher/ShareLinkFetcher need the bare functions host, no function name. */
+    @Test
+    fun functionsBaseUsesTheFunctionsEmulatorWhenAHostIsGiven() {
+        assertEquals(
+            "http://127.0.0.1:5001/auntieos-ttpc/us-central1",
+            FirebaseRestConfig.functionsBase(emulatorHost = "127.0.0.1:5001"),
+        )
+    }
+
+    @Test
+    fun functionsBaseUsesProductionWhenNoHostIsGiven() {
+        assertEquals(
+            "https://us-central1-auntieos-ttpc.cloudfunctions.net",
+            FirebaseRestConfig.functionsBase(emulatorHost = null),
+        )
+    }
 }

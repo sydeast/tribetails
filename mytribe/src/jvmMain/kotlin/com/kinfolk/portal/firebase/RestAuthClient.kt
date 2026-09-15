@@ -1,5 +1,6 @@
 package com.kinfolk.portal.firebase
 
+import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.forms.FormDataContent
 import io.ktor.client.request.post
@@ -18,8 +19,16 @@ import kotlinx.serialization.Serializable
  *  - signInWithPassword:  identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=
  *  - exchange refresh:    securetoken.googleapis.com/v1/token?key=
  *  - lookup user:         identitytoolkit.googleapis.com/v1/accounts:lookup?key=
+ *
+ * #889 review, item 5: [client] and [endpoints] are constructor params, not
+ * RestHttp.client and FirebaseRestConfig read directly, so a test can inject
+ * a MockEngine client and an explicit RestEndpoints instance and assert the
+ * outgoing URL without touching process env or a real socket.
  */
-internal class RestAuthClient {
+internal class RestAuthClient(
+    private val client: HttpClient = RestHttp.client,
+    private val endpoints: RestEndpoints = FirebaseRestConfig,
+) {
 
     @Serializable
     private data class SignInRequest(
@@ -57,8 +66,8 @@ internal class RestAuthClient {
     )
 
     suspend fun signInWithPassword(email: String, password: String): SignInResponse {
-        val url = "${FirebaseRestConfig.identityToolkitBase()}/accounts:signInWithPassword?key=${FirebaseRestConfig.API_KEY}"
-        val res: HttpResponse = RestHttp.client.post(url) {
+        val url = "${endpoints.identityToolkitBase()}/accounts:signInWithPassword?key=${endpoints.API_KEY}"
+        val res: HttpResponse = client.post(url) {
             contentType(ContentType.Application.Json)
             setBody(SignInRequest(email, password))
         }
@@ -72,8 +81,8 @@ internal class RestAuthClient {
     internal data class CustomTokenResponse(val idToken: String, val refreshToken: String)
     /** accounts:signInWithCustomToken — claim flow (server-minted account). */
     suspend fun signInWithCustomToken(token: String): CustomTokenResponse {
-        val url = "${FirebaseRestConfig.identityToolkitBase()}/accounts:signInWithCustomToken?key=${FirebaseRestConfig.API_KEY}"
-        val res: HttpResponse = RestHttp.client.post(url) {
+        val url = "${endpoints.identityToolkitBase()}/accounts:signInWithCustomToken?key=${endpoints.API_KEY}"
+        val res: HttpResponse = client.post(url) {
             contentType(ContentType.Application.Json)
             setBody(CustomTokenRequest(token))
         }
@@ -83,8 +92,8 @@ internal class RestAuthClient {
 
     /** Returns Pair(idToken, uid). Updates JvmTokenStore.refreshToken if rotated. */
     suspend fun refresh(refreshToken: String): Pair<String, String> {
-        val url = "${FirebaseRestConfig.secureTokenBase()}/token?key=${FirebaseRestConfig.API_KEY}"
-        val res: HttpResponse = RestHttp.client.post(url) {
+        val url = "${endpoints.secureTokenBase()}/token?key=${endpoints.API_KEY}"
+        val res: HttpResponse = client.post(url) {
             setBody(
                 FormDataContent(
                     Parameters.build {
@@ -102,9 +111,9 @@ internal class RestAuthClient {
 
     /** Requests a password reset via the custom Cloud Function (bypasses Firebase email). */
     suspend fun sendPasswordReset(email: String) {
-        val url = FirebaseRestConfig.functionUrl("requestPasswordReset")
+        val url = endpoints.functionUrl("requestPasswordReset")
         val body = """{"data":{"email":${kotlinx.serialization.json.JsonPrimitive(email)}}}"""
-        val res: HttpResponse = RestHttp.client.post(url) {
+        val res: HttpResponse = client.post(url) {
             contentType(ContentType.Application.Json)
             setBody(body)
         }
@@ -117,9 +126,9 @@ internal class RestAuthClient {
      * callable is unauthenticated. Same endpoint shape as [sendPasswordReset].
      */
     suspend fun reportFailedLogin(email: String) {
-        val url = FirebaseRestConfig.functionUrl("recordFailedLogin")
+        val url = endpoints.functionUrl("recordFailedLogin")
         val body = """{"data":{"email":${kotlinx.serialization.json.JsonPrimitive(email)}}}"""
-        val res: HttpResponse = RestHttp.client.post(url) {
+        val res: HttpResponse = client.post(url) {
             contentType(ContentType.Application.Json)
             setBody(body)
         }
@@ -127,8 +136,8 @@ internal class RestAuthClient {
     }
 
     suspend fun lookup(idToken: String): LookupUser? {
-        val url = "${FirebaseRestConfig.identityToolkitBase()}/accounts:lookup?key=${FirebaseRestConfig.API_KEY}"
-        val res: HttpResponse = RestHttp.client.post(url) {
+        val url = "${endpoints.identityToolkitBase()}/accounts:lookup?key=${endpoints.API_KEY}"
+        val res: HttpResponse = client.post(url) {
             contentType(ContentType.Application.Json)
             setBody(mapOf("idToken" to idToken))
         }
@@ -150,14 +159,14 @@ internal class RestAuthClient {
      *  the tokens that a password change invalidates. Nulls are omitted from the
      *  body so a password-only change never sends an empty email (and vice versa). */
     suspend fun update(idToken: String, password: String? = null, email: String? = null): UpdateResponse {
-        val url = "${FirebaseRestConfig.identityToolkitBase()}/accounts:update?key=${FirebaseRestConfig.API_KEY}"
+        val url = "${endpoints.identityToolkitBase()}/accounts:update?key=${endpoints.API_KEY}"
         val fields = buildList {
             add("\"idToken\":${kotlinx.serialization.json.JsonPrimitive(idToken)}")
             add("\"returnSecureToken\":true")
             if (password != null) add("\"password\":${kotlinx.serialization.json.JsonPrimitive(password)}")
             if (email != null) add("\"email\":${kotlinx.serialization.json.JsonPrimitive(email)}")
         }
-        val res: HttpResponse = RestHttp.client.post(url) {
+        val res: HttpResponse = client.post(url) {
             contentType(ContentType.Application.Json)
             setBody("{${fields.joinToString(",")}}")
         }
