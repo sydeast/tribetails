@@ -84,7 +84,8 @@ class AuntieRepositoryCreateKinfolkTest {
         val result = repo().createKinfolkComplete(input)
 
         assertTrue(result.isSuccess)
-        assertEquals("kf-new", result.getOrNull()?.id)
+        assertEquals("kf-new", result.getOrNull()?.kinfolk?.id)
+        assertEquals(null, result.getOrNull()?.duplicateOf)
         val payload = sentKinfolk()
         for (key in excludedKeys) {
             assertFalse("$key must never be written by the client (#829)", payload.containsKey(key))
@@ -104,8 +105,9 @@ class AuntieRepositoryCreateKinfolkTest {
 
         val result = repo().createKinfolkComplete(input)
 
-        assertEquals("kf-existing", result.getOrThrow().id)
-        assertEquals("Jamie", result.getOrThrow().firstName)
+        assertEquals("kf-existing", result.getOrThrow().kinfolk.id)
+        assertEquals("kf-existing", result.getOrThrow().duplicateOf)
+        assertEquals("Jamie", result.getOrThrow().kinfolk.firstName)
     }
 
     @Test

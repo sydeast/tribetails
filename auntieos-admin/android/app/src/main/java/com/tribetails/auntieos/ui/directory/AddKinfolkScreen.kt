@@ -48,7 +48,16 @@ fun AddKinfolkScreen(
         onBack = onBack,
         imePaddingEnabled = true,
     ) {
-        LazyColumn(
+        // #890: Add opened on a household still waiting on its Emergency Contact.
+        // Ask first, as admin web and the desktop console do; the form is not shown
+        // until the operator chooses.
+        if (state.offerPendingOnOpen && state.createdKinfolkId != null) {
+            PendingAddKinfolkPrompt(
+                name = pendingHouseholdName(state),
+                onContinue = viewModel::continuePendingAdd,
+                onDiscard = viewModel::discardPendingAdd,
+            )
+        } else LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 16.dp),
@@ -302,6 +311,47 @@ fun AddKinfolkScreen(
                 )
             }
         }
+    }
+}
+
+/**
+ * #890: the choice offered when Add opens on a household created without its
+ * Emergency Contact. Same copy as admin web (`AddKinfolkDialog.tsx`) and the
+ * desktop console (`KinfolkEditScreen.kt`). Discard writes nothing.
+ */
+@Composable
+fun PendingAddKinfolkPrompt(name: String, onContinue: () -> Unit, onDiscard: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        AuntieCard(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = "$name was created, but the Emergency Contact did not save. The household shows No Emergency Contact until it is saved.",
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = AuntieTheme.colors.textPrimary,
+                )
+                Text(
+                    text = "Discard starts a new Add and leaves $name as it is.",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = AuntieTheme.colors.textDim,
+                )
+            }
+        }
+        PrimaryButton(
+            label = "Continue adding the Emergency Contact for $name",
+            onClick = onContinue,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        GhostButton(
+            label = "Discard",
+            onClick = onDiscard,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 

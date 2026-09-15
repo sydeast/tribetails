@@ -5,6 +5,7 @@ import com.tribetails.auntieos.data.model.EmergencyContactDraft
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.KinfolkCreated
 import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
 import io.mockk.coEvery
@@ -54,7 +55,7 @@ class DirectoryViewModelAuditLogTest {
     @Test
     fun `saveKinfolk fires CREATE_KINFOLK audit entry`() = runTest(testDispatcher) {
         coEvery { repository.createKinfolkComplete(any()) } returns
-            Result.success(Kinfolk(id = "new-id", firstName = "Pat", lastName = "S"))
+            Result.success(KinfolkCreated(Kinfolk(id = "new-id", firstName = "Pat", lastName = "S"), null))
         coEvery { repository.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
         viewModel.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         viewModel.updateFirstName("Pat")

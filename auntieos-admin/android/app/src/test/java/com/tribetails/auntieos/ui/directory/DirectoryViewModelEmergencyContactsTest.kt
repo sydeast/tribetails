@@ -5,6 +5,7 @@ import com.tribetails.auntieos.data.model.EmergencyContactDraft
 import com.tribetails.auntieos.data.model.EMERGENCY_CONTACT_REQUIRED
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.KinfolkCreated
 import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.util.CallEventStore
@@ -67,7 +68,7 @@ class DirectoryViewModelEmergencyContactsTest {
 
     @Test
     fun `add creates the household, then saves the contact against the new id`() {
-        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(firstArg<Kinfolk>().copy(id = "kf-new")) }
+        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-new"), null)) }
         coEvery { repo.saveEmergencyContacts("kf-new", any()) } returns Result.success(emptyList())
         vm.updateFirstName("Jamie")
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
@@ -78,7 +79,7 @@ class DirectoryViewModelEmergencyContactsTest {
 
     @Test
     fun `a failed contact save keeps the new id so a retry never creates a second household`() {
-        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(firstArg<Kinfolk>().copy(id = "kf-new")) }
+        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-new"), null)) }
         coEvery { repo.saveEmergencyContacts("kf-new", any()) } returnsMany listOf(Result.failure(Exception("offline")), Result.success(emptyList()))
         vm.updateFirstName("Jamie")
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
@@ -95,7 +96,7 @@ class DirectoryViewModelEmergencyContactsTest {
     // #829 review item 6.
     @Test
     fun `leaving Add with a created household keeps it, so coming back continues that household`() {
-        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(firstArg<Kinfolk>().copy(id = "kf-new")) }
+        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-new"), null)) }
         coEvery { repo.saveEmergencyContacts("kf-new", any()) } returnsMany listOf(Result.failure(Exception("offline")), Result.success(emptyList()))
         vm.updateFirstName("Jamie")
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "8055550199"))
@@ -119,7 +120,7 @@ class DirectoryViewModelEmergencyContactsTest {
 
     @Test
     fun `the CREATE audit waits for the contact outcome and says when the contact did not save`() {
-        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(firstArg<Kinfolk>().copy(id = "kf-new", firstName = "Jamie")) }
+        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-new", firstName = "Jamie"), null)) }
         coEvery { repo.saveEmergencyContacts("kf-new", any()) } returnsMany listOf(Result.failure(Exception("offline")), Result.success(emptyList()))
         coEvery { repo.logActivity(any()) } returns Result.success(Unit)
         vm.updateFirstName("Jamie")
@@ -148,7 +149,7 @@ class DirectoryViewModelEmergencyContactsTest {
 
     @Test
     fun `a call never overwrites a household still waiting on its contact`() {
-        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(firstArg<Kinfolk>().copy(id = "kf-new")) }
+        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-new"), null)) }
         coEvery { repo.saveEmergencyContacts("kf-new", any()) } returns Result.failure(Exception("offline"))
         vm.updateFirstName("Jamie")
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "8055550199"))
@@ -166,7 +167,7 @@ class DirectoryViewModelEmergencyContactsTest {
         CallEventStore.clearActiveCall()
         var created: Kinfolk? = null
         coEvery { repo.createKinfolkComplete(any()) } answers {
-            Result.success(firstArg<Kinfolk>().copy(id = "kf-from-call").also { created = it })
+            Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-from-call").also { created = it }, null))
         }
         coEvery { repo.saveEmergencyContacts("kf-from-call", any()) } returns Result.success(emptyList())
 
@@ -185,7 +186,7 @@ class DirectoryViewModelEmergencyContactsTest {
     fun `cancelling Add from a call leaves the call unlinked, and a later Add does not link it`() {
         CallEventStore.addEvent(CallEvent(callSid = "CA829cancelled", callerNumber = "+18055550133", transcript = "", popupUrl = ""))
         CallEventStore.clearActiveCall()
-        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(firstArg<Kinfolk>().copy(id = "kf-later")) }
+        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-later"), null)) }
         coEvery { repo.saveEmergencyContacts("kf-later", any()) } returns Result.success(emptyList())
 
         vm.prefillAddKinfolkFromCall("Jamie Halbrook", "+18055550133", "CA829cancelled")
@@ -215,7 +216,7 @@ class DirectoryViewModelEmergencyContactsTest {
      */
     @Test
     fun `a retry with a cleared contact is refused before it ever calls the callable again`() {
-        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(firstArg<Kinfolk>().copy(id = "kf-new")) }
+        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-new"), null)) }
         coEvery { repo.saveEmergencyContacts("kf-new", any()) } returns Result.failure(Exception("offline"))
         vm.updateFirstName("Jamie")
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
@@ -242,7 +243,7 @@ class DirectoryViewModelEmergencyContactsTest {
      */
     @Test
     fun `household fields ignore updates once the household is created, so a retry cannot silently change what was saved`() {
-        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(firstArg<Kinfolk>().copy(id = "kf-new")) }
+        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-new"), null)) }
         coEvery { repo.saveEmergencyContacts("kf-new", any()) } returnsMany listOf(Result.failure(Exception("offline")), Result.success(emptyList()))
         vm.updateFirstName("Jamie")
         vm.updatePhoneNumber("5125550134")

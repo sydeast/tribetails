@@ -231,7 +231,15 @@ data class AddKinfolkUiState(
     // Once the household is created, that call event is linked to it, as the
     // Calls screen's direct create did before calls went through Add.
     val sourceCallSid: String? = null,
+    // #890: set when Add is left with [createdKinfolkId] still waiting on its
+    // Emergency Contact. Opening Add again then asks first: continue that
+    // household, or Discard, the same choice admin web and the desktop console offer.
+    val offerPendingOnOpen: Boolean = false,
 )
+
+/** #890: how the Continue prompt names the household waiting on its contact. */
+fun pendingHouseholdName(state: AddKinfolkUiState): String =
+    "${state.firstName.trim()} ${state.lastName.trim()}".trim().ifBlank { "this household" }
 
 data class EditKinfolkUiState(
     val kinfolkId: String = "",
@@ -840,7 +848,8 @@ class DirectoryViewModel(
                 status                 = finalStatus,
             )
 
-            repository.createKinfolkComplete(newKinfolk).onSuccess { saved ->
+            repository.createKinfolkComplete(newKinfolk).onSuccess { created ->
+                val saved = created.kinfolk
                 AuntieLog.i("Kinfolk saved: $finalStatus")
                 // A household opened from a call is linked onto that call as soon
                 // as it exists, whatever its contact save does next: the
@@ -850,7 +859,10 @@ class DirectoryViewModel(
                 }
                 // #829 review item 6: the CREATE audit waits for the contact
                 // outcome, so the log says whether the household got its contact.
-                saveNewHouseholdContacts(saved.id, state.copy(isSaving = true, createdKinfolkId = saved.id), auditCreatedName = saved.displayName)
+                // #890: a `duplicateOf` answer is a household this operator created
+                // minutes ago, already audited then, so no second CREATE is logged.
+                val auditName = if (created.duplicateOf == null) saved.displayName else null
+                saveNewHouseholdContacts(saved.id, state.copy(isSaving = true, createdKinfolkId = saved.id), auditCreatedName = auditName)
             }.onFailure { error ->
                 AuntieLog.e("Failed to save kinfolk", error)
                 _addKinfolkState.value = state.copy(
@@ -913,7 +925,22 @@ class DirectoryViewModel(
      */
     fun leaveAddKinfolk() {
         val state = _addKinfolkState.value
-        if (state.createdKinfolkId == null) clearAddKinfolkForm() else _addKinfolkState.value = state.copy(isSaving = false)
+        if (state.createdKinfolkId == null) clearAddKinfolkForm()
+        else _addKinfolkState.value = state.copy(isSaving = false, offerPendingOnOpen = true)
+    }
+
+    /** #890: Continue. Add shows the waiting household again, fields locked, "Save Emergency Contact". */
+    fun continuePendingAdd() {
+        _addKinfolkState.value = _addKinfolkState.value.copy(offerPendingOnOpen = false)
+    }
+
+    /**
+     * #890: Discard. Starts a blank Add and writes NOTHING: the household stays as
+     * it was created and shows No Emergency Contact until it is fixed on its own
+     * profile. Same meaning as Discard on admin web and the desktop console.
+     */
+    fun discardPendingAdd() {
+        clearAddKinfolkForm()
     }
 
     /**

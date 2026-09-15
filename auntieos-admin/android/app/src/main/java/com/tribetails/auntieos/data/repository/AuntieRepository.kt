@@ -53,6 +53,13 @@ private val KINFOLK_CREATE_EXCLUDED_FIELDS = setOf(
     "emergencyContactRelation",
 )
 
+/**
+ * #890: what `createKinfolk` answered. [duplicateOf] is set when the server handed
+ * back a household this operator created in the last 10 minutes with the same
+ * phone or email; [kinfolk] then carries that household's id.
+ */
+data class KinfolkCreated(val kinfolk: Kinfolk, val duplicateOf: String?)
+
 class AuntieRepository(
     private val n8n: N8nApi,
     /**
@@ -407,11 +414,12 @@ class AuntieRepository(
     /**
      * #890: through the `createKinfolk` callable, not a direct `add`. The server
      * hands back the household this operator created in the last 10 minutes with
-     * the same phone or email (`duplicateOf`) instead of creating a second one, and
-     * the returned [Kinfolk] then carries THAT id, so Add Kinfolk carries on and
-     * saves the Emergency Contact onto the existing household.
+     * the same phone or email (`duplicateOf`) instead of creating a second one. The
+     * returned [KinfolkCreated.kinfolk] then carries THAT id, so Add Kinfolk carries
+     * on and saves the Emergency Contact onto the existing household, and
+     * [KinfolkCreated.duplicateOf] tells the caller not to audit a second CREATE.
      */
-    suspend fun createKinfolkComplete(kinfolk: Kinfolk): Result<Kinfolk> = runCatching {
+    suspend fun createKinfolkComplete(kinfolk: Kinfolk): Result<KinfolkCreated> = runCatching {
         AuntieLog.i("Creating kinfolk complete phone=${AuntieLog.redactPhone(kinfolk.phoneNumber)}")
         authGate.ensureAuthenticated()
         val payload = mapOf("kinfolk" to kinfolkCreatePayload(kinfolk).mapValues { (_, v) -> callableValue(v) })
@@ -424,8 +432,8 @@ class AuntieRepository(
         if (duplicateOf != null) {
             AuntieLog.i("createKinfolk: continuing kinfolk id=$duplicateOf, added minutes ago with the same phone or email")
         }
-        kinfolk.copy(id = id).also {
-            AuntieLog.i("Created kinfolk id=${it.id}")
+        KinfolkCreated(kinfolk.copy(id = id), duplicateOf).also {
+            AuntieLog.i("Created kinfolk id=${it.kinfolk.id}")
         }
     }.onFailure { AuntieLog.e("Failed to create complete kinfolk", it) }
 
