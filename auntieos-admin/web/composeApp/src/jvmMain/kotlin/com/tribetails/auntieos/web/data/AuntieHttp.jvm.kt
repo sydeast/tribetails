@@ -74,11 +74,18 @@ internal fun emulatorHostOf(hostPort: String): String {
     return bare.lowercase()
 }
 
-/** Four dotted decimal octets, or null. A literal parse only: nothing here resolves a name. */
+/**
+ * Four dotted decimal octets, or null. A literal parse only: nothing here resolves a name.
+ * #867 review: ASCII digits only (`Char.isDigit` also takes other scripts' digits), and no
+ * leading zero on a multi-digit octet, which some resolvers read as octal (`010` is 8).
+ */
 private fun ipv4Octets(host: String): List<Int>? {
     val parts = host.split('.')
     if (parts.size != 4) return null
-    val octets = parts.map { p -> if (p.isEmpty() || p.length > 3 || !p.all(Char::isDigit)) return null else p.toInt() }
+    val octets = parts.map { p ->
+        if (p.isEmpty() || p.length > 3 || !p.all { it in '0'..'9' } || (p.length > 1 && p[0] == '0')) return null
+        p.toInt()
+    }
     return octets.takeIf { o -> o.all { it in 0..255 } }
 }
 

@@ -97,6 +97,20 @@ class DesktopTransportTest {
             .forEach { assertTrue(!isLoopbackOrPrivateHost(it), "$it should be refused") }
     }
 
+    /** #867 review: a leading zero can read as octal, and `isDigit` takes non-ASCII digits. */
+    @Test
+    fun onlyPlainAsciiOctetsParseAsAddresses() {
+        assertTrue(isLoopbackOrPrivateHost("10.0.0.1"))
+        assertTrue(isLoopbackOrPrivateHost("192.168.0.10"))
+        assertTrue(!isLoopbackOrPrivateHost("010.0.0.1"), "leading zero")
+        assertTrue(!isLoopbackOrPrivateHost("10.00.0.1"), "leading zero in a later octet")
+        assertTrue(!isLoopbackOrPrivateHost("0127.0.0.1"), "leading zero on loopback")
+        assertTrue(!isLoopbackOrPrivateHost("１０.0.0.1"), "fullwidth digits")
+        assertTrue(!isLoopbackOrPrivateHost("١٠.0.0.1"), "Arabic-Indic digits")
+        assertTrue(!isLoopbackHost("١٢٧.0.0.1"), "Arabic-Indic 127")
+        assertTrue(NetworkGuard.blockReason("010.0.0.7", listOf("010.0.0.7:8080")) != null)
+    }
+
     @Test
     fun anUntrustedEmulatorVariableIsRefusedLoudlyAndIgnored() {
         val reports = mutableListOf<String>()
