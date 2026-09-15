@@ -4,6 +4,7 @@ import com.tribetails.auntieos.data.model.EmergencyContactDraft
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.KinfolkCreated
 import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
 import io.mockk.coEvery
@@ -120,7 +121,7 @@ class DirectoryViewModelArchiveTest {
 
     @Test
     fun `saveKinfolk defaults blank status to prospect`() = runTest(testDispatcher) {
-        coEvery { repository.createKinfolkComplete(any()) } returns Result.success(Kinfolk(id = "new-id"))
+        coEvery { repository.createKinfolkComplete(any()) } returns Result.success(KinfolkCreated(Kinfolk(id = "new-id"), null))
         coEvery { repository.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
         viewModel.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         viewModel.updateFirstName("Pat")
@@ -135,7 +136,7 @@ class DirectoryViewModelArchiveTest {
 
     @Test
     fun `saveKinfolk respects explicit status`() = runTest(testDispatcher) {
-        coEvery { repository.createKinfolkComplete(any()) } returns Result.success(Kinfolk(id = "new-id"))
+        coEvery { repository.createKinfolkComplete(any()) } returns Result.success(KinfolkCreated(Kinfolk(id = "new-id"), null))
         coEvery { repository.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
         viewModel.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         viewModel.updateFirstName("Pat")

@@ -35,6 +35,8 @@ import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.UserCog
 import com.composables.icons.lucide.UserPlus
 import com.tribetails.auntieos.web.data.AuditLog
+import com.tribetails.auntieos.web.data.AuthClient
+import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.data.EMERGENCY_CONTACT_WHO_GETS_CALLED
 import com.tribetails.auntieos.web.data.EmergencyContactDraft
 import com.tribetails.auntieos.web.data.NO_EMERGENCY_CONTACT
@@ -165,6 +167,10 @@ fun KinfolkEditScreen(
     // then on Save retries ONLY the contacts (never a second household) and the
     // household fields lock, as admin web and Android do.
     var createdKinfolkId by remember(kinfolkId) { mutableStateOf<String?>(null) }
+    // #890: the operator this Add belongs to. A household created without its
+    // contact is kept under this uid (PendingAddKinfolk), so opening Add again
+    // offers to continue it rather than creating a second one.
+    val operatorUid = remember { AuthClient().authStateStream() }.collectAsState(initial = null).value?.uid
     var internalNotes  by remember(kinfolkId) { mutableStateOf("") }
     var referral       by remember(kinfolkId) { mutableStateOf("") }
     var vetName        by remember(kinfolkId) { mutableStateOf("") }
@@ -282,6 +288,42 @@ fun KinfolkEditScreen(
         formValues               = formValues.toMap(),
     ) }
 
+    // #890: the household Add created, kept outside this screen until its contact saves.
+    fun keepPending(id: String) {
+        PendingAddKinfolk.keep(operatorUid, PendingKinfolk(kinfolkId = id, household = build(), contacts = ecDrafts))
+    }
+
+    /** #890: Continue. The form comes back as it was saved, locked, with the contact as last typed. */
+    fun continuePending(pending: PendingKinfolk) {
+        val h = pending.household
+        firstName = h.firstName; lastName = h.lastName; phoneNumber = h.phoneNumber
+        secondaryPhone = h.secondaryPhone; email = h.email; secondaryEmail = h.secondaryEmail
+        status = h.status.ifBlank { "active" }; serviceAddr = h.serviceAddress
+        gateCode = h.gateCode; parking = h.parkingInstructions; entryNotes = h.entryNotes
+        wifiName = h.wifiName; wifiPass = h.wifiPassword; internalNotes = h.internalNotes
+        referral = h.referralSource; vetName = h.vetClinicName; vetPhone = h.vetClinicPhone
+        vetAddress = h.vetClinicAddress; photoUrl = h.profilePictureUrl
+        formValues.clear(); formValues.putAll(h.formValues)
+        ecDrafts = pending.contacts.ifEmpty { listOf(EmergencyContactDraft()) }
+        createdKinfolkId = pending.kinfolkId
+    }
+
+    /** #890: Discard. Nothing is written; the household stays as created, with its No Emergency Contact flag. */
+    fun discardPending() {
+        PendingAddKinfolk.clear(operatorUid)
+    }
+
+    // #890: asked when Add opens on a household still waiting on its contact.
+    // Never while saving: the save keeps the household the moment it is created,
+    // before `createdKinfolkId` is set, and the form must stay on screen meanwhile.
+    val offeredPending = if (isNew && !saving && createdKinfolkId == null) PendingAddKinfolk.get(operatorUid) else null
+
+    // #890: keeps the pending household's contact current while a retry is edited.
+    LaunchedEffect(ecDrafts, createdKinfolkId) {
+        val id = createdKinfolkId
+        if (isNew && id != null) keepPending(id)
+    }
+
     var attemptedSave  by remember { mutableStateOf(false) }
     // P1-FORMS hardening 2026-05-26: require Last name; reject alpha in phone;
     // require RFC-ish email format. Validators live in
@@ -386,7 +428,13 @@ fun KinfolkEditScreen(
                     }
                     if (isNew) {
                         when (val r = client.createKinfolk(draft)) {
-                            is WriteResult.Ok  -> WriteResult.Ok(HouseholdWrite(r.value))
+                            // #890: kept the moment it exists, so leaving mid-save still
+                            // offers it. A duplicateOf answer is a household that was
+                            // already created (and audited then), so nothing is logged again.
+                            is WriteResult.Ok  -> {
+                                keepPending(r.value.kinfolkId)
+                                WriteResult.Ok(HouseholdWrite(r.value.kinfolkId, wrote = r.value.duplicateOf == null))
+                            }
                             is WriteResult.Err -> WriteResult.Err(r.message)
                         }
                     } else {
@@ -424,6 +472,7 @@ fun KinfolkEditScreen(
                         showToast("The household is saved. The Emergency Contact still needs attention.", ToastKind.Info)
                     } else {
                         if (saveContacts) ecBaseline = ecDrafts
+                        if (isNew) PendingAddKinfolk.clear(operatorUid)
                         showToast(if (isNew) "Kinfolk added." else "Saved.", ToastKind.Success)
                         onSaved(outcome.kinfolkId)
                     }
@@ -431,7 +480,10 @@ fun KinfolkEditScreen(
                 is KinfolkSaveOutcome.HouseholdFailed ->
                     showToast("Save failed: ${outcome.message}", ToastKind.Error)
                 is KinfolkSaveOutcome.ContactsFailed -> {
-                    if (isNew) createdKinfolkId = outcome.kinfolkId
+                    if (isNew) {
+                        createdKinfolkId = outcome.kinfolkId
+                        keepPending(outcome.kinfolkId)
+                    }
                     showToast(ecError.orEmpty(), ToastKind.Error)
                 }
             }
@@ -449,6 +501,31 @@ fun KinfolkEditScreen(
         )
 
         StatusToast(visible = toastVisible, message = toast, kind = toastKind, onDismiss = { toastVisible = false })
+
+        // #890: Add opened on a household still waiting on its Emergency Contact.
+        // The form is not shown until the operator chooses.
+        if (offeredPending != null) {
+            val name = pendingHouseholdName(offeredPending)
+            AuntieBanner(tone = AuntieBannerTone.Warning, icon = Lucide.UserPlus) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text  = "$name was created, but the Emergency Contact did not save. The household shows $NO_EMERGENCY_CONTACT until it is saved.",
+                        style = AuntieTheme.typography.bodyMedium,
+                        color = AuntieTheme.colors.textPrimary,
+                    )
+                    Text(
+                        text  = "Discard starts a new Add and leaves $name as it is.",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = AuntieTheme.colors.textDim,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        PrimaryButton(label = "Continue adding the Emergency Contact for $name", onClick = { continuePending(offeredPending) })
+                        GhostButton(label = "Discard", onClick = { discardPending() })
+                    }
+                }
+            }
+            return@ScreenScaffold
+        }
 
         // While editing, wait for the live doc to land before showing the form
         // (otherwise the user briefly sees blank fields before the prefill).

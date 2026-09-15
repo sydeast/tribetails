@@ -19,6 +19,7 @@ import {
   type SortOption,
 } from '../api/directory';
 import { useCollection } from '../lib/firestore';
+import { useAuth } from '../lib/auth';
 import { str } from '../lib/coerce';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { hasEmergencyContact } from '../api/emergencyContacts';
@@ -373,6 +374,8 @@ export function Directory({
   const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
   const kinState = useCollection<Kin>(KIN_QUERY);
   const navigate = useNavigate();
+  // #890: Add Kinfolk keeps a household waiting on its Emergency Contact per operator.
+  const auth = useAuth();
 
   const [tab, setTab] = useState<DirectoryTab>('kinfolk');
   const [query, setQuery] = useState('');
@@ -796,6 +799,7 @@ export function Directory({
             setShowAddKinfolk(false);
           }}
           onLeftWithoutContact={setLeftWithoutContactId}
+          operatorUid={auth.status === 'signedIn' ? auth.user.uid : null}
         />
       )}
 

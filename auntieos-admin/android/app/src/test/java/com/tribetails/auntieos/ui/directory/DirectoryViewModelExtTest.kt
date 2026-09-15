@@ -5,6 +5,7 @@ import com.tribetails.auntieos.data.model.EmergencyContactDraft
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.KinfolkCreated
 import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
 import io.mockk.coEvery
@@ -109,7 +110,7 @@ class DirectoryViewModelExtTest {
 
     @Test
     fun `saveKinfolk sets isSuccess on repository success`() = runTest(testDispatcher) {
-        coEvery { mockRepo.createKinfolkComplete(any()) } returns Result.success(TestFixtures.kinfolk1)
+        coEvery { mockRepo.createKinfolkComplete(any()) } returns Result.success(KinfolkCreated(TestFixtures.kinfolk1, null))
 
         val vm = buildViewModel()
         advanceUntilIdle()
