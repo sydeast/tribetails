@@ -122,6 +122,8 @@ fun App() {
             adminVerified = false
             testMode = com.tribetails.auntieos.web.data.TestMode.OFF
             com.tribetails.auntieos.web.data.FirestoreClient.setSessionTestMode(com.tribetails.auntieos.web.data.TestMode.OFF)
+            // #867 re-review: a broadcast draft and its key belong to the admin who wrote it.
+            com.tribetails.auntieos.web.screens.communicate.BroadcastDraftSession.clear()
         } else {
             // Stage 0I: a single forced token read resolves BOTH the admin flag and the
             // testTribeId claim. A test admin (claim present, admin:false) is allowed in

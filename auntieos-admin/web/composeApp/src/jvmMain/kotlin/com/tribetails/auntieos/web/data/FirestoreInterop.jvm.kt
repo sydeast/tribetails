@@ -53,6 +53,8 @@ object JvmFirestoreFixtures {
     var callableResponses: Map<String, String> = emptyMap()
     /** #867 review: callables that answer with this Err message, so a test can show a screen a failed call (a timeout). */
     var callableErrors: Map<String, String> = emptyMap()
+    /** #867 re-review: the admin's `broadcasts` rows, flat JSON with `_id`, for [platformBroadcastRowsForCurrentAdmin]. */
+    var broadcastRows: List<JsonObject>? = null
     var incomingKinCares: List<KinCareVisit>? = null
     /** Keyed by "familyId/batchId/visitId"; answers platformGetKinCareAssignment in tests. */
     var kinCareAssignments: Map<String, KinCareAssignment> = emptyMap()
@@ -106,7 +108,7 @@ object JvmFirestoreFixtures {
         provideUserProfile = false; userProfile = null
         voicemails = null; calls = null; sms = null; emails = null
         activity = null; trainingDocs = null; dynamicFields = null; businessSettings = null
-        callableResponses = emptyMap(); callableErrors = emptyMap(); incomingKinCares = null
+        callableResponses = emptyMap(); callableErrors = emptyMap(); broadcastRows = null; incomingKinCares = null
         kinCareAssignments = emptyMap()
         lastCallableName = null; lastCallablePayloadJson = null
         lastWrite = null
@@ -737,6 +739,14 @@ private suspend fun rawInvokeCallable(name: String, payloadJson: String): WriteR
     JvmFirestoreFixtures.callableErrors[name]?.let { return WriteResult.Err(it) }
     return JvmFirestoreFixtures.callableResponses[name]?.let { WriteResult.Ok(it) }
         ?: JvmFirestoreRest.callable(name, payloadJson)
+}
+
+// #867 re-review: the admin's own broadcast rows, through the guarded REST client.
+// No sign-in means no request, the same as every other desktop read.
+internal actual suspend fun platformBroadcastRowsForCurrentAdmin(): WriteResult<List<JsonObject>> {
+    JvmFirestoreFixtures.broadcastRows?.let { return WriteResult.Ok(it) }
+    val uid = jvmFirebaseUid() ?: return WriteResult.Ok(emptyList())
+    return transportResult("read failed") { WriteResult.Ok(JvmFirestoreRest.runQueryWhereEq("broadcasts", "actorUid", uid)) }
 }
 
 internal actual suspend fun platformInvokeCallable(name: String, payloadJson: String): WriteResult<String> =

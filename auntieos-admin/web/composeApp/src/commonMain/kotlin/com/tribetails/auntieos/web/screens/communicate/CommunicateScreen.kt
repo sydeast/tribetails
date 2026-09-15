@@ -653,14 +653,17 @@ private fun BroadcastForm(
 
     var segments by remember { mutableStateOf<List<AudienceSegment>>(emptyList()) }
     var loadingSegments by remember { mutableStateOf(true) }
-    var selectedSegmentId by remember { mutableStateOf<String?>(null) } // null = ad-hoc
+    // #867 re-review: the draft, its idempotency key and the timeout state live in the
+    // session, not in this form, which leaves composition on every mode switch.
+    val draft = BroadcastDraftSession.current
+    var selectedSegmentId by draft::selectedSegmentId // null = ad-hoc
 
     // Ad-hoc criteria builder.
-    var kind by remember { mutableStateOf(SegmentKind.All) }
-    var statusesText by remember { mutableStateOf("") }
-    var selectedTags by remember { mutableStateOf<List<String>>(emptyList()) }
+    var kind by draft::kind
+    var statusesText by draft::statusesText
+    var selectedTags by draft::selectedTags
     var tagQuery by remember { mutableStateOf("") }
-    var tagMatch by remember { mutableStateOf(TagMatch.Any) }
+    var tagMatch by draft::tagMatch
     var newSegmentName by remember { mutableStateOf("") }
 
     // The household tag vocabulary the "By tag" audience picks from. HOUSEHOLD
@@ -674,16 +677,16 @@ private fun BroadcastForm(
     val vocabLoaded = settingsState is FirestoreResult.Data
     val vocabError = (settingsState as? FirestoreResult.Error)?.message
 
-    val channels = remember { mutableStateListOf(BroadcastChannel.InApp) }
-    var subject by remember { mutableStateOf("") }
-    var body by remember { mutableStateOf("") }
+    val channels = draft.channels
+    var subject by draft::subject
+    var body by draft::body
 
     var sending by remember { mutableStateOf(false) }
     var savingSegment by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<BroadcastResult?>(null) }
-    var errorText by remember { mutableStateOf<String?>(null) }
+    var errorText by draft::errorText
     /** #867 review: whether [errorText] is a timeout, which picks the banner title. */
-    var errorIsTimeout by remember { mutableStateOf(false) }
+    var errorIsTimeout by draft::errorIsTimeout
     /**
      * #814: one key per SUBMISSION, re-minted only when the message or its
      * audience has changed since the key was minted. An operator who sees an
@@ -692,14 +695,14 @@ private fun BroadcastForm(
      * with the key the server answers from the broadcast the first press
      * claimed. There is no automatic retry here, see `data/SendIdempotency.kt`.
      */
-    var submissionKey by remember { mutableStateOf<String?>(null) }
-    var submissionSignature by remember { mutableStateOf<String?>(null) }
+    var submissionKey by draft::submissionKey
+    var submissionSignature by draft::submissionSignature
     /**
      * #867 review: the signature of a draft whose send timed out, or null. While the
      * draft still matches it, Send reuses the key and lands on that broadcast. Once
      * the draft differs, the next Send is a second broadcast, and the screen says so.
      */
-    var timedOutSignature by remember { mutableStateOf<String?>(null) }
+    var timedOutSignature by draft::timedOutSignature
 
     fun adhocCriteria(): BroadcastCriteria = BroadcastCriteria(
         kind = kind,
@@ -730,6 +733,18 @@ private fun BroadcastForm(
     }
 
     LaunchedEffect(Unit) { loadSegments() }
+
+    // #867 re-review: a broadcast this admin started, from an earlier session or a
+    // screen that was closed, may still be sending. Put it back with its own key so
+    // an unchanged Send replays onto it rather than starting a second broadcast.
+    // Checked once per session draft; a failed read leaves the form as it is.
+    LaunchedEffect(draft) {
+        if (draft.submissionKey == null && !draft.checkedForRunningBroadcast) {
+            draft.checkedForRunningBroadcast = true
+            val found = (firestore.runningBroadcasts() as? WriteResult.Ok)?.value?.firstOrNull()
+            if (found != null && draft.submissionKey == null) draft.restoreRunning(found)
+        }
+    }
 
     fun saveSegment() {
         val criteria = adhocCriteria()

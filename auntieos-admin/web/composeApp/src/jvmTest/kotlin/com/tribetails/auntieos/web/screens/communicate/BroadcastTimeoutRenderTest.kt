@@ -27,7 +27,10 @@ import kotlin.test.assertTrue
 class BroadcastTimeoutRenderTest {
 
     @AfterTest
-    fun tearDown() = JvmFirestoreFixtures.clear()
+    fun tearDown() {
+        JvmFirestoreFixtures.clear()
+        BroadcastDraftSession.clear()
+    }
 
     @Test
     fun editingTheDraftAfterATimeoutShowsTheNewBroadcastWarning() = runDesktopComposeUiTest {
