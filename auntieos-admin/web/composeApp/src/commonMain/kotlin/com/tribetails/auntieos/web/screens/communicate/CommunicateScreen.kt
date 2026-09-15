@@ -692,6 +692,12 @@ private fun BroadcastForm(
      */
     var submissionKey by remember { mutableStateOf<String?>(null) }
     var submissionSignature by remember { mutableStateOf<String?>(null) }
+    /**
+     * #867 review: the signature of a draft whose send timed out, or null. While the
+     * draft still matches it, Send reuses the key and lands on that broadcast. Once
+     * the draft differs, the next Send is a second broadcast, and the screen says so.
+     */
+    var timedOutSignature by remember { mutableStateOf<String?>(null) }
 
     fun adhocCriteria(): BroadcastCriteria = BroadcastCriteria(
         kind = kind,
@@ -762,16 +768,7 @@ private fun BroadcastForm(
         val blocker = tagCapProblem() ?: broadcastBlocker(channels.toSet(), effectiveCriteria, subject, body)
         if (blocker != null) { errorText = blocker; onToast(blocker, ToastKind.Error); return }
         sending = true
-        val signature = listOf(
-            selectedSegmentId.orEmpty(),
-            kind.name,
-            statusesText,
-            selectedTags.toString(),
-            tagMatch.name,
-            channels.map { it.wire }.sorted().toString(),
-            subject,
-            body,
-        ).joinToString("\u001F") // a separator no typed field can contain
+        val signature = broadcastSignature(selectedSegmentId, kind, statusesText, selectedTags, tagMatch, channels, subject, body)
         if (submissionKey == null || submissionSignature != signature) {
             submissionKey = mintBroadcastIdempotencyKey()
             submissionSignature = signature
@@ -790,10 +787,12 @@ private fun BroadcastForm(
                     result = r.value
                     errorText = null
                     submissionKey = null
+                    timedOutSignature = null
                     onToast(broadcastSummary(r.value), ToastKind.Success)
                 }
                 is WriteResult.Err -> {
                     result = null
+                    timedOutSignature = if (isBroadcastTimeout(r.message)) signature else null
                     errorText = broadcastErrorText(r.message)
                     onToast(broadcastErrorText(r.message), ToastKind.Error)
                 }
@@ -1010,6 +1009,15 @@ private fun BroadcastForm(
             minLines = 4,
         )
 
+        broadcastEditWarning(
+            timedOutSignature,
+            broadcastSignature(selectedSegmentId, kind, statusesText, selectedTags, tagMatch, channels, subject, body),
+        )?.let { warning ->
+            AuntieBanner(tone = AuntieBannerTone.Warning, title = "This will be a new broadcast", icon = Lucide.TriangleAlert) {
+                Text(text = warning, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
+            }
+        }
+
         PrimaryButton(
             label = "Send broadcast",
             onClick = ::send,
@@ -1020,7 +1028,8 @@ private fun BroadcastForm(
         )
 
         errorText?.let { msg ->
-            AuntieBanner(tone = AuntieBannerTone.Error, title = "Broadcast blocked", icon = Lucide.Ban) {
+            val title = if (timedOutSignature != null) "Send may still be running" else "Broadcast blocked"
+            AuntieBanner(tone = AuntieBannerTone.Error, title = title, icon = Lucide.Ban) {
                 Text(text = msg, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
             }
         }
