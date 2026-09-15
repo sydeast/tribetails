@@ -130,17 +130,28 @@ class KinfolkAddPendingRenderTest {
             "saveEmergencyContacts" to """{"contacts":[]}""",
         )
         var saved: String? = null
+        var duplicate: String? = null
         setContent {
             AuntieAppTheme(themeMode = ThemeMode.DARK) {
-                KinfolkEditScreen(kinfolkId = null, onBack = {}, onSaved = { saved = it }, onArchived = {})
+                KinfolkEditScreen(
+                    kinfolkId = null, onBack = {}, onSaved = { saved = it }, onArchived = {},
+                    onDuplicate = { duplicate = it },
+                )
             }
         }
         waitForIdle()
         fillAdd()
         onNodeWithText("Create Kinfolk").performScrollTo().performClick()
-        waitUntil(timeoutMillis = 5_000) { saved != null }
+        waitUntil(timeoutMillis = 5_000) { duplicate != null }
+        waitForIdle()
 
-        assertEquals("kf-existing", saved)
+        // #907 review item 1(b): never reported as added, and nothing is saved onto it.
+        assertEquals("kf-existing", duplicate)
+        assertNull(saved, "a duplicateOf answer was reported as a saved household")
+        assertTrue(onAllNodesWithText("Kinfolk added.").fetchSemanticsNodes().isEmpty())
+        assertTrue(JvmFirestoreFixtures.callablePayloads.none { it.first == "saveEmergencyContacts" }, "the contact was saved onto the existing household")
         assertNull(PendingAddKinfolk.get(null))
+        assertEquals("Mercer", PendingAddKinfolk.duplicateFor(null, "kf-existing")?.household?.lastName)
+        assertEquals("Rae Park", PendingAddKinfolk.duplicateFor(null, "kf-existing")?.contacts?.firstOrNull()?.name)
     }
 }

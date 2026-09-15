@@ -73,6 +73,8 @@ import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.web.ui.components.AuntieFieldLabel
 import com.tribetails.auntieos.web.ui.components.AuntieNoteCallout
+import com.tribetails.auntieos.web.data.AuthUser
+import kotlinx.coroutines.flow.Flow
 import com.tribetails.auntieos.web.ui.components.AuntieSaveBar
 import com.tribetails.auntieos.web.ui.components.BottomBorderField
 import com.tribetails.auntieos.web.ui.components.DynamicFormFields
@@ -113,6 +115,18 @@ fun KinfolkEditScreen(
      * can take the operator to it; without a handler it is an ordinary back.
      */
     onLeftWithoutContact: ((kinfolkId: String) -> Unit)? = null,
+    /**
+     * #907 review item 1(b): the server answered Add with `duplicateOf`, a household
+     * this operator added minutes ago. Nothing was written and no contact saved; what
+     * was typed is kept (PendingAddKinfolk.keepDuplicate) and the caller opens that
+     * household's edit screen, which fills in the differences as unsaved changes.
+     */
+    onDuplicate: ((kinfolkId: String) -> Unit)? = null,
+    /**
+     * #907 review item 4: the signed-in operator. Null uses the app's own auth
+     * state; a render test passes a flow with a real uid.
+     */
+    authState: Flow<AuthUser?>? = null,
 ) {
     val client = remember { FirestoreClient() }
     val scope  = rememberReportingScope()
@@ -170,7 +184,19 @@ fun KinfolkEditScreen(
     // #890: the operator this Add belongs to. A household created without its
     // contact is kept under this uid (PendingAddKinfolk), so opening Add again
     // offers to continue it rather than creating a second one.
-    val operatorUid = remember { AuthClient().authStateStream() }.collectAsState(initial = null).value?.uid
+    //
+    // #907 review item 4: read from the auth state's first answer, not an initial
+    // null. Until it answers, Add shows a loading cue instead of choosing between
+    // the Continue prompt and the form, so a pending household is never missed.
+    val authFlow = remember(authState) { authState ?: AuthClient().authStateStream() }
+    var operatorUid by remember { mutableStateOf<String?>(null) }
+    var authSeen by remember { mutableStateOf(false) }
+    LaunchedEffect(authFlow) {
+        authFlow.collect { user ->
+            operatorUid = user?.uid
+            authSeen = true
+        }
+    }
     var internalNotes  by remember(kinfolkId) { mutableStateOf("") }
     var referral       by remember(kinfolkId) { mutableStateOf("") }
     var vetName        by remember(kinfolkId) { mutableStateOf("") }
@@ -235,6 +261,30 @@ fun KinfolkEditScreen(
             loaded = existing
             initialized = true
         }
+    }
+
+    // #907 review item 1(b): this household is open because Add was answered
+    // `duplicateOf`. What was typed there and differs from what is stored is laid
+    // over the form once, as unsaved changes; the baseline stays the stored record,
+    // so Save sends only those through the normal update and Cancel drops them.
+    var duplicateNotice by remember(kinfolkId) { mutableStateOf<String?>(null) }
+    LaunchedEffect(initialized, authSeen) {
+        val base = loaded
+        if (isNew || !initialized || !authSeen || base == null) return@LaunchedEffect
+        val typed = PendingAddKinfolk.duplicateFor(operatorUid, base._id) ?: return@LaunchedEffect
+        PendingAddKinfolk.clearDuplicate(operatorUid)
+        val h = overlayDuplicateAdd(base, typed.household)
+        firstName = h.firstName; lastName = h.lastName; phoneNumber = h.phoneNumber
+        secondaryPhone = h.secondaryPhone; email = h.email; secondaryEmail = h.secondaryEmail
+        serviceAddr = h.serviceAddress; gateCode = h.gateCode; parking = h.parkingInstructions
+        entryNotes = h.entryNotes; wifiName = h.wifiName; wifiPass = h.wifiPassword
+        internalNotes = h.internalNotes; referral = h.referralSource; vetName = h.vetClinicName
+        vetPhone = h.vetClinicPhone; vetAddress = h.vetClinicAddress
+        formValues.clear(); formValues.putAll(h.formValues)
+        if (!typed.contacts.isBlankDrafts() && !draftsEqual(typed.contacts, emergencyContactsOf(base).toDrafts())) {
+            ecDrafts = typed.contacts
+        }
+        duplicateNotice = duplicateAddNotice(base, typed.household)
     }
 
     var saving       by remember { mutableStateOf(false) }
@@ -308,8 +358,14 @@ fun KinfolkEditScreen(
         createdKinfolkId = pending.kinfolkId
     }
 
-    /** #890: Discard. Nothing is written; the household stays as created, with its No Emergency Contact flag. */
+    /**
+     * #890: Discard. Nothing is written; the household stays as created, with its No
+     * Emergency Contact flag. #907 review item 1(a): its id is recorded, and the next
+     * create sends it as `ignoreDuplicateOf`, because Discard says the next Add is a
+     * new household.
+     */
     fun discardPending() {
+        PendingAddKinfolk.get(operatorUid)?.let { PendingAddKinfolk.discard(operatorUid, it.kinfolkId) }
         PendingAddKinfolk.clear(operatorUid)
     }
 
@@ -427,13 +483,17 @@ fun KinfolkEditScreen(
                         )
                     }
                     if (isNew) {
-                        when (val r = client.createKinfolk(draft)) {
+                        when (val r = client.createKinfolk(draft, PendingAddKinfolk.discardedFor(operatorUid))) {
                             // #890: kept the moment it exists, so leaving mid-save still
                             // offers it. A duplicateOf answer is a household that was
-                            // already created (and audited then), so nothing is logged again.
+                            // already created (and audited then): nothing is logged again,
+                            // nothing is kept pending, and the save stops there (#907).
                             is WriteResult.Ok  -> {
-                                keepPending(r.value.kinfolkId)
-                                WriteResult.Ok(HouseholdWrite(r.value.kinfolkId, wrote = r.value.duplicateOf == null))
+                                // The discarded id has done its job once a create is answered.
+                                PendingAddKinfolk.clearDiscarded(operatorUid)
+                                val duplicateOf = r.value.duplicateOf
+                                if (duplicateOf == null) keepPending(r.value.kinfolkId)
+                                WriteResult.Ok(HouseholdWrite(r.value.kinfolkId, wrote = duplicateOf == null, duplicateOf = duplicateOf))
                             }
                             is WriteResult.Err -> WriteResult.Err(r.message)
                         }
@@ -486,6 +546,25 @@ fun KinfolkEditScreen(
                     }
                     showToast(ecError.orEmpty(), ToastKind.Error)
                 }
+                // #907 review item 1(b): never "Kinfolk added." The typing goes to
+                // that household's edit screen as unsaved changes.
+                is KinfolkSaveOutcome.Duplicate -> {
+                    val typed = PendingKinfolk(outcome.kinfolkId, draft, ecDrafts)
+                    PendingAddKinfolk.clear(operatorUid)
+                    PendingAddKinfolk.keepDuplicate(operatorUid, typed)
+                    val openIt = onDuplicate
+                    if (openIt != null) openIt(outcome.kinfolkId)
+                    else showToast("${pendingHouseholdName(typed)} was already added a few minutes ago.", ToastKind.Info)
+                }
+                // #907 review item 2: deleted under a pending Add. Retrying would fail
+                // forever, so it is dropped and the form opens for a fresh Add.
+                is KinfolkSaveOutcome.HouseholdGone -> {
+                    if (isNew) {
+                        PendingAddKinfolk.clear(operatorUid)
+                        createdKinfolkId = null
+                    }
+                    showToast(HOUSEHOLD_NO_LONGER_EXISTS, ToastKind.Error)
+                }
             }
         }
     }
@@ -501,6 +580,15 @@ fun KinfolkEditScreen(
         )
 
         StatusToast(visible = toastVisible, message = toast, kind = toastKind, onDismiss = { toastVisible = false })
+
+        // #907 review item 4: Add waits for the operator before it can know whether
+        // one of their households is waiting on its contact.
+        if (isNew && !authSeen) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                repeat(4) { ShimmerCard(height = 56.dp) }
+            }
+            return@ScreenScaffold
+        }
 
         // #890: Add opened on a household still waiting on its Emergency Contact.
         // The form is not shown until the operator chooses.
@@ -534,6 +622,16 @@ fun KinfolkEditScreen(
                 repeat(4) { ShimmerCard(height = 56.dp) }
             }
             return@ScreenScaffold
+        }
+
+        duplicateNotice?.let { notice ->
+            AuntieBanner(tone = AuntieBannerTone.Warning, icon = Lucide.UserCog) {
+                Text(
+                    text  = notice,
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = AuntieTheme.colors.textPrimary,
+                )
+            }
         }
 
         // ---- Profile photo (#4). Reuses the proven media pipeline; on desktop the upload

@@ -634,8 +634,12 @@ class FirestoreClient {
      * same phone or email ([KinfolkCreated.duplicateOf]) instead of making a second
      * one. The body is [kinfolkWriteJson], so it still carries no Emergency Contact key.
      */
-    suspend fun createKinfolk(k: Kinfolk): WriteResult<KinfolkCreated> {
-        val payload = buildJsonObject { put("kinfolk", callableJson.parseToJsonElement(kinfolkWriteJson(k))) }
+    suspend fun createKinfolk(k: Kinfolk, ignoreDuplicateOf: String? = null): WriteResult<KinfolkCreated> {
+        val payload = buildJsonObject {
+            put("kinfolk", callableJson.parseToJsonElement(kinfolkWriteJson(k)))
+            // #907 review item 1(a): the household this operator just Discarded.
+            ignoreDuplicateOf?.trim()?.takeIf { it.isNotEmpty() }?.let { put("ignoreDuplicateOf", it) }
+        }
         return when (val r = platformInvokeCallable("createKinfolk", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
             is WriteResult.Ok -> runCatching {

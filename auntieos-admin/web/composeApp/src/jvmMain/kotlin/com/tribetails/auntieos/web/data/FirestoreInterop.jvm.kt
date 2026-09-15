@@ -66,6 +66,9 @@ object JvmFirestoreFixtures {
     var lastCallableName: String? = null
     var lastCallablePayloadJson: String? = null
 
+    /** #907: every (name, payloadJson) sent this test, in order, for a screen that makes several calls. */
+    val callablePayloads: MutableList<Pair<String, String>> = mutableListOf()
+
     /**
      * ISSUE #616: the last direct-REST write [JvmFirestoreRest] was ASKED to
      * perform, recorded before the auth token is fetched so it captures the
@@ -100,7 +103,7 @@ object JvmFirestoreFixtures {
         activity = null; trainingDocs = null; dynamicFields = null; businessSettings = null
         callableResponses = emptyMap(); callableErrors = emptyMap(); incomingKinCares = null
         kinCareAssignments = emptyMap()
-        lastCallableName = null; lastCallablePayloadJson = null
+        lastCallableName = null; lastCallablePayloadJson = null; callablePayloads.clear()
         lastWrite = null
     }
 }
@@ -689,6 +692,7 @@ private suspend fun rawInvokeCallable(name: String, payloadJson: String): WriteR
     // are cheap writes; the live path (else branch) still hits real REST).
     JvmFirestoreFixtures.lastCallableName = name
     JvmFirestoreFixtures.lastCallablePayloadJson = payloadJson
+    JvmFirestoreFixtures.callablePayloads += name to payloadJson
     JvmFirestoreFixtures.callableErrors[name]?.let { return WriteResult.Err(it) }
     return JvmFirestoreFixtures.callableResponses[name]?.let { WriteResult.Ok(it) }
         ?: JvmFirestoreRest.callable(name, payloadJson)
