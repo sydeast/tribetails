@@ -239,6 +239,13 @@ describe('email action helpers', () => {
       handleCodeInApp: false,
     });
   });
+  it('sendReset with a null continue URL sends a bare link, so the page offers both sign-ins again (#892 review)', async () => {
+    const { sendPasswordResetEmail } = await import('firebase/auth');
+    const { sendReset } = await import('./auth');
+    await sendReset('ops@example.com', null);
+    expect(vi.mocked(sendPasswordResetEmail).mock.calls[0]).toHaveLength(2);
+    expect(sendPasswordResetEmail).toHaveBeenCalledWith(expect.anything(), 'ops@example.com');
+  });
   it('verifyResetCode resolves the account email from the code', async () => {
     const { verifyPasswordResetCode } = await import('firebase/auth');
     vi.mocked(verifyPasswordResetCode).mockResolvedValue('pepper@example.com');
@@ -259,7 +266,11 @@ describe('email action helpers', () => {
       data: { email: 'old@example.com', previousEmail: 'new@example.com' },
     } as never);
     const { readActionCode } = await import('./auth');
-    await expect(readActionCode('R')).resolves.toEqual({ email: 'old@example.com', previousEmail: 'new@example.com' });
+    await expect(readActionCode('R')).resolves.toEqual({
+      operation: 'RECOVER_EMAIL',
+      email: 'old@example.com',
+      previousEmail: 'new@example.com',
+    });
   });
   it('applyEmailAction applies the code', async () => {
     const { applyActionCode } = await import('firebase/auth');

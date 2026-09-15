@@ -81,7 +81,9 @@ describe('password reset link (#892)', () => {
 
       restSignIn(RESET_KINFOLK.email, RESET_KINFOLK.password).its('status').should('eq', 400);
 
-      cy.contains('a', 'Sign in with your new password').should('have.attr', 'href', '/signin').click();
+      // A bare native link cannot say whose account it is, so both sign-ins (#892 review).
+      cy.contains('a', 'Staff sign-in').should('have.attr', 'href', 'https://auntie.tribetails.com/signin');
+      cy.contains('a', 'Household sign-in').should('have.attr', 'href', '/signin').click();
       cy.stubAccess();
       cy.location('pathname').should('eq', '/signin');
       cy.get('#email').type(RESET_KINFOLK.email);

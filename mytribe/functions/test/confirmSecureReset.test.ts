@@ -3,33 +3,32 @@
  *
  * Covers:
  *   - Input validation (method, required fields, password length)
- *   - Missing WEB_API_KEY → 503
+ *   - Missing WEB_API_KEY: 503
+ *   - Per-IP limit before any Identity Toolkit call, keyed on the entry Google
+ *     appended to X-Forwarded-For, never the forgeable first entry (#892 review)
  *   - The email is DERIVED from the oobCode (#892): a verify-only Identity
  *     Toolkit call runs first, and a client-sent email is never trusted
- *   - Email-based rate-limit guard keyed on the derived email (429 before the
- *     oobCode is consumed)
- *   - Identity Toolkit unreachable → 502, rejects oobCode → 400
- *   - Happy-path: incident doc written + notification enqueued → 200
- *   - Notification failure does NOT block 200 response (fail-loud log only)
+ *   - The verified code must be a PASSWORD_RESET code (#892 review)
+ *   - The 3-per-24h account limit counts only resets that were applied, and a
+ *     pending attempt holds a slot so concurrent calls cannot exceed it
+ *   - Identity Toolkit unreachable: 502, rejects oobCode: 400
+ *   - Happy path: incident doc written, alert enqueued under the key for the
+ *     account's role (kinfolk or staff), 200
+ *   - Notification failure does NOT block the 200 response (fail-loud log only)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createHash } from 'crypto';
 
 // ── Hoisted mocks ─────────────────────────────────────────────────────────────
 const mocks = vi.hoisted(() => ({
-  // Firestore transaction internals
-  txGet: vi.fn(),
-  txSet: vi.fn(),
-  // Doc ref for the securityIncidents collection
+  /** Every Firestore doc the fake transaction reads or writes, by path. */
+  store: new Map<string, Record<string, unknown>>(),
   incidentSet: vi.fn(),
   incidentId: 'incident-abc',
-  // Rate-limit doc ids requested, so a test can see which email was hashed
-  rateLimitDocIds: [] as string[],
-  // getFirestore mock
   getFirestore: vi.fn(),
-  // Notification dispatcher
+  getUserByEmail: vi.fn(),
   enqueueNotification: vi.fn(),
-  // Logger
   logEvent: vi.fn(),
 }));
 
@@ -41,6 +40,7 @@ vi.mock('firebase-admin/firestore', async () => {
     getFirestore: mocks.getFirestore,
   };
 });
+vi.mock('firebase-admin/auth', () => ({ getAuth: () => ({ getUserByEmail: mocks.getUserByEmail }) }));
 vi.mock('../src/notifications/dispatcher.js', () => ({ enqueueNotification: mocks.enqueueNotification }));
 vi.mock('../src/lib/logger.js', () => ({ logEvent: mocks.logEvent }));
 
@@ -65,52 +65,44 @@ function captureRes(): { res: import('../src/security/confirmSecureReset.js').Mi
   return { res, captured };
 }
 
-function makeReq(body: unknown, method = 'POST') {
+const CLIENT_IP = '203.0.113.9';
+
+function makeReq(body: unknown, opts: { method?: string; xff?: string } = {}) {
   return {
-    method,
+    method: opts.method ?? 'POST',
     body,
-    headers: {},
-    socket: { remoteAddress: '1.2.3.4' },
+    headers: { 'x-forwarded-for': opts.xff ?? CLIENT_IP } as Record<string, string | undefined>,
+    socket: { remoteAddress: '10.0.0.1' },
   };
 }
 
-/** Build a fake Firestore db that simulates the rate-limit transaction. */
-function buildFakeDb(opts: {
-  /** Timestamps already stored for this email's rate-limit doc. */
-  existingTimestamps?: number[];
-}) {
-  const existingTimestamps = opts.existingTimestamps ?? [];
+const hash32 = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 32);
+const emailDoc = (email: string) => `securityRateLimits/secureReset_${hash32(email)}`;
+const ipDoc = (ip: string) => `securityRateLimits/secureResetIp_${hash32(ip)}`;
 
-  mocks.txGet.mockResolvedValue({
-    data: () => ({ timestamps: existingTimestamps }),
-  });
-  mocks.txSet.mockResolvedValue(undefined);
+/**
+ * A Firestore fake with real state: transactions read and merge-write the docs
+ * in `mocks.store`, so a test can seed prior attempts and read back exactly
+ * what the handler recorded.
+ */
+function installFakeDb() {
   mocks.incidentSet.mockResolvedValue(undefined);
-
-  const fakeIncidentRef = {
-    id: mocks.incidentId,
-    set: mocks.incidentSet,
-  };
-
   const fakeDb: any = {
     collection: vi.fn((name: string) => ({
-      doc: vi.fn((id?: string) => {
-        if (name === 'securityRateLimits') {
-          mocks.rateLimitDocIds.push(id ?? '');
-          return 'rateLimitDocRef'; // will be used as ref in transaction
-        }
-        // securityIncidents auto-id doc
-        return fakeIncidentRef;
-      }),
+      doc: vi.fn((id?: string) =>
+        name === 'securityIncidents' ? { id: mocks.incidentId, set: mocks.incidentSet } : { path: `${name}/${id}` },
+      ),
     })),
-    runTransaction: vi.fn(async (fn: (tx: any) => Promise<void>) => {
-      const tx = { get: mocks.txGet, set: mocks.txSet };
-      return fn(tx);
-    }),
+    runTransaction: vi.fn(async (fn: (tx: any) => Promise<unknown>) =>
+      fn({
+        get: async (ref: { path: string }) => ({ data: () => mocks.store.get(ref.path) }),
+        set: (ref: { path: string }, data: Record<string, unknown>) => {
+          mocks.store.set(ref.path, { ...(mocks.store.get(ref.path) ?? {}), ...data });
+        },
+      }),
+    ),
   };
-
   mocks.getFirestore.mockReturnValue(fakeDb);
-  return fakeDb;
 }
 
 /** The account the oobCode belongs to, as Identity Toolkit reports it. */
@@ -127,9 +119,6 @@ function jsonResponse(status: number, payload: unknown) {
     status,
     json: async () => payload,
     text: async () => JSON.stringify(payload),
-    clone() {
-      return this;
-    },
   };
 }
 
@@ -138,92 +127,85 @@ function jsonResponse(status: number, payload: unknown) {
  * only) verifies and names the account, the second (with newPassword)
  * consumes the code.
  */
-function identityToolkit(opts: { email?: string; verifyStatus?: number; consumeStatus?: number } = {}) {
+function identityToolkit(
+  opts: { email?: string; requestType?: string; verifyStatus?: number; consumeStatus?: number } = {},
+) {
   const email = opts.email ?? OWNER_EMAIL;
+  const requestType = opts.requestType ?? 'PASSWORD_RESET';
   const fetchMock = vi.fn(async (_url: string, init: { body: string }) => {
     const sent = JSON.parse(init.body) as { oobCode: string; newPassword?: string };
     if (sent.newPassword === undefined) {
       const status = opts.verifyStatus ?? 200;
       return status === 200
-        ? jsonResponse(200, { email, requestType: 'PASSWORD_RESET' })
+        ? jsonResponse(200, { email, requestType })
         : jsonResponse(status, { error: { message: 'EXPIRED_OOB_CODE' } });
     }
     const status = opts.consumeStatus ?? 200;
     return status === 200
-      ? jsonResponse(200, { email, requestType: 'PASSWORD_RESET' })
-      : jsonResponse(status, { error: { message: 'INVALID_OOB_CODE' } });
+      ? jsonResponse(200, { email, requestType })
+      : jsonResponse(status, { error: { message: 'WEAK_PASSWORD' } });
   });
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
 }
 
-/** sha256(email) prefix the handler keys its rate-limit doc on. */
-async function hashOf(email: string): Promise<string> {
-  const { createHash } = await import('crypto');
-  return createHash('sha256').update(email).digest('hex').slice(0, 32);
+async function run(body: unknown = VALID_BODY, opts: { method?: string; xff?: string } = {}) {
+  const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
+  const { res, captured } = captureRes();
+  await confirmSecureResetHandler(makeReq(body, opts), res);
+  return captured;
 }
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 
 beforeEach(() => {
   vi.resetModules();
-  mocks.txGet.mockReset();
-  mocks.txSet.mockReset();
+  mocks.store.clear();
   mocks.incidentSet.mockReset();
   mocks.getFirestore.mockReset();
+  mocks.getUserByEmail.mockReset();
+  mocks.getUserByEmail.mockResolvedValue({ uid: 'kf-uid', customClaims: { kinfolkId: 'kf-1' } });
   mocks.enqueueNotification.mockReset();
+  mocks.enqueueNotification.mockResolvedValue(['notif-1']);
   mocks.logEvent.mockReset();
-  mocks.rateLimitDocIds.length = 0;
-  delete process.env.WEB_API_KEY;
+  installFakeDb();
+  process.env.WEB_API_KEY = 'test-api-key';
   delete process.env.FIREBASE_AUTH_EMULATOR_HOST;
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  delete process.env.WEB_API_KEY;
 });
 
 // ── Input validation ──────────────────────────────────────────────────────────
 
-describe('confirmSecureResetHandler — input validation', () => {
+describe('confirmSecureResetHandler: input validation', () => {
   it('rejects non-POST with 405', async () => {
-    const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
-    const { res, captured } = captureRes();
-    await confirmSecureResetHandler(makeReq(VALID_BODY, 'GET'), res);
+    const captured = await run(VALID_BODY, { method: 'GET' });
     expect(captured.status).toBe(405);
     expect(captured.body.error).toBe('method_not_allowed');
   });
 
   it('rejects missing oobCode with 400', async () => {
-    const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
-    const { res, captured } = captureRes();
-    await confirmSecureResetHandler(makeReq({ newPassword: 'abc12345' }), res);
+    const captured = await run({ newPassword: 'abc12345' });
     expect(captured.status).toBe(400);
     expect(captured.body.error).toBe('missing_required');
   });
 
   it('rejects missing newPassword with 400', async () => {
-    const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
-    const { res, captured } = captureRes();
-    await confirmSecureResetHandler(makeReq({ oobCode: 'abc' }), res);
+    const captured = await run({ oobCode: 'abc' });
     expect(captured.status).toBe(400);
     expect(captured.body.error).toBe('missing_required');
   });
 
   it('does NOT require an email: the server derives it from the oobCode (#892)', async () => {
-    buildFakeDb({ existingTimestamps: [] });
-    process.env.WEB_API_KEY = 'test-api-key';
     identityToolkit();
-    mocks.enqueueNotification.mockResolvedValue(['notif-1']);
-    const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
-    const { res, captured } = captureRes();
-    await confirmSecureResetHandler(makeReq(VALID_BODY), res);
-    expect(captured.status).toBe(200);
+    expect((await run()).status).toBe(200);
   });
 
   it('rejects password shorter than 8 chars with 400', async () => {
-    const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
-    const { res, captured } = captureRes();
-    await confirmSecureResetHandler(makeReq({ oobCode: 'abc', newPassword: 'short' }), res);
+    const captured = await run({ oobCode: 'abc', newPassword: 'short' });
     expect(captured.status).toBe(400);
     expect(captured.body.error).toBe('password_too_short');
   });
@@ -231,92 +213,104 @@ describe('confirmSecureResetHandler — input validation', () => {
 
 // ── Missing API key ───────────────────────────────────────────────────────────
 
-describe('confirmSecureResetHandler — missing WEB_API_KEY', () => {
+describe('confirmSecureResetHandler: missing WEB_API_KEY', () => {
   it('returns 503 server_misconfigured when WEB_API_KEY is unset, before any Identity Toolkit call', async () => {
-    buildFakeDb({ existingTimestamps: [] });
+    delete process.env.WEB_API_KEY;
     const fetchMock = identityToolkit();
-    const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
-    const { res, captured } = captureRes();
-    await confirmSecureResetHandler(makeReq(VALID_BODY), res);
+    const captured = await run();
     expect(captured.status).toBe(503);
     expect(captured.body.error).toBe('server_misconfigured');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
+// ── Per-IP limit ──────────────────────────────────────────────────────────────
+
+describe('confirmSecureResetHandler: per-IP limit before verify (#892 review)', () => {
+  const tenRecent = () => Array.from({ length: 10 }, (_, i) => Date.now() - (i + 1) * 1000);
+
+  it('refuses with 429 and never calls Identity Toolkit once the IP has used its window', async () => {
+    mocks.store.set(ipDoc(CLIENT_IP), { timestamps: tenRecent() });
+    const fetchMock = identityToolkit();
+    const captured = await run();
+    expect(captured.status).toBe(429);
+    expect(captured.body).toEqual({ ok: false, reason: 'rate_limited' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('records one attempt per call against the client IP, including a call whose code is bad', async () => {
+    identityToolkit({ verifyStatus: 400 });
+    await run();
+    expect((mocks.store.get(ipDoc(CLIENT_IP))?.timestamps as number[]).length).toBe(1);
+  });
+
+  it('keys on the entry Google appended, so rotating the first X-Forwarded-For entry does not reset it', async () => {
+    mocks.store.set(ipDoc(CLIENT_IP), { timestamps: tenRecent() });
+    const fetchMock = identityToolkit();
+    for (const forged of ['198.51.100.1', '198.51.100.2', '1.1.1.1']) {
+      const captured = await run(VALID_BODY, { xff: `${forged}, ${CLIENT_IP}` });
+      expect(captured.status, forged).toBe(429);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.store.has(ipDoc('198.51.100.1'))).toBe(false);
+  });
+
+  it('names the trusted IP in the incident, not the forged first entry', async () => {
+    identityToolkit();
+    await run(VALID_BODY, { xff: `6.6.6.6, ${CLIENT_IP}` });
+    expect((mocks.incidentSet.mock.calls[0]![0] as Record<string, unknown>).ip).toBe(CLIENT_IP);
+  });
+});
+
 // ── Derived email ─────────────────────────────────────────────────────────────
 
-describe('confirmSecureResetHandler — email comes from the oobCode, never the client (#892)', () => {
+describe('confirmSecureResetHandler: email comes from the oobCode, never the client (#892)', () => {
   it('verifies the code first with oobCode ONLY, then consumes it with the new password', async () => {
-    buildFakeDb({ existingTimestamps: [] });
-    process.env.WEB_API_KEY = 'test-api-key';
     const fetchMock = identityToolkit();
-    mocks.enqueueNotification.mockResolvedValue(['notif-1']);
-    const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
-    const { res } = captureRes();
-    await confirmSecureResetHandler(makeReq(VALID_BODY), res);
+    await run();
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    const [verifyUrl, verifyInit] = fetchMock.mock.calls[0];
+    const [verifyUrl, verifyInit] = fetchMock.mock.calls[0]!;
     expect(verifyUrl).toBe('https://identitytoolkit.googleapis.com/v1/accounts:resetPassword?key=test-api-key');
     expect(JSON.parse(verifyInit.body)).toEqual({ oobCode: VALID_BODY.oobCode });
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+    expect(JSON.parse(fetchMock.mock.calls[1]![1].body)).toEqual({
       oobCode: VALID_BODY.oobCode,
       newPassword: VALID_BODY.newPassword,
     });
   });
 
   it('names the oobCode owner in the incident and notification even when the client sends another email', async () => {
-    buildFakeDb({ existingTimestamps: [] });
-    process.env.WEB_API_KEY = 'test-api-key';
     identityToolkit({ email: OWNER_EMAIL });
-    mocks.enqueueNotification.mockResolvedValue(['notif-1']);
-    const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
-    const { res, captured } = captureRes();
-    await confirmSecureResetHandler(makeReq({ ...VALID_BODY, email: 'someone-else@example.com' }), res);
+    const captured = await run({ ...VALID_BODY, email: 'someone-else@example.com' });
 
     expect(captured.status).toBe(200);
-    const incident = mocks.incidentSet.mock.calls[0][0] as Record<string, unknown>;
+    const incident = mocks.incidentSet.mock.calls[0]![0] as Record<string, unknown>;
     expect(incident.kinfolkEmail).toBe(OWNER_EMAIL);
     expect(mocks.enqueueNotification).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ kinfolkEmail: OWNER_EMAIL }) }),
     );
   });
 
-  it('keys the rate limit on the DERIVED email hash, not the client-sent one', async () => {
-    buildFakeDb({ existingTimestamps: [] });
-    process.env.WEB_API_KEY = 'test-api-key';
+  it('keys the account limit on the DERIVED email hash, not the client-sent one', async () => {
     identityToolkit({ email: OWNER_EMAIL });
-    mocks.enqueueNotification.mockResolvedValue(['notif-1']);
-    const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
-    const { res } = captureRes();
-    await confirmSecureResetHandler(makeReq({ ...VALID_BODY, email: 'rotating-alias@example.com' }), res);
-
-    expect(mocks.rateLimitDocIds).toEqual([`secureReset_${await hashOf(OWNER_EMAIL)}`]);
+    await run({ ...VALID_BODY, email: 'rotating-alias@example.com' });
+    expect(mocks.store.has(emailDoc(OWNER_EMAIL))).toBe(true);
+    expect(mocks.store.has(emailDoc('rotating-alias@example.com'))).toBe(false);
   });
 
   it('calls the Auth emulator when FIREBASE_AUTH_EMULATOR_HOST is set', async () => {
-    buildFakeDb({ existingTimestamps: [] });
-    process.env.WEB_API_KEY = 'test-api-key';
     process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9499';
     const fetchMock = identityToolkit();
-    mocks.enqueueNotification.mockResolvedValue(['notif-1']);
-    const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
-    const { res } = captureRes();
-    await confirmSecureResetHandler(makeReq(VALID_BODY), res);
-    expect(fetchMock.mock.calls[0][0]).toBe(
+    await run();
+    expect(fetchMock.mock.calls[0]![0]).toBe(
       'http://127.0.0.1:9499/identitytoolkit.googleapis.com/v1/accounts:resetPassword?key=test-api-key',
     );
   });
 
   it('returns 400 reset_failed and consumes nothing when the verify call names no email', async () => {
-    buildFakeDb({ existingTimestamps: [] });
-    process.env.WEB_API_KEY = 'test-api-key';
     const fetchMock = vi.fn(async () => jsonResponse(200, { requestType: 'PASSWORD_RESET' }));
     vi.stubGlobal('fetch', fetchMock);
-    const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
-    const { res, captured } = captureRes();
-    await confirmSecureResetHandler(makeReq(VALID_BODY), res);
+    const captured = await run();
     expect(captured.status).toBe(400);
     expect(captured.body.error).toBe('reset_failed');
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -324,117 +318,139 @@ describe('confirmSecureResetHandler — email comes from the oobCode, never the 
   });
 });
 
-// ── Rate-limit guard ──────────────────────────────────────────────────────────
+// ── Code type ─────────────────────────────────────────────────────────────────
 
-describe('confirmSecureResetHandler — email rate-limit (3 per 24h)', () => {
-  it('HAPPY: exactly 2 prior attempts in window — third is allowed and recorded', async () => {
+describe('confirmSecureResetHandler: only a password reset code is accepted (#892 review)', () => {
+  it.each(['VERIFY_EMAIL', 'RECOVER_EMAIL', 'VERIFY_AND_CHANGE_EMAIL', ''])(
+    'returns 400 for a %s code, before the account limit and without consuming it',
+    async (requestType) => {
+      const fetchMock = identityToolkit({ requestType });
+      const captured = await run();
+      expect(captured.status).toBe(400);
+      expect(captured.body).toEqual({ error: 'reset_failed', detail: 'wrong_code_type' });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(mocks.store.has(emailDoc(OWNER_EMAIL))).toBe(false);
+      expect(mocks.incidentSet).not.toHaveBeenCalled();
+    },
+  );
+});
+
+// ── Account limit ─────────────────────────────────────────────────────────────
+
+describe('confirmSecureResetHandler: account limit (3 applied resets per 24h)', () => {
+  it('HAPPY: 2 prior resets in window, the third is applied and recorded', async () => {
     const now = Date.now();
-    buildFakeDb({ existingTimestamps: [now - 1000, now - 2000] });
-    process.env.WEB_API_KEY = 'test-api-key';
+    mocks.store.set(emailDoc(OWNER_EMAIL), { timestamps: [now - 1000, now - 2000] });
     identityToolkit();
-    mocks.enqueueNotification.mockResolvedValue(['notif-1']);
-    const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
-    const { res, captured } = captureRes();
-    await confirmSecureResetHandler(makeReq(VALID_BODY), res);
-    expect(captured.status).toBe(200);
-    expect(mocks.txSet).toHaveBeenCalledOnce();
+    expect((await run()).status).toBe(200);
+    const doc = mocks.store.get(emailDoc(OWNER_EMAIL))!;
+    expect((doc.timestamps as number[]).length).toBe(3);
+    expect(doc.pending).toEqual([]);
   });
 
-  it('SAD: 3 prior attempts in 24h window → 429 rate_limited, and the code is NOT consumed', async () => {
+  it('SAD: 3 prior resets in window, 429 and the code is NOT consumed', async () => {
     const now = Date.now();
-    buildFakeDb({ existingTimestamps: [now - 1000, now - 2000, now - 3000] });
-    process.env.WEB_API_KEY = 'test-api-key';
+    mocks.store.set(emailDoc(OWNER_EMAIL), { timestamps: [now - 1000, now - 2000, now - 3000] });
     const fetchMock = identityToolkit();
-    const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
-    const { res, captured } = captureRes();
-    await confirmSecureResetHandler(makeReq(VALID_BODY), res);
+    const captured = await run();
     expect(captured.status).toBe(429);
     expect(captured.body).toEqual({ ok: false, reason: 'rate_limited' });
-    // Only the verify call ran; the password was not changed.
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(mocks.enqueueNotification).not.toHaveBeenCalled();
   });
 
-  it('SAD: 5 prior attempts (abuse) → 429 rate_limited without growing the array', async () => {
-    const now = Date.now();
-    const many = Array.from({ length: 5 }, (_, i) => now - (i + 1) * 1000);
-    buildFakeDb({ existingTimestamps: many });
-    process.env.WEB_API_KEY = 'test-api-key';
-    identityToolkit();
-    const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
-    const { res, captured } = captureRes();
-    await confirmSecureResetHandler(makeReq(VALID_BODY), res);
-    expect(captured.status).toBe(429);
-    expect(captured.body.reason).toBe('rate_limited');
-    expect(mocks.txSet).not.toHaveBeenCalled();
+  it('a rejected apply (weak password, a code used in another tab) does not use up a slot', async () => {
+    identityToolkit({ consumeStatus: 400 });
+    const captured = await run();
+    expect(captured.status).toBe(400);
+    const doc = mocks.store.get(emailDoc(OWNER_EMAIL))!;
+    expect(doc.timestamps ?? []).toEqual([]);
+    expect(doc.pending).toEqual([]);
   });
 
-  it('EDGE: expired timestamps (>24h old) do not count — request is allowed', async () => {
-    const expired = Array.from({ length: 5 }, (_, i) => Date.now() - 25 * 60 * 60 * 1000 - i * 1000);
-    buildFakeDb({ existingTimestamps: expired });
-    process.env.WEB_API_KEY = 'test-api-key';
+  it('an unreachable apply does not use up a slot either', async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        calls += 1;
+        if (calls === 1) return jsonResponse(200, { email: OWNER_EMAIL, requestType: 'PASSWORD_RESET' });
+        throw new Error('network down');
+      }),
+    );
+    expect((await run()).status).toBe(502);
+    const doc = mocks.store.get(emailDoc(OWNER_EMAIL))!;
+    expect(doc.timestamps ?? []).toEqual([]);
+    expect(doc.pending).toEqual([]);
+  });
+
+  it('attempts still in flight hold their slots, so concurrent calls cannot exceed the limit', async () => {
+    const now = Date.now();
+    mocks.store.set(emailDoc(OWNER_EMAIL), {
+      timestamps: [now - 5000],
+      pending: [
+        { id: 'a', atMs: now - 1000 },
+        { id: 'b', atMs: now - 2000 },
+      ],
+    });
+    const fetchMock = identityToolkit();
+    expect((await run()).status).toBe(429);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a pending slot older than its lease is ignored, so a crashed call cannot hold it forever', async () => {
+    const now = Date.now();
+    mocks.store.set(emailDoc(OWNER_EMAIL), {
+      timestamps: [now - 5000],
+      pending: [
+        { id: 'a', atMs: now - 10 * 60 * 1000 },
+        { id: 'b', atMs: now - 11 * 60 * 1000 },
+      ],
+    });
     identityToolkit();
-    mocks.enqueueNotification.mockResolvedValue(['notif-1']);
-    const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
-    const { res, captured } = captureRes();
-    await confirmSecureResetHandler(makeReq(VALID_BODY), res);
-    expect(captured.status).toBe(200);
+    expect((await run()).status).toBe(200);
+  });
+
+  it('EDGE: resets older than 24h do not count', async () => {
+    const expired = Array.from({ length: 5 }, (_, i) => Date.now() - 25 * 60 * 60 * 1000 - i * 1000);
+    mocks.store.set(emailDoc(OWNER_EMAIL), { timestamps: expired });
+    identityToolkit();
+    expect((await run()).status).toBe(200);
   });
 
   it('rate-limited request logs warn event', async () => {
     const now = Date.now();
-    buildFakeDb({ existingTimestamps: [now - 1000, now - 2000, now - 3000] });
-    process.env.WEB_API_KEY = 'test-api-key';
+    mocks.store.set(emailDoc(OWNER_EMAIL), { timestamps: [now - 1000, now - 2000, now - 3000] });
     identityToolkit();
-    const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
-    const { res } = captureRes();
-    await confirmSecureResetHandler(makeReq(VALID_BODY), res);
+    await run();
     expect(mocks.logEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        severity: 'warn',
-        event: 'security.secureResetRateLimited',
-      }),
+      expect.objectContaining({ severity: 'warn', event: 'security.secureResetRateLimited' }),
     );
   });
 });
 
 // ── Identity Toolkit failures ─────────────────────────────────────────────────
 
-describe('confirmSecureResetHandler — Identity Toolkit errors', () => {
+describe('confirmSecureResetHandler: Identity Toolkit errors', () => {
   it('returns 502 when fetch throws (network error)', async () => {
-    buildFakeDb({ existingTimestamps: [] });
-    process.env.WEB_API_KEY = 'test-api-key';
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
-
-    const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
-    const { res, captured } = captureRes();
-    await confirmSecureResetHandler(makeReq(VALID_BODY), res);
+    const captured = await run();
     expect(captured.status).toBe(502);
     expect(captured.body.error).toBe('auth_unreachable');
   });
 
   it('returns 400 when Identity Toolkit rejects the oobCode at verify (expired or used)', async () => {
-    buildFakeDb({ existingTimestamps: [] });
-    process.env.WEB_API_KEY = 'test-api-key';
     const fetchMock = identityToolkit({ verifyStatus: 400 });
-
-    const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
-    const { res, captured } = captureRes();
-    await confirmSecureResetHandler(makeReq(VALID_BODY), res);
+    const captured = await run();
     expect(captured.status).toBe(400);
     expect(captured.body.error).toBe('reset_failed');
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(mocks.txSet).not.toHaveBeenCalled();
+    expect(mocks.store.has(emailDoc(OWNER_EMAIL))).toBe(false);
   });
 
   it('returns 400 when Identity Toolkit rejects the consume call', async () => {
-    buildFakeDb({ existingTimestamps: [] });
-    process.env.WEB_API_KEY = 'test-api-key';
     identityToolkit({ consumeStatus: 400 });
-
-    const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
-    const { res, captured } = captureRes();
-    await confirmSecureResetHandler(makeReq(VALID_BODY), res);
+    const captured = await run();
     expect(captured.status).toBe(400);
     expect(captured.body.error).toBe('reset_failed');
     expect(mocks.incidentSet).not.toHaveBeenCalled();
@@ -443,55 +459,69 @@ describe('confirmSecureResetHandler — Identity Toolkit errors', () => {
 
 // ── Happy path ────────────────────────────────────────────────────────────────
 
-describe('confirmSecureResetHandler — happy path', () => {
-  it('writes incident doc + enqueues notification + returns 200 with incidentId', async () => {
-    buildFakeDb({ existingTimestamps: [] });
-    process.env.WEB_API_KEY = 'test-api-key';
+describe('confirmSecureResetHandler: happy path', () => {
+  it('writes incident doc, enqueues the kinfolk alert, returns 200 with incidentId', async () => {
     identityToolkit();
-    mocks.enqueueNotification.mockResolvedValue(['notif-1']);
-
-    const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
-    const { res, captured } = captureRes();
-    await confirmSecureResetHandler(makeReq(VALID_BODY), res);
+    const captured = await run();
 
     expect(captured.status).toBe(200);
     expect(captured.body.ok).toBe(true);
     expect(captured.body.incidentId).toBe(mocks.incidentId);
 
     expect(mocks.incidentSet).toHaveBeenCalledOnce();
-    const incidentData = mocks.incidentSet.mock.calls[0][0] as Record<string, unknown>;
+    const incidentData = mocks.incidentSet.mock.calls[0]![0] as Record<string, unknown>;
     expect(incidentData.type).toBe('unsolicited_password_reset');
+    expect(incidentData.accountRole).toBe('kinfolk');
+    expect(incidentData.accountEmail).toBe(OWNER_EMAIL);
     expect(incidentData.kinfolkEmail).toBe(OWNER_EMAIL);
     expect(incidentData.oobCodePrefix).toBe(VALID_BODY.oobCode.slice(0, 8));
 
     expect(mocks.enqueueNotification).toHaveBeenCalledWith(
       expect.objectContaining({
         key: 'security.breach_attempt.kinfolk',
-        data: expect.objectContaining({
-          kinfolkEmail: OWNER_EMAIL,
-          incidentId: mocks.incidentId,
-        }),
+        data: expect.objectContaining({ kinfolkEmail: OWNER_EMAIL, incidentId: mocks.incidentId }),
       }),
     );
   });
 
+  it('alerts under the staff key, labelled as a staff account, when the account holds the admin claim (#892 review)', async () => {
+    mocks.getUserByEmail.mockResolvedValue({ uid: 'op-1', customClaims: { admin: true } });
+    identityToolkit({ email: 'ops@tribetails.com' });
+    expect((await run()).status).toBe(200);
+
+    expect(mocks.getUserByEmail).toHaveBeenCalledWith('ops@tribetails.com');
+    const call = mocks.enqueueNotification.mock.calls[0]![0] as { key: string; data: Record<string, unknown> };
+    expect(call.key).toBe('security.breach_attempt.staff');
+    expect(call.data).toEqual(expect.objectContaining({ staffEmail: 'ops@tribetails.com', incidentId: mocks.incidentId }));
+    expect(call.data).not.toHaveProperty('kinfolkEmail');
+
+    const incident = mocks.incidentSet.mock.calls[0]![0] as Record<string, unknown>;
+    expect(incident.accountRole).toBe('staff');
+    expect(incident.kinfolkEmail).toBeNull();
+    expect(incident.staffEmail).toBe('ops@tribetails.com');
+  });
+
+  it('still alerts, under the kinfolk key with a warning logged, when the role lookup fails', async () => {
+    mocks.getUserByEmail.mockRejectedValue(new Error('auth unavailable'));
+    identityToolkit();
+    expect((await run()).status).toBe(200);
+    expect(mocks.enqueueNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'security.breach_attempt.kinfolk' }),
+    );
+    expect(mocks.logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ severity: 'warn', event: 'security.roleLookupFailed' }),
+    );
+  });
+
   it('returns 200 even when notification dispatch throws (fail-loud log)', async () => {
-    buildFakeDb({ existingTimestamps: [] });
-    process.env.WEB_API_KEY = 'test-api-key';
     identityToolkit();
     mocks.enqueueNotification.mockRejectedValue(new Error('smtp2go down'));
-
-    const { confirmSecureResetHandler } = await import('../src/security/confirmSecureReset.js');
-    const { res, captured } = captureRes();
-    await confirmSecureResetHandler(makeReq(VALID_BODY), res);
+    const captured = await run();
 
     expect(captured.status).toBe(200);
     expect(captured.body.ok).toBe(true);
     expect(mocks.logEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        severity: 'error',
-        event: 'security.notificationDispatchFailed',
-      }),
+      expect.objectContaining({ severity: 'error', event: 'security.notificationDispatchFailed' }),
     );
   });
 });

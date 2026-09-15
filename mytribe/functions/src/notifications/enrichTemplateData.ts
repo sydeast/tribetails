@@ -140,6 +140,7 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   'security.account.locked.operator': ['kinfolkEmail', 'kinfolkName'],
   'security.failedLogin.attempts.operator': ['attemptsInWindow', 'kinfolkEmail', 'kinfolkName'],
   'security.breach_attempt.kinfolk': ['incidentId', 'ip', 'kinfolkEmail', 'timestampIso', 'userAgent'],
+  'security.breach_attempt.staff': ['incidentId', 'ip', 'staffEmail', 'timestampIso', 'userAgent'],
   'survey.event': [],
 };
 

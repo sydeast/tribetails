@@ -120,8 +120,15 @@ export const PORTAL_SIGN_IN_URL = 'https://kinfolk.tribetails.com/signin';
  * the continue target of an expired link through, so a staff member who asks
  * for a fresh link there still ends on the admin sign-in.
  */
-export async function sendReset(email: string, continueUrl: string = PORTAL_SIGN_IN_URL): Promise<void> {
+export async function sendReset(email: string, continueUrl: string | null = PORTAL_SIGN_IN_URL): Promise<void> {
   await ensureRecaptcha();
+  if (continueUrl === null) {
+    // A fresh link for a link that had no continue target (#892 review): the
+    // page cannot tell a household from staff, so the new link stays bare and
+    // the page again offers both sign-ins.
+    await sendPasswordResetEmail(auth, email);
+    return;
+  }
   await sendPasswordResetEmail(auth, email, { url: continueUrl, handleCodeInApp: false });
 }
 
@@ -143,10 +150,11 @@ export async function completeReset(oobCode: string, newPassword: string): Promi
  */
 export async function readActionCode(
   oobCode: string,
-): Promise<{ email: string | null; previousEmail: string | null }> {
+): Promise<{ operation: string; email: string | null; previousEmail: string | null }> {
   await ensureRecaptcha();
   const info = await checkActionCode(auth, oobCode);
-  return { email: info.data.email ?? null, previousEmail: info.data.previousEmail ?? null };
+  // `operation` is what the CODE is, whatever the link's `mode` says (#892 review).
+  return { operation: info.operation, email: info.data.email ?? null, previousEmail: info.data.previousEmail ?? null };
 }
 
 /** Uses an email link's oobCode (confirms, changes or restores the address). */

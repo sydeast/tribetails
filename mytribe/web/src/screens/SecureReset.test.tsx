@@ -74,7 +74,23 @@ describe('SecureReset: a normal requested reset', () => {
     expect(await screen.findByText('Your password is updated.')).toBeInTheDocument();
     expect(mocks.completeReset).toHaveBeenCalledWith('CODE-1', 'new-password-1');
     expect(mocks.confirmSecureReset).not.toHaveBeenCalled();
-    expect(screen.getByRole('link', { name: 'Sign in with your new password' })).toHaveAttribute('href', '/signin');
+    // A bare link cannot say whose account it is (#892 review), so both sign-ins.
+    expect(screen.getByRole('link', { name: 'Household sign-in' })).toHaveAttribute('href', '/signin');
+    expect(screen.getByRole('link', { name: 'Staff sign-in' })).toHaveAttribute(
+      'href',
+      'https://auntie.tribetails.com/signin',
+    );
+    expect(screen.queryByRole('link', { name: 'Sign in with your new password' })).toBeNull();
+  });
+
+  it('a bare expired link asks for a bare new link, so the next page still offers both sign-ins (#892 review)', async () => {
+    mocks.verifyResetCode.mockRejectedValue(authError('auth/expired-action-code'));
+    openLink(NATIVE);
+    await screen.findByText('This reset link has expired.');
+    fireEvent.change(screen.getByLabelText('Email address'), { target: { value: 'ops@tribetails.com' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send a new link' }));
+    await screen.findByText(/new link is on its way/i);
+    expect(mocks.sendReset).toHaveBeenCalledWith('ops@tribetails.com', null);
   });
 
   it('handles the requestPasswordReset link: the account comes from the code, not the email in continueUrl', async () => {
@@ -214,7 +230,7 @@ describe('SecureReset: "I did not ask for this reset"', () => {
 
 describe('SecureReset: the other Firebase email links', () => {
   it('confirms an email address on a verifyEmail link', async () => {
-    mocks.readActionCode.mockResolvedValue({ email: 'pepper@example.com', previousEmail: null });
+    mocks.readActionCode.mockResolvedValue({ operation: 'VERIFY_EMAIL', email: 'pepper@example.com', previousEmail: null });
     openLink('?mode=verifyEmail&oobCode=V-1&apiKey=AIzaFake&lang=en');
 
     fireEvent.click(await screen.findByRole('button', { name: 'Confirm this email address' }));
@@ -223,7 +239,11 @@ describe('SecureReset: the other Firebase email links', () => {
   });
 
   it('confirms a new sign-in email on a verifyAndChangeEmail link', async () => {
-    mocks.readActionCode.mockResolvedValue({ email: 'new@example.com', previousEmail: 'old@example.com' });
+    mocks.readActionCode.mockResolvedValue({
+      operation: 'VERIFY_AND_CHANGE_EMAIL',
+      email: 'new@example.com',
+      previousEmail: 'old@example.com',
+    });
     openLink('?mode=verifyAndChangeEmail&oobCode=V-2');
 
     expect(await screen.findByText('new@example.com')).toBeInTheDocument();
@@ -232,7 +252,11 @@ describe('SecureReset: the other Firebase email links', () => {
   });
 
   it('restores the previous email on a recoverEmail link and offers a password reset', async () => {
-    mocks.readActionCode.mockResolvedValue({ email: 'old@example.com', previousEmail: 'new@example.com' });
+    mocks.readActionCode.mockResolvedValue({
+      operation: 'RECOVER_EMAIL',
+      email: 'old@example.com',
+      previousEmail: 'new@example.com',
+    });
     openLink('?mode=recoverEmail&oobCode=R-1');
 
     fireEvent.click(await screen.findByRole('button', { name: 'Restore my sign-in email' }));
@@ -240,7 +264,23 @@ describe('SecureReset: the other Firebase email links', () => {
     expect(mocks.applyEmailAction).toHaveBeenCalledWith('R-1');
 
     fireEvent.click(screen.getByRole('button', { name: 'Send me a password reset link' }));
-    await waitFor(() => expect(mocks.sendReset).toHaveBeenCalledWith('old@example.com', undefined));
+    await waitFor(() => expect(mocks.sendReset).toHaveBeenCalledWith('old@example.com', null));
+  });
+
+  it.each([
+    ['verifyEmail', 'RECOVER_EMAIL'],
+    ['verifyEmail', 'VERIFY_AND_CHANGE_EMAIL'],
+    ['verifyAndChangeEmail', 'RECOVER_EMAIL'],
+    ['recoverEmail', 'VERIFY_EMAIL'],
+    ['verifyEmail', 'PASSWORD_RESET'],
+  ])('refuses a mode=%s link whose code is really %s, and never applies it (#892 review)', async (mode, operation) => {
+    mocks.readActionCode.mockResolvedValue({ operation, email: 'old@example.com', previousEmail: 'new@example.com' });
+    const { container } = openLink(`?mode=${mode}&oobCode=MISMATCH`);
+
+    expect(await screen.findByText("This link can't be completed here.")).toBeInTheDocument();
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(container.textContent).not.toMatch(/contact Tribe Tails/i);
+    expect(mocks.applyEmailAction).not.toHaveBeenCalled();
   });
 
   it('says an expired email link has expired', async () => {

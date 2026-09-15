@@ -208,6 +208,8 @@ describe('NOTIFICATION_CATALOG audiences streams (audience revamp 2026-07)', () 
     // #877: the operator's copy of the 5-failure warning, never the household's key.
     'security.failedLogin.attempts.operator': { business: true },
     'security.breach_attempt.kinfolk': { business: true },
+    // #892 review: the staff copy of the secure-reset alert.
+    'security.breach_attempt.staff': { business: true },
     'rating.submitted.bad': { business: true },
     'rating.submitted.good': { business: true },
     'pet.marked.inactive': { business: true },

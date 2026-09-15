@@ -921,6 +921,28 @@ const CATALOG_LIST: NotificationDef[] = [
     description:
       "Someone tried to reset a kinfolk's password without asking. A security incident record is filed automatically.",
   },
+  {
+    // #892 review: the same secure-reset flow, when the account holds the admin
+    // claim. Staff land on the portal's email action page too, and an alert
+    // labelled "Kinfolk email" would misname whose account it was.
+    key: 'security.breach_attempt.staff',
+    label: 'Unsolicited password reset attempt on a staff account',
+    audience: 'business',
+    audiences: { business: true },
+    category: 'security',
+    allowedChannels: ['email', 'push'],
+    required: { email: true, push: true },
+    alwaysEnabled: true,
+    kinfolkFacing: false,
+    deliveryMode: 'trigger',
+    recipientResolver: 'businessAdmins',
+    templates: {
+      email: 'security.breach_attempt.staff',
+      push: 'security.breach_attempt.staff',
+    },
+    description:
+      'A staff account flagged a password reset it did not ask for and set a new password. A security incident record is filed automatically.',
+  },
 
   // ─────────────────────────────────────────────────────────
   // RATINGS / PET STATE

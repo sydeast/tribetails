@@ -106,7 +106,52 @@ function Checking() {
   );
 }
 
-function Success({ title, children, signInHref }: { title: string; children?: React.ReactNode; signInHref: string }) {
+/** The admin app's sign-in, offered beside the portal's when a link does not say whose account it is. */
+const STAFF_SIGN_IN_URL = 'https://auntie.tribetails.com/signin';
+
+/**
+ * Where to go next.
+ *
+ * With a continue URL the sender already said where this account signs in, so
+ * there is one link. Without one (a bare native link, or a fresh link sent for
+ * one) the page cannot tell a household from staff: `verifyPasswordResetCode`
+ * returns only the email, and asking the server for the account's role would
+ * be a new unauthenticated endpoint answering "is this address staff" for
+ * anyone holding a code. So both sign-ins are shown, each named (#892 review).
+ */
+function SignInLinks({ continueUrl, label }: { continueUrl: string | null; label: string }) {
+  const style = { color: 'var(--teal)' };
+  if (continueUrl) {
+    return (
+      <p className="helper" style={{ marginTop: 14 }}>
+        <a href={continueUrl} style={style}>
+          {label}
+        </a>
+      </p>
+    );
+  }
+  return (
+    <p className="helper" style={{ marginTop: 14 }}>
+      <a href="/signin" style={style}>
+        Household sign-in
+      </a>
+      {' · '}
+      <a href={STAFF_SIGN_IN_URL} style={style}>
+        Staff sign-in
+      </a>
+    </p>
+  );
+}
+
+function Success({
+  title,
+  children,
+  continueUrl,
+}: {
+  title: string;
+  children?: React.ReactNode;
+  continueUrl: string | null;
+}) {
   return (
     <section className="glass card d1">
       <div className="successbox" role="status">
@@ -116,11 +161,7 @@ function Success({ title, children, signInHref }: { title: string; children?: Re
         </div>
       </div>
       {children}
-      <p className="helper" style={{ marginTop: 14 }}>
-        <a href={signInHref} style={{ color: 'var(--teal)' }}>
-          Sign in with your new password
-        </a>
-      </p>
+      <SignInLinks continueUrl={continueUrl} label="Sign in with your new password" />
     </section>
   );
 }
@@ -161,7 +202,8 @@ function ResendLink({ continueUrl }: { continueUrl: string | null }) {
     setBusy(true);
     setResult(null);
     try {
-      await sendReset(address, continueUrl ?? undefined);
+      // null stays null: a bare link gets a bare new link (see SignInLinks).
+      await sendReset(address, continueUrl);
       setResult('sent');
     } catch {
       setResult('failed');
@@ -212,7 +254,6 @@ type ResetPhase =
   | { kind: 'done'; secured: boolean };
 
 function ResetPasswordFlow({ link }: { link: EmailActionLink }) {
-  const signInHref = link.continueUrl ?? '/signin';
   const [phase, setPhase] = useState<ResetPhase>({ kind: 'checking' });
   const [attempt, setAttempt] = useState(0);
   const [intent, setIntent] = useState<'reset' | 'secure'>('reset');
@@ -298,14 +339,14 @@ function ResetPasswordFlow({ link }: { link: EmailActionLink }) {
 
   if (phase.kind === 'done') {
     return phase.secured ? (
-      <Success title="Your account is secured." signInHref={signInHref}>
+      <Success title="Your account is secured." continueUrl={link.continueUrl}>
         <p className="helper" style={{ marginTop: 14 }}>
           Your new password is set, and Tribe Tails has been alerted to look into the reset you did not
           ask for.
         </p>
       </Success>
     ) : (
-      <Success title="Your password is updated." signInHref={signInHref} />
+      <Success title="Your password is updated." continueUrl={link.continueUrl} />
     );
   }
 
@@ -399,11 +440,23 @@ function ResetPasswordFlow({ link }: { link: EmailActionLink }) {
 type EmailPhase =
   | { kind: 'checking' }
   | { kind: 'problem'; problem: CodeProblem }
+  | { kind: 'mismatch' }
   | { kind: 'ready'; email: string | null }
   | { kind: 'done'; email: string | null };
 
+/**
+ * What `checkActionCode` must report for each link mode (#892 review). The mode
+ * is a URL param anyone can edit, the operation is what the code really does:
+ * a `mode=verifyEmail` link carrying a RECOVER_EMAIL code would otherwise show
+ * "Confirm this email address" and roll back an email change on the tap.
+ */
+const OPERATION_FOR_MODE: Record<string, string> = {
+  verifyEmail: 'VERIFY_EMAIL',
+  verifyAndChangeEmail: 'VERIFY_AND_CHANGE_EMAIL',
+  recoverEmail: 'RECOVER_EMAIL',
+};
+
 function EmailLinkFlow({ link }: { link: EmailActionLink }) {
-  const signInHref = link.continueUrl ?? '/signin';
   const [phase, setPhase] = useState<EmailPhase>({ kind: 'checking' });
   const [attempt, setAttempt] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -415,7 +468,12 @@ function EmailLinkFlow({ link }: { link: EmailActionLink }) {
     setPhase({ kind: 'checking' });
     readActionCode(link.oobCode).then(
       (info) => {
-        if (live) setPhase({ kind: 'ready', email: info.email });
+        if (!live) return;
+        if (info.operation !== OPERATION_FOR_MODE[link.mode]) {
+          setPhase({ kind: 'mismatch' });
+          return;
+        }
+        setPhase({ kind: 'ready', email: info.email });
       },
       (err: unknown) => {
         if (live) setPhase({ kind: 'problem', problem: codeProblemOf(err) ?? 'unreachable' });
@@ -424,7 +482,7 @@ function EmailLinkFlow({ link }: { link: EmailActionLink }) {
     return () => {
       live = false;
     };
-  }, [link.oobCode, attempt]);
+  }, [link.oobCode, link.mode, attempt]);
 
   async function handleApply() {
     if (busy || phase.kind !== 'ready') return;
@@ -446,7 +504,7 @@ function EmailLinkFlow({ link }: { link: EmailActionLink }) {
     if (busy) return;
     setBusy(true);
     try {
-      await sendReset(email, link.continueUrl ?? undefined);
+      await sendReset(email, link.continueUrl);
       setResetSent('sent');
     } catch {
       setResetSent('failed');
@@ -464,6 +522,14 @@ function EmailLinkFlow({ link }: { link: EmailActionLink }) {
         title={phase.problem === 'expired' ? 'This link has expired.' : 'This link has already been used or is not valid.'}
       >
         Go back to where you started and ask for a new link.
+      </Notice>
+    );
+  }
+
+  if (phase.kind === 'mismatch') {
+    return (
+      <Notice title="This link can't be completed here.">
+        Go back to the app or site where you started and try again from there.
       </Notice>
     );
   }
@@ -511,11 +577,7 @@ function EmailLinkFlow({ link }: { link: EmailActionLink }) {
             )}
           </>
         )}
-        <p className="helper" style={{ marginTop: 14 }}>
-          <a href={signInHref} style={{ color: 'var(--teal)' }}>
-            Go to sign in
-          </a>
-        </p>
+        <SignInLinks continueUrl={link.continueUrl} label="Go to sign in" />
       </section>
     );
   }

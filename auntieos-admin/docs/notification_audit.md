@@ -110,6 +110,7 @@ Every `security.*` key in the catalog as of 2026-09-14. All three go to business
 | `security.account.locked.operator` | businessAdmins | business | e,s,p | trigger | email, push | ✓ | ✓ | `loginSecurity.ts` `sendLockAlerts`, same call as the household's `auth.account.locked` (#869). Dedupe key per lock start |
 | `security.failedLogin.attempts.operator` | businessAdmins | business | e,s,p | trigger | email, push | ✓ | ✓ | `loginSecurity.ts` `sendWarningAlerts`, same call as the household's `auth.failedLogin.attempts` (#877). Dedupe key per warning burst |
 | `security.breach_attempt.kinfolk` | businessAdmins | business | e,p | trigger | email, push | ✓ | ✓ | `security/confirmSecureReset.ts`, when a secure-reset confirmation is attempted against an account that did not ask |
+| `security.breach_attempt.staff` | businessAdmins | business | e,p | trigger | email, push | ✓ | ✓ | `security/confirmSecureReset.ts`, the same flow when the account holds the admin claim (#892) |
 
 ---
 

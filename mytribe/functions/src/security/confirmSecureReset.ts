@@ -1,17 +1,24 @@
 /**
  * confirmSecureReset, public HTTPS endpoint.
  *
- * Called from MyTribe /account/secure-reset after a kinfolk flags an
- * unsolicited password-reset email. The user is signed-out; no auth token.
+ * Called from the portal's email action page (/account/secure-reset) when the
+ * account holder chooses "I did not ask for this reset". The user is signed out;
+ * no auth token.
  *
  * Flow:
  *   1. Validate input ({ oobCode, newPassword }; any client-sent email is ignored).
- *   2. Verify the oobCode via Identity Toolkit REST and derive the account email from it.
- *   3. Rate-limit on the derived email.
- *   4. Consume oobCode via Identity Toolkit REST (sets the new password).
- *   5. Write securityIncidents/{auto} Firestore doc.
- *   6. Dispatch security.breach_attempt.kinfolk notification to business admins.
- *   7. Return { ok: true, incidentId }.
+ *   2. Per-IP limit, keyed on the IP Google appended (#892 review), before any
+ *      Identity Toolkit call.
+ *   3. Verify the oobCode via Identity Toolkit REST, derive the account email
+ *      from it, and require a PASSWORD_RESET code.
+ *   4. Hold a slot in the account's 3-per-24h limit.
+ *   5. Consume the oobCode (sets the new password), then record the slot as used
+ *      only if that succeeded.
+ *   6. Write securityIncidents/{auto}.
+ *   7. Alert business admins under the key for the account's role:
+ *      security.breach_attempt.staff for an admin-claim account, else
+ *      security.breach_attempt.kinfolk.
+ *   8. Return { ok: true, incidentId }.
  *
  * Fail-loud: auth/Firestore errors propagate as 4xx/5xx.
  * Notification errors are logged loudly but MUST NOT block the reset response
@@ -22,19 +29,32 @@
  */
 
 import { onRequest } from 'firebase-functions/v2/https';
+import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { z } from 'zod';
 import { enqueueNotification } from '../notifications/dispatcher.js';
 import { logEvent } from '../lib/logger.js';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { clientIpOf } from '../lib/clientIp';
 
-// ── Email-based rate limit for confirmSecureReset ─────────────────────────────
-// Prevents a single kinfolk address being used to flood breach-incident writes
-// or to probe oobCode validity en-masse. Keyed on sha256(email) so no plaintext
-// email is stored in the rate-limit doc.
-const EMAIL_RATE_WINDOW_MS = 24 * 60 * 60 * 1000; // 24-hour window
-const EMAIL_RATE_LIMIT = 3;                        // max 3 attempts per window
+// ── Limits ────────────────────────────────────────────────────────────────────
+// Account limit: at most 3 applied secure resets per account per 24h, so one
+// account cannot be used to flood breach-incident writes. Keyed on sha256 of the
+// DERIVED email so no plaintext email is stored in the rate-limit doc.
+const EMAIL_RATE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const EMAIL_RATE_LIMIT = 3;
+/**
+ * How long a held slot counts before it is ignored. Long enough to cover the
+ * Identity Toolkit apply call, short enough that a crashed call cannot hold a
+ * slot for the rest of the day.
+ */
+const PENDING_LEASE_MS = 5 * 60 * 1000;
+
+// IP limit (#892 review): verify is an unauthenticated Identity Toolkit call, so
+// it is throttled per client IP before it runs.
+const IP_RATE_WINDOW_MS = 15 * 60 * 1000;
+const IP_RATE_LIMIT = 10;
 
 /**
  * Canonicalize an email for rate-limit bucket derivation. Lowercases AND
@@ -55,29 +75,28 @@ function hashEmail(email: string): string {
   return createHash('sha256').update(canonicalizeEmail(email)).digest('hex').slice(0, 32);
 }
 
+function hashIp(ip: string): string {
+  return createHash('sha256').update(ip).digest('hex').slice(0, 32);
+}
+
 /** Strict Zod email validator. Rejects garbage like `@`, `a@`, `@b`. */
 const emailSchema = z.string().email();
 
 /**
- * Check and record a secure-reset attempt for the given email address.
- * Uses a Firestore transaction so concurrent requests don't double-count.
- *
- * @throws never, returns boolean instead of throwing so the caller can issue
- *   the correct HTTP 429 response (this is an onRequest handler, not onCall).
+ * Count and record one call from this IP. Every call spends budget, including
+ * one whose code turns out to be bad, because probing codes is what this limits.
+ * Transactional, so concurrent calls from one IP cannot overshoot it.
  */
-async function checkEmailRateLimit(email: string): Promise<boolean> {
+async function ipIsRateLimited(ip: string): Promise<boolean> {
   const db = getFirestore();
-  const key = `secureReset_${hashEmail(email)}`;
-  const ref = db.collection('securityRateLimits').doc(key);
+  const ref = db.collection('securityRateLimits').doc(`secureResetIp_${hashIp(ip)}`);
   const nowMs = Date.now();
-  const cutoff = nowMs - EMAIL_RATE_WINDOW_MS;
-
   let limited = false;
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const timestamps: number[] = (snap.data()?.timestamps as number[] | undefined) ?? [];
-    const recent = timestamps.filter((t) => t >= cutoff);
-    if (recent.length >= EMAIL_RATE_LIMIT) {
+    const recent = timestamps.filter((t) => t >= nowMs - IP_RATE_WINDOW_MS);
+    if (recent.length >= IP_RATE_LIMIT) {
       limited = true;
       return; // do not record, don't let the array grow unboundedly on abuse
     }
@@ -85,6 +104,79 @@ async function checkEmailRateLimit(email: string): Promise<boolean> {
     tx.set(ref, { timestamps: recent, updatedAtMs: nowMs }, { merge: true });
   });
   return limited;
+}
+
+interface PendingAttempt {
+  id: string;
+  atMs: number;
+}
+
+function livePending(raw: unknown, nowMs: number): PendingAttempt[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (p): p is PendingAttempt =>
+      !!p && typeof p.id === 'string' && typeof p.atMs === 'number' && p.atMs >= nowMs - PENDING_LEASE_MS,
+  );
+}
+
+function emailLimitRef(email: string) {
+  return getFirestore().collection('securityRateLimits').doc(`secureReset_${hashEmail(email)}`);
+}
+
+/**
+ * Hold a slot in the account's limit before the password is changed.
+ *
+ * #892 review: the attempt used to be RECORDED here, so a weak-password
+ * rejection or a code already used in another tab spent one of the three. Now a
+ * slot is only held: applied resets plus live held slots must be under the limit,
+ * checked and held in one transaction so concurrent calls cannot exceed it.
+ * `settleEmailAttempt` turns the hold into a used slot only if the apply worked.
+ *
+ * @returns the hold id, or null when the account is at its limit.
+ */
+async function holdEmailAttempt(email: string): Promise<string | null> {
+  const db = getFirestore();
+  const ref = emailLimitRef(email);
+  const nowMs = Date.now();
+  const id = randomUUID();
+  let held: string | null = null;
+  await db.runTransaction(async (tx) => {
+    const data = (await tx.get(ref)).data();
+    const timestamps: number[] = (data?.timestamps as number[] | undefined) ?? [];
+    const recent = timestamps.filter((t) => t >= nowMs - EMAIL_RATE_WINDOW_MS);
+    const pending = livePending(data?.pending, nowMs);
+    if (recent.length + pending.length >= EMAIL_RATE_LIMIT) return;
+    pending.push({ id, atMs: nowMs });
+    tx.set(ref, { timestamps: recent, pending, updatedAtMs: nowMs }, { merge: true });
+    held = id;
+  });
+  return held;
+}
+
+/** Release a held slot, recording it as a used attempt only when the reset was applied. */
+async function settleEmailAttempt(email: string, id: string, applied: boolean): Promise<void> {
+  const db = getFirestore();
+  const ref = emailLimitRef(email);
+  const nowMs = Date.now();
+  try {
+    await db.runTransaction(async (tx) => {
+      const data = (await tx.get(ref)).data();
+      const timestamps: number[] = (data?.timestamps as number[] | undefined) ?? [];
+      const recent = timestamps.filter((t) => t >= nowMs - EMAIL_RATE_WINDOW_MS);
+      if (applied) recent.push(nowMs);
+      const pending = livePending(data?.pending, nowMs).filter((p) => p.id !== id);
+      tx.set(ref, { timestamps: recent, pending, updatedAtMs: nowMs }, { merge: true });
+    });
+  } catch (e) {
+    // The reset itself already succeeded or failed; a lost settle only means the
+    // hold lapses after PENDING_LEASE_MS. Loud, not blocking.
+    logEvent({
+      severity: 'error',
+      function: 'confirmSecureReset',
+      event: 'security.secureResetSettleFailed',
+      extra: { emailHash: hashEmail(email), applied, error: String(e) },
+    });
+  }
 }
 
 // ── Request shape ─────────────────────────────────────────────────────────────
@@ -102,6 +194,7 @@ interface ResetBody {
   /** navigator.userAgent from the browser (optional; best-effort). */
   userAgent?: string;
 }
+
 /**
  * Identity Toolkit base URL. Under the Auth emulator the same REST surface is
  * served at http://<host>/identitytoolkit.googleapis.com, so an emulator run
@@ -113,6 +206,29 @@ function identityToolkitBase(): string {
     ? `http://${emulator}/identitytoolkit.googleapis.com/v1`
     : 'https://identitytoolkit.googleapis.com/v1';
 }
+
+type AccountRole = 'staff' | 'kinfolk';
+
+/**
+ * Whose account this is, for the alert's key and label (#892 review). Staff hold
+ * the `admin` custom claim (firestore.rules `isAuntie()`). A failed lookup falls
+ * back to the kinfolk key, logged, so the alert still goes out.
+ */
+async function accountRoleOf(email: string): Promise<AccountRole> {
+  try {
+    const user = await getAuth().getUserByEmail(email);
+    return user.customClaims?.['admin'] === true ? 'staff' : 'kinfolk';
+  } catch (e) {
+    logEvent({
+      severity: 'warn',
+      function: 'confirmSecureReset',
+      event: 'security.roleLookupFailed',
+      extra: { emailHash: hashEmail(email), error: String(e) },
+    });
+    return 'kinfolk';
+  }
+}
+
 // ── Handler (exported for unit tests) ────────────────────────────────────────
 export interface MinimalReq {
   method?: string;
@@ -124,6 +240,7 @@ export interface MinimalRes {
   status(code: number): MinimalRes;
   json(payload: Record<string, unknown>): void;
 }
+
 export async function confirmSecureResetHandler(
   req: MinimalReq,
   res: MinimalRes,
@@ -144,10 +261,8 @@ export async function confirmSecureResetHandler(
     return;
   }
   const ts = new Date().toISOString();
-  const ip =
-    (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ||
-    req.socket.remoteAddress ||
-    'unknown';
+  // The entry Google appended, never the caller's forgeable first entry (#892 review).
+  const ip = clientIpOf({ headers: req.headers, ip: req.socket.remoteAddress });
   const ua = userAgent || (req.headers['user-agent'] as string | undefined) || 'unknown';
   const apiKey = process.env.WEB_API_KEY ?? '';
   if (!apiKey) {
@@ -162,8 +277,21 @@ export async function confirmSecureResetHandler(
     res.status(503).json({ error: 'server_misconfigured', detail: 'WEB_API_KEY not set' });
     return;
   }
+
+  // ── Step 2: Per-IP limit before any Identity Toolkit call ────────────────────
+  if (await ipIsRateLimited(ip)) {
+    logEvent({
+      severity: 'warn',
+      function: 'confirmSecureReset',
+      event: 'security.secureResetIpRateLimited',
+      extra: { ipHash: hashIp(ip) },
+    });
+    res.status(429).json({ ok: false, reason: 'rate_limited' });
+    return;
+  }
+
   const resetUrl = `${identityToolkitBase()}/accounts:resetPassword?key=${apiKey}`;
-  // ── Step 1: Verify the oobCode and DERIVE the account email ─────────────────
+  // ── Step 3: Verify the oobCode and DERIVE the account email ─────────────────
   // accounts:resetPassword with only an oobCode checks the code and returns
   // { email, requestType } WITHOUT consuming it (the client SDK's
   // verifyPasswordResetCode is this same call). The email a client sends is
@@ -187,7 +315,7 @@ export async function confirmSecureResetHandler(
       res.status(400).json({ error: 'reset_failed', detail });
       return;
     }
-    const verified = (await verifyResp.json().catch(() => ({}))) as { email?: unknown };
+    const verified = (await verifyResp.json().catch(() => ({}))) as { email?: unknown; requestType?: unknown };
     if (typeof verified.email !== 'string' || !emailSchema.safeParse(verified.email).success) {
       logEvent({
         severity: 'warn',
@@ -196,6 +324,18 @@ export async function confirmSecureResetHandler(
         extra: { stage: 'verify', note: 'Identity Toolkit named no account for this oobCode' },
       });
       res.status(400).json({ error: 'reset_failed', detail: 'no_account_for_code' });
+      return;
+    }
+    // #892 review: only a password reset code may set a password here. An email
+    // verification or recovery code is refused before it touches the limit.
+    if (verified.requestType !== 'PASSWORD_RESET') {
+      logEvent({
+        severity: 'warn',
+        function: 'confirmSecureReset',
+        event: 'security.oobCodeRejected',
+        extra: { stage: 'verify', note: 'not a password reset code', requestType: String(verified.requestType) },
+      });
+      res.status(400).json({ error: 'reset_failed', detail: 'wrong_code_type' });
       return;
     }
     canonicalEmail = verified.email;
@@ -209,23 +349,22 @@ export async function confirmSecureResetHandler(
     res.status(502).json({ error: 'auth_unreachable', detail: String(e) });
     return;
   }
-  // ── Step 2: Rate-limit on the derived email (BEFORE the code is consumed) ───
-  // Max 3 confirmSecureReset attempts per account per 24h, so one account
-  // cannot be used to flood breach-incident writes. Keyed on the derived email,
-  // so rotating a client-sent address no longer buys fresh attempts.
-  const rateLimited = await checkEmailRateLimit(canonicalEmail);
-  if (rateLimited) {
+
+  // ── Step 4: Hold a slot in the account limit (BEFORE the code is consumed) ──
+  const holdId = await holdEmailAttempt(canonicalEmail);
+  if (holdId === null) {
     // Log hash only, raw email in Cloud Logging is PII leakage (CWE-532).
     logEvent({
       severity: 'warn',
       function: 'confirmSecureReset',
       event: 'security.secureResetRateLimited',
-      extra: { emailHash: hashEmail(canonicalEmail), ip },
+      extra: { emailHash: hashEmail(canonicalEmail), ipHash: hashIp(ip) },
     });
     res.status(429).json({ ok: false, reason: 'rate_limited' });
     return;
   }
-  // ── Step 3: Consume oobCode + set new password via Identity Toolkit REST ────
+
+  // ── Step 5: Consume oobCode + set new password via Identity Toolkit REST ────
   let resetResp: Response;
   try {
     resetResp = await fetch(resetUrl, {
@@ -234,6 +373,7 @@ export async function confirmSecureResetHandler(
       body: JSON.stringify({ oobCode, newPassword }),
     });
   } catch (e) {
+    await settleEmailAttempt(canonicalEmail, holdId, false);
     logEvent({
       severity: 'error',
       function: 'confirmSecureReset',
@@ -244,6 +384,7 @@ export async function confirmSecureResetHandler(
     return;
   }
   if (!resetResp.ok) {
+    await settleEmailAttempt(canonicalEmail, holdId, false);
     const detail = await resetResp.text();
     logEvent({
       severity: 'warn',
@@ -254,6 +395,8 @@ export async function confirmSecureResetHandler(
     res.status(400).json({ error: 'reset_failed', detail });
     return;
   }
+  await settleEmailAttempt(canonicalEmail, holdId, true);
+
   const emailMismatch =
     suppliedEmail !== null && suppliedEmail.toLowerCase() !== canonicalEmail.toLowerCase();
   if (emailMismatch) {
@@ -264,17 +407,24 @@ export async function confirmSecureResetHandler(
       extra: {
         suppliedHash: hashEmail(suppliedEmail),
         canonicalHash: hashEmail(canonicalEmail),
-        ip,
+        ipHash: hashIp(ip),
         note: 'Caller-supplied email does not match oobCode owner, possible spoof',
       },
     });
   }
-  // ── Step 2: Write securityIncidents doc ───────────────────────────────────────
+
+  const role = await accountRoleOf(canonicalEmail);
+
+  // ── Step 6: Write securityIncidents doc ──────────────────────────────────────
   const db = getFirestore();
   const incidentRef = db.collection('securityIncidents').doc();
   await incidentRef.set({
     type: 'unsolicited_password_reset',
-    kinfolkEmail: canonicalEmail,
+    accountRole: role,
+    accountEmail: canonicalEmail,
+    // Kept for existing readers of kinfolk incidents; null for a staff account.
+    kinfolkEmail: role === 'kinfolk' ? canonicalEmail : null,
+    staffEmail: role === 'staff' ? canonicalEmail : null,
     suppliedEmail: emailMismatch ? suppliedEmail : null,
     timestampIso: ts,
     ip,
@@ -288,23 +438,19 @@ export async function confirmSecureResetHandler(
     severity: 'warn',
     function: 'confirmSecureReset',
     event: 'security.breachAttemptRecorded',
-    extra: { incidentId: incidentRef.id, emailHash: hashEmail(canonicalEmail), ip },
+    extra: { incidentId: incidentRef.id, emailHash: hashEmail(canonicalEmail), role, ipHash: hashIp(ip) },
   });
 
-  // ── Step 3: Dispatch notification ─────────────────────────────────────────────
+  // ── Step 7: Dispatch notification ────────────────────────────────────────────
   // Notification failure MUST NOT block the reset response, the password has
-  // already been changed and the kinfolk is waiting. Log loudly instead.
+  // already been changed and the account holder is waiting. Log loudly instead.
+  const common = { timestampIso: ts, ip, userAgent: ua, incidentId: incidentRef.id };
   try {
-    await enqueueNotification({
-      key: 'security.breach_attempt.kinfolk',
-      data: {
-        kinfolkEmail: canonicalEmail,
-        timestampIso: ts,
-        ip,
-        userAgent: ua,
-        incidentId: incidentRef.id,
-      },
-    });
+    await enqueueNotification(
+      role === 'staff'
+        ? { key: 'security.breach_attempt.staff', data: { staffEmail: canonicalEmail, ...common } }
+        : { key: 'security.breach_attempt.kinfolk', data: { kinfolkEmail: canonicalEmail, ...common } },
+    );
   } catch (e) {
     // FAIL-LOUD: notification dispatch failed, log with full detail so admin
     // can correlate via Cloud Logging → incidentId.
