@@ -1,5 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
-import { FieldValue, Timestamp, type DocumentReference, type Firestore } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp, type DocumentReference, type Firestore, type Transaction } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
@@ -116,11 +116,15 @@ export function parseEmergencyContactsInput(contacts: unknown[]): EmergencyConta
  * `saveEmergencyContacts` and saveTribeProfile's old-client path (#829). Reads
  * only: returns the doc to write and the merged list, and throws the same
  * HttpsErrors either caller shows. The caller has already checked home_access.
+ *
+ * With [tx] both reads go through the transaction, so saveTribeProfile's
+ * profile and contact writes commit against what was read (#873 review).
  */
 export async function prepareEmergencyContactsSave(
   firestore: Firestore,
   kinfolkId: string,
   contacts: EmergencyContactInput[],
+  tx?: Transaction,
 ): Promise<{ ref: DocumentReference; merged: StoredEmergencyContact[] }> {
   const [first, second] = contacts;
   if (!first) {
@@ -131,7 +135,10 @@ export async function prepareEmergencyContactsSave(
   }
 
   const ref = firestore.doc(`kinfolk/${kinfolkId}`);
-  const [kinSnap, membersSnap] = await Promise.all([ref.get(), firestore.collection(`families/${kinfolkId}/members`).get()]);
+  const members = firestore.collection(`families/${kinfolkId}/members`);
+  const [kinSnap, membersSnap] = tx
+    ? await Promise.all([tx.get(ref), tx.get(members)])
+    : await Promise.all([ref.get(), members.get()]);
   if (!kinSnap.exists) throw new HttpsError('not-found', 'That household no longer exists.');
   const kinfolk = (kinSnap.data() ?? {}) as Record<string, unknown>;
   const who = householdIdentity(kinfolk, membersSnap.docs.map((d) => (d.data() ?? {}) as Record<string, unknown>));
@@ -218,9 +225,10 @@ function servedEntries(data: unknown): Array<{ key: string; at: unknown }> {
   return served.filter((s): s is { key: string; at: unknown } => typeof s === 'object' && s !== null && typeof (s as { key?: unknown }).key === 'string');
 }
 
-/** The keys of the contacts last served to this caller, oldest first. */
-export async function readLegacyServedKeys(firestore: Firestore, kinfolkId: string, uid: string): Promise<string[]> {
-  const snap = await legacyServedRef(firestore, kinfolkId, uid).get();
+/** The keys of the contacts last served to this caller, oldest first. With [tx], read through it. */
+export async function readLegacyServedKeys(firestore: Firestore, kinfolkId: string, uid: string, tx?: Transaction): Promise<string[]> {
+  const ref = legacyServedRef(firestore, kinfolkId, uid);
+  const snap = tx ? await tx.get(ref) : await ref.get();
   return snap.exists ? servedEntries(snap.data()).map((s) => s.key) : [];
 }
 

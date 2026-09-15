@@ -4,6 +4,7 @@
  * folded into api/types.ts + api/portal.ts. Field names/types are
  * transcribed from the backend handlers; each block cites its source file.
  */
+import { FirebaseError } from 'firebase/app';
 import { call } from '../lib/fns';
 
 // ── shared custom-field shape (functions/src/portal/getMyTribeProfile.ts,
@@ -57,7 +58,10 @@ export function getMyTribeProfile(kinfolkId?: string): Promise<GetMyTribeProfile
 export interface SaveTribeProfileRequest {
   kinfolkId?: string;
   displayName?: string;
+  /** #873: merged by key into the stored rows. A row not sent is kept. */
   customFields?: CustomFieldDto[];
+  /** #873: the only way to delete a stored row. */
+  removeCustomFieldKeys?: string[];
 }
 
 export interface SaveTribeProfileResult {
@@ -76,7 +80,10 @@ export interface SaveHomeAccessRequest {
   gateCode?: string | null;
   keyLocation?: string | null;
   wifiPassword?: string | null;
+  /** #873: merged by key into the stored rows. A row not sent is kept. */
   customFields?: CustomFieldDto[];
+  /** #873: the only way to delete a stored row. */
+  removeCustomFieldKeys?: string[];
 }
 
 export interface SaveHomeAccessResult {
@@ -580,6 +587,79 @@ export const HOME_RESERVED_KEYS = ['afterHoursVetName', 'afterHoursVetPhone'] as
 export function mergeReservedFields(base: CustomFieldDto[], next: CustomFieldDto[], reservedKeys: readonly string[]): CustomFieldDto[] {
   const reserved = new Set(reservedKeys);
   return [...base.filter((f) => !reserved.has(f.key)), ...next];
+}
+
+/** #829: stored for old clients and the migration only. This screen never sends them. */
+export const LEGACY_EMERGENCY_CONTACT_KEYS = ['emergencyContactName', 'emergencyContactPhone', 'emergencyContactRelation'] as const;
+
+/**
+ * #873. The row a schema field saves, or null when the stored row stays as it is.
+ *
+ * `value` undefined means the form never held the key: nothing stored, nothing
+ * typed. A value equal to the stored one is untouched. `''` over a stored value
+ * is a real clear and is sent. `''` with nothing stored writes no empty row.
+ */
+export function schemaFieldRow(stored: readonly CustomFieldDto[], field: { key: string; label: string }, value: string | undefined): CustomFieldDto | null {
+  if (value === undefined) return null;
+  const current = stored.find((f) => f.key === field.key);
+  if (current) return value === current.value ? null : { key: field.key, label: field.label || current.label || field.key, value };
+  return value === '' ? null : { key: field.key, label: field.label || field.key, value };
+}
+
+/**
+ * #873. The save payload: the stored rows, in order, with [set] applied by key
+ * (a new key is appended) and every stored key in [clear] removed and named in
+ * `removeCustomFieldKeys`, because the callables merge by key and keep a row that
+ * is merely omitted. Keys in [drop] are never sent and never named. A stored
+ * duplicate key is folded into its first position.
+ *
+ * The full list is sent, not just the changes, so the payload is also right
+ * against a server that still replaces the list whole.
+ */
+export function editCustomFields(
+  stored: readonly CustomFieldDto[],
+  set: readonly CustomFieldDto[],
+  clear: readonly string[],
+  drop: readonly string[] = [],
+): { customFields: CustomFieldDto[]; removeCustomFieldKeys: string[] } {
+  const dropKeys = new Set(drop);
+  const clearKeys = new Set(clear);
+  const latest = new Map<string, CustomFieldDto>();
+  for (const row of set) latest.set(row.key, row);
+  const placed = new Set<string>();
+  const removed = new Set<string>();
+  const customFields: CustomFieldDto[] = [];
+  for (const row of stored) {
+    if (dropKeys.has(row.key)) continue;
+    if (clearKeys.has(row.key)) {
+      removed.add(row.key);
+      continue;
+    }
+    if (placed.has(row.key)) continue;
+    customFields.push(latest.get(row.key) ?? row);
+    placed.add(row.key);
+  }
+  for (const row of latest.values()) {
+    if (placed.has(row.key) || clearKeys.has(row.key) || dropKeys.has(row.key)) continue;
+    customFields.push(row);
+    placed.add(row.key);
+  }
+  return { customFields, removeCustomFieldKeys: [...removed] };
+}
+
+/**
+ * #873 second review. saveTribeProfile and saveHomeAccess each allow 60 saves an
+ * hour per household and refuse the next with `resource-exhausted`. Starts with
+ * "Save failed" like every other page-save failure. Same text as portal Android's
+ * PROFILE_SAVE_RATE_LIMITED_MESSAGE.
+ */
+export const PROFILE_SAVE_RATE_LIMITED_MESSAGE =
+  'Save failed: this household has saved too many times in the last hour. Wait a little, then save again.';
+
+/** The page-save failure line for a rejected saveTribeProfile or saveHomeAccess. */
+export function profileSaveErrorMessage(err: unknown): string {
+  if (err instanceof FirebaseError && err.code === 'functions/resource-exhausted') return PROFILE_SAVE_RATE_LIMITED_MESSAGE;
+  return `Save failed: ${err instanceof Error ? err.message : 'unknown error'}`;
 }
 
 /** True when a custom field has anything worth displaying (mirrors the Kotlin visibility guards). */
