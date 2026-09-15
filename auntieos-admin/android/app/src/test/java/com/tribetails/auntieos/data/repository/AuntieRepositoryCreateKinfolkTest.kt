@@ -81,7 +81,7 @@ class AuntieRepositoryCreateKinfolkTest {
     fun `createKinfolkComplete calls createKinfolk with no Emergency Contact key and every other field`() = runBlocking {
         answer(mapOf("kinfolkId" to "kf-new", "duplicateOf" to null))
 
-        val result = repo().createKinfolkComplete(input)
+        val result = repo().createKinfolkComplete(input, null)
 
         assertTrue(result.isSuccess)
         assertEquals("kf-new", result.getOrNull()?.kinfolk?.id)
@@ -103,17 +103,35 @@ class AuntieRepositoryCreateKinfolkTest {
     fun `a duplicateOf answer returns the existing household, so Add continues it`() = runBlocking {
         answer(mapOf("kinfolkId" to "kf-existing", "duplicateOf" to "kf-existing"))
 
-        val result = repo().createKinfolkComplete(input)
+        val result = repo().createKinfolkComplete(input, null)
 
         assertEquals("kf-existing", result.getOrThrow().kinfolk.id)
         assertEquals("kf-existing", result.getOrThrow().duplicateOf)
         assertEquals("Jamie", result.getOrThrow().kinfolk.firstName)
     }
 
+    // #907 review item 1(a).
+    @Test
+    fun `the discarded household crosses the wire as ignoreDuplicateOf, and is left off when there is none`() = runBlocking {
+        answer(mapOf("kinfolkId" to "kf-new", "duplicateOf" to null))
+
+        repo().createKinfolkComplete(input, "kf-left")
+        @Suppress("UNCHECKED_CAST")
+        assertEquals("kf-left", (sent.captured as Map<String, Any?>)["ignoreDuplicateOf"])
+
+        repo().createKinfolkComplete(input, null)
+        @Suppress("UNCHECKED_CAST")
+        assertFalse((sent.captured as Map<String, Any?>).containsKey("ignoreDuplicateOf"))
+
+        repo().createKinfolkComplete(input, "  ")
+        @Suppress("UNCHECKED_CAST")
+        assertFalse((sent.captured as Map<String, Any?>).containsKey("ignoreDuplicateOf"))
+    }
+
     @Test
     fun `an answer with no household id is a failure, never a blank id`() = runBlocking {
         answer(mapOf("duplicateOf" to null))
-        val result = repo().createKinfolkComplete(input)
+        val result = repo().createKinfolkComplete(input, null)
         assertTrue(result.isFailure)
         assertEquals("createKinfolk returned no household id", result.exceptionOrNull()?.message)
     }
@@ -122,7 +140,7 @@ class AuntieRepositoryCreateKinfolkTest {
     fun `a nested contact override crosses the callable wire as a plain map`() = runBlocking {
         answer(mapOf("kinfolkId" to "kf-new", "duplicateOf" to null))
 
-        repo().createKinfolkComplete(input.copy(contactOverride = ContactOverride(channel = "text", note = "on vacation")))
+        repo().createKinfolkComplete(input.copy(contactOverride = ContactOverride(channel = "text", note = "on vacation")), null)
 
         @Suppress("UNCHECKED_CAST")
         val override = sentKinfolk()["contactOverride"] as Map<String, Any?>

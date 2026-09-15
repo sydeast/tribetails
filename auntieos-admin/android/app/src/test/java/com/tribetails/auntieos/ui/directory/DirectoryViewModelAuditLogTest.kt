@@ -54,7 +54,7 @@ class DirectoryViewModelAuditLogTest {
 
     @Test
     fun `saveKinfolk fires CREATE_KINFOLK audit entry`() = runTest(testDispatcher) {
-        coEvery { repository.createKinfolkComplete(any()) } returns
+        coEvery { repository.createKinfolkComplete(any(), any()) } returns
             Result.success(KinfolkCreated(Kinfolk(id = "new-id", firstName = "Pat", lastName = "S"), null))
         coEvery { repository.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
         viewModel.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
@@ -117,7 +117,7 @@ class DirectoryViewModelAuditLogTest {
 
     @Test
     fun `failed save does NOT fire audit entry`() = runTest(testDispatcher) {
-        coEvery { repository.createKinfolkComplete(any()) } returns
+        coEvery { repository.createKinfolkComplete(any(), any()) } returns
             Result.failure(RuntimeException("nope"))
         coEvery { repository.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
         viewModel.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))

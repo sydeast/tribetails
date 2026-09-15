@@ -50,7 +50,7 @@ class DirectoryViewModelPendingAddTest {
     @After fun tearDown() = Dispatchers.resetMain()
 
     private fun addWithFailedContact(id: String = "kf-890", duplicateOf: String? = null) {
-        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = id), duplicateOf)) }
+        coEvery { repo.createKinfolkComplete(any(), any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = id), duplicateOf)) }
         coEvery { repo.saveEmergencyContacts(id, any()) } returns Result.failure(Exception("offline"))
         vm.updateFirstName("Jamie")
         vm.updateLastName("Halbrook")
@@ -93,7 +93,7 @@ class DirectoryViewModelPendingAddTest {
         vm.saveKinfolk()
 
         assertTrue(vm.addKinfolkState.value.isSuccess)
-        coVerify(exactly = 1) { repo.createKinfolkComplete(any()) }
+        coVerify(exactly = 1) { repo.createKinfolkComplete(any(), any()) }
         coVerify(exactly = 2) { repo.saveEmergencyContacts("kf-890", any()) }
     }
 
@@ -115,26 +115,108 @@ class DirectoryViewModelPendingAddTest {
         assertFalse(vm.addKinfolkState.value.offerPendingOnOpen)
     }
 
+    /** #907 review item 1(b): a duplicate is never a success and never has the contact saved onto it. */
     @Test
-    fun `a duplicateOf answer saves the contact onto that household and logs no second CREATE`() {
-        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-existing"), "kf-existing")) }
-        coEvery { repo.saveEmergencyContacts("kf-existing", any()) } returns Result.success(emptyList())
-        vm.updateFirstName("Jamie")
-        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Park", "8055550199"))
+    fun `a duplicateOf answer is not a success, saves no contact, logs no CREATE, and hands the typing on`() {
+        addDuplicate()
 
-        vm.saveKinfolk()
-
-        assertTrue(vm.addKinfolkState.value.isSuccess)
-        coVerify(exactly = 1) { repo.saveEmergencyContacts("kf-existing", any()) }
+        val s = vm.addKinfolkState.value
+        assertFalse("a duplicateOf answer was reported as saved", s.isSuccess)
+        assertEquals("kf-existing", s.duplicateOf)
+        assertNull(s.createdKinfolkId)
+        coVerify(exactly = 0) { repo.saveEmergencyContacts(any(), any()) }
         coVerify(exactly = 0) { repo.logActivity(match { it.actionType == "CREATE_KINFOLK" }) }
     }
 
-    @Test
-    fun `a duplicateOf answer whose contact fails logs no CREATE either, and still keeps the household`() {
-        addWithFailedContact(id = "kf-existing", duplicateOf = "kf-existing")
+    private fun addDuplicate() {
+        coEvery { repo.createKinfolkComplete(any(), any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-existing"), "kf-existing")) }
+        vm.updateFirstName("Jamie")
+        vm.updateLastName("Halbrook-Park")
+        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Park", "8055550199"))
+        vm.saveKinfolk()
+    }
 
-        assertEquals("kf-existing", vm.addKinfolkState.value.createdKinfolkId)
-        coVerify(exactly = 0) { repo.logActivity(match { it.actionType == "CREATE_KINFOLK" }) }
+    /** #907 review item 1(b), the edit screen side. */
+    @Test
+    fun `the household's edit form opens with what Add typed that differs, unsaved, and saves only that`() {
+        addDuplicate()
+        coEvery { repo.getKinfolk() } returns Result.success(
+            listOf(Kinfolk(id = "kf-existing", firstName = "Jamie", lastName = "Halbrook", phoneNumber = "8055550134", status = "prospect", preferredContactMethod = "Text")),
+        )
+        coEvery { repo.updateKinfolkFields(any(), any()) } returns Result.success(Unit)
+        coEvery { repo.saveEmergencyContacts("kf-existing", any()) } returns Result.success(emptyList())
+
+        vm.loadKinfolkForEdit("kf-existing")
+
+        val e = vm.editKinfolkState.value
+        assertEquals("Halbrook-Park", e.lastName)
+        // A blank typed phone is "not typed", never "clear it".
+        assertEquals("8055550134", e.phoneNumber)
+        assertEquals("Rae Park", e.emergencyContacts.single().name)
+        assertEquals(
+            "Jamie Halbrook was already added a few minutes ago. What you typed in Add that differs is filled in below and is not saved yet.",
+            e.duplicateAddNotice,
+        )
+        assertTrue(vm.editHasUnsavedChanges())
+
+        vm.saveKinfolkChanges()
+
+        coVerify(exactly = 1) { repo.updateKinfolkFields("kf-existing", match { it.keys == setOf("lastName") }) }
+        coVerify(exactly = 1) { repo.saveEmergencyContacts("kf-existing", any()) }
+
+        // Opened again, it is only the stored household: the typing was used once.
+        vm.loadKinfolkForEdit("kf-existing")
+        assertNull(vm.editKinfolkState.value.duplicateAddNotice)
+    }
+
+    /** #907 review item 1(a): Discard says the next Add is a new household. */
+    @Test
+    fun `after Discard the next create names the discarded household, once`() {
+        addWithFailedContact()
+        vm.leaveAddKinfolk()
+        vm.discardPendingAdd()
+        assertEquals("kf-890", vm.addKinfolkState.value.discardedKinfolkId)
+
+        coEvery { repo.createKinfolkComplete(any(), any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-new"), null)) }
+        coEvery { repo.saveEmergencyContacts("kf-new", any()) } returns Result.success(emptyList())
+        vm.updateFirstName("Jamie")
+        vm.updateLastName("Halbrook")
+        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Park", "8055550199"))
+        vm.saveKinfolk()
+
+        assertTrue(vm.addKinfolkState.value.isSuccess)
+        coVerify(exactly = 1) { repo.createKinfolkComplete(any(), "kf-890") }
+        assertNull(vm.addKinfolkState.value.discardedKinfolkId)
+    }
+
+    /** #907 review item 2. */
+    @Test
+    fun `a household deleted while its contact was pending is dropped with That household no longer exists`() {
+        addWithFailedContact()
+        coEvery { repo.saveEmergencyContacts("kf-890", any()) } returns Result.failure(Exception(HOUSEHOLD_NO_LONGER_EXISTS))
+
+        vm.saveKinfolk()
+
+        val s = vm.addKinfolkState.value
+        assertNull(s.createdKinfolkId)
+        assertEquals(HOUSEHOLD_NO_LONGER_EXISTS, s.error)
+        vm.leaveAddKinfolk()
+        assertFalse("a household that is gone was offered again", vm.addKinfolkState.value.offerPendingOnOpen)
+    }
+
+    /** #907 review item 3. */
+    @Test
+    fun `a different operator never sees the last operator's pending Add`() {
+        vm.operatorChanged("op-1")
+        addWithFailedContact()
+        vm.leaveAddKinfolk()
+
+        vm.operatorChanged("op-1")
+        assertEquals("kf-890", vm.addKinfolkState.value.createdKinfolkId)
+
+        vm.operatorChanged(null)
+        assertNull(vm.addKinfolkState.value.createdKinfolkId)
+        assertFalse(vm.addKinfolkState.value.offerPendingOnOpen)
     }
 
     @Test

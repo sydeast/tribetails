@@ -93,7 +93,7 @@ class DirectoryViewModelExtTest {
 
     @Test
     fun `saveKinfolk sets error when repository fails`() = runTest(testDispatcher) {
-        coEvery { mockRepo.createKinfolkComplete(any()) } returns Result.failure(RuntimeException("Write failed"))
+        coEvery { mockRepo.createKinfolkComplete(any(), any()) } returns Result.failure(RuntimeException("Write failed"))
 
         val vm = buildViewModel()
         advanceUntilIdle()
@@ -110,7 +110,7 @@ class DirectoryViewModelExtTest {
 
     @Test
     fun `saveKinfolk sets isSuccess on repository success`() = runTest(testDispatcher) {
-        coEvery { mockRepo.createKinfolkComplete(any()) } returns Result.success(KinfolkCreated(TestFixtures.kinfolk1, null))
+        coEvery { mockRepo.createKinfolkComplete(any(), any()) } returns Result.success(KinfolkCreated(TestFixtures.kinfolk1, null))
 
         val vm = buildViewModel()
         advanceUntilIdle()

@@ -25,7 +25,12 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
 fun AddKinfolkScreen(
     viewModel: DirectoryViewModel,
     onBack: () -> Unit,
-    onSaved: () -> Unit
+    onSaved: () -> Unit,
+    /**
+     * #907 review item 1(b): createKinfolk answered `duplicateOf`. The caller opens
+     * that household's edit screen, where what was typed is filled in, unsaved.
+     */
+    onDuplicate: (kinfolkId: String) -> Unit = {},
 ) {
     val state by viewModel.addKinfolkState.collectAsState()
     // #829 Fix round 1: once the household exists (a retry after a failed
@@ -41,6 +46,10 @@ fun AddKinfolkScreen(
         if (state.isSuccess) {
             onSaved()
         }
+    }
+
+    LaunchedEffect(state.duplicateOf) {
+        state.duplicateOf?.let(onDuplicate)
     }
 
     AuntieScreenScaffold(

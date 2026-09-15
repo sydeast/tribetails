@@ -116,12 +116,12 @@ class DirectoryViewModelArchiveTest {
 
         assertNotNull(viewModel.addKinfolkState.value.error)
         assertTrue(viewModel.addKinfolkState.value.error!!.contains("First name"))
-        coVerify(exactly = 0) { repository.createKinfolkComplete(any()) }
+        coVerify(exactly = 0) { repository.createKinfolkComplete(any(), any()) }
     }
 
     @Test
     fun `saveKinfolk defaults blank status to prospect`() = runTest(testDispatcher) {
-        coEvery { repository.createKinfolkComplete(any()) } returns Result.success(KinfolkCreated(Kinfolk(id = "new-id"), null))
+        coEvery { repository.createKinfolkComplete(any(), any()) } returns Result.success(KinfolkCreated(Kinfolk(id = "new-id"), null))
         coEvery { repository.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
         viewModel.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         viewModel.updateFirstName("Pat")
@@ -130,13 +130,13 @@ class DirectoryViewModelArchiveTest {
         advanceUntilIdle()
 
         coVerify(exactly = 1) {
-            repository.createKinfolkComplete(match { it.status == "prospect" })
+            repository.createKinfolkComplete(match { it.status == "prospect" }, any())
         }
     }
 
     @Test
     fun `saveKinfolk respects explicit status`() = runTest(testDispatcher) {
-        coEvery { repository.createKinfolkComplete(any()) } returns Result.success(KinfolkCreated(Kinfolk(id = "new-id"), null))
+        coEvery { repository.createKinfolkComplete(any(), any()) } returns Result.success(KinfolkCreated(Kinfolk(id = "new-id"), null))
         coEvery { repository.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
         viewModel.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         viewModel.updateFirstName("Pat")
@@ -146,7 +146,7 @@ class DirectoryViewModelArchiveTest {
         advanceUntilIdle()
 
         coVerify(exactly = 1) {
-            repository.createKinfolkComplete(match { it.status == "active" })
+            repository.createKinfolkComplete(match { it.status == "active" }, any())
         }
     }
 }

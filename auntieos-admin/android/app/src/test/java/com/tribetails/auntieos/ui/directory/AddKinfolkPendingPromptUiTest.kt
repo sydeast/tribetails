@@ -59,7 +59,7 @@ class AddKinfolkPendingPromptUiTest {
         vm = DirectoryViewModel(repo, mockk<InvoiceRepository>(relaxed = true), kinCareRepo)
 
         // Add created the household, its contact failed, and the operator left.
-        coEvery { repo.createKinfolkComplete(any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-890"), null)) }
+        coEvery { repo.createKinfolkComplete(any(), any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-890"), null)) }
         coEvery { repo.saveEmergencyContacts("kf-890", any()) } returns Result.failure(Exception("offline"))
         vm.updateFirstName("Jamie")
         vm.updateLastName("Halbrook")
@@ -106,5 +106,24 @@ class AddKinfolkPendingPromptUiTest {
         composeRule.onNodeWithText("Save").assertExists()
         assertTrue(composeRule.onAllNodesWithText("Save Emergency Contact").fetchSemanticsNodes().isEmpty())
         verify { repo wasNot Called }
+    }
+
+    /** #907 review item 1(b): a duplicateOf answer hands the operator to that household, never onSaved. */
+    @Test
+    fun aDuplicateOfAnswerOpensThatHouseholdInsteadOfReportingSaved() {
+        vm.discardPendingAdd()
+        coEvery { repo.createKinfolkComplete(any(), any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-existing"), "kf-existing")) }
+        vm.updateFirstName("Jamie")
+        vm.updateLastName("Halbrook")
+        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Park", "8055550199"))
+        vm.saveKinfolk()
+        var opened: String? = null
+        var saved = false
+        composeRule.setContent {
+            AuntieOSTheme { AddKinfolkScreen(viewModel = vm, onBack = {}, onSaved = { saved = true }, onDuplicate = { opened = it }) }
+        }
+        composeRule.waitForIdle()
+        assertEquals("kf-existing", opened)
+        assertEquals(false, saved)
     }
 }

@@ -159,6 +159,19 @@ fun EditKinfolkScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 contentPadding = PaddingValues(vertical = 16.dp)
             ) {
+                // #907 review item 1(b): opened from an Add answered `duplicateOf`.
+                state.duplicateAddNotice?.let { notice ->
+                    item {
+                        AuntieCard(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = notice,
+                                modifier = Modifier.padding(16.dp),
+                                color = AuntieTheme.colors.warning,
+                            )
+                        }
+                    }
+                }
+
                 // K3 (A8): household-notes migration box, re-homed here from the
                 // read-only profile. Only when the loaded profile matches this kinfolk
                 // and the dossier still carries un-migrated notes.

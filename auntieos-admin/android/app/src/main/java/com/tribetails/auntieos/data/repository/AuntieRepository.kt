@@ -419,10 +419,17 @@ class AuntieRepository(
      * on and saves the Emergency Contact onto the existing household, and
      * [KinfolkCreated.duplicateOf] tells the caller not to audit a second CREATE.
      */
-    suspend fun createKinfolkComplete(kinfolk: Kinfolk): Result<KinfolkCreated> = runCatching {
+    //
+    // [ignoreDuplicateOf] (#907 review item 1a): the household the operator just
+    // Discarded, so the server's duplicate check skips it. No default on purpose:
+    // every caller says whether there is one.
+    suspend fun createKinfolkComplete(kinfolk: Kinfolk, ignoreDuplicateOf: String?): Result<KinfolkCreated> = runCatching {
         AuntieLog.i("Creating kinfolk complete phone=${AuntieLog.redactPhone(kinfolk.phoneNumber)}")
         authGate.ensureAuthenticated()
-        val payload = mapOf("kinfolk" to kinfolkCreatePayload(kinfolk).mapValues { (_, v) -> callableValue(v) })
+        val payload = buildMap<String, Any> {
+            put("kinfolk", kinfolkCreatePayload(kinfolk).mapValues { (_, v) -> callableValue(v) })
+            ignoreDuplicateOf?.trim()?.takeIf { it.isNotEmpty() }?.let { put("ignoreDuplicateOf", it) }
+        }
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("createKinfolk").call(payload).awaitCallable().data as? Map<String, Any?>
             ?: error("createKinfolk: non-map payload")
