@@ -93,7 +93,9 @@ function report(email: string, atMs: number) {
   vi.setSystemTime(atMs);
   ipCounter += 1;
   return recordFailedLoginHandler(
-    callableRequest({ email }, { headers: { 'x-forwarded-for': `10.0.${(ipCounter >> 8) & 255}.${ipCounter & 255}` } }),
+    // Public addresses: since #908 a private entry at the trusted hop is refused
+    // as untrusted, and every such call would share one bucket.
+    callableRequest({ email }, { headers: { 'x-forwarded-for': `203.0.${113 + ((ipCounter >> 8) & 3)}.${ipCounter & 255}` } }),
   );
 }
 

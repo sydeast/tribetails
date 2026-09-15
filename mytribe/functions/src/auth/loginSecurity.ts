@@ -172,9 +172,17 @@ export type UntrustedRangeClass =
   | 'loopback'
   | 'linkLocal'
   | 'uniqueLocal'
+  | 'ipv4Compatible'
   | 'unspecified'
   | 'googleFrontEnd'
   | 'notAnIp';
+
+/**
+ * #908 re-review: what `clientIpOf` returns, and so what the per-IP limit keys
+ * on and the audit row records, when the entry at the trusted hop cannot be a
+ * caller on the internet. Every such call shares this one bucket.
+ */
+export const UNTRUSTED_CLIENT_IP = 'untrusted';
 
 /** Eight 16-bit groups of an IPv6 address, or null when it is not one. */
 function ipv6Groups(ip: string): number[] | null {
@@ -195,9 +203,37 @@ function ipv6Groups(ip: string): number[] | null {
 }
 
 /**
- * One X-Forwarded-For entry as an address: brackets and a port stripped, and an
- * IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) turned into its IPv4 address.
- * Anything that is not an IP comes back trimmed and unchanged.
+ * RFC 5952 text for eight IPv6 groups: lowercase hex without leading zeros, the
+ * longest run of two or more zero groups written as `::` (the leftmost run on a
+ * tie), and a single zero group left as `0`.
+ */
+function canonicalIpv6(g: number[]): string {
+  let bestStart = -1;
+  let bestLen = 0;
+  for (let i = 0; i < 8; ) {
+    if (g[i] !== 0) {
+      i += 1;
+      continue;
+    }
+    let j = i;
+    while (j < 8 && g[j] === 0) j += 1;
+    if (j - i > bestLen) {
+      bestStart = i;
+      bestLen = j - i;
+    }
+    i = j;
+  }
+  const hex = g.map((x) => x.toString(16));
+  if (bestLen < 2) return hex.join(':');
+  return `${hex.slice(0, bestStart).join(':')}::${hex.slice(bestStart + bestLen).join(':')}`;
+}
+
+/**
+ * One X-Forwarded-For entry as one canonical address (#908 re-review): brackets
+ * and a port stripped, an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) turned
+ * into its IPv4 address, and any other IPv6 address in RFC 5952 form with no
+ * zone id, so every spelling of one address keys and audits the same. Anything
+ * that is not an IP comes back trimmed and unchanged.
  */
 function normalizeIp(entry: string): string {
   let ip = entry.trim();
@@ -205,19 +241,27 @@ function normalizeIp(entry: string): string {
   if (bracketed) ip = bracketed[1]!;
   else if (/^\d{1,3}(\.\d{1,3}){3}:\d+$/.test(ip)) ip = ip.slice(0, ip.lastIndexOf(':'));
   const g = ipv6Groups(ip);
-  if (g && g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) {
+  if (!g) return ip;
+  if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) {
     return `${g[6]! >> 8}.${g[6]! & 255}.${g[7]! >> 8}.${g[7]! & 255}`;
   }
-  return isIP(ip) === 6 ? ip.toLowerCase() : ip;
+  return canonicalIpv6(g);
 }
 
 /**
  * Null for a public address, else why it cannot be the one Google's front end
- * appended for a caller on the internet: RFC 1918 private, loopback,
- * link-local (169.254.0.0/16, fe80::/10), unique-local (fc00::/7), unspecified,
- * a Google front end or health-check range (35.191.0.0/16, 130.211.0.0/22,
- * https://docs.cloud.google.com/load-balancing/docs/health-check-concepts), or
- * not an IP at all.
+ * appended for a caller on the internet:
+ *   - RFC 1918 private, loopback, unspecified;
+ *   - link-local (169.254.0.0/16, fe80::/10), unique-local (fc00::/7);
+ *   - IPv4-compatible IPv6 (`::/96`, deprecated by RFC 4291, never a real source);
+ *   - a Google front end range. 35.191.0.0/16 and 130.211.0.0/22 are the
+ *     request source ranges for "Instance groups and zonal NEGs", and
+ *     2600:2d00:1:1::/64 is the IPv6 one, all from
+ *     https://docs.cloud.google.com/load-balancing/docs/https (Firewall rules).
+ *     2600:2d00:1:b029::/64 is the IPv6 health check probe range, and
+ *     35.191.0.0/16 the IPv4 one, from
+ *     https://docs.cloud.google.com/load-balancing/docs/health-check-concepts;
+ *   - not an IP at all.
  */
 function untrustedRangeClass(ip: string): UntrustedRangeClass | null {
   if (isIP(ip) === 4) {
@@ -233,8 +277,10 @@ function untrustedRangeClass(ip: string): UntrustedRangeClass | null {
   if (!g) return 'notAnIp';
   if (g.every((x) => x === 0)) return 'unspecified';
   if (g.slice(0, 7).every((x) => x === 0) && g[7] === 1) return 'loopback';
+  if (g.slice(0, 6).every((x) => x === 0)) return 'ipv4Compatible';
   if ((g[0]! & 0xffc0) === 0xfe80) return 'linkLocal';
   if ((g[0]! & 0xfe00) === 0xfc00) return 'uniqueLocal';
+  if (g[0] === 0x2600 && g[1] === 0x2d00 && g[2] === 1 && (g[3] === 1 || g[3] === 0xb029)) return 'googleFrontEnd';
   return null;
 }
 
@@ -290,18 +336,26 @@ export function ipRateLimitKey(ip: string): string {
  * become 2: the rightmost entry would be the balancer's own address, and every
  * caller would share one 30-per-5-minute bucket.
  *
- * FAILS SAFE WHEN THE HOP COUNT IS WRONG (#908 review). Gen 2 callables answer on
- * both `cloudfunctions.net` and `*.run.app`, and nothing proves those two add
- * the same number of entries. If the chosen entry is private, loopback,
- * link-local, unique-local, unspecified, a Google front end range or not an IP
- * (`untrustedRangeClass`), it cannot be a caller on the internet, so this logs
+ * FAILS CLOSED WHEN THE HOP COUNT IS WRONG (#908 review and re-review). Gen 2
+ * callables answer on both `cloudfunctions.net` and `*.run.app`, and nothing
+ * proves those two add the same number of entries. If the entry at the trusted
+ * hop is private, loopback, link-local, unique-local, IPv4-compatible IPv6,
+ * unspecified, a Google front end range or not an IP (`untrustedRangeClass`),
+ * it cannot be a caller on the internet, so this logs
  * `clientIp.untrustedRightmost` at error (the range class, never the address)
- * and steps one entry left, repeating while entries remain. When none remains it
- * keeps the entry it has. Zero entries log `clientIp.noForwardedFor` at error
- * and fall back to `rawRequest.ip`, which is then the socket address, and then
- * to 'unknown'. Production always carries the header; the emulator does not.
+ * and returns UNTRUSTED_CLIENT_IP. It never steps left to another entry: every
+ * entry left of the trusted hop was written by the caller, and at runtime a
+ * real client behind an unexpected proxy cannot be told apart from a forged
+ * public address. So a wrong hop count puts every caller in one shared bucket
+ * and in the error log until TRUSTED_PROXY_HOPS is corrected, rather than
+ * handing each forged address a fresh bucket. Zero entries log
+ * `clientIp.noForwardedFor` at error and fall back to `rawRequest.ip`, which is
+ * then the socket address, and then to 'unknown'. Production always carries
+ * the header; the emulator does not.
  *
- * An IPv4-mapped IPv6 entry comes back as its IPv4 address.
+ * The address comes back canonical: an IPv4-mapped IPv6 entry as its IPv4
+ * address, any other IPv6 entry in RFC 5952 form without brackets, port or
+ * zone id.
  */
 export function clientIpOf(rawRequest: RawRequestLike, trustedHops: number = TRUSTED_PROXY_HOPS): string {
   const header = rawRequest?.headers?.['x-forwarded-for'];
@@ -321,20 +375,17 @@ export function clientIpOf(rawRequest: RawRequestLike, trustedHops: number = TRU
     const socketIp = typeof rawRequest?.ip === 'string' ? normalizeIp(rawRequest.ip) : '';
     return socketIp || 'unknown';
   }
-  let index = Math.max(0, entries.length - hops);
-  for (;;) {
-    const rangeClass = untrustedRangeClass(entries[index]!);
-    if (rangeClass === null) break;
-    logEvent({
-      severity: 'error',
-      function: 'clientIpOf',
-      event: 'clientIp.untrustedRightmost',
-      extra: { rangeClass, entryCount: entries.length, position: entries.length - index, trustedHops: hops },
-    });
-    if (index === 0) break;
-    index -= 1;
-  }
-  return entries[index]!;
+  const index = Math.max(0, entries.length - hops);
+  const rangeClass = untrustedRangeClass(entries[index]!);
+  if (rangeClass === null) return entries[index]!;
+  logEvent({
+    severity: 'error',
+    function: 'clientIpOf',
+    event: 'clientIp.untrustedRightmost',
+    extra: { rangeClass, entryCount: entries.length, position: entries.length - index, trustedHops: hops },
+  });
+  // Fail closed: never an entry further left, which the caller wrote.
+  return UNTRUSTED_CLIENT_IP;
 }
 
 /**

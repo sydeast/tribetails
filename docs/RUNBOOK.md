@@ -1169,10 +1169,12 @@ What a failure means:
 
 - A row shows `1.2.3.4`: that URL adds no entry of its own, so the function keys
   on what the caller wrote. Stop and report it.
-- A `clientIp.untrustedRightmost` error: that URL adds more entries than one. Its
-  `rangeClass` says what sat in the rightmost place (`googleFrontEnd`, `private`
-  and so on). The function already stepped left and used the next entry, so the
-  limit still works, but `TRUSTED_PROXY_HOPS` does not match that URL. Report it.
+- A `clientIp.untrustedRightmost` error, or rows showing `untrusted` as `ip`: that
+  URL adds more entries than one. Its `rangeClass` says what sat in the rightmost
+  place (`googleFrontEnd`, `private` and so on). The function refuses to guess
+  further left, so every caller on that URL shares one 30-per-5-minute bucket
+  until `TRUSTED_PROXY_HOPS` in `loginSecurity.ts` is fixed in the next release.
+  Report it.
 - Every row shows the same Google address: the hop count is wrong in a way the
   ranges did not catch. Report it.
 
