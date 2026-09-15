@@ -936,14 +936,16 @@ describe('#884 review: updateInvoice decides and writes in one transaction', () 
       'invoices/inv1/payments/p1': { amountCents: 6000, amount: 60 },
     };
     docs = store;
+    // B commits once A has read BOTH the invoice and its payments: the first
+    // time a payment row is read through the store, which is A's payments read.
     let raced = false;
     const racing = new Proxy(store, {
       get(target, p, receiver) {
         const value = Reflect.get(target, p, receiver);
-        if (!raced && p === INVOICE) {
+        if (!raced && p === 'invoices/inv1/payments/p1') {
           raced = true;
           target[INVOICE] = {
-            ...(value as Record<string, unknown>),
+            ...(target[INVOICE] as Record<string, unknown>),
             status: 'paid',
             paymentStatus: 'PAID',
             amountDue: 0,
