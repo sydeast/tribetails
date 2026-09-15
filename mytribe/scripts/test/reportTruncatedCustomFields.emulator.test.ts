@@ -67,11 +67,12 @@ describe.runIf(EMULATOR)('the #873 report reads real stored customFields', () =>
       customFields: [...office, { key: 'noLabel', value: 'Secret A' }, { key: 'longOne', label: 'Long', value: 'Q'.repeat(1001) }],
     });
     await db.doc('families/fam_big/homeAccess/current').set({ customFields: [...office, { key: 'blank', label: '', value: 'Secret B' }, { key: 'pool', label: 'Pool', value: 'Heated' }] });
-    // 7. #873 second review: 30 rows of 2500 characters, about 75 KiB, so over the
-    // 64 KiB growth ceiling with no other risk.
+    // 7. #873 second review: 70 rows of 1000 characters (the longest value the
+    // callables accept, so no long-value risk), about 72 KiB: over the 64 KiB
+    // growth ceiling and past the old 40-row cap, with no label risk.
     await db.doc('families/fam_heavy').set({
       displayName: 'G',
-      customFields: Array.from({ length: 30 }, (_, i) => ({ key: `note${i}`, label: `Note ${i}`, value: 'W'.repeat(2500) })),
+      customFields: Array.from({ length: 70 }, (_, i) => ({ key: `note${i}`, label: `Note ${i}`, value: 'W'.repeat(1000) })),
     });
   }, EMULATOR_TIMEOUT_MS);
 
@@ -85,7 +86,7 @@ describe.runIf(EMULATOR)('the #873 report reads real stored customFields', () =>
     expect(report.scannedFamilies).toBe(7);
     expect(report.lockoutRisks).toEqual([
       expect.objectContaining({ surface: 'families', kinfolkId: 'fam_big', path: 'families/fam_big', rows: 41, blankLabelKeys: ['noLabel'], longValueKeys: ['longOne'] }),
-      expect.objectContaining({ surface: 'families', kinfolkId: 'fam_heavy', path: 'families/fam_heavy', rows: 30, blankLabelKeys: [], longValueKeys: [] }),
+      expect.objectContaining({ surface: 'families', kinfolkId: 'fam_heavy', path: 'families/fam_heavy', rows: 70, blankLabelKeys: [], longValueKeys: [] }),
       expect.objectContaining({ surface: 'homeAccess', kinfolkId: 'fam_big', path: 'families/fam_big/homeAccess/current', rows: 41, blankLabelKeys: ['blank'], longValueKeys: [] }),
     ]);
     const heavy = report.lockoutRisks.find((r) => r.kinfolkId === 'fam_heavy');
