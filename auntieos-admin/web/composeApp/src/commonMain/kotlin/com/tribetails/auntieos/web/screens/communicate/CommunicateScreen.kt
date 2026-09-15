@@ -682,6 +682,8 @@ private fun BroadcastForm(
     var savingSegment by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<BroadcastResult?>(null) }
     var errorText by remember { mutableStateOf<String?>(null) }
+    /** #867 review: whether [errorText] is a timeout, which picks the banner title. */
+    var errorIsTimeout by remember { mutableStateOf(false) }
     /**
      * #814: one key per SUBMISSION, re-minted only when the message or its
      * audience has changed since the key was minted. An operator who sees an
@@ -766,7 +768,7 @@ private fun BroadcastForm(
         val criteria = if (selectedSegmentId == null) adhocCriteria() else null
         val effectiveCriteria = criteria ?: segments.firstOrNull { it.id == selectedSegmentId }?.criteria ?: BroadcastCriteria()
         val blocker = tagCapProblem() ?: broadcastBlocker(channels.toSet(), effectiveCriteria, subject, body)
-        if (blocker != null) { errorText = blocker; onToast(blocker, ToastKind.Error); return }
+        if (blocker != null) { errorText = blocker; errorIsTimeout = false; onToast(blocker, ToastKind.Error); return }
         sending = true
         val signature = broadcastSignature(selectedSegmentId, kind, statusesText, selectedTags, tagMatch, channels, subject, body)
         if (submissionKey == null || submissionSignature != signature) {
@@ -793,6 +795,7 @@ private fun BroadcastForm(
                 is WriteResult.Err -> {
                     result = null
                     timedOutSignature = if (isBroadcastTimeout(r.message)) signature else null
+                    errorIsTimeout = isBroadcastTimeout(r.message)
                     errorText = broadcastErrorText(r.message)
                     onToast(broadcastErrorText(r.message), ToastKind.Error)
                 }
@@ -1028,7 +1031,8 @@ private fun BroadcastForm(
         )
 
         errorText?.let { msg ->
-            val title = if (timedOutSignature != null) "Send may still be running" else "Broadcast blocked"
+            // #867 review: the title follows the error on screen now, not a timeout that came before it.
+            val title = if (errorIsTimeout) "Send may still be running" else "Broadcast blocked"
             AuntieBanner(tone = AuntieBannerTone.Error, title = title, icon = Lucide.Ban) {
                 Text(text = msg, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
             }

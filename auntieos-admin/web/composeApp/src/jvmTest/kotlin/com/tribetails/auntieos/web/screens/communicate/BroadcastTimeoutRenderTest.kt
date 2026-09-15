@@ -52,4 +52,27 @@ class BroadcastTimeoutRenderTest {
         onNode(message).performScrollTo().performTextReplacement("Walks are back on Tuesday.")
         waitUntil(timeoutMillis = 10_000) { shown("This will be a new broadcast") }
     }
+
+    /** #867 review: a validation error after a timeout is titled as what it is. */
+    @Test
+    fun aLaterValidationErrorIsNotTitledAsARunningSend() = runDesktopComposeUiTest {
+        JvmFirestoreFixtures.callableErrors = mapOf("broadcastMessage" to AUNTIE_TIMEOUT_MESSAGE)
+        setContent { AuntieAppTheme(themeMode = ThemeMode.DARK) { CommunicateScreen() } }
+
+        fun shown(text: String) = onAllNodesWithText(text, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+
+        onNode(hasText("Broadcast") and hasClickAction()).performClick()
+        waitUntil(timeoutMillis = 10_000) { shown("Send broadcast") }
+        onNode(hasText("In-app") and hasClickAction()).performScrollTo().performClick()
+        onNode(hasText("Text") and hasClickAction()).performScrollTo().performClick()
+        val message = hasSetTextAction() and hasContentDescription("Message")
+        onNode(message).performScrollTo().performTextReplacement("Walks are back on Monday.")
+        onNode(hasText("Send broadcast") and hasClickAction()).performScrollTo().performClick()
+        waitUntil(timeoutMillis = 10_000) { shown("Send may still be running") }
+
+        onNode(message).performScrollTo().performTextReplacement("")
+        onNode(hasText("Send broadcast") and hasClickAction()).performScrollTo().performClick()
+        waitUntil(timeoutMillis = 10_000) { shown("Write a message first.") && shown("Broadcast blocked") }
+        assertTrue(!shown("Send may still be running"), "the validation error kept the timeout title")
+    }
 }
