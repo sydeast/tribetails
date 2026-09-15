@@ -23,6 +23,8 @@ data class SettingsUiState(
     val settingsResult: FirestoreResult<BusinessSettings> = FirestoreResult.Loading,
     val saveSuccess: Boolean = false,
     val saveError: String? = null,
+    /** #867 review: true from a Retry press until the settings read answers again. */
+    val reloadingSettings: Boolean = false,
 )
 
 class SettingsViewModel(private val dataSource: AuntieDataSource) {
@@ -32,12 +34,27 @@ class SettingsViewModel(private val dataSource: AuntieDataSource) {
     private val _uiState = MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
+    private var settingsJob: kotlinx.coroutines.Job? = null
+
     init {
-        scope.launch {
+        collectSettings()
+    }
+
+    private fun collectSettings() {
+        // #867 review: one collection at a time. The scope never cancels, so a retry
+        // that relaunched without cancelling would leave the old polling loop running.
+        settingsJob?.cancel()
+        settingsJob = scope.launch {
             dataSource.businessSettingsStream().collect { result ->
-                _uiState.update { it.copy(settingsResult = result) }
+                _uiState.update { it.copy(settingsResult = result, reloadingSettings = false) }
             }
         }
+    }
+
+    /** #867 review: read business settings again now, for the load error banner's Retry. */
+    fun retrySettings() {
+        _uiState.update { it.copy(reloadingSettings = true) }
+        collectSettings()
     }
 
     suspend fun saveSettings(settings: BusinessSettings) {

@@ -69,6 +69,8 @@ import com.tribetails.auntieos.web.util.isValidPhone
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.web.ui.components.LoadErrorBanner
+import com.tribetails.auntieos.web.ui.components.rememberReloadableRead
+import com.tribetails.auntieos.web.ui.components.settlesRetry
 import com.tribetails.auntieos.web.ui.components.AuntieFieldLabel
 import com.tribetails.auntieos.web.ui.components.AuntieNoteCallout
 import com.tribetails.auntieos.web.ui.components.AuntieSaveBar
@@ -119,7 +121,8 @@ fun KinfolkEditScreen(
     // For edits we need the live doc to pre-fill. Subscribe to the kinfolk list
     // (it's already in memory from Directory) and pluck the matching record.
     // For creates, we never read; the form starts blank.
-    val state by remember { client.kinfolkStream() }.collectAsState(initial = FirestoreResult.Loading)
+    val reload = rememberReloadableRead()
+    val state by remember(reload.generation) { client.kinfolkStream().settlesRetry(reload) }.collectAsState(initial = FirestoreResult.Loading)
     val existing: Kinfolk? = remember(state, kinfolkId) {
         if (isNew) null
         else (state as? FirestoreResult.Data)?.value?.firstOrNull { it._id == kinfolkId }
@@ -450,7 +453,7 @@ fun KinfolkEditScreen(
         if (!isNew && existing == null) {
             // #867: a failed read shows its error, not a shimmer that never ends.
             (state as? FirestoreResult.Error)?.let {
-                LoadErrorBanner("Couldn't load this household", it.message)
+                LoadErrorBanner("Couldn't load this household", it.message, onRetry = reload::retry, retrying = reload.retrying)
                 return@ScreenScaffold
             }
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {

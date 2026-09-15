@@ -54,6 +54,8 @@ import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.web.ui.components.GhostButton
 import com.tribetails.auntieos.web.ui.components.KeyValueStyle
 import com.tribetails.auntieos.web.ui.components.LoadErrorBanner
+import com.tribetails.auntieos.web.ui.components.rememberReloadableRead
+import com.tribetails.auntieos.web.ui.components.settlesRetry
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.SectionHeader
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
@@ -76,7 +78,8 @@ fun KinCareDetailScreen(
     onBack: () -> Unit,
 ) {
     val client = remember { FirestoreClient() }
-    val sessions by remember { client.sessionsStream() }.collectAsState(initial = FirestoreResult.Loading)
+    val reload = rememberReloadableRead()
+    val sessions by remember(reload.generation) { client.sessionsStream().settlesRetry(reload) }.collectAsState(initial = FirestoreResult.Loading)
     val kinfolks by remember { client.kinfolkStream() }.collectAsState(initial = FirestoreResult.Loading)
     val reports  by remember { client.reportsStream() }.collectAsState(initial = FirestoreResult.Loading)
 
@@ -107,7 +110,7 @@ fun KinCareDetailScreen(
             // #867: a failed read shows its error, not a shimmer that never ends.
             (sessions as? FirestoreResult.Error)?.let {
                 SectionHeader(title = "Kin Care", subtitle = "", icon = Lucide.PawPrint, onBack = onBack)
-                LoadErrorBanner("Couldn't load this Kin Care", it.message)
+                LoadErrorBanner("Couldn't load this Kin Care", it.message, onRetry = reload::retry, retrying = reload.retrying)
                 return@ScreenScaffold
             }
             SectionHeader(title = "Loading…", subtitle = "Pulling Kin Care detail", icon = Lucide.PawPrint)

@@ -46,6 +46,8 @@ import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.web.ui.components.LoadErrorBanner
+import com.tribetails.auntieos.web.ui.components.rememberReloadableRead
+import com.tribetails.auntieos.web.ui.components.settlesRetry
 import com.tribetails.auntieos.web.ui.components.AuntieSelectField
 import com.tribetails.auntieos.web.ui.components.DynamicFormFields
 import com.tribetails.auntieos.web.ui.components.AuntieBreadcrumbs
@@ -90,7 +92,8 @@ fun KinEditScreen(
     val scope  = rememberReportingScope()
     val isNew  = kinId.isNullOrBlank()
 
-    val state by remember(kinfolkId) { client.kinStream(kinfolkId) }.collectAsState(initial = FirestoreResult.Loading)
+    val reload = rememberReloadableRead()
+    val state by remember(kinfolkId, reload.generation) { client.kinStream(kinfolkId).settlesRetry(reload) }.collectAsState(initial = FirestoreResult.Loading)
     val existing: Kin? = remember(state, kinId) {
         if (isNew) null
         else (state as? FirestoreResult.Data)?.value?.firstOrNull { it._id == kinId }
@@ -314,7 +317,7 @@ fun KinEditScreen(
         if (!isNew && existing == null) {
             // #867: a failed read shows its error, not a shimmer that never ends.
             (state as? FirestoreResult.Error)?.let {
-                LoadErrorBanner("Couldn't load this kin", it.message)
+                LoadErrorBanner("Couldn't load this kin", it.message, onRetry = reload::retry, retrying = reload.retrying)
                 return@ScreenScaffold
             }
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {

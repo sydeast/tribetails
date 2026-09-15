@@ -366,7 +366,12 @@ fun SettingsScreen(
         // #867: the panels wait on business settings ("Loading settings…"). When
         // that read fails, say so once at the top instead of every panel waiting forever.
         (uiState.settingsResult as? FirestoreResult.Error)?.let {
-            LoadErrorBanner("Couldn't load business settings", it.message)
+            LoadErrorBanner(
+                "Couldn't load business settings",
+                it.message,
+                onRetry = vm::retrySettings,
+                retrying = uiState.reloadingSettings,
+            )
             Spacer(Modifier.height(dims.space5))
         }
 
