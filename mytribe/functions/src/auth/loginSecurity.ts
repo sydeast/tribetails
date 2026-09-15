@@ -1,7 +1,8 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { beforeUserSignedIn } from 'firebase-functions/v2/identity';
-import { FieldValue } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { createHash } from 'crypto';
+import { isIP } from 'net';
 import { z } from 'zod';
 import { auth, db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
@@ -77,7 +78,20 @@ const EMAIL_RATE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const EMAIL_RATE_LIMIT = 15;
 
 function hashIp(ip: string): string {
-  return createHash('sha256').update(ip).digest('hex').slice(0, 32);
+  return createHash('sha256').update(ipRateLimitKey(ip)).digest('hex').slice(0, 32);
+}
+
+/**
+ * #908 review: how long after its last write a rate-limit ledger doc may be
+ * deleted by Firestore TTL, beyond the longest window it is read over. Nothing
+ * reads `expiresAt`; the windows filter on their own timestamps, so a doc TTL
+ * has not reached yet can never refuse a call it should allow.
+ */
+export const RATE_LIMIT_TTL_MARGIN_MS = 60 * 60 * 1000;
+
+/** The `expiresAt` for a ledger doc read over `windowMs`, written at `nowMs`. */
+export function rateLimitExpiresAt(nowMs: number, windowMs: number): Timestamp {
+  return Timestamp.fromMillis(nowMs + windowMs + RATE_LIMIT_TTL_MARGIN_MS);
 }
 
 function hashEmail(email: string): string {
@@ -116,12 +130,25 @@ async function reserveFailedLoginReport(email: string): Promise<EmailReportDecis
     const recent = timestamps.filter((t) => t >= nowMs - EMAIL_RATE_WINDOW_MS);
     if (recent.length < EMAIL_RATE_LIMIT) {
       recent.push(nowMs);
-      tx.set(ref, { timestamps: recent, updatedAtMs: nowMs }, { merge: true });
+      tx.set(
+        ref,
+        { timestamps: recent, updatedAtMs: nowMs, expiresAt: rateLimitExpiresAt(nowMs, EMAIL_RATE_WINDOW_MS) },
+        { merge: true },
+      );
       return { allowed: true };
     }
     const exhaustedAt = typeof data['budgetExhaustedAtMs'] === 'number' ? (data['budgetExhaustedAtMs'] as number) : undefined;
     if (exhaustedAt === undefined || exhaustedAt <= nowMs - EMAIL_RATE_WINDOW_MS) {
-      tx.set(ref, { budgetExhaustedAtMs: nowMs, budgetAlertPendingForMs: nowMs, updatedAtMs: nowMs }, { merge: true });
+      tx.set(
+        ref,
+        {
+          budgetExhaustedAtMs: nowMs,
+          budgetAlertPendingForMs: nowMs,
+          updatedAtMs: nowMs,
+          expiresAt: rateLimitExpiresAt(nowMs, EMAIL_RATE_WINDOW_MS),
+        },
+        { merge: true },
+      );
       return { allowed: false, alertExhaustedAtMs: nowMs };
     }
     return {
@@ -132,15 +159,105 @@ async function reserveFailedLoginReport(email: string): Promise<EmailReportDecis
 }
 
 /**
- * How many proxies Google puts between the internet and this function that
- * each append one entry to `X-Forwarded-For`. See `clientIpOf`.
+ * How many proxies Google puts between the internet and a DIRECTLY called
+ * function that each append one entry to `X-Forwarded-For`. See `clientIpOf`.
  */
-const TRUSTED_PROXY_HOPS = 1;
+export const TRUSTED_PROXY_HOPS = 1;
 
 type RawRequestLike = { headers?: Record<string, string | string[] | undefined>; ip?: string } | undefined;
 
+/** Why an entry cannot be the address Google appended for a caller on the internet. */
+export type UntrustedRangeClass =
+  | 'private'
+  | 'loopback'
+  | 'linkLocal'
+  | 'uniqueLocal'
+  | 'unspecified'
+  | 'googleFrontEnd'
+  | 'notAnIp';
+
+/** Eight 16-bit groups of an IPv6 address, or null when it is not one. */
+function ipv6Groups(ip: string): number[] | null {
+  const bare = ip.split('%')[0]!;
+  if (isIP(bare) !== 6) return null;
+  let text = bare.toLowerCase();
+  const lastColon = text.lastIndexOf(':');
+  const tail = text.slice(lastColon + 1);
+  if (tail.includes('.')) {
+    const o = tail.split('.').map(Number);
+    text = `${text.slice(0, lastColon + 1)}${((o[0]! << 8) | o[1]!).toString(16)}:${((o[2]! << 8) | o[3]!).toString(16)}`;
+  }
+  const [head, rest] = text.includes('::') ? text.split('::') : [text, undefined];
+  const headParts = head ? head.split(':') : [];
+  const restParts = rest === undefined ? [] : rest ? rest.split(':') : [];
+  const fill = rest === undefined ? 0 : 8 - headParts.length - restParts.length;
+  return [...headParts, ...Array<string>(fill).fill('0'), ...restParts].map((g) => parseInt(g, 16));
+}
+
+/**
+ * One X-Forwarded-For entry as an address: brackets and a port stripped, and an
+ * IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) turned into its IPv4 address.
+ * Anything that is not an IP comes back trimmed and unchanged.
+ */
+function normalizeIp(entry: string): string {
+  let ip = entry.trim();
+  const bracketed = /^\[([^\]]+)\](?::\d+)?$/.exec(ip);
+  if (bracketed) ip = bracketed[1]!;
+  else if (/^\d{1,3}(\.\d{1,3}){3}:\d+$/.test(ip)) ip = ip.slice(0, ip.lastIndexOf(':'));
+  const g = ipv6Groups(ip);
+  if (g && g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) {
+    return `${g[6]! >> 8}.${g[6]! & 255}.${g[7]! >> 8}.${g[7]! & 255}`;
+  }
+  return isIP(ip) === 6 ? ip.toLowerCase() : ip;
+}
+
+/**
+ * Null for a public address, else why it cannot be the one Google's front end
+ * appended for a caller on the internet: RFC 1918 private, loopback,
+ * link-local (169.254.0.0/16, fe80::/10), unique-local (fc00::/7), unspecified,
+ * a Google front end or health-check range (35.191.0.0/16, 130.211.0.0/22,
+ * https://docs.cloud.google.com/load-balancing/docs/health-check-concepts), or
+ * not an IP at all.
+ */
+function untrustedRangeClass(ip: string): UntrustedRangeClass | null {
+  if (isIP(ip) === 4) {
+    const [a, b, c] = ip.split('.').map(Number) as [number, number, number, number];
+    if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) return 'private';
+    if (a === 127) return 'loopback';
+    if (a === 169 && b === 254) return 'linkLocal';
+    if (a === 0) return 'unspecified';
+    if ((a === 35 && b === 191) || (a === 130 && b === 211 && c <= 3)) return 'googleFrontEnd';
+    return null;
+  }
+  const g = ipv6Groups(ip);
+  if (!g) return 'notAnIp';
+  if (g.every((x) => x === 0)) return 'unspecified';
+  if (g.slice(0, 7).every((x) => x === 0) && g[7] === 1) return 'loopback';
+  if ((g[0]! & 0xffc0) === 0xfe80) return 'linkLocal';
+  if ((g[0]! & 0xfe00) === 0xfc00) return 'uniqueLocal';
+  return null;
+}
+
+/**
+ * #908 review: the string the per-IP limit hashes. IPv4 is the address itself,
+ * exactly as before, so stored IPv4 counters keep their meaning. IPv6 is its
+ * /64 (`2001:db8:1:2::/64`), because one subscriber is usually handed a whole
+ * /64 and could otherwise rotate through 2^64 buckets. An IPv4-mapped IPv6
+ * address is its IPv4 address.
+ */
+export function ipRateLimitKey(ip: string): string {
+  const normalized = normalizeIp(ip);
+  const g = ipv6Groups(normalized);
+  if (!g) return normalized;
+  return `${g.slice(0, 4).map((x) => x.toString(16)).join(':')}::/64`;
+}
+
 /**
  * #891: the caller's IP as Google's front end saw it, for rate limiting and audit rows.
+ *
+ * ONLY VALID FOR A FUNCTION CALLED DIRECTLY (at `cloudfunctions.net` or its
+ * `*.run.app` URL), with `trustedHops` left at 1. Behind a Hosting rewrite or a
+ * load balancer there are more hops, and the caller must pass that count.
  *
  * WHY NOT THE FIRST `X-Forwarded-For` ENTRY. A caller can send its own
  * `X-Forwarded-For`, and Google keeps what was sent and appends after it. The
@@ -169,34 +286,68 @@ type RawRequestLike = { headers?: Record<string, string | string[] | undefined>;
  * release: send one report with a forged `X-Forwarded-For: 1.2.3.4` and read
  * the `ip` on its `AUTH_LOGIN_FAIL` audit row, which must be the real address.
  *
- * IF A LOAD BALANCER OR HOSTING REWRITE IS EVER PUT IN FRONT, this must become
- * 2: the rightmost entry would be the balancer's own address, and every caller
- * would share one 30-per-5-minute bucket.
+ * IF A LOAD BALANCER OR HOSTING REWRITE IS EVER PUT IN FRONT, the hop count must
+ * become 2: the rightmost entry would be the balancer's own address, and every
+ * caller would share one 30-per-5-minute bucket.
  *
- * With no header at all (the emulator, a local call) it falls back to
- * `rawRequest.ip`, which is then the socket address, and then to 'unknown'.
+ * FAILS SAFE WHEN THE HOP COUNT IS WRONG (#908 review). Gen 2 callables answer on
+ * both `cloudfunctions.net` and `*.run.app`, and nothing proves those two add
+ * the same number of entries. If the chosen entry is private, loopback,
+ * link-local, unique-local, unspecified, a Google front end range or not an IP
+ * (`untrustedRangeClass`), it cannot be a caller on the internet, so this logs
+ * `clientIp.untrustedRightmost` at error (the range class, never the address)
+ * and steps one entry left, repeating while entries remain. When none remains it
+ * keeps the entry it has. Zero entries log `clientIp.noForwardedFor` at error
+ * and fall back to `rawRequest.ip`, which is then the socket address, and then
+ * to 'unknown'. Production always carries the header; the emulator does not.
+ *
+ * An IPv4-mapped IPv6 entry comes back as its IPv4 address.
  */
-export function clientIpOf(rawRequest: RawRequestLike): string {
+export function clientIpOf(rawRequest: RawRequestLike, trustedHops: number = TRUSTED_PROXY_HOPS): string {
   const header = rawRequest?.headers?.['x-forwarded-for'];
   const joined = Array.isArray(header) ? header.join(',') : header ?? '';
   const entries = joined
     .split(',')
-    .map((e) => e.trim())
+    .map((e) => normalizeIp(e))
     .filter((e) => e !== '');
-  if (entries.length > 0) {
-    return entries[Math.max(0, entries.length - TRUSTED_PROXY_HOPS)]!;
+  const hops = Number.isInteger(trustedHops) && trustedHops >= 1 ? trustedHops : TRUSTED_PROXY_HOPS;
+  if (entries.length === 0) {
+    logEvent({
+      severity: 'error',
+      function: 'clientIpOf',
+      event: 'clientIp.noForwardedFor',
+      extra: { trustedHops: hops, hasSocketIp: typeof rawRequest?.ip === 'string' && rawRequest.ip.trim() !== '' },
+    });
+    const socketIp = typeof rawRequest?.ip === 'string' ? normalizeIp(rawRequest.ip) : '';
+    return socketIp || 'unknown';
   }
-  const socketIp = typeof rawRequest?.ip === 'string' ? rawRequest.ip.trim() : '';
-  return socketIp || 'unknown';
+  let index = Math.max(0, entries.length - hops);
+  for (;;) {
+    const rangeClass = untrustedRangeClass(entries[index]!);
+    if (rangeClass === null) break;
+    logEvent({
+      severity: 'error',
+      function: 'clientIpOf',
+      event: 'clientIp.untrustedRightmost',
+      extra: { rangeClass, entryCount: entries.length, position: entries.length - index, trustedHops: hops },
+    });
+    if (index === 0) break;
+    index -= 1;
+  }
+  return entries[index]!;
 }
 
 /**
  * The shared per-IP limit (30 per 5 minutes) for the unauthenticated auth
- * callables. Keyed on `clientIpOf` (#891), and returns that key so the caller
- * stores the same address on its audit row.
+ * callables. Keyed on `clientIpOf` (#891), hashed through `ipRateLimitKey`
+ * (#908), and returns the address so the caller stores it on its audit row.
+ * `trustedHops` as for `clientIpOf`: leave it at 1 for a directly called function.
  */
-export async function checkIpRateLimit(rawRequest: RawRequestLike): Promise<string> {
-  const rawIp = clientIpOf(rawRequest);
+export async function checkIpRateLimit(
+  rawRequest: RawRequestLike,
+  trustedHops: number = TRUSTED_PROXY_HOPS,
+): Promise<string> {
+  const rawIp = clientIpOf(rawRequest, trustedHops);
   const ipKey = hashIp(rawIp);
   const ref = db().collection('ipRateLimits').doc(ipKey);
   const nowMs = Date.now();
@@ -210,7 +361,11 @@ export async function checkIpRateLimit(rawRequest: RawRequestLike): Promise<stri
       throw new HttpsError('resource-exhausted', 'Too many requests. Try again later.');
     }
     recent.push(nowMs);
-    tx.set(ref, { timestamps: recent, updatedAtMs: nowMs }, { merge: true });
+    tx.set(
+      ref,
+      { timestamps: recent, updatedAtMs: nowMs, expiresAt: rateLimitExpiresAt(nowMs, IP_RATE_WINDOW_MS) },
+      { merge: true },
+    );
   });
   return rawIp;
 }
@@ -854,7 +1009,12 @@ async function recordUnknownEmailFailure(email: string, remoteIp: string): Promi
     const nowMs = Date.now();
     const prior = ((await tx.get(ref)).data()?.attempts as LoginAttempt[] | undefined) ?? [];
     const attempts = pruneAttempts([...prior, { ts: nowMs }], nowMs);
-    tx.set(ref, { attempts, updatedAtMs: nowMs }, { merge: true });
+    // #908 review: kept a day for the operator's credential-stuffing view, then TTL.
+    tx.set(
+      ref,
+      { attempts, updatedAtMs: nowMs, expiresAt: rateLimitExpiresAt(nowMs, EMAIL_RATE_WINDOW_MS) },
+      { merge: true },
+    );
   });
 }
 

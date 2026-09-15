@@ -1124,11 +1124,71 @@ more accounts lock within 30 minutes, you get `security.account.locked.spike.ope
 on top of each lock's own alert. A locked account can still request up to 10
 resets per lock from portal Android and portal desktop.
 
-To confirm the IP key after a release, send one `recordFailedLogin` report with
-a forged header, for example `X-Forwarded-For: 1.2.3.4`, and read the `ip` on
-its `AUTH_LOGIN_FAIL` row in the Activity Log. It must be your real address. If
-it is `1.2.3.4`, or every row shows the same Google address, `TRUSTED_PROXY_HOPS`
-in `loginSecurity.ts` does not match what is in front of the function.
+#### Confirm the IP key after the release (#891, #908)
+
+Each callable answers on two URLs, and both must key on your real address. You
+run these; they call production.
+
+1. Get the `run.app` URL of each callable:
+
+   ```bash
+   gcloud run services describe recordfailedlogin --region us-central1 --project auntieos-ttpc --format 'value(status.url)'
+   gcloud run services describe requestpasswordreset --region us-central1 --project auntieos-ttpc --format 'value(status.url)'
+   ```
+
+   If `run services describe` finds nothing, the same URL is in
+   `gcloud functions describe recordFailedLogin --gen2 --region us-central1 --project auntieos-ttpc --format 'value(serviceConfig.uri)'`.
+
+2. Send one forged report to each URL of `recordFailedLogin`. The address is not
+   an account, so nobody is warned or locked:
+
+   ```bash
+   curl -s -X POST 'https://us-central1-auntieos-ttpc.cloudfunctions.net/recordFailedLogin' -H 'Content-Type: application/json' -H 'X-Forwarded-For: 1.2.3.4' -d '{"data":{"email":"ip-probe-891@example.com"}}'
+   curl -s -X POST '<recordfailedlogin run.app URL>' -H 'Content-Type: application/json' -H 'X-Forwarded-For: 1.2.3.4' -d '{"data":{"email":"ip-probe-891@example.com"}}'
+   ```
+
+   Both answer `{"result":{"ok":true}}`. In the Activity Log, the two newest
+   `AUTH_LOGIN_FAIL` rows must each show your real address as `ip`.
+
+3. Send one forged reset to each URL of `requestPasswordReset`, using a test
+   kinfolk account you own (an audit row is written only for a real account).
+   Each sends that account a reset email and uses one of its 3 resets for the day:
+
+   ```bash
+   curl -s -X POST 'https://us-central1-auntieos-ttpc.cloudfunctions.net/requestPasswordReset' -H 'Content-Type: application/json' -H 'X-Forwarded-For: 1.2.3.4' -d '{"data":{"email":"<test kinfolk email>"}}'
+   curl -s -X POST '<requestpasswordreset run.app URL>' -H 'Content-Type: application/json' -H 'X-Forwarded-For: 1.2.3.4' -d '{"data":{"email":"<test kinfolk email>"}}'
+   ```
+
+   The two newest `AUTH_PASSWORD_RESET_REQUESTED` rows must show your real address.
+
+4. In Logs Explorer, filter on `jsonPayload.event="clientIp.untrustedRightmost"`
+   and on `jsonPayload.event="clientIp.noForwardedFor"` for the last hour. Both
+   should be empty.
+
+What a failure means:
+
+- A row shows `1.2.3.4`: that URL adds no entry of its own, so the function keys
+  on what the caller wrote. Stop and report it.
+- A `clientIp.untrustedRightmost` error: that URL adds more entries than one. Its
+  `rangeClass` says what sat in the rightmost place (`googleFrontEnd`, `private`
+  and so on). The function already stepped left and used the next entry, so the
+  limit still works, but `TRUSTED_PROXY_HOPS` does not match that URL. Report it.
+- Every row shows the same Google address: the hop count is wrong in a way the
+  ranges did not catch. Report it.
+
+#### Rate-limit ledgers expire by TTL (#908)
+
+`ipRateLimits`, `failedLoginEmailRateLimits`, `unknownLoginAttempts` and
+`passwordResetEmailRateLimits` now carry `expiresAt` (their longest window plus
+one hour), with TTL policies declared in `mytribe/firestore.indexes.json` next
+to `notificationDedupe.expiresAt`. That file changed, so the release's index
+step (step 3) asks before deploying it: a detached `deploy:bg` run refuses and
+tells you to run the release in the foreground. After it deploys, the Firebase
+console under Firestore, then TTL, lists the five policies; a new policy can take
+a while to show as serving. Documents written before this release have no
+`expiresAt` and stay until their next write. No backfill: they are a few hundred
+bytes each, nothing lists these collections, and every new write carries the
+field.
 
 ### Backfills to run after a release
 

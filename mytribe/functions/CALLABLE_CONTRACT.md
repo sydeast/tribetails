@@ -1069,6 +1069,13 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
   entry (the one Google's front end appended), not the caller's first entry and
   not `rawRequest.ip` (which `trust proxy` makes that same first entry). The audit
   row's `ip` is the same address.
+- #908: if that entry is private, loopback, link-local, unique-local,
+  unspecified, a Google front end range or not an IP, `clientIpOf` logs
+  `clientIp.untrustedRightmost` at error (range class only) and steps left; zero
+  entries log `clientIp.noForwardedFor`. IPv6 is keyed on its /64, and an
+  IPv4-mapped IPv6 address on its IPv4 address. The hop count is a parameter
+  (default 1), valid only for functions called directly, not behind a Hosting
+  rewrite. The ledgers carry `expiresAt` for a Firestore TTL.
 - #891: when a REAL account's per-email refusal finds its 15 spent, the operator
   gets `security.failedLogin.budgetExhausted.operator`, once per exhaustion. The
   refusal body is unchanged. When 3 distinct accounts lock within 30 minutes, the

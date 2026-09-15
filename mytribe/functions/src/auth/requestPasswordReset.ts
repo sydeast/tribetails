@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { auth, db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { enqueueNotification } from '../notifications';
-import { activeLockStartedAtMs, checkIpRateLimit } from './loginSecurity';
+import { activeLockStartedAtMs, checkIpRateLimit, rateLimitExpiresAt } from './loginSecurity';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { wrapCallable } from '../lib/wrapCallable';
@@ -66,9 +66,15 @@ async function reservePasswordReset(email: string, lockStartedAtMs: number | nul
       const sameLock = data['lockWindowStartedAtMs'] === lockStartedAtMs;
       const count = sameLock && typeof data['lockWindowCount'] === 'number' ? (data['lockWindowCount'] as number) : 0;
       if (count >= LOCKED_RESET_LIMIT) return false;
+      // #908 review: the TTL covers the daily `timestamps` this doc may still hold.
       tx.set(
         ref,
-        { lockWindowStartedAtMs: lockStartedAtMs, lockWindowCount: count + 1, updatedAtMs: FieldValue.serverTimestamp() },
+        {
+          lockWindowStartedAtMs: lockStartedAtMs,
+          lockWindowCount: count + 1,
+          updatedAtMs: FieldValue.serverTimestamp(),
+          expiresAt: rateLimitExpiresAt(nowMs, EMAIL_RATE_WINDOW_MS),
+        },
         { merge: true },
       );
       return true;
@@ -77,7 +83,15 @@ async function reservePasswordReset(email: string, lockStartedAtMs: number | nul
     const recent = timestamps.filter((t) => t >= nowMs - EMAIL_RATE_WINDOW_MS);
     if (recent.length >= EMAIL_RATE_LIMIT) return false;
     recent.push(nowMs);
-    tx.set(ref, { timestamps: recent, updatedAtMs: FieldValue.serverTimestamp() }, { merge: true });
+    tx.set(
+      ref,
+      {
+        timestamps: recent,
+        updatedAtMs: FieldValue.serverTimestamp(),
+        expiresAt: rateLimitExpiresAt(nowMs, EMAIL_RATE_WINDOW_MS),
+      },
+      { merge: true },
+    );
     return true;
   });
 }
