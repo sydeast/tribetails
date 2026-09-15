@@ -70,4 +70,29 @@ class ShareLinkFetcherUrlTest {
         fetcher.postGuestComment("tok", "tale1", "hi", "Guest", "g@x.com", "captcha", null)
         assertEquals("$prodBase/addGuestKinTaleComment", urls.single())
     }
+
+    /**
+     * #889 review round 3, item 3: gates on the Functions emulator switch
+     * specifically, see SecureResetFetcherUrlTest for the full reasoning.
+     * Uses a distinctive custom base, not the literal cloudfunctions.net
+     * string, so this is not accidentally satisfied by functionsBase()'s own
+     * (separately fixed) production branch producing the same URL.
+     */
+    @Test
+    fun getShareLinkStaysOnTheExplicitProdBaseWhenOnlyFirestoreEmulatorIsConfigured() = runBlocking {
+        val urls = mutableListOf<String>()
+        val customBase = "https://custom-share-link-base.example"
+        val endpoints = RestEndpoints(
+            env = {
+                when (it) {
+                    "FIRESTORE_EMULATOR_HOST" -> "127.0.0.1:8080"
+                    "GCLOUD_PROJECT" -> "demo-x"
+                    else -> null
+                }
+            },
+        )
+        val fetcher = JvmShareLinkFetcher(customBase, clientCapturing(urls, "{}"), endpoints)
+        fetcher.getShareLink("share1", null)
+        assertEquals("$customBase/getShareLink/share1", urls.single())
+    }
 }

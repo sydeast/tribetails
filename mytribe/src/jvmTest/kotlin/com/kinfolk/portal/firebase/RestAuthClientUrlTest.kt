@@ -87,4 +87,72 @@ class RestAuthClientUrlTest {
         RestAuthClient(clientCapturing(urls, "{}"), endpoints(emulator = false)).reportFailedLogin("a@b.com")
         assertEquals("https://us-central1-auntieos-ttpc.cloudfunctions.net/recordFailedLogin", urls.single())
     }
+
+    // #889 review round 3, item 6: refresh, lookup, update and
+    // signInWithCustomToken had no URL test, only signInWithPassword and the
+    // two functionUrl-based calls did.
+
+    private val refreshBody = """{"id_token":"tok","refresh_token":"rt","user_id":"u1","expires_in":"3600"}"""
+
+    @Test
+    fun refreshHitsTheAuthEmulatorWhenConfigured() = runBlocking {
+        val urls = mutableListOf<String>()
+        RestAuthClient(clientCapturing(urls, refreshBody), endpoints(emulator = true)).refresh("rt")
+        assertTrue(urls.single().startsWith("http://127.0.0.1:9099/securetoken.googleapis.com/v1/token"))
+    }
+
+    @Test
+    fun refreshHitsProductionWhenNoEmulatorIsConfigured() = runBlocking {
+        val urls = mutableListOf<String>()
+        RestAuthClient(clientCapturing(urls, refreshBody), endpoints(emulator = false)).refresh("rt")
+        assertTrue(urls.single().startsWith("https://securetoken.googleapis.com/v1/token"))
+    }
+
+    private val lookupBody = """{"users":[{"localId":"u1"}]}"""
+
+    @Test
+    fun lookupHitsTheAuthEmulatorWhenConfigured() = runBlocking {
+        val urls = mutableListOf<String>()
+        RestAuthClient(clientCapturing(urls, lookupBody), endpoints(emulator = true)).lookup("tok")
+        assertTrue(urls.single().startsWith("http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:lookup"))
+    }
+
+    @Test
+    fun lookupHitsProductionWhenNoEmulatorIsConfigured() = runBlocking {
+        val urls = mutableListOf<String>()
+        RestAuthClient(clientCapturing(urls, lookupBody), endpoints(emulator = false)).lookup("tok")
+        assertTrue(urls.single().startsWith("https://identitytoolkit.googleapis.com/v1/accounts:lookup"))
+    }
+
+    private val updateBody = """{"localId":"u1"}"""
+
+    @Test
+    fun updateHitsTheAuthEmulatorWhenConfigured() = runBlocking {
+        val urls = mutableListOf<String>()
+        RestAuthClient(clientCapturing(urls, updateBody), endpoints(emulator = true)).update("tok", password = "newpass123")
+        assertTrue(urls.single().startsWith("http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:update"))
+    }
+
+    @Test
+    fun updateHitsProductionWhenNoEmulatorIsConfigured() = runBlocking {
+        val urls = mutableListOf<String>()
+        RestAuthClient(clientCapturing(urls, updateBody), endpoints(emulator = false)).update("tok", password = "newpass123")
+        assertTrue(urls.single().startsWith("https://identitytoolkit.googleapis.com/v1/accounts:update"))
+    }
+
+    private val customTokenBody = """{"idToken":"tok","refreshToken":"rt"}"""
+
+    @Test
+    fun signInWithCustomTokenHitsTheAuthEmulatorWhenConfigured() = runBlocking {
+        val urls = mutableListOf<String>()
+        RestAuthClient(clientCapturing(urls, customTokenBody), endpoints(emulator = true)).signInWithCustomToken("ct")
+        assertTrue(urls.single().startsWith("http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken"))
+    }
+
+    @Test
+    fun signInWithCustomTokenHitsProductionWhenNoEmulatorIsConfigured() = runBlocking {
+        val urls = mutableListOf<String>()
+        RestAuthClient(clientCapturing(urls, customTokenBody), endpoints(emulator = false)).signInWithCustomToken("ct")
+        assertTrue(urls.single().startsWith("https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken"))
+    }
 }

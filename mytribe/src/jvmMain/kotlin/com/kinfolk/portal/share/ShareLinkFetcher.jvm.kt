@@ -39,7 +39,9 @@ internal class JvmShareLinkFetcher(
 ) : ShareLinkFetcher {
     private val json = Json { ignoreUnknownKeys = true }
 
-    private fun resolvedBase(): String = if (endpoints.emulatorActive) endpoints.functionsBase() else base
+    // #889 review round 3, item 3: gates on the Functions emulator switch
+    // specifically, not emulatorActive. See JvmSecureResetFetcher for why.
+    private fun resolvedBase(): String = if (endpoints.FUNCTIONS_EMULATOR_HOST != null) endpoints.functionsBase() else base
 
     override suspend fun getShareLink(shareId: String, passcode: String?): GetShareLinkResult {
         val url = buildString {

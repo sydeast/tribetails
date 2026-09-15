@@ -56,4 +56,37 @@ class SecureResetFetcherUrlTest {
         fetcher.confirmReset("oob1", "newpass123", "a@b.com", "ua")
         assertEquals("$prodBase/confirmSecureReset", urls.single())
     }
+
+    /**
+     * #889 review round 3, item 3: this call carries the new password.
+     * Gating on emulatorActive (any of the three switches) instead of the
+     * Functions emulator specifically meant that setting only
+     * FIRESTORE_EMULATOR_HOST, with a GCLOUD_PROJECT=demo-x override
+     * alongside it, sent the password to a Functions emulator host that was
+     * never actually configured. It must stay on the explicit prod base.
+     *
+     * Uses a distinctive custom base, not the literal cloudfunctions.net
+     * string: functionsBase()'s own production branch now always carries the
+     * real project id too (a separate fix), so routing through it would
+     * often produce the SAME url as the real prod default and hide a
+     * regression in this gate specifically. A custom base makes the two
+     * fixes distinguishable.
+     */
+    @Test
+    fun confirmResetStaysOnTheExplicitProdBaseWhenOnlyFirestoreEmulatorIsConfigured() = runBlocking {
+        val urls = mutableListOf<String>()
+        val customBase = "https://custom-secure-reset-base.example"
+        val endpoints = RestEndpoints(
+            env = {
+                when (it) {
+                    "FIRESTORE_EMULATOR_HOST" -> "127.0.0.1:8080"
+                    "GCLOUD_PROJECT" -> "demo-x"
+                    else -> null
+                }
+            },
+        )
+        val fetcher = JvmSecureResetFetcher(customBase, clientCapturing(urls), endpoints)
+        fetcher.confirmReset("oob1", "newpass123", "a@b.com", "ua")
+        assertEquals("$customBase/confirmSecureReset", urls.single())
+    }
 }

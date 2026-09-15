@@ -133,4 +133,106 @@ class RestEndpointsTest {
         )
         assertEquals("http://127.0.0.1:5001/demo-test/us-central1", e.functionsBase())
     }
+
+    /**
+     * #889 review round 3, item 3: the bug. Only FIRESTORE_EMULATOR_HOST was
+     * set (no FUNCTIONS_EMULATOR_HOST), plus a demo- override, and
+     * functionUrl's PRODUCTION branch (emulatorHost null, since no Functions
+     * emulator is configured) still interpolated the overridden project id,
+     * turning a real callable URL into https://.../demo-x.cloudfunctions.net/....
+     * Every production-routed URL below must carry the real project id
+     * regardless of which single switch, if any, is set alongside the
+     * override.
+     */
+    @Test
+    fun aGcloudProjectOverrideNeverLeaksIntoAProductionRoutedUrl() {
+        val onlyFirestore = endpoints(
+            mapOf("FIRESTORE_EMULATOR_HOST" to "127.0.0.1:8080", "GCLOUD_PROJECT" to "demo-x"),
+        )
+        assertEquals(
+            "https://us-central1-auntieos-ttpc.cloudfunctions.net/requestPasswordReset",
+            onlyFirestore.functionUrl("requestPasswordReset"),
+            "no Functions emulator is configured, so this must stay on the real project",
+        )
+        assertEquals(
+            "https://identitytoolkit.googleapis.com/v1",
+            onlyFirestore.identityToolkitBase(),
+        )
+
+        val onlyAuth = endpoints(
+            mapOf("FIREBASE_AUTH_EMULATOR_HOST" to "127.0.0.1:9099", "GCLOUD_PROJECT" to "demo-x"),
+        )
+        assertEquals(
+            "https://firestore.googleapis.com/v1/projects/auntieos-ttpc/databases/(default)/documents",
+            onlyAuth.firestoreBase(),
+            "no Firestore emulator is configured, so this must stay on the real project",
+        )
+        assertEquals(
+            "https://us-central1-auntieos-ttpc.cloudfunctions.net/getMyHome",
+            onlyAuth.functionUrl("getMyHome"),
+        )
+
+        val onlyFunctions = endpoints(
+            mapOf("FUNCTIONS_EMULATOR_HOST" to "127.0.0.1:5001", "GCLOUD_PROJECT" to "demo-x"),
+        )
+        assertEquals(
+            "https://firestore.googleapis.com/v1/projects/auntieos-ttpc/databases/(default)/documents",
+            onlyFunctions.firestoreBase(),
+            "no Firestore emulator is configured, so this must stay on the real project",
+        )
+        // The one case where the override IS honored: the emulator branch of the switch that is actually set.
+        assertEquals(
+            "http://127.0.0.1:5001/demo-x/us-central1/getMyHome",
+            onlyFunctions.functionUrl("getMyHome"),
+        )
+    }
+
+    @Test
+    fun aRejectedSwitchIsReportedThroughEmulatorConfigRejected() {
+        val rejected = endpoints(mapOf("FIREBASE_AUTH_EMULATOR_HOST" to "8.8.8.8:9099"))
+        assertTrue(rejected.emulatorConfigRejected)
+        assertFalse(rejected.emulatorActive)
+
+        val accepted = endpoints(mapOf("FIREBASE_AUTH_EMULATOR_HOST" to "127.0.0.1:9099"))
+        assertFalse(accepted.emulatorConfigRejected)
+
+        val unset = endpoints(emptyMap())
+        assertFalse(unset.emulatorConfigRejected)
+    }
+
+    /** #889 review round 3, item 4: rebuilt from the parsed host:port, so extra URI parts are refused, not carried through. */
+    @Test
+    fun rejectsAHostWithUserinfoPathQueryOrFragment() {
+        val cases = listOf(
+            "127.0.0.1#@evil.com",
+            "user@127.0.0.1:9099",
+            "127.0.0.1:9099/@evil.com",
+            "127.0.0.1:9099?x=@evil.com",
+            "127.0.0.1:9099#@evil.com",
+        )
+        for (raw in cases) {
+            val warnings = mutableListOf<String>()
+            val e = endpoints(mapOf("FIREBASE_AUTH_EMULATOR_HOST" to raw), warnings)
+            assertNull(e.AUTH_EMULATOR_HOST, "'$raw' must be rejected")
+            assertTrue(warnings.isNotEmpty(), "'$raw' should warn")
+        }
+    }
+
+    @Test
+    fun rejectsAHostWithNoPort() {
+        val e = endpoints(mapOf("FIREBASE_AUTH_EMULATOR_HOST" to "127.0.0.1"))
+        assertNull(e.AUTH_EMULATOR_HOST, "a port is required")
+    }
+
+    @Test
+    fun acceptsAPlainHostAndPortWithNothingElse() {
+        val e = endpoints(mapOf("FIREBASE_AUTH_EMULATOR_HOST" to "127.0.0.1:9099"))
+        assertEquals("127.0.0.1:9099", e.AUTH_EMULATOR_HOST)
+    }
+
+    @Test
+    fun rebuildsABracketedIpv6HostAndPortFromTheParsedAuthority() {
+        val e = endpoints(mapOf("FIREBASE_AUTH_EMULATOR_HOST" to "[::1]:9099"))
+        assertEquals("[::1]:9099", e.AUTH_EMULATOR_HOST)
+    }
 }

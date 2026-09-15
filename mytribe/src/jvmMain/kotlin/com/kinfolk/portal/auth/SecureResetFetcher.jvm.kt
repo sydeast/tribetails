@@ -39,7 +39,16 @@ internal class JvmSecureResetFetcher(
 ) : SecureResetFetcher {
     private val json = Json { ignoreUnknownKeys = true }
 
-    private fun resolvedBase(): String = if (endpoints.emulatorActive) endpoints.functionsBase() else base
+    // #889 review round 3, item 3: gates on the Functions emulator switch
+    // specifically, not emulatorActive. With only FIRESTORE_EMULATOR_HOST
+    // set, emulatorActive was true but no Functions emulator exists, so this
+    // used to send the new password to functionsBase() anyway; if
+    // GCLOUD_PROJECT was also set to a demo- id, that host did not even
+    // exist. functionsBase's own production branch is unaffected either way
+    // (it always uses the real project id there), but there is no reason to
+    // route this call through it when nothing said the Functions emulator
+    // was up.
+    private fun resolvedBase(): String = if (endpoints.FUNCTIONS_EMULATOR_HOST != null) endpoints.functionsBase() else base
 
     override suspend fun confirmReset(
         oobCode: String,
