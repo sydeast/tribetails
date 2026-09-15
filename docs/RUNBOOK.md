@@ -1102,6 +1102,7 @@ push carry content-free copy pointing at AuntieOS, and **SMS is skipped**
 | `security.failedLogin.attempts.operator` | #877 | The operator's 5-failure warning does not name the household, the account email or the attempt count, and sends no SMS. |
 | `security.failedLogin.budgetExhausted.operator` | #891 | The alert that an account's failed sign-ins stopped counting for 24 hours names neither the household nor the account email, and sends no SMS. |
 | `security.account.locked.spike.operator` | #891 | The alert that 3 or more accounts locked within 30 minutes does not give the count or the window, and sends no SMS. |
+| `security.breach_attempt.staff` | #892 | When a staff account uses "I did not ask for this reset", the alert does not name the staff account, the IP or the incident record. |
 
 To import, follow [the template import list](#importing-notification-templates):
 Admin, then **Templates**, then **Import from repo** on web or the **Import** tab

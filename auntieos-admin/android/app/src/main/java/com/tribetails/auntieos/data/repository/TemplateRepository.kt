@@ -49,6 +49,8 @@ class TemplateRepository(
         val channels: List<ImportChannel>,
         val differsFromRepo: Boolean,
         val blocked: Boolean,
+        /** Why the template was refused, one sentence each. Empty unless [blocked] (#892 review 2). */
+        val issues: List<String> = emptyList(),
     )
     /**
      * What an import did, or would do.
@@ -292,6 +294,7 @@ internal fun decodeImportReport(raw: Map<String, Any?>): TemplateRepository.Impo
             },
             differsFromRepo = m["differsFromRepo"] as? Boolean ?: false,
             blocked = m["blocked"] as? Boolean ?: false,
+            issues = (m["issues"] as? List<*>).orEmpty().mapNotNull { it as? String },
         )
     }
     val counts = (raw["counts"] as? Map<*, *>).orEmpty().entries.mapNotNull { (k, v) ->

@@ -84,6 +84,17 @@ const secureResetRoute = createRoute({
   component: lazyRouteComponent(() => import('./screens/SecureReset'), 'SecureReset'),
 });
 
+/**
+ * The same email action handler under a name that says what it is (#892).
+ * Identity Toolkit's `callbackUri` points at /account/secure-reset today, so
+ * that route stays; this one is ready for the day the operator repoints it.
+ */
+const emailActionRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/account/action',
+  component: lazyRouteComponent(() => import('./screens/SecureReset'), 'SecureReset'),
+});
+
 const homeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/home',
@@ -376,6 +387,7 @@ const routeTree = rootRoute.addChildren([
   claimRoute,
   claimIdRoute,
   secureResetRoute,
+  emailActionRoute,
   pickRoute,
   errorRoute,
   noTribesRoute,

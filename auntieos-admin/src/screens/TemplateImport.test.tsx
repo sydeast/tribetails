@@ -198,6 +198,37 @@ describe('TemplateImport: refusals', () => {
     expect(screen.getByTestId('summary-kincare.booking.confirm')).toHaveTextContent('Refused');
   });
 
+  it('shows why a template was refused on its own row, next to Refused (#892 review 2)', async () => {
+    const reason = 'email: html puts a merge field straight into an attribute without quotes, like href={{link}}.';
+    planSeedTemplateImport.mockResolvedValue(
+      report({
+        counts: { create: 0, overwrite: 0, skipped: 0, unchanged: 0, blocked: 3 },
+        rows: [
+          {
+            templateId: 'assignment.assigned',
+            aliasOf: null,
+            channels: [channel('email', 'blocked'), channel('sms', 'blocked'), channel('push', 'blocked')],
+            differsFromRepo: false,
+            blocked: true,
+            issues: [reason],
+          },
+        ],
+        refused: [],
+      }),
+    );
+    render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
+
+    expect(await screen.findByTestId('summary-assignment.assigned')).toHaveTextContent('Refused');
+    expect(screen.getByTestId('issues-assignment.assigned')).toHaveTextContent(reason);
+  });
+
+  it('shows no reason line on a row that was not refused', async () => {
+    planSeedTemplateImport.mockResolvedValue(report());
+    render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
+    await screen.findByTestId('summary-kincare.reschedule.requested');
+    expect(screen.queryByTestId('issues-kincare.reschedule.requested')).not.toBeInTheDocument();
+  });
+
   it('says nothing was written when the import call itself fails', async () => {
     planSeedTemplateImport.mockResolvedValue(report());
     importSeedTemplates.mockImplementationOnce(() => Promise.reject(new Error('deadline-exceeded')));

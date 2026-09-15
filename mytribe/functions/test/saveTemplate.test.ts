@@ -209,6 +209,30 @@ describe('saveTemplate: the triple-stash guard', () => {
     expect(ctx.writes.find((w) => w.path === 'emailTemplates/welcome.kinfolk')).toBeDefined();
   });
 });
+// #892 review 2: the authoring door refuses a merge field in an unquoted
+// attribute, the same rule the importer applies (lib/templateValidation.ts).
+describe('saveTemplate: the unquoted-attribute guard', () => {
+  it('SAD: rejects href={{link}} in html, names the fix, and writes nothing', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      saveTemplateHandler(
+        req({ templateId: 'welcome.kinfolk', subject: 'Hello', body: 'Body copy.', html: '<a href={{link}}>Go</a>' }),
+      ),
+    ).rejects.toThrow(/without quotes, like href=\{\{link\}\}/);
+    expect(ctx.writes).toEqual([]);
+  });
+
+  it('HAPPY: a quoted href saves', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await saveTemplateHandler(
+      req({ templateId: 'welcome.kinfolk', subject: 'Hello', body: 'Body copy.', html: `<a href='{{link}}'>Go</a>` }),
+    );
+    expect(ctx.writes.find((w) => w.path === 'emailTemplates/welcome.kinfolk')?.data.html).toBe(`<a href='{{link}}'>Go</a>`);
+  });
+});
+
 describe('saveTemplate: expectNew', () => {
   it('SAD: refuses to create over a key that is already taken', async () => {
     const ctx = buildDbMock({

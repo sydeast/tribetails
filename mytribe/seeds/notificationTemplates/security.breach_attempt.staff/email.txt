@@ -1,0 +1,13 @@
+Subject: Security alert: a staff account flagged a password reset it did not ask for
+
+A staff account said it did not ask for a password reset, then set a new password on the secure-reset page. The incident is logged.
+
+Staff account: {{staffEmail}}
+Reset completed: {{timestampIso}}
+IP address: {{ip}}
+Device: {{userAgent}}
+Incident record: securityIncidents/{{incidentId}}
+
+Someone may have tried to take over an admin account. Confirm with the account holder that they made this change, and check the Activity Log for other sign-ins from that IP.
+
+Tribe Tails Pet Care. Your Kin's Favorite Auntie.

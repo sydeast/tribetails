@@ -251,7 +251,15 @@ describe('changeEmail', () => {
 describe('sendReset', () => {
   it('sends the reset mail to the trimmed address', async () => {
     await sendReset('  auntie@tribetails.com ');
-    expect(sendPasswordResetEmail).toHaveBeenCalledWith(authStub, 'auntie@tribetails.com');
+    expect(sendPasswordResetEmail).toHaveBeenCalledWith(authStub, 'auntie@tribetails.com', expect.anything());
+  });
+
+  it('continues the reset link back to the admin sign-in, not the portal (#892)', async () => {
+    // The project's email action URL is the portal's /account/secure-reset, so
+    // the link always opens there. The continue URL is what brings staff back.
+    await sendReset('auntie@tribetails.com');
+    const settings = sendPasswordResetEmail.mock.calls[0]?.[2] as { url: string; handleCodeInApp: boolean };
+    expect(settings).toEqual({ url: 'https://auntie.tribetails.com/signin', handleCodeInApp: false });
   });
 
   it('maps a Firebase failure to a typed AccountSecurityError, not a raw code', async () => {
