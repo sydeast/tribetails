@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), logEvent: vi.fn() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: mocks.logEvent }));
+vi.mock('../src/lib/sessionRevocation', () => import('./_helpers/mockSessionRevocation'));
 // The stamp is a REAL Timestamp at the (faked) current time, not a sentinel
 // string. The duplicate lookup is a `createdAt >=` range query, and a string
 // would sort above every Timestamp and match for the wrong reason.
@@ -14,7 +15,7 @@ vi.mock('firebase-admin/firestore', async () => {
   return { ...actual, FieldValue: { serverTimestamp: () => actual.Timestamp.fromMillis(Date.now()) } };
 });
 
-import { createKinfolkHandler, Args, Result } from '../src/admin/createKinfolk';
+import { createKinfolk, createKinfolkHandler, Args, Result } from '../src/admin/createKinfolk';
 
 const NOW = Date.UTC(2026, 8, 14, 15, 0, 0);
 const MIN = 60_000;
@@ -176,6 +177,21 @@ describe('createKinfolk', () => {
     expect(first).toEqual({ kinfolkId: 'auto-1', duplicateOf: null });
     expect(second).toEqual({ kinfolkId: 'auto-1', duplicateOf: 'auto-1' });
     expect(mock.writes).toHaveLength(1);
+  });
+
+  // #890 test admins. A sandbox test admin carries `testTribeId` and no `admin`
+  // claim. The old direct Add used an auto id, which the rules refuse for a test
+  // admin (test/rules/kinfolkProfile.test.ts proves it), so createKinfolk keeps
+  // that: staff only, and a test admin is refused before anything is read.
+  it('refuses a sandbox test admin through the deployed export, as the auto-id direct create it replaces did', async () => {
+    const mock = buildDbMock({ queryDocs: { kinfolk: [] } });
+    mocks.dbFn.mockReturnValue(mock.db);
+    const req = { data: { kinfolk: household() }, auth: { uid: 'test-admin-uid', token: { testTribeId: 'kin-test' } }, rawRequest: {} };
+    const run = (createKinfolk as unknown as { run: (r: unknown) => Promise<unknown> }).run;
+    await expect(run(req)).rejects.toMatchObject({ code: 'permission-denied' });
+    // The wrapper records the refusal in its own failure log; nothing reaches kinfolk.
+    expect(mock.writes.filter((w) => w.path.startsWith('kinfolk/'))).toHaveLength(0);
+    expect(mock.adds.filter((a) => a.collection === 'kinfolk')).toHaveLength(0);
   });
 
   it('exports the request and response shapes the three admin clients mirror', () => {
