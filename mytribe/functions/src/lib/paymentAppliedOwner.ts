@@ -57,6 +57,30 @@
  */
 export const PAYMENT_APPLIED_OWNER_FIELD = 'paymentAppliedNoticeOwner';
 
+/**
+ * #884 second review: THE CREDIT DRAW'S NOTICE STAYS PENDING UNTIL IT IS OUT.
+ *
+ * The draw sends after its commit. A crash between the two used to lose the
+ * notice for good: a redelivered pass finds the bill paid and draws nothing, and
+ * `onInvoicesWrite` stands down on the `accountCredit:*` owner. On main the
+ * trigger sent from its own at-least-once event. So, as the Stripe webhook does
+ * with `stripeEvents/{id}` (#866):
+ *   - the settling write stamps PENDING with the owner (`accountCredit:<id>`)
+ *     and PENDING_AT, in the same commit as the payment;
+ *   - a delivered notice clears PENDING to '' and stamps SENT_AT; a notice that
+ *     can reach nobody clears it and stamps SKIPPED ('no-recipients');
+ *   - a redelivered pass that finds the bill paid, and `notificationScheduledSweep`
+ *     once PENDING is older than the grace period, resend from the stamp.
+ * Every send carries the payment row id and a long ledger window, so the
+ * dispatcher delivers one copy however many of those three race.
+ * '' rather than a deleted field, so the sweep's range query needs no index
+ * and no FieldValue sentinel.
+ */
+export const PAYMENT_APPLIED_PENDING_FIELD = 'paymentAppliedNoticePending';
+export const PAYMENT_APPLIED_PENDING_AT_FIELD = 'paymentAppliedNoticePendingAtMs';
+export const PAYMENT_APPLIED_SENT_AT_FIELD = 'paymentAppliedNoticeSentAt';
+export const PAYMENT_APPLIED_SKIPPED_FIELD = 'paymentAppliedNoticeSkippedReason';
+
 /** Who took ownership. The id after the colon is for a reader tracing one payment; nothing parses it. */
 export type PaymentAppliedOwnerSource =
   | 'stripe'

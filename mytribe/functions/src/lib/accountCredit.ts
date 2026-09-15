@@ -77,9 +77,17 @@ import {
 } from './invoiceMath';
 import { invoiceStateStampOf } from './invoiceStateStamp';
 import { logEvent } from './logger';
-import { PAYMENT_APPLIED_OWNER_FIELD, paymentAppliedOwner } from './paymentAppliedOwner';
+import {
+  PAYMENT_APPLIED_OWNER_FIELD,
+  PAYMENT_APPLIED_PENDING_AT_FIELD,
+  PAYMENT_APPLIED_PENDING_FIELD,
+  PAYMENT_APPLIED_SENT_AT_FIELD,
+  PAYMENT_APPLIED_SKIPPED_FIELD,
+  paymentAppliedOwner,
+} from './paymentAppliedOwner';
 import { resolveKinfolkUid } from './resolveKinfolkUid';
-import { enqueueNotification } from '../notifications/dispatcher';
+import { enqueueNotificationDetailed } from '../notifications/dispatcher';
+import { isNoRecipientsError } from '../notifications/recipientErrors';
 
 /** The stored balance field. Named once so every reader and writer agrees. */
 export const ACCOUNT_BALANCE_FIELD = 'accountBalanceCents';
@@ -373,6 +381,11 @@ export async function drawAccountCredit(
             // here: a legacy invoice with a `total` and no `amountDue` already
             // reads paid to invoiceStateOf, so paying it off is paid to paid.
             [PAYMENT_APPLIED_OWNER_FIELD]: paymentAppliedOwner('accountCredit', paymentRef.id),
+            // #884 second review: pending until the notice is delivered, in the
+            // same commit as the payment, so a crash anywhere after this point
+            // leaves a record a redelivered pass or the scheduled sweep can finish.
+            [PAYMENT_APPLIED_PENDING_FIELD]: paymentAppliedOwner('accountCredit', paymentRef.id),
+            [PAYMENT_APPLIED_PENDING_AT_FIELD]: Date.now(),
           }
         : {}),
       lastPaymentAt: FieldValue.serverTimestamp(),
@@ -429,17 +442,51 @@ export async function drawAccountCredit(
 
   // #884 review: THE DRAW SENDS ITS OWN PAYMENT NOTICE, after the commit and
   // only when this draw paid the bill off (a partial draw tells nobody, as
-  // before). Its own write stamped `accountCredit:<paymentId>`, so
-  // `onInvoicesWrite` stands down for it. The notice carries the payment row's
-  // id, so the dispatcher ledger dedupes a repeat of this same pass; a second
-  // pass over the paid bill draws nothing and never reaches here. A failed
-  // enqueue is logged, the same outcome the trigger had when it sent this.
+  // before). Its own write stamped `accountCredit:<paymentId>` as the owner, so
+  // `onInvoicesWrite` stands down, and as pending, so the notice is finished by
+  // someone even if this instance stops before it goes out.
   if (pass.applied !== null && pass.applied.settling) {
-    await sendCreditPaymentNotice(input.invoiceId, pass.applied, pass.result.amountDueCents);
+    await deliverCreditPaymentNotice(firestore, input.invoiceId, {
+      owner: paymentAppliedOwner('accountCredit', pass.applied.paymentId),
+      kinfolkId: pass.applied.kinfolkId,
+      paymentId: pass.applied.paymentId,
+      currency: pass.applied.currency,
+      dueDate: pass.applied.dueDate,
+      amountDueCents: pass.result.amountDueCents,
+    });
+  }
+
+  // #884 second review: A REDELIVERED PASS FINISHES WHAT THE FIRST ONE COULD NOT.
+  // The trigger redelivery or a second press of Run auto-apply finds the bill
+  // already paid and draws nothing, and this is the moment it can send a notice
+  // the first pass committed but never delivered.
+  if (pass.result.skipped === 'invoice_not_collectable') {
+    await resendPendingCreditNotice(firestore, input.invoiceId);
   }
 
   return pass.result;
 }
+
+/**
+ * How long the dispatcher ledger remembers one credit payment notice. Every
+ * sender of it (the pass, a redelivered pass, the sweep) uses the same identity,
+ * `invoice:<id>#paymentId:<paymentId>`, so within this window only one copy is
+ * delivered however they race. A week covers any redelivery and many sweeps; one
+ * payment row is one payment, so the window can never merge two payments.
+ */
+export const CREDIT_NOTICE_DEDUPE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * How old a pending notice must be before `notificationScheduledSweep` sends it.
+ * The pass sends within seconds of its commit; this leaves it room to, so the
+ * sweep only picks up notices that stopped.
+ */
+export const CREDIT_NOTICE_SWEEP_GRACE_MS = 10 * 60 * 1000;
+
+const CREDIT_NOTICE_SWEEP_LIMIT = 100;
+const CREDIT_OWNER_PREFIX = 'accountCredit:';
+/** The first string after every `accountCredit:*` value (';' follows ':'), for the sweep's range query. */
+const CREDIT_OWNER_PREFIX_END = 'accountCredit;';
 
 /** The due date the invoice trigger put on this notice, from either spelling. */
 function dueDateOf(doc: Record<string, unknown>): string | null {
@@ -450,39 +497,164 @@ function dueDateOf(doc: Record<string, unknown>): string | null {
   return null;
 }
 
-async function sendCreditPaymentNotice(
+interface CreditPaymentNotice {
+  /** The pending stamp this notice finishes, `accountCredit:<paymentId>`. */
+  owner: string;
+  kinfolkId: string;
+  paymentId: string;
+  currency: string | null;
+  dueDate: string | null;
+  amountDueCents: number;
+}
+
+/** The notice a doc's pending stamp still owes, or null. */
+function pendingCreditNoticeOf(doc: Record<string, unknown>): CreditPaymentNotice | null {
+  const owner = doc[PAYMENT_APPLIED_PENDING_FIELD];
+  if (typeof owner !== 'string' || !owner.startsWith(CREDIT_OWNER_PREFIX)) return null;
+  const paymentId = owner.slice(CREDIT_OWNER_PREFIX.length);
+  const kinfolkId = typeof doc['kinfolkId'] === 'string' ? doc['kinfolkId'] : '';
+  if (paymentId === '' || kinfolkId === '') return null;
+  const cents = doc['amountDueCents'];
+  return {
+    owner,
+    kinfolkId,
+    paymentId,
+    currency: typeof doc['currency'] === 'string' ? doc['currency'] : null,
+    dueDate: dueDateOf(doc),
+    amountDueCents: typeof cents === 'number' && Number.isFinite(cents) ? cents : 0,
+  };
+}
+
+/**
+ * Sends one credit payment notice, then clears its pending stamp. NEVER THROWS:
+ * the money has committed, and a failure here is finished later by a redelivered
+ * pass or the sweep.
+ *
+ * Returns true when the notice is done: delivered (or already delivered, which
+ * the ledger reports as a duplicate), or unreachable for good (no household
+ * account and no office roster, as the Stripe webhook treats it). False when it
+ * must be tried again: an enqueue error, an audience whose lookup failed, or a
+ * stamp that did not land.
+ *
+ * The clear is a compare-and-set in a transaction: it only clears the stamp this
+ * notice owns, so a later draw's pending stamp is never wiped by an older send.
+ */
+async function deliverCreditPaymentNotice(
+  firestore: Firestore,
   invoiceId: string,
-  applied: { kinfolkId: string; paymentId: string; currency: string | null; dueDate: string | null },
-  amountDueCents: number,
-): Promise<void> {
+  notice: CreditPaymentNotice,
+): Promise<boolean> {
+  const extra = { kinfolkId: notice.kinfolkId, invoiceId, paymentId: notice.paymentId, key: 'invoice.payment.applied' };
+  let finished: Record<string, unknown>;
   try {
-    const recipientUid = await resolveKinfolkUid(applied.kinfolkId);
-    await enqueueNotification({
+    const recipientUid = await resolveKinfolkUid(notice.kinfolkId);
+    const outcome = await enqueueNotificationDetailed({
       key: 'invoice.payment.applied',
       recipientUid: recipientUid ?? '',
       data: {
-        kinfolkId: applied.kinfolkId,
+        kinfolkId: notice.kinfolkId,
         invoiceId,
-        amountDue: centsToDollars(amountDueCents),
-        currency: applied.currency,
-        dueDate: applied.dueDate,
-        paymentId: applied.paymentId,
+        amountDue: centsToDollars(notice.amountDueCents),
+        currency: notice.currency,
+        dueDate: notice.dueDate,
+        paymentId: notice.paymentId,
       },
       targetType: 'invoice',
       targetId: invoiceId,
+      dedupeWindowMs: CREDIT_NOTICE_DEDUPE_WINDOW_MS,
     });
+    const unresolved = outcome.unresolved ?? [];
+    if (unresolved.length > 0) {
+      // Some audience's lookup failed (the office roster read). Left pending: the
+      // retry's ledger stops the copies that went out from repeating.
+      logEvent({
+        severity: 'warn',
+        function: 'accountCredit',
+        event: 'credit.notice.partial',
+        extra: { ...extra, unresolved: unresolved.map((u) => u.resolver) },
+      });
+      return false;
+    }
+    finished = { [PAYMENT_APPLIED_SENT_AT_FIELD]: FieldValue.serverTimestamp() };
+  } catch (err) {
+    if (!isNoRecipientsError(err)) {
+      logEvent({
+        severity: 'warn',
+        function: 'accountCredit',
+        event: 'notification.dispatch.failed',
+        extra: { ...extra, err: (err as Error)?.message },
+      });
+      return false;
+    }
+    logEvent({
+      severity: 'error',
+      function: 'accountCredit',
+      event: 'credit.notice.unreachable',
+      extra: { ...extra, err: (err as Error)?.message },
+    });
+    finished = { [PAYMENT_APPLIED_SKIPPED_FIELD]: 'no-recipients' };
+  }
+
+  try {
+    const invRef = firestore.collection('invoices').doc(invoiceId);
+    await firestore.runTransaction(async (tx) => {
+      const snap = await tx.get(invRef);
+      if ((snap.data() ?? {})[PAYMENT_APPLIED_PENDING_FIELD] !== notice.owner) return;
+      tx.set(invRef, { ...finished, [PAYMENT_APPLIED_PENDING_FIELD]: '' }, { merge: true });
+    });
+    return true;
   } catch (err) {
     logEvent({
       severity: 'warn',
       function: 'accountCredit',
-      event: 'notification.dispatch.failed',
-      extra: {
-        kinfolkId: applied.kinfolkId,
-        invoiceId,
-        paymentId: applied.paymentId,
-        key: 'invoice.payment.applied',
-        err: (err as Error)?.message,
-      },
+      event: 'credit.notice.stamp.failed',
+      extra: { ...extra, err: (err as Error)?.message },
     });
+    return false;
   }
+}
+
+/** Sends the notice an invoice's pending stamp still owes, if any. Never throws. */
+async function resendPendingCreditNotice(firestore: Firestore, invoiceId: string): Promise<boolean> {
+  try {
+    const snap = await firestore.collection('invoices').doc(invoiceId).get();
+    const notice = snap.exists ? pendingCreditNoticeOf((snap.data() ?? {}) as Record<string, unknown>) : null;
+    if (notice === null) return false;
+    return await deliverCreditPaymentNotice(firestore, invoiceId, notice);
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'accountCredit',
+      event: 'credit.notice.resend.failed',
+      extra: { invoiceId, err: (err as Error)?.message },
+    });
+    return false;
+  }
+}
+
+/**
+ * THE SAFETY NET (#884 second review), run by `notificationScheduledSweep`
+ * every 5 minutes: every credit payment notice still pending after
+ * CREDIT_NOTICE_SWEEP_GRACE_MS is sent now. Covers the crash that no redelivery
+ * follows (the trigger does not retry, and nobody presses Run auto-apply again).
+ * A range query on one field, so it needs no composite index. Returns how many
+ * notices it finished.
+ */
+export async function sweepPendingCreditNotices(firestore: Firestore, nowMs: number): Promise<number> {
+  const snap = await firestore
+    .collection('invoices')
+    .where(PAYMENT_APPLIED_PENDING_FIELD, '>=', CREDIT_OWNER_PREFIX)
+    .where(PAYMENT_APPLIED_PENDING_FIELD, '<', CREDIT_OWNER_PREFIX_END)
+    .limit(CREDIT_NOTICE_SWEEP_LIMIT)
+    .get();
+  let finished = 0;
+  for (const doc of snap.docs) {
+    const data = (doc.data() ?? {}) as Record<string, unknown>;
+    const at = data[PAYMENT_APPLIED_PENDING_AT_FIELD];
+    if (typeof at === 'number' && nowMs - at < CREDIT_NOTICE_SWEEP_GRACE_MS) continue;
+    const notice = pendingCreditNoticeOf(data);
+    if (notice === null) continue;
+    if (await deliverCreditPaymentNotice(firestore, doc.id, notice)) finished += 1;
+  }
+  return finished;
 }

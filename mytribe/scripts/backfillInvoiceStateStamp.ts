@@ -38,19 +38,19 @@
  *     zero planned writes. The stamp itself is a classifier fixpoint
  *     (asserted in functions/test/invoiceStateStamp.test.ts), which is what
  *     makes that skip check sound.
- *   - THE NOTIFICATION GUARD. `onInvoicesWrite` fires invoice.payment.applied
- *     at the household when a write is a paid transition, `isPaidTransition`
- *     (#884): invoiceStateOf moves from `open` into `paid`. The guard asks that
- *     exported function about the stamp write itself, so it follows whatever
- *     the trigger does. The stamp is invoiceStateOf's own output (a fixpoint),
- *     so a stamp write never changes the state it reads and the guard refuses
- *     nothing today; it stays so a later change to either side cannot make a
- *     backfill text a household about a payment from months ago. A refused doc
- *     is listed (`would_notify_household`) for the operator to handle by hand.
- *     Before #884 the trigger used an `amountDue <= 0` rule, and docs with a
- *     `total` and no numeric `amountDue` were refused here; they now stamp
- *     `paid`, which is what every reader already shows. The stamp cannot
- *     produce an overdue label, so the overdue notice cannot be reached.
+ *   - THE PAYMENT GUARD (`would_assert_payment`, #884). invoiceStateOf reads a
+ *     missing `amountDue` as 0, so a doc with a `total`, no numeric `amountDue`
+ *     and no payment rows classifies paid although nothing was paid. A paid/none
+ *     stamp on it would block every payment path and every edit, while unstamped
+ *     the portal shows it open. This script refuses those docs and lists them for
+ *     the operator, until #902 rules on a missing amountDue.
+ *   - THE NOTIFICATION GUARD (`would_notify_household`). It asks
+ *     `onInvoicesWrite`'s own decision, `invoiceWriteNoticeKey`, whether the
+ *     trigger would send anything for the stamp write, so it follows whatever the
+ *     trigger does: a backfill must never text a household about a payment that
+ *     happened months ago. With today's classifier a stamp write never changes
+ *     what the trigger reads, so it refuses nothing; the unit test proves it
+ *     refuses a stamp that would. Refused docs are listed for the operator.
  *
  * Runbook: run DRY first, read the plan, then re-run with --allow-prod.
  * This script has NOT been run against production as part of the PR that
@@ -74,7 +74,7 @@ import {
   type InvoiceStateStamp,
 } from '../functions/src/lib/invoiceStateStamp';
 import { paidCentsFromPayments, type PaymentAmount } from '../functions/src/lib/invoiceMath';
-import { isPaidTransition } from '../functions/src/triggers/onInvoicesWrite';
+import { invoiceWriteNoticeKey } from '../functions/src/triggers/onInvoicesWrite';
 
 type Mode = 'dry-run' | 'apply';
 
@@ -158,7 +158,7 @@ export function parseArgs(argv: string[]): Args {
 }
 
 /** Why a scanned invoice is not being stamped. Reported, never silent. */
-export type StampSkipReason = 'stamp_current' | 'would_notify_household';
+export type StampSkipReason = 'stamp_current' | 'would_assert_payment' | 'would_notify_household';
 
 export type StampDecision =
   | {
@@ -171,24 +171,56 @@ export type StampDecision =
   | { action: 'skip'; reason: StampSkipReason };
 
 /**
- * The decision for one invoice. PURE: no Firestore access, so the whole rule,
- * including the notification guard, is unit-testable against fixtures
- * (mytribe/scripts/test/backfillInvoiceStateStamp.test.ts).
+ * THE NOTIFICATION GUARD: would `onInvoicesWrite` send anything for this stamp
+ * write? It asks the trigger's own decision, `invoiceWriteNoticeKey`, both of
+ * its notices and the owner stand-down included, so it follows whatever the
+ * trigger does. With the classifier's stamp it never fires today (a stamp write
+ * does not change what the trigger reads); it is kept as a real check so a later
+ * change to either side cannot make a backfill text a household.
  */
 export function wouldNotifyHousehold(doc: Record<string, unknown>, stamp: InvoiceStateStamp): boolean {
-  // The trigger's own exported predicate, applied to this stamp write, so the
-  // guard cannot drift from what `onInvoicesWrite` sends (#884).
-  return isPaidTransition(doc, { ...doc, ...stamp });
+  return invoiceWriteNoticeKey(doc, { ...doc, ...stamp }) !== null;
 }
 
+/**
+ * #884 second review: A PAID STAMP NOTHING BUT A MISSING amountDue SUPPORTS.
+ * invoiceStateOf reads a missing `amountDue` as 0, so `{ status: 'sent',
+ * total: 40 }` classifies paid with nothing paid. Stamped paid/none, the bill
+ * could not be collected by any path (`alreadySettledRefusal` blocks
+ * markInvoicePaid, the credit draw and payInvoice; scope none blocks
+ * updateInvoice; repairInvoicePayments skips it), while unstamped the portal
+ * shows it open. Refused, with no payment row to back the reading, until #902
+ * rules on a missing amountDue.
+ */
+export function wouldAssertPayment(
+  doc: Record<string, unknown>,
+  stamp: InvoiceStateStamp,
+  paidCents: number,
+): boolean {
+  return stamp.status === 'paid' && typeof doc.amountDue !== 'number' && paidCents === 0;
+}
+
+/**
+ * The decision for one invoice. PURE: no Firestore access, so the whole rule,
+ * including both guards, is unit-testable against fixtures
+ * (mytribe/scripts/test/backfillInvoiceStateStamp.test.ts). `stampOf` is the
+ * classifier's stamp; a test passes another one to prove the notification guard
+ * refuses a write the trigger would announce.
+ */
 export function planStamp(
   doc: Record<string, unknown>,
   payments: readonly PaymentAmount[],
+  stampOf: (doc: Record<string, unknown>, paidCents: number) => InvoiceStateStamp = invoiceStateStampOf,
 ): StampDecision {
-  const stamp = invoiceStateStampOf(doc, paidCentsFromPayments(payments));
+  const paidCents = paidCentsFromPayments(payments);
+  const stamp = stampOf(doc, paidCents);
 
   if (invoiceStampIsCurrent(doc, stamp)) {
     return { action: 'skip', reason: 'stamp_current' };
+  }
+
+  if (wouldAssertPayment(doc, stamp, paidCents)) {
+    return { action: 'skip', reason: 'would_assert_payment' };
   }
 
   // The notification guard (see the header).
@@ -236,7 +268,7 @@ export async function run(mode: Mode, pageSize: number): Promise<RunResult> {
   const result: RunResult = {
     scanned: 0,
     stamped: 0,
-    skipped: { stamp_current: 0, would_notify_household: 0 },
+    skipped: { stamp_current: 0, would_assert_payment: 0, would_notify_household: 0 },
     byState: {},
     needsOperator: [],
   };
@@ -277,6 +309,11 @@ export async function run(mode: Mode, pageSize: number): Promise<RunResult> {
           console.log(
             `[skip:would_notify_household] invoices/${docSnap.id} status=${JSON.stringify(data.status ?? null)} — stamping 'paid' here would fire invoice.payment.applied at the household; handle by hand`,
           );
+        } else if (decision.reason === 'would_assert_payment') {
+          result.needsOperator.push(docSnap.id);
+          console.log(
+            `[skip:would_assert_payment] invoices/${docSnap.id} status=${JSON.stringify(data.status ?? null)}: no amountDue and no payment rows, so a 'paid' stamp would mark an owed bill paid; left for #902`,
+          );
         }
         continue;
       }
@@ -311,9 +348,10 @@ function summarise(mode: Mode, r: RunResult): void {
   }
   console.log('  skipped :');
   console.log(`      stamp_current: ${r.skipped.stamp_current}`);
+  console.log(`      would_assert_payment: ${r.skipped.would_assert_payment}`);
   console.log(`      would_notify_household: ${r.skipped.would_notify_household}`);
   if (r.needsOperator.length > 0) {
-    console.log('  NEEDS OPERATOR (notification guard refused these):');
+    console.log('  NEEDS OPERATOR (a guard refused these):');
     for (const id of r.needsOperator) console.log(`      invoices/${id}`);
   }
 }
@@ -336,7 +374,7 @@ async function main(): Promise<void> {
     await db.collection('activity_log').add({
       timestamp: new Date().toISOString(),
       actionType: 'BACKFILL_INVOICE_STATE_STAMP',
-      description: `stamped=${result.stamped} scanned=${result.scanned} skipped_current=${result.skipped.stamp_current} needs_operator=${result.skipped.would_notify_household}`,
+      description: `stamped=${result.stamped} scanned=${result.scanned} skipped_current=${result.skipped.stamp_current} needs_operator=${result.needsOperator.length} would_assert_payment=${result.skipped.would_assert_payment} would_notify_household=${result.skipped.would_notify_household}`,
       status: 'SUCCESS',
       actorId: 'system:backfillInvoiceStateStamp',
       targetId: '',

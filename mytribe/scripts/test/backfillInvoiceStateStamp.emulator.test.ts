@@ -4,12 +4,10 @@ import { getApps, initializeApp, getFirestore, type Firestore } from '../lib/fir
 import { run } from '../backfillInvoiceStateStamp';
 
 /**
- * The state stamp backfill's real write path against the emulator, including
- * the notification guard as #884 left it: the guard asks the invoice trigger's
- * own `isPaidTransition` about each stamp write, and a stamp never moves
- * invoiceStateOf, so nothing is refused. The legacy shape the old
- * `amountDue <= 0` guard refused (a `total` with no `amountDue`) is stamped
- * `paid`, and the trigger reads that write as paid to paid.
+ * The state stamp backfill's real write path against the emulator (#884). The
+ * legacy shape (a `total`, no `amountDue`, no payment rows) classifies paid only
+ * because the missing amountDue reads as 0, so it is refused as
+ * `would_assert_payment` and left exactly as it was, until #902 rules.
  */
 const EMULATOR = process.env['FIRESTORE_EMULATOR_HOST'];
 const PROJECT = 'stamp-884-test';
@@ -31,21 +29,20 @@ describe.runIf(EMULATOR)('backfillInvoiceStateStamp against the emulator (#884 g
     await inv.doc('stamped').set({ kinfolkId: 'fam1', status: 'open', editScope: 'all', amountDue: 40, total: 40 });
   }, 30_000);
 
-  it('stamps every doc, refuses none, and a second run changes nothing', async () => {
+  it('refuses the legacy total-only doc and leaves it untouched, stamps the rest, and a second run changes nothing', async () => {
     const first = await run('apply', 300);
     expect(first.scanned).toBe(4);
-    expect(first.stamped).toBe(3);
-    expect(first.skipped).toEqual({ stamp_current: 1, would_notify_household: 0 });
-    expect(first.needsOperator).toEqual([]);
+    expect(first.stamped).toBe(2);
+    expect(first.skipped).toEqual({ stamp_current: 1, would_assert_payment: 1, would_notify_household: 0 });
+    expect(first.needsOperator).toEqual(['legacy_total_only']);
 
     const read = async (id: string) => (await db.collection('invoices').doc(id).get()).data() ?? {};
-    expect(await read('legacy_total_only')).toMatchObject({ status: 'paid', editScope: 'none', total: 40 });
-    expect((await read('legacy_total_only'))['amountDue']).toBeUndefined();
+    expect(await read('legacy_total_only')).toEqual({ kinfolkId: 'fam1', status: 'sent', total: 40 });
     expect(await read('open_bill')).toMatchObject({ status: 'open', editScope: 'all' });
     expect(await read('part_paid')).toMatchObject({ status: 'paid', editScope: 'all' });
 
     const second = await run('apply', 300);
     expect(second.stamped).toBe(0);
-    expect(second.skipped).toEqual({ stamp_current: 4, would_notify_household: 0 });
+    expect(second.skipped).toEqual({ stamp_current: 3, would_assert_payment: 1, would_notify_household: 0 });
   });
 });

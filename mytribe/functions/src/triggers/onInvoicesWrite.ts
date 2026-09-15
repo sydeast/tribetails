@@ -108,24 +108,35 @@ type InvoicesWriteEvent = FirestoreEvent<
   { invoiceId: string }
 >;
 
+/**
+ * The notice this trigger sends for one write, or null. PURE, and exported so
+ * the state stamp backfill's notification guard asks exactly this question
+ * about its own writes (#884 second review).
+ */
+export function invoiceWriteNoticeKey(
+  before: InvoiceDoc | undefined,
+  after: InvoiceDoc | undefined,
+): 'invoice.payment.applied' | 'invoice.overdue' | null {
+  if (!after) return null;
+  const beforeLifecycle = resolveLifecycle(before);
+  const afterLifecycle = resolveLifecycle(after);
+  // The overdue branch is unchanged (#871 owns it). It is checked first so a
+  // write it would have announced as overdue is never re-read as a payment.
+  if (afterLifecycle === 'past_due' && beforeLifecycle !== 'past_due') return 'invoice.overdue';
+  if (isPaidTransition(before, after)) {
+    // #866: the write that paid it named another sender (lib/paymentAppliedOwner.ts).
+    if (paymentAppliedNoticeOwnedByWriter(before, after)) return null;
+    return 'invoice.payment.applied';
+  }
+  return null;
+}
+
 export async function onInvoicesWriteHandler(event: InvoicesWriteEvent): Promise<void> {
   const before = event.data?.before.data() as InvoiceDoc | undefined;
   const after = event.data?.after.data() as InvoiceDoc | undefined;
   if (!after) return;
 
-  const beforeLifecycle = resolveLifecycle(before);
-  const afterLifecycle = resolveLifecycle(after);
-
-  let key: 'invoice.payment.applied' | 'invoice.overdue' | null = null;
-  // The overdue branch is unchanged (#871 owns it). It is checked first so a
-  // write it would have announced as overdue is never re-read as a payment.
-  if (afterLifecycle === 'past_due' && beforeLifecycle !== 'past_due') {
-    key = 'invoice.overdue';
-  } else if (isPaidTransition(before, after)) {
-    // #866: the write that paid it named another sender (lib/paymentAppliedOwner.ts).
-    if (paymentAppliedNoticeOwnedByWriter(before, after)) return;
-    key = 'invoice.payment.applied';
-  }
+  const key = invoiceWriteNoticeKey(before, after);
   if (!key) return;
 
   const invoiceId = event.params.invoiceId;
