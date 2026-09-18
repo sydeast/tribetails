@@ -16,7 +16,7 @@ plugins {
     // app was never in a release run. Raised WITH the dependencies that demand
     // it, and matched to auntieos-admin/android, which is already on 9.3.1.
     // Needs Gradle 9.x; the wrapper moves with it.
-    id("com.android.application") version "9.4.0"
+    id("com.android.application") version "9.4.1"
     id("com.google.gms.google-services") version "4.5.0"
 }
 
@@ -194,7 +194,7 @@ kotlin {
             //   Could not find com.google.firebase:firebase-auth:
             // (note the empty version). Pinning the BOM is the supported answer
             // and it also stops the three SDKs drifting apart from each other.
-            implementation(project.dependencies.platform("com.google.firebase:firebase-bom:34.18.0"))
+            implementation(project.dependencies.platform("com.google.firebase:firebase-bom:34.19.0"))
             implementation("com.google.firebase:firebase-analytics-ktx:22.5.0")
             // Native Firebase Functions SDK — used by NativeAndroidFunctionsClient
             // to bypass gitlive 2.x's FirebaseEncoder, which throws
@@ -218,7 +218,7 @@ kotlin {
             implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.2")
             // Sentry — crash reporting. Init gated in KinfolkPortalApplication
             // on a non-blank DSN + non-robolectric fingerprint.
-            implementation("io.sentry:sentry-android:8.55.0")
+            implementation("io.sentry:sentry-android:8.56.0")
             // Mapbox Maps SDK, android only. It is what puts streets and
             // landmarks under the KinCare route instead of the bare polyline a
             // kinfolk sees today (issue #520). Same 11.10.0 as
@@ -245,7 +245,7 @@ kotlin {
             dependencies {
                 implementation(kotlin("test"))
                 implementation("junit:junit:4.13.2")
-                implementation("org.robolectric:robolectric:4.16.1")
+                implementation("org.robolectric:robolectric:4.17")
             }
         }
         jsMain.dependencies {
