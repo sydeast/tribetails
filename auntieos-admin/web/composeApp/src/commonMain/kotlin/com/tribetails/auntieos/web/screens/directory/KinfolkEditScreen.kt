@@ -532,8 +532,13 @@ fun KinfolkEditScreen(
                 is KinfolkSaveOutcome.Saved -> {
                     if (contactProblem != null) {
                         // Edit: the household is saved; the contact still needs fixing
-                        // and the screen stays open for it.
-                        showToast("The household is saved. The Emergency Contact still needs attention.", ToastKind.Info)
+                        // and the screen stays open for it. #893 item 2: only when the
+                        // household step actually wrote something - an edit whose diff
+                        // was empty must not claim a save that never happened. Either
+                        // way ecError (set above) already shows the contact problem.
+                        if (outcome.wrote) {
+                            showToast("The household is saved. The Emergency Contact still needs attention.", ToastKind.Info)
+                        }
                     } else {
                         if (saveContacts) ecBaseline = ecDrafts
                         if (isNew) PendingAddKinfolk.clear(operatorUid)
