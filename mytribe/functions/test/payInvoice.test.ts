@@ -226,6 +226,78 @@ describe('payInvoiceHandler', () => {
     ).rejects.toMatchObject({ code: 'failed-precondition' });
   });
 
+  /**
+   * #902: THE PAY BUTTON HAS TO LEAD SOMEWHERE.
+   *
+   * A migrated invoice carries a `total` and no balance at all. This handler
+   * used to read that as $0 and refuse — invisible while the portal showed the
+   * same bill as $0.00 with no Pay button, and a dead end the moment
+   * `getMyInvoices` started shipping the derived balance. It asks the shared
+   * rule now, so the screen and the checkout charge the same figure.
+   */
+  it('#902: charges a migrated invoice its derived balance instead of refusing it', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'invoices/inv-legacy': { kinfolkId: '3', status: 'sent', total: 40 },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    const res = await payInvoiceHandler({
+      data: { invoiceId: 'inv-legacy', successUrl: 'https://x', cancelUrl: 'https://y' },
+      auth: { uid: 'u1' },
+    } as any);
+    expect(res.checkoutUrl).toContain('checkout.stripe.com');
+    expect(res.amountCents).toBe(4000);
+    const callArg = mocks.stripeMock.checkout.sessions.create.mock.calls[0]![0];
+    expect(callArg.line_items[0]!.price_data.unit_amount).toBe(4000);
+  });
+
+  /**
+   * AND IT MUST NOT CHARGE ONE TWICE. There are no refunds, so the one thing
+   * this path may never do is take a card payment for a bill already settled.
+   * The rows are the only record that a migrated bill was paid off before
+   * `amountDue` existed, so this handler reads them for that shape and for no
+   * other, and refuses when they cover the total.
+   */
+  it('#902: refuses a migrated invoice its own payment rows already cover', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'invoices/inv-legacy-paid': { kinfolkId: '3', status: 'sent', total: 40 },
+      },
+      queryDocs: { 'invoices/inv-legacy-paid/payments': [{ id: 'p1', data: { amountCents: 4000, amount: 40 } }] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    await expect(
+      payInvoiceHandler({
+        data: { invoiceId: 'inv-legacy-paid', successUrl: 'https://x', cancelUrl: 'https://y' },
+        auth: { uid: 'u1' },
+      } as any),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(mocks.stripeMock.checkout.sessions.create).not.toHaveBeenCalled();
+  });
+
+  it('#902: charges only the remainder when those rows fall short', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'invoices/inv-legacy-part': { kinfolkId: '3', status: 'sent', total: 40 },
+      },
+      queryDocs: { 'invoices/inv-legacy-part/payments': [{ id: 'p1', data: { amountCents: 1500, amount: 15 } }] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    await payInvoiceHandler({
+      data: { invoiceId: 'inv-legacy-part', successUrl: 'https://x', cancelUrl: 'https://y' },
+      auth: { uid: 'u1' },
+    } as any);
+    const callArg = mocks.stripeMock.checkout.sessions.create.mock.calls[0]![0];
+    expect(callArg.line_items[0]!.price_data.unit_amount).toBe(2500);
+  });
+
   it('creates a Checkout Session and returns the URL', async () => {
     const ctx = buildDbMock({
       docs: {

@@ -9,6 +9,8 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { INVOICE_STATES, type InvoiceState, type InvoiceEditScope } from '../lib/invoiceEditPolicy';
 import { validateResponse } from '../lib/callableResponse';
 import { quoteDecisionOf } from '../lib/quoteDecision';
+import { amountDueCentsOf } from '../lib/amountDueRule';
+import { centsToDollars } from '../lib/invoiceMath';
 import { payMethodSettingsFrom, resolvePayMethods, settingsForInvoice } from '../lib/paymentMethods';
 import {
   CentsSchema,
@@ -365,7 +367,6 @@ export async function getMyInvoicesHandler(
     // questions and their amounts come from different places.
     if (storedLines.length === 0 && sessionIds.length > 0) sessionIdsByInvoice.set(d.id, sessionIds);
     if (storedLines.some((l) => l.sessionId !== '')) boundLinesByInvoice.set(d.id, storedLines);
-    const amountDue = numericFrom(data['amountDue']);
     const total = numericFrom(data['total']);
     const stamped = statusFromStamp(data);
     if (!stamped.stamped) unstampedIds.push(d.id);
@@ -379,15 +380,32 @@ export async function getMyInvoicesHandler(
     // InvoiceDto field note for why that subtraction is specifically unsafe on
     // the invoices this exists to describe.
     const paidCents = integerCentsFrom(data['paidCents']);
-    const partiallyPaid = !isCredit && !isPaid && paidCents > 0 && amountDue > 0;
     // THE CENTS SEAM, deliberately (issue #409). `resolvePayMethods` reads
-    // CENTS; this collection's `amountDue` is a legacy DOLLARS float. Read
-    // the integer field the settlement pass writes first and fall back to
-    // rounding the float, the same order and the same reason as
-    // `payInvoice.ts`: a real charge should never be a re-rounding of a
-    // re-rounding. Rounded rather than truncated so $127.505 does not clip.
-    const amountDueCents =
-      integerCentsOrNull(data['amountDueCents']) ?? Math.round(amountDue * 100);
+    // CENTS; this collection's `amountDue` is a legacy DOLLARS float. The rule
+    // reads the integer field the settlement pass writes first and falls back to
+    // rounding the float, the same order and the same reason as `payInvoice.ts`:
+    // a real charge should never be a re-rounding of a re-rounding. Rounded
+    // rather than truncated so $127.505 does not clip.
+    //
+    // #902: AND IT IS THE SHARED RULE THAT READS THEM, not this handler. A
+    // migrated invoice carries a `total` and no balance at all, and this builder
+    // used to ship that as `amountDue: 0`. The household saw a bill they owed
+    // rendered $0.00 with no way to pay it, the web detail screen read
+    // `total - amountDue` and announced it PAID IN FULL, and the auto-apply
+    // trigger meanwhile drew their account credit against the same document.
+    // `lib/amountDueRule.ts` derives what such a document owes, from its own
+    // `paidCents` where the settlement pass wrote one and from its status label
+    // otherwise, and every other reader of this collection asks the same
+    // function. An invoice that states a balance is untouched by it, so nothing
+    // this callable shipped for an ordinary bill has changed.
+    //
+    // THE CLIENTS STILL DO NOT CLASSIFY. This is the portal's classifier of
+    // record (see `statusFromStamp`), and the rule runs HERE, once, on the raw
+    // document, where a missing field can still be told from a zero one. The
+    // web and Android screens keep reading the number they are handed.
+    const amountDueCents = amountDueCentsOf(data, paidCents);
+    const amountDue = centsToDollars(amountDueCents);
+    const partiallyPaid = !isCredit && !isPaid && paidCents > 0 && amountDue > 0;
     return {
       id: d.id,
       kinfolkId,
@@ -699,7 +717,15 @@ function integerCentsFrom(v: unknown): number {
  * reading a real balance as nothing owed. Same helper, same name, and the
  * same reasoning as `payInvoice.ts`'s: the two are the payable-amount reads
  * on the two sides of one payment.
+ *
+ * #902 MOVED THIS READ, it did not retire it. `lib/amountDueRule.ts` performs
+ * exactly this check as `statedAmountDueCents`, on the same two fields in the
+ * same order, for every reader of the collection at once. This copy is left in
+ * place and unused rather than deleted: it is half of a payment path whose other
+ * half is `payInvoice.ts`, and payment code is reported here, never removed.
+ * Named in #902's PR as orphaned, for whoever retires the pair together.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function integerCentsOrNull(v: unknown): number | null {
   return typeof v === 'number' && Number.isInteger(v) ? v : null;
 }

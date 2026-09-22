@@ -48,10 +48,22 @@ describe('collectableForAutoApply: what counts as a bill worth looking at', () =
     expect(collectableForAutoApply(OPEN)).toBe(true);
   });
 
-  it('counts an invoice with NO stated balance, because that is not "nothing owed"', () => {
-    // An un-itemized invoice can carry a `total` and no `amountDue` yet. The
-    // pass resolves the real figure; this only decides whether to go and look.
-    expect(collectableForAutoApply({ kinfolkId: 'fam1', status: 'open' })).toBe(true);
+  /**
+   * READER 3 of #902's shared rule. This predicate and `invoiceStateOf` used to
+   * answer "what does a document with a `total` and no `amountDue` owe"
+   * differently — collectable here, settled there — and a household's account
+   * credit was spent on a bill their portal called paid. Both ask
+   * `lib/amountDueRule.ts` now.
+   */
+  it('counts a migrated total-only bill: the rule says its total is owed', () => {
+    expect(collectableForAutoApply({ kinfolkId: 'fam1', status: 'open', total: 40 })).toBe(true);
+    expect(collectableForAutoApply({ kinfolkId: 'fam1', status: 'sent', totalCents: 4000 })).toBe(true);
+  });
+  it('CHANGED BY #902: an invoice stating no money at all is not collectable', () => {
+    // It used to be, because "no `amountDue` field" was read as "go and look".
+    // An invoice that names neither a balance nor a total is not a bill to spend
+    // a household's credit against, and the pass refuses it on arrival anyway.
+    expect(collectableForAutoApply({ kinfolkId: 'fam1', status: 'open' })).toBe(false);
   });
 
   it('does not count a draft, a quote, a cancelled invoice, a credit or a paid one', () => {

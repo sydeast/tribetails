@@ -14,7 +14,19 @@
  * branch below is a positive read of either an explicit status string or a real
  * money field. Reintroducing a negation here would let an invoice become
  * editable, or frozen, by accident.
+ *
+ * THE ONE DEPENDENCY, AND WHY IT IS NOT A DEPARTURE. This module used to import
+ * nothing at all, so the backfill script and the pure tests could load the
+ * classifier without anything reaching Firestore. It now takes
+ * `lib/amountDueRule.ts`, whose own single import is `lib/invoiceMath.ts`, which
+ * imports nothing. That serves the same purpose rather than abandoning it: #902
+ * was this classifier and `triggers/onInvoiceAutoApply.ts` answering "what does
+ * a document with a `total` and no `amountDue` owe" differently, and money moved
+ * on the difference. The answer is one module now, so no reader can drift from
+ * another, and every file in the chain is still free of Firestore.
  */
+import { amountDueCentsOf } from './amountDueRule';
+import { invoiceTotalCentsOf } from './invoiceMath';
 
 /** Every state this module will ever return. */
 export const INVOICE_STATES = [
@@ -34,7 +46,18 @@ export type InvoiceState = (typeof INVOICE_STATES)[number];
 export interface InvoiceStateDoc {
   status?: unknown;
   amountDue?: unknown;
+  /** The integer-cents balance where a writer paired it with `amountDue`; see `amountDueRule.ts`. */
+  amountDueCents?: unknown;
   total?: unknown;
+  /**
+   * The integer-cents total, which WINS over `total` (`invoiceTotalCentsOf`).
+   * Read here from 2026-09-22: the classifier used to read only the float
+   * dollars, so it and every other money reader could put a different number
+   * against the same invoice. Docs carrying both are written from one source in
+   * one pass and agree; a doc carrying only `totalCents` used to classify as if
+   * it were worth nothing.
+   */
+  totalCents?: unknown;
   creditRedeemedAt?: unknown;
   /**
    * The household's answer to a quote, written by `portal/quoteDecision.ts`.
@@ -46,11 +69,6 @@ export interface InvoiceStateDoc {
   quoteDecision?: unknown;
 }
 
-/** A non-finite or non-numeric field reads as "no evidence" (0), never as NaN. */
-function money(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
-}
-
 /**
  * Classifies one invoice doc. Precedence matches the admin twin (the portal's
  * `resolveStatus` was the third copy of this precedence until 2026-07-28,
@@ -58,11 +76,28 @@ function money(v: unknown): number {
  * stamp this module's output writes): an explicit status wins, then a
  * negative balance is a credit even when unlabeled, then the money places an
  * unlabeled row.
+ *
+ * THE BALANCE COMES FROM THE SHARED RULE (#902), not from the raw field. Until
+ * 2026-09-22 a missing `amountDue` was read as 0 here, so a migrated
+ * `{ status: 'sent', total: 40 }` classified `paid` while the auto-apply trigger
+ * read the same document as collectable and drew account credit against it. The
+ * rule (`lib/amountDueRule.ts`) derives what such a document owes, and every
+ * reader now asks it: a stated balance is returned untouched, so nothing this
+ * classifier said about a document that HAS an `amountDue` has changed.
+ *
+ * `paidCents` is the sum of the invoice's `payments` subcollection, passed by
+ * the callers that hold it (`invoiceStateStampOf`, `chaseRefusalOf`) and left
+ * `null` by the ones that cannot fetch it. It is read ONLY to settle a document
+ * that states no balance; for every other document the argument changes nothing,
+ * which is why every existing call site keeps its meaning without passing it.
+ * A legacy bill whose rows cover its total therefore reads `paid` to a caller
+ * holding the rows, and a caller without them says `open` — the conservative
+ * reading, and the one that keeps the bill visible and repairable.
  */
-export function invoiceStateOf(doc: InvoiceStateDoc): InvoiceState {
+export function invoiceStateOf(doc: InvoiceStateDoc, paidCents: number | null = null): InvoiceState {
   const status = typeof doc.status === 'string' ? doc.status.trim().toLowerCase() : '';
-  const amountDue = money(doc.amountDue);
-  const total = money(doc.total);
+  const amountDue = amountDueCentsOf(doc, paidCents);
+  const total = invoiceTotalCentsOf(doc);
 
   if (status === 'quote') return 'quote';
   if (status === 'draft') return 'draft';

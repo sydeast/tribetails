@@ -17,6 +17,8 @@ import {
   checkoutRoundOf,
 } from '../lib/invoiceCheckoutDedupe';
 import { CheckoutIdempotencyKeyArg } from '../lib/moneyIdempotency';
+import { amountDueCentsOf, statesNoBalance } from '../lib/amountDueRule';
+import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 
 export const Args = z.object({
   invoiceId: z.string().min(1),
@@ -111,10 +113,31 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   // WHAT THE HOUSEHOLD IS CHARGED IS THE REMAINING BALANCE, not the total, and
   // on a part-paid invoice those differ. `amountDueCents` is the integer figure
   // the settlement pass writes (`lib/invoiceMath.ts`); the float dollar
-  // `amountDue` is its projection and is all an older invoice carries. Read in
-  // that order so a real card charge is never a re-rounding of a re-rounding.
-  const amountCents =
-    integerCentsOrNull(inv['amountDueCents']) ?? Math.round(numericFrom(inv['amountDue']) * 100);
+  // `amountDue` is its projection and is all an older invoice carries. The
+  // shared rule reads them in that order, so a real card charge is never a
+  // re-rounding of a re-rounding.
+  //
+  // #902: AND IT IS THE SHARED RULE THAT READS THEM. A migrated invoice carries
+  // a `total` and no balance at all, and this handler used to charge it 0 and
+  // refuse. That was invisible while the portal showed the same bill as $0.00
+  // with no Pay button; now that `getMyInvoices` ships the derived balance and
+  // the household is offered a way to pay, a checkout that refused what the
+  // screen just offered would be the disagreement this issue closes, moved one
+  // step along.
+  //
+  // THE PAYMENT ROWS ARE READ, and only for that shape. This handler charges a
+  // CARD: deriving a balance from a status label alone, when the invoice's own
+  // rows could say the bill was settled before `amountDue` existed, would risk
+  // charging a household twice for one bill — and there are no refunds. One
+  // document, one extra read, and only when the document states nothing. An
+  // invoice that states its balance takes the same path it always did, for the
+  // same cost.
+  let legacyPaidCents: number | null = null;
+  if (statesNoBalance(inv)) {
+    const rows = await invoiceSnap.ref.collection('payments').get();
+    legacyPaidCents = paidCentsFromPayments(rows.docs.map((d) => d.data() as PaymentAmount));
+  }
+  const amountCents = amountDueCentsOf(inv, legacyPaidCents);
   if (amountCents <= 0) throw new HttpsError('failed-precondition', 'Invoice is fully paid.');
 
   // WHICH SETTLEMENT ROUND THIS SESSION BELONGS TO (issue #826).
@@ -466,11 +489,21 @@ function isUnsupportedMethodTypeError(err: unknown): boolean {
  * An integer count of cents, or null when the field is absent or is not one.
  * Null rather than 0, so the caller falls back to the dollar field instead of
  * refusing a real balance as "fully paid".
+ *
+ * #902 MOVED THIS READ, it did not retire it. `lib/amountDueRule.ts` performs
+ * exactly this check as `statedAmountDueCents`, on the same two fields in the
+ * same order, for every reader of the collection at once. This copy and its
+ * `numericFrom` are left in place and unused rather than deleted: they are half
+ * of a payment path whose other half is `getMyInvoices.ts`, and payment code is
+ * reported here, never removed. Named in #902's PR as orphaned, for whoever
+ * retires the pair together.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function integerCentsOrNull(v: unknown): number | null {
   return typeof v === 'number' && Number.isInteger(v) ? v : null;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function numericFrom(v: unknown): number {
   if (typeof v === 'number') return v;
   if (typeof v === 'string') {

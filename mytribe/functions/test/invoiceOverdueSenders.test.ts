@@ -98,7 +98,12 @@ const CASES: Case[] = [
     chase: false,
   },
   { name: 'an archived open bill', doc: { ...STATE_FIXTURES.open, archivedAt: 'ts' }, chase: false },
-  { name: 'a legacy total-only bill with no payment rows', doc: { status: 'sent', total: 40 }, chase: false },
+  // #902 CHANGED THIS ROW. A migrated bill with a `total` and no `amountDue`
+  // used to classify `paid`, and #871 refused to chase it unless its payment
+  // rows proved a balance. The shared rule reads it as owing its total, so an
+  // unpaid one is an open bill and the office may chase it. The two rows below
+  // are unchanged: only the rows can say a legacy bill was already paid off.
+  { name: 'a legacy total-only bill with no payment rows', doc: { status: 'sent', total: 40 }, chase: true },
   {
     name: 'a legacy total-only bill whose rows cover the total',
     doc: { status: 'sent', total: 40 },

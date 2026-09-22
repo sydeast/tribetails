@@ -222,6 +222,24 @@ on an invoice doc are DOLLARS as floating-point numbers. That is the legacy shap
 of this collection, and it is NOT the convention used elsewhere in this file:
 `logExpense` takes integer `amountCents`. Do not assume one from the other.
 
+**A MISSING `amountDue` IS DERIVED, NOT ZERO (2026-09-22, #902).** A migrated
+invoice carries a `total` and no balance field at all, and the two readings of
+that document used to disagree: `invoiceStateOf` called it paid, while the
+auto-apply trigger drew a household's account credit against it. One rule now
+answers, `src/lib/amountDueRule.ts`, and every reader asks it: the classifier,
+the edit policy, the auto-apply gate, the chase senders, `getMyInvoices` and
+`payInvoice`. A STATED balance is returned untouched, whatever it says, so
+`amountDue: 0` on a part-collected bill stays `repairInvoicePayments`' to fix. A
+MISSING one is the total minus the recorded payments where a caller holds the
+rows, and otherwise 0 for a `paid`/`cancelled`/`credit`/`redeemed` label and the
+whole total for anything else. The derived figure never goes negative: an
+overdraw clamps to 0 and is reported, because a negative `amountDue` is this
+codebase's credit signal and a derivation must not issue one. `getMyInvoices`
+therefore ships a real balance for these documents, and a client that mirrors
+this collection DIRECTLY should ask the rule rather than read the field.
+`backfill:invoice-amount-due` writes the derived figure down; it had not run
+against production when this shipped.
+
 `date`, `dueDate`, `status` and `discount` are FREE TEXT (`z.string()`), never
 validated enums and never parsed dates. `status` in particular WAS whatever the
 caller sent; since the state stamp (below, 2026-07-28) every callable write

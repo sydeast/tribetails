@@ -33,11 +33,15 @@ describe('invoiceStateOf table (#884)', () => {
     ['paid', { status: 'paid', amountDue: 0, total: 40 }, 'a paid label'],
     ['paid', { status: 'paid', amountDue: 20, total: 40 }, 'a paid label on a part-paid bill (the corruption)'],
     ['paid', { status: 'open', amountDue: 0, total: 40 }, 'an open label with nothing left due'],
-    ['paid', { status: 'overdue', total: 40 }, 'a total with no amountDue (no balance evidence)'],
+    ['paid', { status: 'paid', total: 40 }, 'a paid label with no amountDue: the rule reads nothing owed'],
     ['zero', { status: 'open', amountDue: 0, total: 0 }, 'a $0 comped invoice'],
     ['zero', {}, 'a doc with no fields'],
     ['open', { status: 'open', amountDue: 40, total: 40 }, 'an open bill'],
     ['open', { status: 'overdue', amountDue: 40, total: 40 }, 'an overdue label with a balance'],
+    // #902. This row used to read `paid`: a missing balance was 0, so a migrated
+    // bill classified settled while onInvoiceAutoApply drew credit against it.
+    ['open', { status: 'overdue', total: 40 }, 'a total with no amountDue: the rule says the total is owed'],
+    ['open', { status: 'sent', totalCents: 4000 }, 'totalCents alone, which used to classify zero'],
   ];
 
   it('covers every state the classifier can return', () => {

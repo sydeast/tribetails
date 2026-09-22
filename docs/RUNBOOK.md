@@ -1222,6 +1222,7 @@ write, run `npm run test:scripts:emulator` and read the pass count.**
 |---|---|---|
 | `backfill:operator-warning-override` | #877 | An operator who turned off or locked the failed-login warning, or one of its channels, on the Business tab saved that on `auth.failedLogin.attempts`. That key is household-only now, so the setting stopped applying to operators. This copies it to `security.failedLogin.attempts.operator`, only where that key has no setting yet. |
 | `backfill:emergency-contacts` | #829 | Copies the flat `emergencyContact*` fields, and for a household with none the old `families` customFields copy, into `emergencyContacts[0]` - the array the callable and every client now read. |
+| `backfill:invoice-amount-due` | #902 | Migrated invoices carry a `total` and no `amountDue` at all. Every reader derives the balance now (one rule, `functions/src/lib/amountDueRule.ts`), so nothing is broken without this; the backfill writes the figure down so a stored balance is what the ledger sums and what a query can filter on. It writes `amountDue`, `amountDueCents` and the ADR-0002 state stamp, and **nothing else: no `updatedAt` and no server timestamp, so these records keep the original system's dates**. It refuses any invoice whose write would tell a household about a payment made long ago, and lists those for you. |
 
 For `backfill:operator-warning-override`:
 
@@ -1235,6 +1236,30 @@ For `backfill:operator-warning-override`:
    or from `project_id` in that credentials file and refuses to guess, and it
    refuses to run while `FIRESTORE_EMULATOR_HOST` is set.
 4. Re-run step 2. It reports `target-exists`, or the same no-op as before.
+
+For `backfill:invoice-amount-due`:
+
+1. `npm run test:scripts:emulator`, and read the pass count.
+2. `npm --prefix mytribe/functions run report:legacy-amount-due -- --project <id> --allow-prod`
+   The read-only count first, so you know the size of what follows. The first
+   line is the target: check it names the right project and `PRODUCTION`. Read
+   the per-status counts, and the `overdrawn` line in particular.
+3. `npm --prefix mytribe/functions run backfill:invoice-amount-due -- --project <id>`
+   DRY RUN, the default. One `[write]` line per invoice, naming the status it
+   will stamp and the balance it will write. Nothing is written.
+4. `npm --prefix mytribe/functions run backfill:invoice-amount-due -- --project <id> --allow-prod`
+   Needs `GOOGLE_APPLICATION_CREDENTIALS`. `--dry-run` beats `--allow-prod` in
+   either order, so a run you are unsure about can always be made safe by adding it.
+5. Re-run step 3. It plans zero: a document that states a balance is out of scope,
+   which is what makes this idempotent.
+6. Act on the `NEEDS OPERATOR` list by hand, if there is one. Those are bills whose
+   payment rows already cover them: writing the zero balance would have sent the
+   household an `invoice.payment.applied` about a payment made months ago, so the
+   script left them alone. Settle each through `markInvoicePaid` or
+   `repairInvoicePayments`, where the notice is a decision rather than a side effect.
+   Where the rows EXCEED the total, there are no refunds: put the difference on the
+   household's account balance. The backfill never writes a negative balance, so it
+   has minted no credit for you to undo.
 
 The script never overwrites a setting the new key already has. It copies the
 whole business-stream setting, locks and lock reason included, because a
@@ -1307,6 +1332,7 @@ something to fix from the terminal.
 |---|---|---|
 | `report:duplicate-kinfolk` | #890 | Whether Add Kinfolk already made two households for one family: households with the same primary phone or email created close together, by `createdAt`, or by the document's create time for households made before `createdAt` was stamped. |
 | `report:duplicate-notifications` | #832, #866 | Whether a household was already sent the same notification twice, or two payment confirmations about one invoice within 10 minutes. |
+| `report:legacy-amount-due` | #902 | How many invoices carry a `total` and no `amountDue` at all, grouped by their stored `status` spelling, with what the shared rule says each group owes and how many hold payment rows or are overdrawn. **Run this one BEFORE the release that ships #902, not after.** Those invoices used to classify `paid` and were never chased; they classify `open` from the moment that release deploys, so the overdue and reminder crons become free to chase every one of them with a due date in range. The count is the size of that batch, and it may be zero. Run it again before `backfill:invoice-amount-due`. Prints ids, status spellings and counts only, never an amount. |
 
 1. `npm --prefix mytribe/functions run report:duplicate-kinfolk -- --allow-prod --project <id>`
    The first line printed is the target: check it names the right project and
@@ -1315,6 +1341,10 @@ something to fix from the terminal.
 2. `npm --prefix mytribe/functions run report:duplicate-notifications -- --project <id>`
    It has no `--allow-prod` flag because there is nothing to allow: its test
    greps the source and fails on any write call.
+3. `npm --prefix mytribe/functions run report:legacy-amount-due -- --project <id> --allow-prod`
+   The first line printed is the target. It refuses `--allow-prod` while
+   `FIRESTORE_EMULATOR_HOST` is set, and its test greps the source for write
+   calls, so every run is the dry run.
 
 ### Merged branches are deleted after the tag
 

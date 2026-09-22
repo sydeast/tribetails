@@ -146,27 +146,39 @@ describe('backfillInvoiceStateStamp planStamp', () => {
     expect(d.update).toEqual({ status: 'open', editScope: 'metadataOnly' });
   });
 
-  it('REFUSES the legacy shape: a total, no amountDue and no payments would be stamped paid (would_assert_payment)', () => {
-    // Restored from before #884, where the old guard refused it. invoiceStateOf
-    // reads the missing amountDue as 0, so this owed bill classifies paid, and
-    // a paid/none stamp would then block every payment path and every edit.
-    // Refused until #902 rules on a missing amountDue.
+  /**
+   * #902 SETTLED THE SHAPE THIS GUARD WAS BUILT AROUND, and these rows are how
+   * the stamp reads it now. The classifier no longer mistakes a missing balance
+   * for a zero one, so a migrated bill with a `total` and no `amountDue` stamps
+   * `open`/`all` — visible, payable and editable — instead of being refused, and
+   * the operator has nothing left to handle by hand for it.
+   */
+  it('#902: a total, no amountDue and no payments now stamps OPEN, the bill it is', () => {
     const d = planStamp({ status: 'sent', total: 40 }, []);
-    expect(d).toEqual({ action: 'skip', reason: 'would_assert_payment' });
-  });
-
-  it('stamps that shape paid once a subcollection payment row backs the paid reading', () => {
-    const d = planStamp({ status: 'sent', total: 40 }, [{ amountCents: 4000 }]);
     expect(d.action).toBe('stamp');
     if (d.action !== 'stamp') throw new Error('expected stamp');
-    expect(d.update.status).toBe('paid');
+    expect(d.update).toEqual({ status: 'open', editScope: 'all' });
   });
 
-  it('stamps that shape paid when a ROOT payments row names the invoice (the Stripe webhook writes there)', () => {
+  it('#902: a subcollection row covering the total settles it, and THEN the notification guard holds it back', () => {
+    // The rows settle the bill, so the stamp would be `paid`. That write moves
+    // the classifier from open to paid, which is exactly what fires
+    // `invoice.payment.applied`, and a backfill must never text a household
+    // about a payment that happened months ago. Listed for the operator instead.
+    const d = planStamp({ status: 'sent', total: 40 }, [{ amountCents: 4000 }]);
+    expect(d).toEqual({ action: 'skip', reason: 'would_notify_household' });
+  });
+
+  it('#902: a ROOT payments row is evidence, not a settlement, so the bill stamps OPEN', () => {
+    // Root rows are counted as proof that money came in and are deliberately
+    // never summed into the balance: the two collections are not guaranteed to
+    // be disjoint records of one payment. With nothing in its own subcollection
+    // the bill still owes its total, and `open` keeps it collectable and
+    // repairable rather than asserting a settlement nothing measured.
     const d = planStamp({ status: 'sent', total: 40 }, [], { rootPayments: [{ amountCents: 4000 }] });
     expect(d.action).toBe('stamp');
     if (d.action !== 'stamp') throw new Error('expected stamp');
-    expect(d.update.status).toBe('paid');
+    expect(d.update.status).toBe('open');
   });
 
   it('a root row whose amount is unresolved still counts as a record that money came in', () => {
@@ -183,11 +195,25 @@ describe('backfillInvoiceStateStamp planStamp', () => {
     }
   });
 
-  it('treats a non-finite amountDue as missing, so the shape is still refused', () => {
+  it('treats a non-finite amountDue as missing, so the rule derives the same open bill', () => {
     for (const amountDue of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
       const d = planStamp({ status: 'sent', total: 40, amountDue }, []);
-      expect(d, String(amountDue)).toEqual({ action: 'skip', reason: 'would_assert_payment' });
+      expect(d.action, String(amountDue)).toBe('stamp');
+      if (d.action !== 'stamp') throw new Error('expected stamp');
+      expect(d.update.status, String(amountDue)).toBe('open');
     }
+  });
+
+  it('THE PAYMENT GUARD is kept as a backstop and still refuses a paid stamp nothing supports', () => {
+    // #902's rule means the classifier can no longer produce this stamp for this
+    // document, so the guard is unreachable through `invoiceStateStampOf`. It is
+    // kept rather than deleted, and proven with an injected stamp, so a later
+    // change to either side cannot quietly make a backfill mark an owed bill
+    // paid — the failure it was written for, which had no way back.
+    const d = planStamp({ status: 'sent', total: 40 }, [], {
+      stampOf: () => ({ status: 'paid', editScope: 'none' }),
+    });
+    expect(d).toEqual({ action: 'skip', reason: 'would_assert_payment' });
   });
 
   it('THE NOTIFICATION GUARD refuses a stamp write the trigger would send a notice for', () => {

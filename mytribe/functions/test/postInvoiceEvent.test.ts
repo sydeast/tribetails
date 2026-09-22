@@ -248,14 +248,21 @@ describe('#906 the trigger: no invoice.payment.applied can come from this path',
     expect(invoiceWriteNoticeKey(before as any, after as any)).toBeNull();
   });
 
-  it('the legacy shape that classifies PAID still announces no payment', async () => {
-    // `{ total, no amountDue }` classifies `paid` (the classifier reads the
-    // money, not the label). The write still cannot be an
-    // `invoice.payment.applied`, because the invoice came from `draft` and
-    // only `open` is a state a payment moves (#884's PAYMENT_APPLIED_FROM_STATES).
+  /**
+   * FIXED BY #902, from the angle #906 found it. Sending a legacy draft used to
+   * stamp it `paid` — `{ total, no amountDue }` classified paid because a
+   * missing balance read as zero — so the office's own Send button marked an
+   * owed bill settled, with no payment row anywhere and no way back
+   * (`alreadySettledRefusal` then blocks every payment path and scope `none`
+   * blocks the edit). The shared rule reads it as owing its total, so a sent
+   * draft becomes an ordinary `open` bill. It still announces no payment,
+   * because a draft send is not one.
+   */
+  it('#902: sending a legacy total-only draft stamps it open, not paid, and announces no payment', async () => {
     const before = { kinfolkId: '3', status: 'draft', invoiceNumber: 'INV-9', total: 40 };
     const after = await sendAndRead(before);
-    expect(after.status).toBe('paid');
+    expect(after.status).toBe('open');
+    expect(after.editScope).toBe('all');
     expect(invoiceWriteNoticeKey(before as any, after as any)).toBeNull();
   });
 

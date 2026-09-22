@@ -22,17 +22,35 @@
  *     quote is an ordinary open bill here. A doc still labelled `quote` in
  *     either field and never accepted is refused even if its other field says
  *     `open`: nobody agreed to pay it.
- *   - THE LEGACY TOTAL-ONLY SHAPE. A doc with a positive `total` and no finite
- *     `amountDue` classifies `paid`, because a missing balance is no evidence of
- *     one. Whether that reading is right is #902's question, and this module does
- *     not change the classifier. It is chased only when the invoice's own payment
- *     rows PROVE a balance: at least one row, summing to less than the total.
- *     No rows proves nothing (a legacy bill settled before rows were written
- *     looks the same), so no rows means no notice.
+ *   - AN ARCHIVED BILL and an unaccepted quote are the two above; the third
+ *     refusal, `legacy_balance_unproven`, is gone. See below.
+ *
+ * ── THE LEGACY TOTAL-ONLY SHAPE, AFTER #902 ───────────────────────────────
+ *
+ * When #871 shipped, a document with a positive `total` and no finite
+ * `amountDue` classified `paid`, because the classifier read a missing balance
+ * as zero. This module refused to chase one unless its own payment rows PROVED a
+ * balance — at least one row, summing to less than the total — and called that
+ * refusal `legacy_balance_unproven`. It was a local patch around a classifier
+ * reading #871 deliberately left to #902.
+ *
+ * #902 settled it: a missing balance is DERIVED, by one shared rule
+ * (`lib/amountDueRule.ts`), and a legacy bill nobody has paid owes its total. So
+ * the shape classifies `open` and is chased like any other live bill, and the
+ * patch is retired rather than worked around.
+ *
+ * THE PAYMENT ROWS STILL MATTER, and that is why `evidence` survives. The rule
+ * settles a stated-nothing bill from its rows when a caller holds them, and only
+ * the rows can say that a legacy bill was paid off before `amountDue` existed.
+ * A caller that reads them hands them here and gets `paid` — refused, `not_open`
+ * — for a bill whose rows cover its total. A caller that cannot read them gets
+ * the conservative `open`. `legacyEvidenceWanted` says which documents are worth
+ * the extra read, so no caller pays for it on an ordinary invoice.
  */
 import { invoiceStateOf, quoteAcceptanceOf, type InvoiceState } from './invoiceEditPolicy';
 import { isArchived } from './invoiceArchive';
 import { invoiceTotalCentsOf } from './invoiceMath';
+import { statesNoBalance } from './amountDueRule';
 
 /** The raw fields this module reads. All optional: real docs are missing keys. */
 export interface ChaseDoc {
@@ -55,7 +73,14 @@ export interface PaymentEvidence {
   paidCents: number;
 }
 
-export type ChaseRefusalReason = 'archived' | 'unaccepted_quote' | 'not_open' | 'legacy_balance_unproven';
+/**
+ * `legacy_balance_unproven` was removed by #902 rather than left unreachable.
+ * The shape it described is now classified, not special-cased, so a bill whose
+ * rows cover its total refuses as `not_open` like every other settled bill, and
+ * one nobody paid is chased. A dead member would have callers still branching on
+ * a reason nothing can produce.
+ */
+export type ChaseRefusalReason = 'archived' | 'unaccepted_quote' | 'not_open';
 
 export interface ChaseRefusal {
   reason: ChaseRefusalReason;
@@ -68,29 +93,40 @@ function label(v: unknown): string {
 }
 
 /**
- * True for the legacy shape whose balance only payment rows can settle: a
- * positive total, no finite `amountDue`, not labelled paid, and classified
- * `paid` for want of a balance.
+ * IS THIS DOCUMENT WORTH READING THE PAYMENT ROWS FOR, before deciding whether
+ * to chase it?
+ *
+ * True for the legacy total-only shape: a positive total and no stated balance
+ * at all. That is the one document the classifier cannot settle from itself —
+ * the rule reads it as owing its whole total, and only the rows can show that it
+ * was in fact paid off before `amountDue` existed. Every other invoice is
+ * decided from the document alone and costs no extra read, which is what keeps
+ * the reminder cron's cost proportional to the collection rather than to it.
+ *
+ * #902 renamed this from `isLegacyTotalOnly`, whose body asked whether the
+ * classifier said `paid` — a question that only had that answer BECAUSE of the
+ * defect. Asking it now would return false for every document and quietly stop
+ * anyone reading the rows.
  */
-export function isLegacyTotalOnly(doc: ChaseDoc): boolean {
-  const amountDue = doc.amountDue;
-  if (typeof amountDue === 'number' && Number.isFinite(amountDue)) return false;
+export function legacyEvidenceWanted(doc: ChaseDoc): boolean {
+  if (!statesNoBalance(doc)) return false;
   if (label(doc.status) === 'paid') return false;
-  if (invoiceStateOf(doc) !== 'paid') return false;
   return invoiceTotalCentsOf(doc) > 0;
 }
 
-/** Why this invoice may not be chased, or null when it may. */
+/**
+ * Why this invoice may not be chased, or null when it may.
+ *
+ * `evidence` is the invoice's own payment rows when the caller read them
+ * (`legacyEvidenceWanted` says when that is worth doing) and null otherwise. It
+ * reaches the classifier rather than a branch of its own: see the header.
+ */
 export function chaseRefusalOf(doc: ChaseDoc, evidence: PaymentEvidence | null): ChaseRefusal | null {
-  const state = invoiceStateOf(doc);
+  const state = invoiceStateOf(doc, evidence === null ? null : evidence.paidCents);
   if (isArchived(doc)) return { reason: 'archived', state };
   const quoteLabelled = label(doc.status) === 'quote' || label(doc.invoiceStatus) === 'quote';
   if (quoteLabelled && quoteAcceptanceOf(doc) !== 'accepted') return { reason: 'unaccepted_quote', state };
   if (state === 'open') return null;
-  if (isLegacyTotalOnly(doc)) {
-    const proven = evidence !== null && evidence.rows > 0 && evidence.paidCents < invoiceTotalCentsOf(doc);
-    return proven ? null : { reason: 'legacy_balance_unproven', state };
-  }
   return { reason: 'not_open', state };
 }
 

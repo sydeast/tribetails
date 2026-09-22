@@ -4,10 +4,16 @@ import { getApps, initializeApp, getFirestore, type Firestore } from '../lib/fir
 import { run } from '../backfillInvoiceStateStamp';
 
 /**
- * The state stamp backfill's real write path against the emulator (#884). The
- * legacy shape (a `total`, no `amountDue`, no payment rows) classifies paid only
- * because the missing amountDue reads as 0, so it is refused as
- * `would_assert_payment` and left exactly as it was, until #902 rules.
+ * The state stamp backfill's real write path against the emulator (#884), as
+ * #902 leaves it.
+ *
+ * The legacy shape (a `total`, no `amountDue`) used to classify `paid` only
+ * because the missing balance read as 0, and was refused as
+ * `would_assert_payment`. #902's shared rule derives the balance, so an unpaid
+ * one now stamps `open`/`all` — the bill it is — and nothing is left for the
+ * operator. The root-payment-backed one stamps `open` too: a root ledger row is
+ * evidence that money came in, never a measurement of how much, and only the
+ * invoice's own subcollection settles a balance.
  */
 const EMULATOR = process.env['FIRESTORE_EMULATOR_HOST'];
 const PROJECT = 'stamp-884-test';
@@ -33,21 +39,28 @@ describe.runIf(EMULATOR)('backfillInvoiceStateStamp against the emulator (#884 g
     await inv.doc('stamped').set({ kinfolkId: 'fam1', status: 'open', editScope: 'all', amountDue: 40, total: 40 });
   }, 30_000);
 
-  it('refuses the unbacked legacy doc, stamps the root-payment-backed one paid, and a second run changes nothing', async () => {
+  it('#902: stamps both legacy docs OPEN, refuses nothing, and a second run changes nothing', async () => {
     const first = await run('apply', 300);
     expect(first.scanned).toBe(5);
-    expect(first.stamped).toBe(3);
-    expect(first.skipped).toEqual({ stamp_current: 1, would_assert_payment: 1, would_notify_household: 0 });
-    expect(first.needsOperator).toEqual(['legacy_total_only']);
+    expect(first.stamped).toBe(4);
+    expect(first.skipped).toEqual({ stamp_current: 1, would_assert_payment: 0, would_notify_household: 0 });
+    expect(first.needsOperator).toEqual([]);
 
     const read = async (id: string) => (await db.collection('invoices').doc(id).get()).data() ?? {};
-    expect(await read('legacy_total_only')).toEqual({ kinfolkId: 'fam1', status: 'sent', total: 40 });
-    expect(await read('legacy_root_paid')).toMatchObject({ status: 'paid', editScope: 'none', total: 40 });
+    // Stamped open, and the money fields are untouched: the stamp writes two
+    // fields. Writing the balance itself is backfillInvoiceAmountDue's job.
+    expect(await read('legacy_total_only')).toEqual({
+      kinfolkId: 'fam1',
+      status: 'open',
+      editScope: 'all',
+      total: 40,
+    });
+    expect(await read('legacy_root_paid')).toMatchObject({ status: 'open', editScope: 'all', total: 40 });
     expect(await read('open_bill')).toMatchObject({ status: 'open', editScope: 'all' });
     expect(await read('part_paid')).toMatchObject({ status: 'paid', editScope: 'all' });
 
     const second = await run('apply', 300);
     expect(second.stamped).toBe(0);
-    expect(second.skipped).toEqual({ stamp_current: 4, would_assert_payment: 1, would_notify_household: 0 });
+    expect(second.skipped).toEqual({ stamp_current: 5, would_assert_payment: 0, would_notify_household: 0 });
   });
 });
