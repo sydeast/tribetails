@@ -54,6 +54,13 @@ private val KINFOLK_CREATE_EXCLUDED_FIELDS = setOf(
     "emergencyContactRelation",
 )
 
+/**
+ * #890: what `createKinfolk` answered. [duplicateOf] is set when the server handed
+ * back a household this operator created in the last 10 minutes with the same
+ * phone or email; [kinfolk] then carries that household's id.
+ */
+data class KinfolkCreated(val kinfolk: Kinfolk, val duplicateOf: String?)
+
 class AuntieRepository(
     private val n8n: N8nApi,
     /**
@@ -397,12 +404,53 @@ class AuntieRepository(
                 field.name to field.get(kinfolk)
             }
 
-    suspend fun createKinfolkComplete(kinfolk: Kinfolk): Result<Kinfolk> = runCatching {
+    /**
+     * #890: a value the callable wire can carry. Firestore's `add` serialised a
+     * nested model (`contactOverride`) on its own; the callable encoder takes only
+     * maps, lists and primitives, so a nested model goes across as its field map.
+     */
+    private fun callableValue(v: Any?): Any? = when (v) {
+        null, is String, is Number, is Boolean -> v
+        is Map<*, *> -> v.entries.associate { (k, x) -> k.toString() to callableValue(x) }
+        is List<*> -> v.map { callableValue(it) }
+        else -> v.javaClass.declaredFields
+            .filter { !java.lang.reflect.Modifier.isStatic(it.modifiers) && !it.isSynthetic }
+            .associate { f ->
+                f.isAccessible = true
+                f.name to callableValue(f.get(v))
+            }
+    }
+
+    /**
+     * #890: through the `createKinfolk` callable, not a direct `add`. The server
+     * hands back the household this operator created in the last 10 minutes with
+     * the same phone or email (`duplicateOf`) instead of creating a second one. The
+     * returned [KinfolkCreated.kinfolk] then carries THAT id, so Add Kinfolk carries
+     * on and saves the Emergency Contact onto the existing household, and
+     * [KinfolkCreated.duplicateOf] tells the caller not to audit a second CREATE.
+     */
+    //
+    // [ignoreDuplicateOf] (#907 review item 1a): the household the operator just
+    // Discarded, so the server's duplicate check skips it. No default on purpose:
+    // every caller says whether there is one.
+    suspend fun createKinfolkComplete(kinfolk: Kinfolk, ignoreDuplicateOf: String?): Result<KinfolkCreated> = runCatching {
         AuntieLog.i("Creating kinfolk complete phone=${AuntieLog.redactPhone(kinfolk.phoneNumber)}")
         authGate.ensureAuthenticated()
-        val docRef = firestore.collection("kinfolk").add(kinfolkCreatePayload(kinfolk)).await()
-        kinfolk.copy(id = docRef.id).also {
-            AuntieLog.i("Created kinfolk id=${it.id}")
+        val payload = buildMap<String, Any> {
+            put("kinfolk", kinfolkCreatePayload(kinfolk).mapValues { (_, v) -> callableValue(v) })
+            ignoreDuplicateOf?.trim()?.takeIf { it.isNotEmpty() }?.let { put("ignoreDuplicateOf", it) }
+        }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("createKinfolk").call(payload).awaitCallable().data as? Map<String, Any?>
+            ?: error("createKinfolk: non-map payload")
+        val id = (raw["kinfolkId"] as? String)?.takeIf { it.isNotBlank() }
+            ?: error("createKinfolk returned no household id")
+        val duplicateOf = raw["duplicateOf"] as? String
+        if (duplicateOf != null) {
+            AuntieLog.i("createKinfolk: continuing kinfolk id=$duplicateOf, added minutes ago with the same phone or email")
+        }
+        KinfolkCreated(kinfolk.copy(id = id), duplicateOf).also {
+            AuntieLog.i("Created kinfolk id=${it.kinfolk.id}")
         }
     }.onFailure { AuntieLog.e("Failed to create complete kinfolk", it) }
 

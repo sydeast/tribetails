@@ -17,13 +17,30 @@ sealed interface KinfolkSaveOutcome {
      * save failed. On Add, [kinfolkId] is what the retry saves contacts against.
      */
     data class ContactsFailed(val kinfolkId: String, val message: String) : KinfolkSaveOutcome
+
+    /**
+     * #907 review item 1(b): Add was answered `duplicateOf` [kinfolkId]. Nothing was
+     * written, no contact was saved and nothing is audited; this is never a success.
+     */
+    data class Duplicate(val kinfolkId: String) : KinfolkSaveOutcome
+
+    /** #907 review item 2: the household was deleted, so its contact can never be saved. */
+    data class HouseholdGone(val kinfolkId: String) : KinfolkSaveOutcome
 }
+
+/** #907 review item 2: `saveEmergencyContacts`'s `not-found` sentence, which is all the desktop REST error carries. */
+const val HOUSEHOLD_NO_LONGER_EXISTS = "That household no longer exists."
+
+private fun contactsFailed(kinfolkId: String, message: String): KinfolkSaveOutcome =
+    if (message.contains(HOUSEHOLD_NO_LONGER_EXISTS)) KinfolkSaveOutcome.HouseholdGone(kinfolkId)
+    else KinfolkSaveOutcome.ContactsFailed(kinfolkId, message)
 
 /**
  * The household step of a save. [wrote] is false when an edit changed nothing,
- * so no write was sent (#829 review: nothing is audited then).
+ * so no write was sent (#829 review: nothing is audited then). [duplicateOf] is set
+ * when createKinfolk answered with a household that already exists (#907).
  */
-data class HouseholdWrite(val kinfolkId: String, val wrote: Boolean = true)
+data class HouseholdWrite(val kinfolkId: String, val wrote: Boolean = true, val duplicateOf: String? = null)
 
 /**
  * Whether this save must call `saveEmergencyContacts`. Always on Add (a household
@@ -64,6 +81,8 @@ fun contactBlocksSave(isNew: Boolean, retryKinfolkId: String?, contactProblem: S
 fun contactErrorAfterSave(outcome: KinfolkSaveOutcome, isNew: Boolean, contactProblem: String?): String? = when (outcome) {
     is KinfolkSaveOutcome.Saved -> contactProblem
     is KinfolkSaveOutcome.HouseholdFailed -> null
+    is KinfolkSaveOutcome.Duplicate -> null
+    is KinfolkSaveOutcome.HouseholdGone -> HOUSEHOLD_NO_LONGER_EXISTS
     is KinfolkSaveOutcome.ContactsFailed ->
         if (isNew) "${outcome.message} The household was created and shows No Emergency Contact until this is saved."
         else outcome.message
@@ -98,18 +117,21 @@ suspend fun saveKinfolkWithContacts(
     if (retryKinfolkId != null) {
         return when (val ec = writeContacts(retryKinfolkId)) {
             is WriteResult.Ok -> KinfolkSaveOutcome.Saved(retryKinfolkId)
-            is WriteResult.Err -> KinfolkSaveOutcome.ContactsFailed(retryKinfolkId, ec.message)
+            is WriteResult.Err -> contactsFailed(retryKinfolkId, ec.message)
         }
     }
     val household = when (val h = writeHousehold()) {
         is WriteResult.Err -> return KinfolkSaveOutcome.HouseholdFailed(h.message)
         is WriteResult.Ok -> h.value
     }
+    // #907 review item 1(b): a household that already exists stops here, before any
+    // audit and before its contact is touched.
+    household.duplicateOf?.let { return KinfolkSaveOutcome.Duplicate(it) }
     val id = household.kinfolkId
     if (household.wrote) onHouseholdWritten(id)
     if (!saveContacts) return KinfolkSaveOutcome.Saved(id)
     return when (val ec = writeContacts(id)) {
         is WriteResult.Ok -> KinfolkSaveOutcome.Saved(id)
-        is WriteResult.Err -> KinfolkSaveOutcome.ContactsFailed(id, ec.message)
+        is WriteResult.Err -> contactsFailed(id, ec.message)
     }
 }

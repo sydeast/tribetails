@@ -1221,6 +1221,25 @@ The script never overwrites a setting the new key already has. It copies the
 whole business-stream setting, locks and lock reason included, because a
 locked channel delivers differently from an unlocked one.
 
+### Read-only reports to run after a release
+
+These write nothing. Run each once after the first release that contains it and
+read the counts. A non-zero count is a list of documents to look at, not
+something to fix from the terminal.
+
+| Report | Added by | What it answers |
+|---|---|---|
+| `report:duplicate-kinfolk` | #890 | Whether Add Kinfolk already made two households for one family: households with the same primary phone or email created close together, by `createdAt`, or by the document's create time for households made before `createdAt` was stamped. |
+| `report:duplicate-notifications` | #832, #866 | Whether a household was already sent the same notification twice, or two payment confirmations about one invoice within 10 minutes. |
+
+1. `npm --prefix mytribe/functions run report:duplicate-kinfolk -- --allow-prod --project <id>`
+   The first line printed is the target: check it names the right project and
+   production. It refuses `--allow-prod` while `FIRESTORE_EMULATOR_HOST` is set,
+   and without `--allow-prod` it runs only against the emulator.
+2. `npm --prefix mytribe/functions run report:duplicate-notifications -- --project <id>`
+   It has no `--allow-prod` flag because there is nothing to allow: its test
+   greps the source and fails on any write call.
+
 ### Merged branches are deleted after the tag
 
 Immediately after step 9, `scripts/prune-merged-branches.sh` deletes remote

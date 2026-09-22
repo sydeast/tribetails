@@ -231,7 +231,79 @@ data class AddKinfolkUiState(
     // Once the household is created, that call event is linked to it, as the
     // Calls screen's direct create did before calls went through Add.
     val sourceCallSid: String? = null,
+    // #890: set when Add is left with [createdKinfolkId] still waiting on its
+    // Emergency Contact. Opening Add again then asks first: continue that
+    // household, or Discard, the same choice admin web and the desktop console offer.
+    val offerPendingOnOpen: Boolean = false,
+    // #907 review item 1(a): the household the operator last Discarded. Discard says
+    // the next Add is a new household, so the next create sends this as
+    // `ignoreDuplicateOf`; it is cleared once a create is answered.
+    val discardedKinfolkId: String? = null,
+    // #907 review item 1(b): set when createKinfolk answered `duplicateOf`. Add then
+    // hands the operator to that household's edit screen; it is never a success.
+    val duplicateOf: String? = null,
 )
+
+/** #890: how the Continue prompt names the household waiting on its contact. */
+fun pendingHouseholdName(state: AddKinfolkUiState): String =
+    "${state.firstName.trim()} ${state.lastName.trim()}".trim().ifBlank { "this household" }
+
+/** #907 review item 2: `saveEmergencyContacts`'s `not-found` answer when the household was deleted. */
+const val HOUSEHOLD_NO_LONGER_EXISTS = "That household no longer exists."
+
+/** #907 review item 1(b): what an Add answered `duplicateOf` [kinfolkId] had typed, kept for that household's edit screen. */
+data class DuplicateAddPrefill(val kinfolkId: String, val typed: AddKinfolkUiState)
+
+/**
+ * #907 review item 1(b): the loaded edit form with a duplicate Add's typing laid
+ * over it. A typed value counts only when it is not blank and differs from the
+ * stored one once trimmed; a blank is "not typed", never "clear it". The baseline
+ * is untouched, so every filled-in difference shows as unsaved and saves through
+ * the normal update.
+ *
+ * Status and preferred contact are NOT filled in: Add starts them at a default
+ * ("prospect", "Text"), so a difference there may be a default rather than a
+ * choice. They are named in the notice instead.
+ */
+fun duplicateAddOverlay(edit: EditKinfolkUiState, typed: AddKinfolkUiState): EditKinfolkUiState {
+    fun pick(t: String, s: String): String = if (t.isNotBlank() && t.trim() != s.trim()) t.trim() else s
+    val typedContacts = typed.emergencyContacts
+    val contacts = if (!typedContacts.isBlankDrafts() && !draftsEqual(typedContacts, edit.emergencyContactsBaseline)) {
+        typedContacts
+    } else edit.emergencyContacts
+    val name = "${edit.firstName.trim()} ${edit.lastName.trim()}".trim().ifBlank { "This household" }
+    val notFilled = buildList {
+        if (typed.status.isNotBlank() && !typed.status.trim().equals(edit.status.trim(), ignoreCase = true)) {
+            add("status ${typed.status.trim()} (this household is ${edit.status.trim().ifBlank { "blank" }})")
+        }
+        if (typed.preferredContactMethod.isNotBlank() && !typed.preferredContactMethod.trim().equals(edit.preferredContactMethod.trim(), ignoreCase = true)) {
+            add("preferred contact ${typed.preferredContactMethod.trim()} (this household has ${edit.preferredContactMethod.trim().ifBlank { "none" }})")
+        }
+    }
+    val notice = "$name was already added a few minutes ago. What you typed in Add that differs is filled in below and is not saved yet." +
+        if (notFilled.isEmpty()) "" else " Also on Add, not filled in: ${notFilled.joinToString("; ")}."
+    return edit.copy(
+        firstName = pick(typed.firstName, edit.firstName),
+        lastName = pick(typed.lastName, edit.lastName),
+        phoneNumber = pick(typed.phoneNumber, edit.phoneNumber),
+        email = pick(typed.email, edit.email),
+        secondaryPhone = pick(typed.secondaryPhone, edit.secondaryPhone),
+        serviceAddress = pick(typed.serviceAddress, edit.serviceAddress),
+        gateCode = pick(typed.gateCode, edit.gateCode),
+        entryNotes = pick(typed.entryNotes, edit.entryNotes),
+        wifiName = pick(typed.wifiName, edit.wifiName),
+        wifiPassword = pick(typed.wifiPassword, edit.wifiPassword),
+        internalNotes = pick(typed.internalNotes, edit.internalNotes),
+        emergencyContacts = contacts,
+        duplicateAddNotice = notice,
+    )
+}
+
+/** #907 review item 2: the contact save was refused because the household no longer exists. */
+internal fun isHouseholdGone(e: Throwable): Boolean =
+    (e is com.google.firebase.functions.FirebaseFunctionsException &&
+        e.code == com.google.firebase.functions.FirebaseFunctionsException.Code.NOT_FOUND) ||
+        e.message?.contains(HOUSEHOLD_NO_LONGER_EXISTS) == true
 
 data class EditKinfolkUiState(
     val kinfolkId: String = "",
@@ -291,7 +363,9 @@ data class EditKinfolkUiState(
     val isSaving: Boolean = false,
     val isSuccess: Boolean = false,
     val isDeleted: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    /** #907 review item 1(b): shown when this household opened from an Add answered `duplicateOf`. */
+    val duplicateAddNotice: String? = null,
 )
 
 data class AddKinUiState(
@@ -406,6 +480,28 @@ class DirectoryViewModel(
      */
     private var loadedKinfolk: Kinfolk? = null
     private var loadedKin: Kin? = null
+
+    /** #907 review item 1(b): consumed once, by the edit form of the household it names. */
+    private var duplicateAddPrefill: DuplicateAddPrefill? = null
+
+    /** #907 review item 3: the operator the Add state belongs to. */
+    private var addOperatorUid: String? = null
+
+    /**
+     * #907 review item 3: the signed-in operator changed. This view model is built
+     * inside the signed-in nav host, so a sign-out already discards it; this is the
+     * second guard, so one operator's pending Add, discarded id or duplicate typing
+     * can never reach another operator.
+     */
+    fun operatorChanged(uid: String?) {
+        if (uid == addOperatorUid) return
+        val previous = addOperatorUid
+        addOperatorUid = uid
+        if (previous != null) {
+            _addKinfolkState.value = AddKinfolkUiState()
+            duplicateAddPrefill = null
+        }
+    }
 
     // Run-4 #6: seeded dog/cat breed banks for the Kin breed dropdown. Loaded from the
     // screen (LaunchedEffect), not VM init, so strict-mockk unit tests stay isolated.
@@ -840,7 +936,8 @@ class DirectoryViewModel(
                 status                 = finalStatus,
             )
 
-            repository.createKinfolkComplete(newKinfolk).onSuccess { saved ->
+            repository.createKinfolkComplete(newKinfolk, state.discardedKinfolkId).onSuccess { created ->
+                val saved = created.kinfolk
                 AuntieLog.i("Kinfolk saved: $finalStatus")
                 // A household opened from a call is linked onto that call as soon
                 // as it exists, whatever its contact save does next: the
@@ -848,9 +945,23 @@ class DirectoryViewModel(
                 state.sourceCallSid?.let { callSid ->
                     com.tribetails.auntieos.util.CallEventStore.linkKinfolk(callSid, saved.id, saved.displayName)
                 }
+                // #907 review item 1(b): a household this operator added minutes ago
+                // (and audited then). Not a success, no contact saved onto it: the
+                // typing goes to that household's edit screen as unsaved changes.
+                val duplicateOf = created.duplicateOf
+                if (duplicateOf != null) {
+                    duplicateAddPrefill = DuplicateAddPrefill(duplicateOf, state)
+                    _addKinfolkState.value = AddKinfolkUiState(duplicateOf = duplicateOf)
+                    return@onSuccess
+                }
                 // #829 review item 6: the CREATE audit waits for the contact
                 // outcome, so the log says whether the household got its contact.
-                saveNewHouseholdContacts(saved.id, state.copy(isSaving = true, createdKinfolkId = saved.id), auditCreatedName = saved.displayName)
+                // The discarded id has done its job once a create is answered.
+                saveNewHouseholdContacts(
+                    saved.id,
+                    state.copy(isSaving = true, createdKinfolkId = saved.id, discardedKinfolkId = null),
+                    auditCreatedName = saved.displayName,
+                )
             }.onFailure { error ->
                 AuntieLog.e("Failed to save kinfolk", error)
                 _addKinfolkState.value = state.copy(
@@ -876,6 +987,18 @@ class DirectoryViewModel(
                 _addKinfolkState.value = AddKinfolkUiState(isSuccess = true)
                 loadDirectory()
             }.onFailure { e ->
+                // #907 review item 2: deleted while it waited on its contact. Retrying
+                // would fail forever, so it is dropped and the form opens for a fresh Add.
+                if (isHouseholdGone(e)) {
+                    _addKinfolkState.value = state.copy(
+                        isSaving = false,
+                        createdKinfolkId = null,
+                        offerPendingOnOpen = false,
+                        error = HOUSEHOLD_NO_LONGER_EXISTS,
+                    )
+                    loadDirectory()
+                    return@onFailure
+                }
                 // #829 review item 4: the server's own message, as the portals show it.
                 val reason = e.message?.takeIf { it.isNotBlank() } ?: "The Emergency Contact was not saved."
                 auditCreatedName?.let { name -> auditCreate(id, "Created kinfolk $name without an Emergency Contact: $reason") }
@@ -913,7 +1036,26 @@ class DirectoryViewModel(
      */
     fun leaveAddKinfolk() {
         val state = _addKinfolkState.value
-        if (state.createdKinfolkId == null) clearAddKinfolkForm() else _addKinfolkState.value = state.copy(isSaving = false)
+        // A draft is cleared, but a Discard made earlier still stands for the next Add.
+        if (state.createdKinfolkId == null) _addKinfolkState.value = AddKinfolkUiState(discardedKinfolkId = state.discardedKinfolkId)
+        else _addKinfolkState.value = state.copy(isSaving = false, offerPendingOnOpen = true)
+    }
+
+    /** #890: Continue. Add shows the waiting household again, fields locked, "Save Emergency Contact". */
+    fun continuePendingAdd() {
+        _addKinfolkState.value = _addKinfolkState.value.copy(offerPendingOnOpen = false)
+    }
+
+    /**
+     * #890: Discard. Starts a blank Add and writes NOTHING: the household stays as
+     * it was created and shows No Emergency Contact until it is fixed on its own
+     * profile. Same meaning as Discard on admin web and the desktop console.
+     *
+     * #907 review item 1(a): the discarded id is kept, and the next create sends it
+     * as `ignoreDuplicateOf`, because Discard says the next Add is a new household.
+     */
+    fun discardPendingAdd() {
+        _addKinfolkState.value = AddKinfolkUiState(discardedKinfolkId = _addKinfolkState.value.createdKinfolkId)
     }
 
     /**
@@ -932,6 +1074,7 @@ class DirectoryViewModel(
             lastName = parts.getOrElse(1) { "" },
             phoneNumber = callerNumber.trim(),
             sourceCallSid = callSid,
+            discardedKinfolkId = _addKinfolkState.value.discardedKinfolkId,
         )
     }
 
@@ -1174,6 +1317,13 @@ class DirectoryViewModel(
 
             isLoading = false
         )
+        // #907 review item 1(b): this household opened because Add was answered
+        // `duplicateOf`. The typing is laid over the form once; `loadedKinfolk` and
+        // the contact baseline stay what is stored, so it shows as unsaved changes.
+        duplicateAddPrefill?.takeIf { it.kinfolkId == kinfolk.id }?.let { prefill ->
+            duplicateAddPrefill = null
+            _editKinfolkState.value = duplicateAddOverlay(_editKinfolkState.value, prefill.typed)
+        }
         // Phase 14: fetch the KINFOLK-placed form_schemas. A load failure surfaces as
         // schemaError (fail-loud), never a silent-empty panel. Mirrors loadKinForEdit.
         viewModelScope.launch {

@@ -167,5 +167,17 @@ describe('rules: /kinfolk/{kinfolkId}', () => {
       await assertFails(asTestAdmin.firestore().doc('kinfolk/kin-test').set({ firstName: 'Lee', ...ARRAY }));
       await assertSucceeds(asTestAdmin.firestore().doc('kinfolk/kin-test').set({ firstName: 'Lee' }));
     });
+
+    // #890: the evidence for why createKinfolk is staff-only. Before the callable,
+    // Add Kinfolk on all three admin clients created the household with an
+    // AUTO-ID add (web addDoc, Android collection.add, desktop REST POST). A test
+    // admin may create only `kinfolk/{testTribeId}`, and an auto id is never that,
+    // so the old Add path never let a test admin create a household either.
+    it('a test admin cannot Add a household with an auto id, the path all three admin clients used', async () => {
+      const env = await getEnv();
+      const asTestAdmin = env.authenticatedContext('test-admin-uid', { testTribeId: 'kin-test' });
+      await assertFails(asTestAdmin.firestore().collection('kinfolk').add({ firstName: 'Lee', lastName: 'Park' }));
+      await assertFails(asTestAdmin.firestore().doc('kinfolk/some-other-id').set({ firstName: 'Lee' }));
+    });
   });
 });

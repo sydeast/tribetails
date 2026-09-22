@@ -24,6 +24,7 @@ import { GhostButton } from '../components/Buttons';
 import { MaskedValue } from '../components/MaskedValue';
 import { NoEmergencyContactFlag } from '../components/NoEmergencyContactFlag';
 import { KinfolkEdit } from './KinfolkEdit';
+import type { DuplicateAddKinfolk } from '../lib/pendingAddKinfolk';
 import { HouseholdData } from './HouseholdData';
 import './KinfolkProfile.css';
 
@@ -56,6 +57,14 @@ interface KinfolkProfileProps {
    * that would do nothing.
    */
   onOpenKin?: (kin: Kin) => void;
+  /**
+   * #907 review item 1(b): what the operator typed into an Add the server
+   * answered with `duplicateOf` for this household. The profile then opens
+   * straight on its editor, which fills in the differing fields as unsaved changes.
+   */
+  duplicateAdd?: DuplicateAddKinfolk | null;
+  /** The editor has filled the typing in, so the caller can let it go. */
+  onDuplicateAddApplied?: (() => void) | undefined;
 }
 
 /**
@@ -157,8 +166,13 @@ export function KinfolkProfile({
   kinPending = false,
   onBack,
   onOpenKin,
+  duplicateAdd = null,
+  onDuplicateAddApplied,
 }: KinfolkProfileProps) {
-  const [view, setView] = useState<ProfileView>('profile');
+  const [view, setView] = useState<ProfileView>(() => (duplicateAdd !== null ? 'edit' : 'profile'));
+  // #907 review item 1(b): held here and let go once the editor has used it, so
+  // Cancel then Edit never lays the dropped typing over the form a second time.
+  const [pendingDuplicate, setPendingDuplicate] = useState<DuplicateAddKinfolk | null>(duplicateAdd);
   const [profile, setProfile] = useState<Async<Profile>>({ status: 'loading' });
 
   const load = useCallback(() => {
@@ -235,6 +249,11 @@ export function KinfolkProfile({
       <KinfolkEdit
         kinfolkId={kinfolkId}
         kinfolkName={kinfolkName}
+        duplicateAdd={pendingDuplicate}
+        onDuplicateAddApplied={() => {
+          setPendingDuplicate(null);
+          onDuplicateAddApplied?.();
+        }}
         onDone={() => {
           setView('profile');
           // Re-read so the profile shows what was just saved, not the values it

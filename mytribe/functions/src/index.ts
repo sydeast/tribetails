@@ -283,6 +283,10 @@ export {
 // #829 section 1: the one store and the one write path for Emergency Contacts,
 // used by all five clients. Gated on home_access.
 export { saveEmergencyContacts, listEmergencyContacts } from './portal/emergencyContacts';
+// #890: the one admin create path for a household. Hands back the household the
+// same operator added in the last 10 minutes with the same phone or email
+// (`duplicateOf`) instead of creating a second one.
+export { createKinfolk } from './admin/createKinfolk';
 export { getMyKinTaleMedia } from './portal/getMyKinTaleMedia';
 // #399 item 1: the whole household's photo archive, for the Tribe hub gallery.
 // getMyKinTaleMedia resolves ONE tale the caller already has the id of; this

@@ -5,10 +5,13 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class EmergencyContactsClientTest {
@@ -16,6 +19,7 @@ class EmergencyContactsClientTest {
     @AfterTest
     fun tearDown() {
         JvmFirestoreFixtures.callableResponses = emptyMap()
+        JvmFirestoreFixtures.callableErrors = emptyMap()
         JvmFirestoreFixtures.lastWrite = null
         JvmFirestoreFixtures.lastCallableName = null
         JvmFirestoreFixtures.lastCallablePayloadJson = null
@@ -129,14 +133,33 @@ class EmergencyContactsClientTest {
         assertEquals(null, changes.single { it.path == listOf("formValues", "notes") }.value, "a removed key is a delete")
     }
 
+    /** #890: a create is the createKinfolk callable, never a direct write, and its body has no Emergency Contact key. */
     @Test
-    fun aKinfolkCreateBodyCarriesNoEmergencyContactKey() = runBlocking {
-        platformCreateKinfolk(Kinfolk(firstName = "Dana"))
-        val w = JvmFirestoreFixtures.lastWrite
-        assertEquals("POST", w?.op)
-        assertEquals("kinfolk", w?.collection)
-        val fields = w?.fields.orEmpty()
-        assertTrue("firstName" in fields)
-        for (key in KINFOLK_WRITE_EXCLUDED_KEYS) assertTrue(key !in fields, "$key must not be in the create body")
+    fun aKinfolkCreateGoesThroughTheCallableWithNoEmergencyContactKey() = runBlocking {
+        JvmFirestoreFixtures.callableResponses = mapOf("createKinfolk" to """{"kinfolkId":"kf-new","duplicateOf":null}""")
+        val r = FirestoreClient().createKinfolk(Kinfolk(firstName = "Dana"))
+        assertTrue(r is WriteResult.Ok)
+        assertEquals(KinfolkCreated("kf-new", null), r.value)
+        assertEquals("createKinfolk", JvmFirestoreFixtures.lastCallableName)
+        assertNull(JvmFirestoreFixtures.lastWrite, "a create is never a direct write")
+        val sent = Json.parseToJsonElement(JvmFirestoreFixtures.lastCallablePayloadJson.orEmpty()).jsonObject["kinfolk"]?.jsonObject.orEmpty()
+        assertEquals("Dana", sent["firstName"]?.jsonPrimitive?.content)
+        for (key in KINFOLK_WRITE_EXCLUDED_KEYS) assertTrue(key !in sent, "$key must not be in the create body")
+    }
+
+    @Test
+    fun aDuplicateOfAnswerNamesTheExistingHousehold() = runBlocking {
+        JvmFirestoreFixtures.callableResponses = mapOf("createKinfolk" to """{"kinfolkId":"kf-existing","duplicateOf":"kf-existing"}""")
+        val r = FirestoreClient().createKinfolk(Kinfolk(firstName = "Dana"))
+        assertTrue(r is WriteResult.Ok)
+        assertEquals(KinfolkCreated("kf-existing", "kf-existing"), r.value)
+    }
+
+    @Test
+    fun aCreateAnswerWithNoIdIsAnError() = runBlocking {
+        JvmFirestoreFixtures.callableResponses = mapOf("createKinfolk" to """{"duplicateOf":null}""")
+        val r = FirestoreClient().createKinfolk(Kinfolk(firstName = "Dana"))
+        assertTrue(r is WriteResult.Err)
+        assertEquals("createKinfolk returned no household id", r.message)
     }
 }

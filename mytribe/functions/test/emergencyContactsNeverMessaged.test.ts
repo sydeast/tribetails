@@ -92,6 +92,10 @@ describe('Emergency Contacts are never a recipient (#829)', () => {
       // those rows from home-access customFields. It reads no phone and sends
       // nothing.
       'portal/saveHomeAccess.ts',
+      // #890: createKinfolk names the four keys only to drop them from a new
+      // household, so a create can never write an Emergency Contact. It reads
+      // no phone and sends nothing.
+      'admin/createKinfolk.ts',
     ]);
     const offenders = walk(src)
       .map((f) => relative(src, f).split('\\').join('/'))
