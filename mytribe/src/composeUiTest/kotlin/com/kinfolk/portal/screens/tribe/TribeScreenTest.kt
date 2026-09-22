@@ -137,6 +137,55 @@ class TribeScreenTest {
         onNodeWithText("Add a display name to save.").assertIsDisplayed()
     }
 
+    private fun FakeFunctionsClient.stubProfileWithVetClinicFields() {
+        stub("getMyTribeProfile", buildJsonObject {
+            put("profile", buildJsonObject {
+                put("kinfolkId", "3")
+                put("displayName", "The Foster")
+                put("customFields", buildJsonArray {
+                    add(buildJsonObject { put("key", "vetClinicName"); put("label", "Vet Clinic"); put("value", "Ridgeline Animal Hospital") })
+                    add(buildJsonObject { put("key", "vetClinicPhone"); put("label", "Vet Clinic Phone"); put("value", "805-555-0170") })
+                    add(buildJsonObject { put("key", "vetClinicAddress"); put("label", "Vet Clinic Address"); put("value", "12 Ridge Rd") })
+                })
+            })
+            put("homeAccess", buildJsonObject {
+                put("gateCode", JsonNull)
+                put("keyLocation", JsonNull)
+                put("wifiPassword", JsonNull)
+                put("customFields", buildJsonArray {})
+                put("updatedAtMs", JsonNull)
+            })
+        })
+    }
+
+    /**
+     * #872: a household with a saved vet clinic used to see it twice on
+     * Android — once editable in the Vet Clinic card, once read-only as a
+     * "Set by your Auntie" row, because CustomFieldList's ownedElsewhere set
+     * never listed the vetClinic* keys. Each value must render exactly once.
+     */
+    @Test
+    fun vetClinicCustomFields_showOnlyInTheVetClinicCard_neverAsAReadOnlyDuplicate() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithVetClinicFields()
+        fake.stubEmergencyContacts()
+        fake.stub("getVetClinics", buildJsonObject { put("clinics", buildJsonArray {}) })
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Ridgeline Animal Hospital").performScrollTo().assertIsDisplayed()
+        assertEquals(1, onAllNodesWithText("Ridgeline Animal Hospital").fetchSemanticsNodes().size)
+        assertEquals(1, onAllNodesWithText("805-555-0170").fetchSemanticsNodes().size)
+        assertEquals(1, onAllNodesWithText("12 Ridge Rd").fetchSemanticsNodes().size)
+        // This profile's only customFields are the vet clinic's own; once
+        // CustomFieldList hides them there is nothing left for the read-only
+        // "Set by your Auntie" note to introduce.
+        onNodeWithText("Set by your Auntie. Ask them to update these.").assertDoesNotExist()
+        // Same rule for the section header above the list: it must read off
+        // the same filtered set, or a vet-clinic-only profile shows
+        // "PROFILE FIELDS" over an empty read-only list.
+        onNodeWithText("PROFILE FIELDS").assertDoesNotExist()
+    }
+
     @Test
     fun afterHoursVet_alwaysVisible() = runComposeUiTest {
         val fake = FakeFunctionsClient()
