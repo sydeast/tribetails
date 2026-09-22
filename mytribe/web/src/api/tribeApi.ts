@@ -662,6 +662,92 @@ export function profileSaveErrorMessage(err: unknown): string {
   return `Save failed: ${err instanceof Error ? err.message : 'unknown error'}`;
 }
 
+/**
+ * #868: shown in place of the home details (Home Information and the after-hours
+ * clinic) when `getMyTribeProfile` says the caller has no Home access. The server
+ * sends no values to such a caller, so there is nothing to show read-only. Same
+ * text as portal Android's HOME_DETAILS_LOCKED.
+ */
+export const HOME_DETAILS_LOCKED =
+  'Only someone with Home access can see or change the home details. Your primary kinfolk can give you Home access.';
+
+/** #868: what the page Save would send to saveHomeAccess. */
+export interface HomeAccessEdit {
+  gateCode: string | null;
+  keyLocation: string | null;
+  wifiPassword: string | null;
+  customFields: CustomFieldDto[];
+  removeCustomFieldKeys: string[];
+}
+
+/**
+ * #868: true when [next] would change what was loaded. The page Save calls
+ * saveHomeAccess only then, so a save that touched only the Family or Vet Clinic
+ * card makes no home access call. Mirrors `homeAccessEditChanged` in TribeScreen.kt.
+ */
+export function homeAccessEditChanged(loaded: HomeAccessDto, next: HomeAccessEdit, drop: readonly string[] = []): boolean {
+  const stored = (v: string | null) => (v === null || v === '' ? null : v);
+  if (next.gateCode !== stored(loaded.gateCode)) return true;
+  if (next.keyLocation !== stored(loaded.keyLocation)) return true;
+  if (next.wifiPassword !== stored(loaded.wifiPassword)) return true;
+  if (next.removeCustomFieldKeys.length > 0) return true;
+  const unedited = editCustomFields(loaded.customFields, [], [], drop).customFields;
+  return JSON.stringify(next.customFields) !== JSON.stringify(unedited);
+}
+
+/** #868: what became of one half of the page Save. */
+export type SaveHalf = { kind: 'saved' } | { kind: 'skipped' } | { kind: 'failed'; error: unknown };
+
+/** The reason a half failed, as a sentence that says what to do, with no "Save failed:" in front. */
+function saveFailureReason(err: unknown): string {
+  if (err instanceof FirebaseError && err.code === 'functions/resource-exhausted') {
+    return 'this household has saved too many times in the last hour. Wait a little, then save again.';
+  }
+  const message = (err instanceof Error ? err.message : 'unknown error').trim().replace(/[.\s]+$/, '');
+  return `${message}. Press Save Changes to try again.`;
+}
+
+/**
+ * #868: the page Save's status line. The profile half (Family and Vet Clinic)
+ * and the home half (Home Information and the after-hours clinic) are separate
+ * callables, so one can land while the other is refused. A partial result names
+ * what saved and what did not, and never starts "Save failed". It is still
+ * coloured as a failure. Mirrors `pageSaveOutcome` in TribeScreen.kt.
+ */
+export function pageSaveOutcome(profile: SaveHalf, home: SaveHalf, ecDirty: boolean): { text: string; ok: boolean } {
+  if (profile.kind === 'failed' && home.kind === 'saved') {
+    return {
+      text: `Home Information and the after-hours clinic saved. Family and Vet Clinic did not save: ${saveFailureReason(profile.error)} Your edits there are still on this page.`,
+      ok: false,
+    };
+  }
+  if (profile.kind === 'failed') return { text: profileSaveErrorMessage(profile.error), ok: false };
+  if (home.kind === 'failed') {
+    return {
+      text: `Family and Vet Clinic saved. Home Information and the after-hours clinic did not save: ${saveFailureReason(home.error)} Your edits there are still on this page.`,
+      ok: false,
+    };
+  }
+  return {
+    text: ecDirty ? 'Profile saved. Your Emergency Contacts are not saved yet: use Save Emergency Contacts.' : 'Saved.',
+    ok: true,
+  };
+}
+
+/**
+ * #868: where an error from the row building AROUND the two callables belongs.
+ * Both callables catch their own refusal, so anything left is the code that
+ * assembles what they send, and it belongs to the half it was assembling for.
+ * Without this the status line reads "Saved." over a save that never happened,
+ * which is the bug #868 is about, pointing the other way. Mirrors
+ * `blameUnfinishedHalf` in TribeScreen.kt.
+ */
+export function blameUnfinishedHalf(profile: SaveHalf, home: SaveHalf, error: unknown): { profile: SaveHalf; home: SaveHalf } {
+  if (profile.kind === 'skipped') return { profile: { kind: 'failed', error }, home };
+  if (home.kind === 'skipped') return { profile, home: { kind: 'failed', error } };
+  return { profile, home };
+}
+
 /** True when a custom field has anything worth displaying (mirrors the Kotlin visibility guards). */
 export function isDisplayableField(f: CustomFieldDto): boolean {
   return f.label.trim().length > 0 || f.value.trim().length > 0;

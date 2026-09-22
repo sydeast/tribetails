@@ -1353,6 +1353,20 @@ every client in both directions: these callables are the only door.
 - Already-lost rows: `scripts/reportTruncatedCustomFields.ts` (read-only). No before-state is recorded (PROFILE_UPDATED audit carries field names only, `saveHomeAccess` writes no audit), so it lists lists that look like the old schema rebuild, with the portal-save evidence for each.
 - AFTER RELEASE, run the same report once. Its LOCKOUT RISK section finds any household, migrated or not, with a list over 40 rows (refused before the first review round) or over 64 KiB (it may not grow further), plus unlabeled rows and values over 1000 characters. Keys and counts only. None of these can lock a household out of saving now, but they are the households worth a look.
 
+### getMyTribeProfile / saveHomeAccess: the Home access grant on the portal Tribe Profile (#868)
+- `getMyTribeProfile`
+  - req `{ kinfolkId?: string }`
+  - res `{ profile: { kinfolkId, displayName, customFields: CustomField[] }, homeAccess: { gateCode: string | null, keyLocation: string | null, wifiPassword: string | null, customFields: CustomField[], updatedAtMs: number | null }, canEditHomeDetails: boolean }`
+  - `canEditHomeDetails` is `hasKinfolkPerm(..., 'home_access')`: true for staff, the PRIMARY, a legacy primary with no member doc, and an ACTIVE SECONDARY granted Home access; false otherwise. It is the ONLY place a portal client learns the grant. No custom claim carries it, and `getMyAccess` returns no role.
+  - REDACTION. When `canEditHomeDetails` is false, `homeAccess` is `{ gateCode: null, keyLocation: null, wifiPassword: null, customFields: [], updatedAtMs: null }`. No gate code, key location, Wi-Fi password, home-details row or after-hours clinic reaches that caller (`test/getMyTribeProfile.test.ts` checks the serialized response).
+  - A backend older than #843 omits `canEditHomeDetails`; both clients read the absence as allowed and the server still enforces the grant.
+- `saveHomeAccess` without the grant: `permission-denied` with "You need Home access to change the home details. Ask your primary kinfolk to give you Home access." (`HOME_ACCESS_REQUIRED_MESSAGE`), checked before the transaction, so nothing is written and nothing is counted against `homeAccessSave`. A caller outside the household still gets the bare `resolveKinfolkAccess` refusal. Proven on the emulator in `test/rules/saveHomeAccessRoundTrip.test.ts`.
+- CLIENTS (portal web `TribeProfile.tsx`, portal Android and desktop `TribeScreen.kt`, the same commonMain screen):
+  - "The home details" are the Home Information card (static fields or the `homeAccess` form schema) and the after-hours clinic in the Vet Clinic card, since both live in `families/{id}/homeAccess/current`.
+  - Without the grant both show one sentence in place of the fields, "Only someone with Home access can see or change the home details. Your primary kinfolk can give you Home access." (`HOME_DETAILS_LOCKED`), and Save Changes never calls `saveHomeAccess`.
+  - With the grant, Save Changes calls `saveHomeAccess` only when the payload differs from what was loaded (`homeAccessEditChanged`), so a Family-only or Vet-only edit makes one call.
+  - The two callables are attempted separately and reported separately (`pageSaveOutcome`). Both saved: "Saved.". Only the profile refused, home unchanged: "Save failed: ...". One half saved and the other refused: the line names which half saved and which did not, gives the reason and what to do, never starts "Save failed", and is coloured as a failure. The edits that did not save stay on the page: web skips its reload after a partial result, and Android never reloads after a save.
+
 ### saveEmergencyContacts / listEmergencyContacts (#829)
 - `saveEmergencyContacts`
   - req `{ kinfolkId?: string, contacts: Array<{ name: string /* 1..80 */, phone: string /* valid, stored E.164 */, relationship?: string | null /* <= 40, '' and null persist as null */ }> }` (strict, max 2)

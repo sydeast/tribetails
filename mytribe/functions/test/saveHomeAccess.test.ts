@@ -89,6 +89,36 @@ describe('saveHomeAccess permission gate (home_access)', () => {
     expect(ctx.writes.find((w) => w.path === HOME_ACCESS_PATH)).toBeUndefined();
   });
 
+  // #868: an old portal Android client prints this message after "Save failed:".
+  it('tells a secondary without Home access what is missing and who can grant it, and writes nothing at all', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'families/3/homeAccess/current': { gateCode: '1234' },
+        'families/3/members/u1': KIN_EDIT_ONLY_MEMBER,
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { saveHomeAccessHandler, HOME_ACCESS_REQUIRED_MESSAGE } = await import('../src/portal/saveHomeAccess');
+    await expect(
+      saveHomeAccessHandler({ data: { ...homeData, customFields: [{ key: 'alarm', label: 'Alarm', value: '9' }] }, auth: { uid: 'u1' } } as any),
+    ).rejects.toMatchObject({ code: 'permission-denied', message: HOME_ACCESS_REQUIRED_MESSAGE });
+    expect(HOME_ACCESS_REQUIRED_MESSAGE).toBe(
+      'You need Home access to change the home details. Ask your primary kinfolk to give you Home access.',
+    );
+    // No home details, and no rate-limit count either: the gate runs before the transaction.
+    expect(ctx.writes).toEqual([]);
+  });
+
+  it('keeps the bare refusal for a stranger: only the Home access gate carries the #868 sentence', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/stranger': { kinfolkIds: ['other-fam'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { saveHomeAccessHandler, HOME_ACCESS_REQUIRED_MESSAGE } = await import('../src/portal/saveHomeAccess');
+    const err = await saveHomeAccessHandler({ data: homeData, auth: { uid: 'stranger' } } as any).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'permission-denied' });
+    expect((err as Error).message).not.toBe(HOME_ACCESS_REQUIRED_MESSAGE);
+  });
+
   it('ALLOWS a secondary with home_access=true even when kin_edit=false', async () => {
     const ctx = buildDbMock({
       docs: {
