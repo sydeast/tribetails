@@ -151,6 +151,9 @@ const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   autoConfirmRepeatKinfolk: false,
   snapRescheduleTo15Min: false,
   voiceLiveTransferEnabled: true, // issue #397; TRUE is this field's default
+  householdNotificationsLive: false, // PR #943; nothing reaches a household until this is on
+  householdNotificationHour: null, // and no job has a cadence until the operator picks one
+  scheduleDigestHour: null,
   logoUrl: '',
   logoRemovedAt: '',
   brandWordmark: '',
