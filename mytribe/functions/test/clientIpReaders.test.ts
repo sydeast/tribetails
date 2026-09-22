@@ -28,8 +28,18 @@ const REPO = resolve(__dirname, '../../..');
  */
 const ROOTS = ['mytribe/functions/src', 'auntieos-admin/web/functions'];
 
-/** Not our source: vendored code, build output, and test scaffolds that forge headers on purpose. */
-const SKIP_DIRS = new Set(['node_modules', 'lib', 'dist', 'test', 'tests', '__tests__']);
+/**
+ * Not our source: vendored code, and test scaffolds that forge headers on purpose.
+ *
+ * NOT `lib` or `dist`. `mytribe/functions/lib` is the build output, but it sits
+ * beside `src`, not inside it, so skipping the name would only ever hide
+ * `src/lib` — which is where #903's rogue copy of this helper (`src/lib/clientIp.ts`)
+ * actually lived.
+ */
+const SKIP_DIRS = new Set(['node_modules', 'test', 'tests', '__tests__']);
+
+/** Proof the walk reaches `src/lib`, the one place a second reader has really appeared. */
+const MUST_SCAN = ['mytribe/functions/src/lib/rateLimit.ts', 'auntieos-admin/web/functions/rateLimit.js'];
 
 const READERS: Array<[string, RegExp]> = [
   ['x-forwarded-for', /x-forwarded-for/i],
@@ -91,6 +101,15 @@ describe('#910 only clientIpOf reads the client address', () => {
     for (const root of ROOTS) {
       expect(sourceFiles(resolve(REPO, root)).length, `${root} holds source files`).toBeGreaterThan(0);
     }
+  });
+
+  it('the walk reaches nested directories, so a skip-list edit cannot quietly shrink it', () => {
+    const scanned = new Set(
+      ROOTS.flatMap((root) => sourceFiles(resolve(REPO, root))).map((f) =>
+        relative(REPO, f).split('\\').join('/'),
+      ),
+    );
+    for (const rel of MUST_SCAN) expect(scanned, `${rel} is scanned`).toContain(rel);
   });
 
   it('the allowed reader really is a reader, so the patterns are not dead', () => {
