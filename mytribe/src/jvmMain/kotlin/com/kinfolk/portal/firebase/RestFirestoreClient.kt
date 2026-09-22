@@ -1,5 +1,6 @@
 package com.kinfolk.portal.firebase
 
+import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.headers
@@ -9,20 +10,13 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.URLBuilder
 import io.ktor.http.isSuccess
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.longOrNull
 
 /**
  * Firestore REST v1.
@@ -31,12 +25,31 @@ import kotlinx.serialization.json.longOrNull
  *
  * We only implement read paths used by AdminHomeScreen + LaunchRouter.
  * Writes can be added later.
+ *
+ * #889: every request here carries the signed-in kinfolk's own ID token
+ * ([idToken]), never the Firestore emulator's Bearer owner bypass, on
+ * purpose, see [FirebaseRestConfig.firestoreBase]. [root] is emulator-aware
+ * (FIRESTORE_EMULATOR_HOST); the auth header is not.
+ *
+ * #889 review, item 5: the primary constructor takes an [idToken] supplier
+ * plus [client]/[endpoints], so a test can inject a MockEngine client and a
+ * plain lambda and assert the outgoing URL. [FirebasePlatform.jvm.kt] keeps
+ * constructing this from a [RestAuthBackend] through the secondary
+ * constructor below, unchanged at that call site.
  */
 internal class RestFirestoreClient(
-    private val auth: RestAuthBackend,
+    private val idToken: suspend () -> String?,
+    private val client: HttpClient = RestHttp.client,
+    private val endpoints: RestEndpoints = FirebaseRestConfig,
 ) : FirestoreClient {
 
-    private val root = FirebaseRestConfig.firestoreDocumentsRoot()
+    constructor(
+        auth: RestAuthBackend,
+        client: HttpClient = RestHttp.client,
+        endpoints: RestEndpoints = FirebaseRestConfig,
+    ) : this(auth::idToken, client, endpoints)
+
+    private val root = endpoints.firestoreBase()
 
     /** REST has no listen channel — return an empty flow so jvm dev runs don't crash.
      *  Live tracking only works on android/js builds (gitlive). */
@@ -45,8 +58,8 @@ internal class RestFirestoreClient(
 
     override suspend fun getDocument(collection: String, documentId: String): Map<String, Any?>? {
         val url = "$root/$collection/$documentId"
-        val token = auth.idToken() ?: return null
-        val res = RestHttp.client.get(url) {
+        val token = idToken() ?: return null
+        val res = client.get(url) {
             headers { append(HttpHeaders.Authorization, "Bearer $token") }
         }
         if (res.status.value == 404) return null
@@ -58,7 +71,7 @@ internal class RestFirestoreClient(
     }
 
     override suspend fun listDocuments(collection: String): List<FirestoreDoc> {
-        val token = auth.idToken() ?: throw IllegalStateException("Not signed in")
+        val token = idToken() ?: throw IllegalStateException("Not signed in")
         val out = mutableListOf<FirestoreDoc>()
         var pageToken: String? = null
         do {
@@ -66,7 +79,7 @@ internal class RestFirestoreClient(
             builder.parameters.append("pageSize", "100")
             if (pageToken != null) builder.parameters.append("pageToken", pageToken)
             val url = builder.buildString()
-            val res: HttpResponse = RestHttp.client.get(url) {
+            val res: HttpResponse = client.get(url) {
                 headers { append(HttpHeaders.Authorization, "Bearer $token") }
             }
             if (!res.status.isSuccess()) {
