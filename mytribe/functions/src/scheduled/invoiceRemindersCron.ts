@@ -34,13 +34,18 @@ import {
  * WHICH INVOICES. Both scans read the top-level `invoices` collection, the store
  * every admin client, every billing callable and the portal read and write. They
  * used to scan `collectionGroup('invoices')`, which also matched the retired
- * `families/{id}/invoices` path (backfillNestedInvoices.ts: nothing ever wrote
- * there). Reading only the live store means a stray nested copy can never be
- * chased twice under two ids.
+ * `families/{id}/invoices` path. No production writer targets that path
+ * (backfillNestedInvoices.ts retired it; the only code that still writes a
+ * nested copy is `scripts/seedDemoKinfolk.ts`, which writes the flat doc in the
+ * same pass). Reading only the live store means a copy under the retired path
+ * can never be chased as a second invoice, and the flat doc is chased once.
  *
  * WHICH DAY. "Today" is the business's own calendar day (`businessTodayIso`),
  * not the UTC day this function runs on, and a due day counts as overdue only
- * when it is strictly before today, as every client counts it.
+ * when it is strictly before today, as every client counts it. That helper
+ * falls back to the ruled `America/Chicago` when the settings doc carries no
+ * usable zone, so `runDay` returning null needs BOTH zones to fail in `Intl`:
+ * a scan that cannot name the day sends nothing rather than guess it.
  *
  * CADENCE, as it exists today and kept: one due-soon reminder per invoice (this
  * cron, due today or within REMINDER_WINDOW_DAYS; or a button press, which the
