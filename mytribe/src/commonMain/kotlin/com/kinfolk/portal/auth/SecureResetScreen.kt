@@ -85,13 +85,25 @@ fun SecureResetScreen(
     mode: String = EmailAction.MODE_RESET,
     continueUrl: String? = null,
     fetcher: SecureResetFetcher = remember { makeSecureResetFetcher() },
+    openUrl: (String) -> Unit = { openExternalUrl(it) },
 ) {
     val auth = remember(repo) { repo.emailActionAuth() }
     SecureResetScreen(
-        link = SecureResetParams(oobCode = oobCode, mode = mode, continueUrl = continueUrl),
+        // The allowlist runs here, not only in parseEmailActionUrl. A
+        // `navDeepLink<SecureResetRoute>` builds this route straight off the raw
+        // query string, so on Android the route can reach the screen without
+        // ever passing through the parser, carrying whatever `continueUrl` the
+        // link named. Sanitising at the receiver means there is no way in that
+        // skips it.
+        link = SecureResetParams(
+            oobCode = oobCode,
+            mode = mode,
+            continueUrl = safeContinueUrl(continueUrl),
+        ),
         auth = auth,
         fetcher = fetcher,
         onSignIn = onSignIn,
+        openUrl = openUrl,
     )
 }
 

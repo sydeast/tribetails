@@ -160,7 +160,7 @@ Auntie
 - **No minimising language.** Nothing that says "don't worry", "no harm done", "no big deal", or **"you can ignore this email"**. The voice rules forbid all of them on security mail, and the live template still carries the last one. Operator item.
 - **Two named paths, neither of them inaction.** It was me, or it was not me. Doing nothing is never offered as an answer.
 - **The breach path is a mechanism,** not a reassuring sentence: the choice on the page is what files the incident.
-- **First person throughout.** "I", never "we".
+- **Auntie speaks as "I".** "We" appears only where the Tribe Tails team acts together ("we are addressing this", "so we can look into who tried to get in"). Auntie never hides behind it.
 - **No em dashes, no en dashes.**
 - **Colour signalling:** green for the routine path, alert orange `#C45A3A` for the breach path, with an orange rule between them. Both are placeholders for real brand tokens.
 

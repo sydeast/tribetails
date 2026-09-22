@@ -142,6 +142,26 @@ class EmailActionLinkTest {
         assertEquals(EmailActionAudience.Unknown, audienceOf(null))
     }
 
+    /**
+     * `audienceOf` decides which sign-in link the screen opens, so a host it
+     * gets wrong is an open redirect. It compares the whole host: a
+     * `startsWith` on the origin would take every name below as the admin site
+     * or the portal.
+     */
+    @Test
+    fun aLookalikeHostNamesNoAudience() {
+        for (url in listOf(
+            "https://auntie.tribetails.com.evil.test/steal",
+            "https://kinfolk.tribetails.com.evil.test/steal",
+            "https://auntie.tribetails.com@evil.test/steal",
+            "https://auntie.tribetails.comevil.test/steal",
+            "http://auntie.tribetails.com/signin",
+            "//auntie.tribetails.com/signin",
+        )) {
+            assertEquals(EmailActionAudience.Unknown, audienceOf(url), url)
+        }
+    }
+
     // ── The web URL a desktop reader is sent to ──────────────────────────────
 
     @Test

@@ -106,17 +106,31 @@ fun parseEmailActionLink(path: String, query: Map<String, String>): SecureResetP
  * same-origin case, which an app does not have.
  */
 fun safeContinueUrl(raw: String?): String? {
+    val host = httpsHostOf(raw) ?: return null
+    if (host != EmailAction.PORTAL_HOST && host != EmailAction.STAFF_HOST) return null
+    val trimmed = raw!!.trim()
+    val rest = trimmed.removePrefix("https://")
+    val hostEnd = rest.indexOfAny(charArrayOf('/', '?', '#')).let { if (it < 0) rest.length else it }
+    val path = rest.substring(hostEnd).substringBefore('?').substringBefore('#')
+    val origin = "https://$host"
+    if (EmailAction.ACTION_PATHS.any { path == it || path.startsWith("$it/") }) return "$origin/signin"
+    return trimmed
+}
+
+/**
+ * The host of an `https://` URL, lowercased, or null when it is not one.
+ *
+ * Whole-host comparison is the only safe one here. `startsWith` on the origin
+ * would take `https://auntie.tribetails.com.evil.test/x` for the admin site,
+ * and the sign-in link would open it.
+ */
+internal fun httpsHostOf(raw: String?): String? {
     if (raw.isNullOrBlank()) return null
     val trimmed = raw.trim()
     if (!trimmed.startsWith("https://")) return null
     val rest = trimmed.removePrefix("https://")
     val hostEnd = rest.indexOfAny(charArrayOf('/', '?', '#')).let { if (it < 0) rest.length else it }
-    val host = rest.substring(0, hostEnd).lowercase()
-    if (host != EmailAction.PORTAL_HOST && host != EmailAction.STAFF_HOST) return null
-    val path = rest.substring(hostEnd).substringBefore('?').substringBefore('#')
-    val origin = "https://$host"
-    if (EmailAction.ACTION_PATHS.any { path == it || path.startsWith("$it/") }) return "$origin/signin"
-    return trimmed
+    return rest.substring(0, hostEnd).lowercase().ifEmpty { null }
 }
 
 /**
@@ -149,10 +163,14 @@ internal fun percentEncode(s: String): String {
 /** Who a link was sent for, read from where it continues to. Drives the sign-in choice only. */
 enum class EmailActionAudience { Staff, Kinfolk, Unknown }
 
-fun audienceOf(continueUrl: String?): EmailActionAudience = when {
-    continueUrl == null -> EmailActionAudience.Unknown
-    continueUrl.startsWith("https://${EmailAction.STAFF_HOST}") -> EmailActionAudience.Staff
-    continueUrl.startsWith("https://${EmailAction.PORTAL_HOST}") -> EmailActionAudience.Kinfolk
+/**
+ * Anything this does not recognise is [EmailActionAudience.Unknown], which shows
+ * both sign-ins and follows neither, so a target that slipped past
+ * [safeContinueUrl] is never opened.
+ */
+fun audienceOf(continueUrl: String?): EmailActionAudience = when (httpsHostOf(continueUrl)) {
+    EmailAction.STAFF_HOST -> EmailActionAudience.Staff
+    EmailAction.PORTAL_HOST -> EmailActionAudience.Kinfolk
     else -> EmailActionAudience.Unknown
 }
 

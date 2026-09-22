@@ -52,6 +52,16 @@ class SecureResetScreenTest {
         override fun errorCodeOf(t: Throwable): String? = code
     }
 
+    /**
+     * For the one test that goes through the route-taking overload, which takes
+     * an [AuthRepository] rather than an [EmailActionAuth].
+     */
+    private class ScriptedBackend : AuthBackend by FakeAuthBackend() {
+        override suspend fun readActionCode(oobCode: String) =
+            ActionCodeInfo(EmailAction.OP_PASSWORD_RESET, "pat@household.test")
+        override suspend fun confirmPasswordReset(oobCode: String, newPassword: String) = Unit
+    }
+
     private class RecordingFetcher : SecureResetFetcher {
         val calls = mutableListOf<List<String>>()
         override suspend fun confirmReset(
@@ -254,6 +264,40 @@ class SecureResetScreenTest {
         onNodeWithText("Staff sign-in").assertDoesNotExist()
         onNodeWithTag("portal-sign-in").performClick()
         assertEquals(1, signedIn)
+    }
+
+    /**
+     * The route-taking overload is what `AppNavHost` calls, and a
+     * `navDeepLink<SecureResetRoute>` can build that route straight off a link's
+     * raw query string, bypassing `parseEmailActionUrl`. So the allowlist has to
+     * run here too. `auntie.tribetails.com.evil.test` is a host somebody else
+     * owns; before the allowlist moved to the receiver, the sign-in link on the
+     * success card opened it.
+     */
+    @Test
+    fun aContinueUrlThatSkippedTheParserIsStillAllowlisted() = runComposeUiTest {
+        val opened = mutableListOf<String>()
+        val repo = AuthRepository(ScriptedBackend())
+        setThemedContent {
+            SecureResetScreen(
+                oobCode = "code1",
+                repo = repo,
+                onSignIn = {},
+                continueUrl = "https://auntie.tribetails.com.evil.test/steal",
+                fetcher = RecordingFetcher(),
+                openUrl = { opened += it },
+            )
+        }
+        waitForIdle()
+        typeBothPasswords("hunter2hunter2")
+        onNodeWithTag("reset-submit").performClick()
+        waitForIdle()
+        onNodeWithText("Your password is updated.").assertIsDisplayed()
+        // Dropped, so the card falls back to naming both sign-ins.
+        onNodeWithText("Household sign-in").assertIsDisplayed()
+        onNodeWithTag("staff-sign-in").performClick()
+        waitForIdle()
+        assertEquals(listOf(EmailAction.STAFF_SIGN_IN_URL), opened)
     }
 
     // ── Verify, change and recover ──────────────────────────────────────────
