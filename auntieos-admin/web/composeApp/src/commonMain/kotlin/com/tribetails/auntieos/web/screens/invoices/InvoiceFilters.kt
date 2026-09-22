@@ -64,16 +64,56 @@ fun isoDatePrefixOrNull(raw: String): String? {
 }
 
 /**
- * True only when we can prove the invoice is past due: it is outstanding AND its
- * dueDate parses to an ISO date strictly before [todayIso]. A future-dated or
- * unparseable dueDate is never counted as overdue (audit bug: old logic flagged
- * any outstanding invoice that merely had a dueDate, ignoring today).
+ * The eight states the server's state stamp writes into `status` (ADR-0002,
+ * `lib/invoiceEditPolicy.ts#INVOICE_STATES`). The same vocabulary as Android's
+ * `domain/InvoiceActions.kt#InvoiceState` and the web's `InvoiceState`.
+ */
+enum class InvoiceState { QUOTE, DRAFT, CANCELLED, CREDIT, REDEEMED, PAID, ZERO, OPEN }
+
+/**
+ * Decodes the stored state stamp, or null when the doc carries none this build
+ * recognises. A DECODE, NOT A CLASSIFICATION: only `status` is read, trimmed and
+ * lowercased, exactly as Android's `invoiceStateOrNull`. No money field is
+ * consulted; the server did that in the write that moved the money.
+ */
+fun invoiceStateOrNull(invoice: Invoice): InvoiceState? = when (invoice.status.trim().lowercase()) {
+    "quote" -> InvoiceState.QUOTE
+    "draft" -> InvoiceState.DRAFT
+    "cancelled" -> InvoiceState.CANCELLED
+    "credit" -> InvoiceState.CREDIT
+    "redeemed" -> InvoiceState.REDEEMED
+    "paid" -> InvoiceState.PAID
+    "zero" -> InvoiceState.ZERO
+    "open" -> InvoiceState.OPEN
+    else -> null
+}
+
+/**
+ * #871: whether the operator may be offered "Send reminder". Only a stored
+ * `open` bill, the same rule the server's `sendInvoiceReminder` enforces and the
+ * web and Android `invoiceActionsFor` already follow. A cancelled invoice, a
+ * draft, a credit or a quote with a balance on it used to be offered the button
+ * here because this screen read `amountDue` instead of the state.
+ */
+fun invoiceIsRemindable(invoice: Invoice): Boolean =
+    invoiceStateOrNull(invoice) == InvoiceState.OPEN
+
+/**
+ * True only when the STORED state is `open` AND the dueDate parses to an ISO
+ * date strictly before [todayIso]. Due today is due, not overdue. A future-dated
+ * or unparseable dueDate is never counted as overdue.
+ *
+ * #871: this read `amountDue > 0` before, so a cancelled invoice, a draft, a
+ * credit or a quote with a balance and a past date showed OVERDUE on this
+ * console while the server never chases them and web and Android never call
+ * them overdue. It now reads the stamp, as they do: the server's overdue notice
+ * goes out for exactly the invoices this marks.
  *
  * [todayIso] must be a YYYY-MM-DD string (e.g. nowIso().take(10)); lexical
  * comparison on that fixed format is equivalent to chronological comparison.
  */
 fun invoiceIsOverdue(invoice: Invoice, todayIso: String): Boolean {
-    if (!invoiceIsOutstanding(invoice)) return false
+    if (invoiceStateOrNull(invoice) != InvoiceState.OPEN) return false
     val due = isoDatePrefixOrNull(invoice.dueDate) ?: return false
     return due < todayIso
 }
