@@ -126,7 +126,7 @@ Every `security.*` key in the catalog as of 2026-09-14. All five go to business 
 | `onBookingNoteCreate` | `families/{id}/bookings/{id}/notes/{noteId}` | `kincare.note.kinfolk` (only if authorRole=kinfolk) |
 | `onFamilyKinWrite` | `families/{id}/kin/{id}` | `pets.updated`, `pet.marked.inactive` |
 | `onFamilyProfileWrite` | `families/{id}` | `profile.updated` |
-| `onInvoicesWrite` | `invoices/{invoiceId}` | `invoice.payment.applied`, `invoice.overdue` |
+| `onInvoicesWrite` | `invoices/{invoiceId}` | `invoice.payment.applied` (overdue notices come from `invoiceOverdueCron` only, #871) |
 | `onKinTaleCreate` | `kin_care_reports/{reportId}` | `kintale.published`, only when the report is created already `SENT` (a DRAFT create is silent) |
 | `onKinTaleUpdate` | `kin_care_reports/{reportId}` | `kintale.published` on the DRAFT → SENT send; `kintale.note.added` on a post-publish body/media edit. Never both from one write |
 | `onKinTaleCommentCreate` | `families/{id}/kinTales/{id}/comments/{cid}` | `kintale.comment.added` (batched) |

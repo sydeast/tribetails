@@ -18,9 +18,9 @@ type InvoiceDoc = {
 
 /**
  * Watches the FLAT top-level `invoices/{invoiceId}` collection (AuntieOS
- * Android + web write here). Fires a notification when an invoice is paid or
- * becomes past due via ANY write path (admin UI direct write, callable, or the
- * Stripe webhook). #866: a paid transition is skipped when the write stamped a
+ * Android + web write here). Fires a notification when an invoice is paid via
+ * ANY write path (admin UI direct write, callable, or the Stripe webhook).
+ * Overdue notices come from `invoiceOverdueCron` only (#871). #866: a paid transition is skipped when the write stamped a
  * new `paymentAppliedNoticeOwner`, because that writer sends the confirmation
  * itself, or decided nobody is told (lib/paymentAppliedOwner.ts). Other
  * transitions are handled elsewhere:
@@ -85,10 +85,13 @@ type Lifecycle = 'paid' | 'past_due' | 'other';
 /**
  * Resolves a coarse lifecycle from the real free-text status + amountDue.
  *
- * #884: this now gates the OVERDUE notice only, and is kept exactly as it was
- * because #871 reworks that branch. Its `paid` result no longer decides
- * `invoice.payment.applied` (see isPaidTransition); it survives here only as the
- * precedence that keeps a settled doc from reading as past due.
+ * #884: its `paid` result no longer decides `invoice.payment.applied` (see
+ * isPaidTransition).
+ *
+ * #871: it no longer sends anything either. The trigger's overdue notice is
+ * gone (see invoiceWriteNoticeKey); what is left is #884's precedence, kept on
+ * purpose: a write that moves the label to past due is never re-read as a
+ * payment. Unchanged, so that reading stays exactly what #884 tested.
  */
 export function resolveLifecycle(doc: InvoiceDoc | undefined): Lifecycle {
   if (!doc) return 'other';
@@ -112,17 +115,25 @@ type InvoicesWriteEvent = FirestoreEvent<
  * The notice this trigger sends for one write, or null. PURE, and exported so
  * the state stamp backfill's notification guard asks exactly this question
  * about its own writes (#884 second review).
+ *
+ * #871: THIS TRIGGER NEVER SENDS `invoice.overdue`. It used to, when a write
+ * moved the free-text status to `past_due`/`past due`/`overdue`. No server
+ * writer stamps those labels (the state stamp writes only the eight classifier
+ * states), so the branch could fire only on a hand-written label, and it read
+ * the label rather than the money or the due date: a cancelled bill relabelled
+ * `overdue` would have been chased. Overdue is a function of the clock, which no
+ * write carries. `invoiceOverdueCron` (scheduled/invoiceRemindersCron.ts) is the
+ * one sender.
  */
 export function invoiceWriteNoticeKey(
   before: InvoiceDoc | undefined,
   after: InvoiceDoc | undefined,
-): 'invoice.payment.applied' | 'invoice.overdue' | null {
+): 'invoice.payment.applied' | null {
   if (!after) return null;
-  const beforeLifecycle = resolveLifecycle(before);
-  const afterLifecycle = resolveLifecycle(after);
-  // The overdue branch is unchanged (#871 owns it). It is checked first so a
-  // write it would have announced as overdue is never re-read as a payment.
-  if (afterLifecycle === 'past_due' && beforeLifecycle !== 'past_due') return 'invoice.overdue';
+  // #884's precedence, kept: a write that labels the invoice past due sends
+  // nothing, and is never re-read as a payment. `{ status: 'overdue', total: 40 }`
+  // with no `amountDue` classifies paid, but nobody paid anything.
+  if (resolveLifecycle(after) === 'past_due' && resolveLifecycle(before) !== 'past_due') return null;
   if (isPaidTransition(before, after)) {
     // #866: the write that paid it named another sender (lib/paymentAppliedOwner.ts).
     if (paymentAppliedNoticeOwnedByWriter(before, after)) return null;

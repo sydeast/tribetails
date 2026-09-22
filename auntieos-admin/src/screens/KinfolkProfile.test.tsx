@@ -16,11 +16,23 @@ vi.mock('../api/kinfolkProfile', async (orig) => ({
 // tests, HouseholdData 20). These are wiring tests: they assert the parent swaps
 // to the right child, not that the child works.
 vi.mock('./KinfolkEdit', () => ({
-  KinfolkEdit: ({ onCancel }: { onCancel: () => void }) => (
+  KinfolkEdit: ({
+    onCancel,
+    duplicateAdd,
+    onDuplicateAddApplied,
+  }: {
+    onCancel: () => void;
+    duplicateAdd?: unknown;
+    onDuplicateAddApplied?: () => void;
+  }) => (
     <div>
       <p>STUB KinfolkEdit</p>
+      <p>{duplicateAdd ? 'STUB PREFILL' : 'STUB NO PREFILL'}</p>
       <button type="button" onClick={onCancel}>
         stub cancel
+      </button>
+      <button type="button" onClick={() => onDuplicateAddApplied?.()}>
+        stub apply
       </button>
     </div>
   ),
@@ -317,6 +329,36 @@ describe('KinfolkProfile: sub-view wiring', () => {
 
   // Both screens are reached from here, not from the rail, following the same
   // local-state pattern Directory uses to open this profile in the first place.
+  // #907 review item 1(b): an Add answered `duplicateOf` lands on this household's editor.
+  it('opens straight on the editor when it carries a duplicate Add, and never hands it over again after Cancel', async () => {
+    const user = userEvent.setup();
+    const onDuplicateAddApplied = vi.fn();
+    render(
+      <KinfolkProfile
+        kinfolkId="k1"
+        kinfolkName="Jamie Halbrook"
+        kin={[kin()]}
+        onBack={vi.fn()}
+        duplicateAdd={{
+          kinfolkId: 'k1',
+          household: { firstName: 'Jamie', lastName: 'Park', phoneNumber: '', email: '', status: 'active', serviceAddress: '' },
+          contacts: [],
+        }}
+        onDuplicateAddApplied={onDuplicateAddApplied}
+      />,
+    );
+    expect(screen.getByText('STUB KinfolkEdit')).toBeInTheDocument();
+    expect(screen.getByText('STUB PREFILL')).toBeInTheDocument();
+
+    // The editor fills the typing in, then the operator backs out and opens Edit again.
+    await user.click(screen.getByRole('button', { name: 'stub apply' }));
+    expect(onDuplicateAddApplied).toHaveBeenCalledOnce();
+    await user.click(screen.getByRole('button', { name: /stub cancel/i }));
+    await user.click(await screen.findByRole('button', { name: /^edit$/i }));
+
+    expect(screen.getByText('STUB NO PREFILL')).toBeInTheDocument();
+  });
+
   it('swaps in the editor and back again without leaving the profile', async () => {
     const user = userEvent.setup();
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[kin()]} onBack={vi.fn()} />);

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { DuplicateAddKinfolk } from '../lib/pendingAddKinfolk';
 import { getKinfolkProfile, type KinfolkProfile } from '../api/kinfolkProfile';
 import {
   archiveKinfolk,
@@ -89,6 +90,36 @@ interface KinfolkEditProps {
   /** Called after a successful save or archive so the caller reloads the profile. */
   onDone: () => void;
   onCancel: () => void;
+  /**
+   * #907 review item 1(b): what the operator typed into an Add that the server
+   * answered with `duplicateOf` for this household. Applied once, after the
+   * household loads: each typed field that is not blank and differs from the
+   * stored one is filled in, and so is a typed contact that differs, all as
+   * unsaved changes. Save sends them through the normal update; Cancel drops them.
+   */
+  duplicateAdd?: DuplicateAddKinfolk | null;
+  /** Called once the typing above has been filled in. */
+  onDuplicateAddApplied?: (() => void) | undefined;
+}
+
+/** The household fields Add Kinfolk collects, which a duplicate Add can carry here. */
+const ADD_FIELDS = ['firstName', 'lastName', 'phoneNumber', 'email', 'serviceAddress'] as const;
+
+/**
+ * The loaded form with a duplicate Add's typing laid over it. A blank typed value
+ * is "not typed", never "clear this". An archived household keeps its status: a
+ * status picked on Add never restores one unseen.
+ */
+export function withDuplicateAdd(form: KinfolkEditInput, typed: DuplicateAddKinfolk): KinfolkEditInput {
+  const next: KinfolkEditInput = { ...form };
+  for (const key of ADD_FIELDS) {
+    const value = typed.household[key].trim();
+    if (value !== '' && value !== form[key].trim()) next[key] = value;
+  }
+  if (form.status !== KINFOLK_ARCHIVED_STATUS && typed.household.status !== form.status) {
+    next.status = typed.household.status;
+  }
+  return next;
 }
 
 type FormState = KinfolkEditInput;
@@ -193,7 +224,22 @@ const CONTACT_FIELDS = [
   ['secondaryEmail', 'Secondary email'],
 ] as const;
 
-export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: KinfolkEditProps) {
+export function KinfolkEdit({
+  kinfolkId,
+  kinfolkName,
+  onDone,
+  onCancel,
+  duplicateAdd = null,
+  onDuplicateAddApplied,
+}: KinfolkEditProps) {
+  // Held in refs so the load below runs once per household, not again when the
+  // caller lets the typing go.
+  const duplicateAddRef = useRef(duplicateAdd);
+  const duplicateAppliedRef = useRef(onDuplicateAddApplied);
+  useEffect(() => {
+    duplicateAppliedRef.current = onDuplicateAddApplied;
+  }, [onDuplicateAddApplied]);
+  const [duplicateNotice, setDuplicateNotice] = useState<string | null>(null);
   const [loaded, setLoaded] = useState<Async<KinfolkProfile>>({ status: 'loading' });
   const [form, setForm] = useState<FormState | null>(null);
   const [touched, setTouched] = useState<Touched>({});
@@ -237,6 +283,19 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
           // just before the seeding effect overwrote it.
           setEcDrafts(toDrafts(data.emergencyContacts));
           setEcBaseline(toDrafts(data.emergencyContacts));
+
+          const typed = duplicateAddRef.current;
+          if (typed !== null && typed.kinfolkId === kinfolkId) {
+            duplicateAddRef.current = null;
+            // Laid over the form only. The baselines stay what is stored, so every
+            // filled-in difference shows as unsaved and nothing is written unseen.
+            setForm(withDuplicateAdd(toForm(data), typed));
+            const stored = toDrafts(data.emergencyContacts);
+            if (!isBlankDrafts(typed.contacts) && !draftsEqual(typed.contacts, stored)) setEcDrafts(typed.contacts);
+            const storedName = `${data.firstName} ${data.lastName}`.trim();
+            setDuplicateNotice(`${storedName !== '' ? storedName : 'This household'} was already added a few minutes ago.`);
+            duplicateAppliedRef.current?.();
+          }
         }
       } catch (err) {
         if (live) {
@@ -443,6 +502,13 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
             <EditSkeleton />
           ) : (
             <>
+              {duplicateNotice !== null && (
+                <Banner tone="warning" title={duplicateNotice} onDismiss={() => setDuplicateNotice(null)}>
+                  What you typed in Add that differs from this household is filled in below. Nothing is saved until you
+                  press Save changes.
+                </Banner>
+              )}
+
               {isArchived && (
                 <Banner tone="warning" title="This Kinfolk is archived" pillLabel="ARCHIVED">
                   {displayName} is hidden from active lists. Restore them to bring the household back.

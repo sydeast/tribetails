@@ -116,6 +116,27 @@ describe('getMyTribeProfileHandler', () => {
     expect(res.homeAccess.updatedAtMs).toBeNull();
   });
 
+  // #868: the portal clients hide the home details off canEditHomeDetails, so
+  // the values themselves must never be in the response for them to hide.
+  it('#868: no home access value appears anywhere in the response for a secondary without Home access', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u2': { kinfolkIds: ['3'] },
+        'families/3': FAMILY_DOC,
+        'families/3/homeAccess/current': HOME_ACCESS_DOC,
+        'families/3/members/u2': KINTALES_ONLY_MEMBER,
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyTribeProfileHandler } = await import('../src/portal/getMyTribeProfile');
+    const res = await getMyTribeProfileHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u2' } } as any);
+    const wire = JSON.stringify(res);
+    for (const secret of ['1234', 'Under frog', 'TribeNet_5G', 'Alarm Code', '5678']) {
+      expect(wire).not.toContain(secret);
+    }
+    expect(res.canEditHomeDetails).toBe(false);
+  });
+
   it('EXPOSES homeAccess secrets for a home_access=true secondary', async () => {
     const ctx = buildDbMock({
       docs: {

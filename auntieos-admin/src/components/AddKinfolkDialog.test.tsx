@@ -27,6 +27,16 @@ vi.mock('../api/emergencyContacts', async () => {
 
 import { AddKinfolkDialog } from './AddKinfolkDialog';
 import { EMERGENCY_CONTACT_REQUIRED } from '../api/emergencyContacts';
+import {
+  clearDiscardedAddKinfolk,
+  clearDuplicateAddKinfolk,
+  clearPendingAddKinfolk,
+  readDiscardedAddKinfolk,
+  readDuplicateAddKinfolk,
+  readPendingAddKinfolk,
+  savePendingAddKinfolk,
+} from '../lib/pendingAddKinfolk';
+import { OfflineCallError } from '../lib/offlineWrite';
 
 async function fillHousehold() {
   await userEvent.type(screen.getByLabelText('First name'), 'Jamie');
@@ -34,7 +44,18 @@ async function fillHousehold() {
   await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-phone' }), '(512) 555-0134');
 }
 
+async function fillContact(name = 'Rae Halbrook', phone = '5125550199') {
+  await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), name);
+  await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), phone);
+}
+
 beforeEach(() => {
+  sessionStorage.clear();
+  for (const uid of ['op-1', 'op-2']) {
+    clearPendingAddKinfolk(uid);
+    clearDiscardedAddKinfolk(uid);
+    clearDuplicateAddKinfolk(uid);
+  }
   createKinfolk.mockReset();
   mapboxSuggest.mockReset().mockResolvedValue([]);
   mapboxRetrieve.mockReset();
@@ -59,7 +80,7 @@ describe('AddKinfolkDialog', () => {
   });
 
   it('creates the household with the trimmed fields and reports success via onCreated', async () => {
-    createKinfolk.mockResolvedValue('new-kf-1');
+    createKinfolk.mockResolvedValue({ kinfolkId: 'new-kf-1', duplicateOf: null });
     const onCreated = vi.fn();
     render(<AddKinfolkDialog onClose={vi.fn()} onCreated={onCreated} />);
 
@@ -81,7 +102,7 @@ describe('AddKinfolkDialog', () => {
         email: 'jamie@example.com',
         status: 'active',
         serviceAddress: '123 Bark Ave',
-      }),
+      }, null),
     );
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith('new-kf-1'));
   });
@@ -91,7 +112,7 @@ describe('AddKinfolkDialog', () => {
       { name: 'Bark House', fullAddress: '123 Bark Ave, Austin TX 78701', mapboxId: 'id-1', placeFormatted: 'Austin TX' },
     ]);
     mapboxRetrieve.mockResolvedValue('123 Bark Ave, Austin TX 78701');
-    createKinfolk.mockResolvedValue('new-kf-2');
+    createKinfolk.mockResolvedValue({ kinfolkId: 'new-kf-2', duplicateOf: null });
     render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} />);
 
     await userEvent.type(screen.getByLabelText('First name'), 'Jamie');
@@ -107,13 +128,14 @@ describe('AddKinfolkDialog', () => {
     await waitFor(() =>
       expect(createKinfolk).toHaveBeenCalledWith(
         expect.objectContaining({ serviceAddress: '123 Bark Ave, Austin TX 78701' }),
+        null,
       ),
     );
   });
 
   it('still creates the household when the address lookup fails (autofill is additive)', async () => {
     mapboxSuggest.mockRejectedValue(new Error('mapbox_502'));
-    createKinfolk.mockResolvedValue('new-kf-3');
+    createKinfolk.mockResolvedValue({ kinfolkId: 'new-kf-3', duplicateOf: null });
     render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} />);
 
     await userEvent.type(screen.getByLabelText('First name'), 'Jamie');
@@ -125,7 +147,7 @@ describe('AddKinfolkDialog', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
     await waitFor(() =>
-      expect(createKinfolk).toHaveBeenCalledWith(expect.objectContaining({ serviceAddress: '9 Unmapped Rd' })),
+      expect(createKinfolk).toHaveBeenCalledWith(expect.objectContaining({ serviceAddress: '9 Unmapped Rd' }), null),
     );
   });
 
@@ -149,8 +171,8 @@ describe('AddKinfolkDialog', () => {
   });
 
   it('disables Cancel and Add while a create is in flight', async () => {
-    let resolveCreate!: (id: string) => void;
-    createKinfolk.mockReturnValue(new Promise<string>((resolve) => (resolveCreate = resolve)));
+    let resolveCreate!: (res: { kinfolkId: string; duplicateOf: string | null }) => void;
+    createKinfolk.mockReturnValue(new Promise((resolve) => (resolveCreate = resolve)));
     render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} />);
 
     await userEvent.type(screen.getByLabelText('First name'), 'Jamie');
@@ -163,7 +185,7 @@ describe('AddKinfolkDialog', () => {
     expect(screen.getByRole('button', { name: /^cancel$/i })).toBeDisabled();
     expect(screen.getByLabelText('First name')).toBeDisabled();
 
-    resolveCreate('new-kf-2');
+    resolveCreate({ kinfolkId: 'new-kf-2', duplicateOf: null });
     await waitFor(() => expect(screen.queryByRole('button', { name: /adding/i })).toBeNull());
   });
 
@@ -210,7 +232,7 @@ describe('AddKinfolkDialog', () => {
 
   // #829 review item 6.
   it('closing with the household created but its contact unsaved names that household to the caller', async () => {
-    createKinfolk.mockResolvedValue('new-kf-9');
+    createKinfolk.mockResolvedValue({ kinfolkId: 'new-kf-9', duplicateOf: null });
     saveEmergencyContacts.mockRejectedValue(new Error('deadline-exceeded'));
     const onLeftWithoutContact = vi.fn();
     const onClose = vi.fn();
@@ -233,7 +255,7 @@ describe('AddKinfolkDialog', () => {
   });
 
   it('creates the household, then saves its contact', async () => {
-    createKinfolk.mockResolvedValue('new-kf-1');
+    createKinfolk.mockResolvedValue({ kinfolkId: 'new-kf-1', duplicateOf: null });
     saveEmergencyContacts.mockResolvedValue([]);
     const onCreated = vi.fn();
     render(<AddKinfolkDialog onClose={vi.fn()} onCreated={onCreated} />);
@@ -246,7 +268,7 @@ describe('AddKinfolkDialog', () => {
   });
 
   it('when the contact save fails, says so and retries only the contact, never a second household', async () => {
-    createKinfolk.mockResolvedValue('new-kf-1');
+    createKinfolk.mockResolvedValue({ kinfolkId: 'new-kf-1', duplicateOf: null });
     saveEmergencyContacts.mockRejectedValueOnce(new Error('network')).mockResolvedValueOnce([]);
     const onCreated = vi.fn();
     render(<AddKinfolkDialog onClose={vi.fn()} onCreated={onCreated} />);
@@ -263,7 +285,7 @@ describe('AddKinfolkDialog', () => {
   });
 
   it('re-validates the contact on retry: clearing it after a failed save refuses locally, never a second callable call', async () => {
-    createKinfolk.mockResolvedValue('new-kf-1');
+    createKinfolk.mockResolvedValue({ kinfolkId: 'new-kf-1', duplicateOf: null });
     saveEmergencyContacts.mockRejectedValueOnce(new Error('network'));
     const onCreated = vi.fn();
     render(<AddKinfolkDialog onClose={vi.fn()} onCreated={onCreated} />);
@@ -285,5 +307,179 @@ describe('AddKinfolkDialog', () => {
     expect(saveEmergencyContacts).toHaveBeenCalledTimes(1);
     expect(createKinfolk).toHaveBeenCalledTimes(1);
     expect(onCreated).not.toHaveBeenCalled();
+  });
+
+  // #890: the created household outlives the dialog.
+  it('after a failed contact save and a close, reopening Add continues that household instead of creating another', async () => {
+    createKinfolk.mockResolvedValue({ kinfolkId: 'kf-890', duplicateOf: null });
+    saveEmergencyContacts.mockRejectedValueOnce(new Error('deadline-exceeded'));
+    const first = render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} operatorUid="op-1" />);
+    await fillHousehold();
+    await fillContact();
+    await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
+    await screen.findByText(/deadline-exceeded/);
+    // The contact is corrected during the retry, then the operator walks away.
+    await userEvent.clear(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }));
+    await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Park');
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    first.unmount();
+
+    saveEmergencyContacts.mockResolvedValueOnce([]);
+    const onCreated = vi.fn();
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={onCreated} operatorUid="op-1" />);
+    expect(screen.queryByLabelText('First name')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Continue adding the Emergency Contact for Jamie Halbrook' }));
+
+    expect(screen.getByLabelText('First name')).toHaveValue('Jamie');
+    expect(screen.getByLabelText('First name')).toBeDisabled();
+    expect(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' })).toHaveValue('Rae Park');
+    await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contact' }));
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith('kf-890'));
+    expect(saveEmergencyContacts).toHaveBeenLastCalledWith('kf-890', [{ name: 'Rae Park', phone: '5125550199', relationship: '' }]);
+    expect(createKinfolk).toHaveBeenCalledTimes(1);
+    expect(readPendingAddKinfolk('op-1')).toBeNull();
+  });
+
+  it('Discard starts a blank Add, writes nothing, and does not offer the household again', async () => {
+    savePendingAddKinfolk('op-1', {
+      kinfolkId: 'kf-left',
+      household: { firstName: 'Jamie', lastName: 'Halbrook', phoneNumber: '', email: '', status: 'active', serviceAddress: '' },
+      contacts: [{ name: 'Rae Park', phone: '5125550199', relationship: '' }],
+    });
+    const first = render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} operatorUid="op-1" />);
+    await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
+
+    expect(screen.getByLabelText('First name')).toHaveValue('');
+    expect(screen.getByLabelText('First name')).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^add kinfolk$/i })).toBeInTheDocument();
+    expect(readPendingAddKinfolk('op-1')).toBeNull();
+    expect(createKinfolk).not.toHaveBeenCalled();
+    expect(saveEmergencyContacts).not.toHaveBeenCalled();
+
+    first.unmount();
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} operatorUid="op-1" />);
+    expect(screen.queryByRole('button', { name: 'Discard' })).toBeNull();
+  });
+
+  it('another operator is not offered someone else\'s pending household', () => {
+    savePendingAddKinfolk('op-1', {
+      kinfolkId: 'kf-left',
+      household: { firstName: 'Jamie', lastName: 'Halbrook', phoneNumber: '', email: '', status: 'active', serviceAddress: '' },
+      contacts: [],
+    });
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} operatorUid="op-2" />);
+    expect(screen.queryByRole('button', { name: 'Discard' })).toBeNull();
+    expect(screen.getByLabelText('First name')).toHaveValue('');
+  });
+
+  // #907 review item 1(b): a duplicate is never reported as a success, and what was
+  // typed is kept for that household's edit screen rather than dropped.
+  it('a duplicateOf answer reports no success, saves nothing, and hands the typing to that household', async () => {
+    createKinfolk.mockResolvedValue({ kinfolkId: 'kf-existing', duplicateOf: 'kf-existing' });
+    const onCreated = vi.fn();
+    const onDuplicate = vi.fn();
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={onCreated} onDuplicate={onDuplicate} operatorUid="op-1" />);
+    await fillHousehold();
+    await fillContact();
+    await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
+
+    await waitFor(() => expect(onDuplicate).toHaveBeenCalledWith('kf-existing'));
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(saveEmergencyContacts).not.toHaveBeenCalled();
+    expect(readPendingAddKinfolk('op-1')).toBeNull();
+    expect(readDuplicateAddKinfolk('op-1', 'kf-existing')).toEqual({
+      kinfolkId: 'kf-existing',
+      household: { firstName: 'Jamie', lastName: 'Halbrook', phoneNumber: '(512) 555-0134', email: '', status: 'active', serviceAddress: '' },
+      contacts: [{ name: 'Rae Halbrook', phone: '5125550199', relationship: '' }],
+    });
+  });
+
+  it('with nowhere to hand the typing, a duplicateOf answer says so and keeps the form as typed', async () => {
+    createKinfolk.mockResolvedValue({ kinfolkId: 'kf-existing', duplicateOf: 'kf-existing' });
+    const onCreated = vi.fn();
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={onCreated} />);
+    await fillHousehold();
+    await fillContact();
+    await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
+
+    expect(await screen.findByText(/^Jamie Halbrook was already added a few minutes ago\./)).toBeInTheDocument();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(saveEmergencyContacts).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Last name')).toHaveValue('Halbrook');
+    expect(screen.getByLabelText('Last name')).toBeEnabled();
+  });
+
+  // #907 review item 1(a): Discard says the next Add is a new household.
+  it('after Discard, the next create names the discarded household as ignoreDuplicateOf, once', async () => {
+    savePendingAddKinfolk('op-1', {
+      kinfolkId: 'kf-left',
+      household: { firstName: 'Jamie', lastName: 'Halbrook', phoneNumber: '', email: '', status: 'active', serviceAddress: '' },
+      contacts: [],
+    });
+    createKinfolk.mockResolvedValue({ kinfolkId: 'kf-new', duplicateOf: null });
+    const onCreated = vi.fn();
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={onCreated} operatorUid="op-1" />);
+    await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(readDiscardedAddKinfolk('op-1')).toBe('kf-left');
+
+    await fillHousehold();
+    await fillContact();
+    await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith('kf-new'));
+    expect(createKinfolk).toHaveBeenCalledWith(expect.objectContaining({ firstName: 'Jamie' }), 'kf-left');
+    expect(readDiscardedAddKinfolk('op-1')).toBeNull();
+  });
+
+  it('a create that fails keeps the discarded household for the retry', async () => {
+    savePendingAddKinfolk('op-1', {
+      kinfolkId: 'kf-left',
+      household: { firstName: 'Jamie', lastName: 'Halbrook', phoneNumber: '', email: '', status: 'active', serviceAddress: '' },
+      contacts: [],
+    });
+    createKinfolk.mockRejectedValueOnce(new Error('deadline-exceeded'));
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} operatorUid="op-1" />);
+    await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    await fillHousehold();
+    await fillContact();
+    await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
+    await screen.findByText(/deadline-exceeded/);
+    expect(readDiscardedAddKinfolk('op-1')).toBe('kf-left');
+  });
+
+  // #907 review item 2.
+  it('a household deleted while its contact was pending is dropped with "That household no longer exists."', async () => {
+    createKinfolk.mockResolvedValue({ kinfolkId: 'kf-gone', duplicateOf: null });
+    saveEmergencyContacts.mockRejectedValue(
+      Object.assign(new Error('That household no longer exists.'), { code: 'functions/not-found' }),
+    );
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} operatorUid="op-1" />);
+    await fillHousehold();
+    await fillContact();
+    await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
+
+    expect(await screen.findByText('That household no longer exists.')).toBeInTheDocument();
+    expect(readPendingAddKinfolk('op-1')).toBeNull();
+    // The form opens for a fresh Add instead of retrying a household that is gone.
+    expect(screen.getByLabelText('First name')).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^add kinfolk$/i })).toBeInTheDocument();
+  });
+
+  // #907 review item 8: Add goes through a callable now, so offline it is refused, not queued.
+  it('offline, says plainly that nothing was sent', async () => {
+    const offline = new OfflineCallError('createKinfolk');
+    createKinfolk.mockRejectedValue(offline);
+    const onCreated = vi.fn();
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={onCreated} operatorUid="op-1" />);
+    await fillHousehold();
+    await fillContact();
+    await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
+
+    expect(await screen.findByText(offline.message)).toBeInTheDocument();
+    expect(screen.queryByText(/createKinfolk failed/)).toBeNull();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /^add kinfolk$/i })).toBeEnabled();
   });
 });

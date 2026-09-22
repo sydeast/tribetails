@@ -548,11 +548,6 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'daysPastDue',
       ],
     },
-    {
-      trigger: 'An invoice document moves into the past-due lifecycle state.',
-      source: 'src/triggers/onInvoicesWrite.ts',
-      dataKeys: ['kinfolkId', 'invoiceId', 'amountDue', 'currency', 'dueDate'],
-    },
   ],
   'invoice.payment.applied': [
     {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  blameUnfinishedHalf,
   buildSaveContactPayload,
   clinicAlreadyOnList,
   contactMetaLine,
@@ -8,9 +9,11 @@ import {
   mergeReservedFields,
   newMapboxSessionToken,
   normalizeClinicName,
+  pageSaveOutcome,
   resolveMapboxAddress,
   type CustomFieldDto,
   type HouseholdContactDto,
+  type SaveHalf,
   type VetClinicDto,
 } from './tribeApi';
 
@@ -173,5 +176,54 @@ describe('contactMetaLine', () => {
   it('joins what is there and skips what is not', () => {
     expect(contactMetaLine(contact())).toBe('Sister · 805 555 0143 · ada@example.com');
     expect(contactMetaLine(contact({ phone: null, email: null }))).toBe('Sister');
+  });
+});
+
+/**
+ * #868. The page Save is two callables. Either can be refused on its own, and
+ * the row building around them can throw before either is reached, so what the
+ * kinfolk is told has to say which half landed.
+ */
+describe('#868 the page Save reports each half on its own', () => {
+  const boom = new Error('nope');
+  const saved: SaveHalf = { kind: 'saved' };
+  const skipped: SaveHalf = { kind: 'skipped' };
+  const failed: SaveHalf = { kind: 'failed', error: boom };
+
+  it('a clean save says so, and a home half that was never sent does not make it partial', () => {
+    expect(pageSaveOutcome(saved, skipped, false)).toEqual({ text: 'Saved.', ok: true });
+    expect(pageSaveOutcome(saved, saved, false)).toEqual({ text: 'Saved.', ok: true });
+    expect(pageSaveOutcome(saved, skipped, true)).toEqual({
+      text: 'Profile saved. Your Emergency Contacts are not saved yet: use Save Emergency Contacts.',
+      ok: true,
+    });
+  });
+
+  it('a partial result is a failure, names the half that did not save, and never starts "Save failed"', () => {
+    for (const partial of [pageSaveOutcome(saved, failed, false), pageSaveOutcome(failed, saved, false)]) {
+      expect(partial.ok).toBe(false);
+      expect(partial.text.startsWith('Save failed')).toBe(false);
+      expect(partial.text).toContain('did not save');
+      expect(partial.text).toContain('Your edits there are still on this page.');
+    }
+  });
+
+  it('only the profile half failing keeps the plain "Save failed" line', () => {
+    expect(pageSaveOutcome(failed, skipped, false)).toEqual({ text: 'Save failed: nope', ok: false });
+  });
+
+  it('a throw between the callables is blamed on the half it was building for', () => {
+    // Before either call: the profile half never happened.
+    expect(blameUnfinishedHalf(skipped, skipped, boom)).toEqual({ profile: failed, home: skipped });
+    // After the profile saved: the home half never happened.
+    expect(blameUnfinishedHalf(saved, skipped, boom)).toEqual({ profile: saved, home: failed });
+    // Both settled already: nothing left to blame.
+    expect(blameUnfinishedHalf(saved, saved, boom)).toEqual({ profile: saved, home: saved });
+    expect(blameUnfinishedHalf(failed, saved, boom)).toEqual({ profile: failed, home: saved });
+  });
+
+  it('a throw before the profile call reads as a plain failure, not a silent "Saved."', () => {
+    const blamed = blameUnfinishedHalf(skipped, skipped, boom);
+    expect(pageSaveOutcome(blamed.profile, blamed.home, false)).toEqual({ text: 'Save failed: nope', ok: false });
   });
 });

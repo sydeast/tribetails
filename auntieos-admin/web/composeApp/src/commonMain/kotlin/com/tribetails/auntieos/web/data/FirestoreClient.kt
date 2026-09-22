@@ -642,7 +642,29 @@ class FirestoreClient {
     fun kin411Stream(kinId: String):       Flow<FirestoreResult<Kin411?>>   = platformKin411Stream(kinId)
 
     // ---- Profile writes (kinfolk + kin CRUD) ----
-    suspend fun createKinfolk(k: Kinfolk):   WriteResult<String> = platformCreateKinfolk(k)
+    /**
+     * #890: through the `createKinfolk` callable, not a direct add, so the server can
+     * hand back the household this operator created in the last 10 minutes with the
+     * same phone or email ([KinfolkCreated.duplicateOf]) instead of making a second
+     * one. The body is [kinfolkWriteJson], so it still carries no Emergency Contact key.
+     */
+    suspend fun createKinfolk(k: Kinfolk, ignoreDuplicateOf: String? = null): WriteResult<KinfolkCreated> {
+        val payload = buildJsonObject {
+            put("kinfolk", callableJson.parseToJsonElement(kinfolkWriteJson(k)))
+            // #907 review item 1(a): the household this operator just Discarded.
+            ignoreDuplicateOf?.trim()?.takeIf { it.isNotEmpty() }?.let { put("ignoreDuplicateOf", it) }
+        }
+        return when (val r = platformInvokeCallable("createKinfolk", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatching {
+                val o = callableJson.parseToJsonElement(r.value).jsonObject
+                val id = (o["kinfolkId"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+                    ?: error("createKinfolk returned no household id")
+                val duplicateOf = (o["duplicateOf"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                WriteResult.Ok(KinfolkCreated(id, duplicateOf))
+            }.getOrElse { WriteResult.Err(it.message ?: "createKinfolk decode failed") }
+        }
+    }
     /**
      * #829 review: sends ONLY the fields [edited] changed relative to [loaded]
      * (the record the caller read), as a merge write; `formValues` per key. Ok(true)
@@ -2082,7 +2104,11 @@ internal expect fun platformNotificationsStream(): Flow<FirestoreResult<List<Not
 internal expect fun platformDossierStream(kinfolkId: String): Flow<FirestoreResult<Dossier?>>
 internal expect fun platformKin411Stream(kinId: String):      Flow<FirestoreResult<Kin411?>>
 
-internal expect suspend fun platformCreateKinfolk(k: Kinfolk):  WriteResult<String>
+/**
+ * #890: what `createKinfolk` answered. [duplicateOf] is set when the server handed
+ * back a household this operator created minutes ago; [kinfolkId] is then that one.
+ */
+data class KinfolkCreated(val kinfolkId: String, val duplicateOf: String?)
 /** #829 review: merge-writes exactly [changes] (sets and deletes, by field path); an empty list writes nothing. */
 internal expect suspend fun platformUpdateKinfolkFields(kinfolkId: String, changes: List<KinfolkFieldChange>): WriteResult<Unit>
 internal expect suspend fun platformArchiveKinfolk(id: String): WriteResult<Unit>

@@ -25,7 +25,10 @@ if (!process.env['FIRESTORE_EMULATOR_HOST']) {
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['../scripts/test/**/*.emulator.test.ts'],
+    // #871: `test/**/*.emulator.test.ts` adds the functions-side emulator tests
+    // (the overdue cron over a real Firestore). They take firebase-admin through
+    // src/lib/firestoreAdmin, which resolves from this package's node_modules.
+    include: ['../scripts/test/**/*.emulator.test.ts', 'test/**/*.emulator.test.ts'],
     // Same reason as vitest.config.ts: firebase-admin must be required by Node,
     // not processed by Vite. The tests import it only through
     // ../scripts/lib/firebaseAdmin.ts, so they share the one copy the scripts

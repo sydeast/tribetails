@@ -11,6 +11,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.runComposeUiTest
 import com.kinfolk.portal.firebase.FakeFunctionsClient
 import com.kinfolk.portal.firebase.FunctionsClient
@@ -372,7 +373,8 @@ class TribeScreenTest {
         onNodeWithText("Save Changes").performScrollTo().performClick()
         waitForIdle()
         assertEquals(listOf(office, allergy, vet) to emptyList<String>(), fake.sent("saveTribeProfile"))
-        assertEquals(listOf(shed, alarm, afterPhone) to emptyList<String>(), fake.sent("saveHomeAccess"))
+        // #868: nothing in the home details changed, so no home access call.
+        assertTrue(fake.calls.none { it.first == "saveHomeAccess" }, "calls: ${fake.calls.map { it.first }}")
     }
 
     @Test
@@ -413,5 +415,155 @@ class TribeScreenTest {
         waitForIdle()
         onNodeWithText(PROFILE_SAVE_RATE_LIMITED_MESSAGE).performScrollTo().assertIsDisplayed()
         onNodeWithText("Saved.").assertDoesNotExist()
+    }
+
+    // ---- #868: the home details follow Home access, and a partial save says so ----
+
+    /** A household as getMyTribeProfile serves it to a viewer with or without Home access. */
+    private fun viewer(canEditHome: Boolean): FakeFunctionsClient {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyTribeProfile", buildJsonObject {
+            put("profile", buildJsonObject {
+                put("kinfolkId", "3"); put("displayName", "Foster Household"); put("customFields", buildJsonArray {})
+            })
+            put("homeAccess", buildJsonObject {
+                // The server sends no home values without the grant (getMyTribeProfile.ts).
+                if (canEditHome) put("gateCode", "4242") else put("gateCode", JsonNull)
+                put("keyLocation", JsonNull); put("wifiPassword", JsonNull)
+                put("customFields", if (canEditHome) rowsJson(afterPhone) else buildJsonArray {})
+                put("updatedAtMs", JsonNull)
+            })
+            put("canEditHomeDetails", canEditHome)
+        })
+        fake.stubEmergencyContacts(canEdit = canEditHome)
+        fake.stub("getVetClinics", buildJsonObject { put("clinics", buildJsonArray {}) })
+        fake.stub("listMembers", buildJsonObject { put("members", buildJsonArray {}) })
+        fake.stub("listHouseholdContacts", buildJsonObject { put("contacts", buildJsonArray {}) })
+        fake.stub("saveTribeProfile", buildJsonObject { put("ok", true) })
+        fake.stub("saveHomeAccess", buildJsonObject { put("ok", true) })
+        return fake
+    }
+
+    private val refused = "You need Home access to change the home details. Ask your primary kinfolk to give you Home access."
+
+    @Test
+    fun primary_familyOnlyEdit_savesTheProfile_andMakesNoHomeAccessCall() = runComposeUiTest {
+        val fake = viewer(canEditHome = true)
+        setThemedContent { TribeScreen("Foster Household", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("home-locked").assertDoesNotExist()
+        onNodeWithText("Foster Household").performScrollTo().performTextReplacement("Foster Two")
+        waitForIdle()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        assertEquals("Foster Two", fake.calls.last { it.first == "saveTribeProfile" }.second!!["displayName"]!!.jsonPrimitive.content)
+        assertTrue(fake.calls.none { it.first == "saveHomeAccess" }, "calls: ${fake.calls.map { it.first }}")
+        onNodeWithText("Saved.").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun secondaryWithHomeAccess_gateCodeEdit_goesToSaveHomeAccess() = runComposeUiTest {
+        val fake = viewer(canEditHome = true)
+        setThemedContent { TribeScreen("Foster Household", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("4242").performScrollTo().performTextReplacement("9001")
+        waitForIdle()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        val home = fake.calls.last { it.first == "saveHomeAccess" }.second!!
+        assertEquals("9001", home["gateCode"]!!.jsonPrimitive.content)
+        assertEquals(listOf(afterPhone) to emptyList<String>(), fake.sent("saveHomeAccess"))
+        onNodeWithText("Saved.").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun secondaryWithoutHomeAccess_homeDetailsLocked_profileSaves_noHomeAccessCall() = runComposeUiTest {
+        val fake = viewer(canEditHome = false)
+        setThemedContent { TribeScreen("Foster Household", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("home-locked").performScrollTo().assertIsDisplayed()
+        // Once in Home Information, once where the after-hours clinic fields were.
+        assertEquals(2, onAllNodesWithText(HOME_DETAILS_LOCKED).fetchSemanticsNodes().size)
+        onNodeWithTag("after-hours-locked").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Gate / Door Code").assertDoesNotExist()
+        onNodeWithText("Key Location").assertDoesNotExist()
+        onNodeWithText("Wi-Fi Password").assertDoesNotExist()
+        onNodeWithText("Emergency Clinic").assertDoesNotExist()
+        onNodeWithText("Emergency Clinic Phone").assertDoesNotExist()
+        onNodeWithText("Foster Household").performScrollTo().performTextReplacement("Foster Two")
+        waitForIdle()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        assertEquals(1, fake.calls.count { it.first == "saveTribeProfile" })
+        assertTrue(fake.calls.none { it.first == "saveHomeAccess" }, "calls: ${fake.calls.map { it.first }}")
+        onNodeWithText("Saved.").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun partial_homeRefusedAfterTheProfileSaves_saysWhichHalfSaved_andKeepsTheEdit() = runComposeUiTest {
+        val fake = viewer(canEditHome = true)
+        fake.stubError("saveHomeAccess", IllegalStateException(refused))
+        setThemedContent { TribeScreen("Foster Household", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("4242").performScrollTo().performTextReplacement("9001")
+        waitForIdle()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText(
+            "Family and Vet Clinic saved. Home Information and the after-hours clinic did not save: " +
+                "$refused Press Save Changes to try again. Your edits there are still on this page.",
+        ).performScrollTo().assertIsDisplayed()
+        assertTrue(onAllNodesWithText("Save failed", substring = true).fetchSemanticsNodes().isEmpty())
+        onNodeWithText("Saved.").assertDoesNotExist()
+        onNodeWithText("9001").performScrollTo().assertIsDisplayed()
+        assertEquals(1, fake.calls.count { it.first == "saveTribeProfile" })
+    }
+
+    @Test
+    fun partial_profileRefusedWhileHomeSaves_namesBothHalves() = runComposeUiTest {
+        val fake = viewer(canEditHome = true)
+        fake.stubError("saveTribeProfile", IllegalStateException("Too many attempts. Try again later."))
+        setThemedContent { TribeScreen("Foster Household", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("4242").performScrollTo().performTextReplacement("9001")
+        waitForIdle()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText(
+            "Home Information and the after-hours clinic saved. Family and Vet Clinic did not save: " +
+                "this household has saved too many times in the last hour. Wait a little, then save again. " +
+                "Your edits there are still on this page.",
+        ).performScrollTo().assertIsDisplayed()
+        assertTrue(onAllNodesWithText("Save failed", substring = true).fetchSemanticsNodes().isEmpty())
+    }
+
+    @Test
+    fun pageSaveOutcome_aPartialResultIsAFailure_andAFullSaveIsNot() {
+        val boom = IllegalStateException("nope")
+        assertEquals(false, pageSaveOutcome(SaveHalf.Saved, SaveHalf.Failed(boom), emergencyContactsDirty = false).ok)
+        assertEquals(false, pageSaveOutcome(SaveHalf.Failed(boom), SaveHalf.Saved, emergencyContactsDirty = false).ok)
+        assertEquals(PageSaveStatus("Save failed: nope", ok = false), pageSaveOutcome(SaveHalf.Failed(boom), SaveHalf.Skipped, emergencyContactsDirty = false))
+        assertEquals(PageSaveStatus("Saved.", ok = true), pageSaveOutcome(SaveHalf.Saved, SaveHalf.Skipped, emergencyContactsDirty = false))
+        assertEquals(PageSaveStatus("Saved.", ok = true), pageSaveOutcome(SaveHalf.Saved, SaveHalf.Saved, emergencyContactsDirty = false))
+    }
+
+    /**
+     * #868: the row building around the two callables is not inside either half's
+     * catch. Left unattributed it would fall through to "Saved." over a save that
+     * never happened, which is the bug this issue is about, in the other direction.
+     */
+    @Test
+    fun blameUnfinishedHalf_attributesAThrowBetweenTheCallsToTheHalfItWasBuildingFor() {
+        val boom = IllegalStateException("nope")
+        // Before either call: the profile half never happened.
+        assertEquals(SaveHalf.Failed(boom) to SaveHalf.Skipped, blameUnfinishedHalf(SaveHalf.Skipped, SaveHalf.Skipped, boom))
+        // After the profile saved: the home half never happened.
+        assertEquals(SaveHalf.Saved to SaveHalf.Failed(boom), blameUnfinishedHalf(SaveHalf.Saved, SaveHalf.Skipped, boom))
+        // Both settled already: nothing left to blame.
+        assertEquals(SaveHalf.Saved to SaveHalf.Saved, blameUnfinishedHalf(SaveHalf.Saved, SaveHalf.Saved, boom))
+        assertEquals(SaveHalf.Failed(boom) to SaveHalf.Saved, blameUnfinishedHalf(SaveHalf.Failed(boom), SaveHalf.Saved, boom))
+
+        val (profile, home) = blameUnfinishedHalf(SaveHalf.Skipped, SaveHalf.Skipped, boom)
+        assertEquals(PageSaveStatus("Save failed: nope", ok = false), pageSaveOutcome(profile, home, emergencyContactsDirty = false))
     }
 }

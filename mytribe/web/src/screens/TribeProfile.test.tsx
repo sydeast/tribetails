@@ -201,11 +201,13 @@ describe('TribeProfile: Emergency Contacts follow Home access (#843, #829)', () 
     await userEvent.type(name, ' Jr');
     expect(view.getByTestId('ec-unsaved-page')).toHaveTextContent('Your Emergency Contacts have unsaved changes.');
     await userEvent.click(view.getByRole('button', { name: /Save Changes/ }));
-    const { saveHomeAccess, saveEmergencyContacts } = await import('../api/tribeApi');
-    await waitFor(() => expect(saveHomeAccess).toHaveBeenCalledTimes(1));
+    const { saveTribeProfile, saveHomeAccess, saveEmergencyContacts } = await import('../api/tribeApi');
+    await waitFor(() => expect(saveTribeProfile).toHaveBeenCalledTimes(1));
     expect(
       await view.findByText('Profile saved. Your Emergency Contacts are not saved yet: use Save Emergency Contacts.'),
     ).toBeInTheDocument();
+    // #868: nothing in the home details changed, so no home access call.
+    expect(saveHomeAccess).not.toHaveBeenCalled();
     // A saved profile is a success, whatever the sentence starts with.
     expect(view.getByTestId('page-save-status')).not.toHaveClass('err');
     expect(view.queryByText('Saved.')).toBeNull();
@@ -219,15 +221,15 @@ describe('TribeProfile: Emergency Contacts follow Home access (#843, #829)', () 
     await waitFor(() => expect(view.getByText('A household needs at least one Emergency Contact.')).toBeInTheDocument());
     await userEvent.click(view.getByRole('button', { name: /Save Changes/ }));
     const { saveTribeProfile, saveHomeAccess } = await import('../api/tribeApi');
-    await waitFor(() => expect(saveHomeAccess).toHaveBeenCalledTimes(1));
-    expect(saveTribeProfile).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(saveTribeProfile).toHaveBeenCalledTimes(1));
     expect(await view.findByText('Saved.')).toBeInTheDocument();
+    expect(saveHomeAccess).not.toHaveBeenCalled();
   });
 
   it('the page save status is coloured by outcome: a failure is an error, a success is not', async () => {
     const view = await renderTribeProfile({});
-    const { saveHomeAccess } = await import('../api/tribeApi');
-    vi.mocked(saveHomeAccess).mockRejectedValueOnce(new Error('nope'));
+    const { saveTribeProfile } = await import('../api/tribeApi');
+    vi.mocked(saveTribeProfile).mockRejectedValueOnce(new Error('nope'));
     await userEvent.click(await view.findByRole('button', { name: /Save Changes/ }));
     expect(await view.findByText('Save failed: nope')).toBeInTheDocument();
     expect(view.getByTestId('page-save-status')).toHaveClass('err');
@@ -262,6 +264,117 @@ describe('TribeProfile: Emergency Contacts follow Home access (#843, #829)', () 
     });
     await waitFor(() => expect(view.getAllByText('Home access (gate code, Wi-Fi, Emergency Contacts)')).toHaveLength(2));
     expect(view.queryByText('Home access (gate code, Wi-Fi)')).toBeNull();
+  });
+});
+
+/**
+ * #868. Save Changes called saveHomeAccess on every press, so a secondary kinfolk
+ * without Home access had the profile written, the home half refused, and read
+ * "Save failed". The home details now follow canEditHomeDetails, the home half is
+ * sent only when it changed, and a partial result says which half saved.
+ */
+describe('TribeProfile: the home details follow Home access, and a partial save says so (#868)', () => {
+  const WITH_HOME_ACCESS: GetMyTribeProfileResult = { ...PROFILE, canEditHomeDetails: true };
+  const WITHOUT_HOME_ACCESS: GetMyTribeProfileResult = {
+    profile: PROFILE.profile,
+    // What getMyTribeProfile serves a viewer without the grant: no values at all.
+    homeAccess: { gateCode: null, keyLocation: null, wifiPassword: null, customFields: [], updatedAtMs: null },
+    canEditHomeDetails: false,
+  };
+  const REFUSED = 'You need Home access to change the home details. Ask your primary kinfolk to give you Home access.';
+
+  type View = Awaited<ReturnType<typeof renderTribeProfile>>;
+
+  async function renameFamily(view: View) {
+    const name = await view.findByLabelText('Family Display Name');
+    await userEvent.clear(name);
+    await userEvent.type(name, 'The Ramirez Household');
+  }
+
+  async function changeGateCode(view: View) {
+    const gate = await view.findByDisplayValue('4242');
+    await userEvent.clear(gate);
+    await userEvent.type(gate, '9001');
+  }
+
+  async function save(view: View) {
+    await userEvent.click(view.getByRole('button', { name: /Save Changes/ }));
+    return view.findByTestId('page-save-status');
+  }
+
+  it('primary kinfolk: a Family-only edit saves the profile and makes no home access call', async () => {
+    const view = await renderTribeProfile({ profile: WITH_HOME_ACCESS });
+    await view.findByDisplayValue('4242');
+    expect(view.queryByTestId('home-locked')).toBeNull();
+    await renameFamily(view);
+    const status = await save(view);
+    expect(status).toHaveTextContent('Saved.');
+    const { saveTribeProfile, saveHomeAccess } = await import('../api/tribeApi');
+    expect(vi.mocked(saveTribeProfile).mock.calls[0]?.[0]).toMatchObject({ displayName: 'The Ramirez Household' });
+    expect(saveHomeAccess).not.toHaveBeenCalled();
+  });
+
+  it('secondary kinfolk with Home access: an edited gate code and after-hours phone go to saveHomeAccess', async () => {
+    const view = await renderTribeProfile({ profile: WITH_HOME_ACCESS });
+    await changeGateCode(view);
+    await userEvent.type(view.getByLabelText('Emergency clinic phone'), '805-555-0100');
+    const status = await save(view);
+    expect(status).toHaveTextContent('Saved.');
+    expect(status).not.toHaveClass('err');
+    expect(await saveHomeAccessArgs()).toMatchObject({
+      gateCode: '9001',
+      keyLocation: 'Under the blue planter',
+      wifiPassword: 'hunter2-old',
+      customFields: [{ key: 'afterHoursVetPhone', label: 'After-hours Phone', value: '805-555-0100' }],
+    });
+  });
+
+  it('secondary kinfolk without Home access: the home details are locked, the profile saves, and no home access call is made', async () => {
+    const { HOME_DETAILS_LOCKED, saveTribeProfile, saveHomeAccess } = await import('../api/tribeApi');
+    const view = await renderTribeProfile({ profile: WITHOUT_HOME_ACCESS });
+    expect(await view.findByTestId('home-locked')).toHaveTextContent(HOME_DETAILS_LOCKED);
+    expect(view.getByTestId('after-hours-locked')).toHaveTextContent(HOME_DETAILS_LOCKED);
+    expect(view.queryByLabelText('Gate / Door Code')).toBeNull();
+    expect(view.queryByLabelText('Key Location')).toBeNull();
+    expect(view.queryByLabelText('Wi-Fi Password')).toBeNull();
+    expect(view.queryByLabelText('Emergency clinic phone')).toBeNull();
+    expect(view.queryByLabelText('Emergency clinic')).toBeNull();
+    await renameFamily(view);
+    const status = await save(view);
+    expect(status).toHaveTextContent('Saved.');
+    expect(status).not.toHaveClass('err');
+    expect(saveTribeProfile).toHaveBeenCalledTimes(1);
+    expect(saveHomeAccess).not.toHaveBeenCalled();
+  });
+
+  it('home details refused after the profile saved: says which half saved, never "Save failed", and keeps the home edit', async () => {
+    const { saveHomeAccess, getMyTribeProfile } = await import('../api/tribeApi');
+    const view = await renderTribeProfile({ profile: WITH_HOME_ACCESS });
+    vi.mocked(saveHomeAccess).mockRejectedValueOnce(new Error(REFUSED));
+    await changeGateCode(view);
+    const status = await save(view);
+    expect(status).toHaveTextContent(
+      `Family and Vet Clinic saved. Home Information and the after-hours clinic did not save: ${REFUSED} Press Save Changes to try again. Your edits there are still on this page.`,
+    );
+    expect(status).toHaveClass('err');
+    expect(view.queryByText(/^Save failed/)).toBeNull();
+    // No reload after a partial result, so the edit that did not save is still in its field.
+    expect(view.getByDisplayValue('9001')).toBeInTheDocument();
+    expect(getMyTribeProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it('profile refused while the home details saved: names both halves, as an error', async () => {
+    const { saveTribeProfile } = await import('../api/tribeApi');
+    const { FirebaseError } = await import('firebase/app');
+    const view = await renderTribeProfile({ profile: WITH_HOME_ACCESS });
+    vi.mocked(saveTribeProfile).mockRejectedValueOnce(new FirebaseError('functions/resource-exhausted', 'Too many attempts. Try again later.'));
+    await changeGateCode(view);
+    const status = await save(view);
+    expect(status).toHaveTextContent(
+      'Home Information and the after-hours clinic saved. Family and Vet Clinic did not save: this household has saved too many times in the last hour. Wait a little, then save again. Your edits there are still on this page.',
+    );
+    expect(status).toHaveClass('err');
+    expect(view.queryByText(/^Save failed/)).toBeNull();
   });
 });
 
@@ -435,11 +548,13 @@ describe('TribeProfile: a schema-mode save keeps the rows it does not edit (#873
     await view.findByDisplayValue('Chicken');
     await view.findByDisplayValue('5678');
     await userEvent.click(view.getByRole('button', { name: /Save Changes/ }));
-    const { profile, home } = await saved();
+    expect(await view.findByText('Saved.')).toBeInTheDocument();
+    const { saveTribeProfile, saveHomeAccess } = await import('../api/tribeApi');
+    const profile = vi.mocked(saveTribeProfile).mock.calls[0]![0];
     expect(profile.customFields).toEqual([OFFICE, ALLERGY, VET]);
     expect(profile.removeCustomFieldKeys).toEqual([]);
-    expect(home.customFields).toEqual([SHED, ALARM, AFTER_PHONE]);
-    expect(home.removeCustomFieldKeys).toEqual([]);
+    // #868: nothing in the home details changed, so no home access call.
+    expect(saveHomeAccess).not.toHaveBeenCalled();
   });
 
   it('an edited schema field changes only its own row, in place', async () => {
@@ -480,9 +595,10 @@ describe('TribeProfile: a schema-mode save keeps the rows it does not edit (#873
     };
     const view = await renderTribeProfile({ profile: dupVet });
     await userEvent.click(await view.findByRole('button', { name: /Save Changes/ }));
-    const { profile, home } = await saved();
-    expect(profile.customFields).toEqual([VET, OFFICE]);
-    expect(home.customFields).toEqual([SHED, ALARM, AFTER_PHONE]);
+    expect(await view.findByText('Saved.')).toBeInTheDocument();
+    const { saveTribeProfile, saveHomeAccess } = await import('../api/tribeApi');
+    expect(vi.mocked(saveTribeProfile).mock.calls[0]![0].customFields).toEqual([VET, OFFICE]);
+    expect(saveHomeAccess).not.toHaveBeenCalled();
   });
 });
 

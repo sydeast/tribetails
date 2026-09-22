@@ -154,6 +154,9 @@ fun DirectoryScreen(
                 // No Emergency Contact, so the contact is added there instead of
                 // the household being Added a second time.
                 onLeftWithoutContact = { createdId -> route = DirectoryRoute.Profile(createdId) },
+                // #907 review item 1(b): Add was answered `duplicateOf`. That household's
+                // edit screen opens with what was typed filled in as unsaved changes.
+                onDuplicate = { existingId -> route = DirectoryRoute.EditKinfolk(existingId) },
             )
 
         is DirectoryRoute.EditKinfolk ->

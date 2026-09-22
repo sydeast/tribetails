@@ -431,6 +431,10 @@ const CATALOG_LIST: NotificationDef[] = [
     description: 'Invoice payment reminder.',
   },
   {
+    // #871: ONE SENDER. `invoiceOverdueCron` (scheduled/invoiceRemindersCron.ts)
+    // is the only code that sends this, once per invoice, and only for a bill
+    // `invoiceStateOf` reads as `open` whose due day is before the business's
+    // today (lib/invoiceChase.ts). `onInvoicesWrite` no longer sends it.
     key: 'invoice.overdue',
     label: 'Invoice overdue notice',
     audience: 'kinfolk',
