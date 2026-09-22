@@ -1,7 +1,6 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
-import { getAuth } from 'firebase-admin/auth';
 import { z, ZodError } from 'zod';
-import { db } from '../lib/firestoreAdmin';
+import { db, getAdmin } from '../lib/firestoreAdmin';
 import { clientIpOf, ipRateLimitKey } from '../auth/loginSecurity';
 import { enforceRateLimit } from '../lib/rateLimit';
 import { wrapCallable } from '../lib/wrapCallable';
@@ -60,7 +59,12 @@ export async function claimInviteSignupHandler(
     throw new HttpsError('failed-precondition', 'invite expired');
   }
 
-  const auth = getAuth();
+  // #912: getAdmin(), never a bare getAuth(). The bare getter resolves the
+  // DEFAULT app, and nothing in this Cloud Run service initializes one at
+  // module load; getAdmin() is the accessor that initializes it. The rate
+  // limiter and the invite read happen to have done that already today, but
+  // that is statement order, not a guarantee.
+  const auth = getAdmin().auth();
   const email = invite.invitedEmail.toLowerCase();
   const existing = await auth.getUserByEmail(email).catch((err: { code?: string }) => {
     if (err?.code === 'auth/user-not-found') return null;
