@@ -149,6 +149,31 @@ describe('resendQuote over the real dispatcher', () => {
     expect((await ctx.db.collection('invoices').doc('q1').get()).data()?.quoteDecision).toBe('denied');
   });
 
+  /**
+   * THE PRE-LAUNCH HOUSEHOLD GATE. A resend that reaches nobody must not reopen
+   * the quote: the household still has a declined quote and no message about
+   * it, and reopening would leave the operator believing they had asked again.
+   *
+   * Its own refusal code rather than `quote_resend_suppressed`, because the
+   * operator's next move is different. `suppressed` points at this household's
+   * notification settings; `gated` points at one switch that has nothing to do
+   * with them.
+   */
+  it('GATED: household notifications off refuses the resend and leaves the quote declined', async () => {
+    const ctx = buildDbMock({
+      writeThrough: true,
+      docs: {
+        'business_settings/business_settings': { householdNotificationsLive: false },
+        'invoices/q1': declined(),
+        'businessSettings/admins': { uids: ['admin1'] },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const err = await resendQuoteHandler(req()).catch((e) => e);
+    expect(err.details).toMatchObject({ code: 'quote_resend_gated' });
+    expect(householdQuoteMessages(ctx.writes), 'the household heard nothing').toHaveLength(0);
+    expect((await ctx.db.collection('invoices').doc('q1').get()).data()?.quoteDecision).toBe('denied');
+  });
   // #866 fourth review: a failed office-roster read must not stop the resend.
   // The household resolved, so it gets its copy and the quote reopens, as on
   // main; only the office copy is missed, and that is logged by the dispatcher.

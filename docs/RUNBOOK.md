@@ -1566,9 +1566,22 @@ Three things to know about the value:
   `critical` log line, `household.send.gate.read.failed`. See the note at the
   bottom.
 
-If the settings document is missing entirely, the code falls back to the older
-`business_settings/singleton` id, the same fallback the phone line uses. Set the
-field on whichever of the two the console actually shows you.
+Set it on `business_settings/business_settings`. The older
+`business_settings/singleton` id is read only when that document does not exist
+at all, so when both are present the modern one is the only one that counts.
+
+Both admin clients save settings as a merge, the web with `setDoc(..., {merge:
+true})` and Android with `SetOptions.merge()`, so editing business hours or
+anything else on either one leaves this field where you put it.
+
+**It only bites once the functions are deployed.** Merging deploys nothing to
+the backend. Run the release, then confirm the deploy landed:
+
+```bash
+firebase functions:list --json | jq -r '.[] | select(.id=="invoiceOverdueCron") | "\(.id) \(.generation) \(.updateTime)"'
+```
+
+Re-upload the data after that, not before.
 
 ### Turning it back off
 
@@ -1578,28 +1591,31 @@ undoing anything.
 
 ### Checking it took
 
-Logs Explorer, the `mytribe` functions:
+Look for something happening, not for something stopping. The gate is meant to
+hold for weeks, so quiet logs prove very little on their own.
+
+Pick an overdue invoice in Firestore and watch it across a 09:30 run. While the
+gate is shut it carries `overdueSuppressedAtMs` and no `overdueNotifiedAtMs`.
+The morning after you open the gate, the same invoice picks up
+`overdueNotifiedAtMs` and a `scheduledNotifications` row appears for the
+household. That is the confirmation, and it is the thing the whole design
+protects: the suppressed stamp is a one-per-day backoff, the notified stamp is a
+permanent skip, and nothing writes the second one for a notice that was never
+delivered, so the backlog survives however long the gate stays shut.
+
+The logs are the second read. Logs Explorer, the `mytribe` functions:
 
 ```
 jsonPayload.event="notification.gated.household.summary"
 ```
 
 One line per send that was held back, carrying the notification key, how many
-household copies were suppressed and how many operator copies still went. While
-the gate is shut you should see these accumulate. After you switch it on they
-should stop appearing, and that absence is the confirmation.
+household copies were suppressed and how many operator copies still went. These
+accumulate while the gate is shut and stop once you open it.
 
 For the per-recipient detail, `jsonPayload.event="notification.gated.household"`
 carries the key, the recipient uid, the gate state and the channels that copy
 would have used. That is the list of mail the business meant to send and did not.
-
-To confirm from the sending side instead, open an overdue invoice in Firestore
-after a 09:30 run. While the gate is shut it carries `overdueSuppressedAtMs` and
-no `overdueNotifiedAtMs`. That pairing is deliberate and it is what makes the
-backlog safe: the suppressed stamp is a one-per-day backoff, the notified stamp
-is a permanent skip, and nothing writes the second one for a notice that was
-never delivered. The morning after you open the gate, those invoices get their
-notices and pick up `overdueNotifiedAtMs` then.
 
 ### What the gate does not cover
 
@@ -1615,6 +1631,31 @@ press a button:
 
 Nothing in that list runs on a schedule, so none of it can go off while you are
 asleep during the re-upload.
+
+**Do not schedule a marketing blast while the gate is shut.** A blast is spent
+rather than delayed: the fan-out records each household as suppressed and never
+comes back to them, so opening the gate afterwards sends nothing. Schedule it
+after.
+
+### What the re-upload itself will do
+
+Bulk writes fire the document triggers, so expect this while the gate is shut:
+
+- **You will get mail.** The operator copies of `invoice.new`,
+  `kincare.booking.confirm`, `pets.updated`, `profile.updated` and
+  `pet.marked.inactive` are not household copies, so they go out as designed.
+  On a few thousand records that is a few thousand emails to you. Consider
+  turning those rows off in the notification gate for the duration, and back on
+  after.
+- **Invoices keep their backlog.** Nothing marks a re-uploaded invoice as
+  reminded or notified, so the first runs after you open the gate chase them.
+- **Old KinTales and bookings do not get announced at launch, and that is on
+  purpose.** Publishing a tale and confirming a booking both claim their
+  "announced" marker before the send rather than after, so an uploaded tale is
+  marked announced during the upload and is never announced again. Nobody wants
+  two hundred historical tales landing in a household's inbox on launch day. It
+  is the opposite of the invoice behaviour above, so it is worth knowing which
+  is which.
 
 ### The fail-closed choice, and when to revisit it
 
