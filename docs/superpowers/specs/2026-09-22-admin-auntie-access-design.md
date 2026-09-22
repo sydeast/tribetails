@@ -62,8 +62,8 @@ Three further properties:
 - **`staffRole`, not `role`.** `role` is the kinfolk claim
   (`mytribe/functions/src/lib/kinfolkClaim.ts`). Reusing it would collide.
 - **An account holding both claims degrades to Auntie.** `isOwner()` requires
-  `admin == true` AND `staffRole != 'auntie'`, so a minting mistake fails
-  toward less access.
+  `admin == true` AND not the Auntie role, so a minting mistake fails toward
+  less access.
 - **An unknown future `staffRole` is neither role.** A token carrying
   `staffRole: 'bookkeeper'` is refused everywhere until someone writes rules
   for it.
@@ -244,16 +244,35 @@ helpers replace it:
 function isOwner() {
   return request.auth != null
       && request.auth.token.admin == true
-      && request.auth.token.staffRole != 'auntie';
+      && !hasAuntieRole();
+}
+
+function hasAuntieRole() {
+  return 'staffRole' in request.auth.token
+      && request.auth.token.staffRole == 'auntie';
 }
 
 function isCaretaker() {
-  return request.auth != null
-      && request.auth.token.staffRole == 'auntie';
+  return request.auth != null && hasAuntieRole();
 }
 
 function isStaff() { return isOwner() || isCaretaker(); }
 ```
+
+**The `in` guard is load-bearing, and was not in the first draft of this spec.**
+Written the obvious way, `request.auth.token.staffRole != 'auntie'`, the rename
+commit took down 47 of the 270 existing rules tests with "Property staffRole is
+undefined on object". In Firestore rules, reading a key a token does not carry
+is an error, not a null, and an error inside a condition denies the request. No
+token in this project carries `staffRole` yet, the operator's included, so that
+spelling would have turned every owner grant in the file into a refusal on the
+deploy that shipped it: precisely the lockout section 4 promises cannot happen.
+
+It is the same trap `kinfolkLocationSharingOn()` already documents further down
+this rules file, where `.data.get(key, default)` exists for the same reason.
+The existing suite caught it because those 270 tests sign in as an owner
+carrying no `staffRole` on nearly every path, which is also why the no-lockout
+test in section 13 earns its place over any other test here.
 
 Deleting the old name is what forces the walk: every site stops resolving until
 someone picks one of the three.
