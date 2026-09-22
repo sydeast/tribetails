@@ -61,7 +61,6 @@ vi.mock('../src/lib/firestoreAdmin', () => {
   };
   return { db: () => fakeDb, auth: vi.fn(), getAdmin: vi.fn() };
 });
-vi.mock('firebase-admin/auth', () => ({ getAuth: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/notifications', () => ({ enqueueNotification: vi.fn(async () => []) }));
 vi.mock('../src/lib/sendFromTemplate', () => ({ sendFromTemplate: vi.fn() }));
