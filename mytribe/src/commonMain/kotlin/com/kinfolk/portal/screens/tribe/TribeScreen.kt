@@ -988,8 +988,8 @@ internal fun homeAccessEditChanged(
  * #868: where an error from the row building AROUND the two callables belongs.
  * Both callables catch their own refusal, so anything left is the code that
  * assembles what they send, and it belongs to the half it was assembling for.
- * Without this the status line reads "Saved." over a save that never happened —
- * which is the bug #868 is about, in the other direction. Mirrors
+ * Without this the status line reads "Saved." over a save that never happened,
+ * which is the bug #868 is about, pointing the other way. Mirrors
  * `blameUnfinishedHalf` in web `api/tribeApi.ts`.
  */
 internal fun blameUnfinishedHalf(profile: SaveHalf, home: SaveHalf, error: Throwable): Pair<SaveHalf, SaveHalf> = when {
