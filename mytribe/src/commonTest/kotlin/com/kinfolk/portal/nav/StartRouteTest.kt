@@ -13,7 +13,12 @@ import kotlin.test.assertTrue
  */
 class StartRouteTest {
 
-    private val reset = SecureResetParams(oobCode = "oob1", email = "kin@tribetails.com")
+    // #905: an action link carries a mode and a continue target, and no email.
+    private val reset = SecureResetParams(
+        oobCode = "oob1",
+        mode = "verifyEmail",
+        continueUrl = "https://auntie.tribetails.com/signin",
+    )
 
     @Test
     fun stillLoading_returnsNull() {
@@ -32,7 +37,8 @@ class StartRouteTest {
         )
         assertTrue(r is SecureResetRoute)
         assertEquals("oob1", (r as SecureResetRoute).oobCode)
-        assertEquals("kin@tribetails.com", r.email)
+        assertEquals("verifyEmail", r.mode)
+        assertEquals("https://auntie.tribetails.com/signin", r.continueUrl)
     }
 
     @Test

@@ -71,6 +71,13 @@ class SecureResetController(
     val isRecover: Boolean get() = link.mode == EmailAction.MODE_RECOVER
     val isChange: Boolean get() = link.mode == EmailAction.MODE_VERIFY_AND_CHANGE
 
+    /**
+     * The same link on the portal web page, for the [ActionPhase.NotOnThisDevice]
+     * card. Desktop cannot check a code, so the only thing it can offer is the
+     * page that can.
+     */
+    val webUrl: String get() = webActionUrl(link)
+
     var phase by mutableStateOf(initialPhase())
         private set
 

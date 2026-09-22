@@ -1,6 +1,7 @@
 package com.kinfolk.portal.util
 
 import com.kinfolk.portal.auth.parseEmailActionUrl
+import com.kinfolk.portal.auth.parseQuery
 import kotlinx.browser.window
 
 /**
@@ -15,7 +16,10 @@ actual fun readInitialClaimInviteId(): String? {
     parseClaim(hash)?.let { return it }
     val path = loc.pathname
     parseClaim(path)?.let { return it }
-    return parseQueryString(loc.search.removePrefix("?"))["invite"]?.takeIf { it.isNotBlank() }
+    // #905: the hand-rolled parser this used to call lived beside the old
+    // secure-reset parsing and went with it. This is the same query parser the
+    // email action links use, which also decodes `%XX` and `+`.
+    return parseQuery(loc.search.removePrefix("?"))["invite"]?.takeIf { it.isNotBlank() }
 }
 
 private fun parseClaim(s: String): String? = parseSegment(s, "claim")

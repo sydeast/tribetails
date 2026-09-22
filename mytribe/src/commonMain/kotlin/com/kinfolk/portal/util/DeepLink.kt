@@ -18,28 +18,30 @@ expect fun readInitialShareToken(): String?
  * Parsed by [com.kinfolk.portal.auth.parseEmailActionUrl] from
  * `https://kinfolk.tribetails.com/account/secure-reset` or `/account/action`.
  *
+ * There is no `email` here, and that is the point. The field this type used to
+ * carry came from an `email` query param, and the screen showed it as the
+ * account. No Firebase link sends one, and a link is not evidence of whose
+ * account it is, so the address now comes from the verified code alone. Losing
+ * the field makes that structural rather than a rule somebody has to remember.
+ *
  * @property oobCode     The code from the link. Blank when the link had none,
  *                       which the screen reports as "This link is incomplete."
- * @property email       NOT READ by the screen. The account always comes from
- *                       the verified code. Kept only so the desktop entry point
- *                       (`jvmMain/Main.kt`, owned by PR #904) still compiles;
- *                       remove it once that lands.
  * @property mode        The link's `mode`, `resetPassword` when absent.
  * @property continueUrl An allowlisted continue target, or null.
  */
 data class SecureResetParams(
     val oobCode: String,
-    val email: String? = null,
     val mode: String = "resetPassword",
     val continueUrl: String? = null,
 )
+
 /**
  * Returns the email action link the app was launched with, or null.
  *
  * Android: set by MainActivity from the App Link's `intent.data`.
  * Web (Kotlin/JS): parsed from `window.location.href`.
- * Desktop: set from the legacy `--secure-reset-oob=` JVM arg. Desktop has no
- * link handler, and its auth backend cannot check a code, so the screen tells
- * the reader to open the link in a browser and files nothing.
+ * Desktop: set from `--email-link=<url>` or the older `--secure-reset-oob=`
+ * JVM arg. Desktop's auth backend cannot check a code, so the screen tells the
+ * reader to open the link in a browser and files nothing.
  */
 expect fun readInitialSecureResetParams(): SecureResetParams?
