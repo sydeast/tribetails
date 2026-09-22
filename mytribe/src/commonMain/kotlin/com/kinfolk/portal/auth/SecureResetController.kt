@@ -58,6 +58,10 @@ enum class SendState { Idle, Sending, Sent, Failed, Missing }
  *   choice, calls `confirmSecureReset` through [SecureResetFetcher].
  * - Expired and used-or-invalid codes each get their own message, and a reset
  *   link offers "Send a new link". A network failure offers a retry.
+ * - "Send a new link" keeps the continue target the original link carried, so
+ *   a staff member's replacement still points at the admin sign-in (#936). The
+ *   target goes through [safeContinueUrl] on the way out, so a replacement
+ *   cannot reach a host the allowlist excludes.
  */
 class SecureResetController(
     private val link: SecureResetParams,
@@ -217,7 +221,30 @@ class SecureResetController(
         }
     }
 
-    /** "Send a new link" from an expired or used reset link. */
+    /**
+     * Where a link this screen sends should continue to: wherever the link that
+     * arrived continued to, run through [safeContinueUrl] again at the point of
+     * use.
+     *
+     * Both [SecureResetScreen] overloads already sanitise, so on the app's real
+     * paths this is a second pass over an allowed value, which [safeContinueUrl]
+     * leaves alone. It is here because a sent link outlives the screen: whatever
+     * built this controller, the address Firebase mints a link for can only
+     * carry a target the allowlist allows. A forged host becomes null, and null
+     * asks for a bare link, which is exactly what the web page does with a
+     * target it refused.
+     */
+    private val resendTarget: String? get() = safeContinueUrl(link.continueUrl)
+
+    /**
+     * "Send a new link" from an expired or used reset link.
+     *
+     * The replacement continues where the original did, so a staff member whose
+     * `auntie.tribetails.com` link lapsed gets another one back to the admin
+     * sign-in instead of the household's (#936). Portal web's `ResendLink` has
+     * done this since #892 review item 8, null included: a bare link gets a bare
+     * replacement, and the page offers both sign-ins again.
+     */
     fun sendNewLink(email: String) {
         if (resend == SendState.Sending) return
         val address = email.trim()
@@ -228,7 +255,7 @@ class SecureResetController(
         resend = SendState.Sending
         scope.launch {
             resend = try {
-                auth.sendPasswordReset(address)
+                auth.sendPasswordReset(address, resendTarget)
                 SendState.Sent
             } catch (c: CancellationException) {
                 throw c
@@ -242,7 +269,10 @@ class SecureResetController(
         if (resend != SendState.Sending) resend = SendState.Idle
     }
 
-    /** After a recover link restores the old address, sends a reset link to it. */
+    /**
+     * After a recover link restores the old address, sends a reset link to it.
+     * Same target rule as [sendNewLink]; web passes `link.continueUrl` here too.
+     */
     fun sendRecoveryReset() {
         val done = phase as? ActionPhase.EmailDone ?: return
         val email = done.email ?: return
@@ -250,7 +280,7 @@ class SecureResetController(
         recoveryReset = SendState.Sending
         scope.launch {
             recoveryReset = try {
-                auth.sendPasswordReset(email)
+                auth.sendPasswordReset(email, resendTarget)
                 SendState.Sent
             } catch (c: CancellationException) {
                 throw c

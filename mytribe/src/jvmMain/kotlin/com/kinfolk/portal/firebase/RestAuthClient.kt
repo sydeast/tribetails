@@ -121,19 +121,26 @@ internal class RestAuthClient(
      * limits and no per-email budget an attacker can drain.
      *
      * The host comes from [endpoints] (#889), so `FIREBASE_AUTH_EMULATOR_HOST`
-     * sends this at the Auth emulator exactly as it does sign-in. `continueUrl`
-     * is a link destination rather than a call target, and is the same portal
-     * sign-in the Android app and portal web ask for.
+     * sends this at the Auth emulator exactly as it does sign-in. [continueUrl]
+     * is a link destination rather than a call target, and defaults to the same
+     * portal sign-in the Android app and portal web ask for.
+     *
+     * #936: null omits `continueUrl` and `canHandleCodeInApp` from the body
+     * entirely, which is the bare link Identity Toolkit mints when the web SDK
+     * is called with no options. Desktop's reset screen cannot reach this (it
+     * cannot check a code, so it never reaches "Send a new link"), but the call
+     * takes the same argument every client's does, so the contract is one
+     * contract.
      *
      * An address that is not an account fails here with `EMAIL_NOT_FOUND`;
      * [AuthRepository.sendPasswordReset] absorbs that so no screen can report
      * it. Trimmed for the same reason the Android send trims.
      */
-    suspend fun sendPasswordReset(email: String) {
+    suspend fun sendPasswordReset(email: String, continueUrl: String? = EmailAction.PORTAL_SIGN_IN_URL) {
         val url = "${endpoints.identityToolkitBase()}/accounts:sendOobCode?key=${endpoints.API_KEY}"
         val res: HttpResponse = client.post(url) {
             contentType(ContentType.Application.Json)
-            setBody(passwordResetOobBody(email))
+            setBody(passwordResetOobBody(email, continueUrl))
         }
         if (!res.status.isSuccess()) throw FirebaseRestException("sendPasswordReset", res.status.value, res.bodyAsText())
     }
@@ -197,21 +204,31 @@ internal class RestAuthClient(
  * The `accounts:sendOobCode` body for a password reset, exactly as it goes on
  * the wire (#911).
  *
- * A top-level function rather than a private detail so a test can pin the four
+ * A top-level function rather than a private detail so a test can pin the
  * fields without a socket, the way the admin desktop pins its own
  * (`encodePasswordResetRequestBody`, AuthInterop.jvm.kt). `encodeDefaults` is
- * on in [RestHttp.json], so `requestType`, `continueUrl` and
- * `canHandleCodeInApp` are all written even though they are defaulted.
+ * on in [RestHttp.json], so `requestType` is written even though it is
+ * defaulted, and `explicitNulls` is off, so a null [continueUrl] leaves both
+ * link fields out of the body rather than writing them as JSON null (#936).
+ * Identity Toolkit then mints a link with no continue target, which is what the
+ * web SDK sends when it is called with no options.
  */
-internal fun passwordResetOobBody(email: String): String =
-    RestHttp.json.encodeToString(PasswordResetOobRequest(email = email.trim()))
+internal fun passwordResetOobBody(email: String, continueUrl: String?): String =
+    RestHttp.json.encodeToString(
+        PasswordResetOobRequest(
+            email = email.trim(),
+            continueUrl = continueUrl,
+            canHandleCodeInApp = if (continueUrl == null) null else false,
+        ),
+    )
 @Serializable
 internal data class PasswordResetOobRequest(
     val email: String,
     val requestType: String = "PASSWORD_RESET",
-    /** Where the link continues once the password is set. Same target as portal web and Android. */
-    val continueUrl: String = EmailAction.PORTAL_SIGN_IN_URL,
-    val canHandleCodeInApp: Boolean = false,
+    /** Where the link continues once the password is set. Null asks for a bare link. */
+    val continueUrl: String? = EmailAction.PORTAL_SIGN_IN_URL,
+    /** Omitted alongside a null [continueUrl]; there is no link target to handle. */
+    val canHandleCodeInApp: Boolean? = false,
 )
 internal class FirebaseRestException(
     op: String,

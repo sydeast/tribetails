@@ -45,7 +45,7 @@ private class ClaimRefusingBackend(
         AuthState.SignedIn("u", null, null)
     override suspend fun signInWithPhoneOtp(verificationId: String, smsCode: String) = AuthState.SignedIn("u", null, null)
     override suspend fun signOut() = Unit
-    override suspend fun sendPasswordReset(email: String) {
+    override suspend fun sendPasswordReset(email: String, continueUrl: String?) {
         resets += email
     }
     override suspend fun changePassword(currentPassword: String, newPassword: String) = Unit

@@ -32,8 +32,16 @@ interface EmailActionAuth {
      * since #911 is Firebase's own reset on every client: the SDK on Android
      * and web, `accounts:sendOobCode` on desktop. An address that is not an
      * account is absorbed there, so this reports Sent either way.
+     *
+     * [continueUrl] is where the new link continues once the password is set,
+     * matching portal web's `sendReset(email, continueUrl)`. Null asks for a
+     * bare link, which is what a link carrying no target gets, and what a
+     * target [safeContinueUrl] refused gets too. #936: the replacement keeps
+     * the original target, and the caller is the one that runs it through
+     * [safeContinueUrl] first, so no link can name a host the allowlist
+     * excludes.
      */
-    suspend fun sendPasswordReset(email: String)
+    suspend fun sendPasswordReset(email: String, continueUrl: String?)
 
     /** The platform's auth error code for [t]; see [platformAuthErrorCode]. */
     fun errorCodeOf(t: Throwable): String? = platformAuthErrorCode(t)
@@ -47,6 +55,7 @@ fun AuthRepository.emailActionAuth(): EmailActionAuth {
         override suspend fun confirmPasswordReset(oobCode: String, newPassword: String) =
             repo.confirmPasswordReset(oobCode, newPassword)
         override suspend fun applyActionCode(oobCode: String) = repo.applyActionCode(oobCode)
-        override suspend fun sendPasswordReset(email: String) = repo.sendPasswordReset(email)
+        override suspend fun sendPasswordReset(email: String, continueUrl: String?) =
+            repo.sendPasswordReset(email, continueUrl)
     }
 }

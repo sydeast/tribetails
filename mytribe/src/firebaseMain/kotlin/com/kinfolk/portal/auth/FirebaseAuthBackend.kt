@@ -98,21 +98,26 @@ class FirebaseAuthBackend : AuthBackend {
      * account lock existed. Firebase's reset has Google's own abuse limits and
      * no per-email budget an attacker can drain.
      *
-     * The settings are the ones portal web sends: continue to the portal
-     * sign-in, and do not ask for the code to be handled in the app
+     * The settings are the ones portal web sends: continue to [continueUrl],
+     * and do not ask for the code to be handled in the app
      * (`canHandleCodeInApp = false`). `androidPackageName` is deliberately
      * unset; it exists for Dynamic Links, which are shut down.
+     *
+     * #936: a null [continueUrl] asks for a link with no continue target at
+     * all, the same thing `sendPasswordResetEmail(auth, email)` with no options
+     * does on portal web. The reset screen sends that for a link that arrived
+     * bare, and for one whose target the allowlist refused. Every other caller
+     * takes [AuthRepository.sendPasswordReset]'s default, the portal sign-in.
      *
      * Trimmed, because a mobile keyboard's trailing space is otherwise a
      * refused address (the reason the callable call trimmed too, #886 review).
      */
-    override suspend fun sendPasswordReset(email: String) {
+    override suspend fun sendPasswordReset(email: String, continueUrl: String?) {
         auth.sendPasswordResetEmail(
             email = email.trim(),
-            actionCodeSettings = ActionCodeSettings(
-                url = EmailAction.PORTAL_SIGN_IN_URL,
-                canHandleCodeInApp = false,
-            ),
+            actionCodeSettings = continueUrl?.let {
+                ActionCodeSettings(url = it, canHandleCodeInApp = false)
+            },
         )
     }
 

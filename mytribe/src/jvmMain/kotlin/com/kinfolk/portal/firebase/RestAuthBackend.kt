@@ -121,8 +121,8 @@ internal class RestAuthBackend(
         JvmTokenStore.clear()
     }
 
-    override suspend fun sendPasswordReset(email: String) {
-        rest.sendPasswordReset(email)
+    override suspend fun sendPasswordReset(email: String, continueUrl: String?) {
+        rest.sendPasswordReset(email, continueUrl)
     }
 
     override suspend fun changePassword(currentPassword: String, newPassword: String) {

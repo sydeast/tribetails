@@ -31,6 +31,8 @@ class SecureResetControllerTest {
         val resets = mutableListOf<Pair<String, String>>()
         val applied = mutableListOf<String>()
         val sent = mutableListOf<String>()
+        /** Where each sent link was asked to continue to, in send order. */
+        val sentTargets = mutableListOf<String?>()
 
         override suspend fun readActionCode(oobCode: String): ActionCodeInfo {
             reads++
@@ -48,9 +50,10 @@ class SecureResetControllerTest {
             applied += oobCode
         }
 
-        override suspend fun sendPasswordReset(email: String) {
+        override suspend fun sendPasswordReset(email: String, continueUrl: String?) {
             sendFailure?.let { throw it }
             sent += email
+            sentTargets += continueUrl
         }
 
         override fun errorCodeOf(t: Throwable): String? = codes[t]
@@ -339,6 +342,67 @@ class SecureResetControllerTest {
         assertEquals(SendState.Idle, c.resend)
     }
 
+    /**
+     * #936: a staff member who ran out of time on an admin link gets another
+     * admin link, not the household's sign-in.
+     */
+    @Test
+    fun aReplacementLinkContinuesWhereTheOriginalDid() = runTest {
+        val expired = RuntimeException("expired")
+        val auth = FakeAuth(readFailure = expired, codes = mapOf(expired to "EXPIRED_OOB_CODE"))
+        val c = controller(
+            this,
+            auth,
+            link = SecureResetParams(
+                oobCode = "code1",
+                continueUrl = EmailAction.STAFF_SIGN_IN_URL,
+            ),
+        )
+        c.load()
+        c.sendNewLink("staff@tribetails.com")
+        advanceUntilIdle()
+        assertEquals(listOf<String?>(EmailAction.STAFF_SIGN_IN_URL), auth.sentTargets)
+    }
+
+    /**
+     * #936, and the reason this is not a pass-through. The target is read off a
+     * URL, so a link naming a lookalike host must not turn a replacement link
+     * into a link at that host. `auntie.tribetails.com.evil.test` is the exact
+     * host PR #923's `startsWith` bug read as the admin site.
+     *
+     * Null is the refusal, and asks Firebase for a link with no continue target
+     * at all, which is what the web page does with a target it refused.
+     */
+    @Test
+    fun aForgedTargetOnTheOriginalIsNotCarriedIntoTheReplacement() = runTest {
+        val forged = "https://auntie.tribetails.com.evil.test/steal"
+        val expired = RuntimeException("expired")
+        val auth = FakeAuth(readFailure = expired, codes = mapOf(expired to "EXPIRED_OOB_CODE"))
+        val c = controller(
+            this,
+            auth,
+            link = SecureResetParams(oobCode = "code1", continueUrl = forged),
+        )
+        c.load()
+        c.sendNewLink("pat@household.test")
+        advanceUntilIdle()
+        assertEquals(listOf<String?>(null), auth.sentTargets)
+        assertTrue(auth.sentTargets.none { it == forged }, "the forged target reached the replacement link")
+        assertEquals(SendState.Sent, c.resend)
+    }
+
+    /** A link that carried no target gets a replacement that carries none either. */
+    @Test
+    fun aBareLinkGetsABareReplacement() = runTest {
+        val expired = RuntimeException("expired")
+        val auth = FakeAuth(readFailure = expired, codes = mapOf(expired to "EXPIRED_OOB_CODE"))
+        val c = controller(this, auth)
+        c.load()
+        c.sendNewLink("pat@household.test")
+        advanceUntilIdle()
+        assertEquals(listOf<String?>(null), auth.sentTargets)
+    }
+
     // ── Verify, change and recover ──────────────────────────────────────────
 
     @Test
@@ -372,6 +436,32 @@ class SecureResetControllerTest {
         advanceUntilIdle()
         assertEquals(listOf("old@household.test"), auth.sent)
         assertEquals(SendState.Sent, c.recoveryReset)
+    }
+
+    /** #936: the recover link's reset offer follows the same target rule. */
+    @Test
+    fun aRecoveryResetKeepsAnAllowedTargetAndDropsAForgedOne() = runTest {
+        for ((target, expected) in listOf(
+            EmailAction.STAFF_SIGN_IN_URL to EmailAction.STAFF_SIGN_IN_URL,
+            "https://auntie.tribetails.com.evil.test/steal" to null,
+        )) {
+            val auth = FakeAuth(ActionCodeInfo(EmailAction.OP_RECOVER_EMAIL, "old@household.test", "new@evil.test"))
+            val c = controller(
+                this,
+                auth,
+                link = SecureResetParams(
+                    oobCode = "code1",
+                    mode = EmailAction.MODE_RECOVER,
+                    continueUrl = target,
+                ),
+            )
+            c.load()
+            c.apply()
+            advanceUntilIdle()
+            c.sendRecoveryReset()
+            advanceUntilIdle()
+            assertEquals(listOf<String?>(expected), auth.sentTargets, "target $target")
+        }
     }
 
     /** The reset offer belongs to recover links only. */

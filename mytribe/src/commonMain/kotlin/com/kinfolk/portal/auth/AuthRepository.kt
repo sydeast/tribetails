@@ -20,7 +20,13 @@ interface AuthBackend {
     suspend fun signInWithIdToken(provider: AuthProviderId, idToken: String, rawNonce: String?): AuthState.SignedIn
     suspend fun signInWithPhoneOtp(verificationId: String, smsCode: String): AuthState.SignedIn
     suspend fun signOut()
-    suspend fun sendPasswordReset(email: String)
+
+    /**
+     * Sends a reset link that continues to [continueUrl] once the password is
+     * set, or a bare link when it is null. #936 gave this the parameter; see
+     * [AuthRepository.sendPasswordReset] for who passes what.
+     */
+    suspend fun sendPasswordReset(email: String, continueUrl: String?)
     /** Re-auth with [currentPassword], then set [newPassword]. */
     suspend fun changePassword(currentPassword: String, newPassword: String)
     /** Re-auth with [currentPassword], then begin changing the sign-in email to [newEmail]. */
@@ -253,10 +259,17 @@ class AuthRepository(
      * shows the same sentence it shows for a real account, exactly as the
      * `requestPasswordReset` callable's constant `{ ok: true }` used to. See
      * [isUnknownAccountOnReset]; nothing else is absorbed.
+     *
+     * #936: [continueUrl] is where the link continues once the password is set,
+     * the same parameter portal web's `sendReset(email, continueUrl)` takes and
+     * with the same two defaults: the portal sign-in unless a caller says
+     * otherwise, and a bare link for an explicit null. The email action screen
+     * passes the target the original link carried, through [safeContinueUrl],
+     * so a replacement link can only continue somewhere the allowlist allows.
      */
-    suspend fun sendPasswordReset(email: String) {
+    suspend fun sendPasswordReset(email: String, continueUrl: String? = EmailAction.PORTAL_SIGN_IN_URL) {
         try {
-            withRecaptchaGuard { backend.sendPasswordReset(email) }
+            withRecaptchaGuard { backend.sendPasswordReset(email, continueUrl) }
         } catch (c: CancellationException) {
             throw c
         } catch (t: Throwable) {
@@ -332,7 +345,7 @@ internal class FakeAuthBackend(
     override suspend fun signInWithPhoneOtp(verificationId: String, smsCode: String) =
         AuthState.SignedIn(uid, email, null)
     override suspend fun signOut() = Unit
-    override suspend fun sendPasswordReset(email: String) = Unit
+    override suspend fun sendPasswordReset(email: String, continueUrl: String?) = Unit
     override suspend fun changePassword(currentPassword: String, newPassword: String) = Unit
     override suspend fun changeEmail(currentPassword: String, newEmail: String) = Unit
 }
