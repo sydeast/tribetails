@@ -139,7 +139,8 @@ class UrlOpenerSeamGuardTest {
     /**
      * Self-check 1. The scan above passes when nothing is wrong AND when the
      * classifier is broken. This pins the classifier against both mistakes:
-     * a violation it must flag, and the four shapes it must not.
+     * the shapes it must flag, including the two that look like seams and are
+     * not, and the shapes it must leave alone.
      */
     @Test
     fun theClassifierFlagsARealCallAndOnlyARealCall() {
