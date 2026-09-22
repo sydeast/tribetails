@@ -235,6 +235,19 @@ service cloud.firestore {
              && bsBool('requireArrivalDepartureVerification')
              && bsBool('autoStartTrackingOnVisitStart')
              && bsBool('allowClientLocationSharing')
+ // Phase 1's pre-launch household send gate. The server reads it as `=== true`
+ // and so cannot be fooled by a wrong type, but a client that writes a string
+ // here would leave an operator looking at a toggle whose state nothing agrees
+ // on. See `functions/src/notifications/householdSendGate.ts`.
+             && bsBool('householdNotificationsLive')
+ // Phase 2: the hour the daily notification jobs act on, in the business zone.
+ // The server falls back to its default on a value it cannot use rather than
+ // going silent, so this rule is not what keeps the jobs running. It is what
+ // keeps the fallback unreachable from a client, which leaves a hand edit in the
+ // Firestore console as the only way to reach it. See
+ // `functions/src/lib/notificationSchedule.ts`.
+             && bsInt('householdNotificationHour', 0, 23)
+             && bsInt('scheduleDigestHour', 0, 23)
              && bsInt('defaultTimeBlockDurationHours', 1, 24)
              && bsInt('travelBufferMinutes', 0, 480)
              && bsInt('saveRoutesForDays', 1, 3650)
@@ -254,6 +267,19 @@ service cloud.firestore {
     match /business_settings/{docId} {
       allow read: if isAuntie() || isTestAdmin();
       allow write: if isAuntie() && validBusinessSettings();
+    }
+
+ // Which business day each hour-driven cron last completed its scan on. DENIED
+ // TO EVERY CLIENT, including an Auntie, and the reason is the opposite of the
+ // one that protects `integrations_config` below: there is no secret here, there
+ // is a guard. `scheduled_runs/{fn}.lastRunDayIso` is what stops a job sending
+ // twice in one day when the operator moves its hour, so a client able to write
+ // it could clear the marker and a client able to set it could suppress a day's
+ // notices. Nothing needs it: the Admin SDK inside the functions bypasses rules,
+ // and the settings the operator DOES edit live one block up. See
+ // `functions/src/lib/notificationSchedule.ts`.
+    match /scheduled_runs/{jobId} {
+      allow read, write: if false;
     }
 
  // Coverage Package Builder config (the admin's visit menu + coverage rules).
