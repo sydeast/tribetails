@@ -8,7 +8,7 @@ vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 beforeEach(() => mocks.dbFn.mockReset());
 
-import { importSeedTemplatesHandler } from '../src/admin/importSeedTemplates';
+import { importSeedTemplatesHandler, toRows } from '../src/admin/importSeedTemplates';
 import { planImport, plannedWrites } from '../src/notifications/importPlanner';
 import { SEED_CORPUS } from '../src/notifications/seedCorpus.generated';
 
@@ -68,6 +68,7 @@ describe('importSeedTemplates: the dry run', () => {
     expect(row.channels.map((c) => c.channel)).toEqual(['email', 'sms', 'push']);
     expect(row.channels.every((c) => c.outcome === 'create')).toBe(true);
     expect(row.blocked).toBe(false);
+    expect(row.issues).toEqual([]);
     expect(row.differsFromRepo).toBe(false);
     expect(res.counts.create).toBe(3);
   });
@@ -226,6 +227,18 @@ describe('planImport: the triple-stash guard reaches imported templates too', ()
     expect(email?.outcome).toBe('blocked');
     expect(email?.notes.join(' ')).toMatch(/triple stash/);
     expect(email?.notes.join(' ')).toMatch(/Change every \{\{\{name\}\}\} to \{\{name\}\}/);
+  });
+
+  it('SAD: the report row carries every reason, so the import screens can show it beside Refused (#892 review 2)', () => {
+    const plan = planImport({
+      corpus: [{ ...poisoned[0], emailHtml: '<a href={{link}}>Go</a> {{{payload}}}' }],
+      existing: {},
+    });
+    const [row] = toRows(plan);
+    expect(row!.blocked).toBe(true);
+    expect(row!.issues.join(' ')).toMatch(/triple stash/);
+    expect(row!.issues.join(' ')).toMatch(/without quotes, like href=\{\{link\}\}/);
+    expect(row!.issues.every((i) => /^(email|sms|push): /.test(i))).toBe(true);
   });
 
   it('SAD: a blocked channel holds back the whole template, not just itself', () => {

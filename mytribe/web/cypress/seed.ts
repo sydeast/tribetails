@@ -1,4 +1,4 @@
-import { KINFOLK } from './fixtures/accounts';
+import { KINFOLK, RESET_KINFOLK, STAFF } from './fixtures/accounts';
 
 /**
  * Emulator seed for the portal's Cypress harness, run once per run (see
@@ -153,4 +153,9 @@ export default async function seed(): Promise<void> {
     authorName: 'Auntie',
     createdAt: new Date('2026-07-02T18:30:00Z'),
   });
+
+  // #892: the password-reset spec's own accounts, so resetting them never
+  // touches the KINFOLK login every other spec signs in with.
+  await createUser(RESET_KINFOLK.email, RESET_KINFOLK.password, { kinfolkId: RESET_KINFOLK.kinfolkId });
+  await createUser(STAFF.email, STAFF.password, { admin: true });
 }

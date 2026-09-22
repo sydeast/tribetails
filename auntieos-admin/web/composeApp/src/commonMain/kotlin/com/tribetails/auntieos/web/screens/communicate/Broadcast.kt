@@ -204,6 +204,11 @@ fun decodeBroadcastResult(dataJson: String): BroadcastResult {
  * through verbatim (fail loud, never hide a provider/validation failure).
  */
 fun broadcastErrorText(message: String): String = when {
+    // #867 review: a timeout is not a failure the operator can read as "nothing
+    // went out". The function may still be sending, and only a resend with the
+    // same draft (same idempotency key) lands on that broadcast.
+    isBroadcastTimeout(message) ->
+        "The send may still be running. Press Send again without changing anything to see its status."
     message.contains("no_recipients", ignoreCase = true) ->
         "That audience has no kinfolk right now. Nothing was sent."
     message.contains("broadcast_all_failed", ignoreCase = true) ->
@@ -216,6 +221,44 @@ fun broadcastErrorText(message: String): String = when {
         "A stop is already going through. It finishes within a minute."
     else -> message
 }
+
+/** #867 review: true when a broadcast call ended because the request ran out of time. */
+fun isBroadcastTimeout(message: String): Boolean = message == com.tribetails.auntieos.web.data.AUNTIE_TIMEOUT_MESSAGE
+
+/**
+ * #814: what a submission is. The idempotency key is re-minted only when this
+ * changes, so an unchanged resend lands on the broadcast the first press claimed.
+ */
+fun broadcastSignature(
+    segmentId: String?,
+    kind: SegmentKind,
+    statusesText: String,
+    tags: List<String>,
+    tagMatch: TagMatch,
+    channels: Collection<BroadcastChannel>,
+    subject: String,
+    body: String,
+): String = listOf(
+    segmentId.orEmpty(),
+    kind.name,
+    statusesText,
+    tags.toString(),
+    tagMatch.name,
+    channels.map { it.wire }.sorted().toString(),
+    subject,
+    body,
+).joinToString("\u001F") // a separator no typed field can contain
+
+/**
+ * #867 review: after a send timed out, editing the draft changes its signature,
+ * so the next Send mints a new key and starts a second broadcast. This is the
+ * warning shown while the draft differs from the one that timed out, or null.
+ */
+fun broadcastEditWarning(timedOutSignature: String?, currentSignature: String): String? =
+    if (timedOutSignature != null && timedOutSignature != currentSignature) {
+        "The last send timed out and may still be going out. You changed the message or audience since then, " +
+            "so Send now starts a separate broadcast and some kinfolk could get both."
+    } else null
 
 /**
  * One-line human summary of a broadcast result for the success banner. Pure.

@@ -42,8 +42,13 @@ The guest funnel, which has its own quirks worth knowing before you touch it:
   password-reset email with the mockup's toast states)
 - `/claim?invite=<id>` invite-claim funnel (also parses legacy `#/claim/<id>`
   and `/claim/<id>` link forms)
-- `/account/secure-reset?oobCode=...&email=...` flagged-reset flow (signed out,
-  hits the public `confirmSecureReset` endpoint)
+- `/account/secure-reset` (and its alias `/account/action`) is the project's
+  Firebase email action handler: the `callbackUri` in Identity Toolkit points
+  here, so every Firebase auth email lands on it. It handles
+  `mode=resetPassword` (a normal reset, no security incident),
+  `verifyEmail`, `verifyAndChangeEmail` and `recoverEmail`. The "I did not ask
+  for this reset" choice on the reset form is the flagged-reset flow, which hits
+  the public `confirmSecureReset` endpoint with only the oobCode.
 
 ## Contracts to keep in sync
 

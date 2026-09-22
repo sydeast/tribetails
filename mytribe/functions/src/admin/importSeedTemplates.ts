@@ -59,6 +59,12 @@ export interface ImportReportRow {
   channels: Array<{ channel: TemplateChannel; outcome: string; notes: string[] }>;
   differsFromRepo: boolean;
   blocked: boolean;
+  /**
+   * Every complaint that refused this template, one operator-facing sentence
+   * each, prefixed with its channel. Empty unless `blocked`. The clients show it
+   * beside "Refused" (#892 review 2), since `refused` carries only the first.
+   */
+  issues: string[];
 }
 
 export interface ImportSeedTemplatesResult {
@@ -94,13 +100,15 @@ async function readExisting(ids: string[]): Promise<Record<string, Record<string
   return existing;
 }
 
-function toRows(plan: ImportPlan): ImportReportRow[] {
+/** Exported for tests: the committed corpus is clean, so a refused row needs a planned corpus. */
+export function toRows(plan: ImportPlan): ImportReportRow[] {
   return plan.templates.map((t) => ({
     templateId: t.templateId,
     aliasOf: NOTIFICATION_KEY_ALIASES[t.templateId]?.canonical ?? null,
     channels: t.channels.map((c) => ({ channel: c.channel, outcome: c.outcome, notes: c.notes })),
     differsFromRepo: t.differsFromRepo,
     blocked: t.blocked,
+    issues: t.blocked ? t.issues : [],
   }));
 }
 

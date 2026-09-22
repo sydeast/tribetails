@@ -65,6 +65,9 @@ import com.tribetails.auntieos.web.ui.components.AuntieSelectField
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
+import com.tribetails.auntieos.web.ui.components.LoadErrorBanner
+import com.tribetails.auntieos.web.ui.components.rememberReloadableRead
+import com.tribetails.auntieos.web.ui.components.settlesRetry
 import com.tribetails.auntieos.web.ui.components.AuntieChip
 import com.tribetails.auntieos.web.ui.components.AuntieChipTone
 import com.tribetails.auntieos.web.ui.components.AuntieDashedAddButton
@@ -105,7 +108,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
     val client = remember { FirestoreClient() }
-    val templatesRes by remember { client.templatesStream() }.collectAsState(initial = FirestoreResult.Loading)
+    val reload = rememberReloadableRead()
+    val templatesRes by remember(reload.generation) { client.templatesStream().settlesRetry(reload) }.collectAsState(initial = FirestoreResult.Loading)
 
     // I7: the household tag vocabulary backs the KINFOLK_TAG condition picker, so
     // a rule can only target a tag the operator actually manages. Read-only here;
@@ -245,6 +249,11 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
 
         val current = draft
         if (current == null) {
+            // #867: a failed read shows its error, not a shimmer that never ends.
+            (templatesRes as? FirestoreResult.Error)?.let {
+                LoadErrorBanner("Couldn't load templates", it.message, onRetry = reload::retry, retrying = reload.retrying)
+                return@ScreenScaffold
+            }
             ShimmerCard(height = 200.dp)
             return@ScreenScaffold
         }

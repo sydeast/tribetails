@@ -782,6 +782,13 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       dataKeys: ['kinfolkEmail', 'timestampIso', 'ip', 'userAgent', 'incidentId'],
     },
   ],
+  'security.breach_attempt.staff': [
+    {
+      trigger: 'A secure-reset confirmation is attempted against a staff account (admin claim) that did not ask.',
+      source: 'src/security/confirmSecureReset.ts',
+      dataKeys: ['staffEmail', 'timestampIso', 'ip', 'userAgent', 'incidentId'],
+    },
+  ],
 
   // ── Marketing ───────────────────────────────────────────────────────────
   'newsletter.announcement': [

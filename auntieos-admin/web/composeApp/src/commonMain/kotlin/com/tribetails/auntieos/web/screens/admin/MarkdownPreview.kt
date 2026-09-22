@@ -19,8 +19,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import coil3.compose.AsyncImage
 import com.tribetails.auntieos.web.theme.AuntieTheme
+import com.tribetails.auntieos.web.ui.components.AuntieAsyncImage
 
 /**
  * 13.3/13.4 live preview for the Template Bank rich editor (web/desktop). Renders the
@@ -82,7 +82,7 @@ private fun InlineLine(inlines: List<MdInline>, modifier: Modifier = Modifier) {
             Text(annotatedInlines(textRuns), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
         }
         images.forEach { img ->
-            AsyncImage(
+            AuntieAsyncImage(
                 model = img.url,
                 contentDescription = img.alt,
                 contentScale = ContentScale.Fit,

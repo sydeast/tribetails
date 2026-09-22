@@ -46,7 +46,9 @@ import javax.swing.filechooser.FileNameExtensionFilter
 internal object JvmMediaUpload {
     private const val SIGN_URL = "https://auntieos-ttpc.web.app/api/cloudinary/sign-upload"
     private val codec = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
-    private val http = HttpClient(Java)
+    // #867: timeouts and the test network guard come from the shared factory. A
+    // 50MB upload on a slow line needs longer than the default request limit.
+    private val http = auntieHttpClient(requestTimeoutMs = 300_000L)
 
     // Also doubles as the file-type gate for the picker branch below: the dialog
     // itself only lets the user select one of these extensions

@@ -3,11 +3,20 @@ import { Timestamp } from 'firebase-admin/firestore';
 import { buildDbMock } from './_helpers/mockDb';
 import { EMERGENCY_CONTACT_OUTSIDE_MESSAGE } from '../src/lib/emergencyContacts';
 
-const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), writeAuditEntryFn: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), writeAuditEntryFn: vi.fn(), hasKinfolkPermSpy: vi.fn() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: mocks.writeAuditEntryFn }));
+// #873 final review: the rate limiter is NOT mocked. It counts inside the save
+// transaction, against the same mocked documents, so a test reads the counter
+// at rate_limits/profileSave:3.
+// The real gate, wrapped so a test can count how often it ran.
+vi.mock('../src/lib/memberGate', async () => {
+  const actual = await vi.importActual<typeof import('../src/lib/memberGate')>('../src/lib/memberGate');
+  mocks.hasKinfolkPermSpy.mockImplementation(actual.hasKinfolkPerm);
+  return { ...actual, hasKinfolkPerm: mocks.hasKinfolkPermSpy };
+});
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<any>('firebase-admin/firestore');
   return { ...actual, FieldValue: { serverTimestamp: () => '__SERVER_TS__' } };
@@ -16,6 +25,7 @@ beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.writeAuditEntryFn.mockReset();
   mocks.writeAuditEntryFn.mockResolvedValue('audit-id');
+  mocks.hasKinfolkPermSpy.mockClear();
   delete process.env.AUNTIE_OPERATOR_UIDS;
 });
 
@@ -112,6 +122,77 @@ describe('saveTribeProfileHandler', () => {
 });
 
 /**
+ * #873. A household with a tribeProfile form schema saved `customFields` rebuilt
+ * from the schema keys, and the callable replaced the stored list whole, so every
+ * office-set, older-schema or hand-added row was deleted on the next save. The
+ * callable now merges by key and removes a row only when it is named in
+ * `removeCustomFieldKeys`.
+ */
+describe('saveTribeProfileHandler: customFields merge by key (#873)', () => {
+  const OFFICE = { key: 'gateNote', label: 'Set by Auntie', value: 'Side gate sticks' };
+  const ALLERGY = { key: 'allergy', label: 'Allergies', value: 'Chicken' };
+  const VET = { key: 'vetClinicId', label: 'Vet Clinic', value: 'clinic-1' };
+  const EC = { key: 'emergencyContactName', label: 'Emergency Contact', value: 'Rae Halbrook' };
+
+  function household(stored: Array<Record<string, string>>) {
+    const docs: Record<string, any> = {
+      'clients/u1': { kinfolkIds: ['3'] },
+      'families/3': { displayName: 'The Foster', customFields: stored },
+    };
+    const ctx = buildDbMock({ docs, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    return { ctx, docs };
+  }
+  async function save(data: Record<string, unknown>) {
+    const { saveTribeProfileHandler } = await import('../src/portal/saveTribeProfile');
+    return saveTribeProfileHandler({ data: { kinfolkId: '3', displayName: 'The Foster', ...data }, auth: { uid: 'u1' } } as any);
+  }
+  const stored = (docs: Record<string, any>) => docs['families/3'].customFields as Array<{ key: string; label: string; value: string }>;
+
+  it('an OLD client sending only its schema rows no longer deletes a stored non-schema row', async () => {
+    const { docs } = household([OFFICE, ALLERGY, VET]);
+    await expect(save({ customFields: [{ ...ALLERGY, value: 'Beef' }, VET] })).resolves.toEqual({ ok: true });
+    expect(stored(docs)).toEqual([OFFICE, { ...ALLERGY, value: 'Beef' }, VET]);
+  });
+
+  it('a NEW client (full list plus an empty removeCustomFieldKeys) keeps the non-schema row and its order', async () => {
+    const { docs } = household([OFFICE, ALLERGY]);
+    await expect(save({ customFields: [OFFICE, { ...ALLERGY, value: 'Beef' }], removeCustomFieldKeys: [] })).resolves.toEqual({ ok: true });
+    expect(stored(docs)).toEqual([OFFICE, { ...ALLERGY, value: 'Beef' }]);
+  });
+
+  it("a cleared schema field really clears: a sent '' is stored as ''", async () => {
+    const { docs } = household([OFFICE, ALLERGY]);
+    await save({ customFields: [{ ...ALLERGY, value: '' }], removeCustomFieldKeys: [] });
+    expect(stored(docs)).toEqual([OFFICE, { ...ALLERGY, value: '' }]);
+  });
+
+  it('a row named in removeCustomFieldKeys is removed, and nothing else is', async () => {
+    const { docs } = household([OFFICE, VET, ALLERGY]);
+    await save({ customFields: [], removeCustomFieldKeys: ['vetClinicId'] });
+    expect(stored(docs)).toEqual([OFFICE, ALLERGY]);
+  });
+
+  it('removeCustomFieldKeys works without customFields', async () => {
+    const { docs } = household([OFFICE, VET]);
+    await save({ removeCustomFieldKeys: ['vetClinicId'] });
+    expect(stored(docs)).toEqual([OFFICE]);
+  });
+
+  it('removeCustomFieldKeys cannot remove the stored Emergency Contact copy the #829 migration reads', async () => {
+    const { docs } = household([OFFICE, EC]);
+    await save({ customFields: [OFFICE], removeCustomFieldKeys: ['emergencyContactName'] });
+    expect(stored(docs)).toEqual([OFFICE, EC]);
+  });
+
+  it('refuses a key that is both sent and named for removal, and writes nothing', async () => {
+    const { ctx } = household([OFFICE, ALLERGY]);
+    await expect(save({ customFields: [ALLERGY], removeCustomFieldKeys: ['allergy'] })).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(ctx.writes).toHaveLength(0);
+  });
+});
+
+/**
  * #829: the `emergencyContact*` keys in `families/{id}.customFields` are a dead
  * store. Emergency Contacts live on the kinfolk record and are gated on
  * `home_access` inside `saveEmergencyContacts`. This callable strips the keys
@@ -183,8 +264,25 @@ describe('saveTribeProfileHandler: the old Emergency Contact keys are stripped, 
       saveTribeProfileHandler({ data: { kinfolkId: '3', customFields: changed }, auth: { uid: 'u2' } } as any),
     ).resolves.toEqual({ ok: true, emergencyContactIgnored: true });
     expect(ctx.writes.find((w) => w.path === 'kinfolk/3')).toBeUndefined();
+    // #873 final review: the ignored contact was the only difference, so the save
+    // changes nothing and writes nothing. The stored copy stays as it was.
+    expect(writtenFields(ctx)).toBeUndefined();
+    expect(JSON.stringify(ctx.writes)).not.toContain('555-9999');
+  });
+
+  it('#829 old client, no Home access: an ignored contact change beside a real edit saves the edit and keeps the stored copy', async () => {
+    const ctx = household(SECONDARY_NO_HOME);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { saveTribeProfileHandler } = await import('../src/portal/saveTribeProfile');
+    const changed = STORED_EC.map((f) =>
+      f.key === 'emergencyContactPhone' ? { ...f, value: '555-9999' } : f.key === 'k1' ? { ...f, value: 'Nov 2' } : f,
+    );
+    await expect(
+      saveTribeProfileHandler({ data: { kinfolkId: '3', customFields: changed }, auth: { uid: 'u2' } } as any),
+    ).resolves.toEqual({ ok: true, emergencyContactIgnored: true });
     const fields = writtenFields(ctx);
     expect(valueOf(fields, 'emergencyContactPhone')).toBe('555-0100');
+    expect(valueOf(fields, 'k1')).toBe('Nov 2');
     expect(JSON.stringify(fields)).not.toContain('555-9999');
   });
 
@@ -491,4 +589,240 @@ describe('saveTribeProfileHandler: what this caller was served decides an echo',
       expect(logged.filter((e) => e.severity === 'warn')).toEqual([]);
     },
   );
+});
+
+/**
+ * #873 review. The request schema capped rows at 40 and required a label, but
+ * current clients send every stored row back and getMyTribeProfile serves a
+ * missing label as '', so one big or unlabeled household could never save
+ * again. And the read-merge-write was not a transaction, so two devices saving
+ * at once dropped each other's rows.
+ */
+describe('saveTribeProfileHandler: limits and concurrent saves (#873 review)', () => {
+  const ALLERGY = { key: 'allergy', label: 'Allergies', value: 'Chicken' };
+  const OFFICE = { key: 'gateNote', label: 'Set by Auntie', value: 'Side gate sticks' };
+  const rowsOf = (n: number) => Array.from({ length: n }, (_, i) => ({ key: `field${i}`, label: `Field ${i}`, value: `v${i}` }));
+
+  function household(stored: unknown[], extra: Record<string, any> = {}) {
+    const docs: Record<string, any> = {
+      'clients/u1': { kinfolkIds: ['3'] },
+      'families/3': { displayName: 'The Foster', customFields: stored },
+      ...extra,
+    };
+    const ctx = buildDbMock({ docs, writeThrough: true, queryDocs: { 'families/3/members': [] } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    return { ctx, docs };
+  }
+  async function save(data: Record<string, unknown>) {
+    const { saveTribeProfileHandler } = await import('../src/portal/saveTribeProfile');
+    return saveTribeProfileHandler({ data: { kinfolkId: '3', displayName: 'The Foster', ...data }, auth: { uid: 'u1' } } as any);
+  }
+  const storedList = (docs: Record<string, any>) => docs['families/3'].customFields as unknown[];
+
+  it('a household with 60 stored rows saves when a current client sends every row back', async () => {
+    const sixty = rowsOf(60);
+    const { docs } = household(sixty);
+    const sent = sixty.map((r, i) => (i === 59 ? { ...r, value: 'edited' } : r));
+    await expect(save({ customFields: sent, removeCustomFieldKeys: [] })).resolves.toEqual({ ok: true });
+    expect(storedList(docs)).toHaveLength(60);
+    expect(storedList(docs)[59]).toEqual({ ...sixty[59], value: 'edited' });
+  });
+
+  it("a stored row with an empty or missing label, echoed back as '', saves and keeps the stored label", async () => {
+    const { docs } = household([{ key: 'legacyNote', value: 'Old' }, { key: 'blank', label: '', value: 'x' }, ALLERGY]);
+    await expect(
+      save({
+        customFields: [
+          { key: 'legacyNote', label: '', value: 'Old' },
+          { key: 'blank', label: '', value: 'y' },
+          { key: 'allergy', label: '', value: 'Beef' },
+        ],
+        removeCustomFieldKeys: [],
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(storedList(docs)).toEqual([
+      { key: 'legacyNote', label: '', value: 'Old' },
+      { key: 'blank', label: '', value: 'y' },
+      { ...ALLERGY, value: 'Beef' },
+    ]);
+  });
+
+  it('a NEW key with a blank label and a value is refused, and nothing is written', async () => {
+    const { ctx } = household([ALLERGY]);
+    await expect(save({ customFields: [ALLERGY, { key: 'pool', label: ' ', value: 'Heated' }] })).rejects.toMatchObject({
+      code: 'invalid-argument',
+      message: expect.stringContaining('pool'),
+    });
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it("a NEW key with a blank label and an empty value is not refused, and writes no row", async () => {
+    const { docs } = household([ALLERGY]);
+    await expect(save({ customFields: [ALLERGY, { key: 'pool', label: '', value: '' }] })).resolves.toEqual({ ok: true });
+    expect(storedList(docs)).toEqual([ALLERGY]);
+  });
+
+  it('a 200-character label saves, because the form schema allows one', async () => {
+    const { docs } = household([ALLERGY]);
+    const long = { key: 'pool', label: 'L'.repeat(200), value: 'Heated' };
+    await expect(save({ customFields: [ALLERGY, long] })).resolves.toEqual({ ok: true });
+    expect(storedList(docs)).toEqual([ALLERGY, long]);
+  });
+
+  it('a household already over 64 KiB still saves without growing, and cannot grow', async () => {
+    const big = Array.from({ length: 70 }, (_, i) => ({ key: `k${i}`, label: 'L', value: 'x'.repeat(1000) }));
+    const { ctx, docs } = household(big);
+    await expect(save({ customFields: [...big, { key: 'pool', label: 'Pool', value: 'Heated' }] })).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(ctx.writes).toHaveLength(0);
+    await expect(save({ customFields: big, removeCustomFieldKeys: [] })).resolves.toEqual({ ok: true });
+    await expect(save({ customFields: big.map((r, i) => (i === 0 ? { ...r, value: 'y'.repeat(1000) } : r)) })).resolves.toEqual({ ok: true });
+    await expect(save({ removeCustomFieldKeys: ['k1'] })).resolves.toEqual({ ok: true });
+    expect(storedList(docs)).toHaveLength(69);
+  });
+
+  const RATE = 'rate_limits/profileSave:3';
+
+  it('MIGRATED: 2,500 stored rows sent back unchanged with one row edited save', async () => {
+    const many = rowsOf(2500);
+    const { docs } = household(many);
+    // A same-length edit: the list is over 64 KiB, so it must not add bytes.
+    const sent = many.map((r, i) => (i === 7 ? { ...r, value: 'w7' } : r));
+    await expect(save({ customFields: sent, removeCustomFieldKeys: [] })).resolves.toEqual({ ok: true });
+    expect(storedList(docs)).toHaveLength(2500);
+    expect(storedList(docs)[7]).toEqual({ ...many[7], value: 'w7' });
+  });
+
+  it('2,000 new keys in one save are refused, and nothing is written or counted', async () => {
+    const { ctx, docs } = household([ALLERGY]);
+    const fresh = Array.from({ length: 2000 }, (_, i) => ({ key: `n${i}`, label: 'N', value: 'v' }));
+    await expect(save({ customFields: [ALLERGY, ...fresh] })).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(ctx.writes).toHaveLength(0);
+    expect(docs[RATE]).toBeUndefined();
+  });
+
+  it('CHANGED ROWS: editing more than 1,985 stored rows in one save is refused as too many changes', async () => {
+    const many = rowsOf(2500);
+    const { ctx } = household(many);
+    const sent = many.map((r) => ({ ...r, value: `w${r.value.slice(1)}` }));
+    await expect(save({ customFields: sent })).rejects.toMatchObject({ code: 'invalid-argument', message: expect.stringMatching(/fields changed/) });
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('CRAFTED: shrinking huge rows to make room cannot grow the row count past 1,985', async () => {
+    // 100 rows of 1000 characters and one small row, about 100 KiB.
+    const huge = Array.from({ length: 100 }, (_, i) => ({ key: `h${i}`, label: 'H', value: 'x'.repeat(1000) }));
+    const { ctx } = household([...huge, ALLERGY]);
+    // Clear the 100 (100 changes) and add 1,885 small keys: 1,985 changes, fewer
+    // bytes than stored, but 1,986 rows where 101 were stored.
+    const fresh = Array.from({ length: 1885 }, (_, i) => ({ key: `n${i}`, label: 'N', value: 'v' }));
+    await expect(save({ customFields: [...huge.map((r) => ({ ...r, value: '' })), ALLERGY, ...fresh] })).rejects.toMatchObject({
+      code: 'invalid-argument',
+      message: expect.stringMatching(/too many fields to add more/),
+    });
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('RATE LIMIT: a save that writes counts once in its own profileSave bucket', async () => {
+    const { docs } = household([ALLERGY]);
+    await expect(save({ customFields: [{ ...ALLERGY, value: 'Beef' }] })).resolves.toEqual({ ok: true });
+    expect(docs[RATE]).toMatchObject({ count: 1, windowStart: expect.any(Number) });
+    await expect(save({ customFields: [{ ...ALLERGY, value: 'Fish' }] })).resolves.toEqual({ ok: true });
+    expect(docs[RATE]).toMatchObject({ count: 2 });
+  });
+
+  it('RATE LIMIT: a refused save does not count', async () => {
+    const { docs } = household([ALLERGY]);
+    await expect(save({ customFields: [ALLERGY, { key: 'pool', label: '', value: 'Heated' }] })).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(docs[RATE]).toBeUndefined();
+  });
+
+  it('RATE LIMIT: over 60 in the hour, a save that would write is refused with resource-exhausted and writes nothing', async () => {
+    const { ctx, docs } = household([ALLERGY]);
+    docs[RATE] = { count: 60, windowStart: Date.now() };
+    await expect(save({ customFields: [{ ...ALLERGY, value: 'Beef' }] })).rejects.toMatchObject({ code: 'resource-exhausted' });
+    expect(ctx.writes).toHaveLength(0);
+    expect(docs[RATE]).toMatchObject({ count: 60 });
+    expect(storedList(docs)).toEqual([ALLERGY]);
+  });
+
+  it('NO-OP: sending exactly what is stored writes nothing, bumps nothing and does not count, even over the limit', async () => {
+    const { ctx, docs } = household([OFFICE, ALLERGY]);
+    await expect(save({ customFields: [OFFICE, ALLERGY], removeCustomFieldKeys: [] })).resolves.toEqual({ ok: true });
+    expect(ctx.writes).toHaveLength(0);
+    expect(docs['families/3'].updatedAt).toBeUndefined();
+    expect(docs[RATE]).toBeUndefined();
+    expect(mocks.writeAuditEntryFn).not.toHaveBeenCalled();
+    docs[RATE] = { count: 60, windowStart: Date.now() };
+    await expect(save({ customFields: [OFFICE, ALLERGY] })).resolves.toEqual({ ok: true });
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('RATE LIMIT: a save with nothing sent to write spends no save', async () => {
+    const { docs } = household([ALLERGY]);
+    const { saveTribeProfileHandler } = await import('../src/portal/saveTribeProfile');
+    await expect(saveTribeProfileHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any)).resolves.toEqual({ ok: true });
+    expect(docs[RATE]).toBeUndefined();
+  });
+
+  it('CONCURRENT: a row another device adds between this save reading and writing survives', async () => {
+    const { ctx, docs } = household([OFFICE, ALLERGY]);
+    const { installOptimisticTransactions } = await import('./_helpers/optimisticTransaction');
+    const ANDROID = { key: 'pool', label: 'Pool', value: 'Heated' };
+    const tx = installOptimisticTransactions(ctx.db, docs, {
+      onRead: (path, attempt) => {
+        if (path !== 'families/3' || attempt !== 1) return;
+        docs['families/3'] = { ...docs['families/3'], customFields: [...docs['families/3'].customFields, ANDROID] };
+      },
+    });
+    await expect(save({ customFields: [OFFICE, { ...ALLERGY, value: 'Beef' }], removeCustomFieldKeys: [] })).resolves.toEqual({ ok: true });
+    expect(storedList(docs)).toEqual([OFFICE, { ...ALLERGY, value: 'Beef' }, ANDROID]);
+    expect(tx.attempts()).toBe(2);
+  });
+
+  it("CONCURRENT: an old client's contact edit reads and writes inside the same transaction as the rows", async () => {
+    const { ctx, docs } = household([ALLERGY], {
+      'kinfolk/3': { firstName: 'Dana', lastName: 'Foster', phoneNumber: '(805) 555-0100', emergencyContacts: [] },
+    });
+    const { installOptimisticTransactions } = await import('./_helpers/optimisticTransaction');
+    const ANDROID = { key: 'pool', label: 'Pool', value: 'Heated' };
+    const kinfolkOnRetry: unknown[] = [];
+    const tx = installOptimisticTransactions(ctx.db, docs, {
+      onRead: (path, attempt) => {
+        if (path !== 'kinfolk/3') return;
+        if (attempt === 1 && docs['families/3'].customFields.length === 1) {
+          // Another device adds a row while this save is between its reads and its commit.
+          docs['families/3'] = { ...docs['families/3'], customFields: [...docs['families/3'].customFields, ANDROID] };
+        }
+        // #873 second review: attempt 1 must not have written the contact already.
+        // A write made straight on the ref inside the callback lands here, and the
+        // retry would then read it back as an echo and pass.
+        if (attempt === 2) kinfolkOnRetry.push(docs['kinfolk/3'].emergencyContacts);
+      },
+    });
+    await expect(
+      save({
+        customFields: [
+          ALLERGY,
+          { key: 'emergencyContactName', label: 'Emergency Contact', value: 'Sam Ortiz' },
+          { key: 'emergencyContactPhone', label: 'Emergency Contact Phone', value: '(805) 555-0111' },
+        ],
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(tx.attempts()).toBe(2);
+    expect(kinfolkOnRetry.length).toBeGreaterThan(0);
+    for (const seen of kinfolkOnRetry) expect(seen).toEqual([]);
+    // Both writes, and the save count, went through the transaction, by the
+    // attempt that committed. A contact write made after the commit is not in this list.
+    expect(tx.committed()).toEqual(['kinfolk/3', 'families/3', 'rate_limits/profileSave:3']);
+    expect(docs['kinfolk/3'].emergencyContacts[0]).toMatchObject({ name: 'Sam Ortiz', phone: '+18055550111' });
+    expect(storedList(docs)).toEqual([ALLERGY, ANDROID]);
+    // #873 second review: Home access is checked once, before the transaction, not once per attempt.
+    expect(mocks.hasKinfolkPermSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('PERMISSION: a new-client save with no contact rows never reads Home access', async () => {
+    household([ALLERGY]);
+    await expect(save({ customFields: [{ ...ALLERGY, value: 'Beef' }] })).resolves.toEqual({ ok: true });
+    expect(mocks.hasKinfolkPermSpy).not.toHaveBeenCalled();
+  });
 });
