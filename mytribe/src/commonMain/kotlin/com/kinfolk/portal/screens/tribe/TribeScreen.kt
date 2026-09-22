@@ -1041,6 +1041,26 @@ private fun saveFailureReason(t: Throwable): String =
     }
 
 /**
+ * #930: both halves failing. A Save click sends both callables together, so
+ * both halves hitting the same rate limit at once is the common case, not the
+ * rare one. Naming the same reason under both headings would read as the
+ * sentence repeated verbatim, so it is stated once when it is the same
+ * reason. Mirrors this branch of `pageSaveOutcome` in web `api/tribeApi.ts`.
+ */
+private fun bothHalvesFailedStatus(profileError: Throwable, homeError: Throwable): PageSaveStatus {
+    val profileReason = saveFailureReason(profileError)
+    val homeReason = saveFailureReason(homeError)
+    val text = if (profileReason == homeReason) {
+        "Save failed: $profileReason Your edits are still on this page."
+    } else {
+        "Save failed. Family and Vet Clinic did not save: $profileReason " +
+            "Home Information and the after-hours clinic did not save: " +
+            "$homeReason Your edits are still on this page."
+    }
+    return PageSaveStatus(text, ok = false)
+}
+
+/**
  * #868: the page Save's status. The profile half (Family and Vet Clinic) and the
  * home half (Home Information and the after-hours clinic) are separate callables,
  * so one can land while the other is refused. A partial result names what saved
@@ -1053,6 +1073,7 @@ internal fun pageSaveOutcome(profile: SaveHalf, home: SaveHalf, emergencyContact
             "${saveFailureReason(profile.error)} Your edits there are still on this page.",
         ok = false,
     )
+    profile is SaveHalf.Failed && home is SaveHalf.Failed -> bothHalvesFailedStatus(profile.error, home.error)
     profile is SaveHalf.Failed -> PageSaveStatus(profileSaveFailureMessage(profile.error), ok = false)
     home is SaveHalf.Failed -> PageSaveStatus(
         "Family and Vet Clinic saved. Home Information and the after-hours clinic did not save: " +
