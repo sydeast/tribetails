@@ -1,0 +1,1 @@
+Staff account flagged an unrequested reset. {{staffEmail}} set a new password after a reset they did not ask for. Review securityIncidents/{{incidentId}} now.

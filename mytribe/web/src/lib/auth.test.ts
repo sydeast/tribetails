@@ -21,6 +21,9 @@ vi.mock('./queryClient', () => ({ queryClient: { clear: vi.fn() } }));
 vi.mock('../api/authApi', () => ({ signOutAllDevices: vi.fn().mockResolvedValue({ ok: true }) }));
 vi.mock('./push', () => ({ unregisterForPush: vi.fn() }));
 vi.mock('firebase/auth', () => ({
+  applyActionCode: vi.fn().mockResolvedValue(undefined),
+  checkActionCode: vi.fn(),
+  confirmPasswordReset: vi.fn().mockResolvedValue(undefined),
   initializeRecaptchaConfig: vi.fn().mockResolvedValue(undefined),
   onAuthStateChanged: vi.fn().mockReturnValue(vi.fn()),
   sendPasswordResetEmail: vi.fn(),
@@ -206,5 +209,65 @@ describe('signOut teardown order (#539)', () => {
     // A purge that only runs on the happy path is not a purge.
     expect(vi.mocked(clearAccess)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(queryClient.clear)).toHaveBeenCalledTimes(1);
+  });
+});
+/**
+ * #892: the reset and email-link helpers the email action page runs on. The
+ * page tests mock these; this pins that each one reaches the right Firebase
+ * call with the right arguments.
+ */
+describe('email action helpers', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+  it('sendReset continues to the portal sign-in by default', async () => {
+    const { sendPasswordResetEmail } = await import('firebase/auth');
+    const { sendReset } = await import('./auth');
+    await sendReset('pepper@example.com');
+    expect(sendPasswordResetEmail).toHaveBeenCalledWith(expect.anything(), 'pepper@example.com', {
+      url: 'https://kinfolk.tribetails.com/signin',
+      handleCodeInApp: false,
+    });
+  });
+  it('sendReset keeps a continue URL it is given (a fresh link for staff stays on the admin site)', async () => {
+    const { sendPasswordResetEmail } = await import('firebase/auth');
+    const { sendReset } = await import('./auth');
+    await sendReset('ops@example.com', 'https://auntie.tribetails.com/signin');
+    expect(vi.mocked(sendPasswordResetEmail).mock.calls[0]?.[2]).toEqual({
+      url: 'https://auntie.tribetails.com/signin',
+      handleCodeInApp: false,
+    });
+  });
+  it('sendReset with a null continue URL sends a bare link, so the page offers both sign-ins again (#892 review)', async () => {
+    const { sendPasswordResetEmail } = await import('firebase/auth');
+    const { sendReset } = await import('./auth');
+    await sendReset('ops@example.com', null);
+    expect(vi.mocked(sendPasswordResetEmail).mock.calls[0]).toHaveLength(2);
+    expect(sendPasswordResetEmail).toHaveBeenCalledWith(expect.anything(), 'ops@example.com');
+  });
+  it('completeReset sets the password with the code', async () => {
+    const { confirmPasswordReset } = await import('firebase/auth');
+    const { completeReset } = await import('./auth');
+    await completeReset('CODE', 'new-password-1');
+    expect(confirmPasswordReset).toHaveBeenCalledWith(expect.anything(), 'CODE', 'new-password-1');
+  });
+  it('readActionCode returns the email and previous email off the code', async () => {
+    const { checkActionCode } = await import('firebase/auth');
+    vi.mocked(checkActionCode).mockResolvedValue({
+      operation: 'RECOVER_EMAIL',
+      data: { email: 'old@example.com', previousEmail: 'new@example.com' },
+    } as never);
+    const { readActionCode } = await import('./auth');
+    await expect(readActionCode('R')).resolves.toEqual({
+      operation: 'RECOVER_EMAIL',
+      email: 'old@example.com',
+      previousEmail: 'new@example.com',
+    });
+  });
+  it('applyEmailAction applies the code', async () => {
+    const { applyActionCode } = await import('firebase/auth');
+    const { applyEmailAction } = await import('./auth');
+    await applyEmailAction('V');
+    expect(applyActionCode).toHaveBeenCalledWith(expect.anything(), 'V');
   });
 });

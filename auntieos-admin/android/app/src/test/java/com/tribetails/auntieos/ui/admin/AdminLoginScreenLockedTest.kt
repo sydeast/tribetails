@@ -14,6 +14,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.printToString
 import com.google.android.gms.tasks.TaskCompletionSource
 import com.google.android.gms.tasks.Tasks
+import com.google.firebase.auth.ActionCodeSettings
 import com.google.firebase.auth.AuthResult
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthException
@@ -68,7 +69,10 @@ class AdminLoginScreenLockedTest {
     init {
         every { functions.getHttpsCallable("recordFailedLogin") } returns callable
         every { callable.call(any()) } returns TaskCompletionSource<HttpsCallableResult>().task
-        every { auth.sendPasswordResetEmail(any()) } returns Tasks.forResult(null)
+        // #892: the repository sends (email, ActionCodeSettings) so the link continues
+        // to the admin sign-in. A one-argument stub never matches that call, and the
+        // relaxed mock's task never completes, so the screen would hang on "Sending...".
+        every { auth.sendPasswordResetEmail(any(), any<ActionCodeSettings>()) } returns Tasks.forResult(null)
     }
 
     private fun showAndSubmit() {
@@ -110,7 +114,7 @@ class AdminLoginScreenLockedTest {
         composeRule.onNodeWithText("Forgot password?").performScrollTo().assertIsDisplayed()
             .assertHasClickAction().performClick()
         awaitText("Reset link sent. Check your inbox.")
-        verify { auth.sendPasswordResetEmail("auntie@tribetails.test") }
+        verify { auth.sendPasswordResetEmail("auntie@tribetails.test", any<ActionCodeSettings>()) }
         verify(exactly = 0) { functions.getHttpsCallable(any<String>()) }
     }
 

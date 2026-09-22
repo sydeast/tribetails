@@ -11,7 +11,9 @@ import {
   TEMPLATE_ID_PATTERN,
   TEMPLATE_ID_RULE,
   noTripleStash,
+  noUnquotedAttributeMerge,
   tripleStashMessage,
+  unquotedAttributeMessage,
 } from '../lib/templateValidation';
 
 // The triple-stash guard and the id rule moved to `lib/templateValidation.ts`
@@ -59,6 +61,11 @@ export const Args = z.object({
   html: z.string().max(50000).nullable().optional()
     .refine((s) => s == null || noTripleStash(s), {
       message: tripleStashMessage('html'),
+    })
+    // #892 review 2: the same unquoted-attribute rule the importer applies, so
+    // the authoring door cannot store what the import door refuses.
+    .refine((s) => s == null || noUnquotedAttributeMerge(s), {
+      message: unquotedAttributeMessage('html'),
     }),
   title: z.string().max(200).optional(),
   description: z.string().max(1000).optional(),

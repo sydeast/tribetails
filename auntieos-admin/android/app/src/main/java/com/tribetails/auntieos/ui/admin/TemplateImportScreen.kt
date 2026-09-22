@@ -83,6 +83,13 @@ internal fun importRowSummary(row: TemplateRepository.ImportRow): String {
 }
 
 /**
+ * Why a refused row was refused, for the line beside "Refused", or null for any
+ * other row. Pure; mirrors the web row (#892 review 2).
+ */
+internal fun importRowReason(row: TemplateRepository.ImportRow): String? =
+    if (row.blocked && row.issues.isNotEmpty()) row.issues.joinToString(" ") else null
+
+/**
  * Whether ticking this row means anything.
  *
  * A brand new template needs nobody's permission to be created, and one that
@@ -305,6 +312,10 @@ private fun ImportRowCard(
                 style = AuntieTheme.typography.bodySmall,
                 color = if (row.blocked) c.error else c.textDim,
             )
+        }
+
+        importRowReason(row)?.let { reason ->
+            Text(reason, style = AuntieTheme.typography.bodySmall, color = c.error)
         }
 
         row.aliasOf?.let { canonical ->
