@@ -21,6 +21,7 @@ import com.tribetails.auntieos.data.contracts.ListUninvoicedSessionsResult
 import com.tribetails.auntieos.data.contracts.MarkInvoicePaidArgs
 import com.tribetails.auntieos.data.contracts.MarkInvoicePaidResult
 import com.tribetails.auntieos.data.contracts.PostInvoiceEventArgs
+import com.tribetails.auntieos.data.contracts.PostInvoiceEventArgsPayload
 import com.tribetails.auntieos.data.contracts.RecordPaymentArgs
 import com.tribetails.auntieos.data.contracts.RecordPaymentResult
 import com.tribetails.auntieos.data.contracts.ResendQuoteArgs
@@ -446,15 +447,21 @@ class InvoiceRepository(
 
     /**
      * Stage 2 tail: transition a DRAFT invoice to "sent" via the postInvoiceEvent
-     * callable. postInvoiceEvent merges the supplied payload onto invoices/{invoiceId}
-     * and (because the doc already exists) fires the invoice.updated notification.
-     * Only the status field is merged, leaving the rest of the invoice untouched.
+     * callable, which since #906 accepts exactly this one payload and DELEGATES it
+     * to the server's dedicated `reviewAndSendDraftInvoice` handler. So the wire
+     * call is unchanged and the server behaviour is now that handler's: a draft
+     * precondition, a sendability check (total, household, invoice number), the
+     * state stamp, the BILLING_DRAFT_INVOICE_SENT audit entry and `invoice.new`
+     * rather than `invoice.updated`. Every refusal arrives verbatim.
      *
-     * NAMED FOR WHAT IT DOES, NOT FOR THE CALLABLE IT USES: the server also has a
-     * dedicated `reviewAndSendDraftInvoice` callable, and this method does not
-     * call it. Re-pointing is a behaviour change (a different guard, a different
-     * audit event) and belongs to whoever makes it deliberately, so ADR-0001
-     * adoption leaves the target alone and only replaces the payload map.
+     * NAMED FOR WHAT IT DOES, NOT FOR THE CALLABLE IT USES: re-pointing this at
+     * `reviewAndSendDraftInvoice` directly is now a pure rename with no behaviour
+     * left to change, and belongs to whoever makes it deliberately.
+     *
+     * #906: the payload is a generated data class, not a free map. The server
+     * refuses every money and lifecycle key (`total`, `amountDue`, any `status`
+     * other than `sent`, the `paymentAppliedNotice*` stamps) with a message
+     * naming markInvoicePaid / recordPayment / updateInvoice instead.
      */
     suspend fun reviewAndSendDraftInvoice(invoiceId: String, familyId: String): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
@@ -462,7 +469,7 @@ class InvoiceRepository(
         val args = PostInvoiceEventArgs(
             familyId = mode.scopedKinfolkId(familyId),
             invoiceId = invoiceId,
-            payload = mapOf("status" to "sent"),
+            payload = PostInvoiceEventArgsPayload(status = "sent"),
         )
         functions.getHttpsCallable("postInvoiceEvent").call(args.toPayload()).awaitCallable()
         Unit
