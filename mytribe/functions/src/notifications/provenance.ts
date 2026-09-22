@@ -833,8 +833,9 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
  * it has somewhere to go; until then the gate screen says so out loud instead
  * of showing the operator a switch that does nothing.
  *
- * `quote.accepted` and `quote.denied` were
- * the only two entries: the catalog carried the switches, nothing anywhere sent
+ * Before that the list was EMPTY, and had been since #430. `quote.accepted`
+ * and `quote.denied` were its only two entries: the catalog carried the
+ * switches, nothing anywhere sent
  * them, and `createQuote.ts` carried a comment saying accept/deny were handled
  * elsewhere when they were handled nowhere. #430 built the two callables
  * (`portal/quoteDecision.ts`) that a household actually answers a quote with,
