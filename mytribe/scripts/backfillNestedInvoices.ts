@@ -18,8 +18,14 @@
  * A tribe that was seeded before that still holds nested copies. This script
  * is what clears them, and the seed no longer puts them back.
  *
- * In prod (never seeded with demo data) the nested collection is expected to be
- * empty, so a prod run should report scanned=0 and no-op safely.
+ * DO NOT ASSUME PROD IS CLEAN. The older version of this header said the nested
+ * collection was empty in prod. Nothing supports that, and #920 points the other
+ * way: the double-chase it fixed was a real overdue cron run, and that cron runs
+ * only against prod, so prod held nested demo copies at least until #920 landed.
+ * There is one Firebase project, the demo family ids are already listed in an
+ * admin's `clients/{uid}.kinfolkIds`, and no delete has run since. Treat
+ * `scanned : 0` as the result this script has to PROVE, never as its premise:
+ * dry-run first, read the count, and re-run with --allow-prod if it is not zero.
  *
  * Modes:
  *   default        — dry-run, prints planned changes to stdout, no writes
