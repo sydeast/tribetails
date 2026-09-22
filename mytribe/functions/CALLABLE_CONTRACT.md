@@ -226,7 +226,7 @@ of this collection, and it is NOT the convention used elsewhere in this file:
 invoice carries a `total` and no balance field at all, and the two readings of
 that document used to disagree: `invoiceStateOf` called it paid, while the
 auto-apply trigger drew a household's account credit against it. One rule now
-answers, `src/lib/amountDueRule.ts`, and every reader asks it — the classifier,
+answers, `src/lib/amountDueRule.ts`, and every reader asks it: the classifier,
 the edit policy, the auto-apply gate, the chase senders, `getMyInvoices` and
 `payInvoice`. A STATED balance is returned untouched, whatever it says, so
 `amountDue: 0` on a part-collected bill stays `repairInvoicePayments`' to fix. A

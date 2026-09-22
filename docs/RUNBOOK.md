@@ -1222,7 +1222,7 @@ write, run `npm run test:scripts:emulator` and read the pass count.**
 |---|---|---|
 | `backfill:operator-warning-override` | #877 | An operator who turned off or locked the failed-login warning, or one of its channels, on the Business tab saved that on `auth.failedLogin.attempts`. That key is household-only now, so the setting stopped applying to operators. This copies it to `security.failedLogin.attempts.operator`, only where that key has no setting yet. |
 | `backfill:emergency-contacts` | #829 | Copies the flat `emergencyContact*` fields, and for a household with none the old `families` customFields copy, into `emergencyContacts[0]` - the array the callable and every client now read. |
-| `backfill:invoice-amount-due` | #902 | Migrated invoices carry a `total` and no `amountDue` at all. Every reader derives the balance now (one rule, `functions/src/lib/amountDueRule.ts`), so nothing is broken without this; the backfill writes the figure down so a stored balance is what the ledger sums and what a query can filter on. It writes `amountDue`, `amountDueCents` and the ADR-0002 state stamp, and **nothing else — no `updatedAt` and no server timestamp, so these records keep the original system's dates**. It refuses any invoice whose write would tell a household about a payment made long ago, and lists those for you. |
+| `backfill:invoice-amount-due` | #902 | Migrated invoices carry a `total` and no `amountDue` at all. Every reader derives the balance now (one rule, `functions/src/lib/amountDueRule.ts`), so nothing is broken without this; the backfill writes the figure down so a stored balance is what the ledger sums and what a query can filter on. It writes `amountDue`, `amountDueCents` and the ADR-0002 state stamp, and **nothing else: no `updatedAt` and no server timestamp, so these records keep the original system's dates**. It refuses any invoice whose write would tell a household about a payment made long ago, and lists those for you. |
 
 For `backfill:operator-warning-override`:
 
@@ -1239,7 +1239,7 @@ For `backfill:operator-warning-override`:
 
 For `backfill:invoice-amount-due`:
 
-1. `npm run test:scripts:emulator` — read the pass count.
+1. `npm run test:scripts:emulator`, and read the pass count.
 2. `npm --prefix mytribe/functions run report:legacy-amount-due -- --project <id> --allow-prod`
    The read-only count first, so you know the size of what follows. The first
    line is the target: check it names the right project and `PRODUCTION`. Read
