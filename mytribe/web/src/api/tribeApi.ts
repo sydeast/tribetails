@@ -742,6 +742,19 @@ export function pageSaveOutcome(profile: SaveHalf, home: SaveHalf, ecDirty: bool
       ok: false,
     };
   }
+  if (profile.kind === 'failed' && home.kind === 'failed') {
+    const profileReason = saveFailureReason(profile.error);
+    const homeReason = saveFailureReason(home.error);
+    // #930: a Save click sends both callables together, so both halves hitting
+    // the same rate limit at once is the common case, not the rare one. Naming
+    // the same reason under both headings would read as the sentence repeated
+    // verbatim; state it once when it is the same reason.
+    const text =
+      profileReason === homeReason
+        ? `Save failed: ${profileReason} Your edits are still on this page.`
+        : `Save failed. Family and Vet Clinic did not save: ${profileReason} Home Information and the after-hours clinic did not save: ${homeReason} Your edits are still on this page.`;
+    return { text, ok: false };
+  }
   if (profile.kind === 'failed') return { text: profileSaveErrorMessage(profile.error), ok: false };
   if (home.kind === 'failed') {
     return {

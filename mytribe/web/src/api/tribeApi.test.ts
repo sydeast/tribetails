@@ -197,6 +197,22 @@ describe('#868 the page Save reports each half on its own', () => {
     expect(pageSaveOutcome(failed, skipped, false)).toEqual({ text: 'Save failed: nope', ok: false });
   });
 
+  it('#930: both halves failing for different reasons names both, not just the profile half\'s', () => {
+    const failedHome: SaveHalf = { kind: 'failed', error: new Error('kaput') };
+    const outcome = pageSaveOutcome(failed, failedHome, false);
+    expect(outcome.ok).toBe(false);
+    expect(outcome.text).toContain('Family and Vet Clinic did not save: nope.');
+    expect(outcome.text).toContain('Home Information and the after-hours clinic did not save: kaput.');
+  });
+
+  it('#930: both halves failing for the SAME reason (a Save click rate-limits both callables together) states it once', () => {
+    const sameBoom = new Error('nope');
+    const outcome = pageSaveOutcome({ kind: 'failed', error: sameBoom }, { kind: 'failed', error: sameBoom }, false);
+    expect(outcome).toEqual({ text: 'Save failed: nope. Press Save Changes to try again. Your edits are still on this page.', ok: false });
+    // The reason is not named twice.
+    expect(outcome.text.match(/Press Save Changes to try again/g)).toHaveLength(1);
+  });
+
   it('a throw between the callables is blamed on the half it was building for', () => {
     // Before either call: the profile half never happened.
     expect(blameUnfinishedHalf(skipped, skipped, boom)).toEqual({ profile: failed, home: skipped });
