@@ -34,11 +34,12 @@ import {
  * WHICH INVOICES. Both scans read the top-level `invoices` collection, the store
  * every admin client, every billing callable and the portal read and write. They
  * used to scan `collectionGroup('invoices')`, which also matched the retired
- * `families/{id}/invoices` path. No production writer targets that path
- * (backfillNestedInvoices.ts retired it; the only code that still writes a
- * nested copy is `scripts/seedDemoKinfolk.ts`, which writes the flat doc in the
- * same pass). Reading only the live store means a copy under the retired path
- * can never be chased as a second invoice, and the flat doc is chased once.
+ * `families/{id}/invoices` path. NOTHING writes that path any more: no
+ * production writer ever did, and `scripts/seedDemoKinfolk.ts` stopped in #932.
+ * That seed used to write a nested copy alongside the flat doc, and it was the
+ * reason a demo household could be chased twice. Reading only the live
+ * store means a copy left under the retired path by an older seed run can
+ * never be chased as a second invoice, and the flat doc is chased once.
  *
  * WHICH DAY. "Today" is the business's own calendar day (`businessTodayIso`),
  * not the UTC day this function runs on, and a due day counts as overdue only

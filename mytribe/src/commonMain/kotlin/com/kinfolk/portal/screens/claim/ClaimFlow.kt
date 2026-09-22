@@ -91,3 +91,23 @@ fun validateNewPassword(password: String, confirm: String): String? = when {
     password != confirm -> "Passwords don't match."
     else -> null
 }
+
+/**
+ * #931: what the claim card shows when `getInvitePreview` or `claimInviteSignup`
+ * refuses for its rate limit. Same words as portal web's rate-limit copy
+ * (`mapAuthError`'s `rateLimit` kind in `mytribe/web/src/lib/authErrors.ts`).
+ */
+const val CLAIM_RATE_LIMITED_MESSAGE = "Too many tries for now. Wait a few minutes, then try again."
+
+/**
+ * The claim card's text for a failed preview or signup call: the rate-limit copy
+ * when the callable refused for its limit (the native Android SDK carries the
+ * server's "Too many attempts. Try again later." message, the desktop REST
+ * client the RESOURCE_EXHAUSTED response body), otherwise the error's own
+ * message, otherwise [fallback].
+ *
+ * Neither refusal is a connection problem, so it must not be told as one:
+ * trying again immediately is exactly what will not work.
+ */
+fun claimErrorMessage(message: String?, fallback: String): String =
+    if (com.kinfolk.portal.screens.tribe.isRateLimited(message)) CLAIM_RATE_LIMITED_MESSAGE else message ?: fallback
