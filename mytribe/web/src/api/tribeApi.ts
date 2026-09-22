@@ -583,15 +583,32 @@ export const PROFILE_RESERVED_KEYS = [
 
 export const HOME_RESERVED_KEYS = ['afterHoursVetName', 'afterHoursVetPhone'] as const;
 
-/** Replaces any customFields under `reservedKeys` with `next`, preserving everything else untouched. */
-export function mergeReservedFields(base: CustomFieldDto[], next: CustomFieldDto[], reservedKeys: readonly string[]): CustomFieldDto[] {
-  const reserved = new Set(reservedKeys);
-  return [...base.filter((f) => !reserved.has(f.key)), ...next];
-}
-
 /** #829: stored for old clients and the migration only. This screen never sends them. */
 export const LEGACY_EMERGENCY_CONTACT_KEYS = ['emergencyContactName', 'emergencyContactPhone', 'emergencyContactRelation'] as const;
 
+/**
+ * #901. The hint text for a schema field, and the ONLY place a schema's
+ * `defaultValue` is allowed to appear.
+ *
+ * The screen used to seed an empty field with `defaultValue` as its VALUE, while
+ * `schemaFieldRow` saves nothing for a key that was never stored and never
+ * typed. So a household read its Auntie's default off the screen, pressed Save,
+ * and stored nothing: the screen and the stored data said different things, and
+ * the next reader of `families/{id}.customFields` - the office, a sitter's
+ * dossier - saw the field as empty.
+ *
+ * Saving the default instead was the other way out, and is worse: it writes rows
+ * the household never typed, freezes today's default into their record where a
+ * later change by the office cannot reach it, and makes the field impossible to
+ * empty, because a clear is re-seeded as the default on the next load. A hint is
+ * what a default actually is until someone fills the field in.
+ *
+ * Portal Android shows it the same way (`SchemaFormRenderer.kt`), which is also
+ * what it already stored: it never applied defaults at all.
+ */
+export function schemaPlaceholder(field: { placeholder: string | null; defaultValue: string | null }): string | null {
+  return [field.placeholder, field.defaultValue].find((hint): hint is string => hint !== null && hint.trim() !== '') ?? null;
+}
 /**
  * #873. The row a schema field saves, or null when the stored row stays as it is.
  *

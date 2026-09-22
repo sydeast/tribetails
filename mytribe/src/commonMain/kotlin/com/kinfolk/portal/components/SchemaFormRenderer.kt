@@ -66,6 +66,21 @@ fun SchemaFormRenderer(
     }
 }
 
+/**
+ * #901. The hint text for a schema field, and the ONLY place a schema's
+ * `defaultValue` is allowed to appear. Mirrors `schemaPlaceholder` in web
+ * `api/tribeApi.ts`.
+ *
+ * Portal web used to seed an empty field with `defaultValue` as its VALUE while
+ * the save sent nothing for a key that was never stored, so the screen and the
+ * stored data disagreed. Saving the default instead would write rows the
+ * household never typed, freeze today's default into their record, and make the
+ * field impossible to empty. A hint is what a default is until someone fills the
+ * field in. This side never applied defaults at all, so what it STORES does not
+ * change; it now shows the same hint web does.
+ */
+internal fun schemaPlaceholder(field: FormField): String? =
+    listOfNotNull(field.placeholder, field.defaultValue).firstOrNull { it.isNotBlank() }
 @Composable
 private fun SchemaFieldRow(
     field: FormField,
@@ -73,6 +88,10 @@ private fun SchemaFieldRow(
     onValueChange: (String) -> Unit,
 ) {
     val type = LocalKinfolkTypography.current
+    // #901: the schema's own placeholder, falling back to its default. A checkbox
+    // has nowhere to show a hint, so a `defaultValue` of "true" stays unchecked -
+    // which is what this client already stored, since it never applied defaults.
+    val hint = schemaPlaceholder(field)
     when (field.type) {
         FormFieldType.Text, FormFieldType.Email, FormFieldType.Phone, FormFieldType.Date, FormFieldType.Number -> {
             OutlinedTextField(
@@ -81,7 +100,7 @@ private fun SchemaFieldRow(
                     onValueChange(if (field.type == FormFieldType.Number) v.filter { c -> c.isDigit() || c == '.' } else v)
                 },
                 label = { Text(if (field.required) "${field.label} *" else field.label) },
-                placeholder = field.placeholder?.let { { Text(it) } },
+                placeholder = hint?.let { { Text(it) } },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -94,7 +113,7 @@ private fun SchemaFieldRow(
                 value = value,
                 onValueChange = onValueChange,
                 label = { Text(if (field.required) "${field.label} *" else field.label) },
-                placeholder = field.placeholder?.let { { Text(it) } },
+                placeholder = hint?.let { { Text(it) } },
                 minLines = 3,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -109,7 +128,7 @@ private fun SchemaFieldRow(
                 OutlinedButton(
                     onClick = { open = !open },
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text(value.ifBlank { field.placeholder ?: "Choose…" }) }
+                ) { Text(value.ifBlank { hint ?: "Choose…" }) }
                 if (open) {
                     field.options.orEmpty().forEach { opt ->
                         OutlinedButton(
