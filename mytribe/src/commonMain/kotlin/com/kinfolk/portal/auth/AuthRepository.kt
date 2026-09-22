@@ -33,6 +33,19 @@ interface AuthBackend {
      * backend needs this; REST/desktop and test fakes have nothing to refresh.
      */
     suspend fun refreshIdToken() {}
+
+    /**
+     * #905: reads an email action code (reset, verify, change, recover) without
+     * using it. The default throws [EmailActionUnsupportedException]: only the
+     * Firebase SDK backend (Android, web) can do this, so desktop and test fakes
+     * need nothing, and the screen tells a desktop reader to use a browser.
+     */
+    suspend fun readActionCode(oobCode: String): ActionCodeInfo = throw EmailActionUnsupportedException()
+    /** #905: uses a reset code to set [newPassword]. No incident. See [readActionCode]. */
+    suspend fun confirmPasswordReset(oobCode: String, newPassword: String): Unit =
+        throw EmailActionUnsupportedException()
+    /** #905: uses a verify, change or recover code. See [readActionCode]. */
+    suspend fun applyActionCode(oobCode: String): Unit = throw EmailActionUnsupportedException()
     /**
      * Auth state for as long as somebody collects it, not just once at boot
      * (#502).
@@ -267,6 +280,17 @@ class AuthRepository(
         refresh()
     }
 
+    /** #905: see [AuthBackend.readActionCode]. */
+    suspend fun readActionCode(oobCode: String): ActionCodeInfo =
+        withRecaptchaGuard { backend.readActionCode(oobCode) }
+    /** #905: see [AuthBackend.confirmPasswordReset]. */
+    suspend fun confirmPasswordReset(oobCode: String, newPassword: String) {
+        withRecaptchaGuard { backend.confirmPasswordReset(oobCode, newPassword) }
+    }
+    /** #905: see [AuthBackend.applyActionCode]. */
+    suspend fun applyActionCode(oobCode: String) {
+        withRecaptchaGuard { backend.applyActionCode(oobCode) }
+    }
     /** See [AuthBackend.refreshIdToken]. */
     suspend fun refreshIdToken() {
         backend.refreshIdToken()

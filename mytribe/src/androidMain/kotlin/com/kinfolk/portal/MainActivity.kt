@@ -5,8 +5,8 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import com.kinfolk.portal.auth.parseEmailActionUrl
 import com.kinfolk.portal.ui.KinfolkPortalAppGuarded
-import com.kinfolk.portal.util.SecureResetParams
 import com.kinfolk.portal.util.androidInitialClaimInviteId
 import com.kinfolk.portal.util.androidInitialSecureResetParams
 import com.kinfolk.portal.util.androidInitialShareToken
@@ -28,7 +28,7 @@ class MainActivity : ComponentActivity() {
         val pathParts = uri.pathSegments ?: return
         captureSegment(pathParts, "claim") { androidInitialClaimInviteId = it }
         // Invite emails link `${CLAIM_LINK_BASE_URL}?invite=<id>` (query form, no
-        // path segment) — must parse or the claim screen never mounts on Android.
+        // path segment), so it must parse or the claim screen never mounts on Android.
         if (pathParts.lastOrNull() == "claim") {
             uri.getQueryParameter("invite")?.takeIf { it.isNotBlank() }?.let {
                 androidInitialClaimInviteId = it
@@ -36,22 +36,12 @@ class MainActivity : ComponentActivity() {
         }
         captureSegment(pathParts, "share") { androidInitialShareToken = it }
 
-        // /account/secure-reset?oobCode=<code>&email=<email>
-        // Firebase appends email via continueUrl when ActionCodeSettings.url is set.
-        if (pathParts.size >= 2 && pathParts[pathParts.size - 2] == "account" &&
-            pathParts[pathParts.size - 1] == "secure-reset"
-        ) {
-            val oobCode = uri.getQueryParameter("oobCode")?.takeIf { it.isNotBlank() }
-            val email = uri.getQueryParameter("email")?.takeIf { it.isNotBlank() }
-                ?: uri.getQueryParameter("continueUrl")
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let { continueUrl ->
-                        Uri.parse(continueUrl).getQueryParameter("email")?.takeIf { it.isNotBlank() }
-                    }
-            if (oobCode != null && email != null) {
-                androidInitialSecureResetParams = SecureResetParams(oobCode = oobCode, email = email)
-            }
-        }
+        // #905: Firebase email action links, on the one action URL the project has
+        // (https://kinfolk.tribetails.com/account/secure-reset, also /account/action).
+        // Every mode arrives here and none carries an `email` param; the screen
+        // reads the account from the verified code. Parsing is shared, and tested,
+        // in commonMain.
+        parseEmailActionUrl(uri.toString())?.let { androidInitialSecureResetParams = it }
     }
 
     private inline fun captureSegment(parts: List<String>, prefix: String, store: (String) -> Unit) {
