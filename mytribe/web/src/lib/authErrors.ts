@@ -82,6 +82,19 @@ export function isCredentialSignInError(err: unknown): boolean {
   );
 }
 
+/**
+ * #931: `getInvitePreview` and `claimInviteSignup` refuse with `resource-exhausted`
+ * once their rate limit is hit (server message "Too many attempts. Try again
+ * later." from `lib/rateLimit.ts`). The Functions web SDK carries that as
+ * `functions/resource-exhausted`. Distinguished from a network failure so the
+ * claim screen can stop telling a rate-limited household to check their wifi.
+ * Mirrors Kotlin's `isRateLimited` in `screens/tribe/TribeScreen.kt`.
+ */
+export function isRateLimitedError(err: unknown): boolean {
+  const all = `${codeOf(err)} ${messageOf(err)}`;
+  return all.includes('resource-exhausted') || all.includes('too many attempts');
+}
+
 export function mapAuthError(err: unknown): FriendlyError {
   const code = codeOf(err);
   const msg = messageOf(err);
