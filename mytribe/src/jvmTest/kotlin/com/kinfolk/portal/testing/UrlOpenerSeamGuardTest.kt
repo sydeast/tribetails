@@ -51,18 +51,35 @@ class UrlOpenerSeamGuardTest {
 
     /**
      * The one shape a `*Main` source is allowed to name `openExternalUrl` in: a
-     * default argument that a caller can override.
+     * DECLARED parameter's default, which a caller can override.
      *
      *     openUrl: (String) -> Unit = { openExternalUrl(it) },
      *     openUrl: (String) -> Unit = ::openExternalUrl,
+     *
+     * The `: (String) -> Unit` is load-bearing, not decoration. Without it the
+     * rule also accepts an ARGUMENT that hardwires the real opener at a call
+     * site, which is a leak wearing a seam's clothes:
+     *
+     *     EmergencyContactsCard(kinfolkId, portalApi, openUrl = { openExternalUrl(it) })
+     *
+     * A test rendering that parent reaches the platform opener through the
+     * child, and the parameter it was handed can no longer be overridden.
      */
-    private val seamDefault = Regex("""=\s*(\{\s*openExternalUrl\(it\)\s*\}|::openExternalUrl)\s*,?\s*$""")
+    private val seamDefault = Regex(
+        """:\s*\(String\)\s*->\s*Unit\s*=\s*(\{\s*openExternalUrl\(it\)\s*\}|::openExternalUrl)\s*,?\s*$""",
+    )
 
     private val importLine = Regex("""^import\s""")
 
-    /** True when [line] is a direct call that a test could reach with no way to substitute it. */
+    /**
+     * True when [line] reaches the platform opener with no way to substitute it.
+     *
+     * Matches on the bare name, not `openExternalUrl(`, so a function reference
+     * (`openUrl = ::openExternalUrl,` at a call site) is classified rather than
+     * skipped for want of a paren.
+     */
     internal fun isUnseamedCall(line: String): Boolean {
-        if (!line.contains("openExternalUrl(")) return false
+        if (!line.contains("openExternalUrl")) return false
         val trimmed = line.trim()
         if (importLine.containsMatchIn(trimmed)) return false
         // KDoc bodies start with `*`, and both comment forms are prose, not calls.
@@ -72,7 +89,7 @@ class UrlOpenerSeamGuardTest {
     }
 
     private fun isSeam(line: String): Boolean =
-        line.contains("openExternalUrl(") && seamDefault.containsMatchIn(line)
+        line.contains("openExternalUrl") && seamDefault.containsMatchIn(line)
 
     private fun moduleRoot(): File {
         var dir: File? = File(System.getProperty("user.dir")).absoluteFile
@@ -133,6 +150,18 @@ class UrlOpenerSeamGuardTest {
         assertTrue(isUnseamedCall("""    onClick = { openExternalUrl("tel:${'$'}phone") },"""))
         assertTrue(isUnseamedCall("""            modifier = Modifier.clickable { openExternalUrl(url) },"""))
 
+        // A seam's clothes without a seam: an ARGUMENT that hardwires the real
+        // opener into a child, which the child's own caller can no longer
+        // override. Both of these must be flagged.
+        assertTrue(
+            isUnseamedCall("""        EmergencyContactsCard(kinfolkId, portalApi, openUrl = { openExternalUrl(it) })"""),
+            "a call-site argument is not a seam; it pins the platform opener into the child",
+        )
+        assertTrue(
+            isUnseamedCall("""            openUrl = ::openExternalUrl,"""),
+            "a function reference passed as an argument reaches the platform opener too",
+        )
+
         assertFalse(isUnseamedCall("""    openUrl: (String) -> Unit = { openExternalUrl(it) },"""))
         assertFalse(isUnseamedCall("""    private val openUrl: (String) -> Unit = ::openExternalUrl,"""))
         assertFalse(isUnseamedCall("""import com.kinfolk.portal.util.openExternalUrl"""))
@@ -142,7 +171,9 @@ class UrlOpenerSeamGuardTest {
 
         // A seam is not merely "not a violation"; the tripwire below counts these.
         assertTrue(isSeam("""    openUrl: (String) -> Unit = { openExternalUrl(it) },"""))
+        assertTrue(isSeam("""    private val openUrl: (String) -> Unit = ::openExternalUrl,"""))
         assertFalse(isSeam("""                if (url.isNotBlank()) openExternalUrl(url)"""))
+        assertFalse(isSeam("""            openUrl = { openExternalUrl(it) },"""))
     }
 
     /**
