@@ -30,7 +30,10 @@ interface SecureResetFetcher {
      *                    the account from the code and has ignored a client-sent
      *                    address since #903, and all three bodies are
      *                    [secureResetPayload]. The parameter stays because the
-     *                    screen has the address and a future body may need it.
+     *                    interface is shared by three platforms and the screen
+     *                    already holds the address; it is not a slot for a
+     *                    future body to fill, since a request naming an account
+     *                    is the thing #903 removed.
      * @param userAgent   Device user-agent string (best-effort).
      * @return            Firestore incident ID on success.
      * @throws SecureResetException on any failure.
