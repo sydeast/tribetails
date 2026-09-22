@@ -310,9 +310,15 @@ decided by that clause, not missed.
 
 ## 8. The 116 rule sites
 
-Line numbers are against `mytribe/firestore.rules` at `789f939`. Totals: **64
-lines owner-only** (65 occurrences), **47 lines any staff**, **4 lines pinned**,
-**1 line to `if false`**.
+Line numbers are against `mytribe/firestore.rules` at `789f939`. Totals over
+the 116 lines: **64 owner-only** (65 grant occurrences), **44 any staff**, **4
+pinned**, **3 split into a staff read and an owner write**, **1 to `if false`**.
+The three splits were not in the first pass and are worth naming, because they
+are the shape of mistake this kind of walk makes. `the_411`,
+`field_definitions` and `location_sharing_preferences` were each written as a
+single `allow read, write:` statement, so deciding "an Auntie may read this"
+and editing the line granted her the write as well. The 411 write test caught
+it. Each is now two statements.
 
 The table is generated and checked against the file, so it cannot drift into
 listing a site that does not exist or omitting one that does.
@@ -390,7 +396,7 @@ listing a site that does not exist or omitting one that does.
 | 1024 | `dossiers write` | `isOwner()` | ruling: admin only |
 | 1026 | `dynamic_field_values read+write` | `isStaff()` | household custom field values |
 | 1041 | `emails read+write` | `isOwner()` | outbound business mail |
-| 1042 | `field_definitions read+write` | `isStaff()` | renders the household forms she fills in |
+| 1042 | `field_definitions` | read/write split | read isStaff(), write isOwner(): rendering the forms is the job, authoring them is not |
 | 1050 | `generated_drafts read` | `isStaff()` | her KinTale composer |
 | 1051 | `generated_drafts write` | `isStaff()` | her KinTale composer |
 | 1053 | `household_data read+write` | `isStaff()` | household info |
@@ -399,7 +405,7 @@ listing a site that does not exist or omitting one that does.
 | 1070 | `kintale_templates read` | `isStaff()` | composer |
 | 1071 | `kintale_templates write` | `isOwner()` | catalog authoring |
 | 1073 | `location_checkpoints read+write` | `isStaff()` | her visits |
-| 1074 | `location_sharing_preferences read+write` | `isStaff()` | her visits |
+| 1074 | `location_sharing_preferences` | read/write split | read isStaff(), write isOwner(): she must know if tracking is on, the switch is the household's |
 | 1075 | `media_albums read+write` | `isStaff()` | kin photos |
 | 1108 | `media_files read` | `isStaff()` | kin photos |
 | 1109 | `media_files create` | `isStaff()` | kin photos |
@@ -409,7 +415,7 @@ listing a site that does not exist or omitting one that does.
 | 1117 | `payments update` | `isOwner()` | money |
 | 1118 | `payments delete` | `isOwner()` | money |
 | 1120 | `sms_messages read+write` | `isOwner()` | business phone, unruled |
-| 1121 | `the_411 read` | `isStaff()` | ruling: an Auntie can see them (write stays owner) |
+| 1121 | `the_411` | read/write split | read isStaff(), write isOwner(): the ruling grants the read; the feed writes it on the Admin SDK |
 | 1126 | `training_documents read` | `isStaff()` | staff training material |
 | 1127 | `users read+write` | `isOwner()` | account administration |
 | 1128 | `visit_logs read+write` | `isStaff()` | her visits |

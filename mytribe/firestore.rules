@@ -116,6 +116,41 @@ service cloud.firestore {
       return ['assignedTo', 'assignedSitterId', 'sitterRate', 'sitterPayout'];
     }
 
+ // ── The caretaker money pin (#944) ───────────────────────────────────────
+ //
+ // Every money field an Auntie may SEE on a record she needs, but may never
+ // MOVE. Used only by the isCaretaker() branches; the household branches keep
+ // invoiceKeys()/restrictedSitterKeys() exactly as they were.
+ //
+ // WHY A SECOND LIST RATHER THAN REUSING THE TWO ABOVE. Neither of those names
+ // a field any writer in this tree actually writes onto `bookings` or
+ // `kinCares`. Every invoiceKeys() name lives on `invoices/{id}`, and
+ // `assignedTo` / `assignedSitterId` / `sitterRate` / `sitterPayout` appear
+ // nowhere outside one test fixture (test/getMyVisits.test.ts:155, which
+ // invents them on purpose to prove a projection drops unknown keys) - the real
+ // assignment field is `assignedAuntieUid`. So invoiceFieldsUnchanged() and
+ // sitterFieldsUnchanged() currently constrain nothing on those collections.
+ //
+ // That is a pre-existing hole in the HOUSEHOLD-SECONDARY gate, not this one,
+ // and it is reported rather than fixed here: changing what a household
+ // secondary may write is a different ruling than #944. Nothing is removed.
+ //
+ // The real money fields, found by auditing the writers and the Kotlin models:
+ //   priceCents          per-visit price      portal/requestBooking.ts:762
+ //   billing             booking intent       portal/requestBooking.ts:739
+ //   outstandingBalance  household balance    data/model/Models.kt:185
+ // The stale names are carried along anyway. They cost nothing, and if a writer
+ // ever does start producing one the caretaker gate already refuses it.
+    function caretakerMoneyKeys() {
+      return ['priceCents', 'billing', 'outstandingBalance',
+              'payment', 'invoiceStatus', 'paymentStatus', 'amountMinor', 'currency', 'invoiceId',
+              'assignedTo', 'assignedSitterId', 'sitterRate', 'sitterPayout'];
+    }
+
+    function caretakerMoneyUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(caretakerMoneyKeys());
+    }
+
     function diffOnly(keys) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
     }
@@ -387,7 +422,7 @@ service cloud.firestore {
  // server-side whether or not the caller could have read the document, so
  // self-service contact updates still work with read denied.
     match /kinfolk/{kinfolkId} {
-      allow read: if isOwner()
+      allow read: if isStaff()
                   || (isTestAdmin() && kinfolkId == testScope());
       // #829: no client writes an Emergency Contact key, staff included. The
       // saveEmergencyContacts callable (Admin SDK, rules bypassed) is the only
@@ -398,8 +433,18 @@ service cloud.firestore {
       // resource to compare and it never allowed either.
       allow create: if (isOwner() || (isTestAdmin() && kinfolkId == testScope()))
                     && !request.resource.data.keys().hasAny(emergencyContactKeys());
+      // #944: an Auntie updates the household record, because that is the job,
+      // but may not move `outstandingBalance` (Models.kt:185), the one money
+      // field on this document. She can still READ it: rules gate a document,
+      // never a field, and denying the whole record would take away the
+      // household information the ruling explicitly grants. The exposure is
+      // named in the spec, and the fix for it is a projecting read path, not a
+      // rule that cannot be written.
       allow update: if ((isOwner() || (isTestAdmin() && kinfolkId == testScope()))
                         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(emergencyContactKeys()))
+                    || (isCaretaker()
+                        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(emergencyContactKeys())
+                        && caretakerMoneyUnchanged())
                     || (isKinfolk() && kinfolkId == request.auth.token.kinfolkId
                         && onlyAllowedKinfolkFields());
       allow delete: if isOwner()
@@ -407,11 +452,11 @@ service cloud.firestore {
     }
 
     match /kin/{docId} {
-      allow read: if isOwner()
+      allow read: if isStaff()
                   || (isKinfolk() && resource.data.kinfolkId == request.auth.token.kinfolkId)
                   || testOwnsExisting();
-      allow create: if isOwner() || testOwnsIncoming();
-      allow update: if isOwner() || testOwnsExisting();
+      allow create: if isStaff() || testOwnsIncoming();
+      allow update: if isStaff() || testOwnsExisting();
       allow delete: if isOwner() || testOwnsExisting();
     }
 
@@ -460,13 +505,13 @@ service cloud.firestore {
  // clients, so that grant is no more used than this one was -- but a comment
  // carries no route, so removing it closes no leak, and a rules change is
  // cheapest to review one collection at a time.
-      allow read: if isOwner() || testOwnsExisting();
-      allow create: if isOwner() || testOwnsIncoming();
-      allow update: if isOwner() || testOwnsExisting();
+      allow read: if isStaff() || testOwnsExisting();
+      allow create: if isStaff() || testOwnsIncoming();
+      allow update: if isStaff() || testOwnsExisting();
       allow delete: if isOwner() || testOwnsExisting();
 
       match /comments/{commentId} {
-        allow read: if isOwner()
+        allow read: if isStaff()
                     || (isKinfolk()
                         && get(/databases/$(database)/documents/kin_care_reports/$(reportId)).data.kinfolkId
                            == request.auth.token.kinfolkId)
@@ -552,14 +597,31 @@ service cloud.firestore {
  // itself subject to rules, so it never consulted this `allow read`. Live
  // tracking keeps working, still gated on the operator's switch.
  // `test/rules/kinCareSessionRead.test.ts` proves both halves.
-      allow read: if isOwner() || testOwnsExisting();
+      allow read: if isStaff() || testOwnsExisting();
  // The create guard closes the delete-and-recreate walkaround: without it a
  // client reaches the same terminal state on the same doc id in two writes
  // instead of one.
-      allow create: if (isOwner() || testOwnsIncoming())
+      allow create: if (isStaff() || testOwnsIncoming())
                     && !(('status' in request.resource.data)
                          && terminalBookingStatus(request.resource.data.status));
-      allow update: if (isOwner() || testOwnsExisting())
+      // #944: THIS GRANT IS LOAD-BEARING FOR THE AUNTIE AND MUST NOT NARROW.
+      // All three admin clients write `reportIds`, `sentReportCount` and
+      // `autoCompleteEligible` onto the session in the SAME batch that sends a
+      // KinTale (api/kinTalesWrite.ts:234, KinCareRepository.kt:799,
+      // JvmFirestoreRest.kt:541). Close it to a caretaker and sending a KinTale
+      // fails on every client, which is the one thing the ruling says must keep
+      // working.
+      //
+      // `invoiceId` is the only money-ish field on this document and it is a
+      // foreign key with no amount on it; the invoice it points at is
+      // owner-only. The pin is here anyway, so the day an amount lands on a
+      // session the caretaker branch already refuses it.
+      //
+      // bookingTerminalFieldsUntouched() still applies to EVERY caller, owner
+      // included, so an Auntie cannot reach COMPLETED or CANCELLED outside
+      // transitionBookingStatus any more than the operator can.
+      allow update: if (isOwner() || testOwnsExisting()
+                        || (isCaretaker() && caretakerMoneyUnchanged()))
                     && bookingTerminalFieldsUntouched();
       allow delete: if isOwner() || testOwnsExisting();
 
@@ -593,7 +655,7 @@ service cloud.firestore {
                  .data.get('allowClientLocationSharing', true) != false;
       }
       match /breadcrumbs/{crumbId} {
-        allow read: if isOwner()
+        allow read: if isStaff()
                     || (isKinfolk()
                         && kinfolkLocationSharingOn()
                         && get(/databases/$(database)/documents/kin_care_sessions/$(sessionId)).data.kinfolkId
@@ -601,7 +663,7 @@ service cloud.firestore {
                     || (isTestAdmin()
                         && get(/databases/$(database)/documents/kin_care_sessions/$(sessionId)).data.kinfolkId
                            == testScope());
-        allow write: if isOwner()
+        allow write: if isStaff()
                      || (isTestAdmin()
                          && get(/databases/$(database)/documents/kin_care_sessions/$(sessionId)).data.kinfolkId
                             == testScope());
@@ -689,7 +751,7 @@ service cloud.firestore {
  //   * create/delete stay hard-false for every caller including isAuntie(), so
  //     membership itself is still minted only by the Admin SDK.
       match /members/{uid} {
-        allow read: if activeMember(fid) || isOwner();
+        allow read: if activeMember(fid) || isStaff();
         allow create, delete: if false;
         allow update: if isPrimary(fid)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['secondaryLabel','permissions','updatedAt'])
@@ -715,7 +777,7 @@ service cloud.firestore {
       }
 
       match /kin/{kinId} {
-        allow read: if activeMember(fid) || isOwner();
+        allow read: if activeMember(fid) || isStaff();
         allow create, delete: if hasPerm(fid, 'kin_edit');
         allow update: if hasPerm(fid, 'kin_edit')
           || (activeMember(fid) && diffOnly([
@@ -725,7 +787,7 @@ service cloud.firestore {
       }
 
       match /kinfolk/{kinfolkId} {
-        allow read: if activeMember(fid) || isOwner();
+        allow read: if activeMember(fid) || isStaff();
         allow create, update, delete: if isPrimary(fid)
           || (activeMember(fid) && resource.data.id == request.auth.uid
               && diffOnly([
@@ -740,13 +802,17 @@ service cloud.firestore {
  // The envelope itself only takes kinfolk edits to notes/updatedAt; per-visit
  // mutations (status, title, window, notes) happen on the kinCare doc.
       match /bookings/{batchId} {
-        allow read: if activeMember(fid) || isOwner();
+        allow read: if activeMember(fid) || isStaff();
         allow create: if activeMember(fid)
           && request.resource.data.familyId == fid
           && request.resource.data.targetType in ['KIN','KINFOLK']
           && (hasPerm(fid,'billing_full')
               || (!affects(invoiceKeys()) && !affects(restrictedSitterKeys())));
+        // #944: the envelope carries `billing`, a booking intent with no amount
+        // on it (portal/requestBooking.ts:739). An Auntie may write the
+        // envelope back and may not touch that key.
         allow update: if isOwner()
+          || (isCaretaker() && caretakerMoneyUnchanged())
           || hasPerm(fid,'billing_full')
           || (activeMember(fid) && invoiceFieldsUnchanged() && sitterFieldsUnchanged()
               && diffOnly(['notes','updatedAt']));
@@ -757,13 +823,23 @@ service cloud.firestore {
  // isAuntie() update branch is the AuntieOS write-back path that lands
  // visitProgress, auntieDisplayName, sourceBookingId, sessionId, etc.
         match /kinCares/{visitId} {
-          allow read: if activeMember(fid) || isOwner();
+          allow read: if activeMember(fid) || isStaff();
           allow create: if activeMember(fid)
             && request.resource.data.familyId == fid
             && request.resource.data.targetType in ['KIN','KINFOLK']
             && (hasPerm(fid,'billing_full')
                 || (!affects(invoiceKeys()) && !affects(restrictedSitterKeys())));
+          // #944: `priceCents` is the real per-visit price
+          // (portal/requestBooking.ts:762) and it lives on this document. An
+          // Auntie writes the visit back (status, visitProgress,
+          // auntieDisplayName, sessionId) and may not move the price.
+          //
+          // She can still READ it, here and through the collectionGroup query
+          // below. That is the second of the two exposures the spec names: the
+          // queue and the grid are the job, and no rule can serve the visit
+          // while hiding one field of it.
           allow update: if isOwner()
+            || (isCaretaker() && caretakerMoneyUnchanged())
             || hasPerm(fid,'billing_full')
             || (activeMember(fid) && invoiceFieldsUnchanged() && sitterFieldsUnchanged()
                 && diffOnly(['status','notes','title','window','updatedAt']));
@@ -772,7 +848,7 @@ service cloud.firestore {
  // KinCare notes, server-written via addBookingNote callable.
  // Trigger fires kincare.note.kinfolk only when authorRole='kinfolk'.
           match /notes/{noteId} {
-            allow read: if activeMember(fid) || isOwner();
+            allow read: if activeMember(fid) || isStaff();
             allow write: if false;
           }
 
@@ -781,7 +857,7 @@ service cloud.firestore {
  // denied entirely (no field masking needed). Visible to staff; not
  // saved to KinTale.
           match /internalNotes/{noteId} {
-            allow read: if isOwner();
+            allow read: if isStaff();
             allow write: if false;
           }
         }
@@ -790,23 +866,50 @@ service cloud.firestore {
       match /ratings/{ratingId} {
  // Ratings - server-written via submitRating callable. Trigger branches
  // score to rating.submitted.bad (≤3) or rating.submitted.good (≥4).
-        allow read: if activeMember(fid) || isOwner();
+        allow read: if activeMember(fid) || isStaff();
         allow write: if false;
       }
 
       match /visitEvents/{id} {
-        allow read: if activeMember(fid) || isOwner();
+        allow read: if activeMember(fid) || isStaff();
         allow create, update, delete: if false;
       }
 
       match /bookingLocks/{id} {
-        allow read: if activeMember(fid) || isOwner();
+        allow read: if activeMember(fid) || isStaff();
         allow create, update, delete: if false;
       }
 
+ // RETIRED NESTED INVOICE PATH. Issue #942, closed here.
+ //
+ // This block granted create, update and delete to any staff account while the
+ // LIVE flat path (match /invoices/{invoiceId}, far above) forbids all three
+ // with `if false`. That `if false` is ADR-0002: every invoice write goes
+ // through a callable so the Invoice State Classifier stamp cannot be skipped.
+ // This grant was the way around it - no stamp, no schema validation, no audit
+ // entry, none of the checks markInvoicePaid / recordPayment / updateInvoice
+ // apply - reachable by anyone holding a staff account and a REST client.
+ //
+ // Harmless while "Auntie" meant the owner, which is why it survived. Under the
+ // #944 ruling it is a contractor writing an invoice, which the ruling forbids
+ // outright, so the split cannot ship while inheriting it.
+ //
+ // THE BLOCK STAYS, SET TO `if false`, rather than being deleted. The other
+ // honest option was removing the match entirely, and it is rejected for now:
+ // scripts/backfillNestedInvoices.ts says in its own header that prod must NOT
+ // be assumed clean ("Treat `scanned : 0` as the result this script has to
+ // PROVE, never as its premise"), and #920's overdue-cron double-chase is
+ // evidence nested copies were still in prod. Read therefore stays, so whatever
+ // is down there remains inspectable until the backfill runs and reports zero.
+ // No payment code is removed by this; one grant becomes a denial.
+ //
+ // Confirmed on the tree at 789f939: nothing writes families/{id}/invoices.
+ // Every invoice reference in auntieos-admin/src, auntieos-admin/android,
+ // mytribe/web/src and mytribe/functions/src targets the flat collection.
+ // test/rules/auntieAccess.test.ts pins the denial so it cannot reopen quietly.
       match /invoices/{id} {
         allow read: if activeMember(fid) || isOwner();
-        allow create, update, delete: if isOwner();
+        allow create, update, delete: if false;
       }
 
  // Lockbox data: gate/door code, key location, Wi-Fi password, plus whatever
@@ -827,18 +930,18 @@ service cloud.firestore {
  // lands with no updatedByUid, no validation and no log line, on the one
  // document where "who changed the door code, and when" is the whole question.
       match /homeAccess/{id} {
-        allow read: if hasPerm(fid, 'home_access') || isOwner();
+        allow read: if hasPerm(fid, 'home_access') || isStaff();
         allow create, update, delete: if false;
       }
 
       match /themeConfig/{id} {
-        allow read: if activeMember(fid) || isOwner();
+        allow read: if activeMember(fid) || isStaff();
         allow create, delete: if false;
         allow update: if isPrimary(fid) && diffOnly(['kinfolkOverrides','updatedAt']);
       }
 
       match /mediaGallery/{id} {
-        allow read: if activeMember(fid) || isOwner();
+        allow read: if activeMember(fid) || isStaff();
         allow create, update: if hasPerm(fid, 'kin_edit');
         allow delete: if isPrimary(fid);
       }
@@ -893,7 +996,7 @@ service cloud.firestore {
  // the depth-specific rule above. NOTE: a collection-group single-field index
  // on kinCares.status may also be required at runtime.
     match /{path=**}/kinCares/{visitId} {
-      allow read: if isOwner();
+      allow read: if isStaff();
     }
 
     match /inviteRequests/{id} {
@@ -938,7 +1041,7 @@ service cloud.firestore {
  // existing writers green while sealing off any mutation pathway.
     match /activity_log/{id} {
       allow read: if isOwner();
-      allow create: if isOwner();
+      allow create: if isStaff();
       allow update, delete: if false;
     }
  // activity_log_chain_head/{current}: holds the SHA-256 hash-chain head
@@ -1060,7 +1163,7 @@ service cloud.firestore {
     // "Missing or insufficient permissions" and the "Couldn't load busy blocks"
     // banner fired even when calendar sync was never set up (prod 2026-06-08).
     // Admin read only; client writes denied (only the sync function writes).
-    match /booking_time_slots/{id}              { allow read: if isOwner(); allow write: if false; }
+    match /booking_time_slots/{id}              { allow read: if isStaff(); allow write: if false; }
  // Service-Management catalog collections (WARNING-16): the AuntieOS Android
  // client reads/writes these directly from Settings. They had NO rule, so the
  // direct reads/writes hit default-deny and failed with permission errors. Any
@@ -1082,7 +1185,7 @@ service cloud.firestore {
       allow read: if isOwner() || (isTestAdmin() && kinfolkId == testScope());
       allow write: if isOwner();
     }
-    match /dynamic_field_values/{id}            { allow read, write: if isOwner(); }
+    match /dynamic_field_values/{id}            { allow read, write: if isStaff(); }
  // `dynamic_fields` had a rule here. Deleted 2026-07-23: the field-authoring
  // system it served is retired. migrate_dynamic_fields_to_form_schemas.py folded
  // those docs into formSchemas and states "dynamic_fields UI/code is retired in
@@ -1098,7 +1201,10 @@ service cloud.firestore {
  // directly from Android). Their near-identical names are exactly why this rule
  // survived the retirement; do not remove them by association.
     match /emails/{id}                          { allow read, write: if isOwner(); }
-    match /field_definitions/{id}               { allow read, write: if isOwner(); }
+ // #944: an Auntie READS the field definitions, because they are what render
+ // the household forms she fills in on a visit. AUTHORING them is schema work
+ // and stays with the owner, same split as kintale_templates below.
+    match /field_definitions/{id}               { allow read: if isStaff(); allow write: if isOwner(); }
     // Stage-0I sandbox: a test admin may READ its own tribe's generated drafts. The
     // doc's own-tribe key is the snake_case `kinfolk_id` field (written by
     // web/functions/generate.js), NOT camelCase kinfolkId, so testOwnsExisting() does
@@ -1106,10 +1212,10 @@ service cloud.firestore {
     // list listen MUST also constrain the query to where(kinfolk_id == testScope) or
     // an unfiltered list is still denied (see generatedDraftsStream). Writes admin-only.
     match /generated_drafts/{id} {
-      allow read: if isOwner() || (isTestAdmin() && resource.data.kinfolk_id == testScope());
-      allow write: if isOwner();
+      allow read: if isStaff() || (isTestAdmin() && resource.data.kinfolk_id == testScope());
+      allow write: if isStaff();
     }
-    match /household_data/{id}                  { allow read, write: if isOwner(); }
+    match /household_data/{id}                  { allow read, write: if isStaff(); }
  // The household bank (issue #461): the household's own reconciled record, the
  // peer of a kinfolk dossier and a kin 411. ADMIN-ONLY, the same standing ruling
  // that governs those two: kinfolk never see it, and no portal callable projects
@@ -1126,12 +1232,15 @@ service cloud.firestore {
  // Global KinTale template catalog: test admin may READ (so the KinTale
  // composer renders), never write. Writes stay admin-only.
     match /kintale_templates/{id} {
-      allow read: if isOwner() || isTestAdmin();
+      allow read: if isStaff() || isTestAdmin();
       allow write: if isOwner();
     }
-    match /location_checkpoints/{id}            { allow read, write: if isOwner(); }
-    match /location_sharing_preferences/{id}    { allow read, write: if isOwner(); }
-    match /media_albums/{id}                    { allow read, write: if isOwner(); }
+    match /location_checkpoints/{id}            { allow read, write: if isStaff(); }
+ // #944: read is staff, because an Auntie has to know whether a household's
+ // live tracking is on before her app starts sending breadcrumbs. The switch
+ // itself is a privacy decision about the household and stays with the owner.
+    match /location_sharing_preferences/{id}    { allow read: if isStaff(); allow write: if isOwner(); }
+    match /media_albums/{id}                    { allow read, write: if isStaff(); }
  // Scoped for the test-admin sandbox: read+write only docs whose kinfolkId
  // matches testScope() (create checks the incoming payload). Live media /
  // payments stay unreachable.
@@ -1164,9 +1273,9 @@ service cloud.firestore {
  // `media_files` from the client. It no longer is (#577), so the line closes
  // here, in the same change that removes the last client writer.
     match /media_files/{id} {
-      allow read: if isOwner() || testOwnsExisting();
-      allow create: if isOwner() || testOwnsIncoming();
-      allow update: if (isOwner() || testOwnsExisting())
+      allow read: if isStaff() || testOwnsExisting();
+      allow create: if isStaff() || testOwnsIncoming();
+      allow update: if (isStaff() || testOwnsExisting())
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['taggedKinIds']);
       allow delete: if false;
     }
@@ -1177,15 +1286,25 @@ service cloud.firestore {
       allow delete: if isOwner() || testOwnsExisting();
     }
     match /sms_messages/{id}                    { allow read, write: if isOwner(); }
-    match /the_411/{kinfolkId}                  { allow read, write: if isOwner(); }
+ // #944: "411s: an Auntie can see them" - operator ruling 2026-09-22, and this
+ // read is that sentence. A 411 is the kin's own record (breed, medical, diet,
+ // feeding, vet), which is exactly what a caretaker needs in hand on a visit.
+ //
+ // WRITE STAYS WITH THE OWNER, and the Auntie loses nothing by it. She feeds
+ // this record the way she always has: her KinTale lands on kin_care_reports,
+ // onKinTaleCreate seeds reconcileStatus: 'pending' (lib/reconcileStatus.ts:50),
+ // and the nightly reconcile (functions-python/reconcile_comms.py:578) writes
+ // the_411 on the Admin SDK, which does not evaluate these rules. The feed the
+ // ruling says must keep working never ran through a client grant.
+    match /the_411/{kinfolkId}                  { allow read: if isStaff(); allow write: if isOwner(); }
  // Tribal Intel (spec 23): admins READ here, but writes go ONLY through the
  // server-bound createTrainingDocument / updateTrainingDocument /
  // deleteTrainingDocument callables (admin SDK bypasses rules), so the audit
  // entry is structurally bound to every mutation. Direct client writes denied.
-    match /training_documents/{id}              { allow read: if isOwner(); allow write: if false; }
+    match /training_documents/{id}              { allow read: if isStaff(); allow write: if false; }
     match /users/{uid}                          { allow read, write: if isOwner(); }
-    match /visit_logs/{id}                      { allow read, write: if isOwner(); }
-    match /visit_routes/{id}                    { allow read, write: if isOwner(); }
+    match /visit_logs/{id}                      { allow read, write: if isStaff(); }
+    match /visit_routes/{id}                    { allow read, write: if isStaff(); }
     match /voicemails/{id} {
  // Issue #581: Mark read and Dismiss used to be a bare client write authorized
  // by isAuntie() alone, with no floor under it. A stray tap on a voicemail
@@ -1261,7 +1380,7 @@ service cloud.firestore {
  // way), and no client, dashboard or test ever read the collection - the read
  // grant existed "for monitoring" that was never built. Nothing observes the
  // path, so default-deny is the honest state.
-    match /kinTaleNotifications/{reportId}      { allow read: if isOwner(); allow write: if false; }
+    match /kinTaleNotifications/{reportId}      { allow read: if isStaff(); allow write: if false; }
     match /securityRateLimits/{key}             { allow read: if isOwner(); allow write: if false; }
     match /securityIncidents/{id}               { allow read: if isOwner(); allow write: if false; }
  // Stage 2 step 6 (Communicate broadcast): saved audience segments + sent
@@ -1283,10 +1402,10 @@ service cloud.firestore {
  // thread (kinfolkId == their token claim), matching what getMyConversation
  // already returns them non-realtime.
     match /conversations/{kinfolkId} {
-      allow read: if isOwner() || (isKinfolk() && kinfolkId == request.auth.token.kinfolkId);
+      allow read: if isStaff() || (isKinfolk() && kinfolkId == request.auth.token.kinfolkId);
       allow write: if false;
       match /messages/{messageId} {
-        allow read: if isOwner() || (isKinfolk() && kinfolkId == request.auth.token.kinfolkId);
+        allow read: if isStaff() || (isKinfolk() && kinfolkId == request.auth.token.kinfolkId);
         allow write: if false;
       }
     }
