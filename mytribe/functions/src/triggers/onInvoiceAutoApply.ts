@@ -4,6 +4,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapTrigger } from '../lib/wrapTrigger';
 import { drawAccountCredit } from '../lib/accountCredit';
+import { collectableForAutoApply } from '../lib/invoiceCollectable';
 
 /**
  * The half of "Will automatically apply any Unapplied amount to FUTURE
@@ -59,33 +60,23 @@ import { drawAccountCredit } from '../lib/accountCredit';
  * its own, and adding one would only hide that.
  */
 
+/**
+ * The collectability gate lives in `lib/invoiceCollectable.ts` and is re-exported
+ * here, because this module is where every caller already looks for it and
+ * because a script that needs the same answer must not have to import this
+ * file's Firestore and account-credit chain to get it (#902). One definition,
+ * one reading.
+ */
+export { collectableForAutoApply, type CollectableDoc } from '../lib/invoiceCollectable';
+
 type InvoiceDoc = {
   kinfolkId?: string;
   status?: string;
-  amountDue?: number;
+  amountDue?: unknown;
+  amountDueCents?: unknown;
+  total?: unknown;
+  totalCents?: unknown;
 };
-
-/**
- * Is this invoice one a payment could be put against?
- *
- * DELIBERATELY COARSE, and deliberately not `invoiceAcceptsCredit`. This
- * decides only whether the transition is interesting enough to look at; the
- * real refusals are `markInvoicePaid`'s and run inside the pass, against the
- * stored doc and its payments. Duplicating them here would give the trigger a
- * second opinion about what is payable.
- */
-export function collectableForAutoApply(doc: InvoiceDoc | undefined): boolean {
-  if (!doc) return false;
-  const status = typeof doc.status === 'string' ? doc.status.trim().toLowerCase() : '';
-  if (status === 'draft' || status === 'quote' || status === 'cancelled' || status === 'credit') {
-    return false;
-  }
-  if (status === 'paid' || status === 'redeemed') return false;
-  const amountDue = typeof doc.amountDue === 'number' ? doc.amountDue : null;
-  // No stated balance is not "nothing owed": an un-itemized invoice can carry a
-  // `total` and no `amountDue` yet. The pass resolves the real figure.
-  return amountDue === null || amountDue > 0;
-}
 
 type InvoicesWriteEvent = FirestoreEvent<
   Change<DocumentSnapshot> | undefined,

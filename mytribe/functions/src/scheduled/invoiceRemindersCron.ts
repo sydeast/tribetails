@@ -15,7 +15,7 @@ import {
   daysPastDue,
   invoiceDueDayOf,
   isDueWithin,
-  isLegacyTotalOnly,
+  legacyEvidenceWanted,
   type ChaseRefusal,
   type PaymentEvidence,
 } from '../lib/invoiceChase';
@@ -90,10 +90,14 @@ type InvoiceDoc = {
  * Reads the invoice's payment rows ONLY for the legacy total-only shape, the
  * one state the classifier cannot settle without them (lib/invoiceChase.ts).
  * Every other invoice is decided from the doc alone and costs no extra read.
+ *
+ * #902: the rows go to the classifier now, not to a refusal branch beside it.
+ * The reading they change is the same one: a migrated bill whose rows cover its
+ * total is settled and is not chased; one with no rows owes its total and is.
  */
 async function chaseRefusal(docSnap: QueryDocumentSnapshot, data: InvoiceDoc): Promise<ChaseRefusal | null> {
   let evidence: PaymentEvidence | null = null;
-  if (isLegacyTotalOnly(data)) {
+  if (legacyEvidenceWanted(data)) {
     const rows = await docSnap.ref.collection('payments').get();
     evidence = {
       rows: rows.size,

@@ -77,7 +77,14 @@ export interface InvoiceStateStamp {
  * true by construction: a payment cannot precede the invoice it pays.
  */
 export function invoiceStateStampOf(doc: InvoiceStampDoc, paidCents: number): InvoiceStateStamp {
-  const status = invoiceStateOf(doc);
+  // #902: THE ROWS REACH THE CLASSIFIER TOO, not only the standing. For a doc
+  // that states a balance this changes nothing at all. For a migrated doc that
+  // states none, it is the difference between stamping what its rows prove and
+  // stamping a guess: a legacy bill whose rows cover its total stamps `paid`,
+  // and one with no rows stamps `open` rather than the `paid` a missing field
+  // used to be mistaken for. The stamp remains a fixpoint either way, because
+  // every stamp it writes classifies to itself with or without rows.
+  const status = invoiceStateOf(doc, paidCents);
   const standing = paymentStandingOf(invoiceTotalCentsOf(doc), paidCents);
   // THE QUOTE ANSWER IS READ OFF THE DOC, not passed in, and that is what makes
   // the acceptance lock (issue #448) hold everywhere. Every adopter hands this

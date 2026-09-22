@@ -12,7 +12,7 @@ import { enqueueNotificationDetailed } from '../notifications/dispatcher';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
-import { chaseRefusalOf, isLegacyTotalOnly, type ChaseRefusal, type PaymentEvidence } from '../lib/invoiceChase';
+import { chaseRefusalOf, legacyEvidenceWanted, type ChaseRefusal, type PaymentEvidence } from '../lib/invoiceChase';
 import { paidCentsFromPayments } from '../lib/invoiceMath';
 
 /**
@@ -112,9 +112,10 @@ function refusalMessage(refusal: ChaseRefusal): string {
   if (refusal.reason === 'unaccepted_quote') {
     return 'The household has not accepted this quote, so there is no bill to remind them about yet.';
   }
-  if (refusal.reason === 'legacy_balance_unproven') {
-    return 'This invoice has no balance on record, so there is nothing to remind anyone about. Record its payments first if money is still owed.';
-  }
+  // #902 retired `legacy_balance_unproven`. A migrated bill with a `total` and
+  // no `amountDue` is classified now rather than special-cased: unpaid it reads
+  // `open` and this function is never reached, and paid off by its own rows it
+  // reads `paid` and gets the paid wording below, which is the true reason.
   switch (refusal.state) {
     case 'paid':
       return 'Invoice is already paid; nothing to remind.';
@@ -220,10 +221,15 @@ export async function sendInvoiceReminderHandler(
    * doc the classifier cannot settle alone (lib/invoiceChase.ts). Read before
    * the claim transaction; inside it the doc is re-read, and a doc that is not
    * that shape ignores the evidence.
+   *
+   * #902: the rows now reach the classifier itself rather than a refusal branch
+   * beside it, so this read is what tells a migrated bill that was paid off
+   * before `amountDue` existed from one still owed. Without it the rule reads
+   * such a bill as open, which is the conservative answer, not the true one.
    */
   let evidence: PaymentEvidence | null = null;
   const peek = await ref.get();
-  if (peek.exists && isLegacyTotalOnly(peek.data() as InvoiceDoc)) {
+  if (peek.exists && legacyEvidenceWanted(peek.data() as InvoiceDoc)) {
     const rows = await ref.collection('payments').get();
     evidence = {
       rows: rows.size,

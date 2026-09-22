@@ -4,7 +4,7 @@ import {
   daysPastDue,
   invoiceDueDayOf,
   isDueWithin,
-  isLegacyTotalOnly,
+  legacyEvidenceWanted,
 } from '../src/lib/invoiceChase';
 import { INVOICE_STATES, invoiceStateOf } from '../src/lib/invoiceEditPolicy';
 
@@ -66,36 +66,52 @@ describe('chaseRefusalOf: only an open bill may be chased', () => {
   });
 });
 
-describe('the legacy total-only shape (#902 owns the classifier; #871 is conservative)', () => {
+/**
+ * READER 5 of #902's shared rule: the chase gate, and the #871 behaviour change
+ * this issue makes on purpose.
+ *
+ * WHAT #871 DID. A migrated `{ status: 'sent', total: 40 }` classified `paid`,
+ * because the classifier read a missing balance as zero. #871 would not chase it
+ * unless its payment rows PROVED a balance, and called that refusal
+ * `legacy_balance_unproven`. That was a local patch around a classifier reading
+ * #871 deliberately left to this issue.
+ *
+ * WHAT #902 DOES. The rule derives the balance, so an unpaid legacy bill reads
+ * `open` and IS chased. The office may now remind a household about a migrated
+ * bill nobody has paid, which is the reason it was sent. The rows still decide
+ * the other direction: a bill they cover reads `paid` and is refused as
+ * `not_open`, and `legacy_balance_unproven` is gone rather than unreachable.
+ */
+describe('the legacy total-only shape, after #902 ruled on a missing amountDue', () => {
   const legacy = { status: 'sent', total: 40 };
-
-  it('is recognised, and a labelled paid doc or a doc with a finite amountDue is not', () => {
-    expect(isLegacyTotalOnly(legacy)).toBe(true);
-    expect(isLegacyTotalOnly({ status: 'open', total: 40, amountDue: Number.NaN })).toBe(true);
-    expect(isLegacyTotalOnly({ status: 'paid', total: 40 })).toBe(false);
-    expect(isLegacyTotalOnly({ status: 'open', total: 40, amountDue: 0 })).toBe(false);
-    expect(isLegacyTotalOnly({ status: 'sent', total: 0 })).toBe(false);
-    expect(isLegacyTotalOnly({ status: 'cancelled', total: 40 })).toBe(false);
+  it('is what the senders read the payment rows for, and an ordinary invoice is not', () => {
+    expect(legacyEvidenceWanted(legacy)).toBe(true);
+    expect(legacyEvidenceWanted({ status: 'open', total: 40, amountDue: Number.NaN })).toBe(true);
+    expect(legacyEvidenceWanted({ status: 'paid', total: 40 })).toBe(false);
+    expect(legacyEvidenceWanted({ status: 'open', total: 40, amountDue: 0 })).toBe(false);
+    expect(legacyEvidenceWanted({ status: 'sent', total: 0 })).toBe(false);
   });
-
-  it('no evidence and no payment rows: no notice', () => {
-    expect(chaseRefusalOf(legacy, null)).toEqual({ reason: 'legacy_balance_unproven', state: 'paid' });
-    expect(chaseRefusalOf(legacy, { rows: 0, paidCents: 0 })?.reason).toBe('legacy_balance_unproven');
+  it('CHANGED BY #902: no rows means the total is owed, so it is chased', () => {
+    expect(invoiceStateOf(legacy)).toBe('open');
+    expect(chaseRefusalOf(legacy, null)).toBeNull();
+    expect(chaseRefusalOf(legacy, { rows: 0, paidCents: 0 })).toBeNull();
   });
-
-  it('payment rows that cover the total: no notice', () => {
-    expect(chaseRefusalOf(legacy, { rows: 1, paidCents: 4000 })?.reason).toBe('legacy_balance_unproven');
-    expect(chaseRefusalOf(legacy, { rows: 2, paidCents: 5000 })?.reason).toBe('legacy_balance_unproven');
+  it('payment rows covering the total settle it: refused as not_open, not as a legacy special case', () => {
+    expect(chaseRefusalOf(legacy, { rows: 1, paidCents: 4000 })).toEqual({ reason: 'not_open', state: 'paid' });
+    expect(chaseRefusalOf(legacy, { rows: 2, paidCents: 5000 })).toEqual({ reason: 'not_open', state: 'paid' });
   });
-
-  it('payment rows that prove a balance: may be chased', () => {
+  it('payment rows that fall short leave a balance: may be chased', () => {
     expect(chaseRefusalOf(legacy, { rows: 1, paidCents: 1500 })).toBeNull();
   });
-
-  it('totalCents wins over the dollar total', () => {
-    expect(chaseRefusalOf({ status: 'sent', total: 40, totalCents: 1000 }, { rows: 1, paidCents: 1500 })?.reason).toBe(
-      'legacy_balance_unproven',
-    );
+  it('totalCents wins over the dollar total, so a $10 bill covered by $15 is settled', () => {
+    expect(chaseRefusalOf({ status: 'sent', total: 40, totalCents: 1000 }, { rows: 1, paidCents: 1500 })).toEqual({
+      reason: 'not_open',
+      state: 'paid',
+    });
+  });
+  it('a cancelled or drafted legacy doc is still refused: the label decides before the money', () => {
+    expect(chaseRefusalOf({ status: 'cancelled', total: 40 }, null)).toEqual({ reason: 'not_open', state: 'cancelled' });
+    expect(chaseRefusalOf({ status: 'draft', total: 40 }, null)).toEqual({ reason: 'not_open', state: 'draft' });
   });
 });
 

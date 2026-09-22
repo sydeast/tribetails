@@ -38,12 +38,16 @@
  *     zero planned writes. The stamp itself is a classifier fixpoint
  *     (asserted in functions/test/invoiceStateStamp.test.ts), which is what
  *     makes that skip check sound.
- *   - THE PAYMENT GUARD (`would_assert_payment`, #884). invoiceStateOf reads a
- *     missing `amountDue` as 0, so a doc with a `total`, no numeric `amountDue`
- *     and no payment rows classifies paid although nothing was paid. A paid/none
- *     stamp on it would block every payment path and every edit, while unstamped
- *     the portal shows it open. This script refuses those docs and lists them for
- *     the operator, until #902 rules on a missing amountDue.
+ *   - THE PAYMENT GUARD (`would_assert_payment`, #884), NOW A BACKSTOP (#902).
+ *     It was written because invoiceStateOf read a missing `amountDue` as 0, so
+ *     a doc with a `total`, no numeric `amountDue` and no payment rows
+ *     classified paid although nothing was paid; a paid/none stamp on it would
+ *     have blocked every payment path and every edit. #902 settled that reading:
+ *     the classifier derives such a balance (functions/src/lib/amountDueRule.ts)
+ *     and the document stamps `open`/`all`, so the guard can no longer be
+ *     reached through the classifier. It is KEPT, and its unit test now proves
+ *     it with an injected stamp, so a later change on either side cannot quietly
+ *     make a backfill mark an owed bill paid.
  *   - THE NOTIFICATION GUARD (`would_notify_household`). It asks
  *     `onInvoicesWrite`'s own decision, `invoiceWriteNoticeKey`, whether the
  *     trigger would send anything for the stamp write, so it follows whatever the
@@ -184,13 +188,18 @@ export function wouldNotifyHousehold(doc: Record<string, unknown>, stamp: Invoic
 
 /**
  * #884 second review: A PAID STAMP NOTHING BUT A MISSING amountDue SUPPORTS.
- * invoiceStateOf reads a missing `amountDue` as 0, so `{ status: 'sent',
- * total: 40 }` classifies paid with nothing paid. Stamped paid/none, the bill
+ * invoiceStateOf used to read a missing `amountDue` as 0, so `{ status: 'sent',
+ * total: 40 }` classified paid with nothing paid. Stamped paid/none, the bill
  * could not be collected by any path (`alreadySettledRefusal` blocks
  * markInvoicePaid, the credit draw and payInvoice; scope none blocks
  * updateInvoice; repairInvoicePayments skips it), while unstamped the portal
- * shows it open. Refused until #902 rules on a missing amountDue, unless
- * something else says it was paid (#884 third review):
+ * shows it open.
+ *
+ * #902 REMOVED THE WAY IN. The classifier derives a missing balance now, so that
+ * document stamps `open` and this guard sees no `paid` stamp to refuse. It stays
+ * as a backstop rather than being deleted: the failure it describes had no way
+ * back, and a guard that costs one comparison is the cheapest thing in this
+ * script. Its exceptions are unchanged (#884 third review):
  *   - its own `status` already says `paid`: its writer asserted it, and the
  *     stamp only canonicalizes that label;
  *   - a payment row names it, in the invoice's `payments` subcollection or in
@@ -342,7 +351,7 @@ export async function run(mode: Mode, pageSize: number): Promise<RunResult> {
         } else if (decision.reason === 'would_assert_payment') {
           result.needsOperator.push(docSnap.id);
           console.log(
-            `[skip:would_assert_payment] invoices/${docSnap.id} status=${JSON.stringify(data.status ?? null)}: no amountDue and no payment rows, so a 'paid' stamp would mark an owed bill paid; left for #902`,
+            `[skip:would_assert_payment] invoices/${docSnap.id} status=${JSON.stringify(data.status ?? null)}: no amountDue and no payment rows, so a 'paid' stamp would mark an owed bill paid; the #902 rule should have prevented this — do not stamp it by hand`,
           );
         }
         continue;

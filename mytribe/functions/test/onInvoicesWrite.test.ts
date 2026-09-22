@@ -128,12 +128,36 @@ describe('#884 invoice.payment.applied fires only on a transition from open into
     expect(mocks.enqueue).not.toHaveBeenCalled();
   });
 
-  it('legacy: a total with no amountDue already reads paid, so paying it off is paid to paid and sends nothing', async () => {
-    // The classifier's reading (ADR-0002): a missing balance is no evidence of
-    // one. The old amountDue rule sent here; #884 does not add a second rule.
+  /**
+   * CHANGED BY #902, and this is the point of that issue.
+   *
+   * A migrated `{ status: 'open', total: 40 }` used to classify `paid`, because
+   * the classifier read a missing balance as zero. Paying it off was therefore
+   * paid-to-paid and the household was told nothing about a real payment; #884's
+   * review worked around it by having the credit draw send its own notice. The
+   * shared rule (lib/amountDueRule.ts) reads the bill as owing its total, so the
+   * write that settles it is an ordinary open-to-paid transition and announces
+   * itself like any other.
+   */
+  it('#902: a total with no amountDue reads open, so paying it off announces the payment', async () => {
     const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
     await onInvoicesWriteHandler(
       makeEvent({ kinfolkId: '3', status: 'open', total: 40 }, { kinfolkId: '3', status: 'paid', total: 40, amountDue: 0 }) as any,
+    );
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueue.mock.calls[0]![0].key).toBe('invoice.payment.applied');
+  });
+  it('#902: and the payer that owns its own notice still stands the trigger down, so nobody is told twice', async () => {
+    // The credit draw is the one payer that ever accepted this shape (#884
+    // review). It stamps `accountCredit:<paymentId>` in the write that settles
+    // the bill and sends the notice itself, so the transition above must not
+    // produce a second copy now that the trigger can read it.
+    const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
+    await onInvoicesWriteHandler(
+      makeEvent(
+        { kinfolkId: '3', status: 'open', total: 40 },
+        { kinfolkId: '3', status: 'paid', total: 40, amountDue: 0, paymentAppliedNoticeOwner: 'accountCredit:pay-1' },
+      ) as any,
     );
     expect(mocks.enqueue).not.toHaveBeenCalled();
   });
@@ -147,9 +171,10 @@ describe('#884 invoice.payment.applied fires only on a transition from open into
   });
 
   it('#871: an overdue label with no amountDue sends nothing, and is never read as a payment', async () => {
-    // invoiceStateOf reads `{ total: 40 }` with no amountDue as paid. #884's
-    // precedence is kept: a write that labels the invoice past due is not a
-    // payment. And since #871 the trigger does not send the overdue notice.
+    // Since #902 `{ status: 'overdue', total: 40 }` reads `open`, not `paid`,
+    // so this is open-to-open and no longer even reaches the paid branch. #884's
+    // precedence is kept anyway: a write that labels the invoice past due is not
+    // a payment. And since #871 the trigger does not send the overdue notice.
     const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
     await onInvoicesWriteHandler(
       makeEvent(STATE_FIXTURES.open, { kinfolkId: '3', status: 'overdue', total: 40 }) as any,

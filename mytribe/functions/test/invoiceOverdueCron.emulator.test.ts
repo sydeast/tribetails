@@ -9,8 +9,9 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
  *   - the scan reads the top-level `invoices` collection with a real
  *     documentId-ordered pagination, and a doc under the retired
  *     `families/{id}/invoices` path is never chased;
- *   - only the open bill gets a notice: cancelled, quote, draft, credit, paid,
- *     zero, archived and the unproven legacy shape do not;
+ *   - only a live bill gets a notice: cancelled, quote, draft, credit, paid,
+ *     zero and archived do not. #902 added the migrated total-only shape to the
+ *     bills that DO: it owes its total, so it is chased like any other;
  *   - the business day comes from the stored settings zone;
  *   - a rerun sends nothing, and a rerun after a lost stamp meets the ledger.
  *
@@ -58,30 +59,35 @@ describe.runIf(EMULATOR)('#871 invoiceOverdueCron over the Firestore emulator', 
     await db().doc('families/fam871/invoices/e871_nested').set(OPEN);
   }, 30_000);
 
-  it('sends one notice, for the open bill only, and never for the nested copy', async () => {
-    expect(await runInvoiceOverdueScan(NOW)).toBe(1);
+  it('sends one notice per live bill, and never for the nested copy', async () => {
+    // TWO since #902: `e871_legacy` is a migrated bill with a `total` and no
+    // `amountDue`, which the classifier used to read as paid. It owes its total
+    // and is overdue, so the office chases it — the behaviour change #902 makes
+    // on purpose, and the reason #871's `legacy_balance_unproven` is retired.
+    expect(await runInvoiceOverdueScan(NOW)).toBe(2);
 
     const notices = await overdueNotices();
-    expect(notices).toHaveLength(1);
-    expect(notices[0]).toMatchObject({ key: 'invoice.overdue', targetType: 'invoice', targetId: 'e871_open' });
-    expect((notices[0]!['data'] as Record<string, unknown>)['daysPastDue']).toBe(13);
+    expect(notices.map((n) => n['targetId']).sort()).toEqual(['e871_legacy', 'e871_open']);
+    const openNotice = notices.find((n) => n['targetId'] === 'e871_open')!;
+    expect(openNotice).toMatchObject({ key: 'invoice.overdue', targetType: 'invoice' });
+    expect((openNotice['data'] as Record<string, unknown>)['daysPastDue']).toBe(13);
 
     const stamped = (await db().collection('invoices').where('overdueNotifiedAtMs', '>', 0).get()).docs.map((d) => d.id);
-    expect(stamped).toEqual(['e871_open']);
+    expect(stamped.sort()).toEqual(['e871_legacy', 'e871_open']);
     const nested = (await db().doc('families/fam871/invoices/e871_nested').get()).data() ?? {};
     expect(nested['overdueNotifiedAtMs']).toBeUndefined();
   });
 
   it('a rerun sends nothing, and a rerun after a lost stamp records the first send from the ledger', async () => {
     expect(await runInvoiceOverdueScan(NOW + 60_000)).toBe(0);
-    expect(await overdueNotices()).toHaveLength(1);
+    expect(await overdueNotices()).toHaveLength(2);
 
     await db().collection('invoices').doc('e871_open').update({ overdueNotifiedAtMs: null });
     // The next day. The bill that was due on 2026-09-14 is now overdue and gets
     // its one notice; the open bill whose stamp was lost gets nothing more.
     expect(await runInvoiceOverdueScan(NOW + 24 * 60 * 60 * 1000)).toBe(1);
     const notices = await overdueNotices();
-    expect(notices.map((n) => n['targetId']).sort()).toEqual(['e871_due_today', 'e871_open']);
+    expect(notices.map((n) => n['targetId']).sort()).toEqual(['e871_due_today', 'e871_legacy', 'e871_open']);
     // The restored stamp is the ledger's record of the FIRST delivery (the
     // dispatcher stamps its own wall clock), never this rerun's time.
     const ledger = await db()
@@ -97,6 +103,6 @@ describe.runIf(EMULATOR)('#871 invoiceOverdueCron over the Firestore emulator', 
 
     // And a third day: still one each.
     expect(await runInvoiceOverdueScan(NOW + 2 * 24 * 60 * 60 * 1000)).toBe(0);
-    expect(await overdueNotices()).toHaveLength(2);
+    expect(await overdueNotices()).toHaveLength(3);
   });
 });
