@@ -546,4 +546,24 @@ class TribeScreenTest {
         assertEquals(PageSaveStatus("Saved.", ok = true), pageSaveOutcome(SaveHalf.Saved, SaveHalf.Skipped, emergencyContactsDirty = false))
         assertEquals(PageSaveStatus("Saved.", ok = true), pageSaveOutcome(SaveHalf.Saved, SaveHalf.Saved, emergencyContactsDirty = false))
     }
+
+    /**
+     * #868: the row building around the two callables is not inside either half's
+     * catch. Left unattributed it would fall through to "Saved." over a save that
+     * never happened, which is the bug this issue is about, in the other direction.
+     */
+    @Test
+    fun blameUnfinishedHalf_attributesAThrowBetweenTheCallsToTheHalfItWasBuildingFor() {
+        val boom = IllegalStateException("nope")
+        // Before either call: the profile half never happened.
+        assertEquals(SaveHalf.Failed(boom) to SaveHalf.Skipped, blameUnfinishedHalf(SaveHalf.Skipped, SaveHalf.Skipped, boom))
+        // After the profile saved: the home half never happened.
+        assertEquals(SaveHalf.Saved to SaveHalf.Failed(boom), blameUnfinishedHalf(SaveHalf.Saved, SaveHalf.Skipped, boom))
+        // Both settled already: nothing left to blame.
+        assertEquals(SaveHalf.Saved to SaveHalf.Saved, blameUnfinishedHalf(SaveHalf.Saved, SaveHalf.Saved, boom))
+        assertEquals(SaveHalf.Failed(boom) to SaveHalf.Saved, blameUnfinishedHalf(SaveHalf.Failed(boom), SaveHalf.Saved, boom))
+
+        val (profile, home) = blameUnfinishedHalf(SaveHalf.Skipped, SaveHalf.Skipped, boom)
+        assertEquals(PageSaveStatus("Save failed: nope", ok = false), pageSaveOutcome(profile, home, emergencyContactsDirty = false))
+    }
 }

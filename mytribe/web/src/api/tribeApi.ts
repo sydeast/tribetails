@@ -734,6 +734,20 @@ export function pageSaveOutcome(profile: SaveHalf, home: SaveHalf, ecDirty: bool
   };
 }
 
+/**
+ * #868: where an error from the row building AROUND the two callables belongs.
+ * Both callables catch their own refusal, so anything left is the code that
+ * assembles what they send, and it belongs to the half it was assembling for.
+ * Without this the status line reads "Saved." over a save that never happened —
+ * which is the bug #868 is about, in the other direction. Mirrors
+ * `blameUnfinishedHalf` in TribeScreen.kt.
+ */
+export function blameUnfinishedHalf(profile: SaveHalf, home: SaveHalf, error: unknown): { profile: SaveHalf; home: SaveHalf } {
+  if (profile.kind === 'skipped') return { profile: { kind: 'failed', error }, home };
+  if (home.kind === 'skipped') return { profile, home: { kind: 'failed', error } };
+  return { profile, home };
+}
+
 /** True when a custom field has anything worth displaying (mirrors the Kotlin visibility guards). */
 export function isDisplayableField(f: CustomFieldDto): boolean {
   return f.label.trim().length > 0 || f.value.trim().length > 0;

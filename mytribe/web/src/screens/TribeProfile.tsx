@@ -5,6 +5,7 @@ import { SecretField } from '../components/SecretField';
 import { EmergencyContactsCard } from '../components/EmergencyContactsCard';
 import {
   addSecondaryContact,
+  blameUnfinishedHalf,
   CONTACT_LABEL_MAX,
   CONTACT_NAME_MAX,
   CONTACT_PHONE_MAX,
@@ -375,6 +376,10 @@ export function TribeProfile() {
       } catch (err) {
         homeHalf = { kind: 'failed', error: err };
       }
+    } catch (err) {
+      // Neither callable reaches here: both are caught above. This is the row
+      // building around them, which used to sit under one catch-all.
+      ({ profile: profileHalf, home: homeHalf } = blameUnfinishedHalf(profileHalf, homeHalf, err));
     } finally {
       // The card saves on its own button, so "Saved." here would be false about
       // any contact edit still sitting in it (#829). No "Auntie will be

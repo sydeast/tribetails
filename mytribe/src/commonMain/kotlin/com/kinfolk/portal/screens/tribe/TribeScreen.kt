@@ -499,6 +499,14 @@ fun TribeScreen(
                             } catch (t: Throwable) {
                                 SaveHalf.Failed(t)
                             }
+                        } catch (t: Throwable) {
+                            // Neither callable reaches here: both are caught above. This is
+                            // the row building around them, which used to sit under one
+                            // catch-all, and an escaped throw would take this screen's
+                            // scope down with it.
+                            val blamed = blameUnfinishedHalf(profileHalf, homeHalf, t)
+                            profileHalf = blamed.first
+                            homeHalf = blamed.second
                         } finally {
                             // The card saves on its own button, so "Saved." here would be
                             // false about any contact edit still sitting in it (#829).
@@ -974,6 +982,20 @@ internal fun homeAccessEditChanged(
     if (wifiPassword != stored(loaded.wifiPassword)) return true
     if (edit.removeKeys.isNotEmpty()) return true
     return edit.customFields != editCustomFields(loaded.customFields, emptyList(), emptyList(), drop).customFields
+}
+
+/**
+ * #868: where an error from the row building AROUND the two callables belongs.
+ * Both callables catch their own refusal, so anything left is the code that
+ * assembles what they send, and it belongs to the half it was assembling for.
+ * Without this the status line reads "Saved." over a save that never happened —
+ * which is the bug #868 is about, in the other direction. Mirrors
+ * `blameUnfinishedHalf` in web `api/tribeApi.ts`.
+ */
+internal fun blameUnfinishedHalf(profile: SaveHalf, home: SaveHalf, error: Throwable): Pair<SaveHalf, SaveHalf> = when {
+    profile is SaveHalf.Skipped -> SaveHalf.Failed(error) to home
+    home is SaveHalf.Skipped -> profile to SaveHalf.Failed(error)
+    else -> profile to home
 }
 
 /** The reason a half failed, as a sentence that says what to do, with no "Save failed:" in front. */
