@@ -81,6 +81,7 @@ fun SchemaFormRenderer(
  */
 internal fun schemaPlaceholder(field: FormField): String? =
     listOfNotNull(field.placeholder, field.defaultValue).firstOrNull { it.isNotBlank() }
+
 @Composable
 private fun SchemaFieldRow(
     field: FormField,

@@ -508,6 +508,7 @@ class TribeScreenTest {
         )
         return fake to PortalApi(SchemaFunctions(fake, schemas))
     }
+
     @Test
     fun schemaDefault_showsAsAHint_andIsNeverStored() = runComposeUiTest {
         val (fake, api) = defaultsHousehold()
@@ -527,6 +528,7 @@ class TribeScreenTest {
         assertEquals(emptyList<String>(), removed)
         assertEquals(listOf(allergy), rows)
     }
+
     // ---- #868: the home details follow Home access, and a partial save says so ----
 
     /** A household as getMyTribeProfile serves it to a viewer with or without Home access. */
@@ -608,6 +610,7 @@ class TribeScreenTest {
         assertEquals(JsonNull, home["gateCode"])
         onNodeWithText("Saved.").performScrollTo().assertIsDisplayed()
     }
+
     /**
      * #901. All three scalars ride on every call, so an empty field is never
      * ambiguous between "cleared" and "not part of this save". keyLocation and
@@ -630,6 +633,7 @@ class TribeScreenTest {
         assertEquals(JsonNull, home["keyLocation"])
         assertEquals(JsonNull, home["wifiPassword"])
     }
+
     /** #901: a cleared key location and Wi-Fi password clear too, not just the gate code. */
     @Test
     fun clearedKeyLocationAndWifi_reachTheServerAsExplicitNulls() = runComposeUiTest {
@@ -647,6 +651,7 @@ class TribeScreenTest {
         // The gate code was not touched, and rides along unchanged rather than as a clear.
         assertEquals("4242", home["gateCode"]!!.jsonPrimitive.content)
     }
+
     @Test
     fun secondaryWithoutHomeAccess_homeDetailsLocked_profileSaves_noHomeAccessCall() = runComposeUiTest {
         val fake = viewer(canEditHome = false)

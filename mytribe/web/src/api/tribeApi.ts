@@ -612,6 +612,7 @@ export const LEGACY_EMERGENCY_CONTACT_KEYS = ['emergencyContactName', 'emergency
 export function schemaPlaceholder(field: { placeholder: string | null; defaultValue: string | null }): string | null {
   return [field.placeholder, field.defaultValue].find((hint): hint is string => hint !== null && hint.trim() !== '') ?? null;
 }
+
 /**
  * #873. The row a schema field saves, or null when the stored row stays as it is.
  *

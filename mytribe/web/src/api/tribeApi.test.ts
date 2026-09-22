@@ -223,15 +223,19 @@ describe('schemaPlaceholder', () => {
   it("prefers the schema's own placeholder", () => {
     expect(schemaPlaceholder(field('e.g. twice a day', 'Twice a day'))).toBe('e.g. twice a day');
   });
+
   it('falls back to the default when there is no placeholder', () => {
     expect(schemaPlaceholder(field(null, 'Twice a day'))).toBe('Twice a day');
   });
+
   it('is null when neither is set', () => {
     expect(schemaPlaceholder(field(null, null))).toBeNull();
   });
+
   it('falls through a blank placeholder rather than painting an empty hint', () => {
     expect(schemaPlaceholder(field('   ', 'Twice a day'))).toBe('Twice a day');
   });
+
   it('is null when the default is blank', () => {
     expect(schemaPlaceholder(field(null, '  '))).toBeNull();
   });

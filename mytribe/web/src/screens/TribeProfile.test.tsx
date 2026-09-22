@@ -503,6 +503,7 @@ describe('TribeProfile schema-mode save', () => {
     expect(await saveHomeAccessArgs()).toMatchObject({ gateCode: null, keyLocation: 'Under the blue planter' });
   });
 });
+
 /**
  * #873. With a form schema, this screen rebuilt `customFields` from the schema
  * keys alone and the callables replaced the stored list whole, so every stored
@@ -626,6 +627,7 @@ describe('TribeProfile: the vet is chosen, never typed', () => {
     expect(queryByLabelText('Clinic Phone')).toBeNull();
     expect(queryByLabelText('Clinic Address')).toBeNull();
   });
+
   it('puts the create affordance LAST, after the existing clinics', async () => {
     const { findByLabelText, container } = await renderTribeProfile({ clinics: [RIVERSIDE] });
     const search = await findByLabelText(/Search vet clinics/i);
@@ -636,6 +638,7 @@ describe('TribeProfile: the vet is chosen, never typed', () => {
       expect(rows[rows.length - 1]).toContain('as a new clinic');
     });
   });
+
   it('shows the candidates instead of selecting one, when the server asks', async () => {
     const tribeApi = await import('../api/tribeApi');
     vi.mocked(tribeApi.submitVetClinic).mockResolvedValue({
@@ -652,6 +655,7 @@ describe('TribeProfile: the vet is chosen, never typed', () => {
     expect(await findByText(/already on the shared list/i)).toBeTruthy();
     expect(await findByText(/as a different clinic/)).toBeTruthy();
   });
+
   it('echoes the offered ids when the user insists it is different', async () => {
     const tribeApi = await import('../api/tribeApi');
     // The echo is what the server checks. A boolean would let a client claim a
@@ -681,6 +685,7 @@ describe('TribeProfile: the vet is chosen, never typed', () => {
       acknowledgedMatchIds: ['c1'],
     });
   });
+
   it('sends NO acknowledgement on the first attempt, so the safe path is the default', async () => {
     const tribeApi = await import('../api/tribeApi');
     vi.mocked(tribeApi.submitVetClinic).mockResolvedValue({
@@ -700,6 +705,7 @@ describe('TribeProfile: the vet is chosen, never typed', () => {
     });
   });
 });
+
 /**
  * #901. The screen seeded an empty schema field with the schema's `defaultValue`
  * as its VALUE, while `schemaFieldRow` sends nothing for a key that was never
@@ -714,6 +720,7 @@ describe('a schema default is a hint, never a stored value (#901)', () => {
   function fieldWithDefault(key: string, label: string, defaultValue: string): FormFieldDto {
     return { ...textField(key, label), defaultValue };
   }
+
   const PROFILE_FORM: FormSchemaDto = {
     ...PROFILE_SCHEMA,
     sections: [
@@ -730,6 +737,7 @@ describe('a schema default is a hint, never a stored value (#901)', () => {
     expect(input.value).toBe('');
     expect(view.queryByDisplayValue('Twice a day')).toBeNull();
   });
+
   it('a save over an untouched default stores nothing for that key, so the screen and the record agree', async () => {
     const view = await renderTribeProfile({ profileSchema: PROFILE_FORM });
     await view.findByPlaceholderText('Twice a day');
@@ -740,6 +748,7 @@ describe('a schema default is a hint, never a stored value (#901)', () => {
     expect(sent.customFields?.find((f) => f.key === 'feeding')).toBeUndefined();
     expect(sent.removeCustomFieldKeys).toEqual([]);
   });
+
   it('a typed value is saved as usual: the placeholder does not swallow real input', async () => {
     const view = await renderTribeProfile({ profileSchema: PROFILE_FORM });
     const input = await view.findByPlaceholderText('Twice a day');
@@ -750,6 +759,7 @@ describe('a schema default is a hint, never a stored value (#901)', () => {
     const sent = vi.mocked(saveTribeProfile).mock.calls[0]![0];
     expect(sent.customFields).toContainEqual({ key: 'feeding', label: 'Feeding notes', value: 'Once at six' });
   });
+
   it('a stored value still wins over the default', async () => {
     const stored = {
       ...PROFILE,

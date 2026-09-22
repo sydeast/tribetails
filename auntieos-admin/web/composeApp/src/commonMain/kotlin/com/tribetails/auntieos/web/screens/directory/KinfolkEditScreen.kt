@@ -550,9 +550,16 @@ fun KinfolkEditScreen(
                         // Edit: the household is saved; the contact still needs fixing
                         // and the screen stays open for it. #858: locked the same as a
                         // save the server refused (below) - this is the pre-check
-                        // catching it before the callable is even asked.
+                        // catching it before the callable is even asked, so the next
+                        // save skips writeHousehold too. #893 item 2: the toast fires
+                        // only when the household step actually wrote something - an
+                        // edit whose diff was empty must not claim a save that never
+                        // happened. ecError (set above) already shows the contact
+                        // problem either way.
                         if (!isNew) editContactRetryPending = true
-                        showToast("The household is saved. The Emergency Contact still needs attention.", ToastKind.Info)
+                        if (outcome.wrote) {
+                            showToast("The household is saved. The Emergency Contact still needs attention.", ToastKind.Info)
+                        }
                     } else {
                         if (saveContacts) ecBaseline = ecDrafts
                         if (isNew) PendingAddKinfolk.clear(operatorUid)

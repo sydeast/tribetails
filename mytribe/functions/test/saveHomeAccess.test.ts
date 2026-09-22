@@ -274,10 +274,12 @@ describe('saveHomeAccessHandler: customFields merge by key (#873)', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     return { ctx, docs };
   }
+
   async function save(data: Record<string, unknown>) {
     const { saveHomeAccessHandler } = await import('../src/portal/saveHomeAccess');
     return saveHomeAccessHandler({ data: { kinfolkId: '3', ...data }, auth: { uid: 'u1' } } as any);
   }
+
   const stored = (docs: Record<string, any>) => docs[HOME_ACCESS_PATH].customFields;
 
   it('an OLD client sending only its schema rows no longer deletes a stored non-schema row', async () => {
@@ -330,10 +332,12 @@ describe('saveHomeAccessHandler: limits and concurrent saves (#873 review)', () 
     mocks.dbFn.mockReturnValue(ctx.db);
     return { ctx, docs };
   }
+
   async function save(data: Record<string, unknown>) {
     const { saveHomeAccessHandler } = await import('../src/portal/saveHomeAccess');
     return saveHomeAccessHandler({ data: { kinfolkId: '3', ...data }, auth: { uid: 'u1' } } as any);
   }
+
   const storedList = (docs: Record<string, any>) => docs[HOME_ACCESS_PATH].customFields as unknown[];
 
   it('a household with 60 stored rows saves when a current client sends every row back', async () => {
@@ -431,6 +435,7 @@ describe('saveHomeAccessHandler: limits and concurrent saves (#873 review)', () 
     expect(tx.attempts()).toBe(2);
   });
 });
+
 /**
  * #901. This callable wrote no audit entry while `saveTribeProfile` has written
  * one since #843, so a change to the gate code, the key location or the Wi-Fi
@@ -455,10 +460,12 @@ describe('saveHomeAccessHandler: audit entry (#901)', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     return { ctx, docs };
   }
+
   async function save(data: Record<string, unknown>) {
     const { saveHomeAccessHandler } = await import('../src/portal/saveHomeAccess');
     return saveHomeAccessHandler({ data: { kinfolkId: '3', ...data }, auth: { uid: 'u1' } } as any);
   }
+
   const auditArgs = () => mocks.writeAuditEntryFn.mock.calls[0]?.[0];
   it('writes HOME_ACCESS_UPDATED naming the fields that changed', async () => {
     home();
@@ -475,6 +482,7 @@ describe('saveHomeAccessHandler: audit entry (#901)', () => {
     });
     expect(auditArgs().payload.fields).toEqual(['gateCode', 'keyLocation', 'wifiPassword']);
   });
+
   it('NEVER the values: no gate code, key location, Wi-Fi password or custom row value anywhere in the entry', async () => {
     home();
     await expect(
@@ -494,33 +502,39 @@ describe('saveHomeAccessHandler: audit entry (#901)', () => {
     expect(auditArgs().payload.fields).toEqual(['gateCode', 'keyLocation', 'wifiPassword', 'customFields']);
     expect(auditArgs().description).toBe('Home access updated: gateCode, keyLocation, wifiPassword, customFields');
   });
+
   it('names only what actually changed, though the client sends all three scalars every time', async () => {
     home();
     await expect(save({ gateCode: '1234', keyLocation: KEY_SPOT, wifiPassword: null })).resolves.toEqual({ ok: true });
     expect(auditArgs().payload.fields).toEqual(['keyLocation']);
   });
+
   it('a cleared field is audited: a sent null over a stored value is a change', async () => {
     home();
     await expect(save({ gateCode: null })).resolves.toEqual({ ok: true });
     expect(auditArgs().payload.fields).toEqual(['gateCode']);
   });
+
   it('a no-op save writes no audit entry', async () => {
     const { ctx } = home();
     await expect(save({ gateCode: '1234', customFields: [ALARM], removeCustomFieldKeys: [] })).resolves.toEqual({ ok: true });
     expect(ctx.writes).toHaveLength(0);
     expect(mocks.writeAuditEntryFn).not.toHaveBeenCalled();
   });
+
   it('a refused save writes no audit entry', async () => {
     const { docs } = home();
     docs['rate_limits/homeAccessSave:3'] = { count: 60, windowStart: Date.now() };
     await expect(save({ gateCode: GATE })).rejects.toMatchObject({ code: 'resource-exhausted' });
     expect(mocks.writeAuditEntryFn).not.toHaveBeenCalled();
   });
+
   it('a secondary is SECONDARY in the trail, never the household primary', async () => {
     home([ALARM], HOME_ACCESS_MEMBER);
     await expect(save({ gateCode: GATE })).resolves.toEqual({ ok: true });
     expect(auditArgs()).toMatchObject({ actorRole: 'SECONDARY' });
   });
+
   it('a failed audit write does not fail a save that already committed', async () => {
     const { docs } = home();
     mocks.writeAuditEntryFn.mockRejectedValueOnce(new Error('chain head unavailable'));
