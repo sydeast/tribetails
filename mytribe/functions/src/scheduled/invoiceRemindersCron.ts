@@ -8,14 +8,70 @@ import { enqueueNotificationDetailed } from '../notifications/dispatcher';
 import { INVOICE_REMINDER_RESEND_WINDOW_MS } from '../admin/sendInvoiceReminder';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
+import { businessTodayIso } from '../lib/quoteDecision';
+import { paidCentsFromPayments } from '../lib/invoiceMath';
+import {
+  chaseRefusalOf,
+  daysPastDue,
+  invoiceDueDayOf,
+  isDueWithin,
+  isLegacyTotalOnly,
+  type ChaseRefusal,
+  type PaymentEvidence,
+} from '../lib/invoiceChase';
 
+/**
+ * #871: THE ONE SENDER OF `invoice.overdue` IS `invoiceOverdueCron`, below.
+ *
+ * Overdue is a function of the clock. No write happens when a due date passes,
+ * so a document trigger cannot see the moment an invoice falls due, and no
+ * server writer stamps a `past_due`/`overdue` status (the state stamp writes
+ * only the eight classifier states). `onInvoicesWrite` used to carry a branch
+ * for that label; it could only fire on a hand-written label, and it is gone.
+ * The admin clients compute Overdue the same way this cron does: stored state
+ * `open`, due day strictly before today.
+ *
+ * WHICH INVOICES. Both scans read the top-level `invoices` collection, the store
+ * every admin client, every billing callable and the portal read and write. They
+ * used to scan `collectionGroup('invoices')`, which also matched the retired
+ * `families/{id}/invoices` path (backfillNestedInvoices.ts: nothing ever wrote
+ * there). Reading only the live store means a stray nested copy can never be
+ * chased twice under two ids.
+ *
+ * WHICH DAY. "Today" is the business's own calendar day (`businessTodayIso`),
+ * not the UTC day this function runs on, and a due day counts as overdue only
+ * when it is strictly before today, as every client counts it.
+ *
+ * CADENCE, as it exists today and kept: one due-soon reminder per invoice (this
+ * cron, due today or within REMINDER_WINDOW_DAYS; or a button press, which the
+ * cron then honours), and one overdue notice per invoice, ever. No catalog key,
+ * template or setting describes a second overdue notice, so there is none.
+ */
 const REMINDER_WINDOW_DAYS = 3;
 const NOTIFIED_FIELD_REMINDER = 'reminderNotifiedAtMs';
 const NOTIFIED_FIELD_OVERDUE = 'overdueNotifiedAtMs';
 
+/**
+ * How far back the dispatcher's ledger looks for an earlier overdue notice
+ * (#871). The `overdueNotifiedAtMs` stamp is the once-ever gate; this is the
+ * crash net under it. A run that delivered and died before stamping is met by
+ * the ledger on every rerun inside the window, which records that delivery
+ * instead of sending a second one. Seven days, as #884's credit notice uses,
+ * so a week of failed stamp writes still cannot send twice.
+ */
+export const OVERDUE_DEDUPE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * The event id of an invoice's overdue notice. Stable across trigger
+ * redelivery, cron reruns and concurrent runs, because one invoice has one
+ * overdue period. It replaces the dispatcher's derived identity.
+ */
+export function overdueDedupeKey(invoiceId: string): string {
+  return `invoice:${invoiceId}:overdue`;
+}
+
 type InvoiceDoc = {
   status?: string;
-  paymentStatus?: string;
   dueDate?: string;
   invoiceDueDate?: string;
   amountDue?: number;
@@ -25,33 +81,27 @@ type InvoiceDoc = {
   [k: string]: unknown;
 };
 
-// `createInvoice.ts`/`createQuote.ts` stamp `dueDate`; `invoiceDueDate` is
-// read as a legacy/alternate key (matches the same hedge in
-// sendInvoiceReminder.ts and enrichTemplateData.ts) so this never regresses
-// again if a future writer picks the other name.
-function parseDueMs(d: InvoiceDoc): number | null {
-  const s = d.dueDate || d.invoiceDueDate;
-  if (!s) return null;
-  const ms = Date.parse(s);
-  return Number.isFinite(ms) ? ms : null;
-}
-
-// `paymentStatus`/`status==='paid'` cover the Stripe webhook path
-// (stripeWebhook.ts sets both `status` and `amountDue:0` together); the
-// `amountDue <= 0` check covers every other write path (e.g. AuntieOS
-// manual payments) — the same reading the portal's retired `resolveStatus`
-// used. The portal now renders the stored state stamp (ADR-0002); this cron
-// still money-checks defensively because a missed reminder is cheaper than a
-// wrongly sent one, and `amountDue <= 0` can only ever SUPPRESS a reminder.
-function isPaid(d: InvoiceDoc): boolean {
-  if (d.paymentStatus === 'PAID' || d.status === 'paid') return true;
-  return typeof d.amountDue === 'number' && d.amountDue <= 0;
+/**
+ * Reads the invoice's payment rows ONLY for the legacy total-only shape, the
+ * one state the classifier cannot settle without them (lib/invoiceChase.ts).
+ * Every other invoice is decided from the doc alone and costs no extra read.
+ */
+async function chaseRefusal(docSnap: QueryDocumentSnapshot, data: InvoiceDoc): Promise<ChaseRefusal | null> {
+  let evidence: PaymentEvidence | null = null;
+  if (isLegacyTotalOnly(data)) {
+    const rows = await docSnap.ref.collection('payments').get();
+    evidence = {
+      rows: rows.size,
+      paidCents: paidCentsFromPayments(rows.docs.map((d) => d.data() as { amount?: number; amountCents?: number })),
+    };
+  }
+  return chaseRefusalOf(data, evidence);
 }
 
 /**
- * Reminds on one invoice doc if it is unpaid, due within the reminder window,
- * and not yet reminded. Exported for unit testing of the per-doc decision.
- * Returns true when a reminder was enqueued.
+ * Reminds on one invoice doc if it is a live bill, due today or within the
+ * reminder window, and not yet reminded. Exported for unit testing of the
+ * per-doc decision. Returns true when a reminder was enqueued.
  *
  * #832: `reminderNotifiedAtMs` means "a reminder reached this household", and
  * the reminder button, the cron's own skip and every client's "Last reminder"
@@ -64,18 +114,15 @@ function isPaid(d: InvoiceDoc): boolean {
 export async function processReminderInvoice(
   docSnap: QueryDocumentSnapshot,
   now: number,
+  todayIso: string,
 ): Promise<boolean> {
-  const windowEnd = now + REMINDER_WINDOW_DAYS * 24 * 60 * 60 * 1000;
   const data = docSnap.data() as InvoiceDoc;
-  if (isPaid(data)) return false;
   if (data[NOTIFIED_FIELD_REMINDER]) return false;
-  const dueMs = parseDueMs(data);
-  if (dueMs === null) return false;
-  if (dueMs < now || dueMs > windowEnd) return false;
-  // Invoices live in the flat top-level `invoices` collection (O-14), so
-  // `docSnap.ref.parent.parent` is always null here — read the stamped field.
+  const dueDay = invoiceDueDayOf(data);
+  if (!isDueWithin(dueDay, todayIso, REMINDER_WINDOW_DAYS)) return false;
   const familyId = data.kinfolkId;
   if (!familyId) return false;
+  if (await chaseRefusal(docSnap, data)) return false;
   const recipientUid = await resolveKinfolkUid(familyId);
   try {
     const outcome = await enqueueNotificationDetailed({
@@ -84,10 +131,12 @@ export async function processReminderInvoice(
       data: {
         kinfolkId: familyId,
         invoiceId: docSnap.id,
-        invoiceDueDate: data.invoiceDueDate ?? null,
+        invoiceDueDate: data.invoiceDueDate ?? data.dueDate ?? null,
         amountMinor: data.amountMinor ?? null,
         currency: data.currency ?? null,
       },
+      targetType: 'invoice',
+      targetId: docSnap.id,
       fireAtMs: now,
       // #832: look back the reminder button's whole window, as the button does.
       // A press that delivered and lost its stamp an hour ago is past the
@@ -123,16 +172,30 @@ export async function processReminderInvoice(
 }
 
 /**
- * Drains the whole `invoices` collection-group, page by page (WARNING-25): the
+ * The business's calendar day for this run, or null (logged) when no zone can
+ * be resolved. A scan with no day sends nothing: guessing the day is how "due
+ * today" gets called overdue.
+ */
+async function runDay(now: number, functionName: string): Promise<string | null> {
+  const todayIso = await businessTodayIso(db(), now);
+  if (todayIso !== '') return todayIso;
+  logEvent({ severity: 'error', function: functionName, event: 'business.day.unresolved', extra: { now } });
+  return null;
+}
+
+/**
+ * Drains the top-level `invoices` collection, page by page (WARNING-25): the
  * old single `.limit(1000)` never reminded any invoice past the cap. Exported
  * so a test can drive the full scan against a paged mock.
  */
 export async function runInvoiceRemindersScan(now: number = Date.now()): Promise<number> {
+  const todayIso = await runDay(now, 'invoiceRemindersCron');
+  if (todayIso === null) return 0;
   let reminded = 0;
   await paginateQuery(
-    db().collectionGroup('invoices'),
+    db().collection('invoices'),
     async (docSnap) => {
-      if (await processReminderInvoice(docSnap, now)) reminded += 1;
+      if (await processReminderInvoice(docSnap, now, todayIso)) reminded += 1;
     },
     { functionName: 'invoiceRemindersCron' },
   );
@@ -140,8 +203,9 @@ export async function runInvoiceRemindersScan(now: number = Date.now()): Promise
 }
 
 /**
- * Runs daily 09:00 ET. Scans invoices with a due date within REMINDER_WINDOW_DAYS,
- * unpaid, and not yet reminded, enqueues `invoice.reminder` once per invoice.
+ * Runs daily 09:00 ET. Scans live bills due today or within
+ * REMINDER_WINDOW_DAYS and not yet reminded, and enqueues `invoice.reminder`
+ * once per invoice.
  */
 export const invoiceRemindersCron = onSchedule(
   // Walks open invoices and fans out reminders inside the default 60s
@@ -183,15 +247,15 @@ const SUPPRESSED_FIELD_OVERDUE = 'overdueSuppressedAtMs';
 export const OVERDUE_SUPPRESSED_RETRY_MS = 20 * 60 * 60 * 1000;
 
 /**
- * Notifies on one past-due unpaid invoice doc if not yet notified. Exported for
- * unit testing. Returns true when an overdue notice was enqueued.
+ * Notifies on one overdue live bill if not yet notified. Exported for unit
+ * testing. Returns true when an overdue notice was enqueued.
  *
  * #832: `overdueNotifiedAtMs` is written only for a notice that reached the
  * household. Three outcomes:
  *   - written: stamp now.
- *   - duplicate: the `onInvoicesWrite` trigger already sent this notice (it
- *     shares the `invoice:<id>` identity) and wrote no stamp of its own, so
- *     stamp the ledger's last-sent time.
+ *   - duplicate (#871): an earlier run delivered this invoice's notice, under
+ *     the same `overdueDedupeKey`, and its stamp write did not land. Stamp the
+ *     ledger's last-sent time; send nothing.
  *   - suppressed (only by an operator override; see SUPPRESSED_FIELD_OVERDUE):
  *     no notified stamp, so a later run sends once the operator turns the
  *     notice back on; `overdueSuppressedAtMs` skips the invoice for
@@ -200,17 +264,17 @@ export const OVERDUE_SUPPRESSED_RETRY_MS = 20 * 60 * 60 * 1000;
 export async function processOverdueInvoice(
   docSnap: QueryDocumentSnapshot,
   now: number,
+  todayIso: string,
 ): Promise<boolean> {
   const data = docSnap.data() as InvoiceDoc;
-  if (isPaid(data)) return false;
   if (data[NOTIFIED_FIELD_OVERDUE]) return false;
   const suppressedAt = data[SUPPRESSED_FIELD_OVERDUE];
   if (typeof suppressedAt === 'number' && now - suppressedAt < OVERDUE_SUPPRESSED_RETRY_MS) return false;
-  const dueMs = parseDueMs(data);
-  if (dueMs === null) return false;
-  if (dueMs >= now) return false;
+  const pastDue = daysPastDue(invoiceDueDayOf(data), todayIso);
+  if (pastDue === null) return false;
   const familyId = data.kinfolkId;
   if (!familyId) return false;
+  if (await chaseRefusal(docSnap, data)) return false;
   const recipientUid = await resolveKinfolkUid(familyId);
   try {
     const outcome = await enqueueNotificationDetailed({
@@ -219,12 +283,16 @@ export async function processOverdueInvoice(
       data: {
         kinfolkId: familyId,
         invoiceId: docSnap.id,
-        invoiceDueDate: data.invoiceDueDate ?? null,
+        invoiceDueDate: data.invoiceDueDate ?? data.dueDate ?? null,
         amountMinor: data.amountMinor ?? null,
         currency: data.currency ?? null,
-        daysPastDue: Math.floor((now - dueMs) / (24 * 60 * 60 * 1000)),
+        daysPastDue: pastDue,
       },
+      targetType: 'invoice',
+      targetId: docSnap.id,
       fireAtMs: now,
+      dedupeKey: overdueDedupeKey(docSnap.id),
+      dedupeWindowMs: OVERDUE_DEDUPE_WINDOW_MS,
     });
     if (outcome.written.length > 0) {
       await docSnap.ref.set({ [NOTIFIED_FIELD_OVERDUE]: now }, { merge: true });
@@ -232,7 +300,7 @@ export async function processOverdueInvoice(
     }
     const duplicate = outcome.suppressed.find((s) => s.reason === 'duplicate');
     if (duplicate) {
-      // The trigger's notice already reached this household; record THAT one.
+      // An earlier run's notice already reached this household; record THAT one.
       await docSnap.ref.set({ [NOTIFIED_FIELD_OVERDUE]: duplicate.lastAtMs ?? now }, { merge: true });
     } else {
       await docSnap.ref.set({ [SUPPRESSED_FIELD_OVERDUE]: now }, { merge: true });
@@ -256,14 +324,16 @@ export async function processOverdueInvoice(
 }
 
 /**
- * Drains the whole `invoices` collection-group for overdue notices (WARNING-25).
+ * Drains the top-level `invoices` collection for overdue notices (WARNING-25).
  */
 export async function runInvoiceOverdueScan(now: number = Date.now()): Promise<number> {
+  const todayIso = await runDay(now, 'invoiceOverdueCron');
+  if (todayIso === null) return 0;
   let notified = 0;
   await paginateQuery(
-    db().collectionGroup('invoices'),
+    db().collection('invoices'),
     async (docSnap) => {
-      if (await processOverdueInvoice(docSnap, now)) notified += 1;
+      if (await processOverdueInvoice(docSnap, now, todayIso)) notified += 1;
     },
     { functionName: 'invoiceOverdueCron' },
   );
@@ -271,8 +341,8 @@ export async function runInvoiceOverdueScan(now: number = Date.now()): Promise<n
 }
 
 /**
- * Runs daily 09:30 ET. Scans invoices past due and unpaid, enqueues
- * `invoice.overdue` once per invoice.
+ * Runs daily 09:30 ET. Scans live bills whose due day has passed, and enqueues
+ * `invoice.overdue` once per invoice. The only sender of that notice (#871).
  */
 export const invoiceOverdueCron = onSchedule(
   // Walks overdue invoices and fans out notices. See invoiceRemindersCron.

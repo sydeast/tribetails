@@ -35,17 +35,16 @@ enum class InvoiceStatus { PAID, OVERDUE, OUTSTANDING }
  * "today" so the comparison stays testable and clock-free.
  *
  * - amountDue <= 0  -> PAID
- * - still owed AND dueDate parses to a date strictly before today -> OVERDUE
+ * - [invoiceIsOverdue]: stored state `open` AND dueDate strictly before today -> OVERDUE
  * - otherwise -> OUTSTANDING
  *
- * dueDate is free text; only a leading YYYY-MM-DD prefix is compared. An
- * unparseable / blank dueDate never escalates to OVERDUE (stays OUTSTANDING).
+ * #871: OVERDUE comes from the shared [invoiceIsOverdue], so the detail badge,
+ * the list pill and the server's overdue notice agree. It used to call any
+ * still-owed invoice with a past date overdue, cancelled and quotes included.
  */
 fun invoiceStatusFor(invoice: Invoice, todayKey: String): InvoiceStatus {
     if (invoice.amountDue <= 0.0) return InvoiceStatus.PAID
-    val due = invoice.dueDate.trim().take(10)
-    val overdue = isIsoDateBefore(due, todayKey)
-    return if (overdue) InvoiceStatus.OVERDUE else InvoiceStatus.OUTSTANDING
+    return if (invoiceIsOverdue(invoice, todayKey)) InvoiceStatus.OVERDUE else InvoiceStatus.OUTSTANDING
 }
 
 /** True only when both look like YYYY-MM-DD and [a] is strictly before [b]. */

@@ -406,7 +406,9 @@ private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
                 enabled = !receiptLoading && !reminderLoading,
                 leading = { Icon(Lucide.ReceiptText, contentDescription = null, modifier = Modifier.size(14.dp)) },
             )
-            GhostButton(
+            // #871: offered only for a stored open bill, the rule the server
+            // enforces, so a cancelled invoice or a quote never shows the button.
+            if (invoiceIsRemindable(invoice)) GhostButton(
                 label   = if (reminderLoading) "Sending..." else "Send reminder",
                 onClick = {
                     if (receiptLoading || reminderLoading) return@GhostButton
