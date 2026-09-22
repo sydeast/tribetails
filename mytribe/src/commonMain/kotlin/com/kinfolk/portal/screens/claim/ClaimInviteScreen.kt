@@ -98,7 +98,7 @@ fun ClaimInviteScreen(
                 tribeName = raw["tribeName"]?.jsonPrimitive?.contentOrNull.orEmpty(),
             )
         } catch (t: Throwable) {
-            previewError = claimErrorMessage(t.message, "Could not load this invite. Check your connection and try again.")
+            previewError = t.message ?: "Could not load this invite. Check your connection and try again."
         }
     }
 
@@ -180,7 +180,7 @@ fun ClaimInviteScreen(
                                             tribeName = raw["tribeName"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                                         )
                                     } catch (t: Throwable) {
-                                        previewError = claimErrorMessage(t.message, "Still couldn't load the invite.")
+                                        previewError = t.message ?: "Still couldn't load the invite."
                                     }
                                 }
                             },
@@ -253,7 +253,7 @@ fun ClaimInviteScreen(
                                         } else if (signInMode && repo.isCredentialFailure(t)) {
                                             actionError = WRONG_CREDENTIALS_MESSAGE
                                         } else {
-                                            actionError = claimErrorMessage(t.message, "Could not continue. Try again.")
+                                            actionError = t.message ?: "Could not continue. Try again."
                                         }
                                     } finally {
                                         inFlight = false

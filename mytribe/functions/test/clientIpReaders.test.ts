@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 
 /**
- * #910: `clientIpOf` in `auth/loginSecurity.ts` is the ONLY code that reads the
- * caller's address.
+ * #910: `clientIpOf` in `auth/loginSecurity.ts` is the ONLY code that decides
+ * what the caller's address is.
  *
  * Behind the Functions Framework (Express `trust proxy` on), `rawRequest.ip`,
  * `req.ip` and the first `X-Forwarded-For` entry are all whatever the caller
@@ -13,15 +13,23 @@ import { join, relative, resolve } from 'node:path';
  * source file reads one of those directly. Comments are stripped first, so a
  * comment explaining why not to read them does not trip it.
  *
- * Scope: every `.ts`/`.js` under `mytribe/functions/src`, and under
- * `auntieos-admin/web/functions/src` when that directory exists (it does not
- * on 2026-09-14; the admin functions live in `mytribe/functions`).
+ * WHY A SCAN AND NOT AN ESLINT RULE. The readers span two packages with two
+ * ESLint configs (`mytribe/functions` is TypeScript, `auntieos-admin/web/functions`
+ * is plain CommonJS JavaScript with no lint script), and a repo-local rule would
+ * have to be registered in both. One vitest file scans both trees, runs in the
+ * suite CI already gates on, and names the offending file and pattern.
  */
-const ROOTS = [
-  resolve(__dirname, '../src'),
-  resolve(__dirname, '../../../auntieos-admin/web/functions/src'),
-];
 const REPO = resolve(__dirname, '../../..');
+
+/**
+ * Every tree with a server that can see an `X-Forwarded-For` header. Both are
+ * the ones #910 names. `auntieos-admin/twilio-service/functions` is Twilio-hosted,
+ * not the Functions Framework, and reads no address today.
+ */
+const ROOTS = ['mytribe/functions/src', 'auntieos-admin/web/functions'];
+
+/** Not our source: vendored code, build output, and test scaffolds that forge headers on purpose. */
+const SKIP_DIRS = new Set(['node_modules', 'lib', 'dist', 'test', 'tests', '__tests__']);
 
 const READERS: Array<[string, RegExp]> = [
   ['x-forwarded-for', /x-forwarded-for/i],
@@ -31,20 +39,25 @@ const READERS: Array<[string, RegExp]> = [
   ['remoteAddress', /\bremoteAddress\b/],
 ];
 
-/** Files allowed to read the address, each with the reason. */
+/** The files allowed to touch the address, each with the reason. */
 const ALLOWED = new Map<string, string>([
   ['mytribe/functions/src/auth/loginSecurity.ts', 'home of clientIpOf, the one reader'],
-  // PR #903 (#892) moves confirmSecureReset onto clientIpOf and is still open
-  // on 2026-09-14. Delete this entry when it merges.
-  ['mytribe/functions/src/security/confirmSecureReset.ts', 'moved to clientIpOf by PR #903'],
+  [
+    'mytribe/functions/src/security/confirmSecureReset.ts',
+    // An onRequest function, so it has no CallableRequest to pass. It hands the
+    // socket address to clientIpOf as the documented no-header fallback and
+    // never decides an address itself (#892, PR #903).
+    'hands req.socket.remoteAddress to clientIpOf as its fallback',
+  ],
 ]);
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
   for (const name of readdirSync(dir)) {
     const full = join(dir, name);
-    if (statSync(full).isDirectory()) out.push(...sourceFiles(full));
-    else if (/\.(ts|js)$/.test(name) && !/\.d\.ts$/.test(name)) out.push(full);
+    if (statSync(full).isDirectory()) {
+      if (!SKIP_DIRS.has(name)) out.push(...sourceFiles(full));
+    } else if (/\.(ts|js|mjs|cjs)$/.test(name) && !/\.d\.ts$/.test(name)) out.push(full);
   }
   return out;
 }
@@ -74,17 +87,28 @@ describe('#910 only clientIpOf reads the client address', () => {
     expect(readersIn('const zip = req.zip; const tip = request.tipAmount;')).toEqual([]);
   });
 
-  it('the allowed reader really is a reader, so the scan is not reading an empty tree', () => {
+  it('every root exists and holds source, so the scan cannot pass on an empty tree', () => {
+    for (const root of ROOTS) {
+      expect(sourceFiles(resolve(REPO, root)).length, `${root} holds source files`).toBeGreaterThan(0);
+    }
+  });
+
+  it('the allowed reader really is a reader, so the patterns are not dead', () => {
     const text = readFileSync(resolve(REPO, 'mytribe/functions/src/auth/loginSecurity.ts'), 'utf8');
     expect(readersIn(text)).toContain('x-forwarded-for');
+  });
+
+  it('every allowed file is still there, so a stale entry cannot hide a new reader', () => {
+    for (const rel of ALLOWED.keys()) {
+      expect(() => statSync(resolve(REPO, rel)), `${rel} still exists`).not.toThrow();
+    }
   });
 
   it('no other source file reads x-forwarded-for, x-real-ip, rawRequest.ip, req.ip or remoteAddress', () => {
     const offenders: string[] = [];
     let scanned = 0;
     for (const root of ROOTS) {
-      if (!existsSync(root)) continue;
-      for (const file of sourceFiles(root)) {
+      for (const file of sourceFiles(resolve(REPO, root))) {
         scanned += 1;
         const rel = relative(REPO, file).split('\\').join('/');
         if (ALLOWED.has(rel)) continue;

@@ -1,6 +1,7 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
+import { getAuth } from 'firebase-admin/auth';
 import { z, ZodError } from 'zod';
-import { db, getAdmin } from '../lib/firestoreAdmin';
+import { db } from '../lib/firestoreAdmin';
 import { clientIpOf, ipRateLimitKey } from '../auth/loginSecurity';
 import { enforceRateLimit } from '../lib/rateLimit';
 import { wrapCallable } from '../lib/wrapCallable';
@@ -44,7 +45,7 @@ export async function claimInviteSignupHandler(
   // #910: keyed on the entry Google appended to X-Forwarded-For (`clientIpOf`),
   // never `rawRequest.ip`, which under `trust proxy` is the caller's own first
   // entry. Called directly (no Hosting rewrite points here), so one trusted hop.
-  // The per-invite limit below already bounds any one invite across addresses.
+  // IPv6 is keyed on its /64 and an untrusted entry on the shared sentinel.
   const ipKey = ipRateLimitKey(clientIpOf(req.rawRequest));
   await enforceRateLimit('claimSignup', ipKey, 20, 3600);
   await enforceRateLimit('claimSignup', args.inviteId, 10, 3600);
@@ -59,9 +60,7 @@ export async function claimInviteSignupHandler(
     throw new HttpsError('failed-precondition', 'invite expired');
   }
 
-  // #912: the lazy accessor, never a bare getAuth(), so this never depends on
-  // an earlier call having initialized the default app.
-  const auth = getAdmin().auth();
+  const auth = getAuth();
   const email = invite.invitedEmail.toLowerCase();
   const existing = await auth.getUserByEmail(email).catch((err: { code?: string }) => {
     if (err?.code === 'auth/user-not-found') return null;

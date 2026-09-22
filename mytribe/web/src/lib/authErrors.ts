@@ -82,16 +82,6 @@ export function isCredentialSignInError(err: unknown): boolean {
   );
 }
 
-/**
- * #910: a callable refused for its rate limit. The Functions SDK gives
- * `functions/resource-exhausted` with the server's message ("Too many attempts.
- * Try again later." from lib/rateLimit.ts). Mirrors Kotlin's `isRateLimited`.
- */
-export function isRateLimitedError(err: unknown): boolean {
-  const all = `${codeOf(err)} ${messageOf(err)}`;
-  return all.includes('resource-exhausted') || all.includes('too many attempts');
-}
-
 export function mapAuthError(err: unknown): FriendlyError {
   const code = codeOf(err);
   const msg = messageOf(err);
