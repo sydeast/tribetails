@@ -16,8 +16,8 @@ package com.kinfolk.portal.auth
  * Platform implementations:
  *   android  HttpURLConnection, body from [secureResetPayload]
  *   jsMain   window.fetch, body from [secureResetPayload]
- *   jvmMain  Ktor (PR #904 owns that file; desktop never reaches this call,
- *            see [SecureResetController])
+ *   jvmMain  Ktor, body from [secureResetPayload] too since #933 item 4
+ *            (desktop never reaches this call, see [SecureResetController])
  */
 interface SecureResetFetcher {
     /**
@@ -25,11 +25,12 @@ interface SecureResetFetcher {
      *
      * @param oobCode     Firebase oobCode from the reset link.
      * @param newPassword New password (min 8 chars).
-     * @param email       The address the verified code belongs to. The server
-     *                    derives the account from the code and ignores this, and
-     *                    the Android and web bodies leave it out entirely
-     *                    ([secureResetPayload]). The parameter stays so the
-     *                    desktop implementation compiles unchanged.
+     * @param email       The address the verified code belongs to. No
+     *                    implementation puts it on the wire: the server derives
+     *                    the account from the code and has ignored a client-sent
+     *                    address since #903, and all three bodies are
+     *                    [secureResetPayload]. The parameter stays because the
+     *                    screen has the address and a future body may need it.
      * @param userAgent   Device user-agent string (best-effort).
      * @return            Firestore incident ID on success.
      * @throws SecureResetException on any failure.

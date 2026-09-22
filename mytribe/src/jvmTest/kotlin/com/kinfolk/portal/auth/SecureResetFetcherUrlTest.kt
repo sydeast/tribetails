@@ -7,10 +7,12 @@ import io.ktor.client.engine.mock.respond
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.OutgoingContent
 import io.ktor.http.headersOf
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 /**
  * #889 review, item 1 and item 5: JvmSecureResetFetcher used to build its own
@@ -88,5 +90,32 @@ class SecureResetFetcherUrlTest {
         val fetcher = JvmSecureResetFetcher(customBase, clientCapturing(urls), endpoints)
         fetcher.confirmReset("oob1", "newpass123", "a@b.com", "ua")
         assertEquals("$customBase/confirmSecureReset", urls.single())
+    }
+
+    /**
+     * #933 item 4: the desktop body is [secureResetPayload], the same three
+     * keys Android and web post. It used to add an `email` field, which the
+     * server has ignored since #903.
+     */
+    @Test
+    fun confirmResetPostsTheSharedPayloadAndNoEmail() = runBlocking {
+        val bodies = mutableListOf<String>()
+        val client = RestHttp.buildClient(MockEngine, guardRequests = false) {
+            engine {
+                addHandler { request ->
+                    bodies += (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
+                    respond(
+                        content = """{"incidentId":"inc1"}""",
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                    )
+                }
+            }
+        }
+        val fetcher = JvmSecureResetFetcher(prodBase, client, endpoints(emulator = false))
+        fetcher.confirmReset("oob1", "newpass123", "pat@household.test", "ua")
+        assertEquals(secureResetPayload("oob1", "newpass123", "ua"), bodies.single())
+        assertFalse("email" in bodies.single(), "the desktop body must name no account, got ${bodies.single()}")
+        assertFalse("pat@household.test" in bodies.single())
     }
 }
