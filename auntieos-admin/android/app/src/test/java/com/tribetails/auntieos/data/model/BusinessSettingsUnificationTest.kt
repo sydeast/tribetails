@@ -3,6 +3,7 @@ package com.tribetails.auntieos.data.model
 import com.tribetails.auntieos.domain.resolveTimeBlock
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -64,6 +65,14 @@ class BusinessSettingsUnificationTest {
 
         // Calendar + meta.
         assertEquals("", s.calendarSyncId)
+
+        // Notification schedule. The shipped state is OFF and UNSCHEDULED, by
+        // operator ruling 2026-09-22: no job runs until it is switched on from
+        // the settings screen, and the cadence is decided then. A default of 9
+        // here would start the invoice crons at an hour nobody picked.
+        assertFalse(s.householdNotificationsLive)
+        assertNull(s.householdNotificationHour)
+        assertNull(s.scheduleDigestHour)
     }
 
     @Test
