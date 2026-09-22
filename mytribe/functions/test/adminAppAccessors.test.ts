@@ -134,7 +134,21 @@ export function accessorsIn(text: string): string[] {
       if (new RegExp(`(^|[^\\w$])${name}\\b`).test(clause)) found.add(`firebase-admin/${spec}: ${name}`);
     }
   }
-  for (const [, clause, spec] of code.matchAll(REQUIRE_RE)) {
+  for (const m of code.matchAll(REQUIRE_RE)) {
+    const [whole, clauseRaw, spec] = m;
+    const clause = clauseRaw!.trim();
+    // The CJS mirror of the namespace import above: `const a =
+    // require('firebase-admin/auth')` binds no getter name a text scan can see,
+    // and `a.getAuth()` two lines down is invisible. Anything but a destructuring
+    // bind off a SUBPATH is reported. The root `firebase-admin` namespace never
+    // reaches here: REQUIRE_RE demands the slash. The chained one-liner is the
+    // exception: INLINE_REQUIRE_RE below names the getter exactly, so reporting
+    // it here as well would only double it up.
+    const chained = /^\s*\./.test(code.slice((m.index ?? 0) + whole!.length));
+    if (!clause.startsWith('{')) {
+      if (!chained) found.add(`firebase-admin/${spec}: * as (namespace require)`);
+      continue;
+    }
     for (const name of ACCESSORS) {
       if (new RegExp(`(^|[^\\w$])${name}\\b`).test(clause)) found.add(`firebase-admin/${spec}: ${name}`);
     }
@@ -167,6 +181,11 @@ describe('#912 only lib/firestoreAdmin.ts reaches for a firebase-admin service h
     ]);
     expect(accessorsIn("import * as adminAuth from 'firebase-admin/auth';")).toEqual([
       'firebase-admin/auth: * as (namespace import)',
+    ]);
+    // The CJS spelling of the same dodge, which is the natural one in the
+    // plain-JavaScript admin tree.
+    expect(accessorsIn("const adminAuth = require('firebase-admin/auth');\nadminAuth.getAuth();")).toEqual([
+      'firebase-admin/auth: * as (namespace require)',
     ]);
     // A preceding import of a same-named symbol from somewhere else must not be
     // dragged into the firebase-admin clause by a greedy match.
