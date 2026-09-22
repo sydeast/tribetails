@@ -6,14 +6,17 @@ const getUserByEmail = vi.fn();
 const createCustomToken = vi.fn();
 
 vi.mock('../src/lib/rateLimit', () => ({ enforceRateLimit: vi.fn().mockResolvedValue(undefined) }));
+// #912: the handler reaches Auth through the lazy getAdmin().auth() accessor.
 vi.mock('../src/lib/firestoreAdmin', () => ({
   db: () => ({
     doc: (p: string) => ({ get: vi.fn().mockImplementation(() => docGet(p)) }),
   }),
+  auth: vi.fn(),
+  getAdmin: () => ({ auth: () => ({ createUser, getUserByEmail, createCustomToken }) }),
 }));
-vi.mock('firebase-admin/auth', () => ({
-  getAuth: () => ({ createUser, getUserByEmail, createCustomToken }),
-}));
+// #910: these requests carry no X-Forwarded-For, so clientIpOf logs an error.
+vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
+vi.mock('../src/notifications', () => ({ enqueueNotification: vi.fn() }));
 
 beforeEach(() => {
   docGet.mockReset();

@@ -6,6 +6,16 @@ import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import type { InviteRequestDoc } from '../lib/schema';
 import { FULL_CPU } from '../lib/runtimeOptions';
+import { clientIpOf, ipRateLimitKey } from '../auth/loginSecurity';
+
+/** Previews per caller address per hour. Unchanged since before #910. */
+export const INVITE_PREVIEW_IP_LIMIT = 60;
+/**
+ * #910: previews per invite id per hour, across every address. Well above what
+ * one invitee's claim screen spends (one preview per open, one retry on web, a
+ * "Try Again" on the portal app), far below scripted hammering of one id.
+ */
+export const INVITE_PREVIEW_PER_INVITE_LIMIT = 30;
 
 /**
  * Public (unauthenticated) preview of an invite for the claim screen.
@@ -40,8 +50,17 @@ export async function getInvitePreviewHandler(
     throw err;
   }
 
-  const ip = req.rawRequest?.ip ?? 'unknown';
-  await enforceRateLimit('invitePreview', ip, 60, 3600);
+  // #910: keyed on the entry Google appended to X-Forwarded-For (`clientIpOf`),
+  // never `rawRequest.ip`, which under `trust proxy` is the caller's own first
+  // entry. Called directly (no Hosting rewrite points here), so one trusted hop.
+  // IPv6 is keyed on its /64 and an untrusted entry on the shared sentinel.
+  const ipKey = ipRateLimitKey(clientIpOf(req.rawRequest));
+  await enforceRateLimit('invitePreview', ipKey, INVITE_PREVIEW_IP_LIMIT, 3600);
+  // #910: a per-invite ceiling as well, so rotating addresses cannot hammer one
+  // invite id and so a shared per-IP bucket is not the only bound. Checked
+  // BEFORE the invite is read: an unknown id and a real one spend and refuse
+  // identically, so a refusal says nothing about whether the invite exists.
+  await enforceRateLimit('invitePreviewInvite', args.inviteId, INVITE_PREVIEW_PER_INVITE_LIMIT, 3600);
 
   const snap = await db().doc(`inviteRequests/${args.inviteId}`).get();
   if (!snap.exists) return { status: 'not_found' };

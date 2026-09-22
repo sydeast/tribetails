@@ -88,4 +88,24 @@ class ClaimFlowTest {
         assertFalse(isEmailUnverified("functions/permission-denied invite email mismatch"))
         assertFalse(isEmailUnverified(null))
     }
+
+    /** #910: a rate-limited preview or signup claim reads as a wait, not a connection problem. */
+    @Test
+    fun claimErrorMessage_rateLimitReadsAsAWaitHoweverTheClientCarriesIt() {
+        // Native Android SDK: the server's message from lib/rateLimit.ts.
+        assertEquals(
+            CLAIM_RATE_LIMITED_MESSAGE,
+            claimErrorMessage("Too many attempts. Try again later.", "fallback"),
+        )
+        // Desktop REST client: the status in the response body.
+        assertEquals(
+            CLAIM_RATE_LIMITED_MESSAGE,
+            claimErrorMessage(
+                "Firebase REST call getInvitePreview failed: HTTP 429 {\"status\":\"RESOURCE_EXHAUSTED\"}",
+                "fallback",
+            ),
+        )
+        assertEquals("invite not found", claimErrorMessage("invite not found", "fallback"))
+        assertEquals("fallback", claimErrorMessage(null, "fallback"))
+    }
 }
