@@ -264,6 +264,15 @@ export function KinfolkEdit({
    * retry after a contact problem does not re-send fields that already landed.
    */
   const [householdBaseline, setHouseholdBaseline] = useState<KinfolkEditPatch | null>(null);
+  /**
+   * #858: set the moment a save writes the household and then fails on the
+   * contact, cleared once a retry's contact save lands. The baseline above
+   * already keeps a retry from re-sending the household (`changes` comes back
+   * empty), so this is a UX guard rather than a data one: it stops the operator
+   * from typing a further household edit into a form whose "Save" button is, at
+   * that moment, only going to retry the contact. Cleared on a full save.
+   */
+  const [contactRetryPending, setContactRetryPending] = useState(false);
 
   const load = useCallback(() => {
     let live = true;
@@ -316,6 +325,9 @@ export function KinfolkEdit({
 
   const errors: KinfolkEditErrors = form ? validateKinfolkEdit(form) : {};
   const busy = saving || archiving;
+  // #858: the household fields, specifically - not the contact editor, not Save
+  // itself, which is what retries. See `contactRetryPending`'s own comment.
+  const householdFieldsLocked = busy || contactRetryPending;
   const isArchived = form?.status === KINFOLK_ARCHIVED_STATUS;
 
   // What the stored join date was, when it is not what the picker is showing.
@@ -429,11 +441,16 @@ export function KinfolkEdit({
       if (problem !== null) {
         setSaving(false);
         setEcError(problem);
+        // #858: THIS call is the one that must never happen twice - the household
+        // just wrote, and the contact that failed right after it is what a Save
+        // press from here on retries. Locked until that retry lands.
+        if (householdSaved) setContactRetryPending(true);
         if (householdSaved) showToast(`Saved ${displayName}. The Emergency Contact still needs attention.`);
         return;
       }
     }
 
+    setContactRetryPending(false);
     setSaving(false);
     showToast(`Saved ${displayName}.`);
     onDone();
@@ -515,8 +532,15 @@ export function KinfolkEdit({
                 </Banner>
               )}
 
+              {contactRetryPending && (
+                <Banner tone="warning" title="The household is saved">
+                  Its fields are locked until the Emergency Contact below saves too. Fix it and press Save changes
+                  again, or Cancel to leave it for later.
+                </Banner>
+              )}
+
               <DenPanel title="Contact" subtitle="How Auntie reaches this household.">
-                <fieldset className="kfedit__grid" disabled={busy}>
+                <fieldset className="kfedit__grid" disabled={householdFieldsLocked}>
                   {CONTACT_FIELDS.map(([key, label]) => (
                     <TextField
                       key={key}
@@ -532,7 +556,7 @@ export function KinfolkEdit({
               </DenPanel>
 
               <DenPanel title="Standing" subtitle="Where this household sits with the Tribe.">
-                <fieldset className="kfedit__grid" disabled={busy}>
+                <fieldset className="kfedit__grid" disabled={householdFieldsLocked}>
                   {isArchived ? (
                     <p className="kfedit__hint kfedit__field--wide">
                       Status is held at archived. Restore the household to set it again.
@@ -551,7 +575,7 @@ export function KinfolkEdit({
                             role="radio"
                             aria-checked={form.status === option}
                             data-selected={form.status === option}
-                            disabled={busy}
+                            disabled={householdFieldsLocked}
                             onClick={() => set('status', option as KinfolkPickableStatus)}
                           >
                             {titleCase(option)}
@@ -585,7 +609,7 @@ export function KinfolkEdit({
               />
 
               <DenPanel title="Home & access" subtitle="Gate codes, parking, and how to get in the door.">
-                <fieldset className="kfedit__grid" disabled={busy}>
+                <fieldset className="kfedit__grid" disabled={householdFieldsLocked}>
                   <AddressAutofillField
                     name="serviceAddress"
                     label="Service address"
@@ -593,7 +617,7 @@ export function KinfolkEdit({
                     error={errorFor('serviceAddress')}
                     onChange={(v) => set('serviceAddress', v)}
                     onBlur={() => markTouched('serviceAddress')}
-                    disabled={busy}
+                    disabled={householdFieldsLocked}
                     wide
                   />
                   <SecretField
@@ -601,7 +625,7 @@ export function KinfolkEdit({
                     label="Gate code"
                     spoken="gate code"
                     value={form.gateCode}
-                    disabled={busy}
+                    disabled={householdFieldsLocked}
                     onChange={(v) => set('gateCode', v)}
                   />
                   <TextField
@@ -617,7 +641,7 @@ export function KinfolkEdit({
                     label="Wi-Fi password"
                     spoken="Wi-Fi password"
                     value={form.wifiPassword}
-                    disabled={busy}
+                    disabled={householdFieldsLocked}
                     onChange={(v) => set('wifiPassword', v)}
                   />
                   <TextField
