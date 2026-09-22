@@ -47,8 +47,14 @@ function req(data: unknown, uid: string | null = 'admin1'): CallableRequest<unkn
   } as unknown as CallableRequest<unknown>;
 }
 
+/**
+ * #871: a seeded invoice is a live bill unless the test says otherwise. The
+ * button now asks the one classifier, and an amount-less doc reads `zero`.
+ */
+const OPEN_BILL = { status: 'open', amountDue: 40, total: 40 };
+
 function seed(invoice: Record<string, unknown> | null = { kinfolkId: 'fam1', invoiceNumber: 'INV-9', dueDate: '2026-07-01' }) {
-  return buildDbMock({ docs: { 'invoices/inv1': invoice }, writeThrough: true });
+  return buildDbMock({ docs: { 'invoices/inv1': invoice === null ? null : { ...OPEN_BILL, ...invoice } }, writeThrough: true });
 }
 
 /** The invoice as stored right now. */
