@@ -1333,6 +1333,7 @@ something to fix from the terminal.
 | `report:duplicate-kinfolk` | #890 | Whether Add Kinfolk already made two households for one family: households with the same primary phone or email created close together, by `createdAt`, or by the document's create time for households made before `createdAt` was stamped. |
 | `report:duplicate-notifications` | #832, #866 | Whether a household was already sent the same notification twice, or two payment confirmations about one invoice within 10 minutes. |
 | `report:legacy-amount-due` | #902 | How many invoices carry a `total` and no `amountDue` at all, grouped by their stored `status` spelling, with what the shared rule says each group owes and how many hold payment rows or are overdrawn. **Run this one BEFORE the release that ships #902, not after.** Those invoices used to classify `paid` and were never chased; they classify `open` from the moment that release deploys, so the overdue and reminder crons become free to chase every one of them with a due date in range. The count is the size of that batch, and it may be zero. Run it again before `backfill:invoice-amount-due`. Prints ids, status spellings and counts only, never an amount. |
+| `report:truncated-custom-fields` | #873 | Which households already lost `customFields` rows to a portal save before #873's merge-by-key fix (PR #900), found from the `activity_log` and `homeAccess.updatedByUid` evidence a save leaves behind, since no before-state is stored. Its LOCKOUT RISK section separately counts, for every household, migrated or not, lists over 40 rows or 64 KiB, unlabeled rows, and values over 1000 characters: shapes a save could be refused over, though none of them locks a household out today. Prints household ids, document paths, row keys and counts, never a value. |
 
 1. `npm --prefix mytribe/functions run report:duplicate-kinfolk -- --allow-prod --project <id>`
    The first line printed is the target: check it names the right project and
@@ -1345,6 +1346,10 @@ something to fix from the terminal.
    The first line printed is the target. It refuses `--allow-prod` while
    `FIRESTORE_EMULATOR_HOST` is set, and its test greps the source for write
    calls, so every run is the dry run.
+4. `npm --prefix mytribe/functions run report:truncated-custom-fields -- --project <id> --allow-prod`
+   The first line printed is the target: check it names the right project and
+   production. It refuses `--allow-prod` while `FIRESTORE_EMULATOR_HOST` is set.
+   Read the truncated-rows list and the LOCKOUT RISK counts.
 
 ### Merged branches are deleted after the tag
 
