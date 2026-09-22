@@ -39,6 +39,37 @@ describe.skipIf(!EMULATOR)('saveHomeAccess round trip (Firestore emulator)', () 
     return saveHomeAccessHandler({ data, auth: { uid } } as never);
   }
 
+  it('#868: a secondary without Home access saves the profile, and the home details are untouched', async () => {
+    const fam = 'rt-868-no-grant';
+    const uid = 'rt-868-s1';
+    const storedHome = { gateCode: '1234', wifiPassword: 'TribeNet', customFields: [ALARM] };
+    await firestore.doc(`clients/${uid}`).set({ kinfolkIds: [fam] });
+    await firestore.doc(`families/${fam}`).set({ displayName: 'The Foster', customFields: [] });
+    await firestore.doc(`families/${fam}/members/${uid}`).set({
+      role: 'SECONDARY',
+      status: 'ACTIVE',
+      permissions: { billing_full: false, messaging_direct: false, messaging_group: false, kin_edit: true, kintales_only: true, home_access: false },
+    });
+    await firestore.doc(`families/${fam}/homeAccess/current`).set(storedHome);
+
+    // What a current client sends: the profile half only.
+    const { saveTribeProfileHandler } = await import('../../src/portal/saveTribeProfile');
+    await expect(
+      saveTribeProfileHandler({ data: { kinfolkId: fam, displayName: 'The Foster Tribe', customFields: [], removeCustomFieldKeys: [] }, auth: { uid } } as never),
+    ).resolves.toMatchObject({ ok: true });
+    expect((await firestore.doc(`families/${fam}`).get()).data()?.['displayName']).toBe('The Foster Tribe');
+    expect((await firestore.doc(`families/${fam}/homeAccess/current`).get()).data()).toEqual(storedHome);
+
+    // What an old client still sends: refused with the sentence, and nothing written or counted.
+    const { HOME_ACCESS_REQUIRED_MESSAGE } = await import('../../src/portal/saveHomeAccess');
+    await expect(save(uid, { kinfolkId: fam, gateCode: '9999', customFields: [{ ...ALARM, value: '0000' }] })).rejects.toMatchObject({
+      code: 'permission-denied',
+      message: HOME_ACCESS_REQUIRED_MESSAGE,
+    });
+    expect((await firestore.doc(`families/${fam}/homeAccess/current`).get()).data()).toEqual(storedHome);
+    expect((await firestore.doc(`rate_limits/homeAccessSave:${fam}`).get()).exists).toBe(false);
+  });
+
   it('a save edits its row, keeps the unsent one, and drops a stored Emergency Contact row', async () => {
     const fam = 'rt-873-home';
     const shed = { key: 'shed', label: 'Set by Auntie', value: 'Left of the gate' };

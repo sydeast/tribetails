@@ -13,15 +13,19 @@ import {
   getFormSchema,
   getMyTribeProfile,
   getVetClinics,
+  HOME_DETAILS_LOCKED,
   HOME_RESERVED_KEYS,
+  homeAccessEditChanged,
+  type HomeAccessEdit,
   isDisplayableField,
   LEGACY_EMERGENCY_CONTACT_KEYS,
   listHouseholdContacts,
   listMembers,
   memberStatusLabel,
+  pageSaveOutcome,
   PROFILE_RESERVED_KEYS,
-  profileSaveErrorMessage,
   removeHouseholdContact,
+  type SaveHalf,
   saveHomeAccess,
   saveHouseholdContact,
   saveTribeProfile,
@@ -210,6 +214,13 @@ export function TribeProfile() {
   const membersView = viewOfQuery(membersQ, { isEmpty: (d) => d.members.filter((m) => m.role !== 'PRIMARY').length === 0 });
   const profileSchema = profileSchemaQ.data;
   const homeSchema = homeSchemaQ.data;
+  /**
+   * #868: may this viewer see and change the home details. Primary kinfolk and
+   * staff always may; a secondary kinfolk only with the Home access grant. Absent
+   * from a backend older than #843, which reads as allowed; the server enforces
+   * the rule either way.
+   */
+  const canEditHome = profile.data?.canEditHomeDetails !== false;
 
   // The name that will actually be sent. In schema mode the input writes
   // profileValues, so reading `displayName` here would check the value loaded
@@ -283,6 +294,8 @@ export function TribeProfile() {
   async function handleSave() {
     setSaving(true);
     setStatus(null);
+    let profileHalf: SaveHalf = { kind: 'skipped' };
+    let homeHalf: SaveHalf = { kind: 'skipped' };
     try {
       // #873: both saves start from the stored rows and change only the rows
       // this screen edits (schema fields and the vet cards). The callables merge
@@ -310,11 +323,23 @@ export function TribeProfile() {
         trimmedVetClinicId ? [] : ['vetClinicId'],
         LEGACY_EMERGENCY_CONTACT_KEYS,
       );
-      await saveTribeProfile({
-        ...(kinfolkId !== undefined ? { kinfolkId } : {}),
-        displayName: nextDisplayName,
-        ...profileEdit,
-      });
+      // #868: the two halves are separate callables and either can be refused
+      // on its own, so each is attempted and reported on its own.
+      try {
+        await saveTribeProfile({
+          ...(kinfolkId !== undefined ? { kinfolkId } : {}),
+          displayName: nextDisplayName,
+          ...profileEdit,
+        });
+        profileHalf = { kind: 'saved' };
+      } catch (err) {
+        profileHalf = { kind: 'failed', error: err };
+      }
+
+      // #868: saveHomeAccess needs Home access. Without it the home details are
+      // locked on screen and never sent; with it they are sent only when this
+      // Save changes them, so a Family-only edit makes no home access call.
+      if (!canEditHome || !profile.data) return;
 
       const homeSet: CustomFieldDto[] = [];
       const homeClear: string[] = [];
@@ -337,27 +362,31 @@ export function TribeProfile() {
           if (row) homeSet.push(row);
         }
       }
-      const homeEdit = editCustomFields(baseHomeFields, homeSet, homeClear, LEGACY_EMERGENCY_CONTACT_KEYS);
-      await saveHomeAccess({
-        ...(kinfolkId !== undefined ? { kinfolkId } : {}),
+      const homeEdit: HomeAccessEdit = {
         gateCode: nextGateCode,
         keyLocation: nextKeyLocation,
         wifiPassword: nextWifi,
-        ...homeEdit,
-      });
-
+        ...editCustomFields(baseHomeFields, homeSet, homeClear, LEGACY_EMERGENCY_CONTACT_KEYS),
+      };
+      if (!homeAccessEditChanged(profile.data.homeAccess, homeEdit, LEGACY_EMERGENCY_CONTACT_KEYS)) return;
+      try {
+        await saveHomeAccess({ ...(kinfolkId !== undefined ? { kinfolkId } : {}), ...homeEdit });
+        homeHalf = { kind: 'saved' };
+      } catch (err) {
+        homeHalf = { kind: 'failed', error: err };
+      }
+    } finally {
       // The card saves on its own button, so "Saved." here would be false about
       // any contact edit still sitting in it (#829). No "Auntie will be
       // notified": neither saveTribeProfile nor saveHomeAccess notifies anyone,
       // and portal Android says "Saved." too.
-      setStatus({
-        text: ecDirty ? 'Profile saved. Your Emergency Contacts are not saved yet: use Save Emergency Contacts.' : 'Saved.',
-        ok: true,
-      });
-      void queryClient.invalidateQueries({ queryKey: ['tribeProfile', kinfolkId] });
-    } catch (err) {
-      setStatus({ text: profileSaveErrorMessage(err), ok: false });
-    } finally {
+      setStatus(pageSaveOutcome(profileHalf, homeHalf, ecDirty));
+      // #868: a refetch reseeds every input from the server. After a partial
+      // result that would wipe the edits that did not save, so only a clean
+      // save reloads.
+      if (profileHalf.kind !== 'failed' && homeHalf.kind !== 'failed') {
+        void queryClient.invalidateQueries({ queryKey: ['tribeProfile', kinfolkId] });
+      }
       setSaving(false);
     }
   }
@@ -456,7 +485,11 @@ export function TribeProfile() {
                   </div>
                 </div>
 
-                {homeSchema ? (
+                {!canEditHome ? (
+                  <p className="sub" data-testid="home-locked">
+                    {HOME_DETAILS_LOCKED}
+                  </p>
+                ) : homeSchema ? (
                   <SchemaSection schema={homeSchema} values={homeValues} onChange={setHomeValues} />
                 ) : (
                   <>
@@ -613,16 +646,23 @@ export function TribeProfile() {
                 <div className="sectlabel">
                   After-hours <span className="suggest" style={{ marginLeft: 'auto' }}>{'★'} Suggestion</span>
                 </div>
-                <div className="grid2">
-                  <div className="field">
-                    <label htmlFor="ehphone">Emergency clinic phone</label>
-                    <input id="ehphone" className="inp mono" type="tel" value={afterHoursVetPhone} onChange={(e) => setAfterHoursVetPhone(e.target.value)} />
+                {/* #868: the after-hours clinic is stored with the home details, behind the same grant. */}
+                {!canEditHome ? (
+                  <p className="sub" data-testid="after-hours-locked">
+                    {HOME_DETAILS_LOCKED}
+                  </p>
+                ) : (
+                  <div className="grid2">
+                    <div className="field">
+                      <label htmlFor="ehphone">Emergency clinic phone</label>
+                      <input id="ehphone" className="inp mono" type="tel" value={afterHoursVetPhone} onChange={(e) => setAfterHoursVetPhone(e.target.value)} />
+                    </div>
+                    <div className="field">
+                      <label htmlFor="ehname">Emergency clinic</label>
+                      <input id="ehname" className="inp" type="text" value={afterHoursVetName} onChange={(e) => setAfterHoursVetName(e.target.value)} />
+                    </div>
                   </div>
-                  <div className="field">
-                    <label htmlFor="ehname">Emergency clinic</label>
-                    <input id="ehname" className="inp" type="text" value={afterHoursVetName} onChange={(e) => setAfterHoursVetName(e.target.value)} />
-                  </div>
-                </div>
+                )}
               </section>
 
               {/* EMERGENCY CONTACTS (#829): its own callables and its own Save.

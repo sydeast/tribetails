@@ -33,6 +33,10 @@ const Args = z.object({
 
 const SCALAR_FIELDS = ['gateCode', 'keyLocation', 'wifiPassword'] as const;
 
+/** #868: what a member without Home access is told when this callable refuses. */
+export const HOME_ACCESS_REQUIRED_MESSAGE =
+  'You need Home access to change the home details. Ask your primary kinfolk to give you Home access.';
+
 /**
  * Writes `families/{kinfolkId}/homeAccess/current`.
  * MyTribe-owned subcollection. AuntieOS reads via her own client; we send
@@ -59,7 +63,18 @@ export async function saveHomeAccessHandler(req: CallableRequest<unknown>): Prom
   // getMyKin/getMyBookings use; a cross-tenant resolution is audit-logged
   // inside it.
   const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, hasAdminClaim, 'saveHomeAccess');
-  await requireKinfolkPerm(uid, kinfolkId, 'home_access', hasAdminClaim, 'saveHomeAccess');
+  // #868: the shared gate refuses with the bare message 'permission-denied'.
+  // Portal Android before #868 prints the message after "Save failed:", so a
+  // secondary without Home access read "Save failed: permission-denied". Say
+  // what is missing and who can grant it. Nothing has been read or written yet.
+  try {
+    await requireKinfolkPerm(uid, kinfolkId, 'home_access', hasAdminClaim, 'saveHomeAccess');
+  } catch (err) {
+    if (err instanceof HttpsError && err.code === 'permission-denied') {
+      throw new HttpsError('permission-denied', HOME_ACCESS_REQUIRED_MESSAGE);
+    }
+    throw err;
+  }
 
   const update: Record<string, unknown> = {
     updatedAt: FieldValue.serverTimestamp(),
