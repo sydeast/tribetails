@@ -73,6 +73,11 @@
  *
  * Runbook: run DRY first, read the count and the refusals, then re-run with
  * --allow-prod. The real write is an operator step, never an agent's.
+ *
+ * STATUS (docs/RUNBOOK.md, "Scripts and the data re-upload"): historical, do
+ * not run. `booking_time_slots` holds internal scheduling blocks, not
+ * re-uploaded customer data; the writer is already fixed, and the wipe
+ * clears every row this would have found.
  */
 import { getApps, initializeApp, getFirestore, Timestamp, type Firestore } from './lib/firebaseAdmin';
 
