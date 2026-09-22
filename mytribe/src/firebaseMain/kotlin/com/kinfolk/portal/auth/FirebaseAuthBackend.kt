@@ -2,6 +2,7 @@ package com.kinfolk.portal.auth
 
 import dev.gitlive.firebase.Firebase
 import dev.gitlive.firebase.auth.ActionCodeResult
+import dev.gitlive.firebase.auth.ActionCodeSettings
 import dev.gitlive.firebase.auth.EmailAuthProvider
 import dev.gitlive.firebase.auth.auth
 import dev.gitlive.firebase.functions.functions
@@ -87,9 +88,32 @@ class FirebaseAuthBackend : AuthBackend {
 
     override suspend fun signOut() = auth.signOut()
 
+    /**
+     * #911: Firebase's own reset, not the `requestPasswordReset` callable.
+     *
+     * The callable capped an address at 3 resets a day and answered
+     * `{ ok: true }` once the budget was spent, so anyone who knew a
+     * household's address could spend it and leave the household reading
+     * "Reset link sent" with no email arriving, for 24 hours, before any
+     * account lock existed. Firebase's reset has Google's own abuse limits and
+     * no per-email budget an attacker can drain.
+     *
+     * The settings are the ones portal web sends: continue to the portal
+     * sign-in, and do not ask for the code to be handled in the app
+     * (`canHandleCodeInApp = false`). `androidPackageName` is deliberately
+     * unset; it exists for Dynamic Links, which are shut down.
+     *
+     * Trimmed, because a mobile keyboard's trailing space is otherwise a
+     * refused address (the reason the callable call trimmed too, #886 review).
+     */
     override suspend fun sendPasswordReset(email: String) {
-        val fn = Firebase.functions.httpsCallable("requestPasswordReset")
-        fn.invoke(mapOf("email" to email))
+        auth.sendPasswordResetEmail(
+            email = email.trim(),
+            actionCodeSettings = ActionCodeSettings(
+                url = EmailAction.PORTAL_SIGN_IN_URL,
+                canHandleCodeInApp = false,
+            ),
+        )
     }
 
     /**

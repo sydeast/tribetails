@@ -117,6 +117,35 @@ describe('password reset link (#892)', () => {
     });
   });
 
+  it('portal app: the link portal Android and desktop now ask for lands on the portal sign-in (#911)', () => {
+    // #911 moved both Kotlin clients off the `requestPasswordReset` callable and
+    // onto Firebase's own reset with `continueUrl=https://kinfolk.tribetails.com/signin`,
+    // the target portal web already used. This is that exact link, made by the
+    // emulator, opened on the page #903 built.
+    const newPassword = 'e2e-reset-kinfolk-new-911';
+    requestResetLink(RESET_KINFOLK.email, 'https://kinfolk.tribetails.com/signin').then((search) => {
+      expect(search).to.contain('continueUrl=');
+      expect(search, 'no account travels in the link').not.to.contain('email=');
+
+      let securePosted = false;
+      cy.intercept('POST', '**/confirmSecureReset', () => {
+        securePosted = true;
+      });
+
+      cy.visit(`/account/secure-reset${search}`);
+      cy.get('.secaccount', { timeout: 20_000 }).should('have.text', RESET_KINFOLK.email);
+      setNewPassword(newPassword);
+      cy.then(() => expect(securePosted, 'a normal reset files no security incident').to.equal(false));
+
+      cy.contains('a', 'Sign in with your new password').should(
+        'have.attr',
+        'href',
+        'https://kinfolk.tribetails.com/signin',
+      );
+      restSignIn(RESET_KINFOLK.email, newPassword).its('status').should('eq', 200);
+    });
+  });
+
   it('staff: the admin link continues to the admin sign-in, with no household copy, and the new password signs in', () => {
     const newPassword = 'e2e-reset-staff-new-1';
     requestResetLink(STAFF.email, 'https://auntie.tribetails.com/signin').then((search) => {
