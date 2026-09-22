@@ -304,6 +304,21 @@ fun EditKinfolkScreen(
                     }
                 }
 
+                // #893 item 1: household saved, contact still needs attention -
+                // matches web/desktop wording, so a failed contact never reads as
+                // "nothing happened."
+                val savedNotice = state.savedNotice
+                if (savedNotice != null) {
+                    item {
+                        StatusToast(
+                            visible   = true,
+                            message   = savedNotice,
+                            kind      = ToastKind.Info,
+                            onDismiss = viewModel::dismissEditSavedNotice,
+                        )
+                    }
+                }
+
                 // #829 review items 10 and 14: the Emergency Contacts get their
                 // own titled card, with the flag, an unsaved line and the
                 // contact refusal, the same card Add Kinfolk shows.
