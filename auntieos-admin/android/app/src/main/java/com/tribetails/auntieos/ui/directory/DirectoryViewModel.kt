@@ -336,6 +336,13 @@ data class EditKinfolkUiState(
     val emergencyContactsBaseline: List<EmergencyContactDraft> = listOf(EmergencyContactDraft()),
     /** #829 review item 14: a contact refusal, shown on the contact editor; the household save is not blocked by it. */
     val emergencyContactsError: String? = null,
+    /**
+     * #893 item 1: set alongside [emergencyContactsError] when the household
+     * fields DID save but the contact save failed after them, matching the
+     * web/desktop wording - a failed contact must never read as "nothing saved."
+     * Null on every other outcome.
+     */
+    val savedNotice: String? = null,
 
     // NO VET FIELDS. The household vet is authored on Household Data, against
     // the shared `vet_clinics` catalog (operator ruling 2026-08-01). Keeping
@@ -1065,9 +1072,25 @@ class DirectoryViewModel(
      * call, so the household is linked onto it once created. Leaving Add before
      * the household exists clears the draft, and the call stays unlinked. A
      * household already waiting on its contact is never overwritten.
+     *
+     * #893 item 3: that "never overwritten" used to mean silently doing nothing -
+     * the operator would land on the OTHER household's contact retry with no
+     * sign the call they just tapped went anywhere. This shows a clear message
+     * instead of queuing the call sid to link automatically: the call stays in
+     * the Calls list, unlinked, and can be retried once the pending Add
+     * resolves. Queuing would need new state (a second household to remember
+     * across the pending retry, which can itself still fail) for a low-severity
+     * gap the operator can already recover from by hand.
      */
     fun prefillAddKinfolkFromCall(displayName: String, callerNumber: String, callSid: String) {
-        if (_addKinfolkState.value.createdKinfolkId != null) return
+        val state = _addKinfolkState.value
+        if (state.createdKinfolkId != null) {
+            val pendingName = "${state.firstName} ${state.lastName}".trim().ifBlank { "the pending household" }
+            _addKinfolkState.value = state.copy(
+                error = "Finish $pendingName's Emergency Contact first. The call from $displayName is not linked and stays in Calls.",
+            )
+            return
+        }
         val parts = displayName.trim().split(Regex("\\s+"), limit = 2)
         _addKinfolkState.value = AddKinfolkUiState(
             firstName = parts.getOrElse(0) { "" },
@@ -1409,7 +1432,7 @@ class DirectoryViewModel(
 
         AuntieLog.i("Saving changes for kinfolk: ${state.kinfolkId}")
         viewModelScope.launch {
-            _editKinfolkState.value = state.copy(isSaving = true, error = null, emergencyContactsError = null)
+            _editKinfolkState.value = state.copy(isSaving = true, error = null, emergencyContactsError = null, savedNotice = null)
 
             if (changes.isNotEmpty()) {
                 val fieldsResult = repository.updateKinfolkFields(state.kinfolkId, changes)
@@ -1442,7 +1465,17 @@ class DirectoryViewModel(
                         e.message?.takeIf { it.isNotBlank() } ?: "The Emergency Contacts were not saved. Try again."
                     }
                 if (problem != null) {
-                    _editKinfolkState.value = state.copy(isSaving = false, error = null, emergencyContactsError = problem)
+                    _editKinfolkState.value = state.copy(
+                        isSaving = false,
+                        error = null,
+                        emergencyContactsError = problem,
+                        // #893 item 1: the household fields above already saved; say so,
+                        // matching web/desktop, so a failed contact never reads as
+                        // "nothing happened."
+                        savedNotice = if (changes.isNotEmpty()) {
+                            "Saved ${updatedKinfolk.displayName}. The Emergency Contact still needs attention."
+                        } else null,
+                    )
                     if (changes.isNotEmpty()) loadDirectory()
                     return@launch
                 }
@@ -1451,6 +1484,11 @@ class DirectoryViewModel(
             _editKinfolkState.value = state.copy(isSaving = false, isSuccess = true, emergencyContactsBaseline = state.emergencyContacts)
             loadDirectory()
         }
+    }
+
+    /** #893 item 1: dismisses the "household saved, contact still needs attention" notice. */
+    fun dismissEditSavedNotice() {
+        _editKinfolkState.value = _editKinfolkState.value.copy(savedNotice = null)
     }
 
     fun archiveKinfolk(reason: String) {

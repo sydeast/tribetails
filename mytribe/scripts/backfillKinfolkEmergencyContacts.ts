@@ -40,7 +40,9 @@
  * earlier households written. Re-running recovers, because a fresh plan skips a
  * kinfolk that already has the array and a families doc with no stale rows.
  *
- * Modes: default DRY RUN, prints a per-household diff. `--allow-prod` applies.
+ * Modes: default DRY RUN, prints a per-household diff. `--allow-prod` applies
+ * to production; `--emulator-apply` applies to a local Firestore emulator only
+ * (#893), for rehearsing the write before touching production.
  * Runbook: the operator runs the dry run after release, reads it, then applies.
  */
 // The single firebase-admin import point (#846): resolved from
@@ -54,15 +56,18 @@ type Mode = 'dry-run' | 'apply';
 export interface Args {
   mode: Mode;
   allowProd: boolean;
+  /** #893 item 4: applies, but only against FIRESTORE_EMULATOR_HOST - never production. */
+  emulatorApply: boolean;
   projectId: string | null;
 }
 
 export function parseArgs(argv: string[]): Args {
-  const args: Args = { mode: 'dry-run', allowProd: false, projectId: null };
+  const args: Args = { mode: 'dry-run', allowProd: false, emulatorApply: false, projectId: null };
   let explicitDryRun = false;
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--allow-prod') args.allowProd = true;
+    else if (a === '--emulator-apply') args.emulatorApply = true;
     else if (a === '--dry-run') explicitDryRun = true;
     else if (a === '--project') {
       const v = argv[i + 1];
@@ -74,9 +79,10 @@ export function parseArgs(argv: string[]): Args {
         [
           'backfillKinfolkEmergencyContacts.ts: kinfolk flat fields and the families customFields copy into emergencyContacts[0] (#829)',
           '',
-          '  npm run backfill:emergency-contacts                    # DRY RUN (default)',
-          '  npm run backfill:emergency-contacts -- --allow-prod    # apply',
-          '  npm run backfill:emergency-contacts -- --dry-run       # always wins',
+          '  npm run backfill:emergency-contacts                       # DRY RUN (default)',
+          '  npm run backfill:emergency-contacts -- --allow-prod       # apply to production',
+          '  npm run backfill:emergency-contacts -- --emulator-apply   # apply to FIRESTORE_EMULATOR_HOST only (#893)',
+          '  npm run backfill:emergency-contacts -- --dry-run          # always wins',
         ].join('\n'),
       );
       process.exit(0);
@@ -84,7 +90,7 @@ export function parseArgs(argv: string[]): Args {
       throw new Error(`unknown arg: ${a}`);
     }
   }
-  if (args.allowProd && !explicitDryRun) args.mode = 'apply';
+  if ((args.allowProd || args.emulatorApply) && !explicitDryRun) args.mode = 'apply';
   return args;
 }
 
@@ -419,14 +425,25 @@ export function describeTarget(args: Args, env: Env): string {
  * Why this run must not start, or null. `--allow-prod` with
  * FIRESTORE_EMULATOR_HOST set is refused (#829 review): the flag says "write
  * production" and the variable says "this is the emulator", and a run that
- * quietly picked one would surprise someone either way. Pure.
+ * quietly picked one would surprise someone either way. `--emulator-apply` is
+ * the mirror image (#893 item 4): it exists only to rehearse the write against
+ * the emulator, so it refuses without FIRESTORE_EMULATOR_HOST set rather than
+ * silently falling through to whatever GOOGLE_APPLICATION_CREDENTIALS points
+ * at, and refuses alongside `--allow-prod` rather than guessing which one
+ * wins. Pure.
  */
 export function refuseRun(args: Args, env: Env): string | null {
   const emulator = env['FIRESTORE_EMULATOR_HOST'];
+  if (args.allowProd && args.emulatorApply) {
+    return 'pass one of --allow-prod or --emulator-apply, not both.';
+  }
   if (args.allowProd && emulator) {
     return `refusing --allow-prod while FIRESTORE_EMULATOR_HOST is set (${emulator}). Unset it to write production, or drop --allow-prod for a dry run against the emulator.`;
   }
-  if (args.mode === 'apply' && !env['GOOGLE_APPLICATION_CREDENTIALS']) {
+  if (args.emulatorApply && !emulator) {
+    return '--emulator-apply requires FIRESTORE_EMULATOR_HOST to be set; it writes only against the emulator, never production.';
+  }
+  if (args.mode === 'apply' && !args.emulatorApply && !env['GOOGLE_APPLICATION_CREDENTIALS']) {
     return 'a real write needs GOOGLE_APPLICATION_CREDENTIALS (fail loud, not a silent no-op)';
   }
   return null;
@@ -444,7 +461,8 @@ async function main(): Promise<void> {
   const families = await buildFamiliesPlan(db);
   report(rows, families, args.mode);
   if (args.mode === 'dry-run') {
-    console.log('DRY RUN: nothing was written. Re-run with --allow-prod to apply.');
+    const applyHint = process.env['FIRESTORE_EMULATOR_HOST'] ? '--emulator-apply' : '--allow-prod';
+    console.log(`DRY RUN: nothing was written. Re-run with ${applyHint} to apply.`);
     return;
   }
   const { migrated, familiesCleaned } = await applyPlan(db, rows, families);

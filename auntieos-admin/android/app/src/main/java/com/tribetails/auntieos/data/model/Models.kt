@@ -229,9 +229,9 @@ data class Kinfolk(
     // data, it can be seen on the kin profile"; page-specs 04 item 3).
     //
     // Removing them from this data class is what closes the WRITE path: the
-    // CREATE writers here serialise the whole object (createKinfolk,
-    // createKinfolkComplete), so a field this class does not declare is never
-    // written. Edits go through `updateKinfolkFields`, which writes only the
+    // CREATE writer here (createKinfolkComplete) serialises the whole object,
+    // so a field this class does not declare is never written. Edits go
+    // through `updateKinfolkFields`, which writes only the
     // field names `KINFOLK_DIFF_FIELDS` lists, and the vet is not among them.
     //
     // It does NOT clear what is already stored: those writes use
