@@ -1169,9 +1169,17 @@ class FirestoreClient {
 
     /**
      * Stage 2 tail: transition a DRAFT invoice to sent via postInvoiceEvent.
-     * postInvoiceEvent merges the supplied payload onto invoices/{invoiceId} and
-     * (because the doc already exists) fires the invoice.updated notification.
-     * We merge only status fields, leaving the rest of the invoice untouched.
+     *
+     * #906: postInvoiceEvent no longer merges an arbitrary payload. It accepts
+     * exactly `{ status: "sent" }` — the payload this method has always sent —
+     * and DELEGATES it to the server's dedicated `reviewAndSendDraftInvoice`
+     * handler, so the wire call is unchanged while the server now applies a
+     * draft precondition, a sendability check (total, household, invoice
+     * number), the state stamp, the BILLING_DRAFT_INVOICE_SENT audit entry and
+     * `invoice.new` in place of `invoice.updated`. Money and lifecycle keys
+     * (`total`, `amountDue`, any other `status`, the `paymentAppliedNotice*`
+     * stamps) are refused with a message naming markInvoicePaid /
+     * recordPayment / updateInvoice, and every refusal surfaces verbatim.
      */
     suspend fun reviewAndSendDraftInvoice(invoiceId: String, familyId: String): WriteResult<Unit> {
         val scopedFamilyId = enforceWriteKinfolkId(testMode, familyId)

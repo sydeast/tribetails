@@ -255,7 +255,8 @@ and the `payments` SUBCOLLECTION):
   repairable).
 
 Who stamps: `createInvoice`, `createQuote`, `updateInvoice`, `markInvoicePaid`,
-`postInvoiceEvent`, `reviewAndSendDraftInvoice`, `repairInvoicePayments`
+`postInvoiceEvent` (since #906 only through the `reviewAndSendDraftInvoice`
+handler it delegates to), `reviewAndSendDraftInvoice`, `repairInvoicePayments`
 (repair mode), `redeemCredit`, `stripeWebhook` (paid events). Who deliberately
 does NOT: `archiveInvoice`/`unarchiveInvoice` (`archivedAt` is not a classifier
 input), `sendInvoiceReminder`, `generateReceipt`, `payInvoice` (their writes
@@ -495,6 +496,74 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   (`linkInvoiceSessions` owns the link), `archivedAt`/`archivedBy`
   (`archiveInvoice`/`unarchiveInvoice`), and `kinfolkId` (re-homing an invoice
   to another household is not an edit).
+
+### postInvoiceEvent (payload narrowed 2026-09-22, #906)
+- req `{ familyId: string /* >=1 */, invoiceId: string /* >=1 */, payload: { status: 'sent' } /* .strict() */ }`
+- res `{ ok: true }` — the bare ack, unchanged and frozen in
+  `test/callableContract.test.ts`.
+- **It no longer merges an arbitrary payload.** It used to take
+  `payload: z.record(z.string(), z.unknown())` and merge it onto
+  `invoices/{invoiceId}` verbatim, so an admin payload carrying `status` and
+  `amountDue` could move an invoice from open into paid with no payment row,
+  rewrite the total with no audit of the amounts, and — because this path wrote
+  no `paymentAppliedNoticeOwner` stamp — make `onInvoicesWrite` send
+  `invoice.payment.applied` to the household and the office about money nobody
+  had paid. Same class as #884, different path.
+- **The payload comes from the caller inventory, not from what the merge
+  allowed.** Every caller in the monorepo sends the draft send and nothing
+  else: admin Android (`InvoiceRepository.reviewAndSendDraftInvoice`) and the
+  desktop console (`FirestoreClient.reviewAndSendDraftInvoice`), both
+  `{ status: 'sent' }`. The admin React web moved to the dedicated callables
+  long ago; `mytribe/scripts` and n8n never called it.
+- **The one lifecycle change a real caller makes is DELEGATED**, not rebuilt:
+  the handler validates, checks the invoice exists and belongs to `familyId`,
+  then calls `reviewAndSendDraftInvoiceHandler`, which owns the draft
+  precondition, the sendability check (total, household, invoice number), the
+  state stamp, the pay-method snapshot, the `BILLING_DRAFT_INVOICE_SENT` audit
+  entry and the `invoice.new` dispatch. So the notice from this path is
+  `invoice.new`, not the old `invoice.updated`, and the audit event is
+  `BILLING_DRAFT_INVOICE_SENT`, not `BILLING_INVOICE_CREATED`.
+- **It no longer CREATES an invoice.** A missing doc is `not-found` naming
+  `createInvoice` / `createQuote`, which are the only two that mint one.
+- **It no longer re-homes an invoice.** `kinfolkId: familyId` used to ride
+  every merge, so a mismatched `familyId` moved the bill to another household
+  silently. `familyId` is now a precondition (`permission-denied` on a
+  mismatch) and never a write.
+- **Refusals**, all `invalid-argument`, message naming where the key belongs,
+  `details.refusedKeys = [{ key, use }]`, and EVERY refused key in one answer:
+
+  | Payload key | Refused because | Use instead |
+  |---|---|---|
+  | `total`, `totalCents`, `amountDue`, `amountDueCents`, `amountPaid`, `amountPaidCents`, `paidCents`, `amountMinor`, `currency`, `discount`, `invoiceDiscountCents`, `lineItems` | money | `recordPayment`, `markInvoicePaid`, `updateInvoice` |
+  | `paymentAppliedNotice*` (owner, pending, claim, attempts, …) | only the path that took the payment writes one; a forged stamp silences a real notice | `recordPayment`, `markInvoicePaid` |
+  | `status` with any value but `'sent'`, `invoiceStatus`, `editScope`, `invoiceEditRevision`, `sentAt`, `sentBy`, `archivedAt`, `cancelledAt`, `receiptIssuedAt`, `receiptIssuedBy` | lifecycle | `reviewAndSendDraftInvoice`, `markInvoicePaid`, `recordPayment`, `updateInvoice` |
+  | anything else | the arbitrary merge is gone | `updateInvoice` |
+
+- **Old clients.** Both installed clients send `{ status: 'sent' }` and keep
+  working unchanged; the generated `PostInvoiceEventArgs.payload` is now a
+  typed nested shape (`PostInvoiceEventArgsPayload` in the Kotlin and React
+  contracts) rather than a free map, so a client that recompiles is told at
+  build time. No shipped build sends a refused key: the React admin stopped
+  calling this callable when `markInvoicePaid` and
+  `reviewAndSendDraftInvoice` got their own endpoints, and nothing else ever
+  called it. A client that did would see `invalid-argument` with the message
+  above, surfaced verbatim by all three clients' fail-loud error banners, and
+  the write would NOT happen — no silent drop.
+- **`invoice.updated` now has no emitter at all.** This callable was its only
+  one, and it sent it for any write onto an invoice that already existed — a
+  first send included, which is why the draft send used to announce a new bill
+  as an update. `updateInvoice` deliberately tells nobody (#884: an edit moves
+  no money and the audit entry is the office's record). The catalog row, its
+  template and its toggles are UNTOUCHED; the key is listed in
+  `notifications/provenance.ts` NEVER_FIRES so the gate screen badges it
+  "Never fires" rather than showing the operator a switch that does nothing.
+  Whether an edit should tell a household is a product question, not this
+  issue's, and the row is there for the day it is answered.
+- `INVOICE_RENDERED_FIELDS`, `sameValue` and `isUnchanged` stay exported in
+  `src/admin/postInvoiceEvent.ts` and are now unreferenced. Kept, not deleted:
+  they are the #832 edit-identity machinery, and the rule on payment code is to
+  report an orphan rather than remove it. A repeat draft send is refused by the
+  draft precondition now, which is stronger than the content comparison was.
 
 ### linkInvoiceSessions
 - req `{ invoiceId: string /* 1..200 */, sessionIds: string[] /* each 1..200, max 200; duplicates collapsed */ }`

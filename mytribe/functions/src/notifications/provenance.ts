@@ -507,20 +507,12 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       dataKeys: ['kinfolkId', 'invoiceId', 'isQuote', 'resent'],
     },
     {
+      // #906: `postInvoiceEvent` reaches this same call site now. It used to
+      // dispatch `invoice.new` itself, for an invoice its arbitrary merge had
+      // just created; it no longer creates invoices, and its one remaining
+      // payload delegates the draft send to this handler.
       trigger: 'An admin reviews a draft invoice and sends it.',
       source: 'src/admin/reviewAndSendDraftInvoice.ts',
-      dataKeys: ['kinfolkId', 'invoiceId'],
-    },
-    {
-      trigger: 'An admin posts an invoice event for an invoice that had none yet.',
-      source: 'src/admin/postInvoiceEvent.ts',
-      dataKeys: ['kinfolkId', 'invoiceId'],
-    },
-  ],
-  'invoice.updated': [
-    {
-      trigger: 'An admin posts an invoice event on an invoice that was already sent.',
-      source: 'src/admin/postInvoiceEvent.ts',
       dataKeys: ['kinfolkId', 'invoiceId'],
     },
   ],
@@ -835,7 +827,18 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
  * these rows "Never fires" so the operator stops treating their state as a
  * control.
  *
- * EMPTY TODAY, AND THAT IS THE POINT. `quote.accepted` and `quote.denied` were
+ * `invoice.updated` joined the list on 2026-09-22 (#906). Its ONE emitter was
+ * `postInvoiceEvent`, which sent it for any write onto an invoice that already
+ * existed. That callable now accepts only the draft send and delegates it to
+ * `reviewAndSendDraftInvoice`, which sends `invoice.new` — the right key for a
+ * bill a household is seeing for the first time. Nothing else ever dispatched
+ * `invoice.updated`: `updateInvoice` deliberately tells nobody (#884, an edit
+ * moves no money, and the audit entry is the office's record). The row, its
+ * template and its toggles are untouched, so the day an edit notice is wanted
+ * it has somewhere to go; until then the gate screen says so out loud instead
+ * of showing the operator a switch that does nothing.
+ *
+ * `quote.accepted` and `quote.denied` were
  * the only two entries: the catalog carried the switches, nothing anywhere sent
  * them, and `createQuote.ts` carried a comment saying accept/deny were handled
  * elsewhere when they were handled nowhere. #430 built the two callables
@@ -845,7 +848,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
  * The list stays, because the next dead row wants somewhere honest to sit and
  * the drift guard demands every catalog key be either emitted or named here.
  */
-export const NEVER_FIRES: readonly string[] = [];
+export const NEVER_FIRES: readonly string[] = ['invoice.updated'];
 
 /**
  * Email the platform sends that the notification gate does NOT govern.

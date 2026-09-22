@@ -69,8 +69,8 @@ Legend: ✓ wired catalog path, ⚪ Firebase-native (no catalog dispatch by desi
 
 | Key | Resolver(s) | Audience | Channels | Mode | Status | Call Site |
 |---|---|---|---|---|---|---|
-| `invoice.new` | kinfolkAcct + businessAdmins | both | e,p | trigger | ✓ | `postInvoiceEvent.ts` (isNew=true) |
-| `invoice.updated` | kinfolkAcct + businessAdmins | both | e,p | trigger | ✓ | `postInvoiceEvent.ts` (isNew=false) |
+| `invoice.new` | kinfolkAcct + businessAdmins | both | e,p | trigger | ✓ | `createInvoice.ts`, `createQuote.ts`, `resendQuote.ts`, `reviewAndSendDraftInvoice.ts` (which `postInvoiceEvent` delegates the draft send to since #906) |
+| `invoice.updated` | kinfolkAcct + businessAdmins | both | e,p | trigger | — | **never fires since #906**: its only emitter was `postInvoiceEvent`'s arbitrary merge. Row, template and toggles kept; see `notifications/provenance.ts` NEVER_FIRES |
 | `quote.accepted` | kinfolkAcct + businessAdmins | both | e,p | trigger | ✓ | `portal/quoteDecision.ts`, callable: `acceptQuote` |
 | `quote.denied` | businessAdmins | business | e,s,p | trigger | ✓ | `portal/quoteDecision.ts`, callable: `denyQuote` |
 | `invoice.charge.failed` | kinfolkAcct + businessAdmins | both | e,s,p | trigger | ✓ | `stripeWebhook.ts` (payment_failed) |
@@ -137,7 +137,7 @@ Every `security.*` key in the catalog as of 2026-09-14. All five go to business 
 
 | Callable | Catalog Keys |
 |---|---|
-| `postInvoiceEvent` | `invoice.new` / `invoice.updated` |
+| `postInvoiceEvent` | *(none directly since #906: it delegates the draft send to `reviewAndSendDraftInvoice`, which dispatches `invoice.new`)* |
 | `dispatchVisitNotification` | `kincare.auntie.on_my_way` / `arrived` / `departed` / `kincare.report.sent` |
 | `setKinfolkClaim` | *(none: it dispatched `account.welcome.business`, retired 2026-08-18)* |
 | `acceptInvite` (member) | `account.welcome.kinfolk` |
