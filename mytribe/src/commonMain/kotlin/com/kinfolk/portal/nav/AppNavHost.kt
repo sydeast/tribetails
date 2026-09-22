@@ -96,6 +96,15 @@ fun AppNavHost(
     onSignOut: () -> Unit,
     onBackToDirectory: () -> Unit,
     onRefresh: () -> Unit,
+    /**
+     * The "message Auntie" mailto on the no-tribes funnel. Nothing renders
+     * `AppNavHost` from a test today (`NoTribesOnboardingTest` drives the
+     * component directly and it already takes `onMessageAuntie`), so this call
+     * site leaks nothing right now. It is seamed anyway so that
+     * `UrlOpenerSeamGuardTest` needs no allowlist: one rule, no exception list
+     * to keep up to date.
+     */
+    openUrl: (String) -> Unit = { openExternalUrl(it) },
     navController: NavHostController = rememberNavController(),
 ) {
     // The funnel is reactive but the NavHost start destination is read once.
@@ -151,7 +160,7 @@ fun AppNavHost(
             Box(modifier = Modifier.fillMaxSize()) {
                 NoTribesOnboarding(
                     onMessageAuntie = {
-                        openExternalUrl("mailto:auntie@tribetails.com?subject=MyTribe%20account%20setup%20help")
+                        openUrl("mailto:auntie@tribetails.com?subject=MyTribe%20account%20setup%20help")
                     },
                 )
                 LaunchSignOutButton(
