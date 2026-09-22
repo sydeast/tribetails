@@ -633,6 +633,42 @@ describe('Emergency Contacts on the edit form (#829)', () => {
     expect(screen.queryByText(/saveEmergencyContacts failed/)).toBeNull();
   });
 
+  // #858: the defect this reproduces is a SERVER rejection of the contact call
+  // (not the client pre-check above), arriving right after a household field
+  // genuinely wrote. A retry from there must not re-run that household write -
+  // it would be a second write of the same values, invisible in the data but a
+  // second "updated" entry in the audit log - and until it lands, the household
+  // fields stay locked so the operator cannot bank a further edit behind it.
+  it('a contact save the server rejects locks the household fields; a retry sends the household exactly once', async () => {
+    const onDone = vi.fn();
+    getKinfolkProfile.mockResolvedValue(household());
+    saveEmergencyContacts.mockRejectedValueOnce(new Error('offline'));
+    render(<KinfolkEdit kinfolkId="kf1" kinfolkName="Jamie Halbrook" onDone={onDone} onCancel={vi.fn()} />);
+
+    await userEvent.type(await screen.findByLabelText('Relationship (optional)', { selector: '#kfedit-ec-0-relationship' }), 'Sister');
+    await userEvent.type(fieldByLabel('Last name'), 's');
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(updateKinfolkProfile).toHaveBeenCalledWith('kf1', { lastName: 'Halbrooks' }));
+    expect(await screen.findByTestId('kfedit-ec-error')).toHaveTextContent('offline');
+    expect(saveEmergencyContacts).toHaveBeenCalledTimes(1);
+    expect(onDone).not.toHaveBeenCalled();
+
+    // The household is saved and locked: further household edits are refused
+    // by the browser, and the Emergency Contact editor stays live to fix.
+    expect(fieldByLabel('Last name')).toBeDisabled();
+    expect(fieldByLabel('Service address')).toBeDisabled();
+    expect(screen.getByLabelText('Relationship (optional)', { selector: '#kfedit-ec-0-relationship' })).toBeEnabled();
+    expect(screen.getByText(/household is saved/i)).toBeInTheDocument();
+
+    // Retry: only the contact goes out. The household call count never moves.
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(saveEmergencyContacts).toHaveBeenCalledTimes(2));
+    expect(updateKinfolkProfile).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+    expect(fieldByLabel('Last name')).toBeEnabled();
+  });
+
   // #907 review item 1(b).
   it('fills in what a duplicate Add typed that differs, as unsaved changes, and saves it through the normal update', async () => {
     const onDuplicateAddApplied = vi.fn();

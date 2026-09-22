@@ -1181,11 +1181,25 @@ internal fun decodePayInvoiceResult(raw: Map<String, Any?>?): PayInvoiceResult =
 
 // ---------- postInvoiceEvent ----------
 
+/** Nested in the `postInvoiceEvent` contract. */
+data class PostInvoiceEventArgsPayload(
+    /** Always `sent` on the wire. */
+    val status: String,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        put("status", status)
+    }
+}
+
 /** Request payload for the `postInvoiceEvent` callable. */
 data class PostInvoiceEventArgs(
     val familyId: String,
     val invoiceId: String,
-    val payload: Map<String, Any?>,
+    val payload: PostInvoiceEventArgsPayload,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -1194,7 +1208,7 @@ data class PostInvoiceEventArgs(
     fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
         put("familyId", familyId)
         put("invoiceId", invoiceId)
-        put("payload", payload)
+        put("payload", payload.toPayload())
     }
 }
 

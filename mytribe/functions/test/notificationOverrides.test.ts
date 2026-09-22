@@ -208,14 +208,21 @@ describe('getBusinessNotificationOverridesHandler: provenance projection (#396)'
     expect(entry.emitters[0].dataKeys).toContain('kinfolkId');
   });
 
-  it('projects `neverFires`, and today no row is dead', async () => {
+  it('projects `neverFires`, and today `invoice.updated` is the one dead row', async () => {
     // `quote.accepted` was the standing example here: a row whose toggles were
     // decoration, because nothing sent it. #430 gave it and `quote.denied` a
     // real emitter in portal/quoteDecision.ts, so the badge must be off them
     // both. An operator told "Never fires" about a live row would leave it
     // switched on believing that changed nothing.
+    //
+    // #906 put exactly one row back on the badge: `invoice.updated`'s only
+    // emitter was `postInvoiceEvent`'s arbitrary merge, and that merge is gone.
+    // The badge is how the operator learns that toggling it changes nothing,
+    // instead of finding out when an edit tells nobody.
     const res = await fetch();
-    expect(res.catalog.every((c) => c.neverFires === false)).toBe(true);
+    expect(res.catalog.filter((c) => c.neverFires === true).map((c) => c.key)).toEqual([
+      'invoice.updated',
+    ]);
     expect(row(res, 'quote.accepted').emitters.map((e) => e.source)).toEqual([
       'src/portal/quoteDecision.ts',
     ]);

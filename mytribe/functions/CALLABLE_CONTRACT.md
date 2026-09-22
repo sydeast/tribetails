@@ -255,7 +255,8 @@ and the `payments` SUBCOLLECTION):
   repairable).
 
 Who stamps: `createInvoice`, `createQuote`, `updateInvoice`, `markInvoicePaid`,
-`postInvoiceEvent`, `reviewAndSendDraftInvoice`, `repairInvoicePayments`
+`postInvoiceEvent` (since #906 only through the `reviewAndSendDraftInvoice`
+handler it delegates to), `reviewAndSendDraftInvoice`, `repairInvoicePayments`
 (repair mode), `redeemCredit`, `stripeWebhook` (paid events). Who deliberately
 does NOT: `archiveInvoice`/`unarchiveInvoice` (`archivedAt` is not a classifier
 input), `sendInvoiceReminder`, `generateReceipt`, `payInvoice` (their writes
@@ -495,6 +496,74 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   (`linkInvoiceSessions` owns the link), `archivedAt`/`archivedBy`
   (`archiveInvoice`/`unarchiveInvoice`), and `kinfolkId` (re-homing an invoice
   to another household is not an edit).
+
+### postInvoiceEvent (payload narrowed 2026-09-22, #906)
+- req `{ familyId: string /* >=1 */, invoiceId: string /* >=1 */, payload: { status: 'sent' } /* .strict() */ }`
+- res `{ ok: true }` — the bare ack, unchanged and frozen in
+  `test/callableContract.test.ts`.
+- **It no longer merges an arbitrary payload.** It used to take
+  `payload: z.record(z.string(), z.unknown())` and merge it onto
+  `invoices/{invoiceId}` verbatim, so an admin payload carrying `status` and
+  `amountDue` could move an invoice from open into paid with no payment row,
+  rewrite the total with no audit of the amounts, and — because this path wrote
+  no `paymentAppliedNoticeOwner` stamp — make `onInvoicesWrite` send
+  `invoice.payment.applied` to the household and the office about money nobody
+  had paid. Same class as #884, different path.
+- **The payload comes from the caller inventory, not from what the merge
+  allowed.** Every caller in the monorepo sends the draft send and nothing
+  else: admin Android (`InvoiceRepository.reviewAndSendDraftInvoice`) and the
+  desktop console (`FirestoreClient.reviewAndSendDraftInvoice`), both
+  `{ status: 'sent' }`. The admin React web moved to the dedicated callables
+  long ago; `mytribe/scripts` and n8n never called it.
+- **The one lifecycle change a real caller makes is DELEGATED**, not rebuilt:
+  the handler validates, checks the invoice exists and belongs to `familyId`,
+  then calls `reviewAndSendDraftInvoiceHandler`, which owns the draft
+  precondition, the sendability check (total, household, invoice number), the
+  state stamp, the pay-method snapshot, the `BILLING_DRAFT_INVOICE_SENT` audit
+  entry and the `invoice.new` dispatch. So the notice from this path is
+  `invoice.new`, not the old `invoice.updated`, and the audit event is
+  `BILLING_DRAFT_INVOICE_SENT`, not `BILLING_INVOICE_CREATED`.
+- **It no longer CREATES an invoice.** A missing doc is `not-found` naming
+  `createInvoice` / `createQuote`, which are the only two that mint one.
+- **It no longer re-homes an invoice.** `kinfolkId: familyId` used to ride
+  every merge, so a mismatched `familyId` moved the bill to another household
+  silently. `familyId` is now a precondition (`permission-denied` on a
+  mismatch) and never a write.
+- **Refusals**, all `invalid-argument`, message naming where the key belongs,
+  `details.refusedKeys = [{ key, use }]`, and EVERY refused key in one answer:
+
+  | Payload key | Refused because | Use instead |
+  |---|---|---|
+  | `total`, `totalCents`, `amountDue`, `amountDueCents`, `amountPaid`, `amountPaidCents`, `paidCents`, `amountMinor`, `currency`, `discount`, `invoiceDiscountCents`, `lineItems` | money | `recordPayment`, `markInvoicePaid`, `updateInvoice` |
+  | `paymentAppliedNotice*` (owner, pending, claim, attempts, …) | only the path that took the payment writes one; a forged stamp silences a real notice | `recordPayment`, `markInvoicePaid` |
+  | `status` with any value but `'sent'`, `invoiceStatus`, `editScope`, `invoiceEditRevision`, `sentAt`, `sentBy`, `archivedAt`, `cancelledAt`, `receiptIssuedAt`, `receiptIssuedBy` | lifecycle | `reviewAndSendDraftInvoice`, `markInvoicePaid`, `recordPayment`, `updateInvoice` |
+  | anything else | the arbitrary merge is gone | `updateInvoice` |
+
+- **Old clients.** Both installed clients send `{ status: 'sent' }` and keep
+  working unchanged; the generated `PostInvoiceEventArgs.payload` is now a
+  typed nested shape (`PostInvoiceEventArgsPayload` in the Kotlin and React
+  contracts) rather than a free map, so a client that recompiles is told at
+  build time. No shipped build sends a refused key: the React admin stopped
+  calling this callable when `markInvoicePaid` and
+  `reviewAndSendDraftInvoice` got their own endpoints, and nothing else ever
+  called it. A client that did would see `invalid-argument` with the message
+  above, surfaced verbatim by all three clients' fail-loud error banners, and
+  the write would NOT happen — no silent drop.
+- **`invoice.updated` now has no emitter at all.** This callable was its only
+  one, and it sent it for any write onto an invoice that already existed — a
+  first send included, which is why the draft send used to announce a new bill
+  as an update. `updateInvoice` deliberately tells nobody (#884: an edit moves
+  no money and the audit entry is the office's record). The catalog row, its
+  template and its toggles are UNTOUCHED; the key is listed in
+  `notifications/provenance.ts` NEVER_FIRES so the gate screen badges it
+  "Never fires" rather than showing the operator a switch that does nothing.
+  Whether an edit should tell a household is a product question, not this
+  issue's, and the row is there for the day it is answered.
+- `INVOICE_RENDERED_FIELDS`, `sameValue` and `isUnchanged` stay exported in
+  `src/admin/postInvoiceEvent.ts` and are now unreferenced. Kept, not deleted:
+  they are the #832 edit-identity machinery, and the rule on payment code is to
+  report an orphan rather than remove it. A repeat draft send is refused by the
+  draft precondition now, which is stronger than the content comparison was.
 
 ### linkInvoiceSessions
 - req `{ invoiceId: string /* 1..200 */, sessionIds: string[] /* each 1..200, max 200; duplicates collapsed */ }`
@@ -1352,6 +1421,20 @@ every client in both directions: these callables are the only door.
 - Not in `test/callableContract.test.ts`'s frozen set and not in `scripts/contracts/registry.ts`, so there is no generated mirror; `contracts:check` is unchanged.
 - Already-lost rows: `scripts/reportTruncatedCustomFields.ts` (read-only). No before-state is recorded (PROFILE_UPDATED audit carries field names only, `saveHomeAccess` writes no audit), so it lists lists that look like the old schema rebuild, with the portal-save evidence for each.
 - AFTER RELEASE, run the same report once. Its LOCKOUT RISK section finds any household, migrated or not, with a list over 40 rows (refused before the first review round) or over 64 KiB (it may not grow further), plus unlabeled rows and values over 1000 characters. Keys and counts only. None of these can lock a household out of saving now, but they are the households worth a look.
+
+### getMyTribeProfile / saveHomeAccess: the Home access grant on the portal Tribe Profile (#868)
+- `getMyTribeProfile`
+  - req `{ kinfolkId?: string }`
+  - res `{ profile: { kinfolkId, displayName, customFields: CustomField[] }, homeAccess: { gateCode: string | null, keyLocation: string | null, wifiPassword: string | null, customFields: CustomField[], updatedAtMs: number | null }, canEditHomeDetails: boolean }`
+  - `canEditHomeDetails` is `hasKinfolkPerm(..., 'home_access')`: true for staff, the PRIMARY, a legacy primary with no member doc, and an ACTIVE SECONDARY granted Home access; false otherwise. It is the ONLY place a portal client learns the grant. No custom claim carries it, and `getMyAccess` returns no role.
+  - REDACTION. When `canEditHomeDetails` is false, `homeAccess` is `{ gateCode: null, keyLocation: null, wifiPassword: null, customFields: [], updatedAtMs: null }`. No gate code, key location, Wi-Fi password, home-details row or after-hours clinic reaches that caller (`test/getMyTribeProfile.test.ts` checks the serialized response).
+  - A backend older than #843 omits `canEditHomeDetails`; both clients read the absence as allowed and the server still enforces the grant.
+- `saveHomeAccess` without the grant: `permission-denied` with "You need Home access to change the home details. Ask your primary kinfolk to give you Home access." (`HOME_ACCESS_REQUIRED_MESSAGE`), checked before the transaction, so nothing is written and nothing is counted against `homeAccessSave`. A caller outside the household still gets the bare `resolveKinfolkAccess` refusal. Proven on the emulator in `test/rules/saveHomeAccessRoundTrip.test.ts`.
+- CLIENTS (portal web `TribeProfile.tsx`, portal Android and desktop `TribeScreen.kt`, the same commonMain screen):
+  - "The home details" are the Home Information card (static fields or the `homeAccess` form schema) and the after-hours clinic in the Vet Clinic card, since both live in `families/{id}/homeAccess/current`.
+  - Without the grant both show one sentence in place of the fields, "Only someone with Home access can see or change the home details. Your primary kinfolk can give you Home access." (`HOME_DETAILS_LOCKED`), and Save Changes never calls `saveHomeAccess`.
+  - With the grant, Save Changes calls `saveHomeAccess` only when the payload differs from what was loaded (`homeAccessEditChanged`), so a Family-only or Vet-only edit makes one call.
+  - The two callables are attempted separately and reported separately (`pageSaveOutcome`). Both saved: "Saved.". Only the profile refused, home unchanged: "Save failed: ...". One half saved and the other refused: the line names which half saved and which did not, gives the reason and what to do, never starts "Save failed", and is coloured as a failure. The edits that did not save stay on the page: web skips its reload after a partial result, and Android never reloads after a save.
 
 ### saveEmergencyContacts / listEmergencyContacts (#829)
 - `saveEmergencyContacts`

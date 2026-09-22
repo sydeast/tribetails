@@ -75,6 +75,25 @@ fun contactBlocksSave(isNew: Boolean, retryKinfolkId: String?, contactProblem: S
     contactProblem != null && (isNew || retryKinfolkId != null)
 
 /**
+ * #858: the id [saveKinfolkWithContacts] retries against, on Add or on Edit.
+ * Add creates a new household and keeps its id in [createdKinfolkId] once the
+ * contact fails; Edit already has one, so once its household has saved and
+ * only its contact retry is pending ([editContactRetryPending]), this screen's
+ * own [kinfolkId] stands in - there is no second id to create. Either way, a
+ * non-null result is what tells [saveKinfolkWithContacts] to skip
+ * [writeHousehold] altogether, not merely the merge write inside it: the real
+ * `writeHousehold` also upserts a typed vet clinic into the shared catalog
+ * before it diffs anything, and that has no baseline of its own to keep a
+ * repeat from creating a second row.
+ */
+fun kinfolkRetryId(
+    createdKinfolkId: String?,
+    isNew: Boolean,
+    kinfolkId: String?,
+    editContactRetryPending: Boolean,
+): String? = createdKinfolkId ?: kinfolkId.takeIf { !isNew && editContactRetryPending }
+
+/**
  * #829 review items 4 and 14: the line under the contact editor once a save has
  * come back, or null when there is nothing to say. The server's own message,
  * never a "saveEmergencyContacts failed: " prefix.

@@ -30,6 +30,9 @@ import { processReminderInvoice } from '../src/scheduled/invoiceRemindersCron';
 
 const NOW = Date.UTC(2026, 8, 14, 15, 0, 0);
 
+/** #871: the button reminds only about a live bill, so every seeded invoice is one. */
+const OPEN_BILL = { status: 'open', amountDue: 40, total: 40 };
+
 function req(): CallableRequest<unknown> {
   return {
     data: { invoiceId: 'inv1' },
@@ -53,7 +56,7 @@ afterEach(() => {
 
 describe('sendInvoiceReminder over the real dispatcher', () => {
   it('two presses: the caller guard refuses the second, one reminder is queued', async () => {
-    const ctx = buildDbMock({ writeThrough: true, docs: { 'invoices/inv1': { kinfolkId: 'fam1', invoiceNumber: 'INV-9' } } });
+    const ctx = buildDbMock({ writeThrough: true, docs: { 'invoices/inv1': { ...OPEN_BILL, kinfolkId: 'fam1', invoiceNumber: 'INV-9' } } });
     mocks.dbFn.mockReturnValue(ctx.db);
 
     const first = await sendInvoiceReminderHandler(req());
@@ -66,7 +69,7 @@ describe('sendInvoiceReminder over the real dispatcher', () => {
   });
 
   it('with the caller guard defeated, the dispatcher alone still delivers once', async () => {
-    const ctx = buildDbMock({ writeThrough: true, docs: { 'invoices/inv1': { kinfolkId: 'fam1', invoiceNumber: 'INV-9' } } });
+    const ctx = buildDbMock({ writeThrough: true, docs: { 'invoices/inv1': { ...OPEN_BILL, kinfolkId: 'fam1', invoiceNumber: 'INV-9' } } });
     mocks.dbFn.mockReturnValue(ctx.db);
 
     const first = await sendInvoiceReminderHandler(req());
@@ -85,7 +88,7 @@ describe('sendInvoiceReminder over the real dispatcher', () => {
     // The cron path calls the dispatcher directly with the same key, target
     // and recipient. Even if its stamp never lands, the press that follows
     // collides with the ledger entry the cron's delivery wrote.
-    const ctx = buildDbMock({ writeThrough: true, docs: { 'invoices/inv1': { kinfolkId: 'fam1' } } });
+    const ctx = buildDbMock({ writeThrough: true, docs: { 'invoices/inv1': { ...OPEN_BILL, kinfolkId: 'fam1' } } });
     mocks.dbFn.mockReturnValue(ctx.db);
 
     await enqueueNotification({
@@ -106,7 +109,7 @@ describe('sendInvoiceReminder over the real dispatcher', () => {
     // delivered and recorded in the ledger. The stamp never landed.
     const ctx = buildDbMock({
       writeThrough: true,
-      docs: { 'invoices/inv1': { kinfolkId: 'fam1', invoiceNumber: 'INV-9', reminderClaimAtMs: NOW } },
+      docs: { 'invoices/inv1': { ...OPEN_BILL, kinfolkId: 'fam1', invoiceNumber: 'INV-9', reminderClaimAtMs: NOW } },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     await enqueueNotificationDetailed({
@@ -153,7 +156,8 @@ describe('sendInvoiceReminder over the real dispatcher', () => {
 
     vi.setSystemTime(nine);
     const snap = await ctx.db.collection('invoices').doc('inv1').get();
-    const reminded = await processReminderInvoice(snap as never, nine);
+    // #871: the cron is handed the business's day; 13:00 UTC is 2026-09-14 in Chicago.
+    const reminded = await processReminderInvoice(snap as never, nine, '2026-09-14');
 
     expect(reminded).toBe(false);
     expect(scheduledReminders(ctx.writes)).toHaveLength(1);

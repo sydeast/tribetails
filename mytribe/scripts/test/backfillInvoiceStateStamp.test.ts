@@ -199,11 +199,12 @@ describe('backfillInvoiceStateStamp planStamp', () => {
     expect(d).toEqual({ action: 'skip', reason: 'would_notify_household' });
   });
 
-  it('wouldNotifyHousehold asks the trigger about both of its notices', () => {
+  it('wouldNotifyHousehold asks the trigger about the one notice it still sends', () => {
     const doc = { status: 'open', amountDue: 40, total: 40 };
     expect(wouldNotifyHousehold(doc, { status: 'paid', editScope: 'none' })).toBe(true);
     expect(wouldNotifyHousehold(doc, { status: 'open', editScope: 'all' })).toBe(false);
-    expect(wouldNotifyHousehold(doc, { status: 'overdue', editScope: 'all' } as never)).toBe(true);
+    // #871: an `overdue` label no longer sends anything from the trigger.
+    expect(wouldNotifyHousehold(doc, { status: 'overdue', editScope: 'all' } as never)).toBe(false);
   });
 
   it('does NOT trip the guard when the doc already reads paid to the trigger', () => {

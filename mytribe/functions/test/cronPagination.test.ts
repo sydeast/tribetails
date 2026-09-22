@@ -100,6 +100,8 @@ function pagedDbMock(rows: Row[], settings: Record<string, unknown> = {}) {
 
   const db = {
     collectionGroup: vi.fn(() => makeQuery(null, null)),
+    // #871: the invoice scans read the top-level collection.
+    collection: vi.fn(() => makeQuery(null, null)),
     doc: vi.fn(() => ({ get: vi.fn(async () => ({ data: () => settings })) })),
   };
   return { db, writes };
@@ -181,7 +183,9 @@ describe('WARNING-25: invoice reminder cron paginates past the cap', () => {
 
   it('overdue scan also drains every past-due invoice across pages', async () => {
     const now = 1_000_000_000_000;
-    const pastDue = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+    // #871: two days back. One day back is the business's own today in Chicago
+    // for this `now`, and due today is due, not overdue.
+    const pastDue = new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString();
     const rows: Row[] = Array.from({ length: 700 }, (_, i) => ({
       id: `ov${String(i).padStart(4, '0')}`,
       data: { status: 'open', amountDue: 100, dueDate: pastDue, kinfolkId: `fam-ov${String(i).padStart(4, '0')}` },
@@ -196,7 +200,9 @@ describe('WARNING-25: invoice reminder cron paginates past the cap', () => {
 
   it('#832: an overdue notice that went out is stamped with this run time', async () => {
     const now = 1_000_000_000_000;
-    const pastDue = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+    // #871: two days back. One day back is the business's own today in Chicago
+    // for this `now`, and due today is due, not overdue.
+    const pastDue = new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString();
     const ctx = pagedDbMock([
       { id: 'ov-sent', data: { status: 'open', amountDue: 100, dueDate: pastDue, kinfolkId: 'fam-sent' } },
     ]);
@@ -206,10 +212,12 @@ describe('WARNING-25: invoice reminder cron paginates past the cap', () => {
     expect(ctx.writes).toEqual([{ id: 'ov-sent', data: { overdueNotifiedAtMs: now } }]);
   });
 
-  it('#832: a duplicate of the trigger send is stamped with THAT send time, never the run time', async () => {
+  it('#871: a duplicate of an earlier run whose stamp did not land is stamped with THAT send time, never the run time', async () => {
     const now = 1_000_000_000_000;
     const triggerSentAt = now - 120_000;
-    const pastDue = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+    // #871: two days back. One day back is the business's own today in Chicago
+    // for this `now`, and due today is due, not overdue.
+    const pastDue = new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString();
     const ctx = pagedDbMock([
       { id: 'ov-dup', data: { status: 'open', amountDue: 100, dueDate: pastDue, kinfolkId: 'fam-dup' } },
     ]);
@@ -227,7 +235,9 @@ describe('WARNING-25: invoice reminder cron paginates past the cap', () => {
     // `invoice.overdue` has required email, so only an operator override can
     // produce this outcome; the dispatcher reports it as `prefs` either way.
     const now = 1_000_000_000_000;
-    const pastDue = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+    // #871: two days back. One day back is the business's own today in Chicago
+    // for this `now`, and due today is due, not overdue.
+    const pastDue = new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString();
     mocks.enqueueDetailed.mockResolvedValue({ written: [], suppressed: [{ recipientUid: 'kin-uid', reason: 'prefs' }] });
 
     // The run that meets the suppression.
@@ -267,7 +277,9 @@ describe('WARNING-25: invoice reminder cron paginates past the cap', () => {
 
   it('O-14 regression: familyId comes from the stamped kinfolkId field, not ref.parent.parent (always null on flat invoices docs)', async () => {
     const now = 1_000_000_000_000;
-    const pastDue = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+    // #871: two days back. One day back is the business's own today in Chicago
+    // for this `now`, and due today is due, not overdue.
+    const pastDue = new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString();
     const rows: Row[] = [
       { id: 'ov-linked', data: { status: 'open', amountDue: 100, dueDate: pastDue, kinfolkId: 'fam-linked' } },
       { id: 'ov-orphan', data: { status: 'open', amountDue: 100, dueDate: pastDue } },
@@ -285,7 +297,9 @@ describe('WARNING-25: invoice reminder cron paginates past the cap', () => {
 
   it('O-14 regression: due date comes from the stamped `dueDate` field (what createInvoice.ts actually writes), not the never-written `invoiceDueDate`', async () => {
     const now = 1_000_000_000_000;
-    const pastDue = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+    // #871: two days back. One day back is the business's own today in Chicago
+    // for this `now`, and due today is due, not overdue.
+    const pastDue = new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString();
     const rows: Row[] = [
       // Real production shape: `dueDate`, no `invoiceDueDate` at all.
       { id: 'ov-real-shape', data: { status: 'open', amountDue: 100, dueDate: pastDue, kinfolkId: 'fam-real' } },
@@ -301,7 +315,9 @@ describe('WARNING-25: invoice reminder cron paginates past the cap', () => {
 
   it('O-14 regression: an invoice with amountDue<=0 is treated as paid (no status/paymentStatus field set) and skipped', async () => {
     const now = 1_000_000_000_000;
-    const pastDue = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+    // #871: two days back. One day back is the business's own today in Chicago
+    // for this `now`, and due today is due, not overdue.
+    const pastDue = new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString();
     const rows: Row[] = [
       { id: 'ov-paid-via-amount', data: { amountDue: 0, dueDate: pastDue, kinfolkId: 'fam-paid' } },
     ];

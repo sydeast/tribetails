@@ -129,6 +129,14 @@ describe('isInvoiceOverdue', () => {
     expect(isInvoiceOverdue('credit', '2020-01-01', '2026-07-16')).toBe(false);
   });
 
+  it('#871: every one of the eight states agrees with the server, only open is ever overdue or offered a reminder', () => {
+    const states = ['quote', 'draft', 'cancelled', 'credit', 'redeemed', 'paid', 'zero', 'open'] as const;
+    for (const s of states) {
+      expect(isInvoiceOverdue(s, '2020-01-01', '2026-07-16')).toBe(s === 'open');
+      expect(invoiceActionsFor(s).includes('reminder')).toBe(s === 'open');
+    }
+  });
+
   it('false for an unstamped doc (null state): no stamp, no overdue verdict', () => {
     expect(isInvoiceOverdue(null, '2020-01-01', '2026-07-16')).toBe(false);
   });

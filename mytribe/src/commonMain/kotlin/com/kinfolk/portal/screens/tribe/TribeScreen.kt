@@ -44,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
@@ -66,6 +67,7 @@ import com.kinfolk.portal.portal.CONTACT_PHONE_MAX
 import com.kinfolk.portal.portal.CustomField
 import com.kinfolk.portal.portal.DEFAULT_CONTACT_LABEL
 import com.kinfolk.portal.portal.FormSchema
+import com.kinfolk.portal.portal.HomeAccess
 import com.kinfolk.portal.portal.HouseholdContact
 import com.kinfolk.portal.portal.MapboxSuggestion
 import com.kinfolk.portal.portal.PortalApi
@@ -101,6 +103,8 @@ fun TribeScreen(
     var loaded by remember { mutableStateOf<TribeProfileResult?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
+    /** #868: a partial result is a failure that does not start "Save failed", so the colour is carried, not read off the text. */
+    var statusOk by remember { mutableStateOf(true) }
 
     var displayName by remember { mutableStateOf("") }
     var profileFields by remember { mutableStateOf<List<CustomField>>(emptyList()) }
@@ -140,8 +144,8 @@ fun TribeScreen(
             accessFields = r.homeAccess.customFields
             // Seed after-hours emergency vet from the same customFields store.
             val seededHome = accessFields.associate { it.key to it.value }
-            afterHoursVetName = seededHome["afterHoursVetName"].orEmpty()
-            afterHoursVetPhone = seededHome["afterHoursVetPhone"].orEmpty()
+            afterHoursVetName = seededHome[AFTER_HOURS_VET_NAME_KEY].orEmpty()
+            afterHoursVetPhone = seededHome[AFTER_HOURS_VET_PHONE_KEY].orEmpty()
             error = null
         } catch (t: Throwable) {
             error = t.message ?: "Could not load Tribe profile"
@@ -162,9 +166,9 @@ fun TribeScreen(
             vetClinics = portalApi.getVetClinics()
         } catch (_: Throwable) { /* catalog unreachable — fall back to manual entry */ }
         val seededVet = profileFields.associate { it.key to it.value }
-        vetName    = seededVet["vetClinicName"].orEmpty()
-        vetPhone   = seededVet["vetClinicPhone"].orEmpty()
-        vetAddress = seededVet["vetClinicAddress"].orEmpty()
+        vetName    = seededVet[VET_CLINIC_NAME_KEY].orEmpty()
+        vetPhone   = seededVet[VET_CLINIC_PHONE_KEY].orEmpty()
+        vetAddress = seededVet[VET_CLINIC_ADDRESS_KEY].orEmpty()
 
         try {
             val hs = portalApi.getFormSchema("homeAccess")
@@ -220,6 +224,11 @@ fun TribeScreen(
                 return@Column
             }
 
+            // #868: may this viewer see and change the home details. Primary kinfolk
+            // and staff always may; a secondary kinfolk only with the Home access
+            // grant. The server sends no home values without it.
+            val canEditHome = loaded?.canEditHomeDetails ?: true
+
             // Profile section — admin schema (when present) drives the form; otherwise static fields.
             val ps = profileSchema
             if (ps != null) {
@@ -254,8 +263,11 @@ fun TribeScreen(
                                 style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral),
                             )
                         }
+                        // #872: read off the same filtered list CustomFieldList renders,
+                        // not the raw customFields — otherwise a profile whose only
+                        // rows are vet-clinic keys shows this header over an empty list.
                         val hasProfileExtras =
-                            profileFields.any { it.label.isNotBlank() || it.value.isNotBlank() }
+                            visibleCustomFields(profileFields).any { it.label.isNotBlank() || it.value.isNotBlank() }
                         if (hasProfileExtras) {
                             CardDivider()
                             Text("PROFILE FIELDS", style = type.sansMeta)
@@ -268,7 +280,26 @@ fun TribeScreen(
             }
 
             val hs = homeSchema
-            if (hs != null) {
+            if (!canEditHome) {
+                GlassCard(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
+                    contentPadding = PaddingValues(KinfolkSpacing.l),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+                        CardHead(
+                            icon = Icons.Filled.Home,
+                            tint = KinfolkBrand.KinTeal,
+                            title = "Home Information",
+                            sub = "Shared only with the Aunties booked for your visits.",
+                        )
+                        Text(
+                            HOME_DETAILS_LOCKED,
+                            style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted),
+                            modifier = Modifier.testTag("home-locked"),
+                        )
+                    }
+                }
+            } else if (hs != null) {
                 SchemaFormRenderer(
                     schema = hs,
                     values = homeValues,
@@ -312,8 +343,9 @@ fun TribeScreen(
                             label = "Wi-Fi Password",
                             modifier = Modifier.fillMaxWidth(),
                         )
+                        // #872: same filtered-list rule as the Profile card above.
                         val hasHomeExtras =
-                            accessFields.any { it.label.isNotBlank() || it.value.isNotBlank() }
+                            visibleCustomFields(accessFields).any { it.label.isNotBlank() || it.value.isNotBlank() }
                         if (hasHomeExtras) {
                             CardDivider()
                             Text("CUSTOM HOME FIELDS", style = type.sansMeta)
@@ -334,6 +366,8 @@ fun TribeScreen(
                 onPhone = { vetPhone = it },
                 onAddress = { vetAddress = it },
                 showAfterHours = true,
+                // #868: stored with the home details, behind the same grant.
+                afterHoursLocked = !canEditHome,
                 afterHoursName = afterHoursVetName,
                 afterHoursPhone = afterHoursVetPhone,
                 onAfterHoursName = { afterHoursVetName = it },
@@ -361,10 +395,9 @@ fun TribeScreen(
             HouseholdContactsCard(kinfolkId = kinfolkId, portalApi = portalApi)
 
             if (status != null) {
-                // Every success message starts "Saved" or "Profile saved"; only a
-                // failure starts "Save failed".
-                val ok = !status!!.startsWith("Save failed")
-                val statusColor = if (ok) KinfolkBrand.KinTeal else KinfolkBrand.SnuggleCoral
+                // #868: coloured by outcome. A partial result ("Family and Vet
+                // Clinic saved. Home Information ... did not save") is a failure.
+                val statusColor = if (statusOk) KinfolkBrand.KinTeal else KinfolkBrand.SnuggleCoral
                 Row(modifier = Modifier.padding(horizontal = KinfolkSpacing.l)) {
                     Row(
                         modifier = Modifier
@@ -386,6 +419,8 @@ fun TribeScreen(
                     saving = true
                     status = null
                     scope.launch {
+                        var profileHalf: SaveHalf = SaveHalf.Skipped
+                        var homeHalf: SaveHalf = SaveHalf.Skipped
                         try {
                             // #873: both saves start from the stored rows and change only
                             // the rows this screen edits (schema fields and the vet cards).
@@ -399,9 +434,9 @@ fun TribeScreen(
                             fun card(key: String, label: String, value: String, set: MutableList<CustomField>, clear: MutableList<String>) {
                                 if (value.isNotBlank()) set += CustomField(key = key, label = label, value = value.trim()) else clear += key
                             }
-                            card("vetClinicName", "Vet Clinic", vetName, profileSet, profileClear)
-                            card("vetClinicPhone", "Vet Clinic Phone", vetPhone, profileSet, profileClear)
-                            card("vetClinicAddress", "Vet Clinic Address", vetAddress, profileSet, profileClear)
+                            card(VET_CLINIC_NAME_KEY, "Vet Clinic", vetName, profileSet, profileClear)
+                            card(VET_CLINIC_PHONE_KEY, "Vet Clinic Phone", vetPhone, profileSet, profileClear)
+                            card(VET_CLINIC_ADDRESS_KEY, "Vet Clinic Address", vetAddress, profileSet, profileClear)
                             val ps = profileSchema
                             val nextDisplayName = if (ps != null) {
                                 profileValues["displayName"]?.trim().orEmpty().ifBlank { displayName.trim() }
@@ -412,17 +447,31 @@ fun TribeScreen(
                                 schemaFieldRow(profileFields, f.key, f.label, profileValues[f.key])?.let { profileSet += it }
                             }
                             val profileEdit = editCustomFields(profileFields, profileSet, profileClear, LEGACY_EMERGENCY_CONTACT_KEYS)
-                            portalApi.saveTribeProfile(
-                                kinfolkId = kinfolkId,
-                                displayName = nextDisplayName,
-                                customFields = profileEdit.customFields,
-                                removeCustomFieldKeys = profileEdit.removeKeys,
-                            )
+                            // #868: the two halves are separate callables and either can
+                            // be refused on its own, so each is attempted and reported.
+                            profileHalf = try {
+                                portalApi.saveTribeProfile(
+                                    kinfolkId = kinfolkId,
+                                    displayName = nextDisplayName,
+                                    customFields = profileEdit.customFields,
+                                    removeCustomFieldKeys = profileEdit.removeKeys,
+                                )
+                                SaveHalf.Saved
+                            } catch (t: Throwable) {
+                                SaveHalf.Failed(t)
+                            }
+
+                            // #868: saveHomeAccess needs Home access. Without it the home
+                            // details are locked and never sent; with it they are sent only
+                            // when this Save changes them, so a Family-only edit makes no
+                            // home access call.
+                            val loadedHome = loaded?.homeAccess
+                            if (!canEditHome || loadedHome == null) return@launch
 
                             val homeSet = mutableListOf<CustomField>()
                             val homeClear = mutableListOf<String>()
-                            card("afterHoursVetName", "After-hours Clinic", afterHoursVetName, homeSet, homeClear)
-                            card("afterHoursVetPhone", "After-hours Phone", afterHoursVetPhone, homeSet, homeClear)
+                            card(AFTER_HOURS_VET_NAME_KEY, "After-hours Clinic", afterHoursVetName, homeSet, homeClear)
+                            card(AFTER_HOURS_VET_PHONE_KEY, "After-hours Phone", afterHoursVetPhone, homeSet, homeClear)
                             val hsSave = homeSchema
                             val gc: String?
                             val kl: String?
@@ -440,24 +489,36 @@ fun TribeScreen(
                                 wf = wifi.trim().ifBlank { null }
                             }
                             val homeEdit = editCustomFields(accessFields, homeSet, homeClear, LEGACY_EMERGENCY_CONTACT_KEYS)
-                            portalApi.saveHomeAccess(
-                                kinfolkId = kinfolkId,
-                                gateCode = gc,
-                                keyLocation = kl,
-                                wifiPassword = wf,
-                                customFields = homeEdit.customFields,
-                                removeCustomFieldKeys = homeEdit.removeKeys,
-                            )
-                            // The card saves on its own button, so "Saved." here would be
-                            // false about any contact edit still sitting in it (#829).
-                            status = if (emergencyContactsDirty) {
-                                "Profile saved. Your Emergency Contacts are not saved yet: use Save Emergency Contacts."
-                            } else {
-                                "Saved."
+                            if (!homeAccessEditChanged(loadedHome, gc, kl, wf, homeEdit, LEGACY_EMERGENCY_CONTACT_KEYS)) return@launch
+                            homeHalf = try {
+                                portalApi.saveHomeAccess(
+                                    kinfolkId = kinfolkId,
+                                    gateCode = gc,
+                                    keyLocation = kl,
+                                    wifiPassword = wf,
+                                    customFields = homeEdit.customFields,
+                                    removeCustomFieldKeys = homeEdit.removeKeys,
+                                )
+                                SaveHalf.Saved
+                            } catch (t: Throwable) {
+                                SaveHalf.Failed(t)
                             }
                         } catch (t: Throwable) {
-                            status = profileSaveFailureMessage(t)
+                            // Neither callable reaches here: both are caught above. This is
+                            // the row building around them, which used to sit under one
+                            // catch-all, and an escaped throw would take this screen's
+                            // scope down with it.
+                            val blamed = blameUnfinishedHalf(profileHalf, homeHalf, t)
+                            profileHalf = blamed.first
+                            homeHalf = blamed.second
                         } finally {
+                            // The card saves on its own button, so "Saved." here would be
+                            // false about any contact edit still sitting in it (#829).
+                            // Nothing on screen is reloaded, so an edit that did not save
+                            // stays in its field.
+                            val outcome = pageSaveOutcome(profileHalf, homeHalf, emergencyContactsDirty)
+                            status = outcome.text
+                            statusOk = outcome.ok
                             saving = false
                         }
                     }
@@ -584,20 +645,23 @@ private fun GhostPillButton(
     }
 }
 
+/**
+ * #872: [fields] with every key in [SCREEN_OWNED_CUSTOM_FIELD_KEYS] removed —
+ * a key one of this screen's own cards (Vet Clinic, After-hours Vet,
+ * Emergency Contact) already shows and edits, so it should never also appear
+ * here as a read-only "Set by your Auntie" row. Shared by [CustomFieldList]
+ * and by the two "has extra fields" header checks above it, so the header
+ * and the list it introduces agree on what counts as an extra field.
+ */
+private fun visibleCustomFields(fields: List<CustomField>): List<CustomField> =
+    fields.filter { it.key !in SCREEN_OWNED_CUSTOM_FIELD_KEYS }
+
 @Composable
 private fun CustomFieldList(
     fields: List<CustomField>,
 ) {
     val type = LocalKinfolkTypography.current
-    // Keys owned by dedicated controls elsewhere on this screen (the after-hours
-    // vet block) are never shown in this generic list to avoid duplicate display.
-    // #829: getMyTribeProfile still serves slot 1 as emergencyContact* rows for
-    // old clients; the Emergency Contacts card owns them now, so they stay hidden.
-    val ownedElsewhere = setOf(
-        "afterHoursVetName", "afterHoursVetPhone",
-        "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation",
-    )
-    val visible = fields.filter { it.key !in ownedElsewhere }
+    val visible = visibleCustomFields(fields)
     Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
         // Read-only: admins define fields in AuntieOS; a kinfolk cannot add them.
         // Any already-saved fields still show so no data is hidden or lost.
@@ -632,6 +696,8 @@ private fun VetClinicSection(
     onPhone: (String) -> Unit,
     onAddress: (String) -> Unit,
     showAfterHours: Boolean = false,
+    /** #868: the viewer has no Home access, so the after-hours clinic shows the lock sentence instead of fields. */
+    afterHoursLocked: Boolean = false,
     afterHoursName: String = "",
     afterHoursPhone: String = "",
     onAfterHoursName: (String) -> Unit = {},
@@ -825,30 +891,65 @@ private fun VetClinicSection(
                     "Where to go if your Kin needs care outside regular clinic hours.",
                     style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted),
                 )
-                FieldPair(
-                    wide = wide,
-                    first = { m ->
-                        KinField(
-                            value = afterHoursName, onValueChange = onAfterHoursName,
-                            label = "Emergency Clinic",
-                            modifier = m,
-                        )
-                    },
-                    second = { m ->
-                        KinField(
-                            value = afterHoursPhone, onValueChange = onAfterHoursPhone,
-                            label = "Emergency Clinic Phone",
-                            modifier = m,
-                        )
-                    },
-                )
+                if (afterHoursLocked) {
+                    Text(
+                        HOME_DETAILS_LOCKED,
+                        style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted),
+                        modifier = Modifier.testTag("after-hours-locked"),
+                    )
+                } else {
+                    FieldPair(
+                        wide = wide,
+                        first = { m ->
+                            KinField(
+                                value = afterHoursName, onValueChange = onAfterHoursName,
+                                label = "Emergency Clinic",
+                                modifier = m,
+                            )
+                        },
+                        second = { m ->
+                            KinField(
+                                value = afterHoursPhone, onValueChange = onAfterHoursPhone,
+                                label = "Emergency Clinic Phone",
+                                modifier = m,
+                            )
+                        },
+                    )
+                }
             }
         }
     }
 }
 
+/** Keys the Vet Clinic card edits, stored in profile customFields (#872). The
+ *  save handler's card() calls below key off these same constants, so this
+ *  is the one place a vet-clinic key literal is typed. */
+internal const val VET_CLINIC_NAME_KEY = "vetClinicName"
+internal const val VET_CLINIC_PHONE_KEY = "vetClinicPhone"
+internal const val VET_CLINIC_ADDRESS_KEY = "vetClinicAddress"
+internal val VET_CLINIC_CUSTOM_FIELD_KEYS = setOf(VET_CLINIC_NAME_KEY, VET_CLINIC_PHONE_KEY, VET_CLINIC_ADDRESS_KEY)
+
+/** Keys the After-hours Vet block edits, stored in home access customFields (#872). */
+internal const val AFTER_HOURS_VET_NAME_KEY = "afterHoursVetName"
+internal const val AFTER_HOURS_VET_PHONE_KEY = "afterHoursVetPhone"
+internal val AFTER_HOURS_VET_CUSTOM_FIELD_KEYS = setOf(AFTER_HOURS_VET_NAME_KEY, AFTER_HOURS_VET_PHONE_KEY)
+
 /** #829: stored for old clients and the migration only. This screen never sends them. */
 internal val LEGACY_EMERGENCY_CONTACT_KEYS = setOf("emergencyContactName", "emergencyContactPhone", "emergencyContactRelation")
+
+/**
+ * #872: every custom-field key one of this screen's own cards edits — Vet
+ * Clinic, the After-hours Vet block, and (via [LEGACY_EMERGENCY_CONTACT_KEYS])
+ * the Emergency Contacts card's old storage slot. [visibleCustomFields] hides
+ * exactly this set, so a card's own value can never also ride along as a
+ * read-only admin row. Was previously typed out a second time, by hand,
+ * inside CustomFieldList's own local `ownedElsewhere` set — missing the vet
+ * clinic keys is what let a household see its vet clinic twice. A card that
+ * starts editing a new key must union it into this set, or it reintroduces
+ * that bug; there is now exactly one set to add it to.
+ */
+internal val SCREEN_OWNED_CUSTOM_FIELD_KEYS: Set<String> =
+    VET_CLINIC_CUSTOM_FIELD_KEYS + AFTER_HOURS_VET_CUSTOM_FIELD_KEYS + LEGACY_EMERGENCY_CONTACT_KEYS
 
 /** #873: a save payload. [removeKeys] names each stored row to delete, since an omitted row is kept. */
 internal data class CustomFieldEdit(val customFields: List<CustomField>, val removeKeys: List<String>)
@@ -876,6 +977,94 @@ internal fun isRateLimited(message: String?): Boolean {
 /** The page-save status line for a failed saveTribeProfile or saveHomeAccess. */
 internal fun profileSaveFailureMessage(t: Throwable): String =
     if (isRateLimited(t.message)) PROFILE_SAVE_RATE_LIMITED_MESSAGE else "Save failed: ${t.message ?: t}"
+
+/**
+ * #868: shown in place of the home details (Home Information and the after-hours
+ * clinic) when `getMyTribeProfile` says the viewer has no Home access. The server
+ * sends no values to such a viewer, so there is nothing to show read-only. Same
+ * text as portal web's HOME_DETAILS_LOCKED.
+ */
+internal const val HOME_DETAILS_LOCKED =
+    "Only someone with Home access can see or change the home details. Your primary kinfolk can give you Home access."
+
+/** #868: what became of one half of the page Save. */
+internal sealed interface SaveHalf {
+    data object Saved : SaveHalf
+    data object Skipped : SaveHalf
+    data class Failed(val error: Throwable) : SaveHalf
+}
+
+/** #868: the page Save's status line, and whether it is a success. */
+internal data class PageSaveStatus(val text: String, val ok: Boolean)
+
+/**
+ * #868: true when the home access payload would change what was loaded. The page
+ * Save calls saveHomeAccess only then. Mirrors `homeAccessEditChanged` in web
+ * `api/tribeApi.ts`.
+ */
+internal fun homeAccessEditChanged(
+    loaded: HomeAccess,
+    gateCode: String?,
+    keyLocation: String?,
+    wifiPassword: String?,
+    edit: CustomFieldEdit,
+    drop: Set<String> = emptySet(),
+): Boolean {
+    fun stored(v: String?) = v?.takeIf { it.isNotEmpty() }
+    if (gateCode != stored(loaded.gateCode)) return true
+    if (keyLocation != stored(loaded.keyLocation)) return true
+    if (wifiPassword != stored(loaded.wifiPassword)) return true
+    if (edit.removeKeys.isNotEmpty()) return true
+    return edit.customFields != editCustomFields(loaded.customFields, emptyList(), emptyList(), drop).customFields
+}
+
+/**
+ * #868: where an error from the row building AROUND the two callables belongs.
+ * Both callables catch their own refusal, so anything left is the code that
+ * assembles what they send, and it belongs to the half it was assembling for.
+ * Without this the status line reads "Saved." over a save that never happened,
+ * which is the bug #868 is about, pointing the other way. Mirrors
+ * `blameUnfinishedHalf` in web `api/tribeApi.ts`.
+ */
+internal fun blameUnfinishedHalf(profile: SaveHalf, home: SaveHalf, error: Throwable): Pair<SaveHalf, SaveHalf> = when {
+    profile is SaveHalf.Skipped -> SaveHalf.Failed(error) to home
+    home is SaveHalf.Skipped -> profile to SaveHalf.Failed(error)
+    else -> profile to home
+}
+
+/** The reason a half failed, as a sentence that says what to do, with no "Save failed:" in front. */
+private fun saveFailureReason(t: Throwable): String =
+    if (isRateLimited(t.message)) {
+        "this household has saved too many times in the last hour. Wait a little, then save again."
+    } else {
+        "${(t.message ?: t.toString()).trim().trimEnd('.', ' ')}. Press Save Changes to try again."
+    }
+
+/**
+ * #868: the page Save's status. The profile half (Family and Vet Clinic) and the
+ * home half (Home Information and the after-hours clinic) are separate callables,
+ * so one can land while the other is refused. A partial result names what saved
+ * and what did not, never starts "Save failed", and is still a failure. Mirrors
+ * `pageSaveOutcome` in web `api/tribeApi.ts`.
+ */
+internal fun pageSaveOutcome(profile: SaveHalf, home: SaveHalf, emergencyContactsDirty: Boolean): PageSaveStatus = when {
+    profile is SaveHalf.Failed && home is SaveHalf.Saved -> PageSaveStatus(
+        "Home Information and the after-hours clinic saved. Family and Vet Clinic did not save: " +
+            "${saveFailureReason(profile.error)} Your edits there are still on this page.",
+        ok = false,
+    )
+    profile is SaveHalf.Failed -> PageSaveStatus(profileSaveFailureMessage(profile.error), ok = false)
+    home is SaveHalf.Failed -> PageSaveStatus(
+        "Family and Vet Clinic saved. Home Information and the after-hours clinic did not save: " +
+            "${saveFailureReason(home.error)} Your edits there are still on this page.",
+        ok = false,
+    )
+    emergencyContactsDirty -> PageSaveStatus(
+        "Profile saved. Your Emergency Contacts are not saved yet: use Save Emergency Contacts.",
+        ok = true,
+    )
+    else -> PageSaveStatus("Saved.", ok = true)
+}
 
 /**
  * #873. The row a schema field saves, or null when the stored row stays as it is.

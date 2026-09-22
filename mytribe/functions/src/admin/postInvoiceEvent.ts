@@ -1,23 +1,60 @@
-import { onCall, CallableRequest } from 'firebase-functions/v2/https';
-import { FieldValue } from 'firebase-admin/firestore';
+import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
-import { writeAuditEntry } from '../lib/writeAuditEntry';
-import { AUDIT_EVENTS } from '../lib/auditEvents';
-import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
-import { contentDedupeKey, enqueueNotificationDetailed } from '../notifications/dispatcher';
 import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
-import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
-import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
+import { reviewAndSendDraftInvoiceHandler } from './reviewAndSendDraftInvoice';
 
+/**
+ * ── #906: THIS CALLABLE NO LONGER MERGES AN ARBITRARY PAYLOAD ─────────────
+ *
+ * It used to take `payload: z.record(z.string(), z.unknown())` and merge it
+ * onto `invoices/{invoiceId}` verbatim. That let an admin payload carry
+ * `status` and `amountDue`, move an invoice from open into paid with no
+ * payment row behind it, and — because this path wrote no
+ * `paymentAppliedNoticeOwner` stamp — make `onInvoicesWrite` announce
+ * `invoice.payment.applied` to the household and the office for money nobody
+ * had paid. Same class as #884, on a different path. It could also rewrite the
+ * total with no audit of the amounts and none of the checks `markInvoicePaid`
+ * and `recordPayment` apply, and stamp `kinfolkId` from the caller's
+ * `familyId`, silently reassigning an invoice to another household.
+ *
+ * The payload is now an explicit, `.strict()` schema built from the CALLER
+ * INVENTORY, not from what the merge happened to allow. Every caller in the
+ * monorepo sends exactly one thing:
+ *
+ *   | Caller                                                      | Payload              |
+ *   |-------------------------------------------------------------|----------------------|
+ *   | Admin Android, `InvoiceRepository.reviewAndSendDraftInvoice` | `{ status: 'sent' }` |
+ *   | Desktop console, `FirestoreClient.reviewAndSendDraftInvoice` | `{ status: 'sent' }` |
+ *   | Admin React web                                             | (none — moved to the |
+ *   |                                                             | dedicated callables) |
+ *   | `mytribe/scripts`, n8n                                      | (none)               |
+ *
+ * So the one real need is the draft send, and the draft send has a dedicated,
+ * guarded home: `reviewAndSendDraftInvoice`. Rather than rebuild its owner
+ * stamp and audit here, this callable now VALIDATES and DELEGATES to that
+ * handler, which is the issue's "route it through the same owner stamp and
+ * audit as `updateInvoice`" for the one lifecycle change a real caller makes.
+ * The installed clients keep working, byte for byte on the wire.
+ *
+ * Everything else is refused with a message naming where it belongs. Nothing
+ * is silently dropped: a refused key is an `invalid-argument` error, so an
+ * admin sees that the write did NOT happen rather than a cheerful `ok: true`
+ * over a payload the server ignored.
+ */
 export const Args = z.object({
   familyId: z.string().min(1),
   invoiceId: z.string().min(1),
-  payload: z.record(z.string(), z.unknown()),
+  /**
+   * The ONLY payload this callable accepts, and the only one any caller sends:
+   * the draft send. `.strict()`, so an added key is a deliberate act with its
+   * own review rather than a field that slips through a record type.
+   */
+  payload: z.object({ status: z.literal('sent') }).strict(),
 });
 
 /**
@@ -28,15 +65,114 @@ export const Args = z.object({
  */
 export const Result = z.object({ ok: OkSchema }).strict();
 
+/** Money. Refused here; `recordPayment` / `markInvoicePaid` / `updateInvoice` own these. */
+export const REFUSED_MONEY_KEYS = [
+  'total',
+  'totalCents',
+  'amountDue',
+  'amountDueCents',
+  'amountPaid',
+  'amountPaidCents',
+  'paidCents',
+  'amountMinor',
+  'currency',
+  'discount',
+  'invoiceDiscountCents',
+  'lineItems',
+] as const;
+
+/**
+ * Lifecycle. `status` is here too: it is accepted ONLY as the literal `'sent'`
+ * (the draft send), and any other value is a lifecycle move that belongs to a
+ * callable that knows what it means for the money.
+ */
+export const REFUSED_LIFECYCLE_KEYS = [
+  'status',
+  'invoiceStatus',
+  'editScope',
+  'invoiceEditRevision',
+  'sentAt',
+  'sentBy',
+  'archivedAt',
+  'cancelledAt',
+  'receiptIssuedAt',
+  'receiptIssuedBy',
+] as const;
+
+/**
+ * Owner stamps (#866/#884). Every `paymentAppliedNotice*` field is written by
+ * the path that actually took the payment, and it is what tells the trigger to
+ * stand down. A caller that could set one could silence a real payment notice.
+ */
+export const REFUSED_OWNER_STAMP_PREFIX = 'paymentAppliedNotice';
+
+const MONEY = new Set<string>(REFUSED_MONEY_KEYS);
+const LIFECYCLE = new Set<string>(REFUSED_LIFECYCLE_KEYS);
+
+export type PayloadRefusal = { key: string; use: string; message: string };
+
+/**
+ * Why one payload key is refused, and what to call instead. PURE, and exported
+ * so the refusal table is testable key by key without a Firestore mock.
+ *
+ * Returns null for the one accepted pair, `status: 'sent'`.
+ */
+export function refusalForKey(key: string, value: unknown): PayloadRefusal | null {
+  if (key === 'status' && value === 'sent') return null;
+  if (MONEY.has(key)) {
+    return {
+      key,
+      use: 'recordPayment | markInvoicePaid | updateInvoice',
+      message:
+        `'${key}' is money and postInvoiceEvent cannot write it. Use recordPayment to log a ` +
+        `payment, markInvoicePaid to settle an invoice, or updateInvoice to correct a figure.`,
+    };
+  }
+  if (key.startsWith(REFUSED_OWNER_STAMP_PREFIX)) {
+    return {
+      key,
+      use: 'recordPayment | markInvoicePaid',
+      message:
+        `'${key}' is a payment-notice owner stamp, written only by the path that takes the ` +
+        `payment. Use recordPayment or markInvoicePaid, which stamp it in the write that pays.`,
+    };
+  }
+  if (LIFECYCLE.has(key)) {
+    return {
+      key,
+      use: 'reviewAndSendDraftInvoice | markInvoicePaid | recordPayment | updateInvoice',
+      message:
+        `'${key}' is a lifecycle field. Use reviewAndSendDraftInvoice to send a draft, ` +
+        `markInvoicePaid or recordPayment to settle one, or updateInvoice to edit one. ` +
+        `postInvoiceEvent accepts only { status: 'sent' }.`,
+    };
+  }
+  return {
+    key,
+    use: 'updateInvoice',
+    message:
+      `postInvoiceEvent no longer merges arbitrary invoice fields; it accepts only ` +
+      `{ status: 'sent' }, the draft send. Use updateInvoice to edit '${key}'.`,
+  };
+}
+
+/** Every refusal in one payload, in the caller's key order. */
+export function payloadRefusals(payload: Record<string, unknown>): PayloadRefusal[] {
+  return Object.entries(payload)
+    .map(([k, v]) => refusalForKey(k, v))
+    .filter((r): r is PayloadRefusal => r !== null);
+}
+
 /**
  * The invoice fields an `invoice.updated` notification can show a household,
- * and so the ones that make two edits DIFFERENT notifications (#832).
+ * and so the ones that made two edits DIFFERENT notifications (#832).
  *
- * The enricher renders `invoiceNumber` and `kinName` for this key and `amount`,
- * `dueDate`, `invoiceNumber`, `kinfolkName`, `kinName` for `invoice.new`
- * (enrichTemplateData.ts). `amount` and the due date are derived from the money
- * and date fields below, which is why those are listed rather than the token
- * names: a corrected total or due date must change the key.
+ * ORPHANED BY #906 and kept deliberately, not deleted: this callable no longer
+ * merges edits, so nothing computes an edit-identity dedupe key here any more.
+ * The list is the record of which invoice fields a household actually sees
+ * rendered, which is a fact about the templates rather than about this file,
+ * and `updateInvoice` is where an edit now goes. Reported as orphaned rather
+ * than removed, per the standing rule on payment code.
  */
 export const INVOICE_RENDERED_FIELDS = [
   'invoiceNumber',
@@ -64,8 +200,10 @@ export const INVOICE_RENDERED_FIELDS = [
  * payload change anything?". Key order is ignored; Timestamps and other
  * objects compare by their JSON form, which is enough to recognise a byte-for-
  * byte retry and errs toward "changed" (and so toward notifying) otherwise.
+ *
+ * ORPHANED BY #906 with `isUnchanged` below, and kept for the same reason.
  */
-function sameValue(a: unknown, b: unknown): boolean {
+export function sameValue(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
   if (Array.isArray(a) !== Array.isArray(b)) return false;
@@ -76,137 +214,84 @@ function sameValue(a: unknown, b: unknown): boolean {
 }
 
 /**
- * #832: this callable used to re-enqueue on EVERY call. Two things now stop a
- * repeat, and neither can stop a real edit:
- *
- *   1. UNCHANGED (here). The payload sets nothing the stored invoice does not
- *      already hold. That is a retry that landed after the first attempt
- *      committed, and the notable case is a retried CREATE: the first attempt
- *      wrote the doc and sent `invoice.new`, so the retry sees an existing doc
- *      and would have sent `invoice.updated` about a change that never happened.
- *      The dispatcher cannot catch that one, because the two keys differ.
- *   2. EDIT IDENTITY (the dispatcher). An edit's `invoice.updated` carries a
- *      `dedupeKey` hashed from INVOICE_RENDERED_FIELDS of the invoice as the
- *      edit leaves it AND the `invoiceEditRevision` the edit was based on. Two
- *      attempts at the same edit that both read the doc before either wrote
- *      share both and deliver once. A second, different edit (a corrected
- *      amount minutes after the invoice went out) sends, to the household and
- *      to the office copy. So does a REVERT: an edit returning the invoice to
- *      an earlier value hashes like that earlier edit, and only the revision,
- *      bumped by every real edit in the same write, tells them apart.
- *
- * There is deliberately no "this household was notified a moment ago" skip: it
- * dropped exactly the correction a household most needs to see.
+ * #832's UNCHANGED check: the payload sets nothing the stored invoice does not
+ * already hold, so the call is a retry that landed after the first attempt
+ * committed. ORPHANED BY #906: a repeat draft send is now refused outright by
+ * `reviewAndSendDraftInvoice`'s draft precondition (the invoice is `open` by
+ * then), which is a stronger guarantee than a content comparison — it cannot
+ * be defeated by a payload that differs in a field no template renders.
  */
-function isUnchanged(existing: Record<string, unknown> | undefined, payload: Record<string, unknown>): boolean {
+export function isUnchanged(
+  existing: Record<string, unknown> | undefined,
+  payload: Record<string, unknown>,
+): boolean {
   const stored = existing ?? {};
   return Object.entries(payload).every(([k, v]) => sameValue(stored[k], v));
 }
 
 export async function postInvoiceEventHandler(req: CallableRequest<unknown>): Promise<z.infer<typeof Result>> {
-  const args = Args.parse(req.data);
-  // Canonical store is the FLAT top-level `invoices` collection (AuntieOS
-  // Android + web write here). Stamp `kinfolkId` so the portal's
-  // getMyInvoices (which filters where kinfolkId == id) can see this doc.
-  const ref = db().collection('invoices').doc(args.invoiceId);
-  const existing = await ref.get();
-  const isNew = !existing.exists;
-  // This callable merges an ARBITRARY payload, so of all the invoice writers
-  // it is the one that most needs the state stamp (ADR-0002): any field the
-  // classifier reads may be about to change. The stamp is derived from the doc
-  // as this merge leaves it, with the payment standing read from the payments
-  // SUBCOLLECTION (never the amountDue scalar), and joins the same set. It is
-  // spread AFTER the payload: a payload status spelling the classifier does
-  // not recognize is canonicalized, exactly as every client classifier would
-  // have resolved it at read time.
-  const paymentsSnap = await ref.collection('payments').get();
-  const paidCents = paidCentsFromPayments(paymentsSnap.docs.map((d) => d.data() as PaymentAmount));
-  const stored = existing.data() as Record<string, unknown> | undefined;
-  // Compared against the doc as it stood BEFORE this merge; `kinfolkId` is
-  // part of what the call sets, so it takes part in the comparison too.
-  const intended: Record<string, unknown> = { ...args.payload, kinfolkId: args.familyId };
-  const merged: Record<string, unknown> = {
-    ...(stored ?? {}),
-    ...intended,
-  };
-  const stamp = invoiceStateStampOf(merged, paidCents);
-  const unchanged = !isNew && isUnchanged(stored, intended);
-  // The revision this edit is based on. Bumped in the same write by every edit
-  // that changes something, so it moves on every real edit and never on a
-  // no-op retry (see the EDIT IDENTITY note above).
-  const baseRevision =
-    typeof stored?.['invoiceEditRevision'] === 'number' ? (stored['invoiceEditRevision'] as number) : 0;
-  await ref.set(
-    {
-      ...args.payload,
-      kinfolkId: args.familyId,
-      ...stamp,
-      ...(unchanged ? {} : { invoiceEditRevision: baseRevision + 1 }),
-      updatedAt: FieldValue.serverTimestamp(),
-    },
-    { merge: true },
-  );
-  await writeAuditEntry({
-    status: 'SUCCESS',
-    event: AUDIT_EVENTS.BILLING_INVOICE_CREATED,
-    severity: 'info', actorRole: 'AUNTIE', actorUid: req.auth!.uid, familyId: args.familyId,
-    payload: { invoiceId: args.invoiceId },
-  });
-
-  const key = isNew ? 'invoice.new' : 'invoice.updated';
-  if (unchanged) {
-    logEvent({
-      severity: 'info',
-      function: 'postInvoiceEvent',
-      event: 'notification.skipped',
-      extra: { familyId: args.familyId, invoiceId: args.invoiceId, key, reason: 'unchanged' },
-    });
-    return validateResponse('postInvoiceEvent', Result, { ok: true });
-  }
-
-  const recipientUid = await resolveKinfolkUid(args.familyId);
-  const data = { kinfolkId: args.familyId, invoiceId: args.invoiceId };
-  const after: Record<string, unknown> = { ...merged, ...stamp };
-  const rendered = Object.fromEntries(INVOICE_RENDERED_FIELDS.map((f) => [f, after[f] ?? null]));
-  try {
-    const outcome = await enqueueNotificationDetailed({
-      key,
-      recipientUid: recipientUid ?? '',
-      data,
-      // A new invoice keeps the plain `invoice:<id>` identity: there is one
-      // issue per invoice. An edit is named by what it leaves on the invoice.
-      ...(isNew
-        ? {}
-        : {
-            dedupeKey: contentDedupeKey(`invoice:${args.invoiceId}:updated`, {
-              rendered,
-              basedOnRevision: baseRevision,
-            }),
-          }),
-    });
-    const duplicate = outcome.suppressed.find((s) => s.reason === 'duplicate');
-    if (duplicate) {
+  const raw = (req.data ?? {}) as Record<string, unknown>;
+  const rawPayload = raw['payload'];
+  if (rawPayload !== null && typeof rawPayload === 'object' && !Array.isArray(rawPayload)) {
+    const refusals = payloadRefusals(rawPayload as Record<string, unknown>);
+    if (refusals.length > 0) {
       logEvent({
-        severity: 'info',
+        severity: 'warn',
         function: 'postInvoiceEvent',
-        event: 'notification.dispatch.deduped',
+        event: 'invoice.payload.refused',
         extra: {
-          familyId: args.familyId,
-          invoiceId: args.invoiceId,
-          key,
-          existingId: duplicate.existingId ?? null,
-          lastAtMs: duplicate.lastAtMs ?? null,
+          invoiceId: typeof raw['invoiceId'] === 'string' ? raw['invoiceId'] : null,
+          keys: refusals.map((r) => r.key),
         },
       });
+      throw new HttpsError('invalid-argument', refusals.map((r) => r.message).join(' '), {
+        refusedKeys: refusals.map((r) => ({ key: r.key, use: r.use })),
+      });
     }
-  } catch (err) {
-    logEvent({
-      severity: 'warn',
-      function: 'postInvoiceEvent',
-      event: 'notification.dispatch.failed',
-      extra: { familyId: args.familyId, invoiceId: args.invoiceId, key, err: (err as Error)?.message },
-    });
   }
+
+  const args = Args.parse(req.data);
+
+  // The invoice must already exist. This callable used to CREATE one when the
+  // doc was missing (and send `invoice.new` about it); `createInvoice` and
+  // `createQuote` mint invoices, server id and all, and they are the only two.
+  const ref = db().collection('invoices').doc(args.invoiceId);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    throw new HttpsError(
+      'not-found',
+      `Invoice '${args.invoiceId}' not found. postInvoiceEvent no longer creates invoices; ` +
+        `use createInvoice or createQuote.`,
+    );
+  }
+  // `kinfolkId` used to be stamped from the caller's `familyId` on every call,
+  // so a mismatched id moved the invoice to another household without a word.
+  // It is now a precondition, never a write.
+  const storedKinfolkId = (snap.data() as { kinfolkId?: unknown } | undefined)?.kinfolkId;
+  if (typeof storedKinfolkId === 'string' && storedKinfolkId.length > 0 && storedKinfolkId !== args.familyId) {
+    throw new HttpsError(
+      'permission-denied',
+      `Invoice '${args.invoiceId}' belongs to household '${storedKinfolkId}', not ` +
+        `'${args.familyId}'. postInvoiceEvent no longer reassigns an invoice to another ` +
+        `household; use updateInvoice.`,
+    );
+  }
+
+  // The delegation. `reviewAndSendDraftInvoice` owns the draft precondition,
+  // the sendability check (total, household, invoice number), the state stamp,
+  // the pay-method snapshot, the `BILLING_DRAFT_INVOICE_SENT` audit entry and
+  // the `invoice.new` dispatch — and it reads `kinfolkId` off the doc, so no
+  // household id travels from the caller into the write. Its refusals surface
+  // verbatim (fail loud); its `invoiceId` echo is dropped because this
+  // callable's frozen response signature is the bare ack.
+  await reviewAndSendDraftInvoiceHandler({ ...req, data: { invoiceId: args.invoiceId } });
+  logEvent({
+    severity: 'info',
+    function: 'postInvoiceEvent',
+    event: 'invoice.draft.sent.delegated',
+    uid: req.auth?.uid,
+    extra: { invoiceId: args.invoiceId, familyId: args.familyId, to: 'reviewAndSendDraftInvoice' },
+  });
 
   return validateResponse('postInvoiceEvent', Result, { ok: true });
 }

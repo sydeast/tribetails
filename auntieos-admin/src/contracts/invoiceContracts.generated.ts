@@ -590,12 +590,19 @@ export interface PayInvoiceResult {
 // ---------- postInvoiceEvent ----------
 
 /**
+ * Nested in the `postInvoiceEvent` contract.
+ */
+export interface PostInvoiceEventArgsPayload {
+  status: 'sent';
+}
+
+/**
  * Request payload for the `postInvoiceEvent` callable.
  */
 export interface PostInvoiceEventArgs {
   familyId: string;
   invoiceId: string;
-  payload: Record<string, unknown>;
+  payload: PostInvoiceEventArgsPayload;
 }
 
 /**
