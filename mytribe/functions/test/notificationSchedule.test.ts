@@ -28,8 +28,13 @@ import {
  *
  * THE DOUBLE-SEND TESTS ARE THE POINT OF THIS FILE. They drive a whole simulated
  * day, tick by tick, with the setting changing under the job at 11:00, in both
- * directions. Each one was watched fail against a tick that compares the hour and
- * keeps no marker, which is the version that looks right and sends twice.
+ * directions.
+ *
+ * They were watched fail against the version without a run marker, the one that
+ * looks right because it compares the hour correctly. Ten of the tests below go
+ * red, and the sharpest is `09 to 14 at 11:00`: the day that should scan once
+ * scans at [9, 10, 14, 15, 16, ... 23], twelve times, because 09:00 has already
+ * happened and every tick from 14:00 on matches the new hour too.
  */
 
 const SETTINGS_PATH = 'business_settings/business_settings';

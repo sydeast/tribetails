@@ -106,8 +106,9 @@ describe('the digest sends once per business day', () => {
   });
 
   /**
-   * THE REGRESSION THIS GUARDS. Watched fail against the pre-change
-   * `enqueueNotification` call with no dedupe key, which sent twice.
+   * THE REGRESSION THIS GUARDS. Watched fail with the `dedupeKey` and window
+   * taken back off the enqueue, which is how this function stood before: two
+   * digests written for one day, "expected 2 to be 1".
    */
   it('a SECOND run of the same day sends nothing', async () => {
     const ctx = ctxFor();

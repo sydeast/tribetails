@@ -244,7 +244,7 @@ Every client already writes `business_settings` as a partial merge, and all thre
 
 - **Web**: one `Save` for the panel, sending only its own three fields through the shared `persist`, the `BookingRulesSection` shape.
 - **Android**: the three fields are added to `BUSINESS_SETTINGS_DIFF_FIELDS`. Without that entry the field would simply never save, which `BusinessSettingsDiffTest` exists to catch.
-- **Desktop**: `saveBusinessSettings` writes the whole model under merge, so the panel must `copy()` the loaded settings and change three fields. Building a `BusinessSettings(...)` from form state is the rebuild trap this repo has been bitten by: every field with no control on screen goes back to its default and the save reverts it.
+- **Desktop**: `platformSaveBusinessSettings` diffs the encoded model against the last read and patches only the changed fields, so the panel must `copy()` the loaded settings and change three. Building a `BusinessSettings(...)` from form state is the rebuild trap this repo has been bitten by, and the diff makes it worse rather than safer: a rebuilt model differs from the baseline on every field that has a value, so the save names them all and writes the Kotlin defaults over the operator's document. The model gains its first nullable fields here, and clearing an hour has to survive the diff as an explicit null rather than be dropped.
 
 Each client's model gains the three fields reading exactly as the table at the top says, so a document missing them gives the client the same answer it gives the server. The two hours are nullable on every client, because "not scheduled" has to be representable and a sentinel like `-1` would be a second way to say it.
 
