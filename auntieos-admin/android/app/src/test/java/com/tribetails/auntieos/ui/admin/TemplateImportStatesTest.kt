@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.ui.admin
 
 import com.tribetails.auntieos.data.repository.TemplateRepository
+import com.tribetails.auntieos.data.repository.decodeImportReport
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -33,6 +34,38 @@ class TemplateImportStatesTest {
         differsFromRepo = differs,
         blocked = blocked,
     )
+
+    /** #892 review 2: the reason a refused template gives, shown beside "Refused". */
+    @Test
+    fun `a refused row gives its reason, and every other row gives none`() {
+        val reason = "email: html puts a merge field straight into an attribute without quotes, like href={{link}}."
+        val refused = row(blocked = true, outcomes = listOf("blocked", "blocked", "blocked")).copy(issues = listOf(reason))
+        assertEquals("Refused", importRowSummary(refused))
+        assertEquals(reason, importRowReason(refused))
+        assertNull(importRowReason(row()))
+        assertNull(importRowReason(row(blocked = true).copy(issues = emptyList())))
+    }
+
+    @Test
+    fun `decoding a report keeps each row's issues`() {
+        val decoded = decodeImportReport(
+            mapOf(
+                "dryRun" to true,
+                "rows" to listOf(
+                    mapOf(
+                        "templateId" to "assignment.assigned",
+                        "channels" to emptyList<Any>(),
+                        "blocked" to true,
+                        "issues" to listOf("email: first.", "sms: second."),
+                    ),
+                    mapOf("templateId" to "invoice.new", "channels" to emptyList<Any>()),
+                ),
+            ),
+        )
+        assertEquals(listOf("email: first.", "sms: second."), decoded.rows[0].issues)
+        assertEquals("email: first. sms: second.", importRowReason(decoded.rows[0]))
+        assertEquals(emptyList<String>(), decoded.rows[1].issues)
+    }
 
     private fun report(
         rows: List<TemplateRepository.ImportRow>,
