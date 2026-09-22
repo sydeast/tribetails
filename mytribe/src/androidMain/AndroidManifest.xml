@@ -56,15 +56,21 @@
                 <data android:scheme="mytribe" />
                 <data android:host="share" />
             </intent-filter>
-            <!-- Secure-reset: host is tribetails.com per the email template
-                 (see DeepLink.js.kt). Requires assetlinks.json on tribetails.com. -->
+            <!-- #905: Firebase email action links. The project has ONE action URL,
+                 https://kinfolk.tribetails.com/account/secure-reset, and the portal
+                 web page also answers at /account/action. Every auth email (reset,
+                 verify, email change, recover) opens one of these, and none carries
+                 an email param. autoVerify needs
+                 https://kinfolk.tribetails.com/.well-known/assetlinks.json, served
+                 from mytribe/web/public/.well-known/. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" />
-                <data android:host="tribetails.com" />
-                <data android:pathPrefix="/account/secure-reset" />
+                <data android:host="kinfolk.tribetails.com" />
+                <data android:path="/account/secure-reset" />
+                <data android:path="/account/action" />
             </intent-filter>
         </activity>
 

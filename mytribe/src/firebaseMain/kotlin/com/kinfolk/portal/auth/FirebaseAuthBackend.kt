@@ -1,6 +1,7 @@
 package com.kinfolk.portal.auth
 
 import dev.gitlive.firebase.Firebase
+import dev.gitlive.firebase.auth.ActionCodeResult
 import dev.gitlive.firebase.auth.EmailAuthProvider
 import dev.gitlive.firebase.auth.auth
 import dev.gitlive.firebase.functions.functions
@@ -91,6 +92,27 @@ class FirebaseAuthBackend : AuthBackend {
         fn.invoke(mapOf("email" to email))
     }
 
+    /**
+     * #905: what the code really is, whatever the link's `mode` says. Operation
+     * names match the web SDK's `checkActionCode`, so the screen compares them
+     * the same way the web page does.
+     */
+    override suspend fun readActionCode(oobCode: String): ActionCodeInfo =
+        when (val r = auth.checkActionCode<ActionCodeResult>(oobCode)) {
+            is ActionCodeResult.PasswordReset -> ActionCodeInfo(EmailAction.OP_PASSWORD_RESET, r.email)
+            is ActionCodeResult.VerifyEmail -> ActionCodeInfo(EmailAction.OP_VERIFY_EMAIL, r.email)
+            is ActionCodeResult.VerifyBeforeChangeEmail ->
+                ActionCodeInfo(EmailAction.OP_VERIFY_AND_CHANGE_EMAIL, r.email, r.previousEmail)
+            is ActionCodeResult.RecoverEmail ->
+                ActionCodeInfo(EmailAction.OP_RECOVER_EMAIL, r.email, r.previousEmail)
+            else -> ActionCodeInfo(EmailAction.OP_OTHER, null)
+        }
+    override suspend fun confirmPasswordReset(oobCode: String, newPassword: String) {
+        auth.confirmPasswordReset(oobCode, newPassword)
+    }
+    override suspend fun applyActionCode(oobCode: String) {
+        auth.applyActionCode(oobCode)
+    }
     /** #886: unauthenticated report of a credential failure; see [AuthBackend.reportFailedLogin]. */
     override suspend fun reportFailedLogin(email: String) {
         Firebase.functions.httpsCallable("recordFailedLogin").invoke(mapOf("email" to email))

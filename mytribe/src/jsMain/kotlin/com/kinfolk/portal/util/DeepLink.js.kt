@@ -1,5 +1,7 @@
 package com.kinfolk.portal.util
 
+import com.kinfolk.portal.auth.parseEmailActionUrl
+import com.kinfolk.portal.auth.parseQuery
 import kotlinx.browser.window
 
 /**
@@ -14,7 +16,10 @@ actual fun readInitialClaimInviteId(): String? {
     parseClaim(hash)?.let { return it }
     val path = loc.pathname
     parseClaim(path)?.let { return it }
-    return parseQueryString(loc.search.removePrefix("?"))["invite"]?.takeIf { it.isNotBlank() }
+    // #905: the hand-rolled parser this used to call lived beside the old
+    // secure-reset parsing and went with it. This is the same query parser the
+    // email action links use, which also decodes `%XX` and `+`.
+    return parseQuery(loc.search.removePrefix("?"))["invite"]?.takeIf { it.isNotBlank() }
 }
 
 private fun parseClaim(s: String): String? = parseSegment(s, "claim")
@@ -28,58 +33,11 @@ actual fun readInitialShareToken(): String? {
 }
 
 /**
- * Parses `/account/secure-reset` with `oobCode` and `email` query params.
- *
- * The reset link in the Firebase email template is:
- *   https://tribetails.com/account/secure-reset?source=unauthorized_attempt&email=%EMAIL%
- * The oobCode arrives as an additional query param appended by the email CTA
- * or the MyTribe UI (passed through from the original Firebase reset link).
- *
- * Triggers when pathname is `/account/secure-reset` (hash or plain).
+ * #905: a Firebase email action link at `/account/secure-reset` or
+ * `/account/action`, parsed by the shared [parseEmailActionUrl] (no `email`
+ * param required; the screen reads the account from the verified code).
  */
-actual fun readInitialSecureResetParams(): SecureResetParams? {
-    val loc = window.location
-    val path = loc.pathname.trimEnd('/')
-    val hashPath = loc.hash.removePrefix("#").trimEnd('/')
-    val isSecureReset = path == "/account/secure-reset" || hashPath == "/account/secure-reset"
-    if (!isSecureReset) return null
-
-    val search = loc.search.removePrefix("?")
-    val params = parseQueryString(search)
-    val oobCode = params["oobCode"]?.takeIf { it.isNotBlank() } ?: return null
-
-    // Prefer email as a direct param; fall back to parsing it from continueUrl.
-    // Firebase appends the ActionCodeSettings.url as continueUrl=<encoded-url>, and
-    // that encoded URL carries ?email=<encoded-email>.
-    val email = params["email"]?.takeIf { it.isNotBlank() }
-        ?: params["continueUrl"]
-            ?.takeIf { it.isNotBlank() }
-            ?.let { continueUrl ->
-                val query = continueUrl.substringAfter("?", "")
-                parseQueryString(query)["email"]?.takeIf { it.isNotBlank() }
-            }
-        ?: return null
-
-    return SecureResetParams(oobCode = oobCode, email = email)
-}
-
-/** Minimal query-string parser: `key=value&key2=value2` → Map. */
-private fun parseQueryString(query: String): Map<String, String> {
-    if (query.isBlank()) return emptyMap()
-    return query.split("&").mapNotNull { pair ->
-        val idx = pair.indexOf('=')
-        if (idx <= 0) null
-        else pair.substring(0, idx) to decodeURIComponent(pair.substring(idx + 1))
-    }.toMap()
-}
-
-private fun decodeURIComponent(encoded: String): String {
-    return try {
-        js("decodeURIComponent(encoded)").toString()
-    } catch (_: Throwable) {
-        encoded
-    }
-}
+actual fun readInitialSecureResetParams(): SecureResetParams? = parseEmailActionUrl(window.location.href)
 
 private fun parseSegment(s: String, prefix: String): String? {
     val parts = s.trim('/').split("/")

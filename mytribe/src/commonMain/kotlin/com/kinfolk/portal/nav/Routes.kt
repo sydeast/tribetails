@@ -20,7 +20,16 @@ import kotlinx.serialization.Serializable
 @Serializable data class LaunchErrorRoute(val message: String)
 
 // ---- Unauth terminal deep-link destinations ----
-@Serializable data class SecureResetRoute(val oobCode: String, val email: String)
+/**
+ * A Firebase email action link (#905). No email: the account comes from the
+ * verified code. Every field but [oobCode] has a default so a link with extra
+ * or missing params still matches.
+ */
+@Serializable data class SecureResetRoute(
+    val oobCode: String,
+    val mode: String = "resetPassword",
+    val continueUrl: String? = null,
+)
 @Serializable data class ShareRoute(val shareId: String)
 @Serializable data class ClaimRoute(val inviteId: String)
 

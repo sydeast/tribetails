@@ -174,13 +174,32 @@ fun AppNavHost(
         }
 
         // ---- Unauth deep-link terminals ----
+        // #905: the project's one Firebase email action URL, on the host every
+        // real link uses. The web page answers at both paths, the manifest claims
+        // both, so both are declared here too.
         composable<SecureResetRoute>(
             deepLinks = listOf(
-                navDeepLink<SecureResetRoute>(basePath = "https://tribetails.com/account/secure-reset"),
+                navDeepLink<SecureResetRoute>(
+                    basePath = "https://kinfolk.tribetails.com/account/secure-reset",
+                ),
+                navDeepLink<SecureResetRoute>(
+                    basePath = "https://kinfolk.tribetails.com/account/action",
+                ),
             ),
         ) { entry ->
             val r = entry.toRoute<SecureResetRoute>()
-            SecureResetScreen(oobCode = r.oobCode, email = r.email)
+            SecureResetScreen(
+                oobCode = r.oobCode,
+                repo = repo,
+                onSignIn = {
+                    navController.navigate(SignInRoute) {
+                        popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                },
+                mode = r.mode,
+                continueUrl = r.continueUrl,
+            )
         }
         composable<ShareRoute>(
             deepLinks = listOf(
