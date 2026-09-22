@@ -31,6 +31,7 @@ import {
   saveHouseholdContact,
   saveTribeProfile,
   schemaFieldRow,
+  schemaPlaceholder,
   submitVetClinic,
   type ClinicCandidateDto,
   updateSecondaryPermissions,
@@ -751,8 +752,9 @@ function SchemaSection(props: { schema: FormSchemaDto; values: Record<string, st
           {section.title && <div className="sectlabel">{section.title}</div>}
           {section.description && <p className="sub" style={{ marginBottom: 10 }}>{section.description}</p>}
           <div className="grid2">
+            {/* #901: `defaultValue` is a HINT, never a seeded value - see schemaPlaceholder in api/tribeApi.ts. */}
             {section.fields.map((field) => (
-              <SchemaFieldInput key={field.key} field={field} value={values[field.key] ?? field.defaultValue ?? ''} onChange={(v) => set(field.key, v)} />
+              <SchemaFieldInput key={field.key} field={field} value={values[field.key] ?? ''} onChange={(v) => set(field.key, v)} />
             ))}
           </div>
         </div>
@@ -763,6 +765,11 @@ function SchemaSection(props: { schema: FormSchemaDto; values: Record<string, st
 
 function SchemaFieldInput(props: { field: FormFieldDto; value: string; onChange: (v: string) => void }) {
   const { field, value, onChange } = props;
+  // #901: the schema's own placeholder, falling back to its default. A checkbox
+  // has nowhere to show a hint, so a `defaultValue` of 'true' now renders
+  // unchecked - which is what was stored all along, since the default was never
+  // saved.
+  const hint = schemaPlaceholder(field);
   const wide = field.type === 'textarea' || field.type === 'multiselect' || field.type === 'select';
   const wrapperClass = wide ? 'field full' : 'field';
 
@@ -790,7 +797,7 @@ function SchemaFieldInput(props: { field: FormFieldDto; value: string; onChange:
     return (
       <div className={wrapperClass}>
         <label>{field.label}{field.required && ' *'}</label>
-        <textarea className="inp" value={value} placeholder={field.placeholder ?? undefined} onChange={(e) => onChange(e.target.value)} />
+        <textarea className="inp" value={value} placeholder={hint ?? undefined} onChange={(e) => onChange(e.target.value)} />
         {field.helperText && <span className="hint">{field.helperText}</span>}
       </div>
     );
@@ -802,7 +809,7 @@ function SchemaFieldInput(props: { field: FormFieldDto; value: string; onChange:
       <div className={wrapperClass}>
         <label>{field.label}{field.required && ' *'}</label>
         <select className="inp" value={value} onChange={(e) => onChange(e.target.value)}>
-          <option value="">{field.placeholder ?? 'Choose…'}</option>
+          <option value="">{hint ?? 'Choose…'}</option>
           {options.map((opt) => (
             <option key={opt} value={opt}>
               {opt}
@@ -823,7 +830,7 @@ function SchemaFieldInput(props: { field: FormFieldDto; value: string; onChange:
           label={`${field.label}${field.required ? ' *' : ''}`}
           value={value}
           onChange={onChange}
-          {...(field.placeholder ? { placeholder: field.placeholder } : {})}
+          {...(hint ? { placeholder: hint } : {})}
           className="inp"
         />
         {field.helperText && <span className="hint">{field.helperText}</span>}
@@ -835,7 +842,7 @@ function SchemaFieldInput(props: { field: FormFieldDto; value: string; onChange:
   return (
     <div className={wrapperClass}>
       <label>{field.label}{field.required && ' *'}</label>
-      <input className="inp" type={inputType} value={value} placeholder={field.placeholder ?? undefined} onChange={(e) => onChange(e.target.value)} />
+      <input className="inp" type={inputType} value={value} placeholder={hint ?? undefined} onChange={(e) => onChange(e.target.value)} />
       {field.helperText && <span className="hint">{field.helperText}</span>}
     </div>
   );

@@ -6,6 +6,8 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { requireKinfolkPerm } from '../lib/memberGate';
+import { writeAuditEntry } from '../lib/writeAuditEntry';
+import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { RATE_LIMITED_MESSAGE, readRateLimitInTx } from '../lib/rateLimit';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
@@ -62,7 +64,7 @@ export async function saveHomeAccessHandler(req: CallableRequest<unknown>): Prom
   // (and the read side) already knew how to let staff through. Same resolver
   // getMyKin/getMyBookings use; a cross-tenant resolution is audit-logged
   // inside it.
-  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, hasAdminClaim, 'saveHomeAccess');
+  const { kinfolkId, isOperator } = await resolveKinfolkAccess(uid, args.kinfolkId, hasAdminClaim, 'saveHomeAccess');
   // #868: the shared gate refuses with the bare message 'permission-denied'.
   // Portal Android before #868 prints the message after "Save failed:", so a
   // secondary without Home access read "Save failed: permission-denied". Say
@@ -106,29 +108,76 @@ export async function saveHomeAccessHandler(req: CallableRequest<unknown>): Prom
   // in the same transaction, so only a save that commits a change counts. A save
   // that changes nothing writes nothing: no updatedAt or updatedByUid bump, no
   // count.
-  const wrote = await firestore.runTransaction(async (tx) => {
+  //
+  // #901: the callback returns the NAMES of the fields it changed, not just a
+  // flag, so the audit entry below says which of the home details moved. It is
+  // pure (a comparison of what was read with what was sent), so a retry
+  // recomputes it against the winning read rather than carrying a stale list.
+  const changed = await firestore.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const stored = (snap.data() ?? {}) as Record<string, unknown>;
     const limit = await readRateLimitInTx(tx, 'homeAccessSave', kinfolkId, PROFILE_SAVE_RATE_LIMIT.max, PROFILE_SAVE_RATE_LIMIT.windowSecs);
     const customFields = touchesCustomFields
       ? mergeCustomFieldsForSave(stored['customFields'], sent, removeKeys).filter((entry) => !hasKeyIn(entry, LEGACY_EMERGENCY_CONTACT_KEYS))
       : null;
-    const changes =
-      SCALAR_FIELDS.some((field) => args[field] !== undefined && (args[field] ?? null) !== (stored[field] ?? null)) ||
-      (customFields !== null && !sameAsStored(customFields, stored['customFields']));
-    if (!changes) return false;
+    const changes: string[] = SCALAR_FIELDS.filter(
+      (field) => args[field] !== undefined && (args[field] ?? null) !== (stored[field] ?? null),
+    );
+    if (customFields !== null && !sameAsStored(customFields, stored['customFields'])) changes.push('customFields');
+    if (changes.length === 0) return null;
     if (!limit.allowed) throw new HttpsError('resource-exhausted', RATE_LIMITED_MESSAGE);
     tx.set(ref, customFields !== null ? { ...update, customFields } : update, { merge: true });
     limit.record();
-    return true;
+    return changes;
   });
 
-  if (!wrote) {
+  if (changed === null) {
     logEvent({ severity: 'info', function: 'saveHomeAccess', event: 'portal.homeAccess.unchanged', uid, extra: { kinfolkId } });
     return { ok: true };
   }
-  if (touchesCustomFields) update['customFields'] = true;
-  logEvent({ severity: 'info', function: 'saveHomeAccess', event: 'portal.homeAccess.saved', uid, extra: { kinfolkId, fields: Object.keys(update) } });
+  logEvent({ severity: 'info', function: 'saveHomeAccess', event: 'portal.homeAccess.saved', uid, extra: { kinfolkId, fields: changed } });
+
+  // #901: this callable wrote no audit entry at all, while saveTribeProfile has
+  // written one since #843. The fields behind it are the most sensitive a
+  // household holds - the gate code, where the key is hidden, the Wi-Fi password
+  // - so "who changed the gate code, and when" had no answer anywhere.
+  //
+  // FIELD NAMES ONLY, NEVER VALUES. Nothing on this path may carry a gate code,
+  // a key location, a Wi-Fi password or a custom row's value into `activity_log`:
+  // the audit trail is read by every operator and admin surface, and a secret
+  // copied into it is a second store of that secret with a different, weaker
+  // reader set. `changed` holds field names, and `customFields` is one name for
+  // the whole list - not its rows, whose keys would say which sensitive row moved
+  // but whose presence would invite a value to be added beside them later.
+  //
+  // The caller's real role, the same reading saveTribeProfile takes: a missing
+  // member doc is a legacy primary, and an operator saving on the household's
+  // behalf is AUNTIE rather than falsely PRIMARY. Read only once a save has
+  // committed, so a no-op costs nothing.
+  let actorRole: 'AUNTIE' | 'PRIMARY' | 'SECONDARY' = 'AUNTIE';
+  if (!isOperator) {
+    const memberSnap = await firestore.doc(`families/${kinfolkId}/members/${uid}`).get();
+    const role = memberSnap.exists ? (memberSnap.data() as { role?: string }).role : undefined;
+    actorRole = role === 'SECONDARY' ? 'SECONDARY' : 'PRIMARY';
+  }
+  await writeAuditEntry({
+    status: 'SUCCESS',
+    event: AUDIT_EVENTS.HOME_ACCESS_UPDATED,
+    severity: 'info',
+    actorRole,
+    actorUid: uid,
+    targetUid: kinfolkId,
+    targetCollection: 'families',
+    description: `Home access updated: ${changed.join(', ')}`,
+    payload: { kinfolkId, fields: changed, targets: [{ collection: 'families', id: kinfolkId, doc: 'homeAccess/current' }] },
+  }).catch((err) => {
+    // The save has already committed. A failed audit write must not turn a
+    // landed save into an error the household is told to retry.
+    logEvent({
+      severity: 'warn', function: 'saveHomeAccess', event: 'audit.write.failed',
+      uid, errorMessage: (err as Error)?.message,
+    });
+  });
   return { ok: true };
 }
 
