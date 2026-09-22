@@ -73,7 +73,7 @@ class TribeScreenTest {
         onNodeWithText("Save Changes").performScrollTo().assertIsDisplayed()
     }
 
-    private fun FakeFunctionsClient.stubProfileWithSavedField() {
+    private fun FakeFunctionsClient.stubProfileWithSavedField(canEditHomeDetails: Boolean? = null) {
         stub("getMyTribeProfile", buildJsonObject {
             put("profile", buildJsonObject {
                 put("kinfolkId", "3")
@@ -93,6 +93,10 @@ class TribeScreenTest {
                 put("customFields", buildJsonArray {})
                 put("updatedAtMs", JsonNull)
             })
+            // Optional: existing callers that don't care about Home access leave
+            // this null and the field is omitted, same as before this parameter
+            // existed (#933 item 3).
+            if (canEditHomeDetails != null) put("canEditHomeDetails", canEditHomeDetails)
         })
     }
 
@@ -186,17 +190,40 @@ class TribeScreenTest {
         onNodeWithText("PROFILE FIELDS").assertDoesNotExist()
     }
 
+    /**
+     * #933 item 3. The After-hours block itself always renders (its header and
+     * blurb are unconditional), but the editable "Emergency Clinic" fields only
+     * show when the viewer has Home access (#919's `canEditHomeDetails`); without
+     * it they are replaced by [HOME_DETAILS_LOCKED]. This was named
+     * `afterHoursVet_alwaysVisible` and only passed because its fixture omitted
+     * `canEditHomeDetails`, which `?: true` reads as allowed. It never pinned
+     * the no-access half of the rule.
+     */
     @Test
-    fun afterHoursVet_alwaysVisible() = runComposeUiTest {
-        val fake = FakeFunctionsClient()
-        fake.stubProfileWithSavedField()
-        fake.stubEmergencyContacts()
-        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+    fun afterHoursVet_visibleWheneverViewerHasHomeAccess() = runComposeUiTest {
+        val withHomeAccess = FakeFunctionsClient()
+        withHomeAccess.stubProfileWithSavedField(canEditHomeDetails = true)
+        withHomeAccess.stubEmergencyContacts()
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(withHomeAccess)) }
         waitForIdle()
         // The after-hours block lives inside the vet clinic card, below the fold.
         onNodeWithText("After-hours").performScrollTo().assertIsDisplayed()
         onNodeWithText("Emergency Clinic").performScrollTo().assertIsDisplayed()
         onNodeWithText("Emergency Clinic Phone").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun afterHoursVet_lockedWithoutHomeAccess() = runComposeUiTest {
+        val withoutHomeAccess = FakeFunctionsClient()
+        withoutHomeAccess.stubProfileWithSavedField(canEditHomeDetails = false)
+        withoutHomeAccess.stubEmergencyContacts(canEdit = false)
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(withoutHomeAccess)) }
+        waitForIdle()
+        // The header stays visible, but the editable fields do not.
+        onNodeWithText("After-hours").performScrollTo().assertIsDisplayed()
+        onNodeWithTag("after-hours-locked").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Emergency Clinic").assertDoesNotExist()
+        onNodeWithText("Emergency Clinic Phone").assertDoesNotExist()
     }
 
     @Test
@@ -721,6 +748,32 @@ class TribeScreenTest {
         assertEquals(PageSaveStatus("Save failed: nope", ok = false), pageSaveOutcome(SaveHalf.Failed(boom), SaveHalf.Skipped, emergencyContactsDirty = false))
         assertEquals(PageSaveStatus("Saved.", ok = true), pageSaveOutcome(SaveHalf.Saved, SaveHalf.Skipped, emergencyContactsDirty = false))
         assertEquals(PageSaveStatus("Saved.", ok = true), pageSaveOutcome(SaveHalf.Saved, SaveHalf.Saved, emergencyContactsDirty = false))
+    }
+
+    /** #930: reporting only the profile half's reason drops the home access one. */
+    @Test
+    fun pageSaveOutcome_bothHalvesFailingForDifferentReasons_namesBoth() {
+        val profileError = IllegalStateException("nope")
+        val homeError = IllegalStateException("kaput")
+        val outcome = pageSaveOutcome(SaveHalf.Failed(profileError), SaveHalf.Failed(homeError), emergencyContactsDirty = false)
+        assertEquals(false, outcome.ok)
+        assertTrue(outcome.text.contains("Family and Vet Clinic did not save: nope."))
+        assertTrue(outcome.text.contains("Home Information and the after-hours clinic did not save: kaput."))
+    }
+
+    /**
+     * #930: a Save click sends both callables together, so both hitting the same
+     * rate limit at once is the common case. The reason must not be named twice.
+     */
+    @Test
+    fun pageSaveOutcome_bothHalvesFailingForTheSameReason_statesItOnce() {
+        val sameBoom = IllegalStateException("nope")
+        val outcome = pageSaveOutcome(SaveHalf.Failed(sameBoom), SaveHalf.Failed(sameBoom), emergencyContactsDirty = false)
+        assertEquals(
+            PageSaveStatus("Save failed: nope. Press Save Changes to try again. Your edits are still on this page.", ok = false),
+            outcome,
+        )
+        assertEquals(1, Regex("Press Save Changes to try again").findAll(outcome.text).count())
     }
 
     /**

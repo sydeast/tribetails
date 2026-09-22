@@ -68,15 +68,30 @@ class NativeResetWiringTest {
         )
     }
 
+    /**
+     * #936 moved the target out of this body and into the caller's argument, so
+     * the expected literal is gone: what is pinned now is that the argument is
+     * what the settings carry, and that a null one sends no settings at all,
+     * which is the bare link portal web sends for a link that named no target.
+     * [PasswordResetSendTest] pins the default the callers get.
+     */
     @Test
-    fun itAsksForALinkThatContinuesToThePortalSignIn() {
+    fun itAsksForALinkThatContinuesWhereTheCallerSaid() {
         assertTrue(
-            "ActionCodeSettings" in sendBody && "EmailAction.PORTAL_SIGN_IN_URL" in sendBody,
-            "expected ActionCodeSettings carrying EmailAction.PORTAL_SIGN_IN_URL, got: $sendBody",
+            "ActionCodeSettings" in sendBody && "url = it" in sendBody,
+            "expected ActionCodeSettings built from the continueUrl argument, got: $sendBody",
+        )
+        assertTrue(
+            "continueUrl?.let" in sendBody,
+            "expected a null continueUrl to send no ActionCodeSettings, got: $sendBody",
         )
         assertTrue(
             "canHandleCodeInApp = false" in sendBody,
             "expected canHandleCodeInApp = false, matching portal web's handleCodeInApp: false, got: $sendBody",
+        )
+        assertFalse(
+            "EmailAction.PORTAL_SIGN_IN_URL" in sendBody,
+            "the target is the caller's now; hardcoding it here would ignore the argument, got: $sendBody",
         )
     }
 

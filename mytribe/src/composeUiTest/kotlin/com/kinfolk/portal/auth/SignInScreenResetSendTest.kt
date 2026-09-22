@@ -23,7 +23,7 @@ import kotlin.test.Test
  * like a real one, and a genuine failure has to keep reading like a failure.
  */
 private class ResetBackend(private val onSend: (String) -> Unit) : AuthBackend by FakeAuthBackend() {
-    override suspend fun sendPasswordReset(email: String) = onSend(email)
+    override suspend fun sendPasswordReset(email: String, continueUrl: String?) = onSend(email)
 }
 
 class SignInScreenResetSendTest {

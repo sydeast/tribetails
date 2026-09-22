@@ -12,9 +12,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.put
 
 actual fun makeSecureResetFetcher(base: String): SecureResetFetcher = JvmSecureResetFetcher(base)
 
@@ -29,8 +27,15 @@ actual fun makeSecureResetFetcher(base: String): SecureResetFetcher = JvmSecureR
  * no emulator is configured.
  *
  * [client]/[endpoints] are injectable so a test can assert the outgoing URL
- * against a MockEngine without touching process env or a real socket. The
- * request payload is unchanged here; PR #903 (#892) owns that shape.
+ * against a MockEngine without touching process env or a real socket.
+ *
+ * The body is [secureResetPayload], the same three keys Android and web post.
+ * It used to add an `email` field of its own. The server has derived the
+ * account from the code and ignored a client-sent address since #903, and since
+ * #905 desktop cannot reach this call at all (its auth backend cannot check a
+ * code, so the screen sends the reader to a browser), so nothing was wrong on
+ * the wire. It was one body out of three describing a contract that no longer
+ * existed (#933 item 4).
  */
 internal class JvmSecureResetFetcher(
     private val base: String,
@@ -56,15 +61,9 @@ internal class JvmSecureResetFetcher(
         email: String,
         userAgent: String,
     ): String {
-        val payload = buildJsonObject {
-            put("oobCode", oobCode)
-            put("newPassword", newPassword)
-            put("email", email)
-            put("userAgent", userAgent)
-        }
         val resp = client.post("${resolvedBase()}/confirmSecureReset") {
             headers { append(HttpHeaders.ContentType, "application/json") }
-            setBody(json.encodeToString(JsonObject.serializer(), payload))
+            setBody(secureResetPayload(oobCode, newPassword, userAgent))
         }
         val text = resp.bodyAsText()
         return when (resp.status) {

@@ -82,5 +82,5 @@ class PasswordResetSendTest {
 private class StubResetBackend(
     private val onSend: (String) -> Unit,
 ) : AuthBackend by FakeAuthBackend() {
-    override suspend fun sendPasswordReset(email: String) = onSend(email)
+    override suspend fun sendPasswordReset(email: String, continueUrl: String?) = onSend(email)
 }
