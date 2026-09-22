@@ -892,10 +892,20 @@ export function planWritesForFamily(fam: DemoFamilyId): PlannedWrite[] {
     writes.push({ path: `families/${fam}/bookings/${b._id}`, data: b as unknown as Record<string, unknown> });
   }
   for (const inv of p.invoices) {
-    // Known collection split: getMyInvoices reads the flat top-level collection,
-    // while the family subcollection mirrors it for other consumers. Seed both.
+    // FLAT ONLY (#932). There is no collection split to mirror. `families/{id}/
+    // invoices` is the RETIRED path that backfillNestedInvoices.ts exists to
+    // empty, and every live consumer (getMyInvoices, every billing callable,
+    // both invoice crons, the React admin and the Android admin) reads the
+    // flat top-level `invoices` collection, where each doc carries its own
+    // `kinfolkId`. This seed was the last writer to the nested path, and it
+    // wrote BOTH copies, so a demo household existed twice to anything that
+    // scanned `collectionGroup('invoices')` and the migration could never be
+    // called finished while this ran. Seeding only the flat doc retires it.
+    //
+    // This does NOT clean up nested copies left by earlier runs of this script.
+    // Removing those is backfillNestedInvoices.ts's job (copy-up, then delete,
+    // under --allow-prod). A seed script must not delete documents.
     writes.push({ path: `invoices/${inv._id}`, data: inv as unknown as Record<string, unknown> });
-    writes.push({ path: `families/${fam}/invoices/${inv._id}`, data: inv as unknown as Record<string, unknown> });
   }
   return writes;
 }

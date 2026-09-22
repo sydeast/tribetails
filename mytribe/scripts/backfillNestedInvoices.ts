@@ -4,15 +4,28 @@
  * One-off Firestore backfill that retires a PHANTOM nested invoice path.
  *
  * Three MyTribe functions historically targeted `families/{id}/invoices/{id}`,
- * but nothing ever wrote there — AuntieOS Android + web (and the MyTribe
- * portal callables) all read/write the FLAT top-level `invoices` collection,
- * where each doc carries its own `kinfolkId`. Task #12 repointed those
- * functions at the flat collection. This script closes the loop by copying any
- * stray nested doc up to `invoices/{id}` (stamping `kinfolkId`) and then, only
- * with --allow-prod, deleting the nested original.
+ * but no production writer ever wrote there. AuntieOS Android + web (and the
+ * MyTribe portal callables) all read/write the FLAT top-level `invoices`
+ * collection, where each doc carries its own `kinfolkId`. Task #12 repointed
+ * those functions at the flat collection. This script closes the loop by
+ * copying any stray nested doc up to `invoices/{id}` (stamping `kinfolkId`)
+ * and then, only with --allow-prod, deleting the nested original.
  *
- * In practice the nested collection is empty in prod, so this should report
- * scanned=0 and no-op safely.
+ * ONE WRITER DID EXIST, and it was not production: `scripts/seedDemoKinfolk.ts`
+ * wrote a nested copy of every demo invoice alongside the flat doc, so each
+ * demo household appeared twice to any `collectionGroup('invoices')` scan and
+ * re-seeding re-created whatever this script had just deleted. #932 stopped it.
+ * A tribe that was seeded before that still holds nested copies. This script
+ * is what clears them, and the seed no longer puts them back.
+ *
+ * DO NOT ASSUME PROD IS CLEAN. The older version of this header said the nested
+ * collection was empty in prod. Nothing supports that, and #920 points the other
+ * way: the double-chase it fixed was a real overdue cron run, and that cron runs
+ * only against prod, so prod held nested demo copies at least until #920 landed.
+ * There is one Firebase project, the demo family ids are already listed in an
+ * admin's `clients/{uid}.kinfolkIds`, and no delete has run since. Treat
+ * `scanned : 0` as the result this script has to PROVE, never as its premise:
+ * dry-run first, read the count, and re-run with --allow-prod if it is not zero.
  *
  * Modes:
  *   default        — dry-run, prints planned changes to stdout, no writes
