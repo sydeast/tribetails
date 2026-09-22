@@ -64,7 +64,7 @@ const DAY_NAMES = [
   'Sunday',
 ] as const;
 
-const BUSINESS_SETTINGS_DOC = 'business_settings/business_settings';
+export const BUSINESS_SETTINGS_DOC = 'business_settings/business_settings';
 
 /**
  * The historical doc id. `getBusinessContact.ts` and `syncGoogleCalendarBusyEvents.ts`
@@ -72,7 +72,7 @@ const BUSINESS_SETTINGS_DOC = 'business_settings/business_settings';
  * historically wrote `singleton`. A phone line that reads only the modern id
  * would answer from an empty document on a tenant that never migrated.
  */
-const BUSINESS_SETTINGS_DOC_LEGACY = 'business_settings/singleton';
+export const BUSINESS_SETTINGS_DOC_LEGACY = 'business_settings/singleton';
 
 /** Matches the "HH:MM-HH:MM" wire format `BusinessHoursEditor` writes. */
 const HOURS_RANGE_RE = /^(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$/;

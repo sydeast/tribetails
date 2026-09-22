@@ -356,7 +356,10 @@ describe('WARNING-25: kincare reminder cron paginates past the cap', () => {
 
     const reminded = await runKincareReminderScan(now);
     expect(reminded).toBe(expectedReminded);
-    expect(mocks.enqueue).toHaveBeenCalledTimes(expectedReminded);
+    // The scan reads the outcome now, so it calls the detailed entrypoint:
+    // `upcomingReminderNotifiedAtMs` may only be stamped for a reminder that
+    // really went out. See kincareReminderCron.processUpcomingBooking.
+    expect(mocks.enqueueDetailed).toHaveBeenCalledTimes(expectedReminded);
     // Pending docs must NOT have triggered a notification write.
     const pendingIds = new Set(
       rows.filter((r) => r.data['status'] === 'pending').map((r) => r.id),

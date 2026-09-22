@@ -4,7 +4,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
-import { enqueueNotification } from '../notifications/dispatcher';
+import { enqueueNotificationDetailed } from '../notifications/dispatcher';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
 import { isAutoReminder24hEnabled } from '../lib/autoReminder';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
@@ -31,6 +31,29 @@ type BookingDoc = {
  * The status check is done in-memory (not as a Firestore .where() predicate) so
  * that the paginated collectionGroup scan can run without a composite index.
  * See runKincareReminderScan for details.
+ *
+ * `upcomingReminderNotifiedAtMs` MEANS "A REMINDER REACHED THIS HOUSEHOLD", and
+ * `:43` above skips on it forever, so it is written only when one did. It used
+ * to be stamped on any enqueue that did not throw, which is a different claim:
+ * `kincare.upcoming.reminder` is kinfolk-only with `required: {}`, so a
+ * household that turns email off, an operator gate on the row, or (now) the
+ * pre-launch household gate all return an empty `written` without throwing, and
+ * the booking was marked reminded having heard nothing.
+ *
+ * That was survivable while the only causes were standing preferences. It stops
+ * being survivable with a launch switch: while the gate is shut EVERY household
+ * copy is suppressed, so every booking in the 24-48h window would be stamped
+ * reminded, and the day the operator opens the product not one of them would be
+ * reminded, ever. Same reasoning, same three branches and same vocabulary as
+ * `invoiceRemindersCron.processReminderInvoice`, which is where this shape
+ * comes from:
+ *
+ *   - written:    a reminder went out now. Stamp now.
+ *   - duplicate:  one already went out inside the dispatcher's window and its
+ *                 stamp did not land. Stamp THAT time; send nothing.
+ *   - otherwise:  nothing was delivered. Stamp nothing, so the booking stays
+ *                 eligible. The window is 24 hours wide and the cron runs
+ *                 hourly, so it gets many more attempts.
  */
 export async function processUpcomingBooking(
   docSnap: QueryDocumentSnapshot,
@@ -48,7 +71,7 @@ export async function processUpcomingBooking(
   if (!familyId) return false;
   const recipientUid = await resolveKinfolkUid(familyId);
   try {
-    await enqueueNotification({
+    const outcome = await enqueueNotificationDetailed({
       key: 'kincare.upcoming.reminder',
       recipientUid: recipientUid ?? '',
       data: {
@@ -59,8 +82,26 @@ export async function processUpcomingBooking(
       },
       fireAtMs: now,
     });
-    await docSnap.ref.set({ [NOTIFIED_FIELD]: now }, { merge: true });
-    return true;
+    if (outcome.written.length > 0) {
+      await docSnap.ref.set({ [NOTIFIED_FIELD]: now }, { merge: true });
+      return true;
+    }
+    const duplicate = outcome.suppressed.find((s) => s.reason === 'duplicate');
+    if (duplicate) {
+      await docSnap.ref.set({ [NOTIFIED_FIELD]: duplicate.lastAtMs ?? now }, { merge: true });
+    }
+    logEvent({
+      severity: 'info',
+      function: 'kincareReminderCron',
+      event: duplicate ? 'reminder.already-delivered' : 'reminder.suppressed',
+      extra: {
+        familyId,
+        bookingId: docSnap.id,
+        lastAtMs: duplicate?.lastAtMs ?? null,
+        reasons: outcome.suppressed.map((s) => s.reason),
+      },
+    });
+    return false;
   } catch (err) {
     logEvent({
       severity: 'warn',

@@ -6,6 +6,11 @@ import { captureFunctionError } from '../lib/sentry';
 import { resolveActor, type ResolvedActor } from '../lib/resolveActor';
 import { buildNotificationDetail } from './buildNotificationDetail';
 import { getNotificationDef } from './catalog';
+import {
+  loadHouseholdSendGate,
+  type HouseholdSendGate,
+  type HouseholdSendGateState,
+} from './householdSendGate';
 import { loadBusinessOverride, loadUserPrefs, resolveChannels, streamForRecipient } from './prefs';
 import { resolveRecipients } from './recipientResolver';
 import { NoRecipientsError, isRecipientsUnavailable } from './recipientErrors';
@@ -203,8 +208,18 @@ export function contentDedupeKey(scope: string, content: unknown): string {
   return `${scope}#${digest}`;
 }
 
-/** Why a recipient got nothing from one enqueue. */
-export type SuppressionReason = 'duplicate' | 'prefs';
+/**
+ * Why a recipient got nothing from one enqueue.
+ *
+ * 'gate' is NOT a flavour of 'prefs', and callers must not fold the two
+ * together. `prefs` means a standing choice by the operator or the recipient
+ * about this notification; `gate` means the whole product has not opened yet
+ * and this copy was household-bound (see notifications/householdSendGate.ts).
+ * A caller deciding how long to wait before retrying needs the difference: a
+ * prefs suppression can sit for as long as the preference does, and a gate
+ * suppression clears the day the operator flips one boolean.
+ */
+export type SuppressionReason = 'duplicate' | 'prefs' | 'gate';
 
 export interface Suppression {
   recipientUid: string;
@@ -213,6 +228,8 @@ export interface Suppression {
   existingId?: string;
   /** For 'duplicate': when the earlier delivery happened (ms epoch). */
   lastAtMs?: number;
+  /** For 'gate': what the settings document said ('absent' | 'off' | 'read-failed'). */
+  gateState?: HouseholdSendGateState;
 }
 
 /** #866: a resolver whose lookup FAILED (not one with nobody by definition). */
@@ -396,6 +413,22 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
   const actor = await resolveActor(args.actorUid);
 
   const outcome: EnqueueOutcome = { written: [], suppressed: [], unresolved };
+  /**
+   * THE PRE-LAUNCH HOUSEHOLD GATE, read at most once per enqueue and only when
+   * a household copy is actually about to be written.
+   *
+   * Lazy on purpose: `security.account.locked.operator` and every other
+   * staff-only key resolves nobody in `clients/`, so the operator's alerts cost
+   * no extra Firestore read and cannot be held up by this document at all.
+   */
+  let gate: HouseholdSendGate | null = null;
+  const householdGate = async (): Promise<HouseholdSendGate> => {
+    gate ??= await loadHouseholdSendGate(db());
+    return gate;
+  };
+  let gateSuppressed = 0;
+  /** The state the gate reported when it last held a copy back, for the summary line. */
+  let gateSuppressedState: HouseholdSendGateState = 'absent';
   for (const recipient of recipients) {
     const [userPrefs, businessOverride] = await Promise.all([
       loadUserPrefs(recipient.uid, recipient.collection),
@@ -418,6 +451,59 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
       });
       outcome.suppressed.push({ recipientUid: recipient.uid, reason: 'prefs' });
       continue;
+    }
+
+    /**
+     * THE GATE. Household-bound copies stop here until the operator opens the
+     * product; staff and operator copies walk straight past.
+     *
+     * `stream` is the classification and it is not a heuristic: it is the same
+     * per-copy value `resolveChannels` was just handed, and `streamForRecipient`
+     * returns 'kinfolk' exactly when the resolver put this recipient in
+     * `clients/`. Every notification with a household-side resolver
+     * (`kinfolkAcct`, `specificUid`) declares `audiences.kinfolk`, and no other
+     * resolver can produce a `clients/` recipient, so there is no key this has
+     * to guess about. `householdSendGateGuard.test.ts` pins that invariant so a
+     * new catalog row cannot quietly drift out from under it, and a `both`-key's
+     * business copy is unaffected: `kincare.booking.confirm` still reaches every
+     * admin while the household's copy waits.
+     *
+     * PLACED HERE, BETWEEN THE PREFS CHECK AND `routeByDeliveryMode`, and the
+     * position is the whole safety argument:
+     *
+     *   - BEFORE `routeByDeliveryMode`, because that is what writes the
+     *     `notificationDedupe` ledger. A gated `invoice.overdue` that still
+     *     stamped the ledger would come back 'duplicate' on the first run after
+     *     launch, inside OVERDUE_DEDUPE_WINDOW_MS, and `processOverdueInvoice`
+     *     would write `overdueNotifiedAtMs` from the ledger's time. Every
+     *     invoice that existed while the gate was shut would be marked notified
+     *     without anyone having been notified. Sitting above that write is what
+     *     makes "flip it on and the backlog still goes out" true rather than
+     *     hoped for.
+     *   - AFTER the prefs check, so the count below is what would ACTUALLY have
+     *     been delivered, not what was merely addressed.
+     */
+    if (stream === 'kinfolk') {
+      const { live, state } = await householdGate();
+      if (!live) {
+        gateSuppressed += 1;
+        gateSuppressedState = state;
+        logEvent({
+          severity: 'info',
+          function: 'enqueueNotification',
+          event: 'notification.gated.household',
+          uid: recipient.uid,
+          extra: {
+            key: def.key,
+            recipientType: 'household',
+            stream,
+            gateState: state,
+            channels: activeChannelList(channels),
+          },
+        });
+        outcome.suppressed.push({ recipientUid: recipient.uid, reason: 'gate', gateState: state });
+        continue;
+      }
     }
 
     const routed = await routeByDeliveryMode(def, args, recipient.uid, channels, actor, stream);
@@ -444,6 +530,27 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
         lastAtMs: routed.lastAtMs,
       });
     }
+  }
+
+  /**
+   * One summary line per enqueue, so the operator can read what the gate cost
+   * without counting per-recipient lines. Emitted only when something was
+   * actually held back, at warn rather than info: while the gate is shut this
+   * is the record of mail the business meant to send and did not.
+   */
+  if (gateSuppressed > 0) {
+    logEvent({
+      severity: 'warn',
+      function: 'enqueueNotification',
+      event: 'notification.gated.household.summary',
+      extra: {
+        key: def.key,
+        recipientType: 'household',
+        gateState: gateSuppressedState,
+        suppressedCount: gateSuppressed,
+        deliveredCount: outcome.written.length,
+      },
+    });
   }
 
   return outcome;

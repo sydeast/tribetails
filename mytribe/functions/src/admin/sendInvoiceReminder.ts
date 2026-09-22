@@ -389,15 +389,28 @@ export async function sendInvoiceReminderHandler(
         answer(args.invoiceId, 'recent', lastAtMs, lastAtMs + INVOICE_REMINDER_RESEND_WINDOW_MS),
       );
     }
-    // Every recipient's prefs blocked it. Nothing went out, so nothing is
-    // stamped: the cron and the "Last reminder" row keep telling the truth.
+    // Nothing reached the household: either every recipient's prefs blocked it,
+    // or the pre-launch household gate is shut
+    // (notifications/householdSendGate.ts). Nothing went out, so nothing is
+    // stamped: the cron and the "Last reminder" row keep telling the truth, and
+    // once the gate opens this invoice is still due its reminder.
+    //
+    // DELIBERATELY ONE BRANCH FOR BOTH, unlike `resendQuote`. That callable
+    // refuses the press outright, so it owes the operator a reason they can act
+    // on; this one answers `suppressed`, the admin reads that as "it did not go
+    // out" either way, and the dispatcher's own reason is in `reasons` below for
+    // anyone reading the logs.
     await settle(null);
     logEvent({
       severity: 'info',
       function: 'sendInvoiceReminder',
       event: 'admin.invoice.reminder.suppressed',
       uid,
-      extra: { invoiceId: args.invoiceId, kinfolkId: familyId },
+      extra: {
+        invoiceId: args.invoiceId,
+        kinfolkId: familyId,
+        reasons: dispatched.suppressed.map((s) => s.reason),
+      },
     });
     return validateResponse('sendInvoiceReminder', Result, answer(args.invoiceId, 'suppressed', prior, null));
   }

@@ -36,6 +36,12 @@ export interface SetOptionsLike {
 
 type Data = Record<string, unknown>;
 
+/** The settings document the household send gate is read from. */
+export const HOUSEHOLD_GATE_SETTINGS_PATH = 'business_settings/business_settings';
+
+/** That document with the gate open. See the seeding note inside `buildDbMock`. */
+export const HOUSEHOLD_GATE_OPEN: Data = { householdNotificationsLive: true };
+
 /** A fixture row lifted into a uniform shape the query engine can work on. */
 interface Row {
   id: string;
@@ -323,6 +329,27 @@ export function buildDbMock(opts: {
   writeThrough?: boolean;
 } = {}) {
   const docs = opts.docs ?? {};
+  /**
+   * THE PRE-LAUNCH HOUSEHOLD SEND GATE, seeded OPEN unless the fixture says
+   * otherwise (see `src/notifications/householdSendGate.ts`).
+   *
+   * In production the gate is shut until the operator opens the product, and
+   * "absent means off" is the whole reason it is safe on the day it deploys. In
+   * a fixture that same default says something different and wrong: every suite
+   * written before the gate existed describes a RUNNING business, and reading
+   * their silence as "the product has not opened yet" turned 92 assertions
+   * about ordinary delivery into assertions about a shut door.
+   *
+   * So the mock states the world those suites assume, out loud and in one
+   * place. A fixture that supplies its own `business_settings/business_settings`
+   * keeps it verbatim, which is how `householdSendGate.test.ts` exercises off,
+   * absent and read-failed. `householdSendGateGuard.test.ts` asserts this
+   * seeding is still here, so deleting it cannot quietly leave a suite green
+   * for a reason nobody chose.
+   */
+  if (!(HOUSEHOLD_GATE_SETTINGS_PATH in docs)) {
+    docs[HOUSEHOLD_GATE_SETTINGS_PATH] = { ...HOUSEHOLD_GATE_OPEN };
+  }
   const writeThrough = opts.writeThrough === true;
   const queryDocs = opts.queryDocs ?? {};
   const collectionGroupDocs = opts.collectionGroupDocs ?? {};

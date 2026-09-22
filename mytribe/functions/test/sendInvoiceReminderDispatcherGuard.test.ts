@@ -164,6 +164,39 @@ describe('sendInvoiceReminder over the real dispatcher', () => {
     expect((await ctx.db.collection('invoices').doc('inv1').get()).data()?.reminderNotifiedAtMs).toBe(eight);
   });
 
+  /**
+   * THE PRE-LAUNCH HOUSEHOLD GATE, pressed by hand.
+   *
+   * `reminderNotifiedAtMs` is what the cron, this button and every client's
+   * "Last reminder" row read as "a reminder reached this household", so a press
+   * made while the gate is shut must leave it untouched. The gate's reason is a
+   * third value on `Suppression.reason`, and this callable reaches its
+   * stamp-nothing branch by falling through the duplicate check rather than by
+   * naming 'prefs', which is what keeps that true without an edit here.
+   */
+  it('GATED: a press while household notifications are off stamps nothing', async () => {
+    const ctx = buildDbMock({
+      writeThrough: true,
+      docs: {
+        'business_settings/business_settings': { householdNotificationsLive: false },
+        'invoices/inv1': { ...OPEN_BILL, kinfolkId: 'fam1', invoiceNumber: 'INV-9' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const answer = await sendInvoiceReminderHandler(req());
+    expect(answer.sent).toBe(false);
+    expect(scheduledReminders(ctx.writes), 'nothing queued for delivery').toHaveLength(0);
+    const after = (await ctx.db.collection('invoices').doc('inv1').get()).data();
+    expect(after?.reminderNotifiedAtMs, 'and above all, no notified stamp').toBeUndefined();
+    // Opening the gate and pressing again does what the first press meant to do.
+    await ctx.db
+      .doc('business_settings/business_settings')
+      .set({ householdNotificationsLive: true }, { merge: true });
+    vi.setSystemTime(NOW + 60_000);
+    const second = await sendInvoiceReminderHandler(req());
+    expect(second.sent).toBe(true);
+    expect(scheduledReminders(ctx.writes)).toHaveLength(1);
+  });
   it('the ledger keeps an entry at least as long as every widened caller window', () => {
     // The button and the cron both widen to the reminder window; no other caller widens.
     expect(DEDUPE_LEDGER_RETENTION_MS).toBeGreaterThanOrEqual(INVOICE_REMINDER_RESEND_WINDOW_MS);

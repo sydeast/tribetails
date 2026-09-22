@@ -321,6 +321,20 @@ export async function resendQuoteHandler(
         { code: 'quote_resend_suppressed' },
       );
     }
+    // The pre-launch household gate is shut (notifications/householdSendGate.ts).
+    // Its own message, because the fix has nothing to do with this household:
+    // `quote_resend_suppressed` would send the operator to a notification
+    // settings screen that is not the problem, and the generic message below
+    // reads as a broken recipient roster. Nothing was written and the quote
+    // stays declined, so pressing again once the gate is open does exactly what
+    // this press meant to do.
+    if (reason === 'gate') {
+      throw new HttpsError(
+        'failed-precondition',
+        'Household notifications are switched off until the business goes live, so this quote was not sent again. It is still declined. Turn household notifications on, then press again.',
+        { code: 'quote_resend_gated' },
+      );
+    }
     throw new HttpsError(
       'failed-precondition',
       'Nobody could be notified about this quote, so it was not sent again. The quote is still declined.',
