@@ -1203,6 +1203,7 @@ write, run `npm run test:scripts:emulator` and read the pass count.**
 | Backfill | Added by | What it fixes |
 |---|---|---|
 | `backfill:operator-warning-override` | #877 | An operator who turned off or locked the failed-login warning, or one of its channels, on the Business tab saved that on `auth.failedLogin.attempts`. That key is household-only now, so the setting stopped applying to operators. This copies it to `security.failedLogin.attempts.operator`, only where that key has no setting yet. |
+| `backfill:emergency-contacts` | #829 | Copies the flat `emergencyContact*` fields, and for a household with none the old `families` customFields copy, into `emergencyContacts[0]` - the array the callable and every client now read. |
 
 For `backfill:operator-warning-override`:
 
@@ -1220,6 +1221,33 @@ For `backfill:operator-warning-override`:
 The script never overwrites a setting the new key already has. It copies the
 whole business-stream setting, locks and lock reason included, because a
 locked channel delivers differently from an unlocked one.
+
+For `backfill:emergency-contacts`:
+
+1. `npm run test:scripts:emulator`
+2. Rehearse the real write against a local emulator first (`--emulator-apply`,
+   #893), never production: from `mytribe/`, `firebase emulators:start --only
+   firestore --project mytribe-scripts-emulator-test`, then in a second
+   terminal, with `FIRESTORE_EMULATOR_HOST` set to the address it printed
+   (`127.0.0.1:8080` by default, from `mytribe/firebase.json`):
+   `FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 npm --prefix mytribe/functions run backfill:emergency-contacts -- --emulator-apply`
+   Refuses without `FIRESTORE_EMULATOR_HOST` set, and refuses alongside
+   `--allow-prod`. Read the printed counts and the per-household diff.
+3. `npm --prefix mytribe/functions run backfill:emergency-contacts`
+   Dry run against PRODUCTION (no `FIRESTORE_EMULATOR_HOST` this time). The
+   first two lines are the project and the target: check they say the right
+   project and `PRODUCTION`. Read the diff for every household and every
+   stale `families` row before applying.
+4. `npm --prefix mytribe/functions run backfill:emergency-contacts -- --allow-prod`
+   Needs `GOOGLE_APPLICATION_CREDENTIALS` and refuses while
+   `FIRESTORE_EMULATOR_HOST` is set.
+5. Re-run step 3. Every plan should now report `skip` (`already-has-array` or
+   `no-flat-fields`) - nothing left to migrate.
+
+Never overwrites a non-empty `emergencyContacts` array, never bumps
+`updatedAt`, and never deletes the kinfolk flat fields (they stay readable
+until this run is verified). Dates on the migrated contact are the original
+record's, never the migration time.
 
 ### Read-only reports to run after a release
 

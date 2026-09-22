@@ -83,12 +83,18 @@ describe('planFamiliesEmergencyContacts (the portal store the admin never read)'
 
 describe('parseArgs', () => {
   it('defaults to a dry run', () => {
-    expect(parseArgs([])).toEqual({ mode: 'dry-run', allowProd: false, projectId: null });
+    expect(parseArgs([])).toEqual({ mode: 'dry-run', allowProd: false, emulatorApply: false, projectId: null });
   });
   it('applies only with --allow-prod, and --dry-run wins in either order', () => {
     expect(parseArgs(['--allow-prod']).mode).toBe('apply');
     expect(parseArgs(['--allow-prod', '--dry-run']).mode).toBe('dry-run');
     expect(parseArgs(['--dry-run', '--allow-prod']).mode).toBe('dry-run');
+  });
+  // #893 item 4.
+  it('applies only with --emulator-apply too, and --dry-run wins in either order', () => {
+    expect(parseArgs(['--emulator-apply'])).toEqual({ mode: 'apply', allowProd: false, emulatorApply: true, projectId: null });
+    expect(parseArgs(['--emulator-apply', '--dry-run']).mode).toBe('dry-run');
+    expect(parseArgs(['--dry-run', '--emulator-apply']).mode).toBe('dry-run');
   });
   it('refuses an unknown arg and a valueless --project', () => {
     expect(() => parseArgs(['--wipe'])).toThrow(/unknown arg/);
@@ -108,6 +114,10 @@ describe('describeTarget and refuseRun (#829 review)', () => {
       'TARGET: project auntieos-ttpc, PRODUCTION Firestore, APPLY',
     );
     expect(describeTarget(parseArgs([]), {})).toBe('TARGET: project (from credentials), PRODUCTION Firestore, DRY-RUN');
+    // #893 item 4.
+    expect(describeTarget(parseArgs(['--emulator-apply']), EMU)).toBe(
+      'TARGET: project (from credentials), Firestore EMULATOR at 127.0.0.1:8080, APPLY',
+    );
   });
 
   it('refuses --allow-prod while FIRESTORE_EMULATOR_HOST is set, even with --dry-run and credentials', () => {
@@ -120,6 +130,14 @@ describe('describeTarget and refuseRun (#829 review)', () => {
     expect(refuseRun(parseArgs([]), {})).toBeNull();
     expect(refuseRun(parseArgs(['--allow-prod']), {})).toMatch(/GOOGLE_APPLICATION_CREDENTIALS/);
     expect(refuseRun(parseArgs(['--allow-prod']), CREDS)).toBeNull();
+  });
+
+  // #893 item 4.
+  it('--emulator-apply refuses without the emulator, refuses alongside --allow-prod, and needs no credentials', () => {
+    expect(refuseRun(parseArgs(['--emulator-apply']), {})).toMatch(/--emulator-apply requires FIRESTORE_EMULATOR_HOST/);
+    expect(refuseRun(parseArgs(['--emulator-apply']), CREDS)).toMatch(/--emulator-apply requires FIRESTORE_EMULATOR_HOST/);
+    expect(refuseRun(parseArgs(['--allow-prod', '--emulator-apply']), EMU)).toMatch(/pass one of --allow-prod or --emulator-apply, not both/);
+    expect(refuseRun(parseArgs(['--emulator-apply']), EMU)).toBeNull();
   });
 });
 
