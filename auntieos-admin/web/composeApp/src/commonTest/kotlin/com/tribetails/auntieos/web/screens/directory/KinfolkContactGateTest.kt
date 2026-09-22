@@ -23,6 +23,19 @@ class KinfolkContactGateTest {
         assertFalse(contactBlocksSave(isNew = true, retryKinfolkId = null, contactProblem = null))
     }
 
+    /**
+     * #858: an ordinary Edit save never blocks on the contact (the case above),
+     * but an EDIT RETRY does, the same as Add's. `KinfolkEditScreen.onSave` passes
+     * this screen's own id as `retryKinfolkId` once the household has saved and
+     * only the contact is left (`editContactRetryPending`), so a still-bad retry
+     * reads as the plain rule rather than a wrapped callable failure, and never
+     * calls `writeHousehold` to find out.
+     */
+    @Test
+    fun anEditRetryBlocksOnAStillBadContactTheSameAsAdds() {
+        assertTrue(contactBlocksSave(isNew = false, retryKinfolkId = "kf1", contactProblem = phoneMissing))
+    }
+
     @Test
     fun anEditThatSavedTheHouseholdKeepsTheContactProblemOnTheEditor() {
         assertEquals(phoneMissing, contactErrorAfterSave(KinfolkSaveOutcome.Saved("kf1"), isNew = false, contactProblem = phoneMissing))
