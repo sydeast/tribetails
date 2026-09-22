@@ -10,10 +10,14 @@ vi.mock('../src/lib/firestoreAdmin', () => ({
   db: () => ({
     doc: (p: string) => ({ get: vi.fn().mockImplementation(() => docGet(p)) }),
   }),
+  auth: vi.fn(),
+  // #912: the handler's auth access goes through getAdmin(), the accessor that
+  // initializes the Admin app, not a bare getAuth() on the default app.
+  getAdmin: () => ({ auth: () => ({ createUser, getUserByEmail, createCustomToken }) }),
 }));
-vi.mock('firebase-admin/auth', () => ({
-  getAuth: () => ({ createUser, getUserByEmail, createCustomToken }),
-}));
+// #910: these requests carry no X-Forwarded-For, so clientIpOf logs an error.
+vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
+vi.mock('../src/notifications', () => ({ enqueueNotification: vi.fn() }));
 
 beforeEach(() => {
   docGet.mockReset();

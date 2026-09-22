@@ -13,19 +13,35 @@ expect fun readInitialClaimInviteId(): String?
 expect fun readInitialShareToken(): String?
 
 /**
- * Parameters extracted from the `/account/secure-reset` launch URL.
+ * A Firebase email action link the app was opened with (#905).
  *
- * @property oobCode  Firebase oobCode from the password-reset link query param.
- * @property email    Pre-filled kinfolk email from the `email=` query param.
+ * Parsed by [com.kinfolk.portal.auth.parseEmailActionUrl] from
+ * `https://kinfolk.tribetails.com/account/secure-reset` or `/account/action`.
+ *
+ * There is no `email` here, and that is the point. The field this type used to
+ * carry came from an `email` query param, and the screen showed it as the
+ * account. No Firebase link sends one, and a link is not evidence of whose
+ * account it is, so the address now comes from the verified code alone. Losing
+ * the field makes that structural rather than a rule somebody has to remember.
+ *
+ * @property oobCode     The code from the link. Blank when the link had none,
+ *                       which the screen reports as "This link is incomplete."
+ * @property mode        The link's `mode`, `resetPassword` when absent.
+ * @property continueUrl An allowlisted continue target, or null.
  */
-data class SecureResetParams(val oobCode: String, val email: String)
+data class SecureResetParams(
+    val oobCode: String,
+    val mode: String = "resetPassword",
+    val continueUrl: String? = null,
+)
 
 /**
- * Returns [SecureResetParams] when the launch URL is `/account/secure-reset`
- * with both `oobCode` and `email` query params present; null otherwise.
+ * Returns the email action link the app was launched with, or null.
  *
- * Web: parsed from `window.location.search`.
- * Android: set via deep-link intent extras (MainActivity wires).
- * Desktop: set via `--secure-reset-oob=<code> --secure-reset-email=<email>` JVM args.
+ * Android: set by MainActivity from the App Link's `intent.data`.
+ * Web (Kotlin/JS): parsed from `window.location.href`.
+ * Desktop: set from `--email-link=<url>` or the older `--secure-reset-oob=`
+ * JVM arg. Desktop's auth backend cannot check a code, so the screen tells the
+ * reader to open the link in a browser and files nothing.
  */
 expect fun readInitialSecureResetParams(): SecureResetParams?

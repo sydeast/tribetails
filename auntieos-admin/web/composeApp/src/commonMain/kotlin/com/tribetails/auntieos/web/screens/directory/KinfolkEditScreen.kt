@@ -185,6 +185,20 @@ fun KinfolkEditScreen(
     // then on Save retries ONLY the contacts (never a second household) and the
     // household fields lock, as admin web and Android do.
     var createdKinfolkId by remember(kinfolkId) { mutableStateOf<String?>(null) }
+    /**
+     * #858: the Edit-mode twin of [createdKinfolkId]. Set the moment an Edit save
+     * writes the household (or is blocked from writing it only by the contact
+     * pre-check) and the contact then fails or is refused; cleared once a retry's
+     * contact save lands. While true, [onSave] passes this screen's own
+     * [kinfolkId] as the retry id, which makes the save skip [writeHousehold]
+     * entirely - not just its network write, which `kinfolkChanges` already
+     * empties out on an unedited retry, but the vet-clinic-catalog upsert inside
+     * it, which has no diff of its own and would otherwise run again on every
+     * retry and could create a second clinic row before the stream confirms the
+     * first. The household fields lock through [householdFieldsEnabled] below,
+     * same as Add's.
+     */
+    var editContactRetryPending by remember(kinfolkId) { mutableStateOf(false) }
     // #890: the operator this Add belongs to. A household created without its
     // contact is kept under this uid (PendingAddKinfolk), so opening Add again
     // offers to continue it rather than creating a second one.
@@ -405,9 +419,11 @@ fun KinfolkEditScreen(
         !vetPhoneError
 
     // #829: household fields lock while a save is in flight and, on Add, once the
-    // household exists and only its Emergency Contact is left to retry. Setters
-    // for controls with no `enabled` parameter go through [unlessLocked].
-    val householdFieldsEnabled = !saving && createdKinfolkId == null
+    // household exists and only its Emergency Contact is left to retry.
+    // #858: same lock on Edit, once its household has saved and only its contact
+    // is left. Setters for controls with no `enabled` parameter go through
+    // [unlessLocked].
+    val householdFieldsEnabled = !saving && createdKinfolkId == null && !editContactRetryPending
     fun unlessLocked(set: () -> Unit) { if (householdFieldsEnabled) set() }
 
     // Live unsaved-changes indicator for the sticky save bar. It drives only the
@@ -439,7 +455,7 @@ fun KinfolkEditScreen(
         // disabled too; this also covers any other path into onSave).
         if (saving || photoSaving) return
         attemptedSave = true
-        val retryId = createdKinfolkId
+        val retryId = kinfolkRetryId(createdKinfolkId, isNew, kinfolkId, editContactRetryPending)
         // The retry skips the household checks (those fields are locked and
         // already saved) but still validates the contacts, so a refusal reads as
         // the plain rule rather than a wrapped callable failure.
@@ -532,11 +548,22 @@ fun KinfolkEditScreen(
                 is KinfolkSaveOutcome.Saved -> {
                     if (contactProblem != null) {
                         // Edit: the household is saved; the contact still needs fixing
-                        // and the screen stays open for it.
-                        showToast("The household is saved. The Emergency Contact still needs attention.", ToastKind.Info)
+                        // and the screen stays open for it. #858: locked the same as a
+                        // save the server refused (below) - this is the pre-check
+                        // catching it before the callable is even asked, so the next
+                        // save skips writeHousehold too. #893 item 2: the toast fires
+                        // only when the household step actually wrote something - an
+                        // edit whose diff was empty must not claim a save that never
+                        // happened. ecError (set above) already shows the contact
+                        // problem either way.
+                        if (!isNew) editContactRetryPending = true
+                        if (outcome.wrote) {
+                            showToast("The household is saved. The Emergency Contact still needs attention.", ToastKind.Info)
+                        }
                     } else {
                         if (saveContacts) ecBaseline = ecDrafts
                         if (isNew) PendingAddKinfolk.clear(operatorUid)
+                        if (!isNew) editContactRetryPending = false
                         showToast(if (isNew) "Kinfolk added." else "Saved.", ToastKind.Success)
                         onSaved(outcome.kinfolkId)
                     }
@@ -547,6 +574,10 @@ fun KinfolkEditScreen(
                     if (isNew) {
                         createdKinfolkId = outcome.kinfolkId
                         keepPending(outcome.kinfolkId)
+                    } else {
+                        // #858: the household is on file (this attempt or an earlier
+                        // one); only the contact is left, and only it retries from here.
+                        editContactRetryPending = true
                     }
                     showToast(ecError.orEmpty(), ToastKind.Error)
                 }
@@ -566,6 +597,10 @@ fun KinfolkEditScreen(
                     if (isNew) {
                         PendingAddKinfolk.clear(operatorUid)
                         createdKinfolkId = null
+                    } else {
+                        // #858: nothing left to retry against; unlock rather than
+                        // strand the operator on a form that can never save again.
+                        editContactRetryPending = false
                     }
                     showToast(HOUSEHOLD_NO_LONGER_EXISTS, ToastKind.Error)
                 }
@@ -637,6 +672,19 @@ fun KinfolkEditScreen(
             AuntieBanner(tone = AuntieBannerTone.Warning, icon = Lucide.UserCog) {
                 Text(
                     text  = notice,
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = AuntieTheme.colors.textPrimary,
+                )
+            }
+        }
+
+        // #858: same lock, same reason, as Add's Continue/Discard banner above -
+        // just without a choice to make, since the household already exists and
+        // does not need one.
+        if (editContactRetryPending) {
+            AuntieBanner(tone = AuntieBannerTone.Warning, icon = Lucide.UserCog) {
+                Text(
+                    text  = "The household is saved. Its fields are locked until the Emergency Contact below saves too.",
                     style = AuntieTheme.typography.bodyMedium,
                     color = AuntieTheme.colors.textPrimary,
                 )

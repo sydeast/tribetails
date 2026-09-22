@@ -6,6 +6,10 @@ import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import type { InviteRequestDoc } from '../lib/schema';
 import { FULL_CPU } from '../lib/runtimeOptions';
+import { clientIpOf, ipRateLimitKey } from '../auth/loginSecurity';
+
+/** Previews per caller address per hour. Unchanged since before #910. */
+export const INVITE_PREVIEW_IP_LIMIT = 60;
 
 /**
  * Public (unauthenticated) preview of an invite for the claim screen.
@@ -40,8 +44,12 @@ export async function getInvitePreviewHandler(
     throw err;
   }
 
-  const ip = req.rawRequest?.ip ?? 'unknown';
-  await enforceRateLimit('invitePreview', ip, 60, 3600);
+  // #910: keyed on the entry Google appended to X-Forwarded-For (`clientIpOf`),
+  // never `rawRequest.ip`, which under `trust proxy` is the caller's own first
+  // entry. Called directly (no Hosting rewrite points here), so one trusted hop.
+  // IPv6 is keyed on its /64 and an untrusted entry on the shared sentinel.
+  const ipKey = ipRateLimitKey(clientIpOf(req.rawRequest));
+  await enforceRateLimit('invitePreview', ipKey, INVITE_PREVIEW_IP_LIMIT, 3600);
 
   const snap = await db().doc(`inviteRequests/${args.inviteId}`).get();
   if (!snap.exists) return { status: 'not_found' };

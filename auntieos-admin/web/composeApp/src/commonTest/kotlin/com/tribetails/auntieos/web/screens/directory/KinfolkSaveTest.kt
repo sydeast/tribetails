@@ -6,6 +6,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class KinfolkSaveTest {
@@ -55,6 +56,36 @@ class KinfolkSaveTest {
         )
         assertEquals(KinfolkSaveOutcome.Saved("kf-new"), out)
         assertEquals(listOf("contacts:kf-new"), c.log)
+    }
+
+    /**
+     * #858: Edit has no second id to create, so `KinfolkEditScreen.onSave` reuses
+     * this household's OWN id as `retryKinfolkId` once its household has saved and
+     * only the contact is left (`editContactRetryPending`). Proven here against a
+     * [writeHousehold] that does more than the household field diff: the real one
+     * also upserts a typed vet clinic into the shared catalog before it ever
+     * checks whether any household field actually changed, so skipping the whole
+     * lambda - not just the merge write inside it - is what keeps a retry from
+     * creating a second clinic row. If this regresses to only skipping the
+     * network write and not the call, this test fails on the clinic log entry,
+     * not just the household one.
+     */
+    @Test
+    fun anEditRetryReusesTheHouseholdsOwnIdAndNeverReRunsWriteHousehold() = runTest {
+        val c = Calls()
+        val out = saveKinfolkWithContacts(
+            retryKinfolkId = "kf1",
+            saveContacts = true,
+            writeHousehold = {
+                c.log += "vet-clinic-upsert"
+                c.log += "household"
+                WriteResult.Ok(HouseholdWrite("kf1"))
+            },
+            writeContacts = { id -> c.log += "contacts:$id"; WriteResult.Ok(Unit) },
+            onHouseholdWritten = { c.log += "audit" },
+        )
+        assertEquals(KinfolkSaveOutcome.Saved("kf1"), out)
+        assertEquals(listOf("contacts:kf1"), c.log, "writeHousehold, and everything inside it, must not run on the retry")
     }
 
     @Test
@@ -108,8 +139,28 @@ class KinfolkSaveTest {
             writeContacts = { c.log += "contacts"; WriteResult.Ok(Unit) },
             onHouseholdWritten = { c.log += "audit" },
         )
-        assertEquals(KinfolkSaveOutcome.Saved("kf1"), out)
+        // #893 item 2: the outcome carries `wrote = false` through, so the toast
+        // never claims a save this call never made.
+        assertEquals(KinfolkSaveOutcome.Saved("kf1", wrote = false), out)
         assertEquals(listOf("household"), c.log)
+    }
+
+    /**
+     * #893 item 2: an edit whose household diff is empty AND whose contact fails
+     * the pre-check (so `saveContacts` is already false by the time this is
+     * called) must say nothing was written - the toast must not read "The
+     * household is saved" for a call that saved nothing.
+     */
+    @Test
+    fun anEmptyEditWithAFailedContactPrecheckReportsNothingWasWritten() = runTest {
+        val out = saveKinfolkWithContacts(
+            retryKinfolkId = null,
+            saveContacts = false,
+            writeHousehold = { WriteResult.Ok(HouseholdWrite("kf1", wrote = false)) },
+            writeContacts = { error("must not be called") },
+            onHouseholdWritten = { error("must not be called") },
+        )
+        assertEquals(KinfolkSaveOutcome.Saved("kf1", wrote = false), out)
     }
 
     @Test
@@ -123,6 +174,21 @@ class KinfolkSaveTest {
             onHouseholdWritten = { c.log += "audit" },
         )
         assertEquals(listOf("contacts:kf1"), c.log)
+    }
+
+    /** #858: which id, if any, [KinfolkEditScreen.onSave] retries against. */
+    @Test
+    fun kinfolkRetryIdPrefersACreatedHouseholdThenFallsToEditsOwnId() {
+        // Add: nothing created yet, or a normal Edit - no retry.
+        assertNull(kinfolkRetryId(createdKinfolkId = null, isNew = true, kinfolkId = null, editContactRetryPending = false))
+        assertNull(kinfolkRetryId(createdKinfolkId = null, isNew = false, kinfolkId = "kf1", editContactRetryPending = false))
+        // Add retry: its created id, regardless of Edit's own flag (which Add never sets).
+        assertEquals("kf-new", kinfolkRetryId(createdKinfolkId = "kf-new", isNew = true, kinfolkId = null, editContactRetryPending = false))
+        // Edit retry: this screen's own id, only once its flag is set.
+        assertEquals("kf1", kinfolkRetryId(createdKinfolkId = null, isNew = false, kinfolkId = "kf1", editContactRetryPending = true))
+        // Edit's flag alone is never enough without an id, and never fires on Add.
+        assertNull(kinfolkRetryId(createdKinfolkId = null, isNew = false, kinfolkId = null, editContactRetryPending = true))
+        assertNull(kinfolkRetryId(createdKinfolkId = null, isNew = true, kinfolkId = "kf1", editContactRetryPending = true))
     }
 
     @Test

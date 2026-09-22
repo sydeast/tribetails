@@ -34,6 +34,9 @@ vi.mock('../src/lib/firestoreAdmin', () => ({
         cb({ get: (ref: { get: () => unknown }) => ref.get(), set: memberSet, update: inviteUpdate }),
       ),
   }),
+  // #912: the verification-link mint goes through getAdmin(), the accessor that
+  // initializes the Admin app, not a bare getAuth() on the default app.
+  getAdmin: () => ({ auth: () => ({ generateEmailVerificationLink: genVerifyLink }) }),
 }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: auditAdd }));
 vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: enqueue }));
@@ -43,9 +46,6 @@ vi.mock('../src/lib/kinfolkClaim', () => ({ syncKinfolkClaim: syncClaim }));
 const genVerifyLink = vi.fn();
 const sendTpl = vi.fn();
 const rateLimit = vi.fn();
-vi.mock('firebase-admin/auth', () => ({
-  getAuth: () => ({ generateEmailVerificationLink: genVerifyLink }),
-}));
 vi.mock('../src/lib/sendFromTemplate', () => ({ sendFromTemplate: sendTpl }));
 vi.mock('../src/lib/rateLimit', () => ({ enforceRateLimit: rateLimit }));
 

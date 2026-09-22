@@ -1,7 +1,7 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
-import { getAuth } from 'firebase-admin/auth';
 import { z, ZodError } from 'zod';
-import { db } from '../lib/firestoreAdmin';
+import { db, getAdmin } from '../lib/firestoreAdmin';
+import { clientIpOf, ipRateLimitKey } from '../auth/loginSecurity';
 import { enforceRateLimit } from '../lib/rateLimit';
 import { wrapCallable } from '../lib/wrapCallable';
 import { logEvent } from '../lib/logger';
@@ -41,8 +41,12 @@ export async function claimInviteSignupHandler(
     throw err;
   }
 
-  const ip = req.rawRequest?.ip ?? 'unknown';
-  await enforceRateLimit('claimSignup', ip, 20, 3600);
+  // #910: keyed on the entry Google appended to X-Forwarded-For (`clientIpOf`),
+  // never `rawRequest.ip`, which under `trust proxy` is the caller's own first
+  // entry. Called directly (no Hosting rewrite points here), so one trusted hop.
+  // IPv6 is keyed on its /64 and an untrusted entry on the shared sentinel.
+  const ipKey = ipRateLimitKey(clientIpOf(req.rawRequest));
+  await enforceRateLimit('claimSignup', ipKey, 20, 3600);
   await enforceRateLimit('claimSignup', args.inviteId, 10, 3600);
 
   const snap = await db().doc(`inviteRequests/${args.inviteId}`).get();
@@ -55,7 +59,12 @@ export async function claimInviteSignupHandler(
     throw new HttpsError('failed-precondition', 'invite expired');
   }
 
-  const auth = getAuth();
+  // #912: getAdmin(), never a bare getAuth(). The bare getter resolves the
+  // DEFAULT app, and nothing in this Cloud Run service initializes one at
+  // module load; getAdmin() is the accessor that initializes it. The rate
+  // limiter and the invite read happen to have done that already today, but
+  // that is statement order, not a guarantee.
+  const auth = getAdmin().auth();
   const email = invite.invitedEmail.toLowerCase();
   const existing = await auth.getUserByEmail(email).catch((err: { code?: string }) => {
     if (err?.code === 'auth/user-not-found') return null;

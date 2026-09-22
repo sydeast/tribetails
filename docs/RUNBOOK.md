@@ -1125,10 +1125,13 @@ more accounts lock within 30 minutes, you get `security.account.locked.spike.ope
 on top of each lock's own alert. A locked account can still request up to 10
 resets per lock from portal Android and portal desktop.
 
-#### Confirm the IP key after the release (#891, #908)
+#### Confirm the IP key after the release (#891, #908, #910)
 
 Each callable answers on two URLs, and both must key on your real address. You
 run these; they call production.
+
+Steps 2 and 3 cover `recordFailedLogin` and `requestPasswordReset`. Step 5 adds
+`requestPrimaryRecovery`, which #910 moved onto the same key.
 
 1. Get the `run.app` URL of each callable:
 
@@ -1165,6 +1168,21 @@ run these; they call production.
 4. In Logs Explorer, filter on `jsonPayload.event="clientIp.untrustedRightmost"`
    and on `jsonPayload.event="clientIp.noForwardedFor"` for the last hour. Both
    should be empty.
+
+5. #910: send one forged recovery request naming a household you own. It files a
+   real `recoveryRequests` row for you to review and close, emails
+   `AUNTIE_NOTIFY_EMAIL`, and uses one of that household's 3 requests per address
+   per hour:
+
+   ```bash
+   curl -s -X POST 'https://us-central1-auntieos-ttpc.cloudfunctions.net/requestPrimaryRecovery' -H 'Content-Type: application/json' -H 'X-Forwarded-For: 1.2.3.4' -d '{"data":{"familyId":"<your test tribe id>","contactMethod":"email","newContact":"ip-probe-910@example.com"}}'
+   ```
+
+   It answers `{"result":{"ok":true}}`, and the newest
+   `AUTH_RECOVERY_REQUESTED` row must show your real address as `ip`.
+
+   `getInvitePreview` and `claimInviteSignup` key the same way but write no audit
+   row, so they are confirmed by step 4 being empty rather than by a row.
 
 What a failure means:
 
@@ -1203,6 +1221,7 @@ write, run `npm run test:scripts:emulator` and read the pass count.**
 | Backfill | Added by | What it fixes |
 |---|---|---|
 | `backfill:operator-warning-override` | #877 | An operator who turned off or locked the failed-login warning, or one of its channels, on the Business tab saved that on `auth.failedLogin.attempts`. That key is household-only now, so the setting stopped applying to operators. This copies it to `security.failedLogin.attempts.operator`, only where that key has no setting yet. |
+| `backfill:emergency-contacts` | #829 | Copies the flat `emergencyContact*` fields, and for a household with none the old `families` customFields copy, into `emergencyContacts[0]` - the array the callable and every client now read. |
 | `backfill:invoice-amount-due` | #902 | Migrated invoices carry a `total` and no `amountDue` at all. Every reader derives the balance now (one rule, `functions/src/lib/amountDueRule.ts`), so nothing is broken without this; the backfill writes the figure down so a stored balance is what the ledger sums and what a query can filter on. It writes `amountDue`, `amountDueCents` and the ADR-0002 state stamp, and **nothing else — no `updatedAt` and no server timestamp, so these records keep the original system's dates**. It refuses any invoice whose write would tell a household about a payment made long ago, and lists those for you. |
 
 For `backfill:operator-warning-override`:
@@ -1245,6 +1264,33 @@ For `backfill:invoice-amount-due`:
 The script never overwrites a setting the new key already has. It copies the
 whole business-stream setting, locks and lock reason included, because a
 locked channel delivers differently from an unlocked one.
+
+For `backfill:emergency-contacts`:
+
+1. `npm run test:scripts:emulator`
+2. Rehearse the real write against a local emulator first (`--emulator-apply`,
+   #893), never production: from `mytribe/`, `firebase emulators:start --only
+   firestore --project mytribe-scripts-emulator-test`, then in a second
+   terminal, with `FIRESTORE_EMULATOR_HOST` set to the address it printed
+   (`127.0.0.1:8080` by default, from `mytribe/firebase.json`):
+   `FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 npm --prefix mytribe/functions run backfill:emergency-contacts -- --emulator-apply`
+   Refuses without `FIRESTORE_EMULATOR_HOST` set, and refuses alongside
+   `--allow-prod`. Read the printed counts and the per-household diff.
+3. `npm --prefix mytribe/functions run backfill:emergency-contacts`
+   Dry run against PRODUCTION (no `FIRESTORE_EMULATOR_HOST` this time). The
+   first two lines are the project and the target: check they say the right
+   project and `PRODUCTION`. Read the diff for every household and every
+   stale `families` row before applying.
+4. `npm --prefix mytribe/functions run backfill:emergency-contacts -- --allow-prod`
+   Needs `GOOGLE_APPLICATION_CREDENTIALS` and refuses while
+   `FIRESTORE_EMULATOR_HOST` is set.
+5. Re-run step 3. Every plan should now report `skip` (`already-has-array` or
+   `no-flat-fields`) - nothing left to migrate.
+
+Never overwrites a non-empty `emergencyContacts` array, never bumps
+`updatedAt`, and never deletes the kinfolk flat fields (they stay readable
+until this run is verified). Dates on the migrated contact are the original
+record's, never the migration time.
 
 ### Read-only reports to run after a release
 

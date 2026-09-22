@@ -3,6 +3,7 @@ package com.kinfolk.portal
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import com.kinfolk.portal.firebase.FirebaseRestConfig
+import com.kinfolk.portal.auth.parseEmailActionUrl
 import com.kinfolk.portal.firebase.RestEndpoints
 import com.kinfolk.portal.ui.KinfolkPortalAppGuarded
 import com.kinfolk.portal.util.SecureResetParams
@@ -33,6 +34,36 @@ internal fun windowTitle(endpoints: RestEndpoints): String = when {
     else -> "MyTribe"
 }
 
+/**
+ * The Firebase email action link this desktop session was started with (#905).
+ *
+ * Desktop has no link handler, so a link arrives as an argument:
+ *
+ * - `--email-link=<the whole https URL from the email>` is the shape to use. It
+ *   goes through the same [parseEmailActionUrl] the Android app and the Kotlin/JS
+ *   portal use, so every mode and the continue target come across.
+ * - `--secure-reset-oob=<code>` is the older shape, kept working. It no longer
+ *   needs `--secure-reset-email=`: the account comes from the verified code, and
+ *   an address in the argument was never checked against it. Any
+ *   `--secure-reset-email=` still passed is ignored.
+ *
+ * Either way the screen lands on the same page and the same contract as web
+ * and Android. What desktop cannot do is check the code: its REST auth backend
+ * has no `checkActionCode`, so [com.kinfolk.portal.auth.AuthBackend]'s default
+ * throws and the screen shows "Open this link in a web browser" with the link
+ * on the portal page. No password is set here and no incident is filed.
+ */
+internal fun emailActionArg(args: Array<String>): SecureResetParams? {
+    args.firstOrNull { it.startsWith("--email-link=") }
+        ?.removePrefix("--email-link=")
+        ?.takeIf { it.isNotBlank() }
+        ?.let { return parseEmailActionUrl(it) }
+    return args.firstOrNull { it.startsWith("--secure-reset-oob=") }
+        ?.removePrefix("--secure-reset-oob=")
+        ?.takeIf { it.isNotBlank() }
+        ?.let { SecureResetParams(oobCode = it) }
+}
+
 fun main(args: Array<String>) {
     args.firstOrNull { it.startsWith("--claim=") }
         ?.removePrefix("--claim=")
@@ -43,16 +74,7 @@ fun main(args: Array<String>) {
         ?.takeIf { it.isNotBlank() }
         ?.let { jvmInitialShareToken = it }
 
-    // --secure-reset-oob=<oobCode> --secure-reset-email=<email>
-    val oob = args.firstOrNull { it.startsWith("--secure-reset-oob=") }
-        ?.removePrefix("--secure-reset-oob=")
-        ?.takeIf { it.isNotBlank() }
-    val srEmail = args.firstOrNull { it.startsWith("--secure-reset-email=") }
-        ?.removePrefix("--secure-reset-email=")
-        ?.takeIf { it.isNotBlank() }
-    if (oob != null && srEmail != null) {
-        jvmInitialSecureResetParams = SecureResetParams(oobCode = oob, email = srEmail)
-    }
+    emailActionArg(args)?.let { jvmInitialSecureResetParams = it }
 
     application {
         Window(onCloseRequest = ::exitApplication, title = windowTitle(FirebaseRestConfig)) {
