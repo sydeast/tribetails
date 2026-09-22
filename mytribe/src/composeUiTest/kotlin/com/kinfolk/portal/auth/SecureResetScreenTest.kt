@@ -31,6 +31,7 @@ class SecureResetScreenTest {
         val resets = mutableListOf<Pair<String, String>>()
         val applied = mutableListOf<String>()
         val sent = mutableListOf<String>()
+        val sentTargets = mutableListOf<String?>()
 
         override suspend fun readActionCode(oobCode: String): ActionCodeInfo {
             readFailure?.let { throw it }
@@ -45,8 +46,9 @@ class SecureResetScreenTest {
             applied += oobCode
         }
 
-        override suspend fun sendPasswordReset(email: String) {
+        override suspend fun sendPasswordReset(email: String, continueUrl: String?) {
             sent += email
+            sentTargets += continueUrl
         }
 
         override fun errorCodeOf(t: Throwable): String? = code
@@ -158,6 +160,41 @@ class SecureResetScreenTest {
         onNodeWithTag("resend-sent").assertIsDisplayed()
     }
 
+    /**
+     * #936: the replacement link a staff member gets from the expired card
+     * still points at the admin sign-in.
+     */
+    @Test
+    fun aReplacementLinkKeepsTheTargetTheOriginalCarried() = runComposeUiTest {
+        val auth = ScriptedAuth(readFailure = RuntimeException("gone"), code = "ERROR_EXPIRED_ACTION_CODE")
+        show(
+            auth,
+            link = SecureResetParams(oobCode = "code1", continueUrl = EmailAction.STAFF_SIGN_IN_URL),
+        )
+        onNodeWithTag("resend-email-input").performTextInput("staff@tribetails.com")
+        onNodeWithTag("resend-submit").performClick()
+        waitForIdle()
+        assertEquals(listOf<String?>(EmailAction.STAFF_SIGN_IN_URL), auth.sentTargets)
+        onNodeWithTag("resend-sent").assertIsDisplayed()
+    }
+    /**
+     * #936, the half that matters. A link naming a lookalike host reaches the
+     * expired card with that host still on it (this overload takes the link as
+     * given, which is how a `navDeepLink` route can reach the screen). The
+     * replacement must not be minted against it. Null is the refusal: Firebase
+     * sends a link with no continue target, and the page offers both sign-ins.
+     */
+    @Test
+    fun aForgedTargetIsNotMintedIntoTheReplacementLink() = runComposeUiTest {
+        val forged = "https://auntie.tribetails.com.evil.test/steal"
+        val auth = ScriptedAuth(readFailure = RuntimeException("gone"), code = "ERROR_EXPIRED_ACTION_CODE")
+        show(auth, link = SecureResetParams(oobCode = "code1", continueUrl = forged))
+        onNodeWithTag("resend-email-input").performTextInput("pat@household.test")
+        onNodeWithTag("resend-submit").performClick()
+        waitForIdle()
+        assertEquals(listOf<String?>(null), auth.sentTargets)
+        onNodeWithTag("resend-sent").assertIsDisplayed()
+    }
     @Test
     fun aUsedResetLinkSaysWhichProblemItIs() = runComposeUiTest {
         show(ScriptedAuth(readFailure = RuntimeException("used"), code = "ERROR_INVALID_ACTION_CODE"))

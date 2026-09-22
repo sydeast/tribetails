@@ -32,7 +32,7 @@ private class ClaimFakeBackend(private val current: AuthState) : AuthBackend {
     override suspend fun signInWithPhoneOtp(verificationId: String, smsCode: String) =
         AuthState.SignedIn("u-otp", null, null)
     override suspend fun signOut() = Unit
-    override suspend fun sendPasswordReset(email: String) = Unit
+    override suspend fun sendPasswordReset(email: String, continueUrl: String?) = Unit
     override suspend fun changePassword(currentPassword: String, newPassword: String) = Unit
     override suspend fun changeEmail(currentPassword: String, newEmail: String) = Unit
 }
