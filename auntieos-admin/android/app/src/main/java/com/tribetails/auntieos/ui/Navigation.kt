@@ -610,6 +610,12 @@ private fun AuthenticatedNavHost(
     val settingsVm          = remember { SettingsViewModel(context) }
     val msgVm               = remember { MessagingViewModel(app.repository) }
     val directoryVm         = remember { DirectoryViewModel(app.repository, app.invoiceRepository, app.kinCareRepository) }
+    // #907 review item 3: Add state belongs to one operator. This host is already
+    // torn down on sign-out (AuntieNavHost shows AdminLoginScreen instead), and this
+    // clears it anyway if the signed-in uid ever changes under it.
+    LaunchedEffect(directoryVm) {
+        app.repository.authStateFlow().collect { directoryVm.operatorChanged(it?.uid) }
+    }
     val schedulingVm        = remember { EnhancedSchedulingViewModel(app.bookingRepository, app.serviceRepository) }
     val serviceManagementVm = remember { ServiceManagementViewModel(app.serviceRepository) }
 
@@ -912,7 +918,14 @@ private fun AuthenticatedNavHost(
                     onSaved = {
                         directoryVm.clearAddKinfolkForm()
                         navController.popBackStack()
-                    }
+                    },
+                    // #907 review item 1(b): the household was already added; open its
+                    // edit screen in place of Add, with the typing filled in, unsaved.
+                    onDuplicate = { existingId ->
+                        directoryVm.clearAddKinfolkForm()
+                        navController.popBackStack()
+                        navController.navigate(Screen.EditKinfolk.createRoute(existingId))
+                    },
                 )
             }
             composable(Screen.EditKinfolk.route) { backStackEntry ->
