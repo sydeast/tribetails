@@ -24,7 +24,7 @@ fun startRouteFor(
     resolvedKinfolkId: String?,
     cameFromPicker: Boolean = false,
 ): Any? = when {
-    secureReset != null -> SecureResetRoute(secureReset.oobCode, secureReset.email)
+    secureReset != null -> SecureResetRoute(secureReset.oobCode, secureReset.mode, secureReset.continueUrl)
     shareToken != null -> ShareRoute(shareToken)
     claimId != null -> ClaimRoute(claimId)
     resolvedKinfolkId != null -> ShellGraph(resolvedKinfolkId, cameFromPicker = cameFromPicker)

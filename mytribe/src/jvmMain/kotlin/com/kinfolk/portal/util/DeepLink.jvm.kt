@@ -11,8 +11,9 @@ internal var jvmInitialClaimInviteId: String? = null
 internal var jvmInitialShareToken: String? = null
 
 /**
- * Desktop secure-reset params set from JVM args:
- *   `--secure-reset-oob=<code>  --secure-reset-email=<email>`
+ * #905: the Firebase email action link this session was started with, set from
+ * `--email-link=<url>` or the older `--secure-reset-oob=<code>`. See
+ * `Main.emailActionArg`.
  */
 @Volatile
 internal var jvmInitialSecureResetParams: SecureResetParams? = null

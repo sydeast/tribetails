@@ -11,8 +11,9 @@ internal var androidInitialClaimInviteId: String? = null
 internal var androidInitialShareToken: String? = null
 
 /**
- * Secure-reset params set by MainActivity when the deep-link path is
- * `/account/secure-reset` with both `oobCode` and `email` query params.
+ * #905: the Firebase email action link MainActivity was opened with
+ * (`/account/secure-reset` or `/account/action` on kinfolk.tribetails.com), parsed by
+ * [com.kinfolk.portal.auth.parseEmailActionUrl]. No `email` param is needed.
  */
 @Volatile
 internal var androidInitialSecureResetParams: SecureResetParams? = null
