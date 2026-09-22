@@ -10,10 +10,15 @@ vi.mock('../src/lib/firestoreAdmin', () => ({
   db: () => ({
     doc: (p: string) => ({ get: vi.fn().mockImplementation(() => docGet(p)) }),
   }),
+  auth: vi.fn(),
+  getAdmin: vi.fn(),
 }));
 vi.mock('firebase-admin/auth', () => ({
   getAuth: () => ({ createUser, getUserByEmail, createCustomToken }),
 }));
+// #910: these requests carry no X-Forwarded-For, so clientIpOf logs an error.
+vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
+vi.mock('../src/notifications', () => ({ enqueueNotification: vi.fn() }));
 
 beforeEach(() => {
   docGet.mockReset();
