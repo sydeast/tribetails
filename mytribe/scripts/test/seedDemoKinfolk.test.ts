@@ -381,15 +381,20 @@ describe('seedDemoKinfolk (MyTribe portal docs: home, bookings, invoices)', () =
     }
   });
 
-  it('writes flat invoices/{id} AND families/{fam}/invoices/{id} (collection split)', () => {
+  // #932: the seed used to write BOTH `invoices/{id}` and the retired
+  // `families/{fam}/invoices/{id}`, which is why a demo household could be
+  // chased twice by any collectionGroup scan. The pair of tests that asserted
+  // the nested copy existed and matched the flat one is replaced by this pair:
+  // the flat doc is still written, and the nested path is written by nothing.
+  it('writes flat invoices/{id} for every demo invoice', () => {
     for (const fam of DEMO_FAMILY_IDS) {
       const paths = planWritesForFamily(fam).map((w) => w.path);
       const p = buildSeedPayload(fam);
+      expect(p.invoices.length).toBeGreaterThan(0);
       for (const inv of p.invoices) {
         expect(paths).toContain(`invoices/${inv._id}`);
-        expect(paths).toContain(`families/${fam}/invoices/${inv._id}`);
       }
-      // booking + family paths land under the families tree
+      // booking + family paths still land under the families tree
       expect(paths).toContain(`families/${fam}`);
       for (const b of p.bookings) {
         expect(paths).toContain(`families/${fam}/bookings/${b._id}`);
@@ -397,16 +402,24 @@ describe('seedDemoKinfolk (MyTribe portal docs: home, bookings, invoices)', () =
     }
   });
 
-  it('flat + subcollection invoice copies carry identical data', () => {
+  it('writes NOTHING under the retired families/{fam}/invoices path', () => {
     for (const fam of DEMO_FAMILY_IDS) {
-      const writes = planWritesForFamily(fam);
+      const paths = planWritesForFamily(fam).map((w) => w.path);
       const p = buildSeedPayload(fam);
       for (const inv of p.invoices) {
-        const flat = writes.find((w) => w.path === `invoices/${inv._id}`)!;
-        const sub = writes.find((w) => w.path === `families/${fam}/invoices/${inv._id}`)!;
-        expect(sub.data).toEqual(flat.data);
+        expect(paths).not.toContain(`families/${fam}/invoices/${inv._id}`);
       }
+      // Belt and braces: no planned write of ANY id under that subcollection,
+      // so a future payload change cannot reintroduce one under a new id.
+      expect(paths.filter((path) => path.startsWith(`families/${fam}/invoices/`))).toEqual([]);
     }
+  });
+
+  it('plans no write to any families/*/invoices path across the whole seed', () => {
+    const nested = planAllWrites()
+      .map((w) => w.path)
+      .filter((path) => /^families\/[^/]+\/invoices\//.test(path));
+    expect(nested).toEqual([]);
   });
 });
 

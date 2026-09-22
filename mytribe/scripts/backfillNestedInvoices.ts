@@ -4,15 +4,22 @@
  * One-off Firestore backfill that retires a PHANTOM nested invoice path.
  *
  * Three MyTribe functions historically targeted `families/{id}/invoices/{id}`,
- * but nothing ever wrote there — AuntieOS Android + web (and the MyTribe
- * portal callables) all read/write the FLAT top-level `invoices` collection,
- * where each doc carries its own `kinfolkId`. Task #12 repointed those
- * functions at the flat collection. This script closes the loop by copying any
- * stray nested doc up to `invoices/{id}` (stamping `kinfolkId`) and then, only
- * with --allow-prod, deleting the nested original.
+ * but no production writer ever wrote there. AuntieOS Android + web (and the
+ * MyTribe portal callables) all read/write the FLAT top-level `invoices`
+ * collection, where each doc carries its own `kinfolkId`. Task #12 repointed
+ * those functions at the flat collection. This script closes the loop by
+ * copying any stray nested doc up to `invoices/{id}` (stamping `kinfolkId`)
+ * and then, only with --allow-prod, deleting the nested original.
  *
- * In practice the nested collection is empty in prod, so this should report
- * scanned=0 and no-op safely.
+ * ONE WRITER DID EXIST, and it was not production: `scripts/seedDemoKinfolk.ts`
+ * wrote a nested copy of every demo invoice alongside the flat doc, so each
+ * demo household appeared twice to any `collectionGroup('invoices')` scan and
+ * re-seeding re-created whatever this script had just deleted. #932 stopped it.
+ * A tribe that was seeded before that still holds nested copies. This script
+ * is what clears them, and the seed no longer puts them back.
+ *
+ * In prod (never seeded with demo data) the nested collection is expected to be
+ * empty, so a prod run should report scanned=0 and no-op safely.
  *
  * Modes:
  *   default        — dry-run, prints planned changes to stdout, no writes

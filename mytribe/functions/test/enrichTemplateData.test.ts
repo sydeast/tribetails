@@ -254,9 +254,15 @@ describe('enrichTemplateData: pets + invoice variants', () => {
     expect(out.kinName).toBe('Rex');
   });
 
-  it('invoice in family subcollection is found when flat doc is absent', async () => {
+  // #932: this used to be "invoice in family subcollection is found when flat
+  // doc is absent", the fallback read of the RETIRED `families/{id}/invoices`
+  // path. It hid a failed backfill: the merge fields hydrated from a copy the
+  // migration was trying to delete, so a half-run backfill looked like success.
+  // The fallback is gone; the miss is now reported instead.
+  it('does NOT read the retired family subcollection when the flat doc is absent', async () => {
     const ctx = buildDbMock({
       docs: {
+        // Present, and deliberately ignored: only a reader would find it.
         'families/fam1/invoices/inv7': { invoiceNumber: 'TT-7', amountDue: 30, date: 'Jul 1, 2026' },
         'families/fam1': { displayName: 'The Rivera Home' },
       },
@@ -269,9 +275,33 @@ describe('enrichTemplateData: pets + invoice variants', () => {
       kinfolkId: 'fam1',
     });
 
+    // Nothing invoice-shaped is hydrated: the flat doc is the only store.
+    expect(out.bookingDate).toBeUndefined();
+    expect(out.invoiceNumber).toBeUndefined();
+    expect(out.amount).toBeUndefined();
+    // The rest of the context still hydrates: this is not a thrown enrich.
     expect(out.kinfolkName).toBe('The Rivera Home');
     expect(out.kinName).toBe('Rex');
-    expect(out.bookingDate).toBe('Jul 1, 2026');
+  });
+
+  it('reports a missing flat invoice at warn severity, naming the family to check', async () => {
+    const ctx = buildDbMock({
+      docs: { 'families/fam1': { displayName: 'The Rivera Home' } },
+      queryDocs: { kin: [] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await enrichTemplateData('invoice.overdue', 'cli1', {
+      invoiceId: 'inv7',
+      kinfolkId: 'fam1',
+    });
+
+    const missed = mocks.logEventFn.mock.calls
+      .map((c) => c[0])
+      .filter((e: { event?: string }) => e?.event === 'enrich.invoice.flat_missing');
+    expect(missed).toHaveLength(1);
+    expect(missed[0].severity).toBe('warn');
+    expect(missed[0].extra).toMatchObject({ key: 'invoice.overdue', id: 'inv7', familyId: 'fam1' });
   });
 
   it('legacy invoice without any date string falls back to createdAt (invoice.overdue bookingDate)', async () => {

@@ -259,6 +259,33 @@ export async function enrichTemplateData(
     });
   }
 
+  /**
+   * A NAMED INVOICE THAT IS NOT IN THE FLAT COLLECTION (#932).
+   *
+   * Louder than `logMiss`, and deliberately so. An emitter that carried an
+   * `invoiceId` is naming a bill it believes exists; a missing family or
+   * booking is ordinary (plenty of keys carry ids for entities the template
+   * does not need), but a missing invoice is not. Until this change the miss
+   * was masked: a second read of the RETIRED `families/{id}/invoices` path
+   * hydrated the merge fields from a copy the migration was trying to delete,
+   * so a backfill that had not run, or had half-run, looked like a success.
+   * With the fallback gone, this line is the only thing that says so, and it
+   * has to be findable in the logs.
+   *
+   * `familyId` rides along so an operator can check the retired path by hand
+   * (`families/{familyId}/invoices/{invoiceId}`) and tell "the backfill never
+   * ran" apart from "this invoice was deleted". This function does not read
+   * that path itself: it is retired, and a reader is what made it survive.
+   */
+  function logInvoiceNotFound(): void {
+    logEvent({
+      severity: 'warn',
+      function: 'enrichTemplateData',
+      event: 'enrich.invoice.flat_missing',
+      extra: { key, entity: 'invoice', id: invoiceId, familyId },
+    });
+  }
+
   // ── lazy, memoized loaders ────────────────────────────────────────────────
   let invoiceLoaded = false;
   let invoice: Doc = null;
@@ -267,13 +294,11 @@ export async function enrichTemplateData(
     invoiceLoaded = true;
     if (!invoiceId) return (invoice = null);
     try {
+      // The flat top-level collection is the ONLY invoice store. See #932 and
+      // the header of scripts/backfillNestedInvoices.ts.
       const flat = await firestore.doc(`invoices/${invoiceId}`).get();
       if (flat.exists) return (invoice = (flat.data() as Doc) ?? null);
-      if (familyId) {
-        const sub = await firestore.doc(`families/${familyId}/invoices/${invoiceId}`).get();
-        if (sub.exists) return (invoice = (sub.data() as Doc) ?? null);
-      }
-      logMiss('invoice', invoiceId);
+      logInvoiceNotFound();
     } catch (err) {
       logErr('invoice', invoiceId, err);
     }
