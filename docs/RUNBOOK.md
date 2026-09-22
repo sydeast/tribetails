@@ -1522,6 +1522,108 @@ build. Full list in `.firebaserc`.
 
 ---
 
+## Opening household notifications
+
+Until you switch this on, nothing the platform sends reaches a household. Your
+own alerts keep coming the whole time.
+
+The gate exists because of the data re-upload. Several jobs chase households on
+a clock: `invoiceRemindersCron` at 09:00, `invoiceOverdueCron` at 09:30,
+`kincareReminderCron` hourly, `scheduleDigestCron`, and the three notification
+sweeps. Re-upload the old invoices and the 09:30 run finds every unpaid bill
+that was already past due in the old system, and writes to real people about
+bills they settled months ago. There is no recall on an email.
+
+It is one boolean, read by `enqueueNotificationDetailed` once per send. Copies
+addressed to a household stop there. Copies addressed to you or to an Auntie go
+out as they always have, which is why the failed-login and account-lockout
+alerts from #876 keep working while the gate is shut.
+
+### Turning it on
+
+Firebase console, Firestore, document `business_settings/business_settings`.
+Add a field:
+
+```
+householdNotificationsLive   boolean   true
+```
+
+That is the whole change. It takes effect on the next send, with no deploy and
+no restart, because the value is read per send rather than cached at cold start.
+
+Three things to know about the value:
+
+- It must be the boolean `true`. The string `"true"` reads as off, on purpose.
+  Going live is a decision you make once, and a value we cannot read as the
+  literal boolean is not evidence that you made it.
+- The field absent reads as off, which is how production sits today.
+- If Firestore cannot be read at all, the gate reads as off and writes a
+  `critical` log line, `household.send.gate.read.failed`. See the note at the
+  bottom.
+
+If the settings document is missing entirely, the code falls back to the older
+`business_settings/singleton` id, the same fallback the phone line uses. Set the
+field on whichever of the two the console actually shows you.
+
+### Turning it back off
+
+Set the same field to `false`, or delete it. The next send is held back. Nothing
+that already went out can be pulled back, so this stops the bleeding rather than
+undoing anything.
+
+### Checking it took
+
+Logs Explorer, the `mytribe` functions:
+
+```
+jsonPayload.event="notification.gated.household.summary"
+```
+
+One line per send that was held back, carrying the notification key, how many
+household copies were suppressed and how many operator copies still went. While
+the gate is shut you should see these accumulate. After you switch it on they
+should stop appearing, and that absence is the confirmation.
+
+For the per-recipient detail, `jsonPayload.event="notification.gated.household"`
+carries the key, the recipient uid, the gate state and the channels that copy
+would have used. That is the list of mail the business meant to send and did not.
+
+To confirm from the sending side instead, open an overdue invoice in Firestore
+after a 09:30 run. While the gate is shut it carries `overdueSuppressedAtMs` and
+no `overdueNotifiedAtMs`. That pairing is deliberate and it is what makes the
+backlog safe: the suppressed stamp is a one-per-day backoff, the notified stamp
+is a permanent skip, and nothing writes the second one for a notice that was
+never delivered. The morning after you open the gate, those invoices get their
+notices and pick up `overdueNotifiedAtMs` then.
+
+### What the gate does not cover
+
+Three paths reach a household without passing it, and all three need you to
+press a button:
+
+- **Broadcasts** (`broadcastMessage`). Sends email, SMS and push to the
+  households you select, directly. It honours the notification gate settings and
+  each household's own preferences, but not this switch.
+- **A single message to one household** (`sendExternalMessage`).
+- **Invite and account-recovery mail** (`sendFromTemplate`). Onboarding has to
+  work while the gate is shut, so this one is deliberate.
+
+Nothing in that list runs on a schedule, so none of it can go off while you are
+asleep during the re-upload.
+
+### The fail-closed choice, and when to revisit it
+
+A settings read that throws is treated as off. That is the right way round today:
+a suppressed notice goes out on the next run an hour or a day later, and a notice
+sent to a household about a migrated bill cannot be taken back.
+
+Once you are live the balance reverses. A Firestore blip would then hold back
+notifications people are actually waiting on, and "off when unsure" stops being
+the careful answer. Worth revisiting at that point. It is logged at `critical`
+rather than swallowed so you find out either way.
+
+---
+
 ## Adding a new employee
 
 **Mint the `admin` custom claim with `setAdminClaim`. Adding the uid to

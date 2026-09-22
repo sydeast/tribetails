@@ -237,9 +237,26 @@ export const invoiceRemindersCron = onSchedule(
  *
  * WHO CAN SUPPRESS IT. Not the household: `invoice.overdue` has catalog-required
  * email, and `resolveChannels` puts a required channel above the recipient's
- * own prefs. Only the OPERATOR can, by disabling the notification (or its email
- * channel along with the others) in the business notification override.
- * (`alwaysEnabled` on the row is advisory and enforces nothing.)
+ * own prefs. Two things can:
+ *
+ *   - the OPERATOR, by disabling the notification (or its email channel along
+ *     with the others) in the business notification override. (`alwaysEnabled`
+ *     on the row is advisory and enforces nothing.) Reported as `reason: 'prefs'`.
+ *   - the PRE-LAUNCH HOUSEHOLD GATE (notifications/householdSendGate.ts), which
+ *     holds back every household-bound copy until the operator opens the
+ *     product. Reported as `reason: 'gate'`.
+ *
+ * Both belong here and neither may write `overdueNotifiedAtMs`, because neither
+ * delivered anything. They are kept distinguishable in the log line below
+ * because the expected duration differs by orders of magnitude: a gate
+ * suppression can stand for weeks, and every invoice it held back is still owed
+ * its notice on the day the gate opens.
+ *
+ * THE RETRY WINDOW IS RIGHT FOR BOTH. This field is a backoff, never a record of
+ * delivery: `OVERDUE_SUPPRESSED_RETRY_MS` is under one run period, so a gated
+ * invoice is retried by the next daily run and goes out on the first run after
+ * the operator flips the gate. What would break the launch is stamping
+ * `overdueNotifiedAtMs` instead, and nothing on this path does.
  */
 const SUPPRESSED_FIELD_OVERDUE = 'overdueSuppressedAtMs';
 
@@ -318,7 +335,16 @@ export async function processOverdueInvoice(
       severity: 'info',
       function: 'invoiceOverdueCron',
       event: duplicate ? 'overdue.already-delivered' : 'overdue.suppressed',
-      extra: { familyId, invoiceId: docSnap.id, lastAtMs: duplicate?.lastAtMs ?? null },
+      extra: {
+        familyId,
+        invoiceId: docSnap.id,
+        lastAtMs: duplicate?.lastAtMs ?? null,
+        // The dispatcher's own words for why. Without this the log cannot tell
+        // an operator override from the pre-launch gate, and those want
+        // different responses: one is a setting the operator chose, the other
+        // is the whole product still being shut.
+        reasons: outcome.suppressed.map((s) => s.reason),
+      },
     });
     return false;
   } catch (err) {

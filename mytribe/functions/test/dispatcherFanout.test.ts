@@ -299,7 +299,9 @@ describe('enqueueNotification fan-out (audience:both)', () => {
     const ctx = buildDbMock({
       docs: {
         'businessSettings/admins': { uids: ['admin1', 'admin2'] },
-        'business_settings/business_settings': { notificationsPaused: true },
+        // This fixture supplies the settings doc itself, so `buildDbMock`'s
+        // gate seeding does not apply and the gate has to be stated here.
+        'business_settings/business_settings': { notificationsPaused: true, householdNotificationsLive: true },
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);

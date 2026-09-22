@@ -22,7 +22,10 @@ vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), get
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: mocks.logEvent }));
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveUid }));
-vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: mocks.enqueue }));
+vi.mock('../src/notifications/dispatcher', () => ({
+  enqueueNotification: mocks.enqueue,
+  enqueueNotificationDetailed: mocks.enqueue,
+}));
 
 import { isAutoReminder24hEnabled } from '../src/lib/autoReminder';
 import { runKincareReminderScan } from '../src/scheduled/kincareReminderCron';
@@ -30,7 +33,8 @@ import { runKincareReminderScan } from '../src/scheduled/kincareReminderCron';
 beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.resolveUid.mockReset().mockResolvedValue('kin-uid');
-  mocks.enqueue.mockReset().mockResolvedValue(['n1']);
+  // The kincare scan reads the outcome, so the mock answers in that shape.
+  mocks.enqueue.mockReset().mockResolvedValue({ written: ['n1'], suppressed: [], unresolved: [] });
   mocks.logEvent.mockReset();
 });
 
