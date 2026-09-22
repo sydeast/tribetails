@@ -144,8 +144,8 @@ fun TribeScreen(
             accessFields = r.homeAccess.customFields
             // Seed after-hours emergency vet from the same customFields store.
             val seededHome = accessFields.associate { it.key to it.value }
-            afterHoursVetName = seededHome["afterHoursVetName"].orEmpty()
-            afterHoursVetPhone = seededHome["afterHoursVetPhone"].orEmpty()
+            afterHoursVetName = seededHome[AFTER_HOURS_VET_NAME_KEY].orEmpty()
+            afterHoursVetPhone = seededHome[AFTER_HOURS_VET_PHONE_KEY].orEmpty()
             error = null
         } catch (t: Throwable) {
             error = t.message ?: "Could not load Tribe profile"
@@ -166,9 +166,9 @@ fun TribeScreen(
             vetClinics = portalApi.getVetClinics()
         } catch (_: Throwable) { /* catalog unreachable — fall back to manual entry */ }
         val seededVet = profileFields.associate { it.key to it.value }
-        vetName    = seededVet["vetClinicName"].orEmpty()
-        vetPhone   = seededVet["vetClinicPhone"].orEmpty()
-        vetAddress = seededVet["vetClinicAddress"].orEmpty()
+        vetName    = seededVet[VET_CLINIC_NAME_KEY].orEmpty()
+        vetPhone   = seededVet[VET_CLINIC_PHONE_KEY].orEmpty()
+        vetAddress = seededVet[VET_CLINIC_ADDRESS_KEY].orEmpty()
 
         try {
             val hs = portalApi.getFormSchema("homeAccess")
@@ -263,8 +263,11 @@ fun TribeScreen(
                                 style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral),
                             )
                         }
+                        // #872: read off the same filtered list CustomFieldList renders,
+                        // not the raw customFields — otherwise a profile whose only
+                        // rows are vet-clinic keys shows this header over an empty list.
                         val hasProfileExtras =
-                            profileFields.any { it.label.isNotBlank() || it.value.isNotBlank() }
+                            visibleCustomFields(profileFields).any { it.label.isNotBlank() || it.value.isNotBlank() }
                         if (hasProfileExtras) {
                             CardDivider()
                             Text("PROFILE FIELDS", style = type.sansMeta)
@@ -340,8 +343,9 @@ fun TribeScreen(
                             label = "Wi-Fi Password",
                             modifier = Modifier.fillMaxWidth(),
                         )
+                        // #872: same filtered-list rule as the Profile card above.
                         val hasHomeExtras =
-                            accessFields.any { it.label.isNotBlank() || it.value.isNotBlank() }
+                            visibleCustomFields(accessFields).any { it.label.isNotBlank() || it.value.isNotBlank() }
                         if (hasHomeExtras) {
                             CardDivider()
                             Text("CUSTOM HOME FIELDS", style = type.sansMeta)
@@ -430,9 +434,9 @@ fun TribeScreen(
                             fun card(key: String, label: String, value: String, set: MutableList<CustomField>, clear: MutableList<String>) {
                                 if (value.isNotBlank()) set += CustomField(key = key, label = label, value = value.trim()) else clear += key
                             }
-                            card("vetClinicName", "Vet Clinic", vetName, profileSet, profileClear)
-                            card("vetClinicPhone", "Vet Clinic Phone", vetPhone, profileSet, profileClear)
-                            card("vetClinicAddress", "Vet Clinic Address", vetAddress, profileSet, profileClear)
+                            card(VET_CLINIC_NAME_KEY, "Vet Clinic", vetName, profileSet, profileClear)
+                            card(VET_CLINIC_PHONE_KEY, "Vet Clinic Phone", vetPhone, profileSet, profileClear)
+                            card(VET_CLINIC_ADDRESS_KEY, "Vet Clinic Address", vetAddress, profileSet, profileClear)
                             val ps = profileSchema
                             val nextDisplayName = if (ps != null) {
                                 profileValues["displayName"]?.trim().orEmpty().ifBlank { displayName.trim() }
@@ -466,8 +470,8 @@ fun TribeScreen(
 
                             val homeSet = mutableListOf<CustomField>()
                             val homeClear = mutableListOf<String>()
-                            card("afterHoursVetName", "After-hours Clinic", afterHoursVetName, homeSet, homeClear)
-                            card("afterHoursVetPhone", "After-hours Phone", afterHoursVetPhone, homeSet, homeClear)
+                            card(AFTER_HOURS_VET_NAME_KEY, "After-hours Clinic", afterHoursVetName, homeSet, homeClear)
+                            card(AFTER_HOURS_VET_PHONE_KEY, "After-hours Phone", afterHoursVetPhone, homeSet, homeClear)
                             val hsSave = homeSchema
                             val gc: String?
                             val kl: String?
@@ -641,20 +645,23 @@ private fun GhostPillButton(
     }
 }
 
+/**
+ * #872: [fields] with every key in [SCREEN_OWNED_CUSTOM_FIELD_KEYS] removed —
+ * a key one of this screen's own cards (Vet Clinic, After-hours Vet,
+ * Emergency Contact) already shows and edits, so it should never also appear
+ * here as a read-only "Set by your Auntie" row. Shared by [CustomFieldList]
+ * and by the two "has extra fields" header checks above it, so the header
+ * and the list it introduces agree on what counts as an extra field.
+ */
+private fun visibleCustomFields(fields: List<CustomField>): List<CustomField> =
+    fields.filter { it.key !in SCREEN_OWNED_CUSTOM_FIELD_KEYS }
+
 @Composable
 private fun CustomFieldList(
     fields: List<CustomField>,
 ) {
     val type = LocalKinfolkTypography.current
-    // Keys owned by dedicated controls elsewhere on this screen (the after-hours
-    // vet block) are never shown in this generic list to avoid duplicate display.
-    // #829: getMyTribeProfile still serves slot 1 as emergencyContact* rows for
-    // old clients; the Emergency Contacts card owns them now, so they stay hidden.
-    val ownedElsewhere = setOf(
-        "afterHoursVetName", "afterHoursVetPhone",
-        "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation",
-    )
-    val visible = fields.filter { it.key !in ownedElsewhere }
+    val visible = visibleCustomFields(fields)
     Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
         // Read-only: admins define fields in AuntieOS; a kinfolk cannot add them.
         // Any already-saved fields still show so no data is hidden or lost.
@@ -914,8 +921,35 @@ private fun VetClinicSection(
     }
 }
 
+/** Keys the Vet Clinic card edits, stored in profile customFields (#872). The
+ *  save handler's card() calls below key off these same constants, so this
+ *  is the one place a vet-clinic key literal is typed. */
+internal const val VET_CLINIC_NAME_KEY = "vetClinicName"
+internal const val VET_CLINIC_PHONE_KEY = "vetClinicPhone"
+internal const val VET_CLINIC_ADDRESS_KEY = "vetClinicAddress"
+internal val VET_CLINIC_CUSTOM_FIELD_KEYS = setOf(VET_CLINIC_NAME_KEY, VET_CLINIC_PHONE_KEY, VET_CLINIC_ADDRESS_KEY)
+
+/** Keys the After-hours Vet block edits, stored in home access customFields (#872). */
+internal const val AFTER_HOURS_VET_NAME_KEY = "afterHoursVetName"
+internal const val AFTER_HOURS_VET_PHONE_KEY = "afterHoursVetPhone"
+internal val AFTER_HOURS_VET_CUSTOM_FIELD_KEYS = setOf(AFTER_HOURS_VET_NAME_KEY, AFTER_HOURS_VET_PHONE_KEY)
+
 /** #829: stored for old clients and the migration only. This screen never sends them. */
 internal val LEGACY_EMERGENCY_CONTACT_KEYS = setOf("emergencyContactName", "emergencyContactPhone", "emergencyContactRelation")
+
+/**
+ * #872: every custom-field key one of this screen's own cards edits — Vet
+ * Clinic, the After-hours Vet block, and (via [LEGACY_EMERGENCY_CONTACT_KEYS])
+ * the Emergency Contacts card's old storage slot. [visibleCustomFields] hides
+ * exactly this set, so a card's own value can never also ride along as a
+ * read-only admin row. Was previously typed out a second time, by hand,
+ * inside CustomFieldList's own local `ownedElsewhere` set — missing the vet
+ * clinic keys is what let a household see its vet clinic twice. A card that
+ * starts editing a new key must union it into this set, or it reintroduces
+ * that bug; there is now exactly one set to add it to.
+ */
+internal val SCREEN_OWNED_CUSTOM_FIELD_KEYS: Set<String> =
+    VET_CLINIC_CUSTOM_FIELD_KEYS + AFTER_HOURS_VET_CUSTOM_FIELD_KEYS + LEGACY_EMERGENCY_CONTACT_KEYS
 
 /** #873: a save payload. [removeKeys] names each stored row to delete, since an omitted row is kept. */
 internal data class CustomFieldEdit(val customFields: List<CustomField>, val removeKeys: List<String>)

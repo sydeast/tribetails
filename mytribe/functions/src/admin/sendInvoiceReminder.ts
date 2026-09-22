@@ -12,6 +12,8 @@ import { enqueueNotificationDetailed } from '../notifications/dispatcher';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
+import { chaseRefusalOf, isLegacyTotalOnly, type ChaseRefusal, type PaymentEvidence } from '../lib/invoiceChase';
+import { paidCentsFromPayments } from '../lib/invoiceMath';
 
 /**
  * Stage 2 tail: admin-initiated on-demand resend of an invoice reminder for
@@ -98,8 +100,38 @@ type InvoiceDoc = {
   [k: string]: unknown;
 };
 
-function isPaid(d: InvoiceDoc): boolean {
-  return d.paymentStatus === 'PAID' || d.status === 'paid';
+/**
+ * #871: WHY A PRESS IS REFUSED, in the operator's words. The press used to be
+ * refused only for a `paid` label or `paymentStatus: 'PAID'`, so a stale client
+ * or a direct call reminded a household about a cancelled bill, a draft, a
+ * credit or a quote they never accepted. It now asks `chaseRefusalOf`, the same
+ * rule both crons use (lib/invoiceChase.ts). The paid wording is unchanged.
+ */
+function refusalMessage(refusal: ChaseRefusal): string {
+  if (refusal.reason === 'archived') return 'This invoice is archived, so there is nothing to remind anyone about.';
+  if (refusal.reason === 'unaccepted_quote') {
+    return 'The household has not accepted this quote, so there is no bill to remind them about yet.';
+  }
+  if (refusal.reason === 'legacy_balance_unproven') {
+    return 'This invoice has no balance on record, so there is nothing to remind anyone about. Record its payments first if money is still owed.';
+  }
+  switch (refusal.state) {
+    case 'paid':
+      return 'Invoice is already paid; nothing to remind.';
+    case 'cancelled':
+      return 'This invoice is cancelled, so there is nothing to remind anyone about.';
+    case 'draft':
+      return 'This invoice is still a draft. Send it before reminding anyone about it.';
+    case 'quote':
+      return 'The household has not accepted this quote, so there is no bill to remind them about yet.';
+    case 'credit':
+    case 'redeemed':
+      return 'This is a credit owed to the household, so there is nothing to remind them about.';
+    case 'zero':
+      return 'This invoice is for $0, so there is nothing to remind anyone about.';
+    case 'open':
+      return '';
+  }
 }
 
 /**
@@ -184,6 +216,22 @@ export async function sendInvoiceReminderHandler(
   const now = Date.now();
 
   /**
+   * #871: the payment rows, read only for the legacy total-only shape, the one
+   * doc the classifier cannot settle alone (lib/invoiceChase.ts). Read before
+   * the claim transaction; inside it the doc is re-read, and a doc that is not
+   * that shape ignores the evidence.
+   */
+  let evidence: PaymentEvidence | null = null;
+  const peek = await ref.get();
+  if (peek.exists && isLegacyTotalOnly(peek.data() as InvoiceDoc)) {
+    const rows = await ref.collection('payments').get();
+    evidence = {
+      rows: rows.size,
+      paidCents: paidCentsFromPayments(rows.docs.map((d) => d.data() as { amount?: number; amountCents?: number })),
+    };
+  }
+
+  /**
    * THE CLAIM, as a lease. Read the stamp and the claim and, if neither blocks,
    * take the claim, in one transaction, BEFORE anything is sent. Two presses
    * racing each other cannot both take it: Firestore serializes the two
@@ -200,8 +248,13 @@ export async function sendInvoiceReminderHandler(
       throw new HttpsError('not-found', `Invoice '${args.invoiceId}' not found.`);
     }
     const data = snap.data() as InvoiceDoc;
-    if (isPaid(data)) {
-      throw new HttpsError('failed-precondition', 'Invoice is already paid; nothing to remind.');
+    const refusal = chaseRefusalOf(data, evidence);
+    if (refusal) {
+      throw new HttpsError('failed-precondition', refusalMessage(refusal), {
+        code: 'invoice_not_remindable',
+        reason: refusal.reason,
+        state: refusal.state,
+      });
     }
     const familyId = data.kinfolkId;
     if (!familyId) {

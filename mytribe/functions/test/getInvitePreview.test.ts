@@ -3,6 +3,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const docGet = vi.fn();
 
 vi.mock('../src/lib/rateLimit', () => ({ enforceRateLimit: vi.fn().mockResolvedValue(undefined) }));
+// #910: these requests carry no X-Forwarded-For, so clientIpOf logs an error.
+vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
+vi.mock('../src/notifications', () => ({ enqueueNotification: vi.fn() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({
   db: () => ({
     doc: (p: string) => ({ get: vi.fn().mockImplementation(() => docGet(p)) }),

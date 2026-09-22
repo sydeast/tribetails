@@ -17,6 +17,9 @@ vi.mock('../src/lib/firestoreAdmin', () => ({
 }));
 vi.mock('../src/lib/sendFromTemplate', () => ({ sendFromTemplate: sendMock }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: auditMock }));
+// #910: these requests carry no X-Forwarded-For, so clientIpOf logs an error.
+vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
+vi.mock('../src/notifications', () => ({ enqueueNotification: vi.fn() }));
 
 beforeEach(() => {
   txGet.mockReset();

@@ -565,9 +565,12 @@ export function memberStatusLabel(status: MemberStatus): string {
 
 /**
  * Reserved customField keys owned by a dedicated control elsewhere on the
- * Tribe Profile screen (vet clinic / emergency contact / after-hours vet),
- * so the generic "set by your Auntie" custom-field list never double-shows
- * them. Mirrors TribeScreen.kt's `reservedKeys` + `ownedElsewhere`.
+ * Tribe Profile screen (vet clinic / emergency contact), so the generic "set
+ * by your Auntie" custom-field list never double-shows them. Applied to
+ * `profile.customFields` only; see [HOME_RESERVED_KEYS] for the home-access
+ * store. #872: mirrors TribeScreen.kt's `SCREEN_OWNED_CUSTOM_FIELD_KEYS`,
+ * which is one set covering both stores because Android's CustomFieldList is
+ * shared between them and the keys never cross stores.
  */
 export const PROFILE_RESERVED_KEYS = [
   'vetClinicName',

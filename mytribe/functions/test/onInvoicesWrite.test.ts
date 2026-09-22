@@ -146,23 +146,21 @@ describe('#884 invoice.payment.applied fires only on a transition from open into
     expect(mocks.enqueue).not.toHaveBeenCalled();
   });
 
-  it('keeps the overdue branch as it was: an overdue label with no amountDue still sends invoice.overdue', async () => {
-    // invoiceStateOf reads `{ total: 40 }` with no amountDue as paid. The overdue
-    // branch is not driven by the classifier (#871 owns it), so this write still
-    // reads as "became overdue" and never as a payment.
+  it('#871: an overdue label with no amountDue sends nothing, and is never read as a payment', async () => {
+    // invoiceStateOf reads `{ total: 40 }` with no amountDue as paid. #884's
+    // precedence is kept: a write that labels the invoice past due is not a
+    // payment. And since #871 the trigger does not send the overdue notice.
     const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
     await onInvoicesWriteHandler(
       makeEvent(STATE_FIXTURES.open, { kinfolkId: '3', status: 'overdue', total: 40 }) as any,
     );
-    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
-    expect(mocks.enqueue.mock.calls[0][0].key).toBe('invoice.overdue');
+    expect(mocks.enqueue).not.toHaveBeenCalled();
   });
 
-  it('still sends invoice.overdue when an overdue doc is created, as before', async () => {
+  it('#871: creating a doc labelled overdue sends nothing', async () => {
     const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
     await onInvoicesWriteHandler(makeEvent(undefined, { kinfolkId: '3', status: 'overdue', amountDue: 40 }) as any);
-    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
-    expect(mocks.enqueue.mock.calls[0][0].key).toBe('invoice.overdue');
+    expect(mocks.enqueue).not.toHaveBeenCalled();
   });
 });
 
@@ -208,13 +206,12 @@ describe('onInvoicesWrite dispatch', () => {
     expect(mocks.enqueue.mock.calls[0][0].data.kinfolkId).toBe('3');
   });
 
-  it('fires invoice.overdue when an invoice becomes past due', async () => {
+  it('#871: never sends invoice.overdue when an invoice is labelled past due (the cron is the one sender)', async () => {
     const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
     await onInvoicesWriteHandler(
       makeEvent({ kinfolkId: '3', status: 'open', amountDue: 40 }, { kinfolkId: '3', status: 'past_due', amountDue: 40 }) as any,
     );
-    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
-    expect(mocks.enqueue.mock.calls[0][0].key).toBe('invoice.overdue');
+    expect(mocks.enqueue).not.toHaveBeenCalled();
   });
 
   it('does nothing when the lifecycle is unchanged', async () => {
@@ -252,7 +249,7 @@ describe('onInvoicesWrite dispatch', () => {
     expect(mocks.enqueue.mock.calls[0][0].key).toBe('invoice.payment.applied');
   });
 
-  it('never lets a notice owner silence invoice.overdue', async () => {
+  it('#871: a past-due label with a notice owner stamp sends nothing at all', async () => {
     const { onInvoicesWriteHandler } = await import('../src/triggers/onInvoicesWrite');
     await onInvoicesWriteHandler(
       makeEvent(
@@ -260,8 +257,7 @@ describe('onInvoicesWrite dispatch', () => {
         { kinfolkId: '3', status: 'past_due', amountDue: 40, paymentAppliedNoticeOwner: 'recordPayment:p1' },
       ) as any,
     );
-    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
-    expect(mocks.enqueue.mock.calls[0][0].key).toBe('invoice.overdue');
+    expect(mocks.enqueue).not.toHaveBeenCalled();
   });
 
   it('skips dispatch when kinfolkId is missing on the doc', async () => {

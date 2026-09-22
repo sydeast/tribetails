@@ -1125,10 +1125,13 @@ more accounts lock within 30 minutes, you get `security.account.locked.spike.ope
 on top of each lock's own alert. A locked account can still request up to 10
 resets per lock from portal Android and portal desktop.
 
-#### Confirm the IP key after the release (#891, #908)
+#### Confirm the IP key after the release (#891, #908, #910)
 
 Each callable answers on two URLs, and both must key on your real address. You
 run these; they call production.
+
+Steps 2 and 3 cover `recordFailedLogin` and `requestPasswordReset`. Step 5 adds
+`requestPrimaryRecovery`, which #910 moved onto the same key.
 
 1. Get the `run.app` URL of each callable:
 
@@ -1165,6 +1168,21 @@ run these; they call production.
 4. In Logs Explorer, filter on `jsonPayload.event="clientIp.untrustedRightmost"`
    and on `jsonPayload.event="clientIp.noForwardedFor"` for the last hour. Both
    should be empty.
+
+5. #910: send one forged recovery request naming a household you own. It files a
+   real `recoveryRequests` row for you to review and close, emails
+   `AUNTIE_NOTIFY_EMAIL`, and uses one of that household's 3 requests per address
+   per hour:
+
+   ```bash
+   curl -s -X POST 'https://us-central1-auntieos-ttpc.cloudfunctions.net/requestPrimaryRecovery' -H 'Content-Type: application/json' -H 'X-Forwarded-For: 1.2.3.4' -d '{"data":{"familyId":"<your test tribe id>","contactMethod":"email","newContact":"ip-probe-910@example.com"}}'
+   ```
+
+   It answers `{"result":{"ok":true}}`, and the newest
+   `AUTH_RECOVERY_REQUESTED` row must show your real address as `ip`.
+
+   `getInvitePreview` and `claimInviteSignup` key the same way but write no audit
+   row, so they are confirmed by step 4 being empty rather than by a row.
 
 What a failure means:
 

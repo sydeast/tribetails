@@ -617,6 +617,8 @@ private fun InvoiceRow(
     val draft   = invoiceIsDraft(invoice)
     val overdue = invoiceIsOverdue(invoice, todayIso)
     val unpaid  = invoiceIsOutstanding(invoice)
+    // #871: the reminder button follows the server's rule, a stored open bill.
+    val remindable = invoiceIsRemindable(invoice)
 
     val (statusLabel, statusTone) = when {
         quote   -> "Quote"   to AuntieStatusTone.Purple
@@ -738,6 +740,7 @@ private fun InvoiceRow(
                 quote = quote,
                 draft = draft,
                 unpaid = unpaid,
+                remindable = remindable,
                 onReceipt = { onReceipt(invoice._id) },
                 onSendReminder = { onSendReminder(invoice._id) },
                 onReviewSend = { onReviewSend(invoice) },
@@ -750,7 +753,8 @@ private fun InvoiceRow(
 /**
  * Per-row action button. All variants are wired to real callables:
  *   - draft  -> reviewAndSendDraftInvoice (postInvoiceEvent status=sent)
- *   - unpaid -> sendInvoiceReminder
+ *   - unpaid AND a stored open bill -> sendInvoiceReminder (#871)
+ *   - unpaid but not an open bill (cancelled, credit, unstamped) -> no action
  *   - paid   -> generateReceipt
  * The generate-receipt variant remains behind flags.invoicesGenerateReceipt
  * (default on) as a kill-switch.
@@ -760,6 +764,7 @@ private fun RowAction(
     quote: Boolean,
     draft: Boolean,
     unpaid: Boolean,
+    remindable: Boolean,
     onReceipt: () -> Unit,
     onSendReminder: () -> Unit,
     onReviewSend: () -> Unit,
@@ -772,6 +777,9 @@ private fun RowAction(
         // payable action (no reminder/receipt), so the row carries no action button.
         quote -> { /* status pill alone conveys the quote state */ }
         draft -> PrimaryButton(label = "Review & send", onClick = onReviewSend)
+        // #871: a balance on a cancelled invoice, a credit or an unstamped doc is
+        // not a bill to chase, and a receipt would claim a payment. No action.
+        unpaid && !remindable -> { /* nothing to remind about, nothing to receipt */ }
         unpaid -> PrimaryButton(
             label = if (reminding) "Sending..." else "Send reminder",
             onClick = { if (!reminding) onSendReminder() },
