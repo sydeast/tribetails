@@ -98,7 +98,9 @@ class CallsViewModelVoicemailTest {
         // dispatcher is still installed. Reset first and the cancellation itself
         // would need the dispatcher it just removed.
         viewModelStore.clear()
-        CallEventStore.clearActiveCall()
+        // #893 item 5: clears events too, not just the active call, so this
+        // test's `addEvent` in setUp never leaks into a later test's JVM.
+        CallEventStore.reset()
         unmockkObject(CallInviteManager)
         Dispatchers.resetMain()
     }

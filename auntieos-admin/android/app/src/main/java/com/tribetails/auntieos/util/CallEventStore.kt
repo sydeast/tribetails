@@ -56,4 +56,15 @@ object CallEventStore {
     fun clearActiveCall() {
         _activeCall.value = null
     }
+
+    /**
+     * Test-only (#893 item 5). This object is app-wide and shares one JVM across
+     * every test in a run; without this, events `addEvent` adds in one test's
+     * `@Before` never clear, so they pile up under a store later tests read
+     * broadly. Call from `@After` in any test that touches this store.
+     */
+    fun reset() {
+        _events.value = emptyList()
+        _activeCall.value = null
+    }
 }
