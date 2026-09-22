@@ -1,5 +1,6 @@
 package com.kinfolk.portal.firebase
 
+import com.kinfolk.portal.auth.EmailAction
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.forms.FormDataContent
@@ -109,13 +110,30 @@ internal class RestAuthClient(
         return body.idToken to body.userId
     }
 
-    /** Requests a password reset via the custom Cloud Function (bypasses Firebase email). */
+    /**
+     * Requests a password reset through Firebase's own
+     * `accounts:sendOobCode`, the REST call `sendPasswordResetEmail` makes.
+     *
+     * #911: this used to post the `requestPasswordReset` callable, which capped
+     * an address at 3 resets a day and then answered `{ ok: true }` while
+     * sending nothing, so spending that budget silently blocked a household's
+     * resets from desktop for 24 hours. Identity Toolkit has Google's own abuse
+     * limits and no per-email budget an attacker can drain.
+     *
+     * The host comes from [endpoints] (#889), so `FIREBASE_AUTH_EMULATOR_HOST`
+     * sends this at the Auth emulator exactly as it does sign-in. `continueUrl`
+     * is a link destination rather than a call target, and is the same portal
+     * sign-in the Android app and portal web ask for.
+     *
+     * An address that is not an account fails here with `EMAIL_NOT_FOUND`;
+     * [AuthRepository.sendPasswordReset] absorbs that so no screen can report
+     * it. Trimmed for the same reason the Android send trims.
+     */
     suspend fun sendPasswordReset(email: String) {
-        val url = endpoints.functionUrl("requestPasswordReset")
-        val body = """{"data":{"email":${kotlinx.serialization.json.JsonPrimitive(email)}}}"""
+        val url = "${endpoints.identityToolkitBase()}/accounts:sendOobCode?key=${endpoints.API_KEY}"
         val res: HttpResponse = client.post(url) {
             contentType(ContentType.Application.Json)
-            setBody(body)
+            setBody(passwordResetOobBody(email))
         }
         if (!res.status.isSuccess()) throw FirebaseRestException("sendPasswordReset", res.status.value, res.bodyAsText())
     }
@@ -175,6 +193,26 @@ internal class RestAuthClient(
     }
 }
 
+/**
+ * The `accounts:sendOobCode` body for a password reset, exactly as it goes on
+ * the wire (#911).
+ *
+ * A top-level function rather than a private detail so a test can pin the four
+ * fields without a socket, the way the admin desktop pins its own
+ * (`encodePasswordResetRequestBody`, AuthInterop.jvm.kt). `encodeDefaults` is
+ * on in [RestHttp.json], so `requestType`, `continueUrl` and
+ * `canHandleCodeInApp` are all written even though they are defaulted.
+ */
+internal fun passwordResetOobBody(email: String): String =
+    RestHttp.json.encodeToString(PasswordResetOobRequest(email = email.trim()))
+@Serializable
+internal data class PasswordResetOobRequest(
+    val email: String,
+    val requestType: String = "PASSWORD_RESET",
+    /** Where the link continues once the password is set. Same target as portal web and Android. */
+    val continueUrl: String = EmailAction.PORTAL_SIGN_IN_URL,
+    val canHandleCodeInApp: Boolean = false,
+)
 internal class FirebaseRestException(
     op: String,
     val status: Int,

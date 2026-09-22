@@ -220,8 +220,9 @@ fun SignInScreen(
                                 error = null
                                 scope.launch {
                                     try {
-                                        // #886 review: a mobile keyboard's trailing space made
-                                        // requestPasswordReset refuse the address (400).
+                                        // #886 review: a mobile keyboard's trailing space is a
+                                        // refused address. The backends trim too (#911); this
+                                        // keeps the screen from asking for a link to " a@b.com".
                                         repo.sendPasswordReset(email.trim())
                                         resetSuccess = true
                                     } catch (t: Throwable) {

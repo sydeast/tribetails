@@ -21,6 +21,16 @@ object EmailAction {
     const val PORTAL_HOST = "kinfolk.tribetails.com"
     const val STAFF_HOST = "auntie.tribetails.com"
     const val STAFF_SIGN_IN_URL = "https://auntie.tribetails.com/signin"
+    /**
+     * Where a portal reset link continues once the password is set. The link
+     * itself always opens the project's action page; this only decides where
+     * the "sign in" link on that page points.
+     *
+     * #911: the value portal web already sends (`PORTAL_SIGN_IN_URL` in
+     * `mytribe/web/src/lib/auth.ts`), now shared by portal Android and portal
+     * desktop so all three ask for the same link.
+     */
+    const val PORTAL_SIGN_IN_URL = "https://kinfolk.tribetails.com/signin"
 
     /** The paths the web page is routed at, and the paths the manifest claims. */
     val ACTION_PATHS = listOf("/account/secure-reset", "/account/action")

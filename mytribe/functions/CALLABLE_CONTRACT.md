@@ -1125,9 +1125,16 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
     Firestore `emailTemplates` collection. The operator edits email templates in
     the admin UI; there is no seed script for them (operator ruling 2026-09-13, #847).
 
-### requestPasswordReset (pre-existing; caps made silent and a locked account exempted 2026-09-14, #891)
-- req `{ email: string /* email */ }`. Called by portal Android and portal desktop;
-  the other clients use Firebase's native reset.
+### requestPasswordReset (pre-existing; caps made silent and a locked account exempted 2026-09-14, #891; left for old clients 2026-09-22, #911)
+- req `{ email: string /* email */ }`.
+- CLIENTS: none in this repo. Every shipped client now uses Firebase's own reset
+  (`sendPasswordResetEmail` on admin web, admin Android, portal web and portal
+  Android; REST `accounts:sendOobCode` on admin desktop and portal desktop).
+  Portal Android and portal desktop builds installed before #911 still call this,
+  so it stays deployed and keeps answering `{ ok: true }`. Nothing new should
+  call it: the per-email cap below is a budget an attacker can spend to block a
+  household's resets for a day, which is why #911 moved the last two clients off
+  it.
 - res `{ ok: true }` for a known, unknown, locked or capped email alike.
 - GATE: none, `wrapCallable` only. Per-IP limit (30 per 5 minutes, keyed like
   `recordFailedLogin`) refuses with `resource-exhausted`; a malformed request is
