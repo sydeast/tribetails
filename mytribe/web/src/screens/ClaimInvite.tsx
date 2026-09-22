@@ -12,7 +12,7 @@ import {
   useAuth,
   useSignOut,
 } from '../lib/auth';
-import { isEmailAlreadyInUse, isEmailUnverified, mapAuthError } from '../lib/authErrors';
+import { isEmailAlreadyInUse, isEmailUnverified, isRateLimitedError, mapAuthError } from '../lib/authErrors';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { BusyLabel } from '../components/Loading';
@@ -195,6 +195,15 @@ export function ClaimInvite() {
         <section className="glass card d1">
           <OfflineNotice what="this invite" />
         </section>
+      ) : preview.isError && isRateLimitedError(preview.error) ? (
+        // #931: getInvitePreview has its own hourly limit next to a real
+        // connection failure, and a refusal is not the same problem, so it
+        // must not get the same advice.
+        <ErrorCard
+          title="Too many tries for now"
+          detail="Wait a few minutes, then try again."
+          onRetry={() => void preview.refetch()}
+        />
       ) : preview.isError ? (
         <ErrorCard
           title="Could not open this invite"
