@@ -23,7 +23,7 @@ describe('parseArgs', () => {
 
   it('--dry-run beats --apply whichever order they come in', () => {
     expect(parseArgs(['--apply', '--dry-run']).apply).toBe(false);
-    expect(parseArgs(['--dry-run', '--apply']).apply).toBe(true);
+    expect(parseArgs(['--dry-run', '--apply']).apply).toBe(false);
   });
 
   it('refuses an unknown flag rather than ignoring it', () => {

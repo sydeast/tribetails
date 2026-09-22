@@ -60,6 +60,7 @@
  *
  *   default        DRY RUN. Prints the plan and writes nothing.
  *   --apply        writes, batched under Firestore's 500-op limit.
+ *   --dry-run      forces the dry run, and BEATS --apply in either flag order.
  *   --allow-prod   the target is PRODUCTION. Required to touch production at all,
  *                  and REFUSED when FIRESTORE_EMULATOR_HOST is set, because then
  *                  the flags and the environment disagree about where the writes
@@ -101,6 +102,11 @@ export interface Args {
 
 export function parseArgs(argv: string[]): Args {
   const args: Args = { projectId: null, allowProd: false, apply: false, samples: 50 };
+  // An explicit --dry-run ALWAYS wins, in either flag order. Tracked separately
+  // rather than written straight into `apply`, because a last-flag-wins parser
+  // lets `--dry-run --apply` silently re-arm the write, and the whole point of
+  // typing --dry-run is that nothing can take it back.
+  let explicitDryRun = false;
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     const value = (): string => {
@@ -112,7 +118,7 @@ export function parseArgs(argv: string[]): Args {
     if (a === '--project') args.projectId = value();
     else if (a === '--allow-prod') args.allowProd = true;
     else if (a === '--apply') args.apply = true;
-    else if (a === '--dry-run') args.apply = false;
+    else if (a === '--dry-run') explicitDryRun = true;
     else if (a === '--samples') {
       const v = value();
       if (!/^\d+$/.test(v)) throw new Error(`--samples must be a whole number, got '${v}'`);
@@ -125,7 +131,8 @@ export function parseArgs(argv: string[]): Args {
           '  npm --prefix mytribe/functions run repair:duplicate-vet-clinic-id -- --project <id> --allow-prod',
           '  npm --prefix mytribe/functions run repair:duplicate-vet-clinic-id -- --project <id> --allow-prod --apply',
           '',
-          'Dry run unless --apply. Prints ids, paths, row keys and counts only.',
+          'Dry run unless --apply. --dry-run forces it back and wins in either flag order.',
+          'Prints ids, paths, row keys and counts only.',
         ].join('\n'),
       );
       process.exit(0);
@@ -133,6 +140,7 @@ export function parseArgs(argv: string[]): Args {
       throw new Error(`unknown arg: ${a}`);
     }
   }
+  if (explicitDryRun) args.apply = false;
   return args;
 }
 

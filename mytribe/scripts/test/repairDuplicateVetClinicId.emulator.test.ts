@@ -7,11 +7,13 @@ import { applyPlan, buildPlan, resolveTarget } from '../repairDuplicateVetClinic
  * The #901 duplicate-`vetClinicId` repair against a real Firestore (the
  * emulator), seeded with each shape it must and must not touch.
  *
- * Read it end to end by hand against the same emulator:
+ * To read the script's own output by hand, seed with the DRY RUN test only: the
+ * apply test below folds the duplicates, so running the whole file first leaves
+ * the script nothing to report.
  *
  *   cd mytribe/functions
  *   npx firebase emulators:exec --only firestore --project dupvet-901-test \
- *     "npx vitest run --config vitest.scripts-emulator.config.ts ../scripts/test/repairDuplicateVetClinicId.emulator.test.ts && \
+ *     "npx vitest run --config vitest.scripts-emulator.config.ts ../scripts/test/repairDuplicateVetClinicId.emulator.test.ts --testNamePattern 'dry run' && \
  *      npm run repair:duplicate-vet-clinic-id -- --project dupvet-901-test"
  */
 const EMULATOR = process.env['FIRESTORE_EMULATOR_HOST'];
