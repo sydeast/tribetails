@@ -7,7 +7,13 @@ import com.tribetails.auntieos.web.data.isBlankDrafts
 
 /** What one press of Save on KinfolkEditScreen came to (#829). */
 sealed interface KinfolkSaveOutcome {
-    data class Saved(val kinfolkId: String) : KinfolkSaveOutcome
+    /**
+     * [wrote] is the household step's own [HouseholdWrite.wrote] for THIS call:
+     * true unless an edit's diff was empty, so nothing was sent. The contacts-only
+     * retry (no household step runs) leaves the default, since there is no
+     * household write to report either way (#893 item 2).
+     */
+    data class Saved(val kinfolkId: String, val wrote: Boolean = true) : KinfolkSaveOutcome
 
     /** The household write itself failed; nothing was saved. */
     data class HouseholdFailed(val message: String) : KinfolkSaveOutcome
@@ -148,9 +154,9 @@ suspend fun saveKinfolkWithContacts(
     household.duplicateOf?.let { return KinfolkSaveOutcome.Duplicate(it) }
     val id = household.kinfolkId
     if (household.wrote) onHouseholdWritten(id)
-    if (!saveContacts) return KinfolkSaveOutcome.Saved(id)
+    if (!saveContacts) return KinfolkSaveOutcome.Saved(id, wrote = household.wrote)
     return when (val ec = writeContacts(id)) {
-        is WriteResult.Ok -> KinfolkSaveOutcome.Saved(id)
+        is WriteResult.Ok -> KinfolkSaveOutcome.Saved(id, wrote = household.wrote)
         is WriteResult.Err -> contactsFailed(id, ec.message)
     }
 }

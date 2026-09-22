@@ -139,8 +139,28 @@ class KinfolkSaveTest {
             writeContacts = { c.log += "contacts"; WriteResult.Ok(Unit) },
             onHouseholdWritten = { c.log += "audit" },
         )
-        assertEquals(KinfolkSaveOutcome.Saved("kf1"), out)
+        // #893 item 2: the outcome carries `wrote = false` through, so the toast
+        // never claims a save this call never made.
+        assertEquals(KinfolkSaveOutcome.Saved("kf1", wrote = false), out)
         assertEquals(listOf("household"), c.log)
+    }
+
+    /**
+     * #893 item 2: an edit whose household diff is empty AND whose contact fails
+     * the pre-check (so `saveContacts` is already false by the time this is
+     * called) must say nothing was written - the toast must not read "The
+     * household is saved" for a call that saved nothing.
+     */
+    @Test
+    fun anEmptyEditWithAFailedContactPrecheckReportsNothingWasWritten() = runTest {
+        val out = saveKinfolkWithContacts(
+            retryKinfolkId = null,
+            saveContacts = false,
+            writeHousehold = { WriteResult.Ok(HouseholdWrite("kf1", wrote = false)) },
+            writeContacts = { error("must not be called") },
+            onHouseholdWritten = { error("must not be called") },
+        )
+        assertEquals(KinfolkSaveOutcome.Saved("kf1", wrote = false), out)
     }
 
     @Test

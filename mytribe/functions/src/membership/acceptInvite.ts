@@ -1,8 +1,7 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { FieldValue } from 'firebase-admin/firestore';
-import { getAuth } from 'firebase-admin/auth';
 import { z } from 'zod';
-import { db } from '../lib/firestoreAdmin';
+import { db, getAdmin } from '../lib/firestoreAdmin';
 import { enforceRateLimit } from '../lib/rateLimit';
 import { sendFromTemplate } from '../lib/sendFromTemplate';
 import { wrapCallable } from '../lib/wrapCallable';
@@ -56,7 +55,12 @@ async function sendInviteVerificationEmail(
     const claimBaseUrl = requireBaseUrl('CLAIM_LINK_BASE_URL');
     await enforceRateLimit('inviteVerifyEmail', uid, 5, 3600);
     await enforceRateLimit('inviteVerifyEmail', invitedEmail.toLowerCase(), 5, 3600);
-    const verifyUrl = await getAuth().generateEmailVerificationLink(invitedEmail);
+    // #912: getAdmin(), never a bare getAuth(). The bare getter resolves the
+    // DEFAULT app, and nothing in this Cloud Run service initializes one at
+    // module load; getAdmin() is the accessor that initializes it. The db()
+    // read further up the handler happens to have done that already today,
+    // but that is statement order, not a guarantee.
+    const verifyUrl = await getAdmin().auth().generateEmailVerificationLink(invitedEmail);
     await sendFromTemplate('invite.verify-email', invitedEmail, {
       invitedEmail,
       verifyUrl,

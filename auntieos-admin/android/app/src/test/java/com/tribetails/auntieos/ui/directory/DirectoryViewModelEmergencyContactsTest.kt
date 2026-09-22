@@ -56,7 +56,11 @@ class DirectoryViewModelEmergencyContactsTest {
         vm = DirectoryViewModel(repo, mockk<InvoiceRepository>(relaxed = true), kinCareRepo)
     }
 
-    @After fun tearDown() = Dispatchers.resetMain()
+    // #893 item 5: this store is app-wide and outlives any one test's JVM.
+    @After fun tearDown() {
+        Dispatchers.resetMain()
+        CallEventStore.reset()
+    }
 
     @Test
     fun `add refuses to create a household without an Emergency Contact`() {
@@ -157,6 +161,12 @@ class DirectoryViewModelEmergencyContactsTest {
         vm.prefillAddKinfolkFromCall("Someone Else", "+18055550111", "CA829waiting")
         assertEquals("kf-new", vm.addKinfolkState.value.createdKinfolkId)
         assertEquals("Jamie", vm.addKinfolkState.value.firstName)
+        // #893 item 3: the call is refused with a clear message instead of
+        // silently doing nothing, and names both the pending household and the
+        // caller so the operator knows the call is not linked.
+        val message = vm.addKinfolkState.value.error.orEmpty()
+        assertTrue(message.contains("Jamie"))
+        assertTrue(message.contains("Someone Else"))
     }
 
     // A household made from a call is linked onto that call event, as the Calls
@@ -293,6 +303,7 @@ class DirectoryViewModelEmergencyContactsTest {
         coVerify { repo.updateKinfolkFields("kf1", mapOf("firstName" to "Jamey")) }
         coVerify(exactly = 0) { repo.saveEmergencyContacts(any(), any()) }
         assertFalse(vm.editKinfolkState.value.error != null)
+        assertNull(vm.editKinfolkState.value.savedNotice)
     }
 
     // #829 review item 14: the flag never blocks other edits.
@@ -312,6 +323,8 @@ class DirectoryViewModelEmergencyContactsTest {
         assertEquals("An Emergency Contact needs a phone number.", s.emergencyContactsError)
         assertFalse(s.isSuccess)
         assertEquals(null, s.error)
+        // #893 item 1: the household field DID save, matching web/desktop wording.
+        assertEquals("Saved Jamey. The Emergency Contact still needs attention.", s.savedNotice)
 
         // Fixing the contact sends only the contact: the household field already landed.
         coEvery { repo.saveEmergencyContacts("kf1", any()) } returns Result.success(emptyList())
@@ -320,6 +333,22 @@ class DirectoryViewModelEmergencyContactsTest {
         vm.saveKinfolkChanges()
         coVerify(exactly = 1) { repo.updateKinfolkFields(any(), any()) }
         coVerify(exactly = 1) { repo.saveEmergencyContacts("kf1", any()) }
+    }
+
+    // #893 item 1: a refused contact save with NO household field changed must
+    // not claim a save that never happened.
+    @Test
+    fun `a refused contact save with no household change reports no savedNotice`() {
+        val stored = Kinfolk(id = "kf1", firstName = "Jamie", phoneNumber = "8055550100")
+        coEvery { repo.getKinfolk() } returns Result.success(listOf(stored))
+        coEvery { repo.saveEmergencyContacts("kf1", any()) } returns Result.failure(Exception("offline"))
+        vm.loadKinfolkForEdit("kf1")
+        vm.updateEditEmergencyContact(0, EmergencyContactDraft("Sam Ortiz", "8055550177"))
+        vm.saveKinfolkChanges()
+
+        val s = vm.editKinfolkState.value
+        assertEquals("offline", s.emergencyContactsError)
+        assertNull(s.savedNotice)
     }
 
     @Test

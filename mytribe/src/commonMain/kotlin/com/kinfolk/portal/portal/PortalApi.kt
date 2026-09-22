@@ -806,20 +806,42 @@ class PortalApi(private val fns: FunctionsClient) {
         })
     }
 
+    /**
+     * #901. [gateCode], [keyLocation] and [wifiPassword] are ALWAYS sent, and a
+     * null is sent as JSON `null`.
+     *
+     * They used to carry `= null` defaults and be dropped from the payload when
+     * null, which conflated "the household emptied this field" with "this call
+     * is not about this field". `saveHomeAccess` reads an absent key as "leave
+     * it alone", so clearing the gate code, the key location or the Wi-Fi
+     * password never reached the server: the Tribe screen showed the field
+     * empty, the save reported "Saved.", and the old value stayed stored. That
+     * is the clear contract the callable already defines and portal web already
+     * uses - `gateCode: z.string().max(80).nullable().optional()`, with the save
+     * comparing `(args[field] ?? null) !== (stored[field] ?? null)`, so a sent
+     * null over a stored value is a real clear and a sent null over a missing
+     * field is no change at all.
+     *
+     * The defaults are gone rather than kept beside an explicit-null wrapper:
+     * the Tribe screen holds all three in form state on every save (with a
+     * schema that omits one, the loaded value is echoed rather than dropped), so
+     * there is no caller that legitimately means "don't touch this field", and a
+     * future one has to say which it means instead of getting a silent no-op.
+     */
     suspend fun saveHomeAccess(
         kinfolkId: String? = null,
-        gateCode: String? = null,
-        keyLocation: String? = null,
-        wifiPassword: String? = null,
+        gateCode: String?,
+        keyLocation: String?,
+        wifiPassword: String?,
         customFields: List<CustomField>? = null,
         // #873: customFields merge by key on the server; a stored row is deleted only when named here.
         removeCustomFieldKeys: List<String>? = null,
     ) {
         fns.call("saveHomeAccess", buildJsonObject {
             kinfolkId?.let { put("kinfolkId", it) }
-            gateCode?.let { put("gateCode", it) }
-            keyLocation?.let { put("keyLocation", it) }
-            wifiPassword?.let { put("wifiPassword", it) }
+            put("gateCode", gateCode)
+            put("keyLocation", keyLocation)
+            put("wifiPassword", wifiPassword)
             customFields?.let { put("customFields", encodeCustomFields(it)) }
             removeCustomFieldKeys?.let { keys -> put("removeCustomFieldKeys", buildJsonArray { keys.forEach { add(it) } }) }
         })

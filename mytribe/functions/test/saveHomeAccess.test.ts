@@ -1,10 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
 
-const mocks = vi.hoisted(() => ({ dbFn: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), writeAuditEntryFn: vi.fn() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
+// #901: this callable now writes an audit entry. Mocked so the chained write
+// does not land among the home-access writes these tests count.
+vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: mocks.writeAuditEntryFn }));
 // #873 final review: the rate limiter is NOT mocked. It counts inside the save
 // transaction, against the same mocked documents (rate_limits/homeAccessSave:3).
 vi.mock('firebase-admin/firestore', async () => {
@@ -13,6 +16,8 @@ vi.mock('firebase-admin/firestore', async () => {
 });
 beforeEach(() => {
   mocks.dbFn.mockReset();
+  mocks.writeAuditEntryFn.mockReset();
+  mocks.writeAuditEntryFn.mockResolvedValue('audit-id');
   delete process.env.AUNTIE_OPERATOR_UIDS;
 });
 
@@ -269,10 +274,12 @@ describe('saveHomeAccessHandler: customFields merge by key (#873)', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     return { ctx, docs };
   }
+
   async function save(data: Record<string, unknown>) {
     const { saveHomeAccessHandler } = await import('../src/portal/saveHomeAccess');
     return saveHomeAccessHandler({ data: { kinfolkId: '3', ...data }, auth: { uid: 'u1' } } as any);
   }
+
   const stored = (docs: Record<string, any>) => docs[HOME_ACCESS_PATH].customFields;
 
   it('an OLD client sending only its schema rows no longer deletes a stored non-schema row', async () => {
@@ -325,10 +332,12 @@ describe('saveHomeAccessHandler: limits and concurrent saves (#873 review)', () 
     mocks.dbFn.mockReturnValue(ctx.db);
     return { ctx, docs };
   }
+
   async function save(data: Record<string, unknown>) {
     const { saveHomeAccessHandler } = await import('../src/portal/saveHomeAccess');
     return saveHomeAccessHandler({ data: { kinfolkId: '3', ...data }, auth: { uid: 'u1' } } as any);
   }
+
   const storedList = (docs: Record<string, any>) => docs[HOME_ACCESS_PATH].customFields as unknown[];
 
   it('a household with 60 stored rows saves when a current client sends every row back', async () => {
@@ -424,5 +433,112 @@ describe('saveHomeAccessHandler: limits and concurrent saves (#873 review)', () 
     await expect(save({ customFields: [{ ...ALARM, value: '9999' }], removeCustomFieldKeys: [] })).resolves.toEqual({ ok: true });
     expect(storedList(docs)).toEqual([{ ...ALARM, value: '9999' }, ANDROID]);
     expect(tx.attempts()).toBe(2);
+  });
+});
+
+/**
+ * #901. This callable wrote no audit entry while `saveTribeProfile` has written
+ * one since #843, so a change to the gate code, the key location or the Wi-Fi
+ * password - the most sensitive fields a household holds - left no trail.
+ *
+ * The entry names FIELDS, never values. The assertions below stringify the WHOLE
+ * argument object rather than reading `payload`, because a value leaking into
+ * `description` or into a field added later would pass a payload-only check.
+ */
+describe('saveHomeAccessHandler: audit entry (#901)', () => {
+  const GATE = '4321';
+  const WIFI = 'hunter2-correct-horse';
+  const KEY_SPOT = 'Under the third flowerpot';
+  const ALARM = { key: 'alarm', label: 'Alarm Code', value: '5678' };
+  function home(stored: unknown[] = [ALARM], member?: unknown) {
+    const docs: Record<string, any> = {
+      'clients/u1': { kinfolkIds: ['3'] },
+      'families/3/homeAccess/current': { gateCode: '1234', customFields: stored },
+    };
+    if (member !== undefined) docs['families/3/members/u1'] = member;
+    const ctx = buildDbMock({ docs, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    return { ctx, docs };
+  }
+
+  async function save(data: Record<string, unknown>) {
+    const { saveHomeAccessHandler } = await import('../src/portal/saveHomeAccess');
+    return saveHomeAccessHandler({ data: { kinfolkId: '3', ...data }, auth: { uid: 'u1' } } as any);
+  }
+
+  const auditArgs = () => mocks.writeAuditEntryFn.mock.calls[0]?.[0];
+  it('writes HOME_ACCESS_UPDATED naming the fields that changed', async () => {
+    home();
+    await expect(save({ gateCode: GATE, keyLocation: KEY_SPOT, wifiPassword: WIFI })).resolves.toEqual({ ok: true });
+    expect(mocks.writeAuditEntryFn).toHaveBeenCalledTimes(1);
+    expect(auditArgs()).toMatchObject({
+      status: 'SUCCESS',
+      event: 'HOME_ACCESS_UPDATED',
+      severity: 'info',
+      actorRole: 'PRIMARY',
+      actorUid: 'u1',
+      targetUid: '3',
+      targetCollection: 'families',
+    });
+    expect(auditArgs().payload.fields).toEqual(['gateCode', 'keyLocation', 'wifiPassword']);
+  });
+
+  it('NEVER the values: no gate code, key location, Wi-Fi password or custom row value anywhere in the entry', async () => {
+    home();
+    await expect(
+      save({
+        gateCode: GATE,
+        keyLocation: KEY_SPOT,
+        wifiPassword: WIFI,
+        customFields: [{ key: 'alarm', label: 'Alarm Code', value: '999-SECRET' }],
+        removeCustomFieldKeys: [],
+      }),
+    ).resolves.toEqual({ ok: true });
+    const serialised = JSON.stringify(auditArgs());
+    for (const secret of [GATE, KEY_SPOT, WIFI, '999-SECRET']) {
+      expect(serialised).not.toContain(secret);
+    }
+    // The names are there, so this is a real absence and not an empty entry.
+    expect(auditArgs().payload.fields).toEqual(['gateCode', 'keyLocation', 'wifiPassword', 'customFields']);
+    expect(auditArgs().description).toBe('Home access updated: gateCode, keyLocation, wifiPassword, customFields');
+  });
+
+  it('names only what actually changed, though the client sends all three scalars every time', async () => {
+    home();
+    await expect(save({ gateCode: '1234', keyLocation: KEY_SPOT, wifiPassword: null })).resolves.toEqual({ ok: true });
+    expect(auditArgs().payload.fields).toEqual(['keyLocation']);
+  });
+
+  it('a cleared field is audited: a sent null over a stored value is a change', async () => {
+    home();
+    await expect(save({ gateCode: null })).resolves.toEqual({ ok: true });
+    expect(auditArgs().payload.fields).toEqual(['gateCode']);
+  });
+
+  it('a no-op save writes no audit entry', async () => {
+    const { ctx } = home();
+    await expect(save({ gateCode: '1234', customFields: [ALARM], removeCustomFieldKeys: [] })).resolves.toEqual({ ok: true });
+    expect(ctx.writes).toHaveLength(0);
+    expect(mocks.writeAuditEntryFn).not.toHaveBeenCalled();
+  });
+
+  it('a refused save writes no audit entry', async () => {
+    const { docs } = home();
+    docs['rate_limits/homeAccessSave:3'] = { count: 60, windowStart: Date.now() };
+    await expect(save({ gateCode: GATE })).rejects.toMatchObject({ code: 'resource-exhausted' });
+    expect(mocks.writeAuditEntryFn).not.toHaveBeenCalled();
+  });
+
+  it('a secondary is SECONDARY in the trail, never the household primary', async () => {
+    home([ALARM], HOME_ACCESS_MEMBER);
+    await expect(save({ gateCode: GATE })).resolves.toEqual({ ok: true });
+    expect(auditArgs()).toMatchObject({ actorRole: 'SECONDARY' });
+  });
+
+  it('a failed audit write does not fail a save that already committed', async () => {
+    const { docs } = home();
+    mocks.writeAuditEntryFn.mockRejectedValueOnce(new Error('chain head unavailable'));
+    await expect(save({ gateCode: GATE })).resolves.toEqual({ ok: true });
+    expect(docs['families/3/homeAccess/current'].gateCode).toBe(GATE);
   });
 });
