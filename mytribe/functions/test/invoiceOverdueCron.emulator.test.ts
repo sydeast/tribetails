@@ -44,7 +44,15 @@ describe.runIf(EMULATOR)('#871 invoiceOverdueCron over the Firestore emulator', 
     ({ db } = await import('../src/lib/firestoreAdmin'));
     ({ runInvoiceOverdueScan } = await import('../src/scheduled/invoiceRemindersCron'));
     const inv = db().collection('invoices');
-    await db().doc('business_settings/business_settings').set({ timeZone: 'America/Chicago' });
+    // `householdNotificationsLive` is the pre-launch household send gate
+    // (src/notifications/householdSendGate.ts). Absent means OFF, so this suite
+    // has to say which side of the gate it is testing on: the emulator's
+    // Firestore starts empty, and `buildDbMock`'s seeding reaches only the
+    // suites that use the mock. Without it every assertion below asserts a shut
+    // door. `the gate over a real Firestore` further down tests the other side.
+    await db()
+      .doc('business_settings/business_settings')
+      .set({ timeZone: 'America/Chicago', householdNotificationsLive: true });
     await inv.doc('e871_open').set(OPEN);
     await inv.doc('e871_due_today').set({ ...OPEN, dueDate: '2026-09-14' });
     await inv.doc('e871_cancelled').set({ ...OPEN, status: 'cancelled' });
@@ -104,5 +112,57 @@ describe.runIf(EMULATOR)('#871 invoiceOverdueCron over the Firestore emulator', 
     // And a third day: still one each.
     expect(await runInvoiceOverdueScan(NOW + 2 * 24 * 60 * 60 * 1000)).toBe(0);
     expect(await overdueNotices()).toHaveLength(3);
+  });
+
+  /**
+   * THE LAUNCH BACKLOG, over a real Firestore.
+   *
+   * The unit suite proves this against `buildDbMock`. This proves it where the
+   * thing that would break it actually lives: `notificationDedupe` is written
+   * inside a real Firestore transaction by `writeOnce`, and the claim is that a
+   * gated send leaves NO entry there. A mock can be wrong about that; the
+   * emulator cannot.
+   *
+   * If it did leave one, the run after the gate opens would fall inside
+   * `OVERDUE_DEDUPE_WINDOW_MS` (7 days), come back `duplicate`, and stamp
+   * `overdueNotifiedAtMs` from the ledger without sending anything. Every
+   * invoice uploaded before launch would be silently skipped forever.
+   *
+   * Runs after the two above, so every earlier invoice is already stamped or
+   * refused and this one is the only bill either scan can chase.
+   */
+  it('the gate over a real Firestore: shut sends nothing and leaves no ledger entry, open sends the backlog', async () => {
+    const shutAt = NOW + 3 * 24 * 60 * 60 * 1000;
+    const settings = db().doc('business_settings/business_settings');
+    const gated = db().collection('invoices').doc('e871_gated');
+    const identity = 'key:invoice:e871_gated:overdue';
+
+    await settings.set({ householdNotificationsLive: false }, { merge: true });
+    await gated.set(OPEN);
+
+    expect(await runInvoiceOverdueScan(shutAt), 'nothing chased while the gate is shut').toBe(0);
+    expect(
+      (await overdueNotices()).some((n) => n['targetId'] === 'e871_gated'),
+      'the household heard nothing',
+    ).toBe(false);
+
+    const afterShut = (await gated.get()).data() ?? {};
+    expect(afterShut['overdueNotifiedAtMs'], 'NOTHING may look like a delivery').toBeUndefined();
+    expect(afterShut['overdueSuppressedAtMs'], 'only the soft daily backoff').toBe(shutAt);
+    expect(
+      (await db().collection('notificationDedupe').where('identity', '==', identity).get()).size,
+      'no ledger entry, so the run after launch is not told it already sent',
+    ).toBe(0);
+
+    // The operator opens the product. A day later: past the 20h suppressed
+    // backoff, and well inside the 7 day dedupe window, which is what makes the
+    // ledger assertion above load-bearing rather than decorative.
+    await settings.set({ householdNotificationsLive: true }, { merge: true });
+    const openAt = shutAt + 24 * 60 * 60 * 1000;
+
+    expect(await runInvoiceOverdueScan(openAt), 'the backlog goes out').toBe(1);
+    expect((await overdueNotices()).some((n) => n['targetId'] === 'e871_gated')).toBe(true);
+    expect((await gated.get()).data()?.['overdueNotifiedAtMs'], 'stamped now, not earlier').toBe(openAt);
+    expect((await db().collection('notificationDedupe').where('identity', '==', identity).get()).size).toBe(1);
   });
 });
