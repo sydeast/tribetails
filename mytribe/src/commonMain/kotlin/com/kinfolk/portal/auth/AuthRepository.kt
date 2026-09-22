@@ -242,8 +242,26 @@ class AuthRepository(
         _state.value = AuthState.SignedOut
     }
 
+    /**
+     * Sends a password reset link to [email].
+     *
+     * #911: an address Firebase has never seen is NOT an error here. Both
+     * Kotlin clients now send through Firebase's own reset, which refuses an
+     * unknown address whenever the project's email enumeration protection is
+     * off, and a screen that showed that refusal would answer "is this an
+     * account?" for anyone who can type. The refusal is absorbed, so the screen
+     * shows the same sentence it shows for a real account, exactly as the
+     * `requestPasswordReset` callable's constant `{ ok: true }` used to. See
+     * [isUnknownAccountOnReset]; nothing else is absorbed.
+     */
     suspend fun sendPasswordReset(email: String) {
-        withRecaptchaGuard { backend.sendPasswordReset(email) }
+        try {
+            withRecaptchaGuard { backend.sendPasswordReset(email) }
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            if (!isUnknownAccountOnReset(t)) throw t
+        }
     }
 
     /**

@@ -49,7 +49,7 @@ class SignInScreenLockedTest {
         waitForIdle()
     }
 
-    /** #886 review: a trailing space from a mobile keyboard must not reach requestPasswordReset. */
+    /** #886 review: a trailing space from a mobile keyboard must not reach the reset send. */
     @Test
     fun forgotPassword_sendsTheTrimmedEmail() = runComposeUiTest {
         val backend = RefusingBackend(RuntimeException("unused"))

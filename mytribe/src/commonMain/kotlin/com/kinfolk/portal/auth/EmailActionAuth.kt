@@ -28,9 +28,10 @@ interface EmailActionAuth {
     suspend fun applyActionCode(oobCode: String)
 
     /**
-     * "Send a new link". Goes through the existing reset request
-     * ([AuthRepository.sendPasswordReset], the `requestPasswordReset` callable),
-     * unchanged here; #911 moves how reset emails are requested.
+     * "Send a new link". Goes through [AuthRepository.sendPasswordReset], which
+     * since #911 is Firebase's own reset on every client: the SDK on Android
+     * and web, `accounts:sendOobCode` on desktop. An address that is not an
+     * account is absorbed there, so this reports Sent either way.
      */
     suspend fun sendPasswordReset(email: String)
 
