@@ -12,8 +12,8 @@
  * NOTHING RECORDS THE BEFORE-STATE, so "shrank" cannot be measured directly:
  *   - `activity_log` PROFILE_UPDATED entries (saveTribeProfile) carry the field
  *     NAMES that were written (`payload.fields`), never the old or new rows;
- *   - `saveHomeAccess` writes no audit entry at all, only a Cloud Logging line
- *     with field names;
+ *   - `saveHomeAccess` wrote no audit entry at all until #901, only a Cloud
+ *     Logging line with field names, and the #901 entry carries field names too;
  *   - Firestore keeps no document history this script can read.
  * So this reports households whose rows LOOK truncated: the list is exactly what
  * the old rebuild wrote. Every key is a schema key or a reserved card key, AND
@@ -350,7 +350,7 @@ export async function buildReport(db: Firestore): Promise<Report> {
 
 function printReport(r: Report, samples: number): void {
   console.log('READ-ONLY truncated customFields report (#873). Nothing was written.');
-  console.log('No before-state is recorded anywhere (audit entries carry field names only, saveHomeAccess writes no audit,');
+  console.log('No before-state is recorded anywhere (audit entries carry field names only, saveHomeAccess wrote none before #901,');
   console.log('Firestore keeps no history), so these are households whose rows LOOK truncated, not a measured shrink.');
   console.log('');
   console.log(`Schemas now: tribeProfile [${r.schemas.tribeProfile.join(', ') || 'none'}], homeAccess [${r.schemas.homeAccess.join(', ') || 'none'}]`);

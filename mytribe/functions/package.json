@@ -43,6 +43,7 @@
     "backfill:stripe-payment-cents": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/backfillStripePaymentAmountCents.ts",
     "repair:blocked-slots": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/repairBlockedTimeSlotShape.ts",
     "repair:business-timezone": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/repairBusinessTimeZone.ts",
+    "repair:duplicate-vet-clinic-id": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/repairDuplicateVetClinicId.ts",
     "report:duplicate-notifications": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/reportDuplicateNotifications.ts",
     "report:duplicate-kinfolk": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/reportDuplicateKinfolk.ts",
     "report:truncated-custom-fields": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/reportTruncatedCustomFields.ts",

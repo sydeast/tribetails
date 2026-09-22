@@ -353,13 +353,18 @@ class TribeScreenTest {
         }
     }
 
-    private fun schemaJson(id: String, vararg fields: Pair<String, String>) = buildJsonObject {
+    private fun schemaJson(id: String, vararg fields: Pair<String, String>, defaults: Map<String, String> = emptyMap()) = buildJsonObject {
         put("id", id); put("name", id); put("version", 1)
         put("sections", buildJsonArray {
             add(buildJsonObject {
                 put("title", "Details for $id")
                 put("fields", buildJsonArray {
-                    fields.forEach { (key, label) -> add(buildJsonObject { put("key", key); put("label", label); put("type", "text") }) }
+                    fields.forEach { (key, label) ->
+                        add(buildJsonObject {
+                            put("key", key); put("label", label); put("type", "text")
+                            defaults[key]?.let { put("defaultValue", it) }
+                        })
+                    }
                 })
             })
         })
@@ -466,10 +471,68 @@ class TribeScreenTest {
         onNodeWithText("Saved.").assertDoesNotExist()
     }
 
+    /**
+     * #901. A schema `defaultValue` is a HINT, not a value.
+     *
+     * Portal web seeded an empty schema field with the default as its VALUE while
+     * the save sent nothing for a key that was never stored, so the screen and the
+     * record disagreed. This client never applied defaults at all, so what it
+     * STORES is unchanged; it now shows the same hint web does, which is what
+     * makes the two clients consistent.
+     */
+    private fun defaultsHousehold(): Pair<FakeFunctionsClient, PortalApi> {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyTribeProfile", buildJsonObject {
+            put("profile", buildJsonObject {
+                put("kinfolkId", "3"); put("displayName", "The Foster"); put("customFields", rowsJson(allergy))
+            })
+            put("homeAccess", buildJsonObject {
+                put("gateCode", JsonNull); put("keyLocation", JsonNull); put("wifiPassword", JsonNull)
+                put("customFields", buildJsonArray {}); put("updatedAtMs", JsonNull)
+            })
+        })
+        fake.stubEmergencyContacts()
+        fake.stub("getVetClinics", buildJsonObject { put("clinics", buildJsonArray {}) })
+        fake.stub("listMembers", buildJsonObject { put("members", buildJsonArray {}) })
+        fake.stub("listHouseholdContacts", buildJsonObject { put("contacts", buildJsonArray {}) })
+        fake.stub("saveTribeProfile", buildJsonObject { put("ok", true) })
+        fake.stub("saveHomeAccess", buildJsonObject { put("ok", true) })
+        val schemas = mapOf(
+            "tribeProfile" to schemaJson(
+                "tribeProfile",
+                "displayName" to "Family Display Name",
+                "allergy" to "Allergies",
+                "feeding" to "Feeding notes",
+                defaults = mapOf("feeding" to "Twice a day"),
+            ),
+        )
+        return fake to PortalApi(SchemaFunctions(fake, schemas))
+    }
+
+    @Test
+    fun schemaDefault_showsAsAHint_andIsNeverStored() = runComposeUiTest {
+        val (fake, api) = defaultsHousehold()
+        setThemedContent { TribeScreen("The Foster", "3", api) }
+        waitForIdle()
+        // The default is nowhere on screen as a VALUE (it rides on the field's
+        // placeholder, which Material only paints while the field has focus).
+        assertTrue(
+            onAllNodesWithText("Twice a day").fetchSemanticsNodes().isEmpty(),
+            "the default is showing as a value",
+        )
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        // And the save stores nothing for that key, so the screen and the record agree.
+        val (rows, removed) = fake.sent("saveTribeProfile")
+        assertTrue(rows.none { it.first == "feeding" }, "rows: $rows")
+        assertEquals(emptyList<String>(), removed)
+        assertEquals(listOf(allergy), rows)
+    }
+
     // ---- #868: the home details follow Home access, and a partial save says so ----
 
     /** A household as getMyTribeProfile serves it to a viewer with or without Home access. */
-    private fun viewer(canEditHome: Boolean): FakeFunctionsClient {
+    private fun viewer(canEditHome: Boolean, keyLocation: String? = null, wifiPassword: String? = null): FakeFunctionsClient {
         val fake = FakeFunctionsClient()
         fake.stub("getMyTribeProfile", buildJsonObject {
             put("profile", buildJsonObject {
@@ -478,7 +541,8 @@ class TribeScreenTest {
             put("homeAccess", buildJsonObject {
                 // The server sends no home values without the grant (getMyTribeProfile.ts).
                 if (canEditHome) put("gateCode", "4242") else put("gateCode", JsonNull)
-                put("keyLocation", JsonNull); put("wifiPassword", JsonNull)
+                put("keyLocation", if (canEditHome) keyLocation else null)
+                put("wifiPassword", if (canEditHome) wifiPassword else null)
                 put("customFields", if (canEditHome) rowsJson(afterPhone) else buildJsonArray {})
                 put("updatedAtMs", JsonNull)
             })
@@ -523,6 +587,69 @@ class TribeScreenTest {
         assertEquals("9001", home["gateCode"]!!.jsonPrimitive.content)
         assertEquals(listOf(afterPhone) to emptyList<String>(), fake.sent("saveHomeAccess"))
         onNodeWithText("Saved.").performScrollTo().assertIsDisplayed()
+    }
+
+    /**
+     * #901. Clearing the gate code used to reach the server as nothing at all:
+     * PortalApi dropped a null from the payload, saveHomeAccess reads an absent
+     * key as "leave it alone", and the screen still said "Saved." while the old
+     * code stayed stored. The clear has to arrive as an explicit JSON null, the
+     * same clear portal web already sends.
+     */
+    @Test
+    fun clearedGateCode_reachesTheServerAsAnExplicitNull() = runComposeUiTest {
+        val fake = viewer(canEditHome = true)
+        setThemedContent { TribeScreen("Foster Household", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("4242").performScrollTo().performTextClearance()
+        waitForIdle()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        val home = fake.calls.last { it.first == "saveHomeAccess" }.second!!
+        assertTrue(home.containsKey("gateCode"), "gateCode missing from the payload: $home")
+        assertEquals(JsonNull, home["gateCode"])
+        onNodeWithText("Saved.").performScrollTo().assertIsDisplayed()
+    }
+
+    /**
+     * #901. All three scalars ride on every call, so an empty field is never
+     * ambiguous between "cleared" and "not part of this save". keyLocation and
+     * wifiPassword are unset on this household and are still sent, as nulls the
+     * server reads as no change (a sent null matching a missing field).
+     */
+    @Test
+    fun homeAccessSave_alwaysCarriesGateCodeKeyLocationAndWifi() = runComposeUiTest {
+        val fake = viewer(canEditHome = true)
+        setThemedContent { TribeScreen("Foster Household", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("4242").performScrollTo().performTextReplacement("9001")
+        waitForIdle()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        val home = fake.calls.last { it.first == "saveHomeAccess" }.second!!
+        assertEquals("9001", home["gateCode"]!!.jsonPrimitive.content)
+        assertTrue(home.containsKey("keyLocation"), "keyLocation missing from the payload: $home")
+        assertTrue(home.containsKey("wifiPassword"), "wifiPassword missing from the payload: $home")
+        assertEquals(JsonNull, home["keyLocation"])
+        assertEquals(JsonNull, home["wifiPassword"])
+    }
+
+    /** #901: a cleared key location and Wi-Fi password clear too, not just the gate code. */
+    @Test
+    fun clearedKeyLocationAndWifi_reachTheServerAsExplicitNulls() = runComposeUiTest {
+        val fake = viewer(canEditHome = true, keyLocation = "Under the mat", wifiPassword = "TribeNet")
+        setThemedContent { TribeScreen("Foster Household", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Under the mat").performScrollTo().performTextClearance()
+        onNodeWithText("TribeNet").performScrollTo().performTextClearance()
+        waitForIdle()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        val home = fake.calls.last { it.first == "saveHomeAccess" }.second!!
+        assertEquals(JsonNull, home["keyLocation"])
+        assertEquals(JsonNull, home["wifiPassword"])
+        // The gate code was not touched, and rides along unchanged rather than as a clear.
+        assertEquals("4242", home["gateCode"]!!.jsonPrimitive.content)
     }
 
     @Test

@@ -1292,6 +1292,36 @@ Never overwrites a non-empty `emergencyContacts` array, never bumps
 until this run is verified). Dates on the migrated contact are the original
 record's, never the migration time.
 
+### Repairs to run after a release
+
+A repair rewrites data a shipped defect already wrote. The code fix stops new bad
+data; it does nothing for what is stored, because Firestore keeps what it was
+given. Every repair here is a dry run by default, and **before any write, run
+`npm run test:scripts:emulator` and read the pass count.**
+
+| Repair | Added by | What it fixes |
+|---|---|---|
+| `repair:duplicate-vet-clinic-id` | #901 | Before #873 (PR #900), portal web appended a second `vetClinicId` row to `families/{id}.customFields` on every no-schema save, so a household's list grew by one row per press of Save Changes. #900 stops new duplicates but only folds a key a client actually sends, so stored ones stay. This keeps the NEWEST copy (the last in the array, which is the one portal web already displays) at the oldest copy's position, drops the rest, and leaves every other row and every timestamp alone. |
+
+For `repair:duplicate-vet-clinic-id`:
+
+1. `npm run test:scripts:emulator`
+2. `npm --prefix mytribe/functions run repair:duplicate-vet-clinic-id -- --project <id> --allow-prod`
+   Reads only. The first line printed is the target: check it names the right
+   project, `PRODUCTION` and `DRY RUN (writes nothing)`. Then read the counts and
+   the per-household lines. `Households whose copies disagree` is the number
+   where the older copies name a different clinic from the newest, so the repair
+   changes what the office would read off the record, not just the row count.
+3. `npm --prefix mytribe/functions run repair:duplicate-vet-clinic-id -- --project <id> --allow-prod --apply`
+   Needs `GOOGLE_APPLICATION_CREDENTIALS`. `--allow-prod` says WHERE and
+   `--apply` says WHETHER TO WRITE; `--allow-prod` is refused while
+   `FIRESTORE_EMULATOR_HOST` is set, and without it nothing reaches production.
+   `--dry-run` forces the dry run back and wins in either flag order.
+4. Re-run step 2. It reports zero households: the repair is idempotent.
+
+`updatedAt` is not bumped and no repair stamp is written, so a repaired household
+keeps the times it already had.
+
 ### Read-only reports to run after a release
 
 These write nothing. Run each once after the first release that contains it and

@@ -167,6 +167,19 @@ export const AUDIT_EVENTS = {
   BOOKING_SUBMITTED: 'BOOKING_SUBMITTED',
   PROFILE_UPDATED: 'PROFILE_UPDATED',
 
+  // #901: `families/{id}/homeAccess/current` was written (saveHomeAccess). Its
+  // own event rather than PROFILE_UPDATED, for two reasons: the two callables
+  // write different documents, and `reportTruncatedCustomFields.ts` reads
+  // PROFILE_UPDATED entries whose `payload.fields` names `customFields` as its
+  // evidence that a portal save touched `families/{id}` itself, which a home
+  // access save did not.
+  //
+  // The payload carries FIELD NAMES ONLY. The fields behind this event are the
+  // gate code, the key location and the Wi-Fi password; a value copied in here
+  // would be a second store of a household secret, with a wider reader set than
+  // the document it came from and no way to take it back once chained.
+  HOME_ACCESS_UPDATED: 'HOME_ACCESS_UPDATED',
+
   // #447: the Kin tagged in one `media_files` doc were changed (saveMediaTags).
   // Audited for the same reason PROFILE_UPDATED is: a tag says a named animal
   // was present at a visit, which is a claim about a household's record, and
