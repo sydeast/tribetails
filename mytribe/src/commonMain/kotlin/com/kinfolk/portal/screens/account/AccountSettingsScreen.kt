@@ -55,6 +55,12 @@ fun AccountSettingsScreen(
     onSignOut: () -> Unit = {},
     onOpenTribeProfile: () -> Unit = {},
     repo: AuthRepository? = null,
+    /**
+     * The Stripe card-setup hand-off, injectable so a test can drive "Add a
+     * card" without the suite launching a browser. Same seam as
+     * `SecureResetScreen`'s `openUrl`.
+     */
+    openUrl: (String) -> Unit = { openExternalUrl(it) },
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
@@ -326,7 +332,7 @@ fun AccountSettingsScreen(
                                         kinfolkId = kinfolkId,
                                     )
                                     if (session.checkoutUrl.isNotBlank()) {
-                                        openExternalUrl(session.checkoutUrl)
+                                        openUrl(session.checkoutUrl)
                                         billingStatus = "Finish at Stripe, then tap Refresh card."
                                     } else {
                                         billingError = "Stripe did not return a link. Try again in a moment."
