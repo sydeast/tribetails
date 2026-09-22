@@ -4,6 +4,20 @@ Phase 2 of the notification schedule work. Phase 1 (the household send gate, PR 
 
 Operator, in their words, about the 09:30 overdue job: it "shouldn't be hardcoded and adjustable in the auntieos".
 
+## The ruling that arrived while this was being built
+
+This document was drafted with defaults that preserved where each job already ran: 09:00 for the invoice crons, 07:00 for the digest. The operator then ruled otherwise, and the ruling is now the load-bearing constraint rather than a footnote on one.
+
+The ruling, in summary: nothing should be running when this ships. The jobs are activated later, from the AuntieOS UI, and the cadence is decided then. 09:00, 09:30 and 07:00 are not the intended cadence, they are what happens to be hardcoded.
+
+Three things follow.
+
+**There is no default hour.** An absent field means NOT SCHEDULED, and the job does nothing at any hour of any day. Shipping 09:00 as a default would be this code guessing at a cadence the operator has reserved for themselves, and it would also mean a job started acting the moment Phase 1's gate opened, at a time nobody picked.
+
+**The UI is the deliverable, not the trailing part of one.** Both controls live in AuntieOS on all three admin clients: activation, which is Phase 1's flag and has had no control anywhere, and cadence.
+
+**The Cloud Scheduler entry still has to exist and tick.** This is the one part of the design that could read as contradicting the ruling, so it is said plainly. Deleting the `onSchedule` export would delete the Cloud Scheduler job, and recreating it later is a deploy, which is exactly what the operator asked to stop needing. A ticking job that finds no hour set reads one document and returns, which is as close to nothing as a scheduled function gets. The product is off; the wiring that lets the product be turned on is not.
+
 ## The constraint that shapes everything below
 
 `onSchedule({ schedule: 'every day 09:30' })` is Cloud Scheduler configuration. It is fixed when the function deploys and there is no runtime API to read it out of Firestore. Making the cron expression itself dynamic would mean a deploy for every change, which is the thing the operator is asking to stop doing.
@@ -27,11 +41,13 @@ Every other scheduled job is out of scope: the purges, token rotation, the error
 
 Three fields on `business_settings/business_settings`, the document every business-wide switch already lives on, read through the same modern-id-then-legacy-`singleton` walk `loadBusinessHoursSettings` performs.
 
-| Field | Type | Default when absent | Governs |
+| Field | Type | When absent | Governs |
 |---|---|---|---|
-| `householdNotificationsLive` | bool | `false` (Phase 1, unchanged) | whether household copies send at all |
-| `householdNotificationHour` | int 0..23 | `9` | `invoiceRemindersCron`, `invoiceOverdueCron` |
-| `scheduleDigestHour` | int 0..23 | `7` | `scheduleDigestCron` |
+| `householdNotificationsLive` | bool | `false`, nothing reaches a household (Phase 1, unchanged) | whether household copies send at all |
+| `householdNotificationHour` | int 0..23 | not scheduled, the job does nothing | `invoiceRemindersCron`, `invoiceOverdueCron` |
+| `scheduleDigestHour` | int 0..23 | not scheduled, the job does nothing | `scheduleDigestCron` |
+
+No production settings document carries any of the three today, so on the day this deploys all three hour-driven jobs are inert and Phase 1's gate is shut. That is two independent reasons nothing sends, which is the intent.
 
 **No new time zone field.** `business_settings.timeZone` already exists and `businessTodayIso` in `lib/quoteDecision.ts` already reads it, falling back to the ruled `America/Chicago` when the stored value is blank or is a name `Intl` cannot parse. A second zone field would let the two disagree, and the first symptom of that is a notice sent an hour off with nothing on screen to explain it.
 
@@ -39,13 +55,13 @@ Three fields on `business_settings/business_settings`, the document every busine
 
 ### Why two hour fields and not one, and not four
 
-One field cannot hold two different defaults, so a single hour would silently move one of these jobs on the deploy that introduced it. The two groups also answer to different people.
+The two groups answer to different people, and the operator should be able to put their own brief before the household notices, which is the arrangement the old 07:00 and 09:00 already had.
 
 `invoiceRemindersCron` and `invoiceOverdueCron` write to households. They are the jobs Phase 1's gate holds shut, they are the ones the operator was talking about, and they already ran within half an hour of each other. Nothing about their contents argues for separating them: the two scans read disjoint sets of invoices (due within three days versus due day already past), so running them in the same hour cannot produce two notices about one bill.
 
-`scheduleDigestCron` is the operator's own morning brief of the next day's visits. It goes to `businessAdmins`, no household ever sees it, and Phase 1's gate does not touch it. Folding it in would mean the operator could not move their own brief without also moving every household's.
+`scheduleDigestCron` is the operator's own morning brief of the next day's visits. It goes to `businessAdmins`, no household ever sees it, and Phase 1's gate does not touch it. One shared hour would mean the operator could not move their own brief earlier than the household notices without moving both.
 
-Four fields would be four controls and three more ways to get it wrong, for a product with one operator. Two is the smallest number that keeps both defaults honest.
+Four fields would be four controls and three more ways to get it wrong, for a product with one operator. Two is the smallest number that lets the operator say the thing they are likely to want to say.
 
 ### What the half hour costs
 
@@ -53,13 +69,9 @@ Four fields would be four controls and three more ways to get it wrong, for a pr
 
 ### What changes on the day this deploys
 
-With the stored zone still `America/New_York` and both new fields absent:
+All three jobs stop. Reminders stopped running at 09:00, overdue at 09:30, the digest at 07:00, and none of them runs again until the operator picks an hour.
 
-- reminders: 09:00 becomes 09:00. No change.
-- overdue: 09:30 becomes 09:00. Thirty minutes earlier.
-- digest: 07:00 becomes 07:00. No change.
-
-If the operator then sets the zone to `America/Chicago` per the ruling, all three move an hour later in New York terms, which is the ruling being applied rather than a side effect.
+Two of those three were already sending nothing, because Phase 1's gate holds every household-bound copy. The digest is the one that really stops: it goes to the operator, not a household, so the gate never held it. That is the ruling's intent rather than a side effect of it, and there is nothing to digest meanwhile, because the product is pre-launch. One picker turns it back on.
 
 ## The tick
 
@@ -77,16 +89,17 @@ UTC rather than the business zone, because a local-zone hourly cron has to decid
 1. Load business_settings once.            <- the only unconditional read
 2. Read failed?        -> log critical, return.        (see "Unreadable settings")
 3. Resolve the hour and the business zone from what was read.
-4. Local hour < configured hour?  -> return.           (23 ticks out of 24)
-5. Read the run marker for this job.
-6. marker.lastRunDayIso == today (business day)?  -> return.
-7. Run the scan.
-8. Write the marker.
+4. No hour set?        -> return.                      (every tick, as shipped)
+5. Local hour < configured hour?  -> return.           (23 ticks out of 24)
+6. Read the run marker for this job.
+7. marker.lastRunDayIso == today (business day)?  -> return.
+8. Run the scan.
+9. Write the marker.
 ```
 
-Step 4 before step 5, and both before step 7, is the point. The expensive work in these jobs is the `paginateQuery` drain of `invoices` or of the `bookings` collection group, and a tick that is not the hour must never reach it. `runDay` currently performs the settings read at the top of each scan; that read moves up into the tick and the scan is handed the day it already resolved, so a matching tick costs no more reads than today's daily run does.
+Steps 4 and 5 before step 6, and all of them before step 8, is the point. The expensive work in these jobs is the `paginateQuery` drain of `invoices` or of the `bookings` collection group, and a tick that is not the hour must never reach it. `runDay` currently performs the settings read at the top of each scan; that read moves up into the tick and the scan is handed the day it already resolved, so a matching tick costs no more reads than today's daily run does.
 
-A non-matching tick before the hour costs **one document read**. A non-matching tick after the hour costs **two** (settings, then the marker).
+A tick with no hour set, which is every tick as this ships, costs **one document read** and returns at step 4. So does a tick before the hour. A tick after the hour on a day already done costs **two** (settings, then the marker).
 
 ### The catch-up rule and why it is `>=` rather than `==`
 
@@ -161,18 +174,18 @@ The digest is the uncomfortable case, and it is named rather than glossed: it is
 
 The three states are not collapsed, for the same reason Phase 1 does not collapse its four:
 
-| What the document says | Hour used | Logged |
+| What the document says | Result | Logged |
 |---|---|---|
-| read threw | none, tick skipped | `critical` |
-| field absent | the default (9 or 7) | nothing. This is every document in production today |
-| field present, integer 0..23 | the stored value | nothing |
-| field present, anything else | the default | `warn` |
+| read threw | tick skipped | `critical` |
+| field absent | not scheduled, the job does nothing | nothing. This is every document in production today |
+| field present, integer 0..23 | that hour | nothing |
+| field present, anything else | not scheduled, the job does nothing | `warn` |
 
-**The last row is where this deliberately differs from Phase 1.** Phase 1 reads the gate as `=== true` and treats a `'true'` string or a `1` as off, because a value it cannot read as a literal boolean is not evidence the operator opened the product, and the cost of being wrong is a notice to a real household that cannot be recalled.
+**The last row is the same posture as Phase 1, not the opposite of it.** Phase 1 reads the gate as `=== true` and treats a `'true'` string or a `1` as off, because a value it cannot read as a literal boolean is not evidence the operator opened the product.
 
-The costs are reversed for the hour. A hand-edited `"9"` read strictly would mean no hour ever matches and the job goes permanently silent, with nothing on any screen saying so. A stored hour is not a safety interlock; it is a preference with a sane default sitting behind it. So a value we cannot use falls back to the default and logs `warn`, and the job keeps running.
+The draft of this document argued for the reverse here: fall back to the default, on the grounds that a hand-edited `"9"` read strictly would silence the job with nothing on screen saying so. The ruling removed the premise. There is no default to fall back to, so a bad value cannot be rescued into 09:00 without inventing exactly the guess the ruling forbids. A cadence we cannot read is not a cadence the operator chose.
 
-`firestore.rules` gains `bsInt('householdNotificationHour', 0, 23)` and `bsInt('scheduleDigestHour', 0, 23)` in `validBusinessSettings`, and `bsBool('householdNotificationsLive')`, so no client can put a value there that needs this branch. After that, the `warn` row is reachable only by a hand edit in the Firestore console.
+The `warn` is what keeps it from being silent. `firestore.rules` gains `bsInt('householdNotificationHour', 0, 23)` and `bsInt('scheduleDigestHour', 0, 23)` in `validBusinessSettings`, plus `bsBool('householdNotificationsLive')`, so no client can put such a value there. After that, the last row is reachable only by a hand edit in the Firestore console.
 
 ## Cost
 
@@ -187,6 +200,8 @@ Three jobs go from 1 invocation a day to 24. `kincareReminderCron` already runs 
 
 The 69 extra invocations a day are sub-second and sit against a free tier of two million a month. The extra reads sit against 50,000 a day. `FULL_CPU_SERIAL` is `{ cpu: 1, maxInstances: 2 }` with no `minInstances`, so nothing is kept warm and an idle hour bills nothing.
 
+As this ships, with no hour set, every one of those 72 invocations returns after a single document read. That is what the Cloud Scheduler entry costs while the feature is off, and it is the price of the operator being able to turn it on from the UI rather than by asking for a deploy.
+
 The number that would have mattered is the one this design avoids: 24 full drains of the `invoices` collection and the `bookings` collection group per day. Putting the hour check in front of the scan, before any pagination, is what keeps 23 of every 24 ticks at one or two document reads.
 
 ## The UI
@@ -197,11 +212,15 @@ Parity is mandatory. A setting on one admin client and not another is a defect h
 
 A new **Notification schedule** panel carrying three controls:
 
-- **Send household notices** (toggle). `householdNotificationsLive`. This is Phase 1's flag getting its first control anywhere. Until now the operator has had to edit Firestore by hand, which `docs/RUNBOOK.md` walks them through.
-- **Send household notices at** (hour picker, 24 entries). `householdNotificationHour`.
-- **Send the daily schedule digest at** (hour picker, 24 entries). `scheduleDigestHour`.
+- **Send notices to households** (toggle). `householdNotificationsLive`. This is Phase 1's flag getting its first control anywhere. Until now the operator has had to edit Firestore by hand, which `docs/RUNBOOK.md` walks them through.
+- **Invoice reminders and overdue notices** (hour picker). `householdNotificationHour`.
+- **Your daily schedule digest** (hour picker). `scheduleDigestHour`.
 
 A picker, never a text box. There are 24 legal values and the operator should not be able to type a 25th.
+
+**"Not scheduled" is the first entry in both pickers**, and it is what an unconfigured document shows. It is a choice the operator can return to, not a placeholder: picking it stops the job. The pickers do not offer 09:00 or 07:00 as a preselected suggestion, because the ruling is that the cadence is theirs to decide.
+
+One state is worth a line on screen and gets one: sends on with no hour set means no invoice notice will ever go out, however many bills are overdue. It is a note rather than a blocked save, because it is a reasonable state to pass through while opening the product before deciding when to chase anybody.
 
 The hours are labelled in the business zone the settings document already carries, so the panel names it rather than leaving the operator to guess which clock they are setting: "Times are in {timeZone}", reading the same field the server reads. No second zone control; the existing one lives on Business profile.
 
@@ -227,7 +246,7 @@ Every client already writes `business_settings` as a partial merge, and all thre
 - **Android**: the three fields are added to `BUSINESS_SETTINGS_DIFF_FIELDS`. Without that entry the field would simply never save, which `BusinessSettingsDiffTest` exists to catch.
 - **Desktop**: `saveBusinessSettings` writes the whole model under merge, so the panel must `copy()` the loaded settings and change three fields. Building a `BusinessSettings(...)` from form state is the rebuild trap this repo has been bitten by: every field with no control on screen goes back to its default and the save reverts it.
 
-Each client's model gains the three fields with the defaults in the table at the top, so a document missing them reads the same answer the server reads.
+Each client's model gains the three fields reading exactly as the table at the top says, so a document missing them gives the client the same answer it gives the server. The two hours are nullable on every client, because "not scheduled" has to be representable and a sentinel like `-1` would be a second way to say it.
 
 ## What this makes stale
 
