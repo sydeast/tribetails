@@ -1170,8 +1170,9 @@ Steps 2 and 3 cover `recordFailedLogin` and `requestPasswordReset`. Step 5 adds
    should be empty.
 
 5. #910: send one forged recovery request naming a household you own. It files a
-   real `recoveryRequests` row for you to review and close, and uses one of that
-   household's 3 requests per address per hour:
+   real `recoveryRequests` row for you to review and close, emails
+   `AUNTIE_NOTIFY_EMAIL`, and uses one of that household's 3 requests per address
+   per hour:
 
    ```bash
    curl -s -X POST 'https://us-central1-auntieos-ttpc.cloudfunctions.net/requestPrimaryRecovery' -H 'Content-Type: application/json' -H 'X-Forwarded-For: 1.2.3.4' -d '{"data":{"familyId":"<your test tribe id>","contactMethod":"email","newContact":"ip-probe-910@example.com"}}'
