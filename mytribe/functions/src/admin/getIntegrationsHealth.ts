@@ -388,7 +388,7 @@ export const getIntegrationsHealth = onCall(
     // housekeeping: `process.env` carries only what this function declared, so
     // an unbound name would be reported absent whether or not it exists.
     // AUNTIE_OPERATOR_UIDS is bound because `wrapAdminCallable` goes through
-    // `isStaff`, which reads it; without it the allowlist fallback silently
+    // `isOwner`, which reads it; without it the allowlist fallback silently
     // stops matching and a legitimate operator is refused.
     secrets: [...INTEGRATION_SECRET_NAMES, 'AUNTIE_OPERATOR_UIDS'],
   },

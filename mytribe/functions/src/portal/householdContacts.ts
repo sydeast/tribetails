@@ -321,7 +321,7 @@ export async function removeHouseholdContactHandler(
   return { ok: true };
 }
 
-// `AUNTIE_OPERATOR_UIDS` is not optional on any of the three: `isStaff` inside
+// `AUNTIE_OPERATOR_UIDS` is not optional on any of the three: `isOwner` inside
 // `requireKinfolkPrimary` reads it, so without the secret an allowlisted
 // operator (one with no `admin` custom claim) is denied in production while
 // every unit test passes.

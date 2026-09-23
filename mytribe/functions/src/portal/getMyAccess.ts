@@ -1,6 +1,6 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { db } from '../lib/firestoreAdmin';
-import { isStaff } from '../lib/staffGate';
+import { isOwner } from '../lib/staffGate';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { logEvent } from '../lib/logger';
@@ -36,7 +36,7 @@ export async function getMyAccessHandler(
   const clientSnap = await firestore.collection('clients').doc(uid).get();
   const ownIds: string[] = (clientSnap.data()?.kinfolkIds ?? []) as string[];
 
-  const operator = isStaff(uid, req.auth?.token?.admin === true, 'getMyAccess');
+  const operator = isOwner(uid, req.auth?.token?.admin === true, 'getMyAccess');
   // Diagnostic: log env state so prod logs reveal why operator gate fires (or doesn't).
   const rawEnv = process.env.AUNTIE_OPERATOR_UIDS ?? '';
   const allowedList = rawEnv.split(',').map((s) => s.trim()).filter(Boolean);

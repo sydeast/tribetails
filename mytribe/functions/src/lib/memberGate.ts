@@ -1,7 +1,7 @@
 import { HttpsError } from 'firebase-functions/v2/https';
 import { db } from './firestoreAdmin';
 import { logEvent } from './logger';
-import { isStaff } from './staffGate';
+import { isOwner } from './staffGate';
 import type { MemberDoc, MemberPermissions } from './schema';
 
 export async function loadMember(familyId: string, uid: string): Promise<MemberDoc> {
@@ -63,7 +63,7 @@ export async function requireKinfolkPrimary(
   hasAdminClaim: boolean,
   functionName: string,
 ): Promise<MemberDoc | null> {
-  if (isStaff(uid, hasAdminClaim, functionName)) return null;
+  if (isOwner(uid, hasAdminClaim, functionName)) return null;
   const snap = await db().doc(`families/${kinfolkId}/members/${uid}`).get();
   if (!snap.exists) {
     logEvent({ severity: 'warn', function: 'requireKinfolkPrimary', event: 'portal.member.missing', uid, familyId: kinfolkId, extra: { kinfolkId } });
@@ -88,7 +88,7 @@ export async function hasKinfolkPerm(
   hasAdminClaim: boolean,
   functionName: string,
 ): Promise<boolean> {
-  if (isStaff(uid, hasAdminClaim, functionName)) return true;
+  if (isOwner(uid, hasAdminClaim, functionName)) return true;
   const snap = await db().doc(`families/${kinfolkId}/members/${uid}`).get();
   if (!snap.exists) return true; // legacy primary
   const member = snap.data() as MemberDoc;
@@ -104,7 +104,7 @@ export async function requireKinfolkPerm(
   hasAdminClaim: boolean,
   functionName: string,
 ): Promise<MemberDoc | null> {
-  if (isStaff(uid, hasAdminClaim, functionName)) return null;
+  if (isOwner(uid, hasAdminClaim, functionName)) return null;
   const snap = await db().doc(`families/${kinfolkId}/members/${uid}`).get();
   if (!snap.exists) {
     logEvent({

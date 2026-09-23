@@ -1,6 +1,6 @@
 import { HttpsError } from 'firebase-functions/v2/https';
 import { db } from './firestoreAdmin';
-import { isStaff } from './staffGate';
+import { isOwner } from './staffGate';
 import { resolveNonStaffKinfolkId } from './resolveNonStaffKinfolkId';
 import { logEvent } from './logger';
 import { writeAuditEntry } from './writeAuditEntry';
@@ -23,7 +23,7 @@ export interface ResolvedKinfolkAccess {
  * inline, so a non-staff call still costs exactly one read.
  *
  * Staff (RULING O-6: `admin` claim, or the AUNTIE_OPERATOR_UIDS transition
- * fallback — see `isStaff`):
+ * fallback — see `isOwner`):
  *   - any requested kinfolkId   -> ok, IF it exists (existence check —
  *     RULING O-6 hardening 1); a cross-tenant resolution (requested id not
  *     in the caller's own kinfolkIds) is audit-logged (hardening 2)
@@ -42,7 +42,7 @@ export async function resolveKinfolkAccess(
   hasAdminClaim: boolean,
   functionName: string,
 ): Promise<ResolvedKinfolkAccess> {
-  const staff = isStaff(uid, hasAdminClaim, functionName);
+  const staff = isOwner(uid, hasAdminClaim, functionName);
 
   if (staff) {
     // The `clients/{uid}` read lives inside this branch, not above it: the

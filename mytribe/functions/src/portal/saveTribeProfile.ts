@@ -132,7 +132,7 @@ export async function saveTribeProfileHandler(
   const removeKeys = (args.removeCustomFieldKeys ?? []).filter((k) => !isEmergencyContactKey(k));
   // #873 second review: Home access is checked ONCE, before the transaction.
   // Inside it, the check was a plain read the transaction did not lock, and a
-  // retry ran it again (and isStaff logged its allowlist fallback twice). A
+  // retry ran it again (and isOwner logged its allowlist fallback twice). A
   // permission change racing a save is not a risk worth a transactional read:
   // the gate is the same one saveEmergencyContacts applies without one. Only an
   // old client that sent contact rows pays for the read.
@@ -297,7 +297,7 @@ function storedEmergencyContactRows(fields: unknown): CustomFieldRow[] {
 }
 
 export const saveTribeProfile = onCall(
-  // AUNTIE_OPERATOR_UIDS is required because resolveKinfolkAccess -> isStaff
+  // AUNTIE_OPERATOR_UIDS is required because resolveKinfolkAccess -> isOwner
   // reads it. Binding it is not optional: without it the allowlist arm
   // silently evaluates false and an operator not yet holding the admin claim
   // gets permission-denied with no indication why.

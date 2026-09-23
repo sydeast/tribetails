@@ -1,4 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
+import { staffBypass } from '../lib/staffGate';
 import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { resolveKinTaleAccess } from '../lib/resolveKinTaleAccess';
@@ -31,7 +32,9 @@ export async function getKinTaleCommentsHandler(
 
   // RULING O-6, Q2: kinfolkId is derived from the tale doc itself, not
   // trusted from the client (staff no longer need to supply it at all).
-  await resolveKinTaleAccess(args.taleId, uid, args.kinfolkId, req.auth?.token?.admin === true, 'getKinTaleComments');
+  // #944: allowlisted for the Auntie - reading the comments on a KinTale she
+  // wrote is the job. staffBypass refuses any callable not in auntieAccess.ts.
+  await resolveKinTaleAccess(args.taleId, uid, args.kinfolkId, staffBypass(req.auth, 'getKinTaleComments'), 'getKinTaleComments');
 
   const snap = await db()
     .collection(`kin_care_reports/${args.taleId}/comments`)

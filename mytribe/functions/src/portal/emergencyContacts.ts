@@ -6,7 +6,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { hasKinfolkPerm, requireKinfolkPerm } from '../lib/memberGate';
-import { isStaff } from '../lib/staffGate';
+import { isOwner, staffBypass } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { isValidPhone, normalizeE164 } from '../lib/phoneNormalize';
@@ -157,7 +157,9 @@ export async function saveEmergencyContactsHandler(
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const args = parseArgs(SaveArgs, req.data);
-  const isAdmin = req.auth?.token?.admin === true;
+  // #944: allowlisted - the admin clients write emergency contacts and an
+  // Auntie needs them in hand on a visit.
+  const isAdmin = staffBypass(req.auth, 'saveEmergencyContacts');
   const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, isAdmin, 'saveEmergencyContacts');
   await requireKinfolkPerm(uid, kinfolkId, 'home_access', isAdmin, 'saveEmergencyContacts');
 
@@ -191,7 +193,7 @@ export async function canReadEmergencyContacts(
   isAdmin: boolean,
   fn: string,
 ): Promise<boolean> {
-  if (isStaff(uid, isAdmin, fn)) return true;
+  if (isOwner(uid, isAdmin, fn)) return true;
   const memberSnap = await firestore.doc(`families/${kinfolkId}/members/${uid}`).get();
   return !memberSnap.exists || (memberSnap.data() as MemberDoc).status === 'ACTIVE';
 }
@@ -249,7 +251,8 @@ export async function listEmergencyContactsHandler(
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const args = parseArgs(ListArgs, req.data);
-  const isAdmin = req.auth?.token?.admin === true;
+  // #944: allowlisted, same reason as saveEmergencyContacts above.
+  const isAdmin = staffBypass(req.auth, 'listEmergencyContacts');
   const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, isAdmin, 'listEmergencyContacts');
 
   const firestore = db();
@@ -273,7 +276,7 @@ export async function listEmergencyContactsHandler(
   return { contacts: contacts.map(toDto), canEdit, legacy };
 }
 
-// AUNTIE_OPERATOR_UIDS because isStaff reads it: without the secret an
+// AUNTIE_OPERATOR_UIDS because isOwner reads it: without the secret an
 // allowlisted operator with no admin claim is denied in production.
 const OPTIONS = {
   region: 'us-central1' as const,

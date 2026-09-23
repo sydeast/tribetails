@@ -8,7 +8,7 @@ import { wrapCallable } from '../lib/wrapCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
-import { isStaff } from '../lib/staffGate';
+import { staffBypass } from '../lib/staffGate';
 
 /**
  * Archive notification(s) out of the active inbox.
@@ -27,8 +27,8 @@ import { isStaff } from '../lib/staffGate';
  */
 
 function isAdminReq(req: CallableRequest<unknown>, functionName: string): boolean {
-  const claim = req.auth?.token?.admin === true || req.auth?.token?.role === 'admin';
-  return isStaff(req.auth?.uid, claim, functionName);
+  // #944: allowlisted - her own inbox.
+  return staffBypass(req.auth, functionName);
 }
 
 // ───────────────────────────── single ─────────────────────────────

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { wrapCallable } from '../lib/wrapCallable';
 import { loadMember, requirePrimary } from '../lib/memberGate';
-import { isStaff } from '../lib/staffGate';
+import { isOwner } from '../lib/staffGate';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
@@ -41,14 +41,14 @@ export async function updateSecondaryPermissionsHandler(req: CallableRequest<unk
   // Was a hard families/{familyId}/members/{uid} lookup with no staff path:
   // an operator has no member doc for ANY family by design (memberGate.ts),
   // so loadMember always threw permission-denied before an operator ever
-  // reached requirePrimary. isStaff is the one gate every portal check goes
+  // reached requirePrimary. isOwner is the one gate every portal check goes
   // through (RULING O-6); NOT requireKinfolkPrimary, whose legacy
   // missing-member-doc fallback assumes an earlier clients/{uid}.kinfolkIds
   // check already ran, which this callable has never had, so swapping to it
   // wholesale would let ANY stranger with no member doc through as if they
   // were a legacy PRIMARY. The non-staff path below is untouched.
   const hasAdminClaim = req.auth?.token?.admin === true;
-  const isOperator = isStaff(uid, hasAdminClaim, 'updateSecondaryPermissions');
+  const isOperator = isOwner(uid, hasAdminClaim, 'updateSecondaryPermissions');
   if (!isOperator) {
     const caller = await loadMember(args.familyId, uid);
     requirePrimary(caller);
@@ -106,7 +106,7 @@ export async function updateSecondaryPermissionsHandler(req: CallableRequest<unk
 }
 
 export const updateSecondaryPermissions = onCall(
-  // AUNTIE_OPERATOR_UIDS is required because isStaff reads it. Binding it is
+  // AUNTIE_OPERATOR_UIDS is required because isOwner reads it. Binding it is
   // not optional: without it the allowlist arm evaluates false silently, and
   // an operator not yet holding the admin claim gets permission-denied with
   // no indication why.

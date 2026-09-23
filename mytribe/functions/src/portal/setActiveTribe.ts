@@ -5,7 +5,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
-import { isStaff } from '../lib/staffGate';
+import { isOwner } from '../lib/staffGate';
 import { syncKinfolkClaim } from '../lib/kinfolkClaim';
 
 const Args = z.object({ kinfolkId: z.string().min(1) });
@@ -61,7 +61,7 @@ export async function setActiveTribeHandler(
     // the AUNTIE_OPERATOR_UIDS allowlist but has no minted claim fails those
     // reads, and no server change can fix it, because rules cannot consult an
     // env allowlist. Mint the claim via setAdminClaim (see RULING O-6 step 6).
-    if (isStaff(uid, req.auth?.token?.admin === true, 'setActiveTribe')) {
+    if (isOwner(uid, req.auth?.token?.admin === true, 'setActiveTribe')) {
       logEvent({
         severity: 'info',
         function: 'setActiveTribe',
@@ -93,8 +93,8 @@ export async function setActiveTribeHandler(
 }
 
 export const setActiveTribe = onCall(
-  // AUNTIE_OPERATOR_UIDS is required because isStaff reads it. Binding it is not
-  // optional: without it the allowlist arm of isStaff silently evaluates false.
+  // AUNTIE_OPERATOR_UIDS is required because isOwner reads it. Binding it is not
+  // optional: without it the allowlist arm of isOwner silently evaluates false.
   { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'] },
   wrapCallable('setActiveTribe', setActiveTribeHandler),
 );

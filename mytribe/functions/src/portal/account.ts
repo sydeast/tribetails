@@ -5,7 +5,7 @@ import { db, auth as authAdmin } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { normalizeE164 } from '../lib/phoneNormalize';
 import { initSentry } from '../lib/sentry';
-import { isStaff } from '../lib/staffGate';
+import { isOwner } from '../lib/staffGate';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { FULL_CPU } from '../lib/runtimeOptions';
@@ -68,7 +68,7 @@ export async function getMyAccountHandler(req: CallableRequest<unknown>): Promis
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
 
   const requestedKinfolkId = GetAccountArgs.parse(req.data ?? {}).kinfolkId;
-  // Must go through isStaff, exactly like getMyAccess and resolveKinfolkAccess.
+  // Must go through isOwner, exactly like getMyAccess and resolveKinfolkAccess.
   // This read `req.auth?.token?.admin === true` directly, which re-opened the
   // CWE-863 split that lib/staffGate.ts exists to close: an operator on the
   // AUNTIE_OPERATOR_UIDS allowlist without the admin claim passed every other
@@ -76,7 +76,7 @@ export async function getMyAccountHandler(req: CallableRequest<unknown>): Promis
   // derives its read-only state from that flag, so they were handed an EDITABLE
   // form holding their own name, phone and backup contacts, captioned as the
   // household they had stepped into, and Save wrote to the operator's record.
-  const isOperator = isStaff(uid, req.auth?.token?.admin === true, 'getMyAccount');
+  const isOperator = isOwner(uid, req.auth?.token?.admin === true, 'getMyAccount');
   const firestore = db();
 
   // Always read the caller's own client doc first so we know which households
@@ -174,8 +174,8 @@ export async function saveMyAccountHandler(req: CallableRequest<unknown>): Promi
 }
 
 export const getMyAccount = onCall(
-  // AUNTIE_OPERATOR_UIDS is required because isStaff reads it. Binding it is not
-  // optional: without it the allowlist arm of isStaff silently evaluates false,
+  // AUNTIE_OPERATOR_UIDS is required because isOwner reads it. Binding it is not
+  // optional: without it the allowlist arm of isOwner silently evaluates false,
   // which is the exact operator this handler's impersonation branch is for.
   // Kept at a full vCPU so the warm instance minInstances buys keeps 80-way
   // concurrency; below 1 vCPU Cloud Run pins concurrency to 1.

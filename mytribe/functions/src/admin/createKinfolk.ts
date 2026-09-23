@@ -143,7 +143,7 @@ export async function createKinfolkHandler(req: CallableRequest<unknown>): Promi
   return { kinfolkId: outcome.kinfolkId, duplicateOf: outcome.duplicateOf };
 }
 
-// AUNTIE_OPERATOR_UIDS because isStaff (inside wrapAdminCallable) reads it.
+// AUNTIE_OPERATOR_UIDS because isOwner (inside wrapAdminCallable) reads it.
 export const createKinfolk = onCall(
   { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'] },
   wrapAdminCallable('createKinfolk', createKinfolkHandler),

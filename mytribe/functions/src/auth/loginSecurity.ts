@@ -12,7 +12,7 @@ import { enqueueNotification } from '../notifications';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
-import { isStaff } from '../lib/staffGate';
+import { isOwner } from '../lib/staffGate';
 import { FULL_CPU } from '../lib/runtimeOptions';
 
 /**
@@ -1325,7 +1325,7 @@ export async function unlockKinfolkAccountHandler(
   req: CallableRequest<unknown>,
 ): Promise<{ ok: true }> {
   if (!req.auth) throw new HttpsError('unauthenticated', 'Sign-in required.');
-  const isAdmin = isStaff(req.auth.uid, req.auth.token['admin'] === true || req.auth.token['role'] === 'admin', 'unlockKinfolkAccount');
+  const isAdmin = isOwner(req.auth.uid, req.auth.token['admin'] === true || req.auth.token['role'] === 'admin', 'unlockKinfolkAccount');
   if (!isAdmin) throw new HttpsError('permission-denied', 'Admin role required.');
   const args = UnlockArgs.parse(req.data);
 
