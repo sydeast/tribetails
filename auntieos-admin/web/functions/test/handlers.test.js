@@ -750,3 +750,369 @@ describe('Mapbox proxies trim the stored secret', () => {
 // The send now goes through MyTribe's `sendExternalMessage` onCall, which is
 // covered in mytribe/functions/test/sendExternalMessage.test.ts against the
 // real handler rather than a mocked upstream.
+
+// ===========================================================================
+// #944: the caretaker at the gate, endpoint by endpoint
+// ===========================================================================
+//
+// `test/staffAccess.test.js` proves the TABLE. This proves the HANDLERS consult
+// it: that a real Auntie token driven through the real exported handler is
+// admitted where the table says and refused where it does not, and that nothing
+// reaches Firestore, Cloudinary or Mapbox on a refusal.
+//
+// The caretaker token is the shape `grant-staff-role.mjs` mints: `staffRole:
+// 'auntie'` and NO `admin` claim, deliberately, so any site nobody revisited
+// refuses her instead of granting owner power.
+const AUNTIE_TOKEN = { uid: 'auntie-1', staffRole: 'auntie' };
+const DOUBLE_CLAIMED_TOKEN = { uid: 'both-1', admin: true, staffRole: 'auntie' };
+
+describe('#944 caretaker: the endpoints she MAY reach', () => {
+  it('signCloudinaryUpload: an Auntie signs a KinTale photo upload, UNSCOPED', async () => {
+    // The second of the two blockers. Without this she signs in (blocker one,
+    // closed in src/lib/access.ts) and every photo she attaches to a KinTale
+    // fails at the signer.
+    process.env.CLOUDINARY_CLOUD_NAME = 'demo-cloud';
+    process.env.CLOUDINARY_API_KEY = 'demo-key';
+    process.env.CLOUDINARY_API_SECRET = 'demo-secret';
+    idx.__resetCloudinaryCredentialCache();
+    global.fetch = async () => ({ status: 200 });
+    installAdmin({ auth: authReturning(AUNTIE_TOKEN) });
+
+    const res = makeRes();
+    // VISIT_LOG: the KinTale composer's photo strip, whose entityId is the
+    // kin_care_sessions doc id. The folder is Android's and the desktop's
+    // shared convention, so a photo attached to a visit on any platform lands
+    // in one Cloudinary folder.
+    const body = {
+      folder: 'tribetails/visit_log/sess_77',
+      entityType: 'VISIT_LOG',
+      entityId: 'sess_77',
+    };
+    await idx.signCloudinaryUpload(makeReq({ headers: ADMIN_BEARER, body }), res);
+
+    assert.strictEqual(res.statusCode, 200, `expected a signature, got ${JSON.stringify(res.jsonBody)}`);
+    assert.strictEqual(res.jsonBody.folder, 'tribetails/visit_log/sess_77');
+    assert.strictEqual(res.jsonBody.signedBy, 'auntie-1');
+    // The signature is real, not a stub: recomputing it from the returned
+    // params and the secret must match, or the upload would be rejected by
+    // Cloudinary and this test would be asserting a 200 that does not work.
+    const base =
+      `folder=${res.jsonBody.folder}&timestamp=${res.jsonBody.timestamp}` +
+      '&transformation=fl_force_strip' +
+      'demo-secret';
+    assert.strictEqual(res.jsonBody.signature, crypto.createHash('sha1').update(base).digest('hex'));
+  });
+
+  it('signCloudinaryUpload: she is NOT pinned to a sandbox tribe', async () => {
+    // The trap this PR had to step over. The sandbox scope check used to key on
+    // `decodedToken.admin !== true`, and a caretaker carries no admin claim
+    // either, so the obvious way to admit her would have dropped her into the
+    // test-admin branch and answered `test_scope_denied` on every upload: role
+    // reachable, camera still broken. It keys on the resolved role now.
+    process.env.CLOUDINARY_CLOUD_NAME = 'demo-cloud';
+    process.env.CLOUDINARY_API_KEY = 'demo-key';
+    process.env.CLOUDINARY_API_SECRET = 'demo-secret';
+    idx.__resetCloudinaryCredentialCache();
+    global.fetch = async () => ({ status: 200 });
+    installAdmin({ auth: authReturning(AUNTIE_TOKEN) });
+
+    const res = makeRes();
+    await idx.signCloudinaryUpload(
+      makeReq({
+        headers: ADMIN_BEARER,
+        // An entityId that is nobody's testTribeId: a real household.
+        body: { folder: 'tribetails/entity/kf_real', entityType: 'entity', entityId: 'kf_real' },
+      }),
+      res,
+    );
+    assert.notStrictEqual(res.jsonBody && res.jsonBody.error, 'test_scope_denied');
+    assert.strictEqual(res.statusCode, 200);
+  });
+
+  it('searchMapbox: an Auntie may look up a household address', async () => {
+    process.env.MAPBOX_ACCESS_TOKEN = 'mb-secret';
+    installAdmin({ auth: authReturning(AUNTIE_TOKEN) });
+    global.fetch = async () => ({ ok: true, json: async () => ({ suggestions: [{ name: 'Bark House' }] }) });
+
+    const res = makeRes();
+    await idx.searchMapbox(
+      makeReq({ headers: ADMIN_BEARER, body: { query: '123 Bark Ave', sessionToken: 'sess-1' } }),
+      res,
+    );
+    assert.strictEqual(res.statusCode, 200, `got ${JSON.stringify(res.jsonBody)}`);
+    assert.strictEqual(res.jsonBody.signedBy, 'auntie-1');
+  });
+
+  it('retrieveMapbox: and complete the same billed search session', async () => {
+    process.env.MAPBOX_ACCESS_TOKEN = 'mb-secret';
+    installAdmin({ auth: authReturning(AUNTIE_TOKEN) });
+    global.fetch = async () => ({
+      ok: true,
+      json: async () => ({ features: [{ properties: { full_address: '123 Bark Ave' } }] }),
+    });
+
+    const res = makeRes();
+    await idx.retrieveMapbox(
+      makeReq({ headers: ADMIN_BEARER, body: { mapboxId: 'mb-1', sessionToken: 'sess-1' } }),
+      res,
+    );
+    assert.strictEqual(res.statusCode, 200, `got ${JSON.stringify(res.jsonBody)}`);
+  });
+});
+
+describe('#944 caretaker: the endpoints that must keep REFUSING her', () => {
+  it('setAdminClaim: an Auntie cannot mint herself the owner claim', async () => {
+    // The refusal the spec calls the one that costs the most. She carries no
+    // `admin` claim, so this is refused by construction rather than by a line
+    // anyone had to write — which is the entire argument for splitting the
+    // claim instead of adding a field beside a shared `admin: true`.
+    installAdmin({
+      auth: () => ({
+        getUser: async () => {
+          throw new Error('setAdminClaim reached Firebase Auth for a caretaker caller');
+        },
+        setCustomUserClaims: async () => {
+          throw new Error('setAdminClaim wrote a claim for a caretaker caller');
+        },
+      }),
+      firestore: () => {
+        throw new Error('setAdminClaim reached Firestore for a caretaker caller');
+      },
+    });
+    await assert.rejects(
+      () =>
+        idx.setAdminClaim.run({
+          auth: { uid: 'auntie-1', token: AUNTIE_TOKEN },
+          data: { uid: 'auntie-1', isAdmin: true },
+        }),
+      (e) => e.code === 'permission-denied',
+    );
+  });
+
+  it('setAdminClaim: a DOUBLE-CLAIMED caller is refused too', async () => {
+    // The account that should not exist degrades to the caretaker everywhere,
+    // and this is the callable where letting it keep the owner's reach would
+    // let a contractor mint herself a clean owner account and leave the
+    // boundary behind entirely.
+    installAdmin({
+      auth: () => ({
+        getUser: async () => {
+          throw new Error('setAdminClaim reached Firebase Auth for a double-claimed caller');
+        },
+        setCustomUserClaims: async () => {
+          throw new Error('setAdminClaim wrote a claim for a double-claimed caller');
+        },
+      }),
+      firestore: () => {
+        throw new Error('setAdminClaim reached Firestore for a double-claimed caller');
+      },
+    });
+    await assert.rejects(
+      () =>
+        idx.setAdminClaim.run({
+          auth: { uid: 'both-1', token: DOUBLE_CLAIMED_TOKEN },
+          data: { uid: 'target', isAdmin: true },
+        }),
+      (e) => e.code === 'permission-denied',
+    );
+  });
+
+  it('listAdmins: an Auntie cannot read the admin roster', async () => {
+    installAdmin({
+      firestore: () => {
+        throw new Error('listAdmins reached Firestore for a caretaker');
+      },
+    });
+    await assert.rejects(
+      () => idx.listAdmins.run({ auth: { uid: 'auntie-1', token: AUNTIE_TOKEN } }),
+      (e) => e.code === 'permission-denied',
+    );
+  });
+
+  it('listAdmins: a double-claimed caller is refused too', async () => {
+    installAdmin({
+      firestore: () => {
+        throw new Error('listAdmins reached Firestore for a double-claimed caller');
+      },
+    });
+    await assert.rejects(
+      () => idx.listAdmins.run({ auth: { uid: 'both-1', token: DOUBLE_CLAIMED_TOKEN } }),
+      (e) => e.code === 'permission-denied',
+    );
+  });
+
+  it('generateAuntieCopy: refused, so no dossier is laundered into a draft', async () => {
+    // `runGenerate` reads dossiers/{kinfolkId} and puts its rawSummary,
+    // communicationStyle, householdNotes and relationshipWithAuntie into the
+    // prompt and the returned draft. Dossiers are admin-only by the ruling, so
+    // the leak would have arrived as generated prose rather than as a read.
+    installAdmin({
+      auth: authReturning(AUNTIE_TOKEN),
+      firestore: () => {
+        throw new Error('generateAuntieCopy reached Firestore for a caretaker');
+      },
+    });
+    const res = makeRes();
+    await idx.generateAuntieCopy(
+      makeReq({ headers: ADMIN_BEARER, body: { kinfolk_id: 'kf_1', communication_type: 'sms' } }),
+      res,
+    );
+    assert.strictEqual(res.statusCode, 403);
+    assert.strictEqual(res.jsonBody.error, 'admin_required');
+  });
+
+  const DRAFT_ENDPOINTS = [
+    { name: 'writeDraft', call: (req, res) => idx.writeDraft(req, res), body: { draft: { copy: 'hi' } } },
+    { name: 'getDraft', call: (req, res) => idx.getDraft(req, res), query: { id: 'd1' } },
+    { name: 'getTrainingDoc', call: (req, res) => idx.getTrainingDoc(req, res), query: { id: 'td1' } },
+  ];
+
+  for (const ep of DRAFT_ENDPOINTS) {
+    it(`${ep.name}: refused, and never spends the shared draft budget`, async () => {
+      // These three are owner-only because nothing calls them (n8n is retired),
+      // not because the ruling denies her the data: the rules already grant a
+      // caretaker `generated_drafts` and `training_documents` as direct client
+      // reads. The Firestore throw also pins that the gate runs BEFORE the rate
+      // limiter, so a refused caller cannot burn the budget the owner shares.
+      installAdmin({
+        auth: authReturning(AUNTIE_TOKEN),
+        firestore: () => {
+          throw new Error(`${ep.name} reached Firestore for a caretaker`);
+        },
+      });
+      const res = makeRes();
+      await ep.call(
+        makeReq({
+          method: ep.query ? 'GET' : 'POST',
+          headers: ADMIN_BEARER,
+          body: ep.body ?? {},
+          query: ep.query ?? {},
+        }),
+        res,
+      );
+      assert.strictEqual(res.statusCode, 403);
+      assert.strictEqual(res.jsonBody.error, 'admin_required');
+    });
+  }
+
+  it('an unknown future staff role reaches NOTHING, not even the allowlisted endpoints', async () => {
+    // Spec §3. `staffRole: 'bookkeeper'` is neither the owner nor the
+    // caretaker, and the caretaker's grants are the ones it would be easiest to
+    // hand it by accident with a `token.staffRole !== undefined` test.
+    installAdmin({ auth: authReturning({ uid: 'bk-1', staffRole: 'bookkeeper' }) });
+    const res = makeRes();
+    await idx.signCloudinaryUpload(
+      makeReq({
+        headers: ADMIN_BEARER,
+        body: { folder: 'tribetails/entity/kf_1', entityType: 'entity', entityId: 'kf_1' },
+      }),
+      res,
+    );
+    assert.strictEqual(res.statusCode, 403);
+    assert.strictEqual(res.jsonBody.error, 'admin_required');
+  });
+});
+
+describe('#944 setAdminClaim will not mint the owner onto a staff account', () => {
+  // Reported by #948 and closed here. The degrade (both isOwner()
+  // implementations subtract the caretaker) is a good last resort and a bad
+  // ONLY resort: it means the account exists, and every gate not yet taught the
+  // subtraction is one line away from granting it owner power.
+  function ownerCallerAgainst(existingClaims, sink) {
+    installAdmin({
+      auth: () => ({
+        getUser: async () => ({ customClaims: existingClaims }),
+        setCustomUserClaims: async (uid, claims) => {
+          sink.push({ uid, claims });
+        },
+      }),
+      firestore: () => ({
+        collection: () => ({
+          count: () => ({ get: async () => ({ data: () => ({ count: 5 }) }) }),
+          doc: () => ({
+            set: async () => {
+              sink.push({ wroteAdminsDoc: true });
+            },
+            delete: async () => {
+              sink.push({ deletedAdminsDoc: true });
+            },
+          }),
+        }),
+      }),
+    });
+  }
+
+  it('refuses to grant admin to an account already holding staffRole: auntie', async () => {
+    const sink = [];
+    ownerCallerAgainst({ staffRole: 'auntie' }, sink);
+    await assert.rejects(
+      () =>
+        idx.setAdminClaim.run({
+          auth: { uid: 'owner-1', token: { admin: true } },
+          data: { uid: 'auntie-1', isAdmin: true },
+        }),
+      (e) => e.code === 'failed-precondition' && /staffRole "auntie"/.test(e.message),
+    );
+    assert.deepStrictEqual(sink, [], 'the refusal must land before any claim or roster write');
+  });
+
+  it('refuses an UNKNOWN staff role too, not just the caretaker', async () => {
+    // An account nobody has written rules for is exactly the one that must not
+    // be handed the owner claim.
+    const sink = [];
+    ownerCallerAgainst({ staffRole: 'bookkeeper' }, sink);
+    await assert.rejects(
+      () =>
+        idx.setAdminClaim.run({
+          auth: { uid: 'owner-1', token: { admin: true } },
+          data: { uid: 'bk-1', isAdmin: true },
+        }),
+      (e) => e.code === 'failed-precondition' && /staffRole "bookkeeper"/.test(e.message),
+    );
+    assert.deepStrictEqual(sink, []);
+  });
+
+  it('the message names the remedy, because the operator reads it in a dialog', async () => {
+    const sink = [];
+    ownerCallerAgainst({ staffRole: 'auntie' }, sink);
+    await assert.rejects(
+      () =>
+        idx.setAdminClaim.run({
+          auth: { uid: 'owner-1', token: { admin: true } },
+          data: { uid: 'auntie-1', isAdmin: true },
+        }),
+      (e) => /grant-staff-role\.mjs/.test(e.message),
+    );
+  });
+
+  it('STILL REVOKES admin from a double-claimed account: that is the repair', async () => {
+    // The guard must not fire on revoke. Refusing here would leave the one
+    // account that must be fixed unfixable through this path.
+    const sink = [];
+    ownerCallerAgainst({ admin: true, staffRole: 'auntie' }, sink);
+    const out = await idx.setAdminClaim.run({
+      auth: { uid: 'owner-1', token: { admin: true } },
+      data: { uid: 'both-1', isAdmin: false },
+    });
+    assert.deepStrictEqual(out, { ok: true, uid: 'both-1', isAdmin: false });
+    assert.deepStrictEqual(sink[0], {
+      uid: 'both-1',
+      // The staff role survives; only `admin` comes off. mergeAdminClaim
+      // preserves every claim this function does not own.
+      claims: { admin: false, staffRole: 'auntie' },
+    });
+    assert.deepStrictEqual(sink[1], { deletedAdminsDoc: true });
+  });
+
+  it('a clean grant onto an account with no staff role is untouched', async () => {
+    // The no-regression half. The operator's normal path must still work.
+    const sink = [];
+    ownerCallerAgainst({ role: 'kinfolk', kinfolkId: 'kf_9' }, sink);
+    const out = await idx.setAdminClaim.run({
+      auth: { uid: 'owner-1', token: { admin: true } },
+      data: { uid: 'target', isAdmin: true },
+    });
+    assert.deepStrictEqual(out, { ok: true, uid: 'target', isAdmin: true });
+    assert.deepStrictEqual(sink[0].claims, { role: 'kinfolk', kinfolkId: 'kf_9', admin: true });
+  });
+});

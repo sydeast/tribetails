@@ -210,12 +210,18 @@ export function AppShell({ counts }: { counts?: RailCounts } = {}) {
   // permissions nobody checked, and it is the wrong claim for the one account
   // it would misdescribe: a test admin, who would lose the sandbox warning and
   // be told they are the operator.
+  //
+  // #944 added a second account this chip must not call "Operator": a caretaker
+  // is on the Auntie boundary, and the rail is where she would otherwise be
+  // told all day that she is the owner.
   const roleText =
     access === null
       ? OFFLINE_ROLE_LABEL
       : access.status === 'testAdmin'
         ? 'Test admin, sandbox'
-        : 'Operator';
+        : access.status === 'caretaker'
+          ? 'Auntie'
+          : 'Operator';
 
   // The rail's one real number: unread client threads, live. See
   // lib/useUnreadInbox.ts for why the shell owns this listener and what a

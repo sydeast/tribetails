@@ -1,6 +1,6 @@
 import { getIdTokenResult, type User } from 'firebase/auth';
 import { useEffect, useState } from 'react';
-import { allowIntoApp, testModeFromClaim } from './gate';
+import { allowIntoApp, caretakerFromClaim, testModeFromClaim } from './gate';
 import { setTestScope } from './testScope';
 import { useAuth } from './auth';
 import { reportError } from './sentry';
@@ -8,14 +8,24 @@ import { reportError } from './sentry';
 /**
  * The admin GATE decision, derived from a signed-in user's custom claims.
  *
- * Two ways in (see gate.ts for why the asymmetry IS the safety property):
- *   - real admin: `admin === true`.
- *   - Stage 0I test admin: no `admin` claim, but a non-blank `testTribeId`.
+ * Three ways in (see gate.ts for why the asymmetry IS the safety property):
+ *   - owner: `admin === true` and no caretaker role. Gets everything.
+ *   - caretaker: `staffRole: 'auntie'`, no `admin` claim (#944). The contractor
+ *     boundary: household information yes, money never, dossiers never.
+ *   - Stage 0I test admin: neither claim, but a non-blank `testTribeId`.
  * Anyone else who authenticates (e.g. a kinfolk signing in with their portal
  * credentials) is DENIED, the admin app is not theirs.
+ *
+ * `caretaker` IS NOT A WEAKER `admin`, and callers must not treat it as one.
+ * Every screen behind this gate is still rendered by a build that predates the
+ * role, so what stops an Auntie from doing owner work is the SERVER — the
+ * rules, `wrapAdminCallable` and the second codebase's gate — not this status.
+ * The status exists so the app can say which boundary the session is on;
+ * hiding the controls the server now refuses is the client follow-up.
  */
 export type AdminAccess =
   | { status: 'admin' }
+  | { status: 'caretaker' }
   | { status: 'testAdmin'; testTribeId: string }
   | { status: 'denied' };
 
@@ -23,12 +33,36 @@ export type AdminAccess =
  * Pure claims -> access mapping. Kept free of Firebase so the gate logic is
  * unit-testable without a live token. `claims` is the decoded (untrusted-shaped
  * but signed) JWT payload.
+ *
+ * THE ORDER OF THESE FOUR BRANCHES IS THE BOUNDARY. Read it as a precedence:
+ *
+ *   1. caretaker, INCLUDING an account that also carries `admin: true`. That
+ *      account should not exist — `grant-staff-role.mjs` refuses to mint it and
+ *      so, as of this change, does `setAdminClaim` — but if one is made by hand
+ *      it must degrade to the caretaker rather than keep the owner's reach.
+ *      `firestore.rules:isOwner()` and `lib/staffGate.ts:isOwnerClaim()` both
+ *      subtract the caretaker from the owner the same way; a gate that admitted
+ *      such a token as `admin` would put the client on one boundary and the
+ *      server on another, which is the disagreement #944 exists to prevent.
+ *      `isOwner` below therefore ALSO subtracts her, belt and braces: the two
+ *      guards fail independently, and either one alone holds the property.
+ *   2. owner.
+ *   3. Stage 0I test admin.
+ *   4. denied.
+ *
+ * A caretaker who also carries `testTribeId` resolves to `caretaker` and gets
+ * NO sandbox pin, because the rules do not scope `isCaretaker()` either. A
+ * caretaker is a real account working real households; the sandbox claim on one
+ * would be a minting mistake, and pinning her queries to a test tribe would
+ * quietly empty every screen instead of saying so.
  */
 export function accessFromClaims(claims: Record<string, unknown>): AdminAccess {
-  const isAdmin = claims.admin === true;
+  const isCaretaker = caretakerFromClaim(claims.staffRole);
+  const isOwner = claims.admin === true && !isCaretaker;
   const testMode = testModeFromClaim(claims.testTribeId);
-  if (!allowIntoApp(isAdmin, testMode)) return { status: 'denied' };
-  if (isAdmin) return { status: 'admin' };
+  if (!allowIntoApp(isOwner, isCaretaker, testMode)) return { status: 'denied' };
+  if (isCaretaker) return { status: 'caretaker' };
+  if (isOwner) return { status: 'admin' };
   // allowIntoApp guarantees testMode.active here, so testTribeId is non-null.
   return { status: 'testAdmin', testTribeId: testMode.testTribeId as string };
 }

@@ -6,6 +6,7 @@ const { runGenerate } = require('./generate');
 const { enforceGenerateRateLimit } = require('./generateRateLimit');
 const { enforceWindowedRateLimit } = require('./rateLimit');
 const { validateDocId, validateDraftPayload } = require('./draftValidation');
+const { isOwnerClaim, resolveStaffRole, staffRoleOf } = require('./staffAccess');
 
 admin.initializeApp();
 
@@ -39,6 +40,46 @@ function assertAdminRemovalAllowed(uid, callerUid, isAdmin, adminCount) {
       'Cannot remove the last admin. Grant another admin first.',
     );
   }
+}
+
+// #944: a contractor must never be mintable into the owner claim.
+//
+// `grant-staff-role.mjs` already refuses the other direction — it will not put
+// `staffRole` on an account holding `admin: true`, and names the revoke step
+// instead. This is the missing half, reported by #948 and closed here: before
+// it, `setAdminClaim` would happily write `admin: true` onto a uid already
+// carrying `staffRole: 'auntie'`, and the only thing holding the line was the
+// degrade (both `isOwner()` implementations subtract the caretaker). A degrade
+// is a good last resort and a bad only resort, because it means the account
+// exists and every gate that has not been taught the subtraction is one line
+// away from granting it owner power.
+//
+// TWO THINGS THIS DELIBERATELY DOES NOT DO:
+//
+//   1. It does not fire on REVOKE. Taking `admin` off a double-claimed account
+//      is the repair, not the defect; refusing it would leave the only account
+//      that must be fixed unfixable through this path.
+//   2. It does not narrow to `staffRole === 'auntie'`. ANY non-empty staff role
+//      refuses, including one this codebase has never heard of. Spec §3: an
+//      unknown future role is neither the owner nor the caretaker, and an
+//      account nobody has written rules for is exactly the one that must not be
+//      handed the owner claim.
+//
+// The remedy is in the message, because the operator reads it in a dialog: drop
+// the staff role first (`grant-staff-role.mjs --revoke`), then grant.
+//
+// Throws HttpsError('failed-precondition', ...). Returns undefined when safe.
+// Exported for hermetic unit tests; called by setAdminClaim.
+function assertAdminGrantAllowed(uid, isAdmin, existingClaims) {
+  if (!isAdmin) return; // revoking is the repair path, never the defect
+  const role = staffRoleOf(existingClaims);
+  if (role === '') return;
+  throw new HttpsError(
+    'failed-precondition',
+    `Cannot grant admin to ${uid}: the account already holds staffRole "${role}". ` +
+      'The owner claim and a staff role must not sit on one account. Revoke the staff ' +
+      'role first (mytribe/functions/scripts/grant-staff-role.mjs), then grant admin.',
+  );
 }
 
 // Build the next custom-claim object for a uid, preserving every claim we do
@@ -78,7 +119,14 @@ exports.setAdminClaim = onCall(async (req) => {
     throw new HttpsError('unauthenticated', 'Must be signed in.');
   }
 
-  const callerHasAdmin = req.auth?.token?.admin === true;
+  // #944: `isOwnerClaim`, not `token.admin === true`. A double-claimed account
+  // (owner claim plus a caretaker role, which should not exist and which this
+  // function now refuses to create) degrades to the caretaker everywhere else,
+  // and this is the one callable where letting it keep the owner's reach would
+  // let a contractor mint herself a clean owner account and escape the boundary
+  // altogether. A caretaker is refused here by construction too: she carries no
+  // `admin` claim at all.
+  const callerHasAdmin = isOwnerClaim(req.auth?.token);
   if (!callerHasAdmin) {
     throw new HttpsError(
       'permission-denied',
@@ -108,6 +156,8 @@ exports.setAdminClaim = onCall(async (req) => {
   // Read-modify-write: preserve portal (role/kinfolkId) and sandbox
   // (testTribeId) claims. setCustomUserClaims replaces the whole object.
   const target = await admin.auth().getUser(uid);
+  // #944: refuse before the write, with the target's existing claims in hand.
+  assertAdminGrantAllowed(uid, isAdmin, target.customClaims); // throws on a staff-role target
   await admin.auth().setCustomUserClaims(uid, mergeAdminClaim(target.customClaims, isAdmin));
 
   if (isAdmin) {
@@ -130,9 +180,14 @@ exports.setAdminClaim = onCall(async (req) => {
 // httpsCallable('revokeKinfolkClaim') auto-resolve to the MyTribe codebase
 // once that codebase is deployed.
 
-// listAdmins: return uids of current admins. Admin-only.
+// listAdmins: return uids of current admins. OWNER-ONLY (#944): the admin
+// roster is account administration, and a caretaker carries no `admin` claim.
+// `isOwnerClaim` rather than `token.admin === true` so a double-claimed account
+// is refused here too, for the same reason it is refused by `setAdminClaim`:
+// this pair is how an account reaches the owner claim, and both halves must sit
+// on the same side of the degrade.
 exports.listAdmins = onCall(async (req) => {
-  if (req.auth?.token?.admin !== true) {
+  if (!isOwnerClaim(req.auth?.token)) {
     throw new HttpsError('permission-denied', 'Admin only.');
   }
   const snap = await admin.firestore().collection('admins').get();
@@ -175,7 +230,7 @@ const ANTHROPIC_API_KEY = defineSecret('ANTHROPIC_API_KEY');
 //
 // That also retires AO-33 on its own terms rather than by hardening: the
 // timing-unsafe secret compare and the unbounded `n8nIpAllowed.timestamps`
-// array are both gone with the code that held them, and `requireAdminToken`
+// array are both gone with the code that held them, and `requireStaffToken`
 // verifies a signed token instead of comparing a string.
 //
 // The RATE LIMIT survives the move, re-keyed from source IP to verified uid
@@ -197,8 +252,13 @@ const DRAFT_RATE_LIMIT = 60;
  * @returns {string|null} the caller uid, or null when a response was sent.
  */
 async function requireAdminWithDraftBudget(req, res, scope) {
-  const decoded = await requireAdminToken(req, res, scope);
-  if (!decoded) return null;
+  // No `allowTestAdmin`, and no caretaker: all three draft endpoints are
+  // owner-only. See the table in staffAccess.js for why (no live caller since
+  // n8n was retired; the composer reaches `generated_drafts` and
+  // `training_documents` as direct client reads the rules already grant her).
+  const staff = await requireStaffToken(req, res, scope);
+  if (!staff) return null;
+  const decoded = staff.token;
   try {
     await enforceWindowedRateLimit(admin.firestore(), {
       collection: DRAFT_RATE_COLLECTION,
@@ -223,34 +283,63 @@ async function requireAdminWithDraftBudget(req, res, scope) {
   return decoded.uid;
 }
 
-// Verifies the Bearer Firebase ID token and enforces the caller is a real admin
-// (`admin === true`). When `allowTestAdmin` is set, a Stage-0I sandbox test-admin
-// — a real Auth user that carries a non-empty `testTribeId` custom claim instead
-// of `admin` — is ALSO accepted; the CALLER is then responsible for scoping the
-// request to that test tribe (see signCloudinaryUpload). All other endpoints keep
-// the admin-only gate (allowTestAdmin defaults false).
-async function requireAdminToken(req, res, scope, { allowTestAdmin = false } = {}) {
+// Verifies the Bearer Firebase ID token and resolves WHICH ROLE the caller is
+// acting as for this endpoint. Returns `{ token, role }`, or null when a
+// response has already been sent.
+//
+// RENAMED FROM `requireAdminToken` IN #944, AND THE RENAME IS NOT COSMETIC. It
+// now admits a caretaker on the three endpoints `staffAccess.js` allowlists, so
+// a name promising "admin" would put two boundaries behind one word in one
+// repository — the CWE-863 shape RULING O-6 closed, and the same reason #948
+// renamed the server's `isStaff` to `isOwner`.
+//
+// Three roles, resolved by `resolveStaffRole`, which owns the precedence:
+//   owner      `admin === true` and not the caretaker. Reaches everything.
+//   caretaker  `staffRole: 'auntie'`, no `admin` claim. Reaches only what
+//              `AUNTIE_ALLOWED_ENDPOINTS` names, keyed on `scope`. This is why
+//              `scope` was never just a log label: it is the table key, so it
+//              must keep naming the endpoint it guards.
+//   testAdmin  Stage-0I sandbox (`testTribeId`, no `admin`), and only where the
+//              endpoint opted in with `allowTestAdmin`. The CALLER is then
+//              responsible for scoping the request to that test tribe — see
+//              signCloudinaryUpload, which switches on `role === 'testAdmin'`
+//              rather than on the absence of an admin claim, because a
+//              caretaker also lacks that claim and must not fall into the
+//              sandbox branch.
+async function requireStaffToken(req, res, scope, { allowTestAdmin = false } = {}) {
   const authHeader = req.get('Authorization') || '';
   if (!authHeader.startsWith('Bearer ')) {
     res.status(401).json({ error: 'missing_bearer_token' });
     return null;
   }
 
+  let decodedToken;
   try {
-    const decodedToken = await admin.auth().verifyIdToken(authHeader.slice('Bearer '.length).trim(), true);
-    const isAdmin = decodedToken.admin === true;
-    const testTribeId = typeof decodedToken.testTribeId === 'string' ? decodedToken.testTribeId : '';
-    const isTestAdmin = testTribeId.length > 0;
-    if (!isAdmin && !(allowTestAdmin && isTestAdmin)) {
-      res.status(403).json({ error: 'admin_required' });
-      return null;
-    }
-    return decodedToken;
+    decodedToken = await admin.auth().verifyIdToken(authHeader.slice('Bearer '.length).trim(), true);
   } catch (err) {
     console.error('%s: verifyIdToken failed', scope, err);
     res.status(401).json({ error: 'invalid_bearer_token' });
     return null;
   }
+
+  const role = resolveStaffRole(decodedToken, scope, { allowTestAdmin });
+  if (!role) {
+    // A caretaker refused on an owner-only endpoint is a different event from
+    // a stranger with no claim at all, and reads differently in the logs: one
+    // is the boundary working, the other may be an attack. Same 403 either way
+    // — the caller learns nothing about which — but the reason is recorded.
+    if (decodedToken.staffRole !== undefined) {
+      console.info(
+        '%s: refused staffRole=%s uid=%s (not on the caretaker allowlist; see staffAccess.js)',
+        scope,
+        decodedToken.staffRole,
+        decodedToken.uid,
+      );
+    }
+    res.status(403).json({ error: 'admin_required' });
+    return null;
+  }
+  return { token: decodedToken, role };
 }
 
 exports.writeDraft = onRequest({ cors: false }, async (req, res) => {
@@ -559,9 +648,15 @@ exports.signCloudinaryUpload = onRequest(
 
     // allowTestAdmin: the Stage-0I sandbox test-admin (testTribeId claim, no
     // admin) may upload media too, but only pinned to its own test tribe (see
-    // the entityId === testTribeId check below).
-    const decodedToken = await requireAdminToken(req, res, 'signCloudinaryUpload', { allowTestAdmin: true });
-    if (!decodedToken) return;
+    // the role === 'testAdmin' check below).
+    //
+    // #944: a CARETAKER also reaches this endpoint, and she is unscoped. This
+    // is the callable that makes the Auntie role usable — a KinTale photo is
+    // uploaded through here — so shipping the sign-in fix without it would give
+    // the first Auntie an app with a broken camera.
+    const staff = await requireStaffToken(req, res, 'signCloudinaryUpload', { allowTestAdmin: true });
+    if (!staff) return;
+    const decodedToken = staff.token;
 
     const cloudName = CLOUDINARY_CLOUD_NAME.value();
     const apiKey = CLOUDINARY_API_KEY.value();
@@ -611,8 +706,16 @@ exports.signCloudinaryUpload = onRequest(
     // kinfolkId=entityId only for the KINFOLK entity). So the folder's pinned
     // entityId (already forced to be the folder's last segment by
     // validateUploadFolder) must equal testTribeId; any other entity is out of
-    // scope and denied. A real admin (admin===true) is unrestricted.
-    if (decodedToken.admin !== true) {
+    // scope and denied. The owner is unrestricted.
+    //
+    // #944: THIS BRANCH IS KEYED ON THE ROLE, NOT ON `admin !== true`, AND THAT
+    // IS THE WHOLE CHANGE HERE. A caretaker carries no `admin` claim either, so
+    // the old spelling would have dropped her into the sandbox check and denied
+    // every upload she made with `test_scope_denied`: the role would have been
+    // reachable and the camera still broken, which is exactly the failure this
+    // PR exists to prevent. `resolveStaffRole` says which of the three she is,
+    // once, and only the sandbox is scoped.
+    if (staff.role === 'testAdmin') {
       const testTribeId = typeof decodedToken.testTribeId === 'string' ? decodedToken.testTribeId : '';
       if (!testTribeId || entityId !== testTribeId) {
         res.status(403).json({ error: 'test_scope_denied' });
@@ -715,8 +818,13 @@ exports.searchMapbox = onRequest(
       return;
     }
 
-    const decodedToken = await requireAdminToken(req, res, 'searchMapbox');
-    if (!decodedToken) return;
+    // #944: a caretaker reaches this. She holds `kinfolk update` in the rules,
+    // so entering a household's address is work she is granted, and the React
+    // admin already serves her the identical suggestions through MyTribe's
+    // `mapboxSearch` (wrapCallable, open to any signed-in caller).
+    const staff = await requireStaffToken(req, res, 'searchMapbox');
+    if (!staff) return;
+    const decodedToken = staff.token;
 
     const accessToken = MAPBOX_ACCESS_TOKEN.value().trim();
     if (!accessToken) {
@@ -786,8 +894,12 @@ exports.retrieveMapbox = onRequest(
       return;
     }
 
-    const decodedToken = await requireAdminToken(req, res, 'retrieveMapbox');
-    if (!decodedToken) return;
+    // #944: caretaker too — the retrieve half of the same search session that
+    // `searchMapbox` opened. Refusing one and granting the other would bill a
+    // suggest session that can never be completed.
+    const staff = await requireStaffToken(req, res, 'retrieveMapbox');
+    if (!staff) return;
+    const decodedToken = staff.token;
 
     const accessToken = MAPBOX_ACCESS_TOKEN.value().trim();
     if (!accessToken) {
@@ -883,8 +995,16 @@ exports.generateAuntieCopy = onRequest({ secrets: [ANTHROPIC_API_KEY], cors: fal
     return;
   }
 
-  const decodedToken = await requireAdminToken(req, res, 'generateAuntieCopy');
-  if (!decodedToken) return;
+  // OWNER-ONLY (#944). `runGenerate` reads `dossiers/{kinfolkId}` and puts its
+  // rawSummary, communicationStyle, householdNotes and relationshipWithAuntie
+  // into the prompt AND into the draft it returns (generate.js:216-221, :359).
+  // Dossiers are admin-only by the operator's ruling, so opening this to a
+  // caretaker would launder a dossier past the boundary through the copy
+  // generator — the leak would arrive as generated prose rather than as a read,
+  // which is precisely the kind nobody notices.
+  const staff = await requireStaffToken(req, res, 'generateAuntieCopy');
+  if (!staff) return;
+  const decodedToken = staff.token;
 
   const commType = (req.body && req.body.communication_type) || '';
   const apiKey = ANTHROPIC_API_KEY.value();
@@ -942,6 +1062,7 @@ module.exports.__resetCloudinaryCredentialCache = () => {
   cloudinaryCredentialCheck = null;
 };
 module.exports.assertAdminRemovalAllowed = assertAdminRemovalAllowed;
+module.exports.assertAdminGrantAllowed = assertAdminGrantAllowed;
 module.exports.mergeAdminClaim = mergeAdminClaim;
 module.exports.projectN8nDocResponse = projectN8nDocResponse;
 module.exports.N8N_DOC_RESPONSE_FIELDS = N8N_DOC_RESPONSE_FIELDS;
