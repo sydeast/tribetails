@@ -161,6 +161,56 @@ describe('#944 wrapAdminCallable enforces the table', () => {
  * pins the source: a money callable must NOT call staffBypass, because being
  * on that gate at all is the bug.
  */
+/**
+ * The allowlist admits by NAME. That is not the end of the question for a
+ * callable that writes: `wrapAdminCallable` lets an Auntie in, and from there
+ * the handler runs on the Admin SDK, where the rules' `caretakerMoneyUnchanged()`
+ * pin never evaluates. So each allowlisted WRITE has to be checked for a money
+ * field of its own.
+ */
+describe('#944 allowlisted write callables cannot reach money on their own', () => {
+  const SESSION_WRITERS = ['admin/updateKinCareSession.ts', 'admin/createKinCareSession.ts'];
+  it('neither session writer accepts a money field in its schema', () => {
+    // `invoiceId` is the money link on kin_care_sessions. Neither callable may
+    // take it as an argument, whoever is calling.
+    const offenders = SESSION_WRITERS.filter((rel) => {
+      const src = readFileSync(resolve(__dirname, '../src', rel), 'utf8');
+      const args = src.slice(src.indexOf('z\n  .object(') >= 0 ? src.indexOf('z\n  .object(') : src.indexOf('z.object('));
+      const schema = args.slice(0, args.indexOf('});') + 3);
+      return /invoiceId|priceCents|amountMinor|sitterRate|sitterPayout|passthrough|catchall/.test(schema);
+    });
+    expect(offenders).toEqual([]);
+  });
+  /**
+   * serviceType carries no money, but it is the join key the money is computed
+   * FROM: listUninvoicedSessions matches it against business_settings.
+   * serviceRates, which is owner-only because it is the price book. A caretaker
+   * changing the service on a finished visit would move what the household is
+   * billed without ever seeing a rate, and no Firestore rule can catch it,
+   * because the callable runs on the Admin SDK.
+   */
+  it('updateKinCareSession refuses a caretaker who tries to re-price a visit', async () => {
+    const { updateKinCareSessionHandler } = await import('../src/admin/updateKinCareSession');
+    await expect(
+      updateKinCareSessionHandler({
+        auth: auntieAuth,
+        data: { sessionId: 's1', serviceType: 'Overnight' },
+      } as never),
+    ).rejects.toMatchObject({ code: 'permission-denied' });
+  });
+  it('but still lets her fix the notes on a visit she worked', async () => {
+    const { updateKinCareSessionHandler } = await import('../src/admin/updateKinCareSession');
+    // Not found is the RIGHT failure here: it means the caretaker guard let her
+    // through and the handler went on to look for the session. A
+    // permission-denied would mean the guard was over-broad.
+    await expect(
+      updateKinCareSessionHandler({
+        auth: auntieAuth,
+        data: { sessionId: 'no-such-session', notes: 'gate sticks, lift and push' },
+      } as never),
+    ).rejects.toMatchObject({ code: 'not-found' });
+  });
+});
 describe('#944 money callables in the portal keep the owner-only bypass', () => {
   const MONEY_PORTAL_FILES = [
     'portal/payInvoice.ts',

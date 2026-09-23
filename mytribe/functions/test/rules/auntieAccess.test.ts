@@ -314,7 +314,13 @@ describe('rules: #944 an Auntie writing a KinTale, and the feed downstream', () 
    * banks, both on the Admin SDK, which does not evaluate rules at all. What
    * these rules have to guarantee is that the Auntie's write LANDS, because
    * that write is what the trigger fires on. The two tests above are that
-   * guarantee. test/kinTaleFeedAuntie.emulator.test.ts carries the trigger half.
+   * guarantee.
+   *
+   * The trigger half is already covered and is role-blind: test/
+   * reconcileStatus.test.ts proves seedReconcileStatus enrols a fresh report,
+   * and test/onKinTaleCreate.test.ts proves the trigger calls it on a create.
+   * A Firestore event handler has no caller identity in scope, so it cannot
+   * tell an Auntie from the owner and cannot behave differently for one.
    */
   it('cannot delete a KinTale', async () => {
     const env = await getEnv();

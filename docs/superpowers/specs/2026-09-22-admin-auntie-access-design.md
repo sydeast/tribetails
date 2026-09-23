@@ -63,7 +63,10 @@ Three further properties:
   (`mytribe/functions/src/lib/kinfolkClaim.ts`). Reusing it would collide.
 - **An account holding both claims degrades to Auntie.** `isOwner()` requires
   `admin == true` AND not the Auntie role, so a minting mistake fails toward
-  less access.
+  less access. `grant-staff-role.mjs` refuses to create such an account;
+  `setAdminClaim` in the second functions codebase does NOT yet refuse minting
+  `admin: true` onto an account that already holds `staffRole`, so the degrade
+  is what actually holds the line there. Section 11 carries that as follow-up.
 - **An unknown future `staffRole` is neither role.** A token carrying
   `staffRole: 'bookkeeper'` is refused everywhere until someone writes rules
   for it.
@@ -548,6 +551,34 @@ The admin clients are untouched. The consequences are specific:
 4. The two named read exposures in section 5, `kinfolk.outstandingBalance` and
    `kinCares.priceCents`, want a projecting read path so an Auntie's screens
    show the record without the number.
+`auntieos-admin/web/functions/index.js` is a SEPARATE Cloud Functions codebase
+with its own gate, `requireAdminToken`, keyed on `admin === true`. It is server
+code, not UI, and it was left alone on purpose: it deploys separately, and
+splitting it in the same PR would have put two deploy units behind one review.
+Two consequences, both real:
+- **An Auntie cannot upload a KinTale photo.** `signCloudinaryUpload` lives
+  there, and `auntieos-admin/src/api/mediaUpload.ts` reaches it through
+  `adminApiFetch`. `generate`, `searchMapbox` and `retrieveMapbox` are behind
+  the same gate. Teaching `requireAdminToken` about `staffRole` is the first
+  piece of follow-up server work, and it is what makes `saveMediaTags` and
+  `setMediaProfilePhoto` (both allowlisted here) useful rather than theoretical.
+- **`setAdminClaim` does not refuse a double-claimed account.** It will happily
+  mint `admin: true` onto a uid already carrying `staffRole: 'auntie'`.
+  `grant-staff-role.mjs` refuses the other direction. Nothing breaks, because
+  both `isOwner()` implementations degrade such a token to the caretaker
+  boundary, but the refusal belongs on both paths.
+`transitionBookingStatus` is owner-only (it is the Approve / Reject / Cancel /
+Mark Completed state machine), and the rules block a terminal status from every
+client. So the owner closes out every visit an Auntie works.
+That follows from the money line, because whether a visit HAPPENED is what
+decides whether it is billable, and it is defensible. It is also a workflow
+change: Android's "Mark Completed" button will start refusing for an Auntie,
+and `autoCompleteEligible` (which the send batch sets) has no consumer anywhere
+in the tree, so nothing closes the visit automatically either. Section 12
+carries it as a ruling question rather than a decision this PR made quietly.
+`auth/loginSecurity.ts:1299` derives `actorRole` from the `admin` claim, so an
+Auntie's sign-in is written to the audit log as `PRIMARY`, the kinfolk label.
+One line, and it belongs with the follow-up rather than buried in this diff.
 
 ## 12. Collections that want a ruling
 
@@ -564,6 +595,15 @@ speak to them and refusing to guess is the safe state:
   `expenses` is money and is not in question.
 - Whether `kinfolk.outstandingBalance` should move off the household record, so
   the household grant and the money boundary stop fighting.
+- **Who marks a visit completed.** `transitionBookingStatus` is owner-only
+  here, which means the owner closes out every visit. If an Auntie should be
+  able to close her own, that callable needs a caretaker path narrowed to
+  sessions she is the assigned Auntie on.
+- **Whether an Auntie may set `serviceType` when CREATING a session.** She is
+  refused it on `updateKinCareSession` (it is the key pricing joins against),
+  but create has to take one or there is no visit to record. The owner still
+  decides the money, since `createInvoice` is owner-only, so this is a question
+  about influence rather than access.
 
 ## 13. Tests
 
@@ -579,10 +619,20 @@ Rules, `mytribe/functions/test/rules/auntieAccess.test.ts`:
 - A token holding both `admin: true` and `staffRole: 'auntie'` gets the Auntie
   boundary, not the owner's.
 
-Downstream, an emulator test against the real trigger path: an Auntie writes a
-KinTale, the send batch lands on `kin_care_sessions`, and the
-`reconcileStatus: 'pending'` seed the nightly reconcile keys off is present.
-That proves the write still feeds the record, not merely that it succeeded.
+Downstream, the feed is proved in two halves, and only one of them is new.
+The new half is the Auntie's WRITE landing: she creates and updates a
+`kin_care_reports` document, and the send batch lands `reportIds`,
+`sentReportCount` and `autoCompleteEligible` on `kin_care_sessions`. Those are
+the rules tests above, and they are the only half this PR can change.
+The other half is the trigger, and it is already covered by the existing suite:
+`test/reconcileStatus.test.ts` proves `seedReconcileStatus` enrols a freshly
+created report so the pipeline query can see it, and
+`test/onKinTaleCreate.test.ts:119` proves the trigger calls it on a create. No
+new test is written for it, and writing one would prove nothing extra, because
+**the trigger path is role-blind**: it is a Firestore event handler running on
+the Admin SDK with no caller identity in scope at all. It cannot tell an Auntie
+from the owner, so it cannot behave differently for one. What could have broken
+the feed is the Auntie's write being refused, and that is what is tested.
 
 Server, `mytribe/functions/test/auntieAccess.test.ts`: every money callable
 refuses an Auntie token, every allowlisted callable admits one, and every name

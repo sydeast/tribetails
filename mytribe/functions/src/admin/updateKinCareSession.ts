@@ -10,6 +10,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { materializeKinRoster } from '../lib/kinRoster';
+import { isAuntieClaim } from '../lib/staffGate';
 
 /**
  * #397 L19: server-bound edit of the operator-editable fields on ONE
@@ -127,6 +128,26 @@ export async function updateKinCareSessionHandler(
     throw err;
   }
 
+  // #944: a caretaker may fix a visit she worked, and may not re-price it.
+  //
+  // `serviceType` carries no money on this document, but it is the JOIN KEY the
+  // money is computed from: listUninvoicedSessions matches it against
+  // business_settings.serviceRates, which is owner-only precisely because it is
+  // the price book. An Auntie changing the service on a finished visit would
+  // therefore move what the household is billed, without ever seeing a rate.
+  // The rules cannot catch this one: a callable runs on the Admin SDK, so
+  // caretakerMoneyUnchanged() never evaluates.
+  //
+  // Everything else in the patch stays hers: notes, duration and the kin
+  // roster are the corrections she is on site to make. The OWNER still decides
+  // the money either way, since createInvoice is owner-only; this stops a
+  // retroactive edit changing the answer underneath them.
+  if (isAuntieClaim(req.auth?.token) && args.serviceType !== undefined) {
+    throw new HttpsError(
+      'permission-denied',
+      'serviceType decides what this visit bills at. Ask an admin to change it.',
+    );
+  }
   const ref = db().doc(`kin_care_sessions/${args.sessionId}`);
   const snap = await ref.get();
   if (!snap.exists) {
