@@ -139,9 +139,49 @@ describe('rules: #944 an Auntie and money', () => {
     await seed('business_settings/business_settings', {
       timeZone: 'America/Chicago', serviceRates: { walk: '25.00' }, venmoHandle: '@x',
     });
+    await assertFails(asAuntie(env).firestore().doc('business_settings/business_settings').get());
+  });
+  it('cannot write business_settings either', async () => {
+    const env = await getEnv();
+    await seed('business_settings/business_settings', { timeZone: 'America/Chicago' });
+    await assertFails(asAuntie(env).firestore().doc('business_settings/business_settings')
+      .set({ timeZone: 'UTC' }, { merge: true }));
+  });
+  /**
+   * #947 (merged after this branch opened) put the daily notification cadence
+   * on this same document: `householdNotificationHour`, `scheduleDigestHour`
+   * and the `householdNotificationsLive` gate. Deciding when the business sends
+   * to every household is not a caretaker's call, and a payload that satisfies
+   * their new `validBusinessSettings()` validators must still be refused on the
+   * role gate rather than sailing through because the shape is valid.
+   *
+   * Spelled out separately from the write test above because the two fail for
+   * the same reason today and would stop doing so the moment anyone splits the
+   * write rule per field.
+   */
+  it('cannot set the business notification cadence #947 added', async () => {
+    const env = await getEnv();
+    await seed('business_settings/business_settings', {
+      timeZone: 'America/Chicago', householdNotificationHour: 9, scheduleDigestHour: 7,
+    });
     const db = asAuntie(env).firestore();
-    await assertFails(db.doc('business_settings/business_settings').get());
-    await assertFails(db.doc('business_settings/business_settings').set({ timeZone: 'UTC' }, { merge: true }));
+    // Each of these is a VALID payload under validBusinessSettings(); only the
+    // role gate stands between a caretaker and the send schedule.
+    await assertFails(db.doc('business_settings/business_settings')
+      .set({ householdNotificationHour: 3 }, { merge: true }));
+    await assertFails(db.doc('business_settings/business_settings')
+      .set({ scheduleDigestHour: null }, { merge: true }));
+    await assertFails(db.doc('business_settings/business_settings')
+      .set({ householdNotificationsLive: true }, { merge: true }));
+  });
+  /** #947's own run-marker collection is closed to everyone; confirm for a caretaker. */
+  it('cannot touch scheduled_runs, the cron double-send guard', async () => {
+    const env = await getEnv();
+    await seed('scheduled_runs/householdDigest', { lastRunDayIso: '2026-09-22' });
+    const db = asAuntie(env).firestore();
+    await assertFails(db.doc('scheduled_runs/householdDigest').get());
+    await assertFails(db.doc('scheduled_runs/householdDigest')
+      .set({ lastRunDayIso: '2000-01-01' }, { merge: true }));
   });
 
   it('cannot read a payer record on clients/{uid}', async () => {
