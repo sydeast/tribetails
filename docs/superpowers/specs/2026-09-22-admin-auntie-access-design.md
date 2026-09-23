@@ -499,14 +499,20 @@ Around 50 portal callables pass `req.auth?.token?.admin === true` into
 Auntie carries no `admin` claim, so all of them refuse her by construction.
 That is the correct default and it is what the claim split buys.
 
-Eight are called by the admin clients, so an Auntie needs them. Those read the
+Nine are called by the admin clients, so an Auntie needs them. Those read the
 same table through `staffBypass(auth, fnName)`: `addBookingNote`,
 `getKinTaleComments`, `submitVetClinic`, `saveEmergencyContacts`,
-`listMembers`, `createShareLink`, `markNotificationRead`,
-`archiveNotification`.
+`listEmergencyContacts`, `listMembers`, `createShareLink`,
+`markNotificationRead`, `archiveNotification` and `bulkMarkNotificationsRead`.
 
-The rest keep the owner-only bypass. They were walked, not edited; the PR body
-lists them.
+The rest keep the owner-only bypass. They were walked, not edited.
+
+Six of them are the money callables in the portal tree: `payInvoice`,
+`redeemCredit`, `billing`, `quoteDecision`, `getMyInvoices` and
+`getMyInvoicePdf`. Their refusal is by construction, and that is the kind of
+guarantee that evaporates when somebody later threads the new gate through for
+consistency. A test therefore pins the source: a money callable must not call
+`staffBypass`, because being on that gate at all is the bug.
 
 `resolveInvoiceWriteActor` (`mytribe/functions/src/lib/testMode.ts:88`) is the
 ADR-0002 invoice-write gate. It refuses an Auntie twice over, no `admin` claim
