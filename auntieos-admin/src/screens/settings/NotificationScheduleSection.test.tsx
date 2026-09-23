@@ -226,7 +226,8 @@ describe('the panel', () => {
     await userEvent.click(screen.getByLabelText('Toggle household notifications'));
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
-    expect(Object.keys(onSave.mock.calls[0][0]).sort()).toEqual([
+    const patch = onSave.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(Object.keys(patch ?? {}).sort()).toEqual([
       'householdNotificationHour',
       'householdNotificationsLive',
       'scheduleDigestHour',
