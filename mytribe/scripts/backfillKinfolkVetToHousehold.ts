@@ -63,6 +63,10 @@
  * Runbook: run DRY first, read the plan and the conflicts, then re-run with
  * --allow-prod. This script has NOT been run against production as part of the
  * PR that ships it; it is a runbook step.
+ *
+ * STATUS (docs/RUNBOOK.md, "Scripts and the data re-upload"): post-import
+ * check. The scan reads every `kinfolk` document by field presence, not by
+ * write date, so run the dry run again after the household/kin re-upload.
  */
 import { getApps, initializeApp, getFirestore, FieldValue, type Firestore } from './lib/firebaseAdmin';
 type Mode = 'dry-run' | 'apply';

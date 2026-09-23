@@ -58,6 +58,12 @@
  *
  * Runbook: DRY first, read the plan and the refusals, then re-run with
  * --allow-prod.
+ *
+ * STATUS (docs/RUNBOOK.md, "Scripts and the data re-upload"): post-import
+ * check, run after bookings are re-uploaded. Caveat: the no-`createdAt`
+ * rule above assumes an undated Kin predates every booking, which held for
+ * this app's own legacy data; if freshly imported kin also land without
+ * `createdAt`, check the dry run's roster sizes before applying.
  */
 import { getApps, initializeApp, getFirestore, type Firestore } from './lib/firebaseAdmin';
 
