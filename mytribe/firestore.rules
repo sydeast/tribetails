@@ -311,6 +311,25 @@ service cloud.firestore {
                  && request.resource.data[field] >= lo
                  && request.resource.data[field] <= hi);
     }
+ // A send hour, or an explicit null for "not scheduled".
+ //
+ // NULL HAS TO BE LEGAL HERE, unlike every other field on this document, because
+ // it is how a client CLEARS one. All three admin clients write a changed-field
+ // patch under merge, so "no cadence" travels as `field: null`; leaving the field
+ // out instead would merge to "unchanged" and the operator's Not scheduled would
+ // silently not take. `bsInt` would refuse that write, since the key IS present
+ // and `null is int` is false.
+ //
+ // It is not a loosening. `resolveSendHour` on the server reads null and absent
+ // identically as "this job has no cadence", so the two spellings of the same
+ // answer are both allowed and nothing else is.
+    function bsHourOrNull(field) {
+      return !bsHas(field)
+             || request.resource.data[field] == null
+             || (request.resource.data[field] is int
+                 && request.resource.data[field] >= 0
+                 && request.resource.data[field] <= 23);
+    }
     function bsList(field, maxLen) {
       return !bsHas(field)
              || (request.resource.data[field] is list && request.resource.data[field].size() <= maxLen);
@@ -329,6 +348,22 @@ service cloud.firestore {
              && bsBool('requireArrivalDepartureVerification')
              && bsBool('autoStartTrackingOnVisitStart')
              && bsBool('allowClientLocationSharing')
+ // Phase 1's pre-launch household send gate. The server reads it as `=== true`
+ // and so cannot be fooled by a wrong type, but a client that writes a string
+ // here would leave an operator looking at a toggle whose state nothing agrees
+ // on. See `functions/src/notifications/householdSendGate.ts`.
+             && bsBool('householdNotificationsLive')
+ // Phase 2: the hour the daily notification jobs act on, in the business zone,
+ // or null for "not scheduled". `bsHourOrNull` rather than `bsInt` because null
+ // is how a client unschedules a job; see that function.
+ //
+ // The server reads a value it cannot use as "no cadence" and the job simply
+ // does nothing, so this rule is not what keeps the jobs running. It is what
+ // keeps that branch unreachable from a client, leaving a hand edit in the
+ // Firestore console as the only way to reach it. See
+ // `functions/src/lib/notificationSchedule.ts`.
+             && bsHourOrNull('householdNotificationHour')
+             && bsHourOrNull('scheduleDigestHour')
              && bsInt('defaultTimeBlockDurationHours', 1, 24)
              && bsInt('travelBufferMinutes', 0, 480)
              && bsInt('saveRoutesForDays', 1, 3650)
@@ -348,6 +383,19 @@ service cloud.firestore {
     match /business_settings/{docId} {
       allow read: if isOwner() || isTestAdmin();
       allow write: if isOwner() && validBusinessSettings();
+    }
+
+ // Which business day each hour-driven cron last completed its scan on. DENIED
+ // TO EVERY CLIENT, including an Auntie, and the reason is the opposite of the
+ // one that protects `integrations_config` below: there is no secret here, there
+ // is a guard. `scheduled_runs/{fn}.lastRunDayIso` is what stops a job sending
+ // twice in one day when the operator moves its hour, so a client able to write
+ // it could clear the marker and a client able to set it could suppress a day's
+ // notices. Nothing needs it: the Admin SDK inside the functions bypasses rules,
+ // and the settings the operator DOES edit live one block up. See
+ // `functions/src/lib/notificationSchedule.ts`.
+    match /scheduled_runs/{jobId} {
+      allow read, write: if false;
     }
 
  // Coverage Package Builder config (the admin's visit menu + coverage rules).

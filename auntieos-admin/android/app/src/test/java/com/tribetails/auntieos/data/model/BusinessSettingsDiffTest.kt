@@ -44,6 +44,59 @@ class BusinessSettingsDiffTest {
         assertEquals(mapOf("venmoHandle" to ""), changes)
     }
 
+    /**
+     * SCHEDULING A JOB, AND UNSCHEDULING IT AGAIN.
+     *
+     * The two send hours are the only nullable fields on this model, and the
+     * second half of this test is the one that matters: clearing 9 back to null
+     * is how the operator stops a job, so it has to arrive as a written null
+     * rather than be dropped as "nothing to say". A differ that skipped nulls
+     * would leave the job running at 9 while the picker read Not scheduled,
+     * which is the quietest possible way to keep sending.
+     */
+    @Test
+    fun `a send hour is written when set and when cleared`() {
+        assertEquals(
+            mapOf<String, Any?>("householdNotificationHour" to 9),
+            businessSettingsFieldChanges(loaded, loaded.copy(householdNotificationHour = 9)),
+        )
+        val scheduled = loaded.copy(householdNotificationHour = 9)
+        assertEquals(
+            mapOf<String, Any?>("householdNotificationHour" to null),
+            businessSettingsFieldChanges(scheduled, scheduled.copy(householdNotificationHour = null)),
+        )
+    }
+
+    /** Midnight is a real hour and must not compare equal to "not scheduled". */
+    @Test
+    fun `midnight is a change from not scheduled`() {
+        assertEquals(
+            mapOf<String, Any?>("scheduleDigestHour" to 0),
+            businessSettingsFieldChanges(loaded, loaded.copy(scheduleDigestHour = 0)),
+        )
+    }
+
+    /** The two hours are independent fields, so moving one never writes the other. */
+    @Test
+    fun `the digest hour and the household hour do not move together`() {
+        val changes = businessSettingsFieldChanges(loaded, loaded.copy(scheduleDigestHour = 7))
+        assertEquals(setOf("scheduleDigestHour"), changes.keys)
+    }
+
+    /** Phase 1's send gate diffs like any other toggle. */
+    @Test
+    fun `the household send gate is written when opened and when shut again`() {
+        val opened = loaded.copy(householdNotificationsLive = true)
+        assertEquals(
+            mapOf<String, Any?>("householdNotificationsLive" to true),
+            businessSettingsFieldChanges(loaded, opened),
+        )
+        assertEquals(
+            mapOf<String, Any?>("householdNotificationsLive" to false),
+            businessSettingsFieldChanges(opened, opened.copy(householdNotificationsLive = false)),
+        )
+    }
+
     /** The stamps and the document identity are the repository's business, never the diff's. */
     @Test
     fun `stamps and identity never enter the diff`() {

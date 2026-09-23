@@ -460,6 +460,33 @@ export interface BusinessSettings {
    * `PhoneLineSection`, which says so on the screen.
    */
   voiceLiveTransferEnabled: boolean;
+  /**
+   * PHASE 1's PRE-LAUNCH SEND GATE: whether anything at all reaches a household.
+   *
+   * DEFAULTS FALSE, and only the literal boolean `true` opens it, which is the
+   * opposite of `voiceLiveTransferEnabled` two fields up and for the opposite
+   * reason. The product is not live, production data is about to be deleted and
+   * re-uploaded, and a value we cannot read as `true` is not evidence the
+   * operator opened the product.
+   * `mytribe/functions/src/notifications/householdSendGate.ts` is the
+   * server-side authority and applies the identical rule. It shipped in PR #943
+   * with no control anywhere; `NotificationScheduleSection` is its first one.
+   */
+  householdNotificationsLive: boolean;
+  /**
+   * When `invoiceRemindersCron` and `invoiceOverdueCron` send, as an hour 0..23
+   * on the business's own clock, or `null` for "not scheduled".
+   *
+   * NULL IS NOT A MISSING VALUE TO BE DEFAULTED, it is the answer. Operator
+   * ruling 2026-09-22: no job runs until they switch it on here, and the cadence
+   * is theirs to choose. The 09:00 and 09:30 these crons used to be pinned to
+   * were never anybody's decision, so this app does not offer them back as
+   * defaults. `mytribe/functions/src/lib/notificationSchedule.ts` reads it the
+   * same way.
+   */
+  householdNotificationHour: number | null;
+  /** The same, for `scheduleDigestCron`. Its own field because it is the operator's own brief, not a household's notice. */
+  scheduleDigestHour: number | null;
   logoUrl: string;
   /** ISO instant of the last clear of `logoUrl`, or ''. See `MyTribePortalConfig.logoRemovedAt` for why this exists. */
   logoRemovedAt: string;
@@ -572,6 +599,11 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   snapRescheduleTo15Min: false,
   // TRUE by design; see the field's comment on the interface.
   voiceLiveTransferEnabled: true,
+  // FALSE and NULL by design; see their comments on the interface. Nothing sends
+  // and nothing is scheduled until the operator says so on the Notifications tab.
+  householdNotificationsLive: false,
+  householdNotificationHour: null,
+  scheduleDigestHour: null,
   logoUrl: '',
   logoRemovedAt: '',
   brandWordmark: '',
@@ -627,6 +659,24 @@ function pickString(raw: unknown, fallback: string): string {
 
 function pickList<T>(raw: unknown, fallback: T[]): T[] {
   return Array.isArray(raw) ? (raw as T[]) : fallback;
+}
+
+/**
+ * A send hour, or null for "not scheduled".
+ *
+ * The one numeric reader in this file, and it is here rather than as a general
+ * `pickNumber` for the reason the note above gives: nothing should learn to
+ * invent a numeric fact a document never stated. This one invents nothing. It
+ * has no fallback to invent, because null is a real answer rather than a
+ * missing one, and anything that is not an integer 0..23 reads as null.
+ *
+ * It matches `resolveSendHour` in
+ * `mytribe/functions/src/lib/notificationSchedule.ts` value for value, so the
+ * picker and the cron never disagree about whether a job is scheduled.
+ */
+function pickHour(raw: unknown): number | null {
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 0 || raw > 23) return null;
+  return raw;
 }
 
 function pickMap(raw: unknown, fallback: Record<string, string>): Record<string, string> {
@@ -789,6 +839,14 @@ export function mergeBusinessSettings(raw: RawSettings | undefined): BusinessSet
     // off for an explicit boolean false and for nothing else. A stray string
     // or number in this field must read as ON in the admin UI too, or the
     // switch would show off while the phone still offered the transfer.
+    // `=== true` rather than the `?? default` the booleans above use, mirroring
+    // `resolveHouseholdSendGate` exactly: a `'true'` string or a `1` left by a
+    // hand edit is not the operator opening the product, and a toggle that
+    // showed ON while the server held every household copy back would be the
+    // worst possible lie for this particular switch.
+    householdNotificationsLive: r.householdNotificationsLive === true,
+    householdNotificationHour: pickHour(r.householdNotificationHour),
+    scheduleDigestHour: pickHour(r.scheduleDigestHour),
     voiceLiveTransferEnabled: r.voiceLiveTransferEnabled !== false,
     logoUrl: pickString(r.logoUrl, d.logoUrl),
     logoRemovedAt: pickString(r.logoRemovedAt, d.logoRemovedAt),

@@ -1533,30 +1533,42 @@ Until you switch this on, nothing the platform sends reaches a household. Your
 own alerts keep coming the whole time.
 
 The gate exists because of the data re-upload. Several jobs chase households on
-a clock: `invoiceRemindersCron` at 09:00, `invoiceOverdueCron` at 09:30,
-`kincareReminderCron` hourly, `scheduleDigestCron`, and the three notification
-sweeps. Re-upload the old invoices and the 09:30 run finds every unpaid bill
-that was already past due in the old system, and writes to real people about
-bills they settled months ago. There is no recall on an email.
+a clock: `invoiceRemindersCron`, `invoiceOverdueCron`, `kincareReminderCron`,
+`scheduleDigestCron`, and the three notification sweeps. Re-upload the old
+invoices and the overdue run finds every unpaid bill that was already past due
+in the old system, and writes to real people about bills they settled months
+ago. There is no recall on an email.
 
 It is one boolean, read by `enqueueNotificationDetailed` once per send. Copies
 addressed to a household stop there. Copies addressed to you or to an Auntie go
 out as they always have, which is why the failed-login and account-lockout
 alerts from #876 keep working while the gate is shut.
 
+**There is a second lock now, and it is also shut.** The three daily jobs used
+to be pinned to 09:00, 09:30 and 07:00 in their own code. They now run at an
+hour you choose, and until you choose one they do not run at all. So the two
+invoice crons are held twice over: no send hour, and this gate. "Choosing when
+the daily jobs run" below is the other half.
+
 ### Turning it on
 
-Firebase console, Firestore, document `business_settings/business_settings`.
-Add a field:
+**Settings, Notifications, the Notification schedule panel.** Switch on "Send
+notices to households". It is the first control at the top of the panel, and it
+is on all three admin clients: the web admin, the Android app and the desktop
+console. This used to be a hand edit in the Firebase console and no longer needs
+to be.
+
+It takes effect on the next send, with no deploy and no restart, because the
+value is read per send rather than cached at cold start.
+
+**The console is still there as a fallback** if an admin client will not load.
+Firestore, document `business_settings/business_settings`, add a field:
 
 ```
 householdNotificationsLive   boolean   true
 ```
 
-That is the whole change. It takes effect on the next send, with no deploy and
-no restart, because the value is read per send rather than cached at cold start.
-
-Three things to know about the value:
+Three things to know about the value, which matter mostly if you set it by hand:
 
 - It must be the boolean `true`. The string `"true"` reads as off, on purpose.
   Going live is a decision you make once, and a value we cannot read as the
@@ -1570,9 +1582,42 @@ Set it on `business_settings/business_settings`. The older
 `business_settings/singleton` id is read only when that document does not exist
 at all, so when both are present the modern one is the only one that counts.
 
-Both admin clients save settings as a merge, the web with `setDoc(..., {merge:
-true})` and Android with `SetOptions.merge()`, so editing business hours or
-anything else on either one leaves this field where you put it.
+All three admin clients save settings as a merge of only the fields they
+touched, so editing business hours or anything else on any of them leaves this
+field where you put it.
+
+### Choosing when the daily jobs run
+
+Same panel, under the toggle. Two pickers, both starting at "Not scheduled":
+
+- **Invoice reminders and overdue notices.** One hour governs both
+  `invoiceRemindersCron` and `invoiceOverdueCron`. They read different invoices,
+  so sharing an hour cannot produce two notices about one bill.
+- **Your daily schedule digest.** Its own hour, because it is your brief and no
+  household ever sees it. It is not held by the gate above, so this picker is
+  the only thing deciding whether it runs.
+
+The hours are on the business's own clock, the `timeZone` on the Business
+profile tab. The panel names the zone so you are not guessing which clock you
+are setting.
+
+Whole hours only. The overdue notice used to go at 09:30 and cannot any more,
+because the jobs check the clock once an hour.
+
+**Picking "Not scheduled" again stops a job.** It is a choice you can return to,
+not a placeholder.
+
+**Changing the hour never doubles up.** Each job records the day it last ran, so
+moving the hour from 14:00 to 09:00 at 11am sends once, at 11am, and moving it
+from 09:00 to 14:00 after the 09:00 run has already gone sends nothing more that
+day. Move it freely.
+
+**Why the jobs are invoked every hour.** A Cloud Scheduler time is fixed when
+the function deploys and cannot be read out of Firestore, so the only way for
+you to change it without a deploy is for the job to wake up hourly, look at your
+setting, and go back to sleep when it is not the hour. A wake-up with no hour
+set reads one document and stops. It is not doing work and it is not sending
+anything.
 
 **It only bites once the functions are deployed.** Merging deploys nothing to
 the backend. Run the release, then confirm the deploy landed:
@@ -1594,7 +1639,8 @@ undoing anything.
 Look for something happening, not for something stopping. The gate is meant to
 hold for weeks, so quiet logs prove very little on their own.
 
-Pick an overdue invoice in Firestore and watch it across a 09:30 run. While the
+Pick an overdue invoice in Firestore and watch it across one overdue run,
+at whatever hour you set above. While the
 gate is shut it carries `overdueSuppressedAtMs` and no `overdueNotifiedAtMs`.
 The morning after you open the gate, the same invoice picks up
 `overdueNotifiedAtMs` and a `scheduledNotifications` row appears for the

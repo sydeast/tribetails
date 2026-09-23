@@ -246,7 +246,7 @@ internal enum class SettingsSection(
     BusinessHours("Business hours", "When the Den is open for visits", Lucide.CalendarClock),
     CalendarSync("Google Calendar sync", "Import busy events as private blocks", Lucide.RefreshCw),
     TimeOff("Time off", "Holidays observed and Den closures", Lucide.Plane),
-    Notifications("Notifications", "The per-notification channel gate", Lucide.Bell),
+    Notifications("Notifications", "Whether notices send, when, and the per-channel gate", Lucide.Bell),
     // "Scheduling" is the settings mock's title for these three switches
     // (issue #755 pass); web's panel of the same name sits under Business
     // profile.
@@ -589,11 +589,27 @@ fun AdminSettingsScreen(
                             },
                         )
 
+                        // TWO PANELS, SCHEDULE FIRST.
+                        //
+                        // NotificationSchedulePanel answers whether anything sends
+                        // at all and at what hour. It outranks the matrix below it,
+                        // because with sending off or no hour set nothing in that
+                        // matrix can fire whatever each row says.
+                        //
                         // Per-notification matrix = the GATE. For every notification
                         // the operator picks, per channel, Enable / Disable / Lock.
                         // Enable makes a channel available in each recipient's own
                         // notification settings; Disable hides it; Lock forces it on.
-                        SettingsSection.Notifications -> NotificationMatrixPanel()
+                        SettingsSection.Notifications -> Column(
+                            verticalArrangement = Arrangement.spacedBy(dims.space4),
+                        ) {
+                            NotificationSchedulePanel(
+                                settings = uiState.businessSettings,
+                                isLoading = uiState.isLoading,
+                                onSettingsChange = { viewModel.updateBusinessSettings(it) },
+                            )
+                            NotificationMatrixPanel()
+                        }
 
                         SettingsSection.BookingBehavior -> BookingBehaviorPanel(
                             settings = uiState.businessSettings,

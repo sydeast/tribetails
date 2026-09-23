@@ -242,6 +242,24 @@ data class BusinessSettings(
     // schedule drag to quarter-hours. Both default false (behavior unchanged).
     var autoConfirmRepeatKinfolk: Boolean = false,
     var snapRescheduleTo15Min: Boolean = false,
+    // --- Notification schedule ---
+    // householdNotificationsLive is the pre-launch send gate (PR #943): nothing
+    // reaches a household while it is false, and the server opens it only on the
+    // literal boolean true. It shipped with no control on any client, so opening
+    // the product meant editing Firestore by hand; NotificationSchedulePanel is
+    // its first switch here.
+    //
+    // The two hours are when the daily jobs run, on the business's own clock.
+    // NULLABLE, and null is the answer rather than a value gone missing: operator
+    // ruling 2026-09-22 is that no job runs until it is switched on from this UI
+    // and the cadence is decided then, so there is no default hour to fall back
+    // to. A sentinel like -1 would be a second spelling of the same answer and
+    // the two would drift. Firestore's mapper narrows a stored Long to Int for a
+    // nullable Int and a missing key leaves the default, so neither needs a
+    // decode branch. See mytribe/functions/src/lib/notificationSchedule.ts.
+    var householdNotificationsLive: Boolean = false,
+    var householdNotificationHour: Int? = null,
+    var scheduleDigestHour: Int? = null,
     // --- Branding (17.2) ---
     // Operator-editable brand identity, persisted on this same business_settings doc
     // via the existing merge write (rule: write if isAuntie()); no backend. Each is

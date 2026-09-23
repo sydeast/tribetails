@@ -113,6 +113,18 @@ internal val BUSINESS_SETTINGS_DIFF_FIELDS: Map<String, SettingsDiffField> = lin
     // --- Booking behavior ---
     "autoConfirmRepeatKinfolk" to SettingsDiffField({ it.autoConfirmRepeatKinfolk }),
     "snapRescheduleTo15Min" to SettingsDiffField({ it.snapRescheduleTo15Min }),
+    // --- Notification schedule ---
+    // The two hours are the only NULLABLE fields on this map, and null has to
+    // survive the diff rather than be dropped by it: null is how the operator
+    // unschedules a job, so a change from 9 to null is a real edit that must be
+    // written. `businessSettingsFieldChanges` compares with `!=`, which is boxed
+    // Integer equality and gets 9-to-null right, and writes the raw value, which
+    // puts an explicit null on the wire. `firestore.rules` allows null on exactly
+    // these two fields for that reason, where every other numeric field takes a
+    // plain range check.
+    "householdNotificationsLive" to SettingsDiffField({ it.householdNotificationsLive }),
+    "householdNotificationHour" to SettingsDiffField({ it.householdNotificationHour }),
+    "scheduleDigestHour" to SettingsDiffField({ it.scheduleDigestHour }),
     // --- Branding ---
     "logoUrl" to SettingsDiffField({ it.logoUrl }),
     // Also written server-side by the `confirmBrandAssetUpload` callable, so a

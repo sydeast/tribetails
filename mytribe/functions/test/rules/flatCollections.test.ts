@@ -258,6 +258,83 @@ describe('rules: flat top-level collections', () => {
       }, { merge: true }),
     );
   });
+  /**
+   * THE NOTIFICATION SCHEDULE FIELDS, and above all the null.
+   *
+   * All three admin clients write a changed-field patch under merge, so "Not
+   * scheduled" travels as `householdNotificationHour: null`. Leaving the key out
+   * instead would merge to "unchanged" and the operator's choice would silently
+   * not take, so null has to be legal here. A plain `bsInt` refuses it, because
+   * the key IS present and `null is int` is false, and that refusal would have
+   * denied the whole save on every client the first time anybody unscheduled a
+   * job. This test was watched fail against `bsInt`.
+   */
+  it('business_settings: a send hour may be set, changed, and cleared to null', async () => {
+    const env = await getEnv();
+    await seedBusinessSettings();
+    await assertSucceeds(
+      asAuntie(env).firestore().doc('business_settings/business_settings')
+        .set({ householdNotificationHour: 9, scheduleDigestHour: 7 }, { merge: true }),
+    );
+    // Midnight and the last hour of the day are both legal.
+    await assertSucceeds(
+      asAuntie(env).firestore().doc('business_settings/business_settings')
+        .set({ householdNotificationHour: 0, scheduleDigestHour: 23 }, { merge: true }),
+    );
+    // And unscheduling, which is the write the first draft of these rules denied.
+    await assertSucceeds(
+      asAuntie(env).firestore().doc('business_settings/business_settings')
+        .set({ householdNotificationHour: null, scheduleDigestHour: null }, { merge: true }),
+    );
+  });
+
+  it('business_settings: a send hour that is not an hour is refused', async () => {
+    const env = await getEnv();
+    await seedBusinessSettings();
+    for (const bad of [-1, 24, 9.5, '9', true]) {
+      await assertFails(
+        asAuntie(env).firestore().doc('business_settings/business_settings')
+          .set({ householdNotificationHour: bad }, { merge: true }),
+      );
+      await assertFails(
+        asAuntie(env).firestore().doc('business_settings/business_settings')
+          .set({ scheduleDigestHour: bad }, { merge: true }),
+      );
+    }
+  });
+
+  /**
+   * The server reads this as `=== true`, so a wrong type cannot make it send.
+   * The rule exists so a client cannot leave behind a value that shows one state
+   * on an admin screen and means another to the dispatcher.
+   */
+  it('business_settings: the household send gate must be a real boolean', async () => {
+    const env = await getEnv();
+    await seedBusinessSettings();
+    await assertSucceeds(
+      asAuntie(env).firestore().doc('business_settings/business_settings')
+        .set({ householdNotificationsLive: true }, { merge: true }),
+    );
+    await assertFails(
+      asAuntie(env).firestore().doc('business_settings/business_settings')
+        .set({ householdNotificationsLive: 'true' }, { merge: true }),
+    );
+  });
+
+  /**
+   * The run marker is what stops an hour-driven job sending twice in one day, so
+   * a client that could write it could suppress a day's notices or replay them.
+   * Nothing needs it: the Admin SDK inside the functions bypasses rules.
+   */
+  it('scheduled_runs: denied to every client, including an Auntie', async () => {
+    const env = await getEnv();
+    await assertFails(asAuntie(env).firestore().doc('scheduled_runs/invoiceOverdueCron').get());
+    await assertFails(
+      asAuntie(env).firestore().doc('scheduled_runs/invoiceOverdueCron')
+        .set({ lastRunDayIso: '2026-09-22' }),
+    );
+  });
+
   it('business_settings: a wrong-typed field is refused, not stored for a Function to trip over', async () => {
     const env = await getEnv();
     await seedBusinessSettings();

@@ -3485,6 +3485,28 @@ data class BusinessSettings(
     // leave them alone. Giving an operator an Email/SMS/Push switch that changes
     // nothing, while the real gate sits one tab away, is the same defect #519 is
     // about pointed the other way.
+    //
+    // WHAT DOES LIVE HERE, and is read by real code on both sides:
+    //
+    // `householdNotificationsLive` is the pre-launch send gate (PR #943).
+    // Nothing reaches a household while it is false, and the server opens it
+    // only on the literal boolean true. It shipped with no control on any
+    // client; `NotificationSchedulePanel` is its first switch here.
+    //
+    // The two hours are when the daily jobs run, on the business's own clock.
+    // THE FIRST NULLABLE FIELDS ON THIS MODEL, and null is the answer rather
+    // than a value gone missing: operator ruling 2026-09-22 is that no job runs
+    // until it is switched on from this UI and the cadence is decided then, so
+    // there is no default hour to fall back to. A sentinel like -1 would be a
+    // second spelling of the same answer and the two would drift.
+    //
+    // A cleared hour is written as an EXPLICIT NULL, which `firestore.rules`
+    // allows on exactly these two fields. The diff write would otherwise have no
+    // way to say "unschedule this", since omitting a key means unchanged under a
+    // merge. See `mytribe/functions/src/lib/notificationSchedule.ts`.
+    val householdNotificationsLive: Boolean = false,
+    val householdNotificationHour: Int? = null,
+    val scheduleDigestHour: Int? = null,
 
     // ---- Time off / holidays ----
     // List of US holiday IDs observed (e.g. "new_years", "thanksgiving")

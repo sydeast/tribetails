@@ -8,6 +8,7 @@ import { enqueueNotificationDetailed } from '../notifications/dispatcher';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
 import { isAutoReminder24hEnabled } from '../lib/autoReminder';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
+import { HOURLY_TICK } from '../lib/notificationSchedule';
 
 const WINDOW_LOWER_MS = 24 * 60 * 60 * 1000;
 const WINDOW_UPPER_MS = 48 * 60 * 60 * 1000;
@@ -154,15 +155,45 @@ export async function runKincareReminderScan(now: number = Date.now()): Promise<
 }
 
 /**
- * Runs hourly. Scans confirmed bookings starting 24-48h from now, enqueues
- * `kincare.upcoming.reminder` once per booking.
+ * Runs hourly and scans on EVERY tick. Confirmed bookings starting 24-48h from
+ * now, `kincare.upcoming.reminder` once per booking.
+ *
+ * ── WHY THIS ONE HAS NO OPERATOR-CHOSEN HOUR ──────────────────────────────────
+ *
+ * The other three daily jobs now tick hourly and act at an hour the operator
+ * picks (`lib/notificationSchedule.ts`). This one keeps sweeping, because it has
+ * no hardcoded hour to make adjustable in the first place: it reminds relative to
+ * the VISIT rather than at a time of day, and it already reads its own switch
+ * (`enableAutoReminder24h`, #519) before it does anything expensive.
+ *
+ * Pinning it to one scan a day would be a regression twice over.
+ *
+ * Its window is exactly 24 hours wide, so daily scans tile it with no gap only
+ * while every day is 24 hours long. On the short day in spring, one hour of
+ * visits falls between two scans and is never reminded about.
+ *
+ * And the "nothing was delivered, stamp nothing" branch above depends on getting
+ * many attempts. A household that turns email back on, or an operator who opens
+ * the pre-launch gate, is caught within the hour today. One scan a day would mean
+ * one attempt a day at a window only 24 hours wide.
+ *
+ * Hour-gating it would also move the lead time from about 48 hours to 24-48,
+ * which is arguably closer to what the switch's own label promises. That is a
+ * product change nobody asked for, so it is not made here.
+ *
+ * ── THE EXPRESSION IS NORMALISED ALL THE SAME ─────────────────────────────────
+ *
+ * `0 * * * *` in `Etc/UTC`, matching the other three. `every 60 minutes` promises
+ * a sixty-minute gap and not the top of the hour, and a local-zone hourly cron
+ * has to answer for the spring hour that does not exist and the autumn hour that
+ * happens twice. Nothing in this file reads a wall clock, so the zone bought it
+ * nothing to begin with.
  */
 export const kincareReminderCron = onSchedule(
   // Scans upcoming visits and fans out reminders inside the default 60s
   // timeout. See notificationDebounceSweep.
   {
-    schedule: 'every 60 minutes',
-    timeZone: 'America/New_York',
+    ...HOURLY_TICK,
     secrets: ['SENTRY_DSN'],
     ...FULL_CPU_SERIAL,
   },
