@@ -11,8 +11,10 @@ import { BUSINESS_SETTINGS_DOC, BUSINESS_SETTINGS_DOC_LEGACY } from '../lib/busi
  * The product is not live, and production data is about to be deleted and
  * re-uploaded whole. A bulk re-upload of historical invoices lands a pile of
  * unpaid, long-past-due bills in `invoices`, and the next `invoiceOverdueCron`
- * run at 09:30 would find every one of them eligible and write a real household
- * an overdue notice about a bill they settled months ago in the old system.
+ * scan would find every one of them eligible and write a real household an
+ * overdue notice about a bill they settled months ago in the old system. (That
+ * scan ran at 09:30 when this was written. It now runs at the hour the operator
+ * picks; see `lib/notificationSchedule.ts`.)
  * `invoiceRemindersCron`, `kincareReminderCron`, `scheduleDigestCron` and the
  * three notification sweeps all sit on the same trip wire.
  *

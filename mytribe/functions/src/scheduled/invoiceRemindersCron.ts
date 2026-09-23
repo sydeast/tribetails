@@ -9,6 +9,7 @@ import { INVOICE_REMINDER_RESEND_WINDOW_MS } from '../admin/sendInvoiceReminder'
 import { paginateQuery } from '../lib/paginateCollectionGroup';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 import { businessTodayIso } from '../lib/quoteDecision';
+import { HOURLY_TICK, runHourlyTick } from '../lib/notificationSchedule';
 import { paidCentsFromPayments } from '../lib/invoiceMath';
 import {
   chaseRefusalOf,
@@ -47,6 +48,20 @@ import {
  * falls back to the ruled `America/Chicago` when the settings doc carries no
  * usable zone, so `runDay` returning null needs BOTH zones to fail in `Intl`:
  * a scan that cannot name the day sends nothing rather than guess it.
+ *
+ * WHEN. Both crons tick HOURLY and act on the hour the operator chose
+ * (`business_settings.householdNotificationHour`), at most once per business
+ * day. They used to be pinned to 09:00 and 09:30 `America/New_York`, which no
+ * operator could change without a redeploy, and which nobody had ever actually
+ * chosen. There is NO DEFAULT: until the operator picks an hour on the settings
+ * screen, neither cron does anything (operator ruling 2026-09-22, see
+ * `lib/notificationSchedule.ts`, which also carries why the tick has to be
+ * hourly for the hour to be adjustable at all).
+ *
+ * The two scans read disjoint sets of invoices (due within REMINDER_WINDOW_DAYS
+ * versus due day already past), so sharing one hour cannot produce two notices
+ * about one bill. The overdue notice loses its old half hour, because an hourly
+ * tick cannot express one.
  *
  * CADENCE, as it exists today and kept: one due-soon reminder per invoice (this
  * cron, due today or within REMINDER_WINDOW_DAYS; or a button press, which the
@@ -197,9 +212,17 @@ async function runDay(now: number, functionName: string): Promise<string | null>
  * Drains the top-level `invoices` collection, page by page (WARNING-25): the
  * old single `.limit(1000)` never reminded any invoice past the cap. Exported
  * so a test can drive the full scan against a paged mock.
+ *
+ * `day` is the business day the hourly tick already resolved. It is optional so
+ * the scan stays drivable on its own, by the tests and by anything that wants
+ * the scan without the schedule; passing it is what stops the tick and the scan
+ * reading the same settings document twice in one run.
  */
-export async function runInvoiceRemindersScan(now: number = Date.now()): Promise<number> {
-  const todayIso = await runDay(now, 'invoiceRemindersCron');
+export async function runInvoiceRemindersScan(
+  now: number = Date.now(),
+  day?: string,
+): Promise<number> {
+  const todayIso = day ?? (await runDay(now, 'invoiceRemindersCron'));
   if (todayIso === null) return 0;
   let reminded = 0;
   await paginateQuery(
@@ -213,21 +236,33 @@ export async function runInvoiceRemindersScan(now: number = Date.now()): Promise
 }
 
 /**
- * Runs daily 09:00 ET. Scans live bills due today or within
- * REMINDER_WINDOW_DAYS and not yet reminded, and enqueues `invoice.reminder`
- * once per invoice.
+ * Ticks hourly. Acts once per business day, at `householdNotificationHour`,
+ * scanning live bills due today or within REMINDER_WINDOW_DAYS and not yet
+ * reminded, and enqueuing `invoice.reminder` once per invoice. With no hour set,
+ * which is how this ships, it does nothing at all.
+ *
+ * A tick before the hour costs one document read and stops there, which is what
+ * makes 24 ticks a day cheaper than they sound. See `lib/notificationSchedule.ts`.
  */
 export const invoiceRemindersCron = onSchedule(
   // Walks open invoices and fans out reminders inside the default 60s
   // timeout. See notificationDebounceSweep.
   {
-    schedule: 'every day 09:00',
-    timeZone: 'America/New_York',
+    ...HOURLY_TICK,
     secrets: ['SENTRY_DSN'],
     ...FULL_CPU_SERIAL,
   },
   wrapScheduled('invoiceRemindersCron', async () => {
-    await runInvoiceRemindersScan(Date.now());
+    const now = Date.now();
+    await runHourlyTick({
+      firestore: db(),
+      functionName: 'invoiceRemindersCron',
+      nowMs: now,
+      pickHour: (s) => s.householdHour,
+      scan: async (dayIso) => {
+        await runInvoiceRemindersScan(now, dayIso);
+      },
+    });
   }),
 );
 
@@ -254,8 +289,8 @@ export const invoiceRemindersCron = onSchedule(
  * its notice on the day the gate opens.
  *
  * THE RETRY WINDOW IS RIGHT FOR BOTH. This field is a backoff, never a record of
- * delivery: `OVERDUE_SUPPRESSED_RETRY_MS` is under one run period, so a gated
- * invoice is retried by the next daily run and goes out on the first run after
+ * delivery: `OVERDUE_SUPPRESSED_RETRY_MS` is under one SCAN period, so a gated
+ * invoice is retried by the next day's scan and goes out on the first scan after
  * the operator flips the gate. What would break the launch is stamping
  * `overdueNotifiedAtMs` instead, and nothing on this path does.
  */
@@ -267,9 +302,17 @@ const SUPPRESSED_FIELD_OVERDUE = 'overdueSuppressedAtMs';
  * of one per run forever, and the notice goes out on the first run after the
  * operator turns it back on.
  *
- * DELIBERATELY SHORTER THAN THE 24-HOUR RUN PERIOD. Equal to it, a run that
+ * DELIBERATELY SHORTER THAN THE DAY BETWEEN TWO SCANS. Equal to it, a scan that
  * starts a little early, or the 23-hour day when clocks spring forward, would
  * fall inside the wait and skip a whole extra day.
+ *
+ * THE HOURLY TICK DOES NOT SHORTEN THAT GAP. The function is invoked 24 times a
+ * day now, but the run marker (`lib/notificationSchedule.ts`) lets the scan
+ * happen at most once per business day, so two consecutive scans are still about
+ * a day apart and 20 hours still sits under that. What WOULD break this constant
+ * is dropping the marker and letting every tick scan: the wait would then swallow
+ * 19 of the 24 ticks and a suppressed invoice would be retried once a day anyway,
+ * by accident rather than by design.
  */
 export const OVERDUE_SUPPRESSED_RETRY_MS = 20 * 60 * 60 * 1000;
 
@@ -362,8 +405,11 @@ export async function processOverdueInvoice(
 /**
  * Drains the top-level `invoices` collection for overdue notices (WARNING-25).
  */
-export async function runInvoiceOverdueScan(now: number = Date.now()): Promise<number> {
-  const todayIso = await runDay(now, 'invoiceOverdueCron');
+export async function runInvoiceOverdueScan(
+  now: number = Date.now(),
+  day?: string,
+): Promise<number> {
+  const todayIso = day ?? (await runDay(now, 'invoiceOverdueCron'));
   if (todayIso === null) return 0;
   let notified = 0;
   await paginateQuery(
@@ -377,18 +423,31 @@ export async function runInvoiceOverdueScan(now: number = Date.now()): Promise<n
 }
 
 /**
- * Runs daily 09:30 ET. Scans live bills whose due day has passed, and enqueues
- * `invoice.overdue` once per invoice. The only sender of that notice (#871).
+ * Ticks hourly. Acts once per business day, at `householdNotificationHour`,
+ * scanning live bills whose due day has passed, and enqueuing `invoice.overdue`
+ * once per invoice. The only sender of that notice (#871). With no hour set,
+ * which is how this ships, it does nothing at all.
+ *
+ * THIS IS THE JOB THE OPERATOR ASKED ABOUT. It ran at 09:30 `America/New_York`,
+ * a time nothing but a redeploy could change.
  */
 export const invoiceOverdueCron = onSchedule(
   // Walks overdue invoices and fans out notices. See invoiceRemindersCron.
   {
-    schedule: 'every day 09:30',
-    timeZone: 'America/New_York',
+    ...HOURLY_TICK,
     secrets: ['SENTRY_DSN'],
     ...FULL_CPU_SERIAL,
   },
   wrapScheduled('invoiceOverdueCron', async () => {
-    await runInvoiceOverdueScan(Date.now());
+    const now = Date.now();
+    await runHourlyTick({
+      firestore: db(),
+      functionName: 'invoiceOverdueCron',
+      nowMs: now,
+      pickHour: (s) => s.householdHour,
+      scan: async (dayIso) => {
+        await runInvoiceOverdueScan(now, dayIso);
+      },
+    });
   }),
 );

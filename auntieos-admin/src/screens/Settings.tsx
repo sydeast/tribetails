@@ -13,6 +13,7 @@ import { BrandingSection } from './settings/BrandingSection';
 import { PhoneLineSection } from './settings/PhoneLineSection';
 import { BusinessProfileSection } from './settings/BusinessProfileSection';
 import { BookingRulesSection } from './settings/BookingRulesSection';
+import { NotificationScheduleSection } from './settings/NotificationScheduleSection';
 import { VisitsTrackingSection } from './settings/VisitsTrackingSection';
 import { IntegrationsSection } from './settings/IntegrationsSection';
 import { BusinessHoursEditor } from './settings/BusinessHoursEditor';
@@ -75,12 +76,14 @@ import './Settings.css';
  * Loads `business_settings/business_settings` once via the one-shot
  * `getBusinessSettings` (a direct Firestore `getDoc`, not a callable — see
  * `api/settings.ts`), not a live listener: a sole admin has no concurrent editor
- * to react to. `Notifications` and `Tags` are their own self-loading editors
- * (`NotificationGate`, `TagsEditor`), so they do not depend on this doc and are
- * rendered directly. `Integrations` is self-loading too (a Cloud Functions
- * secret answer no client can read), but it now also receives the loaded
- * `settings` and the shared `persist`, purely to hand them to the Calendar
- * panels it can open inline. The other nine sections read this loaded `data`.
+ * to react to. `Tags` is its own self-loading editor (`TagsEditor`), so it does
+ * not depend on this doc and is rendered directly. `Integrations` is
+ * self-loading too (a Cloud Functions secret answer no client can read), but it
+ * also receives the loaded `settings` and the shared `persist`, purely to hand
+ * them to the Calendar panels it can open inline. `Notifications` is now BOTH:
+ * the new schedule panel reads this doc, so the section moved under
+ * `AsyncRegion`, and the self-loading `NotificationGate` renders beneath it.
+ * The other ten sections read this loaded `data`.
  */
 
 type SectionId =
@@ -160,7 +163,8 @@ export function Settings({ initialSection }: SettingsProps = {}) {
   // Which sections have been opened at least once. A section mounts on its first
   // visit and then stays mounted (hidden when not selected), so an in-progress
   // edit survives a trip to another section instead of being silently reset, and
-  // the two self-loading sections (Notifications, Tags) don't fetch until opened.
+  // the self-loading editors (Tags, and the gate list inside Notifications)
+  // don't fetch until opened.
   const [visited, setVisited] = useState<Set<SectionId>>(() => new Set([startSection]));
 
   // Hoisted so a failed load can hand AsyncRegion a real retry (the
@@ -270,7 +274,6 @@ function renderSection(
   persist: (patch: Partial<BusinessSettings>) => Promise<void>,
   applyServerChange: (patch: Partial<BusinessSettings>) => void,
 ): ReactNode {
-  if (id === 'notifications') return <NotificationGate />;
   if (id === 'tags') return <TagsEditor />;
   // Self-loading, and for a stronger reason than Notifications/Tags: no
   // client can read a Cloud Functions secret at all, so this section's whole
@@ -363,6 +366,26 @@ function renderDataSection(
       return <PaymentOptionsSection data={data} onSave={persist} />;
     case 'mytribe':
       return <MyTribePortalSection data={data} onSave={persist} onServerChanged={applyServerChange} />;
+    // TWO PANELS, ONE TAB, AND THE SETTINGS-BACKED ONE COMES FIRST.
+    //
+    // `NotificationGate` (the per-key on/off overrides) is self-loading and used
+    // to be this whole section, returned bare above `AsyncRegion` because it
+    // needs no `business_settings`. `NotificationScheduleSection` does need it,
+    // so the section moved down here and the gate editor came with it: the
+    // operator's first two questions about notifications are "do they send at
+    // all" and "when", and the answers should not be on two different screens
+    // from the per-key list.
+    //
+    // The order is deliberate. The schedule panel outranks the override list,
+    // because with sends off or no hour set, nothing in that list can fire
+    // whatever each row says.
+    case 'notifications':
+      return (
+        <>
+          <NotificationScheduleSection data={data} onSave={persist} />
+          <NotificationGate />
+        </>
+      );
     default:
       return null;
   }

@@ -685,6 +685,12 @@ private fun SectionPanel(
             )
         }
         SettingsSection.Notifications -> Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            // SCHEDULE FIRST. It answers whether anything sends at all and at what
+            // hour, which outranks the matrix below it: with sending off or no
+            // hour set, nothing in that matrix can fire whatever each row says.
+            NotificationSchedulePanel(
+                settingsData = settingsData, settingsLoaded = settingsLoaded, vm = vm, scope = scope,
+            )
             // The per-notification gate matrix is the single source of truth for which
             // channels each notification offers. The old global pause + coarse
             // Email/SMS/Push boxes were removed; this panel persists each change itself.
