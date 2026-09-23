@@ -2,13 +2,37 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { AUNTIE_ALLOWED_CALLABLES } from '../src/lib/auntieAccess';
+import { buildDbMock } from './_helpers/mockDb';
 
+const mocks = vi.hoisted(() => ({ dbFn: vi.fn() }));
+
+/**
+ * `lib/firestoreAdmin` is stubbed for the same reason the other 280 test files
+ * in this tree stub it, and this file learned it the hard way. Two tests below
+ * call `updateKinCareSessionHandler` for real, and the one that gets PAST the
+ * caretaker guard goes on to read a document. Unstubbed, that initialises the
+ * Firebase Admin SDK, which needs a project id: ambient on a developer machine,
+ * absent on the CI runner. So this file passed locally and failed in CI with
+ * "Unable to detect a Project Id" where a `not-found` was expected.
+ *
+ * The fix is the stub, not an env var. A unit test asserting an authorization
+ * boundary has no business reaching a real client in either environment, and
+ * papering over it with configuration would leave the test passing for a reason
+ * that has nothing to do with what it claims to check.
+ */
+vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ captureFunctionError: vi.fn().mockReturnValue('s1'), initSentry: () => {} }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockResolvedValue('a1') }));
 vi.mock('../src/lib/sessionRevocation', () => import('./_helpers/mockSessionRevocation'));
+vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 
 beforeEach(() => {
   process.env.AUNTIE_OPERATOR_UIDS = '';
+  // An EMPTY Firestore. Nothing here wants a document to be found: the two
+  // handler tests are about WHICH ERROR comes back, and `not-found` is only
+  // reachable by getting past the gate into a real lookup.
+  mocks.dbFn.mockReset();
+  mocks.dbFn.mockReturnValue(buildDbMock({ docs: {} }).db);
 });
 
 /**
@@ -200,9 +224,12 @@ describe('#944 allowlisted write callables cannot reach money on their own', () 
   });
   it('but still lets her fix the notes on a visit she worked', async () => {
     const { updateKinCareSessionHandler } = await import('../src/admin/updateKinCareSession');
-    // Not found is the RIGHT failure here: it means the caretaker guard let her
-    // through and the handler went on to look for the session. A
-    // permission-denied would mean the guard was over-broad.
+    // `not-found` IS THE ASSERTION, not an accident of the fixture. It can only
+    // be reached by getting past the caretaker guard and into the document
+    // lookup, so it is what proves a legitimate edit still goes through.
+    // `permission-denied` here would mean the guard had grown over-broad and
+    // taken the Auntie's own job with it, which is what this test exists to
+    // catch. The Firestore stub is empty precisely so the lookup misses.
     await expect(
       updateKinCareSessionHandler({
         auth: auntieAuth,
