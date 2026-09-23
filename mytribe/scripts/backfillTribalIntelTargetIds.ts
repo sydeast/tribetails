@@ -52,6 +52,15 @@
  * Runbook: run DRY first, read the CREATE and AMBIGUOUS sections, then re-run
  * with --allow-prod. This script has NOT been run against production as part of
  * the PR that ships it; it is a runbook step the operator performs.
+ *
+ * STATUS (docs/RUNBOOK.md, "Scripts and the data re-upload"): historical, do
+ * not run. `training_documents` is written only by the internal call
+ * reconciliation pipeline, not by the customer-data re-upload, and a full
+ * wipe clears both the stale rows and the kinfolk they would match. If this
+ * is ever run again anyway: it CREATES `kinfolk` records (and, via
+ * `onKinfolkCreate`, full households) for any name it cannot match, which is
+ * exactly what a re-imported roster with retyped or reformatted names would
+ * produce as false negatives. Read every CREATE line by hand first.
  */
 import { getApps, initializeApp, getFirestore, type Firestore } from './lib/firebaseAdmin';
 
