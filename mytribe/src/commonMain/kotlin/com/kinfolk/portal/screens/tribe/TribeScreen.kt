@@ -97,6 +97,14 @@ fun TribeScreen(
     familyName: String,
     kinfolkId: String,
     portalApi: PortalApi,
+    /**
+     * Threaded down to [ContactAuntieCard]'s Call / Text / Email pills. Every
+     * `TribeScreenTest` case renders this screen against a fake, so a
+     * `getBusinessContact` stub puts three live `tel:` / `sms:` / `mailto:`
+     * buttons on the Compose host; without this seam a `performClick()` on one
+     * would hand it to the machine running the suite.
+     */
+    openUrl: (String) -> Unit = { openExternalUrl(it) },
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
@@ -207,7 +215,7 @@ fun TribeScreen(
                 )
             }
 
-            ContactAuntieCard(portalApi = portalApi)
+            ContactAuntieCard(portalApi = portalApi, openUrl = openUrl)
 
             if (loaded == null && error == null) {
                 Box(modifier = Modifier.fillMaxWidth().padding(KinfolkSpacing.l), contentAlignment = Alignment.Center) {
@@ -1725,7 +1733,7 @@ internal fun AccessToggleRow(label: String, value: Boolean, onChange: (Boolean) 
 }
 
 @Composable
-private fun ContactAuntieCard(portalApi: PortalApi) {
+private fun ContactAuntieCard(portalApi: PortalApi, openUrl: (String) -> Unit) {
     val type = LocalKinfolkTypography.current
     var contact by remember { mutableStateOf<BusinessContact?>(null) }
     LaunchedEffect(Unit) {
@@ -1751,13 +1759,13 @@ private fun ContactAuntieCard(portalApi: PortalApi) {
                 if (phone.isNotBlank()) {
                     GhostPillButton(
                         label = "Call",
-                        onClick = { openExternalUrl("tel:$phone") },
+                        onClick = { openUrl("tel:$phone") },
                         icon = Icons.Filled.Phone,
                         modifier = Modifier.weight(1f),
                     )
                     GhostPillButton(
                         label = "Text",
-                        onClick = { openExternalUrl("sms:$phone") },
+                        onClick = { openUrl("sms:$phone") },
                         icon = Icons.Filled.Sms,
                         modifier = Modifier.weight(1f),
                     )
@@ -1765,7 +1773,7 @@ private fun ContactAuntieCard(portalApi: PortalApi) {
                 if (email.isNotBlank()) {
                     GhostPillButton(
                         label = "Email",
-                        onClick = { openExternalUrl("mailto:$email") },
+                        onClick = { openUrl("mailto:$email") },
                         icon = Icons.Filled.Email,
                         modifier = Modifier.weight(1f),
                     )

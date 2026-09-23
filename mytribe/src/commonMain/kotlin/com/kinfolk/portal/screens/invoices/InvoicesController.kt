@@ -58,6 +58,21 @@ class InvoicesController internal constructor(
     private val kinfolkId: String,
     private val portalApi: PortalApi,
     private val scope: kotlinx.coroutines.CoroutineScope,
+    /**
+     * Every external hand-off this controller makes goes through here, so a
+     * test can pass a recording fake instead of the platform opener.
+     *
+     * Before this parameter existed, `startPay` called `openExternalUrl`
+     * directly, and the completed-checkout case in `InvoicesControllerTest`
+     * handed `https://checkout.stripe.com/c/pay/cs_test_1` straight to
+     * `Desktop.getDesktop().browse`, twice per `./gradlew :jvmTest`, in
+     * whatever browser the person running the suite had open. Stripe refused
+     * the fixture session with "This link is incomplete", which is how the
+     * operator found out her unit tests were browsing the internet.
+     *
+     * Same shape as `SecureResetScreen`'s `openUrl`, which had it right.
+     */
+    private val openUrl: (String) -> Unit = { openExternalUrl(it) },
 ) {
     var data by mutableStateOf<InvoicesResult?>(null)
         private set
@@ -126,7 +141,7 @@ class InvoicesController internal constructor(
         scope.launch {
             try {
                 val url = portalApi.getMyInvoicePdf(invoiceId = invoice.id, kinfolkId = kinfolkId)
-                if (url.isNotBlank()) openExternalUrl(url)
+                if (url.isNotBlank()) openUrl(url)
             } catch (t: Throwable) {
                 error = t.message ?: "Could not open the invoice PDF"
             } finally {
@@ -197,7 +212,7 @@ class InvoicesController internal constructor(
                 // pay a different balance later must not reuse a key Stripe
                 // still holds: the body would differ and Stripe would refuse it.
                 checkoutKeys.remove(invoice.id)
-                if (res.checkoutUrl.isNotBlank()) openExternalUrl(res.checkoutUrl)
+                if (res.checkoutUrl.isNotBlank()) openUrl(res.checkoutUrl)
             } catch (t: Throwable) {
                 error = t.message ?: "Could not start payment"
             } finally {
@@ -216,7 +231,7 @@ class InvoicesController internal constructor(
     fun startPayMethod(invoice: Invoice, method: PayMethod) {
         when (method.kind) {
             PayMethodKind.Checkout -> startPay(invoice)
-            PayMethodKind.Link -> method.url?.takeIf { it.isNotBlank() }?.let { openExternalUrl(it) }
+            PayMethodKind.Link -> method.url?.takeIf { it.isNotBlank() }?.let { openUrl(it) }
             // ISSUE #409: an instructions method is text, not a target. The
             // screen renders it without a tap handler, so this branch exists
             // to state that there is nothing to do rather than to be reached.

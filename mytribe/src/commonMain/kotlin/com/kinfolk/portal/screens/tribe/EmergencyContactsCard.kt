@@ -131,6 +131,13 @@ fun EmergencyContactsCard(
     kinfolkId: String?,
     portalApi: PortalApi,
     onDirtyChange: (Boolean) -> Unit = {},
+    /**
+     * The read-only card's tap-to-call. `readOnlyWithoutHomeAccess` already
+     * asserts that phone node `hasClickAction()`; the day someone turns that
+     * assertion into a `performClick()`, this seam is what stops `:jvmTest`
+     * handing a `tel:` URL to the host OS.
+     */
+    openUrl: (String) -> Unit = { openExternalUrl(it) },
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
@@ -229,7 +236,7 @@ fun EmergencyContactsCard(
                                 Text(
                                     c.phone,
                                     style = type.sansBody.copy(color = KinfolkBrand.KinTeal),
-                                    modifier = Modifier.clickable { openExternalUrl("tel:${c.phone}") },
+                                    modifier = Modifier.clickable { openUrl("tel:${c.phone}") },
                                 )
                             }
                         }
