@@ -6,7 +6,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { resolveKinCareRef } from '../lib/resolveKinCareRef';
-import { isStaff } from '../lib/staffGate';
+import { staffBypass } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { sanitizeRichText } from '../lib/richText';
 import { assertNoteWindowOpen } from '../lib/bookingNoteCutoff';
@@ -55,7 +55,7 @@ export async function addBookingNoteHandler(
   // RULING O-6, Q2: kinfolkId remains required as a path locator (the doc
   // path needs it — resolveKinCareRef.ts), but authorization now inverts to
   // resolve-then-authorize: resolve the visit first, then gate on
-  // isStaff || membership. Closes the CWE-863 split — a staff caller on the
+  // isOwner || membership. Closes the CWE-863 split — a staff caller on the
   // AUNTIE_OPERATOR_UIDS fallback (no admin claim) previously could NOT add a
   // note (this handler checked the claim only); now they can, same as every
   // other staff-facing portal callable.
@@ -67,8 +67,11 @@ export async function addBookingNoteHandler(
   // Authorize on the client-supplied kinfolkId BEFORE resolving the booking:
   // resolving first would let a non-member caller distinguish "booking
   // exists, no access" from "booking not found" via the error code alone.
-  const isAdmin = req.auth?.token?.admin === true;
-  const staff = isStaff(uid, isAdmin, 'addBookingNote');
+  // #944: the admin clients call this one, so an Auntie needs it. staffBypass
+  // consults lib/auntieAccess.ts by name; an unlisted callable refuses her.
+  // This replaced a local `isAdmin` read straight off the token, which would
+  // have refused an Auntie: she carries no `admin` claim at all.
+  const staff = staffBypass(req.auth, 'addBookingNote');
   if (!staff) {
     const clientSnap = await db().collection('clients').doc(uid).get();
     const allowed: string[] = (clientSnap.data()?.kinfolkIds ?? []) as string[];

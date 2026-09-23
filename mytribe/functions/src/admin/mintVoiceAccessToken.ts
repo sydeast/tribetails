@@ -24,7 +24,7 @@ import { logEvent } from '../lib/logger';
  *   1. THE IDENTITY IS DERIVED SERVER-SIDE. It is never read from `req.data`.
  *      A caller who could name their own identity could mint a token for
  *      somebody else's client, which is the same hole with an extra step.
- *   2. `AUNTIE_OPERATOR_UIDS` IS DELIBERATELY NOT BOUND. `isStaff` accepts
+ *   2. `AUNTIE_OPERATOR_UIDS` IS DELIBERATELY NOT BOUND. `isOwner` accepts
  *      either the `admin` custom claim or presence on that env allowlist, and
  *      an unbound secret reads as `undefined` with no error, so leaving it out
  *      makes the custom claim the sole gate. For a function that hands out the

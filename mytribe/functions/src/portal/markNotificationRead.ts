@@ -8,7 +8,7 @@ import { wrapCallable } from '../lib/wrapCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
-import { isStaff } from '../lib/staffGate';
+import { isOwner, staffBypass } from '../lib/staffGate';
 
 /**
  * Marks a notification as viewed by its recipient. Writes `readAt` +
@@ -29,7 +29,8 @@ export async function markNotificationReadHandler(
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
-  const isAdmin = isStaff(uid, req.auth?.token?.admin === true || req.auth?.token?.role === 'admin', 'markNotificationRead');
+  // #944: allowlisted - her own inbox.
+  const isAdmin = staffBypass(req.auth, 'markNotificationRead');
   const args = Args.parse(req.data);
 
   const ref = db().collection('notifications').doc(args.notificationId);
@@ -103,7 +104,7 @@ export async function markNotificationUnreadHandler(
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
-  const isAdmin = isStaff(uid, req.auth?.token?.admin === true || req.auth?.token?.role === 'admin', 'markNotificationUnread');
+  const isAdmin = isOwner(uid, req.auth?.token?.admin === true || req.auth?.token?.role === 'admin', 'markNotificationUnread');
   const args = Args.parse(req.data);
 
   const ref = db().collection('notifications').doc(args.notificationId);

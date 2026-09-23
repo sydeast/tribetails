@@ -5,7 +5,7 @@ import argon2 from 'argon2';
 import { db } from '../lib/firestoreAdmin';
 import { wrapCallable } from '../lib/wrapCallable';
 import { loadMember, requirePrimary } from '../lib/memberGate';
-import { isStaff } from '../lib/staffGate';
+import { staffBypass } from '../lib/staffGate';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { requireBaseUrl } from '../lib/requireBaseUrl';
@@ -37,7 +37,8 @@ export async function createShareLinkHandler(req: CallableRequest<unknown>): Pro
   // The AuntieOS operator (auntie) authors KinTales and shares them; she is not a
   // tribe member, so she bypasses the family PRIMARY gate. Family PRIMARY members
   // can still create share links for their own tribe.
-  if (!isStaff(req.auth.uid, req.auth.token?.admin === true, 'createShareLink')) {
+  // #944: allowlisted - sharing a KinTale she wrote is part of writing it.
+  if (!staffBypass(req.auth, 'createShareLink')) {
     const caller = await loadMember(args.familyId, req.auth.uid);
     requirePrimary(caller);
   }

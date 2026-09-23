@@ -1,4 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
+import { staffBypass } from '../lib/staffGate';
 import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
@@ -87,11 +88,12 @@ export async function listMembersHandler(
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
 
   const args = Args.parse(req.data);
-  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, req.auth?.token?.admin === true, 'listMembers');
+  // #944: allowlisted - the household roster is household information.
+  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, staffBypass(req.auth, 'listMembers'), 'listMembers');
 
   // Primary-only (operator bypasses; legacy no-member-doc family falls back to
   // allow, consistent with requireKinfolkPrimary). A secondary is denied here.
-  await requireKinfolkPrimary(uid, kinfolkId, req.auth?.token?.admin === true, 'listMembers');
+  await requireKinfolkPrimary(uid, kinfolkId, staffBypass(req.auth, 'listMembers'), 'listMembers');
 
   const snap = await db().collection(`families/${kinfolkId}/members`).get();
   const members: MemberDTO[] = snap.docs.map((d) => {

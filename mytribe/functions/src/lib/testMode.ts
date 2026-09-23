@@ -1,5 +1,5 @@
 import { CallableRequest, HttpsError } from 'firebase-functions/v2/https';
-import { isStaff } from './staffGate';
+import { isOwner } from './staffGate';
 
 /**
  * Server-side twin of the Stage 0I test-admin sandbox.
@@ -81,7 +81,7 @@ export interface InvoiceWriteActor {
 
 /**
  * The gate for the invoice-write callables (ADR-0002). Staff (admin claim or
- * the logged env-allowlist fallback, via `isStaff`) pass unscoped; a test
+ * the logged env-allowlist fallback, via `isOwner`) pass unscoped; a test
  * admin passes scoped to their sandbox; anyone else is refused. See the module
  * header for why this exists beside `wrapAdminCallable` instead of replacing
  * it.
@@ -92,7 +92,7 @@ export function resolveInvoiceWriteActor(
 ): InvoiceWriteActor {
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
-  if (isStaff(uid, req.auth?.token?.admin === true, functionName)) {
+  if (isOwner(uid, req.auth?.token?.admin === true, functionName)) {
     return { uid, testMode: TEST_MODE_OFF };
   }
   const mode = testModeOf(req.auth?.token as Record<string, unknown> | undefined);

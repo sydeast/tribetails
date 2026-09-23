@@ -5,7 +5,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
-import { isStaff } from '../lib/staffGate';
+import { staffBypass } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import {
   clinicMatchCandidates,
@@ -141,7 +141,10 @@ export async function submitVetClinicHandler(
     return { status: 'needs_choice', clinicId: '', created: false, pending: false, candidates };
   }
 
-  const staff = isStaff(uid, req.auth?.token?.admin === true, 'submitVetClinic');
+  // #944: an Auntie may PROPOSE a clinic (deduped, unverified until reviewed).
+  // Curating the catalog stays with the owner: updateVetClinic and
+  // archiveVetClinic are not on the allowlist.
+  const staff = staffBypass(req.auth, 'submitVetClinic');
 
   const ref = await db().collection('vet_clinics').add({
     name: args.name,

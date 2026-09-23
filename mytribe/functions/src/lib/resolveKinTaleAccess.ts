@@ -1,6 +1,6 @@
 import { HttpsError } from 'firebase-functions/v2/https';
 import { db } from './firestoreAdmin';
-import { isStaff } from './staffGate';
+import { isOwner } from './staffGate';
 
 export interface ResolvedTaleAccess {
   kinfolkId: string;
@@ -38,7 +38,7 @@ export async function resolveKinTaleAccess(
   // `requested` and learn which household owns the tale via invalid-argument
   // vs not-found (an existence oracle the doc comment above already promises
   // this function avoids).
-  const isStaffCaller = isStaff(uid, hasAdminClaim, functionName);
+  const isStaffCaller = isOwner(uid, hasAdminClaim, functionName);
   if (!isStaffCaller) {
     const clientSnap = await db().collection('clients').doc(uid).get();
     const allowedIds: string[] = (clientSnap.data()?.kinfolkIds ?? []) as string[];

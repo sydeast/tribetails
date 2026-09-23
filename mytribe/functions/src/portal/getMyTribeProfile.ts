@@ -7,7 +7,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { hasKinfolkPerm } from '../lib/memberGate';
-import { isStaff } from '../lib/staffGate';
+import { isOwner } from '../lib/staffGate';
 import {
   LEGACY_EMERGENCY_CONTACT_KEYS,
   legacyContactFromRows,
@@ -80,7 +80,7 @@ export async function getMyTribeProfileHandler(
   // an old portal client, so they leave no record.
   const isAdmin = req.auth?.token?.admin === true;
   const served =
-    canReadContacts && !isStaff(uid, isAdmin, 'getMyTribeProfile') ? legacyContactFromRows(profile.customFields) : null;
+    canReadContacts && !isOwner(uid, isAdmin, 'getMyTribeProfile') ? legacyContactFromRows(profile.customFields) : null;
   const bookkeeping: Promise<void> =
     served === null
       ? Promise.resolve()
