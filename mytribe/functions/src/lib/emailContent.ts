@@ -73,9 +73,26 @@ export function sanitizeEmailContent(html: string, cloudName: string): SanitizeR
       else if (!SINGLE_TOKEN.test(value)) issues.add('A link target must be a web address or a single merge field, not both.');
     }
   }
-  const TAG_MARKER = '';
-  const text = flattened.replace(/<[^>]+>/g, TAG_MARKER);
-  if (new RegExp(`\\{\\{[^}]*${TAG_MARKER}`).test(text)) issues.add('A merge field was broken apart by formatting. Retype it as one piece.');
+  // Tokens split by formatting: for each `{{` that sits in text (not inside a
+  // tag's attributes -- those are handled by the attribute loop above), walk to
+  // its matching `}}` (or the end of the string) and check whether any tag
+  // starts in between. No sentinel character is inserted into the text, so
+  // legitimate content that happens to contain an unusual character (e.g. a
+  // pasted icon-font glyph) can never be mistaken for a tag boundary.
+  const tags = [...flattened.matchAll(/<[^>]+>/g)].map((m) => ({
+    start: m.index ?? 0,
+    end: (m.index ?? 0) + m[0].length,
+  }));
+  const isInsideTag = (i: number) => tags.some((t) => i >= t.start && i < t.end);
+  for (const openMatch of flattened.matchAll(/\{\{/g)) {
+    const openIdx = openMatch.index;
+    if (openIdx === undefined || isInsideTag(openIdx)) continue;
+    const closeIdx = flattened.indexOf('}}', openIdx);
+    const closeBound = closeIdx === -1 ? flattened.length : closeIdx;
+    if (tags.some((t) => t.start > openIdx && t.start < closeBound)) {
+      issues.add('A merge field was broken apart by formatting. Retype it as one piece.');
+    }
+  }
 
   if (flattened.replace(/<[^>]+>/g, '').trim().length === 0 && !/<img /.test(flattened)) {
     issues.add('The email body is empty.');

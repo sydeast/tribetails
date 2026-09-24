@@ -49,6 +49,11 @@ describe('sanitizeEmailContent', () => {
     expect(r.issues).toContain('A merge field was broken apart by formatting. Retype it as one piece.');
   });
 
+  it('does not flag a token as split when it contains a private-use-area character (pasted icon-font glyphs are text, not a tag boundary)', () => {
+    const r = clean('<p>{{link}}</p>');
+    expect(r.issues).not.toContain('A merge field was broken apart by formatting. Retype it as one piece.');
+  });
+
   it('refuses an href that mixes a token with other text', () => {
     const r = clean('<p><a href="https://x.com/{{id}}">a</a></p>');
     expect(r.issues).toContain('A link target must be a web address or a single merge field, not both.');
