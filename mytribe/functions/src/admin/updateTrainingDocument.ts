@@ -27,9 +27,8 @@ import { assertTribalIntelTargetResolves } from '../lib/resolveTribalIntelTarget
  * `min(1)` accepted the name back — so an edit could leave the note pointing at
  * unresolvable text, and the operator was never told. The save now has to name
  * a record that exists (`../lib/resolveTribalIntelTarget.ts`), and a row whose
- * reference is still a name is repaired by
- * `mytribe/scripts/backfillTribalIntelTargetIds.ts` rather than by a guess made
- * here.
+ * reference is still a name is repaired by the operator choosing the record in
+ * the picker, never by a guess made here.
  */
 export const UpdateTrainingDocumentArgs = z
   .object({

@@ -42,8 +42,8 @@ import { assertTribalIntelTargetResolves } from '../lib/resolveTribalIntelTarget
  * carry no `targetType` at all (the NDJSON migration import). The clients read
  * a blank one as HOUSEHOLD, the widest, non-fabricating answer, and the one the
  * nightly pipeline already acts on. An old doc gains an explicit `targetType`
- * the first time an operator saves it, and the ids it points at are repaired
- * ahead of that by `mytribe/scripts/backfillTribalIntelTargetIds.ts`.
+ * the first time an operator saves it, choosing the real record in the
+ * picker if the old doc carried a name instead of an id.
  *
  * ── THE TARGET MUST RESOLVE (issue #460) ──────────────────────────────────
  * `targetKinfolkId` used to be checked with `min(1)` alone, so a person's NAME

@@ -437,10 +437,8 @@ function householdOptionLabel(kf: Kinfolk): string {
  * When that fallback value is a NAME rather than an id (issue #460), the draft
  * still carries it — and the picker now shows it, labelled as unresolved,
  * rather than quietly falling back to its placeholder. The save is blocked
- * until a real record is chosen, which is what the callable enforces too. The
- * sweep in `mytribe/scripts/backfillTribalIntelTargetIds.ts` is what turns
- * those names into ids in bulk; this is what the operator sees for one that has
- * not been swept yet.
+ * until a real record is chosen, which is what the callable enforces too.
+ * There is no bulk sweep: each legacy row is fixed here, one at a time.
  */
 function draftFrom(entry: TribalIntelEntry | null): TribalIntelDraft {
   if (entry === null) return blankTribalIntelDraft();

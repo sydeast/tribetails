@@ -105,8 +105,13 @@ describe('firestore.rules mirror (shared project auntieos-ttpc)', () => {
     // MyTribe web/src/lib/messagesListener.ts opens an onSnapshot on
     // /conversations/{kinfolkId}. Without this read the Messages screen goes
     // permission-denied. Two occurrences: the thread doc and its messages.
+    // The staff half read `isAuntie()` until #944 split admin from Auntie. It is
+    // `isStaff()` now, which means both roles, so a caretaker reads the thread as
+    // the owner does. Pinned to the exact current spelling on purpose: this guard
+    // exists to fail when the rule changes shape, so it tracks the rename rather
+    // than accepting either name.
     const matches = mirror.match(
-      /allow read: if isAuntie\(\) \|\| \(isKinfolk\(\) && kinfolkId == request\.auth\.token\.kinfolkId\)/g,
+      /allow read: if isStaff\(\) \|\| \(isKinfolk\(\) && kinfolkId == request\.auth\.token\.kinfolkId\)/g,
     );
     assert.strictEqual(
       matches && matches.length,
