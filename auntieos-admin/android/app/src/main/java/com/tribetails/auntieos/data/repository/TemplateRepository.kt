@@ -25,6 +25,9 @@ class TemplateRepository(
         val description: String?,
         val tags: List<String>,
         val category: String?,
+        /** #953 PR 1: null until listTemplates sends it (a later PR). Any
+         * non-null format (such as "visual") is read-only on this device. */
+        val format: String? = null,
     )
 
     data class TemplateBinding(
@@ -107,6 +110,7 @@ class TemplateRepository(
                 description = m["description"] as? String,
                 tags = ((m["tags"] as? List<*>).orEmpty()).mapNotNull { it as? String },
                 category = m["category"] as? String,
+                format = m["format"] as? String,
             )
         }
     }.onFailure { AuntieLog.e("TemplateRepository.listTemplates failed", it) }

@@ -266,6 +266,12 @@ fun TemplateBankBody(
     var hoveredCategory by remember { mutableStateOf<String?>(null) }
 
     fun assignCategory(tpl: TemplateRepository.EmailTemplate, newCategory: String) {
+        // #953: a non-null format is READ_ONLY on this device; drag-to-category
+        // is a save like any other and must never touch it.
+        if (!canReassignCategory(tpl)) {
+            error = "Move this template on the web admin."
+            return
+        }
         val prev = templates
         // Optimistic: reflect the move immediately (chip counts derive from templates).
         templates = templates.map { if (it.templateId == tpl.templateId) it.copy(category = newCategory) else it }
@@ -887,7 +893,12 @@ private fun TemplateEditorScreen(
     var tags by remember(template.templateId, creating) { mutableStateOf(template.tags) }
 
     val keyError = if (creating) templateKeyError(templateId, existingKeys) else null
-    val canSave = subject.isNotBlank() && bodyValue.text.isNotBlank() && keyError == null
+    val mode = remember(template.templateId, creating) { templateEditMode(template, creating) }
+    val canSave = when (mode) {
+        TemplateEditMode.READ_ONLY -> false
+        TemplateEditMode.SUBJECT_ONLY -> subject.isNotBlank()
+        TemplateEditMode.FULL -> subject.isNotBlank() && bodyValue.text.isNotBlank() && keyError == null
+    }
 
     // Back returns to the bank, never out of Templates, the same as the crumb.
     BackHandler { onDismiss() }
@@ -909,25 +920,25 @@ private fun TemplateEditorScreen(
             accentTail = "template",
             subtitle = "Subject and body render with Handlebars. Merge fields resolve to each recipient at send time.",
             modifier = Modifier.fillMaxWidth(),
-            trailing = {
-                PrimaryButton(
-                    label = "Save",
-                    enabled = canSave,
-                    onClick = {
-                        onSave(
-                            template.copy(
-                                templateId = templateId.trim(),
-                                title = title.ifBlank { templateId.trim() },
-                                subject = subject,
-                                body = bodyValue.text,
-                                html = markdownToHtml(bodyValue.text).ifBlank { null },
-                                category = category.ifBlank { null },
-                                description = description.ifBlank { null },
-                                tags = tags,
-                            ),
-                        )
-                    },
-                )
+            trailing = if (mode == TemplateEditMode.READ_ONLY) null else {
+                {
+                    PrimaryButton(
+                        label = "Save",
+                        enabled = canSave,
+                        onClick = {
+                            val base = templateToSave(template, mode, editedSubject = subject, editedBody = bodyValue.text)
+                            onSave(
+                                base.copy(
+                                    templateId = templateId.trim(),
+                                    title = title.ifBlank { templateId.trim() },
+                                    category = category.ifBlank { null },
+                                    description = description.ifBlank { null },
+                                    tags = tags,
+                                ),
+                            )
+                        },
+                    )
+                }
             },
         )
 
@@ -1022,44 +1033,68 @@ private fun TemplateEditorScreen(
                         value = subject,
                         onValueChange = { subject = it },
                         placeholder = "Your booking is confirmed",
+                        enabled = mode != TemplateEditMode.READ_ONLY,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
 
-                // Tap a merge-field chip to drop its {{token}} at the cursor.
-                MergeFieldChips(onInsert = { snip ->
-                    val e = insertSnippet(bodyValue.text, bodyValue.selection.start, snip)
-                    bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
-                })
-
-                // 13.3/13.4 Markdown toolbar + body editor; HTML is generated on save.
-                // The field draws its own caps label, so the caption rides on it
-                // rather than a second label above the toolbar.
-                Column {
-                    MarkdownToolbar(
-                        onWrap = { p, s ->
-                            val e = wrapSelection(bodyValue.text, bodyValue.selection.start, bodyValue.selection.end, p, s)
-                            bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
-                        },
-                        onInsert = { snip ->
+                // FULL keeps the markdown toolbar + body field, unchanged.
+                // SUBJECT_ONLY shows the hand-authored body read-only, with a
+                // note this device may not touch it. READ_ONLY (a visual
+                // template) shows neither: nothing here reflects the design.
+                when (mode) {
+                    TemplateEditMode.FULL -> {
+                        // Tap a merge-field chip to drop its {{token}} at the cursor.
+                        MergeFieldChips(onInsert = { snip ->
                             val e = insertSnippet(bodyValue.text, bodyValue.selection.start, snip)
                             bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
-                        },
-                    )
-                    AuntieMarkdownField(
-                        value = bodyValue,
-                        onValueChange = { bodyValue = it },
-                        label = "Body · Markdown and Handlebars",
-                        minLines = 6,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    // The mock's `.edmeta`: the count, and what happens to a token.
-                    Text(
-                        "${bodyValue.text.length} chars · tokens left as-is, never sent literally",
-                        style = AuntieTheme.typography.labelSmall,
-                        color = c.textFaint,
-                    )
+                        })
+
+                        // 13.3/13.4 Markdown toolbar + body editor; HTML is generated on save.
+                        // The field draws its own caps label, so the caption rides on it
+                        // rather than a second label above the toolbar.
+                        Column {
+                            MarkdownToolbar(
+                                onWrap = { p, s ->
+                                    val e = wrapSelection(bodyValue.text, bodyValue.selection.start, bodyValue.selection.end, p, s)
+                                    bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
+                                },
+                                onInsert = { snip ->
+                                    val e = insertSnippet(bodyValue.text, bodyValue.selection.start, snip)
+                                    bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
+                                },
+                            )
+                            AuntieMarkdownField(
+                                value = bodyValue,
+                                onValueChange = { bodyValue = it },
+                                label = "Body · Markdown and Handlebars",
+                                minLines = 6,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            // The mock's `.edmeta`: the count, and what happens to a token.
+                            Text(
+                                "${bodyValue.text.length} chars · tokens left as-is, never sent literally",
+                                style = AuntieTheme.typography.labelSmall,
+                                color = c.textFaint,
+                            )
+                        }
+                    }
+                    TemplateEditMode.SUBJECT_ONLY -> {
+                        Text(template.body, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                        Text(
+                            "This email has a custom design. Edit its body on the web admin.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textDim,
+                        )
+                    }
+                    TemplateEditMode.READ_ONLY -> {
+                        Text(
+                            "Edit this template on the web admin.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textDim,
+                        )
+                    }
                 }
 
                 Column {
@@ -1069,6 +1104,7 @@ private fun TemplateEditorScreen(
                         value = description,
                         onValueChange = { description = it },
                         placeholder = "What is this template for? Who receives it?",
+                        enabled = mode != TemplateEditMode.READ_ONLY,
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = false,
                         minLines = 2,
@@ -1085,6 +1121,7 @@ private fun TemplateEditorScreen(
                         value = category,
                         onValueChange = { category = it },
                         placeholder = "Booking",
+                        enabled = mode != TemplateEditMode.READ_ONLY,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     if (categories.isNotEmpty()) {
@@ -1098,7 +1135,10 @@ private fun TemplateEditorScreen(
                                 AuntieChip(
                                     label = cat,
                                     selected = category.equals(cat, ignoreCase = true),
-                                    onClick = { category = cat },
+                                    // AuntieChip has no `enabled` param; guard the tap
+                                    // the same way TagEmojiPicker (AdminSettingsScreen)
+                                    // disables its chips.
+                                    onClick = { if (mode != TemplateEditMode.READ_ONLY) category = cat },
                                 )
                             }
                         }
@@ -1114,6 +1154,7 @@ private fun TemplateEditorScreen(
                         value = tags,
                         vocab = emptyList(),
                         onChange = { tags = it },
+                        enabled = mode != TemplateEditMode.READ_ONLY,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -1128,12 +1169,22 @@ private fun TemplateEditorScreen(
                 if (subject.isNotBlank()) {
                     Text(subject, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
                 }
-                // Renders the SAME parsed blocks the save path emits to HTML; {{vars}} literal.
-                MarkdownPreview(bodyValue.text, modifier = Modifier.fillMaxWidth())
-                // The markdown preview stays, because it is a true picture of the
-                // save path. The warning is the other half: which of those literal
-                // {{vars}} the dispatch pipeline will NOT fill, named while the
-                // author is still in a position to do something about it.
+                if (showsMarkdownPreview(mode)) {
+                    // Renders the SAME parsed blocks the save path emits to HTML; {{vars}} literal.
+                    MarkdownPreview(bodyValue.text, modifier = Modifier.fillMaxWidth())
+                } else {
+                    // SUBJECT_ONLY's real send is the hand-authored html, not this
+                    // markdown; READ_ONLY's body is often empty. Neither is a true
+                    // picture, and this app has no HTML renderer yet (PR 5).
+                    Text(
+                        "Preview this design on the web admin.",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
+                }
+                // Which of the body's literal {{vars}} the dispatch pipeline will NOT
+                // fill, named while the author is still in a position to do something
+                // about it. Runs against the loaded body in every mode, not just FULL.
                 MergeFieldWarning(
                     subject = subject,
                     body = bodyValue.text,

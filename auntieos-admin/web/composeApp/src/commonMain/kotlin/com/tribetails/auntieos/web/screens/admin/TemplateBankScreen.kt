@@ -164,6 +164,12 @@ fun TemplateBankBody(
     var hoveredCategory by remember { mutableStateOf<String?>(null) }
 
     fun assignCategory(tpl: TemplateService.EmailTemplate, newCategory: String) {
+        // #953: a non-null format is READ_ONLY on this device; drag-to-category
+        // is a save like any other and must never touch it.
+        if (!canReassignCategory(tpl)) {
+            error = "Move this template on the web admin."
+            return
+        }
         val prev = templates
         // Optimistic: reflect the move immediately (chip counts derive from templates).
         templates = templates.map { if (it.templateId == tpl.templateId) it.copy(category = newCategory) else it }
@@ -703,7 +709,12 @@ private fun TemplateEditorOverlay(
 
     val keyTaken = creating && templateId.trim() in existingKeys
     val keyValid = !creating || (templateId.isNotBlank() && !keyTaken)
-    val canSave = subject.isNotBlank() && bodyValue.text.isNotBlank() && keyValid
+    val mode = remember(template.templateId, creating) { templateEditMode(template, creating) }
+    val canSave = when (mode) {
+        TemplateEditMode.READ_ONLY -> false
+        TemplateEditMode.SUBJECT_ONLY -> subject.isNotBlank() && keyValid
+        TemplateEditMode.FULL -> subject.isNotBlank() && bodyValue.text.isNotBlank() && keyValid
+    }
 
     AuntieDialog(
         visible = true,
@@ -714,24 +725,24 @@ private fun TemplateEditorOverlay(
         hint = "Stored in Firestore, rendered with Handlebars. SendGrid delivers as a dumb pipe.",
         footer = {
             GhostButton(label = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
-            PrimaryButton(
-                label = if (creating) "Create" else "Save",
-                enabled = canSave,
-                onClick = {
-                    onSave(
-                        template.copy(
-                            templateId = templateId.trim(),
-                            title = title.ifBlank { templateId.trim() },
-                            subject = subject,
-                            body = bodyValue.text,
-                            html = markdownToHtml(bodyValue.text).ifBlank { null },
-                            category = category.ifBlank { null },
-                            description = description.ifBlank { null },
-                        ),
-                    )
-                },
-                modifier = Modifier.weight(1f),
-            )
+            if (mode != TemplateEditMode.READ_ONLY) {
+                PrimaryButton(
+                    label = if (creating) "Create" else "Save",
+                    enabled = canSave,
+                    onClick = {
+                        val base = templateToSave(template, mode, editedSubject = subject, editedBody = bodyValue.text)
+                        onSave(
+                            base.copy(
+                                templateId = templateId.trim(),
+                                title = title.ifBlank { templateId.trim() },
+                                category = category.ifBlank { null },
+                                description = description.ifBlank { null },
+                            ),
+                        )
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+            }
         },
     ) {
         if (keyTaken) {
@@ -781,6 +792,7 @@ private fun TemplateEditorOverlay(
                     value = category,
                     onValueChange = { category = it },
                     label = "Category (optional)",
+                    enabled = mode != TemplateEditMode.READ_ONLY,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 if (categories.isNotEmpty()) {
@@ -794,6 +806,7 @@ private fun TemplateEditorOverlay(
                                 label = cat,
                                 selected = category.equals(cat, ignoreCase = true),
                                 onClick = { category = cat },
+                                enabled = mode != TemplateEditMode.READ_ONLY,
                                 tone = AuntieChipTone.Orange,
                             )
                         }
@@ -803,35 +816,62 @@ private fun TemplateEditorOverlay(
                     value = subject,
                     onValueChange = { subject = it },
                     label = "Subject",
+                    enabled = mode != TemplateEditMode.READ_ONLY,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                // #15: click a named merge-field chip to drop its {{token}} at the cursor.
-                MergeFieldChips(onInsert = { snip ->
-                    val e = insertSnippet(bodyValue.text, bodyValue.selection.start, snip)
-                    bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
-                })
-                // 13.3/13.4 Markdown toolbar: Bold/Italic wrap the selection; the rest
-                // insert a snippet at the cursor. The email HTML is generated on save.
-                MarkdownToolbar(
-                    onWrap = { p, s ->
-                        val e = wrapSelection(bodyValue.text, bodyValue.selection.start, bodyValue.selection.end, p, s)
-                        bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
-                    },
-                    onInsert = { snip ->
-                        val e = insertSnippet(bodyValue.text, bodyValue.selection.start, snip)
-                        bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
-                    },
-                )
-                MultilineFieldValue(
-                    value = bodyValue,
-                    onValueChange = { bodyValue = it },
-                    label = "Body (Markdown + Handlebars)",
-                    minLines = 6,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                // FULL keeps the markdown toolbar + body field, unchanged.
+                // SUBJECT_ONLY shows the hand-authored body read-only, with a
+                // note this device may not touch it. READ_ONLY (a visual
+                // template) shows neither: nothing here reflects the design.
+                when (mode) {
+                    TemplateEditMode.FULL -> {
+                        // #15: click a named merge-field chip to drop its {{token}} at the cursor.
+                        MergeFieldChips(onInsert = { snip ->
+                            val e = insertSnippet(bodyValue.text, bodyValue.selection.start, snip)
+                            bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
+                        })
+                        // 13.3/13.4 Markdown toolbar: Bold/Italic wrap the selection; the rest
+                        // insert a snippet at the cursor. The email HTML is generated on save.
+                        MarkdownToolbar(
+                            onWrap = { p, s ->
+                                val e = wrapSelection(bodyValue.text, bodyValue.selection.start, bodyValue.selection.end, p, s)
+                                bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
+                            },
+                            onInsert = { snip ->
+                                val e = insertSnippet(bodyValue.text, bodyValue.selection.start, snip)
+                                bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
+                            },
+                        )
+                        MultilineFieldValue(
+                            value = bodyValue,
+                            onValueChange = { bodyValue = it },
+                            label = "Body (Markdown + Handlebars)",
+                            minLines = 6,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    TemplateEditMode.SUBJECT_ONLY -> {
+                        Text(template.body, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                        Text(
+                            "This email has a custom design. Edit its body on the web admin.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textDim,
+                        )
+                    }
+                    TemplateEditMode.READ_ONLY -> {
+                        Text(
+                            "Edit this template on the web admin.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textDim,
+                        )
+                    }
+                }
                 MultilineField(
                     value = description,
-                    onValueChange = { description = it },
+                    // MultilineField has no `enabled` param; guard the callback the
+                    // same way the Subject field's mode check reads, so READ_ONLY
+                    // rejects the keystroke instead of hiding it.
+                    onValueChange = { if (mode != TemplateEditMode.READ_ONLY) description = it },
                     label = "Description",
                     minLines = 2,
                     modifier = Modifier.fillMaxWidth(),
@@ -843,12 +883,35 @@ private fun TemplateEditorOverlay(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 AuntieFieldLabel(text = "Live preview")
-                if (subject.isNotBlank()) {
-                    Text(subject, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                if (showsMarkdownPreview(mode)) {
+                    if (subject.isNotBlank()) {
+                        Text(subject, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                    }
+                    // Renders the SAME parsed blocks the save path emits to HTML, so what the
+                    // operator sees here is what SendGrid sends. {{vars}} show literally.
+                    MarkdownPreview(bodyValue.text, modifier = Modifier.fillMaxWidth())
+                } else if (mode == TemplateEditMode.SUBJECT_ONLY) {
+                    // The real send is this hand-authored html, not a markdown render of
+                    // body. Same card and parameters TemplateViewOverlay's "Inbox preview"
+                    // renders, so the editor and the read-only view never disagree; subject
+                    // is the live-edited field since SUBJECT_ONLY lets it change.
+                    AuntieEmailPreviewCard(
+                        subject = subject,
+                        body = template.body,
+                        html = template.html?.takeIf { it.isNotBlank() },
+                        highlightTokens = true,
+                        footer = "merge fields resolve at send",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    // READ_ONLY: a visual template built on the web admin. No stored
+                    // html this device can show.
+                    Text(
+                        "Preview this design on the web admin.",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
                 }
-                // Renders the SAME parsed blocks the save path emits to HTML, so what the
-                // operator sees here is what SendGrid sends. {{vars}} show literally.
-                MarkdownPreview(bodyValue.text, modifier = Modifier.fillMaxWidth())
             }
         }
     }
