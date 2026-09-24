@@ -3,6 +3,7 @@ package com.tribetails.auntieos.web.screens.admin
 import com.tribetails.auntieos.web.data.TemplateService
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -48,5 +49,17 @@ class TemplateEditModeTest {
         val saved = templateToSave(tpl("old", null), TemplateEditMode.FULL, editedSubject = "S", editedBody = "**new**")
         assertEquals("**new**", saved.body)
         assertEquals(markdownToHtml("**new**"), saved.html)
+    }
+
+    @Test fun readOnlySaveThrows() {
+        assertFailsWith<IllegalStateException> {
+            templateToSave(tpl("b", null, format = "visual"), TemplateEditMode.READ_ONLY, editedSubject = "S", editedBody = "b")
+        }
+    }
+
+    @Test fun showsMarkdownPreviewOnlyInFull() {
+        assertTrue(showsMarkdownPreview(TemplateEditMode.FULL))
+        assertFalse(showsMarkdownPreview(TemplateEditMode.SUBJECT_ONLY))
+        assertFalse(showsMarkdownPreview(TemplateEditMode.READ_ONLY))
     }
 }

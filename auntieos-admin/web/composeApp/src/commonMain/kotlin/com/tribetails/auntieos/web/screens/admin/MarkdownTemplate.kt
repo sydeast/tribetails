@@ -183,6 +183,14 @@ fun templateEditMode(template: TemplateService.EmailTemplate, creating: Boolean)
     else -> TemplateEditMode.FULL
 }
 
+/**
+ * True only in FULL: the markdown preview is a true picture of the save path
+ * only there. SUBJECT_ONLY's real HTML is hand-authored and this app has no
+ * HTML renderer yet; READ_ONLY's body is often empty. Both show a plain
+ * "preview on the web admin" line instead.
+ */
+fun showsMarkdownPreview(mode: TemplateEditMode): Boolean = mode == TemplateEditMode.FULL
+
 /** The template a Save sends, given the mode. READ_ONLY never reaches here: the screen hides Save. */
 fun templateToSave(
     original: TemplateService.EmailTemplate,
@@ -190,6 +198,7 @@ fun templateToSave(
     editedSubject: String,
     editedBody: String,
 ): TemplateService.EmailTemplate = when (mode) {
+    TemplateEditMode.FULL -> original.copy(subject = editedSubject, body = editedBody, html = markdownToHtml(editedBody).ifBlank { null })
     TemplateEditMode.SUBJECT_ONLY -> original.copy(subject = editedSubject)
-    else -> original.copy(subject = editedSubject, body = editedBody, html = markdownToHtml(editedBody).ifBlank { null })
+    TemplateEditMode.READ_ONLY -> error("READ_ONLY templates are never saved from this device")
 }

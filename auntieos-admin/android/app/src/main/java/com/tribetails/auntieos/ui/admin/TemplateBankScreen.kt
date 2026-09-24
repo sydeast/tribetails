@@ -1157,12 +1157,22 @@ private fun TemplateEditorScreen(
                 if (subject.isNotBlank()) {
                     Text(subject, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
                 }
-                // Renders the SAME parsed blocks the save path emits to HTML; {{vars}} literal.
-                MarkdownPreview(bodyValue.text, modifier = Modifier.fillMaxWidth())
-                // The markdown preview stays, because it is a true picture of the
-                // save path. The warning is the other half: which of those literal
-                // {{vars}} the dispatch pipeline will NOT fill, named while the
-                // author is still in a position to do something about it.
+                if (showsMarkdownPreview(mode)) {
+                    // Renders the SAME parsed blocks the save path emits to HTML; {{vars}} literal.
+                    MarkdownPreview(bodyValue.text, modifier = Modifier.fillMaxWidth())
+                } else {
+                    // SUBJECT_ONLY's real send is the hand-authored html, not this
+                    // markdown; READ_ONLY's body is often empty. Neither is a true
+                    // picture, and this app has no HTML renderer yet (PR 5).
+                    Text(
+                        "Preview this design on the web admin.",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
+                }
+                // Which of the body's literal {{vars}} the dispatch pipeline will NOT
+                // fill, named while the author is still in a position to do something
+                // about it. Runs against the loaded body in every mode, not just FULL.
                 MergeFieldWarning(
                     subject = subject,
                     body = bodyValue.text,

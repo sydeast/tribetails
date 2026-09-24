@@ -872,12 +872,35 @@ private fun TemplateEditorOverlay(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 AuntieFieldLabel(text = "Live preview")
-                if (subject.isNotBlank()) {
-                    Text(subject, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                if (showsMarkdownPreview(mode)) {
+                    if (subject.isNotBlank()) {
+                        Text(subject, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                    }
+                    // Renders the SAME parsed blocks the save path emits to HTML, so what the
+                    // operator sees here is what SendGrid sends. {{vars}} show literally.
+                    MarkdownPreview(bodyValue.text, modifier = Modifier.fillMaxWidth())
+                } else if (mode == TemplateEditMode.SUBJECT_ONLY) {
+                    // The real send is this hand-authored html, not a markdown render of
+                    // body. Same card and parameters TemplateViewOverlay's "Inbox preview"
+                    // renders, so the editor and the read-only view never disagree; subject
+                    // is the live-edited field since SUBJECT_ONLY lets it change.
+                    AuntieEmailPreviewCard(
+                        subject = subject,
+                        body = template.body,
+                        html = template.html?.takeIf { it.isNotBlank() },
+                        highlightTokens = true,
+                        footer = "merge fields resolve at send",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    // READ_ONLY: a visual template built on the web admin. No stored
+                    // html this device can show.
+                    Text(
+                        "Preview this design on the web admin.",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
                 }
-                // Renders the SAME parsed blocks the save path emits to HTML, so what the
-                // operator sees here is what SendGrid sends. {{vars}} show literally.
-                MarkdownPreview(bodyValue.text, modifier = Modifier.fillMaxWidth())
             }
         }
     }

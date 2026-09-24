@@ -3,6 +3,7 @@ package com.tribetails.auntieos.ui.admin
 import com.tribetails.auntieos.data.repository.TemplateRepository
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -48,5 +49,17 @@ class TemplateEditModeTest {
         val saved = templateToSave(tpl("old", null), TemplateEditMode.FULL, editedSubject = "S", editedBody = "**new**")
         assertEquals("**new**", saved.body)
         assertEquals(markdownToHtml("**new**"), saved.html)
+    }
+
+    @Test fun readOnlySaveThrows() {
+        assertThrows(IllegalStateException::class.java) {
+            templateToSave(tpl("b", null, format = "visual"), TemplateEditMode.READ_ONLY, editedSubject = "S", editedBody = "b")
+        }
+    }
+
+    @Test fun showsMarkdownPreviewOnlyInFull() {
+        assertTrue(showsMarkdownPreview(TemplateEditMode.FULL))
+        assertFalse(showsMarkdownPreview(TemplateEditMode.SUBJECT_ONLY))
+        assertFalse(showsMarkdownPreview(TemplateEditMode.READ_ONLY))
     }
 }
