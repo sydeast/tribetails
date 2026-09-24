@@ -62,10 +62,8 @@ import { db } from './firestoreAdmin';
  *
  * ── WHAT IT NEVER DOES ────────────────────────────────────────────────────
  * It never repairs a bad reference in passing. A save carrying a name is
- * REFUSED with a message naming the picker to use; guessing which household a
- * typed name meant is the sweep script's job
- * (`mytribe/scripts/backfillTribalIntelTargetIds.ts`), where a human reads the
- * plan first and an ambiguous name is left alone rather than resolved.
+ * REFUSED with a message naming the picker to use. Deciding which household a
+ * typed name meant is always a person's call, made in that picker.
  */
 
 /** The three targets, verbatim from the callables' own enum. */
