@@ -231,16 +231,13 @@ describe('getBusinessNotificationOverridesHandler: provenance projection (#396)'
     ]);
   });
 
-  it('projects `external`, and today no row is external', async () => {
+  it('projects `external`, and only the password reset row is external', async () => {
     const res = await fetch();
     // The dispatcher skips fan-out entirely for an `external` row, so the gate's
-    // toggles would control nothing on one. NO catalog row sets the flag right
-    // now — including auth.password.reset, which this platform really does send
-    // itself (see auth/requestPasswordReset.ts). That is worth pinning: it means
-    // switching the password-reset row off in the gate genuinely stops reset
-    // mail, rather than being harmlessly ignored by an outside sender.
-    expect(res.catalog.every((c) => c.external === false)).toBe(true);
-    expect(row(res, 'auth.password.reset').external).toBe(false);
+    // switches control nothing on it and the admin says so. #905: the reset
+    // trigger sends auth.password.reset itself (auth/requestPasswordReset.ts),
+    // so no gate switch or override can stop a reset email.
+    expect(res.catalog.filter((c) => c.external).map((c) => c.key)).toEqual(['auth.password.reset']);
   });
 
   it('lists the ungated mail the gate does NOT govern', async () => {

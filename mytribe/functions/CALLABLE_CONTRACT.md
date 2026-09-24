@@ -1125,26 +1125,32 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
     Firestore `emailTemplates` collection. The operator edits email templates in
     the admin UI; there is no seed script for them (operator ruling 2026-09-13, #847).
 
-### requestPasswordReset (pre-existing; caps made silent and a locked account exempted 2026-09-14, #891; left for old clients 2026-09-22, #911)
+### requestPasswordReset (pre-existing; caps made silent and a locked account exempted 2026-09-14, #891; sends our own email 2026-09-24, #905)
 - req `{ email: string /* email */ }`.
-- CLIENTS: none in this repo. Every shipped client now uses Firebase's own reset
-  (`sendPasswordResetEmail` on admin web, admin Android, portal web and portal
-  Android; REST `accounts:sendOobCode` on admin desktop and portal desktop).
-  Portal Android and portal desktop builds installed before #911 still call this,
-  so it stays deployed and keeps answering `{ ok: true }`. Nothing new should
-  call it: the per-email cap below is a budget an attacker can spend to block a
-  household's resets for a day, which is why #911 moved the last two clients off
-  it.
+- CLIENTS: none yet. Every shipped client still uses Firebase's own reset, whose
+  console template this project cannot edit (#905). The client PRs that follow
+  move all six apps onto this callable. Portal Android and portal desktop builds
+  installed before #911 still call it.
 - res `{ ok: true }` for a known, unknown, locked or capped email alike.
 - GATE: none, `wrapCallable` only. Per-IP limit (30 per 5 minutes, keyed like
   `recordFailedLogin`) refuses with `resource-exhausted`; a malformed request is
   `invalid-argument`.
-- Per-email cap: 3 per 24 hours. An account inside an unexpired lock is exempt
-  and has its own cap of 10 per lock, and resets during a lock do not use the
-  daily 3. Over either cap the call sends nothing and still answers `{ ok: true }`
-  (before #891 it threw `resource-exhausted`, which with the exemption would have
-  told a caller the account was locked).
-
+- The callable only writes `passwordResetRequests/{id}` (no client access, TTL
+  on `expiresAt`) and answers. It never looks the address up, so its work and
+  timing are the same for every email. `onPasswordResetRequestCreate` deletes
+  that doc, then does the lookup, the cap, the link and the send.
+- The email goes straight to smtp2go with the `auth.password.reset` template
+  (binding, then the stored template, then the repo seed). It never passes the
+  notification dispatcher: the household gate cannot hold it, a business
+  override cannot switch it off, and the link is stored nowhere. The catalog row
+  is `external` so the admin gate says its switches control nothing.
+- Link continue URL: `https://auntie.tribetails.com/signin` for the owner or an
+  Auntie, `https://kinfolk.tribetails.com/signin` for everyone else.
+- Cap: 3 per 24 hours per email PER NETWORK (IPv4 address or IPv6 /64), so a
+  stranger spends only their own budget, never the owner's. An account inside an
+  unexpired lock is exempt and has its own cap of 10 per lock, and resets during
+  a lock do not use the daily 3. Over either cap nothing is sent and the caller
+  already has its `{ ok: true }`.
 ### recordFailedLogin (pre-existing; response made constant and clients wired 2026-09-14, #886)
 - req `{ email: string /* email */, ip?: string /* max 256 */, userAgent?: string /* max 256 */ }`.
   Clients send `email` only. Frozen in `test/callableContract.test.ts`.

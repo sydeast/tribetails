@@ -113,9 +113,9 @@ fun notifRowBadges(
     if (entry.external) {
         add(
             NotifRowBadge(
-                label = "Sent by another system",
-                detail = "An outside system delivers this one. The dispatcher skips it entirely, " +
-                    "so these toggles control nothing.",
+                label = "Sent directly",
+                detail = "Sent outside the notification system, so these switches control nothing. " +
+                    "Its template still applies.",
                 tone = NotifBadgeTone.Warn,
             ),
         )

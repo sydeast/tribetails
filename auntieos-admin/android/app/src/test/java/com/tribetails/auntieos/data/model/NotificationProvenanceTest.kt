@@ -129,7 +129,7 @@ class NotificationProvenanceTest {
     @Test
     fun marksARowAnOutsideSystemDelivers() {
         val badges = notifRowBadges(entry(external = true), STREAM_BUSINESS, enabled = true)
-        assertTrue(badges.any { it.label == "Sent by another system" })
+        assertTrue(badges.any { it.label == "Sent directly" })
     }
 
     @Test

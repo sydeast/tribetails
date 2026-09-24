@@ -208,7 +208,7 @@ export { updateMemberLabel } from './membership/updateMemberLabel';
 export { setKinfolkOverrides } from './theme/setKinfolkOverrides';
 export { swapPrimaryContact } from './recovery/swapPrimaryContact';
 export { signOutAllDevices } from './auth/signOutAllDevices';
-export { requestPasswordReset } from './auth/requestPasswordReset';
+export { requestPasswordReset, onPasswordResetRequestCreate } from './auth/requestPasswordReset';
 export {
   recordFailedLogin,
   beforeSignIn,

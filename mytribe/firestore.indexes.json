@@ -529,6 +529,12 @@
       "fieldPath": "expiresAt",
       "ttl": true,
       "indexes": []
+    },
+    {
+      "collectionGroup": "passwordResetRequests",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
     }
   ]
 }

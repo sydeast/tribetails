@@ -142,6 +142,11 @@ const ALLOWED = new Map<string, string>([
       'Operator-initiated, and onboarding is what has to work while the gate is shut.',
   ],
   [
+    'mytribe/functions/src/auth/requestPasswordReset.ts',
+    'BYPASS, on purpose (#905): the password reset email. The account holder asks for it, ' +
+      'and a reset has to work while the gate is shut, so it is sent directly and stores no link.',
+  ],
+  [
     'mytribe/functions/src/twilio/voicePush.ts',
     'pushes an incoming-call alert to STAFF devices, not to households',
   ],

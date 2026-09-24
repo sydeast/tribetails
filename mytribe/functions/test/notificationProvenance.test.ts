@@ -112,6 +112,13 @@ describe('no emitter can land undocumented', () => {
   // `enqueueNotificationDetailed` (#832) is the same dispatcher entry point,
   // reporting what it suppressed; a caller using it dispatches just as much.
   const DISPATCH_CALLS = ['enqueueNotification', 'enqueueNotificationDetailed', 'resolveChannels'];
+  /**
+   * #905: the third route. A catalog row marked `external` is sent by its own
+   * code, straight to the transport, so no gate switch can stop it. The reset
+   * email is the only one. Its file counts as dispatching only while it really
+   * calls the transport.
+   */
+  const EXTERNAL_DIRECT_SENDERS = ['src/auth/requestPasswordReset.ts'];
 
   function dispatchingFiles(): string[] {
     return SOURCE_FILES.filter((f) => {
@@ -134,6 +141,7 @@ describe('no emitter can land undocumented', () => {
       // which is where the key literals live.
       if (f === 'src/admin/marketingAudience.ts') return false;
       const src = read(f);
+      if (EXTERNAL_DIRECT_SENDERS.includes(f)) return src.includes('sendTemplatedEmail(');
       return DISPATCH_CALLS.some((fn) => src.includes(`${fn}(`));
     }).sort();
   }

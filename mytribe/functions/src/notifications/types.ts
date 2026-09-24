@@ -121,9 +121,10 @@ export interface NotificationDef {
   marketingCategory?: MarketingCategory;
   /**
    * If true, dispatcher logs and returns instead of fanning out to channels;
-   * the notification is delivered by an external system (e.g., Firebase Auth
-   * Console sends password.reset emails). The catalog row is kept for
-   * documentation/cross-reference purposes only, no template lookup occurs.
+   * the notification is sent outside the notification pipeline, so the gate's
+   * switches control nothing. `auth.password.reset` is one: the reset trigger
+   * sends it straight to smtp2go (auth/requestPasswordReset.ts), still through
+   * this row's template and binding.
    */
   external?: boolean;
   /** Human description shown in admin UI for clarity. */

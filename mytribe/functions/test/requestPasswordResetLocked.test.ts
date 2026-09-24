@@ -5,10 +5,10 @@ import { callableRequest } from './_helpers/callableRequest';
 /**
  * #891: a locked account can still reset its password.
  *
- * Portal Android and portal desktop reset through `requestPasswordReset`, which
- * sent at most 3 resets per email per 24 hours. Anyone who knows an email could
- * lock it (the server trusts the client's failed-login report) and then spend
- * those 3, leaving the owner without a reset for the rest of the lock.
+ * `requestPasswordReset` sends at most 3 resets per email per network per 24
+ * hours. Anyone who knows an email could lock it (the server trusts the
+ * client's failed-login report) and then spend that budget, leaving the owner
+ * without a reset for the rest of the lock.
  *
  * Now an account inside an unexpired lock is exempt from the daily cap and has
  * its own cap of 10 per lock instead, and resets sent during a lock do not use
@@ -16,15 +16,16 @@ import { callableRequest } from './_helpers/callableRequest';
  * and sends nothing, so known, unknown, locked and capped emails all answer the
  * same. A 429 here told a caller "this email is locked" on the 4th request.
  *
- * Drives the REAL handler and the REAL `checkIpRateLimit` and lock read on one
- * write-through mock. Only Firebase Auth, the dispatcher, the logger and the
- * audit writer are faked.
+ * #905: the budget is keyed by email AND network, so a stranger spends only
+ * their own. `reset()` drives the REAL callable, then hands the request doc it
+ * wrote to the REAL trigger body, as the Firestore trigger would. Only Firebase
+ * Auth, the transport, the logger and the audit writer are faked.
  */
 const mocks = vi.hoisted(() => ({
   dbFn: vi.fn(),
   getUserByEmail: vi.fn(),
   generatePasswordResetLink: vi.fn(),
-  enqueueNotification: vi.fn(),
+  sendTemplatedEmail: vi.fn(),
 }));
 vi.mock('../src/lib/firestoreAdmin', () => ({
   db: mocks.dbFn,
@@ -34,12 +35,17 @@ vi.mock('../src/lib/firestoreAdmin', () => ({
   }),
   getAdmin: vi.fn(),
 }));
-vi.mock('../src/notifications', () => ({ enqueueNotification: mocks.enqueueNotification }));
+vi.mock('../src/lib/email', () => ({ sendTemplatedEmail: mocks.sendTemplatedEmail }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn(async () => 'audit-1') }));
 vi.mock('../src/lib/sentry', () => ({ captureFunctionError: vi.fn() }));
 
-import { requestPasswordResetHandler } from '../src/auth/requestPasswordReset';
+import {
+  requestPasswordResetHandler,
+  processPasswordResetRequest,
+  PASSWORD_RESET_REQUESTS,
+  type PasswordResetRequest,
+} from '../src/auth/requestPasswordReset';
 
 const NOW = Date.UTC(2026, 8, 14, 15, 0, 0);
 const KIN_EMAIL = 'pat@household.test';
@@ -51,23 +57,31 @@ function lockedDoc(lockStartedAtMs: number) {
   return { attempts: [], lockStartedAtMs, lockedUntilMs: lockStartedAtMs + LOCK_MS, updatedAtMs: lockStartedAtMs };
 }
 
+const OWNER_NET = '198.51.100.7';
 let ipCounter = 0;
-/** A different real client per call, so the per-IP limit never gets in the way. */
-async function reset(email: string, atMs: number) {
+let ctx: ReturnType<typeof buildDbMock>;
+/** One reset from `net`: the callable's answer, then the trigger's work on its request doc. */
+async function reset(email: string, atMs: number, net: string = OWNER_NET) {
   vi.setSystemTime(atMs);
-  ipCounter += 1;
-  return requestPasswordResetHandler(
-    callableRequest({ email }, { headers: { 'x-forwarded-for': `198.51.100.${ipCounter % 250}` } }),
+  const before = ctx.adds.length;
+  const answer = await requestPasswordResetHandler(
+    callableRequest({ email }, { headers: { 'x-forwarded-for': net } }),
   );
+  for (const a of ctx.adds.slice(before)) {
+    if (a.collection === PASSWORD_RESET_REQUESTS) {
+      await processPasswordResetRequest(a.data as unknown as PasswordResetRequest);
+    }
+  }
+  return answer;
 }
 
-/** Reset emails actually handed to the dispatcher. */
+/** Reset emails actually handed to the transport. */
 function sends(): number {
-  return mocks.enqueueNotification.mock.calls.filter(([a]) => a.key === 'auth.password.reset').length;
+  return mocks.sendTemplatedEmail.mock.calls.length;
 }
 
 function setup(docs: Record<string, Record<string, unknown>> = {}) {
-  const ctx = buildDbMock({ writeThrough: true, docs: { 'clients/kin1': { email: KIN_EMAIL }, ...docs } });
+  ctx = buildDbMock({ writeThrough: true, docs: { 'clients/kin1': { email: KIN_EMAIL }, ...docs } });
   mocks.dbFn.mockReturnValue(ctx.db);
   return ctx;
 }
@@ -76,7 +90,7 @@ beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.getUserByEmail.mockReset();
   mocks.getUserByEmail.mockImplementation(async (email: string) => {
-    if (email === KIN_EMAIL) return { uid: 'kin1', displayName: 'Pat' };
+    if (email === KIN_EMAIL) return { uid: 'kin1', displayName: 'Pat', email: KIN_EMAIL };
     throw new Error('auth/user-not-found');
   });
   mocks.generatePasswordResetLink.mockReset();
@@ -84,9 +98,9 @@ beforeEach(() => {
     if (email === KIN_EMAIL) return 'https://example.test/reset?oobCode=x';
     throw new Error('auth/user-not-found');
   });
-  mocks.enqueueNotification.mockReset();
-  mocks.enqueueNotification.mockResolvedValue(['n1']);
-  vi.stubEnv('PASSWORD_RESET_CONSTANT_WORK_MS', '0');
+  mocks.sendTemplatedEmail.mockReset();
+  mocks.sendTemplatedEmail.mockResolvedValue('email-1');
+  vi.stubEnv('AUNTIE_OPERATOR_UIDS', '');
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
 });
@@ -105,6 +119,20 @@ describe('#891 an unlocked account keeps the 3-per-day cap', () => {
   });
 });
 
+describe("#905 a stranger cannot spend the owner's budget", () => {
+  it('5 resets from another network leave the owner all 3 of theirs', async () => {
+    setup();
+    for (let i = 0; i < 5; i += 1) await reset(KIN_EMAIL, NOW + i * 1000, '192.0.2.50');
+    expect(sends(), 'the stranger gets 3, then nothing').toBe(3);
+    for (let i = 0; i < 4; i += 1) await reset(KIN_EMAIL, NOW + 10_000 + i * 1000);
+    expect(sends(), 'the owner still gets 3').toBe(6);
+  });
+  it('an IPv6 stranger rotating addresses inside one /64 shares one budget', async () => {
+    setup();
+    for (let i = 1; i <= 5; i += 1) await reset(KIN_EMAIL, NOW + i * 1000, `2001:db8:1:2::${i}`);
+    expect(sends()).toBe(3);
+  });
+});
 describe('#891 a locked account can still reset', () => {
   it('sends resets past 3 while the lock is unexpired, up to 10 for that lock', async () => {
     setup({ [SECURITY_DOC]: lockedDoc(NOW - 60_000) });

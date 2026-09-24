@@ -457,9 +457,9 @@ describe('enqueueNotification fan-out (audience:both)', () => {
     }
   });
 
-  it('DISPATCHER: auth.password.reset routes via dispatcher (email channel, specificUid)', async () => {
-    // auth.password.reset is now dispatcher-owned (custom SendGrid delivery).
-    // alwaysEnabled + required.email=true → always writes one notifications doc.
+  it('DISPATCHER: auth.password.reset is external, so an enqueue writes nothing', async () => {
+    // #905: the reset trigger sends this email itself (auth/requestPasswordReset.ts).
+    // If anything did enqueue it, the dispatcher must not store the link it carries.
     const ctx = buildDbMock();
     mocks.dbFn.mockReturnValue(ctx.db);
 
@@ -469,21 +469,7 @@ describe('enqueueNotification fan-out (audience:both)', () => {
       data: { link: 'https://kinfolk.tribetails.com/account/secure-reset?oobCode=abc', email: 'x@y.z', displayName: 'Pepper' },
     });
 
-    expect(ids.length).toBe(1);
-    const writtenPaths = ctx.writes.map((w) => w.path);
-    expect(writtenPaths.some((p) => p.startsWith('notifications/'))).toBe(true);
-    const notifDoc = ctx.writes.find((w) => w.path.startsWith('notifications/'));
-    expect(notifDoc?.data).toMatchObject({
-      key: 'auth.password.reset',
-      recipientUid: 'kinUid',
-    });
-    // The email channel is proven on the work order (R5), where it now lives.
-    const order = ctx.writes.find((w) => w.path.startsWith('notificationDispatch/'));
-    expect(order?.data).toMatchObject({
-      key: 'auth.password.reset',
-      recipientUid: 'kinUid',
-      channels: ['email'],
-      status: 'pending',
-    });
+    expect(ids).toEqual([]);
+    expect(ctx.writes.filter((w) => /^notification/.test(w.path))).toEqual([]);
   });
 });
