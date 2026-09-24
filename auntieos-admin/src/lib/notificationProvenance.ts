@@ -112,9 +112,9 @@ export function rowBadges(
 
   if (entry.external) {
     badges.push({
-      label: 'Sent by another system',
+      label: 'Sent directly',
       detail:
-        'An outside system delivers this one. The dispatcher skips it entirely, so these toggles control nothing.',
+        'Sent outside the notification system, so these switches control nothing. Its template still applies.',
       tone: 'warn',
     });
   }

@@ -1412,6 +1412,9 @@ service cloud.firestore {
  // hash. Written only by recordFailedLogin through the admin SDK.
     match /unknownLoginAttempts/{id}            { allow read: if isOwner(); allow write: if false; }
     match /passwordResetEmailRateLimits/{key}   { allow read: if isOwner(); allow write: if false; }
+ // #905: a reset request holds a plaintext email and IP until its trigger
+ // deletes it, seconds later. Nobody reads it, the owner included.
+    match /passwordResetRequests/{id}           { allow read, write: if false; }
     match /stripeEvents/{eventId}               { allow read: if isOwner(); allow write: if false; }
  // `stripeEvents` is keyed per EVENT; this one is keyed per PAYMENTINTENT, so
  // the two events a single card payment delivers apply exactly once between

@@ -817,7 +817,10 @@ const CATALOG_LIST: NotificationDef[] = [
     deliveryMode: 'trigger',
     recipientResolver: 'specificUid',
     templates: { email: 'auth.password.reset' },
-    description: 'Password reset link, generated server-side via Admin SDK, delivered by SendGrid dispatcher.',
+    // #905: sent by the reset trigger itself, never through the dispatcher, so
+    // no household switch or business override can stop a reset.
+    external: true,
+    description: 'Password reset link, generated server-side and sent directly through smtp2go.',
   },
   {
     // The household's copy only. Business admins get

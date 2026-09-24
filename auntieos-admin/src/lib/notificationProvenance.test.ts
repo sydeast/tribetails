@@ -103,7 +103,7 @@ describe('rowBadges surfaces the rest of the risk', () => {
 
   it('marks a row an outside system delivers', () => {
     const badges = rowBadges(entry({ external: true }), STREAM_BUSINESS, true);
-    expect(badges.map((b) => b.label)).toContain('Sent by another system');
+    expect(badges.map((b) => b.label)).toContain('Sent directly');
   });
 
   it('marks marketing, and says the opt-in is not overridable', () => {

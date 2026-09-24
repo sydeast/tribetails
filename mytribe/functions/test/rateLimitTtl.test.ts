@@ -23,12 +23,13 @@ vi.mock('../src/lib/firestoreAdmin', () => ({
   getAdmin: vi.fn(),
 }));
 vi.mock('../src/notifications', () => ({ enqueueNotification: vi.fn(async () => ['n1']) }));
+vi.mock('../src/lib/email', () => ({ sendTemplatedEmail: vi.fn(async () => 'email-1') }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ captureFunctionError: vi.fn() }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn(async () => 'audit-1') }));
 
 import { recordFailedLoginHandler } from '../src/auth/loginSecurity';
-import { requestPasswordResetHandler } from '../src/auth/requestPasswordReset';
+import { processPasswordResetRequest } from '../src/auth/requestPasswordReset';
 
 const NOW = Date.UTC(2026, 8, 14, 21, 0, 0);
 const HOUR = 60 * 60_000;
@@ -38,6 +39,7 @@ const TTL_COLLECTIONS = [
   'failedLoginEmailRateLimits',
   'unknownLoginAttempts',
   'passwordResetEmailRateLimits',
+  'passwordResetRequests',
 ];
 
 type Write = { path: string; data: Record<string, unknown> };
@@ -56,12 +58,11 @@ beforeEach(() => {
   mocks.dbFn.mockReturnValue(ctx.db);
   mocks.getUserByEmail.mockReset();
   mocks.getUserByEmail.mockImplementation(async (email: string) => {
-    if (email === 'pat@household.test') return { uid: 'kin1' };
+    if (email === 'pat@household.test') return { uid: 'kin1', email };
     throw new Error('auth/user-not-found');
   });
   mocks.generateLink.mockReset();
   mocks.generateLink.mockResolvedValue('https://example.test/reset');
-  vi.stubEnv('PASSWORD_RESET_CONSTANT_WORK_MS', '0');
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
 });
@@ -123,7 +124,7 @@ describe('#908 every rate-limit write sets expiresAt', () => {
   });
 
   it('requestPasswordReset, unlocked: passwordResetEmailRateLimits (24 hours + 1 hour)', async () => {
-    await requestPasswordResetHandler(req('pat@household.test'));
+    await processPasswordResetRequest({ email: 'pat@household.test', networkKey: '203.0.113.9' });
     expect(writesTo('passwordResetEmailRateLimits').map(expiresAtMillis)).toEqual([NOW + DAY + HOUR]);
   });
 
@@ -131,7 +132,7 @@ describe('#908 every rate-limit write sets expiresAt', () => {
     await ctx.db
       .doc('clients/kin1/security/loginAttempts')
       .set({ attempts: [], lockStartedAtMs: NOW - 60_000, lockedUntilMs: NOW + 29 * 60_000 });
-    await requestPasswordResetHandler(req('pat@household.test'));
+    await processPasswordResetRequest({ email: 'pat@household.test', networkKey: '203.0.113.9' });
     const w = writesTo('passwordResetEmailRateLimits');
     expect(w.map((x) => x.data['lockWindowCount'])).toEqual([1]);
     expect(w.map(expiresAtMillis)).toEqual([NOW + DAY + HOUR]);

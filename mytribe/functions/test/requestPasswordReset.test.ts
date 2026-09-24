@@ -1,261 +1,196 @@
-import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { buildDbMock } from './_helpers/mockDb';
 import { callableRequest } from './_helpers/callableRequest';
 
-const getUserByEmailMock = vi.fn();
-const generateLinkMock = vi.fn();
-const enqueueMock = vi.fn();
-const logEventMock = vi.fn();
-const checkIpRateLimitMock = vi.fn().mockResolvedValue(undefined);
-const writeAuditEntryMock = vi.fn().mockResolvedValue('audit-id');
-
-// `db` mock supports the inline per-email rate-limit transaction added 2026-05-19.
-// The tx callback receives a fake transaction with no-op get/set; the rate-limit
-// helper sees an empty timestamps array and writes one entry — never throws.
-const txGetMock = vi.fn().mockResolvedValue({ data: () => undefined });
-const txSetMock = vi.fn();
-const dbMock = {
-  collection: () => ({ doc: () => ({}) }),
-  runTransaction: async (cb: (tx: { get: typeof txGetMock; set: typeof txSetMock }) => Promise<unknown>) =>
-    cb({ get: txGetMock, set: txSetMock }),
-};
+/**
+ * #905: the server sends password reset emails itself.
+ *
+ * The callable writes one `passwordResetRequests` doc and answers `{ ok: true }`
+ * without looking the address up. The trigger body does the lookup, the budget,
+ * the link and the send, straight to smtp2go with the `auth.password.reset`
+ * template, never through the notifications pipeline.
+ *
+ * Real handler, real template loader and real `checkIpRateLimit` on one
+ * write-through db mock. Only Firebase Auth, the transport, the logger and the
+ * audit writer are faked.
+ */
+const mocks = vi.hoisted(() => ({
+  dbFn: vi.fn(),
+  getUserByEmail: vi.fn(),
+  generatePasswordResetLink: vi.fn(),
+  sendTemplatedEmail: vi.fn(),
+  enqueueNotification: vi.fn(),
+  writeAuditEntry: vi.fn(),
+}));
 vi.mock('../src/lib/firestoreAdmin', () => ({
+  db: mocks.dbFn,
   auth: () => ({
-    getUserByEmail: getUserByEmailMock,
-    generatePasswordResetLink: generateLinkMock,
+    getUserByEmail: mocks.getUserByEmail,
+    generatePasswordResetLink: mocks.generatePasswordResetLink,
   }),
-  db: () => dbMock,
+  getAdmin: vi.fn(),
 }));
-vi.mock('../src/notifications', () => ({ enqueueNotification: enqueueMock }));
-vi.mock('../src/lib/logger', () => ({ logEvent: logEventMock }));
-vi.mock('../src/auth/loginSecurity', () => ({
-  checkIpRateLimit: checkIpRateLimitMock,
-  // #891: no account in this file is locked; requestPasswordResetLocked.test.ts covers locks.
-  activeLockStartedAtMs: vi.fn(async () => null),
-  // #908: the TTL stamp; rateLimitTtl.test.ts asserts its value.
-  rateLimitExpiresAt: vi.fn(() => 'expires-at'),
-}));
-vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: writeAuditEntryMock }));
+vi.mock('../src/lib/email', () => ({ sendTemplatedEmail: mocks.sendTemplatedEmail }));
+vi.mock('../src/notifications', () => ({ enqueueNotification: mocks.enqueueNotification }));
+vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: mocks.enqueueNotification }));
+vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
+vi.mock('../src/lib/sentry', () => ({ captureFunctionError: vi.fn() }));
+vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: mocks.writeAuditEntry }));
 
-const TEST_EMAIL = 'pepper@tribetails.com';
-const GHOST_EMAIL = 'ghost@example.com';
-const TEST_UID = 'uid-pepper';
-const TEST_LINK = 'https://kinfolk.tribetails.com/account/secure-reset?oobCode=abc123';
+import {
+  requestPasswordResetHandler,
+  processPasswordResetRequest,
+  handlePasswordResetRequestDoc,
+  PASSWORD_RESET_REQUESTS,
+} from '../src/auth/requestPasswordReset';
+
+const KIN_EMAIL = 'pat@household.test';
+const GHOST_EMAIL = 'nobody@household.test';
+const LINK = 'https://kinfolk.tribetails.com/account/secure-reset?mode=resetPassword&oobCode=abc';
+const NET = '203.0.113.9';
+
+const users: Record<string, Record<string, unknown>> = {
+  [KIN_EMAIL]: { uid: 'kin1', email: KIN_EMAIL, displayName: 'Pat Doe' },
+  'owner@tribetails.test': { uid: 'op1', email: 'owner@tribetails.test', customClaims: { admin: true } },
+  'auntie@tribetails.test': { uid: 'au1', email: 'auntie@tribetails.test', customClaims: { staffRole: 'auntie' } },
+};
+
+let ctx: ReturnType<typeof buildDbMock>;
+function setup(docs: Record<string, Record<string, unknown>> = {}) {
+  ctx = buildDbMock({ writeThrough: true, docs });
+  mocks.dbFn.mockReturnValue(ctx.db);
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // Default to 0ms constant-work floor so functional tests stay fast; the
-  // timing-equality tests below override to a measurable value.
-  vi.stubEnv('PASSWORD_RESET_CONSTANT_WORK_MS', '0');
-  checkIpRateLimitMock.mockResolvedValue(undefined);
-  getUserByEmailMock.mockResolvedValue({ uid: TEST_UID, displayName: 'Pepper Tuck' });
-  generateLinkMock.mockResolvedValue(TEST_LINK);
-  enqueueMock.mockResolvedValue(['notif-id-1']);
-  writeAuditEntryMock.mockResolvedValue('audit-id');
+  vi.stubEnv('AUNTIE_OPERATOR_UIDS', '');
+  mocks.getUserByEmail.mockImplementation(async (email: string) => {
+    const u = users[email];
+    if (!u) throw new Error('auth/user-not-found');
+    return u;
+  });
+  mocks.generatePasswordResetLink.mockResolvedValue(LINK);
+  mocks.sendTemplatedEmail.mockResolvedValue('email-1');
+  mocks.writeAuditEntry.mockResolvedValue('audit-1');
+  setup();
+});
+afterEach(() => vi.unstubAllEnvs());
+
+function call(email: unknown) {
+  return requestPasswordResetHandler(callableRequest({ email }, { headers: { 'x-forwarded-for': NET } }));
+}
+
+function requestDocs() {
+  return ctx.adds.filter((a) => a.collection === PASSWORD_RESET_REQUESTS);
+}
+
+describe('the callable', () => {
+  it('writes one request doc and answers { ok: true }, without looking the address up', async () => {
+    await expect(call('Pat@Household.test')).resolves.toEqual({ ok: true });
+    expect(requestDocs()).toHaveLength(1);
+    expect(requestDocs()[0]!.data).toMatchObject({ email: KIN_EMAIL, networkKey: NET, ip: NET });
+    expect(mocks.getUserByEmail).not.toHaveBeenCalled();
+    expect(mocks.sendTemplatedEmail).not.toHaveBeenCalled();
+  });
+
+  it('does the same work for an address that is not an account', async () => {
+    await call(KIN_EMAIL);
+    await call(GHOST_EMAIL);
+    const [a, b] = requestDocs().map((x) => Object.keys(x.data).sort());
+    expect(a).toEqual(b);
+  });
+
+  it('trims the address before checking it', async () => {
+    await expect(call('  pat@household.test  ')).resolves.toEqual({ ok: true });
+    expect(requestDocs()[0]!.data['email']).toBe(KIN_EMAIL);
+  });
+  it('refuses a missing or malformed email', async () => {
+    await expect(call('not-an-email')).rejects.toMatchObject({ code: 'invalid-argument' });
+    await expect(call(undefined)).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(requestDocs()).toHaveLength(0);
+  });
 });
 
-afterAll(() => {
-  vi.unstubAllEnvs();
+describe('sending', () => {
+  it('sends the reset to the account address, with the link, outside the notifications pipeline', async () => {
+    await processPasswordResetRequest({ email: KIN_EMAIL, networkKey: NET });
+    expect(mocks.sendTemplatedEmail).toHaveBeenCalledTimes(1);
+    const args = mocks.sendTemplatedEmail.mock.calls[0]![0];
+    expect(args.to).toBe(KIN_EMAIL);
+    expect(args.data).toEqual({ link: LINK, email: KIN_EMAIL, displayName: 'Pat Doe' });
+    expect(mocks.enqueueNotification).not.toHaveBeenCalled();
+    // No notification doc is written, so the link is stored nowhere.
+    expect(ctx.writes.some((w: { path: string }) => w.path.startsWith('notification'))).toBe(false);
+  });
+
+  it('sends nothing for an address that is not an account', async () => {
+    await processPasswordResetRequest({ email: GHOST_EMAIL, networkKey: NET });
+    expect(mocks.generatePasswordResetLink).not.toHaveBeenCalled();
+    expect(mocks.sendTemplatedEmail).not.toHaveBeenCalled();
+  });
+
+  it('points a household at the portal sign-in and staff at the admin sign-in', async () => {
+    await processPasswordResetRequest({ email: KIN_EMAIL, networkKey: NET });
+    await processPasswordResetRequest({ email: 'owner@tribetails.test', networkKey: NET });
+    await processPasswordResetRequest({ email: 'auntie@tribetails.test', networkKey: NET });
+    expect(mocks.generatePasswordResetLink.mock.calls.map(([, s]) => s.url)).toEqual([
+      'https://kinfolk.tribetails.com/signin',
+      'https://auntie.tribetails.com/signin',
+      'https://auntie.tribetails.com/signin',
+    ]);
+  });
+
+  it("uses the operator's stored template when there is one", async () => {
+    setup({
+      'emailTemplates/auth.password.reset': { subject: 'Mine', body: 'Go: {{link}}', html: '<a href="{{link}}">Go</a>' },
+    });
+    await processPasswordResetRequest({ email: KIN_EMAIL, networkKey: NET });
+    expect(mocks.sendTemplatedEmail.mock.calls[0]![0]).toMatchObject({
+      subjectTemplate: 'Mine',
+      bodyTemplate: 'Go: {{link}}',
+      htmlTemplate: '<a href="{{link}}">Go</a>',
+    });
+  });
+
+  it('falls back to the repo copy, link included, when none is stored', async () => {
+    await processPasswordResetRequest({ email: KIN_EMAIL, networkKey: NET });
+    const args = mocks.sendTemplatedEmail.mock.calls[0]![0];
+    expect(args.subjectTemplate).toBe('Reset your Tribe Tails password');
+    expect(args.bodyTemplate).toContain('{{link}}');
+    expect(args.htmlTemplate).toContain('{{link}}');
+  });
+
+  it('a failed send is rethrown, so the trigger reports it, and writes no audit row', async () => {
+    mocks.sendTemplatedEmail.mockRejectedValueOnce(new Error('smtp2go down'));
+    await expect(processPasswordResetRequest({ email: KIN_EMAIL, networkKey: NET })).rejects.toThrow('smtp2go down');
+    expect(mocks.writeAuditEntry).not.toHaveBeenCalled();
+  });
+  it('writes an audit row for a sent reset', async () => {
+    await processPasswordResetRequest({ email: KIN_EMAIL, networkKey: NET });
+    expect(mocks.writeAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'AUTH_PASSWORD_RESET_REQUESTED', actorUid: 'kin1' }),
+    );
+  });
 });
 
-describe('requestPasswordResetHandler', () => {
-  it('generates link + enqueues notification for known email', async () => {
-    const { requestPasswordResetHandler } = await import('../src/auth/requestPasswordReset');
-    const result = await requestPasswordResetHandler(callableRequest({ email: TEST_EMAIL }));
-
-    expect(result).toEqual({ ok: true });
-    expect(generateLinkMock).toHaveBeenCalledWith(
-      TEST_EMAIL,
-      expect.objectContaining({ url: expect.stringContaining('secure-reset') }),
-    );
-    expect(enqueueMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        key: 'auth.password.reset',
-        recipientUid: TEST_UID,
-        data: expect.objectContaining({ link: TEST_LINK, email: TEST_EMAIL }),
-      }),
-    );
-    expect(writeAuditEntryMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: 'AUTH_PASSWORD_RESET_REQUESTED',
-        actorUid: TEST_UID,
-        severity: 'info',
-      }),
-    );
+describe('the trigger body', () => {
+  it('deletes the request doc before doing anything else, even for an unknown address', async () => {
+    const order: string[] = [];
+    mocks.getUserByEmail.mockImplementationOnce(async () => {
+      order.push('lookup');
+      throw new Error('auth/user-not-found');
+    });
+    await handlePasswordResetRequestDoc({
+      data: () => ({ email: GHOST_EMAIL, networkKey: NET }),
+      ref: { delete: async () => void order.push('delete') },
+    });
+    expect(order).toEqual(['delete', 'lookup']);
   });
 
-  it('skips audit emit when email not found', async () => {
-    getUserByEmailMock.mockRejectedValue(new Error('auth/user-not-found'));
-    const { requestPasswordResetHandler } = await import('../src/auth/requestPasswordReset');
-    await requestPasswordResetHandler(callableRequest({ email: 'ghost@example.com' }));
-    expect(writeAuditEntryMock).not.toHaveBeenCalled();
-  });
-
-  it('returns ok=true silently when email not found (no leak)', async () => {
-    getUserByEmailMock.mockRejectedValue(new Error('auth/user-not-found'));
-    const { requestPasswordResetHandler } = await import('../src/auth/requestPasswordReset');
-    const result = await requestPasswordResetHandler(callableRequest({ email: 'ghost@example.com' }));
-
-    expect(result).toEqual({ ok: true });
-    expect(enqueueMock).not.toHaveBeenCalled();
-  });
-
-  it('rejects missing email with invalid-argument', async () => {
-    const { requestPasswordResetHandler } = await import('../src/auth/requestPasswordReset');
-    await expect(
-      requestPasswordResetHandler(callableRequest({})),
-    ).rejects.toMatchObject({ code: 'invalid-argument' });
-  });
-
-  it('rejects malformed email with invalid-argument', async () => {
-    const { requestPasswordResetHandler } = await import('../src/auth/requestPasswordReset');
-    await expect(
-      requestPasswordResetHandler(callableRequest({ email: 'not-an-email' })),
-    ).rejects.toMatchObject({ code: 'invalid-argument' });
-  });
-
-  it('propagates rate-limit error from checkIpRateLimit', async () => {
-    const { HttpsError } = await import('firebase-functions/v2/https');
-    checkIpRateLimitMock.mockRejectedValue(
-      new HttpsError('resource-exhausted', 'Too many requests. Try again later.'),
-    );
-    const { requestPasswordResetHandler } = await import('../src/auth/requestPasswordReset');
-    await expect(
-      requestPasswordResetHandler(callableRequest({ email: TEST_EMAIL })),
-    ).rejects.toMatchObject({ code: 'resource-exhausted' });
-    expect(generateLinkMock).not.toHaveBeenCalled();
-  });
-
-  it('uses email as displayName fallback when displayName is null', async () => {
-    getUserByEmailMock.mockResolvedValue({ uid: TEST_UID, displayName: null });
-    const { requestPasswordResetHandler } = await import('../src/auth/requestPasswordReset');
-    await requestPasswordResetHandler(callableRequest({ email: TEST_EMAIL }));
-
-    expect(enqueueMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ displayName: TEST_EMAIL }),
-      }),
-    );
-  });
-
-  it('link continueUrl encodes email param', async () => {
-    const plusEmail = 'pepper+pet@tribetails.com';
-    getUserByEmailMock.mockResolvedValue({ uid: TEST_UID, displayName: null });
-    const { requestPasswordResetHandler } = await import('../src/auth/requestPasswordReset');
-    await requestPasswordResetHandler(callableRequest({ email: plusEmail }));
-
-    const callArgs = generateLinkMock.mock.calls[0];
-    expect(callArgs[1].url).toContain(encodeURIComponent(plusEmail));
-  });
-
-  // ----- C-B: timing-oracle closure (constant-work floor) -----
-  //
-  // These assertions used to read the real clock and compare the result to a
-  // hardcoded budget, most sharply `|hit - miss| <= 15`. That flakes. A single
-  // `Date.now()` delta carries GC pauses, JIT warm-up and worker-pool
-  // preemption on its tail, so the budget sat inside the measurement noise:
-  // against a 100ms floor, single samples were observed at 113ms on an idle
-  // machine, and the two samples are taken at different moments in the
-  // worker's life, so nothing forces their overhead to match. It went red once
-  // in a full-suite run and would have gone red again in CI.
-  //
-  // They now run on the fake clock, so what gets measured is how long the
-  // handler makes the caller wait by its own reckoning. That is the quantity
-  // an attacker samples, it is deterministic here, and it still goes red when
-  // the oracle is put back.
-
-  /**
-   * Runs the handler on a fake clock and returns the virtual milliseconds the
-   * caller waits for an answer.
-   *
-   * The timestamp is taken when the handler's promise settles, not after the
-   * clock is drained, so a constant-work pad that gets scheduled but not
-   * awaited still reads as 0 rather than passing by accident.
-   *
-   * Everything the handler awaits (auth, db, notifications) is mocked and
-   * settles in a microtask, so virtual time only moves when the handler's own
-   * constant-work timer fires. That makes the floor exactly measurable.
-   *
-   * What this proves: the handler pads to the same latency whether or not the
-   * account exists. What it does NOT prove: that real Firebase round trips
-   * stay under that floor in production. With the SDK mocked, no unit test can
-   * see that. It is what the 600ms CONSTANT_WORK_MS_DEFAULT is sized for.
-   */
-  async function measureVirtualLatency(email: string): Promise<number> {
-    const { requestPasswordResetHandler } = await import('../src/auth/requestPasswordReset');
-    vi.useFakeTimers();
-    try {
-      const startMs = Date.now();
-      let settledAtMs = -1;
-      const pending = requestPasswordResetHandler(callableRequest({ email })).then((result) => {
-        settledAtMs = Date.now();
-        return result;
-      });
-      await vi.runAllTimersAsync();
-      await pending;
-      return settledAtMs - startMs;
-    } finally {
-      vi.useRealTimers();
-    }
-  }
-
-  function stubUnknownEmail(): void {
-    getUserByEmailMock.mockRejectedValue(new Error('auth/user-not-found'));
-    generateLinkMock.mockRejectedValue(new Error('auth/user-not-found'));
-  }
-
-  it('does the same auth work for a known and an unknown email', async () => {
-    const { requestPasswordResetHandler } = await import('../src/auth/requestPasswordReset');
-
-    const hitResult = await requestPasswordResetHandler(callableRequest({ email: TEST_EMAIL }));
-    const hitLookups = getUserByEmailMock.mock.calls.length;
-    const hitLinks = generateLinkMock.mock.calls.length;
-
-    stubUnknownEmail();
-    const missResult = await requestPasswordResetHandler(callableRequest({ email: GHOST_EMAIL }));
-    const missLookups = getUserByEmailMock.mock.calls.length - hitLookups;
-    const missLinks = generateLinkMock.mock.calls.length - hitLinks;
-
-    // The miss path must not short-circuit: it looks the user up AND asks for
-    // a reset link, same as the hit path, even though both throw. Skipping
-    // either call is the fast-throw oracle this handler exists to avoid.
-    expect(hitLookups).toBe(1);
-    expect(hitLinks).toBe(1);
-    expect(missLookups).toBe(hitLookups);
-    expect(missLinks).toBe(hitLinks);
-    expect(generateLinkMock).toHaveBeenLastCalledWith(
-      GHOST_EMAIL,
-      expect.objectContaining({ url: expect.stringContaining('secure-reset') }),
-    );
-    expect(missResult).toEqual(hitResult);
-  });
-
-  it('hit path floors caller latency at CONSTANT_WORK_MS', async () => {
-    vi.stubEnv('PASSWORD_RESET_CONSTANT_WORK_MS', '120');
-    expect(await measureVirtualLatency(TEST_EMAIL)).toBe(120);
-  });
-
-  it('miss path floors caller latency at CONSTANT_WORK_MS (closes timing oracle)', async () => {
-    vi.stubEnv('PASSWORD_RESET_CONSTANT_WORK_MS', '120');
-    stubUnknownEmail();
-    expect(await measureVirtualLatency(GHOST_EMAIL)).toBe(120);
-  });
-
-  it('hit and miss caller latencies are identical, to the millisecond', async () => {
-    vi.stubEnv('PASSWORD_RESET_CONSTANT_WORK_MS', '100');
-
-    const hitMs = await measureVirtualLatency(TEST_EMAIL);
-    stubUnknownEmail();
-    const missMs = await measureVirtualLatency(GHOST_EMAIL);
-
-    // No tolerance to tune: on the fake clock these are equal or the handler
-    // has an existence oracle.
-    expect(missMs).toBe(hitMs);
-    expect(hitMs).toBe(100);
-  });
-
-  it('rejects negative or non-numeric env override (falls back to default 600)', async () => {
-    vi.stubEnv('PASSWORD_RESET_CONSTANT_WORK_MS', 'bogus');
-    stubUnknownEmail();
-    expect(await measureVirtualLatency(GHOST_EMAIL)).toBe(600);
+  it('ignores a malformed doc after deleting it', async () => {
+    const del = vi.fn(async () => undefined);
+    await handlePasswordResetRequestDoc({ data: () => ({ email: 42 }), ref: { delete: del } });
+    expect(del).toHaveBeenCalled();
+    expect(mocks.getUserByEmail).not.toHaveBeenCalled();
   });
 });
