@@ -89,7 +89,19 @@ export function contentToText(headline: string, content: string): string {
       if (el.name === 'ul' || el.name === 'ol') {
         const items = el.children.filter((c): c is Element => c.type === 'tag' && (c as Element).name === 'li');
         blocks.push(
-          items.map((li, i) => `${el.name === 'ol' ? `${i + 1}.` : '-'} ${decode(textOf(li)).trim()}`).join('\n'),
+          items
+            .map((li, i) => {
+              // A <br> inside a <li> (sanitizer-legal) produces a continuation
+              // line, which is indented to align under the item text rather
+              // than reading as a detached, unmarked line.
+              const marker = el.name === 'ol' ? `${i + 1}.` : '-';
+              const indent = ' '.repeat(marker.length + 1);
+              const lines = decode(textOf(li))
+                .split('\n')
+                .map((l) => l.trim());
+              return lines.map((line, idx) => (idx === 0 ? `${marker} ${line}` : `${indent}${line}`)).join('\n');
+            })
+            .join('\n'),
         );
       } else if (el.name === 'blockquote') {
         walk(el.children);

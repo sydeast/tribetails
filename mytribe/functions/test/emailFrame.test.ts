@@ -51,6 +51,14 @@ describe('contentToText', () => {
   it('does not repeat a link whose text is its address', () => {
     expect(contentToText('H', '<p><a href="https://x.com">https://x.com</a></p>')).toBe('H\n\nhttps://x.com');
   });
+
+  it('indents a <br> continuation line under a bulleted item', () => {
+    expect(contentToText('H', '<ul><li>Line1<br>Line2</li><li>Two</li></ul>')).toBe('H\n\n- Line1\n  Line2\n- Two');
+  });
+
+  it('indents a <br> continuation line under a numbered item', () => {
+    expect(contentToText('H', '<ol><li>a<br>b</li></ol>')).toBe('H\n\n1. a\n   b');
+  });
 });
 
 describe('sendPartsFor', () => {
