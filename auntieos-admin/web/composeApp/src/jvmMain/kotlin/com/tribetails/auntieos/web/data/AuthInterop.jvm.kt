@@ -37,8 +37,13 @@ import java.util.Base64
  *   - sign-in via accounts:signInWithPassword,
  *   - admin gate by reading the `admin` custom claim straight off the ID token JWT
  *     (web does getIdTokenResult().claims.admin === true),
- *   - password reset via the NATIVE accounts:sendOobCode (the AuntieOS admin web app uses
- *     sendPasswordResetEmail, not the custom MyTribe callable).
+ *   - password reset via the NATIVE accounts:sendOobCode, so desktop staff get Firebase's
+ *     stock reset email. The admin web and Android apps moved to the `requestPasswordReset`
+ *     callable (the operator's own template). Desktop did not follow because desktop
+ *     parity is paused by owner ruling (auntieos-admin/CLAUDE.md), and because
+ *     [JvmFirestoreRest.callable] refuses to dial without a signed-in token, which a
+ *     reset from the sign-in screen never has. Switching needs an unauthenticated
+ *     callable path first.
  *
  * The Web API key is a public client identifier (already shipped in firebase-bridge.js to
  * every browser), not a secret, so embedding it here is safe.

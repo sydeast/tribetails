@@ -3,7 +3,6 @@ import {
   EmailAuthProvider,
   onAuthStateChanged,
   reauthenticateWithCredential,
-  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
   updatePassword,
@@ -14,6 +13,9 @@ import { useSyncExternalStore } from 'react';
 import { decideAttestation } from './boot';
 import { reportCredentialFailure } from './failedLogin';
 import { auth } from './firebase';
+import { CallableTimeoutError, call } from './fns';
+import { LostSignalError } from './offlineWrite';
+import { OfflineSessionError } from './readOnlySession';
 
 /**
  * Auth for the AuntieOS admin app. Structurally mirrors
@@ -92,6 +94,8 @@ export class AccountSecurityError extends Error {
   }
 }
 
+const NETWORK_ERROR_MSG = 'Network error. Check your connection and try again.';
+
 /** Firebase's shortest password. The project policy may demand more; the server says so. */
 const MIN_PASSWORD_LENGTH = 6;
 
@@ -126,19 +130,19 @@ function toSecurityError(err: unknown): AccountSecurityError {
       return new AccountSecurityError('email-already-in-use', 'That email is already in use.');
     case 'auth/invalid-email':
     case 'auth/missing-email':
+    case 'functions/invalid-argument':
       return new AccountSecurityError('invalid-email', "That email address doesn't look right.");
     case 'auth/user-not-found':
       return new AccountSecurityError('invalid-email', 'No account uses that email address.');
     case 'auth/too-many-requests':
+    case 'functions/resource-exhausted':
       return new AccountSecurityError(
         'too-many-requests',
         'Too many attempts. Wait a minute and try again.',
       );
     case 'auth/network-request-failed':
-      return new AccountSecurityError(
-        'network-error',
-        'Network error. Check your connection and try again.',
-      );
+    case 'functions/unavailable':
+      return new AccountSecurityError('network-error', NETWORK_ERROR_MSG);
     default: {
       const raw = err instanceof Error ? err.message.trim() : '';
       return new AccountSecurityError(
@@ -232,22 +236,38 @@ export async function changeEmail(currentPassword: string, newEmail: string): Pr
   }
 }
 
-/** Where an admin reset link continues once the password is set (#892). */
-export const ADMIN_SIGN_IN_URL = 'https://auntie.tribetails.com/signin';
-
 /**
- * Sends the Firebase password-reset email.
+ * Sends the password-reset email through our own `requestPasswordReset`
+ * callable, not Firebase's `sendPasswordResetEmail`.
  *
- * Wired from the Account > Security panel ("Send reset email"), matching
- * Android's SecurityPanel, which is the only place either app offers it.
+ * Firebase's reset email uses a console template this project cannot edit, so
+ * the server sends the link itself through the operator's
+ * `auth.password.reset` template. The client sends only the address. The
+ * server picks where the link continues: staff (owner or auntie claim) go back
+ * to https://auntie.tribetails.com/signin, which is what #892 used to pass as
+ * the continue URL from here.
+ *
+ * The callable answers `{ ok: true }` for every address, known or not, so the
+ * screen says the same thing either way. What can still fail is the request
+ * itself: the per-IP limit (`resource-exhausted`), a malformed address
+ * (`invalid-argument`), or the network.
+ *
+ * Wired from the sign-in screen's "Forgot password?" and the Account >
+ * Security panel's "Send reset email".
  */
 export async function sendReset(email: string): Promise<void> {
   try {
-    // #892: the link opens the project's email action page on the portal
-    // (Identity Toolkit callbackUri is one URL per project). The continue URL
-    // is what sends staff back to this app's sign-in afterwards.
-    await sendPasswordResetEmail(auth, email.trim(), { url: ADMIN_SIGN_IN_URL, handleCodeInApp: false });
+    await call<{ email: string }, { ok: true }>('requestPasswordReset', { email: email.trim() });
   } catch (err) {
+    // These three already carry operator copy, but it names the callable
+    // ("requestPasswordReset was not sent"), which means nothing to an auntie.
+    if (
+      err instanceof OfflineSessionError ||
+      err instanceof LostSignalError ||
+      err instanceof CallableTimeoutError
+    ) {
+      throw new AccountSecurityError('network-error', NETWORK_ERROR_MSG);
+    }
     throw toSecurityError(err);
   }
 }

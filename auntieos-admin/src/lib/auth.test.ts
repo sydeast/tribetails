@@ -57,12 +57,22 @@ vi.mock('firebase/auth', () => ({
 }));
 vi.mock('./firebase', () => ({ auth: authStub }));
 
+// The callable seam. Only `call` is faked; the error classes stay real, because
+// `sendReset` recognises them with `instanceof`.
+const { call } = vi.hoisted(() => ({ call: vi.fn() }));
+vi.mock('./fns', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./fns')>()),
+  call,
+}));
+
 import {
   AccountSecurityError,
   changeEmail,
   changePassword,
   sendReset,
 } from './auth';
+import { CallableTimeoutError } from './fns';
+import { LostSignalError, OfflineCallError } from './offlineWrite';
 
 function signedInUser(email: string | null = 'auntie@tribetails.com') {
   return { uid: 'op-1', email };
@@ -96,6 +106,11 @@ beforeEach(() => {
   sendPasswordResetEmail.mockReset();
   sendPasswordResetEmail.mockImplementation(async () => {
     calls.push('sendPasswordResetEmail');
+  });
+  call.mockReset();
+  call.mockImplementation(async (name: string) => {
+    calls.push(name);
+    return { ok: true };
   });
 });
 
@@ -249,24 +264,44 @@ describe('changeEmail', () => {
 });
 
 describe('sendReset', () => {
-  it('sends the reset mail to the trimmed address', async () => {
+  it('asks our requestPasswordReset callable, with the trimmed address and nothing else', async () => {
     await sendReset('  auntie@tribetails.com ');
-    expect(sendPasswordResetEmail).toHaveBeenCalledWith(authStub, 'auntie@tribetails.com', expect.anything());
+    // Exactly the two arguments: no options, so no retry opt-in, and a payload
+    // with no continue URL. The server picks that (#892's admin sign-in for
+    // staff), so a client cannot point a reset link anywhere.
+    expect(call.mock.calls).toEqual([['requestPasswordReset', { email: 'auntie@tribetails.com' }]]);
   });
 
-  it('continues the reset link back to the admin sign-in, not the portal (#892)', async () => {
-    // The project's email action URL is the portal's /account/secure-reset, so
-    // the link always opens there. The continue URL is what brings staff back.
+  it('never falls back to Firebase\'s own reset email', async () => {
     await sendReset('auntie@tribetails.com');
-    const settings = sendPasswordResetEmail.mock.calls[0]?.[2] as { url: string; handleCodeInApp: boolean };
-    expect(settings).toEqual({ url: 'https://auntie.tribetails.com/signin', handleCodeInApp: false });
+    expect(sendPasswordResetEmail).not.toHaveBeenCalled();
+    expect(calls).toEqual(['requestPasswordReset']);
   });
 
-  it('maps a Firebase failure to a typed AccountSecurityError, not a raw code', async () => {
-    sendPasswordResetEmail.mockRejectedValueOnce(fbError('auth/too-many-requests'));
+  it('maps the per-IP limit to the existing too-many-attempts copy, not a raw code', async () => {
+    call.mockRejectedValueOnce(fbError('functions/resource-exhausted', 'Too many requests. Try again later.'));
     const err = await sendReset('auntie@tribetails.com').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AccountSecurityError);
     expect((err as AccountSecurityError).code).toBe('too-many-requests');
-    expect((err as Error).message).not.toContain('auth/');
+    expect((err as Error).message).toBe('Too many attempts. Wait a minute and try again.');
+  });
+
+  it('maps a malformed address refused by the server to invalid-email', async () => {
+    call.mockRejectedValueOnce(fbError('functions/invalid-argument', 'email (valid email address) is required'));
+    const err = await sendReset('not-an-address').catch((e: unknown) => e);
+    expect((err as AccountSecurityError).code).toBe('invalid-email');
+    expect((err as Error).message).not.toContain('functions/');
+  });
+
+  it.each([
+    ['a timeout', () => new CallableTimeoutError('requestPasswordReset')],
+    ['an offline refusal', () => new OfflineCallError('requestPasswordReset')],
+    ['a lost signal', () => new LostSignalError('requestPasswordReset')],
+  ])('reports %s as a network error without naming the callable', async (_label, make) => {
+    call.mockRejectedValueOnce(make());
+    const err = await sendReset('auntie@tribetails.com').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AccountSecurityError);
+    expect((err as AccountSecurityError).code).toBe('network-error');
+    expect((err as Error).message).toBe('Network error. Check your connection and try again.');
   });
 });

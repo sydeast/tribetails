@@ -385,8 +385,15 @@ describe('account', () => {
       cy.visit('/account');
       cy.contains('.security__rowTitle', 'Change password').should('exist');
       cy.get('#security-new-password').should('not.exist');
+      // The reset goes through our `requestPasswordReset` callable, and this
+      // harness serves no functions emulator, so the callable is stubbed with
+      // the answer it gives for every address.
+      cy.intercept('POST', CALLABLE('requestPasswordReset'), {
+        statusCode: 200,
+        body: { result: { ok: true } },
+      }).as('requestReset');
       cy.contains('button', 'Send reset email').click();
-      // The auth emulator accepts the request and mails nothing.
+      cy.wait('@requestReset').its('request.body').should('deep.equal', { data: { email: ADMIN.email } });
       cy.contains(`Reset link sent to ${ADMIN.email}`, { timeout: 10_000 }).should('exist');
     });
 
