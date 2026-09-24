@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allowIntoApp, testModeFromClaim, type TestMode } from './gate';
+import { allowIntoApp, caretakerFromClaim, testModeFromClaim, type TestMode } from './gate';
 
 /**
  * The auth gate, ported from the wasm app's TestMode.kt (`allowIntoApp`,
@@ -9,7 +9,8 @@ import { allowIntoApp, testModeFromClaim, type TestMode } from './gate';
  * the rules will then deny on every read.
  *
  * The model, which is easy to get backwards:
- *   real admin  -> `admin: true` claim, NO testTribeId, runs UNSCOPED
+ *   owner       -> `admin: true` claim, NO testTribeId, runs UNSCOPED
+ *   caretaker   -> `staffRole: 'auntie'`, NEVER `admin: true` (#944), UNSCOPED
  *   test admin  -> `testTribeId` claim, NEVER `admin: true`, runs SCOPED
  *   anyone else -> denied
  *
@@ -58,27 +59,63 @@ describe('testModeFromClaim', () => {
   });
 });
 
+describe('caretakerFromClaim', () => {
+  it('the exact role string is the caretaker', () => {
+    expect(caretakerFromClaim('auntie')).toBe(true);
+  });
+
+  it('no claim is not the caretaker', () => {
+    expect(caretakerFromClaim(undefined)).toBe(false);
+    expect(caretakerFromClaim(null)).toBe(false);
+    expect(caretakerFromClaim('')).toBe(false);
+  });
+
+  it('an unknown future staff role is NOT the caretaker', () => {
+    // Spec section 3: `staffRole: 'bookkeeper'` is neither the owner nor the
+    // Auntie, and must be refused everywhere until someone writes rules for it.
+    // A `typeof raw === 'string'` test here would have admitted it.
+    expect(caretakerFromClaim('bookkeeper')).toBe(false);
+    expect(caretakerFromClaim('admin')).toBe(false);
+  });
+
+  it('does not coerce, trim or case-fold', () => {
+    // Custom claims are attacker-adjacent input: they arrive decoded from a JWT.
+    // `grant-staff-role.mjs` writes the literal string, so anything else is not
+    // a claim this project minted and must not be read as one.
+    expect(caretakerFromClaim(' auntie ')).toBe(false);
+    expect(caretakerFromClaim('Auntie')).toBe(false);
+    expect(caretakerFromClaim(true as unknown as string)).toBe(false);
+    expect(caretakerFromClaim({} as unknown as string)).toBe(false);
+  });
+});
+
 describe('allowIntoApp', () => {
   const scoped: TestMode = { active: true, testTribeId: 'test-kinfolk-001' };
 
-  it('admits a real admin', () => {
-    expect(allowIntoApp(true, OFF)).toBe(true);
+  it('admits the owner', () => {
+    expect(allowIntoApp(true, false, OFF)).toBe(true);
+  });
+
+  it('admits a caretaker, who carries no admin claim at all', () => {
+    // #944's first blocker: before this, an Auntie authenticated and the gate
+    // refused her, so the whole access level was unreachable.
+    expect(allowIntoApp(false, true, OFF)).toBe(true);
   });
 
   it('admits a Stage 0I test admin, to run scoped', () => {
-    expect(allowIntoApp(false, scoped)).toBe(true);
+    expect(allowIntoApp(false, false, scoped)).toBe(true);
   });
 
-  it('denies a signed-in user with neither claim', () => {
+  it('denies a signed-in user with none of the three claims', () => {
     // The whole point of the gate. A kinfolk who signs into the ADMIN app with
     // their portal credentials must not get in.
-    expect(allowIntoApp(false, OFF)).toBe(false);
+    expect(allowIntoApp(false, false, OFF)).toBe(false);
   });
 
-  it('admits an admin who somehow also carries a test claim', () => {
+  it('admits an owner who somehow also carries a test claim', () => {
     // Not expected (the seed never sets admin:true on the test user) but the
     // rule is OR, and failing closed here would lock out the sole operator if a
     // stray claim ever landed on their account.
-    expect(allowIntoApp(true, scoped)).toBe(true);
+    expect(allowIntoApp(true, false, scoped)).toBe(true);
   });
 });

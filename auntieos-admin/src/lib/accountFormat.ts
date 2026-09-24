@@ -92,6 +92,11 @@ export function roleLabel(access: AdminAccess | null): string {
   switch (access.status) {
     case 'admin':
       return 'Operator (full admin)';
+    case 'caretaker':
+      // #944. Not "Operator". The whole point of the split is that this session
+      // is on a narrower boundary than the owner's, and the account screen is
+      // where someone looks to find out which one they are on.
+      return 'Auntie (caretaker)';
     case 'testAdmin':
       return 'Test admin (sandbox)';
     case 'denied':

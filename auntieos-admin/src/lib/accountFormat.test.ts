@@ -66,8 +66,18 @@ describe('providerLabel', () => {
 describe('roleLabel', () => {
   it('labels each resolved access', () => {
     expect(roleLabel({ status: 'admin' })).toBe('Operator (full admin)');
+    expect(roleLabel({ status: 'caretaker' })).toBe('Auntie (caretaker)');
     expect(roleLabel({ status: 'testAdmin', testTribeId: '0I' })).toBe('Test admin (sandbox)');
     expect(roleLabel({ status: 'denied' })).toBe('No access');
+  });
+
+  it('never calls a caretaker the Operator (#944)', () => {
+    // The Account screen's Role row is where someone looks to find out which
+    // boundary they are on, and the whole point of the split is that hers is
+    // narrower than the owner's. Asserted separately from the wording above so
+    // a copy edit cannot quietly reintroduce "Operator" here.
+    expect(roleLabel({ status: 'caretaker' })).not.toContain('Operator');
+    expect(roleLabel({ status: 'caretaker' })).not.toContain('admin');
   });
 });
 

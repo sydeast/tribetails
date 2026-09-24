@@ -19,13 +19,19 @@ import { adminApiFetch, NotSignedInError } from '../lib/adminApiFetch';
  * module does: a bare `fetch` with a `Bearer <idToken>` header, not the
  * Functions SDK's `httpsCallable`.
  *
- *   generate       admin-only (Firebase ID token, `requireAdminToken` in
+ *   generate       OWNER-only (Firebase ID token, `requireStaffToken` in
  *                  index.js), reads admin-only Firestore context (dossiers /
  *                  kin / the_411 / visit_logs), builds the Auntie Voice Bible
  *                  prompt, calls Claude, writes a `generated_drafts` doc, and
  *                  returns a byte-compatible `GenerateResponse`. Confirmed
  *                  DEPLOYED (2026-06-17 memory: "/api/generate DEPLOYED
  *                  always-on").
+ *                  #944: "owner-only" is now a narrower thing than
+ *                  "admin-only" was, and this endpoint is one of the six that
+ *                  REFUSE a caretaker. The dossier read on the line above is
+ *                  the reason: dossiers are admin-only by the operator's
+ *                  ruling, and this endpoint puts their prose into the draft
+ *                  it returns. See web/functions/staffAccess.js.
  * SENDING is different, and no longer goes through this file's fetch path at
  * all. It used to POST `/api/send-message`, an AuntieOS `onRequest` that was a
  * bare proxy to the n8n `auntie-send-message` webhook. n8n was retired, so that

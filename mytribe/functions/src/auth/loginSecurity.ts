@@ -13,6 +13,8 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { isOwner } from '../lib/staffGate';
+import { STAFF_ROLE_AUNTIE } from '../lib/auntieAccess';
+import type { ActorRole } from '../lib/schema';
 import { FULL_CPU } from '../lib/runtimeOptions';
 
 /**
@@ -1214,6 +1216,60 @@ export const recordFailedLogin = onCall(
   wrapCallable('recordFailedLogin', recordFailedLoginHandler),
 );
 
+/** What the sign-in audit row should say about who just signed in. */
+export interface SignInAuditActor {
+  /** The audit-log role band. `AUNTIE` is the business side; `PRIMARY` is a household. */
+  readonly actorRole: ActorRole;
+  /** Does this account hold the OWNER claim? Reported truthfully, degrade and all. */
+  readonly admin: boolean;
+  /** The `staffRole` claim verbatim, or null. Recorded so the row is self-contained. */
+  readonly staffRole: string | null;
+  /** Appended to the description: ' (admin)', ' (auntie)', or ''. */
+  readonly descriptionSuffix: string;
+}
+
+/**
+ * Who is this sign-in, for the audit log?
+ *
+ * #944 / #948 follow-up. This used to derive the label from the `admin` claim
+ * alone, and an Auntie carries no `admin` claim on purpose, so HER SIGN-IN WAS
+ * WRITTEN DOWN AS `PRIMARY` — the household label. The audit log is how the
+ * operator sees who did what, and a caretaker filed under "a household member
+ * signed in" is not a cosmetic error: it is the one row that says a contractor
+ * was on the system at all, pointing at the wrong kind of account.
+ *
+ * `ActorRole` IS DELIBERATELY NOT EXTENDED. `'AUNTIE'` predates the split and
+ * already means "the business side" at roughly thirty writers across this tree;
+ * adding a fourth band would have to be threaded through every one of them and
+ * through the rows already in Firestore, to distinguish something the payload
+ * and the description can carry today. So a caretaker lands in the same band as
+ * the owner — which is true, she IS staff — and the row NAMES her: the
+ * description reads `Sign-in success (auntie)` rather than `(admin)`, and the
+ * payload carries `admin` and `staffRole` verbatim so a query can separate them
+ * without parsing prose.
+ *
+ * Precedence matches every other gate in the split: caretaker first, INCLUDING
+ * a double-claimed account, so the row says what the boundary actually did.
+ *
+ * Pure and exported so it is testable without a blocking function, a token or a
+ * Firestore client.
+ */
+export function signInAuditActor(rawClaims: unknown): SignInAuditActor {
+  const claims = (rawClaims ?? {}) as { admin?: unknown; role?: unknown; staffRole?: unknown };
+  const staffRole = typeof claims.staffRole === 'string' ? claims.staffRole : null;
+  const isCaretaker = staffRole === STAFF_ROLE_AUNTIE;
+  // `role === 'admin'` is the legacy operator signal this call site has always
+  // honoured alongside the claim; kept so no existing row changes shape.
+  const holdsOwnerClaim = claims.admin === true || claims.role === 'admin';
+  if (isCaretaker) {
+    return { actorRole: 'AUNTIE', admin: holdsOwnerClaim, staffRole, descriptionSuffix: ' (auntie)' };
+  }
+  if (holdsOwnerClaim) {
+    return { actorRole: 'AUNTIE', admin: true, staffRole, descriptionSuffix: ' (admin)' };
+  }
+  return { actorRole: 'PRIMARY', admin: false, staffRole, descriptionSuffix: '' };
+}
+
 /**
  * Firebase Auth blocking function, runs on every successful credential
  * verification before the sign-in completes. Used here to:
@@ -1289,23 +1345,23 @@ export const beforeSignIn = beforeUserSignedIn(
         { merge: true },
       );
 
-    // Audit: successful sign-in. Fires for BOTH kinfolk and admin (the
+    // Audit: successful sign-in. Fires for BOTH kinfolk and staff (the
     // beforeUserSignedIn blocking function runs on every Firebase Auth sign-in
-    // regardless of role). Admin login is differentiated downstream via
-    // actorRole or the admin custom claim, we tag SYSTEM here and surface
-    // role via payload to keep this emit self-contained.
-    const isAdminClaim =
-      event.data?.customClaims &&
-      ((event.data.customClaims as { admin?: boolean }).admin === true ||
-        (event.data.customClaims as { role?: string }).role === 'admin');
+    // regardless of role). `signInAuditActor` below owns the labelling; see its
+    // header for why an Auntie used to land here as a household PRIMARY.
+    const actor = signInAuditActor(event.data?.customClaims);
     await writeAuditEntry({
       status: 'SUCCESS',
       event: AUDIT_EVENTS.AUTH_LOGIN_SUCCESS,
       severity: 'info',
-      actorRole: isAdminClaim ? 'AUNTIE' : 'PRIMARY',
+      actorRole: actor.actorRole,
       actorUid: uid,
-      description: `Sign-in success${isAdminClaim ? ' (admin)' : ''}`,
-      payload: { admin: !!isAdminClaim, provider: event.data?.providerData?.[0]?.providerId },
+      description: `Sign-in success${actor.descriptionSuffix}`,
+      payload: {
+        admin: actor.admin,
+        staffRole: actor.staffRole,
+        provider: event.data?.providerData?.[0]?.providerId,
+      },
     }).catch((err) => {
       logEvent({
         severity: 'warn',

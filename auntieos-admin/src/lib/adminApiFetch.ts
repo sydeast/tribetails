@@ -20,7 +20,8 @@ import { OfflineSessionError, isReadOnlySession } from './readOnlySession';
  * (`recap_recent_comms` is in the walk immediately before `/api/generate`
  * fails). The token was not missing and the endpoints were not down.
  *
- * The difference is `requireAdminToken`, which these two endpoints and nothing
+ * The difference is `requireStaffToken` (named `requireAdminToken` until #944
+ * taught it the caretaker role), which these two endpoints and nothing
  * else go through. It calls `verifyIdToken(token, true)`, and that second
  * argument is `checkRevoked`. Callables verify without it. So a token that is
  * still inside its one-hour validity but was minted before the account's
