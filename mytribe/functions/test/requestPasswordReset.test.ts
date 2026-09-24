@@ -100,6 +100,10 @@ describe('the callable', () => {
     expect(a).toEqual(b);
   });
 
+  it('trims the address before checking it', async () => {
+    await expect(call('  pat@household.test  ')).resolves.toEqual({ ok: true });
+    expect(requestDocs()[0]!.data['email']).toBe(KIN_EMAIL);
+  });
   it('refuses a missing or malformed email', async () => {
     await expect(call('not-an-email')).rejects.toMatchObject({ code: 'invalid-argument' });
     await expect(call(undefined)).rejects.toMatchObject({ code: 'invalid-argument' });
@@ -156,6 +160,11 @@ describe('sending', () => {
     expect(args.htmlTemplate).toContain('{{link}}');
   });
 
+  it('a failed send is rethrown, so the trigger reports it, and writes no audit row', async () => {
+    mocks.sendTemplatedEmail.mockRejectedValueOnce(new Error('smtp2go down'));
+    await expect(processPasswordResetRequest({ email: KIN_EMAIL, networkKey: NET })).rejects.toThrow('smtp2go down');
+    expect(mocks.writeAuditEntry).not.toHaveBeenCalled();
+  });
   it('writes an audit row for a sent reset', async () => {
     await processPasswordResetRequest({ email: KIN_EMAIL, networkKey: NET });
     expect(mocks.writeAuditEntry).toHaveBeenCalledWith(

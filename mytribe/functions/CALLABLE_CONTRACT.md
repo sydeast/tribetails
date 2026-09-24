@@ -1127,10 +1127,10 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
 
 ### requestPasswordReset (pre-existing; caps made silent and a locked account exempted 2026-09-14, #891; sends our own email 2026-09-24, #905)
 - req `{ email: string /* email */ }`.
-- CLIENTS: none yet. Every shipped client still uses Firebase's own reset, whose
-  console template this project cannot edit (#905). The client PRs that follow
-  move all six apps onto this callable. Portal Android and portal desktop builds
-  installed before #911 still call it.
+- CLIENTS: portal web, portal Android and portal desktop (#956), admin web and
+  admin Android (#954), once those merge. Admin desktop stays on Firebase's own
+  reset: its REST client cannot call anything signed out (#955). Portal Android
+  and portal desktop builds installed before #911 still call it.
 - res `{ ok: true }` for a known, unknown, locked or capped email alike.
 - GATE: none, `wrapCallable` only. Per-IP limit (30 per 5 minutes, keyed like
   `recordFailedLogin`) refuses with `resource-exhausted`; a malformed request is

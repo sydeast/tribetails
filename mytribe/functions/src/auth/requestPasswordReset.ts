@@ -135,7 +135,7 @@ async function reservePasswordReset(
 }
 
 const RequestPasswordResetArgs = z.object({
-  email: z.string().email(),
+  email: z.string().trim().email(),
 });
 
 /**
@@ -227,29 +227,44 @@ export async function processPasswordResetRequest(request: PasswordResetRequest)
     return;
   }
 
-  const link = await auth().generatePasswordResetLink(user.email, {
-    url: continueUrlFor(user),
-    handleCodeInApp: false,
-  });
-
-  const { template, source } = await loadResetTemplate();
-  if (source === 'seed') {
-    // Sent anyway; the operator should import the template so it is theirs to edit.
-    logEvent({
-      severity: 'warn',
-      function: 'requestPasswordReset',
-      event: 'password.reset.seedTemplate',
-      uid: user.uid,
+  let source: 'stored' | 'seed';
+  try {
+    const link = await auth().generatePasswordResetLink(user.email, {
+      url: continueUrlFor(user),
+      handleCodeInApp: false,
     });
-  }
 
-  await sendTemplatedEmail({
-    to: user.email,
-    subjectTemplate: template.subject,
-    bodyTemplate: template.body,
-    htmlTemplate: template.html ?? undefined,
-    data: { link, email: user.email, displayName: user.displayName || user.email },
-  });
+    const loaded = await loadResetTemplate();
+    source = loaded.source;
+    if (source === 'seed') {
+      // Sent anyway; the operator should import the template so it is theirs to edit.
+      logEvent({
+        severity: 'warn',
+        function: 'requestPasswordReset',
+        event: 'password.reset.seedTemplate',
+        uid: user.uid,
+      });
+    }
+
+    await sendTemplatedEmail({
+      to: user.email,
+      subjectTemplate: loaded.template.subject,
+      bodyTemplate: loaded.template.body,
+      htmlTemplate: loaded.template.html ?? undefined,
+      data: { link, email: user.email, displayName: user.displayName || user.email },
+    });
+  } catch (err) {
+    // The request doc is already gone and the caller was told `ok`, so this
+    // log is the only record that a reset was asked for and not sent.
+    logEvent({
+      severity: 'error',
+      function: 'requestPasswordReset',
+      event: 'password.reset.failed',
+      uid: user.uid,
+      errorMessage: (err as Error)?.message ?? 'unknown',
+    });
+    throw err;
+  }
 
   await writeAuditEntry({
     status: 'SUCCESS',
