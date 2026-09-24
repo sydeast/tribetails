@@ -171,7 +171,20 @@ export async function saveTemplateHandler(
           body: FieldValue.delete(),
           html: FieldValue.delete(),
         }
-      : { body: args.body, html: args.html ?? null }),
+      : {
+          body: args.body,
+          html: args.html ?? null,
+          // Controller ruling (#953): an old-format save must also turn a
+          // document that used to be visual back into an old-format one, or
+          // `sendPartsFor` keeps reading the stale `format: 'visual'` /
+          // `headline` / `content` at send time even though the operator just
+          // replaced them with body/html. `set(merge: true)` needs these
+          // sentinels; `create()` on a brand-new doc has nothing to delete, so
+          // they are stripped below before that call.
+          format: FieldValue.delete(),
+          headline: FieldValue.delete(),
+          content: FieldValue.delete(),
+        }),
     title: args.title ?? args.templateId,
     description: args.description ?? null,
     tags: args.tags ?? [],
@@ -192,11 +205,17 @@ export async function saveTemplateHandler(
     // `create()` rather than the read above plus a set, so two operators naming
     // the same key at once cannot both believe they made it. The read is still
     // worth keeping for the friendlier message in the common case.
+    // `create()` refuses a `FieldValue.delete()` sentinel outright (there is
+    // nothing on a brand-new document to delete), unlike `set(merge: true)`.
+    // Only one side ever holds sentinels here, matching whichever branch above
+    // built `data`.
     if (visual) {
-      // `create()` refuses a `FieldValue.delete()` sentinel outright (there is
-      // nothing on a brand-new document to delete), unlike `set(merge: true)`.
       delete data.body;
       delete data.html;
+    } else {
+      delete data.format;
+      delete data.headline;
+      delete data.content;
     }
     try {
       await ref.create(data);

@@ -42,21 +42,54 @@ describe('saveTemplate, visual format', () => {
     await expect(save({ templateId: 'k', subject: 'S', format: 'visual', headline: ' ', content: '<p>x</p>' })).rejects.toBeTruthy();
   });
 
-  it('old-format saves are unchanged', async () => {
+  it('old-format saves are unchanged, and also clear any stale visual fields', async () => {
     await save({ templateId: 'k', subject: 'S2', body: 'b2', html: null });
-    expect(written()).toMatchObject({ subject: 'S2', body: 'b2', html: null });
-    expect(written().format).toBeUndefined();
+    const d = written();
+    expect(d).toMatchObject({ subject: 'S2', body: 'b2', html: null });
+    // Controller ruling (#953): an old-format save must turn a document that
+    // used to be visual back into an old-format one. `emailTemplates/k` in
+    // this file's fixture is already old-format, so these are a no-op on the
+    // stored value, but the write itself must always carry the three
+    // sentinels on the update path -- the handler cannot tell "this document
+    // happens to have no visual fields" from "this document is visual" without
+    // reading it, and reading it defeats the point of a merge write.
+    expect(d.format).toEqual(FieldValue.delete());
+    expect(d.headline).toEqual(FieldValue.delete());
+    expect(d.content).toEqual(FieldValue.delete());
+  });
+
+  it('an old-format save over an existing visual document clears format/headline/content', async () => {
+    const visualCtx = buildDbMock({
+      writeThrough: true,
+      docs: { 'emailTemplates/v': { subject: 'Old', format: 'visual', headline: 'H', content: '<p>x</p>' } },
+    });
+    mocks.dbFn.mockReturnValue(visualCtx.db);
+    await saveTemplateHandler(callableRequest({ templateId: 'v', subject: 'S2', body: 'b2', html: null }, { uid: 'op1' }));
+    const d = visualCtx.writes.filter((w: { path: string }) => w.path === 'emailTemplates/v').at(-1)!.data;
+    expect(d).toMatchObject({ subject: 'S2', body: 'b2', html: null });
+    expect(d.format).toEqual(FieldValue.delete());
+    expect(d.headline).toEqual(FieldValue.delete());
+    expect(d.content).toEqual(FieldValue.delete());
   });
 
   // Environment rule: create() must never see a FieldValue.delete() sentinel.
-  // A brand-new document has nothing to delete, so the visual branch's
-  // delete-sentinel write has to be stripped before ref.create(), not merely
-  // set to a harmless value.
+  // A brand-new document has nothing to delete, so whichever branch's
+  // delete-sentinel write applies has to be stripped before ref.create(), not
+  // merely set to a harmless value.
   it('a new visual template (expectNew) writes no body/html at all', async () => {
     await save({ templateId: 'new-visual', subject: 'S', format: 'visual', headline: 'H', content: '<p>x</p>', expectNew: true });
     const d = ctx.writes.find((w: { path: string }) => w.path === 'emailTemplates/new-visual')!.data;
     expect('body' in d).toBe(false);
     expect('html' in d).toBe(false);
     expect(d).toMatchObject({ format: 'visual', headline: 'H', content: '<p>x</p>' });
+  });
+
+  it('a new old-format template (expectNew) writes no format/headline/content at all', async () => {
+    await save({ templateId: 'new-old', subject: 'S', body: 'b', expectNew: true });
+    const d = ctx.writes.find((w: { path: string }) => w.path === 'emailTemplates/new-old')!.data;
+    expect('format' in d).toBe(false);
+    expect('headline' in d).toBe(false);
+    expect('content' in d).toBe(false);
+    expect(d).toMatchObject({ subject: 'S', body: 'b' });
   });
 });
