@@ -113,9 +113,9 @@ export const Args = z.object({
  * The cross-field rules a plain `z.object` cannot express: a visual save must
  * carry neither `body` nor `html` (they are generated at send time) and must
  * carry both `headline` and `content`; an old-format save still requires
- * `body`. Kept separate from `Args` because `test/callableContract.test.ts`
- * reads `Args.shape` for its frozen-signature check, which a `ZodEffects`
- * (the type `superRefine` returns) does not have.
+ * `body`. Kept separate from `Args` per the controller ruling, so
+ * `test/callableContract.test.ts`'s frozen-signature check keeps reading the
+ * plain object `Args` (and its `.shape`) rather than the `superRefine` result.
  */
 export const SaveTemplateInput = Args.superRefine((a, ctx) => {
   if (a.format === 'visual') {

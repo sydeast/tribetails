@@ -47,4 +47,16 @@ describe('saveTemplate, visual format', () => {
     expect(written()).toMatchObject({ subject: 'S2', body: 'b2', html: null });
     expect(written().format).toBeUndefined();
   });
+
+  // Environment rule: create() must never see a FieldValue.delete() sentinel.
+  // A brand-new document has nothing to delete, so the visual branch's
+  // delete-sentinel write has to be stripped before ref.create(), not merely
+  // set to a harmless value.
+  it('a new visual template (expectNew) writes no body/html at all', async () => {
+    await save({ templateId: 'new-visual', subject: 'S', format: 'visual', headline: 'H', content: '<p>x</p>', expectNew: true });
+    const d = ctx.writes.find((w: { path: string }) => w.path === 'emailTemplates/new-visual')!.data;
+    expect('body' in d).toBe(false);
+    expect('html' in d).toBe(false);
+    expect(d).toMatchObject({ format: 'visual', headline: 'H', content: '<p>x</p>' });
+  });
 });

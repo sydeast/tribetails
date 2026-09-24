@@ -86,7 +86,13 @@ the stale "~26":
 - Nested / effects shapes (added 2026-07-21), frozen by RECURSIVE signature:
   `saveFormSchema` (3-level `schema.sections[].fields[]`), `saveTemplate`
   (`sectionDefinitions[]`, plus `expectNew` added under issue #468 so a create
-  refuses an id that is already taken instead of upserting over it),
+  refuses an id that is already taken instead of upserting over it; #953 added
+  the visual format's `format` (literal `'visual'`), `headline` and `content`,
+  and made `body` optional, since a visual save carries neither `body` nor
+  `html` — those are generated at send time. The cross-field rule (a visual
+  save must omit `body`/`html` and supply both `headline` and `content`; an
+  old-format save still needs `body`) lives in a `superRefine` wrapper,
+  `SaveTemplateInput`, kept separate from the frozen `Args` object),
   `importSeedTemplates` (`dryRun`, `onlyIds[]`, `overwriteIds[]`, issue #468,
   frozen from birth because the React admin and the Android Templates screen
   both hand-mirror it), `broadcastMessage` (a `.superRefine` ZodEffects wrapping
