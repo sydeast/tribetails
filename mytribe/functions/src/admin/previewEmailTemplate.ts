@@ -25,11 +25,33 @@ const Args = z.object({
 
 const SAMPLE_URL = 'https://kinfolk.tribetails.com/sample';
 
+/**
+ * Writes `value` at a dotted path inside `target`, creating intermediate
+ * objects as needed (`setPath(out, 'nextVisit.date', 'x')` ->
+ * `out.nextVisit.date === 'x'`). `TEMPLATE_FIELDS` spells nested enrichment
+ * fields (`nextVisit.date`, `nextVisit.time`, `nextVisit.weekday`, from
+ * `visitDates.ts`'s `{ weekday, date, time }` shape) as dotted strings, and
+ * Handlebars resolves `{{nextVisit.date}}` as a path into a nested object, not
+ * a literal `"nextVisit.date"` key -- a flat key would leave the token
+ * unresolved and the preview would render blank where a real send shows the
+ * date.
+ */
+function setPath(target: Record<string, unknown>, path: string, value: unknown): void {
+  const parts = path.split('.');
+  let node = target;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const key = parts[i]!;
+    const next = node[key];
+    node = (next && typeof next === 'object' ? next : (node[key] = {})) as Record<string, unknown>;
+  }
+  node[parts[parts.length - 1]!] = value;
+}
+
 /** Sample merge data for a catalog key's known fields, so a preview never shows a raw `{{token}}`. */
-export function sampleDataFor(catalogKey?: string): Record<string, string> {
+export function sampleDataFor(catalogKey?: string): Record<string, unknown> {
   const fields = (catalogKey && TEMPLATE_FIELDS[catalogKey]) || [];
-  const out: Record<string, string> = {};
-  for (const f of fields) out[f] = /link|url/i.test(f) ? SAMPLE_URL : `[${f}]`;
+  const out: Record<string, unknown> = {};
+  for (const f of fields) setPath(out, f, /link|url/i.test(f) ? SAMPLE_URL : `[${f}]`);
   return out;
 }
 
@@ -37,7 +59,16 @@ export async function previewEmailTemplateHandler(
   req: CallableRequest<unknown>,
 ): Promise<{ subject: string; html: string; text: string; issues: string[] }> {
   if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
-  const args = Args.parse(req.data);
+  // safeParse + an explicit HttpsError, not `Args.parse` (which would throw a
+  // raw ZodError that `wrapCallable`'s catch-all maps to `internal` and
+  // reports to Sentry): this callable is called on a debounce, per keystroke,
+  // from the editor, so an oversized/malformed body during normal typing must
+  // read as an ordinary client-fault refusal, not a captured server error.
+  const parsed = Args.safeParse(req.data);
+  if (!parsed.success) {
+    throw new HttpsError('invalid-argument', parsed.error.issues.map((i) => i.message).join(' '));
+  }
+  const args = parsed.data;
   const { content, issues } = sanitizeEmailContent(args.content, process.env.CLOUDINARY_CLOUD_NAME ?? '');
   const parts = sendPartsFor({ subject: args.subject, format: 'visual', headline: args.headline, content });
   const out = renderEmailParts({ ...parts, data: sampleDataFor(args.catalogKey) });
