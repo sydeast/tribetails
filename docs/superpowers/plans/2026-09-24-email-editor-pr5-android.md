@@ -23,6 +23,7 @@ It also pulls `androidx.compose.material3:material3-android:1.12.0-alpha03` in t
 
 ## Global Constraints
 
+- **Operator ruling 2026-09-24: new templates are created on web only.** Android loses its "New template" button (Task 7a). The empty-bank message stops pointing at it.
 - **Server interfaces (from PR 2, exactly):**
   - `saveTemplate` visual args: `{ templateId, subject, format: 'visual', headline, content, title?, description?, tags?, category? }`. A visual save never sends `body` or `html` (the server's `superRefine` refuses them).
   - `previewEmailTemplate({ subject, headline, content, catalogKey? }) -> { subject, html, text, issues }`.
@@ -2537,6 +2538,24 @@ class TemplateBankVisualTest {
 - [ ] **Step 4: Run** `--tests '*TemplateBankVisualTest*' --tests '*TemplateEditModeTest*' --tests '*TemplateBankStatesTest*'`. Expected: PASS; `TemplateBankVisualTest` `tests="5"`, and PR 1's `TemplateEditModeTest` keeps its count (its `visual → READ_ONLY` assertion still holds: `templateEditMode` is unchanged, the bank simply routes visual docs before reaching it). If the rotation case reopens the editor but loses the edit, the editor's `rememberSaveable` key moved between the two compositions: hoist `draft` into `TemplateBankBody` as `rememberSaveable(editingId, stateSaver = VisualDraftSaver)` and pass it down with an `onDraftChange`, then re-run.
 
 - [ ] **Step 5: Commit.** Message: `Template Bank opens visual templates in the visual editor (#953)`, body noting that rotation now reopens whichever template was being edited.
+
+---
+
+### Task 7a: Remove "New template" from the Android admin
+
+**Files:**
+- Modify: `auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/ui/admin/TemplateBankScreen.kt` (the button around lines 358-366, the empty-state text at line 191, the doc comment at line 209)
+- Modify: `auntieos-admin/android/app/src/test/java/com/tribetails/auntieos/ui/admin/TemplateBankStatesTest.kt:52`
+
+- [ ] **Step 1: Update the test first.** In `TemplateBankStatesTest.kt`, change the expected empty-state text to `"No templates yet. Create one on the web admin."`. If a test drives the New template button, replace it with an assertion that no node has the text `"New template"`, using that file's existing test style.
+- [ ] **Step 2: Run it and see it fail**: `GRADLE_USER_HOME=$HOME/.gradle-local ./gradlew :app:testDebugUnitTest --tests '*TemplateBankStatesTest*'`.
+- [ ] **Step 3: Implement.**
+  - Delete the "New template" `PrimaryButton` block, including the comment above it.
+  - Change the empty-state string to `"No templates yet. Create one on the web admin."`.
+  - Change the doc comment at line 209 to say templates are created on the web admin.
+  - Keep the editor's `creating` parameter: rotation restore and existing callers still pass `false`. Deleting it is out of scope.
+- [ ] **Step 4: Run** the same command. Expected: PASS. Read the XML for counts.
+- [ ] **Step 5: Commit**: "Android admin creates no templates; new ones start on the web editor (#953)".
 
 ---
 
