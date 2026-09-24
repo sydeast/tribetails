@@ -13,7 +13,7 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.storage.FirebaseStorage
-import com.google.firebase.auth.ActionCodeSettings
+import com.google.firebase.functions.FirebaseFunctionsException
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.tribetails.auntieos.data.api.N8nApi
@@ -184,17 +184,30 @@ class AuntieRepository(
     }
 
     /**
-     * #892: the link opens the project's email action page on the portal
-     * (Identity Toolkit's callbackUri is one URL per project). The continue URL
-     * sends staff back to the admin sign-in instead of the kinfolk portal.
+     * Sends the reset through our own `requestPasswordReset` callable, not
+     * Firebase's `sendPasswordResetEmail`. Firebase's reset email uses a console
+     * template this project cannot edit; the server sends the link through the
+     * operator's `auth.password.reset` template instead.
+     *
+     * Only the address goes up. The server picks where the link continues:
+     * staff (owner or auntie claim) go back to https://auntie.tribetails.com/signin,
+     * which is what #892 used to pass from here as ActionCodeSettings.
+     *
+     * The callable answers `{ ok: true }` for every address, so success says
+     * nothing about the account. A refusal is about the request itself, and
+     * [passwordResetFailure] turns it into a sentence both callers can show.
      */
     suspend fun sendPasswordReset(email: String): Result<Unit> = runCatching {
         require(email.isNotBlank()) { "Email is required." }
-        val settings = ActionCodeSettings.newBuilder()
-            .setUrl("https://auntie.tribetails.com/signin")
-            .setHandleCodeInApp(false)
-            .build()
-        auth.sendPasswordResetEmail(email.trim(), settings).await()
+        try {
+            functions.getHttpsCallable("requestPasswordReset")
+                .call(mapOf("email" to email.trim()))
+                .awaitCallable()
+        } catch (c: CancellationException) {
+            throw c
+        } catch (e: FirebaseFunctionsException) {
+            throw passwordResetFailure(e)
+        }
         Unit
     }.onFailure { AuntieLog.e("Password reset failed", it) }
 

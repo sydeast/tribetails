@@ -32,11 +32,12 @@ interface SecurityPanelProps {
  * draw it. It exists, it works, and no other surface offers it, so deleting it
  * would take away the only way to move an admin login off a dead address.
  *
- * Every flow is Firebase Auth client-side. No callable exists for any of them
- * and none is needed: `reauthenticateWithCredential` proves ownership,
- * `verifyBeforeUpdateEmail` and `sendPasswordResetEmail` do the work, and
- * lib/auth.ts turns every failure into a typed AccountSecurityError whose
- * message is already operator-facing.
+ * The email and password-form flows are Firebase Auth client-side:
+ * `reauthenticateWithCredential` proves ownership and `verifyBeforeUpdateEmail`
+ * does the work. The reset row is the exception: it goes through our own
+ * `requestPasswordReset` callable, so the email uses the operator's template
+ * rather than Firebase's stock one. lib/auth.ts turns every failure into a
+ * typed AccountSecurityError whose message is already operator-facing.
  *
  * The email flow says "we sent a link", never "your email changed", because
  * that is what verifyBeforeUpdateEmail actually does: the address flips only

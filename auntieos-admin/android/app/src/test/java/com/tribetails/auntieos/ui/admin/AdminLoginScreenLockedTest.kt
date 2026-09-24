@@ -58,6 +58,7 @@ class AdminLoginScreenLockedTest {
     private val auth = mockk<FirebaseAuth>(relaxed = true)
     private val functions = mockk<FirebaseFunctions>()
     private val callable = mockk<HttpsCallableReference>()
+    private val resetCallable = mockk<HttpsCallableReference>()
     private val repository = AuntieRepository(
         n8n = mockk<N8nApi>(),
         authGate = AuthGate { auth },
@@ -69,10 +70,11 @@ class AdminLoginScreenLockedTest {
     init {
         every { functions.getHttpsCallable("recordFailedLogin") } returns callable
         every { callable.call(any()) } returns TaskCompletionSource<HttpsCallableResult>().task
-        // #892: the repository sends (email, ActionCodeSettings) so the link continues
-        // to the admin sign-in. A one-argument stub never matches that call, and the
-        // relaxed mock's task never completes, so the screen would hang on "Sending...".
-        every { auth.sendPasswordResetEmail(any(), any<ActionCodeSettings>()) } returns Tasks.forResult(null)
+        // The reset goes through our `requestPasswordReset` callable. Its own
+        // reference with a COMPLETED task: the report stub above never settles, and
+        // a reset on that task would leave the screen hanging on "Sending...".
+        every { functions.getHttpsCallable("requestPasswordReset") } returns resetCallable
+        every { resetCallable.call(any()) } returns Tasks.forResult(mockk<HttpsCallableResult>(relaxed = true))
     }
 
     private fun showAndSubmit() {
@@ -114,8 +116,10 @@ class AdminLoginScreenLockedTest {
         composeRule.onNodeWithText("Forgot password?").performScrollTo().assertIsDisplayed()
             .assertHasClickAction().performClick()
         awaitText("Reset link sent. Check your inbox.")
-        verify { auth.sendPasswordResetEmail("auntie@tribetails.test", any<ActionCodeSettings>()) }
-        verify(exactly = 0) { functions.getHttpsCallable(any<String>()) }
+        verify(exactly = 1) { resetCallable.call(mapOf("email" to "auntie@tribetails.test")) }
+        verify(exactly = 0) { auth.sendPasswordResetEmail(any(), any<ActionCodeSettings>()) }
+        // The locked refusal is not a credential failure, so nothing is reported.
+        verify(exactly = 0) { functions.getHttpsCallable("recordFailedLogin") }
     }
 
     @Test
