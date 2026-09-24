@@ -59,6 +59,14 @@ describe('contentToText', () => {
   it('indents a <br> continuation line under a numbered item', () => {
     expect(contentToText('H', '<ol><li>a<br>b</li></ol>')).toBe('H\n\n1. a\n   b');
   });
+
+  it('drops a trailing empty line from a trailing <br>', () => {
+    expect(contentToText('H', '<ul><li>a<br></li></ul>')).toBe('H\n\n- a');
+  });
+
+  it('marks the first non-empty line when a <br> leads the item', () => {
+    expect(contentToText('H', '<ul><li><br>a</li></ul>')).toBe('H\n\n- a');
+  });
 });
 
 describe('sendPartsFor', () => {

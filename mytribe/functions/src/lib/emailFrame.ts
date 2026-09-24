@@ -96,9 +96,13 @@ export function contentToText(headline: string, content: string): string {
               // than reading as a detached, unmarked line.
               const marker = el.name === 'ol' ? `${i + 1}.` : '-';
               const indent = ' '.repeat(marker.length + 1);
+              // Drop empty lines (a leading/trailing <br> with nothing on the
+              // other side) before marking, so the first line to survive is
+              // the one that gets the marker, not a blank continuation.
               const lines = decode(textOf(li))
                 .split('\n')
-                .map((l) => l.trim());
+                .map((l) => l.trim())
+                .filter((l) => l.length > 0);
               return lines.map((line, idx) => (idx === 0 ? `${marker} ${line}` : `${indent}${line}`)).join('\n');
             })
             .join('\n'),
