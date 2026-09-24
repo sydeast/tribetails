@@ -63,7 +63,6 @@ beforeEach(() => {
   });
   mocks.generateLink.mockReset();
   mocks.generateLink.mockResolvedValue('https://example.test/reset');
-  vi.stubEnv('PASSWORD_RESET_CONSTANT_WORK_MS', '0');
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
 });
