@@ -124,6 +124,23 @@ the stale "~26":
   - `headline`: the visual template's headline, `null` on an old-format doc.
   - `content`: the visual template's sanitized body, `null` on an old-format
     doc.
+- `previewEmailTemplate` (#953, net-new, admin-gated like `saveTemplate`, not
+  in `shapeKeys`/`shapeSignature`: it takes no stored id and has no client
+  mirror to protect):
+  - req `{ subject: string; headline: string; content: string; catalogKey?: string }`
+  - res `{ subject: string; html: string; text: string; issues: string[] }`
+  - Runs the SAME sanitizer, frame and renderer as a real send
+    (`sanitizeEmailContent` → `sendPartsFor` → `renderEmailParts`), so the
+    preview cannot disagree with the inbox. Unlike `saveTemplate`, a sanitizer
+    issue does not refuse the call; it comes back in `issues` so the editor can
+    show it beside the render instead of losing the draft.
+  - `catalogKey` selects sample merge data from
+    `notifications/enrichTemplateData.ts`'s `TEMPLATE_FIELDS` map (the same
+    table the real send-time enricher reads); a field named `link`/`url`
+    samples as an `https://` URL so a button previews as clickable, everything
+    else samples as `[fieldName]`. An unknown or omitted key samples no fields,
+    and any token the content still carries is stripped by the renderer, same
+    as a real send with a field the emitter never supplied.
 - The remaining ~34 are lower-complexity (2 to 3 flat fields); freeze as they churn.
 
 Two freeze levels now exist: `shapeKeys` (top-level, for flat shapes) and
