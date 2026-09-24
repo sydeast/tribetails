@@ -136,9 +136,13 @@ export function ClaimInvite() {
     try {
       await sendReset(invitedEmail);
       setResetState('sent');
-    } catch {
+    } catch (err) {
       setResetState('idle');
-      setActionError("Couldn't send reset email. Try again in a moment.");
+      setActionError(
+        isRateLimitedError(err)
+          ? 'Too many tries for now. Wait a few minutes, then try again.'
+          : "Couldn't send reset email. Try again in a moment.",
+      );
     }
   }
 

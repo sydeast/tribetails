@@ -314,6 +314,7 @@ private fun ExpiredReset(controller: SecureResetController, problem: CodeProblem
             when (controller.resend) {
                 SendState.Missing -> ProblemText("Type the email you sign in with.", "resend-problem")
                 SendState.Failed -> ProblemText("We couldn't send a new link. Try again in a moment.", "resend-problem")
+                SendState.RateLimited -> ProblemText(RESET_RATE_LIMITED_MESSAGE, "resend-problem")
                 else -> Unit
             }
             Spacer(Modifier.height(KinfolkSpacing.s))
@@ -409,6 +410,9 @@ private fun EmailDone(
                 )
                 if (controller.recoveryReset == SendState.Failed) {
                     ProblemText("We couldn't send the reset link. Try again in a moment.", "recovery-reset-problem")
+                }
+                if (controller.recoveryReset == SendState.RateLimited) {
+                    ProblemText(RESET_RATE_LIMITED_MESSAGE, "recovery-reset-problem")
                 }
             }
         }

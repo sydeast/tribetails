@@ -60,4 +60,26 @@ describe('#886 portal SignIn locked state', () => {
       'That email and password did not match. Check for typos and try again.',
     );
   });
+
+  it('a rate-limited reset says to wait instead of "something went wrong" (#905)', async () => {
+    render(<SignIn />);
+    fireEvent.change(screen.getByLabelText('Email Address'), { target: { value: 'pat@household.test' } });
+    sendReset.mockRejectedValue(
+      Object.assign(new Error('Too many requests. Try again later.'), { code: 'functions/resource-exhausted' }),
+    );
+    fireEvent.click(screen.getByText('Forgot password?'));
+    expect(await screen.findByText('Too many tries for now.')).toBeInTheDocument();
+    expect(screen.getByText('Wait a few minutes, then try again.')).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't send reset email.")).toBeNull();
+    expect(screen.queryByText('Reset link sent. Check your inbox.')).toBeNull();
+  });
+
+  it('any other reset failure keeps the plain failure toast', async () => {
+    render(<SignIn />);
+    fireEvent.change(screen.getByLabelText('Email Address'), { target: { value: 'pat@household.test' } });
+    sendReset.mockRejectedValue(new Error('network'));
+    fireEvent.click(screen.getByText('Forgot password?'));
+    expect(await screen.findByText("Couldn't send reset email.")).toBeInTheDocument();
+    expect(screen.queryByText('Too many tries for now.')).toBeNull();
+  });
 });

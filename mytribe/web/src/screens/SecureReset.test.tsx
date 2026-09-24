@@ -81,14 +81,14 @@ describe('SecureReset: a normal requested reset', () => {
     expect(screen.queryByRole('link', { name: 'Sign in with your new password' })).toBeNull();
   });
 
-  it('a bare expired link asks for a bare new link, so the next page still offers both sign-ins (#892 review)', async () => {
+  it('a bare expired link asks for a new link with the address alone; the server picks the sign-in (#905)', async () => {
     mocks.readActionCode.mockRejectedValue(authError('auth/expired-action-code'));
     openLink(NATIVE);
     await screen.findByText('This reset link has expired.');
     fireEvent.change(screen.getByLabelText('Email address'), { target: { value: 'ops@tribetails.com' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send a new link' }));
     await screen.findByText(/new link is on its way/i);
-    expect(mocks.sendReset).toHaveBeenCalledWith('ops@tribetails.com', null);
+    expect(mocks.sendReset).toHaveBeenCalledWith('ops@tribetails.com');
   });
 
   it('handles the requestPasswordReset link: the account comes from the code, not the email in continueUrl', async () => {
@@ -150,7 +150,7 @@ describe('SecureReset: a normal requested reset', () => {
 });
 
 describe('SecureReset: a code that cannot be used', () => {
-  it('says an expired link has expired and offers a new one, keeping the continue target', async () => {
+  it('says an expired link has expired and offers a new one, sending only the trimmed address (#905)', async () => {
     mocks.readActionCode.mockRejectedValue(authError('auth/expired-action-code'));
     const continueUrl = encodeURIComponent('https://auntie.tribetails.com/signin');
     openLink(`?mode=resetPassword&oobCode=OLD&continueUrl=${continueUrl}`);
@@ -160,7 +160,34 @@ describe('SecureReset: a code that cannot be used', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send a new link' }));
 
     expect(await screen.findByText(/new link is on its way/i)).toBeInTheDocument();
-    expect(mocks.sendReset).toHaveBeenCalledWith('pepper@example.com', 'https://auntie.tribetails.com/signin');
+    // The old link's admin target is not passed along: the server reads the
+    // account and sends a staff member back to the admin sign-in itself.
+    expect(mocks.sendReset).toHaveBeenCalledWith('pepper@example.com');
+  });
+
+  it('tells a rate-limited "Send a new link" to wait, not to try again at once (#905)', async () => {
+    mocks.readActionCode.mockRejectedValue(authError('auth/expired-action-code'));
+    mocks.sendReset.mockRejectedValue(
+      Object.assign(new Error('Too many requests. Try again later.'), { code: 'functions/resource-exhausted' }),
+    );
+    openLink(NATIVE);
+    await screen.findByText('This reset link has expired.');
+    fireEvent.change(screen.getByLabelText('Email address'), { target: { value: 'pepper@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send a new link' }));
+    expect(await screen.findByText('Too many tries for now. Wait a few minutes, then try again.')).toBeInTheDocument();
+    expect(screen.queryByText(/new link is on its way/i)).toBeNull();
+    expect(screen.queryByText("We couldn't send a new link. Try again in a moment.")).toBeNull();
+  });
+
+  it('keeps the plain failure for any other "Send a new link" error', async () => {
+    mocks.readActionCode.mockRejectedValue(authError('auth/expired-action-code'));
+    mocks.sendReset.mockRejectedValue(Object.assign(new Error('internal'), { code: 'functions/internal' }));
+    openLink(NATIVE);
+    await screen.findByText('This reset link has expired.');
+    fireEvent.change(screen.getByLabelText('Email address'), { target: { value: 'pepper@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send a new link' }));
+    expect(await screen.findByText("We couldn't send a new link. Try again in a moment.")).toBeInTheDocument();
+    expect(screen.queryByText(/Too many tries/)).toBeNull();
   });
 
   it('says a used or invalid link cannot be used again', async () => {
@@ -274,7 +301,23 @@ describe('SecureReset: the other Firebase email links', () => {
     expect(mocks.applyEmailAction).toHaveBeenCalledWith('R-1');
 
     fireEvent.click(screen.getByRole('button', { name: 'Send me a password reset link' }));
-    await waitFor(() => expect(mocks.sendReset).toHaveBeenCalledWith('old@example.com', null));
+    await waitFor(() => expect(mocks.sendReset).toHaveBeenCalledWith('old@example.com'));
+  });
+
+  it('tells a rate-limited recovery reset to wait (#905)', async () => {
+    mocks.readActionCode.mockResolvedValue({
+      operation: 'RECOVER_EMAIL',
+      email: 'old@example.com',
+      previousEmail: 'new@example.com',
+    });
+    mocks.sendReset.mockRejectedValue(
+      Object.assign(new Error('Too many requests. Try again later.'), { code: 'functions/resource-exhausted' }),
+    );
+    openLink('?mode=recoverEmail&oobCode=R-2');
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore my sign-in email' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Send me a password reset link' }));
+    expect(await screen.findByText('Too many tries for now. Wait a few minutes, then try again.')).toBeInTheDocument();
+    expect(screen.queryByText(/reset link is on its way/i)).toBeNull();
   });
 
   it.each([

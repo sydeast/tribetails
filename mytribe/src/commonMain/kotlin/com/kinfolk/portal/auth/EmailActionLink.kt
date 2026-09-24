@@ -26,9 +26,10 @@ object EmailAction {
      * itself always opens the project's action page; this only decides where
      * the "sign in" link on that page points.
      *
-     * #911: the value portal web already sends (`PORTAL_SIGN_IN_URL` in
-     * `mytribe/web/src/lib/auth.ts`), now shared by portal Android and portal
-     * desktop so all three ask for the same link.
+     * #905: no client sends this any more. The `requestPasswordReset`
+     * callable picks the target from the account (this URL for households,
+     * [STAFF_SIGN_IN_URL] for staff); it stays here as the portal's half of
+     * that pair.
      */
     const val PORTAL_SIGN_IN_URL = "https://kinfolk.tribetails.com/signin"
 
@@ -110,7 +111,7 @@ fun parseEmailActionLink(path: String, query: Map<String, String>): SecureResetP
  *
  * Allowed: https on the admin site or the portal. Anything else is dropped, so
  * a link can never turn the app into an open redirect. A target that is the
- * action page itself (the `requestPasswordReset` shape) becomes that host's
+ * action page itself (the pre-#905 `requestPasswordReset` shape) becomes that host's
  * `/signin`, since sending someone back to this screen would be a loop. Mirrors
  * `safeContinueUrl` in `mytribe/web/src/lib/emailAction.ts`, minus the
  * same-origin case, which an app does not have.

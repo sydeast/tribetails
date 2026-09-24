@@ -18,7 +18,10 @@ import { queryClient } from './queryClient';
 vi.mock('./firebase', () => ({ auth: { currentUser: { uid: 'uid-1' } }, activateAppCheck: vi.fn() }));
 vi.mock('./activeTribe', () => ({ clearAccess: vi.fn(), clearActiveTribeSession: vi.fn() }));
 vi.mock('./queryClient', () => ({ queryClient: { clear: vi.fn() } }));
-vi.mock('../api/authApi', () => ({ signOutAllDevices: vi.fn().mockResolvedValue({ ok: true }) }));
+vi.mock('../api/authApi', () => ({
+  signOutAllDevices: vi.fn().mockResolvedValue({ ok: true }),
+  requestPasswordReset: vi.fn().mockResolvedValue({ ok: true }),
+}));
 vi.mock('./push', () => ({ unregisterForPush: vi.fn() }));
 vi.mock('firebase/auth', () => ({
   applyActionCode: vi.fn().mockResolvedValue(undefined),
@@ -220,30 +223,37 @@ describe('email action helpers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
-  it('sendReset continues to the portal sign-in by default', async () => {
+
+  // #905: resets go through our own `requestPasswordReset` callable, which
+  // sends the email from the operator's template. Firebase's native reset is
+  // not called at all.
+  it('sendReset asks the requestPasswordReset callable, with the trimmed address and nothing else', async () => {
+    const { requestPasswordReset } = await import('../api/authApi');
     const { sendPasswordResetEmail } = await import('firebase/auth');
     const { sendReset } = await import('./auth');
-    await sendReset('pepper@example.com');
-    expect(sendPasswordResetEmail).toHaveBeenCalledWith(expect.anything(), 'pepper@example.com', {
-      url: 'https://kinfolk.tribetails.com/signin',
-      handleCodeInApp: false,
-    });
+    await sendReset('  pepper@example.com ');
+    expect(requestPasswordReset).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(requestPasswordReset).mock.calls[0]).toEqual(['pepper@example.com']);
+    expect(sendPasswordResetEmail).not.toHaveBeenCalled();
   });
-  it('sendReset keeps a continue URL it is given (a fresh link for staff stays on the admin site)', async () => {
-    const { sendPasswordResetEmail } = await import('firebase/auth');
+
+  it('sendReset sends no continue URL: the server picks the sign-in from the account', async () => {
+    const { requestPasswordReset } = await import('../api/authApi');
     const { sendReset } = await import('./auth');
-    await sendReset('ops@example.com', 'https://auntie.tribetails.com/signin');
-    expect(vi.mocked(sendPasswordResetEmail).mock.calls[0]?.[2]).toEqual({
-      url: 'https://auntie.tribetails.com/signin',
-      handleCodeInApp: false,
-    });
+    await sendReset('ops@example.com');
+    // One argument, the address. A staff member's fresh link still ends on the
+    // admin sign-in because the server reads the account's claims, not the page.
+    expect(vi.mocked(requestPasswordReset).mock.calls[0]).toHaveLength(1);
   });
-  it('sendReset with a null continue URL sends a bare link, so the page offers both sign-ins again (#892 review)', async () => {
-    const { sendPasswordResetEmail } = await import('firebase/auth');
+
+  it('sendReset lets the callable refusal through, so the screen can tell a rate limit from a failure', async () => {
+    const { requestPasswordReset } = await import('../api/authApi');
     const { sendReset } = await import('./auth');
-    await sendReset('ops@example.com', null);
-    expect(vi.mocked(sendPasswordResetEmail).mock.calls[0]).toHaveLength(2);
-    expect(sendPasswordResetEmail).toHaveBeenCalledWith(expect.anything(), 'ops@example.com');
+    const limited = Object.assign(new Error('Too many requests. Try again later.'), {
+      code: 'functions/resource-exhausted',
+    });
+    vi.mocked(requestPasswordReset).mockRejectedValueOnce(limited);
+    await expect(sendReset('pepper@example.com')).rejects.toBe(limited);
   });
   it('completeReset sets the password with the code', async () => {
     const { confirmPasswordReset } = await import('firebase/auth');

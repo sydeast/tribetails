@@ -15,6 +15,7 @@ import com.kinfolk.portal.auth.AuthBackend
 import com.kinfolk.portal.auth.AuthProviderId
 import com.kinfolk.portal.auth.AuthRepository
 import com.kinfolk.portal.auth.AuthState
+import com.kinfolk.portal.auth.RESET_RATE_LIMITED_MESSAGE
 import com.kinfolk.portal.auth.SignInFailureKind
 import com.kinfolk.portal.auth.WRONG_CREDENTIALS_MESSAGE
 import com.kinfolk.portal.firebase.FakeFunctionsClient
@@ -33,6 +34,7 @@ import kotlin.test.assertEquals
 private class ClaimRefusingBackend(
     private val failure: Throwable,
     private val kind: SignInFailureKind,
+    private val resetFailure: Throwable? = null,
 ) : AuthBackend {
     val resets = mutableListOf<String>()
     override fun classifySignInFailure(t: Throwable): SignInFailureKind = kind
@@ -45,7 +47,8 @@ private class ClaimRefusingBackend(
         AuthState.SignedIn("u", null, null)
     override suspend fun signInWithPhoneOtp(verificationId: String, smsCode: String) = AuthState.SignedIn("u", null, null)
     override suspend fun signOut() = Unit
-    override suspend fun sendPasswordReset(email: String, continueUrl: String?) {
+    override suspend fun sendPasswordReset(email: String) {
+        resetFailure?.let { throw it }
         resets += email
     }
     override suspend fun changePassword(currentPassword: String, newPassword: String) = Unit
@@ -88,6 +91,23 @@ class ClaimInviteLockedTest {
 
         assertEquals(listOf("kin@example.com"), backend.resets)
         onNodeWithText("Reset link sent. Check your inbox.").assertExists()
+    }
+
+    /** #905: the reset callable's per-IP limit says to wait, not "try again in a moment". */
+    @Test
+    fun aRateLimitedReset_onTheClaimCard_saysToWait() = runComposeUiTest {
+        val backend = ClaimRefusingBackend(
+            RuntimeException("This account is locked."),
+            SignInFailureKind.Locked,
+            resetFailure = RuntimeException("Too many requests. Try again later."),
+        )
+        signInOnClaimCard(backend)
+        onNodeWithText("Forgot password?").performClick()
+        waitForIdle()
+
+        onNodeWithText(RESET_RATE_LIMITED_MESSAGE).assertExists()
+        onNodeWithText("Couldn't send reset email. Try again in a moment.").assertDoesNotExist()
+        onNodeWithText("Reset link sent. Check your inbox.").assertDoesNotExist()
     }
 
     @Test

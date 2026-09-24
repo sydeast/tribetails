@@ -53,7 +53,7 @@ private class StubBackend(
     override suspend fun signOut() {
         signOutCount++; onSignOut()
     }
-    override suspend fun sendPasswordReset(email: String, continueUrl: String?) {
+    override suspend fun sendPasswordReset(email: String) {
         passwordResetCount++
         lastPasswordResetEmail = email
         onPasswordReset(email)

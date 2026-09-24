@@ -1,59 +1,52 @@
 package com.kinfolk.portal.auth
 
 /**
- * #911: what a failed password-reset send means for what the household reads.
+ * #905: what a failed password-reset send means for what the household reads.
  *
- * Portal Android and portal desktop used to send resets through the
- * `requestPasswordReset` callable, which answers `{ ok: true }` for a known,
- * unknown, locked or capped address alike. That constant answer is what kept
- * the screen from telling an unauthenticated caller whether an address is an
- * account, and it is also what let somebody spend an address's 3-a-day budget
- * and leave the household with a screen that says "Reset link sent" and no
- * email.
+ * Every portal client (web, Android, desktop) sends resets through our own
+ * `requestPasswordReset` callable, which emails the link from the operator's
+ * `auth.password.reset` template. Firebase's native reset email is not used:
+ * its console template cannot be edited on this project.
  *
- * Both clients now send through Firebase's own reset, which has no per-email
- * budget to drain but does refuse an address it has never seen. With email
- * enumeration protection OFF, an unknown address comes back
- * `EMAIL_NOT_FOUND` / `auth/user-not-found`; with it ON, the same address comes
- * back success. [isUnknownAccountOnReset] closes that difference at the client,
- * so the screen shows one sentence either way and the project setting is not
- * observable through the portal apps. (Turning the setting on is still worth
- * doing; it closes the same oracle for callers that skip our clients.)
+ * The callable answers `{ ok: true }` for a known, unknown, locked or capped
+ * address alike, so success says nothing about whether an address is an
+ * account and needs no special handling. It refuses in only two ways a screen
+ * should tell apart:
  *
- * Nothing else is swallowed. A malformed address, an abuse refusal and a
- * network failure all keep today's "Couldn't send reset email.". None of them
- * says anything about whether the address is an account, and a household whose
- * link genuinely did not go out is owed the truth.
+ *   - `resource-exhausted`: the per-IP limit (30 requests per 5 minutes).
+ *     Trying again at once is exactly what will not work, so the screen says
+ *     to wait ([RESET_RATE_LIMITED_MESSAGE]) instead of "try again".
+ *   - everything else (a malformed address, a network failure, a server
+ *     error): the screen's own "Couldn't send reset email" wording.
+ *
+ * Neither says anything about the account.
+ *
+ * (#911 had moved Android and desktop onto Firebase's reset because the
+ * callable's per-email cap could be spent by a stranger. #905's server change
+ * keys that cap by email AND network, so a stranger spends only their own.)
  */
 
-/**
- * The three spellings of "no such account": the web SDK's `auth/...`, the
- * Android SDK's `ERROR_...`, and Identity Toolkit REST's upper-case message.
- * Same shape as [CREDENTIAL_CODES] in `SignInFailure.kt`.
- */
-private val UNKNOWN_ACCOUNT_CODES = setOf(
-    "auth/user-not-found",
-    "ERROR_USER_NOT_FOUND",
-    "EMAIL_NOT_FOUND",
-)
+/** Same words as the claim card's and portal web's rate-limit copy. */
+const val RESET_RATE_LIMITED_MESSAGE = "Too many tries for now. Wait a few minutes, then try again."
 
 /**
- * Whether a reset send failed only because the address is not an account.
+ * Whether a reset send was refused by the callable's per-IP limit.
  *
- * [code] is the SDK's error code when it has one ([platformAuthErrorCode]);
- * [text] is the error's message or response body. The text is checked as well
- * as the code because not every platform surfaces a code: the JVM actual reads
- * one only off a [com.kinfolk.portal.firebase.FirebaseRestException], so a
- * wrapped or re-thrown failure would otherwise arrive codeless. Same reasoning
- * as [isAccountLockedText], which identifies a locked account by the server's
- * sentence for the same reason.
+ * Callable errors reach the Kotlin clients as text, not a shared code: the
+ * native Android SDK and the JS SDK carry the server's message ("Too many
+ * requests. Try again later.", `checkIpRateLimit` in loginSecurity.ts), and the
+ * desktop REST client carries the response body, whose status is
+ * `RESOURCE_EXHAUSTED`. So all of those spellings are checked, in the message
+ * and in `toString()`, the same approach as `isRateLimited` in TribeScreen.kt.
  */
-fun isUnknownAccountOnReset(code: String?, text: String?): Boolean {
-    if (code != null && code in UNKNOWN_ACCOUNT_CODES) return true
-    if (text == null) return false
-    return UNKNOWN_ACCOUNT_CODES.any { text.contains(it) }
+fun isResetRateLimited(text: String?): Boolean {
+    val m = text?.lowercase() ?: return false
+    return "resource-exhausted" in m ||
+        "resource_exhausted" in m ||
+        "too many requests" in m ||
+        "too many attempts" in m
 }
 
-/** [isUnknownAccountOnReset] for a throwable, reading this platform's code off it. */
-fun isUnknownAccountOnReset(t: Throwable): Boolean =
-    isUnknownAccountOnReset(platformAuthErrorCode(t), t.message ?: t.toString())
+/** [isResetRateLimited] for a throwable, reading both its message and `toString()`. */
+fun isResetRateLimited(t: Throwable): Boolean =
+    isResetRateLimited(t.message) || isResetRateLimited(t.toString())

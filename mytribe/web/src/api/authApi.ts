@@ -45,3 +45,21 @@ export function signOutAllDevices(): Promise<{ ok: true }> {
 export function reportFailedLogin(email: string): Promise<{ ok: true }> {
   return call<{ email: string }, { ok: true }>('recordFailedLogin', { email });
 }
+
+/**
+ * #905: asks the backend to email a password reset link. We send that email
+ * ourselves (smtp2go, the operator's `auth.password.reset` template), because
+ * Firebase's own reset email uses a console template this project cannot edit.
+ *
+ * Only the address goes up. The server picks where the link continues (the
+ * admin sign-in for staff, the portal sign-in for everyone else), so no client
+ * can point a reset at a host of its choosing.
+ *
+ * Unauthenticated. The answer is `{ ok: true }` for a known, unknown, locked or
+ * capped address alike, so nothing here reads it. It throws only for the per-IP
+ * limit (`functions/resource-exhausted`), a malformed address
+ * (`functions/invalid-argument`) and transport failures.
+ */
+export function requestPasswordReset(email: string): Promise<{ ok: true }> {
+  return call<{ email: string }, { ok: true }>('requestPasswordReset', { email });
+}

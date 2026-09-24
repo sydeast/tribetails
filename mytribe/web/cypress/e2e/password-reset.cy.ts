@@ -1,4 +1,5 @@
 import { RESET_KINFOLK, STAFF } from '../fixtures/accounts';
+import { stubCallables } from '../support/callables';
 
 /**
  * #892, end to end against the Auth emulator: a reset link opens the email
@@ -10,6 +11,14 @@ import { RESET_KINFOLK, STAFF } from '../fixtures/accounts';
  * string on /account/secure-reset, which is where the project's callbackUri
  * points in production. Nothing is mocked except the confirmSecureReset
  * endpoint, which this harness does not serve.
+ *
+ * #905: every portal client now ASKS for a reset through the
+ * `requestPasswordReset` callable, and the email goes out from our own
+ * template. This harness serves no functions (see e2e.firebase.json), so the
+ * "asking" tests at the bottom stub that callable with `cy.intercept` and
+ * judge only what the page shows. The link tests above it still use the
+ * emulator's own links, which have the same shape the callable's Admin SDK
+ * link has.
  */
 
 const AUTH = 'http://127.0.0.1:9499';
@@ -94,7 +103,7 @@ describe('password reset link (#892)', () => {
     });
   });
 
-  it('kinfolk: the requestPasswordReset link shape works, and a used link says so', () => {
+  it('kinfolk: the pre-#905 requestPasswordReset link shape still works, and a used link says so', () => {
     const newPassword = 'e2e-reset-kinfolk-new-2';
     const continueUrl = `https://kinfolk.tribetails.com/account/secure-reset?email=${encodeURIComponent(RESET_KINFOLK.email)}`;
     requestResetLink(RESET_KINFOLK.email, continueUrl).then((search) => {
@@ -117,10 +126,10 @@ describe('password reset link (#892)', () => {
     });
   });
 
-  it('portal app: the link portal Android and desktop now ask for lands on the portal sign-in (#911)', () => {
-    // #911 moved both Kotlin clients off the `requestPasswordReset` callable and
-    // onto Firebase's own reset with `continueUrl=https://kinfolk.tribetails.com/signin`,
-    // the target portal web already used. This is that exact link, made by the
+  it('portal: the link requestPasswordReset sends a household lands on the portal sign-in (#905)', () => {
+    // Since #905 the callable mints the link with the Admin SDK and
+    // `continueUrl=https://kinfolk.tribetails.com/signin` for a household (the
+    // admin sign-in for staff). This is that exact link shape, made by the
     // emulator, opened on the page #903 built.
     const newPassword = 'e2e-reset-kinfolk-new-911';
     requestResetLink(RESET_KINFOLK.email, 'https://kinfolk.tribetails.com/signin').then((search) => {
@@ -206,5 +215,95 @@ describe('password reset link (#892)', () => {
       cy.contains('button', 'Set new password').should('be.visible');
       cy.contains('button', 'I did not ask for this reset').should('be.visible');
     });
+  });
+});
+
+/**
+ * #905: asking for a reset from the portal's own screens. The callable is
+ * stubbed; the assertions are on what the page says, plus the one request
+ * body the stub received, since "only the address goes up" is the contract.
+ */
+const CALLABLE = '**/auntieos-ttpc/us-central1/requestPasswordReset';
+const CORS = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'POST, OPTIONS',
+  'access-control-allow-headers': 'authorization, content-type, x-firebase-appcheck',
+};
+
+/** The callable's per-IP refusal, in the callable protocol's own error envelope. */
+function refuseWithRateLimit(): void {
+  cy.intercept('OPTIONS', CALLABLE, { statusCode: 204, headers: CORS });
+  cy.intercept('POST', CALLABLE, {
+    statusCode: 429,
+    headers: CORS,
+    body: { error: { status: 'RESOURCE_EXHAUSTED', message: 'Too many requests. Try again later.' } },
+  }).as('reset');
+}
+
+/** Opens the sign-in form signed out, whatever an earlier spec left in IndexedDB. */
+function visitSignedOut(path: string): void {
+  cy.visit(path, {
+    onBeforeLoad(win) {
+      // Queued before the app's own open, so the app waits for it and starts
+      // with no persisted session.
+      win.indexedDB.deleteDatabase('firebaseLocalStorageDb');
+    },
+  });
+}
+
+describe('asking for a reset link (#905)', () => {
+  it('sign-in: "Forgot password?" sends only the typed address and says the link is on its way', () => {
+    const payloads: unknown[] = [];
+    stubCallables({
+      requestPasswordReset: (payload: unknown) => {
+        payloads.push(payload);
+        return { ok: true };
+      },
+    });
+    visitSignedOut('/signin');
+    cy.get('#email', { timeout: 20_000 }).type(`  ${RESET_KINFOLK.email} `);
+    cy.contains('a', 'Forgot password?').click();
+    cy.contains('Reset link sent. Check your inbox.').should('be.visible');
+    cy.then(() => expect(payloads).to.deep.equal([{ email: RESET_KINFOLK.email }]));
+  });
+
+  it('sign-in: a rate-limited reset says to wait, not that something went wrong', () => {
+    refuseWithRateLimit();
+    visitSignedOut('/signin');
+    cy.get('#email', { timeout: 20_000 }).type(RESET_KINFOLK.email);
+    cy.contains('a', 'Forgot password?').click();
+    cy.wait('@reset');
+    cy.contains('Too many tries for now.').should('be.visible');
+    cy.contains('Wait a few minutes, then try again.').should('be.visible');
+    cy.contains("Couldn't send reset email.").should('not.exist');
+    cy.contains('Reset link sent. Check your inbox.').should('not.exist');
+  });
+
+  it('email action page: "Send a new link" on a dead link asks the callable and confirms', () => {
+    const payloads: unknown[] = [];
+    stubCallables({
+      requestPasswordReset: (payload: unknown) => {
+        payloads.push(payload);
+        return { ok: true };
+      },
+    });
+    visitSignedOut('/account/secure-reset?mode=resetPassword&oobCode=e2e-not-a-real-code&apiKey=fake-api-key');
+    cy.contains('This reset link has already been used or is not valid.', { timeout: 20_000 }).should('be.visible');
+    cy.get('#resend-email').type(STAFF.email);
+    cy.contains('button', 'Send a new link').click();
+    cy.contains('A new link is on its way.').should('be.visible');
+    // No continue URL travels: the server sends staff back to the admin sign-in itself.
+    cy.then(() => expect(payloads).to.deep.equal([{ email: STAFF.email }]));
+  });
+
+  it('email action page: a rate-limited "Send a new link" says to wait', () => {
+    refuseWithRateLimit();
+    visitSignedOut('/account/secure-reset?mode=resetPassword&oobCode=e2e-not-a-real-code&apiKey=fake-api-key');
+    cy.contains('This reset link has already been used or is not valid.', { timeout: 20_000 }).should('be.visible');
+    cy.get('#resend-email').type(RESET_KINFOLK.email);
+    cy.contains('button', 'Send a new link').click();
+    cy.wait('@reset');
+    cy.contains('Too many tries for now. Wait a few minutes, then try again.').should('be.visible');
+    cy.contains('A new link is on its way.').should('not.exist');
   });
 });

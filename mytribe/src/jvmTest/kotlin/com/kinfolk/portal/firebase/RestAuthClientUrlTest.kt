@@ -7,8 +7,6 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.OutgoingContent
 import io.ktor.http.headersOf
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -63,40 +61,43 @@ class RestAuthClientUrlTest {
         assertTrue(urls.single().startsWith("https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword"))
     }
 
-    // #911: the reset send moved off the requestPasswordReset callable and onto
-    // Identity Toolkit's own accounts:sendOobCode, so it now follows the AUTH
-    // emulator switch (9099) rather than the FUNCTIONS one (5001).
+    // #905: the reset send is the requestPasswordReset callable again (it was
+    // Identity Toolkit's accounts:sendOobCode from #911), so it follows the
+    // FUNCTIONS emulator switch (5001), exactly like reportFailedLogin, and
+    // never the Auth one.
 
     @Test
-    fun sendPasswordResetHitsTheAuthEmulatorWhenConfigured() = runBlocking {
+    fun sendPasswordResetHitsTheFunctionsEmulatorWhenConfigured() = runBlocking {
         val urls = mutableListOf<String>()
-        RestAuthClient(clientCapturing(urls, "{}"), endpoints(emulator = true)).sendPasswordReset("a@b.com")
-        assertTrue(
-            urls.single().startsWith("http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:sendOobCode"),
-            "expected the Auth emulator's sendOobCode, got ${urls.single()}",
-        )
+        RestAuthClient(clientCapturing(urls, """{"result":{"ok":true}}"""), endpoints(emulator = true))
+            .sendPasswordReset("a@b.com")
+        assertEquals("http://127.0.0.1:5001/auntieos-ttpc/us-central1/requestPasswordReset", urls.single())
     }
 
     @Test
     fun sendPasswordResetHitsProductionWhenNoEmulatorIsConfigured() = runBlocking {
         val urls = mutableListOf<String>()
-        RestAuthClient(clientCapturing(urls, "{}"), endpoints(emulator = false)).sendPasswordReset("a@b.com")
-        assertTrue(
-            urls.single().startsWith("https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode"),
-            "expected production sendOobCode, got ${urls.single()}",
-        )
+        RestAuthClient(clientCapturing(urls, """{"result":{"ok":true}}"""), endpoints(emulator = false))
+            .sendPasswordReset("a@b.com")
+        assertEquals("https://us-central1-auntieos-ttpc.cloudfunctions.net/requestPasswordReset", urls.single())
     }
 
-    /** The whole body, so a dropped field cannot pass as a URL that still looks right. */
+    /**
+     * The whole body, so an extra field cannot ride along unnoticed: the
+     * callable is sent the trimmed address and nothing else. No continue URL,
+     * no requestType; the server picks where the link continues.
+     */
     @Test
-    fun sendPasswordResetPostsAPasswordResetRequestThatContinuesToThePortalSignIn() = runBlocking {
+    fun sendPasswordResetPostsTheTrimmedAddressAndNothingElse() = runBlocking {
         val bodies = mutableListOf<String>()
+        val authHeaders = mutableListOf<String?>()
         val client = RestHttp.buildClient(MockEngine, guardRequests = false) {
             engine {
                 addHandler { request ->
                     bodies += (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
+                    authHeaders += request.headers[HttpHeaders.Authorization]
                     respond(
-                        content = "{}",
+                        content = """{"result":{"ok":true}}""",
                         status = HttpStatusCode.OK,
                         headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
                     )
@@ -104,62 +105,10 @@ class RestAuthClientUrlTest {
             }
         }
         RestAuthClient(client, endpoints(emulator = true)).sendPasswordReset("  Pat@Household.test  ")
-        val body = RestHttp.json.parseToJsonElement(bodies.single()).jsonObject
-        assertEquals("PASSWORD_RESET", body["requestType"]?.jsonPrimitive?.content)
-        assertEquals("Pat@Household.test", body["email"]?.jsonPrimitive?.content)
-        assertEquals("https://kinfolk.tribetails.com/signin", body["continueUrl"]?.jsonPrimitive?.content)
-        assertEquals("false", body["canHandleCodeInApp"]?.jsonPrimitive?.content)
+        assertEquals("""{"data":{"email":"Pat@Household.test"}}""", bodies.single())
+        assertEquals(listOf<String?>(null), authHeaders, "the reset call is unauthenticated")
     }
 
-    /**
-     * #936: a null target leaves both link fields OUT of the body rather than
-     * writing them as JSON null. `explicitNulls = false` in [RestHttp.json] is
-     * what makes that true, and a change to that setting would turn this body
-     * into one Identity Toolkit reads differently.
-     */
-    @Test
-    fun aNullTargetPostsNoContinueUrlAtAll() = runBlocking {
-        val bodies = mutableListOf<String>()
-        val client = RestHttp.buildClient(MockEngine, guardRequests = false) {
-            engine {
-                addHandler { request ->
-                    bodies += (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
-                    respond(
-                        content = "{}",
-                        status = HttpStatusCode.OK,
-                        headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
-                    )
-                }
-            }
-        }
-        RestAuthClient(client, endpoints(emulator = true)).sendPasswordReset("pat@household.test", null)
-        val body = RestHttp.json.parseToJsonElement(bodies.single()).jsonObject
-        assertEquals("PASSWORD_RESET", body["requestType"]?.jsonPrimitive?.content)
-        assertTrue("continueUrl" !in body, "expected no continueUrl key, got ${bodies.single()}")
-        assertTrue("canHandleCodeInApp" !in body, "expected no canHandleCodeInApp key, got ${bodies.single()}")
-    }
-    /** A target the caller names is the one that goes on the wire. */
-    @Test
-    fun theCallersTargetIsTheOneThatIsPosted() = runBlocking {
-        val bodies = mutableListOf<String>()
-        val client = RestHttp.buildClient(MockEngine, guardRequests = false) {
-            engine {
-                addHandler { request ->
-                    bodies += (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
-                    respond(
-                        content = "{}",
-                        status = HttpStatusCode.OK,
-                        headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
-                    )
-                }
-            }
-        }
-        RestAuthClient(client, endpoints(emulator = true))
-            .sendPasswordReset("staff@tribetails.com", "https://auntie.tribetails.com/signin")
-        val body = RestHttp.json.parseToJsonElement(bodies.single()).jsonObject
-        assertEquals("https://auntie.tribetails.com/signin", body["continueUrl"]?.jsonPrimitive?.content)
-        assertEquals("false", body["canHandleCodeInApp"]?.jsonPrimitive?.content)
-    }
     @Test
     fun reportFailedLoginHitsTheFunctionsEmulatorWhenConfigured() = runBlocking {
         val urls = mutableListOf<String>()

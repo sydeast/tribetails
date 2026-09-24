@@ -6,11 +6,13 @@
  * `admin/v2/projects/auntieos-ttpc/config`). It is ONE URL for the whole
  * project, so every Firebase auth email opens this page, whoever sent it:
  *
- *   - native resets (admin web, admin Android, admin desktop, portal web):
+ *   - native resets (admin clients, and portal clients before #905):
  *     `?mode=resetPassword&oobCode=..&apiKey=..&lang=en`, plus `continueUrl`
  *     when the sender passed ActionCodeSettings
- *   - the custom `requestPasswordReset` email (portal Android and desktop): the
- *     same, with `continueUrl=https://kinfolk.tribetails.com/account/secure-reset?email=..`
+ *   - the `requestPasswordReset` email (portal web, Android and desktop since
+ *     #905): the same, with `continueUrl` set by the server to the admin or
+ *     portal sign-in. Links it sent before #905 (and any still in an inbox)
+ *     continue to `https://kinfolk.tribetails.com/account/secure-reset?email=..`
  *   - `verifyEmail`, `verifyAndChangeEmail` and `recoverEmail` links
  *
  * No Firebase link carries an `email` param, which is why the old parser (that

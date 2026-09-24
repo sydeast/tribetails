@@ -31,8 +31,6 @@ class SecureResetControllerTest {
         val resets = mutableListOf<Pair<String, String>>()
         val applied = mutableListOf<String>()
         val sent = mutableListOf<String>()
-        /** Where each sent link was asked to continue to, in send order. */
-        val sentTargets = mutableListOf<String?>()
 
         override suspend fun readActionCode(oobCode: String): ActionCodeInfo {
             reads++
@@ -50,10 +48,9 @@ class SecureResetControllerTest {
             applied += oobCode
         }
 
-        override suspend fun sendPasswordReset(email: String, continueUrl: String?) {
+        override suspend fun sendPasswordReset(email: String) {
             sendFailure?.let { throw it }
             sent += email
-            sentTargets += continueUrl
         }
 
         override fun errorCodeOf(t: Throwable): String? = codes[t]
@@ -343,64 +340,49 @@ class SecureResetControllerTest {
     }
 
     /**
-     * #936: a staff member who ran out of time on an admin link gets another
-     * admin link, not the household's sign-in.
+     * #905: the reset callable's per-IP limit is its own state, so the screen
+     * can say to wait instead of "try again in a moment". Each spelling the
+     * three clients carry it in is checked.
      */
     @Test
-    fun aReplacementLinkContinuesWhereTheOriginalDid() = runTest {
-        val expired = RuntimeException("expired")
-        val auth = FakeAuth(readFailure = expired, codes = mapOf(expired to "EXPIRED_OOB_CODE"))
-        val c = controller(
-            this,
-            auth,
-            link = SecureResetParams(
-                oobCode = "code1",
-                continueUrl = EmailAction.STAFF_SIGN_IN_URL,
-            ),
-        )
-        c.load()
-        c.sendNewLink("staff@tribetails.com")
-        advanceUntilIdle()
-        assertEquals(listOf<String?>(EmailAction.STAFF_SIGN_IN_URL), auth.sentTargets)
+    fun aRateLimitedSendSaysToWait() = runTest {
+        for (refusal in listOf(
+            RuntimeException("Too many requests. Try again later."),
+            RuntimeException("""Firebase REST sendPasswordReset failed: HTTP 429 — {"error":{"message":"Too many requests. Try again later.","status":"RESOURCE_EXHAUSTED"}}"""),
+            RuntimeException("FirebaseError: functions/resource-exhausted"),
+        )) {
+            val c = controller(this, FakeAuth(sendFailure = refusal))
+            c.sendNewLink("pat@household.test")
+            advanceUntilIdle()
+            assertEquals(SendState.RateLimited, c.resend, "for ${refusal.message}")
+            c.clearResendState()
+            assertEquals(SendState.Idle, c.resend)
+        }
     }
 
     /**
-     * #936, and the reason this is not a pass-through. The target is read off a
-     * URL, so a link naming a lookalike host must not turn a replacement link
-     * into a link at that host. `auntie.tribetails.com.evil.test` is the exact
-     * host PR #923's `startsWith` bug read as the admin site.
-     *
-     * Null is the refusal, and asks Firebase for a link with no continue target
-     * at all, which is what the web page does with a target it refused.
+     * #905 replaces #936's target rule. The callable takes the address and
+     * nothing else, and the server picks where the link continues from the
+     * account, so a staff member's replacement still lands on the admin sign-in
+     * and a forged target on the original link has nowhere to go: there is no
+     * argument left that could carry it. Pinned here for every kind of original.
      */
     @Test
-    fun aForgedTargetOnTheOriginalIsNotCarriedIntoTheReplacement() = runTest {
-        val forged = "https://auntie.tribetails.com.evil.test/steal"
-        val expired = RuntimeException("expired")
-        val auth = FakeAuth(readFailure = expired, codes = mapOf(expired to "EXPIRED_OOB_CODE"))
-        val c = controller(
-            this,
-            auth,
-            link = SecureResetParams(oobCode = "code1", continueUrl = forged),
-        )
-        c.load()
-        c.sendNewLink("pat@household.test")
-        advanceUntilIdle()
-        assertEquals(listOf<String?>(null), auth.sentTargets)
-        assertTrue(auth.sentTargets.none { it == forged }, "the forged target reached the replacement link")
-        assertEquals(SendState.Sent, c.resend)
-    }
-
-    /** A link that carried no target gets a replacement that carries none either. */
-    @Test
-    fun aBareLinkGetsABareReplacement() = runTest {
-        val expired = RuntimeException("expired")
-        val auth = FakeAuth(readFailure = expired, codes = mapOf(expired to "EXPIRED_OOB_CODE"))
-        val c = controller(this, auth)
-        c.load()
-        c.sendNewLink("pat@household.test")
-        advanceUntilIdle()
-        assertEquals(listOf<String?>(null), auth.sentTargets)
+    fun aReplacementLinkSendsTheAddressAloneWhateverTheOriginalContinuedTo() = runTest {
+        for (original in listOf(EmailAction.STAFF_SIGN_IN_URL, "https://auntie.tribetails.com.evil.test/steal", null)) {
+            val expired = RuntimeException("expired")
+            val auth = FakeAuth(readFailure = expired, codes = mapOf(expired to "EXPIRED_OOB_CODE"))
+            val c = controller(
+                this,
+                auth,
+                link = SecureResetParams(oobCode = "code1", continueUrl = original),
+            )
+            c.load()
+            c.sendNewLink("staff@tribetails.com")
+            advanceUntilIdle()
+            assertEquals(listOf("staff@tribetails.com"), auth.sent, "original target $original")
+            assertEquals(SendState.Sent, c.resend, "original target $original")
+        }
     }
 
     // ── Verify, change and recover ──────────────────────────────────────────
@@ -438,30 +420,44 @@ class SecureResetControllerTest {
         assertEquals(SendState.Sent, c.recoveryReset)
     }
 
-    /** #936: the recover link's reset offer follows the same target rule. */
+    /** #905: the recovery reset tells the per-IP limit apart too. */
     @Test
-    fun aRecoveryResetKeepsAnAllowedTargetAndDropsAForgedOne() = runTest {
-        for ((target, expected) in listOf(
-            EmailAction.STAFF_SIGN_IN_URL to EmailAction.STAFF_SIGN_IN_URL,
-            "https://auntie.tribetails.com.evil.test/steal" to null,
-        )) {
-            val auth = FakeAuth(ActionCodeInfo(EmailAction.OP_RECOVER_EMAIL, "old@household.test", "new@evil.test"))
-            val c = controller(
-                this,
-                auth,
-                link = SecureResetParams(
-                    oobCode = "code1",
-                    mode = EmailAction.MODE_RECOVER,
-                    continueUrl = target,
-                ),
-            )
-            c.load()
-            c.apply()
-            advanceUntilIdle()
-            c.sendRecoveryReset()
-            advanceUntilIdle()
-            assertEquals(listOf<String?>(expected), auth.sentTargets, "target $target")
-        }
+    fun aRateLimitedRecoveryResetSaysToWait() = runTest {
+        val auth = FakeAuth(
+            ActionCodeInfo(EmailAction.OP_RECOVER_EMAIL, "old@household.test", "new@evil.test"),
+            sendFailure = RuntimeException("Too many requests. Try again later."),
+        )
+        val c = controller(
+            this,
+            auth,
+            link = SecureResetParams(oobCode = "code1", mode = EmailAction.MODE_RECOVER),
+        )
+        c.load()
+        c.apply()
+        advanceUntilIdle()
+        c.sendRecoveryReset()
+        advanceUntilIdle()
+        assertEquals(SendState.RateLimited, c.recoveryReset)
+        assertEquals(emptyList(), auth.sent)
+    }
+
+    @Test
+    fun aRecoveryResetThatFailsOtherwiseStillSaysFailed() = runTest {
+        val auth = FakeAuth(
+            ActionCodeInfo(EmailAction.OP_RECOVER_EMAIL, "old@household.test", "new@evil.test"),
+            sendFailure = RuntimeException("socket closed"),
+        )
+        val c = controller(
+            this,
+            auth,
+            link = SecureResetParams(oobCode = "code1", mode = EmailAction.MODE_RECOVER),
+        )
+        c.load()
+        c.apply()
+        advanceUntilIdle()
+        c.sendRecoveryReset()
+        advanceUntilIdle()
+        assertEquals(SendState.Failed, c.recoveryReset)
     }
 
     /** The reset offer belongs to recover links only. */
