@@ -1,5 +1,6 @@
 import { db } from './firestoreAdmin';
 import { sendTemplatedEmail } from './email';
+import { sendPartsFor } from './emailFrame';
 
 /**
  * Resolves the templateId for a catalog key via the bindings collection.
@@ -96,11 +97,5 @@ export async function sendFromTemplate(
 ): Promise<string> {
   const tpl = await loadEmailTemplate(key);
   if (!tpl) throw new Error(`email template missing: resolved from ${key}`);
-  return sendTemplatedEmail({
-    to,
-    subjectTemplate: tpl.subject,
-    bodyTemplate: tpl.body ?? '',
-    data,
-    htmlTemplate: tpl.html ?? undefined,
-  });
+  return sendTemplatedEmail({ to, data, ...sendPartsFor(tpl) });
 }

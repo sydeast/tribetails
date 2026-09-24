@@ -1,6 +1,7 @@
 import { db } from '../../lib/firestoreAdmin';
 import { loadEmailTemplate } from '../../lib/sendFromTemplate';
 import { sendTemplatedEmail } from '../../lib/email';
+import { sendPartsFor } from '../../lib/emailFrame';
 import { logEvent } from '../../lib/logger';
 import { fallbackEmail } from '../fallbackTemplate';
 import type { ChannelSendArgs, ChannelSendResult } from './index';
@@ -68,13 +69,7 @@ export async function sendEmailChannel(args: ChannelSendArgs): Promise<ChannelSe
     return { providerMessageId, usedFallback: true, fallbackReason: `emailTemplates/${templateId}` };
   }
 
-  const providerMessageId = await sendTemplatedEmail({
-    to: email,
-    subjectTemplate: tpl.subject,
-    bodyTemplate: tpl.body ?? '',
-    data: renderData,
-    htmlTemplate: tpl.html ?? undefined,
-  });
+  const providerMessageId = await sendTemplatedEmail({ to: email, data: renderData, ...sendPartsFor(tpl) });
   return { providerMessageId };
 }
 

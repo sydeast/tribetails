@@ -86,6 +86,14 @@ const ALLOWED_EAGER_PACKAGES = [
   'net',
   'node:net',
   'sanitize-html',
+  // #953: `emailFrame.ts` parses visual-template content into text/HTML for
+  // every send route (`sendFromTemplate`, `emailChannel`, `requestPasswordReset`).
+  // `sendPartsFor` must stay synchronous (other in-flight PRs depend on that
+  // exact signature), so this cannot move behind `await import()`. Marginal
+  // cost is ~zero: `sanitize-html`, already on this list, requires the same
+  // `htmlparser2@12` at ITS OWN module scope (node_modules/sanitize-html/index.js),
+  // so it is already resident in the process on every cold start this list produces.
+  'htmlparser2',
   '@sentry/node',
   'zod',
 ];
