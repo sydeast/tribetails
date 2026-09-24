@@ -62,4 +62,11 @@ class TemplateEditModeTest {
         assertFalse(showsMarkdownPreview(TemplateEditMode.SUBJECT_ONLY))
         assertFalse(showsMarkdownPreview(TemplateEditMode.READ_ONLY))
     }
+
+    @Test fun canReassignCategoryOnlyWhenFormatIsNull() {
+        assertTrue(canReassignCategory(tpl("b", null)))
+        assertTrue(canReassignCategory(tpl("Hi", "<!DOCTYPE html><html><body><a href='{{link}}' class='button'>Go</a></body></html>")))
+        assertFalse(canReassignCategory(tpl("", null, format = "visual")))
+        assertFalse(canReassignCategory(tpl("b", null, format = "mjml")))
+    }
 }

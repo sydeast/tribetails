@@ -153,6 +153,14 @@ fun templateEditMode(template: TemplateRepository.EmailTemplate, creating: Boole
 }
 
 /**
+ * True when this device may reassign [template]'s category. A non-null [format]
+ * (a visual or MJML template built on the web admin) is READ_ONLY here, and the
+ * drag-to-category move is a save like any other: it must obey the same rule.
+ */
+fun canReassignCategory(template: TemplateRepository.EmailTemplate): Boolean =
+    template.format == null
+
+/**
  * True only in FULL: the markdown preview is a true picture of the save path
  * only there. SUBJECT_ONLY's real HTML is hand-authored and this app has no
  * HTML renderer yet (arriving PR 5); READ_ONLY's body is often empty. Both

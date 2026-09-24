@@ -164,6 +164,12 @@ fun TemplateBankBody(
     var hoveredCategory by remember { mutableStateOf<String?>(null) }
 
     fun assignCategory(tpl: TemplateService.EmailTemplate, newCategory: String) {
+        // #953: a non-null format is READ_ONLY on this device; drag-to-category
+        // is a save like any other and must never touch it.
+        if (!canReassignCategory(tpl)) {
+            error = "Move this template on the web admin."
+            return
+        }
         val prev = templates
         // Optimistic: reflect the move immediately (chip counts derive from templates).
         templates = templates.map { if (it.templateId == tpl.templateId) it.copy(category = newCategory) else it }
@@ -786,6 +792,7 @@ private fun TemplateEditorOverlay(
                     value = category,
                     onValueChange = { category = it },
                     label = "Category (optional)",
+                    enabled = mode != TemplateEditMode.READ_ONLY,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 if (categories.isNotEmpty()) {
@@ -799,6 +806,7 @@ private fun TemplateEditorOverlay(
                                 label = cat,
                                 selected = category.equals(cat, ignoreCase = true),
                                 onClick = { category = cat },
+                                enabled = mode != TemplateEditMode.READ_ONLY,
                                 tone = AuntieChipTone.Orange,
                             )
                         }
@@ -860,7 +868,10 @@ private fun TemplateEditorOverlay(
                 }
                 MultilineField(
                     value = description,
-                    onValueChange = { description = it },
+                    // MultilineField has no `enabled` param; guard the callback the
+                    // same way the Subject field's mode check reads, so READ_ONLY
+                    // rejects the keystroke instead of hiding it.
+                    onValueChange = { if (mode != TemplateEditMode.READ_ONLY) description = it },
                     label = "Description",
                     minLines = 2,
                     modifier = Modifier.fillMaxWidth(),

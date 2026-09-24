@@ -266,6 +266,12 @@ fun TemplateBankBody(
     var hoveredCategory by remember { mutableStateOf<String?>(null) }
 
     fun assignCategory(tpl: TemplateRepository.EmailTemplate, newCategory: String) {
+        // #953: a non-null format is READ_ONLY on this device; drag-to-category
+        // is a save like any other and must never touch it.
+        if (!canReassignCategory(tpl)) {
+            error = "Move this template on the web admin."
+            return
+        }
         val prev = templates
         // Optimistic: reflect the move immediately (chip counts derive from templates).
         templates = templates.map { if (it.templateId == tpl.templateId) it.copy(category = newCategory) else it }
@@ -1098,6 +1104,7 @@ private fun TemplateEditorScreen(
                         value = description,
                         onValueChange = { description = it },
                         placeholder = "What is this template for? Who receives it?",
+                        enabled = mode != TemplateEditMode.READ_ONLY,
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = false,
                         minLines = 2,
@@ -1114,6 +1121,7 @@ private fun TemplateEditorScreen(
                         value = category,
                         onValueChange = { category = it },
                         placeholder = "Booking",
+                        enabled = mode != TemplateEditMode.READ_ONLY,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     if (categories.isNotEmpty()) {
@@ -1127,7 +1135,10 @@ private fun TemplateEditorScreen(
                                 AuntieChip(
                                     label = cat,
                                     selected = category.equals(cat, ignoreCase = true),
-                                    onClick = { category = cat },
+                                    // AuntieChip has no `enabled` param; guard the tap
+                                    // the same way TagEmojiPicker (AdminSettingsScreen)
+                                    // disables its chips.
+                                    onClick = { if (mode != TemplateEditMode.READ_ONLY) category = cat },
                                 )
                             }
                         }
@@ -1143,6 +1154,7 @@ private fun TemplateEditorScreen(
                         value = tags,
                         vocab = emptyList(),
                         onChange = { tags = it },
+                        enabled = mode != TemplateEditMode.READ_ONLY,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
