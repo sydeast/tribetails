@@ -249,7 +249,7 @@ export async function processPasswordResetRequest(request: PasswordResetRequest)
     await sendTemplatedEmail({
       to: user.email,
       subjectTemplate: loaded.template.subject,
-      bodyTemplate: loaded.template.body,
+      bodyTemplate: loaded.template.body ?? '',
       htmlTemplate: loaded.template.html ?? undefined,
       data: { link, email: user.email, displayName: user.displayName || user.email },
     });

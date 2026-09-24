@@ -71,7 +71,7 @@ export async function sendEmailChannel(args: ChannelSendArgs): Promise<ChannelSe
   const providerMessageId = await sendTemplatedEmail({
     to: email,
     subjectTemplate: tpl.subject,
-    bodyTemplate: tpl.body,
+    bodyTemplate: tpl.body ?? '',
     data: renderData,
     htmlTemplate: tpl.html ?? undefined,
   });
