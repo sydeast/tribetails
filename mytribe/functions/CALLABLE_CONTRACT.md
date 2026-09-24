@@ -116,6 +116,14 @@ the stale "~26":
   `src/lib/moneyIdempotency.ts`. The `shapeSignature` walker unwraps optional/nullable/
   default/effects and descends arrays, so a rename at ANY depth (e.g.
   `schema.sections[].fields[].required`) fails the guard.
+- `listTemplates` response gained three fields per row (#953, doc-only: this
+  response is not in `shapeKeys`/`contracts:check`):
+  - `format`: `'visual'` for a visual template, the doc's raw value for
+    anything else, `null` when absent. Any non-null value means READ_ONLY to
+    admin clients.
+  - `headline`: the visual template's headline, `null` on an old-format doc.
+  - `content`: the visual template's sanitized body, `null` on an old-format
+    doc.
 - The remaining ~34 are lower-complexity (2 to 3 flat fields); freeze as they churn.
 
 Two freeze levels now exist: `shapeKeys` (top-level, for flat shapes) and
