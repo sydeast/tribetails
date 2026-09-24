@@ -5,7 +5,6 @@ import {
   initializeRecaptchaConfig,
   onAuthStateChanged,
   sendEmailVerification,
-  sendPasswordResetEmail,
   signInWithCustomToken,
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
@@ -17,7 +16,7 @@ import { useCallback, useRef, useState, useSyncExternalStore } from 'react';
 // neither side touches an uninitialized binding during module evaluation. The
 // old dynamic import here never split a chunk anyway — activeTribe is
 // statically imported by the router and most screens.
-import { reportFailedLogin, signOutAllDevices } from '../api/authApi';
+import { reportFailedLogin, requestPasswordReset, signOutAllDevices } from '../api/authApi';
 import { clearAccess, clearActiveTribeSession } from './activeTribe';
 import { isCredentialSignInError } from './authErrors';
 import { auth, activateAppCheck } from './firebase';
@@ -106,29 +105,22 @@ export async function signInWithToken(token: string): Promise<User> {
 }
 
 /**
- * Where a portal reset link continues once the password is set (#892). The
- * link itself opens the project's email action page (/account/secure-reset);
- * this only decides where its "sign in" link goes.
- */
-export const PORTAL_SIGN_IN_URL = 'https://kinfolk.tribetails.com/signin';
-
-/**
- * Sends the Firebase password-reset email.
+ * Asks for a password reset email through our `requestPasswordReset` callable
+ * (#905), not Firebase's `sendPasswordResetEmail`, whose email template this
+ * project cannot edit.
  *
- * `continueUrl` defaults to the portal sign-in. The email action page passes
- * the continue target of an expired link through, so a staff member who asks
- * for a fresh link there still ends on the admin sign-in.
+ * The address is the only argument. The server decides where the link
+ * continues from the account itself: the admin sign-in for staff, the portal
+ * sign-in for everyone else. So a staff member who asks for a fresh link from
+ * the email action page still ends on the admin sign-in, with nothing passed
+ * through from the old link.
+ *
+ * Resolves the same way for every address, real or not. Throws for the per-IP
+ * limit (`functions/resource-exhausted`, see `isRateLimitedError`), a malformed
+ * address and transport failures.
  */
-export async function sendReset(email: string, continueUrl: string | null = PORTAL_SIGN_IN_URL): Promise<void> {
-  await ensureRecaptcha();
-  if (continueUrl === null) {
-    // A fresh link for a link that had no continue target (#892 review): the
-    // page cannot tell a household from staff, so the new link stays bare and
-    // the page again offers both sign-ins.
-    await sendPasswordResetEmail(auth, email);
-    return;
-  }
-  await sendPasswordResetEmail(auth, email, { url: continueUrl, handleCodeInApp: false });
+export async function sendReset(email: string): Promise<void> {
+  await requestPasswordReset(email.trim());
 }
 
 /** Uses a reset link's oobCode to set the new password. */

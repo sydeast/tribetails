@@ -22,11 +22,11 @@ interface AuthBackend {
     suspend fun signOut()
 
     /**
-     * Sends a reset link that continues to [continueUrl] once the password is
-     * set, or a bare link when it is null. #936 gave this the parameter; see
-     * [AuthRepository.sendPasswordReset] for who passes what.
+     * Asks the `requestPasswordReset` callable to email [email] a reset link
+     * (#905). The address is the whole request: the server picks where the
+     * link continues from the account. See [AuthRepository.sendPasswordReset].
      */
-    suspend fun sendPasswordReset(email: String, continueUrl: String?)
+    suspend fun sendPasswordReset(email: String)
     /** Re-auth with [currentPassword], then set [newPassword]. */
     suspend fun changePassword(currentPassword: String, newPassword: String)
     /** Re-auth with [currentPassword], then begin changing the sign-in email to [newEmail]. */
@@ -249,32 +249,23 @@ class AuthRepository(
     }
 
     /**
-     * Sends a password reset link to [email].
+     * Sends a password reset link to [email] through the `requestPasswordReset`
+     * callable (#905), on every client: the gitlive Functions SDK on Android
+     * and Kotlin/JS, the REST callable endpoint on desktop.
      *
-     * #911: an address Firebase has never seen is NOT an error here. Both
-     * Kotlin clients now send through Firebase's own reset, which refuses an
-     * unknown address whenever the project's email enumeration protection is
-     * off, and a screen that showed that refusal would answer "is this an
-     * account?" for anyone who can type. The refusal is absorbed, so the screen
-     * shows the same sentence it shows for a real account, exactly as the
-     * `requestPasswordReset` callable's constant `{ ok: true }` used to. See
-     * [isUnknownAccountOnReset]; nothing else is absorbed.
+     * The callable answers `{ ok: true }` for a known, unknown, locked or
+     * capped address alike, so there is nothing to absorb here: an address
+     * that is not an account already reads exactly like one that is. A
+     * failure is a real failure (the per-IP limit, a malformed address, the
+     * network) and propagates; the screens tell the per-IP limit apart with
+     * [isResetRateLimited].
      *
-     * #936: [continueUrl] is where the link continues once the password is set,
-     * the same parameter portal web's `sendReset(email, continueUrl)` takes and
-     * with the same two defaults: the portal sign-in unless a caller says
-     * otherwise, and a bare link for an explicit null. The email action screen
-     * passes the target the original link carried, through [safeContinueUrl],
-     * so a replacement link can only continue somewhere the allowlist allows.
+     * No continue URL. The server reads the account and sends staff back to
+     * the admin sign-in and everyone else to the portal's, so a client cannot
+     * point a reset link anywhere.
      */
-    suspend fun sendPasswordReset(email: String, continueUrl: String? = EmailAction.PORTAL_SIGN_IN_URL) {
-        try {
-            withRecaptchaGuard { backend.sendPasswordReset(email, continueUrl) }
-        } catch (c: CancellationException) {
-            throw c
-        } catch (t: Throwable) {
-            if (!isUnknownAccountOnReset(t)) throw t
-        }
+    suspend fun sendPasswordReset(email: String) {
+        backend.sendPasswordReset(email)
     }
 
     /**
@@ -345,7 +336,7 @@ internal class FakeAuthBackend(
     override suspend fun signInWithPhoneOtp(verificationId: String, smsCode: String) =
         AuthState.SignedIn(uid, email, null)
     override suspend fun signOut() = Unit
-    override suspend fun sendPasswordReset(email: String, continueUrl: String?) = Unit
+    override suspend fun sendPasswordReset(email: String) = Unit
     override suspend fun changePassword(currentPassword: String, newPassword: String) = Unit
     override suspend fun changeEmail(currentPassword: String, newEmail: String) = Unit
 }

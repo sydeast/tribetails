@@ -221,12 +221,15 @@ fun SignInScreen(
                                 scope.launch {
                                     try {
                                         // #886 review: a mobile keyboard's trailing space is a
-                                        // refused address. The backends trim too (#911); this
+                                        // refused address. The backends trim too (#905); this
                                         // keeps the screen from asking for a link to " a@b.com".
                                         repo.sendPasswordReset(email.trim())
                                         resetSuccess = true
                                     } catch (t: Throwable) {
-                                        error = ErrorEnvelope.message("Couldn't send reset email.")
+                                        // #905: the callable's per-IP limit says to wait.
+                                        error = ErrorEnvelope.message(
+                                            if (isResetRateLimited(t)) RESET_RATE_LIMITED_MESSAGE else "Couldn't send reset email.",
+                                        )
                                     } finally {
                                         resetting = false
                                     }

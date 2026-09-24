@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { sendReset, signIn } from '../lib/auth';
-import { mapAuthError } from '../lib/authErrors';
+import { isRateLimitedError, mapAuthError } from '../lib/authErrors';
 import { readAndClearSessionEndedNotice } from '../lib/revokedSession';
 import { BusyLabel } from '../components/Loading';
 
@@ -71,12 +71,18 @@ export function SignIn() {
         title: 'Reset link sent. Check your inbox.',
         sub: 'Sent to the email you typed above.',
       });
-    } catch {
-      setResetToast({
-        tone: 'err',
-        title: "Couldn't send reset email.",
-        sub: 'Something went wrong on our end. Try again in a moment.',
-      });
+    } catch (err) {
+      // #905: the reset callable's per-IP limit. Trying again at once is exactly
+      // what will not work, so it is not told as "something went wrong".
+      setResetToast(
+        isRateLimitedError(err)
+          ? { tone: 'err', title: 'Too many tries for now.', sub: 'Wait a few minutes, then try again.' }
+          : {
+              tone: 'err',
+              title: "Couldn't send reset email.",
+              sub: 'Something went wrong on our end. Try again in a moment.',
+            },
+      );
     } finally {
       setBusy(false);
     }

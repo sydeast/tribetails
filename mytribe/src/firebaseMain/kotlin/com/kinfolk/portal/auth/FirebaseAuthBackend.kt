@@ -2,7 +2,6 @@ package com.kinfolk.portal.auth
 
 import dev.gitlive.firebase.Firebase
 import dev.gitlive.firebase.auth.ActionCodeResult
-import dev.gitlive.firebase.auth.ActionCodeSettings
 import dev.gitlive.firebase.auth.EmailAuthProvider
 import dev.gitlive.firebase.auth.auth
 import dev.gitlive.firebase.functions.functions
@@ -89,36 +88,31 @@ class FirebaseAuthBackend : AuthBackend {
     override suspend fun signOut() = auth.signOut()
 
     /**
-     * #911: Firebase's own reset, not the `requestPasswordReset` callable.
+     * #905: our `requestPasswordReset` callable, not Firebase's
+     * `sendPasswordResetEmail`. Firebase's reset email uses a console template
+     * this project cannot edit; the callable sends the link through smtp2go
+     * with the operator's `auth.password.reset` template.
      *
-     * The callable capped an address at 3 resets a day and answered
-     * `{ ok: true }` once the budget was spent, so anyone who knew a
-     * household's address could spend it and leave the household reading
-     * "Reset link sent" with no email arriving, for 24 hours, before any
-     * account lock existed. Firebase's reset has Google's own abuse limits and
-     * no per-email budget an attacker can drain.
+     * Same call shape as [reportFailedLogin] below: the gitlive Functions SDK,
+     * default region us-central1, unauthenticated, `{ email }` and nothing
+     * else. The server picks where the link continues from the account (admin
+     * sign-in for staff, portal sign-in for everyone else), so no continue URL
+     * is sent.
      *
-     * The settings are the ones portal web sends: continue to [continueUrl],
-     * and do not ask for the code to be handled in the app
-     * (`canHandleCodeInApp = false`). `androidPackageName` is deliberately
-     * unset; it exists for Dynamic Links, which are shut down.
+     * The answer is `{ ok: true }` for a known, unknown, locked or capped
+     * address alike, and is not read. A refusal (the per-IP limit, a
+     * malformed address) throws, and the screen tells the limit apart with
+     * [isResetRateLimited].
      *
-     * #936: a null [continueUrl] asks for a link with no continue target at
-     * all, the same thing `sendPasswordResetEmail(auth, email)` with no options
-     * does on portal web. The reset screen sends that for a link that arrived
-     * bare, and for one whose target the allowlist refused. Every other caller
-     * takes [AuthRepository.sendPasswordReset]'s default, the portal sign-in.
+     * #911 had moved this onto Firebase's reset because the callable's
+     * per-email cap could be spent by a stranger; #905 keys that cap by email
+     * and network, so a stranger spends only their own budget.
      *
      * Trimmed, because a mobile keyboard's trailing space is otherwise a
-     * refused address (the reason the callable call trimmed too, #886 review).
+     * refused address (#886 review); the server's email check does not trim.
      */
-    override suspend fun sendPasswordReset(email: String, continueUrl: String?) {
-        auth.sendPasswordResetEmail(
-            email = email.trim(),
-            actionCodeSettings = continueUrl?.let {
-                ActionCodeSettings(url = it, canHandleCodeInApp = false)
-            },
-        )
+    override suspend fun sendPasswordReset(email: String) {
+        Firebase.functions.httpsCallable("requestPasswordReset").invoke(mapOf("email" to email.trim()))
     }
 
     /**

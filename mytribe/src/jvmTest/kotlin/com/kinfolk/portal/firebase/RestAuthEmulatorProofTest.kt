@@ -38,7 +38,7 @@ import kotlin.test.assertFailsWith
  * alone. Run it from mytribe/:
  *
  *   firebase emulators:exec --project auntieos-ttpc \
- *     --only auth,firestore,functions:mytribe:recordFailedLogin,functions:mytribe:beforeSignIn \
+ *     --only auth,firestore,functions:mytribe:recordFailedLogin,functions:mytribe:beforeSignIn,functions:mytribe:requestPasswordReset,functions:mytribe:onPasswordResetRequestCreate \
  *     'FUNCTIONS_EMULATOR_HOST=127.0.0.1:5001 ./gradlew :jvmTest --no-daemon --rerun --tests "*RestAuthEmulatorProofTest"'
  *
  * emulators:exec sets FIREBASE_AUTH_EMULATOR_HOST and FIRESTORE_EMULATOR_HOST
@@ -51,9 +51,18 @@ import kotlin.test.assertFailsWith
  * Firestore for those calls, which is exactly what this whole issue exists to
  * stop.
  *
- * #911: the reset half no longer involves Functions at all. It goes to the
- * Auth emulator's `accounts:sendOobCode`, and the proof reads the link the
- * emulator minted back out of the emulator's own oobCodes endpoint.
+ * #905: the reset half goes through Functions again. The client posts the
+ * `requestPasswordReset` callable; the callable writes a
+ * `passwordResetRequests` doc and answers; `onPasswordResetRequestCreate`
+ * (the Firestore trigger, so it needs the Firestore emulator too) mints the
+ * link with the Admin SDK against the Auth emulator, which keeps the code it
+ * minted. The proof reads that code back out of the emulator's own oobCodes
+ * endpoint, polling, because the trigger runs after the callable has already
+ * answered. The trigger then tries smtp2go; with no SMTP2GO_API_KEY on the
+ * emulator that send fails AFTER the link is minted, which is what this reads,
+ * so no email leaves the machine. Both functions exist from PR #952 on; this
+ * proof is not meant to pass against an older functions build.
+ *
  * `beforeSignIn` joins the --only list for the locked-account test, which
  * needs a real refusal to prove the reset clears it.
  */
@@ -127,40 +136,41 @@ class RestAuthEmulatorProofTest {
     }
 
     /**
-     * #911: the desktop reset reaches the Auth emulator and mints a real
-     * Firebase reset link that continues to the portal sign-in.
+     * #905: the desktop reset reaches the Functions emulator's
+     * `requestPasswordReset`, and the server mints a real reset link for the
+     * account that continues to the portal sign-in.
      *
-     * Before #911 this called the `requestPasswordReset` callable, whose
-     * constant `{ ok: true }` meant reaching it was the only thing that could
-     * be asserted. Firebase's own reset leaves evidence: the emulator keeps the
-     * code it minted, so this signs an account up, sends, then reads the link
-     * back and checks what it is and where it continues.
+     * The callable answers `{ ok: true }` for every address, so reaching it
+     * proves little on its own. The link the trigger mints is the evidence:
+     * sign an account up, send, then wait for the code to appear and check
+     * what it is and where it continues.
      */
     @Test
-    fun aPasswordResetReachesTheAuthEmulatorAndMintsAPortalResetLink(): Unit = runBlocking {
-        val email = "nobody-911-${System.nanoTime()}@example.test"
-        signUp(email, "starting-password-911")
+    fun aPasswordResetReachesTheFunctionsEmulatorAndMintsAPortalResetLink(): Unit = runBlocking {
+        val email = "nobody-905-${System.nanoTime()}@example.test"
+        signUp(email, "starting-password-905")
 
         RestAuthClient().sendPasswordReset(email)
 
-        val code = oobCodes().last { it.email == email }
+        val code = awaitResetCode(email)
         assertEquals("PASSWORD_RESET", code.requestType, "expected a reset code, got ${code.requestType}")
         check(code.oobLink.contains("continueUrl=https%3A%2F%2Fkinfolk.tribetails.com%2Fsignin")) {
             "expected the link to continue to the portal sign-in, got ${code.oobLink}"
         }
-        println("911 reset link: ${code.oobLink}")
+        println("905 reset link: ${code.oobLink}")
     }
 
     /**
-     * #911 with #886: a locked account is still unlockable by a NATIVE reset.
+     * #886, on #905's send path: a locked account is still unlockable by a
+     * reset link the callable asked for.
      *
      * `beforeSignIn` clears a lock when Firebase Auth's `tokensValidAfterTime`
      * rises above the recorded lock start, and every password reset raises it,
      * so the send mechanism does not matter to the unlock. This proves that on
-     * the new send path: write a live lock onto the account's security doc,
-     * confirm sign-in is refused, send through
-     * [RestAuthClient.sendPasswordReset], use the link the emulator minted,
-     * then sign in and read the lock fields back.
+     * the callable path (which also exempts a locked account from the daily
+     * cap): write a live lock onto the account's security doc, confirm sign-in
+     * is refused, send through [RestAuthClient.sendPasswordReset], use the link
+     * the trigger minted, then sign in and read the lock fields back.
      *
      * The refusal half needs `functions:mytribe:beforeSignIn` served. Without
      * it the locked sign-in simply succeeds, and this fails saying so rather
@@ -174,9 +184,9 @@ class RestAuthEmulatorProofTest {
      * later again.
      */
     @Test
-    fun aNativeResetUnlocksALockedAccount(): Unit = runBlocking {
-        val email = "locked-911-${System.nanoTime()}@example.test"
-        val startingPassword = "starting-password-911"
+    fun aCallableResetUnlocksALockedAccount(): Unit = runBlocking {
+        val email = "locked-905-${System.nanoTime()}@example.test"
+        val startingPassword = "starting-password-905"
         val uid = signUp(email, startingPassword)
 
         delay(1_500)
@@ -190,17 +200,17 @@ class RestAuthEmulatorProofTest {
         )
 
         val locked = signIn(email, startingPassword)
-        println("911 locked sign-in: ${locked.first} ${locked.second}")
+        println("905 locked sign-in: ${locked.first} ${locked.second}")
         check(locked.first != 200) {
             "beforeSignIn did not refuse the locked account; serve functions:mytribe:beforeSignIn for this test"
         }
 
         delay(1_500)
         RestAuthClient().sendPasswordReset(email)
-        val code = oobCodes().last { it.email == email && it.requestType == "PASSWORD_RESET" }
-        println("911 locked-account reset link: ${code.oobLink}")
+        val code = awaitResetCode(email)
+        println("905 locked-account reset link: ${code.oobLink}")
 
-        val newPassword = "unlocked-by-native-reset-911"
+        val newPassword = "unlocked-by-callable-reset-905"
         val reset = RestHttp.client.post(
             "${FirebaseRestConfig.identityToolkitBase()}/accounts:resetPassword?key=${FirebaseRestConfig.API_KEY}",
         ) {
@@ -210,14 +220,14 @@ class RestAuthEmulatorProofTest {
         check(reset.status.isSuccess()) { "resetPassword failed: ${reset.status} ${reset.bodyAsText()}" }
 
         val after = signIn(email, newPassword)
-        println("911 post-reset sign-in: ${after.first}")
+        println("905 post-reset sign-in: ${after.first}")
         check(after.first == 200) { "expected the reset to clear the lock, got ${after.first}: ${after.second}" }
 
         val doc = RestHttp.client.get("${FirebaseRestConfig.firestoreBase()}/clients/$uid/security/loginAttempts") {
             headers { append(HttpHeaders.Authorization, "Bearer owner") }
         }
         val body = doc.bodyAsText()
-        println("911 loginAttempts after: $body")
+        println("905 loginAttempts after: $body")
         check(!body.contains("lockedUntilMs")) { "expected beforeSignIn to have cleared lockedUntilMs, got $body" }
     }
 
@@ -245,6 +255,21 @@ class RestAuthEmulatorProofTest {
     }
 
     private data class OobCode(val email: String, val oobCode: String, val oobLink: String, val requestType: String)
+
+    /**
+     * The newest reset code for [email], waiting up to 30 seconds for it: the
+     * trigger that mints it runs after the callable has answered.
+     */
+    private suspend fun awaitResetCode(email: String): OobCode {
+        val deadline = System.currentTimeMillis() + 30_000
+        while (true) {
+            oobCodes().lastOrNull { it.email == email && it.requestType == "PASSWORD_RESET" }?.let { return it }
+            check(System.currentTimeMillis() < deadline) {
+                "no reset code for $email after 30s; is functions:mytribe:onPasswordResetRequestCreate served?"
+            }
+            delay(500)
+        }
+    }
 
     /** Every oob code the Auth emulator currently holds, oldest first. */
     private suspend fun oobCodes(): List<OobCode> {

@@ -167,7 +167,7 @@ class MidSessionAuthChangeRoutingTest {
         override suspend fun signInWithPhoneOtp(verificationId: String, smsCode: String) =
             AuthState.SignedIn("u1", null, null)
         override suspend fun signOut() = Unit
-        override suspend fun sendPasswordReset(email: String, continueUrl: String?) = Unit
+        override suspend fun sendPasswordReset(email: String) = Unit
         override suspend fun changePassword(currentPassword: String, newPassword: String) = Unit
         override suspend fun changeEmail(currentPassword: String, newEmail: String) = Unit
     }

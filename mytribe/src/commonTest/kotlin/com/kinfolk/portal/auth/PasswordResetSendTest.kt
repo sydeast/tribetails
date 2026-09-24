@@ -8,79 +8,81 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * #911: the reset send on portal Android and portal desktop moved off the
- * `requestPasswordReset` callable, which answered `{ ok: true }` for every
- * address, and onto Firebase's own reset, which refuses an address it has
- * never seen unless the project's email enumeration protection is on.
+ * #905: portal Android and portal desktop send resets through our own
+ * `requestPasswordReset` callable again, as portal web now does too. It
+ * answers `{ ok: true }` for every address, so [AuthRepository.sendPasswordReset]
+ * absorbs nothing and passes the address alone.
  *
- * These pin the one rule that closes the difference: an unknown account is the
- * only failure [AuthRepository.sendPasswordReset] absorbs, and it absorbs it
- * whichever of the three SDK spellings arrives.
+ * These pin the two rules the screens rely on: a refusal by the callable's
+ * per-IP limit is recognised in every spelling a client carries it in, and
+ * nothing else is mistaken for it.
  */
 class PasswordResetSendTest {
 
     @Test
-    fun everySdkSpellingOfNoSuchAccountIsRecognised() {
-        for (code in listOf("auth/user-not-found", "ERROR_USER_NOT_FOUND", "EMAIL_NOT_FOUND")) {
-            assertTrue(isUnknownAccountOnReset(code, null), "expected $code to read as an unknown account")
+    fun everySpellingOfThePerIpLimitIsRecognised() {
+        val spellings = listOf(
+            // Android's native SDK and the JS SDK: the server's own message.
+            "Too many requests. Try again later.",
+            // Desktop: FirebaseRestException's message carries the REST body.
+            """Firebase REST sendPasswordReset failed: HTTP 429 — {"error":{"message":"Too many requests. Try again later.","status":"RESOURCE_EXHAUSTED"}}""",
+            // The web SDK's code, in case a wrapper surfaces it as text.
+            "FirebaseError: functions/resource-exhausted",
+            // lib/rateLimit.ts's wording, the other rate-limit sentence the backend uses.
+            "Too many attempts. Try again later.",
+        )
+        for (text in spellings) {
+            assertTrue(isResetRateLimited(text), "expected a rate limit in: $text")
+            assertTrue(isResetRateLimited(RuntimeException(text)), "expected a rate limit in a throwable of: $text")
         }
     }
 
-    /** The desktop failure arrives as an Identity Toolkit body, not a bare code. */
     @Test
-    fun theIdentityToolkitBodyIsRecognisedWithNoCodeAtAll() {
-        assertTrue(
-            isUnknownAccountOnReset(null, """{"error":{"code":400,"message":"EMAIL_NOT_FOUND"}}"""),
-        )
-    }
-
-    @Test
-    fun nothingElseIsTreatedAsAnUnknownAccount() {
+    fun nothingElseIsTreatedAsTheLimit() {
         val others = listOf(
-            "auth/invalid-email" to "The email address is badly formatted.",
-            "auth/too-many-requests" to "We have blocked all requests from this device.",
-            "INVALID_EMAIL" to """{"error":{"message":"INVALID_EMAIL"}}""",
-            "TOO_MANY_ATTEMPTS_TRY_LATER" to """{"error":{"message":"TOO_MANY_ATTEMPTS_TRY_LATER"}}""",
-            "ERROR_USER_DISABLED" to "The user account has been disabled.",
+            "INTERNAL",
+            "email (valid email address) is required",
+            """Firebase REST sendPasswordReset failed: HTTP 400 — {"error":{"message":"email (valid email address) is required","status":"INVALID_ARGUMENT"}}""",
+            "connection reset by peer",
+            "auth/too-many-requests",
         )
-        for ((code, text) in others) {
-            assertFalse(isUnknownAccountOnReset(code, text), "$code must keep its own message")
+        for (text in others) {
+            assertFalse(isResetRateLimited(text), "$text must keep the plain failure message")
         }
-        assertFalse(isUnknownAccountOnReset(null, "connection reset by peer"))
-        assertFalse(isUnknownAccountOnReset(null, null))
+        assertFalse(isResetRateLimited(null as String?))
     }
 
     @Test
-    fun anUnknownAccountReadsTheSameAsARealOne() = runTest {
+    fun theAddressIsTheWholeRequest() = runTest {
         val sent = mutableListOf<String>()
-        val real = AuthRepository(
-            StubResetBackend { sent += it },
-        )
-        real.sendPasswordReset("pat@household.test")
-
-        val unknown = AuthRepository(
-            StubResetBackend { throw IllegalStateException("auth/user-not-found") },
-        )
-        // No throw is the whole assertion: the screen shows "Reset link sent"
-        // for an address that is not an account, exactly as it did when the
-        // callable answered { ok: true } for one.
-        unknown.sendPasswordReset("ghost@household.test")
-
+        val repo = AuthRepository(StubResetBackend { sent += it })
+        repo.sendPasswordReset("pat@household.test")
         assertEquals(listOf("pat@household.test"), sent)
     }
 
+    /**
+     * No failure is absorbed any more. Before #905 an unknown account's
+     * `auth/user-not-found` was swallowed here because Firebase's reset refused
+     * addresses it had never seen; the callable never does.
+     */
     @Test
-    fun aRealSendFailureStillReachesTheScreen() = runTest {
-        val repo = AuthRepository(
-            StubResetBackend { throw IllegalStateException("auth/too-many-requests") },
-        )
-        val thrown = assertFailsWith<IllegalStateException> { repo.sendPasswordReset("pat@household.test") }
-        assertEquals("auth/too-many-requests", thrown.message)
+    fun everyFailureReachesTheScreen() = runTest {
+        for (message in listOf("auth/user-not-found", "Too many requests. Try again later.", "socket closed")) {
+            val repo = AuthRepository(StubResetBackend { throw IllegalStateException(message) })
+            val thrown = assertFailsWith<IllegalStateException> { repo.sendPasswordReset("pat@household.test") }
+            assertEquals(message, thrown.message)
+        }
+    }
+
+    @Test
+    fun theRateLimitCopyMatchesTheClaimCardAndPortalWeb() {
+        assertEquals("Too many tries for now. Wait a few minutes, then try again.", RESET_RATE_LIMITED_MESSAGE)
+        assertEquals(com.kinfolk.portal.screens.claim.CLAIM_RATE_LIMITED_MESSAGE, RESET_RATE_LIMITED_MESSAGE)
     }
 }
 
 private class StubResetBackend(
     private val onSend: (String) -> Unit,
 ) : AuthBackend by FakeAuthBackend() {
-    override suspend fun sendPasswordReset(email: String, continueUrl: String?) = onSend(email)
+    override suspend fun sendPasswordReset(email: String) = onSend(email)
 }

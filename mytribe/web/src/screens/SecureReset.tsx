@@ -3,6 +3,7 @@ import { confirmSecureReset } from '../api/portal';
 import { validateNewPassword } from '../api/claimFlow';
 import { BusyLabel } from '../components/Loading';
 import { applyEmailAction, completeReset, readActionCode, sendReset } from '../lib/auth';
+import { isRateLimitedError } from '../lib/authErrors';
 import { parseEmailActionLink, type EmailActionLink } from '../lib/emailAction';
 
 /**
@@ -113,8 +114,8 @@ const STAFF_SIGN_IN_URL = 'https://auntie.tribetails.com/signin';
  * Where to go next.
  *
  * With a continue URL the sender already said where this account signs in, so
- * there is one link. Without one (a bare native link, or a fresh link sent for
- * one) the page cannot tell a household from staff: `verifyPasswordResetCode`
+ * there is one link. Without one (a bare native link) the
+ * page cannot tell a household from staff: `verifyPasswordResetCode`
  * returns only the email, and asking the server for the account's role would
  * be a new unauthenticated endpoint answering "is this address staff" for
  * anyone holding a code. So both sign-ins are shown, each named (#892 review).
@@ -185,11 +186,15 @@ function Unreachable({ onRetry }: { onRetry: () => void }) {
   );
 }
 
-/** Asks for an email and sends a fresh reset link that continues where the old one did. */
-function ResendLink({ continueUrl }: { continueUrl: string | null }) {
+/**
+ * Asks for an email and sends a fresh reset link. The server picks where the
+ * new link continues from the account (#905), so nothing from the old link is
+ * passed along.
+ */
+function ResendLink() {
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<'sent' | 'failed' | 'missing' | null>(null);
+  const [result, setResult] = useState<'sent' | 'failed' | 'limited' | 'missing' | null>(null);
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
@@ -202,11 +207,10 @@ function ResendLink({ continueUrl }: { continueUrl: string | null }) {
     setBusy(true);
     setResult(null);
     try {
-      // null stays null: a bare link gets a bare new link (see SignInLinks).
-      await sendReset(address, continueUrl);
+      await sendReset(address);
       setResult('sent');
-    } catch {
-      setResult('failed');
+    } catch (err) {
+      setResult(isRateLimitedError(err) ? 'limited' : 'failed');
     } finally {
       setBusy(false);
     }
@@ -229,6 +233,7 @@ function ResendLink({ continueUrl }: { continueUrl: string | null }) {
         />
         {result === 'missing' && <span className="vmsg">Type the email you sign in with.</span>}
         {result === 'failed' && <span className="vmsg">We couldn't send a new link. Try again in a moment.</span>}
+        {result === 'limited' && <span className="vmsg">Too many tries for now. Wait a few minutes, then try again.</span>}
       </div>
       {result === 'sent' ? (
         <p className="helper" role="status">
@@ -352,7 +357,7 @@ function ResetPasswordFlow({ link }: { link: EmailActionLink }) {
             </p>
           </div>
         </div>
-        <ResendLink continueUrl={link.continueUrl} />
+        <ResendLink />
       </section>
     );
   }
@@ -481,7 +486,7 @@ function EmailLinkFlow({ link }: { link: EmailActionLink }) {
   const [attempt, setAttempt] = useState(0);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
-  const [resetSent, setResetSent] = useState<'sent' | 'failed' | null>(null);
+  const [resetSent, setResetSent] = useState<'sent' | 'failed' | 'limited' | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -524,10 +529,10 @@ function EmailLinkFlow({ link }: { link: EmailActionLink }) {
     if (busy) return;
     setBusy(true);
     try {
-      await sendReset(email, link.continueUrl);
+      await sendReset(email);
       setResetSent('sent');
-    } catch {
-      setResetSent('failed');
+    } catch (err) {
+      setResetSent(isRateLimitedError(err) ? 'limited' : 'failed');
     } finally {
       setBusy(false);
     }
@@ -592,6 +597,9 @@ function EmailLinkFlow({ link }: { link: EmailActionLink }) {
                 </button>
                 {resetSent === 'failed' && (
                   <span className="vmsg">We couldn't send the reset link. Try again in a moment.</span>
+                )}
+                {resetSent === 'limited' && (
+                  <span className="vmsg">Too many tries for now. Wait a few minutes, then try again.</span>
                 )}
               </div>
             )}

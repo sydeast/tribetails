@@ -27,7 +27,7 @@ private class RefusingBackend(
     private val defaults = FakeAuthBackend()
     override fun classifySignInFailure(t: Throwable): SignInFailureKind = kind ?: defaults.classifySignInFailure(t)
     override suspend fun signInWithEmailPassword(email: String, password: String): AuthState.SignedIn = throw failure
-    override suspend fun sendPasswordReset(email: String, continueUrl: String?) {
+    override suspend fun sendPasswordReset(email: String) {
         resets += email
     }
 }

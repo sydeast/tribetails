@@ -27,11 +27,11 @@ class SecureResetScreenTest {
         private val info: ActionCodeInfo? = ActionCodeInfo(EmailAction.OP_PASSWORD_RESET, "pat@household.test"),
         private val readFailure: Throwable? = null,
         private val code: String? = null,
+        private val sendFailure: Throwable? = null,
     ) : EmailActionAuth {
         val resets = mutableListOf<Pair<String, String>>()
         val applied = mutableListOf<String>()
         val sent = mutableListOf<String>()
-        val sentTargets = mutableListOf<String?>()
 
         override suspend fun readActionCode(oobCode: String): ActionCodeInfo {
             readFailure?.let { throw it }
@@ -46,9 +46,9 @@ class SecureResetScreenTest {
             applied += oobCode
         }
 
-        override suspend fun sendPasswordReset(email: String, continueUrl: String?) {
+        override suspend fun sendPasswordReset(email: String) {
+            sendFailure?.let { throw it }
             sent += email
-            sentTargets += continueUrl
         }
 
         override fun errorCodeOf(t: Throwable): String? = code
@@ -161,40 +161,42 @@ class SecureResetScreenTest {
     }
 
     /**
-     * #936: the replacement link a staff member gets from the expired card
-     * still points at the admin sign-in.
+     * #905: the replacement is the address alone, whatever the original link
+     * continued to, a staff target or a lookalike host (this overload takes the
+     * link as given, which is how a `navDeepLink` route can reach the screen).
+     * The server picks where the new link continues from the account, so a
+     * staff member still lands on the admin sign-in and a forged target has no
+     * way into the new link.
      */
     @Test
-    fun aReplacementLinkKeepsTheTargetTheOriginalCarried() = runComposeUiTest {
-        val auth = ScriptedAuth(readFailure = RuntimeException("gone"), code = "ERROR_EXPIRED_ACTION_CODE")
-        show(
-            auth,
-            link = SecureResetParams(oobCode = "code1", continueUrl = EmailAction.STAFF_SIGN_IN_URL),
-        )
-        onNodeWithTag("resend-email-input").performTextInput("staff@tribetails.com")
-        onNodeWithTag("resend-submit").performClick()
-        waitForIdle()
-        assertEquals(listOf<String?>(EmailAction.STAFF_SIGN_IN_URL), auth.sentTargets)
-        onNodeWithTag("resend-sent").assertIsDisplayed()
-    }
-    /**
-     * #936, the half that matters. A link naming a lookalike host reaches the
-     * expired card with that host still on it (this overload takes the link as
-     * given, which is how a `navDeepLink` route can reach the screen). The
-     * replacement must not be minted against it. Null is the refusal: Firebase
-     * sends a link with no continue target, and the page offers both sign-ins.
-     */
-    @Test
-    fun aForgedTargetIsNotMintedIntoTheReplacementLink() = runComposeUiTest {
+    fun aReplacementLinkSendsTheAddressAlone() = runComposeUiTest {
         val forged = "https://auntie.tribetails.com.evil.test/steal"
         val auth = ScriptedAuth(readFailure = RuntimeException("gone"), code = "ERROR_EXPIRED_ACTION_CODE")
         show(auth, link = SecureResetParams(oobCode = "code1", continueUrl = forged))
+        onNodeWithTag("resend-email-input").performTextInput("staff@tribetails.com")
+        onNodeWithTag("resend-submit").performClick()
+        waitForIdle()
+        assertEquals(listOf("staff@tribetails.com"), auth.sent)
+        onNodeWithTag("resend-sent").assertIsDisplayed()
+    }
+
+    /** #905: the reset callable's per-IP limit says to wait, not to try again. */
+    @Test
+    fun aRateLimitedReplacementSaysToWait() = runComposeUiTest {
+        val auth = ScriptedAuth(
+            readFailure = RuntimeException("gone"),
+            code = "ERROR_EXPIRED_ACTION_CODE",
+            sendFailure = RuntimeException("Too many requests. Try again later."),
+        )
+        show(auth)
         onNodeWithTag("resend-email-input").performTextInput("pat@household.test")
         onNodeWithTag("resend-submit").performClick()
         waitForIdle()
-        assertEquals(listOf<String?>(null), auth.sentTargets)
-        onNodeWithTag("resend-sent").assertIsDisplayed()
+        onNodeWithText(RESET_RATE_LIMITED_MESSAGE).assertIsDisplayed()
+        onNodeWithText("We couldn't send a new link. Try again in a moment.").assertDoesNotExist()
+        onNodeWithTag("resend-sent").assertDoesNotExist()
     }
+
     @Test
     fun aUsedResetLinkSaysWhichProblemItIs() = runComposeUiTest {
         show(ScriptedAuth(readFailure = RuntimeException("used"), code = "ERROR_INVALID_ACTION_CODE"))

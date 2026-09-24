@@ -84,6 +84,19 @@ describe('#886 ClaimInvite locked state', () => {
     expect(screen.queryByText('Reset link sent. Check your inbox.')).toBeNull();
   });
 
+  it('a rate-limited reset says to wait, not to try again at once (#905)', async () => {
+    signIn.mockRejectedValue(LOCKED);
+    sendReset.mockRejectedValue(
+      Object.assign(new Error('Too many requests. Try again later.'), { code: 'functions/resource-exhausted' }),
+    );
+    await signInOnClaimCard();
+    await screen.findByRole('alert');
+    fireEvent.click(screen.getByText('Forgot password?'));
+    expect(await screen.findByText('Too many tries for now. Wait a few minutes, then try again.')).toBeInTheDocument();
+    expect(screen.queryByText('Reset link sent. Check your inbox.')).toBeNull();
+    expect(screen.queryByText("Couldn't send reset email. Try again in a moment.")).toBeNull();
+  });
+
   it('the create-account card has no reset link, because there is no password to forget', async () => {
     renderClaim();
     expect(await screen.findByRole('button', { name: 'Create account & join' })).toBeInTheDocument();

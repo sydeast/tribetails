@@ -41,6 +41,8 @@ import com.kinfolk.portal.auth.ACCOUNT_LOCKED_MESSAGE
 import com.kinfolk.portal.auth.AccountLockedException
 import com.kinfolk.portal.auth.AuthRepository
 import com.kinfolk.portal.auth.AuthState
+import com.kinfolk.portal.auth.RESET_RATE_LIMITED_MESSAGE
+import com.kinfolk.portal.auth.isResetRateLimited
 import com.kinfolk.portal.auth.WRONG_CREDENTIALS_MESSAGE
 import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.firebase.FunctionsClient
@@ -273,7 +275,12 @@ fun ClaimInviteScreen(
                                         repo.sendPasswordReset(step.invitedEmail)
                                         resetSent = true
                                     } catch (t: Throwable) {
-                                        actionError = "Couldn't send reset email. Try again in a moment."
+                                        // #905: the reset callable's per-IP limit says to wait.
+                                        actionError = if (isResetRateLimited(t)) {
+                                            RESET_RATE_LIMITED_MESSAGE
+                                        } else {
+                                            "Couldn't send reset email. Try again in a moment."
+                                        }
                                     } finally {
                                         resetting = false
                                     }
