@@ -7,7 +7,7 @@ describe('frameHtml', () => {
     expect(html).toContain('<div class="header"><h2>Reset your password</h2></div>');
     expect(html).toContain('<div class="content"><p>Hi</p></div>');
     expect(html).toContain("Tribe Tails Pet Care. Your Kin's Favorite Auntie.");
-    expect(html).toContain('border-top: 8px solid #D5535A');
+    expect(html).toContain('border-top: 8px solid #df8431');
     expect(html).toContain('blockquote {');
   });
 });

@@ -6,28 +6,26 @@ import type { EmailTemplateDoc } from './sendFromTemplate';
  * #953: the one shared frame every visual email is sent in, and the text part
  * generated from the same content. A change here reaches every email.
  *
- * NEEDS A RULING: the brief that specified this style block named it as
- * `account.welcome.kinfolk`'s "34 of 52 seeds" variant, but that file (and
- * 42 other seeds) actually use the orange scheme (`border-top: #df8431`, no
- * `.header` background, `h2 { color: #11131f }`). This block is verbatim the
- * RED scheme from `auth.password.reset`, carried by only 9 of 52 seeds (the
- * auth/security alert templates), plus `blockquote` for the Callout block
- * (the old `.alert-box`). Shipping this means every visual email -- welcome,
- * invoices, etc. -- renders in the red security-alert skin. Flagged to the
- * operator; if the ruling favors the 43-seed orange variant instead, the
- * `.container` border, `.header` background, `.header h2` color and
- * `blockquote`'s `border-left` all change, and the `frameHtml` test's
- * `#D5535A` assertion needs a matching update.
+ * Ruling fix: an earlier draft of this file copied the RED security-alert
+ * scheme (`auth.password.reset`, 9 of 52 seeds) under the mistaken belief
+ * that it was the dominant variant. Controller ruling: the shared frame is
+ * the DOMINANT, orange scheme -- verified 34 of 52 seeds, e.g.
+ * `mytribe/seeds/notificationTemplates/account.welcome.kinfolk/email.html`
+ * (`border-top: #df8431`, no `.header` background, `h2 { color: #11131f }`,
+ * orange `.button`). `blockquote` below is that file's `.alert-box` rule,
+ * selector changed to `blockquote`, for the Callout block. The 9 red
+ * security-alert seeds now share this frame too; their warning content goes
+ * in a Callout (`blockquote`) rather than getting its own color scheme.
  */
 const FRAME_STYLE = `
         body { background-color: #fbfbf9; color: #11131f; font-family: 'Segoe UI', Tahoma, sans-serif; line-height: 1.6; margin: 0; padding: 0; }
-        .container { max-width: 600px; margin: 20px auto; background: #ffffff; border-top: 8px solid #D5535A; border-bottom: 4px solid #11131f; }
-        .header { padding: 30px 40px 10px 40px; background-color: #fff5f2; }
-        .header h2 { color: #D5535A; margin: 0; }
+        .container { max-width: 600px; margin: 20px auto; background: #ffffff; border-top: 8px solid #df8431; border-bottom: 4px solid #11131f; }
+        .header { padding: 30px 40px 10px 40px; }
+        .header h2 { color: #11131f; margin: 0; }
         .content { padding: 10px 40px 30px 40px; font-size: 16px; }
         .footer { padding: 20px 40px; background-color: #11131f; color: #fbfbf9; font-size: 12px; text-align: center; }
         .button { display: inline-block; padding: 14px 28px; background: #df8431; color: #ffffff; text-decoration: none; border-radius: 4px; font-weight: bold; margin: 20px 0; }
-        blockquote { background-color: #fff5f5; border-left: 4px solid #D5535A; padding: 15px 20px; margin: 20px 0; border-radius: 0 4px 4px 0; }`;
+        blockquote { background-color: #fff5f5; border-left: 4px solid #df8431; padding: 15px 20px; margin: 20px 0; border-radius: 0 4px 4px 0; }`;
 
 const FOOTER = "Tribe Tails Pet Care. Your Kin's Favorite Auntie.";
 
