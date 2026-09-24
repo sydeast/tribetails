@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.web.screens.admin
 
+import com.tribetails.auntieos.web.data.TemplateService
+
 /**
  * 13.3/13.4 Template Bank rich editor (web/desktop). Pure, Compose-free core, shared by
  * the SAVE path and the live PREVIEW so they can never drift:
@@ -159,4 +161,35 @@ fun wrapSelection(text: String, selStart: Int, selEnd: Int, prefix: String, suff
 fun insertSnippet(text: String, cursor: Int, snippet: String): MarkdownEdit {
     val c = cursor.coerceIn(0, text.length)
     return MarkdownEdit(text.substring(0, c) + snippet + text.substring(c), c + snippet.length)
+}
+
+// ── Edit mode (#953 PR 1) ────────────────────────────────────────────────────
+
+/** #953 PR 1: what this device may change on a template. */
+enum class TemplateEditMode { FULL, SUBJECT_ONLY, READ_ONLY }
+
+/**
+ * True when [html] was not produced by this app's own [markdownToHtml] from
+ * [body]: a seed's branded design, or HTML written on the web admin. Saving it
+ * from here used to replace it with markdown output and destroy the design.
+ */
+fun htmlIsHandAuthored(body: String, html: String?): Boolean =
+    !html.isNullOrBlank() && html != markdownToHtml(body)
+
+fun templateEditMode(template: TemplateService.EmailTemplate, creating: Boolean): TemplateEditMode = when {
+    creating -> TemplateEditMode.FULL
+    template.format != null -> TemplateEditMode.READ_ONLY
+    htmlIsHandAuthored(template.body, template.html) -> TemplateEditMode.SUBJECT_ONLY
+    else -> TemplateEditMode.FULL
+}
+
+/** The template a Save sends, given the mode. READ_ONLY never reaches here: the screen hides Save. */
+fun templateToSave(
+    original: TemplateService.EmailTemplate,
+    mode: TemplateEditMode,
+    editedSubject: String,
+    editedBody: String,
+): TemplateService.EmailTemplate = when (mode) {
+    TemplateEditMode.SUBJECT_ONLY -> original.copy(subject = editedSubject)
+    else -> original.copy(subject = editedSubject, body = editedBody, html = markdownToHtml(editedBody).ifBlank { null })
 }

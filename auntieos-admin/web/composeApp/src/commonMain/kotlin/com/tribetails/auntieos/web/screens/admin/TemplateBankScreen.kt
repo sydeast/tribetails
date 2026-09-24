@@ -703,7 +703,12 @@ private fun TemplateEditorOverlay(
 
     val keyTaken = creating && templateId.trim() in existingKeys
     val keyValid = !creating || (templateId.isNotBlank() && !keyTaken)
-    val canSave = subject.isNotBlank() && bodyValue.text.isNotBlank() && keyValid
+    val mode = remember(template.templateId, creating) { templateEditMode(template, creating) }
+    val canSave = when (mode) {
+        TemplateEditMode.READ_ONLY -> false
+        TemplateEditMode.SUBJECT_ONLY -> subject.isNotBlank() && keyValid
+        TemplateEditMode.FULL -> subject.isNotBlank() && bodyValue.text.isNotBlank() && keyValid
+    }
 
     AuntieDialog(
         visible = true,
@@ -714,24 +719,24 @@ private fun TemplateEditorOverlay(
         hint = "Stored in Firestore, rendered with Handlebars. SendGrid delivers as a dumb pipe.",
         footer = {
             GhostButton(label = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
-            PrimaryButton(
-                label = if (creating) "Create" else "Save",
-                enabled = canSave,
-                onClick = {
-                    onSave(
-                        template.copy(
-                            templateId = templateId.trim(),
-                            title = title.ifBlank { templateId.trim() },
-                            subject = subject,
-                            body = bodyValue.text,
-                            html = markdownToHtml(bodyValue.text).ifBlank { null },
-                            category = category.ifBlank { null },
-                            description = description.ifBlank { null },
-                        ),
-                    )
-                },
-                modifier = Modifier.weight(1f),
-            )
+            if (mode != TemplateEditMode.READ_ONLY) {
+                PrimaryButton(
+                    label = if (creating) "Create" else "Save",
+                    enabled = canSave,
+                    onClick = {
+                        val base = templateToSave(template, mode, editedSubject = subject, editedBody = bodyValue.text)
+                        onSave(
+                            base.copy(
+                                templateId = templateId.trim(),
+                                title = title.ifBlank { templateId.trim() },
+                                category = category.ifBlank { null },
+                                description = description.ifBlank { null },
+                            ),
+                        )
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+            }
         },
     ) {
         if (keyTaken) {
@@ -803,32 +808,56 @@ private fun TemplateEditorOverlay(
                     value = subject,
                     onValueChange = { subject = it },
                     label = "Subject",
+                    enabled = mode != TemplateEditMode.READ_ONLY,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                // #15: click a named merge-field chip to drop its {{token}} at the cursor.
-                MergeFieldChips(onInsert = { snip ->
-                    val e = insertSnippet(bodyValue.text, bodyValue.selection.start, snip)
-                    bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
-                })
-                // 13.3/13.4 Markdown toolbar: Bold/Italic wrap the selection; the rest
-                // insert a snippet at the cursor. The email HTML is generated on save.
-                MarkdownToolbar(
-                    onWrap = { p, s ->
-                        val e = wrapSelection(bodyValue.text, bodyValue.selection.start, bodyValue.selection.end, p, s)
-                        bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
-                    },
-                    onInsert = { snip ->
-                        val e = insertSnippet(bodyValue.text, bodyValue.selection.start, snip)
-                        bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
-                    },
-                )
-                MultilineFieldValue(
-                    value = bodyValue,
-                    onValueChange = { bodyValue = it },
-                    label = "Body (Markdown + Handlebars)",
-                    minLines = 6,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                // FULL keeps the markdown toolbar + body field, unchanged.
+                // SUBJECT_ONLY shows the hand-authored body read-only, with a
+                // note this device may not touch it. READ_ONLY (a visual
+                // template) shows neither: nothing here reflects the design.
+                when (mode) {
+                    TemplateEditMode.FULL -> {
+                        // #15: click a named merge-field chip to drop its {{token}} at the cursor.
+                        MergeFieldChips(onInsert = { snip ->
+                            val e = insertSnippet(bodyValue.text, bodyValue.selection.start, snip)
+                            bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
+                        })
+                        // 13.3/13.4 Markdown toolbar: Bold/Italic wrap the selection; the rest
+                        // insert a snippet at the cursor. The email HTML is generated on save.
+                        MarkdownToolbar(
+                            onWrap = { p, s ->
+                                val e = wrapSelection(bodyValue.text, bodyValue.selection.start, bodyValue.selection.end, p, s)
+                                bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
+                            },
+                            onInsert = { snip ->
+                                val e = insertSnippet(bodyValue.text, bodyValue.selection.start, snip)
+                                bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
+                            },
+                        )
+                        MultilineFieldValue(
+                            value = bodyValue,
+                            onValueChange = { bodyValue = it },
+                            label = "Body (Markdown + Handlebars)",
+                            minLines = 6,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    TemplateEditMode.SUBJECT_ONLY -> {
+                        Text(template.body, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                        Text(
+                            "This email has a custom design. Edit its body on the web admin.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textDim,
+                        )
+                    }
+                    TemplateEditMode.READ_ONLY -> {
+                        Text(
+                            "Edit this template on the web admin.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textDim,
+                        )
+                    }
+                }
                 MultilineField(
                     value = description,
                     onValueChange = { description = it },

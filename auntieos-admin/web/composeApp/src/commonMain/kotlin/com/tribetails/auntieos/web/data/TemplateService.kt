@@ -36,6 +36,9 @@ class TemplateService {
         val description: String?,
         val tags: List<String>,
         val category: String?,
+        /** #953 PR 1: null until listTemplates sends it (a later PR). Any
+         * non-null value is a visual template built on the web admin. */
+        val format: String? = null,
     )
 
     data class TemplateBinding(
@@ -194,6 +197,7 @@ class TemplateService {
         description = o["description"]?.jsonPrimitive?.contentOrNull,
         tags = (o["tags"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty(),
         category = o["category"]?.jsonPrimitive?.contentOrNull,
+        format = o["format"]?.jsonPrimitive?.contentOrNull,
     )
 
     private fun decodeBinding(o: JsonObject): TemplateBinding = TemplateBinding(
