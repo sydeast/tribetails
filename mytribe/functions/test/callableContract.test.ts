@@ -408,10 +408,16 @@ const FROZEN_DEEP_SHAPES: Record<string, { schema: z.ZodTypeAny; signature: stri
       'schema.sections[].fields[].type', 'schema.sections[].title', 'schema.version',
     ],
   },
+  // #953: `body` is now optional (a visual save carries none) and three fields
+  // were added for the visual format (`format`, `headline`, `content`). The
+  // cross-field rule that a visual save must omit body/html and a non-visual
+  // save must supply body lives in `SaveTemplateInput` (a `superRefine` over
+  // this same object), not in this shape, so it is exercised by
+  // `saveTemplateVisual.test.ts` instead of this drift guard.
   saveTemplate: {
     schema: SaveTemplateArgs,
     signature: [
-      'body', 'category', 'description', 'expectNew', 'html',
+      'body', 'category', 'content', 'description', 'expectNew', 'format', 'headline', 'html',
       'sectionDefinitions[].description', 'sectionDefinitions[].title',
       'subject', 'tags[]', 'templateId', 'title', 'usageInstructions',
     ],
