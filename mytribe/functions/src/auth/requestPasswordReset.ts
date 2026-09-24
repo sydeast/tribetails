@@ -16,6 +16,7 @@ import { sendTemplatedEmail } from '../lib/email';
 import { SEED_CORPUS } from '../notifications/seedCorpus.generated';
 import { parseEmailTxt } from '../notifications/templateParsers';
 import { isAuntieClaim, isOwner, isOwnerClaim } from '../lib/staffGate';
+import { TRIBETAILS_CORS } from '../lib/cors';
 
 /**
  * #905: password reset emails are sent by us, not by Firebase.
@@ -272,11 +273,9 @@ export async function processPasswordResetRequest(request: PasswordResetRequest)
 export const requestPasswordReset = onCall(
   {
     region: 'us-central1',
-    cors: [
-      'https://auntie.tribetails.com',
-      'https://kinfolk.tribetails.com',
-      /^http:\/\/localhost(:\d+)?$/,
-    ],
+    // The shared list, like recordFailedLogin, so every host that serves a
+    // sign-in screen can ask for a reset.
+    cors: TRIBETAILS_CORS,
     secrets: ['SENTRY_DSN'],
   },
   wrapCallable('requestPasswordReset', requestPasswordResetHandler),
