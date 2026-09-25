@@ -8,6 +8,7 @@ import {
   TEMPLATE_BANK_EMPTY_COPY,
   previewTags,
   templateCategoryDisplay,
+  templateEditorMode,
   templateRowTitle,
   templateSubjectPreview,
 } from '../lib/templateFormat';
@@ -686,6 +687,11 @@ interface TemplateCardProps {
  */
 function TemplateCard({ tpl, onSelect }: TemplateCardProps) {
   const category = templateCategoryDisplay(tpl.category);
+  // #953: which editor this card's Edit button opens. 'old' offers Convert;
+  // 'readonly' is a stored format newer than this admin knows (Ruling C13) —
+  // it opens with no body editing, so the card says so up front rather than
+  // making the operator open it to find out.
+  const editorMode = templateEditorMode(tpl);
   const tags = previewTags(tpl.tags, 4);
   const description = tpl.description?.trim() ?? '';
   const subject = templateSubjectPreview(tpl);
@@ -703,6 +709,14 @@ function TemplateCard({ tpl, onSelect }: TemplateCardProps) {
 
       <span className="templates__card-meta">
         {category ? <StatusPill label={category} tone="purple" size="compact" /> : null}
+        {/* #953: still in the old format; opening it offers Convert. */}
+        {editorMode === 'old' ? <StatusPill label="Old format" tone="warning" size="compact" /> : null}
+        {/* #953: a format this admin does not know yet (Ruling C13); opens read-only. */}
+        {editorMode === 'readonly' ? (
+          <span title="Edit this template on a newer admin">
+            <StatusPill label="Not editable here" tone="muted" size="compact" />
+          </span>
+        ) : null}
         <code className="templates__card-id">{tpl.templateId}</code>
       </span>
 

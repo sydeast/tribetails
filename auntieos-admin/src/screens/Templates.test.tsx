@@ -790,3 +790,45 @@ describe('Templates screen: the mock\'s Ctrl-K search shortcut', () => {
     expect(screen.queryByLabelText(/search templates by title or key/i)).toBeNull();
   });
 });
+
+describe('#953 Old format badge', () => {
+  beforeEach(() => {
+    listTemplates.mockReset();
+    listTemplateCategories.mockReset();
+    listTemplateCategories.mockResolvedValue([]);
+  });
+
+  it('badges old-format templates and not visual ones', async () => {
+    listTemplates.mockResolvedValue([
+      tpl({ templateId: 'old.one', title: 'Old one' }),
+      tpl({ templateId: 'new.one', title: 'New one', body: '', format: 'visual', headline: 'H', content: '<p>x</p>' }),
+    ]);
+    listTemplateCategories.mockResolvedValue([]);
+    render(<Templates />);
+    const oldCard = (await screen.findByText('Old one')).closest('li')!;
+    const newCard = screen.getByText('New one').closest('li')!;
+    expect(within(oldCard).getByText('Old format')).toBeInTheDocument();
+    expect(within(newCard).queryByText('Old format')).toBeNull();
+  });
+
+  it('gives a known-but-unsupported format a "Not editable here" badge instead, with a tooltip', async () => {
+    listTemplates.mockResolvedValue([
+      tpl({ templateId: 'future.one', title: 'Future one', body: '', format: 'markdown' }),
+    ]);
+    render(<Templates />);
+    const card = (await screen.findByText('Future one')).closest('li')!;
+    expect(within(card).queryByText('Old format')).toBeNull();
+    const badge = within(card).getByText('Not editable here');
+    expect(badge.closest('[title]')).toHaveAttribute('title', 'Edit this template on a newer admin');
+  });
+
+  it('gives a visual template neither badge', async () => {
+    listTemplates.mockResolvedValue([
+      tpl({ templateId: 'visual.one', title: 'Visual one', body: '', format: 'visual', headline: 'H', content: '<p>x</p>' }),
+    ]);
+    render(<Templates />);
+    const card = (await screen.findByText('Visual one')).closest('li')!;
+    expect(within(card).queryByText('Old format')).toBeNull();
+    expect(within(card).queryByText('Not editable here')).toBeNull();
+  });
+});
