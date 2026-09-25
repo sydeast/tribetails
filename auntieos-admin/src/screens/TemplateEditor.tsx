@@ -240,6 +240,10 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
   >(null);
   // Kept apart from `error`, whose banner is titled "Couldn’t save".
   const [convertError, setConvertError] = useState<string | null>(null);
+  // Set when startConvert refuses to run because the form has unsaved edits
+  // against the loaded row (final review: Convert silently discarded them).
+  // Never sent to the server: this is a client-side refusal.
+  const [convertBlocked, setConvertBlocked] = useState<string | null>(null);
   // After a Convert the stored row still holds the old body and html, which
   // the save is about to clear, so the fields "already used" are the
   // converted email's.
@@ -352,6 +356,20 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
   }
   async function startConvert() {
     if (isCreate || mode !== 'old' || convert.status !== 'idle') return;
+    // Convert replaces the form with the server's read of the STORED row.
+    // An operator who has edited subject/body/html since opening the editor
+    // would have those edits thrown away the instant the converted version
+    // lands, with no warning: refuse instead of calling the callable.
+    const dirty =
+      template !== null &&
+      (fields.subject !== template.subject ||
+        fields.body !== template.body ||
+        fields.html !== (template.html ?? ''));
+    if (dirty) {
+      setConvertBlocked('Save or undo your changes before converting.');
+      return;
+    }
+    setConvertBlocked(null);
     setConvert({ status: 'working' });
     setConvertError(null);
     setError(null);
@@ -554,6 +572,11 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
           }
         >
           Convert it to edit it like a document. You&rsquo;ll see both versions before anything changes.
+        </Banner>
+      ) : null}
+      {convertBlocked ? (
+        <Banner tone="error" className="template-editor__error">
+          {convertBlocked}
         </Banner>
       ) : null}
       {convertError ? (

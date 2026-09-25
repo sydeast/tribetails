@@ -1150,6 +1150,42 @@ describe('TemplateEditor: converting an old-format template (#953)', () => {
     expect(screen.queryByRole('button', { name: 'Convert' })).toBeNull();
     expect(screen.queryByText('Old format')).toBeNull();
   });
+  it('refuses to convert an edited body, and never calls the callable (final review Important)', async () => {
+    render(<TemplateEditor template={OLD()} onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText(/^body$/i), { target: { value: 'Hi {{displayName}}\n\nChanged.' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Convert' }));
+    expect(await screen.findByText('Save or undo your changes before converting.')).toBeInTheDocument();
+    expect(convertTemplateToVisual).not.toHaveBeenCalled();
+    // The compare view never opens: the form (with the edit still in it) stays up.
+    expect(screen.getByLabelText(/^body$/i)).toHaveValue('Hi {{displayName}}\n\nChanged.');
+  });
+  it('refuses to convert an edited subject or html the same way', async () => {
+    render(<TemplateEditor template={OLD()} onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText(/^subject$/i), { target: { value: 'Reset, changed' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Convert' }));
+    expect(await screen.findByText('Save or undo your changes before converting.')).toBeInTheDocument();
+    expect(convertTemplateToVisual).not.toHaveBeenCalled();
+  });
+  it('converts normally once the edit is undone', async () => {
+    convertTemplateToVisual.mockResolvedValue(ok());
+    render(<TemplateEditor template={OLD()} onClose={vi.fn()} onSaved={vi.fn()} />);
+    const body = screen.getByLabelText(/^body$/i);
+    fireEvent.change(body, { target: { value: 'Hi {{displayName}}\n\nChanged.' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Convert' }));
+    expect(await screen.findByText('Save or undo your changes before converting.')).toBeInTheDocument();
+    // Undo: back to exactly the loaded row.
+    fireEvent.change(body, { target: { value: 'Hi {{displayName}}\n\nClick {{link}}' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Convert' }));
+    expect(convertTemplateToVisual).toHaveBeenCalledWith('auth.password.reset');
+    expect(screen.queryByText('Save or undo your changes before converting.')).toBeNull();
+  });
+  it('converts an unedited old-format template as before (no unsaved edits)', async () => {
+    convertTemplateToVisual.mockResolvedValue(ok());
+    render(<TemplateEditor template={OLD()} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Convert' }));
+    expect(convertTemplateToVisual).toHaveBeenCalledWith('auth.password.reset');
+    expect(screen.queryByText('Save or undo your changes before converting.')).toBeNull();
+  });
   it('Convert is not offered while creating', () => {
     render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
     expect(screen.queryByRole('button', { name: 'Convert' })).toBeNull();

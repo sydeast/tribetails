@@ -587,3 +587,29 @@ describe('pastes and moves cannot break a repeating list (#953 fix round 3)', ()
     expect(out(e)).toBe('<p>x{{this.date}}</p><ul>{{#each visits}}<li>a</li>{{/each}}</ul>');
   });
 });
+
+describe('EmailButton refuses an unsafe stored href on load', () => {
+  function hasEmailButtonNode(e: Editor): boolean {
+    let found = false;
+    e.state.doc.descendants((node) => {
+      if (node.type.name === 'emailButton') found = true;
+    });
+    return found;
+  }
+
+  it('a stored `javascript:` button href does not load as a button node', () => {
+    const e = open('<p><a href="javascript:alert(1)" class="button">Go</a></p>');
+    expect(hasEmailButtonNode(e)).toBe(false);
+    expect(out(e)).not.toContain('javascript:');
+  });
+
+  it('a valid https button href still loads as a button node', () => {
+    const e = open('<p><a href="https://a.com" class="button">Go</a></p>');
+    expect(hasEmailButtonNode(e)).toBe(true);
+  });
+
+  it('a valid single {{token}} button href still loads as a button node', () => {
+    const e = open('<p><a href="{{link}}" class="button">Go</a></p>');
+    expect(hasEmailButtonNode(e)).toBe(true);
+  });
+});

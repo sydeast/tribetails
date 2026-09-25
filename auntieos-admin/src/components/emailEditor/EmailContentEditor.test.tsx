@@ -235,6 +235,42 @@ describe('EmailContentEditor toolbar', () => {
     expect(tool('Insert field')).toBeDisabled();
     expect(screen.getByRole('textbox', { name: 'Email content' })).toHaveAttribute('contenteditable', 'false');
   });
+
+  it('a locked body does not let a click on a link navigate', () => {
+    // Once contenteditable is false the browser treats the anchor as plain
+    // rendered HTML and would otherwise follow it: final review Minor,
+    // "links live in a locked body".
+    render(
+      <EmailContentEditor
+        initialContent='<p><a href="https://example.com">Go</a></p>'
+        onChange={vi.fn()}
+        fields={[]}
+        fieldsState="ready"
+        disabled
+      />,
+    );
+    const link = screen.getByRole('textbox', { name: 'Email content' }).querySelector('a');
+    expect(link).not.toBeNull();
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+    link?.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('an editable body lets a click reach the link (no interference when not locked)', () => {
+    render(
+      <EmailContentEditor
+        initialContent='<p><a href="https://example.com">Go</a></p>'
+        onChange={vi.fn()}
+        fields={[]}
+        fieldsState="ready"
+      />,
+    );
+    const link = screen.getByRole('textbox', { name: 'Email content' }).querySelector('a');
+    expect(link).not.toBeNull();
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+    link?.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+  });
 });
 
 describe('EmailContentEditor reports only real changes (ruling C4)', () => {

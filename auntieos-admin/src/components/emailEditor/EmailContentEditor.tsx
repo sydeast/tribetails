@@ -50,6 +50,14 @@ export function EmailContentEditor({
   }, [onChange]);
   const [panel, setPanel] = useState<Panel>(null);
 
+  // useEditor below builds the editor once (no deps array), so a plain
+  // closure over `disabled` inside editorProps would freeze at mount time,
+  // same reasoning as onChangeRef above: keep the live value in a ref.
+  const disabledRef = useRef(disabled);
+  useEffect(() => {
+    disabledRef.current = disabled;
+  }, [disabled]);
+
   const editor = useEditor({
     extensions: emailEditorExtensions(),
     content: fromEmailContent(initialContent),
@@ -57,6 +65,21 @@ export function EmailContentEditor({
     onUpdate: ({ editor: e }) => onChangeRef.current(toEmailContent(e.getHTML())),
     editorProps: {
       attributes: { 'aria-label': 'Email content', role: 'textbox', 'aria-multiline': 'true', class: 'email-editor__doc' },
+      handleDOMEvents: {
+        // A locked body (bodyLocked, or `saving`) still renders real <a>
+        // elements: ProseMirror's non-editable mode stops typing, not
+        // navigation. Without this a click on a link or button in the body
+        // follows the href out of the admin instead of doing nothing.
+        click: (_view, event) => {
+          if (!disabledRef.current) return false;
+          const target = event.target as HTMLElement | null;
+          if (target?.closest('a')) {
+            event.preventDefault();
+            return true;
+          }
+          return false;
+        },
+      },
     },
   });
 

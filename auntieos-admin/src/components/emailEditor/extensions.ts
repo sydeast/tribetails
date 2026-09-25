@@ -134,7 +134,17 @@ export const EmailButton = Node.create({
   },
 
   parseHTML() {
-    return [{ tag: 'a.button', priority: 1000 }];
+    return [
+      {
+        tag: 'a.button',
+        priority: 1000,
+        // A stored `<a class="button" href="javascript:alert(1)">` (or any
+        // other non-email-safe href) must not load as a button node: without
+        // this, TipTap would happily parse it and renderHTML would carry the
+        // href straight back out.
+        getAttrs: (el) => (isLinkTarget((el as HTMLElement).getAttribute('href') ?? '') ? null : false),
+      },
+    ];
   },
 
   renderHTML({ node }) {
