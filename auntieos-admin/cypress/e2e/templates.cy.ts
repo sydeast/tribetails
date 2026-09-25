@@ -40,6 +40,11 @@ interface TemplateFixture {
   category: string | null;
   usageInstructions: string;
   sectionDefinitions: { title: string; description: string }[];
+  // #953: present on a visual-format row (email-editor.cy.ts's fixtures);
+  // absent here, so this spec's one seeded row stays old-format.
+  format?: 'visual';
+  headline?: string;
+  content?: string;
 }
 
 const TEMPLATE: TemplateFixture = {

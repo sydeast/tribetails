@@ -61,6 +61,17 @@ export interface TemplateSummary {
    */
   usageInstructions: string;
   sectionDefinitions: TemplateSection[];
+  /**
+   * #953: present on a visual template, `null` on an old-format one. Missing
+   * means the old format (`subject` / `body` / `html`), which keeps sending
+   * exactly as before until it is converted. Optional, so every existing
+   * fixture and caller is unchanged.
+   */
+  format?: string | null;
+  /** Visual only: the plain-text headline in the frame's header bar. */
+  headline?: string | null;
+  /** Visual only: the sanitized HTML fragment the editor writes. */
+  content?: string | null;
 }
 
 /**
