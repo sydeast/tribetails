@@ -16,6 +16,7 @@ vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), get
 
 import { loadResetTemplate } from '../src/auth/requestPasswordReset';
 import { renderEmailParts } from '../src/lib/email';
+import { sendPartsFor } from '../src/lib/emailFrame';
 
 const LINK =
   'https://kinfolk.tribetails.com/account/secure-reset?mode=resetPassword&oobCode=abc-123_XYZ' +
@@ -28,9 +29,7 @@ describe('the repo reset template renders a working link', () => {
     expect(source).toBe('seed');
 
     const out = renderEmailParts({
-      subjectTemplate: template.subject,
-      bodyTemplate: template.body,
-      htmlTemplate: template.html ?? undefined,
+      ...sendPartsFor(template),
       data: { link: LINK, email: 'pat@household.test', displayName: 'Pat Doe' },
     });
 

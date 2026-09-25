@@ -6,6 +6,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { sanitizeEmailContent } from '../lib/emailContent';
 import {
   TEMPLATE_ID_MAX_LENGTH,
   TEMPLATE_ID_PATTERN,
@@ -55,9 +56,12 @@ export const Args = z.object({
   subject: z.string().min(1).max(500).refine(noTripleStash, {
     message: tripleStashMessage('subject'),
   }),
+  // #953: optional because a visual save carries no body at all (generated at
+  // send time from headline + content). The cross-field rule below still
+  // requires it for an old-format save.
   body: z.string().min(1).max(20000).refine(noTripleStash, {
     message: tripleStashMessage('body'),
-  }),
+  }).optional(),
   html: z.string().max(50000).nullable().optional()
     .refine((s) => s == null || noTripleStash(s), {
       message: tripleStashMessage('html'),
@@ -97,7 +101,32 @@ export const Args = z.object({
   // knows what exists. With this set, the write becomes `create()`, which fails
   // natively when the document is there, so there is no read-then-write window
   // for a second operator to land in.
+  // #953: the visual format. Body and html are generated at send time, so a
+  // visual save carries neither.
+  format: z.literal('visual').optional(),
+  headline: z.string().max(300).refine(noTripleStash, { message: tripleStashMessage('headline') }).optional(),
+  content: z.string().max(50000).optional(),
   expectNew: z.boolean().optional(),
+});
+
+/**
+ * The cross-field rules a plain `z.object` cannot express: a visual save must
+ * carry neither `body` nor `html` (they are generated at send time) and must
+ * carry both `headline` and `content`; an old-format save still requires
+ * `body`. Kept separate from `Args` per the controller ruling, so
+ * `test/callableContract.test.ts`'s frozen-signature check keeps reading the
+ * plain object `Args` (and its `.shape`) rather than the `superRefine` result.
+ */
+export const SaveTemplateInput = Args.superRefine((a, ctx) => {
+  if (a.format === 'visual') {
+    if (a.body !== undefined || (a.html !== undefined && a.html !== null)) {
+      ctx.addIssue({ code: 'custom', message: 'A visual template has no body or html; they are generated at send time.' });
+    }
+    if (!a.headline || a.headline.trim() === '') ctx.addIssue({ code: 'custom', message: 'The headline is empty.' });
+    if (!a.content) ctx.addIssue({ code: 'custom', message: 'The email body is empty.' });
+  } else if (!a.body) {
+    ctx.addIssue({ code: 'custom', message: 'body is required.' });
+  }
 });
 
 export async function saveTemplateHandler(
@@ -106,7 +135,34 @@ export async function saveTemplateHandler(
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
-  const args = Args.parse(req.data);
+  const parsed = SaveTemplateInput.safeParse(req.data);
+  if (!parsed.success) {
+    throw new HttpsError('invalid-argument', parsed.error.issues.map((i) => i.message).join(' '));
+  }
+  const args = parsed.data;
+
+  const visual = args.format === 'visual';
+  let content: string | undefined;
+  if (visual) {
+    const cloud = process.env.CLOUDINARY_CLOUD_NAME ?? '';
+    // #953 review fix: without a configured Cloudinary cloud name the sanitizer
+    // cannot build a matching image-src prefix, so every <img> is silently
+    // stripped as "not from your Cloudinary library" -- an issue this callable
+    // deliberately does not treat as blocking (see the filter below). Left
+    // alone, that means a save with an image "succeeds" but the image never
+    // makes it into the stored template. Refuse outright so the operator learns
+    // the server needs configuring, instead of finding out when the email goes
+    // out with no picture.
+    if (!cloud && /<img\b/i.test(args.content!)) {
+      throw new HttpsError('failed-precondition', 'Image uploads are not configured on the server (CLOUDINARY_CLOUD_NAME).');
+    }
+    const r = sanitizeEmailContent(args.content!, cloud);
+    // "Removed an image" is a silent best-effort cleanup, not a refusal: the
+    // sanitizer already dropped the offending tag, so the save still succeeds.
+    const blocking = r.issues.filter((i) => !i.startsWith('Removed an image'));
+    if (blocking.length) throw new HttpsError('invalid-argument', blocking.join(' '));
+    content = r.content;
+  }
 
   const ref = db().doc(`emailTemplates/${args.templateId}`);
   const snap = await ref.get();
@@ -114,8 +170,32 @@ export async function saveTemplateHandler(
 
   const data: Record<string, unknown> = {
     subject: args.subject,
-    body: args.body,
-    html: args.html ?? null,
+    ...(visual
+      ? {
+          format: 'visual' as const,
+          headline: args.headline!.trim(),
+          content,
+          // A visual save replaces whatever old-format body/html were there,
+          // so `sendPartsFor` never sees a document with both. `set(merge:
+          // true)` needs these sentinels; `create()` on a brand-new doc has
+          // nothing to delete, so they are stripped below before that call.
+          body: FieldValue.delete(),
+          html: FieldValue.delete(),
+        }
+      : {
+          body: args.body,
+          html: args.html ?? null,
+          // Controller ruling (#953): an old-format save must also turn a
+          // document that used to be visual back into an old-format one, or
+          // `sendPartsFor` keeps reading the stale `format: 'visual'` /
+          // `headline` / `content` at send time even though the operator just
+          // replaced them with body/html. `set(merge: true)` needs these
+          // sentinels; `create()` on a brand-new doc has nothing to delete, so
+          // they are stripped below before that call.
+          format: FieldValue.delete(),
+          headline: FieldValue.delete(),
+          content: FieldValue.delete(),
+        }),
     title: args.title ?? args.templateId,
     description: args.description ?? null,
     tags: args.tags ?? [],
@@ -136,6 +216,18 @@ export async function saveTemplateHandler(
     // `create()` rather than the read above plus a set, so two operators naming
     // the same key at once cannot both believe they made it. The read is still
     // worth keeping for the friendlier message in the common case.
+    // `create()` refuses a `FieldValue.delete()` sentinel outright (there is
+    // nothing on a brand-new document to delete), unlike `set(merge: true)`.
+    // Only one side ever holds sentinels here, matching whichever branch above
+    // built `data`.
+    if (visual) {
+      delete data.body;
+      delete data.html;
+    } else {
+      delete data.format;
+      delete data.headline;
+      delete data.content;
+    }
     try {
       await ref.create(data);
     } catch (err) {
@@ -191,6 +283,6 @@ export async function saveTemplateHandler(
 }
 
 export const saveTemplate = onCall(
-  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
+  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN', 'CLOUDINARY_CLOUD_NAME'] },
   wrapAdminCallable('saveTemplate', saveTemplateHandler),
 );

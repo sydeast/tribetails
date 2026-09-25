@@ -86,7 +86,13 @@ the stale "~26":
 - Nested / effects shapes (added 2026-07-21), frozen by RECURSIVE signature:
   `saveFormSchema` (3-level `schema.sections[].fields[]`), `saveTemplate`
   (`sectionDefinitions[]`, plus `expectNew` added under issue #468 so a create
-  refuses an id that is already taken instead of upserting over it),
+  refuses an id that is already taken instead of upserting over it; #953 added
+  the visual format's `format` (literal `'visual'`), `headline` and `content`,
+  and made `body` optional, since a visual save carries neither `body` nor
+  `html` — those are generated at send time. The cross-field rule (a visual
+  save must omit `body`/`html` and supply both `headline` and `content`; an
+  old-format save still needs `body`) lives in a `superRefine` wrapper,
+  `SaveTemplateInput`, kept separate from the frozen `Args` object),
   `importSeedTemplates` (`dryRun`, `onlyIds[]`, `overwriteIds[]`, issue #468,
   frozen from birth because the React admin and the Android Templates screen
   both hand-mirror it), `broadcastMessage` (a `.superRefine` ZodEffects wrapping
@@ -110,6 +116,31 @@ the stale "~26":
   `src/lib/moneyIdempotency.ts`. The `shapeSignature` walker unwraps optional/nullable/
   default/effects and descends arrays, so a rename at ANY depth (e.g.
   `schema.sections[].fields[].required`) fails the guard.
+- `listTemplates` response gained three fields per row (#953, doc-only: this
+  response is not in `shapeKeys`/`contracts:check`):
+  - `format`: `'visual'` for a visual template, the doc's raw value for
+    anything else, `null` when absent. Any non-null value means READ_ONLY to
+    admin clients.
+  - `headline`: the visual template's headline, `null` on an old-format doc.
+  - `content`: the visual template's sanitized body, `null` on an old-format
+    doc.
+- `previewEmailTemplate` (#953, net-new, admin-gated like `saveTemplate`, not
+  in `shapeKeys`/`shapeSignature`: it takes no stored id and has no client
+  mirror to protect):
+  - req `{ subject: string; headline: string; content: string; catalogKey?: string }`
+  - res `{ subject: string; html: string; text: string; issues: string[] }`
+  - Runs the SAME sanitizer, frame and renderer as a real send
+    (`sanitizeEmailContent` → `sendPartsFor` → `renderEmailParts`), so the
+    preview cannot disagree with the inbox. Unlike `saveTemplate`, a sanitizer
+    issue does not refuse the call; it comes back in `issues` so the editor can
+    show it beside the render instead of losing the draft.
+  - `catalogKey` selects sample merge data from
+    `notifications/enrichTemplateData.ts`'s `TEMPLATE_FIELDS` map (the same
+    table the real send-time enricher reads); a field named `link`/`url`
+    samples as an `https://` URL so a button previews as clickable, everything
+    else samples as `[fieldName]`. An unknown or omitted key samples no fields,
+    and any token the content still carries is stripped by the renderer, same
+    as a real send with a field the emitter never supplied.
 - The remaining ~34 are lower-complexity (2 to 3 flat fields); freeze as they churn.
 
 Two freeze levels now exist: `shapeKeys` (top-level, for flat shapes) and

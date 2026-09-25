@@ -13,6 +13,7 @@ import { wrapCallable } from '../lib/wrapCallable';
 import { wrapTrigger } from '../lib/wrapTrigger';
 import { loadEmailTemplate, type EmailTemplateDoc } from '../lib/sendFromTemplate';
 import { sendTemplatedEmail } from '../lib/email';
+import { sendPartsFor } from '../lib/emailFrame';
 import { SEED_CORPUS } from '../notifications/seedCorpus.generated';
 import { parseEmailTxt } from '../notifications/templateParsers';
 import { isAuntieClaim, isOwner, isOwnerClaim } from '../lib/staffGate';
@@ -248,10 +249,8 @@ export async function processPasswordResetRequest(request: PasswordResetRequest)
 
     await sendTemplatedEmail({
       to: user.email,
-      subjectTemplate: loaded.template.subject,
-      bodyTemplate: loaded.template.body,
-      htmlTemplate: loaded.template.html ?? undefined,
       data: { link, email: user.email, displayName: user.displayName || user.email },
+      ...sendPartsFor(loaded.template),
     });
   } catch (err) {
     // The request doc is already gone and the caller was told `ok`, so this

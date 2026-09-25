@@ -17,6 +17,9 @@ type TemplateDoc = {
   usageInstructions?: string;
   sectionDefinitions?: Array<{ title?: unknown; description?: unknown }>;
   updatedAtMs?: number;
+  format?: string;
+  headline?: string;
+  content?: string;
 };
 
 /**
@@ -67,6 +70,10 @@ export async function listTemplatesHandler(
             description: typeof s?.description === 'string' ? s.description : '',
           }))
         : [],
+      // #953: visual templates. Null on old-format rows so clients can branch on `format`.
+      format: data.format === 'visual' ? 'visual' : data.format ? String(data.format) : null,
+      headline: typeof data.headline === 'string' ? data.headline : null,
+      content: typeof data.content === 'string' ? data.content : null,
     };
   });
 

@@ -90,6 +90,20 @@ describe('listTemplates', () => {
     expect(res.templates[0]?.templateId).toBe('c');
   });
 
+  it('#953: returns format, headline and content for a visual template, and nulls for an old one', async () => {
+    mocks.dbFn.mockReturnValue(
+      seed([
+        { id: 'vis', data: { subject: 'S', format: 'visual', headline: 'H', content: '<p>c</p>' } },
+        { id: 'old', data: { subject: 'O', body: 'b', html: null } },
+      ]),
+    );
+    const res = await listTemplatesHandler(req());
+    const vis = res.templates.find((t) => t.templateId === 'vis')!;
+    const old = res.templates.find((t) => t.templateId === 'old')!;
+    expect(vis).toMatchObject({ format: 'visual', headline: 'H', content: '<p>c</p>', body: '', html: null });
+    expect(old).toMatchObject({ format: null, headline: null, content: null, body: 'b' });
+  });
+
   it('SAD: an invalid limit (0) is rejected', async () => {
     mocks.dbFn.mockReturnValue(seed([]));
     await expect(listTemplatesHandler(req({ limit: 0 }))).rejects.toThrow();
