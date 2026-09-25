@@ -244,22 +244,42 @@ export function loopedListName(state: Editor['state']): string | null {
   }
   return null;
 }
+
+/** A bullet or numbered list that carries an each-loop. */
+function isLoopedList(node: { type: { name: string }; attrs: Record<string, unknown> } | null | undefined): boolean {
+  return (
+    node !== null &&
+    node !== undefined &&
+    (node.type.name === 'bulletList' || node.type.name === 'orderedList') &&
+    Boolean(node.attrs['each'])
+  );
+}
+
 /**
  * #953 loop protection, keyboard half (the toolbar disables its own buttons).
  * TipTap's list toggles and lifts rebuild the list without `data-each`, which
  * deletes the loop, and a lift from the middle of a list splits it into two
  * loops, which sends every visit twice. Inside a repeating list these keys do
  * nothing, except Backspace at the start of a later item, which joins it to
- * the item above instead of lifting it out. Priority above the StarterKit so
- * these run first.
+ * the item above instead of lifting it out.
+ *
+ * The loop's edges are guarded too (fix round 1). Backspace at the start of
+ * the first item would lift it out of the loop, Delete at the end of the last
+ * item would pull the next paragraph in, and Backspace or Delete in the
+ * paragraph right after or right before the list would join that paragraph
+ * into (or an item out of) the loop. At those edges the key does nothing. An
+ * empty paragraph beside the list is still removed as usual, which leaves the
+ * loop whole. Priority above the StarterKit so these run first.
  */
 export const LoopedListGuard = Extension.create({
   name: 'loopedListGuard',
   priority: 1000,
+
   addKeyboardShortcuts() {
     const inLoop = () => loopedListName(this.editor.state) !== null;
     const keys = ['Mod-Shift-7', 'Mod-Shift-8', 'Mod-Alt-2', 'Mod-Alt-3', 'Mod-Shift-b', 'Tab', 'Shift-Tab'];
     const shortcuts: Record<string, () => boolean> = Object.fromEntries(keys.map((k) => [k, inLoop]));
+
     // The list item holding the cursor: its depth, and whether it is the last
     // or the first item of its list.
     const item = () => {
@@ -272,6 +292,17 @@ export const LoopedListGuard = Extension.create({
       }
       return null;
     };
+
+    // The block beside the cursor's (non-empty) textblock, one step before or
+    // after it in the same parent, when that block is a looped list.
+    const loopBeside = (direction: -1 | 1): boolean => {
+      const { $from } = this.editor.state.selection;
+      if ($from.depth < 1 || $from.parent.content.size === 0) return false;
+      const parent = $from.node($from.depth - 1);
+      const index = $from.index($from.depth - 1) + direction;
+      return index >= 0 && index < parent.childCount && isLoopedList(parent.child(index));
+    };
+
     shortcuts['Enter'] = () => {
       const { selection } = this.editor.state;
       if (!inLoop() || !selection.empty || selection.$from.parent.content.size > 0) return false;
@@ -279,14 +310,30 @@ export const LoopedListGuard = Extension.create({
       // An empty last item leaves the list, which keeps the loop whole.
       return li !== null && !li.last;
     };
+
     shortcuts['Backspace'] = () => {
       const { selection } = this.editor.state;
       const { $from } = selection;
-      if (!inLoop() || !selection.empty || $from.parentOffset !== 0) return false;
+      if (!selection.empty || $from.parentOffset !== 0) return false;
+      if (!inLoop()) return loopBeside(-1);
       const li = item();
-      if (li === null || li.first || $from.index(li.depth) !== 0) return false;
+      if (li === null || $from.index(li.depth) !== 0) return false;
+      // The first item stays put; a later item joins the one above.
+      if (li.first) return true;
       return this.editor.commands.joinTextblockBackward();
     };
+
+    shortcuts['Delete'] = () => {
+      const { selection } = this.editor.state;
+      const { $from } = selection;
+      if (!selection.empty || $from.parentOffset !== $from.parent.content.size) return false;
+      if (!inLoop()) return loopBeside(1);
+      const li = item();
+      if (li === null) return false;
+      // The end of the last item: nothing after the list joins the loop.
+      return li.last && $from.index(li.depth) === $from.node(li.depth).childCount - 1;
+    };
+
     return shortcuts;
   },
 });

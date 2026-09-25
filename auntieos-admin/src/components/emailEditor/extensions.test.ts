@@ -264,6 +264,56 @@ describe('the keyboard cannot break a repeating list (#953 loop protection)', ()
     expect(out(e).match(/\{\{#each/g)).toHaveLength(1);
     expect(out(e)).toBe(LOOP);
   });
+  // Fix round 1: the loop's edges.
+  it.each([
+    ['Backspace', 'the start of the first item', 'a', 0],
+    ['Delete', 'the end of the last item', 'c', 1],
+    ['Backspace', 'the start of the paragraph after the list', 'y', 0],
+    ['Delete', 'the end of the paragraph before the list', 'x', 1],
+  ] as const)('%s at %s leaves the loop and its neighbours as they were', (key, _where, text, offset) => {
+    const e = open(LOOP);
+    e.commands.setTextSelection(at(e, text) + offset);
+    e.commands.keyboardShortcut(key);
+    expect(out(e)).toBe(LOOP);
+  });
+  it('Backspace or Delete in an empty paragraph beside the loop removes that paragraph only', () => {
+    const before = '<p>x</p><ul>{{#each visits}}<li>a</li><li>c</li>{{/each}}</ul><p></p><p>y</p>';
+    const e = open(before);
+    let pos = -1;
+    e.state.doc.forEach((node, offset) => {
+      if (node.type.name === 'paragraph' && node.content.size === 0) pos = offset + 1;
+    });
+    e.commands.setTextSelection(pos);
+    e.commands.keyboardShortcut('Backspace');
+    expect(out(e)).toBe('<p>x</p><ul>{{#each visits}}<li>a</li><li>c</li>{{/each}}</ul><p>y</p>');
+    expect(e.state.doc.childCount).toBe(3);
+  });
+  it('Delete at the end of a middle item still joins the next item into it', () => {
+    const e = open(LOOP);
+    e.commands.setTextSelection(at(e, 'b') + 1);
+    e.commands.keyboardShortcut('Delete');
+    expect(out(e)).toBe('<p>x</p><ul>{{#each visits}}<li>a</li><li>bc</li>{{/each}}</ul><p>y</p>');
+  });
+  it('a plain list keeps the usual Backspace and Delete at its edges', () => {
+    const PLAIN = '<p>x</p><ul><li>a</li><li>c</li></ul><p>y</p>';
+    let e = open(PLAIN);
+    e.commands.setTextSelection(at(e, 'a'));
+    e.commands.keyboardShortcut('Backspace');
+    expect(out(e)).toBe('<p>x</p><p>a</p><ul><li>c</li></ul><p>y</p>');
+    e = open(PLAIN);
+    e.commands.setTextSelection(at(e, 'c') + 1);
+    e.commands.keyboardShortcut('Delete');
+    expect(out(e)).toBe('<p>x</p><ul><li>a</li><li>c</li><li>y</li></ul>');
+    e = open(PLAIN);
+    e.commands.setTextSelection(at(e, 'y'));
+    e.commands.keyboardShortcut('Backspace');
+    expect(out(e)).toBe('<p>x</p><ul><li>a</li><li>c<br>y</li></ul>');
+    e = open(PLAIN);
+    e.commands.setTextSelection(at(e, 'x') + 1);
+    e.commands.keyboardShortcut('Delete');
+    expect(out(e)).toBe('<p>x</p><p>a</p><ul><li>c</li></ul><p>y</p>');
+  });
+
   it('Enter twice at the end of the last item leaves the list, loop intact', () => {
     const e = open(LOOP);
     e.commands.setTextSelection(at(e, 'c') + 1);

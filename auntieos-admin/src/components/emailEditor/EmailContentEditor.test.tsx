@@ -293,6 +293,32 @@ describe('EmailContentEditor and a repeating list', () => {
     expect(tool('Numbered list')).toHaveAttribute('aria-disabled', 'true');
   });
 
+  it('a multi-paragraph paste into a middle item stays inside the loop', () => {
+    const MID = '<p>Before</p><ul>{{#each visits}}<li>one</li><li>two</li><li>three</li>{{/each}}</ul><p>After</p>';
+    const { editor, dom, last } = setup(MID);
+    act(() => {
+      editor.commands.setTextSelection(posOf(editor, 'two') + 3);
+    });
+    const html = '<p>Alpha <b>bold</b></p><p>Beta</p><div>Gamma</div>';
+    const paste = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, 'clipboardData', {
+      value: {
+        getData: (type: string) => (type === 'text/html' ? html : type === 'text/plain' ? 'Alpha bold Beta Gamma' : ''),
+        types: ['text/html', 'text/plain'],
+        files: [],
+      },
+    });
+    act(() => {
+      dom.dispatchEvent(paste);
+    });
+    expect(paste.defaultPrevented).toBe(true);
+    // The pasted paragraphs join the item as lines of it; the one loop still wraps every item.
+    expect(last()).toBe(
+      '<p>Before</p><ul>{{#each visits}}<li>one</li><li>twoAlpha <strong>bold</strong><br>Beta<br>Gamma</li>' +
+        '<li>three</li>{{/each}}</ul><p>After</p>',
+    );
+  });
+
   it('Ctrl+Shift+7 inside the loop does not turn it into a numbered list', () => {
     const { editor, dom, onChange } = setup(LOOP);
     act(() => {
