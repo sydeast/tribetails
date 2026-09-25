@@ -257,12 +257,17 @@ fun TemplateBankBody(
     // rememberSaveable next to editingId: a rotation right after a failed save
     // must not lose the banner it is still showing.
     var saveError by rememberSaveable { mutableStateOf<String?>(null) }
-    // #953: the template whose visual save is in flight. Its Save button shows
-    // a spinner and cannot fire twice. Keyed by template (final review M1): an
-    // operator who leaves mid-save and opens another template must not see
-    // that one's Save spinning. Plain remember: rotation cancels the launched
-    // coroutine anyway, so there is nothing left in flight for it to describe.
-    var savingId by remember { mutableStateOf<String?>(null) }
+    // #953 final re-review: every open of an editor is its own session, and a
+    // save's answer belongs to the session that sent it. Keying on the
+    // template id was not enough: save A, leave, reopen A and edit, and the
+    // late answer closed the new session and dropped its edits unasked.
+    var editorSession by remember { mutableStateOf(0) }
+    var saveAttempts by remember { mutableStateOf(0) }
+    // The visual save in flight, as (attempt, session). Only that session's
+    // Save shows a spinner and refuses a second tap; a reopened or different
+    // template starts with Save ready. Plain remember: rotation cancels the
+    // launched coroutine anyway, so there is nothing left in flight to describe.
+    var inFlightSave by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     // #953 final review M3: which catalog key sends each template, so the
     // preview asks for that key's sample values (see previewCatalogKey).
     var bindings by remember { mutableStateOf<List<TemplateRepository.TemplateBinding>>(emptyList()) }
@@ -324,7 +329,12 @@ fun TemplateBankBody(
                 error = null
                 // #953: rotation restores editingId before this list has loaded;
                 // once it has, reopen whichever template was being edited.
-                if (editing == null) editingId?.let { id -> editing = list.firstOrNull { it.templateId == id } }
+                if (editing == null) {
+                    editingId?.let { id ->
+                        editing = list.firstOrNull { it.templateId == id }
+                        if (editing != null) editorSession++
+                    }
+                }
                 // Final review M8: the template was deleted elsewhere meanwhile.
                 // Stay on the bank and forget it, so a later reload that finds
                 // the key again (an import recreating it) cannot reopen the
@@ -360,22 +370,25 @@ fun TemplateBankBody(
             VisualTemplateEditorScreen(
                 template = current,
                 categories = categories,
-                saving = savingId == current.templateId,
+                saving = inFlightSave?.second == editorSession,
                 saveError = saveError,
                 onDismissError = { saveError = null },
                 onDismiss = { editing = null; editingId = null; saveError = null },
                 onSave = { updated ->
                     val id = current.templateId
-                    savingId = id
+                    val attempt = ++saveAttempts
+                    val session = editorSession
+                    inFlightSave = attempt to session
                     // Final review M2: a new attempt replaces the last refusal.
                     saveError = null
                     scope.launch {
                         val result = templateRepo.saveTemplate(updated)
-                        if (savingId == id) savingId = null
-                        // Final review M1: the answer belongs to this template.
-                        // If the operator has left it, it must not close or
-                        // mark whatever they opened next.
-                        val stillOpen = editingId == id
+                        if (inFlightSave?.first == attempt) inFlightSave = null
+                        // Final review M1 and re-review: the answer belongs to
+                        // the editor session that sent it. Once the operator
+                        // has left that session (even to reopen the same
+                        // template), it must not close or mark what is open now.
+                        val stillOpen = editing != null && editorSession == session
                         result
                             .onSuccess {
                                 if (stillOpen) { editing = null; editingId = null; saveError = null }
@@ -410,16 +423,16 @@ fun TemplateBankBody(
             onDismissError = { saveError = null },
             onDismiss = { editing = null; editingId = null; creating = false; saveError = null },
             onSave = { updated ->
-                val openId = editingId
+                val session = editorSession
                 saveError = null
                 scope.launch {
                     // expectNew on create: the collision check above only sees
                     // the templates this screen loaded, and the server sees them
                     // all. Issue #468.
                     val result = templateRepo.saveTemplate(updated, expectNew = creating)
-                    // Final review M1, same rule as the visual editor: a late
-                    // answer never lands on a template opened since.
-                    val stillOpen = editingId == openId
+                    // Final review M1 and re-review, same rule as the visual
+                    // editor: a late answer never lands on a session opened since.
+                    val stillOpen = editing != null && editorSession == session
                     result
                         .onSuccess {
                             if (stillOpen) { editing = null; editingId = null; creating = false; saveError = null }
@@ -571,7 +584,10 @@ fun TemplateBankBody(
                     TemplateCard(
                         tpl = tpl,
                         onOpen = { viewing = tpl },
-                        onEdit = { creating = false; saveError = null; editing = tpl; editingId = tpl.templateId },
+                        onEdit = {
+                            creating = false; saveError = null; editorSession++
+                            editing = tpl; editingId = tpl.templateId
+                        },
                         isDragging = draggingId == tpl.templateId,
                         isSaving = categorySavingId == tpl.templateId,
                         onDragStart = { draggingId = tpl.templateId; hoveredCategory = null },
@@ -597,6 +613,7 @@ fun TemplateBankBody(
                 viewing = null
                 creating = false
                 saveError = null
+                editorSession++
                 editing = current
                 editingId = current.templateId
             },

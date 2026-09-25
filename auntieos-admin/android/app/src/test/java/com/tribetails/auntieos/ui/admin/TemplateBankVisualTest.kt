@@ -398,4 +398,55 @@ class TemplateBankVisualTest {
         composeRule.onNodeWithTag(blockTag(0)).assertDoesNotExist()
         composeRule.onNodeWithText("Password reset").assertExists()
     }
+
+    // Final re-review, Concern 3: a save answered after the operator left and
+    // reopened the same template belongs to the earlier session, not this one.
+    private fun saveLeaveReopenAndEdit(r: TemplateRepository) {
+        composeRule.setContent { AuntieOSTheme { TemplateBankBody(templateRepo = r) } }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Edit").performClick()
+        composeRule.onNodeWithTag(VISUAL_SAVE_TAG).performClick()
+        back()
+        composeRule.onNodeWithTag(blockTag(0)).assertDoesNotExist()
+        composeRule.onNodeWithText("Edit").performClick()
+        composeRule.onNodeWithTag(blockTag(0)).performTextReplacement("Hi {{displayName}}, new words.")
+    }
+
+    @Test
+    fun `reopening a template mid-save starts with Save ready, not spinning`() {
+        val r = repo(listOf(visual))
+        coEvery { r.saveTemplate(any(), any()) } coAnswers { awaitCancellation() }
+        saveLeaveReopenAndEdit(r)
+        composeRule.onNodeWithTag(VISUAL_SAVE_TAG).assertIsEnabled()
+    }
+
+    @Test
+    fun `an earlier session's late success leaves the reopened editor and its new edit alone`() {
+        val r = repo(listOf(visual))
+        val gate = CompletableDeferred<Result<String>>()
+        coEvery { r.saveTemplate(any(), any()) } coAnswers { gate.await() }
+        saveLeaveReopenAndEdit(r)
+        gate.complete(Result.success(visual.templateId))
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(blockTag(0)).assertTextEquals("Hi {{displayName}}, new words.")
+        composeRule.onNodeWithText(DISCARD_CHANGES_TITLE).assertDoesNotExist()
+    }
+
+    @Test
+    fun `an earlier session's late failure goes to the bank banner, not the reopened editor`() {
+        val r = repo(listOf(visual))
+        val gate = CompletableDeferred<Result<String>>()
+        coEvery { r.saveTemplate(any(), any()) } coAnswers { gate.await() }
+        saveLeaveReopenAndEdit(r)
+        gate.complete(Result.failure(Exception("The headline is empty.")))
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(blockTag(0)).assertTextEquals("Hi {{displayName}}, new words.")
+        composeRule.onNodeWithText("The headline is empty.", substring = true).assertDoesNotExist()
+        composeRule.onNodeWithText("Couldn't save").assertDoesNotExist()
+        back()
+        composeRule.onNodeWithText(DISCARD_LABEL).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Couldn't save \"Password reset\": The headline is empty.", substring = true)
+            .assertExists()
+    }
 }

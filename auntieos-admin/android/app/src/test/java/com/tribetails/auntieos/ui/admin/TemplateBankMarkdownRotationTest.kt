@@ -12,6 +12,7 @@ import com.tribetails.auntieos.data.repository.TemplateRepository
 import com.tribetails.auntieos.ui.theme.AuntieOSTheme
 import io.mockk.coEvery
 import io.mockk.coVerify
+import kotlinx.coroutines.CompletableDeferred
 import io.mockk.mockk
 import org.junit.Rule
 import org.junit.Test
@@ -104,5 +105,49 @@ class TemplateBankMarkdownRotationTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithText(DISCARD_CHANGES_TITLE).assertDoesNotExist()
         composeRule.onNodeWithText("Edit template").assertDoesNotExist()
+    }
+
+    // Final re-review, Concern 3, markdown save: a late answer from an earlier
+    // session never closes or marks the reopened editor.
+    private fun saveLeaveReopenAndEdit(r: TemplateRepository) {
+        composeRule.setContent { AuntieOSTheme { TemplateBankBody(templateRepo = r) } }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Edit").performClick()
+        composeRule.onNodeWithText("Save").performClick()
+        composeRule.activity.onBackPressedDispatcher.onBackPressed()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Edit template").assertDoesNotExist()
+        composeRule.onNodeWithText("Edit").performClick()
+        composeRule.onAllNodesWithText("Hi there").onFirst().performTextReplacement("Hi there, new words")
+    }
+
+    @Test
+    fun `an earlier markdown session's late success leaves the reopened editor and its new edit alone`() {
+        val r = repo()
+        val gate = CompletableDeferred<Result<String>>()
+        coEvery { r.saveTemplate(any(), any()) } coAnswers { gate.await() }
+        saveLeaveReopenAndEdit(r)
+        gate.complete(Result.success("invoice.sent"))
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Edit template").assertExists()
+        composeRule.onAllNodesWithText("Hi there, new words").onFirst().assertExists()
+    }
+
+    @Test
+    fun `an earlier markdown session's late failure goes to the bank banner, not the reopened editor`() {
+        val r = repo()
+        val gate = CompletableDeferred<Result<String>>()
+        coEvery { r.saveTemplate(any(), any()) } coAnswers { gate.await() }
+        saveLeaveReopenAndEdit(r)
+        gate.complete(Result.failure(Exception("subject is required")))
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Edit template").assertExists()
+        composeRule.onAllNodesWithText("Hi there, new words").onFirst().assertExists()
+        composeRule.onNodeWithText("subject is required", substring = true).assertDoesNotExist()
+        composeRule.activity.onBackPressedDispatcher.onBackPressed()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText(DISCARD_LABEL).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Couldn't save \"Invoice sent\": subject is required", substring = true).assertExists()
     }
 }
