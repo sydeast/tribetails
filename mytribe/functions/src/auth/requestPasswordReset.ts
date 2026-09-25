@@ -15,7 +15,6 @@ import { loadEmailTemplate, type EmailTemplateDoc } from '../lib/sendFromTemplat
 import { sendTemplatedEmail } from '../lib/email';
 import { sendPartsFor } from '../lib/emailFrame';
 import { SEED_CORPUS } from '../notifications/seedCorpus.generated';
-import { parseEmailTxt } from '../notifications/templateParsers';
 import { isAuntieClaim, isOwner, isOwnerClaim } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
@@ -186,8 +185,10 @@ export async function loadResetTemplate(): Promise<{ template: EmailTemplateDoc;
   if (stored) return { template: stored, source: 'stored' };
   const seed = SEED_CORPUS.find((e) => e.key === TEMPLATE_KEY);
   if (!seed) throw new Error(`no ${TEMPLATE_KEY} template stored and none in the seed corpus`);
-  const { subject, body } = parseEmailTxt(seed.emailTxt);
-  return { template: { subject, body, html: seed.emailHtml }, source: 'seed' };
+  return {
+    template: { subject: seed.emailSubject, format: 'visual', headline: seed.emailHeadline, content: seed.emailContent },
+    source: 'seed',
+  };
 }
 
 export interface PasswordResetRequest {

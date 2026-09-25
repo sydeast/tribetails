@@ -5,7 +5,7 @@ import {
   listNotificationKeys,
   NOTIFICATION_KEY_ALIASES,
 } from '../functions/src/notifications/catalog';
-import { parseEmailTxt, parsePushTxt } from '../functions/src/notifications/templateParsers';
+import { parsePushTxt } from '../functions/src/notifications/templateParsers';
 
 interface Args {
   dryRun: boolean;
@@ -33,24 +33,37 @@ function parseArgs(argv: string[]): Args {
 
 interface PlannedWrite {
   key: string;
-  emailDoc: { subject: string; body: string; html: string };
+  emailDoc: {
+    subject: string;
+    headline: string;
+    content: string;
+    format: 'visual';
+    body: null;
+    html: null;
+  };
   smsDoc: { text: string };
   pushDoc: { title: string; body: string };
 }
 
 function loadDir(dir: string, key: string): PlannedWrite {
-  const need = ['email.html', 'email.txt', 'sms.txt', 'push.txt'];
+  const need = ['subject.txt', 'headline.txt', 'content.html', 'sms.txt', 'push.txt'];
   for (const f of need) {
     if (!existsSync(join(dir, f))) {
       throw new Error(`seedNotificationTemplates: ${key}: missing required file ${f} in ${dir}`);
     }
   }
-  const emailHtml = readFileSync(join(dir, 'email.html'), 'utf8');
-  const emailTxt = readFileSync(join(dir, 'email.txt'), 'utf8');
+  const subject = readFileSync(join(dir, 'subject.txt'), 'utf8').trim();
+  const headline = readFileSync(join(dir, 'headline.txt'), 'utf8').trim();
+  const content = readFileSync(join(dir, 'content.html'), 'utf8').trim();
   const smsTxt = readFileSync(join(dir, 'sms.txt'), 'utf8');
   const pushTxt = readFileSync(join(dir, 'push.txt'), 'utf8');
 
-  const { subject, body } = parseEmailTxt(emailTxt);
+  if (subject.length === 0) {
+    throw new Error(`seedNotificationTemplates: ${key}: subject.txt is empty`);
+  }
+  if (headline.length === 0) {
+    throw new Error(`seedNotificationTemplates: ${key}: headline.txt is empty`);
+  }
   const { title, body: pushBody } = parsePushTxt(pushTxt);
   const smsText = smsTxt.trim();
   if (smsText.length === 0) {
@@ -59,7 +72,7 @@ function loadDir(dir: string, key: string): PlannedWrite {
 
   return {
     key,
-    emailDoc: { subject, body, html: emailHtml },
+    emailDoc: { subject, headline, content, format: 'visual', body: null, html: null },
     smsDoc: { text: smsText },
     pushDoc: { title, body: pushBody },
   };
@@ -142,6 +155,9 @@ async function main(): Promise<void> {
       const planned = loadDir(join(seedsRoot, dirName), dirName);
       await db.doc(`emailTemplates/${dirName}`).set({
         subject: planned.emailDoc.subject,
+        headline: planned.emailDoc.headline,
+        content: planned.emailDoc.content,
+        format: planned.emailDoc.format,
         body: planned.emailDoc.body,
         html: planned.emailDoc.html,
         updatedAt: stamp(),

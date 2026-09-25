@@ -1,0 +1,1 @@
+Your visit for {{kinName}} is cancelled

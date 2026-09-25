@@ -1,0 +1,1 @@
+Sign-in protection paused: {{kinfolkName}} ({{kinfolkEmail}})

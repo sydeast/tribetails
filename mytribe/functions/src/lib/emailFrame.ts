@@ -9,10 +9,11 @@ import type { EmailTemplateDoc } from './sendFromTemplate';
  * Ruling fix: an earlier draft of this file copied the RED security-alert
  * scheme (`auth.password.reset`, 9 of 52 seeds) under the mistaken belief
  * that it was the dominant variant. Controller ruling: the shared frame is
- * the DOMINANT, orange scheme -- verified 34 of 52 seeds, e.g.
+ * the DOMINANT, orange scheme -- verified 34 of 52 seeds, e.g. the pre-#953
  * `mytribe/seeds/notificationTemplates/account.welcome.kinfolk/email.html`
+ * (now split across `content.html` and `headline.txt`)
  * (`border-top: #df8431`, no `.header` background, `h2 { color: #11131f }`,
- * orange `.button`). `blockquote` below is that file's `.alert-box` rule,
+ * orange `.button`). `blockquote` was that file's `.alert-box` rule,
  * selector changed to `blockquote`, for the Callout block. The 9 red
  * security-alert seeds now share this frame too; their warning content goes
  * in a Callout (`blockquote`) rather than getting its own color scheme.
@@ -107,28 +108,62 @@ export function contentToText(headline: string, content: string): string {
       if (node.type !== 'tag') continue;
       const el = node as Element;
       if (el.name === 'ul' || el.name === 'ol') {
-        const items = el.children.filter((c): c is Element => c.type === 'tag' && (c as Element).name === 'li');
-        blocks.push(
-          items
-            .map((li, i) => {
-              // A <br> inside a <li> (sanitizer-legal) produces a continuation
-              // line, which is indented to align under the item text rather
-              // than reading as a detached, unmarked line.
-              const marker = el.name === 'ol' ? `${i + 1}.` : '-';
-              const indent = ' '.repeat(marker.length + 1);
-              // Drop empty lines (a leading/trailing <br> with nothing on the
-              // other side) before marking, so the first line to survive is
-              // the one that gets the marker, not a blank continuation.
-              const lines = decode(textOf(li))
-                .split('\n')
-                .map((l) => l.trim())
-                .filter((l) => l.length > 0);
-              return lines.map((line, idx) => (idx === 0 ? `${marker} ${line}` : `${indent}${line}`)).join('\n');
-            })
-            .join('\n'),
-        );
+        // Walked in DOCUMENT ORDER, not `<li>`-only: `{{#each visits}}` /
+        // `{{/each}}` (assignment.assigned, kincare.booking.confirm) are bare
+        // text nodes the seed writer put directly inside the `<ul>`, around
+        // the single `<li>` that is the loop's body. Dropping them (as the
+        // old `<li>`-only filter did) left the `<li>` line with no `#each`
+        // wrapper around it, so `{{this.weekday}}` etc. resolved against the
+        // top-level context instead of a loop item and rendered blank -- one
+        // broken `- ,  at ` line instead of one line per visit.
+        //
+        // A number for `ol` still counts `<li>` only: the block-tag text
+        // nodes are not items and must not shift the numbering.
+        const lines: string[] = [];
+        let liIndex = 0;
+        for (const child of el.children) {
+          if (child.type === 'tag' && (child as Element).name === 'li') {
+            const li = child as Element;
+            // A <br> inside a <li> (sanitizer-legal) produces a continuation
+            // line, which is indented to align under the item text rather
+            // than reading as a detached, unmarked line.
+            const marker = el.name === 'ol' ? `${liIndex + 1}.` : '-';
+            liIndex++;
+            const indent = ' '.repeat(marker.length + 1);
+            // Drop empty lines (a leading/trailing <br> with nothing on the
+            // other side) before marking, so the first line to survive is
+            // the one that gets the marker, not a blank continuation.
+            const itemLines = decode(textOf(li))
+              .split('\n')
+              .map((l) => l.trim())
+              .filter((l) => l.length > 0);
+            lines.push(itemLines.map((line, idx) => (idx === 0 ? `${marker} ${line}` : `${indent}${line}`)).join('\n'));
+          } else if (child.type === 'text') {
+            // A bare text node here is a Handlebars block tag (`{{#each
+            // visits}}`, `{{/each}}`), emitted as its own line so the loop
+            // still wraps the `<li>` line once Handlebars renders this text
+            // template. Handlebars strips a "standalone" block-tag line --
+            // one with nothing but whitespace before and after it on its own
+            // line -- entirely, INCLUDING its trailing newline, which is why
+            // the final rendered text has no blank line where this one sat.
+            const text = decode(child.data).trim();
+            if (text) lines.push(text);
+          }
+        }
+        blocks.push(lines.join('\n'));
       } else if (el.name === 'blockquote') {
-        walk(el.children);
+        // Recurse into tag children as before, but a bare text node directly
+        // inside the <blockquote> (never wrapped in a <p>) must not be
+        // dropped the way plain `walk` drops top-level text: it is visible
+        // callout content, not layout noise.
+        for (const child of el.children) {
+          if (child.type === 'tag') {
+            walk([child as Element]);
+          } else if (child.type === 'text') {
+            const text = decode(child.data).trim();
+            if (text) blocks.push(text);
+          }
+        }
       } else {
         const line = decode(textOf(el))
           .split('\n')

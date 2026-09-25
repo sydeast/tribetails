@@ -1,9 +1,0 @@
-Subject: New message from {{kinfolkName}}
-
-{{kinfolkName}} just sent you a message:
-
-"{{preview}}"
-
-Hop into the inbox to reply.
-
-Tribe Tails Pet Care. Your Kin's Favorite Auntie.

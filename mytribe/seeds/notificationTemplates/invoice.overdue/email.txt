@@ -1,9 +1,0 @@
-Subject: Your invoice is past due
-
-Hi {{kinfolkName}}, the invoice for {{kinName}}'s care from {{bookingDate}} is now past due.
-
-Please take a moment to settle it, or reach out to me directly if something has come up. I'm always glad to work it out with you.
-
-Talk soon, Auntie
-
-Tribe Tails Pet Care. Your Kin's Favorite Auntie.

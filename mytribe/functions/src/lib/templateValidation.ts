@@ -13,6 +13,7 @@
  * learns "invalid" has to invent the explanation, and two callers inventing it
  * separately is how an operator gets told two different things about one rule.
  */
+import { sanitizeEmailContent } from './emailContent';
 
 /**
  * Handlebars triple-stash, `{{{var}}}`, renders a variable WITHOUT HTML escape,
@@ -127,6 +128,44 @@ export function emailTemplateIssues(content: EmailTemplateContent): string[] {
   }
   const attributeIssue = unquotedAttributeIssue('html', content.html);
   if (attributeIssue) issues.push(attributeIssue);
+  return issues;
+}
+
+/** The renderable fields of a visual email template, as stored. */
+export interface VisualEmailTemplateContent {
+  subject: string;
+  headline: string;
+  content: string;
+}
+
+/**
+ * Every complaint about one visual email template's renderable content, same
+ * spirit as `emailTemplateIssues` for the old format. `content` is checked by
+ * running it through `sanitizeEmailContent` rather than by regex: that is the
+ * one allowlist every visual body already passes through on save, so a seed
+ * or an import held to a second, hand-rolled set of rules could accept
+ * something the editor would refuse, or refuse something the editor accepts.
+ *
+ * "Removed an image" is not reported here: `sanitizeEmailContent` is run with
+ * an empty cloud name (this module has no Cloudinary config to check
+ * against), so every image would be reported as foreign and block every
+ * template that has one. The other issues it raises are unaffected by that
+ * gap and stay blocking.
+ */
+export function visualEmailTemplateIssues(v: VisualEmailTemplateContent): string[] {
+  const issues: string[] = [];
+  if (v.subject.trim() === '') issues.push('subject is empty.');
+  if (v.headline.trim() === '') issues.push('headline is empty.');
+  for (const [field, value] of [
+    ['subject', v.subject],
+    ['headline', v.headline],
+  ] as const) {
+    const issue = tripleStashIssue(field, value);
+    if (issue) issues.push(issue);
+  }
+  const r = sanitizeEmailContent(v.content, '');
+  issues.push(...r.issues.filter((i) => !i.startsWith('Removed an image')));
+  if (r.content !== v.content) issues.push('content is not in the stored form; regenerate it with the converter.');
   return issues;
 }
 

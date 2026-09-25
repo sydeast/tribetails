@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
+import { SEED_CORPUS } from '../../src/notifications/seedCorpus.generated';
+import { contentToText } from '../../src/lib/emailFrame';
 
 /**
  * Regression coverage for issue #387: every seed template except
@@ -33,12 +35,11 @@ describe('notification seed templates: no dead link placeholders', () => {
     }
   }
 
-  it('auth.password.reset is untouched: {{link}} is still populated in both email files', () => {
-    const dir = join(seedsDir, 'auth.password.reset');
-    const html = readFileSync(join(dir, 'email.html'), 'utf8');
-    const txt = readFileSync(join(dir, 'email.txt'), 'utf8');
-    expect(html).toMatch(/\{\{link\}\}/);
-    expect(txt).toMatch(/\{\{link\}\}/);
+  it('auth.password.reset is untouched: {{link}} is still populated in the visual content and the text it generates', () => {
+    const entry = SEED_CORPUS.find((e) => e.key === 'auth.password.reset');
+    if (!entry) throw new Error('no auth.password.reset entry in the seed corpus');
+    expect(entry.emailContent).toMatch(/\{\{link\}\}/);
+    expect(contentToText(entry.emailHeadline, entry.emailContent)).toMatch(/\{\{link\}\}/);
   });
 
   it('{{link}} appears nowhere outside auth.password.reset (no other key claims a link it never gets)', () => {

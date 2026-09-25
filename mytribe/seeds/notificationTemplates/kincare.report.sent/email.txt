@@ -1,9 +1,0 @@
-Subject: A fresh KinTale is waiting for you
-
-Hi {{kinfolkName}}, I just wrapped up with {{kinName}} and wrote the whole visit down for you. The good, the cute, and every little detail.
-
-Grab a coffee and give it a read.
-
-With care, Auntie
-
-Tribe Tails Pet Care. Your Kin's Favorite Auntie.

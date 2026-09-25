@@ -17,13 +17,15 @@
  * either: the admin web app ships as static assets and the Android app as an
  * APK. So the corpus travels with the server or the importer is a lie.
  *
- * WHY RAW FILE CONTENTS, NOT PARSED FIELDS. The generator runs the same
- * `parseEmailTxt` / `parsePushTxt` the seed script uses, so a malformed corpus
- * file is red at generation time and therefore in CI. But it stores what it
- * read, not what it parsed, and the importer parses again at call time with
- * those same functions. One parse authority, one set of error messages, and a
- * change to the parsers cannot leave a stale interpretation frozen in a
- * generated file.
+ * WHY RAW FILE CONTENTS, NOT PARSED FIELDS. `subject.txt`, `headline.txt` and
+ * `content.html` are read and trimmed as-is: the visual format has nothing
+ * left to parse out of them. `push.txt` still runs through `parsePushTxt` (and
+ * `sms.txt` through the same "is it empty" check the seed script uses), so a
+ * malformed one of those two is red at generation time and therefore in CI.
+ * The generator stores what it read, not what it parsed, and the importer
+ * parses `push.txt` again at call time with the same function: one parse
+ * authority, one set of error messages, and a change to the parser cannot
+ * leave a stale interpretation frozen in a generated file.
  *
  * The seed script `mytribe/scripts/seedNotificationTemplates.ts` still reads the
  * directories directly, and stays the corpus's other reader. It is not deleted
@@ -32,7 +34,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
-import { parseEmailTxt, parsePushTxt } from '../src/notifications/templateParsers';
+import { parsePushTxt } from '../src/notifications/templateParsers';
 
 /** `<repo>/mytribe/functions/scripts` -> `<repo>`. */
 const REPO_ROOT = resolve(__dirname, '..', '..', '..');
@@ -46,14 +48,15 @@ export const CORPUS_MODULE_PATH = 'mytribe/functions/src/notifications/seedCorpu
 export const SEEDS_GENERATE_COMMAND = 'npm --prefix mytribe/functions run seeds:generate';
 export const SEEDS_CHECK_COMMAND = 'npm --prefix mytribe/functions run seeds:check';
 
-/** The four files every corpus directory must carry. */
-export const REQUIRED_FILES = ['email.html', 'email.txt', 'sms.txt', 'push.txt'] as const;
+/** The five files every corpus directory must carry. */
+export const REQUIRED_FILES = ['subject.txt', 'headline.txt', 'content.html', 'sms.txt', 'push.txt'] as const;
 
 /** One directory's raw contents, exactly as read off disk. */
 export interface RawCorpusEntry {
   key: string;
-  emailHtml: string;
-  emailTxt: string;
+  emailSubject: string;
+  emailHeadline: string;
+  emailContent: string;
   smsTxt: string;
   pushTxt: string;
 }
@@ -61,8 +64,8 @@ export interface RawCorpusEntry {
 /**
  * Reads and validates every directory under the corpus root.
  *
- * Validation is the seed script's, deliberately: the same four required files,
- * the same parsers, the same "sms.txt is empty" refusal. A corpus this
+ * Validation is the seed script's, deliberately: the same five required files,
+ * the same "sms.txt is empty" refusal, and the same push parser. A corpus this
  * generator accepts is a corpus `seed:notif-templates` would have accepted.
  */
 export function readCorpus(corpusRoot: string): RawCorpusEntry[] {
@@ -79,16 +82,22 @@ export function readCorpus(corpusRoot: string): RawCorpusEntry[] {
     }
     const entry: RawCorpusEntry = {
       key,
-      emailHtml: readFileSync(join(dir, 'email.html'), 'utf8'),
-      emailTxt: readFileSync(join(dir, 'email.txt'), 'utf8'),
+      emailSubject: readFileSync(join(dir, 'subject.txt'), 'utf8').trim(),
+      emailHeadline: readFileSync(join(dir, 'headline.txt'), 'utf8').trim(),
+      emailContent: readFileSync(join(dir, 'content.html'), 'utf8').trim(),
       smsTxt: readFileSync(join(dir, 'sms.txt'), 'utf8'),
       pushTxt: readFileSync(join(dir, 'push.txt'), 'utf8'),
     };
 
-    // Parse now so a broken file fails here rather than in a callable an
-    // operator is watching. The results are thrown away on purpose.
+    if (entry.emailSubject.length === 0) {
+      throw new Error(`seed corpus: ${key}: subject.txt is empty`);
+    }
+    if (entry.emailHeadline.length === 0) {
+      throw new Error(`seed corpus: ${key}: headline.txt is empty`);
+    }
+    // Parse now so a broken push.txt fails here rather than in a callable an
+    // operator is watching. The result is thrown away on purpose.
     try {
-      parseEmailTxt(entry.emailTxt);
       parsePushTxt(entry.pushTxt);
     } catch (err) {
       throw new Error(`seed corpus: ${key}: ${(err as Error).message}`, { cause: err });
@@ -125,8 +134,9 @@ export function emitCorpusModule(entries: RawCorpusEntry[]): string {
       [
         '  {',
         `    key: ${JSON.stringify(entry.key)},`,
-        `    emailHtml: ${JSON.stringify(entry.emailHtml)},`,
-        `    emailTxt: ${JSON.stringify(entry.emailTxt)},`,
+        `    emailSubject: ${JSON.stringify(entry.emailSubject)},`,
+        `    emailHeadline: ${JSON.stringify(entry.emailHeadline)},`,
+        `    emailContent: ${JSON.stringify(entry.emailContent)},`,
         `    smsTxt: ${JSON.stringify(entry.smsTxt)},`,
         `    pushTxt: ${JSON.stringify(entry.pushTxt)},`,
         '  },',
@@ -141,8 +151,9 @@ export function emitCorpusModule(entries: RawCorpusEntry[]): string {
     'export interface SeedCorpusEntry {',
     '  /** The directory name, which is also the template id it seeds. */',
     '  readonly key: string;',
-    '  readonly emailHtml: string;',
-    '  readonly emailTxt: string;',
+    '  readonly emailSubject: string;',
+    '  readonly emailHeadline: string;',
+    '  readonly emailContent: string;',
     '  readonly smsTxt: string;',
     '  readonly pushTxt: string;',
     '}',

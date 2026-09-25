@@ -35,7 +35,7 @@ describe('unquotedAttributeIssue', () => {
   it('passes every html template in the seed corpus', () => {
     const root = join(__dirname, '..', '..', 'seeds', 'notificationTemplates');
     for (const key of readdirSync(root)) {
-      const html = readFileSync(join(root, key, 'email.html'), 'utf8');
+      const html = readFileSync(join(root, key, 'content.html'), 'utf8');
       expect(unquotedAttributeIssue('html', html), key).toBeNull();
     }
   });

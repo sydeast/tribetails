@@ -1,7 +1,0 @@
-Subject: A kinfolk asked for a new visit time
-
-Heads up: {{kinfolkName}} asked to move the {{serviceType}} for {{kinName}} that is currently set for {{bookingDate}} at {{bookingTime}}.
-
-Nothing has moved yet. Open Bookings to accept the time they proposed or send them a reason it does not work.
-
-Tribe Tails Pet Care. Your Kin's Favorite Auntie.

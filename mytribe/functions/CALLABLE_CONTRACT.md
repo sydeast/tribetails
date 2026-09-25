@@ -141,6 +141,30 @@ the stale "~26":
     else samples as `[fieldName]`. An unknown or omitted key samples no fields,
     and any token the content still carries is stripped by the renderer, same
     as a real send with a field the emitter never supplied.
+- `convertTemplateToVisual` (#953, net-new, admin-gated like `saveTemplate`,
+  not in `shapeKeys`/`shapeSignature` for the same reason as
+  `previewEmailTemplate`: single client, no client-mirrored shape):
+  - req `{ templateId: string }`
+  - res `{ ok: true; subject: string; headline: string; content: string; warnings: string[] }`
+    `| { ok: false; reason: 'unreadable'; subject: string; body: string }`
+  - The web editor's Convert button. Reads the stored `emailTemplates/{id}`
+    doc and runs it through `convertLegacyTemplate`, but WRITES NOTHING --
+    Save is the only write, same split `previewEmailTemplate` draws between
+    rendering and persisting. A template already stored as `format: 'visual'`
+    with both `headline` and `content` is returned as-is rather than
+    reconverted, so this can never turn a working visual template into an
+    `unreadable` refusal (`warnings: []` on that path). `not-found` when the
+    id has no document. `subject` falls back to `''` when the stored doc has
+    none. `warnings` carries the sanitizer's non-blocking "Removed an
+    image..." messages through on an `ok` response (empty when there are
+    none), so a dropped non-Cloudinary image is never silent. When
+    `CLOUDINARY_CLOUD_NAME` is not configured and the stored html has an
+    `<img`, this throws `failed-precondition` instead of converting with the
+    image silently gone -- same guard as `previewEmailTemplate`.
+  - `convertLegacyTemplate` is loaded with `await import()` inside the
+    handler, not a file-scope import: it is this callable's only caller and
+    pulls in `dom-serializer`, which `coldStartImportGraph.test.ts` would
+    otherwise charge to every deployed function's cold start.
 - The remaining ~34 are lower-complexity (2 to 3 flat fields); freeze as they churn.
 
 Two freeze levels now exist: `shapeKeys` (top-level, for flat shapes) and

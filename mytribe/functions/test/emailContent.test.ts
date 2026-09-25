@@ -94,6 +94,11 @@ describe('sanitizeEmailContent', () => {
     expect(r.issues).toContain('A link must point to a web address (https://), an email address (mailto:), or a merge field.');
   });
 
+  it('refuses an empty href instead of quietly reducing the button to text', () => {
+    const r = clean('<p><a class="button" href="">Go</a></p>');
+    expect(r.issues).toContain('A link must point to a web address (https://), an email address (mailto:), or a merge field.');
+  });
+
   it('does not flag an https href or a mailto href', () => {
     const r = clean('<p><a href="https://tribetails.com">a</a> <a href="mailto:help@tribetails.com">b</a></p>');
     expect(r.issues).toEqual([]);

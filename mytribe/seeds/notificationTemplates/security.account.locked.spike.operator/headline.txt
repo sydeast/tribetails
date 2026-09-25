@@ -1,0 +1,1 @@
+{{lockedAccounts}} kinfolk accounts locked in {{windowMinutes}} minutes
