@@ -11,7 +11,7 @@
     "sync:voice": "cp ../../voice/01_Voice_Bible.md voice/01_Voice_Bible.md && cp ../../voice/02_Channel_Playbook.md voice/02_Channel_Playbook.md && cp ../../voice/corpus/exemplars.md voice/corpus/exemplars.md"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.126.0",
+    "@anthropic-ai/sdk": "^0.128.0",
     "firebase-admin": "^14.4.0",
     "firebase-functions": "^7.4.0"
   },
