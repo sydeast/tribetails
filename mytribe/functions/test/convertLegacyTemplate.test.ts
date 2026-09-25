@@ -15,7 +15,18 @@ describe('convertLegacyTemplate', () => {
       ok: true,
       headline: 'Hello there',
       content: '<p>Hi {{displayName}}</p>',
+      warnings: [],
     });
+  });
+
+  // #953 review fix: a non-Cloudinary <img> is a non-blocking sanitizer issue
+  // (the rest of the body still converts), so it must be surfaced as a
+  // warning, not silently swallowed.
+  it('converts ok and reports a removed non-Cloudinary image as a warning', () => {
+    const r = convertLegacyTemplate(frame('<p>Hello <img src="https://evil.example/pic.png" alt="x"></p>'), 'tribetails');
+    expect(r).toMatchObject({ ok: true, content: '<p>Hello </p>' });
+    if (!r.ok) throw new Error('expected ok');
+    expect(r.warnings).toEqual(['Removed an image that is not from your Cloudinary library.']);
   });
 
   it("keeps a single-quoted button as a button", () => {

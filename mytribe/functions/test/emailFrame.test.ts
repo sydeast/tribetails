@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { contentToText, frameHtml, isVisualTemplate, sendPartsFor } from '../src/lib/emailFrame';
 import { renderEmailParts } from '../src/lib/email';
+import { SEED_CORPUS } from '../src/notifications/seedCorpus.generated';
 
 describe('frameHtml', () => {
   it('puts headline and content inside the shared frame', () => {
@@ -77,6 +78,107 @@ describe('contentToText', () => {
 
   it('marks the first non-empty line when a <br> leads the item', () => {
     expect(contentToText('H', '<ul><li><br>a</li></ul>')).toBe('H\n\n- a');
+  });
+
+  // CRITICAL fix: a bare text node directly inside a `<ul>`/`<ol>` (a
+  // Handlebars block tag like `{{#each visits}}`, not visible content) used
+  // to be dropped along with every other non-`<li>` child, leaving the
+  // `<li>` line with no loop wrapper around it. It must now survive in
+  // document order, interleaved with the `<li>` line(s).
+  it('keeps a bare text node inside a list in document order, around the <li> line', () => {
+    expect(contentToText('H', '<ul>{{#each visits}}<li>{{this.name}}</li>{{/each}}</ul>')).toBe(
+      'H\n\n{{#each visits}}\n- {{this.name}}\n{{/each}}',
+    );
+  });
+
+  it('numbers only the <li> items, not the interleaved text nodes', () => {
+    expect(contentToText('H', '<ol>{{#each xs}}<li>{{this}}</li>{{/each}}</ol>')).toBe('H\n\n{{#each xs}}\n1. {{this}}\n{{/each}}');
+  });
+
+  // Bare text directly inside a <blockquote> (never wrapped in a <p>) is
+  // visible callout content, not layout noise, and must not be dropped the
+  // way plain top-level text handling would drop it.
+  it('emits bare text directly inside a blockquote instead of dropping it', () => {
+    expect(contentToText('H', '<blockquote>Careful now</blockquote>')).toBe('H\n\nCareful now');
+  });
+
+  it('keeps bare text alongside a nested element inside a blockquote', () => {
+    expect(contentToText('H', '<blockquote>Note: <p>see below</p></blockquote>')).toBe('H\n\nNote:\n\nsee below');
+  });
+});
+
+describe('contentToText: the {{#each}} loop seeds render one line per visit', () => {
+  // assignment.assigned and kincare.booking.confirm are the two seeds whose
+  // content wraps a single `<li>{{this.weekday}}, {{this.date}} at
+  // {{this.time}}</li>` in `{{#each visits}}...{{/each}}`, written directly
+  // as bare text around the `<li>` (see seedCorpus.generated.ts). Built and
+  // rendered exactly as a real send would (sendPartsFor + renderEmailParts,
+  // real Handlebars), with a real two-item `visits` array, so this proves
+  // the fix end to end, not just against contentToText's own output string.
+  const VISITS = [
+    { weekday: 'Thu', date: 'Sep 4', time: '9:00 AM' },
+    { weekday: 'Fri', date: 'Sep 5', time: '10:00 AM' },
+  ];
+
+  it('assignment.assigned renders one line per visit', () => {
+    const seed = SEED_CORPUS.find((s) => s.key === 'assignment.assigned')!;
+    const doc = { subject: seed.emailSubject, format: 'visual' as const, headline: seed.emailHeadline, content: seed.emailContent };
+    const out = renderEmailParts({
+      ...sendPartsFor(doc),
+      data: {
+        kinName: 'Fido',
+        serviceType: 'dog walking',
+        portalUrl: 'https://auntieos.tribetails.com',
+        visitCount: 2,
+        visits: VISITS,
+      },
+    });
+    // Adjacent, in order, with nothing stray between: proves the `{{#each}}`
+    // wrapper actually looped, not just that both lines appear somewhere.
+    expect(out.text).toContain('- Thu, Sep 4 at 9:00 AM\n- Fri, Sep 5 at 10:00 AM');
+    expect(out.text).not.toContain('{{');
+  });
+
+  it('kincare.booking.confirm renders one line per visit', () => {
+    const seed = SEED_CORPUS.find((s) => s.key === 'kincare.booking.confirm')!;
+    const doc = { subject: seed.emailSubject, format: 'visual' as const, headline: seed.emailHeadline, content: seed.emailContent };
+    const out = renderEmailParts({
+      ...sendPartsFor(doc),
+      data: {
+        kinfolkName: 'Pat',
+        kinName: 'Fido',
+        serviceType: 'dog walking',
+        portalUrl: 'https://kinfolk.tribetails.com',
+        visitCount: 2,
+        visits: VISITS,
+      },
+    });
+    expect(out.text).toContain('- Thu, Sep 4 at 9:00 AM\n- Fri, Sep 5 at 10:00 AM');
+    expect(out.text).not.toContain('{{');
+  });
+
+  it('an empty visits array leaves no stray broken bullet line', () => {
+    for (const key of ['assignment.assigned', 'kincare.booking.confirm']) {
+      const seed = SEED_CORPUS.find((s) => s.key === key)!;
+      const doc = { subject: seed.emailSubject, format: 'visual' as const, headline: seed.emailHeadline, content: seed.emailContent };
+      const out = renderEmailParts({
+        ...sendPartsFor(doc),
+        data: {
+          kinfolkName: 'Pat',
+          kinName: 'Fido',
+          serviceType: 'dog walking',
+          portalUrl: 'https://x.tribetails.com',
+          visitCount: 0,
+          visits: [],
+        },
+      });
+      // No line left over from the loop body: no bullet marker at all, and
+      // specifically not the broken "- ,  at " shape the missing #each wrap
+      // used to produce.
+      expect(out.text).not.toMatch(/^- /m);
+      expect(out.text).not.toContain('- ,');
+      expect(out.text).not.toContain('{{');
+    }
   });
 });
 

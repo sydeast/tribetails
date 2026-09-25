@@ -9,7 +9,14 @@ import { sanitizeEmailContent } from '../lib/emailContent';
  * content box it answers `unreadable`, and the editor starts from the plain
  * text body instead.
  */
-export type ConvertResult = { ok: true; headline: string; content: string } | { ok: false; reason: 'unreadable' };
+// #953 review fix: a non-Cloudinary <img> is a NON-BLOCKING sanitizer issue --
+// `sanitizeEmailContent` strips the tag but the rest of the body still
+// converts -- so it must not be swallowed. `warnings` carries those "Removed
+// an image..." messages through to the caller (the editor's Convert button)
+// instead of silently dropping the picture with no trace.
+export type ConvertResult =
+  | { ok: true; headline: string; content: string; warnings: string[] }
+  | { ok: false; reason: 'unreadable' };
 
 const hasClass = (el: Element, c: string) => (el.attribs['class'] ?? '').split(/\s+/).includes(c);
 
@@ -61,6 +68,7 @@ export function convertLegacyTemplate(html: string, cloudName: string): ConvertR
   // run into one <p> per child instead of one <p> per run.
 
   const { content, issues } = sanitizeEmailContent(render(box.children, { encodeEntities: false }), cloudName);
+  const warnings = issues.filter((i) => i.startsWith('Removed an image'));
   const blocking = issues.filter((i) => !i.startsWith('Removed an image'));
   if (blocking.length) return { ok: false, reason: 'unreadable' };
   // Alert boxes held inline text directly; give it a paragraph inside the
@@ -68,5 +76,5 @@ export function convertLegacyTemplate(html: string, cloudName: string): ConvertR
   // that was already a <p>, just indented on its own line, must not become
   // <p><p>...</p></p>).
   const tidy = collapseBlockAdjacentWhitespace(wrapBareBlockquoteBodies(content)).trim();
-  return { ok: true, headline, content: tidy };
+  return { ok: true, headline, content: tidy, warnings };
 }

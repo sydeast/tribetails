@@ -20,7 +20,7 @@ import type { EmailTemplateDoc } from '../lib/sendFromTemplate';
 const Args = z.object({ templateId: z.string().min(1).max(TEMPLATE_ID_MAX_LENGTH).regex(TEMPLATE_ID_PATTERN) });
 
 export type ConvertTemplateResponse =
-  | { ok: true; subject: string; headline: string; content: string }
+  | { ok: true; subject: string; headline: string; content: string; warnings: string[] }
   | { ok: false; reason: 'unreadable'; subject: string; body: string };
 
 export async function convertTemplateToVisualHandler(req: CallableRequest<unknown>): Promise<ConvertTemplateResponse> {
@@ -37,14 +37,30 @@ export async function convertTemplateToVisualHandler(req: CallableRequest<unknow
   const snap = await db().doc(`emailTemplates/${templateId}`).get();
   if (!snap.exists) throw new HttpsError('not-found', `No template ${templateId}.`);
   const doc = snap.data() as EmailTemplateDoc;
+  // #953 review fix: `doc.subject` is Firestore data cast to `EmailTemplateDoc`,
+  // not validated -- an old hand-edited or partially-migrated doc can be
+  // missing it entirely, and `ConvertTemplateResponse.subject` is a required
+  // `string`, not `string | undefined`.
+  const subject = doc.subject ?? '';
   if (doc.format === 'visual' && doc.headline && doc.content) {
-    return { ok: true, subject: doc.subject, headline: doc.headline, content: doc.content };
+    return { ok: true, subject, headline: doc.headline, content: doc.content, warnings: [] };
   }
-  if (!doc.html) return { ok: false, reason: 'unreadable', subject: doc.subject, body: doc.body ?? '' };
+  if (!doc.html) return { ok: false, reason: 'unreadable', subject, body: doc.body ?? '' };
+  const cloud = process.env.CLOUDINARY_CLOUD_NAME ?? '';
+  // #953 review fix: mirrors previewEmailTemplate's guard. Without a
+  // configured Cloudinary cloud name, `convertLegacyTemplate` can't tell a
+  // real image from a foreign one -- every `<img>` looks foreign and
+  // `sanitizeEmailContent` silently strips it, which would convert an old
+  // template into a visual one with the picture just gone and only a
+  // "warning" (easy to miss on a one-off Convert click) to show for it.
+  // Refuse outright instead, same as the preview does.
+  if (!cloud && /<img\b/i.test(doc.html)) {
+    throw new HttpsError('failed-precondition', 'Image uploads are not configured on the server (CLOUDINARY_CLOUD_NAME).');
+  }
   const { convertLegacyTemplate } = await import('../notifications/convertLegacyTemplate.js');
-  const r = convertLegacyTemplate(doc.html, process.env.CLOUDINARY_CLOUD_NAME ?? '');
-  if (r.ok) return { ok: true, subject: doc.subject, headline: r.headline, content: r.content };
-  return { ok: false, reason: 'unreadable', subject: doc.subject, body: doc.body ?? '' };
+  const r = convertLegacyTemplate(doc.html, cloud);
+  if (r.ok) return { ok: true, subject, headline: r.headline, content: r.content, warnings: r.warnings };
+  return { ok: false, reason: 'unreadable', subject, body: doc.body ?? '' };
 }
 
 export const convertTemplateToVisual = onCall(
