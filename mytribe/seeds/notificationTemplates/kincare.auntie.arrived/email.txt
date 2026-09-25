@@ -1,7 +1,0 @@
-Subject: Just arrived for your {{serviceType}}
-
-I'm here and getting started on our {{serviceType}}. I'll let you know how it goes.
-
-More soon, Auntie
-
-Tribe Tails Pet Care. Your Kin's Favorite Auntie.

@@ -44,7 +44,7 @@ describe('convertLegacyTemplate', () => {
   });
 
   it('converts the real reset seed', () => {
-    const html = readFileSync(join(__dirname, '../../seeds/notificationTemplates/auth.password.reset/email.html'), 'utf8');
+    const html = readFileSync(join(__dirname, 'fixtures/legacyResetEmail.html'), 'utf8');
     const r = convertLegacyTemplate(html, '');
     expect(r).toMatchObject({ ok: true, headline: 'Reset your Tribe Tails password' });
     expect((r as { content: string }).content).toContain('<a href="{{link}}" class="button">Reset Password</a>');

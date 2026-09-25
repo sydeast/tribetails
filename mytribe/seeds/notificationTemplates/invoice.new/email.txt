@@ -1,9 +1,0 @@
-Subject: Your Tribe Tails invoice is ready
-
-Hi {{kinfolkName}}, your invoice ({{invoiceNumber}}) for {{kinName}}'s care is ready. The total is {{amount}}, due {{dueDate}}.
-
-You can review everything and pay whenever it works for you. Thank you for trusting me with your Kin.
-
-With care, Auntie
-
-Tribe Tails Pet Care. Your Kin's Favorite Auntie.

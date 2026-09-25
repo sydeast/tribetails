@@ -1,9 +1,0 @@
-Subject: Your visit for {{kinName}} is cancelled
-
-Hi {{kinfolkName}}, just confirming I've taken the {{serviceType}} for {{kinName}} on {{bookingDate}} off the calendar.
-
-Whenever you're ready to set something new up, I'm right here. Give a shout.
-
-With care, Auntie
-
-Tribe Tails Pet Care. Your Kin's Favorite Auntie.

@@ -1,7 +1,0 @@
-Subject: I updated your invoice
-
-Hi there, I made some changes to invoice {{invoiceNumber}} for {{kinName}}'s care. Give it a look so you've got the latest.
-
-With care, Auntie
-
-Tribe Tails Pet Care. Your Kin's Favorite Auntie.

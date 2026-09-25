@@ -1,9 +1,0 @@
-Subject: Payment received, thank you
-
-Hi there, your payment for invoice {{invoiceNumber}} just came through. Thank you so much for taking care of that.
-
-I appreciate you, and I appreciate the trust.
-
-With thanks, Auntie
-
-Tribe Tails Pet Care. Your Kin's Favorite Auntie.
