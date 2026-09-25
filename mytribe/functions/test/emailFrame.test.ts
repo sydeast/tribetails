@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { contentToText, frameHtml, isVisualTemplate, sendPartsFor } from '../src/lib/emailFrame';
+import { renderEmailParts } from '../src/lib/email';
 
 describe('frameHtml', () => {
   it('puts headline and content inside the shared frame', () => {
@@ -9,6 +10,16 @@ describe('frameHtml', () => {
     expect(html).toContain("Tribe Tails Pet Care. Your Kin's Favorite Auntie.");
     expect(html).toContain('border-top: 8px solid #df8431');
     expect(html).toContain('blockquote {');
+  });
+
+  it('HTML-escapes the headline so it cannot break out of the <h2> or inject markup', () => {
+    const html = frameHtml('A & <b>', '<p>x</p>');
+    expect(html).toContain('<h2>A &amp; &lt;b&gt;</h2>');
+  });
+
+  it('leaves a {{token}} in the headline intact for Handlebars to resolve', () => {
+    const html = frameHtml('Hi {{displayName}}', '<p>x</p>');
+    expect(html).toContain('<h2>Hi {{displayName}}</h2>');
   });
 });
 
@@ -90,5 +101,24 @@ describe('sendPartsFor', () => {
     expect(isVisualTemplate({ subject: 's', format: 'visual', headline: 'H', content: '<p>x</p>' })).toBe(true);
     expect(isVisualTemplate({ subject: 's', format: 'visual', headline: 'H' })).toBe(false);
     expect(isVisualTemplate({ subject: 's', body: 'b' })).toBe(false);
+  });
+
+  it('a {{token}} headline survives a real render with the value substituted', () => {
+    const parts = sendPartsFor({ subject: 's', format: 'visual', headline: 'Hi {{displayName}}', content: '<p>x</p>' });
+    const out = renderEmailParts({ ...parts, data: { displayName: 'Pat' } });
+    expect(out.html).toContain('<h2>Hi Pat</h2>');
+  });
+
+  it('throws when a document is marked visual but has no headline or content', () => {
+    expect(() => sendPartsFor({ subject: 's', format: 'visual' })).toThrow(
+      'email template is marked visual but has no headline or content',
+    );
+    expect(() => sendPartsFor({ subject: 's', format: 'visual', headline: 'H' })).toThrow(
+      'email template is marked visual but has no headline or content',
+    );
+  });
+
+  it('an old-format document with an empty body still sends as today', () => {
+    expect(sendPartsFor({ subject: 's', body: '' })).toEqual({ subjectTemplate: 's', bodyTemplate: '' });
   });
 });

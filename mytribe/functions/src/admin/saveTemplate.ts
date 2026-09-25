@@ -145,6 +145,17 @@ export async function saveTemplateHandler(
   let content: string | undefined;
   if (visual) {
     const cloud = process.env.CLOUDINARY_CLOUD_NAME ?? '';
+    // #953 review fix: without a configured Cloudinary cloud name the sanitizer
+    // cannot build a matching image-src prefix, so every <img> is silently
+    // stripped as "not from your Cloudinary library" -- an issue this callable
+    // deliberately does not treat as blocking (see the filter below). Left
+    // alone, that means a save with an image "succeeds" but the image never
+    // makes it into the stored template. Refuse outright so the operator learns
+    // the server needs configuring, instead of finding out when the email goes
+    // out with no picture.
+    if (!cloud && /<img\b/i.test(args.content!)) {
+      throw new HttpsError('failed-precondition', 'Image uploads are not configured on the server (CLOUDINARY_CLOUD_NAME).');
+    }
     const r = sanitizeEmailContent(args.content!, cloud);
     // "Removed an image" is a silent best-effort cleanup, not a refusal: the
     // sanitizer already dropped the offending tag, so the save still succeeds.

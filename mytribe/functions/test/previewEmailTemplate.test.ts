@@ -68,4 +68,18 @@ describe('previewEmailTemplate', () => {
     const res = await previewEmailTemplateHandler(callableRequest({ ...req, content: '<p>{{{raw}}}</p>' }, { uid: 'op1' }));
     expect(res.issues).toContain('Triple braces {{{ }}} are not allowed.');
   });
+
+  it('a prototype-name catalogKey renders with no fields instead of throwing', async () => {
+    for (const catalogKey of ['constructor', '__proto__']) {
+      await expect(previewEmailTemplateHandler(callableRequest({ ...req, catalogKey }, { uid: 'op1' }))).resolves.toBeTruthy();
+      expect(sampleDataFor(catalogKey)).toEqual({});
+    }
+  });
+
+  it('refuses to preview an image when Cloudinary is not configured', async () => {
+    vi.stubEnv('CLOUDINARY_CLOUD_NAME', '');
+    await expect(
+      previewEmailTemplateHandler(callableRequest({ ...req, content: '<p><img src="x"></p>' }, { uid: 'op1' })),
+    ).rejects.toMatchObject({ code: 'failed-precondition', message: expect.stringContaining('CLOUDINARY_CLOUD_NAME') });
+  });
 });

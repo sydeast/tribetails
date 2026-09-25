@@ -84,6 +84,19 @@ describe('saveTemplate, visual format', () => {
     expect(d).toMatchObject({ format: 'visual', headline: 'H', content: '<p>x</p>' });
   });
 
+  it('refuses to save an image when Cloudinary is not configured', async () => {
+    vi.stubEnv('CLOUDINARY_CLOUD_NAME', '');
+    await expect(
+      save({
+        templateId: 'k',
+        subject: 'S',
+        format: 'visual',
+        headline: 'H',
+        content: '<p><img src="https://res.cloudinary.com/tribetails/image/upload/a.png"></p>',
+      }),
+    ).rejects.toMatchObject({ code: 'failed-precondition', message: expect.stringContaining('CLOUDINARY_CLOUD_NAME') });
+  });
+
   it('a new old-format template (expectNew) writes no format/headline/content at all', async () => {
     await save({ templateId: 'new-old', subject: 'S', body: 'b', expectNew: true });
     const d = ctx.writes.find((w: { path: string }) => w.path === 'emailTemplates/new-old')!.data;

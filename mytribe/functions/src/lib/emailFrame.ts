@@ -35,6 +35,26 @@ export function isVisualTemplate(
   return doc.format === 'visual' && typeof doc.headline === 'string' && typeof doc.content === 'string';
 }
 
+// #953 review fix: `headline` is plain operator-typed text, not markup, but it
+// lands directly inside `<h2>`. An unescaped `&`, `<`, `>` or `"` would either
+// break the frame's markup or (worse) let a stray `<script>` typed into the
+// headline field execute in the recipient's mail client. Escaped here, not at
+// render time, because `frameHtml`'s caller (`sendPartsFor`) hands the RESULT
+// to Handlebars as `htmlTemplate`, and Handlebars only escapes `{{var}}`
+// substitutions, never the literal template text surrounding them.
+//
+// `{{token}}` must survive intact: a headline is allowed to carry a merge
+// field (see `visualSendRoutes.test.ts`), and curly braces are not among the
+// characters this escapes, so a token is untouched by construction.
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export function frameHtml(headline: string, content: string): string {
   return [
     '<!DOCTYPE html>',
@@ -45,7 +65,7 @@ export function frameHtml(headline: string, content: string): string {
     '</head>',
     '<body>',
     '    <div class="container">',
-    `        <div class="header"><h2>${headline}</h2></div>`,
+    `        <div class="header"><h2>${escapeHtml(headline)}</h2></div>`,
     `        <div class="content">${content}</div>`,
     `        <div class="footer">${FOOTER}</div>`,
     '    </div>',
@@ -137,6 +157,14 @@ export function sendPartsFor(doc: EmailTemplateDoc): SendParts {
       bodyTemplate: contentToText(doc.headline, doc.content),
       htmlTemplate: frameHtml(doc.headline, doc.content),
     };
+  }
+  // A document tagged `format: 'visual'` but missing `headline` or `content`
+  // (a partial write, a botched migration) has no old-format `body`/`html` to
+  // fall back to either -- `saveTemplate` deletes those on every visual save.
+  // Falling through to the old-format branch below would silently send an
+  // empty body instead of surfacing the corrupt document.
+  if (doc.format === 'visual') {
+    throw new Error('email template is marked visual but has no headline or content');
   }
   return {
     subjectTemplate: doc.subject,

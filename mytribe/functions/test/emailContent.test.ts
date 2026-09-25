@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { sanitizeEmailContent } from '../src/lib/emailContent';
+import { contentToText } from '../src/lib/emailFrame';
 
 const CLOUD = 'tribetails';
 const IMG = `https://res.cloudinary.com/${CLOUD}/image/upload/v1/brand/pup.jpg`;
@@ -65,5 +66,36 @@ describe('sanitizeEmailContent', () => {
 
   it('reports empty content', () => {
     expect(clean('<p> </p>').issues).toContain('The email body is empty.');
+  });
+
+  it('wraps a top-level bare text/inline run in its own <p>, block-by-block', () => {
+    const r = clean('Hi {{displayName}}, <strong>welcome</strong><p>next</p>');
+    expect(r.content).toBe('<p>Hi {{displayName}}, <strong>welcome</strong></p><p>next</p>');
+    expect(r.issues).toEqual([]);
+  });
+
+  it('contentToText renders a wrapped bare top-level run', () => {
+    const { content } = clean('Hi {{displayName}}, <strong>welcome</strong><p>next</p>');
+    expect(contentToText('H', content)).toContain('Hi {{displayName}}, welcome');
+  });
+
+  it('drops a whitespace-only top-level run instead of leaving an empty <p>', () => {
+    const r = clean('<p>a</p>   <p>b</p>');
+    expect(r.content).toBe('<p>a</p><p>b</p>');
+  });
+
+  it('refuses a relative href', () => {
+    const r = clean('<p><a href="reset">Reset</a></p>');
+    expect(r.issues).toContain('A link must point to a web address (https://), an email address (mailto:), or a merge field.');
+  });
+
+  it('refuses a fragment href', () => {
+    const r = clean('<p><a href="#top">Top</a></p>');
+    expect(r.issues).toContain('A link must point to a web address (https://), an email address (mailto:), or a merge field.');
+  });
+
+  it('does not flag an https href or a mailto href', () => {
+    const r = clean('<p><a href="https://tribetails.com">a</a> <a href="mailto:help@tribetails.com">b</a></p>');
+    expect(r.issues).toEqual([]);
   });
 });

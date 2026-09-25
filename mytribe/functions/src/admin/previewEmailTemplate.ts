@@ -49,7 +49,16 @@ function setPath(target: Record<string, unknown>, path: string, value: unknown):
 
 /** Sample merge data for a catalog key's known fields, so a preview never shows a raw `{{token}}`. */
 export function sampleDataFor(catalogKey?: string): Record<string, unknown> {
-  const fields = (catalogKey && TEMPLATE_FIELDS[catalogKey]) || [];
+  // #953 review fix: `catalogKey` is operator-typed free text (the editor's
+  // catalog-key field), and `TEMPLATE_FIELDS[catalogKey]` on a plain object is
+  // a prototype-chain lookup -- 'constructor' and '__proto__' both resolve to
+  // something (a function, or the prototype itself) rather than `undefined`,
+  // which `Array.isArray` then rejects, but only after the lookup already ran.
+  // `Object.hasOwn` refuses anything not an OWN property before the lookup
+  // happens at all, so a mistyped or malicious key can never reach a prototype
+  // member.
+  const raw = catalogKey && Object.hasOwn(TEMPLATE_FIELDS, catalogKey) ? TEMPLATE_FIELDS[catalogKey] : undefined;
+  const fields = Array.isArray(raw) ? raw : [];
   const out: Record<string, unknown> = {};
   for (const f of fields) setPath(out, f, /link|url/i.test(f) ? SAMPLE_URL : `[${f}]`);
   return out;
@@ -69,7 +78,17 @@ export async function previewEmailTemplateHandler(
     throw new HttpsError('invalid-argument', parsed.error.issues.map((i) => i.message).join(' '));
   }
   const args = parsed.data;
-  const { content, issues } = sanitizeEmailContent(args.content, process.env.CLOUDINARY_CLOUD_NAME ?? '');
+  const cloud = process.env.CLOUDINARY_CLOUD_NAME ?? '';
+  // #953 review fix: without a configured Cloudinary cloud name, the sanitizer
+  // cannot build a matching image-src prefix, so every <img> looks foreign and
+  // is silently stripped (an "issue", not a refusal -- see saveTemplate's
+  // filter). That left an operator previewing a template with an image
+  // believing the picture would send, when in fact no server in this
+  // deployment could ever validate one. Refuse outright instead.
+  if (!cloud && /<img\b/i.test(args.content)) {
+    throw new HttpsError('failed-precondition', 'Image uploads are not configured on the server (CLOUDINARY_CLOUD_NAME).');
+  }
+  const { content, issues } = sanitizeEmailContent(args.content, cloud);
   const parts = sendPartsFor({ subject: args.subject, format: 'visual', headline: args.headline, content });
   const out = renderEmailParts({ ...parts, data: sampleDataFor(args.catalogKey) });
   return { subject: out.subject, html: out.html ?? '', text: out.text, issues };
