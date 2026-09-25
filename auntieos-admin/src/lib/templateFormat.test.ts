@@ -1,3 +1,7 @@
+// @vitest-environment jsdom
+// #953: visualFormError -> hasTextBlock parses the content fragment with
+// DOMParser, so this file needs jsdom, unlike the rest of its plain-logic
+// tests (which run fine under either environment).
 import { describe, it, expect } from 'vitest';
 import type { TemplateSummary } from '../api/templates';
 import {
@@ -19,6 +23,10 @@ import {
   templateIdError,
   templateFormError,
   buildSaveTemplatePayload,
+  isOldFormat,
+  visualFormError,
+  buildVisualSavePayload,
+  fieldsForTemplate,
   type TemplateFormFields,
 } from './templateFormat';
 
@@ -50,6 +58,8 @@ function fields(over: Partial<TemplateFormFields> = {}): TemplateFormFields {
     tagsInput: '',
     usageInstructions: '',
     sections: [],
+    headline: '',
+    content: '',
     ...over,
   };
 }
@@ -199,6 +209,8 @@ describe('templateToFormFields', () => {
       tagsInput: 'a, b',
       usageInstructions: '',
       sections: [],
+      headline: '',
+      content: '',
     });
   });
 
@@ -233,6 +245,8 @@ describe('blankFormFields', () => {
       tagsInput: '',
       usageInstructions: '',
       sections: [],
+      headline: '',
+      content: '',
     });
   });
 });
@@ -431,5 +445,75 @@ describe('templateEmptyMessage: what the bank searched over', () => {
     expect(templateEmptyMessage({ loaded: 1, category: null, query: 'refund', hasMore: true })).toBe(
       'Nothing matches "refund". Searched the 1 template loaded so far, by title and key. Load more to search further.',
     );
+  });
+});
+
+describe('#953 visual templates', () => {
+  const visualFields = (over: Partial<TemplateFormFields> = {}): TemplateFormFields => ({
+    ...blankFormFields(),
+    templateId: 'auth.password.reset',
+    subject: 'Reset your password',
+    headline: 'Reset your password',
+    content: '<p>Hi {{displayName}}</p>',
+    ...over,
+  });
+
+  it('isOldFormat is true unless the template says visual', () => {
+    expect(isOldFormat({})).toBe(true);
+    expect(isOldFormat({ format: 'visual' })).toBe(false);
+  });
+
+  it('templateToFormFields carries headline and content, defaulting to empty', () => {
+    const base = { templateId: 't', subject: 's', body: '', html: null, title: 't', description: null, tags: [], category: null, usageInstructions: '', sectionDefinitions: [] };
+    expect(templateToFormFields({ ...base, format: 'visual', headline: 'H', content: '<p>x</p>' })).toMatchObject({ headline: 'H', content: '<p>x</p>' });
+    expect(templateToFormFields(base)).toMatchObject({ headline: '', content: '' });
+  });
+
+  it('visualFormError checks key (create only), subject, headline, then content', () => {
+    expect(visualFormError(visualFields({ templateId: '' }), { isCreate: true })).toBe('Template key is required.');
+    expect(visualFormError(visualFields({ templateId: '' }), { isCreate: false })).toBeNull();
+    expect(visualFormError(visualFields({ subject: ' ' }), { isCreate: false })).toBe('Subject is required.');
+    expect(visualFormError(visualFields({ headline: ' ' }), { isCreate: false })).toBe('Headline is required.');
+    expect(visualFormError(visualFields({ content: '<p> </p>' }), { isCreate: false })).toBe('The email needs some content.');
+    expect(visualFormError(visualFields(), { isCreate: true })).toBeNull();
+  });
+
+  it('buildVisualSavePayload is the PR 2 shape exactly: format visual, no body or html keys', () => {
+    const p = buildVisualSavePayload(visualFields({ title: ' Reset ', tagsInput: 'auth, reset', category: '' }), { isCreate: true });
+    expect(p).toEqual({
+      templateId: 'auth.password.reset',
+      subject: 'Reset your password',
+      format: 'visual',
+      headline: 'Reset your password',
+      content: '<p>Hi {{displayName}}</p>',
+      title: 'Reset',
+      tags: ['auth', 'reset'],
+      usageInstructions: '',
+      sectionDefinitions: [],
+      expectNew: true,
+    });
+    expect('body' in p).toBe(false);
+    expect('html' in p).toBe(false);
+  });
+
+  it('fieldsForTemplate unions the fields of every notification that sends this template', () => {
+    const catalog = [
+      { key: 'auth.password.reset', templates: { email: 'auth.password.reset' }, mergeFields: ['link', 'displayName'] },
+      { key: 'other', templates: { email: 'auth.password.reset' }, mergeFields: ['email'] },
+      { key: 'unrelated', templates: { email: 'x' }, mergeFields: ['nope'] },
+    ];
+    expect(fieldsForTemplate(catalog, 'auth.password.reset', [])).toEqual({
+      catalogKey: 'auth.password.reset',
+      fields: ['displayName', 'email', 'link'],
+      source: 'catalog',
+    });
+  });
+
+  it('fieldsForTemplate falls back to the fields the template already uses when no notification sends it', () => {
+    expect(fieldsForTemplate([], 'invite.kinfolk', ['inviteLink', 'businessName'])).toEqual({
+      catalogKey: null,
+      fields: ['businessName', 'inviteLink'],
+      source: 'template',
+    });
   });
 });

@@ -1,4 +1,6 @@
 import type { TemplateSummary, TemplateSection } from '../api/templates';
+import { hasTextBlock } from './emailContent';
+import type { NotificationCatalogEntry } from '../api/myNotifications';
 
 /**
  * Pure Template Bank list classification + display helpers, kept out of the
@@ -238,6 +240,10 @@ export interface TemplateFormFields {
    * title is blank, the same way `parseTagsInput` drops blank tags.
    */
   sections: TemplateSection[];
+  /** #953, visual templates: the frame's header-bar line. `''` on an old-format template. */
+  headline: string;
+  /** #953, visual templates: the stored content fragment the editor reads and writes. `''` on an old-format template. */
+  content: string;
 }
 
 /** A fresh, empty section row for the editor's "Add section" control. */
@@ -259,6 +265,8 @@ export function templateToFormFields(tpl: TemplateSummary): TemplateFormFields {
     usageInstructions: tpl.usageInstructions ?? '',
     // Copy each row so editing form state never mutates the loaded template.
     sections: (tpl.sectionDefinitions ?? []).map((s) => ({ ...s })),
+    headline: tpl.headline ?? '',
+    content: tpl.content ?? '',
   };
 }
 
@@ -275,6 +283,8 @@ export function blankFormFields(): TemplateFormFields {
     tagsInput: '',
     usageInstructions: '',
     sections: [],
+    headline: '',
+    content: '',
   };
 }
 
@@ -438,5 +448,84 @@ export function buildSaveTemplatePayload(
     usageInstructions: fields.usageInstructions.trim(),
     sectionDefinitions: parseSections(fields.sections),
     ...(opts.isCreate ? { expectNew: true } : {}),
+  };
+}
+
+// ── #953 visual templates ───────────────────────────────────────────────────
+
+/** Old format = anything not marked visual. The Template Bank badges these; the editor offers Convert. */
+export function isOldFormat(tpl: Pick<TemplateSummary, 'format'>): boolean {
+  return tpl.format !== 'visual';
+}
+
+/** The single blocking error for a visual template, or null. Same order and key rules as `templateFormError`. */
+export function visualFormError(
+  fields: Pick<TemplateFormFields, 'templateId' | 'subject' | 'headline' | 'content'>,
+  opts: { isCreate: boolean },
+): string | null {
+  if (opts.isCreate) {
+    const idError = templateIdError(fields.templateId);
+    if (idError) return idError;
+  }
+  if (fields.subject.trim() === '') return 'Subject is required.';
+  if (fields.headline.trim() === '') return 'Headline is required.';
+  if (!hasTextBlock(fields.content)) return 'The email needs some content.';
+  return null;
+}
+
+/** The exact visual `saveTemplate` payload. Optional-field rules match `buildSaveTemplatePayload`. */
+export function buildVisualSavePayload(
+  fields: TemplateFormFields,
+  opts: { isCreate?: boolean } = {},
+): SaveVisualTemplatePayload {
+  const title = fields.title.trim();
+  const description = fields.description.trim();
+  const category = fields.category.trim();
+  return {
+    templateId: fields.templateId.trim(),
+    subject: fields.subject.trim(),
+    format: 'visual',
+    headline: fields.headline.trim(),
+    content: fields.content,
+    ...(title !== '' ? { title } : {}),
+    ...(description !== '' ? { description } : {}),
+    ...(category !== '' ? { category } : {}),
+    tags: parseTagsInput(fields.tagsInput),
+    usageInstructions: fields.usageInstructions.trim(),
+    sectionDefinitions: parseSections(fields.sections),
+    ...(opts.isCreate ? { expectNew: true } : {}),
+  };
+}
+
+export interface TemplateFieldSet {
+  /** The notification key the preview samples, or null when no notification sends this template. */
+  catalogKey: string | null;
+  fields: string[];
+  /** Where `fields` came from: the notification catalog, or the template's own existing tokens. */
+  source: 'catalog' | 'template';
+}
+
+/**
+ * The merge fields "Insert field" offers. A notification row names the
+ * template that actually renders its email after bindings (`templates.email`),
+ * and `mergeFields` is `TEMPLATE_FIELDS[key]` projected by the server. When no
+ * notification sends the template (invites and recovery go through
+ * `sendFromTemplate` by key), the only honest list is the fields the template
+ * already uses.
+ */
+export function fieldsForTemplate(
+  catalog: ReadonlyArray<Pick<NotificationCatalogEntry, 'key' | 'templates' | 'mergeFields'>>,
+  templateId: string,
+  alreadyUsed: readonly string[],
+): TemplateFieldSet {
+  const id = templateId.trim();
+  const matches = catalog.filter((entry) => entry.templates['email'] === id);
+  if (matches.length === 0) {
+    return { catalogKey: null, fields: [...new Set(alreadyUsed)].sort(), source: 'template' };
+  }
+  return {
+    catalogKey: matches[0]!.key,
+    fields: [...new Set(matches.flatMap((entry) => [...entry.mergeFields]))].sort(),
+    source: 'catalog',
   };
 }
