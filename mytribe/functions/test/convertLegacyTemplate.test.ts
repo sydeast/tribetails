@@ -74,11 +74,21 @@ describe('convertLegacyTemplate', () => {
     expect(r).toMatchObject({ ok: true, content: '<p><strong>a</strong> <em>b</em></p>' });
   });
 
+  // Fix round 2 (review): the whitespace collapse consumed the tag on the
+  // right of each gap, so it couldn't also serve as the left tag of the
+  // NEXT gap -- a three-deep chain (blockquote > p > strong) only collapsed
+  // every other gap, leaking indentation around the middle tag.
+  it('collapses every layout gap in a chain of nested block tags, not just every other one', () => {
+    const r = convertLegacyTemplate(frame('<div class="alert-box">\n  <p>\n    <strong>x</strong>\n  </p>\n</div>'), '');
+    expect(r).toMatchObject({ ok: true, content: '<blockquote><p><strong>x</strong></p></blockquote>' });
+  });
+
   it('produces output the sanitizer accepts unchanged, with no doubled paragraph tags', () => {
     const cases = [
       frame('<div class="alert-box">\n  <p>Heads up</p>\n</div>'),
       frame('Hi <strong>there</strong>, welcome'),
       frame('<p><strong>a</strong> <em>b</em></p>'),
+      frame('<div class="alert-box">\n  <p>\n    <strong>x</strong>\n  </p>\n</div>'),
     ];
     for (const html of cases) {
       const r = convertLegacyTemplate(html, '');

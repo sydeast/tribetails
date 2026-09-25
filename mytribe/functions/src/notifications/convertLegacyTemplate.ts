@@ -29,12 +29,16 @@ function wrapBareBlockquoteBodies(html: string): string {
 }
 
 function collapseBlockAdjacentWhitespace(html: string): string {
+  // The tag on the right of the gap is a lookahead, not part of the match,
+  // so it isn't consumed and stays available as the LEFT tag of the next
+  // gap. A consuming match here (`(tag)(ws)(tag)`) can only ever collapse
+  // every other gap in a chain like `<p>\n  <strong>x</strong>\n</p>` --
+  // once `<p>` is consumed as the right side of the first gap, it can't
+  // also open the next one, leaking whitespace around it.
   return html.replace(
-    /(<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>)(\s+)(<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>)/g,
-    (whole: string, tagA: string, nameA: string, _ws: string, tagB: string, nameB: string) =>
-      BLOCK_ADJACENT_TAGS.has(nameA.toLowerCase()) || BLOCK_ADJACENT_TAGS.has(nameB.toLowerCase())
-        ? `${tagA}${tagB}`
-        : whole,
+    /(<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>)(\s+)(?=<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>)/g,
+    (whole: string, tagA: string, nameA: string, _ws: string, nameB: string) =>
+      BLOCK_ADJACENT_TAGS.has(nameA.toLowerCase()) || BLOCK_ADJACENT_TAGS.has(nameB.toLowerCase()) ? tagA : whole,
   );
 }
 
