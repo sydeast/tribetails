@@ -82,8 +82,41 @@ const TEXT_NODE = 3;
 const ELEMENT_NODE = 1;
 const SHOW_TEXT = 4;
 
+/**
+ * #953 Ruling C5(b): the field name a list's each-loop repeats over. The same
+ * shape as a merge field's name, so `this.visits` or `booking.days` work too.
+ */
+export const EACH_BLOCK_NAME = /^[A-Za-z_][A-Za-z0-9_.]*$/;
+const EACH_OPEN = /^\s*\{\{#each\s+([A-Za-z_][A-Za-z0-9_.]*)\s*\}\}\s*$/;
+const EACH_CLOSE = /^\s*\{\{\/each\s*\}\}\s*$/;
+/**
+ * A stored loop is `<ul>{{#each visits}}<li>…</li>{{/each}}</ul>`: the block
+ * tags are bare text directly inside the list, which ProseMirror would wrap in
+ * list items of their own. When a list is exactly that shape -- the open tag
+ * first, the close tag last, only `<li>`s (and whitespace) between -- the tags
+ * move onto the list as `data-each`, and `write` puts them back. Any other
+ * placement is left as it is for the editor's round-trip check to catch.
+ */
+function liftEachBlocks(doc: Document): void {
+  for (const list of Array.from(doc.body.querySelectorAll('ul, ol'))) {
+    const kids = Array.from(list.childNodes).filter(
+      (n) => !(n.nodeType === TEXT_NODE && (n as Text).data.trim() === ''),
+    );
+    const first = kids[0];
+    const last = kids[kids.length - 1];
+    if (kids.length < 2 || first?.nodeType !== TEXT_NODE || last?.nodeType !== TEXT_NODE) continue;
+    const open = EACH_OPEN.exec((first as Text).data);
+    if (!open || !EACH_CLOSE.test((last as Text).data)) continue;
+    const items = kids.slice(1, -1);
+    if (!items.every((n) => n.nodeType === ELEMENT_NODE && (n as Element).tagName.toLowerCase() === 'li')) continue;
+    first.remove();
+    last.remove();
+    list.setAttribute('data-each', open[1] ?? '');
+  }
+}
 export function fromEmailContent(content: string): string {
   const doc = parseFragment(content);
+  liftEachBlocks(doc);
   const walker = doc.createTreeWalker(doc.body, SHOW_TEXT);
   const texts: Text[] = [];
   while (walker.nextNode()) texts.push(walker.currentNode as Text);
@@ -166,11 +199,18 @@ function write(node: ChildNode): string {
       const body = inner(el);
       return body === '' ? '' : `<${tag}>${body}</${tag}>`;
     }
+    case 'ul':
+    case 'ol': {
+      const body = inner(el);
+      if (isBlank(body)) return '';
+      // #953 C5(b): the editor's `data-each` goes back to the stored block tags.
+      const each = el.getAttribute('data-each');
+      const loop = each !== null && EACH_BLOCK_NAME.test(each);
+      return loop ? `<${tag}>{{#each ${each}}}${body}{{/each}}</${tag}>` : `<${tag}>${body}</${tag}>`;
+    }
     case 'p':
     case 'h2':
     case 'h3':
-    case 'ul':
-    case 'ol':
     case 'blockquote': {
       const body = inner(el);
       return isBlank(body) ? '' : `<${tag}>${body}</${tag}>`;

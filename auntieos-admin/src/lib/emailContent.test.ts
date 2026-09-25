@@ -96,3 +96,30 @@ describe('targets and tokens', () => {
     expect(tokensIn('Hi {{b}}', '<a href="{{a}}">{{b}}</a>', '')).toEqual(['a', 'b']);
   });
 });
+describe('each-block lists (#953 C5(b))', () => {
+  it('fromEmailContent moves a list loop onto the list as data-each', () => {
+    expect(fromEmailContent('<ul>{{#each visits}}\n  <li>{{this.date}}</li>{{/each}}\n</ul>')).toBe(
+      // The whitespace around the tags was part of their text nodes, so it goes with them.
+      '<ul data-each="visits"><li><span data-merge-field="this.date"></span></li></ul>',
+    );
+  });
+  it('fromEmailContent leaves any other placement of the block tags alone', () => {
+    for (const content of [
+      '<ul><li>{{#each visits}}{{this}}{{/each}}</li></ul>',
+      '<ul>{{#each visits}}<li>a</li>stray{{/each}}</ul>',
+      '<ul>{{#each visits}}<li>a</li></ul>',
+      '<ul>{{#if x}}<li>a</li>{{/if}}</ul>',
+      '<p>{{#each visits}}</p><ul><li>a</li></ul><p>{{/each}}</p>',
+    ]) {
+      expect(fromEmailContent(content)).not.toContain('data-each');
+    }
+  });
+  it('toEmailContent writes data-each back as the block tags around the items', () => {
+    expect(toEmailContent('<ol data-each="visits"><li><p>a</p></li><li><p>b</p></li></ol>')).toBe(
+      '<ol>{{#each visits}}<li>a</li><li>b</li>{{/each}}</ol>',
+    );
+  });
+  it('toEmailContent ignores a data-each that is not a field name', () => {
+    expect(toEmailContent('<ul data-each="x}}{{evil"><li><p>a</p></li></ul>')).toBe('<ul><li>a</li></ul>');
+  });
+});
