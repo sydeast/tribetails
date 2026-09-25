@@ -52,7 +52,6 @@ import com.composables.icons.lucide.Mail
 import androidx.compose.ui.unit.sp
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Pencil
-import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.X
 import com.tribetails.auntieos.data.repository.TemplateRepository
@@ -189,7 +188,7 @@ internal fun templateBankEmptyMessage(
         return if (hasError) {
             "Templates could not be loaded. See the error above."
         } else {
-            "No templates yet. Use New template to create one."
+            "No templates yet. Create one on the web admin."
         }
     }
     val where = if (category == "All") "" else " in $category"
@@ -204,10 +203,11 @@ internal fun templateBankEmptyMessage(
  * counterpart at web/.../admin/TemplateBankScreen.kt and, since #755, drawn the
  * way `ui-ideas/auntieos-template-bank-2026-05-27.html` draws it.
  *
- * The kit hero band with the mock's mail tile and one primary action, then the
- * mock's controls row (category chips, search) straight on the page, then one
- * [TemplateCard] per template. A card tap opens a read-only viewer; Edit opens
- * the editor; New template opens the editor in create mode.
+ * The kit hero band with the mock's mail tile, then the mock's controls row
+ * (category chips, search) straight on the page, then one [TemplateCard] per
+ * template. A card tap opens a read-only viewer; Edit opens the editor.
+ * Templates are created on the web admin (#953 7a); this console has no
+ * "New template" action any more.
  *
  * No stat strip, per #716: the mock draws none, and the chips already carry the
  * counts it claimed. No panel around the list either, per #755: the panel this
@@ -394,35 +394,6 @@ fun TemplateBankBody(
                         icon = Lucide.Mail,
                         size = 38.dp,
                         tone = AuntieStatusTone.Teal,
-                    )
-                },
-                trailing = {
-                    // New template opens the editor in create mode with a fresh
-                    // blank template; Save persists via saveTemplate (upsert by a
-                    // new templateId). Backed by a real callable, so it ships live.
-                    PrimaryButton(
-                        label = "New template",
-                        onClick = {
-                            creating = true
-                            editing = TemplateRepository.EmailTemplate(
-                                templateId = "",
-                                subject = "",
-                                body = "",
-                                html = null,
-                                title = "",
-                                description = null,
-                                tags = emptyList(),
-                                category = null,
-                            )
-                        },
-                        leading = {
-                            Icon(
-                                imageVector = Lucide.Plus,
-                                contentDescription = null,
-                                tint = c.background,
-                                modifier = Modifier.size(16.dp),
-                            )
-                        },
                     )
                 },
             )
