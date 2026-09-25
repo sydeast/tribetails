@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within, waitFor } from '@testing-library/react';
+import { render, screen, within, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type TemplateSummary } from '../api/templates';
 
@@ -28,6 +28,13 @@ const { saveTemplate, deleteTemplate, assignTemplatesToCategory } = vi.hoisted((
   deleteTemplate: vi.fn(),
   assignTemplatesToCategory: vi.fn(),
 }));
+// #953 C6: a resolved preview, never a bare vi.fn(). useEmailPreview calls
+// `.then` on it inside its debounce timer, and `undefined.then` there is an
+// unhandled error vitest reports against whichever test is running.
+const { previewEmailTemplate, convertTemplateToVisual } = vi.hoisted(() => ({
+  previewEmailTemplate: vi.fn().mockResolvedValue({ subject: '', html: '', text: '', issues: [] }),
+  convertTemplateToVisual: vi.fn(),
+}));
 vi.mock('../api/templatesWrite', async () => {
   const actual = await vi.importActual<typeof import('../api/templatesWrite')>(
     '../api/templatesWrite',
@@ -36,11 +43,40 @@ vi.mock('../api/templatesWrite', async () => {
     saveTemplate,
     deleteTemplate,
     assignTemplatesToCategory,
+    previewEmailTemplate,
+    convertTemplateToVisual,
     // Real, not stubbed: TemplateEditor uses it to tell the live-key warning
     // apart from a binding refusal, and a stub would only agree with itself.
     isLiveNotificationKeyWarning: actual.isLiveNotificationKeyWarning,
   };
 });
+
+// New templates open the visual editor, which reads the notification catalog
+// for its merge fields.
+vi.mock('../api/myNotifications', () => ({
+  getNotificationMatrix: vi.fn().mockResolvedValue({
+    catalog: [],
+    overrides: {},
+    ungated: [],
+    businessAdminCount: null,
+    businessAdminRosterPath: '',
+    updatedAtMs: null,
+  }),
+}));
+
+// This file tests the bank screen, not the editor, so the TipTap surface is a
+// textarea here (the same stand-in TemplateEditor.test.tsx uses). The real
+// editor is pinned in components/emailEditor/*.test.tsx.
+vi.mock('../components/emailEditor/EmailContentEditor', () => ({
+  EmailContentEditor: (p: { initialContent: string; onChange: (c: string) => void; disabled?: boolean }) => (
+    <textarea
+      aria-label="Email content"
+      defaultValue={p.initialContent}
+      disabled={p.disabled}
+      onChange={(e) => p.onChange(e.target.value)}
+    />
+  ),
+}));
 
 import { Templates } from './Templates';
 import { TEMPLATE_BANK_EMPTY_COPY } from '../lib/templateFormat';
@@ -68,8 +104,10 @@ function tpl(over: Partial<TemplateSummary>): TemplateSummary {
  * crumb marked current and the bank's own heading gone, and "closed" is the
  * bank heading back.
  */
-function editorCrumb(label: 'Edit template' | 'New template'): HTMLElement {
-  const crumb = screen.getByText(label);
+async function editorCrumb(label: 'Edit template' | 'New template'): Promise<HTMLElement> {
+  // TemplateEditor is lazy-loaded (code-split from the bank list), so it
+  // mounts behind a Suspense fallback: findByText waits for the chunk.
+  const crumb = await screen.findByText(label);
   expect(crumb).toHaveAttribute('aria-current', 'page');
   return crumb;
 }
@@ -337,7 +375,7 @@ describe('Templates screen', () => {
     const row = await screen.findByText('Booking Confirmed');
     expect(row.closest('.templates__card-main')?.tagName).toBe('BUTTON');
     await userEvent.click(row);
-    editorCrumb('Edit template');
+    await editorCrumb('Edit template');
     expect(screen.getByLabelText(/^subject$/i)).toHaveValue('Your booking is confirmed');
   });
 
@@ -361,7 +399,7 @@ describe('Templates screen', () => {
 
     await userEvent.click(edit);
 
-    editorCrumb('Edit template');
+    await editorCrumb('Edit template');
     expect(screen.getByLabelText(/^subject$/i)).toHaveValue('Your booking is confirmed');
   });
 
@@ -404,7 +442,7 @@ describe('Templates screen', () => {
     render(<Templates />);
     await screen.findByText(TEMPLATE_BANK_EMPTY_COPY);
     await userEvent.click(screen.getByRole('button', { name: /new template/i }));
-    editorCrumb('New template');
+    await editorCrumb('New template');
     expect(screen.getByLabelText(/template key/i)).toHaveValue('');
   });
 
@@ -430,7 +468,9 @@ describe('Templates screen', () => {
     await userEvent.click(screen.getByRole('button', { name: /new template/i }));
     await userEvent.type(screen.getByLabelText(/template key/i), 'booking.confirmed');
     await userEvent.type(screen.getByLabelText(/^subject$/i), 'Your booking is confirmed');
-    await userEvent.type(screen.getByLabelText(/^body$/i), 'Hi {{kinfolk_name}}');
+    // #953: a new template is a visual one, so Headline and content, not Body.
+    fireEvent.change(screen.getByLabelText(/^headline$/i), { target: { value: 'Booking confirmed' } });
+    fireEvent.change(screen.getByLabelText('Email content'), { target: { value: '<p>Hi {{kinfolk_name}}</p>' } });
     await userEvent.click(screen.getByRole('button', { name: /save template/i }));
 
     await waitFor(() => expectBankShowing());
@@ -448,7 +488,7 @@ describe('Templates screen', () => {
 
     const row = await screen.findByText('Booking Confirmed');
     await userEvent.click(row);
-    editorCrumb('Edit template');
+    await editorCrumb('Edit template');
 
     await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
     expect(screen.getByRole('dialog', { name: /delete this template\?/i })).toBeInTheDocument();
@@ -470,7 +510,7 @@ describe('Templates screen', () => {
     // exercises openEditorFor's guard indirectly via New template still being
     // available and NOT throwing while templates.status !== 'ready'.
     await userEvent.click(screen.getByRole('button', { name: /new template/i }));
-    editorCrumb('New template');
+    await editorCrumb('New template');
   });
 
   it('the editor replaces the bank while it is open, and the Template bank crumb brings the bank back', async () => {
@@ -479,6 +519,7 @@ describe('Templates screen', () => {
     ]);
     render(<Templates />);
     await userEvent.click(await screen.findByText('Booking Confirmed'));
+    await editorCrumb('Edit template');
     // One page at a time: no bank heading, no card grid, one h1.
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
     expect(screen.queryByText('Template Bank.')).toBeNull();
@@ -750,5 +791,47 @@ describe('Templates screen: the mock\'s Ctrl-K search shortcut', () => {
     await screen.findByText(/listTemplates failed: permission-denied/, { selector: '.async-error-detail' });
     await userEvent.keyboard('{Control>}k{/Control}');
     expect(screen.queryByLabelText(/search templates by title or key/i)).toBeNull();
+  });
+});
+
+describe('#953 Old format badge', () => {
+  beforeEach(() => {
+    listTemplates.mockReset();
+    listTemplateCategories.mockReset();
+    listTemplateCategories.mockResolvedValue([]);
+  });
+
+  it('badges old-format templates and not visual ones', async () => {
+    listTemplates.mockResolvedValue([
+      tpl({ templateId: 'old.one', title: 'Old one' }),
+      tpl({ templateId: 'new.one', title: 'New one', body: '', format: 'visual', headline: 'H', content: '<p>x</p>' }),
+    ]);
+    listTemplateCategories.mockResolvedValue([]);
+    render(<Templates />);
+    const oldCard = (await screen.findByText('Old one')).closest('li')!;
+    const newCard = screen.getByText('New one').closest('li')!;
+    expect(within(oldCard).getByText('Old format')).toBeInTheDocument();
+    expect(within(newCard).queryByText('Old format')).toBeNull();
+  });
+
+  it('gives a known-but-unsupported format a "Not editable here" badge instead, with a tooltip', async () => {
+    listTemplates.mockResolvedValue([
+      tpl({ templateId: 'future.one', title: 'Future one', body: '', format: 'markdown' }),
+    ]);
+    render(<Templates />);
+    const card = (await screen.findByText('Future one')).closest('li')!;
+    expect(within(card).queryByText('Old format')).toBeNull();
+    const badge = within(card).getByText('Not editable here');
+    expect(badge.closest('[title]')).toHaveAttribute('title', 'Edit this template on a newer admin');
+  });
+
+  it('gives a visual template neither badge', async () => {
+    listTemplates.mockResolvedValue([
+      tpl({ templateId: 'visual.one', title: 'Visual one', body: '', format: 'visual', headline: 'H', content: '<p>x</p>' }),
+    ]);
+    render(<Templates />);
+    const card = (await screen.findByText('Visual one')).closest('li')!;
+    expect(within(card).queryByText('Old format')).toBeNull();
+    expect(within(card).queryByText('Not editable here')).toBeNull();
   });
 });

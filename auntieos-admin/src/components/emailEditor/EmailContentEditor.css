@@ -1,0 +1,174 @@
+/*
+ * #953: the visual email editor. The toolbar follows the admin theme; the
+ * document itself is drawn on the email's own paper (the frame's white
+ * `.container` and `#11131f` text, `mytribe/functions/src/lib/emailFrame.ts`),
+ * so the Callout and the button look the way they will arrive, in either theme.
+ */
+.email-editor {
+  display: flex;
+  flex-direction: column;
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-card-lg);
+  overflow: hidden;
+}
+
+.email-editor__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: 6px;
+  border-bottom: var(--border-hairline) solid var(--color-hairline);
+  background: var(--color-surface-2);
+}
+
+.email-editor__tool {
+  min-width: 32px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-chip);
+  background: none;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--type-label-lg-size);
+  cursor: pointer;
+}
+.email-editor__tool:hover:not(:disabled):not([aria-disabled='true']) {
+  border-color: var(--color-hairline);
+}
+.email-editor__tool:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+.email-editor__tool[aria-pressed='true'] {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+}
+.email-editor__tool:disabled,
+.email-editor__tool[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.email-editor__content {
+  background: #ffffff;
+  color: #11131f;
+}
+.email-editor__content .email-editor__doc {
+  min-height: 260px;
+  padding: 12px 14px;
+  outline: none;
+  font-size: 15px;
+  line-height: 1.6;
+}
+.email-editor__content .email-editor__doc:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--color-accent);
+}
+.email-editor__doc[contenteditable='false'] {
+  opacity: 0.7;
+}
+.email-editor__doc h2,
+.email-editor__doc h3 {
+  color: #11131f;
+}
+
+/* Ruling C7: exactly the frame's `blockquote` rule. */
+.email-editor__doc blockquote {
+  border-left: 4px solid #df8431;
+  background: #fff5f5;
+  padding: 15px 20px;
+  margin: 20px 0;
+  border-radius: 0 4px 4px 0;
+}
+
+/* The frame's `.button`. */
+.email-editor__doc a.button {
+  display: inline-block;
+  padding: 14px 28px;
+  background: #df8431;
+  color: #ffffff;
+  border-radius: 4px;
+  font-weight: bold;
+  text-decoration: none;
+}
+.email-editor__doc img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* A list that repeats once per entry of a list field ({{#each}}). */
+.email-editor__doc ul[data-each],
+.email-editor__doc ol[data-each] {
+  border-left: 2px dashed var(--tt-kin-teal);
+  padding-top: var(--space-1);
+  padding-bottom: var(--space-1);
+}
+.email-editor__doc ul[data-each]::before, .email-editor__doc ol[data-each]::before {
+  content: 'Repeats for each ' attr(data-each);
+  display: block;
+  margin-left: -1em;
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: 0.04em;
+  color: var(--tt-kin-teal);
+  user-select: none;
+}
+
+.merge-chip {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--tt-kin-teal) 18%, transparent);
+  color: #11131f;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  user-select: all;
+}
+.merge-chip.ProseMirror-selectednode {
+  outline: 2px solid var(--tt-kin-teal);
+}
+
+/* The dialogs (EmailEditorDialogs.tsx). */
+.email-editor__error {
+  margin: 0 0 var(--space-2);
+  color: var(--color-error);
+  font-size: var(--type-label-lg-size);
+}
+.email-editor__note {
+  margin: 0 0 var(--space-2);
+  font-size: var(--type-label-lg-size);
+  color: var(--color-text-dim);
+}
+.email-editor__dlabel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: 10px;
+  font-size: var(--type-label-lg-size);
+}
+.email-editor__target {
+  border: 0;
+  padding: 0;
+  margin: 0 0 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.email-editor__fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.email-editor__field {
+  font-family: var(--font-mono);
+  font-size: var(--type-body-sm-size);
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  border: var(--border-hairline) solid var(--color-hairline);
+  background: none;
+  color: var(--color-accent);
+  cursor: pointer;
+}
+.email-editor__field:hover {
+  border-color: var(--color-accent);
+}

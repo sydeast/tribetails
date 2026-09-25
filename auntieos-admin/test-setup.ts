@@ -82,3 +82,19 @@ configure({
 // query happily matches the PREVIOUS test's DOM, so an assertion can pass or fail
 // for reasons that have nothing to do with the test that wrote it.
 afterEach(cleanup);
+
+// #953: ProseMirror measures the selection to scroll it into view, and jsdom
+// has no layout, so Range has no rects. Zero-size rects are what a real
+// browser returns for a collapsed, off-screen range, so this changes no
+// behaviour a test can observe; it only stops the measurement from throwing.
+// Guarded: node-environment specs have no Range at all.
+if (typeof Range !== 'undefined') {
+  const rect = { x: 0, y: 0, top: 0, left: 0, bottom: 0, right: 0, width: 0, height: 0, toJSON: () => ({}) };
+  const proto = Range.prototype as unknown as Record<string, unknown>;
+  if (typeof proto['getBoundingClientRect'] !== 'function') proto['getBoundingClientRect'] = () => rect;
+  if (typeof proto['getClientRects'] !== 'function') {
+    proto['getClientRects'] = () => Object.assign([rect], { item: (i: number) => (i === 0 ? rect : null) });
+  }
+  const doc = document as unknown as Record<string, unknown>;
+  if (typeof doc['elementFromPoint'] !== 'function') doc['elementFromPoint'] = () => null;
+}
