@@ -11,6 +11,7 @@ beforeEach(() => mocks.dbFn.mockReset());
 import { importSeedTemplatesHandler, toRows } from '../src/admin/importSeedTemplates';
 import { planImport, plannedWrites } from '../src/notifications/importPlanner';
 import { SEED_CORPUS } from '../src/notifications/seedCorpus.generated';
+import { contentToText, frameHtml } from '../src/lib/emailFrame';
 
 function req(data: unknown, uid: string | null = 'admin1'): CallableRequest<unknown> {
   return {
@@ -75,11 +76,15 @@ describe('importSeedTemplates: the dry run', () => {
 
   it('HAPPY: reports unchanged when the stored copy already matches the repo', async () => {
     const entry = corpusEntry(RESCHEDULE);
-    const subject = 'A kinfolk asked for a new visit time';
-    const body = entry.emailTxt.slice(entry.emailTxt.indexOf('\n\n') + 2);
+    // #953 bridge: importPlanner's email channel derives body/html from the
+    // visual fields the same way sendPartsFor does (see importPlanner.ts);
+    // this fixture has to match that derivation to land on "unchanged".
+    const subject = entry.emailSubject;
+    const body = contentToText(entry.emailHeadline, entry.emailContent);
+    const html = frameHtml(entry.emailHeadline, entry.emailContent);
     const ctx = buildDbMock({
       docs: {
-        [`emailTemplates/${RESCHEDULE}`]: { subject, body, html: entry.emailHtml },
+        [`emailTemplates/${RESCHEDULE}`]: { subject, body, html },
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -212,8 +217,9 @@ describe('planImport: the triple-stash guard reaches imported templates too', ()
   const poisoned = [
     {
       key: 'kincare.booking.confirm',
-      emailHtml: '<p>Hello {{{payload}}}</p>',
-      emailTxt: 'Subject: Visit confirmed\n\nHello there.\n',
+      emailSubject: 'Visit confirmed',
+      emailHeadline: 'Visit confirmed',
+      emailContent: '<p>Hello {{{payload}}}</p>',
       smsTxt: 'Visit confirmed.\n',
       pushTxt: 'Visit confirmed. Tap to see it.\n',
     },
@@ -231,7 +237,7 @@ describe('planImport: the triple-stash guard reaches imported templates too', ()
 
   it('SAD: the report row carries every reason, so the import screens can show it beside Refused (#892 review 2)', () => {
     const plan = planImport({
-      corpus: [{ ...poisoned[0], emailHtml: '<a href={{link}}>Go</a> {{{payload}}}' }],
+      corpus: [{ ...poisoned[0], emailContent: '<a href={{link}}>Go</a> {{{payload}}}' }],
       existing: {},
     });
     const [row] = toRows(plan);
@@ -252,7 +258,7 @@ describe('planImport: the triple-stash guard reaches imported templates too', ()
 
   it('SAD: blocks a sms body carrying a triple stash', () => {
     const plan = planImport({
-      corpus: [{ ...poisoned[0], emailHtml: '<p>clean</p>', smsTxt: 'Visit {{{raw}}}.\n' }],
+      corpus: [{ ...poisoned[0], emailContent: '<p>clean</p>', smsTxt: 'Visit {{{raw}}}.\n' }],
       existing: {},
     });
 
@@ -263,7 +269,7 @@ describe('planImport: the triple-stash guard reaches imported templates too', ()
 
   it('SAD: blocks a directory name that could not be a document id', () => {
     const plan = planImport({
-      corpus: [{ ...poisoned[0], key: 'has spaces', emailHtml: '<p>clean</p>' }],
+      corpus: [{ ...poisoned[0], key: 'has spaces', emailContent: '<p>clean</p>' }],
       existing: {},
     });
 
@@ -271,14 +277,20 @@ describe('planImport: the triple-stash guard reaches imported templates too', ()
     expect(plan.templates[0].issues.join(' ')).toMatch(/template id contains " "/);
   });
 
-  it('SAD: reports a malformed email.txt instead of throwing past the other templates', () => {
+  // #953 bridge: the email channel no longer parses a "Subject: " line out of
+  // a file (subject.txt IS the subject), so a malformed email.txt can no
+  // longer happen here. push.txt is still parsed (parsePushTxt), and is now
+  // the channel that exercises the "one bad template doesn't abort the batch"
+  // guard this test pins.
+  it('SAD: reports a malformed push.txt instead of throwing past the other templates', () => {
     const plan = planImport({
       corpus: [
-        { ...poisoned[0], emailHtml: '<p>clean</p>', emailTxt: 'no subject line here\n\nbody\n' },
+        { ...poisoned[0], emailContent: '<p>clean</p>', pushTxt: 'no period in this text\n' },
         {
           key: 'invoice.new',
-          emailHtml: '<p>clean</p>',
-          emailTxt: 'Subject: Invoice\n\nBody.\n',
+          emailSubject: 'Invoice',
+          emailHeadline: 'Invoice',
+          emailContent: '<p>clean</p>',
           smsTxt: 'Invoice.\n',
           pushTxt: 'Invoice. Tap to view.\n',
         },
@@ -287,8 +299,8 @@ describe('planImport: the triple-stash guard reaches imported templates too', ()
     });
 
     expect(plan.templates[0].blocked).toBe(true);
-    expect(plan.templates[0].issues.join(' ')).toMatch(/first line must start with "Subject: "/);
-    // The second template is unaffected. The seed script aborted the run here.
+    expect(plan.templates[0].issues.join(' ')).toMatch(/no period found/i);
+    // The second template is unaffected. The importer aborted the run here.
     expect(plan.templates[1].blocked).toBe(false);
   });
 });

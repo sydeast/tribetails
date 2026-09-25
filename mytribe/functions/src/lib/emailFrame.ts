@@ -9,10 +9,11 @@ import type { EmailTemplateDoc } from './sendFromTemplate';
  * Ruling fix: an earlier draft of this file copied the RED security-alert
  * scheme (`auth.password.reset`, 9 of 52 seeds) under the mistaken belief
  * that it was the dominant variant. Controller ruling: the shared frame is
- * the DOMINANT, orange scheme -- verified 34 of 52 seeds, e.g.
+ * the DOMINANT, orange scheme -- verified 34 of 52 seeds, e.g. the pre-#953
  * `mytribe/seeds/notificationTemplates/account.welcome.kinfolk/email.html`
+ * (now split across `content.html` and `headline.txt`)
  * (`border-top: #df8431`, no `.header` background, `h2 { color: #11131f }`,
- * orange `.button`). `blockquote` below is that file's `.alert-box` rule,
+ * orange `.button`). `blockquote` was that file's `.alert-box` rule,
  * selector changed to `blockquote`, for the Callout block. The 9 red
  * security-alert seeds now share this frame too; their warning content goes
  * in a Callout (`blockquote`) rather than getting its own color scheme.

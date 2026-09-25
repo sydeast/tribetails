@@ -13,9 +13,8 @@ import { wrapCallable } from '../lib/wrapCallable';
 import { wrapTrigger } from '../lib/wrapTrigger';
 import { loadEmailTemplate, type EmailTemplateDoc } from '../lib/sendFromTemplate';
 import { sendTemplatedEmail } from '../lib/email';
-import { sendPartsFor } from '../lib/emailFrame';
+import { contentToText, frameHtml, sendPartsFor } from '../lib/emailFrame';
 import { SEED_CORPUS } from '../notifications/seedCorpus.generated';
-import { parseEmailTxt } from '../notifications/templateParsers';
 import { isAuntieClaim, isOwner, isOwnerClaim } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
@@ -186,8 +185,19 @@ export async function loadResetTemplate(): Promise<{ template: EmailTemplateDoc;
   if (stored) return { template: stored, source: 'stored' };
   const seed = SEED_CORPUS.find((e) => e.key === TEMPLATE_KEY);
   if (!seed) throw new Error(`no ${TEMPLATE_KEY} template stored and none in the seed corpus`);
-  const { subject, body } = parseEmailTxt(seed.emailTxt);
-  return { template: { subject, body, html: seed.emailHtml }, source: 'seed' };
+  // #953 bridge (Task 3): the corpus now carries the visual fields
+  // (emailHeadline/emailContent), not a pre-built old-format body/html. This
+  // derives both the same way `sendPartsFor` does for a real visual document,
+  // so the fallback still sends a working link. Task 4 replaces this with the
+  // proper visual-format fallback.
+  return {
+    template: {
+      subject: seed.emailSubject,
+      body: contentToText(seed.emailHeadline, seed.emailContent),
+      html: frameHtml(seed.emailHeadline, seed.emailContent),
+    },
+    source: 'seed',
+  };
 }
 
 export interface PasswordResetRequest {

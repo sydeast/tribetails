@@ -36,7 +36,10 @@ describe('the repo reset template renders a working link', () => {
     expect(out.subject).toBe('Reset your Tribe Tails password');
     expect(out.text).toContain(LINK);
     expect(out.text).toContain('Pat Doe');
-    expect(out.html).toContain(`href='${LINK}'`);
+    // #953: the seed's button now comes through the sanitizer's canonical,
+    // double-quoted attribute form (the pre-#953 hand-authored email.html used
+    // single quotes for this button).
+    expect(out.html).toContain(`href="${LINK}"`);
     expect(out.html).not.toContain('&amp;oobCode');
     expect(out.html).not.toMatch(/\{\{/);
   });

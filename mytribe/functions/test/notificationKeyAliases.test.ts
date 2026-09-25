@@ -87,7 +87,7 @@ describe('notification key aliases: seeded templates', () => {
   it('the merged key still has an email template to render', () => {
     const dirs = readdirSync(seedsDir);
     expect(dirs).toContain(CANONICAL);
-    expect(readdirSync(join(seedsDir, CANONICAL))).toContain('email.html');
+    expect(readdirSync(join(seedsDir, CANONICAL))).toContain('content.html');
     // The canonical row's template ids are what a send actually resolves, for a
     // legacy-key dispatch too (getNotificationDef returns the canonical def).
     expect(getNotificationDef(LEGACY).templates.email).toBe(CANONICAL);

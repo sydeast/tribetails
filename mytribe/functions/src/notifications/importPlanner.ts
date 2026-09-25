@@ -17,7 +17,8 @@ import {
   smsTemplateIssues,
   templateIdIssue,
 } from '../lib/templateValidation';
-import { parseEmailTxt, parsePushTxt } from './templateParsers';
+import { parsePushTxt } from './templateParsers';
+import { contentToText, frameHtml } from '../lib/emailFrame';
 import type { SeedCorpusEntry } from './seedCorpus.generated';
 
 /** The three collections a seed directory writes into. */
@@ -106,8 +107,15 @@ function channelContent(
 ): { content: Record<string, string | null>; issues: string[] } {
   try {
     if (channel === 'email') {
-      const { subject, body } = parseEmailTxt(entry.emailTxt);
-      const content = { subject, body, html: entry.emailHtml };
+      // #953 bridge (Task 3): the corpus carries the visual fields now
+      // (emailHeadline/emailContent), not a pre-built old-format body/html.
+      // This derives both the same way `sendPartsFor` does for a real visual
+      // document, so the imported doc still renders as it always did. Task 4
+      // replaces this with a proper visual-format write.
+      const subject = entry.emailSubject;
+      const body = contentToText(entry.emailHeadline, entry.emailContent);
+      const html = frameHtml(entry.emailHeadline, entry.emailContent);
+      const content = { subject, body, html };
       return { content, issues: emailTemplateIssues(content) };
     }
     if (channel === 'sms') {

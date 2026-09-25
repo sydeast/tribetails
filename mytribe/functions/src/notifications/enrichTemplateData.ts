@@ -42,7 +42,7 @@ import type { Audience } from './types';
 
 /**
  * The exact `{{token}}` set each catalog key's templates reference, mirrored from
- * seeds/notificationTemplates/<key>/{email.html,email.txt,sms.txt,push.txt}. A
+ * seeds/notificationTemplates/<key>/{subject.txt,headline.txt,content.html,sms.txt,push.txt}. A
  * unit test (enrichTemplateData.test.ts) cross-checks this map against the
  * on-disk seeds so the two can never drift. Only the subset the enricher knows
  * how to hydrate (see ENRICHABLE) is fetched; the rest are emitter-supplied
