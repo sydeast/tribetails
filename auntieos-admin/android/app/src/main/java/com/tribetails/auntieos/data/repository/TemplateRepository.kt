@@ -28,6 +28,18 @@ class TemplateRepository(
         /** #953 PR 1: null until listTemplates sends it (a later PR). Any
          * non-null format (such as "visual") is read-only on this device. */
         val format: String? = null,
+        /** #953: the visual format's header-bar text. Null on an old-format template. */
+        val headline: String? = null,
+        /** #953: the visual format's sanitized body fragment. Null on an old-format template. */
+        val content: String? = null,
+    )
+
+    /** #953: what previewEmailTemplate rendered, exactly as a real send would render it. */
+    data class EmailPreview(
+        val subject: String,
+        val html: String,
+        val text: String,
+        val issues: List<String>,
     )
 
     data class TemplateBinding(
@@ -111,6 +123,8 @@ class TemplateRepository(
                 tags = ((m["tags"] as? List<*>).orEmpty()).mapNotNull { it as? String },
                 category = m["category"] as? String,
                 format = m["format"] as? String,
+                headline = m["headline"] as? String,
+                content = m["content"] as? String,
             )
         }
     }.onFailure { AuntieLog.e("TemplateRepository.listTemplates failed", it) }
@@ -155,22 +169,44 @@ class TemplateRepository(
         template: EmailTemplate,
         expectNew: Boolean = false,
     ): Result<String> = runCatching {
-        val payload = buildMap<String, Any> {
-            put("templateId", template.templateId)
-            put("subject", template.subject)
-            put("body", template.body)
-            template.html?.let { put("html", it) }
-            put("title", template.title)
-            template.description?.let { put("description", it) }
-            put("tags", template.tags)
-            template.category?.let { put("category", it) }
-            if (expectNew) put("expectNew", true)
-        }
+        val payload = saveTemplatePayload(template, expectNew)
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("saveTemplate").call(payload).awaitCallable().data as? Map<String, Any?>
             ?: error("saveTemplate: non-map payload")
         raw["templateId"] as? String ?: error("saveTemplate: missing templateId")
     }.onFailure { AuntieLog.e("TemplateRepository.saveTemplate failed", it) }
+
+    /**
+     * #953: the email as it would be sent: the shared frame, the generated text
+     * part, sample values for [catalogKey]'s merge fields. `issues` are the
+     * sanitizer's notes on [content], returned rather than thrown so the editor
+     * can show them. Cancellation is rethrown so a superseded preview stops.
+     */
+    suspend fun previewEmailTemplate(
+        subject: String,
+        headline: String,
+        content: String,
+        catalogKey: String?,
+    ): Result<EmailPreview> = runCatching {
+        val payload = buildMap<String, Any> {
+            put("subject", subject)
+            put("headline", headline)
+            put("content", content)
+            catalogKey?.takeIf { it.isNotBlank() }?.let { put("catalogKey", it) }
+        }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("previewEmailTemplate").call(payload).awaitCallable().data as? Map<String, Any?>
+            ?: error("previewEmailTemplate: non-map payload")
+        EmailPreview(
+            subject = raw["subject"] as? String ?: "",
+            html = raw["html"] as? String ?: error("previewEmailTemplate: missing html"),
+            text = raw["text"] as? String ?: "",
+            issues = (raw["issues"] as? List<*>).orEmpty().mapNotNull { it as? String },
+        )
+    }.onFailure {
+        if (it is kotlinx.coroutines.CancellationException) throw it
+        AuntieLog.e("TemplateRepository.previewEmailTemplate failed", it)
+    }
 
     suspend fun assignTemplate(
         catalogKey: String,
@@ -319,6 +355,36 @@ internal fun decodeImportReport(raw: Map<String, Any?>): TemplateRepository.Impo
             id to (m["reason"] as? String ?: "Refused.")
         },
     )
+}
+
+/**
+ * Pure: the saveTemplate arguments for [template].
+ *
+ * #953: a visual template sends `format`, `headline` and `content` and never
+ * `body` or `html` (the server refuses a visual save that carries either). An
+ * old-format template sends exactly what it always did, in the same order.
+ * The drag-to-categorize path goes through here too, so moving a visual
+ * template to a category no longer sends an empty body.
+ */
+internal fun saveTemplatePayload(
+    template: TemplateRepository.EmailTemplate,
+    expectNew: Boolean,
+): Map<String, Any> = buildMap<String, Any> {
+    put("templateId", template.templateId)
+    put("subject", template.subject)
+    if (template.format == "visual") {
+        put("format", "visual")
+        put("headline", template.headline.orEmpty())
+        put("content", template.content.orEmpty())
+    } else {
+        put("body", template.body)
+        template.html?.let { put("html", it) }
+    }
+    put("title", template.title)
+    template.description?.let { put("description", it) }
+    put("tags", template.tags)
+    template.category?.let { put("category", it) }
+    if (expectNew) put("expectNew", true)
 }
 
 /**
