@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { convertLegacyTemplate } from '../src/notifications/convertLegacyTemplate';
+import { sanitizeEmailContent } from '../src/lib/emailContent';
 
 const frame = (inner: string, h = 'Hello there') =>
   `<!DOCTYPE html><html><head><style>.x{}</style></head><body><div class="container">` +
@@ -47,5 +48,46 @@ describe('convertLegacyTemplate', () => {
     const r = convertLegacyTemplate(html, '');
     expect(r).toMatchObject({ ok: true, headline: 'Reset your Tribe Tails password' });
     expect((r as { content: string }).content).toContain('<a href="{{link}}" class="button">Reset Password</a>');
+  });
+
+  // Fix round 1 (review): a real .alert-box body sits on its own indented
+  // line, e.g. `<div class="alert-box">\n  <p>...</p>\n</div>` -- the old
+  // `(?!<p>)` lookahead didn't see past that leading whitespace and doubled
+  // the paragraph.
+  it('keeps an alert box that already holds a <p> from doubling it', () => {
+    const r = convertLegacyTemplate(frame('<div class="alert-box">\n  <p>Heads up</p>\n</div>'), '');
+    expect(r).toMatchObject({ ok: true, content: '<blockquote><p>Heads up</p></blockquote>' });
+  });
+
+  // Fix round 1 (review): the manual per-child pre-wrap split a single run
+  // of bare text and inline markup into one <p> per child instead of one <p>
+  // for the whole run.
+  it('wraps a bare text-and-inline run in a single paragraph', () => {
+    const r = convertLegacyTemplate(frame('Hi <strong>there</strong>, welcome'), '');
+    expect(r).toMatchObject({ ok: true, content: '<p>Hi <strong>there</strong>, welcome</p>' });
+  });
+
+  // Fix round 1 (review): the old blanket `>\s+<` collapse deleted a real
+  // space typed between two inline elements, not just layout indentation.
+  it('keeps the space between two adjacent inline elements', () => {
+    const r = convertLegacyTemplate(frame('<p><strong>a</strong> <em>b</em></p>'), '');
+    expect(r).toMatchObject({ ok: true, content: '<p><strong>a</strong> <em>b</em></p>' });
+  });
+
+  it('produces output the sanitizer accepts unchanged, with no doubled paragraph tags', () => {
+    const cases = [
+      frame('<div class="alert-box">\n  <p>Heads up</p>\n</div>'),
+      frame('Hi <strong>there</strong>, welcome'),
+      frame('<p><strong>a</strong> <em>b</em></p>'),
+    ];
+    for (const html of cases) {
+      const r = convertLegacyTemplate(html, '');
+      if (!r.ok) throw new Error(`expected ok for ${html}`);
+      expect(r.content).not.toContain('<p><p');
+      expect(r.content).not.toContain('</p></p>');
+      const resanitized = sanitizeEmailContent(r.content, '');
+      expect(resanitized.issues).toEqual([]);
+      expect(resanitized.content).toBe(r.content);
+    }
   });
 });

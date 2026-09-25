@@ -13,6 +13,31 @@ export type ConvertResult = { ok: true; headline: string; content: string } | { 
 
 const hasClass = (el: Element, c: string) => (el.attribs['class'] ?? '').split(/\s+/).includes(c);
 
+// Tags whose surrounding whitespace is layout noise (the seeds' indentation),
+// never meaningful content. A run of whitespace between two INLINE tags
+// (`<strong>a</strong> <em>b</em>`) is a real space and must survive.
+const BLOCK_ADJACENT_TAGS = new Set(['p', 'h2', 'h3', 'ul', 'ol', 'li', 'blockquote']);
+// A blockquote body that already starts with a block element (typically a
+// <p>, from an alert-box the old template hand-wrote one into) is left
+// alone; only a bare-text/inline body gets a <p> added around it.
+const STARTS_WITH_BLOCK_RE = /^<(p|h2|h3|ul|ol|blockquote)\b/i;
+
+function wrapBareBlockquoteBodies(html: string): string {
+  return html.replace(/<blockquote>([\s\S]*?)<\/blockquote>/g, (whole: string, inner: string) =>
+    STARTS_WITH_BLOCK_RE.test(inner.trim()) ? whole : `<blockquote><p>${inner}</p></blockquote>`,
+  );
+}
+
+function collapseBlockAdjacentWhitespace(html: string): string {
+  return html.replace(
+    /(<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>)(\s+)(<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>)/g,
+    (whole: string, tagA: string, nameA: string, _ws: string, tagB: string, nameB: string) =>
+      BLOCK_ADJACENT_TAGS.has(nameA.toLowerCase()) || BLOCK_ADJACENT_TAGS.has(nameB.toLowerCase())
+        ? `${tagA}${tagB}`
+        : whole,
+  );
+}
+
 export function convertLegacyTemplate(html: string, cloudName: string): ConvertResult {
   const doc = parseDocument(html);
   const header = DomUtils.findOne((el) => el.name === 'div' && hasClass(el, 'header'), doc.children, true);
@@ -25,24 +50,19 @@ export function convertLegacyTemplate(html: string, cloudName: string): ConvertR
     el.name = 'blockquote';
     el.attribs = {};
   }
-  // A bare inline element directly in the box (the reset seed's button) gets its own paragraph.
-  box.children = box.children.map((child) => {
-    if (child.type === 'tag' && ['a', 'strong', 'em', 'span'].includes((child as Element).name)) {
-      const p = parseDocument('<p></p>').children[0] as Element;
-      p.children = [child];
-      child.parent = p;
-      return p;
-    }
-    return child;
-  });
+  // No manual pre-wrap of bare inline children here: sanitizeEmailContent's
+  // own wrapBareTopLevelRuns already wraps a whole contiguous run of bare
+  // text/inline content (the reset seed's button, or `Hi <strong>x</strong>,
+  // welcome`) in a single <p>. Pre-wrapping each inline child here split that
+  // run into one <p> per child instead of one <p> per run.
 
   const { content, issues } = sanitizeEmailContent(render(box.children, { encodeEntities: false }), cloudName);
   const blocking = issues.filter((i) => !i.startsWith('Removed an image'));
   if (blocking.length) return { ok: false, reason: 'unreadable' };
-  // Alert boxes held inline text directly; give it a paragraph inside the callout.
-  const tidy = content
-    .replace(/<blockquote>(?!<p>)([\s\S]*?)<\/blockquote>/g, '<blockquote><p>$1</p></blockquote>')
-    .replace(/>\s+</g, '><')
-    .trim();
+  // Alert boxes held inline text directly; give it a paragraph inside the
+  // callout -- but only when it doesn't already have one (an alert-box body
+  // that was already a <p>, just indented on its own line, must not become
+  // <p><p>...</p></p>).
+  const tidy = collapseBlockAdjacentWhitespace(wrapBareBlockquoteBodies(content)).trim();
   return { ok: true, headline, content: tidy };
 }
