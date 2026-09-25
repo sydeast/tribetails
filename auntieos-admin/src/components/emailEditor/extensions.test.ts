@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect, afterEach } from 'vitest';
 import { Editor } from '@tiptap/core';
-import { emailEditorExtensions, loopedListName } from './extensions';
+import { LOAD_CONTENT_META, emailEditorExtensions, loopedListName } from './extensions';
 import { fromEmailContent, toEmailContent } from '../../lib/emailContent';
 
 let editor: Editor | null = null;
@@ -321,5 +321,129 @@ describe('the keyboard cannot break a repeating list (#953 loop protection)', ()
     e.commands.keyboardShortcut('Enter');
     e.commands.insertContent('z');
     expect(out(e)).toBe('<p>x</p><ul>{{#each visits}}<li>a</li><li>b</li><li>c</li>{{/each}}</ul><p>z</p><p>y</p>');
+  });
+});
+describe('no edit can break a repeating list (#953 fix round 2, structural guard)', () => {
+  const seedsDir = join(dirname(fileURLToPath(import.meta.url)), '../../../../mytribe/seeds/notificationTemplates');
+  const seed = (key: string) => readFileSync(join(seedsDir, key, 'content.html'), 'utf8').trimEnd();
+  const SYNTHETIC = '<p>Before</p><ul>{{#each visits}}<li>one</li><li>two</li><li>three</li>{{/each}}</ul><p>After</p>';
+  // Each document with: the text of its last item's first text node, and the
+  // stored content once that text is deleted.
+  const docs: Array<[string, string, (base: string) => string]> = [
+    ['synthetic 3-item loop', SYNTHETIC, (b) => b.replace('<li>three</li>', '<li></li>').replace('<li></li>', '')],
+    ['assignment.assigned', seed('assignment.assigned'), (b) => b.replace('{{this.weekday}}, {{this.date}}', '{{this.weekday}}{{this.date}}')],
+    ['kincare.booking.confirm', seed('kincare.booking.confirm'), (b) => b.replace('{{this.weekday}}, {{this.date}}', '{{this.weekday}}{{this.date}}')],
+  ];
+  /** The looped list's position and size, and the text of its last item. */
+  function loop(e: Editor) {
+    let pos = -1;
+    let size = 0;
+    e.state.doc.descendants((node, p) => {
+      if (pos === -1 && node.attrs['each']) {
+        pos = p;
+        size = node.nodeSize;
+      }
+      return pos === -1;
+    });
+    expect(pos).toBeGreaterThan(0);
+    return { pos, size, after: pos + size };
+  }
+  function lastItemFirstText(e: Editor, list: { pos: number; size: number }) {
+    let found: { pos: number; text: string } | null = null;
+    const listNode = e.state.doc.nodeAt(list.pos);
+    const lastItemPos = list.pos + list.size - 1 - (listNode?.lastChild?.nodeSize ?? 0);
+    e.state.doc.nodesBetween(lastItemPos, list.pos + list.size - 1, (node, p) => {
+      if (found === null && node.isText) found = { pos: p, text: node.text ?? '' };
+      return found === null;
+    });
+    if (found === null) throw new Error('no text in the last item');
+    return found as { pos: number; text: string };
+  }
+  describe.each(docs)('%s', (_name, content, deleteInside) => {
+    it('a selection from the paragraph before into the first item, deleted, changes nothing', () => {
+      const e = open(content);
+      const base = out(e);
+      const l = loop(e);
+      e.commands.setTextSelection({ from: l.pos - 2, to: l.pos + 4 });
+      e.commands.deleteSelection();
+      expect(out(e)).toBe(base);
+    });
+    it('a selection from the last item into the paragraph after, deleted, changes nothing', () => {
+      const e = open(content);
+      const base = out(e);
+      const l = loop(e);
+      e.commands.setTextSelection({ from: l.after - 4, to: l.after + 3 });
+      e.commands.deleteSelection();
+      expect(out(e)).toBe(base);
+    });
+    it('select all, then delete, changes nothing', () => {
+      const e = open(content);
+      const base = out(e);
+      e.commands.selectAll();
+      e.commands.deleteSelection();
+      expect(out(e)).toBe(base);
+    });
+    it('select all, then typing, changes nothing', () => {
+      const e = open(content);
+      const base = out(e);
+      e.commands.selectAll();
+      e.commands.insertContent('x');
+      expect(out(e)).toBe(base);
+    });
+    it('a selection wholly inside one item deletes normally', () => {
+      const e = open(content);
+      const base = out(e);
+      const t = lastItemFirstText(e, loop(e));
+      e.commands.setTextSelection({ from: t.pos, to: t.pos + t.text.length });
+      e.commands.deleteSelection();
+      expect(out(e)).toBe(deleteInside(base));
+      expect(out(e)).toContain('{{#each visits}}');
+    });
+    it('a selection wholly outside the list deletes normally', () => {
+      const e = open(content);
+      const base = out(e);
+      const l = loop(e);
+      const start = l.after + 1;
+      const gone = e.state.doc.textBetween(start, start + 4);
+      e.commands.setTextSelection({ from: start, to: start + 4 });
+      e.commands.deleteSelection();
+      expect(out(e)).toBe(base.replace(`</ul><p>${gone}`, '</ul><p>'));
+    });
+    it('typing inside an item works', () => {
+      const e = open(content);
+      const base = out(e);
+      const l = loop(e);
+      e.commands.setTextSelection(l.after - 3);
+      e.commands.insertContent(' (confirmed)');
+      expect(out(e)).toBe(base.replace('</li>{{/each}}', ' (confirmed)</li>{{/each}}'));
+    });
+    it('a content load carrying the load flag replaces the document, loop and all', () => {
+      const e = open('<p>old</p>');
+      e.chain().setMeta(LOAD_CONTENT_META, true).setContent(fromEmailContent(content), { emitUpdate: false }).run();
+      expect(out(e)).toBe(out(open(content)));
+      expect(out(e)).toContain('{{#each visits}}');
+    });
+  });
+  it('a transaction that would remove the loop is refused, even through setContent', () => {
+    const e = open(SYNTHETIC);
+    e.commands.setContent('<p>plain</p>');
+    expect(out(e)).toBe(SYNTHETIC);
+    e.chain().setMeta(LOAD_CONTENT_META, true).setContent('<p>plain</p>').run();
+    expect(out(e)).toBe('<p>plain</p>');
+  });
+  it('setting or clearing data-each by attributes is refused', () => {
+    const e = open(SYNTHETIC);
+    const l = loop(e);
+    e.commands.command(({ tr }) => {
+      tr.setNodeMarkup(l.pos, undefined, { each: null });
+      return true;
+    });
+    expect(out(e)).toBe(SYNTHETIC);
+    const plain = open('<ul><li>a</li></ul>');
+    plain.commands.command(({ tr }) => {
+      tr.setNodeMarkup(0, undefined, { each: 'visits' });
+      return true;
+    });
+    expect(out(plain)).toBe('<ul><li>a</li></ul>');
   });
 });

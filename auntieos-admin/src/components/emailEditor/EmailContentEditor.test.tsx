@@ -319,6 +319,21 @@ describe('EmailContentEditor and a repeating list', () => {
     );
   });
 
+  it('opens a real loop template with the loop in place, and select-all then Delete keeps it', () => {
+    const seedsDir = join(dirname(fileURLToPath(import.meta.url)), '../../../../mytribe/seeds/notificationTemplates');
+    const stored = readFileSync(join(seedsDir, 'kincare.booking.confirm', 'content.html'), 'utf8');
+    const { editor, dom, onChange } = setup(stored);
+    expect(dom.querySelector('ul')).toHaveAttribute('data-each', 'visits');
+    const opened = toEmailContent(editor.getHTML());
+    expect(opened).toContain('<ul>{{#each visits}}<li>{{this.weekday}}, {{this.date}} at {{this.time}}</li>{{/each}}</ul>');
+    act(() => {
+      editor.commands.selectAll();
+    });
+    fireEvent.keyDown(dom, { key: 'Delete', code: 'Delete', keyCode: 46 });
+    fireEvent.keyDown(dom, { key: 'Backspace', code: 'Backspace', keyCode: 8 });
+    expect(onChange).not.toHaveBeenCalled();
+    expect(toEmailContent(editor.getHTML())).toBe(opened);
+  });
   it('Ctrl+Shift+7 inside the loop does not turn it into a numbered list', () => {
     const { editor, dom, onChange } = setup(LOOP);
     act(() => {

@@ -1,6 +1,9 @@
 import { Extension, Node, mergeAttributes, type Editor, type Extensions } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
+import type { Node as PMNode } from '@tiptap/pm/model';
+import { Plugin, PluginKey } from '@tiptap/pm/state';
+import { ReplaceAroundStep, ReplaceStep } from '@tiptap/pm/transform';
 import { CLOUDINARY_IMAGE, EACH_BLOCK_NAME, isLinkTarget } from '../../lib/emailContent';
 
 /**
@@ -338,6 +341,100 @@ export const LoopedListGuard = Extension.create({
   },
 });
 
+/**
+ * #953 fix round 2: the meta flag that lets a transaction replace looped lists
+ * wholesale. Only a content load sets it (`setContent` of a whole template);
+ * the component's own load is the editor's initial content, which is no
+ * transaction at all.
+ */
+export const LOAD_CONTENT_META = 'emailEditorLoad';
+
+interface LoopedSpan {
+  each: string;
+  /** First and last position inside the list (its content range). */
+  start: number;
+  end: number;
+}
+
+function loopedSpans(doc: PMNode): LoopedSpan[] {
+  const spans: LoopedSpan[] = [];
+  doc.descendants((node, pos) => {
+    if (isLoopedList(node)) spans.push({ each: node.attrs['each'] as string, start: pos + 1, end: pos + node.nodeSize - 1 });
+    return true;
+  });
+  return spans;
+}
+
+const loopKey = (spans: LoopedSpan[]) =>
+  spans
+    .map((s) => s.each)
+    .sort()
+    .join('\u0000');
+
+/** True when exactly one end of [from, to] lies inside the list's content. */
+function crosses(span: LoopedSpan, from: number, to: number): boolean {
+  const inside = (x: number) => x >= span.start && x <= span.end;
+  return inside(from) !== inside(to);
+}
+
+/** True when the range holds no text and no atom (a merge field, button, image). */
+function holdsNothing(doc: PMNode, from: number, to: number): boolean {
+  let found = false;
+  doc.nodesBetween(from, to, (node) => {
+    if (found) return false;
+    if (node.isText || node.isAtom) found = true;
+    return !found;
+  });
+  return !found;
+}
+
+/**
+ * #953 fix round 2, the structural guard (controller ruling). The keymaps in
+ * LoopedListGuard handle a collapsed cursor; this catches everything else,
+ * such as a selection across the list's edge followed by Delete, cut or
+ * typing. A document change is refused when:
+ *  - the looped lists before and after differ (one removed, one added, one
+ *    split in two, or `data-each` set, cleared or renamed), or
+ *  - a replace step's range has exactly one end inside a looped list, which
+ *    moves text into or out of the loop. A structural step that only moves
+ *    empty blocks across the edge (Enter on an empty last item leaving the
+ *    list) is still allowed, since it moves nothing that is sent.
+ * A change wholly inside one list's items, or wholly outside every looped
+ * list, passes. So does a transaction carrying LOAD_CONTENT_META.
+ */
+export const LoopedListIntegrity = Extension.create({
+  name: 'loopedListIntegrity',
+
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: new PluginKey('loopedListIntegrity'),
+        filterTransaction: (tr, state) => {
+          if (!tr.docChanged || tr.getMeta(LOAD_CONTENT_META) === true) return true;
+          const before = loopedSpans(state.doc);
+          const after = loopedSpans(tr.doc);
+          if (before.length === 0 && after.length === 0) return true;
+          if (loopKey(before) !== loopKey(after)) return false;
+          for (let i = 0; i < tr.steps.length; i++) {
+            const step = tr.steps[i];
+            const doc = tr.docs[i];
+            if (!doc) continue;
+            const spans = i === 0 ? before : loopedSpans(doc);
+            if (step instanceof ReplaceAroundStep) {
+              if (spans.some((s) => crosses(s, step.from, step.to)) && !holdsNothing(doc, step.gapFrom, step.gapTo)) {
+                return false;
+              }
+            } else if (step instanceof ReplaceStep) {
+              if (spans.some((s) => crosses(s, step.from, step.to))) return false;
+            }
+          }
+          return true;
+        },
+      }),
+    ];
+  },
+});
+
 /** The full extension list. One function, so the component and the tests build the same schema. */
 export function emailEditorExtensions(): Extensions {
   return [
@@ -362,5 +459,6 @@ export function emailEditorExtensions(): Extensions {
     EmailImage,
     EachBlockList,
     LoopedListGuard,
+    LoopedListIntegrity,
   ];
 }
