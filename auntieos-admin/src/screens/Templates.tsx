@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { listTemplatesPage, listTemplateCategories, type TemplateSummary } from '../api/templates';
 import {
   categoryCount,
@@ -20,7 +20,6 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { EntityCardGrid } from '../components/EntityCardGrid';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
-import { TemplateEditor } from './TemplateEditor';
 import { TemplateAssignments } from './TemplateAssignments';
 import { TemplateImport } from './TemplateImport';
 import { CategoryBindingDialog } from './CategoryBindingDialog';
@@ -35,6 +34,16 @@ import './Templates.css';
  * full-collection total the paged read never fetched.
  */
 const TEMPLATE_PAGE_SIZE = 50;
+
+/**
+ * Loaded on demand, not at module scope: TipTap and its extensions only ride
+ * along with TemplateEditor.tsx, so viewing the bank list never pays for the
+ * editor bundle (final review: was +131 kB gzip on the Templates chunk just
+ * to view the list).
+ */
+const TemplateEditor = lazy(() =>
+  import('./TemplateEditor').then((m) => ({ default: m.TemplateEditor })),
+);
 
 /**
  * Admin Template Bank. The PAGE FRAME is the 2026-05-27 mock
@@ -454,17 +463,19 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
   // hook order is the same on every render.
   if (editor) {
     return (
-      <TemplateEditor
-        // #953: one editor per template. The screen seeds its mode, its
-        // content editor and its lock check once, at mount, so a different
-        // template must mount a fresh one rather than reuse this state.
-        key={editor.mode === 'edit' ? `edit:${editor.template.templateId}` : 'new'}
-        template={editor.mode === 'edit' ? editor.template : null}
-        categories={categoryList}
-        onClose={() => setEditor(null)}
-        onSaved={handleSaved}
-        onDeleted={handleDeleted}
-      />
+      <Suspense fallback={<LoadingRow label="Loading template editor…" className="templates__hint" />}>
+        <TemplateEditor
+          // #953: one editor per template. The screen seeds its mode, its
+          // content editor and its lock check once, at mount, so a different
+          // template must mount a fresh one rather than reuse this state.
+          key={editor.mode === 'edit' ? `edit:${editor.template.templateId}` : 'new'}
+          template={editor.mode === 'edit' ? editor.template : null}
+          categories={categoryList}
+          onClose={() => setEditor(null)}
+          onSaved={handleSaved}
+          onDeleted={handleDeleted}
+        />
+      </Suspense>
     );
   }
   if (view === 'import') {

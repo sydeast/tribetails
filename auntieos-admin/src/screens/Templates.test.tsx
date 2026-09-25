@@ -104,8 +104,10 @@ function tpl(over: Partial<TemplateSummary>): TemplateSummary {
  * crumb marked current and the bank's own heading gone, and "closed" is the
  * bank heading back.
  */
-function editorCrumb(label: 'Edit template' | 'New template'): HTMLElement {
-  const crumb = screen.getByText(label);
+async function editorCrumb(label: 'Edit template' | 'New template'): Promise<HTMLElement> {
+  // TemplateEditor is lazy-loaded (code-split from the bank list), so it
+  // mounts behind a Suspense fallback: findByText waits for the chunk.
+  const crumb = await screen.findByText(label);
   expect(crumb).toHaveAttribute('aria-current', 'page');
   return crumb;
 }
@@ -373,7 +375,7 @@ describe('Templates screen', () => {
     const row = await screen.findByText('Booking Confirmed');
     expect(row.closest('.templates__card-main')?.tagName).toBe('BUTTON');
     await userEvent.click(row);
-    editorCrumb('Edit template');
+    await editorCrumb('Edit template');
     expect(screen.getByLabelText(/^subject$/i)).toHaveValue('Your booking is confirmed');
   });
 
@@ -397,7 +399,7 @@ describe('Templates screen', () => {
 
     await userEvent.click(edit);
 
-    editorCrumb('Edit template');
+    await editorCrumb('Edit template');
     expect(screen.getByLabelText(/^subject$/i)).toHaveValue('Your booking is confirmed');
   });
 
@@ -440,7 +442,7 @@ describe('Templates screen', () => {
     render(<Templates />);
     await screen.findByText(TEMPLATE_BANK_EMPTY_COPY);
     await userEvent.click(screen.getByRole('button', { name: /new template/i }));
-    editorCrumb('New template');
+    await editorCrumb('New template');
     expect(screen.getByLabelText(/template key/i)).toHaveValue('');
   });
 
@@ -486,7 +488,7 @@ describe('Templates screen', () => {
 
     const row = await screen.findByText('Booking Confirmed');
     await userEvent.click(row);
-    editorCrumb('Edit template');
+    await editorCrumb('Edit template');
 
     await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
     expect(screen.getByRole('dialog', { name: /delete this template\?/i })).toBeInTheDocument();
@@ -508,7 +510,7 @@ describe('Templates screen', () => {
     // exercises openEditorFor's guard indirectly via New template still being
     // available and NOT throwing while templates.status !== 'ready'.
     await userEvent.click(screen.getByRole('button', { name: /new template/i }));
-    editorCrumb('New template');
+    await editorCrumb('New template');
   });
 
   it('the editor replaces the bank while it is open, and the Template bank crumb brings the bank back', async () => {
@@ -517,6 +519,7 @@ describe('Templates screen', () => {
     ]);
     render(<Templates />);
     await userEvent.click(await screen.findByText('Booking Confirmed'));
+    await editorCrumb('Edit template');
     // One page at a time: no bank heading, no card grid, one h1.
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
     expect(screen.queryByText('Template Bank.')).toBeNull();
