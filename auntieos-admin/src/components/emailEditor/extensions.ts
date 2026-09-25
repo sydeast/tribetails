@@ -1,4 +1,4 @@
-import { Extension, Node, mergeAttributes, type Extensions } from '@tiptap/core';
+import { Extension, Node, mergeAttributes, type Editor, type Extensions } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
 import { CLOUDINARY_IMAGE, EACH_BLOCK_NAME, isLinkTarget } from '../../lib/emailContent';
@@ -229,6 +229,68 @@ export const EachBlockList = Extension.create({
   },
 });
 
+/**
+ * #953 loop protection: the field a repeating list around the selection loops
+ * over, or null. Either end of the selection counts, so a selection that only
+ * reaches into the loop is treated as inside it.
+ */
+export function loopedListName(state: Editor['state']): string | null {
+  for (const $pos of [state.selection.$from, state.selection.$to]) {
+    for (let d = $pos.depth; d > 0; d--) {
+      const node = $pos.node(d);
+      const each = node.attrs['each'] as string | null | undefined;
+      if ((node.type.name === 'bulletList' || node.type.name === 'orderedList') && each) return each;
+    }
+  }
+  return null;
+}
+/**
+ * #953 loop protection, keyboard half (the toolbar disables its own buttons).
+ * TipTap's list toggles and lifts rebuild the list without `data-each`, which
+ * deletes the loop, and a lift from the middle of a list splits it into two
+ * loops, which sends every visit twice. Inside a repeating list these keys do
+ * nothing, except Backspace at the start of a later item, which joins it to
+ * the item above instead of lifting it out. Priority above the StarterKit so
+ * these run first.
+ */
+export const LoopedListGuard = Extension.create({
+  name: 'loopedListGuard',
+  priority: 1000,
+  addKeyboardShortcuts() {
+    const inLoop = () => loopedListName(this.editor.state) !== null;
+    const keys = ['Mod-Shift-7', 'Mod-Shift-8', 'Mod-Alt-2', 'Mod-Alt-3', 'Mod-Shift-b', 'Tab', 'Shift-Tab'];
+    const shortcuts: Record<string, () => boolean> = Object.fromEntries(keys.map((k) => [k, inLoop]));
+    // The list item holding the cursor: its depth, and whether it is the last
+    // or the first item of its list.
+    const item = () => {
+      const { $from } = this.editor.state.selection;
+      for (let d = $from.depth; d > 1; d--) {
+        if ($from.node(d).type.name === 'listItem') {
+          const index = $from.index(d - 1);
+          return { depth: d, first: index === 0, last: index === $from.node(d - 1).childCount - 1 };
+        }
+      }
+      return null;
+    };
+    shortcuts['Enter'] = () => {
+      const { selection } = this.editor.state;
+      if (!inLoop() || !selection.empty || selection.$from.parent.content.size > 0) return false;
+      const li = item();
+      // An empty last item leaves the list, which keeps the loop whole.
+      return li !== null && !li.last;
+    };
+    shortcuts['Backspace'] = () => {
+      const { selection } = this.editor.state;
+      const { $from } = selection;
+      if (!inLoop() || !selection.empty || $from.parentOffset !== 0) return false;
+      const li = item();
+      if (li === null || li.first || $from.index(li.depth) !== 0) return false;
+      return this.editor.commands.joinTextblockBackward();
+    };
+    return shortcuts;
+  },
+});
+
 /** The full extension list. One function, so the component and the tests build the same schema. */
 export function emailEditorExtensions(): Extensions {
   return [
@@ -252,5 +314,6 @@ export function emailEditorExtensions(): Extensions {
     EmailButton,
     EmailImage,
     EachBlockList,
+    LoopedListGuard,
   ];
 }

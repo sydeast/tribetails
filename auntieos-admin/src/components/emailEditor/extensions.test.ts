@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect, afterEach } from 'vitest';
 import { Editor } from '@tiptap/core';
-import { emailEditorExtensions } from './extensions';
+import { emailEditorExtensions, loopedListName } from './extensions';
 import { fromEmailContent, toEmailContent } from '../../lib/emailContent';
 
 let editor: Editor | null = null;
@@ -210,5 +210,66 @@ describe('each-block lists', () => {
 
   it('a plain list gains no loop', () => {
     expect(out(open('<ul><li>a</li></ul><ol><li>b</li></ol>'))).toBe('<ul><li>a</li></ul><ol><li>b</li></ol>');
+  });
+});
+describe('the keyboard cannot break a repeating list (#953 loop protection)', () => {
+  const LOOP = '<p>x</p><ul>{{#each visits}}<li>a</li><li>b</li><li>c</li>{{/each}}</ul><p>y</p>';
+  function at(e: Editor, text: string): number {
+    let found = -1;
+    e.state.doc.descendants((node, pos) => {
+      if (found === -1 && node.isText && node.text === text) found = pos;
+    });
+    return found;
+  }
+  it('loopedListName names the loop around the selection, and nothing outside it', () => {
+    const e = open(LOOP);
+    e.commands.setTextSelection(at(e, 'b') + 1);
+    expect(loopedListName(e.state)).toBe('visits');
+    e.commands.setTextSelection(1);
+    expect(loopedListName(e.state)).toBeNull();
+    e.commands.setTextSelection({ from: 1, to: at(e, 'a') + 1 });
+    expect(loopedListName(e.state)).toBe('visits');
+  });
+  it.each([
+    ['Mod-Shift-7', 'numbered list'],
+    ['Mod-Shift-8', 'bulleted list'],
+    ['Mod-Alt-2', 'heading'],
+    ['Mod-Alt-3', 'subheading'],
+    ['Mod-Shift-b', 'callout'],
+    ['Tab', 'indent'],
+    ['Shift-Tab', 'outdent'],
+  ])('%s (%s) inside the loop leaves it whole', (key) => {
+    const e = open(LOOP);
+    e.commands.setTextSelection(at(e, 'b') + 1);
+    e.commands.keyboardShortcut(key);
+    expect(out(e)).toBe(LOOP);
+  });
+  it('the same keys still work outside the loop', () => {
+    const e = open(LOOP);
+    e.commands.setTextSelection(at(e, 'y') + 1);
+    e.commands.keyboardShortcut('Mod-Shift-7');
+    expect(out(e)).toBe('<p>x</p><ul>{{#each visits}}<li>a</li><li>b</li><li>c</li>{{/each}}</ul><ol><li>y</li></ol>');
+  });
+  it('Backspace at the start of a later item joins it to the one above, keeping one loop', () => {
+    const e = open(LOOP);
+    e.commands.setTextSelection(at(e, 'b'));
+    e.commands.keyboardShortcut('Backspace');
+    expect(out(e)).toBe('<p>x</p><ul>{{#each visits}}<li>ab</li><li>c</li>{{/each}}</ul><p>y</p>');
+  });
+  it('Enter on an empty item in the middle does not split the loop in two', () => {
+    const e = open(LOOP);
+    e.commands.setTextSelection(at(e, 'b') + 1);
+    e.commands.keyboardShortcut('Enter');
+    e.commands.keyboardShortcut('Enter');
+    expect(out(e).match(/\{\{#each/g)).toHaveLength(1);
+    expect(out(e)).toBe(LOOP);
+  });
+  it('Enter twice at the end of the last item leaves the list, loop intact', () => {
+    const e = open(LOOP);
+    e.commands.setTextSelection(at(e, 'c') + 1);
+    e.commands.keyboardShortcut('Enter');
+    e.commands.keyboardShortcut('Enter');
+    e.commands.insertContent('z');
+    expect(out(e)).toBe('<p>x</p><ul>{{#each visits}}<li>a</li><li>b</li><li>c</li>{{/each}}</ul><p>z</p><p>y</p>');
   });
 });
