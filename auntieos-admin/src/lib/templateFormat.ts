@@ -453,9 +453,29 @@ export function buildSaveTemplatePayload(
 
 // ── #953 visual templates ───────────────────────────────────────────────────
 
-/** Old format = anything not marked visual. The Template Bank badges these; the editor offers Convert. */
+/**
+ * Old format = no `format` at all (subject, body and optional html). The
+ * Template Bank badges these; the editor offers Convert.
+ *
+ * #953 Ruling C13: a `format` that is set but is not `'visual'` is NOT old
+ * format. It is a shape this admin does not know yet, and CALLABLE_CONTRACT.md
+ * says any non-null value this client cannot handle opens read-only. Treating
+ * it as old would offer Convert, and an old-format save deletes the visual
+ * fields on the server.
+ */
 export function isOldFormat(tpl: Pick<TemplateSummary, 'format'>): boolean {
-  return tpl.format !== 'visual';
+  return tpl.format == null;
+}
+
+/**
+ * Which editor a template opens in. `null` is create mode, and new templates
+ * are visual. `'readonly'` is a stored format this admin cannot edit (C13).
+ */
+export type TemplateEditorMode = 'visual' | 'old' | 'readonly';
+
+export function templateEditorMode(tpl: Pick<TemplateSummary, 'format'> | null): TemplateEditorMode {
+  if (tpl === null || tpl.format === 'visual') return 'visual';
+  return isOldFormat(tpl) ? 'old' : 'readonly';
 }
 
 /** The single blocking error for a visual template, or null. Same order and key rules as `templateFormError`. */

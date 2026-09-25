@@ -24,6 +24,7 @@ import {
   templateFormError,
   buildSaveTemplatePayload,
   isOldFormat,
+  templateEditorMode,
   visualFormError,
   buildVisualSavePayload,
   fieldsForTemplate,
@@ -461,6 +462,19 @@ describe('#953 visual templates', () => {
   it('isOldFormat is true unless the template says visual', () => {
     expect(isOldFormat({})).toBe(true);
     expect(isOldFormat({ format: 'visual' })).toBe(false);
+  });
+
+  it('C13: a format this admin does not know is not old format (no Convert on it)', () => {
+    expect(isOldFormat({ format: null })).toBe(true);
+    expect(isOldFormat({ format: 'blocks' })).toBe(false);
+  });
+
+  it('templateEditorMode: new and visual are visual, no format is old, anything else is read-only', () => {
+    expect(templateEditorMode(null)).toBe('visual');
+    expect(templateEditorMode({ format: 'visual' })).toBe('visual');
+    expect(templateEditorMode({})).toBe('old');
+    expect(templateEditorMode({ format: null })).toBe('old');
+    expect(templateEditorMode({ format: 'blocks' })).toBe('readonly');
   });
 
   it('templateToFormFields carries headline and content, defaulting to empty', () => {
