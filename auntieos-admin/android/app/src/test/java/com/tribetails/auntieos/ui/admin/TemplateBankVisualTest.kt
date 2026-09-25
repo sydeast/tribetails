@@ -264,6 +264,11 @@ class TemplateBankVisualTest {
         composeRule.onNodeWithText("The headline is empty.").assertDoesNotExist()
         composeRule.onNodeWithText("Welcome to the family").assertExists()
         composeRule.onNodeWithTag(VISUAL_SAVE_TAG).assertIsEnabled()
+
+        // Not silent either: back on the bank, the lost save is named there.
+        back()
+        composeRule.onNodeWithText("Couldn't save \"Password reset\": The headline is empty.", substring = true)
+            .assertExists()
     }
 
     @Test

@@ -381,7 +381,16 @@ fun TemplateBankBody(
                                 if (stillOpen) { editing = null; editingId = null; saveError = null }
                                 reload()
                             }
-                            .onFailure { if (stillOpen) saveError = it.message ?: "Save failed." }
+                            .onFailure {
+                                val msg = it.message ?: "Save failed."
+                                // Left behind, a refusal goes on the bank's own
+                                // banner, named, the way a failed drag does.
+                                if (stillOpen) {
+                                    saveError = msg
+                                } else {
+                                    error = "Couldn't save \"${current.title.ifBlank { id }}\": $msg"
+                                }
+                            }
                     }
                 },
                 loadPreview = { req ->
@@ -416,7 +425,14 @@ fun TemplateBankBody(
                             if (stillOpen) { editing = null; editingId = null; creating = false; saveError = null }
                             reload()
                         }
-                        .onFailure { if (stillOpen) saveError = it.message ?: "Save failed." }
+                        .onFailure {
+                            val msg = it.message ?: "Save failed."
+                            if (stillOpen) {
+                                saveError = msg
+                            } else {
+                                error = "Couldn't save \"${current.title.ifBlank { current.templateId }}\": $msg"
+                            }
+                        }
                 }
             },
         )
