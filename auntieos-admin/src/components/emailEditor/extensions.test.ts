@@ -447,3 +447,143 @@ describe('no edit can break a repeating list (#953 fix round 2, structural guard
     expect(out(plain)).toBe('<ul><li>a</li></ul>');
   });
 });
+describe('pastes and moves cannot break a repeating list (#953 fix round 3)', () => {
+  const seedsDir = join(dirname(fileURLToPath(import.meta.url)), '../../../../mytribe/seeds/notificationTemplates');
+  const seed = (key: string) => readFileSync(join(seedsDir, key, 'content.html'), 'utf8').trimEnd();
+  const SYNTHETIC = '<p>Before</p><ul>{{#each visits}}<li>one</li><li>two</li><li>three</li>{{/each}}</ul><p>After</p>';
+  const WITH_CHIP = '<p>Before</p><ul>{{#each visits}}<li>{{this.date}} one</li><li>two</li>{{/each}}</ul><p>After</p>';
+  /** A real paste event on the editor's DOM, with the given clipboard. */
+  function paste(e: Editor, html: string, text: string): boolean {
+    const event = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'clipboardData', {
+      value: {
+        getData: (type: string) => (type === 'text/html' ? html : type === 'text/plain' ? text : ''),
+        types: ['text/html', 'text/plain'],
+        files: [],
+      },
+    });
+    e.view.dom.dispatchEvent(event);
+    return event.defaultPrevented;
+  }
+  function loop(e: Editor) {
+    let pos = -1;
+    let size = 0;
+    e.state.doc.descendants((node, p) => {
+      if (pos === -1 && node.attrs['each']) {
+        pos = p;
+        size = node.nodeSize;
+      }
+      return pos === -1;
+    });
+    expect(pos).toBeGreaterThan(0);
+    return { pos, size, after: pos + size };
+  }
+  /** Position just after the first character of the first text node inside the last item. */
+  function midLastItem(e: Editor) {
+    const l = loop(e);
+    const list = e.state.doc.nodeAt(l.pos);
+    const lastItem = l.after - 1 - (list?.lastChild?.nodeSize ?? 0);
+    let at = -1;
+    e.state.doc.nodesBetween(lastItem, l.after - 1, (node, p) => {
+      if (at === -1 && node.isText) at = p + 1;
+      return at === -1;
+    });
+    expect(at).toBeGreaterThan(0);
+    return at;
+  }
+  // [name, content, where the paste lands inside the last item: before -> after]
+  const docs: Array<[string, string, string, string]> = [
+    ['synthetic 3-item loop', SYNTHETIC, '<li>three</li>', '<li>t%%hree</li>'],
+    ['assignment.assigned', seed('assignment.assigned'), '{{this.weekday}}, {{this.date}}', '{{this.weekday}},%% {{this.date}}'],
+    ['kincare.booking.confirm', seed('kincare.booking.confirm'), '{{this.weekday}}, {{this.date}}', '{{this.weekday}},%% {{this.date}}'],
+  ];
+  const landed = (base: string, find: string, into: string, pasted: string) => base.replace(find, into.replace('%%', pasted));
+  describe.each(docs)('%s', (_name, content, find, into) => {
+    it('a list, a paragraph and a list pasted mid-item land as text inside that item', () => {
+      const e = open(content);
+      const base = out(e);
+      e.commands.setTextSelection(midLastItem(e));
+      expect(paste(e, '<ul><li>A</li></ul><p>X</p><ul><li>B</li></ul>', 'A\nX\nB')).toBe(true);
+      expect(out(e)).toBe(landed(base, find, into, 'A<br>X<br>B'));
+      expect(out(e).match(/\{\{#each/g)).toHaveLength(1);
+    });
+    it('with no plain-text flavour, the pasted markup is flattened to its text', () => {
+      const e = open(content);
+      const base = out(e);
+      e.commands.setTextSelection(midLastItem(e));
+      paste(e, '<ul><li>A</li></ul><p>X</p><ul><li>B</li></ul>', '');
+      expect(out(e)).toBe(landed(base, find, into, 'A<br>X<br>B'));
+    });
+    it('two pasted paragraphs become one item with a line break', () => {
+      const e = open(content);
+      const base = out(e);
+      e.commands.setTextSelection(midLastItem(e));
+      paste(e, '<p>X</p><p>Y</p>', 'X\n\nY');
+      expect(out(e)).toBe(landed(base, find, into, 'X<br>Y'));
+    });
+    it('a paste over a selection from before the list into it changes nothing', () => {
+      const e = open(content);
+      const base = out(e);
+      const l = loop(e);
+      e.commands.setTextSelection({ from: l.pos - 2, to: l.pos + 4 });
+      paste(e, `<ul data-each="visits"><li><p>Z</p></li></ul>${e.getHTML()}`, 'Z');
+      expect(out(e)).toBe(base);
+    });
+    it('a same-name loop put over the list, or over a selection into it, is refused', () => {
+      const e = open(content);
+      const base = out(e);
+      const l = loop(e);
+      e.commands.insertContentAt({ from: l.pos, to: l.after }, '<ul data-each="visits"><li><p>Z</p></li></ul>');
+      expect(out(e)).toBe(base);
+      e.commands.insertContentAt({ from: l.pos - 2, to: l.pos + 4 }, '<ul data-each="visits"><li><p>Z</p></li></ul>');
+      expect(out(e)).toBe(base);
+      // The whole editor HTML put over that selection, past the paste handler.
+      e.commands.insertContentAt({ from: l.pos - 2, to: l.pos + 4 }, e.getHTML());
+      expect(out(e)).toBe(base);
+    });
+    it('a list pasted outside the loop still lands as a list', () => {
+      const e = open(content);
+      const base = out(e);
+      const l = loop(e);
+      // An empty paragraph right after the list, where the list is pasted.
+      e.chain().insertContentAt(l.after, { type: 'paragraph' }).setTextSelection(l.after + 1).run();
+      paste(e, '<ul><li>P</li><li>Q</li></ul>', 'P\nQ');
+      const after = out(e);
+      expect(after).toBe(base.replace('{{/each}}</ul>', '{{/each}}</ul><ul><li>P</li><li>Q</li></ul>'));
+    });
+  });
+  it.each([
+    ['a synthetic loop with a chip', WITH_CHIP, 'this.date'],
+    ['assignment.assigned', seed('assignment.assigned'), 'this.weekday'],
+    ['kincare.booking.confirm', seed('kincare.booking.confirm'), 'this.weekday'],
+  ])('%s: moving a {{this…}} chip out of the loop in one transaction is refused', (_name, content, field) => {
+    const e = open(content);
+    const base = out(e);
+    let chip = -1;
+    e.state.doc.descendants((node, p) => {
+      if (chip === -1 && node.type.name === 'mergeField' && node.attrs['name'] === field) chip = p;
+      return chip === -1;
+    });
+    expect(chip).toBeGreaterThan(0);
+    e.commands.command(({ tr }) => {
+      const node = tr.doc.nodeAt(chip);
+      if (!node) return false;
+      tr.delete(chip, chip + 1);
+      tr.insert(1, node);
+      return true;
+    });
+    expect(out(e)).toBe(base);
+  });
+  it('typing a {{this…}} token outside the loop is refused; inside it is fine', () => {
+    const e = open(SYNTHETIC);
+    e.commands.insertContentAt(1, '{{this.date}} ');
+    expect(out(e)).toBe(SYNTHETIC);
+    e.commands.insertContentAt(midLastItem(e), '{{this.date}}');
+    expect(out(e)).toBe(SYNTHETIC.replace('<li>three</li>', '<li>t{{this.date}}hree</li>'));
+  });
+  it('a stored {{this…}} already outside a loop does not freeze the editor', () => {
+    const e = open('<p>{{this.date}}</p><ul>{{#each visits}}<li>a</li>{{/each}}</ul>');
+    e.commands.insertContentAt(1, 'x');
+    expect(out(e)).toBe('<p>x{{this.date}}</p><ul>{{#each visits}}<li>a</li>{{/each}}</ul>');
+  });
+});

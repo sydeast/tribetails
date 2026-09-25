@@ -303,7 +303,7 @@ describe('EmailContentEditor and a repeating list', () => {
     const paste = new Event('paste', { bubbles: true, cancelable: true });
     Object.defineProperty(paste, 'clipboardData', {
       value: {
-        getData: (type: string) => (type === 'text/html' ? html : type === 'text/plain' ? 'Alpha bold Beta Gamma' : ''),
+        getData: (type: string) => (type === 'text/html' ? html : type === 'text/plain' ? 'Alpha bold\n\nBeta\nGamma' : ''),
         types: ['text/html', 'text/plain'],
         files: [],
       },
@@ -312,9 +312,10 @@ describe('EmailContentEditor and a repeating list', () => {
       dom.dispatchEvent(paste);
     });
     expect(paste.defaultPrevented).toBe(true);
-    // The pasted paragraphs join the item as lines of it; the one loop still wraps every item.
+    // Fix round 3: inside a loop a paste goes in as plain text, its lines joined
+    // by line breaks inside the item; the one loop still wraps every item.
     expect(last()).toBe(
-      '<p>Before</p><ul>{{#each visits}}<li>one</li><li>twoAlpha <strong>bold</strong><br>Beta<br>Gamma</li>' +
+      '<p>Before</p><ul>{{#each visits}}<li>one</li><li>twoAlpha bold<br>Beta<br>Gamma</li>' +
         '<li>three</li>{{/each}}</ul><p>After</p>',
     );
   });

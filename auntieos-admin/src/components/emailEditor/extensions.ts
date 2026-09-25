@@ -1,8 +1,8 @@
 import { Extension, Node, mergeAttributes, type Editor, type Extensions } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
-import type { Node as PMNode } from '@tiptap/pm/model';
-import { Plugin, PluginKey } from '@tiptap/pm/state';
+import { Fragment, Slice, type Node as PMNode } from '@tiptap/pm/model';
+import { Plugin, PluginKey, type Transaction } from '@tiptap/pm/state';
 import { ReplaceAroundStep, ReplaceStep } from '@tiptap/pm/transform';
 import { CLOUDINARY_IMAGE, EACH_BLOCK_NAME, isLinkTarget } from '../../lib/emailContent';
 
@@ -351,6 +351,8 @@ export const LOAD_CONTENT_META = 'emailEditorLoad';
 
 interface LoopedSpan {
   each: string;
+  /** The list node's own position, before its opening token. */
+  pos: number;
   /** First and last position inside the list (its content range). */
   start: number;
   end: number;
@@ -359,22 +361,19 @@ interface LoopedSpan {
 function loopedSpans(doc: PMNode): LoopedSpan[] {
   const spans: LoopedSpan[] = [];
   doc.descendants((node, pos) => {
-    if (isLoopedList(node)) spans.push({ each: node.attrs['each'] as string, start: pos + 1, end: pos + node.nodeSize - 1 });
+    if (isLoopedList(node)) {
+      spans.push({ each: node.attrs['each'] as string, pos, start: pos + 1, end: pos + node.nodeSize - 1 });
+    }
     return true;
   });
   return spans;
 }
 
-const loopKey = (spans: LoopedSpan[]) =>
-  spans
-    .map((s) => s.each)
-    .sort()
-    .join('\u0000');
+const insideSpan = (span: LoopedSpan, x: number) => x >= span.start && x <= span.end;
 
 /** True when exactly one end of [from, to] lies inside the list's content. */
 function crosses(span: LoopedSpan, from: number, to: number): boolean {
-  const inside = (x: number) => x >= span.start && x <= span.end;
-  return inside(from) !== inside(to);
+  return insideSpan(span, from) !== insideSpan(span, to);
 }
 
 /** True when the range holds no text and no atom (a merge field, button, image). */
@@ -388,19 +387,87 @@ function holdsNothing(doc: PMNode, from: number, to: number): boolean {
   return !found;
 }
 
+/** A loop-local token: `{{this}}` or `{{this.something}}`. */
+const LOOP_TOKEN = /\{\{\s*this(?:\.[A-Za-z0-9_.]*)?\s*\}\}/;
+
+function mentionsLoopToken(node: PMNode): boolean {
+  if (node.type.name === 'mergeField') {
+    const name = node.attrs['name'] as string;
+    if (name === 'this' || name.startsWith('this.')) return true;
+  }
+  if (node.isText && LOOP_TOKEN.test(node.text ?? '')) return true;
+  for (const value of Object.values(node.attrs)) {
+    if (typeof value === 'string' && LOOP_TOKEN.test(value)) return true;
+  }
+  return node.marks.some((mark) =>
+    Object.values(mark.attrs).some((value) => typeof value === 'string' && LOOP_TOKEN.test(value)),
+  );
+}
+
+/** How many nodes carry a loop-local token outside every looped list. */
+function orphanedLoopTokens(doc: PMNode): number {
+  let count = 0;
+  const walk = (node: PMNode, inLoop: boolean) => {
+    node.forEach((child) => {
+      if (!inLoop && mentionsLoopToken(child)) count++;
+      walk(child, inLoop || isLoopedList(child));
+    });
+  };
+  walk(doc, false);
+  return count;
+}
+
 /**
- * #953 fix round 2, the structural guard (controller ruling). The keymaps in
- * LoopedListGuard handle a collapsed cursor; this catches everything else,
- * such as a selection across the list's edge followed by Delete, cut or
- * typing. A document change is refused when:
- *  - the looped lists before and after differ (one removed, one added, one
- *    split in two, or `data-each` set, cleared or renamed), or
+ * Identity (fix round 3): every looped list before the change must still be
+ * there after it, as the same list. Its position mapped through the change
+ * must land on a looped list with the same field name, and no looped list may
+ * appear that is not one of those. The mapped end must match the list's new
+ * end, except when all that lies between them is empty blocks (Enter on an
+ * empty last item leaving the list), so a loop that was cut in two, or that
+ * swallowed what came after it, is refused.
+ */
+function keepsLoopIdentity(tr: Transaction, before: LoopedSpan[], after: LoopedSpan[]): boolean {
+  const kept = new Set<number>();
+  for (const span of before) {
+    const start = tr.mapping.mapResult(span.pos, 1);
+    if (start.deleted) return false;
+    const node = tr.doc.nodeAt(start.pos);
+    if (!node || !isLoopedList(node) || node.attrs['each'] !== span.each) return false;
+    const newEnd = start.pos + node.nodeSize;
+    const mappedEnd = tr.mapping.map(span.end + 1, -1);
+    if (newEnd !== mappedEnd) {
+      const [lo, hi] = newEnd < mappedEnd ? [newEnd, mappedEnd] : [mappedEnd, newEnd];
+      if (!holdsNothing(tr.doc, lo, hi)) return false;
+    }
+    kept.add(start.pos);
+  }
+  return after.every((span) => kept.has(span.pos));
+}
+
+/**
+ * #953 fix round 2, the structural guard (controller ruling), widened in fix
+ * round 3. The keymaps in LoopedListGuard handle a collapsed cursor; this
+ * catches everything else, such as a selection across the list's edge
+ * followed by Delete, cut, typing or a paste. A document change is refused
+ * when:
+ *  - a looped list does not survive as itself (see keepsLoopIdentity): one
+ *    removed, replaced, cut in two or grown over its neighbour, a new one
+ *    added (even one with the same field name), or `data-each` set, cleared
+ *    or renamed;
  *  - a replace step's range has exactly one end inside a looped list, which
  *    moves text into or out of the loop. A structural step that only moves
  *    empty blocks across the edge (Enter on an empty last item leaving the
- *    list) is still allowed, since it moves nothing that is sent.
+ *    list) is still allowed, since it moves nothing that is sent;
+ *  - a structural step's kept block (its gap) has exactly one end inside a
+ *    looped list, which lifts part of the loop out or wraps outside content in;
+ *  - it leaves more `{{this…}}` tokens outside every loop than before (a
+ *    visit field moved out of its loop means nothing when the email is sent).
  * A change wholly inside one list's items, or wholly outside every looped
  * list, passes. So does a transaction carrying LOAD_CONTENT_META.
+ *
+ * The paste half: a paste that lands in or across a looped list goes in as
+ * plain text, its lines joined by line breaks inside the item, so pasted
+ * block structure (a list, several paragraphs) never lands in the loop.
  */
 export const LoopedListIntegrity = Extension.create({
   name: 'loopedListIntegrity',
@@ -414,13 +481,14 @@ export const LoopedListIntegrity = Extension.create({
           const before = loopedSpans(state.doc);
           const after = loopedSpans(tr.doc);
           if (before.length === 0 && after.length === 0) return true;
-          if (loopKey(before) !== loopKey(after)) return false;
+          if (!keepsLoopIdentity(tr, before, after)) return false;
           for (let i = 0; i < tr.steps.length; i++) {
             const step = tr.steps[i];
             const doc = tr.docs[i];
             if (!doc) continue;
             const spans = i === 0 ? before : loopedSpans(doc);
             if (step instanceof ReplaceAroundStep) {
+              if (spans.some((s) => crosses(s, step.gapFrom, step.gapTo))) return false;
               if (spans.some((s) => crosses(s, step.from, step.to)) && !holdsNothing(doc, step.gapFrom, step.gapTo)) {
                 return false;
               }
@@ -428,7 +496,34 @@ export const LoopedListIntegrity = Extension.create({
               if (spans.some((s) => crosses(s, step.from, step.to))) return false;
             }
           }
-          return true;
+          return orphanedLoopTokens(tr.doc) <= orphanedLoopTokens(state.doc);
+        },
+      }),
+      new Plugin({
+        key: new PluginKey('loopedListPaste'),
+        props: {
+          handlePaste: (view, event, slice) => {
+            const { state } = view;
+            const { from, to } = state.selection;
+            const touches = loopedSpans(state.doc).some(
+              (s) => insideSpan(s, from) || insideSpan(s, to) || (from < s.start && to > s.end),
+            );
+            if (!touches) return false;
+            const plain =
+              event.clipboardData?.getData('text/plain') ||
+              slice.content.textBetween(0, slice.content.size, '\n', (leaf) =>
+                leaf.type.name === 'mergeField' ? `{{${leaf.attrs['name'] as string}}}` : leaf.type.name === 'hardBreak' ? '\n' : '',
+              );
+            const lines = plain.split(/\r?\n/).filter((line) => line.trim() !== '');
+            const hardBreak = state.schema.nodes['hardBreak'];
+            const nodes: PMNode[] = [];
+            lines.forEach((line, index) => {
+              if (index > 0 && hardBreak) nodes.push(hardBreak.create());
+              nodes.push(state.schema.text(line));
+            });
+            if (nodes.length > 0) view.dispatch(state.tr.replaceSelection(new Slice(Fragment.from(nodes), 0, 0)).scrollIntoView());
+            return true;
+          },
         },
       }),
     ];
