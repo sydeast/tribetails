@@ -1,0 +1,185 @@
+package com.tribetails.auntieos.ui.admin
+
+import androidx.compose.runtime.saveable.SaverScope
+import com.tribetails.auntieos.data.repository.TemplateRepository
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * #953 PR 5: the Android rule that edit screens never rebuild a model from
+ * form state. Every field comes back as loaded unless its control changed.
+ */
+class VisualTemplateSaveTest {
+
+    private val original = TemplateRepository.EmailTemplate(
+        templateId = "auth.password.reset", subject = "Reset", body = "", html = null,
+        title = "", description = "", tags = listOf("auth", "account"), category = "",
+        format = "visual", headline = "Reset your password",
+        content = "<p>Hi <strong>{{displayName}}</strong>,<br>tap below.</p>",
+    )
+
+    private fun editedFirstBlock(draft: VisualDraft, newText: String): VisualDraft {
+        val first = draft.blocks[0] as EmailBlock.TextBlock
+        val r = applyBlockEdit(first, newText) as BlockEdit.Accepted
+        return draft.copy(blocks = draft.blocks.toMutableList().also { it[0] = r.block })
+    }
+
+    @Test fun anUntouchedDraftSavesTheTemplateAsLoaded() {
+        assertEquals(original, visualTemplateToSave(original, VisualDraft.from(original)))
+    }
+
+    @Test fun changingTheSubjectChangesOnlyTheSubject() {
+        val saved = visualTemplateToSave(original, VisualDraft.from(original).copy(subject = "New"))
+        assertEquals(original.copy(subject = "New"), saved)
+    }
+
+    @Test fun anEmptyDescriptionNobodyTouchedStaysEmptyNotNull() {
+        assertEquals("", visualTemplateToSave(original, VisualDraft.from(original)).description)
+        assertEquals("", visualTemplateToSave(original, VisualDraft.from(original)).category)
+    }
+
+    @Test fun aDescriptionTheOperatorClearedBecomesNull() {
+        val withNote = original.copy(description = "Sent on request")
+        assertNull(visualTemplateToSave(withNote, VisualDraft.from(withNote).copy(description = "")).description)
+    }
+
+    @Test fun aTitleClearedByTheOperatorFallsBackToTheKey() {
+        val named = original.copy(title = "Password reset")
+        assertEquals("auth.password.reset", visualTemplateToSave(named, VisualDraft.from(named).copy(title = " ")).title)
+    }
+
+    @Test fun untouchedContentIsWrittenBackByteForByte() {
+        // `<br>` without the slash is not the sanitizer's spelling; it still comes back as stored.
+        assertEquals(original.content, visualTemplateToSave(original, VisualDraft.from(original).copy(headline = "H")).content)
+    }
+
+    @Test fun editedContentIsSerializedFromTheBlocks() {
+        val draft = editedFirstBlock(VisualDraft.from(original), "Hi {{displayName}},\ntap the button.")
+        assertEquals(
+            "<p>Hi <strong>{{displayName}}</strong>,<br>tap the button.</p>",
+            visualTemplateToSave(original, draft).content,
+        )
+    }
+
+    @Test fun onlyACompleteVisualDocUsesTheVisualEditor() {
+        assertTrue(usesVisualEditor(original, creating = false))
+        assertFalse(usesVisualEditor(original, creating = true))
+        assertFalse(usesVisualEditor(original.copy(content = null), creating = false))
+        assertFalse(usesVisualEditor(original.copy(headline = null), creating = false))
+        assertFalse(usesVisualEditor(original.copy(format = "mjml"), creating = false))
+        assertFalse(usesVisualEditor(original.copy(format = null), creating = false))
+    }
+
+    @Test fun problems() {
+        val draft = VisualDraft.from(original)
+        assertNull(visualDraftProblem(draft))
+        assertEquals(DRAFT_NEEDS_SUBJECT, visualDraftProblem(draft.copy(subject = " ")))
+        assertEquals(DRAFT_NEEDS_HEADLINE, visualDraftProblem(draft.copy(headline = "")))
+        assertEquals(DRAFT_BROKEN_MERGE_FIELD, visualDraftProblem(draft.copy(subject = "Hi {{na")))
+        assertEquals(DRAFT_BROKEN_MERGE_FIELD, visualDraftProblem(editedFirstBlock(draft, "Hi {{displayName}},\ntap {{li")))
+    }
+
+    // Review Focus 4
+    @Test fun theDraftSurvivesSaveAndRestore() {
+        val edited = editedFirstBlock(VisualDraft.from(original), "Hi {{displayName}},\ntap here 😀.")
+            .copy(subject = "S2", tags = listOf("x"))
+        val scope = SaverScope { true }
+        val saved = with(VisualDraftSaver) { scope.save(edited) }!!
+        val restored = VisualDraftSaver.restore(saved)!!
+        assertEquals(serializeEmailContent(edited.blocks), serializeEmailContent(restored.blocks))
+        assertEquals(edited.copy(blocks = restored.blocks), restored)
+    }
+
+    @Test fun aNullDescriptionAndCategoryStayNullUnlessTheirControlChanges() {
+        val bare = original.copy(description = null, category = null)
+        val untouched = visualTemplateToSave(bare, VisualDraft.from(bare))
+        assertNull(untouched.description)
+        assertNull(untouched.category)
+        assertEquals(bare, untouched)
+        val draft = editedFirstBlock(VisualDraft.from(bare), "Hi {{displayName}},\ntap it.").copy(subject = "S2", tags = listOf("x"))
+        val otherFieldsEdited = visualTemplateToSave(bare, draft)
+        assertNull(otherFieldsEdited.description)
+        assertNull(otherFieldsEdited.category)
+        assertEquals("S2", otherFieldsEdited.subject)
+    }
+
+    // Review Focus 4: what rotation restores diff-saves like the draft that was on screen.
+    @Test fun aRestoredDraftDiffSavesLikeTheOriginal() {
+        val scope = SaverScope { true }
+        fun rotate(d: VisualDraft) = VisualDraftSaver.restore(with(VisualDraftSaver) { scope.save(d) }!!)!!
+
+        val untouched = visualTemplateToSave(original, rotate(VisualDraft.from(original)))
+        assertEquals(original, untouched)
+        assertEquals(original.content, untouched.content)
+
+        val twoBlocks = original.copy(content = "<p>Hi <strong>{{displayName}}</strong>,<br>tap below.</p><p>Thanks &amp; bye.</p>")
+        val edited = visualTemplateToSave(twoBlocks, rotate(editedFirstBlock(VisualDraft.from(twoBlocks), "Hi {{displayName}},\ntap here.")))
+        assertEquals("<p>Hi <strong>{{displayName}}</strong>,<br>tap here.</p><p>Thanks &amp; bye.</p>", edited.content)
+        assertEquals(twoBlocks.copy(content = edited.content), edited)
+    }
+
+    private val spelled = original.copy(
+        content = "<p>Tom&nbsp;&amp; Jerry say hi.</p>\n<p>Fish &#38; chips&nbsp;at <strong>{{time}}</strong>.</p>",
+    )
+
+    private fun editBlock(draft: VisualDraft, index: Int, change: (String) -> String): VisualDraft {
+        val block = draft.blocks[index] as EmailBlock.TextBlock
+        val r = applyBlockEdit(block, change(block.plainText())) as BlockEdit.Accepted
+        return draft.copy(blocks = draft.blocks.toMutableList().also { it[index] = r.block })
+    }
+
+    // Review round 1: typing a block back to its words writes its stored spelling, not a re-escape.
+    @Test fun aBlockEditedAndTypedBackSavesByteForByte() {
+        val once = editBlock(VisualDraft.from(spelled), 0) { it.replace("hi.", "hello.") }
+        val back = editBlock(once, 0) { it.replace("hello.", "hi.") }
+        assertEquals(spelled.content, visualTemplateToSave(spelled, back).content)
+        assertEquals(spelled, visualTemplateToSave(spelled, back))
+
+        val both = editBlock(editBlock(VisualDraft.from(spelled), 1) { it.replace("chips", "peas") }, 1) { it.replace("peas", "chips") }
+        assertEquals(spelled.content, visualTemplateToSave(spelled, both).content)
+    }
+
+    @Test fun aRealEditLeavesEveryOtherBlockByteForByte() {
+        val reverted = editBlock(editBlock(VisualDraft.from(spelled), 1) { it.replace("Fish", "Cod") }, 1) { it.replace("Cod", "Fish") }
+        val edited = editBlock(reverted, 0) { it.replace("hi.", "hello.") }
+        val saved = visualTemplateToSave(spelled, edited).content!!
+        assertTrue(saved.endsWith("</p>\n<p>Fish &#38; chips&nbsp;at <strong>{{time}}</strong>.</p>"))
+        assertTrue(saved.contains("hello."))
+        assertFalse(saved.contains("hi."))
+    }
+
+    @Test fun thePreviewIsAskedForTheDraftUnderTheTemplateKey() {
+        val request = VisualDraft.from(original).copy(subject = "S2").previewRequest(original.templateId)
+        assertEquals(EmailPreviewRequest("S2", "Reset your password", original.content!!, "auth.password.reset"), request)
+    }
+
+    // Final review M3: web resolves the catalog key that sends a template
+    // (TemplateEditor.tsx fieldsForTemplate); the phone reads the same from
+    // listTemplateBindings and falls back to the template key.
+    private fun binding(key: String, templateId: String, active: Boolean = true) =
+        TemplateRepository.TemplateBinding(key, templateId, audience = null, triggerKey = null, active = active)
+    @Test fun aTemplateBoundToAnotherCatalogKeyPreviewsUnderThatKey() {
+        val bindings = listOf(binding("booking.confirmed", "other"), binding("auth.password.reset", "custom.reset"))
+        assertEquals("auth.password.reset", previewCatalogKey("custom.reset", bindings))
+    }
+
+    @Test fun anUnboundTemplatePreviewsUnderItsOwnKey() {
+        assertEquals("auth.password.reset", previewCatalogKey("auth.password.reset", emptyList()))
+        assertEquals("custom.reset", previewCatalogKey("custom.reset", listOf(binding("x", "y"))))
+    }
+
+    @Test fun anActiveBindingWinsOverAPausedOne() {
+        val bindings = listOf(binding("a.paused", "custom.reset", active = false), binding("b.live", "custom.reset"))
+        assertEquals("b.live", previewCatalogKey("custom.reset", bindings))
+    }
+
+    // listTemplateBindings reports a binding with no `active` field as false,
+    // while dispatch treats it as live (sendFromTemplate.ts `active !== false`).
+    // Either way that key's sample values fit the template better than none.
+    @Test fun aBindingReportedInactiveStillBeatsTheTemplateKey() {
+        assertEquals("a.paused", previewCatalogKey("custom.reset", listOf(binding("a.paused", "custom.reset", active = false))))
+    }
+}

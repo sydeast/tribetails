@@ -47,9 +47,10 @@ class TemplateBankStatesTest {
     // ── empty states ───────────────────────────────────────────────────────
 
     @Test
-    fun emptyMessage_anEmptyBankSaysSoAndPointsAtNew() {
+    fun emptyMessage_anEmptyBankSaysSoAndPointsAtTheWebAdmin() {
+        // #953 7a: Android creates no templates any more; new ones start on the web editor.
         assertEquals(
-            "No templates yet. Use New template to create one.",
+            "No templates yet. Create one on the web admin.",
             templateBankEmptyMessage(loaded = 0, category = "All", query = "", hasError = false),
         )
     }

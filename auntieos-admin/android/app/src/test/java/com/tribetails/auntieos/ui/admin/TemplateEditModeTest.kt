@@ -10,9 +10,16 @@ import org.junit.Test
 /** #953 PR 1: FULL/SUBJECT_ONLY/READ_ONLY save gating so this app never
  * overwrites hand-authored HTML or a visual template. Mirror of web. */
 class TemplateEditModeTest {
-    private fun tpl(body: String, html: String?, format: String? = null) = TemplateRepository.EmailTemplate(
+    private fun tpl(
+        body: String,
+        html: String?,
+        format: String? = null,
+        headline: String? = null,
+        content: String? = null,
+    ) = TemplateRepository.EmailTemplate(
         templateId = "k", subject = "S", body = body, html = html, title = "k",
         description = null, tags = emptyList(), category = null, format = format,
+        headline = headline, content = content,
     )
 
     @Test fun markdownDerivedHtmlIsNotHandAuthored() {
@@ -63,9 +70,14 @@ class TemplateEditModeTest {
         assertFalse(showsMarkdownPreview(TemplateEditMode.READ_ONLY))
     }
 
-    @Test fun canReassignCategoryOnlyWhenFormatIsNull() {
+    @Test fun canReassignCategoryOnlyWhenFormatIsNullOrARealVisualTemplate() {
         assertTrue(canReassignCategory(tpl("b", null)))
         assertTrue(canReassignCategory(tpl("Hi", "<!DOCTYPE html><html><body><a href='{{link}}' class='button'>Go</a></body></html>")))
+        // Ruling C1: a real visual template (format + headline + content all
+        // present) drags to a category like any other; the drag saves through
+        // saveTemplatePayload in the visual shape.
+        assertTrue(canReassignCategory(tpl("", null, format = "visual", headline = "Reset your password", content = "<p>Hi</p>")))
+        // A visual flag missing its fields, and any other unknown format, stay refused.
         assertFalse(canReassignCategory(tpl("", null, format = "visual")))
         assertFalse(canReassignCategory(tpl("b", null, format = "mjml")))
     }
