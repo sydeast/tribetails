@@ -17,7 +17,6 @@ import {
   type TemplateFormFields,
   buildVisualSavePayload,
   fieldsForTemplate,
-  templateEditorMode,
   visualFormError,
 } from '../lib/templateFormat';
 import { getNotificationMatrix, type NotificationCatalogEntry } from '../api/myNotifications';
@@ -25,7 +24,8 @@ import { EmailContentEditor } from '../components/emailEditor/EmailContentEditor
 import { EmailPreviewPane } from '../components/emailEditor/EmailPreviewPane';
 import { useEmailPreview } from '../lib/useEmailPreview';
 import { tokensIn } from '../lib/emailContent';
-import { editorCanRoundTrip, loopGuardError } from '../lib/emailRoundTrip';
+import { visualContentForSave } from '../lib/emailRoundTrip';
+import { useTemplateEditorSeed } from '../lib/useTemplateEditorSeed';
 import { Dialog } from '../components/Dialog';
 import { MergePreview } from '../components/MergePreview';
 import { ENRICHABLE_SAMPLE } from '../lib/mergeFields';
@@ -188,21 +188,14 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
   // merge field dropped into it. Null when no insertion is pending.
   const pendingCaret = useRef<number | null>(null);
 
-  // #953: which editor this template gets. New templates are visual; a stored
-  // template is visual only when it says so, old when it has no format, and
-  // read-only when its format is one this admin does not know (Ruling C13).
-  // Task 10 flips old to visual on Convert.
-  const [mode] = useState(() => templateEditorMode(template));
+  // #953: which editor this template gets, and what its content editor is
+  // seeded with. New templates are visual; a stored template is visual only
+  // when it says so, old when it has no format, and read-only when its format
+  // is one this admin does not know (Ruling C13). The seed, not the loaded
+  // row, is the baseline for the lock and the loop check, and `reseed` is
+  // how Task 10's Convert replaces it.
+  const { mode, seed, bodyLocked } = useTemplateEditorSeed(template);
   const readOnly = mode === 'readonly';
-  // What the content editor mounts with. `key` changes only when the content
-  // is replaced wholesale (Convert), which remounts the editor.
-  const [seed] = useState(() => ({ key: 0, content: template?.content ?? '' }));
-  // Ruling C5(a): stored content the editor cannot write back as it found it
-  // opens with the body locked, and Save sends the stored content untouched.
-  // Checked once, at open, because it runs a headless editor.
-  const [bodyLocked] = useState(
-    () => mode === 'visual' && template !== null && !editorCanRoundTrip(template.content ?? ''),
-  );
   const [catalog, setCatalog] = useState<
     { status: 'loading' } | { status: 'ready'; entries: NotificationCatalogEntry[] } | { status: 'error' }
   >({ status: 'loading' });
@@ -324,17 +317,13 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
       setFields(withTag);
       setTagDraft('');
     }
-    // A locked body is never the editor's to write: the stored content goes
-    // back exactly as it came.
-    const stored = template?.content ?? '';
-    const effective: TemplateFormFields = bodyLocked ? { ...withTag, content: stored } : withTag;
-    // The loop check is the last backstop behind the editor's own guards: a
-    // different number of {{#each}} openers or closers than the stored content
-    // means a repeating list was lost, split or closed early.
-    const validationError =
-      mode === 'visual'
-        ? (visualFormError(effective, { isCreate }) ?? loopGuardError(stored, effective.content))
-        : templateFormError(effective, { isCreate });
+    // A locked body goes back exactly as the editor was opened with it, and an
+    // unlocked one must keep the seed's repeating lists (see visualContentForSave).
+    const visual = mode === 'visual' ? visualContentForSave(seed.content, withTag.content, bodyLocked) : null;
+    const effective: TemplateFormFields = visual ? { ...withTag, content: visual.content } : withTag;
+    const validationError = visual
+      ? (visualFormError(effective, { isCreate }) ?? visual.error)
+      : templateFormError(effective, { isCreate });
     if (validationError) {
       setError(validationError);
       return;
@@ -575,7 +564,7 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
                 </span>
                 {bodyLocked ? (
                   <Banner tone="warning" title="Body locked" className="template-editor__locked">
-                    {"This email has a structure the editor can't edit yet. Edit its subject and headline here."}
+                    This email has a structure the editor can&rsquo;t edit yet. Edit its subject and headline here.
                   </Banner>
                 ) : null}
                 <EmailContentEditor

@@ -995,7 +995,7 @@ describe('TemplateEditor: content the editor cannot reproduce (#953 C5a)', () =>
 
   const UNSUPPORTED = '<p>Hi</p><ul><li>a</li>{{#if vip}}<li>b</li>{{/if}}</ul>';
 
-  const LOCK_NOTE = "This email has a structure the editor can't edit yet. Edit its subject and headline here.";
+  const LOCK_NOTE = 'This email has a structure the editor can’t edit yet. Edit its subject and headline here.';
 
   it('opens with the body locked and says why', () => {
     render(<TemplateEditor template={visualTpl({ content: UNSUPPORTED })} onClose={vi.fn()} onSaved={vi.fn()} />);
@@ -1023,6 +1023,30 @@ describe('TemplateEditor: content the editor cannot reproduce (#953 C5a)', () =>
       expect(screen.queryByText(LOCK_NOTE)).toBeNull();
     },
   );
+
+  it('a new seed is the new baseline: the lock and the loop check follow it, not the first row', async () => {
+    saveTemplate.mockResolvedValue({ templateId: 'assignment.assigned' });
+    const LOOPED = '<p>Your visits:</p><ul>{{#each visits}}<li>{{this.date}}</li>{{/each}}</ul>';
+    const { rerender } = render(
+      <TemplateEditor key="a" template={visualTpl({ content: UNSUPPORTED })} onClose={vi.fn()} onSaved={vi.fn()} />,
+    );
+    expect(screen.getByLabelText('Email content')).toBeDisabled();
+    rerender(
+      <TemplateEditor
+        key="b"
+        template={visualTpl({ templateId: 'assignment.assigned', content: LOOPED })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(screen.getByLabelText('Email content')).not.toBeDisabled();
+    expect(screen.queryByText(LOCK_NOTE)).toBeNull();
+    const edited = LOOPED.replace('{{this.date}}', '{{this.date}} (booked)');
+    fireEvent.change(screen.getByLabelText('Email content'), { target: { value: edited } });
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() => expect(saveTemplate).toHaveBeenCalled());
+    expect(saveTemplate.mock.calls[0]![0]).toMatchObject({ templateId: 'assignment.assigned', content: edited });
+  });
 });
 
 describe('TemplateEditor: a repeating list cannot be lost or split on save (#953)', () => {
@@ -1075,6 +1099,11 @@ describe('TemplateEditor: a format this admin cannot edit (#953 C13)', () => {
     expect(screen.queryByLabelText(/^html$/i)).toBeNull();
     expect(screen.getByRole('button', { name: /save template/i })).toBeDisabled();
     expect(screen.getByText(/can.t be edited here yet/i)).toBeInTheDocument();
+  });
+
+  it('still offers Delete, enabled: only editing is off', () => {
+    render(<TemplateEditor template={foreign()} onClose={vi.fn()} onSaved={vi.fn()} onDeleted={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /^delete$/i })).toBeEnabled();
   });
 
   it('never calls saveTemplate', async () => {

@@ -96,3 +96,19 @@ export function loopGuardError(stored: string, edited: string): string | null {
   if (count(EACH_CLOSER, stored) !== count(EACH_CLOSER, edited)) return LOOP_CHANGED_ERROR;
   return null;
 }
+
+/**
+ * The content a visual save sends, and the loop error that blocks it, measured
+ * against `seedContent`: the content the editor was opened with. That is the
+ * stored content on open, and the converted content after a Convert (when the
+ * loaded row still holds the old value). A locked body sends the seed as it
+ * is, so there is nothing to check.
+ */
+export function visualContentForSave(
+  seedContent: string,
+  edited: string,
+  locked: boolean,
+): { content: string; error: string | null } {
+  if (locked) return { content: seedContent, error: null };
+  return { content: edited, error: loopGuardError(seedContent, edited) };
+}
