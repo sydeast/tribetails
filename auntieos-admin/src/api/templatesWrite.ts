@@ -1,5 +1,5 @@
 import { call } from '../lib/fns';
-import type { SaveTemplatePayload } from '../lib/templateFormat';
+import type { SaveTemplatePayload, SaveVisualTemplatePayload } from '../lib/templateFormat';
 
 /**
  * The Template Bank WRITE surface: `saveTemplate` (admin) -> { templateId },
@@ -42,13 +42,57 @@ export function isTemplateKeyTakenError(err: unknown): boolean {
   if (typeof details !== 'object' || details === null) return false;
   return (details as { reason?: unknown }).reason === 'template-exists';
 }
-export async function saveTemplate(payload: SaveTemplatePayload): Promise<{ templateId: string }> {
+export async function saveTemplate(
+  payload: SaveTemplatePayload | SaveVisualTemplatePayload,
+): Promise<{ templateId: string }> {
   // Explicitly awaited, not `return call(...)`: matches the `await
   // call(...)` convention every other write module in this repo uses
   // (`accountWrite.ts#saveUserProfile`, `formSchemas.ts#deleteFormSchema`),
   // rather than forwarding the callable's promise unawaited.
-  const result = await call<SaveTemplatePayload, { templateId: string }>('saveTemplate', payload);
+  const result = await call<SaveTemplatePayload | SaveVisualTemplatePayload, { templateId: string }>(
+    'saveTemplate',
+    payload,
+  );
   return result;
+}
+
+/** #953: `previewEmailTemplate` (admin). Same sanitizer, frame and renderer as a real send. */
+export interface PreviewEmailTemplateRequest {
+  subject: string;
+  headline: string;
+  content: string;
+  /** The notification key whose fields get sample values. Omitted when no notification sends the template. */
+  catalogKey?: string;
+}
+
+export interface PreviewEmailTemplateResult {
+  subject: string;
+  html: string;
+  text: string;
+  /** Sanitizer findings, as sentences. Empty when the content is clean. */
+  issues: string[];
+}
+
+export async function previewEmailTemplate(req: PreviewEmailTemplateRequest): Promise<PreviewEmailTemplateResult> {
+  return await call<PreviewEmailTemplateRequest, PreviewEmailTemplateResult>('previewEmailTemplate', req);
+}
+
+/**
+ * #953: `convertTemplateToVisual` (admin, PR 3). Reads the stored old-format
+ * template and returns the visual form. It never writes: the operator's Save
+ * is the only write.
+ *
+ * `warnings` (ruling C2): non-blocking notes about what the conversion
+ * couldn't carry over (e.g. an image outside the delivery path). The ok
+ * branch always has the key, even when it's empty, so a caller can render it
+ * without an extra null check.
+ */
+export type ConvertTemplateResult =
+  | { ok: true; subject: string; headline: string; content: string; warnings: string[] }
+  | { ok: false; reason: 'unreadable'; subject: string; body: string };
+
+export async function convertTemplateToVisual(templateId: string): Promise<ConvertTemplateResult> {
+  return await call<{ templateId: string }, ConvertTemplateResult>('convertTemplateToVisual', { templateId });
 }
 
 /**

@@ -397,6 +397,26 @@ export interface SaveTemplatePayload {
   expectNew?: boolean;
 }
 
+/**
+ * #953: the `saveTemplate` payload for a visual template. No `body` and no
+ * `html` key at all: the server generates both at send time, and PR 2's check
+ * refuses a visual save that carries a body.
+ */
+export interface SaveVisualTemplatePayload {
+  templateId: string;
+  subject: string;
+  format: 'visual';
+  headline: string;
+  content: string;
+  title?: string;
+  description?: string;
+  tags: string[];
+  category?: string;
+  usageInstructions: string;
+  sectionDefinitions: TemplateSection[];
+  expectNew?: boolean;
+}
+
 export function buildSaveTemplatePayload(
   fields: TemplateFormFields,
   opts: { isCreate?: boolean } = {},

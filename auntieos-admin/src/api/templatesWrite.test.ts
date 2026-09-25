@@ -8,6 +8,8 @@ import {
   deleteTemplate,
   assignTemplatesToCategory,
   isLiveNotificationKeyWarning,
+  previewEmailTemplate,
+  convertTemplateToVisual,
 } from './templatesWrite';
 import type { SaveTemplatePayload } from '../lib/templateFormat';
 
@@ -149,5 +151,53 @@ describe('templatesWrite api', () => {
     await expect(
       assignTemplatesToCategory({ category: 'Booking', templateIds: ['ghost'] }),
     ).rejects.toThrow(/not-found/);
+  });
+});
+
+describe('#953 visual template callables', () => {
+  it('saveTemplate sends a visual payload untouched, with no body or html keys', async () => {
+    call.mockResolvedValue({ templateId: 'auth.password.reset' });
+    const visual = {
+      templateId: 'auth.password.reset',
+      subject: 'Reset',
+      format: 'visual' as const,
+      headline: 'Reset your password',
+      content: '<p>Hi</p>',
+      tags: [],
+      usageInstructions: '',
+      sectionDefinitions: [],
+    };
+    await saveTemplate(visual);
+    expect(call).toHaveBeenCalledWith('saveTemplate', visual);
+    const sent = call.mock.calls[0]![1] as Record<string, unknown>;
+    expect('body' in sent).toBe(false);
+    expect('html' in sent).toBe(false);
+  });
+
+  it('previewEmailTemplate calls the callable by name and returns its four fields', async () => {
+    const res = { subject: 'S', html: '<html></html>', text: 'T', issues: [] };
+    call.mockResolvedValue(res);
+    const req = { subject: 'S', headline: 'H', content: '<p>x</p>', catalogKey: 'auth.password.reset' };
+    await expect(previewEmailTemplate(req)).resolves.toEqual(res);
+    expect(call).toHaveBeenCalledWith('previewEmailTemplate', req);
+  });
+
+  it('convertTemplateToVisual sends only the templateId and returns both outcomes as-is', async () => {
+    call.mockResolvedValueOnce({ ok: true, subject: 'S', headline: 'H', content: '<p>x</p>', warnings: [] });
+    await expect(convertTemplateToVisual('a.b')).resolves.toEqual({
+      ok: true,
+      subject: 'S',
+      headline: 'H',
+      content: '<p>x</p>',
+      warnings: [],
+    });
+    expect(call).toHaveBeenCalledWith('convertTemplateToVisual', { templateId: 'a.b' });
+    call.mockResolvedValueOnce({ ok: false, reason: 'unreadable', subject: 'S', body: 'B' });
+    await expect(convertTemplateToVisual('a.b')).resolves.toEqual({
+      ok: false,
+      reason: 'unreadable',
+      subject: 'S',
+      body: 'B',
+    });
   });
 });
