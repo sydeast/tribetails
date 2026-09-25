@@ -12,13 +12,12 @@
  * here that is one argument rather than a mocked generated module.
  */
 import {
-  emailTemplateIssues,
   pushTemplateIssues,
   smsTemplateIssues,
   templateIdIssue,
+  visualEmailTemplateIssues,
 } from '../lib/templateValidation';
 import { parsePushTxt } from './templateParsers';
-import { contentToText, frameHtml } from '../lib/emailFrame';
 import type { SeedCorpusEntry } from './seedCorpus.generated';
 
 /** The three collections a seed directory writes into. */
@@ -95,7 +94,13 @@ export interface PlanInput {
  * the same would erase an operator's categorisation every time it ran.
  */
 const CONTENT_FIELDS: Readonly<Record<TemplateChannel, readonly string[]>> = Object.freeze({
-  email: ['subject', 'body', 'html'],
+  // All six, not just the three the corpus fills in. An import that only
+  // compared subject/headline/content could call a stored old-format document
+  // "unchanged" and leave its body/html sitting next to the new visual
+  // fields; comparing format/body/html too means an overwrite is the only way
+  // to reach "unchanged", and an overwrite always clears the old pair (see
+  // `channelContent`'s email branch below).
+  email: ['subject', 'headline', 'content', 'format', 'body', 'html'],
   sms: ['text'],
   push: ['title', 'body'],
 });
@@ -107,16 +112,18 @@ function channelContent(
 ): { content: Record<string, string | null>; issues: string[] } {
   try {
     if (channel === 'email') {
-      // #953 bridge (Task 3): the corpus carries the visual fields now
-      // (emailHeadline/emailContent), not a pre-built old-format body/html.
-      // This derives both the same way `sendPartsFor` does for a real visual
-      // document, so the imported doc still renders as it always did. Task 4
-      // replaces this with a proper visual-format write.
-      const subject = entry.emailSubject;
-      const body = contentToText(entry.emailHeadline, entry.emailContent);
-      const html = frameHtml(entry.emailHeadline, entry.emailContent);
-      const content = { subject, body, html };
-      return { content, issues: emailTemplateIssues(content) };
+      // The importer writes visual documents. `body: null, html: null` on
+      // every write means an overwrite clears whatever old-format pair was
+      // stored, so a document can never end up holding both formats.
+      const content = {
+        subject: entry.emailSubject,
+        headline: entry.emailHeadline,
+        content: entry.emailContent,
+        format: 'visual',
+        body: null,
+        html: null,
+      };
+      return { content, issues: visualEmailTemplateIssues(content) };
     }
     if (channel === 'sms') {
       const text = entry.smsTxt.trim();

@@ -153,10 +153,13 @@ describe('sending', () => {
   });
 
   it('falls back to the repo copy, link included, when none is stored', async () => {
+    // #953: the seed fallback is a visual document now, sent through
+    // sendPartsFor like any other. Its button ("Reset Password") becomes this
+    // exact text line, and the html frame carries the same href.
     await processPasswordResetRequest({ email: KIN_EMAIL, networkKey: NET });
     const args = mocks.sendTemplatedEmail.mock.calls[0]![0];
     expect(args.subjectTemplate).toBe('Reset your Tribe Tails password');
-    expect(args.bodyTemplate).toContain('{{link}}');
+    expect(args.bodyTemplate).toContain('Reset Password: {{link}}');
     expect(args.htmlTemplate).toContain('{{link}}');
   });
 

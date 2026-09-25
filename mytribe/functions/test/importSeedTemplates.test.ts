@@ -11,7 +11,6 @@ beforeEach(() => mocks.dbFn.mockReset());
 import { importSeedTemplatesHandler, toRows } from '../src/admin/importSeedTemplates';
 import { planImport, plannedWrites } from '../src/notifications/importPlanner';
 import { SEED_CORPUS } from '../src/notifications/seedCorpus.generated';
-import { contentToText, frameHtml } from '../src/lib/emailFrame';
 
 function req(data: unknown, uid: string | null = 'admin1'): CallableRequest<unknown> {
   return {
@@ -76,15 +75,16 @@ describe('importSeedTemplates: the dry run', () => {
 
   it('HAPPY: reports unchanged when the stored copy already matches the repo', async () => {
     const entry = corpusEntry(RESCHEDULE);
-    // #953 bridge: importPlanner's email channel derives body/html from the
-    // visual fields the same way sendPartsFor does (see importPlanner.ts);
-    // this fixture has to match that derivation to land on "unchanged".
-    const subject = entry.emailSubject;
-    const body = contentToText(entry.emailHeadline, entry.emailContent);
-    const html = frameHtml(entry.emailHeadline, entry.emailContent);
     const ctx = buildDbMock({
       docs: {
-        [`emailTemplates/${RESCHEDULE}`]: { subject, body, html },
+        [`emailTemplates/${RESCHEDULE}`]: {
+          subject: entry.emailSubject,
+          headline: entry.emailHeadline,
+          content: entry.emailContent,
+          format: 'visual',
+          body: null,
+          html: null,
+        },
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -231,8 +231,11 @@ describe('planImport: the triple-stash guard reaches imported templates too', ()
     expect(plan.templates[0].blocked).toBe(true);
     const email = plan.templates[0].channels.find((c) => c.channel === 'email');
     expect(email?.outcome).toBe('blocked');
-    expect(email?.notes.join(' ')).toMatch(/triple stash/);
-    expect(email?.notes.join(' ')).toMatch(/Change every \{\{\{name\}\}\} to \{\{name\}\}/);
+    // #953: the email channel is visual now, so its content goes through
+    // sanitizeEmailContent (the same allowlist the editor's save door uses),
+    // which reports triple braces in its own words rather than
+    // templateValidation's old-format `tripleStashMessage`.
+    expect(email?.notes.join(' ')).toMatch(/Triple braces \{\{\{ \}\}\} are not allowed\./);
   });
 
   it('SAD: the report row carries every reason, so the import screens can show it beside Refused (#892 review 2)', () => {
@@ -242,8 +245,11 @@ describe('planImport: the triple-stash guard reaches imported templates too', ()
     });
     const [row] = toRows(plan);
     expect(row!.blocked).toBe(true);
-    expect(row!.issues.join(' ')).toMatch(/triple stash/);
-    expect(row!.issues.join(' ')).toMatch(/without quotes, like href=\{\{link\}\}/);
+    expect(row!.issues.join(' ')).toMatch(/Triple braces \{\{\{ \}\}\} are not allowed\./);
+    // The sanitizer re-serializes the unquoted href into its canonical quoted
+    // form, so the stored-content round trip is what catches it, not a
+    // separate unquoted-attribute complaint.
+    expect(row!.issues.join(' ')).toMatch(/content is not in the stored form/);
     expect(row!.issues.every((i) => /^(email|sms|push): /.test(i))).toBe(true);
   });
 
@@ -277,10 +283,10 @@ describe('planImport: the triple-stash guard reaches imported templates too', ()
     expect(plan.templates[0].issues.join(' ')).toMatch(/template id contains " "/);
   });
 
-  // #953 bridge: the email channel no longer parses a "Subject: " line out of
-  // a file (subject.txt IS the subject), so a malformed email.txt can no
-  // longer happen here. push.txt is still parsed (parsePushTxt), and is now
-  // the channel that exercises the "one bad template doesn't abort the batch"
+  // #953: the email channel no longer parses a "Subject: " line out of a file
+  // (subject.txt IS the subject), so a malformed email.txt can no longer
+  // happen here. push.txt is still parsed (parsePushTxt), and is now the
+  // channel that exercises the "one bad template doesn't abort the batch"
   // guard this test pins.
   it('SAD: reports a malformed push.txt instead of throwing past the other templates', () => {
     const plan = planImport({
