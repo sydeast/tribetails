@@ -41,6 +41,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -250,6 +251,11 @@ fun TemplateBankBody(
     // A failed save is the editor's to show: the editor replaces the bank while
     // it is open (#755), so a banner on the bank would sit behind it unread.
     var saveError by remember { mutableStateOf<String?>(null) }
+    // #953: a visual save in flight. The Save button shows a spinner and cannot fire twice.
+    var saving by remember { mutableStateOf(false) }
+    // #953: the template open in the visual editor, by key, so rotation (which
+    // recreates the Activity) reopens it once the list has loaded again.
+    var editingId by rememberSaveable { mutableStateOf<String?>(null) }
     // Read-only view target. A row tap sets this so the operator can read the full
     // subject / body / html / description without entering the editor.
     var viewing by remember { mutableStateOf<TemplateRepository.EmailTemplate?>(null) }
@@ -288,7 +294,13 @@ fun TemplateBankBody(
     suspend fun reload() {
         loading = true
         templateRepo.listTemplates()
-            .onSuccess { templates = it; error = null }
+            .onSuccess { list ->
+                templates = list
+                error = null
+                // #953: rotation restores editingId before this list has loaded;
+                // once it has, reopen whichever template was being edited.
+                if (editing == null) editingId?.let { id -> editing = list.firstOrNull { it.templateId == id } }
+            }
             .onFailure { error = it.message ?: "Could not load templates." }
         // Category list is secondary chrome: a failure must not blank the templates,
         // but it is surfaced (not silently swallowed).
@@ -307,7 +319,31 @@ fun TemplateBankBody(
     // email creation mock's "Template bank / Edit template" crumb trail, the
     // same swap the web Templates screen makes. It was an AuntieDialog over the
     // list until the #755 sweep.
+    // #953: a visual template opens in the visual editor, never the markdown one
+    // (PR 1's TemplateEditMode.READ_ONLY would otherwise refuse it entirely).
     editing?.let { current ->
+        if (usesVisualEditor(current, creating)) {
+            VisualTemplateEditorScreen(
+                template = current,
+                categories = categories,
+                saving = saving,
+                saveError = saveError,
+                onDismissError = { saveError = null },
+                onDismiss = { editing = null; editingId = null; saveError = null },
+                onSave = { updated ->
+                    saving = true
+                    scope.launch {
+                        templateRepo.saveTemplate(updated)
+                            .onSuccess { saving = false; editing = null; editingId = null; saveError = null; reload() }
+                            .onFailure { saving = false; saveError = it.message ?: "Save failed." }
+                    }
+                },
+                loadPreview = { req ->
+                    templateRepo.previewEmailTemplate(req.subject, req.headline, req.content, req.catalogKey)
+                },
+            )
+            return
+        }
         TemplateEditorScreen(
             template = current,
             creating = creating,
@@ -316,14 +352,14 @@ fun TemplateBankBody(
             existingKeys = templates.map { it.templateId },
             saveError = saveError,
             onDismissError = { saveError = null },
-            onDismiss = { editing = null; creating = false; saveError = null },
+            onDismiss = { editing = null; editingId = null; creating = false; saveError = null },
             onSave = { updated ->
                 scope.launch {
                     // expectNew on create: the collision check above only sees
                     // the templates this screen loaded, and the server sees them
                     // all. Issue #468.
                     templateRepo.saveTemplate(updated, expectNew = creating)
-                        .onSuccess { editing = null; creating = false; saveError = null; reload() }
+                        .onSuccess { editing = null; editingId = null; creating = false; saveError = null; reload() }
                         .onFailure { saveError = it.message ?: "Save failed." }
                 }
             },
@@ -492,7 +528,7 @@ fun TemplateBankBody(
                     TemplateCard(
                         tpl = tpl,
                         onOpen = { viewing = tpl },
-                        onEdit = { creating = false; editing = tpl },
+                        onEdit = { creating = false; editing = tpl; editingId = tpl.templateId },
                         isDragging = draggingId == tpl.templateId,
                         onDragStart = { draggingId = tpl.templateId; hoveredCategory = null },
                         onDragMove = { windowPos -> hoveredCategory = categoryDropTarget(windowPos, categoryTargets) },
@@ -517,6 +553,10 @@ fun TemplateBankBody(
                 viewing = null
                 creating = false
                 editing = current
+                editingId = current.templateId
+            },
+            loadPreview = { req ->
+                templateRepo.previewEmailTemplate(req.subject, req.headline, req.content, req.catalogKey)
             },
         )
     }
@@ -691,6 +731,7 @@ private fun TemplateViewOverlay(
     template: TemplateRepository.EmailTemplate,
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
+    loadPreview: suspend (EmailPreviewRequest) -> Result<TemplateRepository.EmailPreview>,
 ) {
     AuntieDialog(
         visible = true,
@@ -715,8 +756,15 @@ private fun TemplateViewOverlay(
         }
         template.category?.takeIf { it.isNotBlank() }?.let { ReadField("Category", it) }
         ReadField("Subject", template.subject.ifBlank { "(none)" })
-        ReadField("Body", template.body.ifBlank { "(empty)" })
-        template.html?.takeIf { it.isNotBlank() }?.let { ReadField("HTML", it, mono = true) }
+        // #953: a visual template's design lives in headline + content, not body/html.
+        val visual = usesVisualEditor(template, creating = false)
+        if (visual) {
+            ReadField("Headline", template.headline.orEmpty())
+            ReadField("Body", htmlToReadableText(template.content.orEmpty()).ifBlank { "(empty)" })
+        } else {
+            ReadField("Body", template.body.ifBlank { "(empty)" })
+            template.html?.takeIf { it.isNotBlank() }?.let { ReadField("HTML", it, mono = true) }
+        }
         template.description?.takeIf { it.isNotBlank() }?.let { ReadField("Description", it) }
         if (template.tags.isNotEmpty()) {
             Column {
@@ -728,20 +776,27 @@ private fun TemplateViewOverlay(
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             AuntieFieldLabel(text = "Inbox preview")
-            // MergePreview, not the bare card: it fills the twelve tokens
-            // `enrichTemplateData.ts` hydrates with sample values, so what is on
-            // screen is the copy a kinfolk receives rather than the source, and
-            // it names the merge fields nothing binds. `account.welcome.business`
-            // is the reason: it has shipped for months ending "See their account
-            // here: []" and no admin surface had ever rendered it.
-            MergePreview(
-                subject = template.subject,
-                body = template.body,
-                sample = ENRICHABLE_SAMPLE,
-                html = template.html?.takeIf { it.isNotBlank() },
-                footnote = "sample values, filled in at send",
-                modifier = Modifier.fillMaxWidth(),
-            )
+            if (visual) {
+                // The server's own render, same as the visual editor's preview:
+                // this app has no local HTML renderer, and MergePreview only
+                // knows the markdown-derived shape.
+                EmailPreviewPanel(VisualDraft.from(template).previewRequest(template.templateId), loadPreview)
+            } else {
+                // MergePreview, not the bare card: it fills the twelve tokens
+                // `enrichTemplateData.ts` hydrates with sample values, so what is on
+                // screen is the copy a kinfolk receives rather than the source, and
+                // it names the merge fields nothing binds. `account.welcome.business`
+                // is the reason: it has shipped for months ending "See their account
+                // here: []" and no admin surface had ever rendered it.
+                MergePreview(
+                    subject = template.subject,
+                    body = template.body,
+                    sample = ENRICHABLE_SAMPLE,
+                    html = template.html?.takeIf { it.isNotBlank() },
+                    footnote = "sample values, filled in at send",
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
     }
 }

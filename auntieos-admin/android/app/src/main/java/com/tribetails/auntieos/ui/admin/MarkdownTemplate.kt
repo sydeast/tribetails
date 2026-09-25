@@ -153,12 +153,16 @@ fun templateEditMode(template: TemplateRepository.EmailTemplate, creating: Boole
 }
 
 /**
- * True when this device may reassign [template]'s category. A non-null [format]
- * (a visual or MJML template built on the web admin) is READ_ONLY here, and the
- * drag-to-category move is a save like any other: it must obey the same rule.
+ * True when this device may reassign [template]'s category. A non-null,
+ * unrecognized [format] (an MJML template built on the web admin, or a visual
+ * flag missing its fields) is READ_ONLY here, and the drag-to-category move is
+ * a save like any other: it must obey the same rule. A real visual template is
+ * the one exception (#953 Ruling C1): the drag saves through
+ * [saveTemplatePayload] in the visual shape, with the content exactly as
+ * loaded, so it is safe from this device without opening the visual editor.
  */
 fun canReassignCategory(template: TemplateRepository.EmailTemplate): Boolean =
-    template.format == null
+    template.format == null || usesVisualEditor(template, creating = false)
 
 /**
  * True only in FULL: the markdown preview is a true picture of the save path

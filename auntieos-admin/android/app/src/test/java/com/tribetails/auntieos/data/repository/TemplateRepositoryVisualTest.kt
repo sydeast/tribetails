@@ -62,6 +62,27 @@ class TemplateRepositoryVisualTest {
     }
 
     @Test
+    fun `a drag-to-category save on a visual template keeps the visual shape, content byte-identical`() {
+        // #953 Ruling C1: drag-to-category stays allowed for a visual template.
+        // The drag is `saveTemplate(tpl.copy(category = newCategory))`, same as
+        // any other reassignment, so only `category` differs from what was loaded.
+        val loadedContent = "<p>Hi <strong>{{displayName}}</strong>, tap below. &nbsp;</p>"
+        val loaded = visual.copy(content = loadedContent, category = "Account")
+        val dragged = loaded.copy(category = "Security")
+        val p = saveTemplatePayload(dragged, expectNew = false)
+        assertEquals(
+            setOf("templateId", "subject", "format", "headline", "content", "title", "description", "tags", "category"),
+            p.keys,
+        )
+        assertEquals("visual", p["format"])
+        assertEquals("Security", p["category"])
+        // The content is exactly what was loaded, byte for byte: no re-clean, re-escape or rebuild.
+        assertEquals(loadedContent, p["content"])
+        assertFalse(p.containsKey("body"))
+        assertFalse(p.containsKey("html"))
+    }
+
+    @Test
     fun `an old-format save is unchanged`() {
         val old = visual.copy(format = null, headline = null, content = null, body = "Body", html = "<p>h</p>", description = null, category = null)
         val p = saveTemplatePayload(old, expectNew = true)
