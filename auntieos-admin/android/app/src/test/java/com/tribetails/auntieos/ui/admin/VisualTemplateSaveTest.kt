@@ -93,6 +93,34 @@ class VisualTemplateSaveTest {
         assertEquals(edited.copy(blocks = restored.blocks), restored)
     }
 
+    @Test fun aNullDescriptionAndCategoryStayNullUnlessTheirControlChanges() {
+        val bare = original.copy(description = null, category = null)
+        val untouched = visualTemplateToSave(bare, VisualDraft.from(bare))
+        assertNull(untouched.description)
+        assertNull(untouched.category)
+        assertEquals(bare, untouched)
+        val draft = editedFirstBlock(VisualDraft.from(bare), "Hi {{displayName}},\ntap it.").copy(subject = "S2", tags = listOf("x"))
+        val otherFieldsEdited = visualTemplateToSave(bare, draft)
+        assertNull(otherFieldsEdited.description)
+        assertNull(otherFieldsEdited.category)
+        assertEquals("S2", otherFieldsEdited.subject)
+    }
+
+    // Review Focus 4: what rotation restores diff-saves like the draft that was on screen.
+    @Test fun aRestoredDraftDiffSavesLikeTheOriginal() {
+        val scope = SaverScope { true }
+        fun rotate(d: VisualDraft) = VisualDraftSaver.restore(with(VisualDraftSaver) { scope.save(d) }!!)!!
+
+        val untouched = visualTemplateToSave(original, rotate(VisualDraft.from(original)))
+        assertEquals(original, untouched)
+        assertEquals(original.content, untouched.content)
+
+        val twoBlocks = original.copy(content = "<p>Hi <strong>{{displayName}}</strong>,<br>tap below.</p><p>Thanks &amp; bye.</p>")
+        val edited = visualTemplateToSave(twoBlocks, rotate(editedFirstBlock(VisualDraft.from(twoBlocks), "Hi {{displayName}},\ntap here.")))
+        assertEquals("<p>Hi <strong>{{displayName}}</strong>,<br>tap here.</p><p>Thanks &amp; bye.</p>", edited.content)
+        assertEquals(twoBlocks.copy(content = edited.content), edited)
+    }
+
     @Test fun thePreviewIsAskedForTheDraftUnderTheTemplateKey() {
         val request = VisualDraft.from(original).copy(subject = "S2").previewRequest(original.templateId)
         assertEquals(EmailPreviewRequest("S2", "Reset your password", original.content!!, "auth.password.reset"), request)
