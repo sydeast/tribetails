@@ -42,7 +42,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.rememberNestedScrollInteropConnection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -69,6 +71,7 @@ import com.tribetails.auntieos.data.repository.TemplateRepository
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieChip
+import com.tribetails.auntieos.ui.components.AuntieDialog
 import com.tribetails.auntieos.ui.components.AuntieField
 import com.tribetails.auntieos.ui.components.AuntieFieldLabel
 import com.tribetails.auntieos.ui.components.DenCrumb
@@ -86,6 +89,9 @@ internal const val PREVIEW_DEBOUNCE_MS = 700L
 internal const val PREVIEW_LOADING_TEXT = "Loading preview…"
 internal const val VISUAL_SAVE_TAG = "visual-save"
 internal const val PREVIEW_WEB_TAG = "email-preview-web"
+internal const val DISCARD_CHANGES_TITLE = "Discard your changes?"
+internal const val DISCARD_LABEL = "Discard"
+internal const val KEEP_EDITING_LABEL = "Keep editing"
 internal fun blockTag(index: Int) = "email-block-$index"
 internal fun imageTag(index: Int) = "email-image-$index"
 
@@ -114,6 +120,8 @@ internal fun VisualTemplateEditorScreen(
     onSave: (TemplateRepository.EmailTemplate) -> Unit,
     loadPreview: suspend (EmailPreviewRequest) -> Result<TemplateRepository.EmailPreview>,
     previewDebounceMs: Long = PREVIEW_DEBOUNCE_MS,
+    /** Whose sample values the preview fills in; see [previewCatalogKey]. */
+    previewCatalogKey: String = template.templateId,
 ) {
     val c = AuntieTheme.colors
     var draft by rememberSaveable(template.templateId, stateSaver = VisualDraftSaver) {
@@ -121,7 +129,22 @@ internal fun VisualTemplateEditorScreen(
     }
     val problem = visualDraftProblem(draft)
 
-    BackHandler { onDismiss() }
+    // Final review I1: leaving drops the draft, so an edited one asks first.
+    // "Edited" means exactly what Save would change: an untouched draft, or
+    // one typed back to its stored words, saves the template as loaded. The
+    // draft is read when back fires, not when this screen last recomposed, so
+    // a back press that lands right after a keystroke still sees it.
+    var confirmingDiscard by rememberSaveable(template.templateId) { mutableStateOf(false) }
+    val leave = {
+        if (visualTemplateToSave(template, draft) != template) confirmingDiscard = true else onDismiss()
+    }
+
+    BackHandler { leave() }
+    DiscardChangesDialog(
+        visible = confirmingDiscard,
+        onKeepEditing = { confirmingDiscard = false },
+        onDiscard = { confirmingDiscard = false; onDismiss() },
+    )
 
     Column(
         modifier = Modifier
@@ -132,7 +155,7 @@ internal fun VisualTemplateEditorScreen(
     ) {
         DenScreenHeading(
             kicker = "The Den · Template bank",
-            crumbs = listOf(DenCrumb("Template bank", onDismiss), DenCrumb("Edit template")),
+            crumbs = listOf(DenCrumb("Template bank", leave), DenCrumb("Edit template")),
             title = "Email",
             accentTail = "template",
             modifier = Modifier.fillMaxWidth(),
@@ -224,10 +247,29 @@ internal fun VisualTemplateEditorScreen(
         GlassSurface(cornerRadius = 18.dp, modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 AuntieFieldLabel(text = "Preview")
-                EmailPreviewPanel(draft.previewRequest(template.templateId), loadPreview, previewDebounceMs)
+                EmailPreviewPanel(draft.previewRequest(previewCatalogKey), loadPreview, previewDebounceMs)
             }
         }
     }
+}
+
+/**
+ * Asked before an editor drops an edited draft (back, or the "Template bank"
+ * crumb). Closing the dialog any other way (back, the scrim) keeps editing;
+ * only Discard leaves.
+ */
+@Composable
+internal fun DiscardChangesDialog(visible: Boolean, onKeepEditing: () -> Unit, onDiscard: () -> Unit) {
+    AuntieDialog(
+        visible = visible,
+        title = DISCARD_CHANGES_TITLE,
+        onDismiss = onKeepEditing,
+        maxWidth = 420.dp,
+        footer = {
+            GhostButton(label = KEEP_EDITING_LABEL, onClick = onKeepEditing, modifier = Modifier.weight(1f))
+            PrimaryButton(label = DISCARD_LABEL, onClick = onDiscard, modifier = Modifier.weight(1f))
+        },
+    ) {}
 }
 
 @Composable
@@ -479,6 +521,10 @@ private fun EmailHtmlView(html: String, modifier: Modifier) {
     AndroidView(
         factory = { context ->
             WebView(context).apply {
+                // Final review M5: the preview sits inside the editor's
+                // verticalScroll. With this and the interop connection below,
+                // a drag the email cannot use scrolls the page instead.
+                isNestedScrollingEnabled = true
                 settings.javaScriptEnabled = false
                 settings.allowFileAccess = false
                 settings.allowContentAccess = false
@@ -494,6 +540,11 @@ private fun EmailHtmlView(html: String, modifier: Modifier) {
                 view.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
             }
         },
-        modifier = modifier.testTag(PREVIEW_WEB_TAG).semantics { contentDescription = "Email preview" },
+        // Final review M4: a closed editor or viewer frees its WebView.
+        onRelease = { it.stopLoading(); it.destroy() },
+        modifier = modifier
+            .nestedScroll(rememberNestedScrollInteropConnection())
+            .testTag(PREVIEW_WEB_TAG)
+            .semantics { contentDescription = "Email preview" },
     )
 }

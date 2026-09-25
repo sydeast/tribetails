@@ -4,6 +4,9 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
@@ -51,6 +54,7 @@ class VisualTemplateEditorUiTest {
             "<p><a href=\"{{link}}\" class=\"button\">Reset Password</a></p>" +
             "<p><img src=\"$img\" alt=\"pup\" /></p>",
     )
+
     private val preview = TemplateRepository.EmailPreview("Reset your password", "<html><body>framed</body></html>", "framed", emptyList())
     private val blockFields = SemanticsMatcher("an email block field") {
         it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("email-block-") == true
@@ -281,5 +285,28 @@ class VisualTemplateEditorUiTest {
         assertEquals(0, calls)
         composeRule.mainClock.advanceTimeBy(600)
         assertEquals(1, calls)
+    }
+
+    // Final review M4: a closed editor must not leave its WebView behind.
+    @Test
+    fun `closing the editor destroys the preview WebView`() {
+        var open by mutableStateOf(true)
+        composeRule.setContent { if (open) editor()() }
+        composeRule.waitForIdle()
+        val web = webView()
+        assertFalse(Shadows.shadowOf(web).wasDestroyCalled())
+        open = false
+        composeRule.waitForIdle()
+        assertTrue(Shadows.shadowOf(web).wasDestroyCalled())
+    }
+
+    // Final review M5: the preview sits inside the editor's scroll, so the
+    // WebView hands the drags it cannot use back to the page. Robolectric
+    // cannot drag it; this pins the setting the interop connection needs.
+    @Test
+    fun `the preview WebView takes part in nested scrolling`() {
+        composeRule.setContent(editor())
+        composeRule.waitForIdle()
+        assertTrue(webView().isNestedScrollingEnabled)
     }
 }

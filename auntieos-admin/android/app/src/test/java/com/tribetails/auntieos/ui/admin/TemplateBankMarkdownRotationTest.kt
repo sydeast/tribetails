@@ -11,6 +11,7 @@ import androidx.compose.ui.test.performTextReplacement
 import com.tribetails.auntieos.data.repository.TemplateRepository
 import com.tribetails.auntieos.ui.theme.AuntieOSTheme
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import org.junit.Rule
 import org.junit.Test
@@ -46,6 +47,7 @@ class TemplateBankMarkdownRotationTest {
         // chips, which would echo "Billing" a second time and make the text
         // match below ambiguous.
         coEvery { r.listCategories() } returns Result.success(emptyList())
+        coEvery { r.listBindings() } returns Result.success(emptyList())
         return r
     }
 
@@ -71,5 +73,36 @@ class TemplateBankMarkdownRotationTest {
         composeRule.onNodeWithText("Sent when an invoice goes out").assertExists()
         composeRule.onNodeWithText("billing").assertExists()
         composeRule.onNodeWithText("Billing").assertExists()
+    }
+
+    // Final review I1, same rule on the markdown editor the bank also opens:
+    // back never throws an edited draft away unasked.
+    @Test
+    fun `back on an edited markdown draft asks first, and Keep editing keeps the draft`() {
+        val r = repo()
+        composeRule.setContent { AuntieOSTheme { TemplateBankBody(templateRepo = r) } }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Edit").performClick()
+        composeRule.onAllNodesWithText("Hi there").onFirst().performTextReplacement("Hi there, edited")
+        composeRule.activity.onBackPressedDispatcher.onBackPressed()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText(DISCARD_CHANGES_TITLE).assertExists()
+        composeRule.onNodeWithText(KEEP_EDITING_LABEL).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText(DISCARD_CHANGES_TITLE).assertDoesNotExist()
+        composeRule.onAllNodesWithText("Hi there, edited").onFirst().assertExists()
+        coVerify(exactly = 0) { r.saveTemplate(any(), any()) }
+    }
+
+    @Test
+    fun `back on an unedited markdown draft leaves at once`() {
+        composeRule.setContent { AuntieOSTheme { TemplateBankBody(templateRepo = repo()) } }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Edit").performClick()
+        composeRule.onNodeWithText("Edit template").assertExists()
+        composeRule.activity.onBackPressedDispatcher.onBackPressed()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText(DISCARD_CHANGES_TITLE).assertDoesNotExist()
+        composeRule.onNodeWithText("Edit template").assertDoesNotExist()
     }
 }

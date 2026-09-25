@@ -257,10 +257,15 @@ fun TemplateBankBody(
     // rememberSaveable next to editingId: a rotation right after a failed save
     // must not lose the banner it is still showing.
     var saveError by rememberSaveable { mutableStateOf<String?>(null) }
-    // #953: a visual save in flight. The Save button shows a spinner and cannot
-    // fire twice. Plain remember: rotation cancels the launched coroutine
-    // anyway, so there is nothing left in flight for this flag to describe.
-    var saving by remember { mutableStateOf(false) }
+    // #953: the template whose visual save is in flight. Its Save button shows
+    // a spinner and cannot fire twice. Keyed by template (final review M1): an
+    // operator who leaves mid-save and opens another template must not see
+    // that one's Save spinning. Plain remember: rotation cancels the launched
+    // coroutine anyway, so there is nothing left in flight for it to describe.
+    var savingId by remember { mutableStateOf<String?>(null) }
+    // #953 final review M3: which catalog key sends each template, so the
+    // preview asks for that key's sample values (see previewCatalogKey).
+    var bindings by remember { mutableStateOf<List<TemplateRepository.TemplateBinding>>(emptyList()) }
     // #953: the template open in the visual editor, by key, so rotation (which
     // recreates the Activity) reopens it once the list has loaded again.
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -320,6 +325,11 @@ fun TemplateBankBody(
                 // #953: rotation restores editingId before this list has loaded;
                 // once it has, reopen whichever template was being edited.
                 if (editing == null) editingId?.let { id -> editing = list.firstOrNull { it.templateId == id } }
+                // Final review M8: the template was deleted elsewhere meanwhile.
+                // Stay on the bank and forget it, so a later reload that finds
+                // the key again (an import recreating it) cannot reopen the
+                // editor by surprise.
+                if (editing == null) editingId = null
             }
             .onFailure { error = it.message ?: "Could not load templates." }
         // Category list is secondary chrome: a failure must not blank the templates,
@@ -327,6 +337,10 @@ fun TemplateBankBody(
         templateRepo.listCategories()
             .onSuccess { categories = it }
             .onFailure { if (error == null) error = "Categories unavailable: ${it.message}" }
+        // Only the preview's sample values depend on bindings. On a failure
+        // (logged by the repository) the preview falls back to the template
+        // key, which is the catalog key for every template no binding moves.
+        templateRepo.listBindings().onSuccess { bindings = it }
         loading = false
     }
 
@@ -346,21 +360,34 @@ fun TemplateBankBody(
             VisualTemplateEditorScreen(
                 template = current,
                 categories = categories,
-                saving = saving,
+                saving = savingId == current.templateId,
                 saveError = saveError,
                 onDismissError = { saveError = null },
                 onDismiss = { editing = null; editingId = null; saveError = null },
                 onSave = { updated ->
-                    saving = true
+                    val id = current.templateId
+                    savingId = id
+                    // Final review M2: a new attempt replaces the last refusal.
+                    saveError = null
                     scope.launch {
-                        templateRepo.saveTemplate(updated)
-                            .onSuccess { saving = false; editing = null; editingId = null; saveError = null; reload() }
-                            .onFailure { saving = false; saveError = it.message ?: "Save failed." }
+                        val result = templateRepo.saveTemplate(updated)
+                        if (savingId == id) savingId = null
+                        // Final review M1: the answer belongs to this template.
+                        // If the operator has left it, it must not close or
+                        // mark whatever they opened next.
+                        val stillOpen = editingId == id
+                        result
+                            .onSuccess {
+                                if (stillOpen) { editing = null; editingId = null; saveError = null }
+                                reload()
+                            }
+                            .onFailure { if (stillOpen) saveError = it.message ?: "Save failed." }
                     }
                 },
                 loadPreview = { req ->
                     templateRepo.previewEmailTemplate(req.subject, req.headline, req.content, req.catalogKey)
                 },
+                previewCatalogKey = previewCatalogKey(current.templateId, bindings),
             )
             return
         }
@@ -374,13 +401,22 @@ fun TemplateBankBody(
             onDismissError = { saveError = null },
             onDismiss = { editing = null; editingId = null; creating = false; saveError = null },
             onSave = { updated ->
+                val openId = editingId
+                saveError = null
                 scope.launch {
                     // expectNew on create: the collision check above only sees
                     // the templates this screen loaded, and the server sees them
                     // all. Issue #468.
-                    templateRepo.saveTemplate(updated, expectNew = creating)
-                        .onSuccess { editing = null; editingId = null; creating = false; saveError = null; reload() }
-                        .onFailure { saveError = it.message ?: "Save failed." }
+                    val result = templateRepo.saveTemplate(updated, expectNew = creating)
+                    // Final review M1, same rule as the visual editor: a late
+                    // answer never lands on a template opened since.
+                    val stillOpen = editingId == openId
+                    result
+                        .onSuccess {
+                            if (stillOpen) { editing = null; editingId = null; creating = false; saveError = null }
+                            reload()
+                        }
+                        .onFailure { if (stillOpen) saveError = it.message ?: "Save failed." }
                 }
             },
         )
@@ -519,7 +555,7 @@ fun TemplateBankBody(
                     TemplateCard(
                         tpl = tpl,
                         onOpen = { viewing = tpl },
-                        onEdit = { creating = false; editing = tpl; editingId = tpl.templateId },
+                        onEdit = { creating = false; saveError = null; editing = tpl; editingId = tpl.templateId },
                         isDragging = draggingId == tpl.templateId,
                         isSaving = categorySavingId == tpl.templateId,
                         onDragStart = { draggingId = tpl.templateId; hoveredCategory = null },
@@ -544,12 +580,14 @@ fun TemplateBankBody(
             onEdit = {
                 viewing = null
                 creating = false
+                saveError = null
                 editing = current
                 editingId = current.templateId
             },
             loadPreview = { req ->
                 templateRepo.previewEmailTemplate(req.subject, req.headline, req.content, req.catalogKey)
             },
+            previewCatalogKey = previewCatalogKey(current.templateId, bindings),
         )
     }
 }
@@ -762,6 +800,7 @@ private fun TemplateViewOverlay(
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
     loadPreview: suspend (EmailPreviewRequest) -> Result<TemplateRepository.EmailPreview>,
+    previewCatalogKey: String,
 ) {
     AuntieDialog(
         visible = true,
@@ -810,7 +849,7 @@ private fun TemplateViewOverlay(
                 // The server's own render, same as the visual editor's preview:
                 // this app has no local HTML renderer, and MergePreview only
                 // knows the markdown-derived shape.
-                EmailPreviewPanel(VisualDraft.from(template).previewRequest(template.templateId), loadPreview)
+                EmailPreviewPanel(VisualDraft.from(template).previewRequest(previewCatalogKey), loadPreview)
             } else {
                 // MergePreview, not the bare card: it fills the twelve tokens
                 // `enrichTemplateData.ts` hydrates with sample values, so what is on
@@ -998,8 +1037,25 @@ private fun TemplateEditorScreen(
         TemplateEditMode.FULL -> subject.isNotBlank() && bodyValue.text.isNotBlank() && keyError == null
     }
 
+    // #953 final review I1, the visual editor's rule here too: leaving drops
+    // the draft, so a draft that differs from what was loaded asks first. The
+    // fields are read when back fires, not at the last recomposition.
+    var confirmingDiscard by rememberSaveable(template.templateId, creating) { mutableStateOf(false) }
+    val leave = {
+        val edited = templateId != template.templateId || title != template.title ||
+            subject != template.subject || bodyValue.text != template.body ||
+            category != (template.category ?: "") || description != (template.description ?: "") ||
+            tags != template.tags
+        if (edited) confirmingDiscard = true else onDismiss()
+    }
+
     // Back returns to the bank, never out of Templates, the same as the crumb.
-    BackHandler { onDismiss() }
+    BackHandler { leave() }
+    DiscardChangesDialog(
+        visible = confirmingDiscard,
+        onKeepEditing = { confirmingDiscard = false },
+        onDiscard = { confirmingDiscard = false; onDismiss() },
+    )
 
     Column(
         modifier = Modifier
@@ -1011,7 +1067,7 @@ private fun TemplateEditorScreen(
         DenScreenHeading(
             kicker = "The Den · Template bank",
             crumbs = listOf(
-                DenCrumb("Template bank", onDismiss),
+                DenCrumb("Template bank", leave),
                 // #953 review fix: dead since 7a removed the only caller that
                 // ever passed creating = true to this screen; "New template"
                 // could never actually draw.

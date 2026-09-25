@@ -155,4 +155,31 @@ class VisualTemplateSaveTest {
         val request = VisualDraft.from(original).copy(subject = "S2").previewRequest(original.templateId)
         assertEquals(EmailPreviewRequest("S2", "Reset your password", original.content!!, "auth.password.reset"), request)
     }
+
+    // Final review M3: web resolves the catalog key that sends a template
+    // (TemplateEditor.tsx fieldsForTemplate); the phone reads the same from
+    // listTemplateBindings and falls back to the template key.
+    private fun binding(key: String, templateId: String, active: Boolean = true) =
+        TemplateRepository.TemplateBinding(key, templateId, audience = null, triggerKey = null, active = active)
+    @Test fun aTemplateBoundToAnotherCatalogKeyPreviewsUnderThatKey() {
+        val bindings = listOf(binding("booking.confirmed", "other"), binding("auth.password.reset", "custom.reset"))
+        assertEquals("auth.password.reset", previewCatalogKey("custom.reset", bindings))
+    }
+
+    @Test fun anUnboundTemplatePreviewsUnderItsOwnKey() {
+        assertEquals("auth.password.reset", previewCatalogKey("auth.password.reset", emptyList()))
+        assertEquals("custom.reset", previewCatalogKey("custom.reset", listOf(binding("x", "y"))))
+    }
+
+    @Test fun anActiveBindingWinsOverAPausedOne() {
+        val bindings = listOf(binding("a.paused", "custom.reset", active = false), binding("b.live", "custom.reset"))
+        assertEquals("b.live", previewCatalogKey("custom.reset", bindings))
+    }
+
+    // listTemplateBindings reports a binding with no `active` field as false,
+    // while dispatch treats it as live (sendFromTemplate.ts `active !== false`).
+    // Either way that key's sample values fit the template better than none.
+    @Test fun aBindingReportedInactiveStillBeatsTheTemplateKey() {
+        assertEquals("a.paused", previewCatalogKey("custom.reset", listOf(binding("a.paused", "custom.reset", active = false))))
+    }
 }

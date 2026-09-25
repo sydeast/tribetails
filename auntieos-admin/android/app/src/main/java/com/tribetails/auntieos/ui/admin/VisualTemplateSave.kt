@@ -42,9 +42,23 @@ data class EmailPreviewRequest(
     val catalogKey: String?,
 )
 
-/** The template key doubles as its catalog key (the default binding), so the preview gets that key's sample values. */
-fun VisualDraft.previewRequest(templateId: String) =
-    EmailPreviewRequest(subject, headline, serializeEmailContent(blocks), templateId.ifBlank { null })
+/** The preview asks for [catalogKey]'s sample values (see [previewCatalogKey]). */
+fun VisualDraft.previewRequest(catalogKey: String) =
+    EmailPreviewRequest(subject, headline, serializeEmailContent(blocks), catalogKey.ifBlank { null })
+
+/**
+ * The catalog key whose sample values the preview should use: the key that
+ * sends [templateId], the way web resolves it (`fieldsForTemplate` in
+ * auntieos-admin/src/lib/templateFormat.ts). A binding pointing a key at this
+ * template wins, an active one first. `listTemplateBindings` reports a binding
+ * with no `active` field as inactive although dispatch sends through it, so an
+ * inactive match still beats none. With no binding the template key is its
+ * own catalog key (dispatch's default), which covers every seed.
+ */
+fun previewCatalogKey(templateId: String, bindings: List<TemplateRepository.TemplateBinding>): String {
+    val matches = bindings.filter { it.templateId == templateId }
+    return (matches.firstOrNull { it.active } ?: matches.firstOrNull())?.catalogKey ?: templateId
+}
 
 /**
  * The visual editor opens only for a doc that is really in the visual shape.
