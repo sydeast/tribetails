@@ -68,6 +68,21 @@ function wrapBareTopLevelRuns(html: string): string {
 export function sanitizeEmailContent(html: string, cloudName: string): SanitizeResult {
   const issues = new Set<string>();
   if (/\{\{\{/.test(html)) issues.add('Triple braces {{{ }}} are not allowed.');
+  // sanitize-html drops an empty href attribute entirely (rather than keeping
+  // href=""), so by the time the scheme check below runs on its output the
+  // <a> already looks href-less and gets silently unwrapped to plain text.
+  // Catch it here, on the raw input, before that information is lost. A
+  // dom-serializer round-trip (the converter's path) renders an empty value
+  // as a bare `href` with no `=` at all, so both forms are checked.
+  for (const tagMatch of html.matchAll(/<a\b[^>]*>/gi)) {
+    const tag = tagMatch[0];
+    const quoted = tag.match(/\shref\s*=\s*(["'])([^"']*)\1/i);
+    const isEmptyOrBare = quoted ? quoted[2].trim() === '' : /\shref(?=[\s>/])/i.test(tag);
+    if (isEmptyOrBare) {
+      issues.add('A link must point to a web address (https://), an email address (mailto:), or a merge field.');
+      break;
+    }
+  }
 
   const imagePrefix = `https://res.cloudinary.com/${cloudName}/image/upload/`;
 
