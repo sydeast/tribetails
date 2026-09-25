@@ -454,6 +454,10 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
   if (editor) {
     return (
       <TemplateEditor
+        // #953: one editor per template. The screen seeds its mode, its
+        // content editor and its lock check once, at mount, so a different
+        // template must mount a fresh one rather than reuse this state.
+        key={editor.mode === 'edit' ? `edit:${editor.template.templateId}` : 'new'}
         template={editor.mode === 'edit' ? editor.template : null}
         categories={categoryList}
         onClose={() => setEditor(null)}

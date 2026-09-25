@@ -15,7 +15,17 @@ import {
   templateFormError,
   templateToFormFields,
   type TemplateFormFields,
+  buildVisualSavePayload,
+  fieldsForTemplate,
+  templateEditorMode,
+  visualFormError,
 } from '../lib/templateFormat';
+import { getNotificationMatrix, type NotificationCatalogEntry } from '../api/myNotifications';
+import { EmailContentEditor } from '../components/emailEditor/EmailContentEditor';
+import { EmailPreviewPane } from '../components/emailEditor/EmailPreviewPane';
+import { useEmailPreview } from '../lib/useEmailPreview';
+import { tokensIn } from '../lib/emailContent';
+import { editorCanRoundTrip, loopGuardError } from '../lib/emailRoundTrip';
 import { Dialog } from '../components/Dialog';
 import { MergePreview } from '../components/MergePreview';
 import { ENRICHABLE_SAMPLE } from '../lib/mergeFields';
@@ -178,6 +188,68 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
   // merge field dropped into it. Null when no insertion is pending.
   const pendingCaret = useRef<number | null>(null);
 
+  // #953: which editor this template gets. New templates are visual; a stored
+  // template is visual only when it says so, old when it has no format, and
+  // read-only when its format is one this admin does not know (Ruling C13).
+  // Task 10 flips old to visual on Convert.
+  const [mode] = useState(() => templateEditorMode(template));
+  const readOnly = mode === 'readonly';
+  // What the content editor mounts with. `key` changes only when the content
+  // is replaced wholesale (Convert), which remounts the editor.
+  const [seed] = useState(() => ({ key: 0, content: template?.content ?? '' }));
+  // Ruling C5(a): stored content the editor cannot write back as it found it
+  // opens with the body locked, and Save sends the stored content untouched.
+  // Checked once, at open, because it runs a headless editor.
+  const [bodyLocked] = useState(
+    () => mode === 'visual' && template !== null && !editorCanRoundTrip(template.content ?? ''),
+  );
+  const [catalog, setCatalog] = useState<
+    { status: 'loading' } | { status: 'ready'; entries: NotificationCatalogEntry[] } | { status: 'error' }
+  >({ status: 'loading' });
+
+  // Loaded once, in every mode: visual editing needs the fields, and the
+  // Convert view (Task 10) needs the catalog key before the mode flips.
+  useEffect(() => {
+    let live = true;
+    getNotificationMatrix().then(
+      (matrix) => {
+        if (live) setCatalog({ status: 'ready', entries: matrix.catalog });
+      },
+      () => {
+        if (live) setCatalog({ status: 'error' });
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const alreadyUsed = template
+    ? tokensIn(template.subject, template.body, template.html ?? '', template.content ?? '')
+    : [];
+  // Until the catalog answers (or if it never does), the fields the template
+  // already uses, minus loop-local names, are the honest list.
+  const fieldSet = fieldsForTemplate(
+    catalog.status === 'ready' ? catalog.entries : [],
+    fields.templateId,
+    alreadyUsed,
+  );
+  const fieldsNote =
+    catalog.status === 'ready' && fieldSet.source === 'template'
+      ? 'No notification sends this template, so these are the fields it already uses.'
+      : undefined;
+
+  const previewReq =
+    mode === 'visual' && (fields.headline.trim() !== '' || fields.content !== '')
+      ? {
+          subject: fields.subject,
+          headline: fields.headline,
+          content: fields.content,
+          ...(fieldSet.catalogKey ? { catalogKey: fieldSet.catalogKey } : {}),
+        }
+      : null;
+  const preview = useEmailPreview(previewReq);
+
   function setField<K extends keyof TemplateFormFields>(key: K, value: TemplateFormFields[K]) {
     setFields((prev) => ({ ...prev, [key]: value }));
   }
@@ -241,18 +313,28 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
   }, [saving, deleting, onClose]);
 
   async function handleSave() {
-    if (saving) return;
+    if (saving || readOnly) return;
     // A tag still sitting in the add box is a tag the operator meant to keep.
     const draft = tagDraft.trim();
-    const effective: TemplateFormFields =
+    const withTag: TemplateFormFields =
       draft !== '' && !tags.includes(draft)
         ? { ...fields, tagsInput: formatTagsInput([...tags, draft]) }
         : fields;
-    if (effective !== fields) {
-      setFields(effective);
+    if (withTag !== fields) {
+      setFields(withTag);
       setTagDraft('');
     }
-    const validationError = templateFormError(effective, { isCreate });
+    // A locked body is never the editor's to write: the stored content goes
+    // back exactly as it came.
+    const stored = template?.content ?? '';
+    const effective: TemplateFormFields = bodyLocked ? { ...withTag, content: stored } : withTag;
+    // The loop check is the last backstop behind the editor's own guards: a
+    // different number of {{#each}} openers or closers than the stored content
+    // means a repeating list was lost, split or closed early.
+    const validationError =
+      mode === 'visual'
+        ? (visualFormError(effective, { isCreate }) ?? loopGuardError(stored, effective.content))
+        : templateFormError(effective, { isCreate });
     if (validationError) {
       setError(validationError);
       return;
@@ -260,7 +342,10 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
     setSaving(true);
     setError(null);
     try {
-      const payload = buildSaveTemplatePayload(effective, { isCreate });
+      const payload =
+        mode === 'visual'
+          ? buildVisualSavePayload(effective, { isCreate })
+          : buildSaveTemplatePayload(effective, { isCreate });
       const result = await saveTemplate(payload);
       setSaving(false);
       onSaved(result.templateId);
@@ -336,7 +421,11 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
         ]}
         title="Email"
         accentTail="template"
-        subtitle="Subject and body render with Handlebars. Merge fields resolve to each recipient at send time."
+        subtitle={
+          mode === 'old'
+            ? 'Subject and body render with Handlebars. Merge fields resolve to each recipient at send time.'
+            : 'Merge fields fill in for each person when the email is sent.'
+        }
         trailing={
           <>
             <GhostButton label="Cancel" onClick={requestClose} disabled={saving} />
@@ -346,7 +435,7 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
             <PrimaryButton
               label={saving ? 'Saving…' : 'Save template'}
               onClick={() => void handleSave()}
-              disabled={saving}
+              disabled={saving || readOnly}
               busy={saving}
               leading={<SaveGlyph />}
             />
@@ -359,12 +448,17 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
           {pageError}
         </Banner>
       ) : null}
+      {readOnly ? (
+        <Banner tone="warning" title="Read only" className="template-editor__error">
+          This email is saved in a format that can&rsquo;t be edited here yet.
+        </Banner>
+      ) : null}
 
       <div className="template-editor__cols">
         {/* The mock's left panel carries no title of its own: the page heading
             names the screen and the mono caps name each field. */}
         <DenPanel title="" className="template-editor__panel d1">
-          <fieldset className="template-editor__fields" disabled={saving}>
+          <fieldset className="template-editor__fields" disabled={saving || readOnly}>
             <legend className="template-editor__sr-legend">Template details</legend>
 
             {/* The mock's `.idrow`: key and display name side by side. */}
@@ -451,57 +545,108 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
               />
             </div>
 
-            <div className="template-editor__field">
-              <span className="template-editor__labelrow">
-                <span className="template-editor__label" id="template-editor-mergefields">
-                  Insert merge field
+            {mode !== 'old' ? (
+              <div className="template-editor__field">
+                <span className="template-editor__labelrow">
+                  <label className="template-editor__label" htmlFor="template-editor-headline">
+                    Headline
+                  </label>
+                  <RequiredMark />
                 </span>
-                <span className="template-editor__mfhint">click to drop the token at the cursor</span>
-              </span>
-              <div className="template-editor__chips" role="group" aria-labelledby="template-editor-mergefields">
-                {MERGE_FIELD_KEYS.map((key) => (
-                  <button
-                    key={key}
-                    type="button"
-                    className="template-editor__chip"
-                    // The mock swallows mousedown so the textarea keeps focus
-                    // and its caret through the click; the same here.
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => insertMergeField(key)}
-                  >
-                    <span className="template-editor__chip-plus" aria-hidden="true">
-                      +
-                    </span>
-                    {`{{${key}}}`}
-                  </button>
-                ))}
+                <input
+                  id="template-editor-headline"
+                  type="text"
+                  className="template-editor__input"
+                  value={fields.headline}
+                  onChange={(e) => setField('headline', e.target.value)}
+                  placeholder="Reset your password"
+                  maxLength={300}
+                />
               </div>
-            </div>
+            ) : null}
 
-            <div className="template-editor__field">
-              <span className="template-editor__labelrow">
-                <label className="template-editor__label" htmlFor="template-editor-body">
-                  Body
-                </label>
-                <RequiredMark />
-                <span className="template-editor__hbs">Handlebars supported</span>
-              </span>
-              <textarea
-                id="template-editor-body"
-                ref={bodyRef}
-                className="template-editor__textarea template-editor__textarea--mono template-editor__textarea--body"
-                value={fields.body}
-                onChange={(e) => setField('body', e.target.value)}
-                placeholder="Hi {{kinfolkName}}, ..."
-                rows={8}
-                maxLength={20000}
-              />
-              <div className="template-editor__edmeta">
-                <span className="template-editor__hbsbadge">{'{{ }}'} handlebars</span>
-                <span>{fields.body.length} chars</span>
-                <span>· tokens left as-is, never sent literally</span>
+            {mode === 'visual' ? (
+              <div className="template-editor__field">
+                <span className="template-editor__labelrow">
+                  <span className="template-editor__label" id="template-editor-content-label">
+                    Content
+                  </span>
+                  <RequiredMark />
+                </span>
+                {bodyLocked ? (
+                  <Banner tone="warning" title="Body locked" className="template-editor__locked">
+                    {"This email has a structure the editor can't edit yet. Edit its subject and headline here."}
+                  </Banner>
+                ) : null}
+                <EmailContentEditor
+                  key={seed.key}
+                  initialContent={seed.content}
+                  onChange={(content) => setField('content', content)}
+                  fields={fieldSet.fields}
+                  fieldsState={catalog.status}
+                  fieldsNote={fieldsNote}
+                  disabled={saving || bodyLocked}
+                />
               </div>
-            </div>
+            ) : null}
+
+            {/* Old-format templates keep today's editing until converted:
+                the merge chips, the Body and (below) the HTML field. */}
+            {mode === 'old' ? (
+              <>
+                <div className="template-editor__field">
+                  <span className="template-editor__labelrow">
+                    <span className="template-editor__label" id="template-editor-mergefields">
+                      Insert merge field
+                    </span>
+                    <span className="template-editor__mfhint">click to drop the token at the cursor</span>
+                  </span>
+                  <div className="template-editor__chips" role="group" aria-labelledby="template-editor-mergefields">
+                    {MERGE_FIELD_KEYS.map((key) => (
+                      <button
+                        key={key}
+                        type="button"
+                        className="template-editor__chip"
+                        // The mock swallows mousedown so the textarea keeps focus
+                        // and its caret through the click; the same here.
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => insertMergeField(key)}
+                      >
+                        <span className="template-editor__chip-plus" aria-hidden="true">
+                          +
+                        </span>
+                        {`{{${key}}}`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="template-editor__field">
+                  <span className="template-editor__labelrow">
+                    <label className="template-editor__label" htmlFor="template-editor-body">
+                      Body
+                    </label>
+                    <RequiredMark />
+                    <span className="template-editor__hbs">Handlebars supported</span>
+                  </span>
+                  <textarea
+                    id="template-editor-body"
+                    ref={bodyRef}
+                    className="template-editor__textarea template-editor__textarea--mono template-editor__textarea--body"
+                    value={fields.body}
+                    onChange={(e) => setField('body', e.target.value)}
+                    placeholder="Hi {{kinfolkName}}, ..."
+                    rows={8}
+                    maxLength={20000}
+                  />
+                  <div className="template-editor__edmeta">
+                    <span className="template-editor__hbsbadge">{'{{ }}'} handlebars</span>
+                    <span>{fields.body.length} chars</span>
+                    <span>· tokens left as-is, never sent literally</span>
+                  </div>
+                </div>
+              </>
+            ) : null}
 
             <hr className="template-editor__rule" />
 
@@ -595,23 +740,25 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
             {/* Below the mock's fields: the three persisted fields it does not
                 draw. They stay editable here because a field the bank stores
                 and the editor cannot change is a defect, not a simplification. */}
-            <div className="template-editor__field">
-              <span className="template-editor__labelrow">
-                <label className="template-editor__label" htmlFor="template-editor-html">
-                  HTML
-                </label>
-                <span className="template-editor__opt">optional</span>
-              </span>
-              <textarea
-                id="template-editor-html"
-                className="template-editor__textarea template-editor__textarea--mono"
-                value={fields.html}
-                onChange={(e) => setField('html', e.target.value)}
-                placeholder="<p>Hi {{kinfolkName}}, ...</p>"
-                rows={6}
-                maxLength={50000}
-              />
-            </div>
+            {mode === 'old' ? (
+              <div className="template-editor__field">
+                <span className="template-editor__labelrow">
+                  <label className="template-editor__label" htmlFor="template-editor-html">
+                    HTML
+                  </label>
+                  <span className="template-editor__opt">optional</span>
+                </span>
+                <textarea
+                  id="template-editor-html"
+                  className="template-editor__textarea template-editor__textarea--mono"
+                  value={fields.html}
+                  onChange={(e) => setField('html', e.target.value)}
+                  placeholder="<p>Hi {{kinfolkName}}, ...</p>"
+                  rows={6}
+                  maxLength={50000}
+                />
+              </div>
+            ) : null}
 
             <div className="template-editor__field">
               <span className="template-editor__labelrow">
@@ -675,45 +822,54 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
         </DenPanel>
 
         <div className="template-editor__aside">
-          {/*
-            The live preview. `ENRICHABLE_SAMPLE` is the right sample here and
-            only here: this editor authors NOTIFICATION templates, which are
-            dispatched through `enrichTemplateData.ts`, so the twelve tokens that
-            module hydrates really will be filled in and everything else is a
-            promise the emitting function has to keep. The preview names the
-            second group; the footnote does not pretend they are the first.
-          */}
-          <DenPanel title="" className="template-editor__panel d2">
-            <MergePreview
-              subject={fields.subject}
-              body={fields.body}
-              html={fields.html}
-              sample={ENRICHABLE_SAMPLE}
-              footnote="Sample values. Dispatch fills these in at send"
-            />
-          </DenPanel>
+          {mode === 'visual' ? (
+            <DenPanel title="" className="template-editor__panel d2">
+              <EmailPreviewPane state={preview.state} onRetry={preview.retry} />
+            </DenPanel>
+          ) : null}
+          {mode === 'old' ? (
+            <>
+              {/*
+                The live preview. `ENRICHABLE_SAMPLE` is the right sample here and
+                only here: this editor authors NOTIFICATION templates, which are
+                dispatched through `enrichTemplateData.ts`, so the twelve tokens that
+                module hydrates really will be filled in and everything else is a
+                promise the emitting function has to keep. The preview names the
+                second group; the footnote does not pretend they are the first.
+              */}
+              <DenPanel title="" className="template-editor__panel d2">
+                <MergePreview
+                  subject={fields.subject}
+                  body={fields.body}
+                  html={fields.html}
+                  sample={ENRICHABLE_SAMPLE}
+                  footnote="Sample values. Dispatch fills these in at send"
+                />
+              </DenPanel>
 
-          {/* The mock's second right-hand panel: the sample every token above
-              resolved to, so the author can read the preview back to the
-              token that produced each value. */}
-          <DenPanel title="" className="template-editor__panel d3">
-            <span className="template-editor__label" id="template-editor-legend-label">
-              Resolved with sample values
-            </span>
-            <dl className="template-editor__legend" aria-labelledby="template-editor-legend-label">
-              {MERGE_FIELD_KEYS.map((key) => (
-                <div key={key} className="template-editor__legend-row">
-                  <dt>
-                    <code>{`{{${key}}}`}</code>
-                  </dt>
-                  <span className="template-editor__legend-arrow" aria-hidden="true">
-                    →
-                  </span>
-                  <dd>{ENRICHABLE_SAMPLE[key]}</dd>
-                </div>
-              ))}
-            </dl>
-          </DenPanel>
+              {/* The mock's second right-hand panel: the sample every token above
+                  resolved to, so the author can read the preview back to the
+                  token that produced each value. */}
+              <DenPanel title="" className="template-editor__panel d3">
+                <span className="template-editor__label" id="template-editor-legend-label">
+                  Resolved with sample values
+                </span>
+                <dl className="template-editor__legend" aria-labelledby="template-editor-legend-label">
+                  {MERGE_FIELD_KEYS.map((key) => (
+                    <div key={key} className="template-editor__legend-row">
+                      <dt>
+                        <code>{`{{${key}}}`}</code>
+                      </dt>
+                      <span className="template-editor__legend-arrow" aria-hidden="true">
+                        →
+                      </span>
+                      <dd>{ENRICHABLE_SAMPLE[key]}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </DenPanel>
+            </>
+          ) : null}
         </div>
       </div>
 

@@ -429,3 +429,12 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+/* #953: the server-rendered email beside the visual editor gets the room a
+   real email needs, and the locked-body note sits just above the editor. */
+.template-editor__aside .email-preview__frame {
+  min-height: 560px;
+}
+.template-editor__locked {
+  margin: 0 0 var(--space-2);
+}

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within, waitFor } from '@testing-library/react';
+import { render, screen, within, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type TemplateSummary } from '../api/templates';
 
@@ -28,6 +28,13 @@ const { saveTemplate, deleteTemplate, assignTemplatesToCategory } = vi.hoisted((
   deleteTemplate: vi.fn(),
   assignTemplatesToCategory: vi.fn(),
 }));
+// #953 C6: a resolved preview, never a bare vi.fn(). useEmailPreview calls
+// `.then` on it inside its debounce timer, and `undefined.then` there is an
+// unhandled error vitest reports against whichever test is running.
+const { previewEmailTemplate, convertTemplateToVisual } = vi.hoisted(() => ({
+  previewEmailTemplate: vi.fn().mockResolvedValue({ subject: '', html: '', text: '', issues: [] }),
+  convertTemplateToVisual: vi.fn(),
+}));
 vi.mock('../api/templatesWrite', async () => {
   const actual = await vi.importActual<typeof import('../api/templatesWrite')>(
     '../api/templatesWrite',
@@ -36,11 +43,40 @@ vi.mock('../api/templatesWrite', async () => {
     saveTemplate,
     deleteTemplate,
     assignTemplatesToCategory,
+    previewEmailTemplate,
+    convertTemplateToVisual,
     // Real, not stubbed: TemplateEditor uses it to tell the live-key warning
     // apart from a binding refusal, and a stub would only agree with itself.
     isLiveNotificationKeyWarning: actual.isLiveNotificationKeyWarning,
   };
 });
+
+// New templates open the visual editor, which reads the notification catalog
+// for its merge fields.
+vi.mock('../api/myNotifications', () => ({
+  getNotificationMatrix: vi.fn().mockResolvedValue({
+    catalog: [],
+    overrides: {},
+    ungated: [],
+    businessAdminCount: null,
+    businessAdminRosterPath: '',
+    updatedAtMs: null,
+  }),
+}));
+
+// This file tests the bank screen, not the editor, so the TipTap surface is a
+// textarea here (the same stand-in TemplateEditor.test.tsx uses). The real
+// editor is pinned in components/emailEditor/*.test.tsx.
+vi.mock('../components/emailEditor/EmailContentEditor', () => ({
+  EmailContentEditor: (p: { initialContent: string; onChange: (c: string) => void; disabled?: boolean }) => (
+    <textarea
+      aria-label="Email content"
+      defaultValue={p.initialContent}
+      disabled={p.disabled}
+      onChange={(e) => p.onChange(e.target.value)}
+    />
+  ),
+}));
 
 import { Templates } from './Templates';
 import { TEMPLATE_BANK_EMPTY_COPY } from '../lib/templateFormat';
@@ -430,7 +466,9 @@ describe('Templates screen', () => {
     await userEvent.click(screen.getByRole('button', { name: /new template/i }));
     await userEvent.type(screen.getByLabelText(/template key/i), 'booking.confirmed');
     await userEvent.type(screen.getByLabelText(/^subject$/i), 'Your booking is confirmed');
-    await userEvent.type(screen.getByLabelText(/^body$/i), 'Hi {{kinfolk_name}}');
+    // #953: a new template is a visual one, so Headline and content, not Body.
+    fireEvent.change(screen.getByLabelText(/^headline$/i), { target: { value: 'Booking confirmed' } });
+    fireEvent.change(screen.getByLabelText('Email content'), { target: { value: '<p>Hi {{kinfolk_name}}</p>' } });
     await userEvent.click(screen.getByRole('button', { name: /save template/i }));
 
     await waitFor(() => expectBankShowing());

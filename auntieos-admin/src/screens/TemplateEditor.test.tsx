@@ -1,12 +1,17 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { TemplateSummary } from '../api/templates';
 
-const { saveTemplate, deleteTemplate } = vi.hoisted(() => ({
+const { saveTemplate, deleteTemplate, previewEmailTemplate, convertTemplateToVisual } = vi.hoisted(() => ({
   saveTemplate: vi.fn(),
   deleteTemplate: vi.fn(),
+  previewEmailTemplate: vi.fn(),
+  convertTemplateToVisual: vi.fn(),
 }));
 // `isLiveNotificationKeyWarning` and `isTemplateKeyTakenError` are NOT mocked:
 // they are the real predicates from the api module, so these tests exercise the
@@ -19,10 +24,37 @@ vi.mock('../api/templatesWrite', async () => {
   return {
     saveTemplate,
     deleteTemplate,
+    previewEmailTemplate,
+    convertTemplateToVisual,
     isLiveNotificationKeyWarning: actual.isLiveNotificationKeyWarning,
     isTemplateKeyTakenError: actual.isTemplateKeyTakenError,
   };
 });
+
+const { getNotificationMatrix } = vi.hoisted(() => ({ getNotificationMatrix: vi.fn() }));
+vi.mock('../api/myNotifications', () => ({ getNotificationMatrix }));
+
+// The editor surface is replaced by a plain textarea in THIS file only. Its
+// real behaviour (TipTap, chips, paste, toolbar) is pinned in
+// components/emailEditor/*.test.tsx; this file tests the screen around it:
+// which fields show, what is seeded, what is saved. The round-trip lock check
+// (lib/emailRoundTrip.ts) is NOT mocked: it runs a real headless editor here.
+vi.mock('../components/emailEditor/EmailContentEditor', () => ({
+  EmailContentEditor: (p: {
+    initialContent: string;
+    onChange: (c: string) => void;
+    fields: readonly string[];
+    disabled?: boolean;
+  }) => (
+    <textarea
+      aria-label="Email content"
+      data-fields={p.fields.join(',')}
+      defaultValue={p.initialContent}
+      disabled={p.disabled}
+      onChange={(e) => p.onChange(e.target.value)}
+    />
+  ),
+}));
 
 /**
  * A rejection shaped like the one the Functions SDK throws for the live-key
@@ -65,9 +97,20 @@ function tpl(over: Partial<TemplateSummary> = {}): TemplateSummary {
   };
 }
 
+/** Fills the two visual fields a new template needs besides key and subject. */
+function fillVisualBody(content = '<p>Body</p>') {
+  fireEvent.change(screen.getByLabelText(/^headline$/i), { target: { value: 'Headline' } });
+  fireEvent.change(screen.getByLabelText('Email content'), { target: { value: content } });
+}
 beforeEach(() => {
   saveTemplate.mockReset();
   deleteTemplate.mockReset();
+  previewEmailTemplate.mockReset().mockResolvedValue({ subject: 'S', html: '<html></html>', text: 'T', issues: [] });
+  convertTemplateToVisual.mockReset();
+  getNotificationMatrix.mockReset().mockResolvedValue({
+    catalog: [{ key: 'auth.password.reset', templates: { email: 'auth.password.reset' }, mergeFields: ['displayName', 'link'] }],
+    overrides: {}, ungated: [], businessAdminCount: null, businessAdminRosterPath: '', updatedAtMs: null,
+  });
 });
 
 describe('TemplateEditor: create mode', () => {
@@ -80,13 +123,14 @@ describe('TemplateEditor: create mode', () => {
     expect(screen.getByText('New template')).toHaveAttribute('aria-current', 'page');
     expect(screen.getByLabelText(/template key/i)).toHaveValue('');
     expect(screen.getByLabelText(/^subject$/i)).toHaveValue('');
-    expect(screen.getByLabelText(/^body$/i)).toHaveValue('');
+    expect(screen.getByLabelText(/^headline$/i)).toHaveValue('');
+    expect(screen.getByLabelText('Email content')).toHaveValue('');
   });
 
   it('blocks save and shows an inline error when the template key is blank', async () => {
     render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
     await userEvent.type(screen.getByLabelText(/^subject$/i), 'Hi');
-    await userEvent.type(screen.getByLabelText(/^body$/i), 'Body');
+    fillVisualBody();
     await userEvent.click(screen.getByRole('button', { name: /save template/i }));
     expect(await screen.findByText(/template key is required/i)).toBeInTheDocument();
     expect(saveTemplate).not.toHaveBeenCalled();
@@ -96,7 +140,7 @@ describe('TemplateEditor: create mode', () => {
     render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
     await userEvent.type(screen.getByLabelText(/template key/i), 'booking confirmed');
     await userEvent.type(screen.getByLabelText(/^subject$/i), 'Hi');
-    await userEvent.type(screen.getByLabelText(/^body$/i), 'Body');
+    fillVisualBody();
     await userEvent.click(screen.getByRole('button', { name: /save template/i }));
     // "may only use" is unique to the inline error; the static field hint
     // below the input shares the same character-set wording, so a bare
@@ -108,18 +152,19 @@ describe('TemplateEditor: create mode', () => {
   it('blocks save when subject is blank', async () => {
     render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
     await userEvent.type(screen.getByLabelText(/template key/i), 'booking.confirmed');
-    await userEvent.type(screen.getByLabelText(/^body$/i), 'Body');
+    fillVisualBody();
     await userEvent.click(screen.getByRole('button', { name: /save template/i }));
     expect(await screen.findByText(/subject is required/i)).toBeInTheDocument();
     expect(saveTemplate).not.toHaveBeenCalled();
   });
 
-  it('blocks save when body is blank', async () => {
+  it('blocks save when the content is empty', async () => {
     render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
     await userEvent.type(screen.getByLabelText(/template key/i), 'booking.confirmed');
     await userEvent.type(screen.getByLabelText(/^subject$/i), 'Hi');
+    fireEvent.change(screen.getByLabelText(/^headline$/i), { target: { value: 'Headline' } });
     await userEvent.click(screen.getByRole('button', { name: /save template/i }));
-    expect(await screen.findByText(/body is required/i)).toBeInTheDocument();
+    expect(await screen.findByText('The email needs some content.')).toBeInTheDocument();
     expect(saveTemplate).not.toHaveBeenCalled();
   });
 
@@ -135,7 +180,7 @@ describe('TemplateEditor: create mode', () => {
     // keystroke gets mangled ("{{" is its own escape for a literal "{").
     // Setting the value directly sidesteps that; this test is about the
     // saved payload, not keystroke-level input behavior.
-    fireEvent.change(screen.getByLabelText(/^body$/i), { target: { value: 'Hi {{kinfolk_name}}' } });
+    fillVisualBody('<p>Hi {{kinfolk_name}}</p>');
     // The tag row: a comma commits the first, Enter the second, each becoming
     // its own capsule.
     await userEvent.type(screen.getByLabelText(/add a tag/i), 'booking,confirmation{Enter}');
@@ -149,8 +194,9 @@ describe('TemplateEditor: create mode', () => {
       expect(saveTemplate).toHaveBeenCalledWith({
         templateId: 'booking.confirmed',
         subject: 'Your booking is confirmed',
-        body: 'Hi {{kinfolk_name}}',
-        html: null,
+        format: 'visual',
+        headline: 'Headline',
+        content: '<p>Hi {{kinfolk_name}}</p>',
         category: 'Booking',
         tags: ['booking', 'confirmation'],
         usageInstructions: '',
@@ -303,7 +349,7 @@ describe('TemplateEditor: save failure (fail loud)', () => {
 
     await userEvent.type(screen.getByLabelText(/template key/i), 'booking.confirmed');
     await userEvent.type(screen.getByLabelText(/^subject$/i), 'Hi');
-    await userEvent.type(screen.getByLabelText(/^body$/i), 'Body');
+    fillVisualBody();
     await userEvent.click(screen.getByRole('button', { name: /save template/i }));
 
     expect(await screen.findByText(/saveTemplate failed: templateId already exists/)).toBeInTheDocument();
@@ -592,7 +638,7 @@ describe('TemplateEditor: live preview', () => {
     expect(preview).toHaveTextContent('Sandy Wren');
   });
   it('updates as the author types', async () => {
-    render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    render(<TemplateEditor template={tpl()} onClose={vi.fn()} onSaved={vi.fn()} />);
     await userEvent.type(screen.getByLabelText(/^subject$/i), 'Hello there');
     expect(screen.getByRole('region', { name: 'Live preview' })).toHaveTextContent('Hello there');
   });
@@ -665,7 +711,7 @@ describe('TemplateEditor: creating cannot overwrite an existing template', () =>
     render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
     await userEvent.type(screen.getByLabelText(/template key/i), 'booking.confirmed');
     await userEvent.type(screen.getByLabelText(/^subject$/i), 'Hi');
-    fireEvent.change(screen.getByLabelText(/^body/i), { target: { value: 'Body copy.' } });
+    fillVisualBody();
     await userEvent.click(screen.getByRole('button', { name: /save template/i }));
     await waitFor(() => expect(saveTemplate).toHaveBeenCalled());
     expect(saveTemplate.mock.calls[0]?.[0]).toMatchObject({ expectNew: true });
@@ -690,7 +736,7 @@ describe('TemplateEditor: creating cannot overwrite an existing template', () =>
     render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
     await userEvent.type(screen.getByLabelText(/template key/i), 'booking.confirmed');
     await userEvent.type(screen.getByLabelText(/^subject$/i), 'Hi');
-    fireEvent.change(screen.getByLabelText(/^body/i), { target: { value: 'Body copy.' } });
+    fillVisualBody();
     await userEvent.click(screen.getByRole('button', { name: /save template/i }));
     expect(
       await screen.findByText(/The key booking\.confirmed is already in use/),
@@ -789,5 +835,262 @@ describe('TemplateEditor: the email creation mock (#755)', () => {
     expect(screen.getByLabelText(/^html$/i)).toHaveValue('<p>x</p>');
     expect(screen.getByLabelText(/usage instructions/i)).toHaveValue('When');
     expect(screen.getByRole('button', { name: /add section/i })).toBeInTheDocument();
+  });
+});
+function visualTpl(over: Partial<TemplateSummary> = {}): TemplateSummary {
+  return tpl({
+    templateId: 'auth.password.reset',
+    subject: 'Reset your password',
+    body: '',
+    html: null,
+    format: 'visual',
+    headline: 'Reset your password',
+    content: '<p>Hi {{displayName}}</p>',
+    ...over,
+  });
+}
+
+const seedsDir = join(dirname(fileURLToPath(import.meta.url)), '../../../mytribe/seeds/notificationTemplates');
+const seedContent = (key: string) => readFileSync(join(seedsDir, key, 'content.html'), 'utf8').trimEnd();
+
+describe('TemplateEditor: visual templates (#953)', () => {
+  it('shows Subject, Headline and the content editor, and no Body or HTML fields', async () => {
+    render(<TemplateEditor template={visualTpl()} onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.getByLabelText(/^subject$/i)).toHaveValue('Reset your password');
+    expect(screen.getByLabelText(/^headline$/i)).toHaveValue('Reset your password');
+    expect(screen.getByLabelText('Email content')).toHaveValue('<p>Hi {{displayName}}</p>');
+    expect(screen.getByLabelText('Email content')).not.toBeDisabled();
+    expect(screen.queryByLabelText(/^body$/i)).toBeNull();
+    expect(screen.queryByLabelText(/^html$/i)).toBeNull();
+    // The fields come from the notification that sends this template.
+    await waitFor(() => expect(screen.getByLabelText('Email content')).toHaveAttribute('data-fields', 'displayName,link'));
+  });
+
+  it('previews through the server with the matched catalog key', async () => {
+    render(<TemplateEditor template={visualTpl()} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await waitFor(
+      () =>
+        expect(previewEmailTemplate).toHaveBeenCalledWith({
+          subject: 'Reset your password',
+          headline: 'Reset your password',
+          content: '<p>Hi {{displayName}}</p>',
+          catalogKey: 'auth.password.reset',
+        }),
+      { timeout: 2000 },
+    );
+    expect(await screen.findByTitle('The email as it will be sent', {}, { timeout: 2000 })).toHaveAttribute(
+      'srcdoc',
+      '<html></html>',
+    );
+  });
+
+  it('saves the visual shape: no body, no html', async () => {
+    saveTemplate.mockResolvedValue({ templateId: 'auth.password.reset' });
+    const onSaved = vi.fn();
+    render(<TemplateEditor template={visualTpl()} onClose={vi.fn()} onSaved={onSaved} />);
+    fireEvent.change(screen.getByLabelText('Email content'), { target: { value: '<p>Hello {{displayName}}</p>' } });
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() =>
+      expect(saveTemplate).toHaveBeenCalledWith({
+        templateId: 'auth.password.reset',
+        subject: 'Reset your password',
+        format: 'visual',
+        headline: 'Reset your password',
+        content: '<p>Hello {{displayName}}</p>',
+        title: 'Booking Confirmed',
+        tags: [],
+        usageInstructions: '',
+        sectionDefinitions: [],
+      }),
+    );
+    const sent = saveTemplate.mock.calls[0]![0] as Record<string, unknown>;
+    expect('body' in sent).toBe(false);
+    expect('html' in sent).toBe(false);
+    expect(onSaved).toHaveBeenCalledWith('auth.password.reset');
+  });
+
+  it('keeps every metadata field the template carries on a visual save', async () => {
+    saveTemplate.mockResolvedValue({ templateId: 'auth.password.reset' });
+    render(
+      <TemplateEditor
+        template={visualTpl({
+          title: 'Password reset',
+          description: 'Sent when someone asks for a new password',
+          category: 'Account',
+          tags: ['auth', 'account'],
+          usageInstructions: 'Sent by the reset flow only.',
+          sectionDefinitions: [{ title: 'Greeting', description: 'Hi line' }],
+        })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    await userEvent.clear(screen.getByLabelText(/^subject$/i));
+    await userEvent.type(screen.getByLabelText(/^subject$/i), 'New subject');
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() =>
+      expect(saveTemplate).toHaveBeenCalledWith({
+        templateId: 'auth.password.reset',
+        subject: 'New subject',
+        format: 'visual',
+        headline: 'Reset your password',
+        content: '<p>Hi {{displayName}}</p>',
+        title: 'Password reset',
+        description: 'Sent when someone asks for a new password',
+        category: 'Account',
+        tags: ['auth', 'account'],
+        usageInstructions: 'Sent by the reset flow only.',
+        sectionDefinitions: [{ title: 'Greeting', description: 'Hi line' }],
+      }),
+    );
+  });
+
+  it('blocks save on a blank headline and on empty content', async () => {
+    render(<TemplateEditor template={visualTpl({ headline: '' })} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    expect(await screen.findByText('Headline is required.')).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText(/^headline$/i), 'Hi');
+    fireEvent.change(screen.getByLabelText('Email content'), { target: { value: '<p> </p>' } });
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    expect(await screen.findByText('The email needs some content.')).toBeInTheDocument();
+    expect(saveTemplate).not.toHaveBeenCalled();
+  });
+
+  it('when no notification sends the template, offers the fields it already uses', async () => {
+    getNotificationMatrix.mockResolvedValue({ catalog: [], overrides: {}, ungated: [], businessAdminCount: null, businessAdminRosterPath: '', updatedAtMs: null });
+    render(<TemplateEditor template={visualTpl({ templateId: 'invite.kinfolk', content: '<p><a href="{{inviteLink}}" class="button">Join</a></p>' })} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await waitFor(() => expect(screen.getByLabelText('Email content')).toHaveAttribute('data-fields', 'inviteLink'));
+  });
+
+  it('a failed field load still leaves the fields the template uses', async () => {
+    getNotificationMatrix.mockRejectedValue(new Error('offline'));
+    render(<TemplateEditor template={visualTpl()} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await waitFor(() => expect(screen.getByLabelText('Email content')).toHaveAttribute('data-fields', 'displayName'));
+  });
+
+  it('shows the server refusal word for word, and keeps what was typed', async () => {
+    const refusal = Object.assign(
+      new Error('A merge field can only be used in text or as a link target.'),
+      { code: 'functions/invalid-argument' },
+    );
+    saveTemplate.mockRejectedValue(refusal);
+    const onSaved = vi.fn();
+    render(<TemplateEditor template={visualTpl()} onClose={vi.fn()} onSaved={onSaved} />);
+    fireEvent.change(screen.getByLabelText(/^headline$/i), { target: { value: 'New headline' } });
+    fireEvent.change(screen.getByLabelText('Email content'), { target: { value: '<p>Edited {{displayName}}</p>' } });
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    expect(
+      await screen.findByText(/A merge field can only be used in text or as a link target\./),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/^headline$/i)).toHaveValue('New headline');
+    expect(screen.getByLabelText('Email content')).toHaveValue('<p>Edited {{displayName}}</p>');
+    expect(screen.getByRole('button', { name: /save template/i })).not.toBeDisabled();
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+});
+
+describe('TemplateEditor: content the editor cannot reproduce (#953 C5a)', () => {
+  // A Handlebars block sitting bare in a list: the editor would wrap each tag
+  // in a list item of its own, so it must never be given the chance to save.
+
+  const UNSUPPORTED = '<p>Hi</p><ul><li>a</li>{{#if vip}}<li>b</li>{{/if}}</ul>';
+
+  const LOCK_NOTE = "This email has a structure the editor can't edit yet. Edit its subject and headline here.";
+
+  it('opens with the body locked and says why', () => {
+    render(<TemplateEditor template={visualTpl({ content: UNSUPPORTED })} onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.getByLabelText('Email content')).toBeDisabled();
+    expect(screen.getByText(LOCK_NOTE)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^subject$/i)).not.toBeDisabled();
+    expect(screen.getByLabelText(/^headline$/i)).not.toBeDisabled();
+  });
+
+  it('saves a subject change with the stored content unchanged, byte for byte', async () => {
+    saveTemplate.mockResolvedValue({ templateId: 'auth.password.reset' });
+    render(<TemplateEditor template={visualTpl({ content: UNSUPPORTED })} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.clear(screen.getByLabelText(/^subject$/i));
+    await userEvent.type(screen.getByLabelText(/^subject$/i), 'New subject');
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() => expect(saveTemplate).toHaveBeenCalled());
+    expect(saveTemplate.mock.calls[0]![0]).toMatchObject({ subject: 'New subject', content: UNSUPPORTED });
+  });
+
+  it.each(['assignment.assigned', 'kincare.booking.confirm'])(
+    'the loop seed %s opens editable, not locked',
+    (key) => {
+      render(<TemplateEditor template={visualTpl({ content: seedContent(key) })} onClose={vi.fn()} onSaved={vi.fn()} />);
+      expect(screen.getByLabelText('Email content')).not.toBeDisabled();
+      expect(screen.queryByText(LOCK_NOTE)).toBeNull();
+    },
+  );
+});
+
+describe('TemplateEditor: a repeating list cannot be lost or split on save (#953)', () => {
+  const LOOP_ERROR =
+    'This change would remove or split a repeating list ({{#each}}). Undo it, or edit the list items only.';
+
+  const LOOPED = '<p>Your visits:</p><ul>{{#each visits}}<li>{{this.date}}</li>{{/each}}</ul>';
+
+  it('refuses a save that drops the loop', async () => {
+    render(<TemplateEditor template={visualTpl({ content: LOOPED })} onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Email content'), { target: { value: '<p>Your visits:</p><ul><li>x</li></ul>' } });
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    expect(await screen.findByText(LOOP_ERROR)).toBeInTheDocument();
+    expect(saveTemplate).not.toHaveBeenCalled();
+  });
+
+  it('refuses a save that adds a lone closer (the loop would end early)', async () => {
+    render(<TemplateEditor template={visualTpl({ content: LOOPED })} onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Email content'), {
+      target: { value: LOOPED.replace('</li>', '</li><li>{{/each}}</li>') },
+    });
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    expect(await screen.findByText(LOOP_ERROR)).toBeInTheDocument();
+    expect(saveTemplate).not.toHaveBeenCalled();
+  });
+
+  it('lets an edit inside the loop through', async () => {
+    saveTemplate.mockResolvedValue({ templateId: 'auth.password.reset' });
+    render(<TemplateEditor template={visualTpl({ content: LOOPED })} onClose={vi.fn()} onSaved={vi.fn()} />);
+    const edited = LOOPED.replace('{{this.date}}', '{{this.date}} (booked)');
+    fireEvent.change(screen.getByLabelText('Email content'), { target: { value: edited } });
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() => expect(saveTemplate).toHaveBeenCalled());
+    expect(saveTemplate.mock.calls[0]![0]).toMatchObject({ content: edited });
+  });
+});
+
+describe('TemplateEditor: a format this admin cannot edit (#953 C13)', () => {
+  const foreign = () =>
+    visualTpl({ format: 'blocks', subject: 'Stored subject', headline: 'Stored headline', content: '<p>x</p>' });
+
+  it('opens read-only: subject and headline shown, no body editing, Save off, and a note', () => {
+    render(<TemplateEditor template={foreign()} onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.getByLabelText(/^subject$/i)).toHaveValue('Stored subject');
+    expect(screen.getByLabelText(/^subject$/i)).toBeDisabled();
+    expect(screen.getByLabelText(/^headline$/i)).toHaveValue('Stored headline');
+    expect(screen.getByLabelText(/^headline$/i)).toBeDisabled();
+    expect(screen.queryByLabelText('Email content')).toBeNull();
+    expect(screen.queryByLabelText(/^body$/i)).toBeNull();
+    expect(screen.queryByLabelText(/^html$/i)).toBeNull();
+    expect(screen.getByRole('button', { name: /save template/i })).toBeDisabled();
+    expect(screen.getByText(/can.t be edited here yet/i)).toBeInTheDocument();
+  });
+
+  it('never calls saveTemplate', async () => {
+    render(<TemplateEditor template={foreign()} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    expect(saveTemplate).not.toHaveBeenCalled();
+    expect(previewEmailTemplate).not.toHaveBeenCalled();
+  });
+});
+
+describe('TemplateEditor: old-format templates keep today’s editing (#953)', () => {
+  it('an old-format template shows Body and HTML, and no Headline or visual editor', () => {
+    render(<TemplateEditor template={tpl({ html: '<p>x</p>' })} onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.getByLabelText(/^body$/i)).toHaveValue('Hi {{kinfolk_name}}');
+    expect(screen.getByLabelText(/^html$/i)).toHaveValue('<p>x</p>');
+    expect(screen.queryByLabelText(/^headline$/i)).toBeNull();
+    expect(screen.queryByLabelText('Email content')).toBeNull();
   });
 });
