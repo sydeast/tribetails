@@ -516,4 +516,16 @@ describe('#953 visual templates', () => {
       source: 'template',
     });
   });
+
+  it('fieldsForTemplate never offers a loop-scoped this/this.* token from its own-tokens fallback', () => {
+    // #953 carry-forward: assignment.assigned and kincare.booking.confirm both
+    // seed {{this.weekday}}/{{this.date}}/{{this.time}} inside an {{#each}}
+    // body. tokensIn sees these as ordinary merge tokens; the fallback here
+    // must not offer them as top-level fields to insert.
+    expect(fieldsForTemplate([], 'assignment.assigned', ['this', 'this.weekday', 'this.date', 'subject'])).toEqual({
+      catalogKey: null,
+      fields: ['subject'],
+      source: 'template',
+    });
+  });
 });

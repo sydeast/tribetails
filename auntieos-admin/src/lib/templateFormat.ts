@@ -506,6 +506,20 @@ export interface TemplateFieldSet {
 }
 
 /**
+ * #953, carried to Task 7: `this`/`this.*` names a field local to an
+ * `{{#each}}` loop body (`{{this.weekday}}`, `{{this.date}}` -- both seeded
+ * in `assignment.assigned` and `kincare.booking.confirm`), not a top-level
+ * merge field the operator can insert anywhere else in the email. `tokensIn`
+ * cannot tell a loop-scoped name from a real one, so the fallback below
+ * (built from a template's own already-used tokens, not the server's
+ * catalog) filters them out here, at the source: "Insert field" must never be
+ * built with `{{this}}` or `{{this.weekday}}` in its list.
+ */
+function isLoopScopedToken(name: string): boolean {
+  return name === 'this' || name.startsWith('this.');
+}
+
+/**
  * The merge fields "Insert field" offers. A notification row names the
  * template that actually renders its email after bindings (`templates.email`),
  * and `mergeFields` is `TEMPLATE_FIELDS[key]` projected by the server. When no
@@ -521,7 +535,8 @@ export function fieldsForTemplate(
   const id = templateId.trim();
   const matches = catalog.filter((entry) => entry.templates['email'] === id);
   if (matches.length === 0) {
-    return { catalogKey: null, fields: [...new Set(alreadyUsed)].sort(), source: 'template' };
+    const fields = [...new Set(alreadyUsed)].filter((name) => !isLoopScopedToken(name)).sort();
+    return { catalogKey: null, fields, source: 'template' };
   }
   return {
     catalogKey: matches[0]!.key,
