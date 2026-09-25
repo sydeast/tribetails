@@ -66,6 +66,54 @@ class TemplateBankVisualTest {
         }
     }
 
+    // Review fix round 1, Important #1: the report claimed both save paths were
+    // exercised; only the payload was. This proves the bank side of a success:
+    // the editor closes and the list the operator sees is whatever reload()
+    // fetched, not the pre-save snapshot still sitting in memory.
+    @Test
+    fun `a successful visual save closes the editor and the bank shows the reloaded template`() {
+        val updated = visual.copy(title = "Password reset (updated)")
+        val r = mockk<TemplateRepository>()
+        coEvery { r.listTemplates() } returnsMany listOf(Result.success(listOf(visual)), Result.success(listOf(updated)))
+        coEvery { r.listCategories() } returns Result.success(emptyList())
+        coEvery { r.previewEmailTemplate(any(), any(), any(), any()) } returns
+            Result.success(TemplateRepository.EmailPreview("s", "<p>x</p>", "x", emptyList()))
+        coEvery { r.saveTemplate(any(), any()) } returns Result.success(visual.templateId)
+
+        composeRule.setContent { AuntieOSTheme { TemplateBankBody(templateRepo = r) } }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Edit").performClick()
+        composeRule.onNodeWithTag(VISUAL_SAVE_TAG).performClick()
+        composeRule.waitForIdle()
+
+        // Back at the bank (the visual editor's own field is gone)...
+        composeRule.onNodeWithTag(blockTag(0)).assertDoesNotExist()
+        // ...showing what the post-save reload() fetched, not the stale in-memory copy.
+        composeRule.onNodeWithText("Password reset (updated)").assertExists()
+    }
+
+    // Review fix round 1, Important #1: the failed-save path the report claimed
+    // was tested and was not. A refused save must stay on the editor with the
+    // server's own message, and must not reload (which would discard the draft).
+    @Test
+    fun `a failed visual save stays on the editor, shows the server message verbatim, and does not reload`() {
+        val r = repo(listOf(visual))
+        coEvery { r.saveTemplate(any(), any()) } returns Result.failure(Exception("templateId is required"))
+        composeRule.setContent { AuntieOSTheme { TemplateBankBody(templateRepo = r) } }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Edit").performClick()
+        composeRule.onNodeWithTag(blockTag(0)).performTextReplacement("Hi {{displayName}}, tap the button.")
+        composeRule.onNodeWithTag(VISUAL_SAVE_TAG).performClick()
+        composeRule.waitForIdle()
+
+        // Still on the editor, edit intact: a failed save is not a silent close.
+        composeRule.onNodeWithTag(blockTag(0)).assertTextEquals("Hi {{displayName}}, tap the button.")
+        // The server's exact message, not a paraphrase.
+        composeRule.onNodeWithText("templateId is required").assertExists()
+        // Not reloaded: listTemplates() ran only for the initial load.
+        coVerify(exactly = 1) { r.listTemplates() }
+    }
+
     // Review Focus 4
     @Test
     fun `rotating mid-edit reopens the editor with the edit`() {

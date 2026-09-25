@@ -41,11 +41,14 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.Mail
@@ -68,6 +71,7 @@ import com.tribetails.auntieos.ui.components.AuntieField
 import com.tribetails.auntieos.ui.components.AuntieFieldLabel
 import com.tribetails.auntieos.ui.components.AuntieIconTile
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
+import com.tribetails.auntieos.ui.components.AuntieSpinner
 import com.tribetails.auntieos.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.ui.components.DenCrumb
@@ -250,8 +254,12 @@ fun TemplateBankBody(
     var creating by remember { mutableStateOf(false) }
     // A failed save is the editor's to show: the editor replaces the bank while
     // it is open (#755), so a banner on the bank would sit behind it unread.
-    var saveError by remember { mutableStateOf<String?>(null) }
-    // #953: a visual save in flight. The Save button shows a spinner and cannot fire twice.
+    // rememberSaveable next to editingId: a rotation right after a failed save
+    // must not lose the banner it is still showing.
+    var saveError by rememberSaveable { mutableStateOf<String?>(null) }
+    // #953: a visual save in flight. The Save button shows a spinner and cannot
+    // fire twice. Plain remember: rotation cancels the launched coroutine
+    // anyway, so there is nothing left in flight for this flag to describe.
     var saving by remember { mutableStateOf(false) }
     // #953: the template open in the visual editor, by key, so rotation (which
     // recreates the Activity) reopens it once the list has loaded again.
@@ -270,24 +278,36 @@ fun TemplateBankBody(
     val categoryTargets = remember { mutableStateMapOf<String, Rect>() }
     var draggingId by remember { mutableStateOf<String?>(null) }
     var hoveredCategory by remember { mutableStateOf<String?>(null) }
+    // #953 review fix: the row being saved by a drag drop, so the card can show
+    // a wait indicator and refuse a second drop on itself while the first is
+    // still in flight.
+    var categorySavingId by remember { mutableStateOf<String?>(null) }
 
     fun assignCategory(tpl: TemplateRepository.EmailTemplate, newCategory: String) {
-        // #953: a non-null format is READ_ONLY on this device; drag-to-category
-        // is a save like any other and must never touch it.
+        // #953 Ruling C1: a non-null, unrecognized format (or a visual flag
+        // missing its fields) is READ_ONLY on this device; a real visual
+        // template drags like any other. Either way the drag is a save and
+        // must obey the same rule.
         if (!canReassignCategory(tpl)) {
             error = "Move this template on the web admin."
             return
         }
+        // A drop for this row is already saving: ignore a second one until it
+        // resolves (the card itself also stops offering the drag gesture below).
+        if (categorySavingId == tpl.templateId) return
         val prev = templates
+        categorySavingId = tpl.templateId
         // Optimistic: reflect the move immediately (chip counts derive from templates).
         templates = templates.map { if (it.templateId == tpl.templateId) it.copy(category = newCategory) else it }
         scope.launch {
             templateRepo.saveTemplate(tpl.copy(category = newCategory))
                 .onFailure {
-                    // Fail loud: revert the optimistic move and surface the error.
+                    // Fail loud: revert the optimistic move and surface the
+                    // server's message verbatim.
                     templates = prev
                     error = "Couldn't move \"${tpl.title.ifBlank { tpl.templateId }}\" to $newCategory: ${it.message}"
                 }
+            categorySavingId = null
         }
     }
 
@@ -501,6 +521,7 @@ fun TemplateBankBody(
                         onOpen = { viewing = tpl },
                         onEdit = { creating = false; editing = tpl; editingId = tpl.templateId },
                         isDragging = draggingId == tpl.templateId,
+                        isSaving = categorySavingId == tpl.templateId,
                         onDragStart = { draggingId = tpl.templateId; hoveredCategory = null },
                         onDragMove = { windowPos -> hoveredCategory = categoryDropTarget(windowPos, categoryTargets) },
                         onDragEnd = { windowPos ->
@@ -549,6 +570,8 @@ fun TemplateBankBody(
  * A tap opens the read-only viewer; Edit opens the editor; a long-press lifts
  * the card so it can be dropped on a category chip.
  */
+internal fun categorySavingTag(templateId: String) = "category-saving-$templateId"
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TemplateCard(
@@ -556,6 +579,10 @@ private fun TemplateCard(
     onOpen: () -> Unit,
     onEdit: () -> Unit,
     isDragging: Boolean = false,
+    // #953 review fix: a drag-drop save for this exact row is in flight. The
+    // card shows a wait indicator and stops offering the drag gesture, so a
+    // second drop on the same row cannot fire while the first is still saving.
+    isSaving: Boolean = false,
     onDragStart: () -> Unit = {},
     onDragMove: (windowPos: Offset) -> Unit = {},
     onDragEnd: (windowPos: Offset) -> Unit = {},
@@ -564,8 +591,10 @@ private fun TemplateCard(
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     // Drag-drop: long-press lifts the card, which then follows the pointer via a
-    // graphicsLayer translation (draw-only, so [basePos] stays the true layout
-    // position for the window-coordinate hit-test). The parent owns the assign.
+    // graphicsLayer translation. The gesture detector reads the untransformed
+    // layout frame (it sits above graphicsLayer below), so [basePos] and every
+    // `change.position` stay the true window position throughout the drag. The
+    // parent owns the assign.
     var basePos by remember { mutableStateOf(Offset.Zero) }
     var translation by remember { mutableStateOf(Offset.Zero) }
     var lastWindow by remember { mutableStateOf(Offset.Zero) }
@@ -579,6 +608,41 @@ private fun TemplateCard(
         modifier = Modifier
             .fillMaxWidth()
             .onGloballyPositioned { basePos = it.positionInWindow() }
+            // #953 review fix: the drag gesture sits ABOVE graphicsLayer, so
+            // `change.position` stays in the untransformed layout frame. It used
+            // to sit below it, so once a drag lifted the card (isDragging's
+            // translationX/Y/scale kicked in), every further move was measured
+            // in the ALREADY-TRANSFORMED frame and `lastWindow` drifted away
+            // from the real finger position — a drop almost never landed on a
+            // chip. Pre-existing since 13.8; only surfaced now because Ruling
+            // C1 made the drag path newly relevant to test end to end.
+            .then(
+                // While this row is saving, no new drag can start on it: a
+                // second drop while the first is in flight would be ignored by
+                // assignCategory anyway, but not offering the gesture at all is
+                // the honest picture of "this row is busy."
+                if (isSaving) {
+                    Modifier
+                } else {
+                    Modifier.pointerInput(tpl.templateId) {
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = { startLocal ->
+                                translation = Offset.Zero
+                                lastWindow = basePos + startLocal
+                                onDragStart()
+                            },
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                translation += dragAmount
+                                lastWindow = basePos + change.position
+                                onDragMove(lastWindow)
+                            },
+                            onDragEnd = { onDragEnd(lastWindow); translation = Offset.Zero },
+                            onDragCancel = { translation = Offset.Zero; onDragCancel() },
+                        )
+                    }
+                },
+            )
             .graphicsLayer {
                 if (isDragging) {
                     translationX = translation.x
@@ -588,23 +652,6 @@ private fun TemplateCard(
                     scaleY = 1.02f
                     shadowElevation = 16f
                 }
-            }
-            .pointerInput(tpl.templateId) {
-                detectDragGesturesAfterLongPress(
-                    onDragStart = { startLocal ->
-                        translation = Offset.Zero
-                        lastWindow = basePos + startLocal
-                        onDragStart()
-                    },
-                    onDrag = { change, dragAmount ->
-                        change.consume()
-                        translation += dragAmount
-                        lastWindow = basePos + change.position
-                        onDragMove(lastWindow)
-                    },
-                    onDragEnd = { onDragEnd(lastWindow); translation = Offset.Zero },
-                    onDragCancel = { translation = Offset.Zero; onDragCancel() },
-                )
             }
             .clip(shape)
             .clickable(onClick = onOpen),
@@ -666,6 +713,18 @@ private fun TemplateCard(
                     tags.forEach { tag ->
                         AuntieStatusPill(label = tag, tone = AuntieStatusTone.Orange, compact = true)
                     }
+                }
+            }
+            if (isSaving) {
+                // The wait indicator for a drag-drop save in flight: the only
+                // honest picture while the row cannot yet be dragged again.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.testTag(categorySavingTag(tpl.templateId)),
+                ) {
+                    AuntieSpinner(modifier = Modifier.size(14.dp))
+                    Text("Moving…", style = AuntieTheme.typography.labelSmall, color = c.textDim)
                 }
             }
             // The mock's `.cardfoot`: a soft rule, then Edit on the right edge.
@@ -872,6 +931,12 @@ internal fun templateKeyError(key: String, existingKeys: List<String>): String? 
         else -> null
     }
 }
+/** A tag list, saved across rotation the same way [VisualDraftSaver] saves its tags. */
+private val StringListSaver: Saver<List<String>, Any> = listSaver(
+    save = { ArrayList(it) },
+    restore = { it },
+)
+
 /**
  * The editor as the email creation mock draws it (#755,
  * `ui-ideas/auntieos-email-creation-2026-05-27.html`): a page with the
@@ -906,17 +971,24 @@ private fun TemplateEditorScreen(
     onSave: (TemplateRepository.EmailTemplate) -> Unit,
 ) {
     val c = AuntieTheme.colors
-    var templateId by remember(template.templateId, creating) { mutableStateOf(template.templateId) }
-    var title by remember(template.templateId, creating) { mutableStateOf(template.title) }
-    var subject by remember(template.templateId, creating) { mutableStateOf(template.subject) }
+    // #953 review fix: rotation (which recreates the Activity) reopens this
+    // screen via the bank's editingId, so a mid-edit draft must survive it too,
+    // the same as the visual editor's own rememberSaveable draft. Saves exactly
+    // what was always saved: title/description/tags/category round-trip
+    // unchanged, this only stops rotation from silently reverting them.
+    var templateId by rememberSaveable(template.templateId, creating) { mutableStateOf(template.templateId) }
+    var title by rememberSaveable(template.templateId, creating) { mutableStateOf(template.title) }
+    var subject by rememberSaveable(template.templateId, creating) { mutableStateOf(template.subject) }
     // 13.3/13.4: body edited as Markdown (TextFieldValue for selection-aware toolbar);
     // the email HTML is DERIVED on save (markdownToHtml) - no hand-edited HTML field.
-    var bodyValue by remember(template.templateId, creating) { mutableStateOf(TextFieldValue(template.body)) }
-    var category by remember(template.templateId, creating) { mutableStateOf(template.category ?: "") }
-    var description by remember(template.templateId, creating) { mutableStateOf(template.description ?: "") }
+    var bodyValue by rememberSaveable(template.templateId, creating, stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(template.body))
+    }
+    var category by rememberSaveable(template.templateId, creating) { mutableStateOf(template.category ?: "") }
+    var description by rememberSaveable(template.templateId, creating) { mutableStateOf(template.description ?: "") }
     // Tags are persisted on the doc and used to be decoded but not editable
     // here; the mock draws the tag row, so they are.
-    var tags by remember(template.templateId, creating) { mutableStateOf(template.tags) }
+    var tags by rememberSaveable(template.templateId, creating, stateSaver = StringListSaver) { mutableStateOf(template.tags) }
 
     val keyError = if (creating) templateKeyError(templateId, existingKeys) else null
     val mode = remember(template.templateId, creating) { templateEditMode(template, creating) }
@@ -940,7 +1012,10 @@ private fun TemplateEditorScreen(
             kicker = "The Den · Template bank",
             crumbs = listOf(
                 DenCrumb("Template bank", onDismiss),
-                DenCrumb(if (creating) "New template" else "Edit template"),
+                // #953 review fix: dead since 7a removed the only caller that
+                // ever passed creating = true to this screen; "New template"
+                // could never actually draw.
+                DenCrumb("Edit template"),
             ),
             title = "Email",
             accentTail = "template",
