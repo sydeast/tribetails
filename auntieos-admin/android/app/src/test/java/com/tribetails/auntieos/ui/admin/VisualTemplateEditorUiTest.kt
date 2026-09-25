@@ -155,6 +155,26 @@ class VisualTemplateEditorUiTest {
         assertEquals(2, calls)
     }
 
+    // Review round 1: a retry in flight shows only the loading cue.
+    @Test
+    fun `Retry clears the old error while it asks again`() {
+        var calls = 0
+        val second = CompletableDeferred<Result<TemplateRepository.EmailPreview>>()
+        composeRule.setContent(editor(loadPreview = {
+            calls++
+            if (calls == 1) Result.failure(RuntimeException("deadline-exceeded")) else second.await()
+        }))
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("deadline-exceeded").assertExists()
+        composeRule.onNodeWithText("Retry").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("deadline-exceeded").assertDoesNotExist()
+        composeRule.onNodeWithText(PREVIEW_LOADING_TEXT).assertExists()
+        second.complete(Result.success(preview))
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(PREVIEW_WEB_TAG).assertExists()
+    }
+
     // Review Focus 5
     @Test
     fun `Save works while the preview is still loading, and sends the draft on screen`() {

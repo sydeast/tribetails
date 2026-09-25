@@ -435,6 +435,8 @@ internal fun EmailPreviewPanel(
 
     LaunchedEffect(request, attempt) {
         loading = true
+        // A new attempt replaces the last failure: only the loading cue shows while it runs.
+        error = null
         if (debounceMs > 0) delay(debounceMs)
         val result = loadPreview(request)
         if (!isActive) return@LaunchedEffect

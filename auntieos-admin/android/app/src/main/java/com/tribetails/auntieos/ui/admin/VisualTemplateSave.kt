@@ -65,16 +65,37 @@ fun visualTemplateToSave(
     draft: VisualDraft,
 ): TemplateRepository.EmailTemplate {
     val start = VisualDraft.from(original)
+    val blocks = withPristineBlocks(start.blocks, draft.blocks)
     return original.copy(
         subject = draft.subject,
         format = VISUAL_FORMAT,
         headline = draft.headline,
-        content = if (draft.blocks == start.blocks) original.content else serializeEmailContent(draft.blocks),
+        content = if (blocks == start.blocks) original.content else serializeEmailContent(blocks),
         title = if (draft.title == start.title) original.title else draft.title.ifBlank { original.templateId },
         description = if (draft.description == start.description) original.description else draft.description.ifBlank { null },
         category = if (draft.category == start.category) original.category else draft.category.ifBlank { null },
         tags = if (draft.tags == start.tags) original.tags else draft.tags,
     )
+}
+
+/**
+ * Each draft block that reads the same as its loaded block (same kind, same
+ * tags, same words in the same runs) is swapped for the loaded one, so a block
+ * edited and typed back is written with its stored spelling (`&nbsp;`, `&#38;`)
+ * instead of a re-escape. Only the source spelling of text runs is ignored.
+ */
+private fun withPristineBlocks(start: List<EmailBlock>, draft: List<EmailBlock>): List<EmailBlock> {
+    if (start.size != draft.size) return draft
+    return draft.mapIndexed { i, b -> if (withoutSpelling(b) == withoutSpelling(start[i])) start[i] else b }
+}
+
+private fun withoutSpelling(b: EmailBlock): EmailBlock =
+    if (b is EmailBlock.TextBlock) b.copy(inlines = b.inlines.map(::withoutSpelling)) else b
+
+private fun withoutSpelling(n: EmailInline): EmailInline = when (n) {
+    is EmailInline.Text -> n.copy(raw = null)
+    is EmailInline.Element -> n.copy(children = n.children.map(::withoutSpelling))
+    else -> n
 }
 
 /** Why Save is off, or null when it can go. */

@@ -121,6 +121,36 @@ class VisualTemplateSaveTest {
         assertEquals(twoBlocks.copy(content = edited.content), edited)
     }
 
+    private val spelled = original.copy(
+        content = "<p>Tom&nbsp;&amp; Jerry say hi.</p>\n<p>Fish &#38; chips&nbsp;at <strong>{{time}}</strong>.</p>",
+    )
+
+    private fun editBlock(draft: VisualDraft, index: Int, change: (String) -> String): VisualDraft {
+        val block = draft.blocks[index] as EmailBlock.TextBlock
+        val r = applyBlockEdit(block, change(block.plainText())) as BlockEdit.Accepted
+        return draft.copy(blocks = draft.blocks.toMutableList().also { it[index] = r.block })
+    }
+
+    // Review round 1: typing a block back to its words writes its stored spelling, not a re-escape.
+    @Test fun aBlockEditedAndTypedBackSavesByteForByte() {
+        val once = editBlock(VisualDraft.from(spelled), 0) { it.replace("hi.", "hello.") }
+        val back = editBlock(once, 0) { it.replace("hello.", "hi.") }
+        assertEquals(spelled.content, visualTemplateToSave(spelled, back).content)
+        assertEquals(spelled, visualTemplateToSave(spelled, back))
+
+        val both = editBlock(editBlock(VisualDraft.from(spelled), 1) { it.replace("chips", "peas") }, 1) { it.replace("peas", "chips") }
+        assertEquals(spelled.content, visualTemplateToSave(spelled, both).content)
+    }
+
+    @Test fun aRealEditLeavesEveryOtherBlockByteForByte() {
+        val reverted = editBlock(editBlock(VisualDraft.from(spelled), 1) { it.replace("Fish", "Cod") }, 1) { it.replace("Cod", "Fish") }
+        val edited = editBlock(reverted, 0) { it.replace("hi.", "hello.") }
+        val saved = visualTemplateToSave(spelled, edited).content!!
+        assertTrue(saved.endsWith("</p>\n<p>Fish &#38; chips&nbsp;at <strong>{{time}}</strong>.</p>"))
+        assertTrue(saved.contains("hello."))
+        assertFalse(saved.contains("hi."))
+    }
+
     @Test fun thePreviewIsAskedForTheDraftUnderTheTemplateKey() {
         val request = VisualDraft.from(original).copy(subject = "S2").previewRequest(original.templateId)
         assertEquals(EmailPreviewRequest("S2", "Reset your password", original.content!!, "auth.password.reset"), request)
