@@ -63,7 +63,11 @@ function stub() {
     statusCode: 200,
     body: {
       result: {
-        catalog: [{ key: 'auth.password.reset', label: 'Password reset', templates: { email: 'auth.password.reset' }, mergeFields: ['displayName', 'link'] }],
+        catalog: [
+          { key: 'auth.password.reset', label: 'Password reset', templates: { email: 'auth.password.reset' }, mergeFields: ['displayName', 'link'] },
+          // Backs the "create" test's Button dialog field list.
+          { key: 'e2e.welcome', label: 'Welcome', templates: { email: 'e2e.welcome' }, mergeFields: ['displayName', 'link'] },
+        ],
         overrides: {},
         ungated: [],
       },
@@ -75,7 +79,19 @@ function stub() {
     delay: 800,
     body: { result: { subject: 'Reset your Tribe Tails password', html: '<html><body><h2>Reset your password</h2></body></html>', text: 'Reset your password', issues: [] } },
   });
-  cy.intercept('POST', CALLABLE('saveTemplate'), { statusCode: 200, body: { result: { templateId: 'auth.password.reset' } } });
+  // A route handler, not a fixed body: this is the one write in the whole
+  // flow, and the shape of what it actually sent is the point of the visual
+  // editor existing (Global Constraint: "A visual save sends no `body` key
+  // and no `html` key at all"). Every caller below reads `@save`.
+  cy.intercept('POST', CALLABLE('saveTemplate'), (req) => {
+    const payload = req.body.data as Record<string, unknown>;
+    expect(payload).to.include({ format: 'visual' });
+    expect(payload).to.have.property('headline');
+    expect(payload).to.have.property('content');
+    expect(payload).not.to.have.property('body');
+    expect(payload).not.to.have.property('html');
+    req.reply({ statusCode: 200, body: { result: { templateId: payload['templateId'] } } });
+  }).as('save');
   cy.intercept('POST', CALLABLE('convertTemplateToVisual'), {
     statusCode: 200,
     body: {
@@ -105,6 +121,39 @@ describe('email editor', () => {
     cy.contains('.templates__card', RESET.title).should('not.contain.text', 'Old format');
   });
 
+  it('creates a visual template with formatted content and a button targeting a merge field, then saves', () => {
+    openTemplates();
+    cy.contains('button', 'New template').click();
+
+    cy.get('#template-editor-id').type('e2e.welcome');
+    cy.get('#template-editor-subject').type('Welcome to Tribe Tails');
+    cy.get('#template-editor-headline').type('Welcome aboard');
+    cy.get('[aria-label="Email content"]').click().type('Glad to have you here');
+
+    // Bold the paragraph, then a button whose target is a merge field, not a URL.
+    cy.get('[aria-label="Email content"]').type('{selectall}');
+    cy.get('button[aria-label="Bold"]').click();
+    cy.get('[aria-label="Email content"] strong').should('contain.text', 'Glad to have you here');
+
+    cy.get('button[aria-label="Button"]').click();
+    cy.get('[role="dialog"]').contains('label', 'Button text').find('input').type('Get started');
+    cy.get('[role="dialog"]').contains('label', 'A merge field').find('input[type="radio"]').check();
+    cy.get('[role="dialog"]').contains('label', 'Field').find('select').select('link');
+    cy.get('[role="dialog"]').contains('button', 'Done').click();
+    cy.get('[aria-label="Email content"] a.button').should('have.text', 'Get started').and('have.attr', 'href', '{{link}}');
+
+    cy.get('section[aria-label="Preview"]').should('have.attr', 'aria-busy', 'true');
+    cy.get('iframe[title="The email as it will be sent"]', { timeout: BUDGET_MS.RENDER }).should('have.attr', 'srcdoc');
+    cy.get('section[aria-label="Preview"]').should('have.attr', 'aria-busy', 'false');
+
+    cy.contains('button', 'Save template').click();
+    cy.wait('@save')
+      .its('request.body.data')
+      .should('include', { templateId: 'e2e.welcome', format: 'visual', expectNew: true });
+    cy.get('.template-editor').should('not.exist');
+    cy.get('.templates__card').should('have.length', 2);
+  });
+
   it('edits a visual template, shows the preview loading and then the email, and saves', () => {
     openTemplates();
     cy.contains('.templates__card', RESET.title).within(() => cy.contains('button', 'Edit').click());
@@ -126,6 +175,7 @@ describe('email editor', () => {
     cy.get('[aria-label="Email content"] [data-merge-field="link"]').should('exist');
 
     cy.contains('button', 'Save template').click();
+    cy.wait('@save').its('request.body.data').should('include', { templateId: RESET.templateId, subject: RESET.subject });
     cy.get('.template-editor').should('not.exist');
     cy.get('.templates__card').should('have.length', 2);
   });
@@ -177,6 +227,9 @@ describe('email editor', () => {
     cy.get('#template-editor-headline').should('have.value', 'Visit reminder');
 
     cy.contains('button', 'Save template').click();
+    // The row this template loaded from still carries `body`/`html` (it was
+    // old-format); the save that follows a Convert must not leak either one.
+    cy.wait('@save').its('request.body.data').should('include', { templateId: OLD.templateId, format: 'visual' });
     cy.get('.template-editor').should('not.exist');
     cy.get('.templates__card').should('have.length', 2);
   });
