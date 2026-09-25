@@ -1123,3 +1123,287 @@ describe('TemplateEditor: old-format templates keep today’s editing (#953)', (
     expect(screen.queryByLabelText('Email content')).toBeNull();
   });
 });
+describe('TemplateEditor: converting an old-format template (#953)', () => {
+  const OLD = () =>
+    tpl({ templateId: 'auth.password.reset', subject: 'Reset', body: 'Hi {{displayName}}\n\nClick {{link}}', html: '<p>Hi</p>' });
+  const ok = (over: Partial<{ subject: string; headline: string; content: string; warnings: string[] }> = {}) => ({
+    ok: true as const,
+    subject: 'Reset',
+    headline: 'H',
+    content: '<p>x</p>',
+    warnings: [] as string[],
+    ...over,
+  });
+  const LOOP_ERROR =
+    'This change would remove or split a repeating list ({{#each}}). Undo it, or edit the list items only.';
+  const LOCK_NOTE = 'This email has a structure the editor can’t edit yet. Edit its subject and headline here.';
+  it('offers Convert on an old-format template, and not on a visual one', () => {
+    const { unmount } = render(<TemplateEditor template={OLD()} onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.getByText('Old format')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Convert' })).toBeInTheDocument();
+    unmount();
+    render(<TemplateEditor template={visualTpl()} onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Convert' })).toBeNull();
+  });
+  it('does not offer Convert on a format this admin does not know', () => {
+    render(<TemplateEditor template={visualTpl({ format: 'blocks' })} onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Convert' })).toBeNull();
+    expect(screen.queryByText('Old format')).toBeNull();
+  });
+  it('Convert is not offered while creating', () => {
+    render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Convert' })).toBeNull();
+  });
+  it('shows a busy Convert while the server converts', async () => {
+    convertTemplateToVisual.mockReturnValue(new Promise(() => {}));
+    render(<TemplateEditor template={OLD()} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Convert' }));
+    const busy = screen.getByRole('button', { name: 'Converting…' });
+    expect(busy).toBeDisabled();
+    expect(busy).toHaveAttribute('aria-busy', 'true');
+  });
+  it('shows old and converted side by side, and saves nothing until Save', async () => {
+    convertTemplateToVisual.mockResolvedValue(ok({ headline: 'Reset your password', content: '<p>Hi {{displayName}}</p>' }));
+    saveTemplate.mockResolvedValue({ templateId: 'auth.password.reset' });
+    const onSaved = vi.fn();
+    render(<TemplateEditor template={OLD()} onClose={vi.fn()} onSaved={onSaved} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Convert' }));
+    expect(convertTemplateToVisual).toHaveBeenCalledWith('auth.password.reset');
+    expect(await screen.findByTitle('The old email')).toHaveAttribute('srcdoc', '<p>Hi</p>');
+    expect(screen.getByRole('region', { name: 'Converted email' })).toBeInTheDocument();
+    // The compare view replaces the form while it is up.
+    expect(screen.queryByLabelText(/^body$/i)).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Use the converted version' }));
+    expect(screen.getByLabelText(/^headline$/i)).toHaveValue('Reset your password');
+    expect(screen.getByLabelText('Email content')).toHaveValue('<p>Hi {{displayName}}</p>');
+    expect(screen.getByLabelText('Email content')).not.toBeDisabled();
+    expect(screen.queryByLabelText(/^body$/i)).toBeNull();
+    expect(screen.queryByLabelText(/^html$/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Convert' })).toBeNull();
+    expect(screen.getByText('Converted. Nothing is saved until you press Save template.')).toBeInTheDocument();
+    expect(saveTemplate).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() =>
+      expect(saveTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({ format: 'visual', subject: 'Reset', headline: 'Reset your password', content: '<p>Hi {{displayName}}</p>' }),
+      ),
+    );
+    const sent = saveTemplate.mock.calls[0]![0] as Record<string, unknown>;
+    expect('body' in sent).toBe(false);
+    expect('html' in sent).toBe(false);
+    expect(onSaved).toHaveBeenCalledWith('auth.password.reset');
+  });
+  it('Save is off while the two versions are being compared', async () => {
+    convertTemplateToVisual.mockResolvedValue(ok());
+    render(<TemplateEditor template={OLD()} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Convert' }));
+    await screen.findByRole('button', { name: 'Use the converted version' });
+    expect(screen.getByRole('button', { name: /save template/i })).toBeDisabled();
+  });
+  it('takes the subject from the conversion', async () => {
+    convertTemplateToVisual.mockResolvedValue(ok({ subject: 'Reset (converted)' }));
+    render(<TemplateEditor template={OLD()} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Convert' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Use the converted version' }));
+    expect(screen.getByLabelText(/^subject$/i)).toHaveValue('Reset (converted)');
+  });
+  it('Keep the old format goes back to the untouched old fields', async () => {
+    convertTemplateToVisual.mockResolvedValue(ok());
+    const onClose = vi.fn();
+    render(<TemplateEditor template={OLD()} onClose={onClose} onSaved={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Convert' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Keep the old format' }));
+    expect(screen.getByLabelText(/^body$/i)).toHaveValue('Hi {{displayName}}\n\nClick {{link}}');
+    expect(screen.getByLabelText(/^html$/i)).toHaveValue('<p>Hi</p>');
+    expect(screen.queryByLabelText(/^headline$/i)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Convert' })).toBeInTheDocument();
+    expect(saveTemplate).not.toHaveBeenCalled();
+    // Nothing was converted, so leaving does not ask.
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+  it('leaving after converting asks first; Leave closes without saving', async () => {
+    convertTemplateToVisual.mockResolvedValue(ok());
+    const onClose = vi.fn();
+    render(<TemplateEditor template={OLD()} onClose={onClose} onSaved={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Convert' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Use the converted version' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('dialog', { name: 'Leave without saving?' })).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Stay' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByLabelText('Email content')).toHaveValue('<p>x</p>');
+    await userEvent.click(screen.getByText('Template bank'));
+    expect(screen.getByRole('dialog', { name: 'Leave without saving?' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Leave' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(saveTemplate).not.toHaveBeenCalled();
+  });
+  it('a saved conversion no longer asks before leaving', async () => {
+    convertTemplateToVisual.mockResolvedValue(ok());
+    saveTemplate.mockResolvedValue({ templateId: 'auth.password.reset' });
+    const onClose = vi.fn();
+    render(<TemplateEditor template={OLD()} onClose={onClose} onSaved={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Convert' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Use the converted version' }));
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() => expect(saveTemplate).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole('button', { name: /save template/i })).not.toBeDisabled());
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+  it('a failed save after converting still asks before leaving', async () => {
+    convertTemplateToVisual.mockResolvedValue(ok());
+    saveTemplate.mockRejectedValue(new Error('offline'));
+    const onClose = vi.fn();
+    render(<TemplateEditor template={OLD()} onClose={onClose} onSaved={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Convert' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Use the converted version' }));
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    expect(await screen.findByText(/offline/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('dialog', { name: 'Leave without saving?' })).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+  it('lists what the conversion could not keep, and still lets the operator save', async () => {
+    const WARNING = 'Removed an image that is not from your Cloudinary library.';
+    convertTemplateToVisual.mockResolvedValue(ok({ warnings: [WARNING] }));
+    saveTemplate.mockResolvedValue({ templateId: 'auth.password.reset' });
+    render(<TemplateEditor template={OLD()} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Convert' }));
+    expect(await screen.findByText(WARNING)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Use the converted version' }));
+    // The dropped image is never silent: the note stays above the editor.
+    expect(screen.getByText(WARNING)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() => expect(saveTemplate).toHaveBeenCalledWith(expect.objectContaining({ format: 'visual', content: '<p>x</p>' })));
+  });
+  it('an unreadable template opens in the editor with its plain text as paragraphs', async () => {
+    convertTemplateToVisual.mockResolvedValue({
+      ok: false,
+      reason: 'unreadable',
+      subject: 'Reset',
+      body: 'Hi {{displayName}}\n\nClick {{link}}\nor copy it <here>',
+    });
+    const onClose = vi.fn();
+    render(<TemplateEditor template={OLD()} onClose={onClose} onSaved={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Convert' }));
+    expect(await screen.findByLabelText('Email content')).toHaveValue(
+      '<p>Hi {{displayName}}</p><p>Click {{link}}<br>or copy it &lt;here&gt;</p>',
+    );
+    expect(screen.getByLabelText(/^headline$/i)).toHaveValue('');
+    expect(
+      screen.getByText('The old layout couldn’t be read, so its text is below. Add a headline and the formatting, then save.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^body$/i)).toBeNull();
+    expect(saveTemplate).not.toHaveBeenCalled();
+    // A blank headline is still the operator's to fill before Save goes through.
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    expect(await screen.findByText('Headline is required.')).toBeInTheDocument();
+    expect(saveTemplate).not.toHaveBeenCalled();
+    // And it is an unsaved conversion, so leaving asks.
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('dialog', { name: 'Leave without saving?' })).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+  it('a failed convert shows the server’s words and keeps the old fields', async () => {
+    const refusal = Object.assign(
+      new Error('Image uploads are not configured on the server (CLOUDINARY_CLOUD_NAME).'),
+      { code: 'functions/failed-precondition' },
+    );
+    convertTemplateToVisual.mockRejectedValue(refusal);
+    const onClose = vi.fn();
+    render(<TemplateEditor template={OLD()} onClose={onClose} onSaved={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Convert' }));
+    expect(
+      await screen.findByText('Image uploads are not configured on the server (CLOUDINARY_CLOUD_NAME).'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Couldn’t convert')).toBeInTheDocument();
+    expect(screen.getByLabelText(/^body$/i)).toHaveValue('Hi {{displayName}}\n\nClick {{link}}');
+    expect(screen.getByLabelText(/^html$/i)).toHaveValue('<p>Hi</p>');
+    expect(screen.getByRole('button', { name: 'Convert' })).not.toBeDisabled();
+    expect(saveTemplate).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+  it('a timed-out convert says so', async () => {
+    convertTemplateToVisual.mockRejectedValue(new Error('convertTemplateToVisual took too long to respond.'));
+    render(<TemplateEditor template={OLD()} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Convert' }));
+    expect(await screen.findByText('convertTemplateToVisual took too long to respond.')).toBeInTheDocument();
+    expect(screen.getByLabelText(/^body$/i)).toBeInTheDocument();
+  });
+  it('with no notification sending it, the field list follows the converted content, not the old body', async () => {
+    getNotificationMatrix.mockResolvedValue({ catalog: [], overrides: {}, ungated: [], businessAdminCount: null, businessAdminRosterPath: '', updatedAtMs: null });
+    convertTemplateToVisual.mockResolvedValue(ok({ subject: 'Hello', headline: 'Hi {{kinName}}', content: '<p><a href="{{portalUrl}}">Open</a></p>' }));
+    render(
+      <TemplateEditor
+        template={tpl({ templateId: 'custom.note', subject: 'Hello', body: 'Old {{oldOnly}}', html: '<p>Old {{oldOnly}}</p>' })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Convert' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Use the converted version' }));
+    await waitFor(() => expect(screen.getByLabelText('Email content')).toHaveAttribute('data-fields', 'kinName,portalUrl'));
+  });
+  describe('the real assignment.assigned, stored in the old format', () => {
+    // The seed as it was stored before the seeds moved to the visual format
+    // (git 5cc2c68^), and the content the converter made of it (the seed today).
+    const OLD_TEXT =
+      "Good news: {{kinName}}'s {{serviceType}} just landed on your schedule. Here are the days:\n\n" +
+      '{{#each visits}}  {{this.weekday}}, {{this.date}} at {{this.time}}\n{{/each}}\n' +
+      "Give the details a look so you're set before you head out.\n\nTribe Tails Pet Care. Your Kin's Favorite Auntie.";
+    const OLD_HTML =
+      '<!DOCTYPE html><html><head><style>.visits { list-style: none; }</style></head><body><div class="container">' +
+      "<div class=\"header\"><h2>{{kinName}}'s KinCare is yours</h2></div><div class=\"content\">" +
+      "<p>Good news: {{kinName}}'s {{serviceType}} just landed on your schedule. Here are the days:</p>" +
+      '<ul class="visits">{{#each visits}}\n                <li>{{this.weekday}}, {{this.date}} at {{this.time}}</li>{{/each}}\n            </ul>' +
+      "<p>Give the details a look so you're set before you head out.</p>" +
+      '<p><a class="button" href="{{portalUrl}}">See your schedule</a></p></div>' +
+      "<div class=\"footer\">Tribe Tails Pet Care. Your Kin's Favorite Auntie.</div></div></body></html>";
+    const oldRow = () =>
+      tpl({ templateId: 'assignment.assigned', subject: "{{kinName}}'s KinCare is yours", body: OLD_TEXT, html: OLD_HTML });
+    const converted = () =>
+      ok({ subject: "{{kinName}}'s KinCare is yours", headline: "{{kinName}}'s KinCare is yours", content: seedContent('assignment.assigned') });
+    it('converts to an editable body, and an edit inside the loop saves with no loop error', async () => {
+      convertTemplateToVisual.mockResolvedValue(converted());
+      saveTemplate.mockResolvedValue({ templateId: 'assignment.assigned' });
+      render(<TemplateEditor template={oldRow()} onClose={vi.fn()} onSaved={vi.fn()} />);
+      await userEvent.click(screen.getByRole('button', { name: 'Convert' }));
+      await userEvent.click(await screen.findByRole('button', { name: 'Use the converted version' }));
+      expect(screen.getByLabelText('Email content')).not.toBeDisabled();
+      expect(screen.queryByText(LOCK_NOTE)).toBeNull();
+      const edited = seedContent('assignment.assigned').replace('{{this.time}}', '{{this.time}} (booked)');
+      fireEvent.change(screen.getByLabelText('Email content'), { target: { value: edited } });
+      await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+      await waitFor(() => expect(saveTemplate).toHaveBeenCalledTimes(1));
+      expect(screen.queryByText(LOOP_ERROR)).toBeNull();
+      expect(saveTemplate.mock.calls[0]![0]).toMatchObject({ templateId: 'assignment.assigned', format: 'visual', content: edited });
+    });
+    it('saves the converted loop unchanged when only the subject is touched', async () => {
+      convertTemplateToVisual.mockResolvedValue(converted());
+      saveTemplate.mockResolvedValue({ templateId: 'assignment.assigned' });
+      render(<TemplateEditor template={oldRow()} onClose={vi.fn()} onSaved={vi.fn()} />);
+      await userEvent.click(screen.getByRole('button', { name: 'Convert' }));
+      await userEvent.click(await screen.findByRole('button', { name: 'Use the converted version' }));
+      await userEvent.type(screen.getByLabelText(/^subject$/i), '!');
+      await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+      await waitFor(() => expect(saveTemplate).toHaveBeenCalledTimes(1));
+      expect(saveTemplate.mock.calls[0]![0]).toMatchObject({ content: seedContent('assignment.assigned') });
+    });
+    it('still refuses a save that drops the converted loop', async () => {
+      convertTemplateToVisual.mockResolvedValue(converted());
+      render(<TemplateEditor template={oldRow()} onClose={vi.fn()} onSaved={vi.fn()} />);
+      await userEvent.click(screen.getByRole('button', { name: 'Convert' }));
+      await userEvent.click(await screen.findByRole('button', { name: 'Use the converted version' }));
+      fireEvent.change(screen.getByLabelText('Email content'), { target: { value: '<p>No list any more</p>' } });
+      await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+      expect(await screen.findByText(LOOP_ERROR)).toBeInTheDocument();
+      expect(saveTemplate).not.toHaveBeenCalled();
+    });
+  });
+});

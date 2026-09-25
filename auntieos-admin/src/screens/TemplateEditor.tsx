@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   saveTemplate,
   deleteTemplate,
+  convertTemplateToVisual,
   isLiveNotificationKeyWarning,
   isTemplateKeyTakenError,
 } from '../api/templatesWrite';
@@ -22,8 +23,9 @@ import {
 import { getNotificationMatrix, type NotificationCatalogEntry } from '../api/myNotifications';
 import { EmailContentEditor } from '../components/emailEditor/EmailContentEditor';
 import { EmailPreviewPane } from '../components/emailEditor/EmailPreviewPane';
+import { ConvertCompare } from '../components/emailEditor/ConvertCompare';
 import { useEmailPreview } from '../lib/useEmailPreview';
-import { tokensIn } from '../lib/emailContent';
+import { bodyToContent, tokensIn } from '../lib/emailContent';
 import { visualContentForSave } from '../lib/emailRoundTrip';
 import { useTemplateEditorSeed } from '../lib/useTemplateEditorSeed';
 import { Dialog } from '../components/Dialog';
@@ -194,7 +196,7 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
   // is one this admin does not know (Ruling C13). The seed, not the loaded
   // row, is the baseline for the lock and the loop check, and `reseed` is
   // how Task 10's Convert replaces it.
-  const { mode, seed, bodyLocked } = useTemplateEditorSeed(template);
+  const { mode, seed, bodyLocked, reseed } = useTemplateEditorSeed(template);
   const readOnly = mode === 'readonly';
   const [catalog, setCatalog] = useState<
     { status: 'loading' } | { status: 'ready'; entries: NotificationCatalogEntry[] } | { status: 'error' }
@@ -217,9 +219,35 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
     };
   }, []);
 
-  const alreadyUsed = template
-    ? tokensIn(template.subject, template.body, template.html ?? '', template.content ?? '')
-    : [];
+  // #953 Convert: the old-format state machine. `compare` holds the server's
+  // conversion while the two versions sit side by side; nothing is in the form
+  // until the operator picks "Use the converted version".
+  const [convert, setConvert] = useState<
+    | { status: 'idle' }
+    | { status: 'working' }
+    | { status: 'compare'; subject: string; headline: string; content: string; warnings: string[] }
+  >({ status: 'idle' });
+  // What the editor was seeded with by a conversion, for the field list. Null
+  // until a conversion is applied.
+  const [convertedFrom, setConvertedFrom] = useState<{ subject: string; headline: string; content: string } | null>(
+    null,
+  );
+  // True from the moment converted content is in the editor until it is saved.
+  const [convertedUnsaved, setConvertedUnsaved] = useState(false);
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [convertNotice, setConvertNotice] = useState<
+    { tone: 'info' | 'warning'; text: string; items?: string[] } | null
+  >(null);
+  // Kept apart from `error`, whose banner is titled "Couldn’t save".
+  const [convertError, setConvertError] = useState<string | null>(null);
+  // After a Convert the stored row still holds the old body and html, which
+  // the save is about to clear, so the fields "already used" are the
+  // converted email's.
+  const alreadyUsed = convertedFrom
+    ? tokensIn(convertedFrom.subject, convertedFrom.headline, convertedFrom.content)
+    : template
+      ? tokensIn(template.subject, template.body, template.html ?? '', template.content ?? '')
+      : [];
   // Until the catalog answers (or if it never does), the fields the template
   // already uses, minus loop-local names, are the honest list.
   const fieldSet = fieldsForTemplate(
@@ -302,8 +330,72 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
   const requestClose = useCallback(() => {
     // Never close out from under an in-flight save OR delete: the same guard
     // FormSchemas.tsx's pendingDelete dialog uses for its Escape/backdrop path.
-    if (!saving && !deleting) onClose();
-  }, [saving, deleting, onClose]);
+    if (saving || deleting) return;
+    // A conversion that has not been saved is thrown away by leaving, so ask
+    // first (an in-page Dialog: the viewer blocks native confirm()). The
+    // delete dialog closes so the two are never up together.
+    if (convertedUnsaved) {
+      setView('edit');
+      setConfirmLeave(true);
+      return;
+    }
+    onClose();
+  }, [saving, deleting, convertedUnsaved, onClose]);
+  // Puts visual content in the form and a fresh editor seeded with it. The
+  // seed is the new baseline for the body lock and the loop check, so a
+  // converted repeating list is measured against itself, not the old row.
+  function applyVisual(subject: string, headline: string, content: string) {
+    setFields((prev) => ({ ...prev, subject, headline, content }));
+    reseed(content, 'visual');
+    setConvertedFrom({ subject, headline, content });
+    setConvertedUnsaved(true);
+  }
+  async function startConvert() {
+    if (isCreate || mode !== 'old' || convert.status !== 'idle') return;
+    setConvert({ status: 'working' });
+    setConvertError(null);
+    setError(null);
+    try {
+      const res = await convertTemplateToVisual(fields.templateId);
+      if (res.ok) {
+        setConvert({
+          status: 'compare',
+          subject: res.subject,
+          headline: res.headline,
+          content: res.content,
+          warnings: res.warnings ?? [],
+        });
+        return;
+      }
+      // Unreadable: the old layout could not be taken apart, so the plain
+      // text goes in as paragraphs and the operator writes the headline.
+      setConvert({ status: 'idle' });
+      applyVisual(res.subject, '', bodyToContent(res.body));
+      setConvertNotice({
+        tone: 'warning',
+        text: 'The old layout couldn’t be read, so its text is below. Add a headline and the formatting, then save.',
+      });
+    } catch (err) {
+      // The server's sentence as it is (not-found, invalid-argument,
+      // failed-precondition), and nothing changes.
+      setConvert({ status: 'idle' });
+      setConvertError(err instanceof Error ? err.message : 'Convert failed.');
+    }
+  }
+  function acceptConverted() {
+    if (convert.status !== 'compare') return;
+    applyVisual(convert.subject, convert.headline, convert.content);
+    setConvertNotice(
+      convert.warnings.length > 0
+        ? {
+            tone: 'warning',
+            text: 'Converted. Nothing is saved until you press Save template. Not carried over:',
+            items: convert.warnings,
+          }
+        : { tone: 'info', text: 'Converted. Nothing is saved until you press Save template.' },
+    );
+    setConvert({ status: 'idle' });
+  }
 
   async function handleSave() {
     if (saving || readOnly) return;
@@ -336,6 +428,7 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
           ? buildVisualSavePayload(effective, { isCreate })
           : buildSaveTemplatePayload(effective, { isCreate });
       const result = await saveTemplate(payload);
+      setConvertedUnsaved(false);
       setSaving(false);
       onSaved(result.templateId);
     } catch (err) {
@@ -424,7 +517,9 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
             <PrimaryButton
               label={saving ? 'Saving…' : 'Save template'}
               onClick={() => void handleSave()}
-              disabled={saving || readOnly}
+              // Off while a conversion is on its way or being compared: the form
+              // still holds the old fields then, and Save would write those.
+              disabled={saving || readOnly || convert.status !== 'idle'}
               busy={saving}
               leading={<SaveGlyph />}
             />
@@ -442,425 +537,494 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
           This email is saved in a format that can&rsquo;t be edited here yet.
         </Banner>
       ) : null}
+      {/* Only a template with no format is old (C13): a format this admin
+          does not know is read-only above, never offered a Convert. */}
+      {mode === 'old' && !isCreate && convert.status !== 'compare' ? (
+        <Banner
+          tone="warning"
+          title="Old format"
+          className="template-editor__error"
+          trailing={
+            <PrimaryButton
+              label={convert.status === 'working' ? 'Converting…' : 'Convert'}
+              onClick={() => void startConvert()}
+              disabled={convert.status === 'working' || saving}
+              busy={convert.status === 'working'}
+            />
+          }
+        >
+          Convert it to edit it like a document. You&rsquo;ll see both versions before anything changes.
+        </Banner>
+      ) : null}
+      {convertError ? (
+        <Banner tone="error" title="Couldn&rsquo;t convert" className="template-editor__error">
+          {convertError}
+        </Banner>
+      ) : null}
+      {convertNotice ? (
+        <Banner tone={convertNotice.tone} className="template-editor__error">
+          {convertNotice.text}
+          {convertNotice.items ? (
+            <ul className="convert-compare__warning-list">
+              {convertNotice.items.map((item, i) => (
+                <li key={i}>{item}</li>
+              ))}
+            </ul>
+          ) : null}
+        </Banner>
+      ) : null}
 
-      <div className="template-editor__cols">
-        {/* The mock's left panel carries no title of its own: the page heading
-            names the screen and the mono caps name each field. */}
-        <DenPanel title="" className="template-editor__panel d1">
-          <fieldset className="template-editor__fields" disabled={saving || readOnly}>
-            <legend className="template-editor__sr-legend">Template details</legend>
+      {convert.status === 'compare' ? (
+        <ConvertCompare
+          old={{ subject: fields.subject, body: fields.body, html: fields.html.trim() === '' ? null : fields.html }}
+          converted={convert}
+          catalogKey={fieldSet.catalogKey}
+          onUse={acceptConverted}
+          onBack={() => setConvert({ status: 'idle' })}
+        />
+      ) : (
+        <div className="template-editor__cols">
+          {/* The mock's left panel carries no title of its own: the page heading
+              names the screen and the mono caps name each field. */}
+          <DenPanel title="" className="template-editor__panel d1">
+            <fieldset className="template-editor__fields" disabled={saving || readOnly}>
+              <legend className="template-editor__sr-legend">Template details</legend>
 
-            {/* The mock's `.idrow`: key and display name side by side. */}
-            <div className="template-editor__row2">
-              <div className="template-editor__field">
-                <span className="template-editor__labelrow">
-                  <label className="template-editor__label" htmlFor="template-editor-id">
-                    Template key
-                  </label>
-                  {isCreate ? <RequiredMark /> : null}
-                </span>
-                {isCreate ? (
-                  <input
-                    id="template-editor-id"
-                    type="text"
-                    className="template-editor__input template-editor__input--mono"
-                    value={fields.templateId}
-                    onChange={(e) => setField('templateId', e.target.value)}
-                    placeholder="invoice.sent"
-                    maxLength={120}
-                    autoFocus
-                  />
-                ) : (
-                  <code id="template-editor-id" className="template-editor__id-static">
-                    {fields.templateId}
-                  </code>
-                )}
-                {isCreate ? (
-                  <p className="template-editor__hint">
-                    Letters, numbers, underscore, period, and hyphen only. This becomes the document id and
-                    cannot be changed later.
-                  </p>
-                ) : (
-                  <p className="template-editor__hint">The template key cannot be changed after creation.</p>
-                )}
-              </div>
-
-              <div className="template-editor__field">
-                {/* No required mark, unlike the mock: a blank name saves as the
-                    key (templateFormat.ts), so it is not something the operator
-                    has to fill. */}
-                <label className="template-editor__label" htmlFor="template-editor-title">
-                  Display name
-                </label>
-                <input
-                  id="template-editor-title"
-                  type="text"
-                  className="template-editor__input"
-                  value={fields.title}
-                  onChange={(e) => setField('title', e.target.value)}
-                  placeholder="Defaults to the template key"
-                  maxLength={200}
-                />
-              </div>
-            </div>
-
-            {/* The mock's channel strip. Only the email bank exists, so the
-                strip states the channel and nothing else: the mock's Push and
-                SMS switch positions are disabled there and would be dead here,
-                and its "Active binding" toggle belongs to a TemplateBinding
-                this editor does not hold (see Manage assignments). */}
-            <div className="template-editor__strip">
-              <span className="template-editor__channel">
-                <MailGlyph />
-                <StatusPill tone="teal" label="Channel · Email" />
-              </span>
-            </div>
-
-            <div className="template-editor__field">
-              <span className="template-editor__labelrow">
-                <label className="template-editor__label" htmlFor="template-editor-subject">
-                  Subject
-                </label>
-                <RequiredMark />
-              </span>
-              <input
-                id="template-editor-subject"
-                type="text"
-                className="template-editor__input template-editor__input--mono"
-                value={fields.subject}
-                onChange={(e) => setField('subject', e.target.value)}
-                placeholder="Your booking is confirmed"
-                maxLength={500}
-              />
-            </div>
-
-            {mode !== 'old' ? (
-              <div className="template-editor__field">
-                <span className="template-editor__labelrow">
-                  <label className="template-editor__label" htmlFor="template-editor-headline">
-                    Headline
-                  </label>
-                  <RequiredMark />
-                </span>
-                <input
-                  id="template-editor-headline"
-                  type="text"
-                  className="template-editor__input"
-                  value={fields.headline}
-                  onChange={(e) => setField('headline', e.target.value)}
-                  placeholder="Reset your password"
-                  maxLength={300}
-                />
-              </div>
-            ) : null}
-
-            {mode === 'visual' ? (
-              <div className="template-editor__field">
-                <span className="template-editor__labelrow">
-                  <span className="template-editor__label" id="template-editor-content-label">
-                    Content
-                  </span>
-                  <RequiredMark />
-                </span>
-                {bodyLocked ? (
-                  <Banner tone="warning" title="Body locked" className="template-editor__locked">
-                    This email has a structure the editor can&rsquo;t edit yet. Edit its subject and headline here.
-                  </Banner>
-                ) : null}
-                <EmailContentEditor
-                  key={seed.key}
-                  initialContent={seed.content}
-                  onChange={(content) => setField('content', content)}
-                  fields={fieldSet.fields}
-                  fieldsState={catalog.status}
-                  fieldsNote={fieldsNote}
-                  disabled={saving || bodyLocked}
-                />
-              </div>
-            ) : null}
-
-            {/* Old-format templates keep today's editing until converted:
-                the merge chips, the Body and (below) the HTML field. */}
-            {mode === 'old' ? (
-              <>
+              {/* The mock's `.idrow`: key and display name side by side. */}
+              <div className="template-editor__row2">
                 <div className="template-editor__field">
                   <span className="template-editor__labelrow">
-                    <span className="template-editor__label" id="template-editor-mergefields">
-                      Insert merge field
-                    </span>
-                    <span className="template-editor__mfhint">click to drop the token at the cursor</span>
+                    <label className="template-editor__label" htmlFor="template-editor-id">
+                      Template key
+                    </label>
+                    {isCreate ? <RequiredMark /> : null}
                   </span>
-                  <div className="template-editor__chips" role="group" aria-labelledby="template-editor-mergefields">
-                    {MERGE_FIELD_KEYS.map((key) => (
-                      <button
-                        key={key}
-                        type="button"
-                        className="template-editor__chip"
-                        // The mock swallows mousedown so the textarea keeps focus
-                        // and its caret through the click; the same here.
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => insertMergeField(key)}
-                      >
-                        <span className="template-editor__chip-plus" aria-hidden="true">
-                          +
-                        </span>
-                        {`{{${key}}}`}
-                      </button>
-                    ))}
-                  </div>
+                  {isCreate ? (
+                    <input
+                      id="template-editor-id"
+                      type="text"
+                      className="template-editor__input template-editor__input--mono"
+                      value={fields.templateId}
+                      onChange={(e) => setField('templateId', e.target.value)}
+                      placeholder="invoice.sent"
+                      maxLength={120}
+                      autoFocus
+                    />
+                  ) : (
+                    <code id="template-editor-id" className="template-editor__id-static">
+                      {fields.templateId}
+                    </code>
+                  )}
+                  {isCreate ? (
+                    <p className="template-editor__hint">
+                      Letters, numbers, underscore, period, and hyphen only. This becomes the document id and
+                      cannot be changed later.
+                    </p>
+                  ) : (
+                    <p className="template-editor__hint">The template key cannot be changed after creation.</p>
+                  )}
                 </div>
 
                 <div className="template-editor__field">
+                  {/* No required mark, unlike the mock: a blank name saves as the
+                      key (templateFormat.ts), so it is not something the operator
+                      has to fill. */}
+                  <label className="template-editor__label" htmlFor="template-editor-title">
+                    Display name
+                  </label>
+                  <input
+                    id="template-editor-title"
+                    type="text"
+                    className="template-editor__input"
+                    value={fields.title}
+                    onChange={(e) => setField('title', e.target.value)}
+                    placeholder="Defaults to the template key"
+                    maxLength={200}
+                  />
+                </div>
+              </div>
+
+              {/* The mock's channel strip. Only the email bank exists, so the
+                  strip states the channel and nothing else: the mock's Push and
+                  SMS switch positions are disabled there and would be dead here,
+                  and its "Active binding" toggle belongs to a TemplateBinding
+                  this editor does not hold (see Manage assignments). */}
+              <div className="template-editor__strip">
+                <span className="template-editor__channel">
+                  <MailGlyph />
+                  <StatusPill tone="teal" label="Channel · Email" />
+                </span>
+              </div>
+
+              <div className="template-editor__field">
+                <span className="template-editor__labelrow">
+                  <label className="template-editor__label" htmlFor="template-editor-subject">
+                    Subject
+                  </label>
+                  <RequiredMark />
+                </span>
+                <input
+                  id="template-editor-subject"
+                  type="text"
+                  className="template-editor__input template-editor__input--mono"
+                  value={fields.subject}
+                  onChange={(e) => setField('subject', e.target.value)}
+                  placeholder="Your booking is confirmed"
+                  maxLength={500}
+                />
+              </div>
+
+              {mode !== 'old' ? (
+                <div className="template-editor__field">
                   <span className="template-editor__labelrow">
-                    <label className="template-editor__label" htmlFor="template-editor-body">
-                      Body
+                    <label className="template-editor__label" htmlFor="template-editor-headline">
+                      Headline
                     </label>
                     <RequiredMark />
-                    <span className="template-editor__hbs">Handlebars supported</span>
                   </span>
-                  <textarea
-                    id="template-editor-body"
-                    ref={bodyRef}
-                    className="template-editor__textarea template-editor__textarea--mono template-editor__textarea--body"
-                    value={fields.body}
-                    onChange={(e) => setField('body', e.target.value)}
-                    placeholder="Hi {{kinfolkName}}, ..."
-                    rows={8}
-                    maxLength={20000}
-                  />
-                  <div className="template-editor__edmeta">
-                    <span className="template-editor__hbsbadge">{'{{ }}'} handlebars</span>
-                    <span>{fields.body.length} chars</span>
-                    <span>· tokens left as-is, never sent literally</span>
-                  </div>
-                </div>
-              </>
-            ) : null}
-
-            <hr className="template-editor__rule" />
-
-            <div className="template-editor__field">
-              <span className="template-editor__labelrow">
-                <label className="template-editor__label" htmlFor="template-editor-description">
-                  Internal description
-                </label>
-                <span className="template-editor__opt">admin-only note</span>
-              </span>
-              <textarea
-                id="template-editor-description"
-                className="template-editor__textarea"
-                value={fields.description}
-                onChange={(e) => setField('description', e.target.value)}
-                placeholder="What is this template for? Who receives it?"
-                rows={2}
-                maxLength={1000}
-              />
-            </div>
-
-            {/* The mock's second `.idrow`: category and tags side by side. */}
-            <div className="template-editor__row2">
-              <div className="template-editor__field">
-                <label className="template-editor__label" htmlFor="template-editor-category">
-                  Category
-                </label>
-                <input
-                  id="template-editor-category"
-                  type="text"
-                  className="template-editor__input"
-                  value={fields.category}
-                  onChange={(e) => setField('category', e.target.value)}
-                  placeholder="Booking"
-                  maxLength={60}
-                  {...(categories && categories.length > 0 ? { list: categoryListId } : {})}
-                />
-                {categories && categories.length > 0 ? (
-                  <datalist id={categoryListId}>
-                    {categories.map((cat) => (
-                      <option key={cat} value={cat} />
-                    ))}
-                  </datalist>
-                ) : null}
-              </div>
-
-              <div className="template-editor__field">
-                <span className="template-editor__label" id="template-editor-tags-label">
-                  Tags
-                </span>
-                {/* The mock's `.tagrow`: one orange capsule per tag with its
-                    own remove, then the dashed add box. Enter or a comma
-                    commits what is typed; so does Save, so a tag left in the
-                    box is never silently dropped. */}
-                <div className="template-editor__tagrow" role="group" aria-labelledby="template-editor-tags-label">
-                  {tags.map((tag) => (
-                    <span key={tag} className="template-editor__tag">
-                      {tag}
-                      <button
-                        type="button"
-                        className="template-editor__tag-x"
-                        aria-label={`Remove tag ${tag}`}
-                        onClick={() => removeTag(tag)}
-                      >
-                        ✕
-                      </button>
-                    </span>
-                  ))}
                   <input
+                    id="template-editor-headline"
                     type="text"
-                    className="template-editor__tagadd"
-                    aria-label="Add a tag"
-                    placeholder="+ tag"
-                    value={tagDraft}
-                    onChange={(e) => setTagDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ',') {
-                        e.preventDefault();
-                        commitTagDraft();
-                      }
-                    }}
-                    onBlur={commitTagDraft}
-                    maxLength={60}
+                    className="template-editor__input"
+                    value={fields.headline}
+                    onChange={(e) => setField('headline', e.target.value)}
+                    placeholder="Reset your password"
+                    maxLength={300}
                   />
                 </div>
-              </div>
-            </div>
+              ) : null}
 
-            <hr className="template-editor__rule" />
+              {mode === 'visual' ? (
+                <div className="template-editor__field">
+                  <span className="template-editor__labelrow">
+                    <span className="template-editor__label" id="template-editor-content-label">
+                      Content
+                    </span>
+                    <RequiredMark />
+                  </span>
+                  {bodyLocked ? (
+                    <Banner tone="warning" title="Body locked" className="template-editor__locked">
+                      This email has a structure the editor can&rsquo;t edit yet. Edit its subject and headline here.
+                    </Banner>
+                  ) : null}
+                  <EmailContentEditor
+                    key={seed.key}
+                    initialContent={seed.content}
+                    onChange={(content) => setField('content', content)}
+                    fields={fieldSet.fields}
+                    fieldsState={catalog.status}
+                    fieldsNote={fieldsNote}
+                    disabled={saving || bodyLocked}
+                  />
+                </div>
+              ) : null}
 
-            {/* Below the mock's fields: the three persisted fields it does not
-                draw. They stay editable here because a field the bank stores
-                and the editor cannot change is a defect, not a simplification. */}
-            {mode === 'old' ? (
+              {/* Old-format templates keep today's editing until converted:
+                  the merge chips, the Body and (below) the HTML field. */}
+              {mode === 'old' ? (
+                <>
+                  <div className="template-editor__field">
+                    <span className="template-editor__labelrow">
+                      <span className="template-editor__label" id="template-editor-mergefields">
+                        Insert merge field
+                      </span>
+                      <span className="template-editor__mfhint">click to drop the token at the cursor</span>
+                    </span>
+                    <div className="template-editor__chips" role="group" aria-labelledby="template-editor-mergefields">
+                      {MERGE_FIELD_KEYS.map((key) => (
+                        <button
+                          key={key}
+                          type="button"
+                          className="template-editor__chip"
+                          // The mock swallows mousedown so the textarea keeps focus
+                          // and its caret through the click; the same here.
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => insertMergeField(key)}
+                        >
+                          <span className="template-editor__chip-plus" aria-hidden="true">
+                            +
+                          </span>
+                          {`{{${key}}}`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="template-editor__field">
+                    <span className="template-editor__labelrow">
+                      <label className="template-editor__label" htmlFor="template-editor-body">
+                        Body
+                      </label>
+                      <RequiredMark />
+                      <span className="template-editor__hbs">Handlebars supported</span>
+                    </span>
+                    <textarea
+                      id="template-editor-body"
+                      ref={bodyRef}
+                      className="template-editor__textarea template-editor__textarea--mono template-editor__textarea--body"
+                      value={fields.body}
+                      onChange={(e) => setField('body', e.target.value)}
+                      placeholder="Hi {{kinfolkName}}, ..."
+                      rows={8}
+                      maxLength={20000}
+                    />
+                    <div className="template-editor__edmeta">
+                      <span className="template-editor__hbsbadge">{'{{ }}'} handlebars</span>
+                      <span>{fields.body.length} chars</span>
+                      <span>· tokens left as-is, never sent literally</span>
+                    </div>
+                  </div>
+                </>
+              ) : null}
+
+              <hr className="template-editor__rule" />
+
               <div className="template-editor__field">
                 <span className="template-editor__labelrow">
-                  <label className="template-editor__label" htmlFor="template-editor-html">
-                    HTML
+                  <label className="template-editor__label" htmlFor="template-editor-description">
+                    Internal description
+                  </label>
+                  <span className="template-editor__opt">admin-only note</span>
+                </span>
+                <textarea
+                  id="template-editor-description"
+                  className="template-editor__textarea"
+                  value={fields.description}
+                  onChange={(e) => setField('description', e.target.value)}
+                  placeholder="What is this template for? Who receives it?"
+                  rows={2}
+                  maxLength={1000}
+                />
+              </div>
+
+              {/* The mock's second `.idrow`: category and tags side by side. */}
+              <div className="template-editor__row2">
+                <div className="template-editor__field">
+                  <label className="template-editor__label" htmlFor="template-editor-category">
+                    Category
+                  </label>
+                  <input
+                    id="template-editor-category"
+                    type="text"
+                    className="template-editor__input"
+                    value={fields.category}
+                    onChange={(e) => setField('category', e.target.value)}
+                    placeholder="Booking"
+                    maxLength={60}
+                    {...(categories && categories.length > 0 ? { list: categoryListId } : {})}
+                  />
+                  {categories && categories.length > 0 ? (
+                    <datalist id={categoryListId}>
+                      {categories.map((cat) => (
+                        <option key={cat} value={cat} />
+                      ))}
+                    </datalist>
+                  ) : null}
+                </div>
+
+                <div className="template-editor__field">
+                  <span className="template-editor__label" id="template-editor-tags-label">
+                    Tags
+                  </span>
+                  {/* The mock's `.tagrow`: one orange capsule per tag with its
+                      own remove, then the dashed add box. Enter or a comma
+                      commits what is typed; so does Save, so a tag left in the
+                      box is never silently dropped. */}
+                  <div className="template-editor__tagrow" role="group" aria-labelledby="template-editor-tags-label">
+                    {tags.map((tag) => (
+                      <span key={tag} className="template-editor__tag">
+                        {tag}
+                        <button
+                          type="button"
+                          className="template-editor__tag-x"
+                          aria-label={`Remove tag ${tag}`}
+                          onClick={() => removeTag(tag)}
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    ))}
+                    <input
+                      type="text"
+                      className="template-editor__tagadd"
+                      aria-label="Add a tag"
+                      placeholder="+ tag"
+                      value={tagDraft}
+                      onChange={(e) => setTagDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ',') {
+                          e.preventDefault();
+                          commitTagDraft();
+                        }
+                      }}
+                      onBlur={commitTagDraft}
+                      maxLength={60}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <hr className="template-editor__rule" />
+
+              {/* Below the mock's fields: the three persisted fields it does not
+                  draw. They stay editable here because a field the bank stores
+                  and the editor cannot change is a defect, not a simplification. */}
+              {mode === 'old' ? (
+                <div className="template-editor__field">
+                  <span className="template-editor__labelrow">
+                    <label className="template-editor__label" htmlFor="template-editor-html">
+                      HTML
+                    </label>
+                    <span className="template-editor__opt">optional</span>
+                  </span>
+                  <textarea
+                    id="template-editor-html"
+                    className="template-editor__textarea template-editor__textarea--mono"
+                    value={fields.html}
+                    onChange={(e) => setField('html', e.target.value)}
+                    placeholder="<p>Hi {{kinfolkName}}, ...</p>"
+                    rows={6}
+                    maxLength={50000}
+                  />
+                </div>
+              ) : null}
+
+              <div className="template-editor__field">
+                <span className="template-editor__labelrow">
+                  <label className="template-editor__label" htmlFor="template-editor-usage">
+                    Usage instructions
                   </label>
                   <span className="template-editor__opt">optional</span>
                 </span>
                 <textarea
-                  id="template-editor-html"
-                  className="template-editor__textarea template-editor__textarea--mono"
-                  value={fields.html}
-                  onChange={(e) => setField('html', e.target.value)}
-                  placeholder="<p>Hi {{kinfolkName}}, ...</p>"
-                  rows={6}
-                  maxLength={50000}
+                  id="template-editor-usage"
+                  className="template-editor__textarea"
+                  value={fields.usageInstructions}
+                  onChange={(e) => setField('usageInstructions', e.target.value)}
+                  placeholder="When and how to use this template"
+                  rows={3}
+                  maxLength={2000}
                 />
               </div>
-            ) : null}
 
-            <div className="template-editor__field">
-              <span className="template-editor__labelrow">
-                <label className="template-editor__label" htmlFor="template-editor-usage">
-                  Usage instructions
-                </label>
-                <span className="template-editor__opt">optional</span>
-              </span>
-              <textarea
-                id="template-editor-usage"
-                className="template-editor__textarea"
-                value={fields.usageInstructions}
-                onChange={(e) => setField('usageInstructions', e.target.value)}
-                placeholder="When and how to use this template"
-                rows={3}
-                maxLength={2000}
-              />
-            </div>
-
-            <div className="template-editor__field">
-              <span className="template-editor__labelrow">
-                <span className="template-editor__label">Sections</span>
-                <span className="template-editor__opt">optional</span>
-              </span>
-              <p className="template-editor__hint">
-                Describe the parts of this template for other admins. A section needs a title to be
-                saved; blank ones are dropped.
-              </p>
-              {fields.sections.length > 0 ? (
-                <ul className="template-editor__sections">
-                  {fields.sections.map((section, idx) => (
-                    <li key={idx} className="template-editor__section">
-                      <div className="template-editor__section-fields">
-                        <input
-                          type="text"
-                          className="template-editor__input"
-                          aria-label={`Section ${idx + 1} title`}
-                          value={section.title}
-                          onChange={(e) => updateSection(idx, { title: e.target.value })}
-                          placeholder="Section title"
-                          maxLength={200}
-                        />
-                        <textarea
-                          className="template-editor__textarea"
-                          aria-label={`Section ${idx + 1} description`}
-                          value={section.description}
-                          onChange={(e) => updateSection(idx, { description: e.target.value })}
-                          placeholder="What this section covers"
-                          rows={2}
-                          maxLength={1000}
-                        />
-                      </div>
-                      <GhostButton label="Remove" onClick={() => removeSection(idx)} />
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              <GhostButton label="Add section" onClick={addSection} />
-            </div>
-          </fieldset>
-        </DenPanel>
-
-        <div className="template-editor__aside">
-          {mode === 'visual' ? (
-            <DenPanel title="" className="template-editor__panel d2">
-              <EmailPreviewPane state={preview.state} onRetry={preview.retry} />
-            </DenPanel>
-          ) : null}
-          {mode === 'old' ? (
-            <>
-              {/*
-                The live preview. `ENRICHABLE_SAMPLE` is the right sample here and
-                only here: this editor authors NOTIFICATION templates, which are
-                dispatched through `enrichTemplateData.ts`, so the twelve tokens that
-                module hydrates really will be filled in and everything else is a
-                promise the emitting function has to keep. The preview names the
-                second group; the footnote does not pretend they are the first.
-              */}
-              <DenPanel title="" className="template-editor__panel d2">
-                <MergePreview
-                  subject={fields.subject}
-                  body={fields.body}
-                  html={fields.html}
-                  sample={ENRICHABLE_SAMPLE}
-                  footnote="Sample values. Dispatch fills these in at send"
-                />
-              </DenPanel>
-
-              {/* The mock's second right-hand panel: the sample every token above
-                  resolved to, so the author can read the preview back to the
-                  token that produced each value. */}
-              <DenPanel title="" className="template-editor__panel d3">
-                <span className="template-editor__label" id="template-editor-legend-label">
-                  Resolved with sample values
+              <div className="template-editor__field">
+                <span className="template-editor__labelrow">
+                  <span className="template-editor__label">Sections</span>
+                  <span className="template-editor__opt">optional</span>
                 </span>
-                <dl className="template-editor__legend" aria-labelledby="template-editor-legend-label">
-                  {MERGE_FIELD_KEYS.map((key) => (
-                    <div key={key} className="template-editor__legend-row">
-                      <dt>
-                        <code>{`{{${key}}}`}</code>
-                      </dt>
-                      <span className="template-editor__legend-arrow" aria-hidden="true">
-                        →
-                      </span>
-                      <dd>{ENRICHABLE_SAMPLE[key]}</dd>
-                    </div>
-                  ))}
-                </dl>
+                <p className="template-editor__hint">
+                  Describe the parts of this template for other admins. A section needs a title to be
+                  saved; blank ones are dropped.
+                </p>
+                {fields.sections.length > 0 ? (
+                  <ul className="template-editor__sections">
+                    {fields.sections.map((section, idx) => (
+                      <li key={idx} className="template-editor__section">
+                        <div className="template-editor__section-fields">
+                          <input
+                            type="text"
+                            className="template-editor__input"
+                            aria-label={`Section ${idx + 1} title`}
+                            value={section.title}
+                            onChange={(e) => updateSection(idx, { title: e.target.value })}
+                            placeholder="Section title"
+                            maxLength={200}
+                          />
+                          <textarea
+                            className="template-editor__textarea"
+                            aria-label={`Section ${idx + 1} description`}
+                            value={section.description}
+                            onChange={(e) => updateSection(idx, { description: e.target.value })}
+                            placeholder="What this section covers"
+                            rows={2}
+                            maxLength={1000}
+                          />
+                        </div>
+                        <GhostButton label="Remove" onClick={() => removeSection(idx)} />
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                <GhostButton label="Add section" onClick={addSection} />
+              </div>
+            </fieldset>
+          </DenPanel>
+
+          <div className="template-editor__aside">
+            {mode === 'visual' ? (
+              <DenPanel title="" className="template-editor__panel d2">
+                <EmailPreviewPane state={preview.state} onRetry={preview.retry} />
               </DenPanel>
-            </>
-          ) : null}
+            ) : null}
+            {mode === 'old' ? (
+              <>
+                {/*
+                  The live preview. `ENRICHABLE_SAMPLE` is the right sample here and
+                  only here: this editor authors NOTIFICATION templates, which are
+                  dispatched through `enrichTemplateData.ts`, so the twelve tokens that
+                  module hydrates really will be filled in and everything else is a
+                  promise the emitting function has to keep. The preview names the
+                  second group; the footnote does not pretend they are the first.
+                */}
+                <DenPanel title="" className="template-editor__panel d2">
+                  <MergePreview
+                    subject={fields.subject}
+                    body={fields.body}
+                    html={fields.html}
+                    sample={ENRICHABLE_SAMPLE}
+                    footnote="Sample values. Dispatch fills these in at send"
+                  />
+                </DenPanel>
+
+                {/* The mock's second right-hand panel: the sample every token above
+                    resolved to, so the author can read the preview back to the
+                    token that produced each value. */}
+                <DenPanel title="" className="template-editor__panel d3">
+                  <span className="template-editor__label" id="template-editor-legend-label">
+                    Resolved with sample values
+                  </span>
+                  <dl className="template-editor__legend" aria-labelledby="template-editor-legend-label">
+                    {MERGE_FIELD_KEYS.map((key) => (
+                      <div key={key} className="template-editor__legend-row">
+                        <dt>
+                          <code>{`{{${key}}}`}</code>
+                        </dt>
+                        <span className="template-editor__legend-arrow" aria-hidden="true">
+                          →
+                        </span>
+                        <dd>{ENRICHABLE_SAMPLE[key]}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </DenPanel>
+              </>
+            ) : null}
+          </div>
         </div>
-      </div>
+      )}
+
+      {confirmLeave ? (
+        <Dialog
+          title="Leave without saving?"
+          onClose={() => setConfirmLeave(false)}
+          footer={
+            <>
+              <GhostButton label="Stay" onClick={() => setConfirmLeave(false)} />
+              <PrimaryButton
+                label="Leave"
+                onClick={() => {
+                  setConfirmLeave(false);
+                  onClose();
+                }}
+              />
+            </>
+          }
+        >
+          <p className="template-editor__hint">
+            The converted version isn&rsquo;t saved. This template stays in the old format.
+          </p>
+        </Dialog>
+      ) : null}
 
       {confirming ? (
         <Dialog

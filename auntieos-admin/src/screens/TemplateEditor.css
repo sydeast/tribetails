@@ -438,3 +438,9 @@
 .template-editor__locked {
   margin: 0 0 var(--space-2);
 }
+/* #953 Convert: the old email beside the converted one. */
+.convert-compare { display: flex; flex-direction: column; gap: 14px; }
+.convert-compare__cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.convert-compare__actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+.convert-compare__warning-list { margin: 6px 0 0; padding-left: 18px; }
+@media (max-width: 900px) { .convert-compare__cols { grid-template-columns: 1fr; } }
