@@ -151,43 +151,72 @@ class EmailBlockEditTest {
         assertEquals(tags(reset), tags(out))
     }
 
+    private fun assertWellFormedUtf16(s: String) {
+        s.forEachIndexed { k, ch ->
+            if (ch.isHighSurrogate()) assertTrue("lone high surrogate at $k", k + 1 < s.length && s[k + 1].isLowSurrogate())
+            if (ch.isLowSurrogate()) assertTrue("lone low surrogate at $k", k > 0 && s[k - 1].isHighSurrogate())
+        }
+    }
     @Test fun noSequenceOfEditsAddsRemovesOrReshapesABlock() {
         val random = Random(5)
-        val alphabet = listOf("a", " ", "é", "😀", "{", "}", "{{name}}", "<", "&", "")
+        // The last three are broken UTF-16: a lone high half, a lone low half, a pair in the wrong order.
+        val alphabet = listOf("a", " ", "é", "😀", "{", "}", "{{name}}", "<", "&", "", "\uD83D", "\uDE00", "\uDE00\uD83D")
         val original = parseEmailContent(reset)
         var blocks = original
-        repeat(2000) {
+        var accepted = 0
+        var brokenRefused = 0
+        repeat(2000) { step ->
             val i = random.nextInt(blocks.size)
             val b = blocks[i] as? EmailBlock.TextBlock ?: return@repeat
             val text = b.plainText()
-            val cuts = codePointBoundaries(text)
+            // Mostly whole characters; one edit in five cuts at any UTF-16 index, even inside an emoji.
+            val cuts = if (random.nextInt(5) == 0) (0..text.length).toList() else codePointBoundaries(text)
             val from = cuts[random.nextInt(cuts.size)]
             val later = cuts.filter { it >= from }
             val to = later[random.nextInt(later.size)]
             val next = text.substring(0, from) + alphabet[random.nextInt(alphabet.size)] + text.substring(to)
             val r = applyBlockEdit(b, next)
-            if (r is BlockEdit.Accepted) blocks = blocks.toMutableList().also { it[i] = r.block }
+            if (r is BlockEdit.Rejected && r.reason == EDIT_BROKEN_CHARACTER) brokenRefused++
+            if (r !is BlockEdit.Accepted) return@repeat
+            accepted++
+            blocks = blocks.toMutableList().also { it[i] = r.block }
+            // Every accepted edit, not just the last: same blocks, same tags, whole characters, stable round trip.
+            val out = serializeEmailContent(blocks)
+            val reparsed = parseEmailContent(out)
+            assertEquals("step $step", original.size, reparsed.size)
+            original.zip(reparsed).forEach { (a, c) ->
+                assertEquals("step $step", a::class, c::class)
+                assertEquals("step $step", a.lead, c.lead)
+                assertEquals("step $step", a.trail, c.trail)
+                if (a is EmailBlock.TextBlock) assertEquals("step $step", a.kind, (c as EmailBlock.TextBlock).kind)
+            }
+            assertEquals("step $step", tags(reset), tags(out))
+            assertWellFormedUtf16(out)
+            assertWellFormedUtf16(r.block.plainText())
+            assertEquals("step $step", out, serializeEmailContent(reparsed))
         }
-        val out = serializeEmailContent(blocks)
-        val reparsed = parseEmailContent(out)
-        assertEquals(original.size, reparsed.size)
-        original.zip(reparsed).forEach { (a, b) ->
-            assertEquals(a::class, b::class)
-            assertEquals(a.lead, b.lead)
-            assertEquals(a.trail, b.trail)
-            if (a is EmailBlock.TextBlock) assertEquals(a.kind, (b as EmailBlock.TextBlock).kind)
-        }
-        assertEquals(tags(reset), tags(out))
-        out.forEachIndexed { k, ch ->
-            if (ch.isHighSurrogate()) assertTrue("lone high surrogate at $k", k + 1 < out.length && out[k + 1].isLowSurrogate())
-            if (ch.isLowSurrogate()) assertTrue("lone low surrogate at $k", k > 0 && out[k - 1].isHighSurrogate())
-        }
-        // The edited body reads back as the same blocks and writes out unchanged.
-        assertEquals(out, serializeEmailContent(reparsed))
+        // The run exercised both paths.
+        assertTrue("accepted $accepted", accepted > 200)
+        assertTrue("broken refused $brokenRefused", brokenRefused > 20)
     }
-
     // ── beyond the plan's 14 ──────────────────────────────────────────────────
 
+    @Test fun aBrokenCharacterIsRefusedAndTheBlockIsUnchanged() {
+        val html = "<p>Hi <strong>😀</strong> there</p>"
+        val b = block(html)
+        val grin = "😀"
+        // An emoji spliced between another emoji's two halves.
+        val spliced = "Hi " + grin[0] + "👋" + grin[1] + " there"
+        // A lone high half at the end, a lone low half at the start.
+        val cases = listOf(spliced, "Hi 😀 there" + grin[0], grin[1] + "Hi 😀 there", "Hi " + grin[0] + " there")
+        for (next in cases) {
+            val r = applyBlockEdit(b, next)
+            assertEquals(next, BlockEdit.Rejected(EDIT_BROKEN_CHARACTER), r)
+        }
+        assertEquals(html, serializeEmailContent(listOf(b)))
+        // Whole emoji still go through.
+        assertEquals("<p>Hi <strong>😀👋</strong> there</p>", edit(html, "Hi 😀👋 there"))
+    }
     @Test fun noEditCanTypeALoopOrConditional() {
         val p = "<p>Hi {{name}}, welcome</p>"
         for (typed in listOf("{{#each pets}}", "{{/each}}", "{{^pets}}", "{{else}}", "{{ #if x}}", "{{#")) {

@@ -32,6 +32,7 @@ internal const val EDIT_NO_WORD_HERE = "Put the cursor next to a word to type."
 internal const val EDIT_NO_BLOCK_HELPER = "Loops and conditions can only be added on the web admin."
 internal const val EDIT_BUTTON_LABEL_ONLY = "Only the button's words can change."
 internal const val EDIT_KEEP_WORDS_BESIDE = "Keep some words beside the button."
+internal const val EDIT_BROKEN_CHARACTER = "That character didn't come through whole. Try typing it again."
 
 private class Leaf(
     val index: Int,
@@ -102,11 +103,29 @@ private fun readsAsButton(inlines: List<EmailInline>): Boolean {
     return only != null && only.isButton && !holdsImage(only.children)
 }
 
+/** True when every high surrogate in [s] is followed by a low one and no low one stands alone. */
+private fun isWholeUtf16(s: String): Boolean {
+    var k = 0
+    while (k < s.length) {
+        val ch = s[k]
+        if (ch.isLowSurrogate()) return false
+        if (ch.isHighSurrogate()) {
+            if (k + 1 >= s.length || !s[k + 1].isLowSurrogate()) return false
+            k += 2
+        } else {
+            k++
+        }
+    }
+    return true
+}
 private val P_OPEN_AT_END = Regex("""<p(\s[^>]*)?>$""", RegexOption.IGNORE_CASE)
 
 fun applyBlockEdit(block: EmailBlock.TextBlock, newText: String): BlockEdit {
     val old = block.plainText()
     if (old == newText) return BlockEdit.Accepted(block, newText.length)
+
+    // Half an emoji (a clipped paste, an IME slip) would be written out as broken UTF-16.
+    if (!isWholeUtf16(newText)) return BlockEdit.Rejected(EDIT_BROKEN_CHARACTER)
 
     // A block with a helper parses locked, so an editable block holds none; the
     // phone never makes one, not even by typing "{{" beside a "#".
