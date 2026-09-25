@@ -302,7 +302,7 @@ private fun inlinesOf(html: String, nodes: List<Node>): List<EmailInline>? {
 }
 
 /** `{{#…}}`, `{{/…}}`, `{{^…}}` or `{{else}}`: a loop or conditional, which the phone never edits. */
-private val BLOCK_HELPER = Regex("""\{\{\s*[#/^]|\{\{\s*else\b""")
+internal val BLOCK_HELPER = Regex("""\{\{\s*[#/^]|\{\{\s*else\b""")
 
 /**
  * The nodes as the inlines of an editable text block, or null when the block
