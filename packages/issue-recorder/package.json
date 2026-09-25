@@ -14,7 +14,7 @@
     "build:bookmarklet": "vite build"
   },
   "dependencies": {
-    "rrweb": "^2.1.4"
+    "rrweb": "^2.1.6"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
