@@ -3,8 +3,8 @@
 Terms used across tribetails. Architecture reviews, ADRs, and PRs use these
 names exactly; if a concept is missing, add it here in the PR that names it.
 
-- **Callable Contract**: the request/response shapes of the 185 `onCall`
-  functions in `mytribe/functions` (count as of 2026-08-04). Four clients call
+- **Callable Contract**: the request/response shapes of the `onCall`
+  functions in `mytribe/functions` (232 as of 2026-09-26). Four clients call
   them: the kinfolk portal web app, the kinfolk portal Android app, the admin
   web app, and the admin Android app. Authority is the server zod schema.
   Formerly hand-mirrored per client under the 2026-07-18 Option C ruling;
