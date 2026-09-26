@@ -2,9 +2,10 @@
 
 `README.md` says what the repo is. This says what you do with it.
 
-Every command here was run against the repo on 2026-07-26. The release,
-quota and Cloud Run sections were re-verified 2026-08-03, and the map, test
-counts and contract-freeze sections on 2026-08-04.
+Every command here was run against the repo on 2026-07-26. The command table,
+the map, the release step table and the release knobs were re-checked against
+`package.json`, `scripts/release.sh` and the workflows on 2026-09-26. Sections
+added in between were checked when they were written.
 
 ---
 
@@ -220,7 +221,7 @@ From the repo root. Each fans out to the project that owns it.
 | `npm run dev:admin` | Operator admin, `:5174` |
 | `npm run dev:portal` | Kinfolk portal, `:5173` |
 | `npm test` | Every JS suite (functions, geo, admin, portal) |
-| `npm run test:android` | Gradle unit tests |
+| `npm run test:android` | Gradle unit tests for the operator app (`auntieos-admin/android`) only. The portal Android and desktop tests have no root script; run `./gradlew` in `mytribe/` or `auntieos-admin/web/` |
 | `npm run test:rules` | Firestore rules, against the emulator |
 | `npm run test:scripts:emulator` | Every backfill's `*.emulator.test.ts`, against the emulator. **Run it before any backfill's prod write.** |
 | `npm run typecheck` | All four projects |
@@ -229,8 +230,14 @@ From the repo root. Each fans out to the project that owns it.
 | `npm run lint` | Functions eslint |
 | `npm run contracts:generate` | Rewrite the generated Contracts module from the server zod schemas |
 | `npm run contracts:check` | Regenerate into memory and fail on any diff. Part of `check`. |
+| `npm run seeds:generate` | Bundle `mytribe/seeds/notificationTemplates/` into the module the deployed functions read |
+| `npm run seeds:check` | Regenerate that bundle into memory and fail on any diff. Part of `check`. |
 | `npm run e2e` | Playwright against the emulator. **Not part of `check`** |
-| `npm run check` | typecheck, lint, contracts, test, build. Not e2e; release step 0b covers that by asking CI. |
+| `npm run e2e:cy` | Both Cypress suites against the emulators (`e2e:cy:admin`, `e2e:cy:portal` for one). See `auntieos-admin/docs/runbooks/e2e.md` |
+| `npm run check` | typecheck, lint, contracts, seeds, test, build. Not e2e; release step 0b covers that by asking CI. |
+| `npm run setup` | One-time machine setup: hooks, Android SDK path, every install (`scripts/bootstrap.sh`) |
+| `npm run preflight` | Reports what a release needs that setup does not provide, with the fix for each |
+| `npm run dev:record:admin` / `dev:record:portal` | Dev server with the issue recorder on. See `packages/issue-recorder/README.md` |
 | `npm run deploy` | The production run. See [Deploying](#deploying). |
 | `npm run deploy:bg` | The same run, detached, logged, one command. Use this one. |
 
@@ -272,16 +279,21 @@ distributes; `scripts/distribute-apks.sh` carries both app ids.
 
 **Two web apps and two Android apps**, one pair per operating system, and
 `npm run deploy` ships all four in one run. `mytribe/src` is easy to misread as
-dead: it is a Compose Multiplatform tree whose `jvm` target is the paused
-desktop build, but whose `android` target is a live delivery surface.
+dead: it is a Compose Multiplatform tree whose `jvm` target is the desktop
+build, and whose `android` target is a live delivery surface.
 
-Not delivery targets, do not add features: `auntieos-admin/web/composeApp` (wasm
-admin superseded by `auntieos-admin/src`, desktop build paused by owner ruling),
-the `jvm`/desktop target of `mytribe/src` (same ruling), and
-`auntieos-admin/sotu-hosting` (ops hosting, no Cloud Functions of its own).
+The desktop consoles, `auntieos-admin/web/composeApp` and the `jvm` target of
+`mytribe/src`, get no new features: desktop parity is paused by owner ruling.
+They are still kept working, because the desktop console is the fallback if a
+web app breaks, so fix what breaks there and do not delete it. Run
+`./gradlew :composeApp:jvmTest` in `auntieos-admin/web` locally; its CI job
+(`kotlin` in `ci.yml`) runs only on a manual dispatch. The wasm admin that used
+to live in `composeApp` was deleted in #481. `auntieos-admin/sotu-hosting` is
+ops hosting with no Cloud Functions of its own.
 
 All of it deploys into ONE Firebase project, `auntieos-ttpc`, which is why
-deploys go through a wrapper.
+deploys go through a wrapper. There is no staging project. Click-testing
+happens on the local emulators (`npm run e2e:cy:open` in either app).
 
 ---
 
@@ -343,6 +355,34 @@ npm run deploy        # foreground, when you want to answer the prompts yourself
 That is the whole release. `scripts/release.sh` runs the steps below **in this
 order**, stops at the first failure, and names the step it died in.
 
+**A full release sets two knobs.** This is the command for a normal release:
+
+```bash
+RELEASE_INCLUDE_ADMIN_FUNCTIONS=1 RELEASE_PREDEPLOY_KEEP=0 npm run deploy:bg
+```
+
+- `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` also ships the AuntieOS `default` and
+  `reconcile` codebases. Without it, everything behind an `/api/` hosting
+  rewrite keeps running whatever was deployed last.
+- `RELEASE_PREDEPLOY_KEEP=0` skips the revision prune before the functions
+  deploy. Batching is what keeps the deploy under the CPU quota; the pre-deploy
+  prune does not help and costs time on every run. Step 8 still prunes after
+  verification.
+
+`nightly-release.yml` uses the same set.
+
+**Run it from the repo root, and never pipe it through anything.** The script
+resolves every path from the root, writes state and reads its own output, so
+`npm run deploy | tail` changes both its exit status and what it can see. To
+watch a background run, use the `tail -f` line `deploy:bg` prints.
+
+**Merging to `main` is not a release.** `.github/workflows/main-channel.yml`
+publishes main's HEAD to one fixed Firebase Hosting preview channel per web app
+on every merge that touches web code, and prints the URLs. Only the static
+bundle changes there: Functions, Firestore and Auth behind those URLs are
+production, so walk the channel but do not submit forms against it. Production
+moves only when this release runs.
+
 **Prefer `deploy:bg`.** The release takes 20 to 40 minutes, and every way of
 launching it by hand has a sharp edge that was hit on 2026-08-03:
 
@@ -380,7 +420,8 @@ and prints `resumed:` instead of refusing. It uses the same rule as the release
 | 0 | Preconditions | Clean tree, on `main`, synced with origin. Shipping uncommitted or stale code is the classic incident. Falls back to `gh` if the SSH agent is down, since it must verify the fact, not one transport. |
 | 0a | Dependency drift | Is `node_modules` what each `package-lock.json` says it should be, for every root this run builds, tests, or deploys? Refuses and names the exact `npm ci` command, before step 1 tests anything against tools it cannot trust. See below. |
 | 0b | CI verdict for HEAD | Asks GitHub whether every check is green for this exact commit, **e2e included**. `npm run check` does not run e2e, so until this existed a red e2e could not stop a release. See below. |
-| 1 | `npm run check` | Typecheck, lint, test, build. Not optional theatre: this is what produces the `dist/` that step 6 uploads. |
+| 0c | Client build config (`VITE_*`) | Writes each web app's `.env.production.local` from Secret Manager. Runs before step 1 because `vite build` inlines these values; a value that arrives later ships as an empty string. See "Client build config (`VITE_*`) comes from the store too". |
+| 1 | `npm run check` | Typecheck, lint, contracts, seeds, test, build. Not optional theatre: this is what produces the `dist/` that step 6 uploads. |
 | 1b | Secret preflight | Every secret the code DECLARES must exist. Firebase validates these before uploading, and one missing name fails the whole codebase. Refuses here, before any deploy. |
 | 1c | Android build | Assembles **both** signed release APKs, operator and portal. Runs before the first deploy so a build failure costs nothing; the uploads are step 6b. |
 | 2 | Firestore indexes | Before the code that queries them. A query with no index fails at RUNTIME, not at build. |
@@ -394,7 +435,7 @@ and prints `resumed:` instead of refusing. It uses the same rule as the release
 | 9 | Tag the release | Annotates `release/YYYY.MM.DD-<sha>`, naming what actually shipped, and pushes just that tag to origin. Runs after step 7, so nothing gets tagged unless it was verified live. |
 
 **Why step 5 is conditional.** Redeploying the codebase mints a new Cloud Run
-revision for every one of its ~200 functions even when nothing changed, and a
+revision for every one of its ~285 functions even when nothing changed, and a
 bulk functions deploy is the step most likely to fail: it is where the CPU
 quota bites, and a failure there blocks the release before it ever reaches
 hosting. That happened on 2026-07-27. Skipping the step when the code is
@@ -415,11 +456,11 @@ the code is unchanged, step 5 asks whether any declared secret has an enabled
 version created after the last released commit, and deploys if one does, naming
 the secrets. If it cannot ask (functions not built, gcloud not signed in) it says
 so and still skips, because an unknown must not turn every run into a
-~200-function deploy; `RELEASE_FORCE_FUNCTIONS=1` is the override, and the
+whole-fleet deploy; `RELEASE_FORCE_FUNCTIONS=1` is the override, and the
 warning names it.
 
 **Why step 5 deploys by name in batches.** `--only functions:mytribe` hands the
-CLI all ~227 functions at once. Each was its own Cloud Run service at 1 vCPU, a
+CLI the whole fleet at once (~227 functions then, ~285 now). Each was its own Cloud Run service at 1 vCPU, a
 deploy starts a new revision beside the serving one, and
 `CpuAllocPerProjectRegion` in `us-central1` was 200 vCPU. The fleet did not fit.
 On 2026-08-01 five full deploys each died partway (both of those numbers have
@@ -452,10 +493,15 @@ with 38 functions carrying an explicit override (26 `FULL_CPU`, 12
 The quota increase requested on 2026-08-02 was approved on 2026-08-03:
 `CpuAllocPerProjectRegion` in `us-central1` is now **400 vCPU**, not 200.
 
-So the ceiling that produced 197, 201, 197 is about four times the fleet's
-current draw, and the 2026-08-03 release deployed 202 functions with zero quota
+So the ceiling that produced 197, 201, 197 was then about four times the
+fleet's draw, and the 2026-08-03 release deployed 202 functions with zero quota
 errors. Read the numbers above as what a 1-vCPU fleet did against a 200 vCPU
 ceiling, and nothing about today.
+
+**The 0.25 setting is also history.** The fleet default went back to `cpu: 1`
+on 2026-08-18 under ADR-0004 (see the comment at the top of
+`mytribe/functions/src/index.ts`). What keeps a full deploy under the 400 vCPU
+quota now is the batching in step 5, not a fractional CPU.
 
 ### The nightly release stays off until it can authenticate
 
@@ -553,8 +599,8 @@ nobody had read the error for.
 Two things fall out of that, and both are stronger than anything inferred.
 
 **There was never a CPU problem, by a factor of twenty-five.** 16 vCPU in use
-against 400 available. Elsewhere this runbook says the fleet "draws ~90 vCPU";
-that is the theoretical sum if every service were warm at once, and it is not
+against 400 available. Under the `cpu: 0.25` setting of that time this runbook said the fleet "draws
+~90 vCPU"; that was the theoretical sum if every service were warm at once, and it is not
 what the meter counts. What it counts is what is running, which is 16.
 
 **Active Revisions was 240 while the region held 706 revisions.** That is the
@@ -600,8 +646,8 @@ keeping; it was aimed at the wrong meter.
   rather than continuing because step 5 sits before hosting precisely so the
   clients never ship ahead of the backend.
 
-**Only what changed.** A one-function change has no business redeploying 227
-services. `.release-state` names the last released commit, so `git diff
+**Only what changed.** A one-function change has no business redeploying the
+whole fleet. `.release-state` names the last released commit, so `git diff
 --name-status` names the changed files and `scripts/function-targets.js` maps
 those to functions:
 
@@ -708,13 +754,13 @@ the real script against a throwaway repo with `gh`, `gcloud`, `firebase`, `curl`
 and `npm` stubbed, plus a fake `gradlew` per Android app so the two-app build
 and distribution path runs wet without an SDK. It also covers the admin deploy
 retry and its error classifier, the per-commit resume, and the checkout checks
-around every deploy (#840), and the step 0a dependency-drift checks (#841). 188
+around every deploy (#840), and the step 0a dependency-drift checks (#841). 199
 cases.
 Run it after touching `scripts/release.sh`. `bash scripts/release-bg.test.sh`
 (26 cases) covers the detached wrapper, including a resumed run with changed
 indexes and each reason a resume is refused.
 
-Knobs, all off by default:
+Knobs. Most are off by default; the ones with a default say so:
 
 | Variable | Effect |
 |---|---|
@@ -924,8 +970,8 @@ was read and disagrees stops the release. `RELEASE_SKIP_FLEET_VERIFY=1` turns
 it off; a dry run skips it, having deployed nothing to check.
 
 **What it does not cover.** The AuntieOS codebases behind
-`RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` (`default`, `reconcile`) are deployed in
-step 5b and are not verified. They are retried on transient errors (#840), which
+`RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` (`default`, `reconcile`) are deployed at
+the end of step 5, before hosting, and are not verified. They are retried on transient errors (#840), which
 is not the same thing. Extending the verify to them is worth doing and is not done.
 
 **Why there is no scheduled version.** A cron check would catch a hand-run
@@ -961,7 +1007,7 @@ tool exists to force before anyone touches the fleet again.
 npm --prefix mytribe/functions run runtime-options:expected
 ```
 
-Prints the resolved expected shape for all ~250 functions as JSON. Useful on
+Prints the resolved expected shape for all ~285 functions as JSON. Useful on
 its own — it's "what does source currently declare, exactly" with inheritance
 already resolved — and it fails loudly (nonzero exit, every unresolved export
 named) if a future function's options object uses a shape the extractor
@@ -1016,7 +1062,7 @@ handed it.
 npm --prefix mytribe/functions run runtime-options:diff -- /tmp/deployed.json
 ```
 
-Prints only the functions that disagree — not all ~250, which is why this has
+Prints only the functions that disagree, not all ~285, which is why this has
 never been fixed by eyeballing a full list — plus a deploy-window line and two
 buckets worth reading even when the mismatch table is empty.
 
@@ -1424,15 +1470,16 @@ The two builds are not the same shape, which is the part worth remembering.
 named from `rootProject.name`, which is `kinfolk-portal`, not `mytribe`.
 
 The builds run at 1c, before the first deploy, so a failure costs nothing. The
-uploads run at 6b, beside hosting. **CI cannot do either**: release signing needs
-the keystore, and the Mapbox SDK needs a downloads token, and both are per
-machine and gitignored. That is why this lives in the release you run locally
-and not in Actions. What it needs:
+uploads run at 6b, beside hosting. **CI cannot do either yet**: release signing
+needs the keystore, and the Mapbox SDK needs a downloads token, and both are per
+machine and gitignored. `nightly-release.yml` exists but stays off until the
+hosted runner has them (see "The nightly release stays off until it can
+authenticate"), so today the release runs locally. What it needs:
 
 | Needs | For | Where |
 |---|---|---|
 | `KEYSTORE_PATH`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` | operator app | `auntieos-admin/android/local.properties` |
-| `MAPBOX_DOWNLOADS_TOKEN` | operator app | `~/.gradle/gradle.properties`, or the environment |
+| `MAPBOX_DOWNLOADS_TOKEN` | both apps (`mytribe/settings.gradle.kts` resolves the Mapbox SDK with it too) | `~/.gradle/gradle.properties`, or the environment |
 | `sdk.dir` (or `ANDROID_HOME`) | portal app | `mytribe/local.properties` |
 | `~/.android/debug.keystore` | portal app, see signing below | Android Studio, or `keytool` |
 | An App Distribution tester list | both | Firebase console, per project |
@@ -1454,13 +1501,11 @@ be upgraded in place to a release-signed one later, and it is not shippable to
 Play. It is recorded here rather than quietly ridden because "release build"
 and "release signing" are not the same claim.
 
-**The portal app's version does not move.** `versionCode = 2` and
-`versionName = "0.2.0"` are literals in `mytribe/build.gradle.kts`, so every
-build of it reports as `0.2.0 (2)` whatever the code, and Android will not treat
-a newer one as an upgrade. The operator app solved this in `auntieos-admin` by
-deriving both from git (`git rev-list --count` and the short SHA); the portal app
-has not, and until it does the release note is the only thing telling two of its
-builds apart.
+**Both apps derive their version from git.** `versionCode` is the commit count
+(`git rev-list --count HEAD`), which only grows on a linear history, so Android
+accepts each build as an upgrade. `versionName` carries the short SHA
+(`0.2.0-<sha>` for the portal app in `mytribe/build.gradle.kts`), so two builds
+are always told apart.
 
 A distribution failure at 6b is loud but not fatal: the web has already landed
 by then, the signed APK is on disk, and the run prints the retry command with
@@ -1487,7 +1532,7 @@ be a first list to forget to update.
 
 The operator app's `versionName` embeds the short SHA (its `build.gradle.kts`
 builds it from `gitShortSha`), so a tester's screenshot names the commit it came
-from without anyone checking the console. The portal app's does not; see above.
+from without anyone checking the console. The portal app's does the same.
 
 The AuntieOS functions codebases are **skipped by default** and the run says so
 rather than omitting them quietly. They live in the second tree
@@ -1522,8 +1567,11 @@ scripts/safe-deploy.sh mytribe -- firebase deploy --only firestore:indexes
 Doing it this way puts the ordering above back in your head. Prefer the run.
 
 **Hosting target names lie.** `hosting:app` is the live admin. The target called
-`legacy-wasm`, whose site is literally named `auntieos-admin`, is the superseded
-build. Full list in `.firebaserc`.
+`legacy-wasm`, whose site is literally named `auntieos-admin`, belonged to the
+wasm build deleted in #481; nothing builds it, so do not deploy it. The target
+lists are per tree: `auntieos-admin/.firebaserc` (`app`, `sotu`, `legacy-wasm`)
+and `mytribe/.firebaserc` (`kinfolk_portal`, `mytribe_beta`). There is no root
+`.firebaserc`.
 
 ---
 
@@ -1777,14 +1825,38 @@ importer, not a gap in this script.
 
 ## Adding a new employee
 
-**Mint the `admin` custom claim with `setAdminClaim`. Adding the uid to
+There are two staff roles since #944 (operator ruling 2026-09-22, spec in
+`docs/superpowers/specs/2026-09-22-admin-auntie-access-design.md`). Pick the
+right one before minting anything; they are separate claims and an account must
+never hold both.
+
+| Role | Claim | Sees | Minted with |
+|---|---|---|---|
+| Owner | `admin: true` | Everything | `setAdminClaim` (from an owner account), or `mytribe/functions/scripts/grant-admin-claim.mjs` |
+| Auntie (caretaker, contractor or employee) | `staffRole: "auntie"` | Households, kin, visits, 411s, her own schedule. Never money, dossiers or the household bank | `mytribe/functions/scripts/grant-staff-role.mjs` |
+
+**Hiring an Auntie.** Run once per hire, from `mytribe/functions`:
+
+```bash
+GOOGLE_CLOUD_PROJECT=auntieos-ttpc node scripts/grant-staff-role.mjs \
+  --email auntie@example.com --role auntie
+```
+
+Add `--password` only when the account does not exist yet. `--role none`
+revokes it. Do **not** give an Auntie the `admin` claim: 116 rule sites and 62
+server expressions read `admin`, and the split is safe only because an Auntie
+carries none of it. `grant-staff-role.mjs` refuses to mint both, and
+`setAdminClaim` refuses to grant `admin` to an account that holds `staffRole`.
+
+**Adding an owner. Mint the `admin` custom claim. Adding the uid to
 `AUNTIE_OPERATOR_UIDS` is not enough, and it is not the same thing.**
 
 RULING O-6 makes the `admin` custom claim the primary staff signal. The env
 allowlist is a **logged transition fallback**, kept only until every real
-operator's claim is confirmed minted, and then decommissioned. `isStaff`
-(`mytribe/functions/src/lib/staffGate.ts`) is the single gate every staff check
-goes through, and when it matches on the allowlist without a claim it warns:
+operator's claim is confirmed minted, and then decommissioned. `isOwner`
+(`mytribe/functions/src/lib/staffGate.ts`, called `isStaff` before #944) is the
+single gate every owner check goes through, and when it matches on the
+allowlist without a claim it warns:
 
 ```
 admin.allowlist.fallback.used
@@ -1796,7 +1868,7 @@ running on the fallback and someone skipped this step. It is a `warn`, so it
 does not fail anything and will sit there indefinitely.
 
 Why it matters beyond tidiness: **Firestore and Storage rules do not consult the
-env allowlist at all.** `isAuntie()` in `mytribe/firestore.rules` is
+env allowlist at all.** `isOwner()` in `mytribe/firestore.rules` reads
 `request.auth.token.admin == true`, the claim. So an allowlist-only employee
 passes every *callable* and is refused by every *rule*, which means the
 callable-backed screens work while direct reads fail. That split is confusing to
@@ -1807,7 +1879,7 @@ tribe, per the 2026-08-07 ruling that only an admin may be assigned several.
 `kinfolkClaim.ts` refuses to designate a household for a multi-tribe account, and
 recovery is a tribe-picker selection, which is the operator flow.
 
-**On offboarding**, revoke the claim. Removing the uid from the env allowlist
+**On offboarding**, revoke the claim (`--role none` for an Auntie). Removing the uid from the env allowlist
 alone leaves the claim minted, and the claim is the one the rules trust.
 
 ---
@@ -2100,10 +2172,10 @@ and this is the whole list:
 
 | Permission | Access | The call that needs it |
 |---|---|---|
-| Checkout Sessions | write | `stripe.checkout.sessions.create` in `portal/payInvoice.ts:103` |
-| PaymentIntents | read | `stripe.paymentIntents.retrieve` in `billing/stripeWebhook.ts:272` and `billing/stripeDispute.ts:360` |
+| Checkout Sessions | write | `stripe.checkout.sessions.create` in `portal/payInvoice.ts:261` |
+| PaymentIntents | read | `stripe.paymentIntents.retrieve` in `billing/stripeWebhook.ts:455` and `billing/stripeDispute.ts:360` |
 | Charges | read | `stripe.charges.retrieve` in `billing/stripeDispute.ts:399` |
-| Balance transactions | read | the `expand: ['latest_charge.balance_transaction']` on that same retrieve at `billing/stripeWebhook.ts:272-274` |
+| Balance transactions | read | the `expand: ['latest_charge.balance_transaction']` on that same retrieve at `billing/stripeWebhook.ts:455-456` |
 
 **Balance transactions is the one that fails silently, and it is the one people
 leave off.** It is not a call of its own; it is an expansion riding the
@@ -2132,14 +2204,14 @@ Two things need **no** permission:
   4). Grant none of these; a key that can refund is a key that can refund by
   accident.
 
-### 2. Redeploy the functions that declare it, and not the other 220
+### 2. Redeploy the functions that declare it, and not the rest of the fleet
 
 gcfv2 pins the secret *version* resolved at deploy time. Setting a value and not
 redeploying leaves the function reading the old version, or nothing at all on a
 first set. This has bitten before.
 
 **The pin is per function, so redeploy per function.** `--only functions:mytribe`
-hands the CLI the whole fleet, roughly 220 functions, against a hard 60 mutations
+hands the CLI the whole fleet, roughly 285 functions, against a hard 60 mutations
 per minute per region (see "The quota that was actually refusing the deploy"). A
 full run for one secret costs about half an hour, hits 429s, and can still finish
 with a handful of functions failed. Naming the ones that declare the secret costs
@@ -2163,7 +2235,7 @@ scripts/safe-deploy.sh mytribe -- firebase deploy \
 ```
 
 `STRIPE_WEBHOOK_SECRET` is declared on `stripeWebhook` alone
-(`mytribe/functions/src/billing/stripeWebhook.ts:553`), so rotating the signing
+(`mytribe/functions/src/billing/stripeWebhook.ts:1012`), so rotating the signing
 secret is a one-function deploy:
 
 ```bash
@@ -2416,8 +2488,8 @@ operator an evening.
 **`firebase functions:secrets:set` on these three names does nothing.** A gcfv2
 function is mounted only the secrets its own `secrets:` array declares, and all
 three exports declare `['TWILIO_AUTH_TOKEN', 'SENTRY_DSN']` and nothing else
-(`twilioInbound.ts:557-590`). The handlers read the URLs straight off
-`process.env` (`twilioInbound.ts:136`), which a Secret Manager entry never
+(`twilioInbound.ts:518-540`). The handlers read the URLs straight off
+`process.env` (`twilioSignature.ts:27-28`), which a Secret Manager entry never
 reaches. A value created there sits in the project looking set, and the function
 never sees it. That is the same shape as the `GOOGLE_CALENDAR_ID` failure in
 the Secrets section, and worth checking for first if one of these was "already
@@ -2469,7 +2541,7 @@ long as **the console and the env var hold the identical string**. Use the
 `cloudfunctions.net` form, since that is what the rest of these docs quote.
 
 **With `TWILIO_AUTH_TOKEN` unset, all three fail closed with 403** and no
-signature is checked at all (`twilioInbound.ts:133-134`). That is deliberate, so
+signature is checked at all (`twilioSignature.ts:52`). That is deliberate, so
 a forged request can never be accepted before activation, but it means an
 unmounted auth token and a mismatched URL look exactly alike from the outside.
 Rule the token out first: it is a real declared secret on all three functions,
@@ -2584,13 +2656,15 @@ Confirm the declaration is there, then redeploy:
 
 ```bash
 node scripts/declared-secrets.js --by-function GOOGLE_OAUTH   # the pairs
-firebase deploy --only functions:mytribe                       # from mytribe/
+scripts/safe-deploy.sh mytribe -- firebase deploy \
+  --only "functions:mytribe:NAME1,functions:mytribe:NAME2"    # just those names
 ```
 
-Release step 5 now refuses to skip the functions deploy when a declared secret is
-newer than the last release, so `npm run deploy` covers this. The AuntieOS
-Settings, Calendar section names which of the three setup steps is outstanding
-rather than reporting one generic failure.
+Deploy the names the first command printed, not the whole codebase; see
+"Secrets" above for why. Release step 5 also refuses to skip the functions
+deploy when a declared secret is newer than the last release, so `npm run
+deploy` covers this too. The AuntieOS Settings, Calendar section names which of
+the three setup steps is outstanding rather than reporting one generic failure.
 
 **A functions deploy fails with `Failed to validate secret versions ... not
 found or has no versions`.** The inverse trap: a secret the code DECLARES that
@@ -3028,11 +3102,10 @@ unauthenticated); this is for when it can be asked and the honest answer is
 | `README.md` | What the repo is, why one repo |
 | `auntieos-admin/CLAUDE.md` | Vertical-slice rule, error-handling philosophy |
 | `mytribe/functions/CALLABLE_CONTRACT.md` | Canonical request and response shapes |
-| `docs/twilio/README.md` | Both Twilio integrations, the Studio Flow, the live account's known issues |
+| `docs/twilio/README.md` | Both Twilio integrations, the call flow, the live account's known issues |
 | `scripts/safe-deploy.sh` | Deploy guards, with the reasoning in the header |
 | `scripts/release.sh` | The production run, step by step, with why each step is where it is |
 | `scripts/release.test.sh` | Runs the release script against a throwaway repo and stubbed CLIs |
-| `scripts/prune-run-revisions.test.sh` | Holds the prune's counts to what it deleted; run it by hand, CI does not |
-| `auntieos-admin/docs/runbooks/e2e.md` | The Playwright harness |
-| `auntieos-admin/docs/runbooks/visual-regression.md` | Visual harness, escalate-never-approve |
+| `scripts/prune-run-revisions.test.sh` | Holds the prune's counts to what it deleted. CI runs it in the `deploy-guard` job |
+| `auntieos-admin/docs/runbooks/e2e.md` | The Playwright harness and both Cypress suites |
 | `auntieos-admin/docs/handoffs/` | What a given week found |

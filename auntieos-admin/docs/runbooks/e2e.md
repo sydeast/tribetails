@@ -9,11 +9,14 @@ Emulator config: `e2e.firebase.json`.
 ## Run it
 
 ```bash
+npm ci                  # at the repo root; refused inside auntieos-admin
 cd auntieos-admin
-npm ci
 npm run e2e:install     # once per machine: downloads Chromium
 npm run e2e
 ```
+
+`npm ci` belongs at the root. `auntieos-admin` is a workspace member with no
+lockfile of its own, and its `preinstall` guard refuses an install run there.
 
 `npm run e2e` does three things in order, and the order matters. It type-checks
 the specs (`tsc -p e2e`), because Playwright transpiles TypeScript without
@@ -40,8 +43,18 @@ omission: the harness does not install, build or run `mytribe/functions`. See
 | `signin.spec.ts` | signed-out | Wrong password, kinfolk denial, admin admitted |
 | `bookings.spec.ts` | operator | A real authenticated screen: rules, listener, filters, hover |
 | `no-production-egress.spec.ts` | operator | Nothing in a run leaves the emulator, and an unstubbed callable says so |
+| `cascade-bookings.spec.ts` | operator | The `/bookings` half of the cascade fights, on computed style |
+| `breadcrumbs.spec.ts` | operator | The Den breadcrumb trail through the real router: which crumbs are links and which are buttons |
+| `directory-deeplink.spec.ts` | operator | Directory sub-views are real URLs that survive a reload and unwind on Back |
+| `invites.spec.ts` | operator | The invites screen is reachable from the rail and fails loud (no functions emulator, so no rows) |
+| `mobile-nav.spec.ts` | operator | Navigation at a 390px phone viewport |
+| `phone-layout.spec.ts` | operator | Row grids and invoice overlays at phone width |
+| `template-preview.spec.ts` | operator | The Template Bank editor's live preview renders a template |
 
-17 tests. Three consecutive runs each way on an M-series laptop, 2026-08-01:
+Specs not named in `SIGNED_OUT_SPECS` (`e2e/playwright.config.ts`) run in the
+`operator` project. About 44 tests as of 2026-09-26; `npm run e2e` prints the
+current count. The timings below are from when the suite had 17. Three
+consecutive runs each way on an M-series laptop, 2026-08-01:
 
 | | Playwright | `npm run e2e` wall |
 |---|---|---|
@@ -127,7 +140,7 @@ production's CORS allowlist, which this repo does not own.
 ## Ports, and why they are odd
 
 Auth `9399`, Firestore `8385`, functions `5399`. Not the Firebase defaults, and
-not the `9099`/`8085`/`5001` set `web/firebase.json` uses for the wasm tree. An
+not the `9099`/`8085`/`5001` set `web/firebase.json` declares for its emulators. An
 e2e run that silently attached to a dev emulator somebody left running would read
 their seed data and report a green that meant nothing. Distinct ports turn that
 into a connection refused.
@@ -161,7 +174,7 @@ and the suite would sign in against real data.
 
 The emulator loads `web/firestore.rules`, the mirror that
 `mytribe/firestore.rules` keeps byte-identical under a test and a pre-commit
-hook. So the authenticated specs pass the real `isAuntie()` gate. A permissive
+hook. So the authenticated specs pass the real `isOwner()` gate. A permissive
 stand-in would make every one of them prove nothing, and a third copy of the
 rules under `e2e/` would drift.
 
@@ -226,7 +239,8 @@ tests, proving the app boots in a real browser and that sign-in works, by
 operator ruling on 2026-08-27. The admin suite grew past that on 2026-09-01,
 under the condition that ruling set: a feature spec is designed in session,
 around round trips and their timing, and agreed before it is written. The
-portal suite is still the two smoke tests.
+portal suite grew the same way on 2026-09-14 (password reset, the Emergency
+Contacts card at phone width).
 The 2026-08-27 ruling had a diff behind it. The first version walked all 21
 admin screens, crawled the portal's links and drove named workflows: 46
 assertions that an element was present or visible against 2 that anything
@@ -259,7 +273,7 @@ browser, and an operator can sign in and land on `/home` with the rail rendered.
 session before it was written, and it is the shape any further one has to take:
 every test asserts a state change on a round trip through the emulator, timed.
 A wrong password is refused at the front door with the mapped line. Profile
-edit saves through the real `isAuntie()` rules and is read back after a
+edit saves through the real `isOwner()` rules and is read back after a
 `cy.reload()`, including a name with quotes, an HTML tag and an emoji, which
 must come back as text; a blank display name is refused with nothing written;
 padding is trimmed. The notifications button changes the route. On the Security
@@ -295,9 +309,19 @@ surface (`resetAdminPassword` task, `setPassword` in `e2e/seed.ts`). Under the
 deployed-host overrides below it is skipped: a real admin's password rotated by
 a spec, with the reset pointed at an emulator that is not there, is an operator
 locked out.
+
+Since then the admin suite has grown to 17 spec files (2026-09-26). Besides
+the four above: `bookings`, `schedule`, `templates`, `settings`, `packages`,
+`gallery`, `kin-view`, `kinfolk-profile`, `household-members`, `auntie-time`,
+`email-editor`, `form-schemas` and `notifications`, all under
+`auntieos-admin/cypress/e2e/`. Each file's header says what it proves.
+
 **The portal suite** (`mytribe/web/cypress/`) is the first browser-level test the
 portal has ever had. Its ~500 vitest cases all run in jsdom, where the router
-never runs and no screen is mounted end to end. Same two tests, same scope.
+never runs and no screen is mounted end to end. `smoke.cy.ts` is the two-test
+front door; `password-reset.cy.ts` drives the emulator's reset link through to
+a new sign-in, and `emergency-contacts-phone.cy.ts` checks the Tribe Profile's
+Emergency Contacts card at phone width (#829). 17 cases as of 2026-09-26.
 Its emulators are its own, on 9499/8485 with 5499 reserved and unserved
 (`mytribe/e2e.firebase.json`), so both suites can run at once without either
 seeing the other's seed. Callables are pinned to that dead port and answered by
@@ -406,7 +430,7 @@ the suite is two navigation tests.
 
 **Callable behaviour, entirely.** No server-side callable logic runs in this
 harness. Nothing here exercises `createInvoice`, `markInvoicePaid`,
-`transitionBookingStatus`, or any of the other 220 functions `mytribe/functions`
+`transitionBookingStatus`, or any of the other ~280 functions `mytribe/functions`
 exports. `bookings.spec.ts` passes because `BOOKINGS_QUERY` reads Firestore
 directly through the client SDK, not because any callable works.
 
@@ -444,8 +468,8 @@ So roughly six seconds of boot per run, plus a 694 MB install and a compile step
 that every contributor and every CI job would have to carry. Not fatal on its
 own, and it is not what decided this.
 
-Determinism is what decided it. Serving `mytribe/functions` loads all 220
-definitions, 18 of which are auth or Firestore triggers, and the emulator wires
+Determinism is what decided it. Serving `mytribe/functions` loads all ~285
+definitions (2026-09-26), 25 of which are auth, Firestore or blocking triggers, and the emulator wires
 them to the same database `e2e/seed.ts` writes. Two fire on today's seed:
 `onKinfolkCreate` provisions a `families/{kinfolkId}` envelope off the
 `kinfolk/e2e-kf-1` and `kinfolk/e2e-kf-2` writes, and `onAuthUserCreate` fires on

@@ -33,11 +33,15 @@ has two Android apps, and `android/` here is only the operator one.
 
 ## Running it
 
+Install from the repo root (`npm run setup` once, or `npm ci` at the root).
+Running `npm install` or `npm ci` in this directory is refused by its
+`preinstall` guard, because this is a workspace member with no lockfile of its
+own.
+
 ```
-npm install
 npm run dev            # the React admin, port 5174
 npm test               # vitest
-npx tsc --noEmit       # typecheck
+npm run typecheck      # app and service-worker tsconfigs
 npm run build          # production bundle
 ```
 
@@ -79,24 +83,25 @@ that table; when they disagree, the table is right and the prompt is the bug.
 
 ## Deploying, and why the site names read backwards
 
-Deploy by TARGET, never by site id:
+The admin ships as step 6 of the production release (`npm run deploy:bg` from
+the repo root, see `docs/RUNBOOK.md`). For a single target, deploy by TARGET,
+never by site id, and always through the wrapper (run from the repo root):
 
 ```
-firebase deploy --only hosting:app          # the React admin (auntie.tribetails.com)
-firebase deploy --only hosting:sotu         # the SOTU status page
-firebase deploy --only hosting:legacy-wasm  # the superseded wasm build
-firebase deploy --only functions:default:<name>
+scripts/safe-deploy.sh auntieos-admin -- firebase deploy --only hosting:app    # the React admin (auntie.tribetails.com)
+scripts/safe-deploy.sh auntieos-admin -- firebase deploy --only hosting:sotu   # the SOTU status page
 ```
 
 The targets exist because the Firebase site ids do not mean what they say. All
-four sites live on one project, `auntieos-ttpc`:
+five sites live on one project, `auntieos-ttpc`:
 
-| Site id | Actually serves |
-|---|---|
-| `auntieos` | the SOTU status page, NOT this app |
-| `auntieos-ttpc` | the AuntieOS admin, this app |
-| `auntieos-admin` | the superseded wasm build, NOT this app |
-| `kinfolk-portal` | MyTribe |
+| Site id | Target | Actually serves |
+|---|---|---|
+| `auntieos` | `sotu` | the SOTU status page, NOT this app |
+| `auntieos-ttpc` | `app` | the AuntieOS admin, this app |
+| `auntieos-admin` | `legacy-wasm` | nothing current. It served the wasm build deleted in #481; nothing builds it, so do not deploy it |
+| `kinfolk-portal` | `kinfolk_portal` | MyTribe |
+| `mytribe-kinfolk-beta` | `mytribe_beta` | a second MyTribe site for beta builds. Same project and same production backend, so not a staging environment |
 
 So `auntieos` is not AuntieOS and `auntieos-admin` is not the admin. Firebase
 Hosting site ids cannot be renamed: fixing the names for real means creating new
@@ -136,8 +141,9 @@ that mixes functions with hosting: those are two trees, so run two deploys.
 Two things that will stop a functions deploy on a fresh checkout:
 
 - The Firebase CLI analyzes the codebase locally before uploading, so
-  `web/functions/node_modules` must exist. Nothing else in this repo installs
-  it. `cd web/functions && npm install`.
+  `web/functions/node_modules` must exist. `npm run setup` at the repo root
+  installs it and checks it against its lockfile; `npm ci` in `web/functions`
+  does it by hand.
 - If npm fails with `EACCES` renaming inside `~/.npm/_cacache`, the cache has
   root-owned entries from an earlier `sudo npm`. Pass `--cache` a writable
   directory rather than fixing it destructively. Some transitive postinstall

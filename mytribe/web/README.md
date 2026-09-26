@@ -20,8 +20,11 @@ callables in `us-central1`); this directory is the web client only.
 
 ## Run
 
+Install from the repo root (`npm run setup` once, or `npm ci` at the root).
+`npm install` or `npm ci` in this directory is refused by its `preinstall`
+guard: this is a workspace member with no lockfile of its own.
+
 ```bash
-npm install
 npm run dev        # dev server
 npm run build      # type-check + production build to dist/
 npm run preview    # serve the production build locally
@@ -31,8 +34,8 @@ npm test           # vitest unit tests
 ## What is here
 
 The portal is well past the Phase 1 shell this section used to describe.
-`src/screens/` holds 33 screens and `src/router.tsx` defines 49 route entries,
-including Invoices, InvoiceDetail, BookingWizard, BookingDetail, KinTales,
+`src/screens/` holds 24 screens and `src/router.tsx` defines 26 routes
+(2026-09-26), including Invoices, InvoiceDetail, BookingWizard, BookingDetail, KinTales,
 Messages, TribeHub and Account. Read `src/router.tsx` for the current map
 rather than a list here, which is what went stale.
 
@@ -70,7 +73,9 @@ The guest funnel, which has its own quirks worth knowing before you touch it:
 Wired and live. `dist/` goes to Firebase Hosting target `kinfolk_portal`
 (`mytribe/firebase.json`, mapped in `mytribe/.firebaserc` to the
 `kinfolk-portal` site) at kinfolk.tribetails.com. A second target,
-`mytribe_beta` -> `mytribe-kinfolk-beta`, exists for beta builds.
+`mytribe_beta` -> `mytribe-kinfolk-beta`, exists for beta builds. It is a
+second site in the same project, backed by the same production functions and
+data, so it is not a staging environment; there is none.
 
 Do not deploy it by hand. The portal ships as step 6 of the production release,
 `npm run deploy:bg`; see `docs/RUNBOOK.md`. The single-target escape hatch is:
