@@ -56,10 +56,10 @@
     "qa:set-sandbox-password": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/qa_set_sandbox_password.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.127.0",
+    "@anthropic-ai/sdk": "^0.128.0",
     "@google-cloud/recaptcha-enterprise": "^7.2.0",
     "@googleapis/calendar": "^20.0.0",
-    "@sentry/node": "^10.75.0",
+    "@sentry/node": "^10.75.2",
     "argon2": "^0.45.1",
     "dom-serializer": "^3.1.1",
     "firebase-admin": "^14.4.0",
@@ -85,7 +85,7 @@
     "prettier": "^3.9.8",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.70.0",
+    "typescript-eslint": "^8.70.1",
     "vitest": "^5.0.1"
   }
 }
