@@ -1833,7 +1833,7 @@ never hold both.
 | Role | Claim | Sees | Minted with |
 |---|---|---|---|
 | Owner | `admin: true` | Everything | `setAdminClaim` (from an owner account), or `mytribe/functions/scripts/grant-admin-claim.mjs` |
-| Auntie (caretaker, contractor or employee) | `staffRole: "auntie"` | Households, kin, visits, 411s, her own schedule. Never money, dossiers or the household bank | `mytribe/functions/scripts/grant-staff-role.mjs` |
+| Auntie (caretaker, contractor or employee) | `staffRole: "auntie"` | Households, kin, visits, 411s, their own schedule. Never money, dossiers or the household bank | `mytribe/functions/scripts/grant-staff-role.mjs` |
 
 **Hiring an Auntie.** Run once per hire, from `mytribe/functions`:
 

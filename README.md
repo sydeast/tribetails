@@ -59,14 +59,14 @@ verdict, dependency drift, secret and client-config checks, `npm run check`,
 the Android build, indexes, index wait, rules, functions, both hosting targets,
 the APK upload, a verify step that fetches the live bundles and proves they
 changed, the Cloud Run revision prune, the release tag and the merged-branch
-prune.
+prune. Order is the point. Indexes go before the code that queries them and
+functions before the clients that call them, because both failures land at
+runtime rather than at build.
 
 Merging to `main` does not release anything. `.github/workflows/main-channel.yml`
 publishes main's HEAD to one fixed Firebase Hosting preview channel per web
 app, so main's UI can be walked before a release. Functions, Firestore and Auth
-behind those URLs are production, so do not submit forms there. Order is the point. Indexes go before
-the code that queries them and functions before the clients that call them,
-because both failures land at runtime rather than at build.
+behind those URLs are production, so do not submit forms there.
 
 Do not rebuild that sequence by hand. A menu of deploy commands is what this
 repo had before, and on 2026-07-26 the live admin sat 33 hours and ~19 merged
