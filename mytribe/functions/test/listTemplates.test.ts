@@ -7,7 +7,7 @@ vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), get
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 beforeEach(() => mocks.dbFn.mockReset());
 
-import { listTemplatesHandler } from '../src/admin/listTemplates';
+import { listTemplatesHandler, listTemplateBindingsHandler } from '../src/admin/listTemplates';
 
 function req(data: unknown = {}, uid: string | undefined = 'admin1'): CallableRequest<unknown> {
   return {
@@ -35,7 +35,10 @@ describe('listTemplates', () => {
     const res = await listTemplatesHandler(req());
     expect(res.nextCursor).toBeNull();
     expect(res.templates).toHaveLength(2);
-    expect(res.templates[0]).toMatchObject({ templateId: 'booking.confirmed', category: 'Booking' });
+    expect(res.templates[0]).toMatchObject({
+      templateId: 'booking.confirmed',
+      category: 'Booking',
+    });
   });
 
   it('I9: defaults usageInstructions/sectionDefinitions for docs that lack them', async () => {
@@ -100,7 +103,13 @@ describe('listTemplates', () => {
     const res = await listTemplatesHandler(req());
     const vis = res.templates.find((t) => t.templateId === 'vis')!;
     const old = res.templates.find((t) => t.templateId === 'old')!;
-    expect(vis).toMatchObject({ format: 'visual', headline: 'H', content: '<p>c</p>', body: '', html: null });
+    expect(vis).toMatchObject({
+      format: 'visual',
+      headline: 'H',
+      content: '<p>c</p>',
+      body: '',
+      html: null,
+    });
     expect(old).toMatchObject({ format: null, headline: null, content: null, body: 'b' });
   });
 
@@ -111,8 +120,55 @@ describe('listTemplates', () => {
 
   it('SAD: unauthenticated rejected', async () => {
     mocks.dbFn.mockReturnValue(seed([]));
+    await expect(listTemplatesHandler({ data: {} } as CallableRequest<unknown>)).rejects.toThrow();
+  });
+});
+
+/** Seed the notificationTemplateBindings collection with the given rows. */
+function seedBindings(rows: Array<{ id: string; data: Record<string, unknown> }>) {
+  return buildDbMock({ queryDocs: { notificationTemplateBindings: rows } }).db;
+}
+
+describe('listTemplateBindings', () => {
+  // #965: listing used to decode a missing `active` field as off while
+  // sending (resolveTemplateId, lib/sendFromTemplate.ts) treats it as on.
+  // The listed value must match what a send actually does.
+  it('#965: a doc with no active field reports active: true, matching sending', async () => {
+    mocks.dbFn.mockReturnValue(
+      seedBindings([{ id: 'booking.confirmed', data: { templateId: 't1' } }]),
+    );
+    const res = await listTemplateBindingsHandler(req());
+    expect(res.bindings).toEqual([
+      {
+        catalogKey: 'booking.confirmed',
+        templateId: 't1',
+        audience: null,
+        triggerKey: null,
+        active: true,
+      },
+    ]);
+  });
+
+  it('#965: an explicit active: false still reports as paused', async () => {
+    mocks.dbFn.mockReturnValue(
+      seedBindings([{ id: 'invoice.reminder', data: { templateId: 't2', active: false } }]),
+    );
+    const res = await listTemplateBindingsHandler(req());
+    expect(res.bindings[0]).toMatchObject({ catalogKey: 'invoice.reminder', active: false });
+  });
+
+  it('#965: an explicit active: true reports as active', async () => {
+    mocks.dbFn.mockReturnValue(
+      seedBindings([{ id: 'invoice.new', data: { templateId: 't3', active: true } }]),
+    );
+    const res = await listTemplateBindingsHandler(req());
+    expect(res.bindings[0]).toMatchObject({ catalogKey: 'invoice.new', active: true });
+  });
+
+  it('SAD: unauthenticated rejected', async () => {
+    mocks.dbFn.mockReturnValue(seedBindings([]));
     await expect(
-      listTemplatesHandler({ data: {} } as CallableRequest<unknown>),
+      listTemplateBindingsHandler({ data: {} } as CallableRequest<unknown>),
     ).rejects.toThrow();
   });
 });
