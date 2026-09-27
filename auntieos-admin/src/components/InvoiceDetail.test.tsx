@@ -2369,3 +2369,91 @@ describe('InvoiceDetail and a quote the household has answered (issue #448)', ()
     expect(await screen.findByText(/Give it a new due date/)).toBeInTheDocument();
   });
 });
+
+/**
+ * #977: MARK PAID WITH AUTO-APPLY TICKED.
+ *
+ * The server reads the part `markInvoicePaid` applied off the settlement row
+ * this call names, so the payload has to carry that id and the WHOLE
+ * transaction, and must carry no `apply` (the invoice is already settled). The
+ * note after the payment repeats only the credit the server says it gave.
+ */
+describe('#977 Mark paid with auto-apply ticked', () => {
+  const ledgerAnswer = (creditedToAccountCents: number, amountCents: number) => ({
+    ok: true,
+    paymentId: 'led1',
+    kinfolkId: 'kf1',
+    amountCents,
+    tipCents: 1000,
+    feeCents: 271,
+    tipBasis: 'gross',
+    appliedCents: 12750,
+    unappliedCents: amountCents - 12750 - 1000,
+    proceedsCents: amountCents - 271,
+    tipNetCents: 729,
+    autoApply: true,
+    application: null,
+    creditedToAccountCents,
+    confirmationEmailSent: false,
+  });
+
+  async function payWithAutoApply(total?: string) {
+    markInvoicePaid.mockResolvedValue({ ...settledResult(), totalCents: 12750, paidCents: 12750 });
+    render(<InvoiceDetail invoice={entry({ amountDue: 127.5, total: 127.5 })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await userEvent.clear(screen.getByLabelText(/amount collected/i));
+    await userEvent.type(screen.getByLabelText(/amount collected/i), '127.50');
+    await userEvent.type(screen.getByLabelText(/tip in dollars/i), '10');
+    await userEvent.type(screen.getByLabelText(/processor fee in dollars/i), '2.71');
+    if (total) await userEvent.type(screen.getByLabelText(/total payment amount/i), total);
+    await userEvent.click(screen.getByLabelText(/automatically apply any unapplied amount/i));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+  }
+
+  it('settles with the applied part, then sends the exact two-step ledger payload', async () => {
+    recordPayment.mockResolvedValue(ledgerAnswer(0, 13750));
+    await payWithAutoApply();
+    expect(markInvoicePaid).toHaveBeenCalledWith(
+      'inv1',
+      expect.objectContaining({ amount: 127.5 }),
+    );
+    const sent = recordPayment.mock.calls[0]![0];
+    const { idempotencyKey, date, paymentMethod, referenceNumber, ...rest } = sent;
+    expect(idempotencyKey).toMatch(/^pay_\d+_[a-z0-9]+$/);
+    expect(typeof date).toBe('string');
+    expect(typeof paymentMethod).toBe('string');
+    expect(typeof referenceNumber).toBe('string');
+    expect(rest).toEqual({
+      kinfolkId: 'kf1',
+      kinfolkName: 'The Whitfields',
+      client: '',
+      amount: 137.5,
+      tip: 10,
+      fee: 2.71,
+      notes: '',
+      autoApply: true,
+      sendConfirmationEmail: false,
+      invoiceId: 'inv1',
+      invoiceNumber: '1042',
+      settledByInvoicePaymentId: 'pay1',
+    });
+  });
+
+  it('claims no account credit when the server credited none', async () => {
+    recordPayment.mockResolvedValue(ledgerAnswer(0, 13750));
+    await payWithAutoApply();
+    expect(await screen.findByText(/invoice is paid in full/i)).toBeInTheDocument();
+    expect(screen.queryByText(/account credit/i)).toBeNull();
+  });
+
+  it("repeats the server's credit, and only that, for a real leftover", async () => {
+    // $200 in: $127.50 applied, $10 tip, $62.50 left over.
+    recordPayment.mockResolvedValue(ledgerAnswer(6250, 20000));
+    await payWithAutoApply('200');
+    expect(recordPayment).toHaveBeenCalledWith(expect.objectContaining({ amount: 200, tip: 10, autoApply: true }));
+    expect(
+      await screen.findByText(/\$62\.50 was left over and has been added to the household's account credit/i),
+    ).toBeInTheDocument();
+  });
+});

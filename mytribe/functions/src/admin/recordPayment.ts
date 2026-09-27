@@ -25,6 +25,7 @@ import {
   type ApplyStep,
 } from '../lib/paymentApply';
 import { creditAccount } from '../lib/accountCredit';
+import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { PaymentIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotificationDetailed } from '../notifications/dispatcher';
@@ -250,6 +251,10 @@ export const Args = z.object({
    * OPTIONAL, like every addition here. A client that does not send it gets the
    * household confirmation it ticked, and the office is not told for its
    * settlement.
+   *
+   * #977: it is also where this call reads the part of the payment step 1
+   * applied, so `autoApply` credits only the real leftover. A call linked to an
+   * invoice without it gets no account credit (see `twoStepAppliedCents`).
    */
   settledByInvoicePaymentId: z.string().min(1).max(200).optional(),
 });
@@ -419,7 +424,11 @@ export async function recordPaymentHandler(
   const amountCents = dollarsToCents(args.amount);
   const tipCents = dollarsToCents(args.tip);
   const feeCents = dollarsToCents(args.fee);
-  const appliedCents = args.apply ? dollarsToCents(args.apply.amount) : 0;
+  // #977: in the two-step admin flow the applied part was put on the invoice by
+  // `markInvoicePaid`, not by this call, so it is read off the settlement row
+  // this call names. See `twoStepAppliedCents`.
+  const twoStep = args.apply ? null : await twoStepAppliedCents(args);
+  const appliedCents = args.apply ? dollarsToCents(args.apply.amount) : (twoStep?.appliedCents ?? 0);
   const money = paymentMoneyOf({
     amountCents,
     tipCents,
@@ -473,8 +482,29 @@ export async function recordPaymentHandler(
   // remainder is HELD rather than spread across today's bills, and
   // `triggers/onInvoiceAutoApply.ts` spends it on the next invoice that becomes
   // collectable.
+  //
+  // #977: a row linked to an invoice whose applied part could not be read is
+  // credited NOTHING. Its leftover is unknown, and guessing it as `amount - tip`
+  // is exactly the double credit: the invoice money a second time, as spendable
+  // account balance. The row still stores `unappliedCents` as computed, so the
+  // operator can see the figure and credit the household by hand.
+  const leftoverKnown = twoStep === null || twoStep.known;
   const creditedToAccountCents =
-    args.autoApply && money.unappliedCents > 0 && kinfolkId !== '' ? money.unappliedCents : 0;
+    args.autoApply && leftoverKnown && money.unappliedCents > 0 && kinfolkId !== '' ? money.unappliedCents : 0;
+  if (args.autoApply && !leftoverKnown) {
+    logEvent({
+      severity: 'warn',
+      function: 'recordPayment',
+      event: 'admin.payment.autoapply.withheld',
+      uid: actor.uid,
+      extra: {
+        kinfolkId,
+        invoiceId: args.invoiceId,
+        settledByInvoicePaymentId: args.settledByInvoicePaymentId ?? null,
+        reason: twoStep?.reason ?? null,
+      },
+    });
+  }
 
   // ── ONE TRANSACTION: THE DEDUPE, THE APPLY, THE CREDIT, THE ROW ─────────
   //
@@ -581,6 +611,11 @@ export async function recordPaymentHandler(
       autoApply: args.autoApply,
       // What of the leftover actually reached the household's account credit.
       creditedToAccountCents,
+      // #977: the `invoices/{invoiceId}/payments` row `appliedCents` was read
+      // from in the two-step flow; '' when this call applied (or linked)
+      // nothing. `appliedInvoiceId` stays '' for that flow: this call moved no
+      // invoice balance, `markInvoicePaid` did.
+      settledByInvoicePaymentId: twoStep?.known ? (args.settledByInvoicePaymentId ?? '') : '',
       recordedBy: actor.uid,
       createdAt: FieldValue.serverTimestamp(),
       // ── #825, DENORMALIZED SO A REPLAY CAN BE ANSWERED FROM ONE READ ─────
@@ -667,6 +702,7 @@ export async function recordPaymentHandler(
       proceedsCents: money.proceedsCents,
       autoApply: args.autoApply,
       creditedToAccountCents,
+      settledByInvoicePaymentId: args.settledByInvoicePaymentId ?? null,
       appliedInvoiceId: application?.invoiceId ?? null,
       appliedInvoiceState: application?.state ?? null,
       method: args.paymentMethod,
@@ -773,6 +809,58 @@ export async function recordPaymentHandler(
     householdNoPortalAccount: sent.noPortalAccount,
     officeNoticePending: sent.officePending,
   });
+}
+
+/**
+ * #977: HOW MUCH OF THIS PAYMENT `markInvoicePaid` ALREADY PUT ON THE INVOICE,
+ * for a call that carries no `apply`.
+ *
+ * Admin web (Mark paid) and admin Android (Record payment) settle the invoice
+ * with `markInvoicePaid` first and then call this with the WHOLE transaction as
+ * `amount`, the invoice as a display link, and step 1's row id as
+ * `settledByInvoicePaymentId`. Treating that row as "nothing applied" made the
+ * leftover `amount - tip`, so a ticked auto-apply credited the invoice money to
+ * the household's account balance on top of settling the invoice with it.
+ *
+ * WHY THE SETTLEMENT ROW, AND NOT A REFUSAL OF `autoApply`. The row step 1 wrote
+ * (`invoices/{invoiceId}/payments/{settledByInvoicePaymentId}`) records exactly
+ * what was applied, in the units `paidCentsFromPayments` reads, and nothing ever
+ * rewrites it. With it the leftover is exact, so a genuine overpayment ($200 in
+ * for a $127.50 bill and a $10 tip) still reaches the household's credit as she
+ * asked. Refusing would throw that away, or throw away the ledger row with it,
+ * and the ledger row is written after the money has already moved.
+ *
+ * Read OUTSIDE the transaction, for the reason the apply plan is: the row is
+ * written once, by a `create`/`set` in `markInvoicePaid`'s own transaction, and
+ * never updated, so there is nothing a transactional read would protect.
+ *
+ * `known: false` means the call is linked to an invoice and the applied part
+ * could not be read: no `settledByInvoicePaymentId` (an install from before
+ * #866), or an id that names no row under that invoice. The caller then credits
+ * nothing. The `markInvoicePaid:<id>` owner stamp is no substitute for the id:
+ * it is written only by a payment that settles the invoice, so it cannot name a
+ * partial, and nothing parses it.
+ *
+ * A standalone row (no `invoiceId`) applies nothing and its leftover is known.
+ */
+async function twoStepAppliedCents(args: {
+  invoiceId: string;
+  settledByInvoicePaymentId?: string | undefined;
+}): Promise<{ known: boolean; appliedCents: number; reason?: 'no-settlement-id' | 'settlement-not-found' }> {
+  if (args.invoiceId === '') return { known: true, appliedCents: 0 };
+  if (args.settledByInvoicePaymentId === undefined) {
+    return { known: false, appliedCents: 0, reason: 'no-settlement-id' };
+  }
+  const snap = await db()
+    .collection('invoices')
+    .doc(args.invoiceId)
+    .collection('payments')
+    .doc(args.settledByInvoicePaymentId)
+    .get();
+  if (!snap.exists) return { known: false, appliedCents: 0, reason: 'settlement-not-found' };
+  // The same units rule the invoice's own settlement was summed with, so this
+  // figure and the invoice's `paidCents` cannot disagree about one row.
+  return { known: true, appliedCents: paidCentsFromPayments([(snap.data() ?? {}) as PaymentAmount]) };
 }
 
 /** "$36.00" from integer cents, for a refusal an operator has to read. */
