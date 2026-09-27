@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -26,7 +25,13 @@ import com.composables.icons.lucide.EyeOff
 import com.composables.icons.lucide.Lucide
 import com.tribetails.auntieos.web.data.AuthUser
 import com.tribetails.auntieos.web.data.FirestoreClient
-import com.tribetails.auntieos.web.data.FirestoreResult
+import com.tribetails.auntieos.web.data.UserProfile
+import com.tribetails.auntieos.web.screens.settings.ProfileLoad
+import com.tribetails.auntieos.web.screens.settings.baseline
+import com.tribetails.auntieos.web.screens.settings.isLoaded
+import com.tribetails.auntieos.web.screens.settings.profileNotReadyMessage
+import com.tribetails.auntieos.web.screens.settings.rememberProfileLoad
+import com.tribetails.auntieos.web.ui.components.LoadErrorBanner
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
@@ -57,9 +62,10 @@ fun NavigationPanel(authUser: AuthUser) {
     val saveMutex = remember { Mutex() }
     val defaultKeys = remember { navEditableDestinations.map { it.name } }
 
-    val profileResult by remember(authUser.uid) { client.userProfileStream(authUser.uid) }
-        .collectAsState(initial = FirestoreResult.Loading)
-    val profile = (profileResult as? FirestoreResult.Data)?.value
+    // #897: pending, failed and "no document" stay distinct; see ProfileLoad.
+    val profileHandle = rememberProfileLoad(client, authUser.uid)
+    val profileLoad = profileHandle.load
+    val profile = profileLoad.baseline
 
     val baseline = resolvedNav(profile?.navConfig ?: emptyList(), defaultKeys)
     // Re-seed only when the saved navConfig itself changes (not on any unrelated profile
@@ -75,6 +81,15 @@ fun NavigationPanel(authUser: AuthUser) {
         trailing = { AuntieStatusPill(label = "Your menu", tone = AuntieStatusTone.Teal, mono = true) },
     ) {
         Column {
+            (profileLoad as? ProfileLoad.Failed)?.let {
+                LoadErrorBanner(
+                    "Couldn't load your profile",
+                    it.message,
+                    onRetry = profileHandle.retry,
+                    retrying = profileHandle.retrying,
+                )
+                Spacer(Modifier.height(12.dp))
+            }
             entries.forEachIndexed { i, e ->
                 val fallback = destinationByName(e.key)?.title ?: e.key
                 Row(
@@ -120,19 +135,22 @@ fun NavigationPanel(authUser: AuthUser) {
             Spacer(Modifier.height(14.dp))
             AuntieSaveBar(
                 dirty = dirty,
-                saveEnabled = dirty && !saving && profile != null,
+                saveEnabled = dirty && !saving && profileLoad.isLoaded,
                 onCancel = { entries = baseline },
                 onSave = {
-                    val p = profile
-                    if (p == null) {
-                        navError = "Still loading your profile, your change was not saved."
+                    val load = profileLoad
+                    if (load !is ProfileLoad.Loaded) {
+                        navError = profileNotReadyMessage(load, "your change was not saved")
                     } else {
                         saving = true
+                        val base = load.profile ?: UserProfile(uid = authUser.uid, email = authUser.email.orEmpty())
+                        val next = base.copy(navConfig = entries.toNavTokens())
                         scope.launch {
                             saveMutex.withLock {
-                                when (val r = client.saveUserProfile(p.copy(navConfig = entries.toNavTokens()))) {
+                                // #897: writes navConfig (and its stamp) only.
+                                when (val r = client.updateUserProfile(authUser.uid, load.profile, next)) {
                                     is WriteResult.Err -> navError = "Navigation not saved: ${r.message}"
-                                    is WriteResult.Ok -> navError = null
+                                    is WriteResult.Ok -> { navError = null; profileHandle.saved(next) }
                                 }
                             }
                             saving = false

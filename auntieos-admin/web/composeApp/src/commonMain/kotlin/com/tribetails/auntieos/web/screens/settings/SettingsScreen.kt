@@ -227,8 +227,10 @@ fun SettingsScreen(
     var newHolidayName by remember { mutableStateOf("") }
 
     // ---- Admin / Auntie profile ----
-    val profileResult by remember(authUser.uid) { client.userProfileStream(authUser.uid) }.collectAsState(initial = FirestoreResult.Loading)
-    val profileLoaded = (profileResult as? FirestoreResult.Data)?.value
+    // #897: a failed or pending read is never folded into "no profile"; see ProfileLoad.
+    val profileHandle = rememberProfileLoad(client, authUser.uid)
+    val profileLoad = profileHandle.load
+    val profileLoaded = profileLoad.baseline
     var displayName by remember(profileLoaded) { mutableStateOf(profileLoaded?.displayName ?: "") }
     var firstName   by remember(profileLoaded) { mutableStateOf(profileLoaded?.firstName ?: "") }
     var lastName    by remember(profileLoaded) { mutableStateOf(profileLoaded?.lastName  ?: "") }
@@ -257,15 +259,18 @@ fun SettingsScreen(
     // if the profile has not loaded yet (saving a fresh doc would clobber the
     // operator's other fields, so we surface the wait instead of silently dropping).
     val persistTheme: (ThemeMode) -> Unit = { mode ->
-        val p = profileLoaded
-        if (p == null) {
-            themeError = "Still loading your profile, your theme change was not saved. Try again in a moment."
+        val load = profileLoad
+        if (load !is ProfileLoad.Loaded) {
+            themeError = profileNotReadyMessage(load, "your theme change was not saved")
         } else {
             onThemeModeChange(mode)
+            val p = load.profile ?: UserProfile(uid = authUser.uid, email = authUser.email.orEmpty())
+            val next = p.withTheme(mode)
             scope.launch {
-                when (val r = client.saveUserProfile(p.withTheme(mode))) {
+                // #897: only themeMode (and its stamp) is written.
+                when (val r = client.updateUserProfile(authUser.uid, load.profile, next)) {
                     is WriteResult.Err -> themeError = "Theme not saved: ${r.message}"
-                    is WriteResult.Ok  -> themeError = null
+                    is WriteResult.Ok  -> { themeError = null; profileHandle.saved(next) }
                 }
             }
         }
@@ -296,24 +301,24 @@ fun SettingsScreen(
         onPersonalizationChange(next)
     }
 
-    // Explicit Save: persist the current live personalization. Writes all three
-    // knobs onto the loaded profile (saveUserProfile overwrites the doc, so a
-    // partial write would clobber the others). Fail loud when the profile has not
-    // loaded yet (a fresh-doc save would drop the operator's other fields).
+    // Explicit Save: persist the current live personalization. #897: only the knobs
+    // that differ from the loaded profile are written (masked PATCH). Refused while
+    // the profile read is pending or has failed.
     val saveAppearance: () -> Unit = {
-        val p = profileLoaded
-        if (p == null) {
-            appearanceError = "Still loading your profile, your change was not saved. Try again in a moment."
+        val load = profileLoad
+        if (load !is ProfileLoad.Loaded) {
+            appearanceError = profileNotReadyMessage(load, "your change was not saved")
         } else if (!savingAppearance) {
+            val p = load.profile ?: UserProfile(uid = authUser.uid, email = authUser.email.orEmpty())
             savingAppearance = true
             val snapshot = personalization
             scope.launch {
                 appearanceSaveMutex.withLock {
                     val merged = p.withAccent(snapshot.accent).withDensity(snapshot.density)
                         .withFontScale(snapshot.fontScale).withThemePreset(snapshot.themePreset)
-                    when (val r = client.saveUserProfile(merged)) {
+                    when (val r = client.updateUserProfile(authUser.uid, load.profile, merged)) {
                         is WriteResult.Err -> appearanceError = "Appearance not saved: ${r.message}"
-                        is WriteResult.Ok  -> appearanceError = null
+                        is WriteResult.Ok  -> { appearanceError = null; profileHandle.saved(merged) }
                     }
                     savingAppearance = false
                 }
@@ -338,6 +343,9 @@ fun SettingsScreen(
         saving = savingAppearance,
         onSave = saveAppearance,
         onDiscard = discardAppearance,
+        profileLoad = profileLoad,
+        onRetryProfile = profileHandle.retry,
+        retryingProfile = profileHandle.retrying,
     )
 
     val onSaveHours: () -> Unit = {
@@ -766,11 +774,30 @@ internal fun ProfilePanel(
     profileTitle: String, onProfileTitle: (String) -> Unit,
     profileBio: String, onProfileBio: (String) -> Unit,
     photoUrl: String, onPhotoUrl: (String) -> Unit,
-    profileLoaded: UserProfile?,
+    profileLoad: ProfileLoad,
+    onRetryProfile: () -> Unit,
+    retryingProfile: Boolean,
+    onProfileSaved: (UserProfile) -> Unit,
     savingProfile: Boolean, onSavingProfile: (Boolean) -> Unit,
     profileToast: Pair<String, ToastKind>?, onProfileToast: (Pair<String, ToastKind>?) -> Unit,
     signingOut: Boolean, onSigningOut: (Boolean) -> Unit,
 ) {
+    // #897: the profile this form was seeded from, and the one a save diffs against.
+    val profileLoaded = profileLoad.baseline
+    // What Save would leave on the document. Built from the loaded profile, so the
+    // fields this form does not show ride along unchanged and drop out of the diff.
+    val edited = (profileLoaded ?: UserProfile()).copy(
+        uid         = authUser.uid,
+        email       = authUser.email ?: profileLoaded?.email.orEmpty(),
+        displayName = displayName,
+        firstName   = firstName,
+        lastName    = lastName,
+        phone       = profilePhone,
+        title       = profileTitle,
+        photoUrl    = photoUrl,
+        bio         = profileBio,
+    )
+    val profileDirty = profileLoad.isLoaded && profileFormChanged(profileLoaded, edited)
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     val flags = LocalFeatureFlags.current
@@ -809,6 +836,15 @@ internal fun ProfilePanel(
     }
 
     DenPanel(title = "Profile", subtitle = "Who the kinfolk see on your KinTales and replies.") {
+        (profileLoad as? ProfileLoad.Failed)?.let {
+            LoadErrorBanner(
+                "Couldn't load your profile",
+                it.message,
+                onRetry = onRetryProfile,
+                retrying = retryingProfile,
+            )
+            Spacer(Modifier.height(dims.space3))
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -938,38 +974,38 @@ internal fun ProfilePanel(
             horizontalArrangement = Arrangement.spacedBy(dims.space2),
         ) {
             PrimaryButton(
-                label   = if (savingProfile) "Saving" else "Save Profile",
-                enabled = !savingProfile,
+                label   = when {
+                    savingProfile -> "Saving"
+                    profileLoad is ProfileLoad.Loading -> "Loading profile…"
+                    else -> "Save Profile"
+                },
+                // #897: never while the read is pending or failed (the form would be
+                // blank), and never with nothing to write.
+                enabled = !savingProfile && profileDirty,
                 onClick = {
-                    onSavingProfile(true)
-                    scope.launch {
-                        val updated = (profileLoaded ?: UserProfile()).copy(
-                            uid         = authUser.uid,
-                            email       = authUser.email ?: profileLoaded?.email.orEmpty(),
-                            displayName = displayName,
-                            firstName   = firstName,
-                            lastName    = lastName,
-                            phone       = profilePhone,
-                            title       = profileTitle,
-                            photoUrl    = photoUrl,
-                            bio         = profileBio,
-                        )
-                        onProfileToast(when (val r = client.saveUserProfile(updated)) {
-                            is WriteResult.Ok  -> {
-                                AuditLog.fire(
-                                    scope            = scope,
-                                    client           = client,
-                                    actorId          = authUser.uid,
-                                    actionType       = "UPDATE_PROFILE",
-                                    description      = "Updated profile for ${updated.displayLabel}",
-                                    targetId         = authUser.uid,
-                                    targetCollection = "users",
-                                )
-                                "Profile saved" to ToastKind.Success
-                            }
-                            is WriteResult.Err -> "Save failed: ${r.message}" to ToastKind.Error
-                        })
-                        onSavingProfile(false)
+                    val load = profileLoad as? ProfileLoad.Loaded
+                    if (load != null && !savingProfile) {
+                        onSavingProfile(true)
+                        val updated = edited
+                        scope.launch {
+                            onProfileToast(when (val r = client.updateUserProfile(authUser.uid, load.profile, updated)) {
+                                is WriteResult.Ok  -> {
+                                    onProfileSaved(updated)
+                                    AuditLog.fire(
+                                        scope            = scope,
+                                        client           = client,
+                                        actorId          = authUser.uid,
+                                        actionType       = "UPDATE_PROFILE",
+                                        description      = "Updated profile for ${updated.displayLabel}",
+                                        targetId         = authUser.uid,
+                                        targetCollection = "users",
+                                    )
+                                    "Profile saved" to ToastKind.Success
+                                }
+                                is WriteResult.Err -> "Save failed: ${r.message}" to ToastKind.Error
+                            })
+                            onSavingProfile(false)
+                        }
                     }
                 },
                 modifier = Modifier.weight(1f),
@@ -2989,7 +3025,7 @@ private fun BrandingPanel(
 
 /** 17.1: the three personalization knobs + their fail-loud persist callbacks,
  *  bundled so the giant SectionPanel signature threads one value, not nine. */
-class AppearanceControls(
+internal class AppearanceControls(
     val personalization: ThemePersonalization,
     val onAccent: (AccentChoice) -> Unit,
     val onDensity: (DensityChoice) -> Unit,
@@ -3000,6 +3036,10 @@ class AppearanceControls(
     val saving: Boolean,
     val onSave: () -> Unit,
     val onDiscard: () -> Unit,
+    /** #897: Save waits for the profile read; a failed read shows with a retry. */
+    val profileLoad: ProfileLoad = ProfileLoad.Loaded(null),
+    val onRetryProfile: () -> Unit = {},
+    val retryingProfile: Boolean = false,
 )
 
 @Composable
@@ -3013,6 +3053,14 @@ private fun AppearancePanel(
     val dims = AuntieTheme.dims
     DenPanel(title = "Appearance", subtitle = "The look of your workspace. Your choices are saved to your profile and follow you back.") {
       Column(verticalArrangement = Arrangement.spacedBy(dims.space4)) {
+        (appearance.profileLoad as? ProfileLoad.Failed)?.let {
+            LoadErrorBanner(
+                "Couldn't load your profile",
+                it.message,
+                onRetry = appearance.onRetryProfile,
+                retrying = appearance.retryingProfile,
+            )
+        }
         if (themeError != null) {
             AuntieBanner(tone = AuntieBannerTone.Error, title = "Theme not saved") {
                 Text(themeError, style = AuntieTheme.typography.bodySmall, color = c.textDim)
@@ -3154,8 +3202,12 @@ private fun AppearancePanel(
                     onClick = { appearance.onDiscard() },
                 )
                 PrimaryButton(
-                    label   = if (appearance.saving) "Saving" else "Save appearance",
-                    enabled = appearance.dirty && !appearance.saving,
+                    label   = when {
+                        appearance.saving -> "Saving"
+                        appearance.profileLoad is ProfileLoad.Loading -> "Loading profile…"
+                        else -> "Save appearance"
+                    },
+                    enabled = appearance.dirty && !appearance.saving && appearance.profileLoad.isLoaded,
                     onClick = { appearance.onSave() },
                 )
             }

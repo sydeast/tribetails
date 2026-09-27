@@ -49,7 +49,7 @@ class DesktopErrorPathTest {
             base = "http://127.0.0.1:$port/v1/projects/p/databases/(default)/documents",
             token = "test-token",
         )
-        assertEquals(WriteResult.Err(AUNTIE_TIMEOUT_MESSAGE), platformSaveUserProfile(UserProfile(uid = "u1")))
+        assertEquals(WriteResult.Err(AUNTIE_TIMEOUT_MESSAGE), platformUpdateUserProfile("u1", UserProfile(uid = "u1"), UserProfile(uid = "u1", phone = "555")))
         assertEquals(WriteResult.Err(AUNTIE_TIMEOUT_MESSAGE), platformCreateKin(Kin(_id = "", kinfolkId = "kf1")))
         assertEquals(JvmFirestoreFixtures.lastWrite?.op, "POST")
     }

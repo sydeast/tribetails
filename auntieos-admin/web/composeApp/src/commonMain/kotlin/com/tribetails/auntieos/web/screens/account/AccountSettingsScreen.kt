@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -16,8 +15,9 @@ import androidx.compose.ui.unit.dp
 import com.tribetails.auntieos.web.data.AuthClient
 import com.tribetails.auntieos.web.data.AuthUser
 import com.tribetails.auntieos.web.data.FirestoreClient
-import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.screens.settings.ProfilePanel
+import com.tribetails.auntieos.web.screens.settings.baseline
+import com.tribetails.auntieos.web.screens.settings.rememberProfileLoad
 import com.tribetails.auntieos.web.screens.settings.SecurityPanel
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.DenPanel
@@ -46,9 +46,10 @@ fun AccountSettingsScreen(
     val client = remember { FirestoreClient() }
     val dims = AuntieTheme.dims
 
-    val profileResult by remember(authUser.uid) { client.userProfileStream(authUser.uid) }
-        .collectAsState(initial = FirestoreResult.Loading)
-    val profileLoaded = (profileResult as? FirestoreResult.Data)?.value
+    // #897: loading, failed and "no document" stay distinct, and one failed poll
+    // after a good read keeps the form (it used to reset every field to blank).
+    val profileHandle = rememberProfileLoad(client, authUser.uid)
+    val profileLoaded = profileHandle.load.baseline
 
     var displayName by remember(profileLoaded) { mutableStateOf(profileLoaded?.displayName ?: "") }
     var firstName by remember(profileLoaded) { mutableStateOf(profileLoaded?.firstName ?: "") }
@@ -77,7 +78,10 @@ fun AccountSettingsScreen(
             profileTitle = profileTitle, onProfileTitle = { profileTitle = it },
             profileBio = profileBio, onProfileBio = { profileBio = it },
             photoUrl = photoUrl, onPhotoUrl = { photoUrl = it },
-            profileLoaded = profileLoaded,
+            profileLoad = profileHandle.load,
+            onRetryProfile = profileHandle.retry,
+            retryingProfile = profileHandle.retrying,
+            onProfileSaved = profileHandle.saved,
             savingProfile = savingProfile, onSavingProfile = { savingProfile = it },
             profileToast = profileToast, onProfileToast = { profileToast = it },
             signingOut = signingOut, onSigningOut = { signingOut = it },
