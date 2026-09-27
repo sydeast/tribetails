@@ -147,7 +147,10 @@ jobs:
             # the app boots in a real browser and that sign-in works. Feature
             # specs follow operator ruling 2026-09-01: specs designed in session,
             # UI-only assertions, cy.intercept OK for callables and Cloudinary,
-            # smtp2go for email not SendGrid, no account-deletion tests. It reuses
+            # smtp2go for email not SendGrid, no account-deletion tests. Every
+            # spec must assert that something happened, not only that elements
+            # are visible: an earlier suite that walked every screen and only
+            # checked visibility was a false green. It reuses
             # `e2e/seed.ts` and `e2e.firebase.json`, so both are watched here too.
             adminCy:
               - 'auntieos-admin/cypress/**'
