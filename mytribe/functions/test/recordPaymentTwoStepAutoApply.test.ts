@@ -135,9 +135,11 @@ async function webMarkPaid(opts: { applied: number; tip: number; fee: number; to
 }
 
 /**
- * Admin Android, `InvoiceDetailViewModel.recordPayment`. `buildInvoicePayment`
- * makes `Payment.amount` the TRANSACTION (Payment amount box, else Amount + tip),
- * and the view model sends that same `payment.amount` to BOTH steps.
+ * Admin Android installs from before #982, `InvoiceDetailViewModel.recordPayment`.
+ * `buildInvoicePayment` makes `Payment.amount` the TRANSACTION (Payment amount
+ * box, else Amount + tip), and those builds send that same `payment.amount` to
+ * BOTH steps. Since #982 Android sends `markInvoicePaid` only the applied part,
+ * as admin web does; the server still has to be right for older installs.
  */
 async function androidRecordPayment(opts: { applied: number; tip: number; fee: number; total?: number; autoApply: boolean }) {
   const paymentAmount = (opts.total ?? 0) > 0 ? opts.total! : opts.applied + opts.tip;

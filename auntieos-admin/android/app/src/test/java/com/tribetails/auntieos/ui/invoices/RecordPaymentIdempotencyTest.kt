@@ -140,7 +140,7 @@ class RecordPaymentIdempotencyTest {
             val vm = loaded()
             advanceUntilIdle()
 
-            vm.recordPayment(payment())
+            vm.recordPayment(payment(), 120.0)
             advanceUntilIdle()
 
             val settledBy = mutableListOf<String?>()
@@ -160,9 +160,9 @@ class RecordPaymentIdempotencyTest {
             advanceUntilIdle()
             val p = payment()
 
-            vm.recordPayment(p)
+            vm.recordPayment(p, p.amount)
             advanceUntilIdle()
-            vm.recordPayment(p)
+            vm.recordPayment(p, p.amount)
             advanceUntilIdle()
 
             val ledger = ledgerKeys(2)
@@ -202,11 +202,11 @@ class RecordPaymentIdempotencyTest {
             advanceUntilIdle()
             val p = payment()
 
-            vm.recordPayment(p)
+            vm.recordPayment(p, p.amount)
             advanceUntilIdle()
-            vm.recordPayment(p)
+            vm.recordPayment(p, p.amount)
             advanceUntilIdle()
-            vm.recordPayment(p)
+            vm.recordPayment(p, p.amount)
             advanceUntilIdle()
 
             val ledger = ledgerKeys(3)
@@ -223,18 +223,39 @@ class RecordPaymentIdempotencyTest {
             val vm = loaded()
             advanceUntilIdle()
 
-            vm.recordPayment(payment(amount = 120.0))
+            vm.recordPayment(payment(amount = 120.0), 120.0)
             advanceUntilIdle()
             // The operator corrects the amount in the still-open dialog. Holding
             // the key here would replay the first attempt and report $120 back as
             // though the correction had landed.
-            vm.recordPayment(payment(amount = 60.0))
+            vm.recordPayment(payment(amount = 60.0), 60.0)
             advanceUntilIdle()
 
             val ledger = ledgerKeys(2)
             assertNotEquals(ledger[0], ledger[1])
         }
 
+    /**
+     * #982: the applied part is not on the [Payment], so it has to be in the
+     * signature on its own. With a stated $200 payment, correcting the Amount
+     * box leaves every Payment field unchanged; a held key would replay the
+     * first settlement.
+     */
+    @Test
+    fun `a corrected applied amount on the same transaction mints a new pair`() =
+        runTest(testDispatcher) {
+            coEvery { invoiceRepo.markInvoicePaid(any(), any(), any(), any(), any()) } returns
+                Result.failure(RuntimeException("internal")) andThen
+                Result.success(settled())
+            val vm = loaded()
+            advanceUntilIdle()
+            val p = payment(amount = 200.0)
+            vm.recordPayment(p, 127.5)
+            advanceUntilIdle()
+            vm.recordPayment(p, 100.0)
+            advanceUntilIdle()
+            assertNotEquals(ledgerKeys(2)[0], ledgerKeys(2)[1])
+        }
     @Test
     fun `a corrected reference number is an edit too, not the same payment retried`() =
         runTest(testDispatcher) {
@@ -244,9 +265,9 @@ class RecordPaymentIdempotencyTest {
             val vm = loaded()
             advanceUntilIdle()
 
-            vm.recordPayment(payment(reference = "CHK-1"))
+            vm.recordPayment(payment(reference = "CHK-1"), 120.0)
             advanceUntilIdle()
-            vm.recordPayment(payment(reference = "CHK-2"))
+            vm.recordPayment(payment(reference = "CHK-2"), 120.0)
             advanceUntilIdle()
 
             assertNotEquals(ledgerKeys(2)[0], ledgerKeys(2)[1])
@@ -261,9 +282,9 @@ class RecordPaymentIdempotencyTest {
             advanceUntilIdle()
             val p = payment()
 
-            vm.recordPayment(p)
+            vm.recordPayment(p, p.amount)
             advanceUntilIdle()
-            vm.recordPayment(p)
+            vm.recordPayment(p, p.amount)
             advanceUntilIdle()
 
             // Identical fields, but the first attempt landed: a household can pay
@@ -293,9 +314,9 @@ class RecordPaymentIdempotencyTest {
             advanceUntilIdle()
             val p = payment()
 
-            vm.recordPayment(p)
+            vm.recordPayment(p, p.amount)
             advanceUntilIdle()
-            vm.recordPayment(p)
+            vm.recordPayment(p, p.amount)
             advanceUntilIdle()
 
             assertNotEquals(displayKeys(2)[0], displayKeys(2)[1])

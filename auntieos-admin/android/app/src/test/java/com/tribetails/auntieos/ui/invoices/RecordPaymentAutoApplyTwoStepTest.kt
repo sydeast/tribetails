@@ -156,7 +156,7 @@ class RecordPaymentAutoApplyTwoStepTest {
             vm.loadInvoice("inv1")
             advanceUntilIdle()
 
-            vm.recordPayment(ticked())
+            vm.recordPayment(ticked(), 127.5)
             advanceUntilIdle()
 
             val sent = mutableListOf<Payment>()
