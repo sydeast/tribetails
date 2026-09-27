@@ -120,6 +120,10 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
 
     var selectedId by remember { mutableStateOf<String?>(null) }
     var draft by remember { mutableStateOf<KinTaleTemplate?>(null) }
+    // #994: the template as read (or as this screen last wrote it). Save diffs the
+    // draft against it and writes only what changed. Null for a template that
+    // does not exist yet, which Save creates instead.
+    var loaded by remember { mutableStateOf<KinTaleTemplate?>(null) }
     var dirty by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf("") }
@@ -160,11 +164,13 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
             if (first != null) {
                 selectedId = first._id
                 draft = first
+                loaded = first
             } else {
                 // No templates exist in Firestore yet - seed the editor with the
                 // built-in default so Auntie can save her first one.
                 selectedId = ""
                 draft = DefaultKinTaleTemplate.template.copy(_id = "")
+                loaded = null
             }
             dirty = false
         }
@@ -191,14 +197,19 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
                     showToast("Give the template a name first.", ToastKind.Error)
                     return@save
                 }
+                val baseline = loaded
+                if (d._id.isNotBlank() && baseline?._id != d._id) {
+                    showToast("This template hasn't loaded yet. Try again in a moment.", ToastKind.Error)
+                    return@save
+                }
                 scope.launch {
                     saving = true
-                    val res = if (d._id.isBlank()) {
+                    val res = if (d._id.isBlank() || baseline == null) {
                         client.createKinTaleTemplate(d.copy(_id = ""))
                     } else {
-                        when (val r = client.updateKinTaleTemplate(d)) {
+                        when (val r = client.updateKinTaleTemplate(baseline, d)) {
                             is WriteResult.Ok  -> WriteResult.Ok(d._id)
-                            is WriteResult.Err -> r
+                            is WriteResult.Err -> WriteResult.Err(r.message)
                         }
                     }
                     saving = false
@@ -208,6 +219,7 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
                                 selectedId = res.value
                                 draft = d.copy(_id = res.value)
                             }
+                            loaded = d.copy(_id = res.value)
                             dirty = false
                             showToast("Template saved.", ToastKind.Success)
                         }
@@ -232,6 +244,7 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
             onSelect     = { tpl ->
                 selectedId = tpl._id
                 draft      = tpl
+                loaded     = tpl
                 dirty      = false
             },
             onAddNew = {
@@ -241,6 +254,7 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
                     name = "New template",
                     isDefault = false,
                 )
+                loaded = null
                 dirty = true
             },
         )
