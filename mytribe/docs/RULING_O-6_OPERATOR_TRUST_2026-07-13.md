@@ -7,6 +7,31 @@
 
 ---
 
+## Update, 2026-09-22 (#944): staff split into Owner and Auntie
+
+This ruling was written when "staff" meant one undifferentiated boundary. As
+of 2026-09-22, #944 splits staff into two roles:
+
+- **Owner**: the admin. Reaches everything this ruling ever granted staff,
+  every household, cross-tenant, with the existence checks and audit trail
+  below.
+- **Auntie**: the caretaker, a contractor or employee. She sees households,
+  kin, visits and 411s. She never sees money or dossiers.
+
+The check this ruling built (`isStaff`) is renamed `isOwner` and keeps this
+ruling's exact boundary: the owner's cross-tenant authority, unchanged. An
+Auntie's narrower access is a separate, additive check (`staffBypass` /
+`auntieMayCall`, `mytribe/functions/src/lib/staffGate.ts` and
+`mytribe/functions/src/lib/auntieAccess.ts`) layered on top, not a rewrite of
+what "staff" meant here. Everywhere below that says `isStaff`, read it as
+`isOwner`: the historical body is left as written, since it is what shipped
+and what the implementation session followed.
+
+See `docs/DECISIONS.md` (D-2026-09-22-AUNTIE-ROLE) for the short pointer, and
+O-6 in the same index for this file.
+
+---
+
 ## The ruling, in one paragraph
 
 Cross-tenant staff authority is the **correct and intended** model for MyTribe — this
