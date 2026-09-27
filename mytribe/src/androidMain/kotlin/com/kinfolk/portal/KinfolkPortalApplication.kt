@@ -4,7 +4,6 @@ import android.app.Application
 import android.content.Context
 import android.os.Build
 import android.util.Log
-import com.kinfolk.portal.attestation.activateAppCheck
 import com.kinfolk.portal.config.MapboxPortalConfig
 import io.sentry.android.core.SentryAndroid
 
@@ -68,18 +67,18 @@ class KinfolkPortalApplication : Application() {
             }
         }
 
-        // App Check (O-3 ruling D1, Phase 2). After Sentry, so a failed
-        // attestation has somewhere to be reported; before any screen can make
-        // a callable, which is what an Application.onCreate is for.
-        //
-        // Skipped under Robolectric for the same reason Sentry is: there is no
-        // FirebaseApp in a unit-test JVM, so this would report a failure that
-        // says nothing about the shipped app.
-        if (!isRobolectric) {
-            val debuggable =
-                (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
-            activateAppCheck(useDebugProvider = debuggable)
-        }
+        // No App Check here (R3 ruling, 2026-09-27,
+        // mytribe/docs/O3_APP_CHECK_RULING_2026-07-13.md), superseding O-3's
+        // D1/Phase 2. This app is sideloaded and will never be in the Play
+        // Console, so Play Integrity could never verify a token: every launch
+        // spent one failed attestation request and a captured Sentry
+        // exception for a check the server does not enforce on Android (App
+        // Check is log-only). The debug provider is removed with it: nothing
+        // outside this file ever read the attestation state it fed, so a
+        // developer registering a debug token bought nothing. Sign-in plus
+        // the callables' own rate limits (functions/src/lib/rateLimit.ts,
+        // functions/src/auth/loginSecurity.ts) are what actually guard this
+        // app.
     }
 
     companion object {

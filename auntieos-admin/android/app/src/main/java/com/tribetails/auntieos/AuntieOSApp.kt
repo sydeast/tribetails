@@ -9,7 +9,6 @@ import android.util.Log
 import com.tribetails.auntieos.BuildConfig
 import com.tribetails.auntieos.config.MapboxConfig
 import com.tribetails.auntieos.data.api.RetrofitClient
-import com.tribetails.auntieos.data.repository.AppCheckActivation
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BookingRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
@@ -180,26 +179,16 @@ class AuntieOSApp : Application() {
             }
         }
 
-        // O-3 App Check (#576), the client half this admin never had. BEFORE any
-        // repository can fire a callable, so the first request of the process
-        // either carries an attestation token or is already recorded as
-        // unattested — never "we think it did".
-        //
-        // Installing the provider is synchronous and proves nothing on its own,
-        // so the probe fetches one real token. That runs on [appScope] rather
-        // than inline because a token fetch reaches the network and cold start
-        // must not wait on it; whichever way it lands, `AppCheckActivation.status`
-        // is a value the log, Sentry and the tests can all read.
-        //
-        // Skipped under Robolectric for the same reason as Sentry and the voice
-        // registration below: a JVM test has no Play Services, so the only thing
-        // it could produce is a failure line per test, and noise on this line is
-        // how a real failure stops being read.
-        AppCheckActivation.activate(isRobolectric = isRobolectric)
-        if (!isRobolectric) {
-            appScope.launch { AppCheckActivation.probe() }
-        }
-
+        // O-3 App Check, R3 ruling (docket 2026-09-27,
+        // mytribe/docs/O3_APP_CHECK_RULING_2026-07-13.md): this admin is
+        // sideloaded and will never be in the Play Console, so Play Integrity
+        // could never verify a token here: every launch spent one failed
+        // attestation request and a captured Sentry exception for a check the
+        // server does not enforce on Android (App Check is log-only; sign-in
+        // plus the callables' own rate limits are what actually guard this
+        // app). Removed rather than left installed-but-unprobed: an installed
+        // provider that nobody calls is dead weight with the same maintenance
+        // cost as one that runs.
         AuntieLog.i("AuntieOSApp created")
 
         createNotificationChannels()

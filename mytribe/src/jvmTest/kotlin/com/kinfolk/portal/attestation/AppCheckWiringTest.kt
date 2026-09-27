@@ -7,17 +7,20 @@ import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
- * Issue #556, Android half: the portal Android app declared no App Check
- * dependency and installed no provider, so every callable it made reached the
- * backend unattested while the O-3 ruling described Android attestation as
- * shipped work.
+ * R3 ruling (2026-09-27, mytribe/docs/O3_APP_CHECK_RULING_2026-07-13.md):
+ * "Android has no App Check. Rely on sign-in and rate limits. Stop the
+ * failing Play request." This app is sideloaded and will never be in the
+ * Play Console, so Play Integrity could never verify a token; every launch
+ * was spending one failed attestation request for a check the server does
+ * not enforce on Android.
  *
- * A state machine test cannot catch that coming back — the gap was never in the
- * logic, it was in the wiring, and the wiring lives in a Gradle file and an
- * `Application.onCreate` that no JVM test can execute. So this reads the two
- * files, the same way `ComposeUiTestSourceSetTest` reads `commonTest`. It is a
- * blunt instrument and it is the only one that fails when someone deletes the
- * dependency to fix a build.
+ * This test used to assert the OPPOSITE of what is below, back when O-3's D1
+ * had Play Integrity as the shipped provider (issue #556). It is inverted
+ * here rather than deleted for the same reason it existed in the first
+ * place: the gap this class of test catches is never in application logic,
+ * it is in a Gradle file and an `Application.onCreate` that no JVM unit test
+ * can execute, so a blunt text read of both is what stops the App Check
+ * dependency or its activation call quietly creeping back in.
  */
 class AppCheckWiringTest {
 
@@ -39,49 +42,45 @@ class AppCheckWiringTest {
     }
 
     @Test
-    fun androidBuildDeclaresPlayIntegrity() {
+    fun androidBuildDoesNotDependOnPlayIntegrity() {
         val gradle = read("build.gradle.kts")
-        assertTrue(
-            gradle.contains("com.google.firebase:firebase-appcheck-playintegrity"),
-            "The portal Android app must depend on Play Integrity App Check (O-3 ruling D1). " +
-                "Without it nothing installs a provider and every callable from the app is " +
-                "unattested, which is what issue #556 found.",
+        assertFalse(
+            gradle.contains("firebase-appcheck-playintegrity"),
+            "R3 ruling: the portal Android app must not depend on Play Integrity App Check. " +
+                "It is sideloaded and will never be in the Play Console, so the token request " +
+                "always failed; the dependency should not come back.",
+        )
+    }
+
+    @Test
+    fun androidBuildDoesNotDependOnTheDebugAppCheckProvider() {
+        val gradle = read("build.gradle.kts")
+        assertFalse(
+            gradle.contains("firebase-appcheck-debug"),
+            "R3 ruling: the debug App Check provider fed a system nothing enforces on Android; " +
+                "it should not come back either.",
         )
     }
 
     @Test
     fun androidBuildDoesNotUseSafetyNet() {
         val gradle = read("build.gradle.kts")
-        // Decommissioned by Google. D1 rules out even a fallback to it.
+        // Decommissioned by Google, and was never used here even when Play
+        // Integrity was: this guard against a fallback to it still applies.
         assertFalse(
             gradle.contains("firebase-appcheck-safetynet"),
-            "SafetyNet App Check is decommissioned; Play Integrity is the only provider.",
+            "SafetyNet App Check is decommissioned and must never be a fallback.",
         )
     }
 
     @Test
-    fun applicationActivatesAppCheckOnStart() {
+    fun applicationDoesNotActivateAppCheckOnStart() {
         val application = read("src/androidMain/kotlin/com/kinfolk/portal/KinfolkPortalApplication.kt")
-        assertTrue(
+        assertFalse(
             application.contains("activateAppCheck("),
-            "KinfolkPortalApplication.onCreate must activate App Check, before any screen can " +
-                "make a callable.",
-        )
-    }
-
-    @Test
-    fun releaseBuildsDoNotGetTheDebugProvider() {
-        val activation = read("src/androidMain/kotlin/com/kinfolk/portal/attestation/AppCheck.android.kt")
-        assertTrue(
-            activation.contains("useDebugProvider"),
-            "The provider choice must be explicit. A debug provider in a release build attests " +
-                "nothing while looking like it works.",
-        )
-        val application = read("src/androidMain/kotlin/com/kinfolk/portal/KinfolkPortalApplication.kt")
-        assertTrue(
-            application.contains("FLAG_DEBUGGABLE"),
-            "The debug provider must be chosen from the build's own debuggable flag, not from a " +
-                "constant somebody can forget to flip before a release.",
+            "R3 ruling: KinfolkPortalApplication.onCreate must not activate App Check. " +
+                "The server does not enforce it on Android, and the Play Integrity token " +
+                "request failed on every launch.",
         )
     }
 }
