@@ -65,6 +65,7 @@ import com.tribetails.auntieos.web.ui.components.GlassSurface
 import com.tribetails.auntieos.web.ui.components.MultilineField
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
+import com.tribetails.auntieos.web.ui.components.LocalRouteToast
 import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
 import com.tribetails.auntieos.web.screens.communicate.SYNTHESIZE_SUCCESS
@@ -92,6 +93,9 @@ fun KinEditScreen(
     val client = remember { FirestoreClient() }
     val scope  = rememberReportingScope()
     val isNew  = kinId.isNullOrBlank()
+    // #854: onSaved/onArchived navigate away, disposing this screen; the
+    // confirmation goes to the route-level host so it survives that.
+    val routeToast = LocalRouteToast.current
 
     val reload = rememberReloadableRead()
     val state by remember(kinfolkId, reload.generation) { client.kinStream(kinfolkId).settlesRetry(reload) }.collectAsState(initial = FirestoreResult.Loading)
@@ -251,7 +255,7 @@ fun KinEditScreen(
             saving = false
             when (result) {
                 is WriteResult.Ok  -> {
-                    showToast(if (isNew) "Kin added." else "Saved.", ToastKind.Success)
+                    routeToast.show(if (isNew) "Kin added." else "Saved.", ToastKind.Success)
                     onSaved(result.value)
                 }
                 is WriteResult.Err -> showToast("Save failed: ${result.message}", ToastKind.Error)
@@ -543,7 +547,7 @@ fun KinEditScreen(
                         val r = client.archiveKin(existing._id)
                         saving = false
                         when (r) {
-                            is WriteResult.Ok  -> { showToast("Archived ${existing.name}.", ToastKind.Success); onArchived() }
+                            is WriteResult.Ok  -> { routeToast.show("Archived ${existing.name}.", ToastKind.Success); onArchived() }
                             is WriteResult.Err -> showToast("Archive failed: ${r.message}", ToastKind.Error)
                         }
                     }

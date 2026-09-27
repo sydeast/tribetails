@@ -7,8 +7,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,7 +24,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.Placeable
+import androidx.compose.ui.layout.SubcomposeLayout
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Mail
@@ -521,7 +523,6 @@ private fun matchKin(kin: Kin, q: String): Boolean {
  * Kin are passed in from the screen's single allKinStream() collection, so this
  * card opens NO Firestore listener of its own (was an N+1 per-card subscription).
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun KinfolkCard(
     kf: Kinfolk,
@@ -613,31 +614,7 @@ internal fun KinfolkCard(
             // ── Kin chips (cap at 3 visible + overflow, keeps card height fixed) ─
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 if (kin.isNotEmpty()) {
-                    val shown = kin.take(3)
-                    val overflow = kin.size - shown.size
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(7.dp),
-                        verticalArrangement = Arrangement.spacedBy(7.dp),
-                    ) {
-                        shown.forEach { k ->
-                            AuntieChip(
-                                label   = k.name,
-                                tone    = AuntieChipTone.Teal,
-                                leading = {
-                                    AuntieAvatar(
-                                        imageUrl     = null,
-                                        glyph        = Lucide.PawPrint,
-                                        size         = 28.dp,
-                                        gradientSeed = k._id.ifBlank { k.name },
-                                    )
-                                },
-                            )
-                        }
-                        if (overflow > 0) {
-                            AuntieChip(label = "+$overflow more", tone = AuntieChipTone.Neutral, mono = true)
-                        }
-                    }
+                    KinChipsRow(kin = kin, modifier = Modifier.fillMaxWidth())
                 } else {
                     Text(
                         text  = "No kin on file",
@@ -704,6 +681,94 @@ internal fun KinfolkCard(
             }
         }
     }
+}
+
+/**
+ * #863: single-line kin chip row. A `FlowRow` capped at 3 chips + overflow
+ * silently dropped the third chip and the "+N more" chip together at the
+ * grid's 290dp minimum card width: they wrapped onto a second row that the
+ * card's fixed height (196dp) clips, so a household with 4 kin showed 2 with
+ * no sign that 2 more existed.
+ *
+ * This measures each candidate chip once (up to 3 kin, same cap as before,
+ * and matching the admin web card's `kin.slice(0, 3)`), then keeps the most
+ * of them - counting down from 3 - whose combined width, together with the
+ * "+N more" chip for whatever is left over, actually fits the available
+ * width. The card height never changes and nothing wraps; the overflow count
+ * always accounts for every kin chip that didn't make the row.
+ */
+@Composable
+internal fun KinChipsRow(kin: List<Kin>, modifier: Modifier = Modifier) {
+    val spacingPx = with(LocalDensity.current) { 7.dp.roundToPx() }
+    val shown = kin.take(3)
+    // Every candidate count of shown chips (3 down to 0) hides a different
+    // remainder, so every "+N more" label that could be needed is measured.
+    val overflowCounts = (0..shown.size).map { kin.size - it }.filter { it > 0 }.distinct()
+
+    SubcomposeLayout(modifier) { constraints ->
+        val chipPlaceables: List<Placeable> = subcompose("kinChips") {
+            shown.forEach { k -> KinNameChip(k) }
+        }.map { it.measure(Constraints()) }
+        val overflowPlaceables: Map<Int, Placeable> = overflowCounts.associateWith { remaining ->
+            subcompose("kinChipsOverflow$remaining") { KinOverflowChip(remaining) }
+                .first().measure(Constraints())
+        }
+
+        fun widthOf(items: List<Placeable>) =
+            items.sumOf { it.width } + spacingPx * (items.size - 1).coerceAtLeast(0)
+
+        // Unbounded width (e.g. inside a horizontally-scrolling ancestor) means
+        // nothing needs folding: every kin chip fits by definition.
+        var chosen: List<Placeable> = if (constraints.hasBoundedWidth) {
+            emptyList()
+        } else {
+            val remaining = kin.size - shown.size
+            if (remaining > 0) chipPlaceables + overflowPlaceables.getValue(remaining) else chipPlaceables
+        }
+        if (constraints.hasBoundedWidth) {
+            for (visible in shown.size downTo 0) {
+                val chips = chipPlaceables.take(visible)
+                val remaining = kin.size - visible
+                val overflow = if (remaining > 0) overflowPlaceables.getValue(remaining) else null
+                val items = if (overflow != null) chips + overflow else chips
+                if (widthOf(items) <= constraints.maxWidth || visible == 0) {
+                    chosen = items
+                    break
+                }
+            }
+        }
+
+        val layoutWidth = if (constraints.hasBoundedWidth) constraints.maxWidth else widthOf(chosen)
+        val height = chosen.maxOfOrNull { it.height } ?: 0
+        layout(layoutWidth, height) {
+            var x = 0
+            chosen.forEach { placeable ->
+                placeable.placeRelative(x, 0)
+                x += placeable.width + spacingPx
+            }
+        }
+    }
+}
+
+@Composable
+private fun KinNameChip(k: Kin) {
+    AuntieChip(
+        label   = k.name,
+        tone    = AuntieChipTone.Teal,
+        leading = {
+            AuntieAvatar(
+                imageUrl     = null,
+                glyph        = Lucide.PawPrint,
+                size         = 28.dp,
+                gradientSeed = k._id.ifBlank { k.name },
+            )
+        },
+    )
+}
+
+@Composable
+private fun KinOverflowChip(remaining: Int) {
+    AuntieChip(label = "+$remaining more", tone = AuntieChipTone.Neutral, mono = true)
 }
 
 /**

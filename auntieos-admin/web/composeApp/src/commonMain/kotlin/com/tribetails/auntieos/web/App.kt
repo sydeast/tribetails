@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import com.tribetails.auntieos.web.ui.components.AuntieSpinner
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
+import com.tribetails.auntieos.web.ui.components.RouteToastHost
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -388,6 +389,11 @@ private fun SignedInApp(
             searchQuery = ""
         },
     ) {
+        // #854: hosted here, above every tab's `when(current)` case and every
+        // screen's own nested router (Directory, KinCareSessions, ...), so a
+        // save confirmation survives the navigation it triggers no matter
+        // which screen or sub-route the operator lands on.
+        RouteToastHost {
         when (current) {
             Destination.Home        -> HomeScreen(authUser = user, onNavigate = { current = it })
             Destination.Communicate -> CommunicateScreen()
@@ -516,6 +522,7 @@ private fun SignedInApp(
                 }
             }
             Destination.FeatureFlags -> com.tribetails.auntieos.web.screens.admin.FeatureFlagsScreen()
+        }
         }
     }
     }

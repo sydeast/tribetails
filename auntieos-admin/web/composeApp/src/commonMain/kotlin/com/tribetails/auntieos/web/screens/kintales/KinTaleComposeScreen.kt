@@ -90,6 +90,7 @@ import com.tribetails.auntieos.web.ui.components.MultilineField
 import com.tribetails.auntieos.web.ui.components.PetAvatar
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
+import com.tribetails.auntieos.web.ui.components.LocalRouteToast
 import com.tribetails.auntieos.web.ui.components.SectionHeader
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.StatusToast
@@ -205,6 +206,9 @@ private fun KinTaleComposerBody(
     val scope = rememberReportingScope()
     val n8n = remember { N8nClient() }
     val featureFlags = LocalFeatureFlags.current
+    // #854: onClose navigates away, disposing this screen; the confirmation
+    // goes to the route-level host so it survives that.
+    val routeToast = LocalRouteToast.current
 
     // Scaffold the in-memory draft. `_id` blank → first save creates the doc.
     var report by remember(session._id, template._id) {
@@ -394,7 +398,7 @@ private fun KinTaleComposerBody(
             )) {
                 is WriteResult.Ok -> {
                     isSending = false
-                    showToast("KinTale sent. Kinfolk will hear from you soon.", ToastKind.Success)
+                    routeToast.show("KinTale sent. Kinfolk will hear from you soon.", ToastKind.Success)
                     onClose()
                 }
                 is WriteResult.Err -> {
@@ -612,7 +616,7 @@ private fun KinTaleComposerBody(
                     isDirty   = isDirty,
                     recipient = session.kinfolkName,
                     onDiscard = {
-                        showToast("Discarded local edits. The draft on file is unchanged.", ToastKind.Info)
+                        routeToast.show("Discarded local edits. The draft on file is unchanged.", ToastKind.Info)
                         onClose()
                     },
                     onSaveDraft = { persistDraft() },
