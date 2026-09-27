@@ -70,6 +70,8 @@ class KinfolkProfileVisitTest {
         coEvery { repository.getKin(any()) } returns Result.success(emptyList())
         coEvery { kinCareRepository.getAllKinCareReports() } returns Result.success(emptyList())
         coEvery { invoiceRepository.getInvoicesForKinfolk(any()) } returns Result.success(emptyList())
+        // Q6: the profile's Account credit read. A relaxed mock cannot build a Result.
+        coEvery { invoiceRepository.getAccountCreditHistory(any()) } returns Result.failure(RuntimeException("not under test"))
         coEvery { repository.getHouseholdData(any()) } returns Result.success(null)
         coEvery { repository.getVetClinicsOnce() } returns Result.success(emptyList())
         coEvery { repository.listFormSchemas() } returns Result.success(emptyList())

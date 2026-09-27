@@ -73,3 +73,9 @@ fun mintQuoteIdempotencyKey(
     nowMs: Long = System.currentTimeMillis(),
     random: Random = Random.Default,
 ): String = mintMoneyKey("quot", nowMs, random)
+
+/** Q6: the id of the `families/{id}/creditLedger/{key}` event `giveAccountCredit` will create. */
+fun mintGiveCreditIdempotencyKey(
+    nowMs: Long = System.currentTimeMillis(),
+    random: Random = Random.Default,
+): String = mintMoneyKey("crd", nowMs, random)

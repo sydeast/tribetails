@@ -101,12 +101,32 @@ fun KinfolkProfileScreen(
     LaunchedEffect(kinfolkId) {
         viewModel.loadProfile(kinfolkId)
     }
+    // Q6: the Account credit section, its own read.
+    val creditState by viewModel.accountCredit.state.collectAsState()
+    LaunchedEffect(kinfolkId) {
+        viewModel.accountCredit.load(kinfolkId)
+    }
+    LaunchedEffect(creditState.message) {
+        creditState.message?.let {
+            android.widget.Toast.makeText(profileContext, it, android.widget.Toast.LENGTH_LONG).show()
+            viewModel.accountCredit.clearMessage()
+        }
+    }
 
     val back = {
         viewModel.clearProfile()
         onBack()
     }
 
+    GiveCreditDialog(
+        state = creditState,
+        onAmount = viewModel.accountCredit::setAmount,
+        onReason = viewModel.accountCredit::setReason,
+        onReview = viewModel.accountCredit::review,
+        onBack = viewModel.accountCredit::back,
+        onConfirm = viewModel.accountCredit::confirm,
+        onDismiss = viewModel.accountCredit::dismiss,
+    )
     AuntieScreenScaffold(
         title = state.kinfolk?.displayName ?: "Profile",
         onBack = back,
@@ -327,6 +347,15 @@ fun KinfolkProfileScreen(
                                 state.kinfolkInvoices.forEachIndexed { index, inv -> InvoiceLine(inv, last = index == state.kinfolkInvoices.lastIndex) }
                             }
                         }
+                    }
+                }
+                // Q6: account credit, beside the invoices it is spent on.
+                if (creditState.visible) {
+                    item {
+                        AccountCreditPanel(
+                            state = creditState,
+                            onGiveCredit = viewModel.accountCredit::open,
+                        )
                     }
                 }
                 // Auntie's notes, LAST (#683: "Admin Notes should be pin to the

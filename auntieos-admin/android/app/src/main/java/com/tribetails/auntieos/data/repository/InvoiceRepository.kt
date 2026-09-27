@@ -10,6 +10,12 @@ import com.tribetails.auntieos.data.contracts.CreateQuoteArgs
 import com.tribetails.auntieos.data.contracts.CreateQuoteArgsLineItem
 import com.tribetails.auntieos.data.contracts.GenerateInvoicePdfArgs
 import com.tribetails.auntieos.data.contracts.GenerateReceiptArgs
+import com.tribetails.auntieos.data.contracts.GetAccountCreditHistoryArgs
+import com.tribetails.auntieos.data.contracts.GetAccountCreditHistoryResult
+import com.tribetails.auntieos.data.contracts.GiveAccountCreditArgs
+import com.tribetails.auntieos.data.contracts.GiveAccountCreditResult
+import com.tribetails.auntieos.data.contracts.decodeGetAccountCreditHistoryResult
+import com.tribetails.auntieos.data.contracts.decodeGiveAccountCreditResult
 import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerArgs
 import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerResult
 import com.tribetails.auntieos.data.contracts.LinkInvoiceSessionsArgs
@@ -702,6 +708,38 @@ class InvoiceRepository(
         result.paymentId.ifBlank { error("recordPayment: missing paymentId") }
         result
     }.onFailure { AuntieLog.e("Failed to record payment", it) }
+    /**
+     * Q6 (operator ruling 2026-09-27): give a household account credit, with a
+     * reason. [idempotencyKey] is REQUIRED and becomes the credit's id, so a
+     * retry of the same submission adds nothing (mint it with
+     * [mintGiveCreditIdempotencyKey], once per submission).
+     */
+    suspend fun giveAccountCredit(
+        kinfolkId: String,
+        amountCents: Long,
+        reason: String,
+        idempotencyKey: String,
+    ): Result<GiveAccountCreditResult> = runCatching {
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("giveAccountCredit")
+            .call(GiveAccountCreditArgs(kinfolkId, amountCents, reason, idempotencyKey).toPayload())
+            .awaitCallable().data as? Map<String, Any?>
+            ?: error("giveAccountCredit: non-map payload")
+        val result = decodeGiveAccountCreditResult(raw)
+        if (!result.ok) error("giveAccountCredit: not ok")
+        result
+    }.onFailure { AuntieLog.e("Failed to give account credit", it) }
+    /** Q6: a household's credit, each credit's dates and reason, and every use of credit. */
+    suspend fun getAccountCreditHistory(kinfolkId: String): Result<GetAccountCreditHistoryResult> = runCatching {
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("getAccountCreditHistory")
+            .call(GetAccountCreditHistoryArgs(kinfolkId = kinfolkId).toPayload())
+            .awaitCallable().data as? Map<String, Any?>
+            ?: error("getAccountCreditHistory: non-map payload")
+        decodeGetAccountCreditHistoryResult(raw)
+    }.onFailure { AuntieLog.e("Failed to load account credit history", it) }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
