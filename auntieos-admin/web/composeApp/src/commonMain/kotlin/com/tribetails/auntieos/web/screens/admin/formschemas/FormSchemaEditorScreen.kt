@@ -55,6 +55,7 @@ import com.tribetails.auntieos.web.ui.components.DenScreenHeading
 import com.tribetails.auntieos.web.ui.components.EmptyHint
 import com.tribetails.auntieos.web.ui.components.GhostButton
 import com.tribetails.auntieos.web.ui.components.GlassSurface
+import com.tribetails.auntieos.web.ui.components.LocalRouteToast
 import com.tribetails.auntieos.web.ui.components.MultilineField
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
@@ -94,6 +95,9 @@ fun FormSchemaEditorScreen(
     val state by viewModel.state.collectAsState()
     var confirmDelete by remember { mutableStateOf(false) }
     val creating = isCreateMode(schemaId)
+    // #854: onBack navigates away, disposing this screen; a delete confirmation
+    // goes to the route-level host so it survives that.
+    val routeToast = LocalRouteToast.current
 
     // Throwaway local state for the live preview pane. A kinfolk filling out the
     // form would type into these inputs; here they are sample values that never
@@ -274,7 +278,16 @@ fun FormSchemaEditorScreen(
                             scope.launch {
                                 viewModel.delete()
                                 confirmDelete = false
-                                onBack()
+                                // #854: onBack used to fire unconditionally here, so a
+                                // failed delete's error toast was disposed before it
+                                // could ever render, same as a lost success toast.
+                                // Only a Success navigates; an Error stays on screen
+                                // and shows via the SaveStatus.Error branch below.
+                                val status = viewModel.state.value.saveStatus
+                                if (status is SaveStatus.Success) {
+                                    routeToast.show(status.message, ToastKind.Success)
+                                    onBack()
+                                }
                             }
                         } else {
                             confirmDelete = true

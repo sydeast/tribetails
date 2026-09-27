@@ -89,6 +89,7 @@ import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.SectionHeader
 import com.tribetails.auntieos.web.ui.components.SegmentedPicker
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
+import com.tribetails.auntieos.web.ui.components.LocalRouteToast
 import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
 import kotlinx.coroutines.launch
@@ -134,6 +135,10 @@ fun KinfolkEditScreen(
     val client = remember { FirestoreClient() }
     val scope  = rememberReportingScope()
     val isNew  = kinfolkId.isNullOrBlank()
+    // #854: this screen is disposed the instant onSaved/onArchived navigates
+    // away, so a local toast set right before either call never renders. The
+    // host above the router shows it instead.
+    val routeToast = LocalRouteToast.current
 
     // For edits we need the live doc to pre-fill. Subscribe to the kinfolk list
     // (it's already in memory from Directory) and pluck the matching record.
@@ -564,7 +569,9 @@ fun KinfolkEditScreen(
                         if (saveContacts) ecBaseline = ecDrafts
                         if (isNew) PendingAddKinfolk.clear(operatorUid)
                         if (!isNew) editContactRetryPending = false
-                        showToast(if (isNew) "Kinfolk added." else "Saved.", ToastKind.Success)
+                        // #854: onSaved navigates away now, so the confirmation goes
+                        // to the route-level host, not this screen's own StatusToast.
+                        routeToast.show(if (isNew) "Kinfolk added." else "Saved.", ToastKind.Success)
                         onSaved(outcome.kinfolkId)
                     }
                 }
@@ -995,7 +1002,9 @@ fun KinfolkEditScreen(
                                     targetId         = existing._id,
                                     targetCollection = "kinfolk",
                                 )
-                                showToast("Archived ${existing.displayName}.", ToastKind.Success); onArchived()
+                                // #854: onArchived navigates away; the confirmation
+                                // goes to the route-level host so it survives that.
+                                routeToast.show("Archived ${existing.displayName}.", ToastKind.Success); onArchived()
                             }
                             is WriteResult.Err -> showToast("Archive failed: ${r.message}", ToastKind.Error)
                         }
