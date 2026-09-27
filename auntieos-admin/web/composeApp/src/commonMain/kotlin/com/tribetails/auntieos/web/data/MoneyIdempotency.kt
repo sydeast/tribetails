@@ -74,6 +74,8 @@ fun mintInvoiceIdempotencyKey(random: Random = Random.Default): String = moneyKe
 /** `createQuote` -> `invoices/{key}`. */
 fun mintQuoteIdempotencyKey(random: Random = Random.Default): String = moneyKey("quot", random)
 
+/** Q6: `giveAccountCredit` -> `families/{id}/creditLedger/{key}`. */
+fun mintGiveCreditIdempotencyKey(random: Random = Random.Default): String = moneyKey("crd", random)
 /**
  * The one place the shape is built. Four prefixes drifting apart one copy at a
  * time is exactly what `moneyIdempotency.ts` refuses to allow on the server, by

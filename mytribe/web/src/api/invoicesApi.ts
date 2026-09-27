@@ -17,6 +17,8 @@ import type {
   AcceptQuoteResult,
   DenyQuoteArgs,
   DenyQuoteResult,
+  GetAccountCreditHistoryArgs,
+  GetAccountCreditHistoryResult,
   GetMyInvoicePdfArgs,
   GetMyInvoicePdfResult,
   GetMyInvoicesResult,
@@ -125,6 +127,19 @@ export function redeemCredit(invoiceId: string, kinfolkId?: string): Promise<Red
   return call<RedeemCreditArgs, RedeemCreditResult>('redeemCredit', payload);
 }
 
+// ── getAccountCreditHistory (functions/src/portal/getAccountCreditHistory.ts) ─
+/**
+ * Q6: the household's account credit history. Only the PRIMARY and a
+ * secondary the PRIMARY granted billing get an answer; everyone else gets
+ * `permission-denied`, and the screen hides the section on that code. Read
+ * only, so the retry is safe.
+ */
+export function getAccountCreditHistory(kinfolkId?: string): Promise<GetAccountCreditHistoryResult> {
+  const payload: GetAccountCreditHistoryArgs = kinfolkId !== undefined ? { kinfolkId } : {};
+  return call<GetAccountCreditHistoryArgs, GetAccountCreditHistoryResult>('getAccountCreditHistory', payload, {
+    idempotent: true,
+  });
+}
 // ── acceptQuote / denyQuote (functions/src/portal/quoteDecision.ts) ─────────
 
 /**

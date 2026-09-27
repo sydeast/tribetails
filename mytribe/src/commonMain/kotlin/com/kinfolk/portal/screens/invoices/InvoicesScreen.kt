@@ -117,6 +117,7 @@ fun InvoicesScreen(
             }
 
             val asideColumn: @Composable () -> Unit = {
+                CreditHistorySection(controller.creditHistory)
                 if (data?.credits?.isNotEmpty() == true) {
                     GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(KinfolkSpacing.m)) {
                         Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.m)) {

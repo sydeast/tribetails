@@ -14,6 +14,7 @@ import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { HouseholdVetPanels } from '../components/HouseholdVetPanels';
 import { AuntieNotesPanel } from '../components/AuntieNotesPanel';
+import { AccountCreditPanel } from '../components/AccountCreditPanel';
 import {
   RecentKinTalesPanel,
   UpcomingVisitsPanel,
@@ -623,6 +624,7 @@ export function KinfolkProfile({
           <UpcomingVisitsPanel kinfolkId={kinfolkId} />
           <RecentKinTalesPanel kinfolkId={kinfolkId} />
           <HouseholdInvoicesPanel kinfolkId={kinfolkId} />
+          <AccountCreditPanel kinfolkId={kinfolkId} />
         </div>
       </div>
     </div>

@@ -40,6 +40,11 @@ vi.mock('./KinfolkEdit', () => ({
 vi.mock('./HouseholdData', () => ({
   HouseholdData: () => <p>STUB HouseholdData</p>,
 }));
+// Q6: the account credit card reads a callable; its own suite covers it.
+vi.mock('../api/accountCredit', () => ({
+  getAccountCreditHistory: vi.fn().mockResolvedValue({ ok: true, kinfolkId: 'k1', accountBalanceCents: 0, credits: [], uses: [] }),
+  giveAccountCredit: vi.fn(),
+}));
 // "Members and invites" is a real anchor to `/household-members/{id}` rather
 // than a sub-view swap, so this file needs the router's `Link`. The stub
 // substitutes the params into the path the way the real one does, which is what
@@ -723,7 +728,8 @@ describe('KinfolkProfile: the mock', () => {
         .getAllByRole('heading', { level: 2 })
         .map((h) => h.textContent);
 
-    expect(headingsIn(rightCol)).toEqual(['Kin', 'Upcoming KinCare', 'Recent KinTales', 'Invoices']);
+    // Q6: Account credit sits under Invoices.
+    expect(headingsIn(rightCol)).toEqual(['Kin', 'Upcoming KinCare', 'Recent KinTales', 'Invoices', 'Account credit']);
     const left = headingsIn(leftCol);
     expect(left[0]).toBe('Contact');
     expect(left[left.length - 1]).toBe('Auntie’s notes');

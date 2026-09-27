@@ -15,6 +15,7 @@ import {
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
+import { CreditHistorySection } from '../components/CreditHistorySection';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { LoadingLine } from '../components/Loading';
@@ -192,6 +193,7 @@ export function Invoices() {
           </div>
 
           <div className="stack">
+            <CreditHistorySection kinfolkId={kinfolkId} />
             {data && data.credits.length > 0 && (
               <section className="glass card creditcard d4">
                 <div className="sectlabel">Credits</div>
