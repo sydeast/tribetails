@@ -43,6 +43,7 @@ import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.PawPrint
 import com.tribetails.auntieos.web.data.AuthClient
 import com.tribetails.auntieos.web.data.AuthUser
+import com.tribetails.auntieos.web.data.PasswordResetResult
 import com.tribetails.auntieos.web.data.SessionEndedNotice
 import com.tribetails.auntieos.web.data.SignInResult
 import com.tribetails.auntieos.web.data.platformMountSignInAutofill
@@ -137,17 +138,26 @@ fun SignInScreen(
         }
     }
 
+    // #955: through the `requestPasswordReset` callable, like admin web and Android.
+    // A refusal carries its own sentence (the per-IP limit, a malformed address,
+    // the network); it is never about whether the account exists.
     fun resetPassword() {
+        if (resetting) return
         if (email.isBlank()) {
             toast = "Type your email above first." to ToastKind.Error
             return
         }
         resetting = true
+        toast = null
         scope.launch {
-            val ok = auth.sendPasswordReset(email.trim())
-            toast = (if (ok) "Reset link sent. Check your inbox." else "Couldn't send reset email.") to
-                    (if (ok) ToastKind.Success else ToastKind.Error)
-            resetting = false
+            try {
+                toast = when (val r = auth.sendPasswordReset(email.trim())) {
+                    is PasswordResetResult.Sent -> "Reset link sent. Check your inbox." to ToastKind.Success
+                    is PasswordResetResult.Failed -> r.message to ToastKind.Error
+                }
+            } finally {
+                resetting = false
+            }
         }
     }
 

@@ -37,13 +37,11 @@ import java.util.Base64
  *   - sign-in via accounts:signInWithPassword,
  *   - admin gate by reading the `admin` custom claim straight off the ID token JWT
  *     (web does getIdTokenResult().claims.admin === true),
- *   - password reset via the NATIVE accounts:sendOobCode, so desktop staff get Firebase's
- *     stock reset email. The admin web and Android apps moved to the `requestPasswordReset`
- *     callable (the operator's own template). Desktop did not follow because desktop
- *     parity is paused by owner ruling (auntieos-admin/CLAUDE.md), and because
- *     [JvmFirestoreRest.callable] refuses to dial without a signed-in token, which a
- *     reset from the sign-in screen never has. Switching needs an unauthenticated
- *     callable path first.
+ *   - password reset through our own `requestPasswordReset` callable (#955), as the
+ *     admin web and Android apps do (#905), so the email is the operator's template.
+ *     It goes without an ID token: the sign-in screen never has one, and
+ *     [JvmFirestoreRest.SIGNED_OUT_CALLABLES] lets exactly this callable and
+ *     `recordFailedLogin` through.
  *
  * The Web API key is a public client identifier (already shipped in firebase-bridge.js to
  * every browser), not a secret, so embedding it here is safe.
@@ -65,29 +63,6 @@ internal data class SignInRequest(
 /** Serializes the signInWithPassword body exactly as it is posted on the wire (test seam). */
 internal fun encodeSignInRequestBody(email: String, password: String): String =
     authRestJson.encodeToString(SignInRequest(email.trim(), password))
-
-/** Where an admin reset link continues once the password is set (#892). */
-internal const val ADMIN_SIGN_IN_URL = "https://auntie.tribetails.com/signin"
-
-/**
- * accounts:sendOobCode body for a password reset.
- *
- * #892: the link opens the project's email action page on the portal
- * (Identity Toolkit's callbackUri is one URL per project). `continueUrl` sends
- * staff back to the admin sign-in instead of the kinfolk portal. Non-null with
- * defaults, so `encodeDefaults = true` always puts it on the wire.
- */
-@Serializable
-internal data class PasswordResetOobRequest(
-    val email: String,
-    val requestType: String = "PASSWORD_RESET",
-    val continueUrl: String = ADMIN_SIGN_IN_URL,
-    val canHandleCodeInApp: Boolean = false,
-)
-
-/** Serializes the password-reset sendOobCode body exactly as it is posted on the wire (test seam). */
-internal fun encodePasswordResetRequestBody(email: String): String =
-    authRestJson.encodeToString(PasswordResetOobRequest(email = email.trim()))
 
 /** Parsed securetoken refresh response. */
 internal data class RefreshedToken(val idToken: String, val refreshToken: String?, val expiresInSecs: Long)
@@ -249,19 +224,6 @@ private object FirebaseRestAuth {
         return testTribeIdClaimOf(token)
     }
 
-    suspend fun sendPasswordReset(emailArg: String): Boolean {
-        return try {
-            val resp = http.post("$IDENTITY:sendOobCode") {
-                parameter("key", API_KEY)
-                contentType(ContentType.Application.Json)
-                setBody(PasswordResetOobRequest(email = emailArg.trim()))
-            }
-            resp.status.isSuccess()
-        } catch (e: Exception) {
-            false
-        }
-    }
-
     /** Decode the `admin` custom claim from a Firebase ID token (JWT) payload. */
     private fun adminClaimOf(jwt: String): Boolean = runCatching {
         val payload = jwt.split(".").getOrNull(1) ?: return false
@@ -364,8 +326,22 @@ internal actual suspend fun platformReportFailedLogin(email: String) {
     if (result is WriteResult.Err) throw IllegalStateException("recordFailedLogin failed: $result")
 }
 internal actual suspend fun platformSignOut() = FirebaseRestAuth.signOut()
-internal actual suspend fun platformSendPasswordReset(email: String): Boolean =
-    FirebaseRestAuth.sendPasswordReset(email)
+/**
+ * #955: POSTs `{"data":{"email":...}}` to the `requestPasswordReset` callable, the same
+ * payload the admin web (`src/lib/auth.ts` sendReset) and Android
+ * (`AuntieRepository.sendPasswordReset`) send. The server picks where the link
+ * continues (staff go back to the admin sign-in), so nothing else goes up.
+ */
+internal actual suspend fun platformSendPasswordReset(email: String): PasswordResetResult {
+    val trimmed = email.trim()
+    if (trimmed.isEmpty()) return PasswordResetResult.Failed(RESET_INVALID_EMAIL_MSG)
+    val payload = "{\"email\":${kotlinx.serialization.json.JsonPrimitive(trimmed)}}"
+    return when (val reply = JvmFirestoreRest.callableReply("requestPasswordReset", payload)) {
+        is CallableReply.Ok -> PasswordResetResult.Sent
+        is CallableReply.Refused -> PasswordResetResult.Failed(passwordResetFailureMessage(reply.status) ?: reply.message)
+        is CallableReply.NotSent -> PasswordResetResult.Failed(RESET_NETWORK_MSG)
+    }
+}
 internal actual suspend fun platformIdToken(forceRefresh: Boolean): String? =
     FirebaseRestAuth.freshIdToken(forceRefresh)
 internal actual suspend fun platformIsCurrentUserAdmin(forceRefresh: Boolean): Boolean =

@@ -71,7 +71,12 @@ class AuthClient(
 
     suspend fun signOut() = platformSignOut()
 
-    suspend fun sendPasswordReset(email: String): Boolean = platformSendPasswordReset(email)
+    /**
+     * #955: through our own `requestPasswordReset` callable, as the admin web and
+     * Android apps do (#905), so the email is the operator's `auth.password.reset`
+     * template. Only the trimmed address goes up.
+     */
+    suspend fun sendPasswordReset(email: String): PasswordResetResult = platformSendPasswordReset(email)
 
     suspend fun idToken(forceRefresh: Boolean = false): String? = platformIdToken(forceRefresh)
 
@@ -123,6 +128,33 @@ fun friendlyAuthError(code: String): String = when (code) {
     else                          -> "Couldn't complete that change: $code"
 }
 
+/**
+ * #955: how a `requestPasswordReset` call ended. The callable answers `{ ok: true }`
+ * for every address, known or not, so [Sent] says nothing about the account.
+ */
+sealed class PasswordResetResult {
+    object Sent : PasswordResetResult()
+    /** [message] is the sentence to show. */
+    data class Failed(val message: String) : PasswordResetResult()
+}
+
+const val RESET_TOO_MANY_MSG = "Too many attempts. Wait a minute and try again."
+const val RESET_INVALID_EMAIL_MSG = "That email doesn't look right."
+const val RESET_NETWORK_MSG = "Network hiccup. Try again."
+
+/**
+ * Pure: the sentence for a refused reset, by callable status. A refusal is never
+ * about the account: the per-IP limit, a malformed address or the network. Same
+ * words as the Android admin (`PasswordResetFailure.kt`). Null keeps the server's
+ * own message.
+ */
+fun passwordResetFailureMessage(status: String?): String? = when (status) {
+    "RESOURCE_EXHAUSTED" -> RESET_TOO_MANY_MSG
+    "INVALID_ARGUMENT" -> RESET_INVALID_EMAIL_MSG
+    "UNAVAILABLE", "DEADLINE_EXCEEDED" -> RESET_NETWORK_MSG
+    else -> null
+}
+
 @Serializable
 data class AuthUser(
     val uid: String,
@@ -170,7 +202,7 @@ internal expect suspend fun platformSignIn(email: String, password: String): Sig
 /** #886: unauthenticated `recordFailedLogin` report. Throws on failure; [AuthClient] swallows it. */
 internal expect suspend fun platformReportFailedLogin(email: String)
 internal expect suspend fun platformSignOut()
-internal expect suspend fun platformSendPasswordReset(email: String): Boolean
+internal expect suspend fun platformSendPasswordReset(email: String): PasswordResetResult
 internal expect suspend fun platformIdToken(forceRefresh: Boolean): String?
 internal expect suspend fun platformIsCurrentUserAdmin(forceRefresh: Boolean): Boolean
 /** Raw `testTribeId` custom claim off the current ID token, or null when absent / signed out. */
