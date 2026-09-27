@@ -97,8 +97,7 @@ fun KinViewScreen(
                     // Names live on this kin doc as a flat `tags` list; the color and
                     // emoji come from the `petTags` vocabulary in business_settings,
                     // resolved at render time. Saving goes through updateKinTags, which
-                    // takes the LOADED record so the whole-document write round-trips
-                    // every other field instead of wiping it.
+                    // diffs against the LOADED record and merges only `tags` (#895).
                     ProfileTagsSection(
                         scope = TagScope.PET,
                         initialTags = kin.tags,

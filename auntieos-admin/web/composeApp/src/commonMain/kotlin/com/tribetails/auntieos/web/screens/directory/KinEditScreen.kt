@@ -108,6 +108,13 @@ fun KinEditScreen(
     }
 
     var initialized by remember(kinId) { mutableStateOf(false) }
+    /**
+     * #895: the record the form was seeded from. Saves diff against this, never
+     * against [existing], which the 8-second poll keeps replacing: a field another
+     * client changed since the seed must not look like an operator edit, and one
+     * the operator did not touch must not be written.
+     */
+    var loaded by remember(kinId) { mutableStateOf<Kin?>(null) }
 
     var name           by remember(kinId) { mutableStateOf("") }
     var species        by remember(kinId) { mutableStateOf("Dog") }
@@ -185,6 +192,7 @@ fun KinEditScreen(
             photoUrl       = existing.profilePictureUrl
             formValues.clear()
             formValues.putAll(existing.formValues)
+            loaded = existing
             initialized = true
         }
     }
@@ -200,7 +208,7 @@ fun KinEditScreen(
         toast = msg; toastKind = kind; toastVisible = true
     }
 
-    fun build(): Kin = (existing ?: Kin(_id = kinId.orEmpty(), kinfolkId = kinfolkId)).copy(
+    fun build(): Kin = (loaded ?: existing ?: Kin(_id = kinId.orEmpty(), kinfolkId = kinfolkId)).copy(
         kinfolkId             = kinfolkId,
         name                  = name.trim(),
         species               = species.trim().ifBlank { "Dog" },
@@ -220,7 +228,7 @@ fun KinEditScreen(
         staysAs               = staysAs.trim(),
         officeNotes           = officeNotes,
         profilePictureUrl     = photoUrl,
-        status                = (existing?.status ?: "active"),
+        status                = (loaded ?: existing)?.status ?: "active",
         formValues            = formValues.toMap(),
     )
 
@@ -234,8 +242,9 @@ fun KinEditScreen(
         scope.launch {
             val draft  = build()
             val result = if (isNew) client.createKin(draft) else {
-                when (val r = client.updateKin(draft)) {
-                    is WriteResult.Ok  -> WriteResult.Ok(draft._id)
+                // #895: only the fields the form changed, as a merge.
+                when (val r = client.updateKin(loaded ?: existing ?: draft, draft)) {
+                    is WriteResult.Ok  -> { loaded = draft; WriteResult.Ok(draft._id) }
                     is WriteResult.Err -> r
                 }
             }
@@ -301,7 +310,7 @@ fun KinEditScreen(
             // proven media pipeline; on desktop it fails loud (upload is mobile-only today).
             onChangePhoto = if (!isNew && kinId != null && !photoSaving) {
                 {
-                    val base = existing
+                    val base = loaded ?: existing
                     if (base == null) {
                         showToast("Photo update failed: kin not loaded yet.", ToastKind.Error)
                     } else {
@@ -313,6 +322,7 @@ fun KinEditScreen(
                                 upload      = { client.uploadMedia(kinId, "KIN", ByteArray(0), "") },
                                 write       = { url -> writeKinPhoto(client, base, url) },
                                 onPhotoUrl  = { photoUrl = it },
+                                onLoaded    = { loaded = kinBaselineAfterPhotoWrite(loaded, it) },
                                 onToast     = { (msg, kind) -> showToast(msg, kind) },
                             )
                             photoSaving = false
@@ -793,22 +803,35 @@ private fun BreedField(
 }
 
 /**
- * #853: the Kin (pet) sent on a photo change: [base] (always [existing], the
- * loaded record, never the live form draft) with only `profilePictureUrl`
- * replaced. Pure and separately testable from the write itself, so a test can
- * pin "every other field equals the loaded record" without a live Firestore.
+ * #853: the Kin (pet) sent on a photo change: [base] (the loaded record, never
+ * the live form draft) with only `profilePictureUrl` replaced. Pure and
+ * separately testable from the write itself.
  */
 internal fun kinWithPhoto(base: Kin, url: String): Kin = base.copy(profilePictureUrl = url)
 
 /**
- * #853: the write behind a Kin (pet) photo change. `updateKin` is a
- * whole-document write, but since [kinWithPhoto] carries every other field of
- * [base] unchanged, only `profilePictureUrl` ends up different on the server -
- * whatever the operator has typed elsewhere on the screen (which [base] never
- * reflects) cannot ride along with the photo.
+ * #853 / #895: the write behind a Kin (pet) photo change. Sent through
+ * [FirestoreClient.updateKin] as a merge naming only `profilePictureUrl`, so
+ * whatever the operator has typed elsewhere on the screen cannot ride along
+ * with the photo, and a field another client changed since the load survives.
+ * Returns the record as written, for [kinBaselineAfterPhotoWrite].
  */
-internal suspend fun writeKinPhoto(client: FirestoreClient, base: Kin, url: String): WriteResult<Unit> =
-    client.updateKin(kinWithPhoto(base, url))
+internal suspend fun writeKinPhoto(client: FirestoreClient, base: Kin, url: String): WriteResult<Kin> {
+    val edited = kinWithPhoto(base, url)
+    return when (val w = client.updateKin(base, edited)) {
+        is WriteResult.Ok  -> WriteResult.Ok(edited)
+        is WriteResult.Err -> WriteResult.Err(w.message)
+    }
+}
+
+/**
+ * #895: the save baseline after a photo write lands. Only `profilePictureUrl`
+ * is taken from [written]; every other field stays as [current] holds it, so a
+ * Save that completed while the upload was running is not rolled back, and the
+ * next Save does not send the photo a second time.
+ */
+internal fun kinBaselineAfterPhotoWrite(current: Kin?, written: Kin): Kin =
+    current?.copy(profilePictureUrl = written.profilePictureUrl) ?: written
 
 /**
  * #853: the photo-change pipeline behind KinEditScreen's "Change photo"
@@ -822,8 +845,9 @@ internal suspend fun writeKinPhoto(client: FirestoreClient, base: Kin, url: Stri
 internal suspend fun runKinPhotoUploadPipeline(
     previousUrl: String,
     upload: suspend () -> WriteResult<MediaFile>,
-    write: suspend (url: String) -> WriteResult<Unit>,
+    write: suspend (url: String) -> WriteResult<Kin>,
     onPhotoUrl: (String) -> Unit,
+    onLoaded: (Kin) -> Unit = {},
     onToast: (Pair<String, ToastKind>) -> Unit,
 ) {
     when (val up = upload()) {
@@ -836,7 +860,10 @@ internal suspend fun runKinPhotoUploadPipeline(
             }
             onPhotoUrl(url)
             when (val w = write(url)) {
-                is WriteResult.Ok  -> onToast("Photo updated." to ToastKind.Success)
+                is WriteResult.Ok  -> {
+                    onLoaded(w.value)
+                    onToast("Photo updated." to ToastKind.Success)
+                }
                 is WriteResult.Err -> {
                     // The file is already in Cloudinary + media_files (it shows in
                     // Gallery), so say so: a plain "update failed" invites a retry

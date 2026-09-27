@@ -682,7 +682,22 @@ class FirestoreClient {
     suspend fun archiveKinfolk(id: String):  WriteResult<Unit>   = platformArchiveKinfolk(id)
     suspend fun createKin(k: Kin):           WriteResult<String> =
         platformCreateKin(k.copy(kinfolkId = enforceWriteKinfolkId(testMode, k.kinfolkId)))
-    suspend fun updateKin(k: Kin):           WriteResult<Unit>   = platformUpdateKin(k)
+    /**
+     * #895: sends ONLY the fields [edited] changed relative to [loaded] (the record
+     * the caller read), as a merge write; `formValues` per key. The same shape as
+     * [updateKinfolk]: Ok(true) when a write was sent, Ok(false) when nothing
+     * changed and nothing was written. Every desktop kin update (edit form, tags,
+     * photo) goes through here, so none of them can rewrite a field it did not touch.
+     */
+    suspend fun updateKin(loaded: Kin, edited: Kin): WriteResult<Boolean> {
+        if (edited._id.isBlank()) return WriteResult.Err("updateKin requires a kin id")
+        val changes = kinChanges(loaded, edited)
+        if (changes.isEmpty()) return WriteResult.Ok(false)
+        return when (val r = platformUpdateKinFields(edited._id, changes)) {
+            is WriteResult.Ok  -> WriteResult.Ok(true)
+            is WriteResult.Err -> WriteResult.Err(r.message)
+        }
+    }
     suspend fun archiveKin(id: String):      WriteResult<Unit>   = platformArchiveKin(id)
 
     // ---- Tag assignment writes (kin + kinfolk) ----
@@ -690,16 +705,18 @@ class FirestoreClient {
     // (api/directoryWrite.ts:237-255). Semantics kept identical: a whole-list
     // replace of tag NAMES, so clearing the last tag genuinely empties the field.
     //
-    // TRANSPORT: React patches only `{ tags, updatedAt }`. Kinfolk now matches
-    // (#829 review): [updateKinfolk] diffs against the record you LOADED and merges
-    // only `tags`. Kin still goes through the whole-document [updateKin], so pass
-    // the loaded kin and every other field round-trips. Fail-loud: a rejected
-    // write propagates to the caller as WriteResult.Err.
+    // TRANSPORT: React patches only `{ tags, updatedAt }`. Both desktop paths now
+    // diff against the record you LOADED and merge only `tags`: kinfolk through
+    // [updateKinfolk] (#829 review), kin through [updateKin] (#895). Fail-loud: a
+    // rejected write propagates to the caller as WriteResult.Err.
 
     /** Replaces a pet's tag NAME list. [kin] must be the loaded record, not a fresh one. */
     suspend fun updateKinTags(kin: Kin, tags: List<String>): WriteResult<Unit> {
         require(kin._id.isNotBlank()) { "updateKinTags requires a kin id" }
-        return updateKin(kin.copy(tags = tags))
+        return when (val r = updateKin(kin, kin.copy(tags = tags))) {
+            is WriteResult.Ok  -> WriteResult.Ok(Unit)
+            is WriteResult.Err -> WriteResult.Err(r.message)
+        }
     }
 
     /** Replaces a household's tag NAME list. [kinfolk] must be the loaded record. */
@@ -2113,7 +2130,8 @@ data class KinfolkCreated(val kinfolkId: String, val duplicateOf: String?)
 internal expect suspend fun platformUpdateKinfolkFields(kinfolkId: String, changes: List<KinfolkFieldChange>): WriteResult<Unit>
 internal expect suspend fun platformArchiveKinfolk(id: String): WriteResult<Unit>
 internal expect suspend fun platformCreateKin(k: Kin):          WriteResult<String>
-internal expect suspend fun platformUpdateKin(k: Kin):          WriteResult<Unit>
+/** #895: merge-writes exactly [changes] on kin/[kinId] (sets and deletes, by field path); an empty list writes nothing. */
+internal expect suspend fun platformUpdateKinFields(kinId: String, changes: List<FieldChange>): WriteResult<Unit>
 internal expect suspend fun platformArchiveKin(id: String):     WriteResult<Unit>
 internal expect suspend fun platformPatchKinCare(id: String, patch: Map<String, String>): WriteResult<Unit>
 internal expect suspend fun platformMarkVoicemailReplied(
@@ -3118,17 +3136,20 @@ data class Kin(
 
     /**
      * Pet tag NAMES, resolved against `business_settings.petTags` at render time.
-     * MANDATORY on this model, not optional: [FirestoreClient.updateKin] re-writes the
-     * whole document, so before this field existed every Kotlin save of a pet silently
-     * wiped a tag list the React admin had written. See [TolerantStringListSerializer].
+     * MANDATORY on this model, not optional: before #895 [FirestoreClient.updateKin]
+     * re-wrote the whole document, so before this field existed every Kotlin save of a
+     * pet silently wiped a tag list the React admin had written. Saves now merge only
+     * changed fields, but the field stays so tags can be read and edited.
+     * See [TolerantStringListSerializer].
      */
     @Serializable(with = TolerantStringListSerializer::class)
     val tags: List<String> = emptyList(),
 
     /**
-     * Round-trip-only fields, MANDATORY for the same reason as [tags]:
-     * [FirestoreClient.updateKin] re-writes the whole document, so any field
-     * absent from this model is DESTROYED on every Kotlin save.
+     * Round-trip-only fields. Before #895 [FirestoreClient.updateKin] re-wrote the
+     * whole document, so any field absent from this model was DESTROYED on every
+     * Kotlin save. Kin saves now send only the fields the operator changed, so a
+     * field this model lacks survives; these two stay on the model all the same.
      *
      * Both are live: `familyKinPath` is set on 24 of 24 kin and `updatedAt` on 23
      * (as a Firestore Timestamp, hence the serializer). Neither is read by this

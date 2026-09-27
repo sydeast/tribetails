@@ -58,9 +58,34 @@ describe('KinEdit', () => {
     await waitFor(() => expect(updateKin).toHaveBeenCalledTimes(1));
     const [id, patch] = updateKin.mock.calls[0]!;
     expect(id).toBe('p1');
-    expect(patch.name).toBe('Willow B');
-    expect(patch.breed).toBe('Lab');
+    // #895: only the edited field. The untouched breed is not sent, so a change
+    // another client made to it since the load is not undone.
+    expect(patch).toEqual({ name: 'Willow B' });
     await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+  });
+
+  it('#895: an untouched field is never written back, so a concurrent portal edit to it survives', async () => {
+    getKin.mockResolvedValue(kin({ vaccinations: 'Rabies 2025', medicationHealthNotes: 'none' }));
+    updateKin.mockResolvedValue(undefined);
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    const weightInput = (await screen.findByText('Weight')).parentElement!.querySelector('input')!;
+    await userEvent.type(weightInput, '40');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateKin).toHaveBeenCalledTimes(1));
+    const [, patch] = updateKin.mock.calls[0]!;
+    expect(Object.keys(patch)).toEqual(['weight']);
+    expect('vaccinations' in patch).toBe(false);
+    expect('medicationHealthNotes' in patch).toBe(false);
+  });
+
+  it('#895: a save with nothing changed writes nothing and still signals done', async () => {
+    getKin.mockResolvedValue(kin());
+    const onDone = vi.fn();
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={onDone} onCancel={vi.fn()} />);
+    await screen.findByText('Name');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+    expect(updateKin).not.toHaveBeenCalled();
   });
 
   it('blocks save on a blank name', async () => {
@@ -95,6 +120,7 @@ describe('KinEdit', () => {
     const onDone = vi.fn();
     render(<KinEdit kinId="p1" kinName="Willow" onDone={onDone} onCancel={vi.fn()} />);
     await screen.findByText('Name');
+    await userEvent.type(screen.getByText('Name').parentElement!.querySelector('input')!, ' B');
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
     expect(await screen.findByText(/updateKin failed:.*permission-denied/i)).toBeInTheDocument();
     expect(onDone).not.toHaveBeenCalled();
@@ -123,6 +149,8 @@ describe('KinEdit', () => {
     expect(screen.queryByText('Owner contact')).not.toBeInTheDocument();
     expect(screen.queryByText('Owner email')).not.toBeInTheDocument();
     expect(screen.queryByText('Owner phone')).not.toBeInTheDocument();
+    // #895: saves send only changed fields, so change one to get a write at all.
+    await userEvent.type(screen.getByText('Name').parentElement!.querySelector('input')!, ' B');
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
     await waitFor(() => expect(updateKin).toHaveBeenCalledTimes(1));
     const [, patch] = updateKin.mock.calls[0]!;
@@ -160,6 +188,10 @@ describe('KinEdit vet rule (fix-backlog 5.4: vets attach to the Kinfolk)', () =>
     updateKin.mockResolvedValue(undefined);
     render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
     await screen.findByText('Name');
+    // #895: saves send only changed fields, so edit the two Health fields.
+    for (const label of ['Vaccinations', 'Medication / health notes']) {
+      await userEvent.type(screen.getByText(label).parentElement!.querySelector('textarea, input')!, 'x');
+    }
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
     await waitFor(() => expect(updateKin).toHaveBeenCalledTimes(1));
     const [, patch] = updateKin.mock.calls[0]!;

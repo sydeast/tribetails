@@ -392,8 +392,17 @@ internal actual suspend fun platformArchiveKinfolk(id: String): WriteResult<Unit
     transportWrite("archive failed") { JvmFirestoreRest.patchFields("kinfolk", id, mapOf("status" to JsonPrimitive("archived"))) }
 internal actual suspend fun platformCreateKin(k: Kin): WriteResult<String> =
     transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("kin", jsonOut.encodeToString(k))) }
-internal actual suspend fun platformUpdateKin(k: Kin): WriteResult<Unit> =
-    transportResult("update failed") { JvmFirestoreRest.setDoc("kin", k._id, jsonOut.encodeToString(k)); WriteResult.Ok(Unit) }
+// #895: a MERGE write, not setDoc. setDoc replaced the whole pet document, which
+// deleted every field the model does not carry and put back the stale value of
+// every field another client changed since the 8-second poll. The body is only the
+// fields the caller changed (FirestoreClient.updateKin diffs against its read).
+internal actual suspend fun platformUpdateKinFields(kinId: String, changes: List<FieldChange>): WriteResult<Unit> =
+    transportResult("update failed") {
+        require(kinId.isNotBlank()) { "updateKin requires a kin id" }
+        require(changes.none { it.path.first() == "_id" }) { "updateKin: _id reached the write" }
+        if (changes.isNotEmpty()) JvmFirestoreRest.mergeFieldChanges("kin", kinId, changes)
+        WriteResult.Ok(Unit)
+    }
 internal actual suspend fun platformArchiveKin(id: String): WriteResult<Unit> =
     transportWrite("archive failed") { JvmFirestoreRest.patchFields("kin", id, mapOf("status" to JsonPrimitive("archived"))) }
 internal actual suspend fun platformPatchKinCare(id: String, patch: Map<String, String>): WriteResult<Unit> =
