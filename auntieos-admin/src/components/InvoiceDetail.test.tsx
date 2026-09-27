@@ -83,7 +83,7 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   unarchiveInvoice,
 }));
 
-import { InvoiceDetail } from './InvoiceDetail';
+import { InvoiceDetail, paymentSplit } from './InvoiceDetail';
 import { formatReminderTime, type ReminderOutcome } from '../lib/invoiceReminder';
 
 /** What `sendInvoiceReminder` resolves to when THIS press sent the reminder (#832). */
@@ -1385,7 +1385,9 @@ describe('the record-payment form: fee, gross tip, notes and the two switches', 
     expect(screen.getByLabelText(/tip in dollars/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/processor fee in dollars/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/staff-only notes/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/automatically apply any unapplied amount/i)).toBeInTheDocument();
+    // #988: the auto-apply tick is gone; credit is an amount she enters.
+    expect(screen.getByLabelText(/leave as account credit/i)).toHaveValue('');
+    expect(screen.queryByLabelText(/automatically apply any unapplied amount/i)).toBeNull();
     expect(screen.getByLabelText(/send a confirmation email/i)).toBeInTheDocument();
   });
   it('records invoice #1029: the gross tip and the fee, on top of what settled the bill', async () => {
@@ -1446,18 +1448,25 @@ describe('the record-payment form: fee, gross tip, notes and the two switches', 
     await submit();
     await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
     expect(recordPayment).toHaveBeenCalledWith(
-      expect.objectContaining({ autoApply: false, sendConfirmationEmail: false }),
+      expect.objectContaining({ autoApply: false, creditToAccountCents: 0, sendConfirmationEmail: false }),
     );
   });
-  it('sends both switches on when she turns them on', async () => {
+  it('#988: sends the credit she entered, in cents, and the rest of the leftover as tip', async () => {
     markInvoicePaid.mockResolvedValue(settledResult());
     await openForm();
-    await userEvent.click(screen.getByLabelText(/automatically apply any unapplied amount/i));
+    await userEvent.type(screen.getByLabelText(/total payment amount/i), '200');
+    await userEvent.type(screen.getByLabelText(/leave as account credit/i), '20');
     await userEvent.click(screen.getByLabelText(/send a confirmation email/i));
     await submit();
     await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
     expect(recordPayment).toHaveBeenCalledWith(
-      expect.objectContaining({ autoApply: true, sendConfirmationEmail: true }),
+      expect.objectContaining({
+        amount: 200,
+        tip: 52.5,
+        autoApply: true,
+        creditToAccountCents: 2000,
+        sendConfirmationEmail: true,
+      }),
     );
   });
   it('sends the staff notes, trimmed', async () => {
@@ -1476,10 +1485,12 @@ describe('the record-payment form: fee, gross tip, notes and the two switches', 
     markInvoicePaid.mockResolvedValue(settledResult());
     await openForm();
     await userEvent.type(screen.getByLabelText(/tip in dollars/i), '10');
+    await userEvent.type(screen.getByLabelText(/leave as account credit/i), '5');
     await userEvent.click(screen.getByLabelText(/send a confirmation email/i));
     await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     expect(screen.getByLabelText(/tip in dollars/i)).toHaveValue('');
+    expect(screen.getByLabelText(/leave as account credit/i)).toHaveValue('');
     expect(screen.getByLabelText(/send a confirmation email/i)).not.toBeChecked();
   });
 });
@@ -1520,49 +1531,131 @@ describe('the record-payment form: refusals it makes before any money moves', ()
     await userEvent.type(screen.getByLabelText(/tip in dollars/i), '10');
     await userEvent.type(screen.getByLabelText(/total payment amount/i), '100');
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
-    expect(await screen.findByText(/does not cover/i)).toBeInTheDocument();
+    expect((await screen.findAllByText(/does not cover/i)).length).toBeGreaterThan(0);
+    expect(markInvoicePaid).not.toHaveBeenCalled();
+  });
+  it('#988: refuses a credit larger than what is left after the applied part', async () => {
+    await openForm();
+    await userEvent.type(screen.getByLabelText(/total payment amount/i), '200');
+    await userEvent.type(screen.getByLabelText(/leave as account credit/i), '72.51');
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect((await screen.findAllByText(/more than the \$72\.50 left/i)).length).toBeGreaterThan(0);
+    expect(markInvoicePaid).not.toHaveBeenCalled();
+    expect(recordPayment).not.toHaveBeenCalled();
+  });
+  it('#988: refuses a typed tip and credit that do not add up to the payment', async () => {
+    await openForm();
+    await userEvent.type(screen.getByLabelText(/total payment amount/i), '200');
+    await userEvent.type(screen.getByLabelText(/tip in dollars/i), '10');
+    await userEvent.type(screen.getByLabelText(/leave as account credit/i), '20');
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect((await screen.findAllByText(/add up to \$157\.50, not the \$200\.00 paid/i)).length).toBeGreaterThan(0);
+    expect(markInvoicePaid).not.toHaveBeenCalled();
+  });
+  it('#988: refuses an unreadable credit instead of recording none', async () => {
+    await openForm();
+    await userEvent.type(screen.getByLabelText(/leave as account credit/i), 'some');
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(await screen.findByText(/"some" is not an amount of account credit/i)).toBeInTheDocument();
+    expect(markInvoicePaid).not.toHaveBeenCalled();
+  });
+  it('#988: refuses credit on an invoice with no household', async () => {
+    render(<InvoiceDetail invoice={entry({ amountDue: 127.5, total: 127.5, kinfolkId: '' })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await userEvent.type(screen.getByLabelText(/total payment amount/i), '200');
+    await userEvent.type(screen.getByLabelText(/leave as account credit/i), '20');
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(await screen.findByText(/account credit needs a household/i)).toBeInTheDocument();
     expect(markInvoicePaid).not.toHaveBeenCalled();
   });
 });
-describe('the Unapplied Balance, shown before Save', () => {
+describe('#988 where the payment goes, shown before Save', () => {
   async function openForm(amountDue = 127.5) {
     render(<InvoiceDetail invoice={entry({ amountDue, total: amountDue })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
   }
-  it('reads zero on the ordinary payment, where nothing is left over', async () => {
+  const line = () => screen.getByRole('status', { name: /where this payment goes/i });
+  it('the ordinary payment: all of it to the invoice, no tip, no credit', async () => {
     await openForm();
-    expect(screen.getByText('Unapplied balance')).toBeInTheDocument();
-    expect(screen.getByText('$0.00')).toBeInTheDocument();
+    expect(line()).toHaveTextContent('$127.50 paid');
+    expect(line()).toHaveTextContent('$127.50 to this invoice, $0.00 tip, $0.00 account credit.');
   });
-  it('shows the leftover the moment a bigger payment is typed', async () => {
-    // $300 handed over against a $127.50 bill, no tip: $172.50 over.
+  it('a bigger payment: the tip defaults to paid minus applied', async () => {
+    // $200 against a $127.50 bill: $72.50 is tip unless she leaves some as credit.
     await openForm();
-    await userEvent.type(screen.getByLabelText(/total payment amount/i), '300');
-    await waitFor(() => expect(screen.getByText('$172.50')).toBeInTheDocument());
+    await userEvent.type(screen.getByLabelText(/total payment amount/i), '200');
+    await waitFor(() => expect(line()).toHaveTextContent('$200.00 paid'));
+    expect(line()).toHaveTextContent('$127.50 to this invoice, $72.50 tip, $0.00 account credit.');
   });
-  it('takes the GROSS tip out of the leftover, because the tip is not unapplied money', async () => {
+  it('credit she enters comes out of the tip, not out of the bill', async () => {
     await openForm();
-    await userEvent.type(screen.getByLabelText(/total payment amount/i), '300');
-    await userEvent.type(screen.getByLabelText(/tip in dollars/i), '10');
-    await waitFor(() => expect(screen.getByText('$162.50')).toBeInTheDocument());
+    await userEvent.type(screen.getByLabelText(/total payment amount/i), '200');
+    await userEvent.type(screen.getByLabelText(/leave as account credit/i), '20');
+    await waitFor(() =>
+      expect(line()).toHaveTextContent('$127.50 to this invoice, $52.50 tip, $20.00 account credit.'),
+    );
   });
-  it('does NOT move when a fee is entered: the fee is off proceeds, not off the payment', async () => {
+  it('says the fee comes out of the tip, and the fee moves nothing else', async () => {
     await openForm();
-    await userEvent.type(screen.getByLabelText(/total payment amount/i), '300');
+    await userEvent.type(screen.getByLabelText(/total payment amount/i), '200');
     await userEvent.type(screen.getByLabelText(/processor fee in dollars/i), '2.71');
-    await waitFor(() => expect(screen.getByText('$172.50')).toBeInTheDocument());
+    await waitFor(() => expect(line()).toHaveTextContent('$72.50 tip (the $2.71 fee comes out of it)'));
   });
-  it('says what will happen to the leftover, and it depends on the auto-apply switch', async () => {
+  it('shows the refusal while the figures do not add up', async () => {
     await openForm();
-    await userEvent.type(screen.getByLabelText(/total payment amount/i), '300');
-    expect(await screen.findByText(/will not be applied to anything/i)).toBeInTheDocument();
-    await userEvent.click(screen.getByLabelText(/automatically apply any unapplied amount/i));
-    expect(await screen.findByText(/held as this household's account credit/i)).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText(/total payment amount/i), '200');
+    await userEvent.type(screen.getByLabelText(/leave as account credit/i), '80');
+    await waitFor(() => expect(line()).toHaveTextContent(/more than the \$72\.50 left/));
   });
   it('shows NOTHING rather than a figure derived from a half-typed number', async () => {
     await openForm();
     await userEvent.type(screen.getByLabelText(/tip in dollars/i), 'abc');
     expect(await screen.findByText(/cannot be read/i)).toBeInTheDocument();
+  });
+});
+describe('#988 paymentSplit, the arithmetic behind that line', () => {
+  const base = { paymentTotal: '', applied: '127.50', tip: '', credit: '', fallbackApplied: 127.5 };
+  it('blank payment amount: paid is applied + tip + credit', () => {
+    expect(paymentSplit({ ...base, tip: '10' })).toEqual({
+      ok: true,
+      paidCents: 13750,
+      appliedCents: 12750,
+      tipCents: 1000,
+      creditCents: 0,
+    });
+  });
+  it('blank tip takes the rest after applied and credit', () => {
+    expect(paymentSplit({ ...base, paymentTotal: '200', credit: '20' })).toEqual({
+      ok: true,
+      paidCents: 20000,
+      appliedCents: 12750,
+      tipCents: 5250,
+      creditCents: 2000,
+    });
+  });
+  it('the whole leftover can be credit, leaving no tip', () => {
+    expect(paymentSplit({ ...base, paymentTotal: '200', credit: '72.50' })).toMatchObject({
+      ok: true,
+      tipCents: 0,
+      creditCents: 7250,
+    });
+  });
+  it('a blank applied box means the amount due', () => {
+    expect(paymentSplit({ ...base, applied: '', paymentTotal: '130' })).toMatchObject({
+      ok: true,
+      appliedCents: 12750,
+      tipCents: 250,
+    });
+  });
+  it('refuses a credit one cent over the leftover', () => {
+    expect(paymentSplit({ ...base, paymentTotal: '200', credit: '72.51' })).toMatchObject({ ok: false });
+  });
+  it('refuses a payment smaller than the applied part', () => {
+    expect(paymentSplit({ ...base, paymentTotal: '100' })).toMatchObject({ ok: false });
+  });
+  it('null for anything half-typed', () => {
+    expect(paymentSplit({ ...base, credit: 'x' })).toBeNull();
+    expect(paymentSplit({ ...base, tip: '-1' })).toBeNull();
   });
 });
 describe('what the operator is told after the payment lands', () => {
@@ -1589,6 +1682,32 @@ describe('what the operator is told after the payment lands', () => {
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     expect(await screen.findByText(/added to the household's account credit/i)).toBeInTheDocument();
+  });
+  it('#988: says nothing about account credit when the server credited none', async () => {
+    markInvoicePaid.mockResolvedValue(settledResult());
+    recordPayment.mockResolvedValue({
+      ok: true,
+      paymentId: 'led1',
+      kinfolkId: 'kf1',
+      amountCents: 20000,
+      tipCents: 7250,
+      feeCents: 0,
+      tipBasis: 'gross',
+      appliedCents: 12750,
+      unappliedCents: 0,
+      proceedsCents: 20000,
+      tipNetCents: 7250,
+      autoApply: false,
+      application: null,
+      creditedToAccountCents: 0,
+      confirmationEmailSent: false,
+    });
+    render(<InvoiceDetail invoice={entry({ amountDue: 127.5, total: 127.5 })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await userEvent.type(screen.getByLabelText(/total payment amount/i), '200');
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(await screen.findByText(/invoice is paid in full/i)).toBeInTheDocument();
+    expect(screen.queryByText(/added to the household's account credit/i)).toBeNull();
   });
   it('says the confirmation did NOT go out rather than letting her assume it did', async () => {
     markInvoicePaid.mockResolvedValue(settledResult());
@@ -2378,7 +2497,7 @@ describe('InvoiceDetail and a quote the household has answered (issue #448)', ()
  * transaction, and must carry no `apply` (the invoice is already settled). The
  * note after the payment repeats only the credit the server says it gave.
  */
-describe('#977 Mark paid with auto-apply ticked', () => {
+describe('#977 and #988 Mark paid, two-step, with and without a chosen credit', () => {
   const ledgerAnswer = (creditedToAccountCents: number, amountCents: number) => ({
     ok: true,
     paymentId: 'led1',
@@ -2397,7 +2516,7 @@ describe('#977 Mark paid with auto-apply ticked', () => {
     confirmationEmailSent: false,
   });
 
-  async function payWithAutoApply(total?: string) {
+  async function payWithAutoApply(total?: string, credit?: string) {
     markInvoicePaid.mockResolvedValue({ ...settledResult(), totalCents: 12750, paidCents: 12750 });
     render(<InvoiceDetail invoice={entry({ amountDue: 127.5, total: 127.5 })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
@@ -2406,7 +2525,7 @@ describe('#977 Mark paid with auto-apply ticked', () => {
     await userEvent.type(screen.getByLabelText(/tip in dollars/i), '10');
     await userEvent.type(screen.getByLabelText(/processor fee in dollars/i), '2.71');
     if (total) await userEvent.type(screen.getByLabelText(/total payment amount/i), total);
-    await userEvent.click(screen.getByLabelText(/automatically apply any unapplied amount/i));
+    if (credit) await userEvent.type(screen.getByLabelText(/leave as account credit/i), credit);
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
   }
@@ -2432,7 +2551,9 @@ describe('#977 Mark paid with auto-apply ticked', () => {
       tip: 10,
       fee: 2.71,
       notes: '',
-      autoApply: true,
+      // #988: no credit entered, so none is asked for.
+      autoApply: false,
+      creditToAccountCents: 0,
       sendConfirmationEmail: false,
       invoiceId: 'inv1',
       invoiceNumber: '1042',
@@ -2447,13 +2568,15 @@ describe('#977 Mark paid with auto-apply ticked', () => {
     expect(screen.queryByText(/account credit/i)).toBeNull();
   });
 
-  it("repeats the server's credit, and only that, for a real leftover", async () => {
-    // $200 in: $127.50 applied, $10 tip, $62.50 left over.
+  it("#988: sends the credit she chose, then repeats the server's credit, and only that", async () => {
+    // $200 in: $127.50 applied, $10 tip, and she leaves the other $62.50 as credit.
     recordPayment.mockResolvedValue(ledgerAnswer(6250, 20000));
-    await payWithAutoApply('200');
-    expect(recordPayment).toHaveBeenCalledWith(expect.objectContaining({ amount: 200, tip: 10, autoApply: true }));
+    await payWithAutoApply('200', '62.50');
+    expect(recordPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 200, tip: 10, autoApply: true, creditToAccountCents: 6250 }),
+    );
     expect(
-      await screen.findByText(/\$62\.50 was left over and has been added to the household's account credit/i),
+      await screen.findByText(/\$62\.50 has been added to the household's account credit/i),
     ).toBeInTheDocument();
   });
 });
