@@ -147,8 +147,6 @@ fun kinfolkWriteJson(k: Kinfolk): String {
  */
 data class KinfolkFieldChange(val path: List<String>, val value: kotlinx.serialization.json.JsonElement?)
 
-/** The map field that is diffed key by key, so one custom field's edit never rewrites another's. */
-private const val PER_KEY_MAP_FIELD = "formValues"
 
 /**
  * #829 review: what a desktop kinfolk UPDATE writes, which is only the fields
@@ -163,23 +161,11 @@ private const val PER_KEY_MAP_FIELD = "formValues"
  * Never includes `_id` or an Emergency Contact key. Empty means nothing to write.
  * Android does the same through `DirectoryFieldChanges` (DirectoryViewModel.kt:1187).
  */
-fun kinfolkChanges(loaded: Kinfolk, edited: Kinfolk): List<KinfolkFieldChange> {
-    val before = writeJson.encodeToJsonElement(Kinfolk.serializer(), loaded).jsonObject
-    val after = writeJson.encodeToJsonElement(Kinfolk.serializer(), edited).jsonObject
-    val changes = mutableListOf<KinfolkFieldChange>()
-    for ((key, value) in after) {
-        if (key == "_id" || key in KINFOLK_WRITE_EXCLUDED_KEYS) continue
-        val old = before[key]
-        if (key == PER_KEY_MAP_FIELD && value is JsonObject && (old == null || old is JsonObject)) {
-            val oldMap = old as? JsonObject ?: JsonObject(emptyMap())
-            for ((k, v) in value) if (oldMap[k] != v) changes += KinfolkFieldChange(listOf(key, k), v)
-            for (k in oldMap.keys) if (k !in value) changes += KinfolkFieldChange(listOf(key, k), null)
-        } else if (old != value) {
-            changes += KinfolkFieldChange(listOf(key), value)
-        }
-    }
-    return changes
-}
+fun kinfolkChanges(loaded: Kinfolk, edited: Kinfolk): List<KinfolkFieldChange> = fieldChanges(
+    writeJson.encodeToJsonElement(Kinfolk.serializer(), loaded).jsonObject,
+    writeJson.encodeToJsonElement(Kinfolk.serializer(), edited).jsonObject,
+    excluded = KINFOLK_WRITE_EXCLUDED_KEYS,
+)
 
 private val SIMPLE_FIELD_SEGMENT = Regex("^[A-Za-z_][A-Za-z_0-9]*$")
 

@@ -21,7 +21,8 @@ import kotlin.test.assertTrue
  * url)`, so a photo change silently persisted every unsaved field elsewhere on
  * the form, and "Photo updated." showed even when the write failed.
  *
- * [runKinPhotoUploadPipeline], [kinWithPhoto] and [writeKinPhoto] are the fix,
+ * [runKinPhotoUploadPipeline], [kinWithPhoto] and [writeKinPhoto] are the fix
+ * (#895 made the write a merge naming only `profilePictureUrl`),
  * extracted the same way `runAvatarUploadPipeline` is in SettingsScreen.kt so
  * a fake upload/write can drive every outcome without a live Cloudinary
  * upload, a real Firestore write, or a Swing file picker.
@@ -45,7 +46,7 @@ class KinPhotoUploadPipelineTest {
         runKinPhotoUploadPipeline(
             previousUrl = "https://old.jpg",
             upload      = { WriteResult.Ok(uploaded) },
-            write       = { url -> assertEquals(uploaded.storageUrl, url); WriteResult.Ok(Unit) },
+            write       = { url -> assertEquals(uploaded.storageUrl, url); WriteResult.Ok(Kin(_id = "k1", profilePictureUrl = url)) },
             onPhotoUrl  = { photoUrl = it },
             onToast     = { toast = it },
         )
@@ -87,7 +88,7 @@ class KinPhotoUploadPipelineTest {
         runKinPhotoUploadPipeline(
             previousUrl = "https://old.jpg",
             upload      = { WriteResult.Err("Selected media exceeds the 50MB limit") },
-            write       = { writeCalled = true; WriteResult.Ok(Unit) },
+            write       = { writeCalled = true; WriteResult.Ok(Kin()) },
             onPhotoUrl  = { photoUrl = it },
             onToast     = { toast = it },
         )
@@ -97,16 +98,60 @@ class KinPhotoUploadPipelineTest {
         assertEquals("Photo upload failed: Selected media exceeds the 50MB limit" to ToastKind.Error, toast)
     }
 
-    // ---- kinWithPhoto / writeKinPhoto: the real write, proving the shape ----
+    /**
+     * #895: a Save that completes while the upload is still running moves the
+     * baseline to its draft. When the photo write lands afterwards, `onLoaded`
+     * goes through [kinBaselineAfterPhotoWrite], which takes only the photo from
+     * the written record, never the stale `base` captured on click.
+     */
+    @Test
+    fun `a Save that completes before the photo write keeps its saved fields in the baseline`() = runTest {
+        val clickedBase = Kin(_id = "k1", kinfolkId = "kf1", name = "Fido", weight = "40", profilePictureUrl = "https://old.jpg")
+        val savedDraft = clickedBase.copy(name = "Fido Jr.", weight = "42")
+        var loaded: Kin? = clickedBase
+        val uploaded = photo()
+
+        runKinPhotoUploadPipeline(
+            previousUrl = clickedBase.profilePictureUrl,
+            upload      = { WriteResult.Ok(uploaded) },
+            write       = { url ->
+                loaded = savedDraft
+                WriteResult.Ok(clickedBase.copy(profilePictureUrl = url))
+            },
+            onPhotoUrl  = {},
+            onLoaded    = { loaded = kinBaselineAfterPhotoWrite(loaded, it) },
+            onToast     = {},
+        )
+
+        assertEquals(savedDraft.copy(profilePictureUrl = uploaded.storageUrl), loaded)
+    }
+
+    @Test
+    fun `with no baseline yet the written record becomes the baseline`() {
+        val written = Kin(_id = "k1", profilePictureUrl = "https://new.jpg")
+        assertEquals(written, kinBaselineAfterPhotoWrite(null, written))
+    }
+
+    @Test
+    fun `a failed photo write leaves the baseline alone`() = runTest {
+        var loadedCalled = false
+        runKinPhotoUploadPipeline(
+            previousUrl = "https://old.jpg",
+            upload      = { WriteResult.Ok(photo()) },
+            write       = { WriteResult.Err("Not signed in") },
+            onPhotoUrl  = {},
+            onLoaded    = { loadedCalled = true },
+            onToast     = {},
+        )
+        assertFalse(loadedCalled, "a failed write must not move the baseline")
+    }
+
+    // ---- kinWithPhoto / writeKinPhoto: the real merge write, proving the mask ----
 
     /**
-     * `updateKin` is a whole-document write (no field-level mask to assert on,
-     * unlike Kinfolk's merge), so the invariant this pins is structural:
-     * [kinWithPhoto] carries every field of the loaded record forward
-     * unchanged except the photo. An operator's typed-but-unsaved edit (a new
-     * name, say) lives solely in the screen's Compose state, which
-     * [kinWithPhoto] has no access to at all - only [loadedRecord] is ever
-     * read.
+     * [kinWithPhoto] carries every field of the loaded record forward unchanged
+     * except the photo. An operator's typed-but-unsaved edit (a new name, say)
+     * lives solely in the screen's Compose state, which it never reads.
      */
     @Test
     fun `a photo change preserves every other field even with an unsaved draft sitting nearby`() {
@@ -124,21 +169,29 @@ class KinPhotoUploadPipelineTest {
 
         val written = kinWithPhoto(loadedRecord, "https://res.cloudinary.com/demo/image/upload/new.jpg")
 
-        assertEquals("https://res.cloudinary.com/demo/image/upload/new.jpg", written.profilePictureUrl)
         assertEquals(loadedRecord.copy(profilePictureUrl = written.profilePictureUrl), written)
-        assertEquals(loadedRecord.name, written.name, "the unsaved draft's name must not leak into the write")
-        assertEquals(loadedRecord.weight, written.weight, "the unsaved draft's weight must not leak into the write")
-        assertEquals(loadedRecord.tags, written.tags)
     }
 
+    /** #895 (issue comment from the #894 review): the photo write is a merge naming only `profilePictureUrl`. */
     @Test
-    fun `the write goes out as a whole-document PATCH addressed at the loaded kin`() = runTest {
-        val loadedRecord = Kin(_id = "k1", kinfolkId = "kf1", name = "Fido")
+    fun `a photo change merges only profilePictureUrl on the loaded kin`() = runTest {
+        val loadedRecord = Kin(_id = "k1", kinfolkId = "kf1", name = "Fido", tags = listOf("Reactive"))
 
         writeKinPhoto(FirestoreClient(), loadedRecord, "https://new.jpg")
 
-        assertEquals("PATCH", JvmFirestoreFixtures.lastWrite?.op)
+        assertEquals("MERGE", JvmFirestoreFixtures.lastWrite?.op)
         assertEquals("kin", JvmFirestoreFixtures.lastWrite?.collection)
         assertEquals("k1", JvmFirestoreFixtures.lastWrite?.id)
+        assertEquals(setOf("profilePictureUrl"), JvmFirestoreFixtures.lastWrite?.fields)
+    }
+
+    @Test
+    fun `an unchanged photo url writes nothing`() = runTest {
+        val loadedRecord = Kin(_id = "k1", profilePictureUrl = "https://same.jpg")
+
+        val result = writeKinPhoto(FirestoreClient(), loadedRecord, "https://same.jpg")
+
+        assertEquals(WriteResult.Ok(loadedRecord), result)
+        assertNull(JvmFirestoreFixtures.lastWrite, "no field changed, so nothing should be written")
     }
 }

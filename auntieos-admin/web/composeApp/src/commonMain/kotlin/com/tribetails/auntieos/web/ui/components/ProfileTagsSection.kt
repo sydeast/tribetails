@@ -195,7 +195,7 @@ private fun vocabFor(scope: TagScope, settings: BusinessSettings): List<TagDef> 
  * @param onSaveTags  persists the next name list to the profile doc. Supply
  *                    `client.updateKinfolkTags(loaded, it)` or
  *                    `client.updateKinTags(loaded, it)`, passing the record you
- *                    LOADED so the whole-document write round-trips every other field.
+ *                    LOADED; both diff against it and merge only `tags`.
  */
 @Composable
 fun ProfileTagsSection(

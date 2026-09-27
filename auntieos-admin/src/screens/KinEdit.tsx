@@ -103,6 +103,19 @@ function toForm(k: KinDetail): FormState {
 }
 
 /**
+ * #895: the keys of [edited] whose value differs from [base], the form as it was
+ * loaded. A save sends only these, so a field the operator did not touch is never
+ * rewritten with the value read at load time.
+ */
+function changedKinFields(edited: KinEditPatch, base: FormState): KinEditPatch {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(edited)) {
+    if (value !== (base as Record<string, unknown>)[key]) out[key] = value;
+  }
+  return out as KinEditPatch;
+}
+
+/**
  * Kin (pet) editor: the WRITE surface KinView's Edit action opens. Loads the
  * flat `kin/{id}` doc (getKin), edits the rich flat fields, and saves via
  * `updateKin` (a direct rules-backed merge on the flat collection, NOT the
@@ -162,8 +175,8 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
     setSaving(true);
     setError(null);
     try {
-      // Send every editable field (updateDoc is a merge; status stays owned by archive).
-      const patch: KinEditPatch = {
+      // Every editable field as the form now holds it (status stays owned by archive).
+      const edited: KinEditPatch = {
         name: form.name.trim(),
         species: form.species,
         breed: form.breed,
@@ -184,7 +197,12 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
         // for KinView's read-only row instead of blanking it.
         officeNotes: form.officeNotes,
       };
-      await updateKin(kinId, patch);
+      // #895: send only what the operator changed since the load. `updateDoc`
+      // merges, but a field sent unchanged still writes the value read at load
+      // time, which would undo a household's portal edit made in the meantime.
+      const patch =
+        loaded.status === 'ready' ? changedKinFields(edited, toForm(loaded.data)) : edited;
+      if (Object.keys(patch).length > 0) await updateKin(kinId, patch);
       setSaving(false);
       onDone();
     } catch (err) {

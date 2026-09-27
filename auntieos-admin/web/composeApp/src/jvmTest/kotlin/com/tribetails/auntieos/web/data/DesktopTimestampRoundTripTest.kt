@@ -104,8 +104,10 @@ class DesktopTimestampRoundTripTest {
 
     /**
      * The defect as the issue describes it: a kin whose `updatedAt` is a
-     * Timestamp (23 of 24 live kin), loaded and saved unchanged through the
-     * real desktop kin save.
+     * Timestamp (23 of 24 live kin), loaded and saved through the real desktop
+     * kin save. #895 moved kin saves to a merge of the changed fields only, so
+     * an unchanged `updatedAt` is no longer sent at all; this pins that a kin
+     * write that does carry `updatedAt` still sends it as a Timestamp.
      */
     @Test
     fun aKinLoadedAndSavedKeepsItsUpdatedAtTimestamp() = runBlocking {
@@ -117,10 +119,10 @@ class DesktopTimestampRoundTripTest {
         val kin = JvmFirestoreRest.getDoc<Kin>("kin", "k1")!!
         assertEquals("2025-03-04T05:06:07.123456Z", kin.updatedAt, "the model reads the timestamp as its ISO string")
 
-        assertEquals(WriteResult.Ok(Unit), platformUpdateKin(kin))
+        assertEquals(WriteResult.Ok(Unit), platformUpdateKinFields("k1", kinChanges(kin, kin.copy(updatedAt = "2025-03-04T05:06:08Z"))))
 
         val updatedAt = onlyWriteFields()["updatedAt"]!!.jsonObject
-        assertEquals(ts("2025-03-04T05:06:07.123456Z"), updatedAt, "updatedAt went back as $updatedAt")
+        assertEquals(ts("2025-03-04T05:06:08Z"), updatedAt, "updatedAt went back as $updatedAt")
     }
 
     /**
@@ -136,8 +138,8 @@ class DesktopTimestampRoundTripTest {
             put("updatedAt", str("2025-03-04T05:06:07.123Z"))
         })
         val kin = JvmFirestoreRest.getDoc<Kin>("kin", "k2")!!
-        platformUpdateKin(kin)
-        assertEquals(str("2025-03-04T05:06:07.123Z"), onlyWriteFields()["updatedAt"])
+        platformUpdateKinFields("k2", kinChanges(kin, kin.copy(updatedAt = "2025-03-04T05:06:08.000Z")))
+        assertEquals(str("2025-03-04T05:06:08.000Z"), onlyWriteFields()["updatedAt"])
     }
 
     // ── what the codec decides ──────────────────────────────────────────────
@@ -210,8 +212,8 @@ class DesktopTimestampRoundTripTest {
     fun aDocReadThroughACollectionListKeepsItsTimestamps() = runBlocking {
         seed("kin/k3", buildJsonObject { put("kinfolkId", str("kf1")); put("updatedAt", ts("2025-01-01T00:00:00Z")) })
         val kin = JvmFirestoreRest.list<Kin>("kin").single()
-        platformUpdateKin(kin)
-        assertEquals(ts("2025-01-01T00:00:00Z"), onlyWriteFields()["updatedAt"])
+        platformUpdateKinFields("k3", kinChanges(kin, kin.copy(updatedAt = "2025-01-01T00:00:01Z")))
+        assertEquals(ts("2025-01-01T00:00:01Z"), onlyWriteFields()["updatedAt"])
     }
     /** A collectionGroup query (the incoming kinCares queue) records under the doc's full path. */
     @Test
@@ -305,7 +307,6 @@ class DesktopTimestampRoundTripTest {
             return timeFields
         }
         val covered = mapOf(
-            "kin" to check("kin", "k9", Kin.serializer(), { platformUpdateKin(it) }),
             "kin_care_reports" to check("kin_care_reports", "r9", KinCareReport.serializer(), { platformUpdateKinTaleReport(it) }),
             "kintale_templates" to check("kintale_templates", "t9", KinTaleTemplate.serializer(), { platformUpdateKinTaleTemplate(it) }),
             "payments" to check("payments", "p9", Payment.serializer(), { platformRecordPayment(it, "p9") }),
@@ -315,6 +316,8 @@ class DesktopTimestampRoundTripTest {
             "dynamic_fields" to check("dynamic_fields", "f9", DynamicField.serializer(), { platformUpdateDynamicField(it) }),
         )
         println("[#857] timestamp fields checked per collection: $covered")
-        assertTrue(covered.getValue("kin").contains("updatedAt"))
+        // #895: kin left this sweep; its saves are merges of changed fields only
+        // (DesktopKinMergeTest), so an unchanged kin writes nothing.
+        assertTrue(covered.getValue("kin_care_reports").contains("updatedAt"))
     }
 }
