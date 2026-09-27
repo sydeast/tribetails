@@ -406,7 +406,9 @@ describe('recordPayment: account credit is the amount the admin entered, into th
     expect(res.unappliedCents).toBe(12000);
     expect(res.creditedToAccountCents).toBe(0);
     expect(ctx.writes.find((w) => w.path === 'families/fam1')).toBeUndefined();
-    expect(paymentWriteOf(ctx)?.data).toMatchObject({ autoApply: true, unappliedCents: 12000, creditedToAccountCents: 0 });
+    // The row says no credit was given, so no ledger screen can call it held.
+    expect(paymentWriteOf(ctx)?.data).toMatchObject({ autoApply: false, unappliedCents: 12000, creditedToAccountCents: 0 });
+    expect(res.autoApply).toBe(false);
   });
   it('leaves the balance alone when no credit is chosen, and says so', async () => {
     const ctx = seed({ invoice });

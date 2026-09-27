@@ -316,7 +316,8 @@ describe('#977 a linked row whose applied part cannot be read gets no credit', (
     expect(res.creditedToAccountCents).toBe(0);
     expect(creditedToFamily()).toBe(0);
     // Still recorded, with the figure she would need to credit it by hand.
-    expect(ledgerRow()).toMatchObject({ amountCents: 13750, autoApply: true, creditedToAccountCents: 0 });
+    // #988: the row's autoApply says whether credit was given, and none was.
+    expect(ledgerRow()).toMatchObject({ amountCents: 13750, autoApply: false, creditedToAccountCents: 0 });
   });
 
   it('a settlement id that names no row under that invoice credits nothing', async () => {

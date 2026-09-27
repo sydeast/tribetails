@@ -97,7 +97,7 @@ import { PAYMENT_APPLIED_CLAIM_FIELD, claimableMarkInvoicePaidOwner } from '../l
  *
  *   `fee`                    the processor's cut. Stored as `fee` + `feeCents`.
  *   `apply`                  the "Apply: $" box. ONE invoice, never a list.
- *   `autoApply`              recorded only since #988; the credit is the
+ *   `autoApply`              moves no money since #988; the credit is the
  *                            admin's `creditToAccountCents`, into the
  *                            household's EXISTING account credit.
  *   `sendConfirmationEmail`  enqueue the existing `invoice.payment.applied`
@@ -220,9 +220,10 @@ export const Args = z.object({
    * #988: IT NO LONGER MOVES MONEY BY ITSELF. Operator ruling, 2026-09-27: an
    * overpayment is all tip, and account credit happens only when she enters an
    * amount. The amount is `creditToAccountCents` below. This flag is still
-   * accepted and stored (new clients send it as `creditToAccountCents > 0`), and
-   * an install from before #988 that sends `true` with no amount credits
-   * NOTHING, where it used to credit the whole leftover.
+   * accepted (new clients send it as `creditToAccountCents > 0`), and an install
+   * from before #988 that sends `true` with no amount credits NOTHING, where it
+   * used to credit the whole leftover. The row stores whether credit was
+   * actually given; the request's own flag goes to the audit payload.
    */
   autoApply: z.boolean().default(false),
   /**
@@ -346,7 +347,7 @@ export const Result = z
     proceedsCents: CentsSchema,
     /** What she keeps of the tip: `tipGross - fee`. Signed; a fee can exceed a small tip. */
     tipNetCents: SignedCentsSchema,
-    /** The `autoApply` flag as sent. Since #988 it moves no money; `creditedToAccountCents` is what was credited. */
+    /** #988: whether account credit was given, i.e. `creditedToAccountCents > 0`. Not an echo of the request flag. */
     autoApply: z.boolean(),
     /** What the apply did, or null when no invoice balance was touched. */
     application: PaymentApplicationSchema.nullable(),
@@ -546,6 +547,12 @@ export async function recordPaymentHandler(
     }
   }
   const creditedToAccountCents = chosenCreditCents;
+  // WHAT THE ROW AND THE ANSWER CALL `autoApply`: whether credit was actually
+  // given. The ledger screens on web and Android say "held as credit" off this
+  // flag, so storing an old install's bare tick would have them claim a credit
+  // that was never made. What the client sent is kept in the audit payload as
+  // `autoApplyRequested`.
+  const autoApplied = creditedToAccountCents > 0;
   if (args.autoApply && args.creditToAccountCents === undefined) {
     // An install from before #988: the tick used to mean "credit the whole
     // leftover". It now credits nothing; logged so those submissions can be found.
@@ -665,8 +672,10 @@ export async function recordPaymentHandler(
       appliedCents: money.appliedCents,
       unappliedCents: money.unappliedCents,
       proceedsCents: money.proceedsCents,
-      autoApply: args.autoApply,
-      // What of the leftover actually reached the household's account credit.
+      // #988: true only when the admin chose a credit and it was given.
+      autoApply: autoApplied,
+      // What of the leftover actually reached the household's account credit:
+      // since #988, exactly the amount the admin entered.
       creditedToAccountCents,
       // #977: the `invoices/{invoiceId}/payments` row `appliedCents` was read
       // from in the two-step flow; '' when this call applied (or linked)
@@ -757,7 +766,9 @@ export async function recordPaymentHandler(
       appliedCents: money.appliedCents,
       unappliedCents: money.unappliedCents,
       proceedsCents: money.proceedsCents,
-      autoApply: args.autoApply,
+      autoApply: autoApplied,
+      autoApplyRequested: args.autoApply,
+      creditToAccountCentsRequested: args.creditToAccountCents ?? null,
       creditedToAccountCents,
       settledByInvoicePaymentId: args.settledByInvoicePaymentId ?? null,
       appliedInvoiceId: application?.invoiceId ?? null,
@@ -837,7 +848,7 @@ export async function recordPaymentHandler(
       unappliedCents: money.unappliedCents,
       feeCents,
       appliedInvoiceId: application?.invoiceId ?? '',
-      autoApply: args.autoApply,
+      autoApply: autoApplied,
       creditedToAccountCents,
       confirmationEmailSent,
       testMode: actor.testMode.active,
@@ -859,7 +870,7 @@ export async function recordPaymentHandler(
     // `paymentMoneyOf` always derives a net. The `?? 0` is the type narrowing,
     // not a fallback anything can reach.
     tipNetCents: money.tipNetCents ?? 0,
-    autoApply: args.autoApply,
+    autoApply: autoApplied,
     application,
     creditedToAccountCents,
     confirmationEmailSent,
