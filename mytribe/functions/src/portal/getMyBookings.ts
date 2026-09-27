@@ -6,6 +6,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
+import { householdStaffFlag } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { FULL_CPU } from '../lib/runtimeOptions';
@@ -137,7 +138,7 @@ export async function getMyBookingsHandler(
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
 
   const firestore = db();
-  const { kinfolkId } = await resolveKinfolkAccess(uid, req.data?.kinfolkId, req.auth?.token?.admin === true, 'getMyBookings');
+  const { kinfolkId } = await resolveKinfolkAccess(uid, req.data?.kinfolkId, householdStaffFlag(req.auth, 'getMyBookings'), 'getMyBookings');
 
   const snap = await firestore
     .collectionGroup('kinCares')

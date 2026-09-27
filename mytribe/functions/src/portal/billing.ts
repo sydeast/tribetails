@@ -6,6 +6,7 @@ import { getStripe } from '../lib/stripe';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
+import { refuseAuntie } from '../lib/staffGate';
 import { requireKinfolkPrimary } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
@@ -161,6 +162,8 @@ export async function getMyPaymentMethodHandler(
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
+  // #984: money. An Auntie is refused here by role, not by her tribe count.
+  refuseAuntie(req.auth, 'getMyPaymentMethod');
   const args = parseArgs(GetMyPaymentMethodArgs, req.data, 'getMyPaymentMethod');
   const { kinfolkId, clientData } = await resolveOwnBillingHousehold(
     uid,
@@ -231,6 +234,8 @@ export async function createBillingSetupSessionHandler(
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
+  // #984: money. An Auntie is refused here by role, not by her tribe count.
+  refuseAuntie(req.auth, 'createBillingSetupSession');
   const args = parseArgs(CreateBillingSetupSessionArgs, req.data, 'createBillingSetupSession');
   const { kinfolkId, clientData } = await resolveOwnBillingHousehold(
     uid,
@@ -299,6 +304,8 @@ export async function syncMyPaymentMethodHandler(
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
+  // #984: money. An Auntie is refused here by role, not by her tribe count.
+  refuseAuntie(req.auth, 'syncMyPaymentMethod');
   const args = parseArgs(SyncMyPaymentMethodArgs, req.data, 'syncMyPaymentMethod');
   const { kinfolkId, clientData } = await resolveOwnBillingHousehold(
     uid,
@@ -438,6 +445,8 @@ export async function removeMyPaymentMethodHandler(
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
+  // #984: money. An Auntie is refused here by role, not by her tribe count.
+  refuseAuntie(req.auth, 'removeMyPaymentMethod');
   const args = parseArgs(RemoveMyPaymentMethodArgs, req.data, 'removeMyPaymentMethod');
   const { kinfolkId, clientData } = await resolveOwnBillingHousehold(
     uid,

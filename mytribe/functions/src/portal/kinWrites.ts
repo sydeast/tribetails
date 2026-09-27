@@ -5,6 +5,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
+import { householdStaffFlag } from '../lib/staffGate';
 import { requireKinfolkPerm } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
@@ -70,7 +71,7 @@ export async function addKinHandler(req: CallableRequest<unknown>): Promise<{ ki
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const args = AddArgs.parse(req.data);
-  const hasAdminClaim = req.auth?.token?.admin === true;
+  const hasAdminClaim = householdStaffFlag(req.auth, 'addKin');
   const kinfolkId = await resolveKinfolkId(uid, args.kinfolkId, hasAdminClaim, 'addKin');
   await requireKinfolkPerm(uid, kinfolkId, 'kin_edit', hasAdminClaim, 'addKin');
 
@@ -90,7 +91,7 @@ export async function updateKinHandler(req: CallableRequest<unknown>): Promise<{
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const args = UpdateArgs.parse(req.data);
-  const hasAdminClaim = req.auth?.token?.admin === true;
+  const hasAdminClaim = householdStaffFlag(req.auth, 'updateKin');
   const kinfolkId = await resolveKinfolkId(uid, args.kinfolkId, hasAdminClaim, 'updateKin');
   await requireKinfolkPerm(uid, kinfolkId, 'kin_edit', hasAdminClaim, 'updateKin');
 
@@ -111,7 +112,7 @@ export async function archiveKinHandler(req: CallableRequest<unknown>): Promise<
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const args = ArchiveArgs.parse(req.data);
-  const hasAdminClaim = req.auth?.token?.admin === true;
+  const hasAdminClaim = householdStaffFlag(req.auth, 'archiveKin');
   const kinfolkId = await resolveKinfolkId(uid, args.kinfolkId, hasAdminClaim, 'archiveKin');
   await requireKinfolkPerm(uid, kinfolkId, 'kin_edit', hasAdminClaim, 'archiveKin');
 

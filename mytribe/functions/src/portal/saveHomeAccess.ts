@@ -5,6 +5,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
+import { householdStaffFlag } from '../lib/staffGate';
 import { requireKinfolkPerm } from '../lib/memberGate';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
@@ -58,7 +59,7 @@ export async function saveHomeAccessHandler(req: CallableRequest<unknown>): Prom
     throw new HttpsError('invalid-argument', `A custom field cannot be both saved and removed: ${conflicts.join(', ')}.`);
   }
   const firestore = db();
-  const hasAdminClaim = req.auth?.token?.admin === true;
+  const hasAdminClaim = householdStaffFlag(req.auth, 'saveHomeAccess');
   // Was a hard clients/{uid}.kinfolkIds check with no staff path, so an
   // operator got permission-denied here even though requireKinfolkPerm below
   // (and the read side) already knew how to let staff through. Same resolver

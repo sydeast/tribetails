@@ -1,3 +1,4 @@
+import { HttpsError } from 'firebase-functions/v2/https';
 import { isAuntieOperator } from './operatorAllowlist';
 import { logEvent } from './logger';
 import { STAFF_ROLE_AUNTIE, auntieMayCall } from './auntieAccess';
@@ -110,4 +111,60 @@ export function staffBypass(
     return false;
   }
   return true;
+}
+/**
+ * Refuse a caretaker outright, before any household is resolved.
+ *
+ * Issue #984. Two kinds of portal callable use this.
+ *
+ * MONEY (invoices, the invoice PDF, paying, credits, saved cards, quotes, the
+ * pay links on the home screen) calls it directly. Those used to refuse an
+ * Auntie only by construction: she carries no `admin` claim, so she fell into
+ * the kinfolk branch, and she had no `clients/{uid}.kinfolkIds`, so that branch
+ * refused her too. Operator ruling 2026-09-27 lets an Auntie be assigned
+ * tribes. Holding exactly one, the kinfolk branch resolves it and she reads
+ * that household's money. Holding two, the refusal she got was the one-tribe
+ * rule firing: the right answer for the wrong reason. Deliberately NOT built on
+ * `staffBypass`: a money callable must never be on that gate at all
+ * (`test/auntieAccess.test.ts` pins the source).
+ *
+ * HOUSEHOLD callables reach it through `householdStaffFlag` below, when the
+ * allowlist does not admit her to that callable.
+ *
+ * It keys on the role, not on how many tribes she holds, so it cannot drift
+ * when her assignments change. A token carrying both claims is refused as
+ * well, matching `isOwnerClaim`. Kinfolk and strangers pass through untouched.
+ */
+export function refuseAuntie(
+  auth: { uid?: string; token?: StaffToken } | undefined,
+  functionName: string,
+): void {
+  if (!isAuntieClaim(auth?.token)) return;
+  logEvent({
+    severity: 'info',
+    function: functionName,
+    event: 'auntie.callable.refused',
+    uid: auth?.uid,
+    extra: { note: 'A caretaker never acts as the household. Money, or a household callable not on lib/auntieAccess.ts.' },
+  });
+  throw new HttpsError('permission-denied', 'This is not available to caretaker accounts.');
+}
+/**
+ * The staff flag for a portal callable that resolves a household through
+ * `resolveKinfolkAccess`.
+ *
+ * Same answer as `staffBypass` for the owner, for an Auntie on the allowlist,
+ * and for kinfolk. The one difference: an Auntie the allowlist does NOT admit
+ * is refused here instead of falling into the kinfolk branch, where one
+ * assigned tribe would let her act as that household and two would trip the
+ * one-tribe rule. `firestore.rules:isKinfolk()` makes the same call: a
+ * caretaker is never a kinfolk. The allowlist stays the single switch.
+ */
+export function householdStaffFlag(
+  auth: { uid?: string; token?: StaffToken } | undefined,
+  functionName: string,
+): boolean {
+  if (staffBypass(auth, functionName)) return true;
+  refuseAuntie(auth, functionName);
+  return false;
 }

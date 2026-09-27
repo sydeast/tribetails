@@ -5,6 +5,7 @@ import { logEvent } from '../lib/logger';
 import { isClientLocationSharingEnabled, withoutCoordinates } from '../lib/locationSharing';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
+import { householdStaffFlag } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
 interface GetMyVisitsRequest {
@@ -60,7 +61,7 @@ export async function getMyVisitsHandler(
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
 
-  const { kinfolkId } = await resolveKinfolkAccess(uid, req.data?.kinfolkId, req.auth?.token?.admin === true, 'getMyVisits');
+  const { kinfolkId } = await resolveKinfolkAccess(uid, req.data?.kinfolkId, householdStaffFlag(req.auth, 'getMyVisits'), 'getMyVisits');
   // Wasm/JS clients can serialize limit as a double; Firestore requires an int.
   const limit = clamp(Math.trunc(Number(req.data?.limit ?? 10)) || 10, 1, 50);
 

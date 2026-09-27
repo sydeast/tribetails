@@ -5,6 +5,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
+import { householdStaffFlag } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
 const Args = z.object({
@@ -28,7 +29,7 @@ export async function getMyKinTaleMediaHandler(
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const args = Args.parse(req.data);
 
-  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, req.auth?.token?.admin === true, 'getMyKinTaleMedia');
+  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, householdStaffFlag(req.auth, 'getMyKinTaleMedia'), 'getMyKinTaleMedia');
 
   const taleSnap = await db().doc(`kin_care_reports/${args.taleId}`).get();
   if (!taleSnap.exists) throw new HttpsError('not-found', 'KinTale not found.');

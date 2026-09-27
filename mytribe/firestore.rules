@@ -82,9 +82,20 @@ service cloud.firestore {
 
  // isKinfolk: set by setKinfolkClaim Cloud Function when MyTribe user is linked.
  // Claim shape: { role: 'kinfolk', kinfolkId: '<auntieos kinfolk doc id>' }
+ //
+ // #984: NEVER A CARETAKER. Operator ruling 2026-09-27 lets an Auntie be
+ // assigned tribes, and `clients/{uid}.kinfolkIds` is where an assignment
+ // lands. `syncKinfolkClaim` mints `role: 'kinfolk'` plus `kinfolkId` for any
+ // account holding exactly one id, and it keeps every other claim, so an
+ // Auntie assigned one tribe would carry both. Every household grant she needs
+ // is already on an `isStaff()` branch; the one thing the kinfolk branch adds
+ // for her is the household's invoices (`match /invoices`), which is money.
+ // So the role wins and the kinfolk branch never fires for her, however many
+ // tribes she holds. `test/rules/auntieAccess.test.ts` pins it.
     function isKinfolk() {
       return request.auth != null && request.auth.token.role == 'kinfolk'
-             && request.auth.token.kinfolkId != null;
+             && request.auth.token.kinfolkId != null
+             && !hasAuntieRole();
     }
 
  // ── MyTribe helpers ───────────────────────────────────────────────────────

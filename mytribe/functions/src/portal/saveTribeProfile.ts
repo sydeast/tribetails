@@ -5,6 +5,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
+import { householdStaffFlag } from '../lib/staffGate';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
@@ -74,7 +75,7 @@ export async function saveTribeProfileHandler(
   const { kinfolkId, isOperator } = await resolveKinfolkAccess(
     uid,
     args.kinfolkId,
-    req.auth?.token?.admin === true,
+    householdStaffFlag(req.auth, 'saveTribeProfile'),
     'saveTribeProfile',
   );
 
@@ -116,7 +117,7 @@ export async function saveTribeProfileHandler(
   //     this whole call with the message a new client would show;
   //   - without Home access nothing is written to the contact and the reply
   //     carries emergencyContactIgnored.
-  const isAdmin = req.auth?.token?.admin === true;
+  const isAdmin = householdStaffFlag(req.auth, 'saveTribeProfile');
   const familiesRef = firestore.collection('families').doc(kinfolkId);
   const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
   if (args.displayName !== undefined) update['displayName'] = args.displayName;

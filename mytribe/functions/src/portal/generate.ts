@@ -2,6 +2,7 @@ import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https
 import { z, ZodError } from 'zod';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
+import { householdStaffFlag } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { requireKinfolkPerm } from '../lib/memberGate';
@@ -92,9 +93,9 @@ export async function generateHandler(req: CallableRequest<unknown>): Promise<Ge
     throw err;
   }
 
-  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, req.auth?.token?.admin === true, 'generate');
+  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, householdStaffFlag(req.auth, 'generate'), 'generate');
   // Copy assist is part of messaging: same permission as sending.
-  await requireKinfolkPerm(uid, kinfolkId, 'messaging_direct', req.auth?.token?.admin === true, 'generate');
+  await requireKinfolkPerm(uid, kinfolkId, 'messaging_direct', householdStaffFlag(req.auth, 'generate'), 'generate');
 
   // Hard (transactional) caps, unlike the chat send's best-effort check: every
   // accepted call costs real money, so a failed-open limiter is wrong here.

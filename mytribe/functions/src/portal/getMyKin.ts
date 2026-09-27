@@ -4,6 +4,7 @@ import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
+import { householdStaffFlag } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { isPortalHiddenKinStatus } from '../lib/kinStatus';
 
@@ -72,7 +73,7 @@ export async function getMyKinHandler(
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
 
   const firestore = db();
-  const { kinfolkId } = await resolveKinfolkAccess(uid, req.data?.kinfolkId, req.auth?.token?.admin === true, 'getMyKin');
+  const { kinfolkId } = await resolveKinfolkAccess(uid, req.data?.kinfolkId, householdStaffFlag(req.auth, 'getMyKin'), 'getMyKin');
 
   // NO SERVER-SIDE STATUS FILTER. This used to be
   // `.where('status', 'in', ['active', 'noLongerWithUs'])`, and Firestore's `in`
