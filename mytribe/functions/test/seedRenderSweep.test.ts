@@ -15,16 +15,13 @@ import { stripUnresolvedTokens } from '../src/notifications/templateParsers';
  * throw, leaves no raw `{{token}}` behind, and every button survives into
  * the plain-text part with the address it actually renders to.
  *
- * The two `{{#each visits}}` seeds (assignment.assigned,
- * kincare.booking.confirm) get a real two-item `visits` array in place of
- * `sampleDataFor`'s placeholder string -- see emailFrame.test.ts for the
- * dedicated loop-rendering assertions this sweep does not repeat.
+ * #962: the two `{{#each visits}}` seeds (assignment.assigned,
+ * kincare.booking.confirm) get their `visits` array straight from
+ * `sampleDataFor` now, same as every other field -- see
+ * previewEmailTemplate.test.ts for the dedicated sample-array assertions,
+ * and emailFrame.test.ts for the loop-rendering assertions this sweep does
+ * not repeat.
  */
-const LOOP_SEED_KEYS = new Set(['assignment.assigned', 'kincare.booking.confirm']);
-const SAMPLE_VISITS = [
-  { weekday: 'Thu', date: 'Sep 4', time: '9:00 AM' },
-  { weekday: 'Fri', date: 'Sep 5', time: '10:00 AM' },
-];
 
 /** Every `<a ... class="button">Label</a>` in a seed's raw content, as {label, href}. */
 function buttonsIn(content: string): Array<{ label: string; href: string }> {
@@ -53,7 +50,7 @@ describe('every seed renders for real, end to end', () => {
         headline: seed.emailHeadline,
         content: seed.emailContent,
       };
-      const data = { ...sampleDataFor(seed.key), ...(LOOP_SEED_KEYS.has(seed.key) ? { visits: SAMPLE_VISITS } : {}) };
+      const data = sampleDataFor(seed.key);
 
       const out = renderEmailParts({ ...sendPartsFor(doc), data });
 

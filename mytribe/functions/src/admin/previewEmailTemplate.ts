@@ -47,6 +47,24 @@ function setPath(target: Record<string, unknown>, path: string, value: unknown):
   node[parts[parts.length - 1]!] = value;
 }
 
+/**
+ * #962: merge fields whose real value is a LIST, not a string. `visits`
+ * (`notifications/visitDates.ts`'s `RenderedVisit[]`) is walked by
+ * `{{#each visits}}` in both loop templates (assignment.assigned,
+ * kincare.booking.confirm) -- sampling it as `[visits]` like every other
+ * field left the loop with nothing to iterate, so the preview showed an
+ * empty list while a real send renders every visit. Two rows, so the
+ * preview also shows the loop repeating, not just firing once.
+ */
+const LIST_FIELDS: Readonly<Record<string, (field: string) => unknown>> = {
+  visits: (field) =>
+    Array.from({ length: 2 }, (_, i) => ({
+      weekday: `[${field}.${i}.weekday]`,
+      date: `[${field}.${i}.date]`,
+      time: `[${field}.${i}.time]`,
+    })),
+};
+
 /** Sample merge data for a catalog key's known fields, so a preview never shows a raw `{{token}}`. */
 export function sampleDataFor(catalogKey?: string): Record<string, unknown> {
   // #953 review fix: `catalogKey` is operator-typed free text (the editor's
@@ -60,7 +78,13 @@ export function sampleDataFor(catalogKey?: string): Record<string, unknown> {
   const raw = catalogKey && Object.hasOwn(TEMPLATE_FIELDS, catalogKey) ? TEMPLATE_FIELDS[catalogKey] : undefined;
   const fields = Array.isArray(raw) ? raw : [];
   const out: Record<string, unknown> = {};
-  for (const f of fields) setPath(out, f, /link|url/i.test(f) ? SAMPLE_URL : `[${f}]`);
+  for (const f of fields) {
+    if (Object.hasOwn(LIST_FIELDS, f)) {
+      setPath(out, f, LIST_FIELDS[f]!(f));
+      continue;
+    }
+    setPath(out, f, /link|url/i.test(f) ? SAMPLE_URL : `[${f}]`);
+  }
   return out;
 }
 
