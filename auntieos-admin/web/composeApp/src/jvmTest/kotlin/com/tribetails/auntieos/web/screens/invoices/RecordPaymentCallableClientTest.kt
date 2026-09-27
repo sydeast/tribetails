@@ -17,6 +17,7 @@ import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.double
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -59,11 +60,11 @@ class RecordPaymentCallableClientTest {
         apply: String = "127.50",
         tip: String = "10",
         fee: String = "2.71",
-        autoApply: Boolean = false,
+        credit: String = "",
         sendConfirmation: Boolean = true,
     ): InvoicePaymentEntry {
         val form = parseRecordPaymentForm(
-            invoice, amountPaid, apply, tip, fee, "Venmo", "ref-9", "2026-09-27", " staff note ", autoApply, sendConfirmation,
+            invoice, amountPaid, apply, tip, fee, "Venmo", "ref-9", "2026-09-27", " staff note ", credit, sendConfirmation,
         )
         return (form as RecordPaymentForm.Ready).entry
     }
@@ -88,12 +89,14 @@ class RecordPaymentCallableClientTest {
     @Test
     fun theDialogCallsRecordPaymentWithAnApplyAKeyAndTheConfirmationTick() = runBlocking {
         JvmFirestoreFixtures.callableResponses = mapOf("recordPayment" to okBody)
-        val r = submitInvoicePayment(FirestoreClient(), entry(autoApply = true), PaymentSubmissionKeys())
+        // #988: $147.50 paid, $127.50 applied, $10 tip, and she leaves $10 as credit.
+        val r = submitInvoicePayment(FirestoreClient(), entry(amountPaid = "147.50", credit = "10"), PaymentSubmissionKeys())
         assertTrue(r is WriteResult.Ok, "$r")
 
         val p = sent().single()
         // The whole sum the client paid, gross tip included, with the fee beside it.
-        assertEquals(137.5, p["amount"]!!.jsonPrimitive.double)
+        assertEquals(147.5, p["amount"]!!.jsonPrimitive.double)
+        assertEquals(1000L, p["creditToAccountCents"]!!.jsonPrimitive.long)
         assertEquals(10.0, p["tip"]!!.jsonPrimitive.double)
         assertEquals(2.71, p["fee"]!!.jsonPrimitive.double)
         // One payment, one invoice: a single apply object for THIS invoice.
@@ -120,6 +123,7 @@ class RecordPaymentCallableClientTest {
         submitInvoicePayment(FirestoreClient(), entry(sendConfirmation = false), PaymentSubmissionKeys())
         val p = sent().single()
         assertFalse(p["autoApply"]!!.jsonPrimitive.boolean)
+        assertEquals(0L, p["creditToAccountCents"]!!.jsonPrimitive.long)
         assertFalse(p["sendConfirmationEmail"]!!.jsonPrimitive.boolean)
     }
 
@@ -241,22 +245,82 @@ class RecordPaymentCallableClientTest {
     fun aPendingOfficeCopyAndACreditAreBothReported() {
         val m = recordPaymentOutcomeMessage(outcome(officePending = true, credited = 1200), false)
         assertTrue(m.contains("office copy"), m)
-        assertTrue(m.contains("$12.00 was left over and has been added to the household's account balance"), m)
+        assertTrue(m.contains("$12.00 has been added to the household's account balance"), m)
     }
 
     // ── The form ────────────────────────────────────────────────────────────
 
     @Test
-    fun blankTipAndFeeAreZero() {
+    fun aBlankFeeIsZeroAndABlankTipTakesTheRestOfThePayment() {
+        // #988: $137.50 paid, $127.50 applied: the $10 left over is tip by default.
         val e = entry(tip = "", fee = "")
-        assertEquals(0.0, e.payment.tip)
+        assertEquals(10.0, e.payment.tip)
         assertEquals(0.0, e.fee)
+        assertEquals(0L, e.creditToAccountCents)
+    }
+
+    @Test
+    fun anExactPaymentWithABlankTipHasNoTip() {
+        val e = entry(amountPaid = "127.50", tip = "", fee = "")
+        assertEquals(0.0, e.payment.tip)
+    }
+
+    @Test
+    fun creditSheEntersComesOutOfTheTip() {
+        // $200 paid, $127.50 applied, $20 credit: the tip is the other $52.50.
+        val e = entry(amountPaid = "200", tip = "", credit = "20")
+        assertEquals(52.5, e.payment.tip)
+        assertEquals(2000L, e.creditToAccountCents)
+        assertEquals(200.0, e.payment.amount)
+    }
+
+    @Test
+    fun aCreditLargerThanTheLeftoverIsRefused() {
+        val form = parseRecordPaymentForm(
+            invoice, "200", "127.50", "", "", "cash", "", "", "", "72.51", false,
+        )
+        assertTrue(form is RecordPaymentForm.Invalid)
+        assertTrue((form as RecordPaymentForm.Invalid).message.contains("more than the $72.50 left"), form.message)
+    }
+
+    @Test
+    fun aTypedTipAndCreditThatDoNotAddUpAreRefused() {
+        val form = parseRecordPaymentForm(
+            invoice, "200", "127.50", "10", "", "cash", "", "", "", "20", false,
+        )
+        assertTrue(form is RecordPaymentForm.Invalid)
+        assertTrue(
+            (form as RecordPaymentForm.Invalid).message.contains("add up to $157.50, not the $200.00 paid"),
+            form.message,
+        )
+    }
+
+    @Test
+    fun anUnreadableCreditIsRefusedNotDropped() {
+        val form = parseRecordPaymentForm(
+            invoice, "200", "127.50", "", "", "cash", "", "", "", "lots", false,
+        )
+        assertTrue(form is RecordPaymentForm.Invalid)
+        assertTrue((form as RecordPaymentForm.Invalid).message.contains("is not an amount of account credit"))
+    }
+
+    @Test
+    fun theSplitLineSaysWhereEveryDollarGoes() {
+        assertEquals(
+            "$200.00 paid: $127.50 to this invoice, $52.50 tip (the $2.71 fee comes out of it), $20.00 account credit.",
+            recordPaymentSplitLine(recordPaymentSplit("200", "127.50", "", "20"), "2.71"),
+        )
+        assertEquals(
+            "$127.50 paid: $127.50 to this invoice, $0.00 tip, $0.00 account credit.",
+            recordPaymentSplitLine(recordPaymentSplit("127.50", "127.50", "", ""), ""),
+        )
+        assertTrue(recordPaymentSplitLine(recordPaymentSplit("abc", "127.50", "", ""), "").contains("cannot be read"))
     }
 
     @Test
     fun anApplyPlusTipLargerThanThePaymentIsRefusedBeforeTheCall() {
         val form = parseRecordPaymentForm(
-            invoice, "100", "95", "10", "", "cash", "", "", "", false, false,
+            invoice, "100", "95", "10", "", "cash", "", "", "", "", false,
         )
         assertTrue(form is RecordPaymentForm.Invalid)
         assertTrue((form as RecordPaymentForm.Invalid).message.contains("does not cover"), form.message)
@@ -265,7 +329,7 @@ class RecordPaymentCallableClientTest {
     @Test
     fun anUnreadableFeeIsRefusedNotDropped() {
         val form = parseRecordPaymentForm(
-            invoice, "100", "90", "", "two", "cash", "", "", "", false, false,
+            invoice, "100", "90", "", "two", "cash", "", "", "", "", false,
         )
         assertTrue(form is RecordPaymentForm.Invalid)
         assertTrue((form as RecordPaymentForm.Invalid).message.contains("is not a fee"))

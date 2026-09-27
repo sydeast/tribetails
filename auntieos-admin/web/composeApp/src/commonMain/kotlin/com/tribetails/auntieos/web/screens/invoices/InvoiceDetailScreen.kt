@@ -645,7 +645,9 @@ private fun RecordPaymentDialog(
     var reference by remember(invoice._id, visible) { mutableStateOf("") }
     var date      by remember(invoice._id, visible) { mutableStateOf(nowIso().take(10)) }
     var notes     by remember(invoice._id, visible) { mutableStateOf("") }
-    var autoApply by remember(invoice._id, visible) { mutableStateOf(false) }
+    // #988: "Leave as account credit", an amount, blank for none. It replaced the
+    // auto-apply tick: a leftover is tip unless she enters a credit here.
+    var credit    by remember(invoice._id, visible) { mutableStateOf("") }
     var sendConfirmation by remember(invoice._id, visible) { mutableStateOf(false) }
     val canSave = amount.isNotBlank() && apply.isNotBlank() && method.isNotBlank()
     AuntieDialog(
@@ -662,7 +664,7 @@ private fun RecordPaymentDialog(
                 enabled = canSave && !submitting,
                 onClick = {
                     when (val form = parseRecordPaymentForm(
-                        invoice, amount, apply, tip, fee, method, reference, date, notes, autoApply, sendConfirmation,
+                        invoice, amount, apply, tip, fee, method, reference, date, notes, credit, sendConfirmation,
                     )) {
                         is RecordPaymentForm.Invalid -> onInvalid(form.message)
                         is RecordPaymentForm.Ready   -> onSubmit(form.entry)
@@ -685,18 +687,19 @@ private fun RecordPaymentDialog(
             val on = !submitting
             BottomBorderField(amount, { amount = it }, label = "Amount paid *", placeholder = "the whole sum, tip included", keyboardType = KeyboardType.Decimal, enabled = on, modifier = Modifier.fillMaxWidth())
             BottomBorderField(apply, { apply = it }, label = "Apply to this invoice *", keyboardType = KeyboardType.Decimal, enabled = on, modifier = Modifier.fillMaxWidth())
-            BottomBorderField(tip, { tip = it }, label = "Tip (gross)", keyboardType = KeyboardType.Decimal, enabled = on, modifier = Modifier.fillMaxWidth())
+            BottomBorderField(tip, { tip = it }, label = "Tip (gross)", placeholder = "the rest of the payment", keyboardType = KeyboardType.Decimal, enabled = on, modifier = Modifier.fillMaxWidth())
             BottomBorderField(fee, { fee = it }, label = "Processor fee", keyboardType = KeyboardType.Decimal, enabled = on, modifier = Modifier.fillMaxWidth())
+            BottomBorderField(credit, { credit = it }, label = "Leave as account credit", placeholder = "0.00", keyboardType = KeyboardType.Decimal, enabled = on, modifier = Modifier.fillMaxWidth())
+            // #988: where the money goes, before Save.
+            Text(
+                recordPaymentSplitLine(recordPaymentSplit(amount, apply, tip, credit), fee),
+                style = AuntieTheme.typography.bodySmall,
+                color = AuntieTheme.colors.textDim,
+            )
             BottomBorderField(method, { method = it }, label = "Method *", placeholder = "Venmo, PayPal, cash...", enabled = on, modifier = Modifier.fillMaxWidth())
             BottomBorderField(reference, { reference = it }, label = "Reference #", enabled = on, modifier = Modifier.fillMaxWidth())
             BottomBorderField(date, { date = it }, label = "Date (YYYY-MM-DD)", enabled = on, modifier = Modifier.fillMaxWidth())
             BottomBorderField(notes, { notes = it }, label = "Staff-only notes", enabled = on, modifier = Modifier.fillMaxWidth())
-            AuntieCheckbox(
-                checked = autoApply,
-                onCheckedChange = { autoApply = it },
-                label = "Put any unapplied amount on the household's account balance",
-                enabled = on,
-            )
             AuntieCheckbox(
                 checked = sendConfirmation,
                 onCheckedChange = { sendConfirmation = it },
