@@ -7,7 +7,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { hasKinfolkPerm } from '../lib/memberGate';
-import { isOwner } from '../lib/staffGate';
+import { isOwner, householdStaffFlag } from '../lib/staffGate';
 import {
   LEGACY_EMERGENCY_CONTACT_KEYS,
   legacyContactFromRows,
@@ -49,14 +49,17 @@ export async function getMyTribeProfileHandler(
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
 
   const firestore = db();
-  const { kinfolkId } = await resolveKinfolkAccess(uid, req.data?.kinfolkId, req.auth?.token?.admin === true, 'getMyTribeProfile');
+  // #984: householdStaffFlag, not the raw `admin` claim, so an Auntie resolves as staff
+  // however many tribes she is assigned. Allowlisted in lib/auntieAccess.ts.
+  const isAdmin = householdStaffFlag(req.auth, 'getMyTribeProfile');
+  const { kinfolkId } = await resolveKinfolkAccess(uid, req.data?.kinfolkId, isAdmin, 'getMyTribeProfile');
 
   const [familySnap, kinfolkSnap, canReadContacts] = await Promise.all([
     firestore.collection('families').doc(kinfolkId).get(),
     firestore.doc(`kinfolk/${kinfolkId}`).get(),
     // #829: the legacy Emergency Contact rows follow listEmergencyContacts' read
     // rule. A member who is not ACTIVE gets the rest of the profile without them.
-    canReadEmergencyContacts(firestore, uid, kinfolkId, req.auth?.token?.admin === true, 'getMyTribeProfile'),
+    canReadEmergencyContacts(firestore, uid, kinfolkId, isAdmin, 'getMyTribeProfile'),
   ]);
   const fam = (familySnap.data() ?? {}) as Record<string, unknown>;
   const storedFields = parseCustomFields(fam['customFields']);
@@ -78,7 +81,6 @@ export async function getMyTribeProfileHandler(
   // return rather than left dangling, because a v2 function can be frozen as
   // soon as it responds and an unawaited write may never land. Staff are never
   // an old portal client, so they leave no record.
-  const isAdmin = req.auth?.token?.admin === true;
   const served =
     canReadContacts && !isOwner(uid, isAdmin, 'getMyTribeProfile') ? legacyContactFromRows(profile.customFields) : null;
   const bookkeeping: Promise<void> =
@@ -96,7 +98,7 @@ export async function getMyTribeProfileHandler(
 
   const [accessSnap, canSeeHome] = await Promise.all([
     firestore.doc(`families/${kinfolkId}/homeAccess/current`).get(),
-    hasKinfolkPerm(uid, kinfolkId, 'home_access', req.auth?.token?.admin === true, 'getMyTribeProfile'),
+    hasKinfolkPerm(uid, kinfolkId, 'home_access', isAdmin, 'getMyTribeProfile'),
   ]);
   const acc = (accessSnap.data() ?? {}) as Record<string, unknown>;
   const homeAccess: HomeAccessDto = {

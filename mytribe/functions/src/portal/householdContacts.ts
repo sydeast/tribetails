@@ -5,6 +5,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
+import { householdStaffFlag } from '../lib/staffGate';
 import { requireKinfolkPrimary } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
@@ -182,7 +183,7 @@ async function gate(
 ): Promise<{ uid: string; kinfolkId: string }> {
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
-  const isAdmin = req.auth?.token?.admin === true;
+  const isAdmin = householdStaffFlag(req.auth, functionName);
   const { kinfolkId } = await resolveKinfolkAccess(uid, kinfolkIdArg, isAdmin, functionName);
   // Same gate as addSecondaryContact and listMembers: PRIMARY or staff. A
   // SECONDARY manages nobody, not even a contact who cannot sign in.

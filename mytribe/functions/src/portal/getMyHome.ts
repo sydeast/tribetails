@@ -4,6 +4,7 @@ import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
+import { refuseAuntie } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { FULL_CPU } from '../lib/runtimeOptions';
 import { payMethodSettingsFrom, resolveHomePayMethods, type PayMethod } from '../lib/paymentMethods';
@@ -109,6 +110,10 @@ export async function getMyHomeHandler(
   if (!uid) {
     throw new HttpsError('unauthenticated', 'Sign-in required.');
   }
+  // #984: money. `payMethods` is the business's Venmo, PayPal, Cash App and
+  // Stripe links, and the name fallback below reads the household's dossier.
+  // An Auntie is refused here by role, not by how many tribes she holds.
+  refuseAuntie(req.auth, 'getMyHome');
 
   const firestore = db();
   const { kinfolkId } = await resolveKinfolkAccess(uid, req.data?.kinfolkId, req.auth?.token?.admin === true, 'getMyHome');

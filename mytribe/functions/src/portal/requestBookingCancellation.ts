@@ -5,6 +5,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
+import { householdStaffFlag } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
@@ -82,7 +83,7 @@ export async function requestBookingCancellationHandler(
     throw err;
   }
 
-  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, req.auth?.token?.admin === true, 'requestBookingCancellation');
+  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, householdStaffFlag(req.auth, 'requestBookingCancellation'), 'requestBookingCancellation');
   const visitRef = db().doc(
     `families/${kinfolkId}/bookings/${args.batchId}/kinCares/${args.visitId}`,
   );

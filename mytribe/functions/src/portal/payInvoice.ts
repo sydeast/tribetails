@@ -6,6 +6,7 @@ import { getStripe } from '../lib/stripe';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
+import { refuseAuntie } from '../lib/staffGate';
 import { requireKinfolkPrimary } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
@@ -95,6 +96,8 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
+  // #984: money. An Auntie is refused here by role, not by her tribe count.
+  refuseAuntie(req.auth, 'payInvoice');
 
   const args = Args.parse(req.data);
   const firestore = db();

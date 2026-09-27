@@ -5,6 +5,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
+import { householdStaffFlag } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
@@ -102,7 +103,7 @@ export async function requestBookingRescheduleHandler(
   const { kinfolkId } = await resolveKinfolkAccess(
     uid,
     args.kinfolkId,
-    req.auth?.token?.admin === true,
+    householdStaffFlag(req.auth, 'requestBookingReschedule'),
     'requestBookingReschedule',
   );
   const visitRef = db().doc(

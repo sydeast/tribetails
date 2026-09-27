@@ -5,6 +5,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
+import { householdStaffFlag } from '../lib/staffGate';
 import { requireKinfolkPrimary } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
@@ -52,7 +53,7 @@ export async function addSecondaryContactHandler(req: CallableRequest<unknown>):
   const { kinfolkId } = await resolveKinfolkAccess(
     uid,
     args.kinfolkId,
-    req.auth?.token?.admin === true,
+    householdStaffFlag(req.auth, 'addSecondaryContact'),
     'addSecondaryContact',
   );
 
@@ -64,7 +65,7 @@ export async function addSecondaryContactHandler(req: CallableRequest<unknown>):
   // requireKinfolkPrimary mirrors mintInviteFromPrimary's loadMember+requirePrimary:
   // operator bypasses, legacy single-primary (no member doc) falls back to allow,
   // an ACTIVE non-PRIMARY member is denied. Matches mintInviteFromPrimary.ts:33-37.
-  await requireKinfolkPrimary(uid, kinfolkId, req.auth?.token?.admin === true, 'addSecondaryContact');
+  await requireKinfolkPrimary(uid, kinfolkId, householdStaffFlag(req.auth, 'addSecondaryContact'), 'addSecondaryContact');
 
   // Reject self-invites: caller cannot add their own email as the secondary.
   const lowerInvited = args.invitedEmail.toLowerCase();

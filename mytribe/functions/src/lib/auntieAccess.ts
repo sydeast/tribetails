@@ -88,6 +88,38 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   'addBookingNote',
   'addInternalBookingNote',
 
+  // ── Portal reads and writes on a household record (#984) ────────────────
+  // Operator ruling 2026-09-27: an Auntie may be assigned several tribes, the
+  // same as the owner. These portal callables resolve the household through
+  // resolveKinfolkAccess; listed, an Auntie takes its staff branch instead of
+  // the kinfolk one, whose one-tribe rule refused her at two. Each returns or
+  // writes household, kin, visit, KinTale or media data and nothing priced.
+  // Left out on purpose, with the rule that kept them out:
+  //   getMyHome, getMyInvoices, getMyInvoicePdf: money (rule 1), refused by
+  //     role with refuseAuntie.
+  //   archiveKin, removeHouseholdContact: destructive (rule 6).
+  //   addSecondaryContact: grants a person portal access, billing_full
+  //     included (rules 1 and 3).
+  //   sendKinfolkMessage, getMyConversation, markThreadRead, generate: the
+  //     household's side of the thread. A send is stored as senderRole
+  //     'kinfolk', so she would speak as the household. Her side is
+  //     replyToConversation and friends below (rule 7).
+  //   requestBookingCancellation, requestBookingReschedule: the household
+  //     asking. She answers through the admin resolve callables (rule 7).
+  'getMyKin',
+  'getMyKinTales',
+  'getMyKinTaleMedia',
+  'getMyKinPhotos',
+  'getMyVisits',
+  'getMyBookings',
+  'getMyTribeProfile',
+  'saveTribeProfile',
+  'saveHomeAccess',
+  'addKin',
+  'updateKin',
+  'listHouseholdContacts', // admin Android's household screen calls it
+  'saveHouseholdContact', // and this one
+
   // ── Talking to a household ─────────────────────────────────────────────
   // She is the counterparty on these threads, not an observer of them.
   'listConversations',

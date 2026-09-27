@@ -5,6 +5,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
+import { refuseAuntie } from '../lib/staffGate';
 import { requireKinfolkPrimary } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
@@ -188,6 +189,8 @@ async function decideQuote(
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
+  // #984: money. An Auntie is refused here by role, not by her tribe count.
+  refuseAuntie(req.auth, functionName);
   const args = (decision === 'accepted' ? AcceptQuoteArgs : DenyQuoteArgs).parse(req.data);
 
   const firestore = db();

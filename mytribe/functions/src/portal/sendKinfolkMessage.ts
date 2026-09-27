@@ -4,6 +4,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
+import { householdStaffFlag } from '../lib/staffGate';
 import { requireKinfolkPerm } from '../lib/memberGate';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
@@ -112,8 +113,8 @@ export async function sendKinfolkMessageHandler(
     throw err;
   }
 
-  const { kinfolkId, isOperator } = await resolveKinfolkAccess(uid, args.kinfolkId, req.auth?.token?.admin === true, 'sendKinfolkMessage');
-  const member = await requireKinfolkPerm(uid, kinfolkId, 'messaging_direct', req.auth?.token?.admin === true, 'sendKinfolkMessage');
+  const { kinfolkId, isOperator } = await resolveKinfolkAccess(uid, args.kinfolkId, householdStaffFlag(req.auth, 'sendKinfolkMessage'), 'sendKinfolkMessage');
+  const member = await requireKinfolkPerm(uid, kinfolkId, 'messaging_direct', householdStaffFlag(req.auth, 'sendKinfolkMessage'), 'sendKinfolkMessage');
 
   const body = sanitizeRichText(args.body);
   if (body.length === 0) {
@@ -233,7 +234,7 @@ export async function getMyConversationHandler(
     throw err;
   }
 
-  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, req.auth?.token?.admin === true, 'getMyConversation');
+  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, householdStaffFlag(req.auth, 'getMyConversation'), 'getMyConversation');
   const messages = await readThread(kinfolkId);
 
   // Reading clears the kinfolk-side unread flag and stamps readAt on every
@@ -272,7 +273,7 @@ export async function markThreadReadHandler(
     throw err;
   }
 
-  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, req.auth?.token?.admin === true, 'markThreadRead');
+  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, householdStaffFlag(req.auth, 'markThreadRead'), 'markThreadRead');
   const markedCount = await markMessagesRead(kinfolkId, 'kinfolk');
   return { ok: true, kinfolkId, markedCount };
 }

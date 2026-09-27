@@ -85,6 +85,12 @@ describe('#944 the allowlist is a real list of real callables', () => {
       'sendInvoiceReminder', 'reviewAndSendDraftInvoice', 'createQuote', 'resendQuote',
       'listUninvoicedSessions', 'setSessionDoNotInvoice', 'logExpense', 'listExpenses',
       'payInvoice', 'redeemCredit',
+      // #984: the portal money callables. Each refuses an Auntie by role
+      // (refuseAuntie), and an allowlist line would not change that, but it
+      // would say the opposite of what the code does.
+      'getMyInvoices', 'getMyInvoicePdf', 'getMyHome', 'getMyPaymentMethod',
+      'createBillingSetupSession', 'syncMyPaymentMethod', 'removeMyPaymentMethod',
+      'acceptQuote', 'denyQuote', 'requestBooking',
     ];
     const leaked = money.filter((n) => AUNTIE_ALLOWED_CALLABLES.has(n));
     expect(leaked).toEqual([]);
@@ -246,12 +252,21 @@ describe('#944 money callables in the portal keep the owner-only bypass', () => 
     'portal/quoteDecision.ts',
     'portal/getMyInvoices.ts',
     'portal/getMyInvoicePdf.ts',
+    'portal/getMyHome.ts', // #984: the pay links, and a dossier read for the name
   ];
   it('none of them routes its staff check through staffBypass', () => {
     const offenders = MONEY_PORTAL_FILES.filter((rel) =>
       readFileSync(resolve(__dirname, '../src', rel), 'utf8').includes('staffBypass'),
     );
     expect(offenders).toEqual([]);
+  });
+  it('#984: each refuses an Auntie by role, before it resolves a household', () => {
+    // Refusal used to lean on her having no clients/{uid}.kinfolkIds. The
+    // 2026-09-27 ruling lets her hold them, so the refusal is now a line of code.
+    const withoutRefusal = [...MONEY_PORTAL_FILES, 'portal/requestBooking.ts'].filter(
+      (rel) => !readFileSync(resolve(__dirname, '../src', rel), 'utf8').includes('refuseAuntie(req.auth'),
+    );
+    expect(withoutRefusal).toEqual([]);
   });
   it('and each still has a staff check to speak of', () => {
     // Guards the test above from passing because a file was renamed away.

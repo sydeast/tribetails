@@ -488,3 +488,38 @@ describe('rules: #944 claim-shape edge cases', () => {
     await assertFails(db.doc('the_411/k1').get());
   });
 });
+describe('rules: #984 an Auntie assigned a tribe is still not kinfolk', () => {
+  afterEach(async () => cleanup());
+  afterAll(async () => shutdown());
+  /**
+   * Operator ruling 2026-09-27: an Auntie may be assigned tribes through
+   * `clients/{uid}.kinfolkIds`. With exactly one, `syncKinfolkClaim` mints
+   * `role: 'kinfolk'` and `kinfolkId` on top of her `staffRole`. Without the
+   * `!hasAuntieRole()` conjunct in `isKinfolk()`, that token reads the
+   * household's invoices through the kinfolk branch of `match /invoices`.
+   */
+  it('refuses her the assigned household invoices', async () => {
+    const env = await getEnv();
+    await seed('invoices/inv1', { kinfolkId: 'k1', amountMinor: 5000 });
+    const db = env
+      .authenticatedContext('auntie-1', { staffRole: 'auntie', role: 'kinfolk', kinfolkId: 'k1' })
+      .firestore();
+    await assertFails(db.doc('invoices/inv1').get());
+  });
+  it('still lets her read the household record, through isStaff', async () => {
+    const env = await getEnv();
+    await seed('kinfolk/k1', { firstName: 'A' });
+    await seed('kin/kin1', { kinfolkId: 'k1', name: 'Biscuit' });
+    const db = env
+      .authenticatedContext('auntie-1', { staffRole: 'auntie', role: 'kinfolk', kinfolkId: 'k1' })
+      .firestore();
+    await assertSucceeds(db.doc('kinfolk/k1').get());
+    await assertSucceeds(db.doc('kin/kin1').get());
+  });
+  it('leaves a real kinfolk reading their own invoices', async () => {
+    const env = await getEnv();
+    await seed('invoices/inv1', { kinfolkId: 'k1', amountMinor: 5000 });
+    const db = env.authenticatedContext('u-kin', { role: 'kinfolk', kinfolkId: 'k1' }).firestore();
+    await assertSucceeds(db.doc('invoices/inv1').get());
+  });
+});

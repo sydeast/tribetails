@@ -7,6 +7,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { resolveNonStaffKinfolkId } from '../lib/resolveNonStaffKinfolkId';
+import { refuseAuntie } from '../lib/staffGate';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { approveBookingSeriesCore } from '../admin/approveBookingSeriesCore';
@@ -823,6 +824,10 @@ export async function requestBookingHandler(
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
+  // #984: money. A request writes priced visits under the household and
+  // commits it to the bill. resolveNonStaffKinfolkId below would hand an
+  // Auntie assigned one tribe that household, so she is refused by role.
+  refuseAuntie(req.auth, 'requestBooking');
 
   const firestore = db();
 
