@@ -205,6 +205,17 @@ class TemplateService {
         templateId = o["templateId"]?.jsonPrimitive?.contentOrNull.orEmpty(),
         audience = o["audience"]?.jsonPrimitive?.contentOrNull,
         triggerKey = o["triggerKey"]?.jsonPrimitive?.contentOrNull,
-        active = o["active"]?.jsonPrimitive?.booleanOrNull ?: false,
+        active = isBindingActive(o["active"]?.jsonPrimitive?.booleanOrNull),
     )
+
+    companion object {
+        /**
+         * #965: a `listTemplateBindings` row with no `active` field is live,
+         * matching `resolveTemplateId` on the server (`active !== false`). The
+         * bug this fixes was decoding a missing field here as `false`, so a
+         * binding the dispatcher was actually sending through showed as
+         * paused. Mirrors Android's `TemplateRepository.isBindingActive`.
+         */
+        fun isBindingActive(active: Boolean?): Boolean = active != false
+    }
 }

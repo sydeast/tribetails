@@ -5,6 +5,7 @@ import { db } from '../lib/firestoreAdmin';
 import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { isBindingActive } from '../lib/sendFromTemplate';
 
 type TemplateDoc = {
   subject?: string;
@@ -105,7 +106,9 @@ export async function listTemplateBindingsHandler(
       templateId: data.templateId ?? '',
       audience: data.audience ?? null,
       triggerKey: data.triggerKey ?? null,
-      active: data.active ?? false,
+      // #965: a doc with no `active` field is live (matches `resolveTemplateId`
+      // / `readTemplateBindings`, both in lib/sendFromTemplate.ts), not paused.
+      active: isBindingActive(data.active),
     };
   });
   return { bindings };

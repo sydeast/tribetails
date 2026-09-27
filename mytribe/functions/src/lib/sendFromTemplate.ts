@@ -3,6 +3,22 @@ import { sendTemplatedEmail } from './email';
 import { sendPartsFor } from './emailFrame';
 
 /**
+ * Whether a `notificationTemplateBindings` doc is live, given its `active`
+ * field exactly as Firestore hands it back (`undefined` when the doc never
+ * set it).
+ *
+ * A missing field is ON, not off: a binding written before `active` existed,
+ * or written by a caller that never sent the field, still dispatches. This is
+ * the ONE place that rule is written down. #965 was a client reading a
+ * missing field as off while this file (dispatch) already read it as on;
+ * every reader of `active`, on the server or a client decoding what the
+ * server sent, must call this instead of re-deriving the rule.
+ */
+export function isBindingActive(active: unknown): boolean {
+  return active !== false;
+}
+
+/**
  * Resolves the templateId for a catalog key via the bindings collection.
  * Falls back to the catalog key itself (legacy behavior pre-bindings).
  *
@@ -17,7 +33,7 @@ export async function resolveTemplateId(catalogKey: string): Promise<string> {
   const bindingSnap = await db().doc(`notificationTemplateBindings/${catalogKey}`).get();
   if (bindingSnap.exists) {
     const data = bindingSnap.data() as { templateId?: string; active?: boolean };
-    if (data.active !== false && data.templateId) {
+    if (isBindingActive(data.active) && data.templateId) {
       return data.templateId;
     }
   }
@@ -57,7 +73,7 @@ export async function readTemplateBindings(): Promise<TemplateBindings> {
     const key = (typeof data.catalogKey === 'string' && data.catalogKey) || d.id;
     if (!key) continue;
     boundKeys.add(key);
-    if (data.active !== false && data.templateId) activeBindings.set(key, data.templateId);
+    if (isBindingActive(data.active) && data.templateId) activeBindings.set(key, data.templateId);
   }
   return { boundKeys, activeBindings };
 }

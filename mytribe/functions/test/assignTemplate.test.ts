@@ -55,6 +55,31 @@ describe('assignTemplate', () => {
     expect(ctx.writes.some((w) => w.path === 'notificationTemplateBindings/invite.primary')).toBe(true);
   });
 
+  // #965: toggling (or freshly assigning) a binding must write an explicit
+  // `active`, never leave it to Firestore's missing-field default. A caller
+  // that omits it gets zod's `.default(true)`, written out as a literal
+  // `true`, not left undefined for a later reader to guess at.
+  it('#965: an omitted active writes an explicit true, not an omitted field', async () => {
+    const ctx = buildDbMock({ docs: { 'emailTemplates/t1': { subject: 's', body: 'b' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await assignTemplateHandler(req({ catalogKey: 'invoice.new', templateId: 't1' }));
+    expect(res.active).toBe(true);
+    const write = ctx.writes.find((w) => w.path === 'notificationTemplateBindings/invoice.new');
+    expect(write?.data.active).toBe(true);
+    expect('active' in write!.data).toBe(true);
+  });
+
+  it('#965: an explicit active: false writes an explicit false, never dropped', async () => {
+    const ctx = buildDbMock({ docs: { 'emailTemplates/t1': { subject: 's', body: 'b' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await assignTemplateHandler(
+      req({ catalogKey: 'invoice.new', templateId: 't1', active: false }),
+    );
+    expect(res.active).toBe(false);
+    const write = ctx.writes.find((w) => w.path === 'notificationTemplateBindings/invoice.new');
+    expect(write?.data.active).toBe(false);
+  });
+
   it('HAPPY: triggerKey can be overridden', async () => {
     const ctx = buildDbMock({
       docs: { 'emailTemplates/t1': { subject: 's', body: 'b' } },

@@ -50,10 +50,11 @@ fun VisualDraft.previewRequest(catalogKey: String) =
  * The catalog key whose sample values the preview should use: the key that
  * sends [templateId], the way web resolves it (`fieldsForTemplate` in
  * auntieos-admin/src/lib/templateFormat.ts). A binding pointing a key at this
- * template wins, an active one first. `listTemplateBindings` reports a binding
- * with no `active` field as inactive although dispatch sends through it, so an
- * inactive match still beats none. With no binding the template key is its
- * own catalog key (dispatch's default), which covers every seed.
+ * template wins, an active one first. A genuinely PAUSED binding (`active:
+ * false`) still beats no match at all (#965: a binding with no `active` field
+ * decodes as active, per `TemplateRepository.isBindingActive`, so this is only
+ * about a binding an admin explicitly paused). With no binding the template
+ * key is its own catalog key (dispatch's default), which covers every seed.
  */
 fun previewCatalogKey(templateId: String, bindings: List<TemplateRepository.TemplateBinding>): String {
     val matches = bindings.filter { it.templateId == templateId }

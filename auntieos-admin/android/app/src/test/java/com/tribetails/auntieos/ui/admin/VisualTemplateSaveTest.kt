@@ -176,9 +176,9 @@ class VisualTemplateSaveTest {
         assertEquals("b.live", previewCatalogKey("custom.reset", bindings))
     }
 
-    // listTemplateBindings reports a binding with no `active` field as false,
-    // while dispatch treats it as live (sendFromTemplate.ts `active !== false`).
-    // Either way that key's sample values fit the template better than none.
+    // A binding an admin genuinely paused (active: false, not merely absent,
+    // see #965) still beats no match: that key's sample values fit the
+    // template better than none.
     @Test fun aBindingReportedInactiveStillBeatsTheTemplateKey() {
         assertEquals("a.paused", previewCatalogKey("custom.reset", listOf(binding("a.paused", "custom.reset", active = false))))
     }

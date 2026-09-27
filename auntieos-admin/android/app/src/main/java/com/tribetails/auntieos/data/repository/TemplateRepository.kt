@@ -152,7 +152,7 @@ class TemplateRepository(
                 templateId = m["templateId"] as? String ?: "",
                 audience = m["audience"] as? String,
                 triggerKey = m["triggerKey"] as? String,
-                active = m["active"] as? Boolean ?: false,
+                active = isBindingActive(m["active"] as? Boolean),
             )
         }
     }.onFailure { AuntieLog.e("TemplateRepository.listBindings failed", it) }
@@ -386,6 +386,15 @@ internal fun saveTemplatePayload(
     template.category?.let { put("category", it) }
     if (expectNew) put("expectNew", true)
 }
+
+/**
+ * #965: a `listTemplateBindings` row with no `active` field is live, matching
+ * `resolveTemplateId` on the server (`active !== false`). The bug this fixes
+ * was decoding a missing field as `false` here, so a binding the dispatcher
+ * was actually sending through showed as paused. Every reader of the raw
+ * `active` field goes through this, so the two cannot drift apart again.
+ */
+internal fun isBindingActive(active: Boolean?): Boolean = active != false
 
 /**
  * Pure: whether a binding is actually steering [row] right now.
