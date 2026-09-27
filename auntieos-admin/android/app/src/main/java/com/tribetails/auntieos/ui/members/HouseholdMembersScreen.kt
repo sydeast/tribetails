@@ -35,8 +35,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.composables.icons.lucide.Lucide
@@ -47,13 +45,11 @@ import com.tribetails.auntieos.data.repository.inviteHandle
 import com.tribetails.auntieos.ui.components.AuntieAvatar
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
-import com.tribetails.auntieos.ui.components.AuntieDashedAddButton
 import com.tribetails.auntieos.ui.components.AuntieDialog
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
 import com.tribetails.auntieos.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.ui.components.AuntieToggle
-import com.tribetails.auntieos.ui.components.BottomBorderField
 import com.tribetails.auntieos.ui.components.DenCrumb
 import com.tribetails.auntieos.ui.components.DenPanel
 import com.tribetails.auntieos.ui.components.DenScreenHeading
@@ -95,35 +91,32 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  * is no free-text family-id field, unlike the invites mock: a typed tenant id
  * is a way to invite a stranger into the wrong family.
  *
- * THE HERO CARRIES BOTH ACTIONS, and until the 2026-09-12 ruling it carried
- * none. "Add secondary contact" is the mock's own primary action and records a
- * person with no portal account; "Invite to portal" mails the household its
- * primary claim link. The invite button also ships one screen up, on the
- * household profile, and that used to be the argument for leaving it off here.
- * The ruling names two distinct actions with two distinct outcomes, and a
- * client that shows one of them shows the operator a screen where they look
- * like the same thing. The mock's "Swap primary" is `executePrimaryRecovery`,
+ * THE HERO CARRIES THE INVITE. "Invite to portal" mails the household its
+ * primary claim link; the Primary Kinfolk needs portal access (operator ruling
+ * 2026-09-27, #829), and this is how the office sends it. The button also ships
+ * one screen up, on the household profile. The 2026-09-12 ruling put "Add
+ * secondary contact" beside it; the 2026-09-27 ruling removed the contacts list,
+ * so that button is gone. The mock's "Swap primary" is `executePrimaryRecovery`,
  * which the web screen offers (#378, #426) and this client has never carried: a
  * pre-existing gap, reported rather than widened.
  *
  * WHO INVITES WHOM (ruling, 2026-08-04). The admin invites the PRIMARY. The
  * PRIMARY invites the secondary, from MyTribe, and this screen offers no way to
- * do it on their behalf. That wall is untouched: a CONTACT is not a secondary
- * invite, it has no uid, no role and no permission set, and the server's
- * argument schema refuses `permissions`, `invitedEmail` and `role` outright.
- * This screen also offers no typed-address way to invite the primary: "Invite a
+ * do it on their behalf. That wall is untouched. This screen also offers no typed-address way to invite the primary: "Invite a
  * primary by email" sent the same claim link the hero button sends, and the
  * operator rejected that use case (issue #684).
  * `MembersRepository.mintInvite` stays registered (PRIMARY-only) with no
  * caller left in this screen.
  *
- * A CONTACT IS NOT AN INVITE (ruling, 2026-09-12): "a secondary contact does
- * not have to be a portal user. primary kinfolk user will invite a second
- * kinfolk to the household to manage and receive notifications." The Secondary
- * contacts panel therefore holds two kinds of row: members of role SECONDARY,
- * with their label and permission list, and contacts with no account at all,
- * which carry a "No portal account" capsule, no uid and no switches. The mock's
- * dashed "Add secondary contact" row sits under them, where the mock draws it.
+ * THERE IS NO CONTACTS LIST (operator ruling 2026-09-27, #829): "there is no
+ * true 'Contact List'. There can be up to 3 ppl's contact info to a household:
+ * Primary Kinfolk (PK), Secondary Kinfolk (SK), and Emergency Contact (EC)."
+ * It replaces the 2026-09-12 ruling that put a "No portal account" list, its
+ * dialog and a dashed "Add secondary contact" row in the Secondary contacts
+ * panel. The panel now holds members of role SECONDARY only. The
+ * `families/{id}/contacts` rows and the `MembersRepository` contact calls stay,
+ * unreferenced here, until the operator has read `report:household-contacts`
+ * and ruled on the data.
  *
  * Two more of the mock's controls are PRIMARY-only on the server and so are
  * not offered to an admin: the editable `secondaryLabel` input
@@ -180,10 +173,6 @@ fun HouseholdMembersBody(
     val state by viewModel.uiState.collectAsState()
 
     var removeTarget by remember { mutableStateOf<MembersRepository.Member?>(null) }
-    // The contact form is a DIALOG, so this screen carries no text field at
-    // rest. Null means closed; a draft with a null contactId is an add.
-    var contactDraft by remember { mutableStateOf<MembersRepository.ContactDraft?>(null) }
-    var contactRemoveTarget by remember { mutableStateOf<MembersRepository.Contact?>(null) }
 
     LaunchedEffect(Unit) { viewModel.load() }
 
@@ -211,23 +200,15 @@ fun HouseholdMembersBody(
                 // Members. The crest is the mock's 72dp tile.
                 title = kinfolkName,
                 subtitle = "Who can reach $kinfolkName, and what each of them may do. " +
-                    "Add secondary contact records a person on the household: no portal " +
-                    "account, no invite, nothing to sign in to. Invite to portal mails a " +
-                    "primary claim link, and whoever opens it manages the household and " +
-                    "receives its notifications.",
+                    "Invite to portal mails a primary claim link, and whoever opens it " +
+                    "manages the household and receives its notifications.",
                 trailing = {
-                    // Two gestures, two outcomes (ruling, 2026-09-12). The mock
-                    // draws the contact in the primary slot.
-                    GhostButton(
+                    // The one admin invite, in the primary slot. "Add secondary
+                    // contact" sat beside it until the 2026-09-27 ruling (#829).
+                    PrimaryButton(
                         label = if (state.portalInviteBusy) "Sending…" else "Invite to portal",
                         onClick = { viewModel.invitePortal() },
                         enabled = !state.portalInviteBusy,
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    PrimaryButton(
-                        label = "Add secondary contact",
-                        onClick = { contactDraft = blankContactDraft() },
-                        enabled = !state.savingContact,
                     )
                 },
                 leading = {
@@ -271,7 +252,6 @@ fun HouseholdMembersBody(
             }
         }
         errorBannerItem(state.portalInviteError, "Portal invite failed", viewModel)
-        errorBannerItem(state.contactRemoveError, "The contact was not removed", viewModel)
         errorBannerItem(state.permissionError, "That permission did not save", viewModel)
         errorBannerItem(state.revokeError, "The invite was not revoked", viewModel)
         errorBannerItem(state.removeError, "The member was not removed", viewModel)
@@ -320,12 +300,9 @@ fun HouseholdMembersBody(
             DenPanel(
                 title = "Secondary contacts",
                 meta = secondaryMeta(state, secondaries.size),
-                subtitle = "Two kinds of people, both reachable for this household. A member " +
-                    "was invited to the portal by their primary from MyTribe: they sign in, " +
+                subtitle = "Invited to the portal by their primary from MyTribe: they sign in, " +
                     "they carry a label and a permission set you can edit here, and KinTales " +
-                    "access is locked on by the server for everyone. A contact holds no portal " +
-                    "account at all: a name, a phone, sometimes an email, and nothing to sign " +
-                    "in to.",
+                    "access is locked on by the server for everyone.",
             ) {
                 when {
                     // The failure is named once, in the panel above. This one
@@ -352,67 +329,6 @@ fun HouseholdMembersBody(
                         }
                     }
                 }
-
-                // The contacts half. Separately read and separately failed: an
-                // unreadable roster must not decide what this list says, and
-                // neither may read as empty on the other's behalf.
-                Spacer(Modifier.height(dims.space5))
-                HorizontalDivider(thickness = dims.borderHairline, color = c.border)
-                Spacer(Modifier.height(dims.space4))
-                Row(
-                    verticalAlignment = Alignment.Bottom,
-                    horizontalArrangement = Arrangement.spacedBy(9.dp),
-                ) {
-                    Text(
-                        text = "No portal account",
-                        style = AuntieTheme.typography.headlineSmall.copy(fontSize = 19.sp),
-                        color = c.textPrimary,
-                        modifier = Modifier.semantics { heading() },
-                    )
-                    if (state.contactsLoaded) {
-                        Text(
-                            text = contactCountNote(state.contacts.size),
-                            style = AuntieTheme.typography.labelSmall,
-                            color = c.textDim,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(dims.space3))
-                when {
-                    state.contactsError != null -> {
-                        EmptyHint(state.contactsError!!, error = true)
-                        Spacer(Modifier.height(dims.space2))
-                        GhostButton(label = "Retry", onClick = { viewModel.loadContacts() })
-                    }
-                    state.contactsLoading && !state.contactsLoaded ->
-                        LoadingHint("Loading contacts…")
-                    state.contactsLoaded && state.contacts.isEmpty() ->
-                        EmptyHint("No contact has been recorded for this household yet.")
-                    else -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        state.contacts.forEach { contact ->
-                            ContactBlock(
-                                contact = contact,
-                                onEdit = {
-                                    contactDraft = MembersRepository.ContactDraft(
-                                        contactId = contact.contactId,
-                                        name = contact.name,
-                                        label = contact.label,
-                                        phone = contact.phone.orEmpty(),
-                                        email = contact.email.orEmpty(),
-                                    )
-                                },
-                                onRemove = { contactRemoveTarget = contact },
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(dims.space4))
-                // The mock's dashed row under the list. It went with the #755
-                // sweep; the 2026-09-12 ruling puts it back.
-                AuntieDashedAddButton(
-                    text = "Add secondary contact",
-                    onClick = { contactDraft = blankContactDraft() },
-                )
             }
         }
 
@@ -512,213 +428,15 @@ fun HouseholdMembersBody(
             }
         }
     }
-
-    contactDraft?.let { draft ->
-        val adding = draft.contactId == null
-        AuntieDialog(
-            visible = true,
-            title = if (adding) "Add a secondary contact" else "Edit this contact",
-            onDismiss = { if (!state.savingContact) contactDraft = null },
-            maxWidth = 560.dp,
-            footer = {
-                GhostButton(
-                    label = "Cancel",
-                    onClick = { contactDraft = null },
-                    enabled = !state.savingContact,
-                    modifier = Modifier.weight(1f),
-                )
-                PrimaryButton(
-                    label = if (state.savingContact) "Saving…" else "Save contact",
-                    onClick = { viewModel.saveContact(draft) { contactDraft = null } },
-                    enabled = !state.savingContact && draft.name.isNotBlank(),
-                    loading = state.savingContact,
-                    modifier = Modifier.weight(1f),
-                )
-            },
-        ) {
-            Text(
-                "Somebody this household can be reached through. Saving this creates no portal " +
-                    "account and sends nothing: to give a person a sign-in, their primary " +
-                    "invites them from MyTribe, or use Invite to portal for the primary claim.",
-                style = AuntieTheme.typography.bodyMedium,
-                color = c.textPrimary,
-            )
-            Spacer(Modifier.height(dims.space3))
-            // EVERY PERSISTED FIELD HAS A CONTROL. The draft is the whole
-            // editable shape, so the save is a diff of what is on screen and
-            // cannot wipe a field this form does not draw.
-            BottomBorderField(
-                value = draft.name,
-                onValueChange = { contactDraft = draft.copy(name = it) },
-                label = "Name",
-                required = true,
-                enabled = !state.savingContact,
-            )
-            BottomBorderField(
-                value = draft.label,
-                onValueChange = { contactDraft = draft.copy(label = it) },
-                label = "What they are to the household",
-                placeholder = "Folk",
-                enabled = !state.savingContact,
-            )
-            BottomBorderField(
-                value = draft.phone,
-                onValueChange = { contactDraft = draft.copy(phone = it) },
-                label = "Phone",
-                keyboardType = KeyboardType.Phone,
-                enabled = !state.savingContact,
-            )
-            BottomBorderField(
-                value = draft.email,
-                onValueChange = { contactDraft = draft.copy(email = it) },
-                label = "Email",
-                keyboardType = KeyboardType.Email,
-                imeAction = ImeAction.Done,
-                enabled = !state.savingContact,
-            )
-            Text(
-                "The email is optional and it invites nobody. An address here is somewhere to " +
-                    "reach this person.",
-                style = AuntieTheme.typography.bodySmall,
-                color = c.textDim,
-            )
-            state.contactSaveError?.let { msg ->
-                Spacer(Modifier.height(dims.space3))
-                AuntieBanner(tone = AuntieBannerTone.Error, title = "The contact was not saved") {
-                    Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
-                }
-            }
-        }
-    }
-
-    contactRemoveTarget?.let { target ->
-        val busy = state.removingContactId == target.contactId
-        AuntieDialog(
-            visible = true,
-            title = "Remove this contact?",
-            onDismiss = { if (!busy) contactRemoveTarget = null },
-            maxWidth = 520.dp,
-            footer = {
-                GhostButton(
-                    label = "Cancel",
-                    onClick = { contactRemoveTarget = null },
-                    enabled = !busy,
-                    modifier = Modifier.weight(1f),
-                )
-                PrimaryButton(
-                    label = if (busy) "Removing…" else "Remove",
-                    onClick = { viewModel.removeContact(target) { contactRemoveTarget = null } },
-                    enabled = !busy,
-                    loading = busy,
-                    modifier = Modifier.weight(1f),
-                )
-            },
-        ) {
-            Text(
-                "${target.name} is deleted from $kinfolkName. There is no account to suspend " +
-                    "and no sign-in to revoke, so unlike removing a member this leaves no row " +
-                    "behind.",
-                style = AuntieTheme.typography.bodyMedium,
-                color = c.textPrimary,
-            )
-            state.contactRemoveError?.let { msg ->
-                Spacer(Modifier.height(dims.space3))
-                AuntieBanner(tone = AuntieBannerTone.Error, title = "That did not work") {
-                    Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
-                }
-            }
-        }
-    }
 }
-
-/** An empty add-form draft. Named so the two call sites cannot drift. */
-internal fun blankContactDraft(): MembersRepository.ContactDraft =
-    MembersRepository.ContactDraft(contactId = null, name = "", label = "", phone = "", email = "")
 
 /**
- * The mock's `.ct` note on the Secondary contacts panel, counting both kinds
- * the panel holds. Each half is written only once its OWN read has landed, so a
- * failing roster cannot make the contacts read as zero, or the other way round.
- * Null while neither has.
+ * The mock's `.ct` note on the Secondary contacts panel. Written only once the
+ * roster read has landed, so an unread roster never reads as zero. Null until
+ * then.
  */
-internal fun secondaryMeta(state: HouseholdMembersUiState, secondaries: Int): String? {
-    val parts = listOfNotNull(
-        if (state.membersLoaded) "$secondaries of role: SECONDARY" else null,
-        if (state.contactsLoaded) {
-            "${contactCountNote(state.contacts.size)}, no portal account"
-        } else {
-            null
-        },
-    )
-    return parts.joinToString(" · ").ifBlank { null }
-}
-
-/** "1 contact" / "2 contacts". */
-internal fun contactCountNote(count: Int): String =
-    "$count ${if (count == 1) "contact" else "contacts"}"
-
-/**
- * One contact: the mock's `.member` block without the halves a contact does not
- * have. A 58dp circle, the name, a capsule saying there is no portal account,
- * and the reachable details under it. No uid, no role capsule, no permission
- * list, because a person with nothing to sign in to has no entitlements to draw.
- */
-@Composable
-private fun ContactBlock(
-    contact: MembersRepository.Contact,
-    onEdit: () -> Unit,
-    onRemove: () -> Unit,
-) {
-    val c = AuntieTheme.colors
-    val dims = AuntieTheme.dims
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(MemberBlockShape)
-            .background(c.surface2)
-            .border(dims.borderHairline, c.border, MemberBlockShape)
-            .padding(18.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            AuntieAvatar(
-                initials = contact.name.take(1).uppercase(),
-                gradientSeed = contact.contactId,
-                size = 58.dp,
-                ring = false,
-            )
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = contact.name,
-                        style = AuntieTheme.typography.headlineSmall.copy(fontSize = 19.sp),
-                        color = c.textPrimary,
-                    )
-                    // Muted, not teal: this capsule is the absence of a thing,
-                    // and must not read as a state a member could be in too.
-                    AuntieStatusPill(
-                        label = "No portal account",
-                        tone = AuntieStatusTone.Muted,
-                        mono = true,
-                        compact = true,
-                    )
-                }
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = contact.meta,
-                    style = AuntieTheme.typography.bodySmall,
-                    color = c.textDim,
-                )
-            }
-            GhostButton(label = "Edit", onClick = onEdit)
-            Spacer(Modifier.width(8.dp))
-            GhostButton(label = "Remove", onClick = onRemove)
-        }
-    }
-}
+internal fun secondaryMeta(state: HouseholdMembersUiState, secondaries: Int): String? =
+    if (state.membersLoaded) "$secondaries of role: SECONDARY" else null
 
 /** Adds one dismissible error banner to the list, or nothing when there is none. */
 private fun androidx.compose.foundation.lazy.LazyListScope.errorBannerItem(

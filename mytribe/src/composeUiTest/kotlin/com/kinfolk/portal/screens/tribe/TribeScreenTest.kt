@@ -309,11 +309,28 @@ class TribeScreenTest {
         fake.stubEmergencyContacts()
         fake.stub("getVetClinics", buildJsonObject { put("clinics", buildJsonArray {}) })
         fake.stub("listMembers", buildJsonObject { put("members", buildJsonArray {}) })
-        fake.stub("listHouseholdContacts", buildJsonObject { put("contacts", buildJsonArray {}) })
         setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
         waitForIdle()
         onNodeWithText("Home access (gate code, Wi-Fi, Emergency Contacts)").performScrollTo().assertIsDisplayed()
         assertTrue(onAllNodesWithText("Home access (gate code, Wi-Fi)").fetchSemanticsNodes().isEmpty())
+    }
+
+    // #829, ruling 2026-09-27: "there is no true 'Contact List'". The Tribe
+    // screen draws no contacts card and never asks for one.
+    @Test
+    fun thereIsNoContactsCard() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithSavedField()
+        fake.stubEmergencyContacts()
+        fake.stub("getVetClinics", buildJsonObject { put("clinics", buildJsonArray {}) })
+        fake.stub("listMembers", buildJsonObject { put("members", buildJsonArray {}) })
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Home access (gate code, Wi-Fi, Emergency Contacts)").performScrollTo().assertIsDisplayed()
+        for (text in listOf("Contacts Without an Account", "Add a contact", "Save contact")) {
+            assertTrue(onAllNodesWithText(text, ignoreCase = true).fetchSemanticsNodes().isEmpty(), text)
+        }
+        assertTrue(fake.calls.none { it.first.contains("HouseholdContact") }, "called ${fake.calls.map { it.first }}")
     }
 
     @Test
@@ -323,7 +340,6 @@ class TribeScreenTest {
         fake.stubEmergencyContacts(canEdit = true, withRae = true)
         fake.stub("getVetClinics", buildJsonObject { put("clinics", buildJsonArray {}) })
         fake.stub("listMembers", buildJsonObject { put("members", buildJsonArray {}) })
-        fake.stub("listHouseholdContacts", buildJsonObject { put("contacts", buildJsonArray {}) })
         fake.stub("saveTribeProfile", buildJsonObject { put("ok", true) })
         fake.stub("saveHomeAccess", buildJsonObject { put("ok", true) })
         setThemedContent { TribeScreen("X", "3", PortalApi(fake)) }
@@ -344,7 +360,6 @@ class TribeScreenTest {
         fake.stubEmergencyContacts(canEdit = true, withRae = true)
         fake.stub("getVetClinics", buildJsonObject { put("clinics", buildJsonArray {}) })
         fake.stub("listMembers", buildJsonObject { put("members", buildJsonArray {}) })
-        fake.stub("listHouseholdContacts", buildJsonObject { put("contacts", buildJsonArray {}) })
         fake.stub("saveTribeProfile", buildJsonObject { put("ok", true) })
         fake.stub("saveHomeAccess", buildJsonObject { put("ok", true) })
         setThemedContent { TribeScreen("X", "3", PortalApi(fake)) }
@@ -425,7 +440,6 @@ class TribeScreenTest {
         fake.stubEmergencyContacts()
         fake.stub("getVetClinics", buildJsonObject { put("clinics", buildJsonArray {}) })
         fake.stub("listMembers", buildJsonObject { put("members", buildJsonArray {}) })
-        fake.stub("listHouseholdContacts", buildJsonObject { put("contacts", buildJsonArray {}) })
         fake.stub("saveTribeProfile", buildJsonObject { put("ok", true) })
         fake.stub("saveHomeAccess", buildJsonObject { put("ok", true) })
         val schemas = mapOf(
@@ -521,7 +535,6 @@ class TribeScreenTest {
         fake.stubEmergencyContacts()
         fake.stub("getVetClinics", buildJsonObject { put("clinics", buildJsonArray {}) })
         fake.stub("listMembers", buildJsonObject { put("members", buildJsonArray {}) })
-        fake.stub("listHouseholdContacts", buildJsonObject { put("contacts", buildJsonArray {}) })
         fake.stub("saveTribeProfile", buildJsonObject { put("ok", true) })
         fake.stub("saveHomeAccess", buildJsonObject { put("ok", true) })
         val schemas = mapOf(
@@ -578,7 +591,6 @@ class TribeScreenTest {
         fake.stubEmergencyContacts(canEdit = canEditHome)
         fake.stub("getVetClinics", buildJsonObject { put("clinics", buildJsonArray {}) })
         fake.stub("listMembers", buildJsonObject { put("members", buildJsonArray {}) })
-        fake.stub("listHouseholdContacts", buildJsonObject { put("contacts", buildJsonArray {}) })
         fake.stub("saveTribeProfile", buildJsonObject { put("ok", true) })
         fake.stub("saveHomeAccess", buildJsonObject { put("ok", true) })
         return fake

@@ -48,12 +48,6 @@ vi.mock('../api/tribeApi', async () => {
     submitVetClinic: vi.fn(),
     addSecondaryContact: vi.fn(),
     updateSecondaryPermissions: vi.fn(),
-    // #818's contacts card loads on this screen too. Mocked here so the real
-    // callable never reaches `lib/fns` from a jsdom run; the card's own
-    // behaviour is specced in TribeProfile.contacts.test.tsx.
-    listHouseholdContacts: vi.fn(),
-    saveHouseholdContact: vi.fn(),
-    removeHouseholdContact: vi.fn(),
     // #829: the Emergency Contacts card reads and writes through its own callables.
     listEmergencyContacts: vi.fn(),
     saveEmergencyContacts: vi.fn(),
@@ -118,7 +112,6 @@ async function renderTribeProfile(opts: {
   vi.mocked(tribeApi.getMyTribeProfile).mockResolvedValue(opts.profile ?? PROFILE);
   vi.mocked(tribeApi.getVetClinics).mockResolvedValue({ clinics: opts.clinics ?? [] });
   vi.mocked(tribeApi.listMembers).mockResolvedValue({ members: opts.members ?? [] });
-  vi.mocked(tribeApi.listHouseholdContacts).mockResolvedValue([]);
   vi.mocked(tribeApi.saveTribeProfile).mockResolvedValue({ ok: true });
   vi.mocked(tribeApi.saveHomeAccess).mockResolvedValue({ ok: true });
   vi.mocked(portal.getBusinessContact).mockResolvedValue({ name: 'Tribe Tails Pet Care', email: '', phone: '', address: '' });
