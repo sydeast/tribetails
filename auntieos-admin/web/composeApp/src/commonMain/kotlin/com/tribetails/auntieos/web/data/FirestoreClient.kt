@@ -1073,6 +1073,13 @@ class FirestoreClient {
         else platformPaymentsStream()
     }
     /**
+     * #881: NO LONGER CALLED BY THE INVOICE RECORD PAYMENT DIALOG, which goes
+     * through [recordInvoicePayment] and the `recordPayment` callable instead.
+     * Kept, not deleted: payment code is never removed (operator ruling). The
+     * `AuntieDataSource.recordPayment` adapters still point here, but no screen
+     * in this console calls them, so as of #881 nothing reaches this direct
+     * write. Orphaned, and named as orphaned in the #881 PR.
+     *
      * #825. Note what this is NOT: it does not go through the `recordPayment`
      * admin callable. This console writes the `payments` row directly over REST
      * (`allow create/update: if isAuntie()` covers it), and always has -- so it
@@ -1101,6 +1108,30 @@ class FirestoreClient {
             payment.copy(kinfolkId = enforceWriteKinfolkId(testMode, payment.kinfolkId)),
             idempotencyKey,
         )
+
+    /**
+     * #881: records a payment against an invoice through the `recordPayment`
+     * admin callable, with an `apply` for that invoice. The server applies the
+     * money, moves any leftover into the account balance when auto-apply is on,
+     * writes the audit entry and sends the confirmation when it is ticked, all
+     * for this one call. See [InvoicePaymentEntry] for why it is one call.
+     *
+     * A refusal (draft, quote, cancelled or settled invoice, an apply larger
+     * than the payment, a tip larger than the payment) comes back as
+     * [WriteResult.Err] with the server's message verbatim.
+     */
+    suspend fun recordInvoicePayment(
+        entry: InvoicePaymentEntry,
+        idempotencyKey: String? = null,
+    ): WriteResult<RecordPaymentOutcome> {
+        val scopedKinfolkId = enforceWriteKinfolkId(testMode, entry.payment.kinfolkId)
+        val payload = recordPaymentPayload(entry, scopedKinfolkId, idempotencyKey)
+        return when (val r = platformInvokeCallable("recordPayment", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatching { WriteResult.Ok(decodeRecordPaymentOutcome(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
 
     // ---- Booking time slots (availability + Google-busy blocks) ----
     /**

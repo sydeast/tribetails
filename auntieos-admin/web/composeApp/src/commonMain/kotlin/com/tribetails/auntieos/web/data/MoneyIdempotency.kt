@@ -45,7 +45,7 @@ import kotlin.time.ExperimentalTime
  *
  * [mintInvoicePaymentIdempotencyKey] has no caller in this console today: nothing
  * in composeApp invokes `markInvoicePaid` (the Record-payment dialog on the
- * invoice detail screen goes through `recordPayment` instead). It is minted here
+ * invoice detail screen sends one `recordPayment` call with an `apply`). It is minted here
  * anyway so all four keys this repo's money callables accept are defined in one
  * place, and so a screen that later wires that callable up does not invent a
  * fifth shape.
@@ -57,11 +57,11 @@ import kotlin.time.ExperimentalTime
 private const val KEY_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 /**
- * `recordPayment` -> `payments/{key}`. On this console that row is written
- * directly over REST rather than through the callable, so the key becomes the
- * document id here instead of riding in a payload; see
- * `FirestoreClient.recordPayment`. Same shape either way, so a row written from
- * here and a row the callable wrote for the same key are the same row.
+ * `recordPayment` -> `payments/{key}`. Since #881 the invoice Record Payment
+ * dialog sends it in the `recordPayment` callable's payload
+ * (`FirestoreClient.recordInvoicePayment`). The older direct REST write
+ * (`FirestoreClient.recordPayment`, now uncalled) used it as the document id
+ * instead. Same shape either way, so both name the same row.
  */
 fun mintPaymentIdempotencyKey(random: Random = Random.Default): String = moneyKey("pay", random)
 

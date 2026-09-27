@@ -2,6 +2,7 @@ package com.tribetails.auntieos.web.screens.invoices
 
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Invoice
+import com.tribetails.auntieos.web.data.InvoicePaymentEntry
 import com.tribetails.auntieos.web.data.Payment
 
 sealed interface InvoiceDetailState {
@@ -105,3 +106,63 @@ fun buildInvoicePayment(
     invoiceId = invoice._id,
     invoiceNumber = invoice.invoiceNumber,
 )
+
+/** What the Record Payment form turned into: a request to send, or the sentence that says why not. */
+sealed interface RecordPaymentForm {
+    data class Ready(val entry: InvoicePaymentEntry) : RecordPaymentForm
+    data class Invalid(val message: String) : RecordPaymentForm
+}
+/**
+ * #881: the Record Payment dialog's fields, checked and turned into the
+ * `recordPayment` request. Pure; unit-tested.
+ *
+ * [amountPaid] is the whole sum the client paid, gross tip included. [applyAmount]
+ * is how much of it goes onto this invoice. A blank tip or fee is zero; anything
+ * else that does not read as dollars is refused rather than dropped, because it
+ * is a keystroke the operator meant. An apply plus tip larger than the payment is
+ * refused here too, before the server is asked; the server refuses it as well.
+ */
+fun parseRecordPaymentForm(
+    invoice: Invoice,
+    amountPaid: String,
+    applyAmount: String,
+    tip: String,
+    fee: String,
+    method: String,
+    reference: String,
+    date: String,
+    notes: String,
+    autoApply: Boolean,
+    sendConfirmationEmail: Boolean,
+): RecordPaymentForm {
+    fun money(s: String): Double? = s.trim().removePrefix("$").trim().toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 }
+    fun optionalMoney(s: String): Double? = if (s.isBlank()) 0.0 else money(s)
+    val paid = money(amountPaid)?.takeIf { it > 0.0 }
+        ?: return RecordPaymentForm.Invalid("\"${amountPaid.trim()}\" is not a payment amount. Enter dollars, for example 300 or 300.50.")
+    val applied = money(applyAmount)?.takeIf { it > 0.0 }
+        ?: return RecordPaymentForm.Invalid("\"${applyAmount.trim()}\" is not an amount to apply. Enter dollars, for example 120 or 120.50.")
+    val tipValue = optionalMoney(tip)
+        ?: return RecordPaymentForm.Invalid("\"${tip.trim()}\" is not a tip. Enter dollars, for example 10 or 10.50.")
+    val feeValue = optionalMoney(fee)
+        ?: return RecordPaymentForm.Invalid("\"${fee.trim()}\" is not a fee. Enter dollars, for example 2.71.")
+    if (method.isBlank()) return RecordPaymentForm.Invalid("Enter how the payment was made, for example Venmo or cash.")
+    // Compared in cents, so 0.1 + 0.2 style float error cannot refuse a payment that fits.
+    fun cents(d: Double) = kotlin.math.round(d * 100).toLong()
+    if (cents(applied) + cents(tipValue) > cents(paid)) {
+        return RecordPaymentForm.Invalid(
+            "A payment of ${formatMoney(paid)} does not cover ${formatMoney(applied)} applied plus a ${formatMoney(tipValue)} tip. " +
+                "Raise the payment amount, or lower one of the other two.",
+        )
+    }
+    val payment = buildInvoicePayment(invoice, paid, method, reference, date, notes)
+        .copy(client = invoice.client, tip = tipValue)
+    return RecordPaymentForm.Ready(
+        InvoicePaymentEntry(
+            payment = payment,
+            applyAmount = applied,
+            fee = feeValue,
+            autoApply = autoApply,
+            sendConfirmationEmail = sendConfirmationEmail,
+        ),
+    )
+}
