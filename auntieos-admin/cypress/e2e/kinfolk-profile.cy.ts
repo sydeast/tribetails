@@ -80,7 +80,12 @@ describe('kinfolk profile', () => {
     cy.contains('button', 'New KinTale').should('not.exist');
   });
 
-  it('#678 #682 the right column orders Kin, Upcoming KinCare, Recent KinTales, Invoices', () => {
+  it('#678 #682 the right column orders Kin, Upcoming KinCare, Recent KinTales, Invoices, Account credit', () => {
+    // Q6: the Account credit card reads this callable; an empty history is enough here.
+    cy.intercept('POST', CALLABLE('getAccountCreditHistory'), {
+      statusCode: 200,
+      body: { result: { ok: true, kinfolkId: 'e2e-kf-1', accountBalanceCents: 0, credits: [], uses: [] } },
+    });
     cy.signIn();
     cy.visit('/directory/e2e-kf-1');
     cy.get('.kprofile__cols .kprofile__col', { timeout: 8_000 })
@@ -88,7 +93,7 @@ describe('kinfolk profile', () => {
       .find('.den-panel-title')
       .then(($titles) => {
         const titles = [...$titles].map((el) => el.textContent);
-        expect(titles).to.deep.equal(['Kin', 'Upcoming KinCare', 'Recent KinTales', 'Invoices']);
+        expect(titles).to.deep.equal(['Kin', 'Upcoming KinCare', 'Recent KinTales', 'Invoices', 'Account credit']);
       });
   });
 
