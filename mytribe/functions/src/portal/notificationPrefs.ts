@@ -8,6 +8,7 @@ import type { UserNotificationPrefs } from '../notifications/types';
 import { prefsSetOptions, SaveArgs } from '../notifications/prefsSchema';
 import { withAliasedChoicesResolved } from '../notifications/prefs';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { refuseAuntie } from '../lib/staffGate';
 
 /**
  * Hybrid notification preferences.
@@ -28,6 +29,7 @@ interface PrefsDto {
 export async function getMyNotificationPrefsHandler(
   req: CallableRequest<unknown>,
 ): Promise<PrefsDto> {
+  refuseAuntie(req.auth, 'getMyNotificationPrefs'); // docket Q1: an Auntie never uses the portal
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -54,6 +56,7 @@ export async function getMyNotificationPrefsHandler(
 export async function saveMyNotificationPrefsHandler(
   req: CallableRequest<unknown>,
 ): Promise<{ ok: true }> {
+  refuseAuntie(req.auth, 'saveMyNotificationPrefs'); // docket Q1: an Auntie never uses the portal
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');

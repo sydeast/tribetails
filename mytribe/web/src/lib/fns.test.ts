@@ -78,6 +78,21 @@ describe('call', () => {
     expect(firebaseSignOut).toHaveBeenCalledTimes(2);
   });
 
+  // Docket Q1, operator ruling 2026-09-27: an Auntie never uses the portal.
+  // getMyAccess, the first call after sign-in, refuses her with this tag, and
+  // the portal signs her out instead of parking her on /error.
+  it('signs an Auntie out when getMyAccess refuses her at the portal', async () => {
+    const caretaker = new FirebaseError(
+      'functions/permission-denied',
+      'This sign-in is for households. Aunties use the AuntieOS app (caretaker-not-portal).',
+    );
+    (caretaker as FirebaseError & { details?: unknown }).details = { reason: 'caretaker-not-portal' };
+    vi.mocked(httpsCallable).mockReturnValue(vi.fn().mockRejectedValue(caretaker) as never);
+
+    await expect(call('getMyAccess', {})).rejects.toBe(caretaker);
+    expect(firebaseSignOut).toHaveBeenCalledTimes(1);
+  });
+
   it('does NOT sign the kinfolk out for an untagged unauthenticated refusal', async () => {
     const notSignedIn = new FirebaseError('functions/unauthenticated', 'Sign in required.');
     vi.mocked(httpsCallable).mockReturnValue(vi.fn().mockRejectedValue(notSignedIn) as never);

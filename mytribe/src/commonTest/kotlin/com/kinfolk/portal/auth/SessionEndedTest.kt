@@ -80,4 +80,26 @@ class SessionEndedTest {
         assertTrue(sessionEndedMessage(SessionEndedReason.Disabled).contains("turned off"))
         assertTrue(sessionEndedMessage(SessionEndedReason.Revoked).contains("session ended"))
     }
+
+    // Docket Q1, operator ruling 2026-09-27: an Auntie never uses the portal.
+    @Test
+    fun the_portal_refusing_an_auntie_is_recognised_through_a_wrapper() {
+        val wrapped = IllegalStateException(
+            "call getMyAccess failed",
+            RuntimeException(
+                "PERMISSION_DENIED: This sign-in is for households. Aunties use the AuntieOS app (caretaker-not-portal).",
+            ),
+        )
+        assertEquals(SessionEndedReason.Caretaker, sessionEndedReason(wrapped))
+    }
+
+    @Test
+    fun an_auntie_is_told_the_portal_is_for_households() {
+        assertEquals(
+            "This sign-in is for households. Aunties use the AuntieOS app.",
+            sessionEndedMessage(SessionEndedReason.Caretaker),
+        )
+        SessionEndedNotice.record(SessionEndedReason.Caretaker)
+        assertEquals(CARETAKER_NOT_PORTAL_NOTICE, SessionEndedNotice.consume())
+    }
 }

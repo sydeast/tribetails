@@ -6,6 +6,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { parseClosureEntry, closureOccurrencesInRange } from '../lib/closureRecurrence';
+import { refuseAuntie } from '../lib/staffGate';
 
 /**
  * C1: the ONE way a kinfolk client can find out which dates are closed.
@@ -55,6 +56,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export async function getBusinessClosuresHandler(
   req: CallableRequest<unknown>,
 ): Promise<GetBusinessClosuresResult> {
+  refuseAuntie(req.auth, 'getBusinessClosures'); // docket Q1: an Auntie never uses the portal
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');

@@ -10,6 +10,7 @@ import type {
 import { db } from '../lib/firestoreAdmin';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { refuseAuntie } from '../lib/staffGate';
 
 /**
  * Returns the kinfolk-facing notification catalog at runtime, closes the
@@ -211,6 +212,7 @@ export function lockedChannelValueFor(
 export async function getNotificationCatalogHandler(
   req: CallableRequest<unknown>,
 ): Promise<GetNotificationCatalogResult> {
+  refuseAuntie(req.auth, 'getNotificationCatalog'); // docket Q1: an Auntie never uses the portal
   if (!req.auth?.uid) {
     throw new HttpsError('unauthenticated', 'Sign-in required to read notification catalog.');
   }

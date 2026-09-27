@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { SignIn } from './SignIn';
-import { SESSION_ENDED_STORAGE_KEY } from '../lib/revokedSession';
+import { CARETAKER_REASON, SESSION_ENDED_STORAGE_KEY, sessionEndedMessage } from '../lib/revokedSession';
 
 vi.mock('@tanstack/react-router', () => ({ useNavigate: () => vi.fn() }));
 vi.mock('../lib/auth', () => ({ signIn: vi.fn(), sendReset: vi.fn() }));
@@ -22,6 +22,16 @@ describe('SignIn session-ended notice', () => {
     sessionStorage.setItem(SESSION_ENDED_STORAGE_KEY, 'Your session ended, so we signed you out.');
     render(<SignIn />);
     expect(screen.getByTestId('session-ended-notice')).toHaveTextContent(/session ended/i);
+  });
+
+  // Docket Q1: an Auntie signed in to the portal, getMyAccess refused her, and
+  // the teardown left this for her. Plain words about where she does sign in.
+  it('tells an Auntie the portal is for households', () => {
+    sessionStorage.setItem(SESSION_ENDED_STORAGE_KEY, sessionEndedMessage(CARETAKER_REASON));
+    render(<SignIn />);
+    expect(screen.getByTestId('session-ended-notice')).toHaveTextContent(
+      'This sign-in is for households. Aunties use the AuntieOS app.',
+    );
   });
 
   it('says nothing on an ordinary visit', () => {

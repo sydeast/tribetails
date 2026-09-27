@@ -6,6 +6,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { refuseAuntie } from '../lib/staffGate';
 
 /**
  * dismissBanner: records the per-user dismissal of a portal banner.
@@ -28,6 +29,7 @@ const Args = z.object({
 export async function dismissBannerHandler(
   req: CallableRequest<unknown>,
 ): Promise<{ ok: true }> {
+  refuseAuntie(req.auth, 'dismissBanner'); // docket Q1: an Auntie never uses the portal
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');

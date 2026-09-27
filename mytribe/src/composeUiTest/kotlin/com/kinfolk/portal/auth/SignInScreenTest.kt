@@ -71,6 +71,18 @@ class SignInScreenTest {
         onNodeWithText(sessionEndedMessage(SessionEndedReason.Revoked)).assertIsDisplayed()
     }
 
+    /** Docket Q1: an Auntie signed in to the portal and getMyAccess refused her. */
+    @Test
+    fun tellsAnAuntieThePortalIsForHouseholds() = runComposeUiTest {
+        SessionEndedNotice.record(SessionEndedReason.Caretaker)
+        setThemedContent {
+            SignInScreen(repo = repo(), onSignedIn = {})
+        }
+        waitForIdle()
+        onNodeWithTag("session-ended-notice").assertIsDisplayed()
+        onNodeWithText("This sign-in is for households. Aunties use the AuntieOS app.").assertIsDisplayed()
+    }
+
     @Test
     fun saysNothingOnAnOrdinaryVisit() = runComposeUiTest {
         SessionEndedNotice.clear()

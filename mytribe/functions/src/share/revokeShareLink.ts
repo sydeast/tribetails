@@ -7,10 +7,12 @@ import { loadMember } from '../lib/memberGate';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { refuseAuntie } from '../lib/staffGate';
 
 const Args = z.object({ shareId: z.string().min(1) });
 
 export async function revokeShareLinkHandler(req: CallableRequest<unknown>): Promise<{ ok: true }> {
+  refuseAuntie(req.auth, 'revokeShareLink'); // docket Q1: an Auntie never uses the portal
   if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in required.');
   const { shareId } = Args.parse(req.data);
   const ref = db().doc(`sharedKinTales/${shareId}`);

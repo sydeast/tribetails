@@ -5,6 +5,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveBookingPolicy, type BookableTimeBlock, type BookingMode } from '../lib/bookingTimeBlocks';
+import { refuseAuntie } from '../lib/staffGate';
 
 /**
  * How a household is allowed to say WHEN, and which named windows it may pick.
@@ -74,6 +75,7 @@ function toDto(block: BookableTimeBlock): TimeBlockDto {
 export async function getBookingPolicyHandler(
   req: CallableRequest<unknown>,
 ): Promise<GetBookingPolicyResult> {
+  refuseAuntie(req.auth, 'getBookingPolicy'); // docket Q1: an Auntie never uses the portal
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');

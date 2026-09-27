@@ -88,7 +88,13 @@ interface Case {
   expect: Record<Caller, Outcome>;
 }
 
-/** Allowlisted household callables: an Auntie is staff whatever her tribe count. */
+/**
+ * Allowlisted household callables: an Auntie is staff whatever her tribe count.
+ * Docket Q1 (operator ruling 2026-09-27, an Auntie never uses the portal) left
+ * only the three the ADMIN clients call on this row: getMyKinTaleMedia,
+ * listHouseholdContacts, saveHouseholdContact. The ten portal-only callables
+ * #984 had allowlisted moved to NOT_HERS.
+ */
 const HOUSEHOLD: Record<Caller, Outcome> = {
   owner: 'staff', auntie1: 'staff', auntie2: 'staff', kin1: 'own', kin2: 'multi',
 };
@@ -103,17 +109,17 @@ const p = (m: string) => import(`../src/portal/${m}`);
 const FUTURE = Date.now() + 30 * 24 * 3600 * 1000;
 
 const CASES: Case[] = [
-  { name: 'getMyKin', load: async () => (await p('getMyKin')).getMyKinHandler, data: {}, expect: HOUSEHOLD },
-  { name: 'getMyKinTales', load: async () => (await p('getMyKinTales')).getMyKinTalesHandler, data: {}, expect: HOUSEHOLD },
+  { name: 'getMyKin', load: async () => (await p('getMyKin')).getMyKinHandler, data: {}, expect: NOT_HERS },
+  { name: 'getMyKinTales', load: async () => (await p('getMyKinTales')).getMyKinTalesHandler, data: {}, expect: NOT_HERS },
   { name: 'getMyKinTaleMedia', load: async () => (await p('getMyKinTaleMedia')).getMyKinTaleMediaHandler, data: { taleId: 't1' }, expect: HOUSEHOLD },
-  { name: 'getMyKinPhotos', load: async () => (await p('getMyKinPhotos')).getMyKinPhotosHandler, data: {}, expect: HOUSEHOLD },
-  { name: 'getMyVisits', load: async () => (await p('getMyVisits')).getMyVisitsHandler, data: {}, expect: HOUSEHOLD },
-  { name: 'getMyBookings', load: async () => (await p('getMyBookings')).getMyBookingsHandler, data: {}, expect: HOUSEHOLD },
-  { name: 'getMyTribeProfile', load: async () => (await p('getMyTribeProfile')).getMyTribeProfileHandler, data: {}, expect: HOUSEHOLD },
-  { name: 'saveTribeProfile', load: async () => (await p('saveTribeProfile')).saveTribeProfileHandler, data: { displayName: 'Park tribe' }, expect: HOUSEHOLD },
-  { name: 'saveHomeAccess', load: async () => (await p('saveHomeAccess')).saveHomeAccessHandler, data: { gateCode: '1234' }, expect: HOUSEHOLD },
-  { name: 'addKin', load: async () => (await p('kinWrites')).addKinHandler, data: { kin: { name: 'Biscuit' } }, expect: HOUSEHOLD },
-  { name: 'updateKin', load: async () => (await p('kinWrites')).updateKinHandler, data: { kinId: 'kin1', kin: { name: 'Biscuit' } }, expect: HOUSEHOLD },
+  { name: 'getMyKinPhotos', load: async () => (await p('getMyKinPhotos')).getMyKinPhotosHandler, data: {}, expect: NOT_HERS },
+  { name: 'getMyVisits', load: async () => (await p('getMyVisits')).getMyVisitsHandler, data: {}, expect: NOT_HERS },
+  { name: 'getMyBookings', load: async () => (await p('getMyBookings')).getMyBookingsHandler, data: {}, expect: NOT_HERS },
+  { name: 'getMyTribeProfile', load: async () => (await p('getMyTribeProfile')).getMyTribeProfileHandler, data: {}, expect: NOT_HERS },
+  { name: 'saveTribeProfile', load: async () => (await p('saveTribeProfile')).saveTribeProfileHandler, data: { displayName: 'Park tribe' }, expect: NOT_HERS },
+  { name: 'saveHomeAccess', load: async () => (await p('saveHomeAccess')).saveHomeAccessHandler, data: { gateCode: '1234' }, expect: NOT_HERS },
+  { name: 'addKin', load: async () => (await p('kinWrites')).addKinHandler, data: { kin: { name: 'Biscuit' } }, expect: NOT_HERS },
+  { name: 'updateKin', load: async () => (await p('kinWrites')).updateKinHandler, data: { kinId: 'kin1', kin: { name: 'Biscuit' } }, expect: NOT_HERS },
   { name: 'listHouseholdContacts', load: async () => (await p('householdContacts')).listHouseholdContactsHandler, data: {}, expect: HOUSEHOLD },
   { name: 'saveHouseholdContact', load: async () => (await p('householdContacts')).saveHouseholdContactHandler, data: { name: 'Neighbour Jo' }, expect: HOUSEHOLD },
 
@@ -240,8 +246,186 @@ describe('#984 a double-claimed token', () => {
     });
   });
   it('is admitted as staff to an allowlisted household callable', async () => {
-    const { getMyKinHandler } = await p('getMyKin');
-    await getMyKinHandler({ auth: both, data: {} } as never);
+    const { listHouseholdContactsHandler } = await p('householdContacts');
+    await listHouseholdContactsHandler({ auth: both, data: {} } as never);
     expect(mocks.resolved[0]).toEqual({ kinfolkId: 'k1', isOperator: true });
+  });
+});
+
+/**
+ * Docket Q1, operator ruling 2026-09-27: "Auntie never uses the portal. Refuse
+ * her at portal sign-in with a clear message." Outside of kinfolk, only the
+ * owner uses the portal.
+ *
+ * getMyAccess is the first callable both portal clients make after sign-in.
+ * It refuses an Auntie with a tagged reason the clients turn into a sign-out
+ * and a notice on the sign-in screen. The owner and kinfolk see no change.
+ */
+describe('Q1 getMyAccess refuses an Auntie at portal sign-in', () => {
+  const load = async () => (await p('getMyAccess')).getMyAccessHandler as Handler;
+  it.each(['auntie1', 'auntie2'] as const)('%s is refused with the portal reason, before any read', async (who) => {
+    const handler = await load();
+    const err = await handler({ auth: AUTH[who], data: {} } as never).then(
+      () => null,
+      (e: unknown) => e as { code?: string; message?: string; details?: { reason?: string } },
+    );
+    expect(err).toMatchObject({ code: 'permission-denied', details: { reason: 'caretaker-not-portal' } });
+    // The Android client matches on message text, so the token rides there too.
+    expect(err?.message).toContain('caretaker-not-portal');
+    expect(mocks.dbFn).not.toHaveBeenCalled();
+  });
+  it('a double-claimed token is refused too', async () => {
+    const handler = await load();
+    await expect(
+      handler({ auth: { uid: 'auntie-two', token: { admin: true, staffRole: 'auntie' } }, data: {} } as never),
+    ).rejects.toMatchObject({ code: 'permission-denied', details: { reason: 'caretaker-not-portal' } });
+    expect(mocks.dbFn).not.toHaveBeenCalled();
+  });
+  it('the owner keeps the operator directory', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        docs: { 'clients/owner-1': {} },
+        queryDocs: { kinfolk: [{ id: 'k1', data: {} }, { id: 'k2', data: {} }] },
+      }).db,
+    );
+    const handler = await load();
+    const res = (await handler({ auth: AUTH.owner, data: {} } as never)) as { kinfolkIds: string[]; isOperator: boolean };
+    expect(res.isOperator).toBe(true);
+    expect([...res.kinfolkIds].sort()).toEqual(['k1', 'k2']);
+  });
+  it('a kinfolk with one tribe gets it', async () => {
+    const handler = await load();
+    await expect(handler({ auth: AUTH.kin1, data: {} } as never)).resolves.toEqual({ kinfolkIds: ['k1'], isOperator: false });
+  });
+  it('a kinfolk with two tribes still gets both (the client owns the one-tribe error)', async () => {
+    const handler = await load();
+    await expect(handler({ auth: AUTH.kin2, data: {} } as never)).resolves.toEqual({
+      kinfolkIds: ['k1', 'k2'],
+      isOperator: false,
+    });
+  });
+});
+/**
+ * Docket Q1: the portal-only callables that never went through
+ * resolveKinfolkAccess. Each refuses an Auntie by role before it reads
+ * anything. #984 had left several of these acting as the household for an
+ * Auntie holding one tribe (setActiveTribe, getMyAccount, submitRating, the
+ * kin photo upload pair), and acceptInvite would have linked her to a
+ * household as a member.
+ *
+ * Not here on purpose, because an admin client calls them: registerFcmToken,
+ * getFeatureFlags, getBreeds, getFormSchema, mapboxSearch/Retrieve,
+ * markNotificationRead and the other notification callables, and the
+ * KinTale engagement trio (below). signOutAllDevices is never refused.
+ */
+describe('Q1 portal-only callables refuse an Auntie by role', () => {
+  const m = (path: string) => import(`../src/${path}`);
+  const PORTAL_ONLY: Array<{ name: string; load: () => Promise<Handler>; data: Record<string, unknown> }> = [
+    { name: 'setActiveTribe', load: async () => (await p('setActiveTribe')).setActiveTribeHandler, data: { kinfolkId: 'k1' } },
+    { name: 'getMyAccount', load: async () => (await p('account')).getMyAccountHandler, data: {} },
+    { name: 'saveMyAccount', load: async () => (await p('account')).saveMyAccountHandler, data: {} },
+    { name: 'submitRating', load: async () => (await p('submitRating')).submitRatingHandler, data: { visitId: 'v1', stars: 5 } },
+    { name: 'signKinPhotoUpload', load: async () => (await p('signKinPhotoUpload')).signKinPhotoUploadHandler, data: { kinId: 'kin1' } },
+    { name: 'confirmKinPhotoUpload', load: async () => (await p('signKinPhotoUpload')).confirmKinPhotoUploadHandler, data: { kinId: 'kin1' } },
+    { name: 'signKinfolkAvatar', load: async () => (await p('signKinfolkAvatar')).signKinfolkAvatarHandler, data: {} },
+    { name: 'dismissBanner', load: async () => (await p('dismissBanner')).dismissBannerHandler, data: { bannerId: 'b1' } },
+    { name: 'getMyNotificationPrefs', load: async () => (await p('notificationPrefs')).getMyNotificationPrefsHandler, data: {} },
+    { name: 'saveMyNotificationPrefs', load: async () => (await p('notificationPrefs')).saveMyNotificationPrefsHandler, data: {} },
+    { name: 'getBookingPolicy', load: async () => (await p('getBookingPolicy')).getBookingPolicyHandler, data: {} },
+    { name: 'getServiceCatalog', load: async () => (await p('getServiceCatalog')).getServiceCatalogHandler, data: {} },
+    { name: 'getBusinessClosures', load: async () => (await p('getBusinessClosures')).getBusinessClosuresHandler, data: {} },
+    { name: 'getBusinessContact', load: async () => (await p('getBusinessContact')).getBusinessContactHandler, data: {} },
+    { name: 'getVetClinics', load: async () => (await p('getVetClinics')).getVetClinicsHandler, data: {} },
+    { name: 'getInvitePreview', load: async () => (await p('getInvitePreview')).getInvitePreviewHandler, data: { inviteId: 'i1' } },
+    { name: 'getNotificationCatalog', load: async () => (await m('notifications/getNotificationCatalog')).getNotificationCatalogHandler, data: {} },
+    { name: 'revokeShareLink', load: async () => (await m('share/revokeShareLink')).revokeShareLinkHandler, data: { shareId: 's1' } },
+    { name: 'acceptInvite', load: async () => (await m('membership/acceptInvite')).acceptInviteHandler, data: { inviteId: 'i1' } },
+    { name: 'updateSecondaryPermissions', load: async () => (await m('membership/updateSecondaryPermissions')).updateSecondaryPermissionsHandler, data: {} },
+  ];
+  it('none of them is on the allowlist', () => {
+    for (const c of PORTAL_ONLY) expect({ name: c.name, listed: AUNTIE_ALLOWED_CALLABLES.has(c.name) }).toEqual({ name: c.name, listed: false });
+  });
+  describe.each(PORTAL_ONLY)('$name', (c) => {
+    it.each(['auntie1', 'auntie2'] as const)('%s is refused before any read', async (who) => {
+      const handler = await c.load();
+      await expect(handler({ auth: AUTH[who], data: c.data } as never)).rejects.toMatchObject({
+        code: 'permission-denied',
+        message: CARETAKER_MESSAGE,
+      });
+      expect(mocks.dbFn).not.toHaveBeenCalled();
+    });
+    it.each(['owner', 'kin1'] as const)('%s is not stopped by the caretaker refusal', async (who) => {
+      const handler = await c.load();
+      let message = '';
+      try {
+        await handler({ auth: AUTH[who], data: c.data } as never);
+      } catch (e) {
+        message = (e as Error).message;
+      }
+      expect(message).not.toBe(CARETAKER_MESSAGE);
+    });
+  });
+});
+/**
+ * Docket Q1: the KinTale engagement callables live in portal/ but the admin
+ * web KinTale detail calls all three, so they gate on householdStaffFlag
+ * instead of the raw `admin` claim. The raw claim sent an Auntie into the
+ * kinfolk branch, where one assigned tribe let her comment and react as that
+ * household. Now: addKinTaleComment (allowlisted) resolves her as staff; the
+ * reaction pair (not allowlisted) refuses her.
+ */
+describe('Q1 KinTale engagement never lets an Auntie act as the household', () => {
+  const eng = async () => import('../src/portal/kinTaleEngagement');
+  const withTale = () =>
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        docs: {
+          'kin_care_reports/t1': { kinfolkId: 'k1' },
+          'clients/auntie-one': { kinfolkIds: ['k1'] },
+          'clients/kin-one': { kinfolkIds: ['k1'] },
+        },
+      }).db,
+    );
+  it.each(['getKinTaleReactionHandler', 'toggleKinTaleLoveHandler'] as const)('%s refuses an Auntie holding the tale\'s tribe', async (fn) => {
+    withTale();
+    const handler = (await eng())[fn] as Handler;
+    await expect(handler({ auth: AUTH.auntie1, data: { taleId: 't1' } } as never)).rejects.toMatchObject({
+      code: 'permission-denied',
+      message: CARETAKER_MESSAGE,
+    });
+  });
+  it.each(['getKinTaleReactionHandler', 'toggleKinTaleLoveHandler'] as const)('%s still serves the kinfolk', async (fn) => {
+    withTale();
+    const handler = (await eng())[fn] as Handler;
+    await expect(handler({ auth: AUTH.kin1, data: { taleId: 't1' } } as never)).resolves.toHaveProperty('loved');
+  });
+  it('addKinTaleComment files an Auntie\'s comment as staff, not as the household', async () => {
+    withTale();
+    const { addKinTaleCommentHandler } = await eng();
+    const db = mocks.dbFn();
+    const add = vi.fn().mockResolvedValue({ id: 'c1' });
+    const realCollection = db.collection.bind(db);
+    db.collection = (path: string) => (path === 'kin_care_reports/t1/comments' ? { add } : realCollection(path));
+    mocks.dbFn.mockReturnValue(db);
+    await addKinTaleCommentHandler({ auth: AUTH.auntie1, data: { taleId: 't1', body: 'Walked well today.' } } as never).catch(() => undefined);
+    expect(add).toHaveBeenCalledWith(expect.objectContaining({ authorUid: 'auntie-one', authorRole: 'admin' }));
+  });
+});
+/**
+ * Docket Q1: Storage rules had no caretaker exclusion on `isKinfolk()`, so an
+ * Auntie holding exactly one tribe (and so a minted `role: 'kinfolk'` claim)
+ * could read and write that household's kin photos, profile image and KinTale
+ * media as the household. There is no Storage emulator suite in this repo, so
+ * the rule text is pinned here; `firestore.rules:isKinfolk()` already carries
+ * the same exclusion and `test/rules/auntieAccess.test.ts` covers that one.
+ */
+describe('Q1 storage.rules: a caretaker is never kinfolk', () => {
+  it('isKinfolk() excludes staffRole auntie', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const rules = readFileSync(resolve(__dirname, '../../storage.rules'), 'utf8');
+    const fn = rules.slice(rules.indexOf('function isKinfolk()'), rules.indexOf('function ownsKinfolk('));
+    expect(fn).toContain("request.auth.token.role == 'kinfolk'");
+    expect(fn).toMatch(/!\(\s*'staffRole' in request\.auth\.token && request\.auth\.token\.staffRole == 'auntie'\s*\)/);
   });
 });

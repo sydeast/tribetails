@@ -5,7 +5,7 @@ import { db, auth as authAdmin } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { normalizeE164 } from '../lib/phoneNormalize';
 import { initSentry } from '../lib/sentry';
-import { isOwner } from '../lib/staffGate';
+import { isOwner, refuseAuntie } from '../lib/staffGate';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { FULL_CPU } from '../lib/runtimeOptions';
@@ -63,6 +63,7 @@ function toAccountDto(
 }
 
 export async function getMyAccountHandler(req: CallableRequest<unknown>): Promise<AccountDto> {
+  refuseAuntie(req.auth, 'getMyAccount'); // docket Q1: an Auntie never uses the portal
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -130,6 +131,7 @@ const SaveArgs = z.object({
 });
 
 export async function saveMyAccountHandler(req: CallableRequest<unknown>): Promise<{ ok: true }> {
+  refuseAuntie(req.auth, 'saveMyAccount'); // docket Q1: an Auntie never uses the portal
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');

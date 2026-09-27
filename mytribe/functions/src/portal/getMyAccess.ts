@@ -1,6 +1,6 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { db } from '../lib/firestoreAdmin';
-import { isOwner } from '../lib/staffGate';
+import { isOwner, refuseAuntieAtPortalSignIn } from '../lib/staffGate';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { logEvent } from '../lib/logger';
@@ -31,6 +31,10 @@ export async function getMyAccessHandler(
   if (!uid) {
     throw new HttpsError('unauthenticated', 'Sign-in required.');
   }
+  // Docket Q1, operator ruling 2026-09-27: an Auntie never uses the portal.
+  // Refused before anything is read, with the reason both portal clients turn
+  // into "sign out and explain" (see refuseAuntieAtPortalSignIn).
+  refuseAuntieAtPortalSignIn(req.auth, 'getMyAccess');
 
   const firestore = db();
   const clientSnap = await firestore.collection('clients').doc(uid).get();
