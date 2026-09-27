@@ -144,10 +144,13 @@ jobs:
             # `adminE2e` because the two suites answer different questions and
             # a change to one must not pay for the other: Playwright covers
             # typography, the cascade and a handful of deep flows, Cypress proves
-            # the app boots in a real browser and that sign-in works. It is a
-            # SMOKE suite by operator ruling: the version that walked every screen
-            # asserted that elements were visible and never that anything happened,
-            # which is the false green it was supposed to end. It reuses
+            # the app boots in a real browser and that sign-in works. Feature
+            # specs follow operator ruling 2026-09-01: specs designed in session,
+            # UI-only assertions, cy.intercept OK for callables and Cloudinary,
+            # smtp2go for email not SendGrid, no account-deletion tests. Every
+            # spec must assert that something happened, not only that elements
+            # are visible: an earlier suite that walked every screen and only
+            # checked visibility was a false green. It reuses
             # `e2e/seed.ts` and `e2e.firebase.json`, so both are watched here too.
             adminCy:
               - 'auntieos-admin/cypress/**'
@@ -163,9 +166,12 @@ jobs:
               - 'package-lock.json'
               - '.github/workflows/ci.yml'
             # The portal's Cypress suite, the first browser-level test the
-            # portal has ever had, and a smoke suite for the same reason as the
-            # admin's. It watches `src/**` because the whole point is catching
-            # what a change there does in a real browser, and
+            # portal has ever had. As of operator ruling 2026-09-27 it follows
+            # the same rules as admin (ruling 2026-09-01): feature specs if
+            # designed in session, UI-only assertions, cy.intercept OK for
+            # callables and Cloudinary, smtp2go for email not SendGrid, no
+            # account-deletion tests. It watches `src/**` because the whole point
+            # is catching what a change there does in a real browser, and
             # `mytribe/firestore.rules` because the harness runs against the
             # real rules rather than a permissive stand-in.
             portalCy:
