@@ -50,6 +50,7 @@
     "report:legacy-amount-due": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/reportLegacyAmountDue.ts",
     "report:over-applied-invoices": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/reportOverAppliedInvoices.ts",
     "report:autoapply-double-credit": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/reportAutoApplyDoubleCredit.ts",
+    "report:duplicate-checkout-credits": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/reportDuplicateCheckoutCredits.ts",
     "report:household-contacts": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/reportHouseholdContacts.ts",
     "report:overdue-notices-non-bills": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/reportOverdueNoticesForNonBills.ts",
     "report:desktop-direct-payments": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/reportDesktopDirectPayments.ts",

@@ -112,24 +112,48 @@ describe('saveKinTaleDraft', () => {
 
   it('updates an existing draft via a MERGE setDoc, never a full overwrite that could wipe untracked fields', async () => {
     setDoc.mockResolvedValue(undefined);
-    const result = await saveKinTaleDraft(draft({ _id: 'existing1', title: 'Updated headline' }));
+    const result = await saveKinTaleDraft(
+      draft({ _id: 'existing1', title: 'Updated headline' }),
+      draft({ _id: 'existing1', title: 'Old headline' }),
+    );
 
     expect(result).toBe('existing1');
     expect(setDoc).toHaveBeenCalledTimes(1);
     const [ref, payload, opts] = setDoc.mock.calls[0] as [unknown, Record<string, unknown>, Record<string, unknown>];
     expect(ref).toBe('docRef');
-    expect(payload).toMatchObject({ title: 'Updated headline', sessionId: 'sess1' });
+    expect(payload).toMatchObject({ title: 'Updated headline' });
     expect(opts).toEqual({ merge: true });
     expect(addDoc).not.toHaveBeenCalled();
   });
 
   it('an update never re-stamps author/createdAt (only updatedAt)', async () => {
     setDoc.mockResolvedValue(undefined);
-    await saveKinTaleDraft(draft({ _id: 'existing1', bodyCopy: 'edit' }));
+    await saveKinTaleDraft(draft({ _id: 'existing1', bodyCopy: 'edit' }), draft({ _id: 'existing1', bodyCopy: 'x' }));
     const [, payload] = setDoc.mock.calls[0] as [unknown, Record<string, unknown>];
     expect(payload).not.toHaveProperty('authorId');
     expect(payload).not.toHaveProperty('createdAt');
     expect(typeof payload.updatedAt).toBe('string');
+  });
+
+  it('#994: an update sends only the fields that changed since load', async () => {
+    // Every editable field used to go out on every save, so a field another
+    // client changed after this screen read the draft went back to the old value.
+    setDoc.mockResolvedValue(undefined);
+    const loaded = draft({ _id: 'existing1', title: 'A walk', bodyCopy: 'Short.' });
+    await saveKinTaleDraft({ ...loaded, bodyCopy: 'A long, good walk.' }, loaded);
+    const [, payload] = setDoc.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(Object.keys(payload).sort()).toEqual(['bodyCopy', 'updatedAt']);
+  });
+
+  it('#994: writes nothing when nothing changed since load', async () => {
+    const loaded = draft({ _id: 'existing1', title: 'A walk' });
+    expect(await saveKinTaleDraft({ ...loaded }, loaded)).toBe('existing1');
+    expect(setDoc).not.toHaveBeenCalled();
+  });
+
+  it('#994: refuses an update with no loaded draft to diff against', async () => {
+    await expect(saveKinTaleDraft(draft({ _id: 'existing1', title: 'A walk' }))).rejects.toThrow(/loaded/);
+    expect(setDoc).not.toHaveBeenCalled();
   });
 });
 
@@ -221,11 +245,22 @@ describe('templateId and fieldResponses reach the document', () => {
     setDoc.mockResolvedValue(undefined);
     await saveKinTaleDraft(
       draft({ _id: 'r1', title: 'A great walk', templateId: 'tpl_walk', fieldResponses: ticked }),
+      draft({ _id: 'r1', title: 'A great walk' }),
     );
     const [, payload, options] = setDoc.mock.calls[0] as [unknown, Record<string, unknown>, unknown];
     expect(payload['templateId']).toBe('tpl_walk');
     expect(payload['fieldResponses']).toEqual(ticked);
     expect(options).toEqual({ merge: true });
+  });
+  it('#994: an UPDATE sends only the checklist answers that changed', async () => {
+    setDoc.mockResolvedValue(undefined);
+    const walked = { ...ticked['pet1|fed'], fieldKey: 'walked' };
+    const loaded = draft({ _id: 'r1', title: 'A great walk', fieldResponses: { ...ticked, 'pet1|walked': { ...walked, boolValue: false } } });
+    const edited = { ...loaded, fieldResponses: { ...loaded.fieldResponses, 'pet1|walked': { ...walked, boolValue: true } } };
+    await saveKinTaleDraft(edited, loaded);
+    const [, payload] = setDoc.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(Object.keys(payload).sort()).toEqual(['fieldResponses', 'updatedAt']);
+    expect(Object.keys(payload['fieldResponses'] as object)).toEqual(['pet1|walked']);
   });
   /** The built-in default is a blank id on the wire, never a sentinel string. */
   it('writes a blank templateId through unchanged rather than omitting it', async () => {

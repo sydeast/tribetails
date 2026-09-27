@@ -7,6 +7,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import type { InviteRequestDoc } from '../lib/schema';
 import { FULL_CPU } from '../lib/runtimeOptions';
 import { clientIpOf, ipRateLimitKey } from '../auth/loginSecurity';
+import { refuseAuntie } from '../lib/staffGate';
 
 /** Previews per caller address per hour. Unchanged since before #910. */
 export const INVITE_PREVIEW_IP_LIMIT = 60;
@@ -34,6 +35,7 @@ export type InvitePreviewResult =
 export async function getInvitePreviewHandler(
   req: CallableRequest<unknown>,
 ): Promise<InvitePreviewResult> {
+  refuseAuntie(req.auth, 'getInvitePreview'); // docket Q1: an Auntie never uses the portal
   let args: z.infer<typeof Args>;
   try {
     args = Args.parse(req.data);

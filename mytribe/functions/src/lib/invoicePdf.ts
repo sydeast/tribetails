@@ -8,6 +8,7 @@ import {
 } from './paymentMethods';
 import { getAdmin } from './firestoreAdmin';
 import { lineAmountCents } from './invoiceMath';
+import { invoiceIsPaid } from './invoicePaidGate';
 
 /**
  * Stage 3 / 16.2 - server-side invoice PDF.
@@ -401,6 +402,14 @@ export async function generateAndStoreInvoicePdf(id: string, data: Record<string
   // from those, so a PDF regenerated next month says what the household was
   // originally told rather than what the settings happen to say today. An
   // invoice with no snapshot prints from live settings, exactly as before.
+  //
+  // A PAID INVOICE PRINTS NO "HOW TO PAY" (operator ruling 2026-09-27, docket
+  // Q5): the PDF is a receipt by then, and the Venmo/PayPal handles on it are
+  // pay links the household could still follow. The settings are not read.
+  if (invoiceIsPaid(data)) {
+    inv.paymentMethods = '';
+    return storeInvoicePdf(id, await renderInvoicePdf(inv));
+  }
   try {
     const snap = await getAdmin().firestore().collection('business_settings').doc('business_settings').get();
     inv.paymentMethods = formatPaymentMethods(

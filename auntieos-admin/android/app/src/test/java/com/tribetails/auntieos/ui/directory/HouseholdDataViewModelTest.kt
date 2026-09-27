@@ -95,6 +95,42 @@ class HouseholdDataViewModelTest {
         val state = vm.uiState.value
         assertFalse(state.isLoading)
         assertNotNull(state.error)
+        assertFalse(state.householdLoaded)
+    }
+
+    /**
+     * #994: after a failed read the form holds a blank placeholder. Save is
+     * refused with a message that names the real problem, and nothing is written.
+     */
+    @Test
+    fun `save is refused after a failed load and writes nothing`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getHouseholdData(any()) } returns Result.failure(RuntimeException("Load failed"))
+        val vm = buildViewModel()
+        vm.loadHouseholdData("kf1")
+        advanceUntilIdle()
+
+        vm.updateFoodLocation("garage shelf")
+        vm.saveHouseholdData()
+        advanceUntilIdle()
+
+        io.mockk.coVerify(exactly = 0) { mockRepo.saveHouseholdData(any()) }
+        io.mockk.coVerify(exactly = 0) { mockRepo.updateHouseholdFields(any(), any()) }
+        assertTrue(vm.uiState.value.error!!.contains("hasn't loaded"))
+    }
+
+    @Test
+    fun `a retry that succeeds unlocks save`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getHouseholdData("kf1") } returns Result.failure(RuntimeException("Load failed"))
+        val vm = buildViewModel()
+        vm.loadHouseholdData("kf1")
+        advanceUntilIdle()
+        assertFalse(vm.uiState.value.householdLoaded)
+
+        coEvery { mockRepo.getHouseholdData("kf1") } returns Result.success(HouseholdData(id = "hd1", kinfolkId = "kf1"))
+        vm.loadHouseholdData("kf1")
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.householdLoaded)
+        assertNull(vm.uiState.value.error)
     }
 
     /**

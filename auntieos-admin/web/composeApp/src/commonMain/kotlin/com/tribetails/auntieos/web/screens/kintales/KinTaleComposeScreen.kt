@@ -210,6 +210,11 @@ private fun KinTaleComposerBody(
     var report by remember(session._id, template._id) {
         mutableStateOf(scaffoldReport(session, template))
     }
+    // #994: the report as this screen last wrote it: the diff baseline for every
+    // update, so a save sends only what changed since. Null until the first
+    // create answers; `report._id` is blank until then too, so no update runs
+    // without it.
+    var written by remember(session._id, template._id) { mutableStateOf<KinCareReport?>(null) }
     var bodyCopy by remember(report._id) { mutableStateOf(report.bodyCopy) }
     // Auntie-authored headline for the cover. Blank uses composerTitle(...) ONLY
     // as placeholder; we never write the derived value back onto the report.
@@ -284,15 +289,16 @@ private fun KinTaleComposerBody(
             val res = if (latest._id.isBlank()) {
                 client.createKinTaleReport(latest)
             } else {
-                when (val r = client.updateKinTaleReport(latest)) {
+                when (val r = client.updateKinTaleReport(written ?: KinCareReport(), latest)) {
                     is WriteResult.Ok  -> WriteResult.Ok(latest._id)
-                    is WriteResult.Err -> r
+                    is WriteResult.Err -> WriteResult.Err(r.message)
                 }
             }
             isSaving = false
             when (res) {
                 is WriteResult.Ok  -> {
                     if (latest._id.isBlank()) report = latest.copy(_id = res.value)
+                    written = latest.copy(_id = res.value)
                 }
                 is WriteResult.Err -> showToast("Couldn't save draft: ${res.message}", ToastKind.Error)
             }
@@ -366,12 +372,12 @@ private fun KinTaleComposerBody(
             val latest = report
             val savedId = if (latest._id.isBlank()) {
                 when (val r = client.createKinTaleReport(latest)) {
-                    is WriteResult.Ok  -> { report = latest.copy(_id = r.value); r.value }
+                    is WriteResult.Ok  -> { report = latest.copy(_id = r.value); written = report; r.value }
                     is WriteResult.Err -> { isSending = false; showToast("Couldn't save before sending: ${r.message}", ToastKind.Error); return@launch }
                 }
             } else {
-                when (val r = client.updateKinTaleReport(latest)) {
-                    is WriteResult.Ok  -> latest._id
+                when (val r = client.updateKinTaleReport(written ?: KinCareReport(), latest)) {
+                    is WriteResult.Ok  -> { written = latest; latest._id }
                     is WriteResult.Err -> { isSending = false; showToast("Couldn't save before sending: ${r.message}", ToastKind.Error); return@launch }
                 }
             }

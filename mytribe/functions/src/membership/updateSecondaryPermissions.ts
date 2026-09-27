@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { wrapCallable } from '../lib/wrapCallable';
 import { loadMember, requirePrimary } from '../lib/memberGate';
-import { isOwner } from '../lib/staffGate';
+import { isOwner, refuseAuntie } from '../lib/staffGate';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
@@ -34,6 +34,7 @@ const Args = z.object({
 });
 
 export async function updateSecondaryPermissionsHandler(req: CallableRequest<unknown>): Promise<{ ok: true }> {
+  refuseAuntie(req.auth, 'updateSecondaryPermissions'); // docket Q1: an Auntie never uses the portal
   if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in required.');
   const uid = req.auth.uid;
   const args = Args.parse(req.data);

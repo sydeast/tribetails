@@ -33,6 +33,7 @@ import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
+import com.tribetails.auntieos.web.ui.components.LoadErrorBanner
 import com.tribetails.auntieos.web.ui.components.BottomBorderField
 import com.tribetails.auntieos.web.ui.components.GhostButton
 import com.tribetails.auntieos.web.ui.components.GlassSurface
@@ -90,7 +91,11 @@ fun HouseholdDataScreen(
 
     var loading by remember(kinfolkId) { mutableStateOf(true) }
     var loadError by remember(kinfolkId) { mutableStateOf<String?>(null) }
+    // #994: the document as read (null when the read answered and there is none),
+    // then as this screen last wrote it. Save diffs the form against it.
     var existing by remember(kinfolkId) { mutableStateOf<HouseholdData?>(null) }
+    // Bumped by Retry after a failed read.
+    var loadAttempt by remember(kinfolkId) { mutableStateOf(0) }
 
     // Veterinary
     var primaryVetName     by remember(kinfolkId) { mutableStateOf("") }
@@ -145,7 +150,7 @@ fun HouseholdDataScreen(
     fun fieldLabel(base: String, value: String): String =
         if (value.isBlank()) "$base · empty" else base
 
-    LaunchedEffect(kinfolkId) {
+    LaunchedEffect(kinfolkId, loadAttempt) {
         loading = true
         when (val r = client.getHouseholdData(kinfolkId)) {
             is WriteResult.Ok -> {
@@ -241,13 +246,11 @@ fun HouseholdDataScreen(
             }
             return@ScreenScaffold
         }
-        if (loadError != null) {
-            Text(
-                "Failed to load household data: $loadError",
-                color = AuntieTheme.colors.error,
-                style = AuntieTheme.typography.bodyMedium,
-            )
-            Spacer(Modifier.height(12.dp))
+        // #994: a failed read shows no form and no Save. Saving over a read that
+        // never answered would have written blanks over the household's data.
+        loadError?.let { msg ->
+            LoadErrorBanner("Couldn't load household data", msg, onRetry = { loadAttempt++ })
+            return@ScreenScaffold
         }
 
         // SUGGESTION: read-only dossier needsMoreSamples context band. This banner
@@ -380,15 +383,22 @@ fun HouseholdDataScreen(
             GhostButton(label = "Back", onClick = onBack, modifier = Modifier.weight(1f))
             PrimaryButton(
                 label   = "Save Household Data",
-                enabled = !saving,
+                enabled = !saving && !loading && loadError == null,
                 loading = saving,
-                onClick = {
+                onClick = save@{
+                    if (loading || loadError != null) return@save
                     saving = true
+                    val loaded = existing
+                    val edited = build()
                     scope.launch {
-                        val r = client.saveHouseholdData(build())
+                        val r = client.saveHouseholdData(loaded, edited)
                         saving = false
                         when (r) {
-                            is WriteResult.Ok  -> showToast("Saved.", ToastKind.Success)
+                            is WriteResult.Ok  -> {
+                                // What was just written is the next save's baseline.
+                                if (r.value) existing = edited.copy(_id = loaded?._id?.ifBlank { null } ?: edited._id.ifBlank { kinfolkId })
+                                showToast(if (r.value) "Saved." else "No changes to save.", ToastKind.Success)
+                            }
                             is WriteResult.Err -> showToast("Save failed: ${r.message}", ToastKind.Error)
                         }
                     }

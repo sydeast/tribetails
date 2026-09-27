@@ -25,8 +25,7 @@ import kotlinx.serialization.json.jsonObject
  *
  * A field cleared to blank is a change and is written as `""`.
  *
- * Kept profile-local on purpose. #895 (desktop kin saves) may add a general
- * model diff; the two can be folded together then.
+ * #994: the comparison itself is the shared [fieldChanges] (FieldChanges.kt).
  */
 internal val USER_PROFILE_SERVER_OWNED: Set<String> = setOf("_id", "createdAt", "updatedAt")
 
@@ -35,12 +34,10 @@ internal fun userProfileChangedFields(
     edited: UserProfile,
     codec: Json,
 ): Map<String, JsonElement> {
+    // #994: the key-by-key comparison is the shared [fieldChanges]; no field of
+    // the profile is diffed per map key, so every change is one top-level set.
     val before = codec.encodeToJsonElement(UserProfile.serializer(), loaded ?: UserProfile()).jsonObject
     val after = codec.encodeToJsonElement(UserProfile.serializer(), edited).jsonObject
-    val changes = LinkedHashMap<String, JsonElement>()
-    for ((key, value) in after) {
-        if (key in USER_PROFILE_SERVER_OWNED) continue
-        if (before[key] != value) changes[key] = value
-    }
-    return changes
+    return fieldChanges(before, after, excluded = USER_PROFILE_SERVER_OWNED, perKeyMaps = emptySet())
+        .associate { it.path.single() to it.value!! }
 }

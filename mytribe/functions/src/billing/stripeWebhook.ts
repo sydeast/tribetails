@@ -18,6 +18,10 @@ import { FULL_CPU } from '../lib/runtimeOptions';
 import { handleStripeDisputeEvent, isDisputeEvent } from './stripeDispute';
 import { handleSetupSessionCompleted, isSetupSessionEvent } from './stripeSetupSession';
 import {
+  // ORPHANED since docket Q5 (2026-09-27): the duplicate-checkout branch no
+  // longer credits the household balance, so nothing here reads it. Left in
+  // place, not deleted (payment code is reported, never removed).
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   ACCOUNT_BALANCE_FIELD,
   CHECKOUT_ROUND_FIELD,
   CHECKOUT_ROUND_METADATA_KEY,
@@ -74,8 +78,27 @@ export function stripeAuditDocId(eventId: string, kind: FollowupKind): string {
   return `stripe_${eventId}_${kind}`;
 }
 
-/** Which follow-up an event owes. */
-export type FollowupKind = 'paid' | 'failed';
+/**
+ * Which follow-up an event owes.
+ *
+ * `unapplied` (docket Q5, 2026-09-27): a card charge that landed on an invoice
+ * already paid, or on a stale checkout round. It is recorded as an unapplied
+ * payment and needs the ADMIN: a `critical` audit entry and the business-only
+ * `invoice.payment.unapplied` notice. Tracked by the same stamps as the other
+ * two so a crash between the commit and the notice is finished on Stripe's
+ * retry instead of being lost.
+ */
+export type FollowupKind = 'paid' | 'failed' | 'unapplied';
+
+/** What the `unapplied` follow-up says about the charge. Stored on the event record for a retry. */
+export interface UnappliedDetail {
+  paymentIntentId: string | null;
+  duplicateReason: string | null;
+  unappliedCents: number;
+}
+
+/** The business-only notice the admin gets for an unapplied charge. */
+export const UNAPPLIED_NOTICE_KEY = 'invoice.payment.unapplied';
 
 /**
  * A notice that can never reach anyone: no household account and no office
@@ -106,6 +129,8 @@ async function finishEventFollowup(input: {
   eventId: string;
   auditDone: boolean;
   noticeDone: boolean;
+  /** Set for `unapplied` only. */
+  unapplied?: UnappliedDetail;
 }): Promise<void> {
   const eventRef = db().doc(`stripeEvents/${input.eventId}`);
   const stamp = async (fields: Record<string, unknown>) => {
@@ -119,28 +144,54 @@ async function finishEventFollowup(input: {
     });
   };
   const paid = input.kind === 'paid';
+  const unapplied = input.kind === 'unapplied';
+  const detail: UnappliedDetail = input.unapplied ?? { paymentIntentId: null, duplicateReason: null, unappliedCents: 0 };
   if (!input.auditDone) {
     await writeAuditEntry({
       status: paid ? 'SUCCESS' : 'FAILURE',
-      event: paid ? AUDIT_EVENTS.BILLING_INVOICE_PAID : AUDIT_EVENTS.BILLING_INVOICE_FAILED,
+      event: paid
+        ? AUDIT_EVENTS.BILLING_INVOICE_PAID
+        : unapplied
+          ? AUDIT_EVENTS.BILLING_PAYMENT_UNAPPLIED
+          : AUDIT_EVENTS.BILLING_INVOICE_FAILED,
       severity: paid ? 'info' : 'critical',
       actorRole: 'SYSTEM',
       familyId: input.familyId,
-      payload: { invoiceId: input.invoiceId, stripeEventId: input.eventId },
+      payload: unapplied
+        ? {
+            invoiceId: input.invoiceId,
+            stripeEventId: input.eventId,
+            paymentIntentId: detail.paymentIntentId,
+            duplicateReason: detail.duplicateReason,
+            unappliedCents: detail.unappliedCents,
+            // The root `payments/{eventId}` row that holds the money.
+            paymentId: input.eventId,
+          }
+        : { invoiceId: input.invoiceId, stripeEventId: input.eventId },
       docId: stripeAuditDocId(input.eventId, input.kind),
     });
     await stamp({ [AUDIT_WRITTEN_FIELD]: FieldValue.serverTimestamp() });
   }
   if (!input.noticeDone) {
-    const key = paid ? 'invoice.payment.applied' : 'invoice.charge.failed';
-    const recipientUid = await resolveKinfolkUid(input.familyId);
+    const key = paid ? 'invoice.payment.applied' : unapplied ? UNAPPLIED_NOTICE_KEY : 'invoice.charge.failed';
+    // The unapplied notice is BUSINESS-ONLY: the household is told nothing
+    // until the admin has decided what the money becomes.
+    const recipientUid = unapplied ? null : await resolveKinfolkUid(input.familyId);
     let unresolved: UnresolvedResolver[];
     try {
       const outcome = await enqueueNotificationDetailed({
         key,
         // '' for a household with no portal account: the office copy still goes out.
         recipientUid: recipientUid ?? '',
-        data: { kinfolkId: input.familyId, invoiceId: input.invoiceId, stripeEventId: input.eventId },
+        data: unapplied
+          ? {
+              kinfolkId: input.familyId,
+              invoiceId: input.invoiceId,
+              stripeEventId: input.eventId,
+              unappliedAmount: `$${(detail.unappliedCents / 100).toFixed(2)}`,
+              unappliedReason: unappliedReasonLabel(detail.duplicateReason),
+            }
+          : { kinfolkId: input.familyId, invoiceId: input.invoiceId, stripeEventId: input.eventId },
         dedupeWindowMs: STRIPE_NOTICE_DEDUPE_WINDOW_MS,
       });
       unresolved = outcome.unresolved ?? [];
@@ -168,6 +219,25 @@ async function finishEventFollowup(input: {
       );
     }
     await stamp({ [NOTICE_SENT_FIELD]: FieldValue.serverTimestamp() });
+  }
+}
+
+/**
+ * A plain sentence for the admin notice, off `duplicateCheckoutReason`'s code.
+ * Exported for the test.
+ */
+export function unappliedReasonLabel(reason: string | null): string {
+  switch (reason) {
+    case 'stale-round':
+      return 'it was paid on a checkout opened before an earlier payment on this invoice';
+    case 'settled-by-other-intent':
+      return 'the invoice had already been paid by another card payment';
+    case 'invoice-not-owed':
+      return 'the invoice had already been paid';
+    case 'invoice-marked-paid':
+      return 'the invoice was already marked paid';
+    default:
+      return 'the invoice was not owed this payment';
   }
 }
 
@@ -481,11 +551,11 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   // reason as `unresolvedAmount`: reset on every attempt's write path, because
   // a Firestore transaction re-runs its callback on contention.
   let duplicateReason: DuplicateCheckoutReason = null;
-  let duplicateCreditedCents = 0;
+  let unappliedCents = 0;
   const decision = await db().runTransaction(async (tx) => {
     unresolvedAmount = false;
     duplicateReason = null;
-    duplicateCreditedCents = 0;
+    unappliedCents = 0;
     const dedupeSnap = await tx.get(dedupeRef);
     if (dedupeSnap.exists) {
       // #866: what the first delivery recorded, so a retry can finish a paid
@@ -498,6 +568,11 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
         followupTracked: stored[FOLLOWUP_TRACKED_FIELD] === true,
         auditDone: stored[AUDIT_WRITTEN_FIELD] != null,
         noticeDone: stored[NOTICE_SENT_FIELD] != null || stored[NOTICE_SKIPPED_FIELD] != null,
+        unapplied: {
+          paymentIntentId: typeof stored['paymentIntentId'] === 'string' ? stored['paymentIntentId'] : null,
+          duplicateReason: typeof stored['duplicateReason'] === 'string' ? stored['duplicateReason'] : null,
+          unappliedCents: typeof stored['unappliedCents'] === 'number' ? stored['unappliedCents'] : 0,
+        } as UnappliedDetail,
       };
     }
     // Every read before the first write: a Firestore transaction refuses reads
@@ -511,6 +586,8 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
           amountDueCents?: unknown;
           [CHECKOUT_ROUND_FIELD]?: unknown;
           [SETTLED_INTENT_FIELD]?: unknown;
+          status?: unknown;
+          paymentStatus?: unknown;
         }
       | undefined;
     // The state stamp's payment standing reads the `payments` SUBCOLLECTION
@@ -561,6 +638,8 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
             settledPaymentIntentId: invoice?.[SETTLED_INTENT_FIELD],
             amountDueCents: invoice?.amountDueCents,
             amountDue: invoice?.amountDue,
+            status: invoice?.status,
+            paymentStatus: invoice?.paymentStatus,
           },
           paymentIntentId,
           eventRound,
@@ -568,16 +647,33 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       : null;
     if (duplicateReason !== null) {
       // THE MONEY IS ALREADY GONE FROM THE CARD. Stripe collected it before it
-      // told us, so "refuse" cannot mean "reverse" — and there are no refunds,
-      // ever (operator ruling, 2026-08-06). What this branch can do is keep the
-      // duplicate off the invoice and put it somewhere the household can
-      // actually spend: `families/{id}.accountBalanceCents`, the same balance
-      // `redeemCredit` fills and `getMyInvoices` already shows them.
+      // told us, so "refuse" cannot mean "reverse", and there are no refunds,
+      // ever (operator ruling, 2026-08-06).
+      //
+      // AND IT IS NOT CREDITED EITHER (operator ruling 2026-09-27, docket Q5:
+      // a paid invoice takes no payment; account credit only when the admin
+      // enters an amount, #988). Until that ruling this branch added the whole
+      // charge to `families/{id}.accountBalanceCents` on its own. Now the charge
+      // is recorded as an UNAPPLIED payment linked to the invoice, the admin is
+      // flagged (critical audit entry + business-only `invoice.payment.unapplied`
+      // notice, sent after the commit), and the admin decides what it becomes.
+      // `scripts/reportDuplicateCheckoutCredits.ts` lists the charges the old
+      // branch credited.
+      //
+      // Every reason is treated the same, `stale-round` included: a stale
+      // session charges a balance that has since moved, and deciding what the
+      // difference becomes is the same admin decision.
       //
       // NOT DONE HERE, all deliberate: no second `status: 'paid'` stamp, no
-      // second BILLING_INVOICE_PAID audit, and no `invoice.payment.applied`
-      // notification. The invoice was not paid again; telling a household it
-      // was would be the double charge wearing a receipt.
+      // BILLING_INVOICE_PAID audit, and no `invoice.payment.applied` to the
+      // household. The invoice was not paid again.
+      //
+      // ONLY the amount Stripe itself reports. The local-invoice fallback the
+      // apply path uses is meaningless here: this invoice's balance is zero (or
+      // the round is stale), which is why we are in this branch. No amount means
+      // a flagged row with no figure, never a guess.
+      const chargeCents = eventAmountCents ?? 0;
+      unappliedCents = chargeCents;
       tx.create(dedupeRef, {
         type: event.type,
         receivedAt: FieldValue.serverTimestamp(),
@@ -586,12 +682,16 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
         invoiceId,
         appliedOutcome: 'SKIPPED_DUPLICATE_INVOICE',
         duplicateReason,
+        // What the follow-up needs on a retry (see `finishEventFollowup`).
+        paymentIntentId,
+        unappliedCents: chargeCents,
+        [FOLLOWUP_TRACKED_FIELD]: true,
       });
       if (paymentClaimRef) {
         // Claim the PaymentIntent even though nothing was applied. This
         // duplicate payment has its OWN sibling event coming, and without the
-        // claim that sibling would arrive at this same branch and credit the
-        // account a second time — the original bug, one level along.
+        // claim that sibling would arrive at this same branch and record the
+        // charge a second time.
         tx.create(paymentClaimRef, {
           appliedEventId: event.id,
           appliedEventType: event.type,
@@ -601,20 +701,13 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
           appliedOutcome: 'DUPLICATE_INVOICE_CHECKOUT',
         });
       }
-      // ONLY the amount Stripe itself reports. The local-invoice fallback the
-      // apply path uses is meaningless here: this invoice's balance is zero,
-      // which is why we are in this branch, and crediting zero-or-total would
-      // either lose the household's money or invent some. No amount means no
-      // credit and a flagged row for an operator, never a guess.
-      const creditCents = eventAmountCents ?? 0;
-      duplicateCreditedCents = creditCents;
       tx.set(db().collection('payments').doc(event.id), {
         kinfolkId: familyId,
         invoiceId,
-        amount: creditCents > 0 ? creditCents / 100 : null,
-        amountCents: creditCents > 0 ? creditCents : null,
-        amountResolved: creditCents > 0,
-        amountSource: creditCents > 0 ? 'stripe-event' : 'unresolved',
+        amount: chargeCents > 0 ? chargeCents / 100 : null,
+        amountCents: chargeCents > 0 ? chargeCents : null,
+        amountResolved: chargeCents > 0,
+        amountSource: chargeCents > 0 ? 'stripe-event' : 'unresolved',
         paymentMethod: 'stripe',
         referenceNumber,
         date: FieldValue.serverTimestamp(),
@@ -624,34 +717,19 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
         // What makes this row readable as what it is. The root `payments`
         // collection is a DISPLAY ledger counted in no settlement arithmetic
         // (`getInvoiceLedger` says so in as many words), so the row naming this
-        // invoice cannot double-count it — but a row with no explanation would
-        // have an operator reading a second payment against a settled bill and
-        // finding no reason for it.
+        // invoice cannot double-count it. The admin ledger shows it as "not
+        // applied" (no `appliedInvoiceId`), which is exactly what it is.
         appliedToInvoice: false,
-        appliedTo: 'accountCredit',
+        appliedTo: 'unapplied',
+        needsAdminDecision: true,
+        creditedToAccountCents: 0,
         duplicateCheckoutReason: duplicateReason,
         duplicateOfPaymentIntentId:
           typeof invoice?.[SETTLED_INTENT_FIELD] === 'string' ? invoice[SETTLED_INTENT_FIELD] : null,
       });
-      if (creditCents > 0 && familyId) {
-        // `increment`, not read-then-write, for the reason `creditAccount` in
-        // `lib/accountCredit.ts` gives: two credits landing together must not
-        // each write the balance they read. That helper takes a WriteBatch and
-        // this is a Transaction, so the one line is inlined rather than widening
-        // a helper `recordPayment` also depends on.
-        tx.set(
-          db().collection('families').doc(familyId),
-          {
-            [ACCOUNT_BALANCE_FIELD]: FieldValue.increment(creditCents),
-            accountBalanceUpdatedAt: FieldValue.serverTimestamp(),
-          },
-          { merge: true },
-        );
-      }
       // The invoice records that it happened and nothing else: no money field,
-      // no status, no state stamp. An operator looking at the bill should be
-      // able to see the second charge from here rather than having to find it
-      // in a collection.
+      // no status, no state stamp. An admin looking at the bill can see the
+      // second charge from here rather than having to find it in a collection.
       tx.set(
         ref,
         {
@@ -659,6 +737,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
             ? FieldValue.arrayUnion(paymentIntentId)
             : FieldValue.arrayUnion(event.id),
           lastDuplicateCheckoutAt: FieldValue.serverTimestamp(),
+          unappliedPaymentIds: FieldValue.arrayUnion(event.id),
         },
         { merge: true },
       );
@@ -856,11 +935,14 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   }
 
   if (decision.reason === 'duplicate-invoice-checkout') {
-    // A HOUSEHOLD WAS CHARGED TWICE FOR ONE BILL. Loud, and at `error`, because
-    // this is not a dedupe going about its business: real money arrived that
-    // nobody meant to send, no refund is possible (operator ruling), and the
-    // account-balance credit above is the entire remedy. Somebody has to be
-    // able to find it.
+    // A CARD CHARGE THE INVOICE WAS NOT OWED. Loud, and at `error`: real money
+    // arrived that nobody meant to send, no refund is possible, and nothing
+    // has been done with it yet. The admin decides (docket Q5).
+    const unappliedDetail: UnappliedDetail = {
+      paymentIntentId,
+      duplicateReason,
+      unappliedCents,
+    };
     logEvent({
       severity: 'error',
       function: 'stripeWebhook',
@@ -873,26 +955,33 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
         paymentIntentId,
         duplicateReason,
         eventRound,
-        creditedCents: duplicateCreditedCents,
+        unappliedCents,
+        creditedCents: 0,
       },
     });
-    await writeAuditEntry({
-      status: 'FAILURE',
-      event: AUDIT_EVENTS.BILLING_PAYMENT_DUPLICATE_CREDITED,
-      severity: 'critical',
-      actorRole: 'SYSTEM',
-      familyId,
-      payload: {
+    // The audit entry and the admin notice, tracked by the same stamps as a
+    // paid event: a throw answers 500, Stripe retries, and the replay branch
+    // below finishes whichever step is not stamped done.
+    try {
+      await finishEventFollowup({
+        kind: 'unapplied',
+        familyId,
         invoiceId,
-        stripeEventId: event.id,
-        paymentIntentId,
-        duplicateReason,
-        creditedCents: duplicateCreditedCents,
-      },
-    });
-    // 200, not a retry-provoking error: the credit and the ledger row committed,
-    // and asking Stripe to redeliver would only re-run a transaction that now
-    // short-circuits at the replay branch.
+        eventId: event.id,
+        auditDone: false,
+        noticeDone: false,
+        unapplied: unappliedDetail,
+      });
+    } catch (err) {
+      logEvent({
+        severity: 'error',
+        function: 'stripeWebhook',
+        event: 'stripe.followup.failed',
+        extra: { kind: 'unapplied', familyId, invoiceId, eventId: event.id, err: (err as Error)?.message },
+      });
+      res.status(500).json({ error: 'followup-pending' });
+      return;
+    }
     res.status(200).json({ ok: true, dedup: true, reason: decision.reason });
     return;
   }
@@ -913,7 +1002,9 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
         ? 'paid'
         : isFailedEvent && decision.appliedOutcome === 'FAILED'
           ? 'failed'
-          : null;
+          : isPaidEvent && decision.appliedOutcome === 'SKIPPED_DUPLICATE_INVOICE'
+            ? 'unapplied'
+            : null;
   if (recoverKind !== null && decision.reason === 'replay') {
     try {
       await finishEventFollowup({
@@ -923,6 +1014,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
         eventId: event.id,
         auditDone: decision.auditDone,
         noticeDone: decision.noticeDone,
+        ...(recoverKind === 'unapplied' ? { unapplied: decision.unapplied } : {}),
       });
     } catch (err) {
       logEvent({

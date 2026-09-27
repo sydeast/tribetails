@@ -4,6 +4,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { refuseAuntie } from '../lib/staffGate';
 
 export interface ServiceDto {
   id: string;
@@ -38,6 +39,7 @@ interface GetServiceCatalogResult {
 export async function getServiceCatalogHandler(
   req: CallableRequest<unknown>,
 ): Promise<GetServiceCatalogResult> {
+  refuseAuntie(req.auth, 'getServiceCatalog'); // docket Q1: an Auntie never uses the portal
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');

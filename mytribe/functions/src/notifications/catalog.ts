@@ -569,6 +569,29 @@ const CATALOG_LIST: NotificationDef[] = [
     description: 'A card payment was disputed with the cardholder’s bank, or that dispute closed.',
   },
   {
+    // A card charge landed on an invoice that was not owed it: already paid, or
+    // paid on a checkout opened before an earlier payment (operator ruling
+    // 2026-09-27, docket Q5). The webhook records it as an UNAPPLIED payment
+    // and does nothing else with the money; the admin decides what it becomes
+    // (account credit only when the admin enters an amount, #988; never a
+    // refund). BUSINESS-ONLY for the dispute key's reason: every honest thing
+    // to tell the household depends on that decision.
+    key: 'invoice.payment.unapplied',
+    label: 'Card payment not applied (invoice already paid)',
+    audience: 'business',
+    audiences: { business: true },
+    category: 'invoice',
+    allowedChannels: ['email', 'push'],
+    required: { email: true },
+    // Not silenceable: money is sitting unassigned until somebody decides.
+    alwaysEnabled: true,
+    kinfolkFacing: false,
+    deliveryMode: 'trigger',
+    recipientResolver: 'businessAdmins',
+    templates: { email: 'invoice.payment.unapplied', push: 'invoice.payment.unapplied' },
+    description: 'A card payment arrived for an invoice that was already paid and was held for a decision.',
+  },
+  {
     key: 'quote.accepted',
     label: 'Kinfolk accepted a quote',
     audience: 'both',

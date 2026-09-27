@@ -41,9 +41,21 @@ class VetClinicActionsTest {
     fun `save happy path reaches data source`() = runTest {
         val ds = FakeAuntieDataSource()
         val vm = SettingsViewModel(ds)
-        vm.saveVetClinic(clinic).join()
-        assertEquals(listOf(clinic), ds.updatedVetClinics)
+        val edited = clinic.copy(phone = "556")
+        vm.saveVetClinic(clinic, edited).join()
+        assertEquals(listOf(edited), ds.updatedVetClinics)
+        assertEquals(listOf(clinic), ds.updatedVetClinicBaselines, "#994: the loaded clinic is the diff baseline")
         assertNull(vm.vetClinicError.value)
+    }
+
+    @Test
+    fun `approve diffs against the pending clinic it was shown`() = runTest {
+        val ds = FakeAuntieDataSource()
+        val vm = SettingsViewModel(ds)
+        val pending = clinic.copy(verified = false, submittedBy = "uid-1")
+        vm.approveVetClinic(pending).join()
+        assertEquals(listOf(pending), ds.updatedVetClinicBaselines)
+        assertEquals(listOf(pending.copy(verified = true, submittedBy = "")), ds.updatedVetClinics)
     }
 
     @Test

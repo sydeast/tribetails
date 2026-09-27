@@ -13,6 +13,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
@@ -48,15 +49,20 @@ class InvoicesControllerTest {
         fun opener(): (String) -> Unit = { urls += it }
     }
 
-    private fun invoiceFixture(id: String = "inv-1"): Invoice = Invoice(
+    private fun invoiceFixture(
+        id: String = "inv-1",
+        status: InvoiceStatus = InvoiceStatus.Open,
+        isPaid: Boolean = false,
+        amountDue: Double = 50.0,
+    ): Invoice = Invoice(
         id = id,
         kinfolkId = "kin-1",
         kinfolkName = null,
         client = null,
         total = 50.0,
-        amountDue = 50.0,
-        isPaid = false,
-        status = InvoiceStatus.Open,
+        amountDue = amountDue,
+        isPaid = isPaid,
+        status = status,
         date = null,
         dueDate = null,
         discount = null,
@@ -224,5 +230,62 @@ class InvoicesControllerTest {
         advanceUntilIdle()
 
         assertEquals(emptyList(), opened.urls)
+    }
+
+    // ---- Docket Q5: a paid invoice takes no payment ----
+    @Test
+    fun `a paid invoice never reaches payInvoice, and says why`() = runTest {
+        val fake = FakeFunctionsClient()
+        val opened = RecordingOpener()
+        val c = InvoicesController("kin-1", PortalApi(fake), this, opened.opener())
+        // Marked paid while a stale balance still shows: the mark decides.
+        c.startPay(invoiceFixture(status = InvoiceStatus.Paid, isPaid = true, amountDue = 40.0))
+        advanceUntilIdle()
+        assertEquals(0, fake.calls.size, "a paid invoice must not reach the checkout callable")
+        assertEquals(emptyList(), opened.urls)
+        assertEquals(PAID_INVOICE_REFUSAL, c.error)
+        assertEquals(null, c.paying)
+    }
+    @Test
+    fun `isPaid refuses on its own, even under a stale open status`() = runTest {
+        val fake = FakeFunctionsClient()
+        val opened = RecordingOpener()
+        val c = InvoicesController("kin-1", PortalApi(fake), this, opened.opener())
+        c.startPay(invoiceFixture(status = InvoiceStatus.Open, isPaid = true, amountDue = 40.0))
+        advanceUntilIdle()
+        assertEquals(0, fake.calls.size)
+        assertEquals(PAID_INVOICE_REFUSAL, c.error)
+    }
+    @Test
+    fun `a pay link on a paid invoice opens nothing`() = runTest {
+        // Venmo, PayPal and Cash App links never reach the server, so this gate
+        // is the only one they have.
+        val fake = FakeFunctionsClient()
+        val opened = RecordingOpener()
+        val c = InvoicesController("kin-1", PortalApi(fake), this, opened.opener())
+        val venmo = PayMethod("venmo", "Venmo", PayMethodKind.Link, "https://venmo.com/u/auntie")
+        c.startPayMethod(invoiceFixture(status = InvoiceStatus.Paid, isPaid = true, amountDue = 0.0), venmo)
+        advanceUntilIdle()
+        assertEquals(emptyList(), opened.urls)
+        assertEquals(0, fake.calls.size)
+        assertEquals(PAID_INVOICE_REFUSAL, c.error)
+    }
+    @Test
+    fun `a pay link on an open invoice still opens`() = runTest {
+        val fake = FakeFunctionsClient()
+        val opened = RecordingOpener()
+        val c = InvoicesController("kin-1", PortalApi(fake), this, opened.opener())
+        val venmo = PayMethod("venmo", "Venmo", PayMethodKind.Link, "https://venmo.com/u/auntie")
+        c.startPayMethod(invoiceFixture(), venmo)
+        advanceUntilIdle()
+        assertEquals(listOf("https://venmo.com/u/auntie"), opened.urls)
+    }
+    @Test
+    fun `offersPayment is false for a paid invoice whatever its label and balance`() {
+        assertTrue(offersPayment(invoiceFixture()))
+        assertFalse(offersPayment(invoiceFixture(status = InvoiceStatus.Paid, isPaid = true, amountDue = 40.0)))
+        assertFalse(offersPayment(invoiceFixture(status = InvoiceStatus.Open, isPaid = true, amountDue = 40.0)))
+        assertFalse(offersPayment(invoiceFixture(status = InvoiceStatus.Paid, isPaid = false, amountDue = 40.0)))
+        assertFalse(offersPayment(invoiceFixture(status = InvoiceStatus.Open, amountDue = 0.0)))
     }
 }

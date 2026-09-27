@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  offersPayment,
   calTileFor,
   creditTargetLabel,
   formatCentsUsd,
@@ -165,5 +166,15 @@ describe('a quote the household answered (issue #385)', () => {
   it('names the day a decision was made, and says nothing when there is none', () => {
     expect(longDateLabelFromMs(Date.UTC(2026, 7, 18, 18, 0))).toContain('2026');
     expect(longDateLabelFromMs(null)).toBeNull();
+  });
+});
+describe('offersPayment (docket Q5: a paid invoice takes no payment)', () => {
+  it('only an open, unpaid invoice with a balance', () => {
+    expect(offersPayment({ status: 'open', amountDue: 40, isPaid: false })).toBe(true);
+    expect(offersPayment({ status: 'open', amountDue: 40, isPaid: true })).toBe(false);
+    expect(offersPayment({ status: 'paid', amountDue: 40, isPaid: true })).toBe(false);
+    expect(offersPayment({ status: 'paid', amountDue: 40, isPaid: false })).toBe(false);
+    expect(offersPayment({ status: 'open', amountDue: 0, isPaid: false })).toBe(false);
+    expect(offersPayment({ status: 'quote', amountDue: 40, isPaid: false })).toBe(false);
   });
 });

@@ -88,36 +88,30 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   'addBookingNote',
   'addInternalBookingNote',
 
-  // ── Portal reads and writes on a household record (#984) ────────────────
-  // Operator ruling 2026-09-27: an Auntie may be assigned several tribes, the
-  // same as the owner. These portal callables resolve the household through
+  // ── Household callables the ADMIN clients call (#984, docket Q1) ─────────
+  // These live in portal/ and resolve the household through
   // resolveKinfolkAccess; listed, an Auntie takes its staff branch instead of
-  // the kinfolk one, whose one-tribe rule refused her at two. Each returns or
-  // writes household, kin, visit, KinTale or media data and nothing priced.
-  // Left out on purpose, with the rule that kept them out:
-  //   getMyHome, getMyInvoices, getMyInvoicePdf: money (rule 1), refused by
-  //     role with refuseAuntie.
+  // the kinfolk one. They stay only because the admin app calls them.
+  //
+  // Operator ruling 2026-09-27 (docket Q1): an Auntie never uses the portal.
+  // #984 had also listed ten portal-only callables here (getMyKin,
+  // getMyKinTales, getMyKinPhotos, getMyVisits, getMyBookings,
+  // getMyTribeProfile, saveTribeProfile, saveHomeAccess, addKin, updateKin).
+  // No admin client calls any of them, so they came out, and householdStaffFlag
+  // now refuses her on each. Do not put a portal-only callable back here: the
+  // portal refuses her at sign-in (getMyAccess), and this list is what the
+  // admin app needs. Other portal callables she is refused on, and why:
+  //   getMyHome, getMyInvoices, getMyInvoicePdf: money (rule 1).
   //   archiveKin, removeHouseholdContact: destructive (rule 6).
   //   addSecondaryContact: grants a person portal access, billing_full
   //     included (rules 1 and 3).
   //   sendKinfolkMessage, getMyConversation, markThreadRead, generate: the
-  //     household's side of the thread. A send is stored as senderRole
-  //     'kinfolk', so she would speak as the household. Her side is
-  //     replyToConversation and friends below (rule 7).
+  //     household's side of the thread. Her side is replyToConversation and
+  //     friends below (rule 7).
   //   requestBookingCancellation, requestBookingReschedule: the household
   //     asking. She answers through the admin resolve callables (rule 7).
-  'getMyKin',
-  'getMyKinTales',
-  'getMyKinTaleMedia',
-  'getMyKinPhotos',
-  'getMyVisits',
-  'getMyBookings',
-  'getMyTribeProfile',
-  'saveTribeProfile',
-  'saveHomeAccess',
-  'addKin',
-  'updateKin',
-  'listHouseholdContacts', // admin Android's household screen calls it
+  'getMyKinTaleMedia', // admin web KinTale detail (api/kinTaleDetail.ts)
+  'listHouseholdContacts', // admin web + Android household screen
   'saveHouseholdContact', // and this one
 
   // ── Talking to a household ─────────────────────────────────────────────

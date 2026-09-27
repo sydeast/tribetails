@@ -145,7 +145,9 @@ class KinTaleReportViewModel(
                 bodyCopy = effectiveBody(liveReport.bodyCopy),
             )
             try {
-                when (val result = dataSource.saveReport(report)) {
+                // #994: diffed against the live report, so only the title and
+                // body this screen edits can be written.
+                when (val result = dataSource.saveReport(liveReport, report)) {
                     is WriteResult.Ok -> {
                         isDraftSaved = true
                         error = null
@@ -182,7 +184,7 @@ class KinTaleReportViewModel(
             isSending = true
             error = null
             val report = liveReport.copy(sessionId = sessionId, bodyCopy = body)
-            val reportId = when (val save = dataSource.saveReport(report)) {
+            val reportId = when (val save = dataSource.saveReport(liveReport, report)) {
                 is WriteResult.Ok -> save.value
                 is WriteResult.Err -> {
                     isSending = false

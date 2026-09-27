@@ -53,6 +53,12 @@ data class HouseholdDataUiState(
     /** Set when the vet read failed, so the card fails loud rather than blank. */
     val vetError: String? = null,
     val isLoading: Boolean = true,
+    /**
+     * #994: true once the household read has answered (a document, or a
+     * confirmed "none yet"). Save is refused until then: after a failed read the
+     * form holds a blank placeholder, not the household.
+     */
+    val householdLoaded: Boolean = false,
     val isSaving: Boolean = false,
     val isSuccess: Boolean = false,
     val error: String? = null
@@ -83,7 +89,8 @@ class HouseholdDataViewModel(
                 loadedHouseholdData = record
                 _uiState.value = _uiState.value.copy(
                     householdData = record,
-                    isLoading = false
+                    isLoading = false,
+                    householdLoaded = true,
                 )
             }.onFailure { error ->
                 _uiState.value = _uiState.value.copy(
@@ -347,6 +354,13 @@ class HouseholdDataViewModel(
      * "nothing to save" are the same outcome to the operator.
      */
     fun saveHouseholdData() {
+        // #994: never save over a read that did not answer. Before this, only the
+        // blank-kinfolkId check below stood between a failed load and a write of
+        // the placeholder, and its message named the wrong problem.
+        if (!_uiState.value.householdLoaded) {
+            _uiState.value = _uiState.value.copy(error = "Household data hasn't loaded, so there is nothing to save yet. Retry the load first.")
+            return
+        }
         val householdData = _uiState.value.householdData
         if (householdData.kinfolkId.isBlank()) {
             _uiState.value = _uiState.value.copy(error = "Kinfolk ID is required")

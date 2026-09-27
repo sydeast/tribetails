@@ -4,6 +4,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { refuseAuntie } from '../lib/staffGate';
 
 interface VetClinicDto {
   id: string;
@@ -39,6 +40,7 @@ function str(v: unknown): string {
 export async function getVetClinicsHandler(
   req: CallableRequest<unknown>,
 ): Promise<GetVetClinicsResult> {
+  refuseAuntie(req.auth, 'getVetClinics'); // docket Q1: an Auntie never uses the portal
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');

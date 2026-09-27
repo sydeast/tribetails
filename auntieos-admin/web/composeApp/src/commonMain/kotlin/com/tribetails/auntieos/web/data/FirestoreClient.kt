@@ -700,6 +700,20 @@ class FirestoreClient {
     }
     suspend fun archiveKin(id: String):      WriteResult<Unit>   = platformArchiveKin(id)
 
+    /**
+     * #994: the one write behind every diffed update in this client that has no
+     * collection-specific guard. [changes] come from [modelChanges] against the
+     * record the caller loaded. Empty means Ok(false) and no request at all.
+     */
+    private suspend fun updateChangedFields(collection: String, id: String, changes: List<FieldChange>): WriteResult<Boolean> {
+        if (id.isBlank()) return WriteResult.Err("update of $collection requires a document id")
+        if (changes.isEmpty()) return WriteResult.Ok(false)
+        return when (val r = platformUpdateFields(collection, id, changes)) {
+            is WriteResult.Ok  -> WriteResult.Ok(true)
+            is WriteResult.Err -> WriteResult.Err(r.message)
+        }
+    }
+
     // ---- Tag assignment writes (kin + kinfolk) ----
     // Ports updateKinTags / updateKinfolkTags from the React admin
     // (api/directoryWrite.ts:237-255). Semantics kept identical: a whole-list
@@ -801,8 +815,14 @@ class FirestoreClient {
     suspend fun createKinTaleReport(report: KinCareReport): WriteResult<String> =
         platformCreateKinTaleReport(report.copy(kinfolkId = enforceWriteKinfolkId(testMode, report.kinfolkId)))
 
-    suspend fun updateKinTaleReport(report: KinCareReport): WriteResult<Unit> =
-        platformUpdateKinTaleReport(report)
+    /**
+     * #994: sends ONLY the fields [edited] changed relative to [loaded] (the report
+     * the caller read or last wrote), as a masked merge. `formValues` and
+     * `fieldResponses` are diffed per key. Ok(true) when a write was sent,
+     * Ok(false) when nothing changed and nothing was written.
+     */
+    suspend fun updateKinTaleReport(loaded: KinCareReport, edited: KinCareReport): WriteResult<Boolean> =
+        updateChangedFields("kin_care_reports", edited._id, modelChanges(KinCareReport.serializer(), loaded, edited, perKeyMaps = KIN_CARE_REPORT_PER_KEY_MAPS))
 
     /**
      * Stamp the report SENT and seed the lifecycle metadata. The session-side
@@ -885,11 +905,15 @@ class FirestoreClient {
             }
         }
 
-    suspend fun saveReport(report: KinCareReport): WriteResult<String> =
-        if (report._id.isBlank()) createKinTaleReport(report)
-        else updateKinTaleReport(report).let { r ->
+    /**
+     * Create when [edited] has no id yet, else write only what changed relative
+     * to [loaded] (#994). Answers the report id either way.
+     */
+    suspend fun saveReport(loaded: KinCareReport, edited: KinCareReport): WriteResult<String> =
+        if (edited._id.isBlank()) createKinTaleReport(edited)
+        else updateKinTaleReport(loaded, edited).let { r ->
             when (r) {
-                is WriteResult.Ok  -> WriteResult.Ok(report._id)
+                is WriteResult.Ok  -> WriteResult.Ok(edited._id)
                 is WriteResult.Err -> WriteResult.Err(r.message)
             }
         }
@@ -1891,7 +1915,26 @@ class FirestoreClient {
     // ---- Vet clinics (shared catalog used by Kinfolk vet section) ----
     fun vetClinicsStream(): Flow<FirestoreResult<List<VetClinic>>> = platformVetClinicsStream()
     suspend fun createVetClinic(clinic: VetClinic): WriteResult<String> = platformCreateVetClinic(clinic)
-    suspend fun updateVetClinic(clinic: VetClinic): WriteResult<Unit> = platformUpdateVetClinic(clinic)
+    /**
+     * #994: saves an edit of one catalog clinic through the `updateVetClinic`
+     * callable, the path admin web and Android use. `firestore.rules` refuses every
+     * client write to `vet_clinics`, so the old direct whole-document PATCH was
+     * refused outright. The callable is a whole-record save by design (an omitted
+     * optional field means "cleared") and merges only its seven editable fields,
+     * so a field it does not name survives. [loaded] is the clinic the form was
+     * seeded from: an unchanged save makes no call and answers Ok(false).
+     * `verified` goes only when this save changes it (approving a submission);
+     * `submittedBy` is not a callable field and is never sent.
+     */
+    suspend fun updateVetClinic(loaded: VetClinic, edited: VetClinic): WriteResult<Boolean> {
+        if (edited._id.isBlank()) return WriteResult.Err("update of vet_clinics requires a document id")
+        val changes = modelChanges(VetClinic.serializer(), loaded, edited, excluded = VET_CLINIC_NOT_CALLABLE_FIELDS)
+        if (changes.isEmpty()) return WriteResult.Ok(false)
+        return when (val r = platformInvokeCallable("updateVetClinic", updateVetClinicPayload(loaded, edited).toString())) {
+            is WriteResult.Ok  -> WriteResult.Ok(true)
+            is WriteResult.Err -> WriteResult.Err(r.message)
+        }
+    }
     suspend fun deleteVetClinic(id: String): WriteResult<Unit> = platformDeleteVetClinic(id)
 
     // ---- Activity log writes ----
@@ -1900,13 +1943,30 @@ class FirestoreClient {
     // ---- Household data (kinfolk-keyed dossier extension; mirrors Android port) ----
     suspend fun getHouseholdData(kinfolkId: String): WriteResult<HouseholdData?> =
         platformGetHouseholdData(kinfolkId)
-    suspend fun saveHouseholdData(data: HouseholdData): WriteResult<Unit> =
-        platformSaveHouseholdData(data)
+    /**
+     * #994: [loaded] is what [getHouseholdData] answered: the document, or null
+     * when the read succeeded and there is none. A failed read never reaches here
+     * (the screen blocks Save). Only changed fields are written, as a masked merge,
+     * which also creates the document when it does not exist yet. For a new
+     * document the diff runs against a blank record, so only filled-in fields and
+     * `kinfolkId` are written, and a blank form writes nothing.
+     */
+    suspend fun saveHouseholdData(loaded: HouseholdData?, edited: HouseholdData): WriteResult<Boolean> {
+        val docId = loaded?._id?.ifBlank { null } ?: edited._id.ifBlank { edited.kinfolkId }
+        if (loaded == null) {
+            val changes = modelChanges(HouseholdData.serializer(), HouseholdData(kinfolkId = edited.kinfolkId), edited)
+            if (changes.isEmpty()) return WriteResult.Ok(false)
+            return updateChangedFields("household_data", docId, changes + FieldChange(listOf("kinfolkId"), kotlinx.serialization.json.JsonPrimitive(edited.kinfolkId)))
+        }
+        return updateChangedFields("household_data", docId, modelChanges(HouseholdData.serializer(), loaded, edited))
+    }
 
     // ---- Dynamic fields (admin-defined custom fields) ----
     fun dynamicFieldsStream(): Flow<FirestoreResult<List<DynamicField>>> = platformDynamicFieldsStream()
     suspend fun createDynamicField(field: DynamicField): WriteResult<String> = platformCreateDynamicField(field)
-    suspend fun updateDynamicField(field: DynamicField): WriteResult<Unit>   = platformUpdateDynamicField(field)
+    /** #994: only the fields [edited] changed relative to [loaded]; Ok(false) when nothing changed. */
+    suspend fun updateDynamicField(loaded: DynamicField, edited: DynamicField): WriteResult<Boolean> =
+        updateChangedFields("dynamic_fields", edited._id, modelChanges(DynamicField.serializer(), loaded, edited))
     suspend fun archiveDynamicField(id: String): WriteResult<Unit>           = platformArchiveDynamicField(id)
 
     // ---- GPS breadcrumbs (subcollection per Kin Care session) ----
@@ -1936,8 +1996,9 @@ class FirestoreClient {
     suspend fun createKinTaleTemplate(template: KinTaleTemplate): WriteResult<String> =
         platformCreateKinTaleTemplate(template)
 
-    suspend fun updateKinTaleTemplate(template: KinTaleTemplate): WriteResult<Unit> =
-        platformUpdateKinTaleTemplate(template)
+    /** #994: only the fields [edited] changed relative to [loaded]; Ok(false) when nothing changed. */
+    suspend fun updateKinTaleTemplate(loaded: KinTaleTemplate, edited: KinTaleTemplate): WriteResult<Boolean> =
+        updateChangedFields("kintale_templates", edited._id, modelChanges(KinTaleTemplate.serializer(), loaded, edited))
 
     suspend fun deleteKinTaleTemplate(templateId: String): WriteResult<Unit> =
         platformDeleteKinTaleTemplate(templateId)
@@ -2196,6 +2257,8 @@ internal expect suspend fun platformArchiveKinfolk(id: String): WriteResult<Unit
 internal expect suspend fun platformCreateKin(k: Kin):          WriteResult<String>
 /** #895: merge-writes exactly [changes] on kin/[kinId] (sets and deletes, by field path); an empty list writes nothing. */
 internal expect suspend fun platformUpdateKinFields(kinId: String, changes: List<FieldChange>): WriteResult<Unit>
+/** #994: a masked merge of exactly [changes] at collection/id. Never a whole-document write. */
+internal expect suspend fun platformUpdateFields(collection: String, id: String, changes: List<FieldChange>): WriteResult<Unit>
 internal expect suspend fun platformArchiveKin(id: String):     WriteResult<Unit>
 internal expect suspend fun platformPatchKinCare(id: String, patch: Map<String, String>): WriteResult<Unit>
 internal expect suspend fun platformMarkVoicemailReplied(
@@ -2208,7 +2271,6 @@ internal expect suspend fun platformMarkVoicemailDismissed(voicemailId: String):
 
 internal expect fun platformTemplatesStream(): Flow<FirestoreResult<List<KinTaleTemplate>>>
 internal expect suspend fun platformCreateKinTaleReport(report: KinCareReport): WriteResult<String>
-internal expect suspend fun platformUpdateKinTaleReport(report: KinCareReport): WriteResult<Unit>
 internal expect suspend fun platformMarkKinTaleReportSent(
     reportId: String,
     sessionId: String,
@@ -2257,7 +2319,6 @@ internal expect fun platformMediaForKinfolkStream(kinfolkId: String): Flow<Fires
 internal expect suspend fun platformUpdateMediaTags(mediaId: String, taggedKinIds: List<String>): WriteResult<Unit>
 
 internal expect suspend fun platformCreateKinTaleTemplate(template: KinTaleTemplate): WriteResult<String>
-internal expect suspend fun platformUpdateKinTaleTemplate(template: KinTaleTemplate): WriteResult<Unit>
 internal expect suspend fun platformDeleteKinTaleTemplate(templateId: String): WriteResult<Unit>
 
 internal expect fun platformPaymentsStream(): Flow<FirestoreResult<List<Payment>>>
@@ -2314,17 +2375,14 @@ internal expect suspend fun platformUpdateUserProfile(uid: String, loaded: UserP
 
 internal expect fun platformVetClinicsStream(): Flow<FirestoreResult<List<VetClinic>>>
 internal expect suspend fun platformCreateVetClinic(clinic: VetClinic): WriteResult<String>
-internal expect suspend fun platformUpdateVetClinic(clinic: VetClinic): WriteResult<Unit>
 internal expect suspend fun platformDeleteVetClinic(id: String): WriteResult<Unit>
 
 internal expect suspend fun platformLogActivity(entry: ActivityLogEntry): WriteResult<String>
 
 internal expect suspend fun platformGetHouseholdData(kinfolkId: String): WriteResult<HouseholdData?>
-internal expect suspend fun platformSaveHouseholdData(data: HouseholdData): WriteResult<Unit>
 
 internal expect fun platformDynamicFieldsStream(): Flow<FirestoreResult<List<DynamicField>>>
 internal expect suspend fun platformCreateDynamicField(field: DynamicField): WriteResult<String>
-internal expect suspend fun platformUpdateDynamicField(field: DynamicField): WriteResult<Unit>
 internal expect suspend fun platformArchiveDynamicField(id: String): WriteResult<Unit>
 
 internal expect fun platformBreadcrumbsStream(sessionId: String): Flow<FirestoreResult<List<Breadcrumb>>>
@@ -4060,6 +4118,11 @@ data class VetClinic(
     val googleMapsUrl: String = "",
     /** 24hr / emergency / urgent-care clinic. Drives the kinfolk emergency filter. */
     val isEmergency: Boolean = false,
+    /**
+     * Opening hours. Lives on the clinic (the `updateVetClinic` callable carries
+     * it); read and sent back here so a desktop save never clears it (#994).
+     */
+    val hours: String = "",
     /**
      * Approval gate for the kinfolk-facing vet bank. Admin-authored clinics are
      * verified=true; a kinfolk add-new (submitVetClinic) lands verified=false and

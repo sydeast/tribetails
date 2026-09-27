@@ -227,7 +227,7 @@ fun InvoiceDetailScreen(
         // condition put a Pay button on a credit the household had already
         // spent (issue #449). `isPayable` is the same list the invoice list
         // uses, so the row and the detail screen cannot offer different things.
-        } else if (isPayable(invoice.status) && !invoice.isPaid && invoice.amountDue > 0.0) {
+        } else if (offersPayment(invoice)) {
             PayOptions(
                 methods = payMethods,
                 amountDue = invoice.amountDue,

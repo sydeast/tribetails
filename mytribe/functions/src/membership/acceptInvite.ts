@@ -14,6 +14,7 @@ import { syncKinfolkClaim } from '../lib/kinfolkClaim';
 import type { InviteRequestDoc } from '../lib/schema';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { FULL_CPU } from '../lib/runtimeOptions';
+import { refuseAuntie } from '../lib/staffGate';
 
 const Args = z.object({ inviteId: z.string().min(1) });
 
@@ -125,6 +126,7 @@ function verificationRefusal(invitedEmail: string, sent: boolean): string {
 }
 
 export async function acceptInviteHandler(req: CallableRequest<unknown>): Promise<{ familyId: string }> {
+  refuseAuntie(req.auth, 'acceptInvite'); // docket Q1: an Auntie never uses the portal
   if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in required.');
   const { inviteId } = Args.parse(req.data);
   const tokenEmail = (req.auth.token as { email?: string }).email;

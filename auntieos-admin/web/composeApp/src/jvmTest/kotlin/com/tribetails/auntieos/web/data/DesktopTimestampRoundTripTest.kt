@@ -307,18 +307,16 @@ class DesktopTimestampRoundTripTest {
             return timeFields
         }
         val covered = mapOf(
-            "kin_care_reports" to check("kin_care_reports", "r9", KinCareReport.serializer(), { platformUpdateKinTaleReport(it) }),
-            "kintale_templates" to check("kintale_templates", "t9", KinTaleTemplate.serializer(), { platformUpdateKinTaleTemplate(it) }),
             "payments" to check("payments", "p9", Payment.serializer(), { platformRecordPayment(it, "p9") }),
             // users: no longer a whole-document save (#897); a masked diff write,
             // covered with its Timestamps by DesktopUserProfileSaveTest.
-            "vet_clinics" to check("vet_clinics", "v9", VetClinic.serializer(), { platformUpdateVetClinic(it) }),
-            "household_data" to check("household_data", "h9", HouseholdData.serializer(), { platformSaveHouseholdData(it) }),
-            "dynamic_fields" to check("dynamic_fields", "f9", DynamicField.serializer(), { platformUpdateDynamicField(it) }),
         )
         println("[#857] timestamp fields checked per collection: $covered")
         // #895: kin left this sweep; its saves are merges of changed fields only
         // (DesktopKinMergeTest), so an unchanged kin writes nothing.
-        assertTrue(covered.getValue("kin_care_reports").contains("updatedAt"))
+        // #994: kin_care_reports, kintale_templates, vet_clinics, household_data and
+        // dynamic_fields left it too, for the same reason; their Timestamps are
+        // covered by DesktopDiffedSavesTest.
+        assertTrue(covered.getValue("payments").isNotEmpty())
     }
 }

@@ -394,6 +394,18 @@ describe('KinTaleTemplates: Service types are a catalog, not a text box', () => 
     expect(arg.serviceTypeKeys).toEqual(['Dog Walk', 'Retired Visit']);
   });
 
+  it('#994: saving an existing template hands over the row it opened with, as the diff baseline', async () => {
+    const stored = tpl({ serviceTypeKeys: ['Dog Walk', 'Retired Visit'] });
+    mockStream({ status: 'ready', data: [stored] });
+    render(<KinTaleTemplates />);
+    await openEditor();
+    await user.click(await screen.findByRole('checkbox', { name: /Retired Visit/ }));
+
+    await saveTemplate();
+    await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
+    expect(saveKinTaleTemplate.mock.calls[0]![2]).toEqual(stored);
+  });
+
   it('unticking a stale key removes only that key', async () => {
     mockStream({ status: 'ready', data: [tpl({ serviceTypeKeys: ['Dog Walk', 'Retired Visit'] })] });
     render(<KinTaleTemplates />);

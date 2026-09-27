@@ -99,7 +99,7 @@ class SettingsViewModel(private val dataSource: AuntieDataSource) {
 
     // Suspend delegations (return the raw result; used for unit/integration tests).
     suspend fun createVetClinic(clinic: VetClinic): WriteResult<String> = dataSource.createVetClinic(clinic)
-    suspend fun updateVetClinic(clinic: VetClinic): WriteResult<Unit> = dataSource.updateVetClinic(clinic)
+    suspend fun updateVetClinic(loaded: VetClinic, edited: VetClinic): WriteResult<Unit> = dataSource.updateVetClinic(loaded, edited)
     suspend fun deleteVetClinic(id: String): WriteResult<Unit> = dataSource.deleteVetClinic(id)
 
     // Fail-loud write actions for the UI: each launches on the VM scope and pushes
@@ -114,15 +114,16 @@ class SettingsViewModel(private val dataSource: AuntieDataSource) {
 
     fun addVetClinic(clinic: VetClinic) =
         scope.launch { report("Couldn't add ${clinic.name}", dataSource.createVetClinic(clinic)) }
-    fun saveVetClinic(clinic: VetClinic) =
-        scope.launch { report("Couldn't save ${clinic.name}", dataSource.updateVetClinic(clinic)) }
+    /** #994: [loaded] is the clinic the edit form was seeded from; only what changed is written. */
+    fun saveVetClinic(loaded: VetClinic, edited: VetClinic) =
+        scope.launch { report("Couldn't save ${edited.name}", dataSource.updateVetClinic(loaded, edited)) }
     fun removeVetClinic(id: String, name: String) =
         scope.launch { report("Couldn't delete ${name.ifBlank { "clinic" }}", dataSource.deleteVetClinic(id)) }
 
     /** Approve a kinfolk-submitted pending clinic: flip verified=true (and clear the
      *  submittedBy tag) so it joins the shared bank visible to every household. */
     fun approveVetClinic(clinic: VetClinic) =
-        scope.launch { report("Couldn't approve ${clinic.name}", dataSource.updateVetClinic(clinic.copy(verified = true, submittedBy = ""))) }
+        scope.launch { report("Couldn't approve ${clinic.name}", dataSource.updateVetClinic(clinic, clinic.copy(verified = true, submittedBy = ""))) }
 
     /** Reject a pending submission: hard-delete the pending doc (it was never approved). */
     fun rejectVetClinic(id: String, name: String) =

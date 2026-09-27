@@ -9,6 +9,7 @@ import { resolveKinCareRef } from '../lib/resolveKinCareRef';
 import { resolveNonStaffKinfolkId } from '../lib/resolveNonStaffKinfolkId';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { sanitizeRichText } from '../lib/richText';
+import { refuseAuntie } from '../lib/staffGate';
 
 const Args = z
   .object({
@@ -27,6 +28,7 @@ const Args = z
 export async function submitRatingHandler(
   req: CallableRequest<unknown>,
 ): Promise<{ ratingId: string }> {
+  refuseAuntie(req.auth, 'submitRating'); // docket Q1: an Auntie never uses the portal
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');

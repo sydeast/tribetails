@@ -185,4 +185,31 @@ class RevocationAwareFunctionsClientTest {
 
         assertEquals(1, signOut.count)
     }
+
+    /**
+     * Docket Q1, operator ruling 2026-09-27: an Auntie never uses the portal.
+     * getMyAccess is the first call after sign-in; the backend refuses her with
+     * a tagged permission-denied, and she is signed out with the household
+     * copy waiting on the sign-in screen rather than parked on the launch error.
+     */
+    @Test
+    fun an_auntie_refused_by_getMyAccess_is_signed_out_and_told_why() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stubError(
+            "getMyAccess",
+            IllegalStateException(
+                "PERMISSION_DENIED: This sign-in is for households. Aunties use the AuntieOS app (caretaker-not-portal).",
+            ),
+        )
+        val signOut = RecordingSignOut()
+        val api = PortalApi(RevocationAwareFunctionsClient(fake, signOut.block))
+
+        assertFailsWith<IllegalStateException> { api.getMyAccess() }
+
+        assertEquals(1, signOut.count)
+        assertEquals(
+            "This sign-in is for households. Aunties use the AuntieOS app.",
+            SessionEndedNotice.consume(),
+        )
+    }
 }

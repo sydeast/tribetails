@@ -133,3 +133,30 @@ describe('Invoices — mutation error surfacing', () => {
     await waitFor(() => expect(screen.getByText('Credit already redeemed.')).toBeInTheDocument());
   });
 });
+describe('Invoices: a PAID invoice has no Pay now button (docket Q5)', () => {
+  async function renderWith(res: GetMyInvoicesResult) {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue(res);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Invoices />
+      </QueryClientProvider>,
+    );
+  }
+  it('a paid row in the open bucket, balance still showing, carries no Pay now', async () => {
+    await renderWith({
+      open: [{ ...OPEN_INVOICE, id: 'inv-stale', isPaid: true, amountDue: 40 }],
+      paid: [{ ...OPEN_INVOICE, id: 'inv-paid', status: 'paid', isPaid: true, amountDue: 0 }],
+      credits: [],
+      accountBalanceCents: 0,
+    });
+    expect(await screen.findAllByText(/The Test Family/)).not.toHaveLength(0);
+    expect(screen.queryByRole('button', { name: /Pay now/ })).toBeNull();
+    expect(payInvoice).not.toHaveBeenCalled();
+  });
+  it('an open row still does', async () => {
+    await renderWith({ open: [OPEN_INVOICE], paid: [], credits: [], accountBalanceCents: 0 });
+    expect(await screen.findByRole('button', { name: /Pay now/ })).toBeInTheDocument();
+  });
+});

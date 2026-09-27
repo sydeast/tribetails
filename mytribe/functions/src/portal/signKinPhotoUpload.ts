@@ -14,6 +14,7 @@ import {
   assertCloudinaryUrlInFolder,
   type CloudinarySignedUpload,
 } from '../lib/cloudinary';
+import { refuseAuntie } from '../lib/staffGate';
 
 const CLOUDINARY_CLOUD_NAME = defineSecret('CLOUDINARY_CLOUD_NAME');
 const CLOUDINARY_API_KEY    = defineSecret('CLOUDINARY_API_KEY');
@@ -41,6 +42,7 @@ function kinPhotoFolder(kinfolkId: string, kinId: string): string {
 export async function signKinPhotoUploadHandler(
   req: CallableRequest<unknown>,
 ): Promise<CloudinarySignedUpload> {
+  refuseAuntie(req.auth, 'signKinPhotoUpload'); // docket Q1: an Auntie never uses the portal
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -110,6 +112,7 @@ export interface ConfirmKinPhotoUploadResult {
 export async function confirmKinPhotoUploadHandler(
   req: CallableRequest<unknown>,
 ): Promise<ConfirmKinPhotoUploadResult> {
+  refuseAuntie(req.auth, 'confirmKinPhotoUpload'); // docket Q1: an Auntie never uses the portal
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');

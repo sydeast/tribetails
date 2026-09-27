@@ -13,6 +13,7 @@ import { quoteDecisionOf } from '../lib/quoteDecision';
 import { amountDueCentsOf } from '../lib/amountDueRule';
 import { centsToDollars } from '../lib/invoiceMath';
 import { payMethodSettingsFrom, resolvePayMethods, settingsForInvoice } from '../lib/paymentMethods';
+import { invoiceIsPaid } from '../lib/invoicePaidGate';
 import {
   CentsSchema,
   DollarsSchema,
@@ -435,9 +436,15 @@ export async function getMyInvoicesHandler(
       creditRedeemedAtMs: isCredit ? tsMillis(data['creditRedeemedAt']) : null,
       // Resolved against the options this invoice was ISSUED with when it
       // carries a snapshot, and against live settings when it does not.
-      payMethods: resolvePayMethods(settingsForInvoice(data, liveSettings), {
-        amountDue: amountDueCents,
-      }),
+      // A PAID INVOICE OFFERS NO WAY TO PAY (operator ruling 2026-09-27,
+      // docket Q5), even when its stated balance is positive: that shape is
+      // the partial-payment corruption the admin repairs. `[]` is the answer
+      // `resolvePayMethods` already gives a zero balance.
+      payMethods: invoiceIsPaid(data, paidCents > 0 ? paidCents : null)
+        ? []
+        : resolvePayMethods(settingsForInvoice(data, liveSettings), {
+            amountDue: amountDueCents,
+          }),
       // Set here when the invoice has its own lines. The session pass below then
       // skips this invoice entirely and cannot overwrite them.
       // Bound lines get their visit day filled in by the lookup pass below; a

@@ -455,7 +455,25 @@ describe('KinTaleCompose: Save Draft', () => {
     const input = await screen.findByLabelText(/headline/i);
     await user.type(input, 'New headline');
     await user.click(screen.getByRole('button', { name: /save draft/i }));
-    await waitFor(() => expect(saveKinTaleDraft).toHaveBeenCalledWith(expect.objectContaining({ title: 'New headline' })));
+    await waitFor(() => expect(saveKinTaleDraft).toHaveBeenCalledWith(expect.objectContaining({ title: 'New headline' }), expect.anything()));
+  });
+
+  it('#994: diffs against the draft as read, then as last saved', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report({ title: 'Hi' })] } });
+    saveKinTaleDraft.mockResolvedValue('tale1');
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    const input = await screen.findByDisplayValue('Hi');
+    await user.type(input, ' there');
+    await user.click(screen.getByRole('button', { name: /save draft/i }));
+    await waitFor(() => expect(saveKinTaleDraft).toHaveBeenCalledTimes(1));
+    // First save: the baseline is the draft as the stream delivered it.
+    expect(saveKinTaleDraft.mock.calls[0]![1]).toEqual(expect.objectContaining({ _id: 'tale1', title: 'Hi' }));
+
+    await user.type(input, '!');
+    await user.click(screen.getByRole('button', { name: /save draft/i }));
+    await waitFor(() => expect(saveKinTaleDraft).toHaveBeenCalledTimes(2));
+    // Second save: the baseline is what the first save wrote.
+    expect(saveKinTaleDraft.mock.calls[1]![1]).toEqual(expect.objectContaining({ _id: 'tale1', title: 'Hi there' }));
   });
 
   it('fails loud, naming the reason, when saveKinTaleDraft rejects', async () => {

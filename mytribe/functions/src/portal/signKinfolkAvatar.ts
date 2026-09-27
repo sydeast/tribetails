@@ -5,6 +5,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { signCloudinaryFolderUpload, type CloudinarySignedUpload } from '../lib/cloudinary';
+import { refuseAuntie } from '../lib/staffGate';
 
 const CLOUDINARY_CLOUD_NAME = defineSecret('CLOUDINARY_CLOUD_NAME');
 const CLOUDINARY_API_KEY    = defineSecret('CLOUDINARY_API_KEY');
@@ -19,6 +20,7 @@ const CLOUDINARY_API_SECRET = defineSecret('CLOUDINARY_API_SECRET');
 export async function signKinfolkAvatarHandler(
   req: CallableRequest<unknown>,
 ): Promise<CloudinarySignedUpload> {
+  refuseAuntie(req.auth, 'signKinfolkAvatar'); // docket Q1: an Auntie never uses the portal
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');

@@ -26,7 +26,8 @@ interface AuntieDataSource {
         flowOf(FirestoreResult.Data(emptyList()))
     suspend fun createVetClinic(clinic: VetClinic): WriteResult<String> =
         WriteResult.Err("createVetClinic not supported by this data source")
-    suspend fun updateVetClinic(clinic: VetClinic): WriteResult<Unit> =
+    /** #994: writes only the fields [edited] changed relative to [loaded], the clinic the caller read. */
+    suspend fun updateVetClinic(loaded: VetClinic, edited: VetClinic): WriteResult<Unit> =
         WriteResult.Err("updateVetClinic not supported by this data source")
     suspend fun deleteVetClinic(id: String): WriteResult<Unit> =
         WriteResult.Err("deleteVetClinic not supported by this data source")
@@ -115,7 +116,11 @@ interface AuntieDataSource {
 
     // KinTale report authoring
     fun reportForSessionStream(sessionId: String): Flow<FirestoreResult<KinCareReport?>>
-    suspend fun saveReport(report: KinCareReport): WriteResult<String>
+    /**
+     * Create [edited] when it has no id, else write only the fields it changed
+     * relative to [loaded], the report the caller read (#994).
+     */
+    suspend fun saveReport(loaded: KinCareReport, edited: KinCareReport): WriteResult<String>
     /**
      * Send the report: dispatch the catalog `report_sent` notification and stamp
      * the report SENT with the first dispatchId as the delivery receipt. Needs

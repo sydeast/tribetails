@@ -150,11 +150,19 @@ export async function saveHouseholdSection(
     return { ...next, _id: ref.id, createdAt };
   }
 
-  const changes: Record<string, string> = { updatedAt };
+  // #994: a section dialog hands over every field of its section. Only the ones
+  // that differ from `record`, the record the dialog was opened with, are sent,
+  // so a field the operator left alone is never rewritten with the value read
+  // at load time (which would undo another operator's edit made meanwhile).
+  // Nothing changed means no write at all, not even the `updatedAt` stamp.
+  const changes: Record<string, string> = {};
   for (const [key, value] of Object.entries(patch)) {
-    if (typeof value === 'string') changes[key] = value;
+    if (typeof value !== 'string') continue;
+    if (value === (record as unknown as Record<string, unknown>)[key]) continue;
+    changes[key] = value;
   }
-  await updateDoc(doc(db, 'household_data', record._id), changes);
+  if (Object.keys(changes).length === 0) return record;
+  await updateDoc(doc(db, 'household_data', record._id), { ...changes, updatedAt });
   return next;
 }
 

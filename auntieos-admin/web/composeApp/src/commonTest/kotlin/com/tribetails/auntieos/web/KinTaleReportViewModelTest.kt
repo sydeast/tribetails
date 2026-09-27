@@ -242,6 +242,20 @@ class KinTaleReportViewModelTest {
     }
 
     @Test
+    fun `saveDraft diffs against the live report it was handed`() = runTest {
+        // #994: the live report is the baseline, so only the title and body this
+        // screen edits can differ from it and reach the masked write.
+        val ds = FakeAuntieDataSource()
+        val v = KinTaleReportViewModel(sessionId = "sess-1", dataSource = ds, scope = this)
+        val liveReport = live()
+        v.updateTitle("Checking on Biscuit")
+        v.saveDraft(liveReport)
+        advanceUntilIdle()
+        assertEquals(liveReport, ds.lastSavedReportBaseline)
+        assertEquals(liveReport.copy(title = "Checking on Biscuit"), ds.lastSavedReport)
+    }
+
+    @Test
     fun `saveDraft failure surfaces error and does not lose the title`() = runTest {
         val ds = FakeAuntieDataSource(saveShouldFail = true, saveFailMessage = "quota exceeded")
         val v = KinTaleReportViewModel(sessionId = "sess-1", dataSource = ds, scope = this)

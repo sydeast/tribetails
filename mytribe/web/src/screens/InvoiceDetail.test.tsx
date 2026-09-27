@@ -640,3 +640,52 @@ describe('InvoiceDetail payment option sources (issue #409)', () => {
     expect(screen.queryByRole('link')).toBeNull();
   });
 });
+/**
+ * Operator ruling 2026-09-27 (docket Q5): a paid invoice takes no payment. The
+ * shape that matters is a paid invoice whose balance still reads positive, with
+ * pay methods on it: nothing here may offer the card checkout or a pay link.
+ */
+describe('InvoiceDetail: a PAID invoice offers no way to pay (docket Q5)', () => {
+  const VENMO = { id: 'venmo' as const, label: 'Venmo', kind: 'link' as const, url: 'https://venmo.com/u/auntie', instructions: null };
+  async function renderWith(res: GetMyInvoicesResult) {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue(res);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InvoiceDetail />
+      </QueryClientProvider>,
+    );
+  }
+  it('no card checkout and no Venmo link on a paid invoice, even with a balance and methods shipped', async () => {
+    await renderWith({
+      open: [],
+      paid: [{
+        ...OPEN_INVOICE,
+        status: 'paid',
+        isPaid: true,
+        amountDue: 40,
+        payMethods: [OPEN_INVOICE.payMethods[0]!, VENMO],
+      }],
+      credits: [],
+      accountBalanceCents: 0,
+    });
+    expect(await screen.findByRole('button', { name: /Download PDF/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Pay/ })).toBeNull();
+    expect(screen.queryByText('Pay with Credit Card')).toBeNull();
+    expect(screen.queryByRole('link', { name: /Venmo/ })).toBeNull();
+    expect(payInvoice).not.toHaveBeenCalled();
+  });
+  it('isPaid refuses on its own under a stale open label', async () => {
+    await renderWith({
+      open: [{ ...OPEN_INVOICE, status: 'open', isPaid: true, amountDue: 40 }],
+      paid: [], credits: [], accountBalanceCents: 0,
+    });
+    expect(await screen.findByRole('button', { name: /Download PDF/ })).toBeInTheDocument();
+    expect(screen.queryByText('Pay with Credit Card')).toBeNull();
+  });
+  it('an open bill still offers the card', async () => {
+    await renderWith({ open: [OPEN_INVOICE], paid: [], credits: [], accountBalanceCents: 0 });
+    expect(await screen.findByText('Pay with Credit Card')).toBeInTheDocument();
+  });
+});

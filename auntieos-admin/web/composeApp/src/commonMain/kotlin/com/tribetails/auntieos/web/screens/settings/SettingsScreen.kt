@@ -2191,6 +2191,7 @@ internal fun vetClinicFieldsChanged(original: VetClinic, draft: VetClinic): Bool
     original.phone.trim()   != draft.phone.trim() ||
     original.address.trim() != draft.address.trim() ||
     original.website.trim() != draft.website.trim() ||
+    original.hours.trim()   != draft.hours.trim() ||
     original.isEmergency    != draft.isEmergency ||
     original.notes.trim()   != draft.notes.trim()
 
@@ -2331,7 +2332,7 @@ private fun VetClinicsPanel(vm: SettingsViewModel) {
                                     VetClinicCard(
                                         clinic = clinic,
                                         householdCount = vetClinicHouseholdCount(clinic, allKinfolk),
-                                        onSave = { updated -> vm.saveVetClinic(updated) },
+                                        onSave = { loaded, updated -> vm.saveVetClinic(loaded, updated) },
                                         onDelete = { vm.removeVetClinic(clinic._id, clinic.name) },
                                     )
                                 }
@@ -2398,7 +2399,7 @@ private fun PendingVetClinicCard(clinic: VetClinic, onApprove: () -> Unit, onRej
 }
 
 @Composable
-private fun VetClinicCard(clinic: VetClinic, householdCount: Int, onSave: (VetClinic) -> Unit, onDelete: () -> Unit) {
+private fun VetClinicCard(clinic: VetClinic, householdCount: Int, onSave: (loaded: VetClinic, edited: VetClinic) -> Unit, onDelete: () -> Unit) {
     val c = AuntieTheme.colors
     var editing by remember(clinic) { mutableStateOf(false) }
     var confirmingDelete by remember(clinic) { mutableStateOf(false) }
@@ -2424,6 +2425,7 @@ private fun VetClinicCard(clinic: VetClinic, householdCount: Int, onSave: (VetCl
             VetDetailLine("Phone", clinic.phone)
             VetDetailLine("Address", clinic.address)
             VetDetailLine("Website", clinic.website)
+            VetDetailLine("Hours", clinic.hours)
             VetDetailLine("Notes", clinic.notes)
             // #6: icon actions (mock fidelity): Maps + Website deep-links + edit/delete.
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2442,7 +2444,8 @@ private fun VetClinicCard(clinic: VetClinic, householdCount: Int, onSave: (VetCl
                 }
             }
         } else {
-            VetClinicEditFields(clinic = clinic, onSaved = { onSave(it); editing = false }, onCancel = { editing = false })
+            // #994: the clinic the form was seeded from is the diff baseline.
+            VetClinicEditFields(clinic = clinic, onSaved = { onSave(clinic, it); editing = false }, onCancel = { editing = false })
         }
     }
 }
@@ -2454,12 +2457,13 @@ private fun VetClinicEditFields(clinic: VetClinic, onSaved: (VetClinic) -> Unit,
     var phone       by remember(clinic) { mutableStateOf(clinic.phone) }
     var address     by remember(clinic) { mutableStateOf(clinic.address) }
     var website     by remember(clinic) { mutableStateOf(clinic.website) }
+    var hours       by remember(clinic) { mutableStateOf(clinic.hours) }
     var notes       by remember(clinic) { mutableStateOf(clinic.notes) }
     var isEmergency by remember(clinic) { mutableStateOf(clinic.isEmergency) }
 
     val draft = clinic.copy(
         name = name, phone = phone, address = address,
-        website = website, notes = notes, isEmergency = isEmergency,
+        website = website, hours = hours, notes = notes, isEmergency = isEmergency,
     )
     val canSave = vetClinicSaveEnabled(clinic, draft)
 
@@ -2469,13 +2473,14 @@ private fun VetClinicEditFields(clinic: VetClinic, onSaved: (VetClinic) -> Unit,
         BottomBorderField(value = address, onValueChange = { address = it }, label = "Address", modifier = Modifier.weight(2f))
     }
     BottomBorderField(value = website, onValueChange = { website = it }, label = "Website")
+    BottomBorderField(value = hours, onValueChange = { hours = it }, label = "Hours")
     BottomBorderField(value = notes, onValueChange = { notes = it }, label = "Notes")
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         AuntieToggle(checked = isEmergency, onCheckedChange = { isEmergency = it })
         Text("24hr / emergency clinic", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textPrimary)
     }
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        PrimaryButton(label = "Save", enabled = canSave, onClick = { onSaved(draft.copy(name = name.trim(), phone = phone.trim(), address = address.trim(), website = website.trim(), notes = notes.trim())) })
+        PrimaryButton(label = "Save", enabled = canSave, onClick = { onSaved(draft.copy(name = name.trim(), phone = phone.trim(), address = address.trim(), website = website.trim(), hours = hours.trim(), notes = notes.trim())) })
         GhostButton(label = "Cancel", onClick = onCancel)
     }
 }
@@ -3720,12 +3725,13 @@ private class FirestoreClientSettingsDataSource(
     override suspend fun deleteMedia(mediaId: String, entityId: String) = client.deleteMedia(mediaId, entityId)
 
     override fun reportForSessionStream(sessionId: String) = client.reportForSessionStream(sessionId)
-    override suspend fun saveReport(report: com.tribetails.auntieos.web.data.KinCareReport) = client.saveReport(report)
+    override suspend fun saveReport(loaded: com.tribetails.auntieos.web.data.KinCareReport, edited: com.tribetails.auntieos.web.data.KinCareReport) = client.saveReport(loaded, edited)
     override suspend fun sendReport(report: com.tribetails.auntieos.web.data.KinCareReport, session: com.tribetails.auntieos.web.data.KinCareSession) = client.sendReport(report, session)
     override fun trainingDocsStream() = client.trainingDocsStream()
     override fun vetClinicsStream() = client.vetClinicsStream()
     override suspend fun createVetClinic(clinic: com.tribetails.auntieos.web.data.VetClinic) = client.createVetClinic(clinic)
-    override suspend fun updateVetClinic(clinic: com.tribetails.auntieos.web.data.VetClinic) = client.updateVetClinic(clinic)
+    override suspend fun updateVetClinic(loaded: com.tribetails.auntieos.web.data.VetClinic, edited: com.tribetails.auntieos.web.data.VetClinic): WriteResult<Unit> =
+        client.updateVetClinic(loaded, edited).let { r -> if (r is WriteResult.Err) WriteResult.Err(r.message) else WriteResult.Ok(Unit) }
     override suspend fun deleteVetClinic(id: String) = client.deleteVetClinic(id)
     override suspend fun logActivity(entry: com.tribetails.auntieos.web.data.ActivityLogEntry) = client.logActivity(entry)
     override fun bookingNotesStream(kinfolkId: String, bookingId: String) =

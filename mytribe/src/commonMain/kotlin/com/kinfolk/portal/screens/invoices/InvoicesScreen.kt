@@ -301,7 +301,9 @@ private fun OpenInvoiceRow(
         // quote decoded as `Open` here, so the household was invited to pay a
         // proposal they had not agreed to (issue #385). Tapping the row opens
         // the detail screen, where the quote can be accepted or declined.
-        if (isPayable(invoice.status)) {
+        // `offersPayment`, not `isPayable` alone: a paid invoice takes no payment
+        // whatever its status label says (operator ruling 2026-09-27, docket Q5).
+        if (offersPayment(invoice)) {
             KinButton(
                 label = if (paying) "Opening checkout…" else "Pay ${formatUsd(invoice.amountDue)}",
                 onClick = onPay,
@@ -432,6 +434,22 @@ internal fun openRowMetaLabel(invoice: Invoice): String = when {
     invoice.quoteDecision == QuoteDecision.Accepted -> "You accepted this"
     else -> "Needs your answer"
 }
+
+/**
+ * Whether THIS invoice offers a way to pay: the row's Pay button, the detail
+ * screen's pay options, and the controller's own check before it calls
+ * `payInvoice` or opens a pay link.
+ *
+ * A PAID INVOICE TAKES NO PAYMENT (operator ruling 2026-09-27, docket Q5), so
+ * `isPaid` refuses on its own, even when a stale status or a positive balance
+ * says otherwise. One function for all three, so the list and the detail
+ * screen cannot offer different things.
+ */
+internal fun offersPayment(invoice: Invoice): Boolean =
+    isPayable(invoice.status) && !invoice.isPaid && invoice.amountDue > 0.0
+
+/** The sentence the server sends for a paid invoice; shown when a stale screen tries anyway. */
+internal const val PAID_INVOICE_REFUSAL = "This invoice is already paid, so it cannot take another payment."
 
 /**
  * Whether this state is one the household can hand money over for.

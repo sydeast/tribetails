@@ -11,8 +11,9 @@ let stripe: Stripe | null = null;
 /**
  * The memoised Stripe client.
  *
- * Two functions in this codebase touch Stripe: `payInvoice` and the
- * `stripeWebhook` endpoint. The SDK is therefore loaded HERE, at first use,
+ * Only a handful of functions touch Stripe: `payInvoice`, the `stripeWebhook`
+ * endpoint, the billing callables and, since docket Q5,
+ * `onInvoicePaidExpireCheckouts`. The SDK is therefore loaded HERE, at first use,
  * rather than at file scope, because the Functions runtime loads all of
  * `index.js` on every cold start whatever the target is, so a file-scope import
  * charged the SDK to the other 225 as well. `import type` above erases at

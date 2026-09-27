@@ -11,6 +11,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { sanitizeRichText } from '../lib/richText';
 import { resolveKinTaleAccess } from '../lib/resolveKinTaleAccess';
 import { FULL_CPU } from '../lib/runtimeOptions';
+import { householdStaffFlag } from '../lib/staffGate';
 
 const Body = z.string().min(1).max(2000).refine((s) => s.trim().length > 0, {
   message: 'body cannot be whitespace-only',
@@ -41,7 +42,10 @@ export async function addKinTaleCommentHandler(
   if (body.length === 0) {
     throw new HttpsError('invalid-argument', 'body cannot be whitespace-only');
   }
-  const isAdmin = req.auth?.token?.admin === true;
+  // Docket Q1: householdStaffFlag, not the raw `admin` claim. The raw claim sent
+  // an Auntie into the kinfolk branch, where one assigned tribe let her comment
+  // as that household. Allowlisted, she comments as staff.
+  const isAdmin = householdStaffFlag(req.auth, 'addKinTaleComment');
 
   // RULING O-6, Q2: kinfolkId is derived from the tale doc itself, not
   // trusted from the client.
@@ -152,7 +156,7 @@ export async function getKinTaleReactionHandler(
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const args = ReactionArgs.parse(req.data);
-  await resolveKinTaleAccess(args.taleId, uid, args.kinfolkId, req.auth?.token?.admin === true, 'getKinTaleReaction');
+  await resolveKinTaleAccess(args.taleId, uid, args.kinfolkId, householdStaffFlag(req.auth, 'getKinTaleReaction'), 'getKinTaleReaction');
   return reactionSummary(args.taleId, uid);
 }
 
@@ -168,7 +172,7 @@ export async function toggleKinTaleLoveHandler(
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const args = ReactionArgs.parse(req.data);
-  const { kinfolkId } = await resolveKinTaleAccess(args.taleId, uid, args.kinfolkId, req.auth?.token?.admin === true, 'toggleKinTaleLove');
+  const { kinfolkId } = await resolveKinTaleAccess(args.taleId, uid, args.kinfolkId, householdStaffFlag(req.auth, 'toggleKinTaleLove'), 'toggleKinTaleLove');
 
   const ref = reactionsCollection(args.taleId).doc(uid);
   // Read the "before" state once — existence + count together — then derive

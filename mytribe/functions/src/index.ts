@@ -618,6 +618,10 @@ export { onInvoicesWrite } from './triggers/onInvoicesWrite';
 // decides who to tell about a state change and writes nothing, this one moves
 // a household's unapplied credit onto a bill that has just become collectable.
 export { onInvoiceAutoApply } from './triggers/onInvoiceAutoApply';
+// A THIRD, and the only one holding the Stripe key: when an invoice becomes
+// paid it expires every Checkout Session still open for it, so a paid invoice
+// takes no payment (operator ruling 2026-09-27, docket Q5).
+export { onInvoicePaidExpireCheckouts } from './triggers/onInvoicePaidExpireCheckouts';
 export { onKinTaleCommentCreate } from './triggers/onKinTaleCommentCreate';
 export { onBookingNoteCreate } from './triggers/onBookingNoteCreate';
 export { onRatingCreate } from './triggers/onRatingCreate';

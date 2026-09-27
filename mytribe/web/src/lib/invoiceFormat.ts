@@ -16,6 +16,19 @@ import { calTile } from './portalFormat';
  */
 type InvoiceStatus = InvoiceDto['status'];
 
+/**
+ * Whether this invoice offers any way to pay: the list's Pay now button, the
+ * detail screen's pay options and pay links. One rule for both screens.
+ *
+ * Only an `open` invoice with a balance, and NEVER a paid one (operator ruling
+ * 2026-09-27, docket Q5): `isPaid` refuses on its own, whatever the label or
+ * the balance says. The server refuses too (`payInvoice`, and `getMyInvoices`
+ * ships no pay methods for a paid invoice); this keeps the button from being
+ * offered at all.
+ */
+export function offersPayment(inv: Pick<InvoiceDto, 'status' | 'amountDue' | 'isPaid'>): boolean {
+  return inv.status === 'open' && inv.amountDue > 0 && !inv.isPaid;
+}
 /** "$36.00" / "-$12.50" from a dollars-denominated amount. */
 export function formatUsd(dollars: number): string {
   const sign = dollars < 0 ? '-' : '';
