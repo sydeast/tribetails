@@ -991,6 +991,47 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 - Mirrors: `InvoiceRepository.listPayments` on Android. No React mirror: no web
   surface renders this list. Types come from the generated contracts module.
 
+### giveAccountCredit
+- req `{ kinfolkId: string /* 1..200 */, amountCents: number /* int 1..500000 */, reason: string /* trimmed, 1..1000 */, idempotencyKey: string /* crd_<millis>_<suffix>, REQUIRED */ }` (`.strict()`)
+- res `{ ok: true, creditId: string /* = idempotencyKey */, amountCents: number, newAccountBalanceCents: number /* SIGNED */, replayed: boolean }`
+- Operator ruling 2026-09-27 (docket Q6). The owner gives a household account
+  credit with a reason. The only path that adds credit with no payment behind it.
+- One transaction writes the `given` event at
+  `families/{kinfolkId}/creditLedger/{idempotencyKey}` (amount, reason,
+  `givenBy`, `atMs`, balance before and after) and sets
+  `families/{kinfolkId}.accountBalanceCents` to the balance read in that
+  transaction plus the amount. After the commit, one
+  `BILLING_ACCOUNT_CREDIT_GIVEN` audit entry at docId
+  `account_credit_given_<key>`.
+- Idempotent on the key: a stored key is answered from its event with
+  `replayed: true` and adds nothing. The same key from another admin is
+  `already-exists`.
+- Cap $5,000.00: above any goodwill amount for one household, and it refuses an
+  extra zero typed on a large figure. There are no refunds, so a credit handed
+  out by mistake cannot be sent back.
+- GATE: `refuseAuntie` first, then `resolveInvoiceWriteActor` (owner unscoped;
+  a sandbox test admin only inside their own test tribe). Kinfolk are refused.
+- Errors: `permission-denied`, `invalid-argument`, `not-found` (no household),
+  `already-exists` (another admin's key).
+
+### getAccountCreditHistory
+- req `{ kinfolkId?: string /* 1..200 */ }` (`.strict()`)
+- res `{ ok: true, kinfolkId: string, accountBalanceCents: number /* SIGNED */, credits: Array<{ creditId: string, amountCents: number, reason: string, givenAtMs: number, remainingCents: number, fullyAppliedAtMs: number|null, applications: Array<{ appliedAtMs: number, amountCents: number, invoiceId: string, invoiceNumber: string|null }> }>, uses: Array<{ useId: string, usedAtMs: number, amountCents: number, invoiceId: string, invoiceNumber: string|null }> }`
+- Read only. `credits` and `uses` are newest first.
+- The history is derived from the event log (`lib/creditLedger.ts`):
+  `drawAccountCredit` writes a `draw` event beside every draw. A draw spends
+  balance no given credit accounts for first (anything on account before Q6,
+  overpayment credit, redeemed credit invoices, Stripe duplicate checkouts),
+  then given credits oldest first. `fullyAppliedAtMs` is when the last cent of a
+  credit was spent.
+- GATE: an Auntie is refused by role. The owner reads any household and must
+  name it. A sandbox test admin reads only their test tribe. Kinfolk must hold
+  the household in `clients/{uid}.kinfolkIds` AND have billing access there
+  (`hasKinfolkPerm(..., 'billing_full')`: the PRIMARY, or a secondary holding
+  `billing_full`). Everyone else gets `permission-denied`; the clients hide the
+  section on that code.
+- Errors: `permission-denied`, `invalid-argument`, `not-found`.
+
 ## Household members and invites (admin-gated; B1)
 
 The write half of this surface predates the read half by months:

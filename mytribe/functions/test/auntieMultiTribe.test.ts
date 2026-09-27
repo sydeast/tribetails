@@ -205,6 +205,12 @@ describe('#984 money callables with their own household check refuse an Auntie b
     { name: 'syncMyPaymentMethod', load: async () => (await p('billing')).syncMyPaymentMethodHandler, data: {} },
     { name: 'removeMyPaymentMethod', load: async () => (await p('billing')).removeMyPaymentMethodHandler, data: {} },
     { name: 'requestBooking', load: async () => (await p('requestBooking')).requestBookingHandler, data: {} },
+    // Q6: the household's credit history reads its own clients/{uid} list.
+    {
+      name: 'getAccountCreditHistory',
+      load: async () => (await p('getAccountCreditHistory')).getAccountCreditHistoryHandler,
+      data: { kinfolkId: 'fam1' },
+    },
   ];
 
   describe.each(OWN_GATE)('$name', (c) => {

@@ -90,6 +90,7 @@ import {
 } from './paymentAppliedOwner';
 import { writeAuditEntry } from './writeAuditEntry';
 import { AUDIT_EVENTS } from './auditEvents';
+import { stageDrawEvent } from './creditLedger';
 import { resolveKinfolkUid } from './resolveKinfolkUid';
 import { enqueueNotificationDetailed } from '../notifications/dispatcher';
 import { isNoRecipientsError } from '../notifications/recipientErrors';
@@ -367,6 +368,22 @@ export async function drawAccountCredit(
       },
       { merge: true },
     );
+
+    // Q6: the draw's event in the household's credit history, in this same
+    // transaction. It is how "date applied" is known for a given credit, and it
+    // records the balance before and after so the history can tell which part
+    // of the balance this draw spent (`lib/creditLedger.ts`).
+    stageDrawEvent(firestore, tx, {
+      kinfolkId,
+      paymentId: paymentRef.id,
+      invoiceId: input.invoiceId,
+      invoiceNumber: typeof doc.invoiceNumber === 'string' ? doc.invoiceNumber : null,
+      amountCents: drawCents,
+      heldBeforeCents: heldCents,
+      heldAfterCents: remainingCents,
+      actorUid: input.actorUid,
+      atMs: Date.now(),
+    });
 
     const invoiceUpdate = {
       status: settling ? 'paid' : 'open',

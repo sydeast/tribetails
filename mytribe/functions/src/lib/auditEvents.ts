@@ -155,6 +155,10 @@ export const AUDIT_EVENTS = {
   // 2026-08-06) an account-balance credit is the entire remedy. Somebody has to
   // know it happened.
   BILLING_PAYMENT_DUPLICATE_CREDITED: 'BILLING_PAYMENT_DUPLICATE_CREDITED',
+  // The owner gave a household account credit by hand, with a reason
+  // (`admin/giveAccountCredit.ts`, operator ruling 2026-09-27, docket Q6).
+  // The only path that adds credit with no payment behind it.
+  BILLING_ACCOUNT_CREDIT_GIVEN: 'BILLING_ACCOUNT_CREDIT_GIVEN',
 
   THEME_BRAND_TOKENS_UPDATED: 'THEME_BRAND_TOKENS_UPDATED',
   THEME_KINFOLK_OVERRIDES_UPDATED: 'THEME_KINFOLK_OVERRIDES_UPDATED',
