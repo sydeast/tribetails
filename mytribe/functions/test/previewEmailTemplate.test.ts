@@ -37,6 +37,37 @@ describe('previewEmailTemplate', () => {
     expect(res.text).toContain('[nextVisit.date]');
   });
 
+  // #962: `visits` is a LIST field (notifications/visitDates.ts's
+  // RenderedVisit[]), and sampling it as a string like every other field left
+  // `{{#each visits}}` with nothing to iterate, so the preview of both loop
+  // templates (assignment.assigned, kincare.booking.confirm) showed an empty
+  // list although a real send renders every visit.
+  it('samples visits as an array, not a string, so {{#each visits}} has something to iterate', () => {
+    const data = sampleDataFor('assignment.assigned');
+    expect(Array.isArray(data['visits'])).toBe(true);
+    expect(data['visits']).toHaveLength(2);
+    for (const visit of data['visits'] as Record<string, unknown>[]) {
+      expect(visit['weekday']).toEqual(expect.stringContaining('weekday'));
+      expect(visit['date']).toEqual(expect.stringContaining('date'));
+      expect(visit['time']).toEqual(expect.stringContaining('time'));
+    }
+  });
+
+  it.each(['assignment.assigned', 'kincare.booking.confirm'])(
+    'renders a visit row for each sample visit in the %s preview, not an empty list',
+    async (catalogKey) => {
+      // Same loop markup as the two seed templates
+      // (mytribe/seeds/notificationTemplates/<key>/content.html).
+      const loop = '<ul>{{#each visits}}<li>{{this.weekday}}, {{this.date}} at {{this.time}}</li>{{/each}}</ul>';
+      const res = await previewEmailTemplateHandler(
+        callableRequest({ ...req, content: loop, catalogKey }, { uid: 'op1' }),
+      );
+      const rows = (res.html.match(/<li>/g) ?? []).length;
+      expect(rows).toBe(2);
+      expect(res.html).not.toContain('<ul></ul>');
+    },
+  );
+
   it('rejects oversized content with invalid-argument, not a thrown ZodError', async () => {
     await expect(
       previewEmailTemplateHandler(callableRequest({ ...req, content: 'x'.repeat(50001) }, { uid: 'op1' })),
