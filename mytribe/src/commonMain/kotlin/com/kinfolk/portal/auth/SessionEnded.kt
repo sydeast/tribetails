@@ -36,10 +36,23 @@ enum class SessionEndedReason {
 
     /** An operator turned the account off. */
     Disabled,
+
+    /**
+     * Docket Q1, operator ruling 2026-09-27: an Auntie never uses the portal.
+     * `getMyAccess`, the first call after sign-in, refuses her with this tag
+     * (`permission-denied`, see `functions/src/lib/staffGate.ts`
+     * `refuseAuntieAtPortalSignIn`), so she is signed out and told where she
+     * does sign in, instead of landing on the launch error screen.
+     */
+    Caretaker,
 }
 
 internal const val REVOKED_TOKEN = "session-revoked"
 internal const val DISABLED_TOKEN = "user-disabled"
+internal const val CARETAKER_TOKEN = "caretaker-not-portal"
+
+/** What an Auntie reads on the sign-in screen after the portal turns her away. */
+const val CARETAKER_NOT_PORTAL_NOTICE = "This sign-in is for households. Aunties use the AuntieOS app."
 
 /**
  * The reason the backend gave for refusing, or null when this failure is not
@@ -54,6 +67,7 @@ fun sessionEndedReason(t: Throwable?): SessionEndedReason? {
         when {
             text.contains(DISABLED_TOKEN) -> return SessionEndedReason.Disabled
             text.contains(REVOKED_TOKEN) -> return SessionEndedReason.Revoked
+            text.contains(CARETAKER_TOKEN) -> return SessionEndedReason.Caretaker
         }
         cursor = cursor.cause
         depth++
@@ -65,6 +79,7 @@ fun sessionEndedReason(t: Throwable?): SessionEndedReason? {
 fun sessionEndedMessage(reason: SessionEndedReason): String = when (reason) {
     SessionEndedReason.Disabled -> "This account has been turned off. Please contact Auntie."
     SessionEndedReason.Revoked -> "Your session ended, so we signed you out. Please sign in again."
+    SessionEndedReason.Caretaker -> CARETAKER_NOT_PORTAL_NOTICE
 }
 
 /**

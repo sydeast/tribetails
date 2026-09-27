@@ -6,6 +6,7 @@ import { FirebaseError } from 'firebase/app';
 import { signOut as firebaseSignOut } from 'firebase/auth';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  CARETAKER_REASON,
   DISABLED_REASON,
   REVOKED_REASON,
   SESSION_ENDED_STORAGE_KEY,
@@ -60,6 +61,24 @@ describe('sessionEndedReason', () => {
     expect(sessionEndedReason(callableError('functions/permission-denied', 'not your family'))).toBeNull();
   });
 
+  // Docket Q1: the one tagged reason that arrives as permission-denied.
+  it('recognises the portal refusing an Auntie, from details', () => {
+    const err = callableError('functions/permission-denied', 'Not for caretakers.', { reason: CARETAKER_REASON });
+    expect(sessionEndedReason(err)).toBe(CARETAKER_REASON);
+  });
+
+  it('recognises the portal refusing an Auntie, from the message when details are lost', () => {
+    const err = callableError(
+      'functions/permission-denied',
+      'This sign-in is for households. Aunties use the AuntieOS app (caretaker-not-portal).',
+    );
+    expect(sessionEndedReason(err)).toBe(CARETAKER_REASON);
+  });
+
+  it('does not treat the caretaker token under some other code as a refusal', () => {
+    expect(sessionEndedReason(callableError('functions/internal', 'log said caretaker-not-portal'))).toBeNull();
+  });
+
   it('is null for a network/timeout failure — retrying can fix those', () => {
     expect(sessionEndedReason(new Error('Failed to fetch'))).toBeNull();
     expect(sessionEndedReason(callableError('functions/deadline-exceeded', 'deadline'))).toBeNull();
@@ -102,6 +121,14 @@ describe('endRevokedSession', () => {
   it('says something different when the account was turned off', async () => {
     await endRevokedSession(DISABLED_REASON);
     expect(sessionStorage.getItem(SESSION_ENDED_STORAGE_KEY)).toMatch(/turned off/i);
+  });
+
+  it('tells an Auntie the portal is for households and where she signs in', async () => {
+    await endRevokedSession(CARETAKER_REASON);
+    expect(firebaseSignOut).toHaveBeenCalledTimes(1);
+    expect(sessionStorage.getItem(SESSION_ENDED_STORAGE_KEY)).toBe(
+      'This sign-in is for households. Aunties use the AuntieOS app.',
+    );
   });
 
   it('still clears local state when the Firebase sign-out itself fails', async () => {

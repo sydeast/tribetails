@@ -168,3 +168,45 @@ export function householdStaffFlag(
   refuseAuntie(auth, functionName);
   return false;
 }
+/**
+ * `details.reason` for an Auntie refused at portal sign-in (docket Q1).
+ *
+ * Operator ruling 2026-09-27: "Auntie never uses the portal. Refuse her at
+ * portal sign-in with a clear message." Outside of kinfolk, only the owner
+ * uses the portal.
+ *
+ * Namespaced so it appears nowhere else. Both portal clients already tear the
+ * session down on a tagged refusal (#557, `session-revoked` and
+ * `user-disabled`) and leave a notice for the sign-in screen; this is a third
+ * token on the same path. The token is repeated inside the message because the
+ * Android client matches on message text, for the reason
+ * `lib/sessionRevocation.ts` gives.
+ */
+export const CARETAKER_NOT_PORTAL_REASON = 'caretaker-not-portal';
+export const CARETAKER_NOT_PORTAL_MESSAGE =
+  `This sign-in is for households. Aunties use the AuntieOS app (${CARETAKER_NOT_PORTAL_REASON}).`;
+/**
+ * Refuse a caretaker at the portal's front door.
+ *
+ * `getMyAccess` is the first callable both portal clients make after sign-in,
+ * so this is where she is turned away with the reason the clients map to their
+ * sign-in notice. Every other portal callable refuses her with `refuseAuntie`,
+ * which is the generic caretaker refusal and the one shared callables use.
+ * Keys on the role, so a double-claimed token is refused too.
+ */
+export function refuseAuntieAtPortalSignIn(
+  auth: { uid?: string; token?: StaffToken } | undefined,
+  functionName: string,
+): void {
+  if (!isAuntieClaim(auth?.token)) return;
+  logEvent({
+    severity: 'info',
+    function: functionName,
+    event: 'auntie.portal.refused',
+    uid: auth?.uid,
+    extra: { note: 'Operator ruling 2026-09-27: an Auntie never uses the portal.' },
+  });
+  throw new HttpsError('permission-denied', CARETAKER_NOT_PORTAL_MESSAGE, {
+    reason: CARETAKER_NOT_PORTAL_REASON,
+  });
+}

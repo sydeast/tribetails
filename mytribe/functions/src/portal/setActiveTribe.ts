@@ -5,7 +5,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
-import { isOwner } from '../lib/staffGate';
+import { isOwner, refuseAuntie } from '../lib/staffGate';
 import { syncKinfolkClaim } from '../lib/kinfolkClaim';
 
 const Args = z.object({ kinfolkId: z.string().min(1) });
@@ -29,6 +29,7 @@ const Args = z.object({ kinfolkId: z.string().min(1) });
 export async function setActiveTribeHandler(
   req: CallableRequest<unknown>,
 ): Promise<{ ok: true; kinfolkId: string; claimReminted: boolean }> {
+  refuseAuntie(req.auth, 'setActiveTribe'); // docket Q1: an Auntie never uses the portal
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');

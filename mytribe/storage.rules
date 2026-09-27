@@ -5,8 +5,14 @@ service firebase.storage {
 
     function signedIn() { return request.auth != null; }
     function isAuntie() { return signedIn() && request.auth.token.admin == true; }
+    // Never a caretaker (docket Q1, #984). `syncKinfolkClaim` mints
+    // `role: 'kinfolk'` + `kinfolkId` for any account holding exactly one
+    // tribe and keeps its other claims, so an Auntie assigned one tribe carries
+    // both. Operator ruling 2026-09-27: an Auntie never uses the portal and
+    // never acts as a household. Same rule as `firestore.rules:isKinfolk()`.
     function isKinfolk() {
-      return signedIn() && request.auth.token.role == 'kinfolk' && request.auth.token.kinfolkId != null;
+      return signedIn() && request.auth.token.role == 'kinfolk' && request.auth.token.kinfolkId != null
+             && !('staffRole' in request.auth.token && request.auth.token.staffRole == 'auntie');
     }
 
     function ownsKinfolk(kid) {

@@ -4,6 +4,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { refuseAuntie } from '../lib/staffGate';
 
 interface BusinessContactDto {
   name: string;
@@ -21,6 +22,7 @@ interface BusinessContactDto {
 export async function getBusinessContactHandler(
   req: CallableRequest<unknown>,
 ): Promise<BusinessContactDto> {
+  refuseAuntie(req.auth, 'getBusinessContact'); // docket Q1: an Auntie never uses the portal
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');

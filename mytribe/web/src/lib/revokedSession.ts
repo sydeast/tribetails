@@ -47,12 +47,19 @@ import { auth } from './firebase';
 /** The `details.reason` values `functions/src/lib/sessionRevocation.ts` sends. */
 export const REVOKED_REASON = 'session-revoked';
 export const DISABLED_REASON = 'user-disabled';
+/**
+ * Docket Q1, operator ruling 2026-09-27: an Auntie never uses the portal.
+ * `getMyAccess` refuses her with `permission-denied` and this reason
+ * (`functions/src/lib/staffGate.ts`, `refuseAuntieAtPortalSignIn`). Same
+ * teardown as the other two: sign out here, and say why on the sign-in screen.
+ */
+export const CARETAKER_REASON = 'caretaker-not-portal';
 
-export type SessionEndedReason = typeof REVOKED_REASON | typeof DISABLED_REASON;
+export type SessionEndedReason = typeof REVOKED_REASON | typeof DISABLED_REASON | typeof CARETAKER_REASON;
 
 /**
  * Reads the reason off a callable rejection, or null when the error is not one
- * of the two the server tags.
+ * of the three the server tags.
  *
  * Checks `details.reason` first (the clean signal) and falls back to the
  * message text, which carries the same token. The fallback is not paranoia: a
@@ -64,16 +71,25 @@ export function sessionEndedReason(err: unknown): SessionEndedReason | null {
   if (typeof err !== 'object' || err === null) return null;
 
   const code = (err as { code?: unknown }).code;
-  if (typeof code === 'string' && !code.endsWith('unauthenticated')) return null;
-
   const details = (err as { details?: unknown }).details;
   const reason =
     typeof details === 'object' && details !== null
       ? (details as { reason?: unknown }).reason
       : undefined;
+  const message = (err as { message?: unknown }).message;
+
+  // The caretaker refusal is the one tagged reason sent as `permission-denied`.
+  // It is matched only with its own token, so a plain permission-denied (a real
+  // answer about some piece of data) still returns null below.
+  if (typeof code !== 'string' || code.endsWith('permission-denied')) {
+    if (reason === CARETAKER_REASON) return CARETAKER_REASON;
+    if (typeof message === 'string' && message.includes(CARETAKER_REASON)) return CARETAKER_REASON;
+  }
+
+  if (typeof code === 'string' && !code.endsWith('unauthenticated')) return null;
+
   if (reason === REVOKED_REASON || reason === DISABLED_REASON) return reason;
 
-  const message = (err as { message?: unknown }).message;
   if (typeof message === 'string') {
     if (message.includes(REVOKED_REASON)) return REVOKED_REASON;
     if (message.includes(DISABLED_REASON)) return DISABLED_REASON;
@@ -83,10 +99,14 @@ export function sessionEndedReason(err: unknown): SessionEndedReason | null {
 
 /** Copy the sign-in screen shows after an involuntary sign-out. */
 export function sessionEndedMessage(reason: SessionEndedReason): string {
+  if (reason === CARETAKER_REASON) return CARETAKER_NOT_PORTAL_NOTICE;
   return reason === DISABLED_REASON
     ? 'This account has been turned off. Please contact Auntie.'
     : 'Your session ended, so we signed you out. Please sign in again.';
 }
+
+/** What an Auntie reads on the sign-in screen after the portal turns her away (docket Q1). */
+export const CARETAKER_NOT_PORTAL_NOTICE = 'This sign-in is for households. Aunties use the AuntieOS app.';
 
 /** Where the notice is left for the sign-in screen to pick up after the reload. */
 export const SESSION_ENDED_STORAGE_KEY = 'mytribe.sessionEndedNotice';
