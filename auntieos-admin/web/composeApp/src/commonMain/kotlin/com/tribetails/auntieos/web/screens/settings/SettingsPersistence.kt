@@ -39,7 +39,7 @@ fun hydratedTheme(profile: UserProfile?, fallback: ThemeMode = DEFAULT_THEME_MOD
     return parseThemeMode(saved)
 }
 
-/** Profile copy carrying the chosen theme, ready for saveUserProfile. */
+/** Profile copy carrying the chosen theme, ready for updateUserProfile. */
 fun UserProfile.withTheme(mode: ThemeMode): UserProfile = copy(themeMode = mode.stored)
 
 // ---- 17.1 personalization (accent / density / font scale) ----
@@ -52,7 +52,7 @@ fun hydratedPersonalization(profile: UserProfile?): ThemePersonalization = Theme
     themePreset = AuntieThemePreset.parse(profile?.themePreset),
 )
 
-/** Profile copies carrying each chosen knob, ready for saveUserProfile. */
+/** Profile copies carrying each chosen knob, ready for updateUserProfile. */
 fun UserProfile.withAccent(accent: AccentChoice): UserProfile = copy(accentColor = accent.key)
 fun UserProfile.withDensity(density: DensityChoice): UserProfile = copy(density = density.key)
 fun UserProfile.withFontScale(scale: FontScaleChoice): UserProfile = copy(fontScale = scale.key)

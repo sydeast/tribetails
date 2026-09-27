@@ -606,8 +606,29 @@ internal actual suspend fun platformRejectBooking(bookingId: String): WriteResul
     transportWrite("reject failed") { JvmFirestoreRest.patchFields("kin_care_sessions", bookingId, mapOf("status" to JsonPrimitive("REJECTED"))) }
 internal actual suspend fun platformCreateBookingRequest(booking: KinCareSession): WriteResult<String> =
     transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("kin_care_sessions", jsonOut.encodeToString(booking))) }
-internal actual suspend fun platformSaveUserProfile(profile: UserProfile): WriteResult<Unit> =
-    transportResult("save failed") { JvmFirestoreRest.setDoc("users", profile.uid, jsonOut.encodeToString(profile)); WriteResult.Ok(Unit) }
+/**
+ * #897: a masked PATCH of `users/{uid}` carrying only the fields [edited] changes
+ * relative to [loaded] (see [userProfileChangedFields]), plus an `updatedAt`
+ * stamp. This replaced a whole-document PATCH with no updateMask, which deleted
+ * every field the model lacks and, after a failed profile read, wrote blanks.
+ *
+ * `patchFields` builds the body through `bodyFrom(.., "users/$uid")`, so a field
+ * this console read as a Timestamp goes back as one (#857); `updatedAt` included.
+ * An empty diff writes nothing, stamp included, and still answers Ok.
+ * On a document that does not exist yet the masked PATCH creates it.
+ */
+internal actual suspend fun platformUpdateUserProfile(uid: String, loaded: UserProfile?, edited: UserProfile): WriteResult<Unit> {
+    if (uid.isBlank()) return WriteResult.Err("save failed: no user id")
+    val changes = userProfileChangedFields(loaded, edited, jsonOut)
+    if (changes.isEmpty()) return WriteResult.Ok(Unit)
+    return transportWrite("save failed") {
+        JvmFirestoreRest.patchFields(
+            "users",
+            uid,
+            changes + mapOf("updatedAt" to JsonPrimitive(com.tribetails.auntieos.web.util.nowIso())),
+        )
+    }
+}
 internal actual suspend fun platformCreateVetClinic(clinic: VetClinic): WriteResult<String> =
     transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("vet_clinics", jsonOut.encodeToString(clinic))) }
 internal actual suspend fun platformUpdateVetClinic(clinic: VetClinic): WriteResult<Unit> =

@@ -89,7 +89,7 @@ fun parseDashboard(tokens: List<String>): List<DashWidget> {
 fun resolvedDashboard(tokens: List<String>): List<DashWidget> =
     if (tokens.isEmpty()) DEFAULT_DASHBOARD else parseDashboard(tokens).ifEmpty { DEFAULT_DASHBOARD }
 
-/** Serialize back to "key:size" tokens for saveUserProfile. */
+/** Serialize back to "key:size" tokens for updateUserProfile. */
 fun List<DashWidget>.toTokens(): List<String> = map { "${it.key.token}:${it.size.token}" }
 
 /** Known widgets not currently shown, in enum order (the "hidden" strip). */

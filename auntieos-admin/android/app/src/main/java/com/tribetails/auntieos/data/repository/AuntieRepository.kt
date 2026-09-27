@@ -2838,6 +2838,29 @@ class AuntieRepository(
 
     // ---- User profile (single doc per Firebase Auth uid in `users` collection) ----
 
+    /**
+     * #897: [observeUserProfile] for a screen that SAVES the profile. A listener
+     * error arrives as a failure instead of null, because null means "no
+     * document", and [saveUserProfile] treats a null baseline as a create: a
+     * whole-model write. Folding a failed read into null let a failed load
+     * followed by Save write a blank profile over the real one.
+     */
+    fun observeUserProfileResult(uid: String): Flow<Result<UserProfile?>> = callbackFlow {
+        if (uid.isBlank()) {
+            trySend(Result.failure(IllegalStateException("No signed-in user"))); awaitClose { }; return@callbackFlow
+        }
+        val reg = firestore.collection("users").document(uid)
+            .addSnapshotListener { snap, err ->
+                if (err != null) {
+                    AuntieLog.e("observeUserProfileResult($uid) failed", err)
+                    trySend(Result.failure(err))
+                    return@addSnapshotListener
+                }
+                trySend(runCatching { snap?.toObject(UserProfile::class.java) })
+            }
+        awaitClose { reg.remove() }
+    }
+
     fun observeUserProfile(uid: String): Flow<UserProfile?> = callbackFlow {
         if (uid.isBlank()) {
             trySend(null); awaitClose { }; return@callbackFlow

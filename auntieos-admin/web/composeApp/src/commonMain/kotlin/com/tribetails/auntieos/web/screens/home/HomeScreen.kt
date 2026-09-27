@@ -191,7 +191,7 @@ fun HomeScreen(
 
     // 17.3 Dashboard customization. layout seeds from the saved tokens (empty -> the
     // default = today's exact layout, zero regression); edits persist to users/{uid}
-    // via saveUserProfile, serialized behind a Mutex and copied onto the LIVE profile
+    // via updateUserProfile, serialized behind a Mutex and copied onto the LIVE profile
     // so theme/branding/etc are never clobbered. Fail loud on a save error.
     val profile = (profileState as? FirestoreResult.Data)?.value
     val liveProfile by rememberUpdatedState(profile)
@@ -254,7 +254,8 @@ fun HomeScreen(
         liveProfile?.let { base ->
             dashScope.launch {
                 dashSaveMutex.withLock {
-                    when (val r = client.saveUserProfile(base.copy(dashboardWidgets = next.toTokens()))) {
+                    // #897: a masked write of dashboardWidgets only, never the whole document.
+                    when (val r = client.updateUserProfile(uid ?: base.uid, base, base.copy(dashboardWidgets = next.toTokens()))) {
                         is WriteResult.Err -> dashError = "Couldn't save dashboard: ${r.message}"
                         is WriteResult.Ok -> dashError = null
                     }

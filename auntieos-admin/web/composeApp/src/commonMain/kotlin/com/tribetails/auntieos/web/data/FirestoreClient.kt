@@ -1852,8 +1852,15 @@ class FirestoreClient {
     // ---- Admin / Auntie user profile (single doc per Firebase Auth uid) ----
     fun userProfileStream(uid: String): Flow<FirestoreResult<UserProfile?>> =
         platformUserProfileStream(uid)
-    suspend fun saveUserProfile(profile: UserProfile): WriteResult<Unit> =
-        platformSaveUserProfile(profile)
+    /**
+     * #897: write only what changed between [loaded] (the profile this screen
+     * read, or null when the document does not exist) and [edited], with an
+     * updateMask naming exactly those fields. Nothing changed writes nothing.
+     * Callers must not reach this while the profile read is still loading or has
+     * failed; see ProfileLoad.
+     */
+    suspend fun updateUserProfile(uid: String, loaded: UserProfile?, edited: UserProfile): WriteResult<Unit> =
+        platformUpdateUserProfile(uid, loaded, edited)
 
     // ---- Vet clinics (shared catalog used by Kinfolk vet section) ----
     fun vetClinicsStream(): Flow<FirestoreResult<List<VetClinic>>> = platformVetClinicsStream()
@@ -2277,7 +2284,7 @@ internal expect suspend fun platformGetKinCareAssignment(
 internal expect fun platformTrainingDocsStream(): Flow<FirestoreResult<List<TrainingDocument>>>
 
 internal expect fun platformUserProfileStream(uid: String): Flow<FirestoreResult<UserProfile?>>
-internal expect suspend fun platformSaveUserProfile(profile: UserProfile): WriteResult<Unit>
+internal expect suspend fun platformUpdateUserProfile(uid: String, loaded: UserProfile?, edited: UserProfile): WriteResult<Unit>
 
 internal expect fun platformVetClinicsStream(): Flow<FirestoreResult<List<VetClinic>>>
 internal expect suspend fun platformCreateVetClinic(clinic: VetClinic): WriteResult<String>
@@ -4071,14 +4078,14 @@ data class UserProfile(
     /**
      * Per-operator UI theme preference: "LIGHT" / "DARK" / "SYSTEM". Blank on legacy
      * docs, which falls back to the app default (see [parseThemeMode]). Written via
-     * [withTheme] + saveUserProfile so the chosen theme survives a refresh (0A).
+     * [withTheme] + updateUserProfile so the chosen theme survives a refresh (0A).
      */
     val themeMode: String = "",
     /**
      * 17.1 personalization keys (blank on legacy docs -> app default; see
      * AccentChoice/DensityChoice/FontScaleChoice.parse). accentColor: "TEAL".."CORAL";
      * density: "COMPACT"/"NORMAL"/"ROOMY"; fontScale: "SMALL"/"MEDIUM"/"LARGE".
-     * Written via withAccent/withDensity/withFontScale + saveUserProfile.
+     * Written via withAccent/withDensity/withFontScale + updateUserProfile.
      */
     val accentColor: String = "",
     val density: String = "",
@@ -4087,7 +4094,7 @@ data class UserProfile(
      * Named staff-UI theme preset key ("default", "midnight", ...; see
      * AuntieThemePreset.parse). Blank on legacy docs -> the "default" preset, so
      * the app reads byte-identical to pre-preset behavior. Written via
-     * withThemePreset + saveUserProfile.
+     * withThemePreset + updateUserProfile.
      */
     val themePreset: String = "",
     val createdAt: String = "",

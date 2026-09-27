@@ -14,6 +14,7 @@ import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -79,10 +80,15 @@ class AdminSettingsAvatarUploadTest {
         every { FirebaseAuth.getInstance() } returns auth
     }
 
+    // #897: an avatar save waits on the profile read, so each test's VM has read
+    // the profile first (no document yet, the first-sign-in case).
     private fun buildViewModel() = AdminSettingsViewModel(
         repository = mockRepo,
         mediaUploadManagerFactory = { mockManager },
-    )
+    ).also {
+        every { mockRepo.observeUserProfileResult(any()) } returns flowOf(Result.success(null))
+        it.loadUserProfile()
+    }
 
     // ─── happy path ─────────────────────────────────────────────────────────
 

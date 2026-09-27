@@ -42,7 +42,7 @@ fun resolvedNav(tokens: List<String>, defaultOrder: List<String>): List<NavEntry
     else parseNavTokens(tokens, known).ifEmpty { defaultOrder.map { NavEntry(it) } }
 }
 
-/** Serialize entries back to tokens for saveUserProfile. */
+/** Serialize entries back to tokens for updateUserProfile. */
 fun List<NavEntry>.toNavTokens(): List<String> =
     map { e -> if (e.customLabel.isNullOrBlank()) e.key else "${e.key}|${e.customLabel}" }
 

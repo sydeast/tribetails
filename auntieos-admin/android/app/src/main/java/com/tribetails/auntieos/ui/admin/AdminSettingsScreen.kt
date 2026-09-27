@@ -515,11 +515,18 @@ fun AdminSettingsScreen(
                             },
                         )
 
-                        SettingsSection.Navigation -> NavigationSettingsPanel(
-                            navConfig = uiState.profile.navConfig,
-                            canSave = uiState.profile.uid.isNotBlank(),
-                            onSave = { viewModel.saveNavConfig(it) },
-                        )
+                        SettingsSection.Navigation -> Column {
+                            // #897: saving navigation writes the profile; it waits on the read.
+                            uiState.profileLoadError?.let { msg ->
+                                ProfileLoadErrorBanner(message = msg, onRetry = { viewModel.loadUserProfile() })
+                                Spacer(Modifier.height(dims.space4))
+                            }
+                            NavigationSettingsPanel(
+                                navConfig = uiState.profile.navConfig,
+                                canSave = uiState.profileLoaded && uiState.profile.uid.isNotBlank(),
+                                onSave = { viewModel.saveNavConfig(it) },
+                            )
+                        }
 
                         SettingsSection.KinCareTypes -> KinCareTypesPanel(
                             settings = uiState.businessSettings,

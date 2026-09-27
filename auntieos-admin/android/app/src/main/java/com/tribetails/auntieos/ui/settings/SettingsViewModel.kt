@@ -60,7 +60,12 @@ class SettingsViewModel(private val appContext: Context) : ViewModel() {
             // whole-model write is correct. Handing the fallback in as a
             // baseline would diff the operator's real profile against ten Kotlin
             // defaults and write all of them.
-            val stored = repo.observeUserProfile(user.uid).first()
+            // #897: a failed read must not pass for "no document", or the save
+            // below would CREATE: a whole-model write of blanks over the profile.
+            val stored = repo.observeUserProfileResult(user.uid).first().getOrElse { e ->
+                _themeSyncError.value = "Theme saved on this device, but your profile could not be read, so it was not synced: ${e.message}"
+                return@launch
+            }
             val current = stored ?: UserProfile(uid = user.uid, email = user.email.orEmpty())
             repo.saveUserProfile(stored, current.withTheme(mode)).onFailure { e ->
                 _themeSyncError.value = "Theme saved on this device, but cloud sync failed: ${e.message}"
@@ -100,7 +105,11 @@ class SettingsViewModel(private val appContext: Context) : ViewModel() {
             appearanceSaveMutex.withLock {
                 val user = FirebaseAuth.getInstance().currentUser ?: return@withLock
                 val repo = AuntieOSApp.instance.repository
-                val stored = repo.observeUserProfile(user.uid).first()
+                // #897: as in saveThemeMode, a failed read never reaches a save.
+                val stored = repo.observeUserProfileResult(user.uid).first().getOrElse { e ->
+                    _appearanceSyncError.value = "Appearance saved on this device, but your profile could not be read, so it was not synced: ${e.message}"
+                    return@withLock
+                }
                 val current = stored ?: UserProfile(uid = user.uid, email = user.email.orEmpty())
                 val pers = appContext.personalizationFlow().first()
                 val merged = current.withAccent(pers.accent).withDensity(pers.density).withFontScale(pers.fontScale)

@@ -310,7 +310,8 @@ class DesktopTimestampRoundTripTest {
             "kin_care_reports" to check("kin_care_reports", "r9", KinCareReport.serializer(), { platformUpdateKinTaleReport(it) }),
             "kintale_templates" to check("kintale_templates", "t9", KinTaleTemplate.serializer(), { platformUpdateKinTaleTemplate(it) }),
             "payments" to check("payments", "p9", Payment.serializer(), { platformRecordPayment(it, "p9") }),
-            "users" to check("users", "u9", UserProfile.serializer(), { platformSaveUserProfile(it) }, buildJsonObject { put("uid", str("u9")) }),
+            // users: no longer a whole-document save (#897); a masked diff write,
+            // covered with its Timestamps by DesktopUserProfileSaveTest.
             "vet_clinics" to check("vet_clinics", "v9", VetClinic.serializer(), { platformUpdateVetClinic(it) }),
             "household_data" to check("household_data", "h9", HouseholdData.serializer(), { platformSaveHouseholdData(it) }),
             "dynamic_fields" to check("dynamic_fields", "f9", DynamicField.serializer(), { platformUpdateDynamicField(it) }),
