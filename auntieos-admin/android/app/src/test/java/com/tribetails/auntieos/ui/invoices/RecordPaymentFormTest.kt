@@ -52,6 +52,21 @@ class RecordPaymentFormTest {
         assertEquals("took the fee out of the tip", payment.notes)
     }
 
+    /**
+     * #982, diff vs rebuild: the row is built from the invoice, so what the
+     * invoice knows about the household travels. `client` and `address` used
+     * to be left blank; admin web sends `client: invoice.client`.
+     */
+    @Test
+    fun `the client and address are copied off the invoice, not left blank`() {
+        val inv = invoice().copy(client = "Ana Rivera", address = "12 Elm St")
+        val payment = buildInvoicePayment(inv, 127.5, "cash", "", "", "")
+        assertEquals("Ana Rivera", payment.client)
+        assertEquals("12 Elm St", payment.address)
+        val payload = recordPaymentArgs(payment).toPayload()
+        assertEquals("Ana Rivera", payload["client"])
+        assertEquals("12 Elm St", payload["address"])
+    }
     @Test
     fun `an untouched tip and fee submit as zero, which is what a blank box means`() {
         val payment = buildInvoicePayment(invoice(), 127.5, "cash", "", "", "")

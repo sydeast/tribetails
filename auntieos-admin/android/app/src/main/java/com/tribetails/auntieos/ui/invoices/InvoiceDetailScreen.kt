@@ -269,7 +269,7 @@ fun InvoiceDetailScreen(
                 invoice    = inv,
                 submitting = uiState.recordingPayment,
                 onDismiss  = { viewModel.closeRecordPayment() },
-                onSubmit   = { payment -> viewModel.recordPayment(payment) },
+                onSubmit   = { payment, applied -> viewModel.recordPayment(payment, applied) },
             )
         }
     }
@@ -1581,7 +1581,8 @@ private fun RecordPaymentDialog(
     invoice: Invoice,
     submitting: Boolean,
     onDismiss: () -> Unit,
-    onSubmit: (Payment) -> Unit,
+    /** The whole transaction, and the Amount box: the part applied to this invoice (#982). */
+    onSubmit: (Payment, Double) -> Unit,
 ) {
     var amount    by remember(invoice.id) { mutableStateOf(if (invoice.amountDue > 0.0) invoice.amountDue.toString() else "") }
     var method    by remember(invoice.id) { mutableStateOf("") }
@@ -1635,7 +1636,8 @@ private fun RecordPaymentDialog(
                             paymentTotal = totalValue ?: 0.0,
                             autoApply = autoApply,
                             sendConfirmationEmail = sendConfirmation,
-                        )
+                        ),
+                        amountValue ?: 0.0,
                     )
                 },
                 loading = submitting,

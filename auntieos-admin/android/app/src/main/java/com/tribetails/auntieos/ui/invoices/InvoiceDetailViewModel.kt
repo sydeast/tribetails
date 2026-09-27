@@ -287,8 +287,18 @@ class InvoiceDetailViewModel(
      * If the callable fails, NOTHING is written anywhere and the operator is
      * told. A legacy row written against a payment the server refused would be a
      * record of money the books do not believe was collected.
+     *
+     * #982: TWO FIGURES, NOT ONE. [appliedAmount] is the dialog's Amount box,
+     * the part of the payment that goes on this invoice, and it is the only
+     * figure `markInvoicePaid` gets. [payment] is the whole transaction (Amount
+     * plus tip, or the Payment amount box), and only the ledger row gets it.
+     * Sending `payment.amount` to `markInvoicePaid` put the tip and any leftover
+     * on the invoice as an overpayment. Admin web makes the same split
+     * (`InvoiceDetail.tsx`, Mark paid). There is deliberately no default: no
+     * figure on [payment] can say what was applied once a Payment amount box
+     * is filled in.
      */
-    fun recordPayment(payment: Payment) {
+    fun recordPayment(payment: Payment, appliedAmount: Double) {
         val invoiceId = _uiState.value.invoice?.id ?: return
         _uiState.value = _uiState.value.copy(recordingPayment = true)
         // #825: one pair of keys per payment, re-minted only when the payment
@@ -297,7 +307,7 @@ class InvoiceDetailViewModel(
         // flight reads the same held pair: a nine-second cold start is long
         // enough for an operator to press again, and two attempts overlapping is
         // the ordinary case this protects, not the exotic one.
-        val signature = paymentSignature(invoiceId, payment)
+        val signature = paymentSignature(invoiceId, payment, appliedAmount)
         if (paymentSubmissionKey == null || paymentSubmissionSignature != signature) {
             paymentSubmissionKey = mintPaymentIdempotencyKey()
             invoicePaymentSubmissionKey = mintInvoicePaymentIdempotencyKey()
@@ -308,7 +318,9 @@ class InvoiceDetailViewModel(
         viewModelScope.launch {
             val settlement = invoiceRepository.markInvoicePaid(
                 invoiceId = invoiceId,
-                amount = payment.amount,
+                // #982: the applied part only. The tip is tip and the leftover
+                // is leftover; neither is invoice money.
+                amount = appliedAmount,
                 method = payment.paymentMethod,
                 reference = payment.referenceNumber,
                 idempotencyKey = ledgerKey,
@@ -379,7 +391,9 @@ class InvoiceDetailViewModel(
             _uiState.value = _uiState.value.copy(
                 recordingPayment = false,
                 showRecordPayment = false,
-                toastMessage = recordPaymentToast(settlement) + confirmationNote,
+                // #982: the credit the SERVER says it gave, in web's words.
+                toastMessage = recordPaymentToast(settlement) + confirmationNote +
+                    recordPaymentCreditNote(ledgerRow.getOrNull()?.creditedToAccountCents),
                 toastVisible = true,
                 toastIsError = false,
             )
@@ -402,9 +416,15 @@ class InvoiceDetailViewModel(
      * (`kinfolkId`, `kinfolkName`, `client`, `address`) are copied off the
      * invoice by `buildInvoicePayment` and cannot change without `invoiceId`
      * changing with them.
+     *
+     * #982: [appliedAmount] is in it because it is not on [payment]. With a
+     * Payment amount box of $200, correcting the Amount box from 127.50 to 100
+     * leaves every [Payment] field as it was, and a held `ipay_` key would
+     * replay the 127.50 settlement.
      */
-    private fun paymentSignature(invoiceId: String, payment: Payment): String = listOf(
+    private fun paymentSignature(invoiceId: String, payment: Payment, appliedAmount: Double): String = listOf(
         invoiceId,
+        appliedAmount.toString(),
         payment.amount.toString(),
         payment.tip.toString(),
         payment.fee.toString(),
@@ -907,12 +927,18 @@ internal fun buildInvoicePayment(
 ): Payment = Payment(
     kinfolkId = invoice.kinfolkId,
     kinfolkName = invoice.kinfolkName,
+    // #982: copied off the invoice like the household, as admin web sends
+    // `client: invoice.client`. They were left blank, so every row recorded
+    // here lost the client name and address the invoice carries.
+    client = invoice.client,
+    address = invoice.address,
     date = date.trim(),
     paymentMethod = paymentMethod.trim(),
     referenceNumber = referenceNumber.trim(),
     // THE TRANSACTION, not the settlement. `markInvoicePaid` settles the invoice
-    // with [amount]; this row records what the client actually paid, which is
-    // larger whenever there was a tip or money left over.
+    // with [amount], which the caller passes to `recordPayment` separately
+    // (#982); this row records what the client actually paid, which is larger
+    // whenever there was a tip or money left over.
     amount = if (paymentTotal > 0.0) paymentTotal else amount + tip,
     tip = tip,
     fee = fee,
@@ -1017,6 +1043,21 @@ internal fun recordPaymentConfirmationNote(
     }
     return household + office
 }
+/**
+ * #982: what the operator is told about account credit, appended to the toast.
+ *
+ * The figure is the server's `creditedToAccountCents` from `recordPayment`, and
+ * only that: the client never works out a credit of its own. Nothing is said
+ * when there was none, or when the ledger step failed and never answered (null).
+ * Same sentence as admin web (`InvoiceDetail.tsx`, Mark paid). Pure; unit-tested.
+ */
+internal fun recordPaymentCreditNote(creditedToAccountCents: Long?): String =
+    if (creditedToAccountCents != null && creditedToAccountCents > 0L) {
+        " ${formatCentsUsd(creditedToAccountCents)} was left over and has been added to the household's " +
+            "account credit, which goes onto their next invoice automatically."
+    } else {
+        ""
+    }
 /**
  * The audit line for one recorded payment. Says whether the invoice was settled
  * or merely part-paid, so the audit trail cannot claim "paid" about an invoice
