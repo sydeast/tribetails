@@ -19,6 +19,7 @@ import {
   normaliseName,
   readStoredEmergencyContacts,
   recordedAtForLegacy,
+  EMERGENCY_CONTACTS_TOO_MANY_MESSAGE,
   EMERGENCY_CONTACT_NAME_REQUIRED_MESSAGE,
   EMERGENCY_CONTACT_NAME_TOO_LONG_MESSAGE,
   EMERGENCY_CONTACT_OUTSIDE_MESSAGE,
@@ -136,16 +137,44 @@ describe('saveEmergencyContactsHandler', () => {
     expect(ctx.writes).toHaveLength(0);
   });
 
-  it('refuses a third contact', async () => {
+  // Operator ruling 2026-09-27 (Q2): one Emergency Contact per household.
+  it('ONE: refuses a second contact with the shared message and writes nothing', async () => {
     const ctx = household();
     mocks.dbFn.mockReturnValue(ctx.db);
     const c = (n: string, p: string) => ({ name: n, phone: p });
+    await expect(saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [c('A', '8055550101'), c('B', '8055550102')] }))).rejects.toMatchObject({
+      code: 'invalid-argument',
+      message: EMERGENCY_CONTACTS_TOO_MANY_MESSAGE,
+    });
     await expect(
       saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [c('A', '8055550101'), c('B', '8055550102'), c('C', '8055550103')] })),
-    ).rejects.toMatchObject({ code: 'invalid-argument' });
+    ).rejects.toMatchObject({ code: 'invalid-argument', message: EMERGENCY_CONTACTS_TOO_MANY_MESSAGE });
     expect(ctx.writes).toHaveLength(0);
   });
-
+  it('ONE: a household with two on file cannot save both back, and can save one of them', async () => {
+    const t1 = Timestamp.fromDate(new Date('2026-01-01T00:00:00Z'));
+    const t2 = Timestamp.fromDate(new Date('2026-02-01T00:00:00Z'));
+    const ctx = household({
+      kinfolk: {
+        ...PRIMARY_DOC,
+        emergencyContacts: [
+          { name: 'Rae Mercer', phone: '+18055550199', relationship: null, recordedAt: t1, updatedAt: t1 },
+          { name: 'Lee Park', phone: '+18055550177', relationship: null, recordedAt: t2, updatedAt: t2 },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [{ name: 'Rae Mercer', phone: '+18055550199' }, { name: 'Lee Park', phone: '+18055550177' }] })),
+    ).rejects.toMatchObject({ message: EMERGENCY_CONTACTS_TOO_MANY_MESSAGE });
+    expect(ctx.writes).toHaveLength(0);
+    // Removing one keeps the other's original date.
+    await saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [{ name: 'Lee Park', phone: '+18055550177' }] }));
+    const stored = ctx.writes[0].data.emergencyContacts as Array<{ name: string; recordedAt: Timestamp }>;
+    expect(stored).toHaveLength(1);
+    expect(stored[0].name).toBe('Lee Park');
+    expect(stored[0].recordedAt).toEqual(t2);
+  });
   it('STRICT: refuses an unknown key by name', async () => {
     const ctx = household();
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -188,14 +217,7 @@ describe('saveEmergencyContactsHandler', () => {
     expect(EMERGENCY_CONTACT_NAME_TOO_LONG_MESSAGE).toBe("An Emergency Contact's name can be at most 80 characters.");
     expect(EMERGENCY_CONTACT_PHONE_TOO_LONG_MESSAGE).toBe("An Emergency Contact's phone number can be at most 32 characters.");
     expect(EMERGENCY_CONTACT_RELATIONSHIP_TOO_LONG_MESSAGE).toBe('A relationship can be at most 40 characters.');
-  });
-
-  it('refuses the same phone twice', async () => {
-    const ctx = household();
-    mocks.dbFn.mockReturnValue(ctx.db);
-    await expect(
-      saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [{ name: 'Rae', phone: '8055550199' }, { name: 'Lee', phone: '(805) 555-0199' }] })),
-    ).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(EMERGENCY_CONTACTS_TOO_MANY_MESSAGE).toBe('A household can have only one Emergency Contact.');
   });
 
   it("OUTSIDE: refuses the primary's own phone, spelled differently", async () => {
@@ -216,43 +238,21 @@ describe('saveEmergencyContactsHandler', () => {
     });
   });
 
-  it('saves two in call order: E.164 phones, empty relationship as null, dated now, never logging the phone', async () => {
+  it('saves one: E.164 phone, empty relationship as null, dated now, never logging the phone', async () => {
     const ctx = household();
     mocks.dbFn.mockReturnValue(ctx.db);
-    const res = await saveEmergencyContactsHandler(
-      call({ kinfolkId: 'fam1', contacts: [{ name: ' Rae Mercer ', phone: '(805) 555-0199', relationship: 'Sister' }, { name: 'Lee Park', phone: '805.555.0177', relationship: '' }] }),
-    );
+    const res = await saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [{ name: ' Rae Mercer ', phone: '(805) 555-0199', relationship: '' }] }));
     const write = ctx.writes.find((w) => w.path === 'kinfolk/fam1');
     const stored = write?.data.emergencyContacts as Array<Record<string, unknown>>;
-    expect(stored.map((c) => c.name)).toEqual(['Rae Mercer', 'Lee Park']);
-    expect(stored.map((c) => c.phone)).toEqual(['+18055550199', '+18055550177']);
-    expect(stored[1].relationship).toBeNull();
+    expect(stored.map((c) => c.name)).toEqual(['Rae Mercer']);
+    expect(stored.map((c) => c.phone)).toEqual(['+18055550199']);
+    expect(stored[0].relationship).toBeNull();
     expect((stored[0].recordedAt as Timestamp).toDate().toISOString()).toBe(NOW_ISO);
     expect(write?.data.updatedAt).toBe('__SERVER_TS__');
     expect(res.contacts[0]).toMatchObject({ name: 'Rae Mercer', recordedAt: NOW_ISO });
     expect(JSON.stringify(mocks.logEvent.mock.calls)).not.toContain('0199');
     expect(JSON.stringify(mocks.logEvent.mock.calls)).not.toContain('Rae');
   });
-
-  it('a reorder keeps both recordedAt values', async () => {
-    const t1 = Timestamp.fromDate(new Date('2026-01-01T00:00:00Z'));
-    const t2 = Timestamp.fromDate(new Date('2026-02-01T00:00:00Z'));
-    const ctx = household({
-      kinfolk: {
-        ...PRIMARY_DOC,
-        emergencyContacts: [
-          { name: 'Rae Mercer', phone: '+18055550199', relationship: null, recordedAt: t1, updatedAt: t1 },
-          { name: 'Lee Park', phone: '+18055550177', relationship: null, recordedAt: t2, updatedAt: t2 },
-        ],
-      },
-    });
-    mocks.dbFn.mockReturnValue(ctx.db);
-    await saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [{ name: 'Lee Park', phone: '+18055550177' }, { name: 'Rae Mercer', phone: '+18055550199' }] }));
-    const stored = ctx.writes[0].data.emergencyContacts as Array<{ recordedAt: Timestamp }>;
-    expect(stored[0].recordedAt).toEqual(t2);
-    expect(stored[1].recordedAt).toEqual(t1);
-  });
-
   it('GATE: a SECONDARY without home_access is denied and writes nothing', async () => {
     const ctx = household({ caller: { uid: 'second-uid', member: { role: 'SECONDARY', status: 'ACTIVE', permissions: { home_access: false } } } });
     mocks.dbFn.mockReturnValue(ctx.db);

@@ -112,7 +112,7 @@ export interface ListEmergencyContactsResult {
   legacy: boolean;
 }
 
-/** Any ACTIVE household member may read. Index 0 is called first. */
+/** Any ACTIVE household member may read. One per household since 2026-09-27 (Q2); two only on a household that had two before. */
 export function listEmergencyContacts(kinfolkId?: string): Promise<ListEmergencyContactsResult> {
   return call<{ kinfolkId?: string }, ListEmergencyContactsResult>('listEmergencyContacts', kinfolkId !== undefined ? { kinfolkId } : {});
 }
@@ -122,7 +122,7 @@ export interface SaveEmergencyContactsRequest {
   contacts: Array<{ name: string; phone: string; relationship: string | null }>;
 }
 
-/** Replaces the household's list whole, index 0 called first. Needs home_access. */
+/** Replaces the household's list whole; more than one is refused (2026-09-27 Q2). Needs home_access. */
 export function saveEmergencyContacts(req: SaveEmergencyContactsRequest): Promise<{ contacts: EmergencyContactDto[] }> {
   return call<SaveEmergencyContactsRequest, { contacts: EmergencyContactDto[] }>('saveEmergencyContacts', req);
 }

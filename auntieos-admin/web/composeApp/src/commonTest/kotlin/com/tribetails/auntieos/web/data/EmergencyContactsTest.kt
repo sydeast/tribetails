@@ -68,7 +68,9 @@ class EmergencyContactsTest {
         assertEquals("An Emergency Contact has to be someone outside the household.", validateEmergencyContactDrafts(listOf(EmergencyContactDraft("Rae", "8055550100")), names, phones))
         assertEquals("An Emergency Contact has to be someone outside the household.", validateEmergencyContactDrafts(listOf(EmergencyContactDraft(" dana  MERCER ", "8055550199")), names, phones))
         assertEquals("An Emergency Contact needs a phone number.", validateEmergencyContactDrafts(listOf(EmergencyContactDraft("Rae", "")), names, phones))
-        assertEquals("The two Emergency Contacts need different phone numbers.", validateEmergencyContactDrafts(listOf(EmergencyContactDraft("Rae", "8055550199"), EmergencyContactDraft("Lee", "+1 805 555 0199")), names, phones))
+        // Operator ruling 2026-09-27 (Q2): one Emergency Contact per household.
+        assertEquals(1, EMERGENCY_CONTACTS_MAX)
+        assertEquals("A household can have only one Emergency Contact.", validateEmergencyContactDrafts(listOf(EmergencyContactDraft("Rae", "8055550199"), EmergencyContactDraft("Lee", "8055550177")), names, phones))
         assertNull(validateEmergencyContactDrafts(listOf(EmergencyContactDraft("Rae", "8055550199")), names, phones))
     }
 

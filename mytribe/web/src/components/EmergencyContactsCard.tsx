@@ -16,7 +16,8 @@ interface Draft {
   relationship: string;
 }
 
-const MAX_CONTACTS = 2;
+/** Operator ruling 2026-09-27 (Q2): one Emergency Contact per household. */
+const MAX_CONTACTS = 1;
 const NAME_MAX = 80;
 const PHONE_MAX = 32;
 const RELATIONSHIP_MAX = 40;
@@ -31,9 +32,14 @@ const PHONE_REQUIRED = 'An Emergency Contact needs a phone number.';
 const NAME_TOO_LONG = `An Emergency Contact's name can be at most ${NAME_MAX} characters.`;
 const PHONE_TOO_LONG = `An Emergency Contact's phone number can be at most ${PHONE_MAX} characters.`;
 const RELATIONSHIP_TOO_LONG = `A relationship can be at most ${RELATIONSHIP_MAX} characters.`;
-const SAME_PHONE = 'The two Emergency Contacts need different phone numbers.';
+const TOO_MANY = 'A household can have only one Emergency Contact.';
+/**
+ * A household that still has two on file from before the 2026-09-27 ruling
+ * sees both, each with Remove, under this. Nothing removes one on its own.
+ */
+const OVER_LIMIT = 'This household has two Emergency Contacts on file. A household has only one now, so remove one of them.';
 /** Same sentence admin web, admin Android, desktop and portal Android show. */
-const WHO_GETS_CALLED = 'Called only when no kinfolk can be reached. The first one is called first.';
+const WHO_GETS_CALLED = 'Called only when no kinfolk can be reached.';
 /** The #844 explanation, word for word, so web and Android say the same thing. */
 const LOCKED = 'Only someone with Home access can change the Emergency Contact.';
 /**
@@ -60,8 +66,6 @@ const sameDrafts = (a: Draft[], b: Draft[]) =>
       d.name.trim() === b[i]?.name.trim() && d.phone.trim() === b[i]?.phone.trim() && d.relationship.trim() === b[i]?.relationship.trim(),
   );
 
-/** Digits only, a bare 10-digit US number read as +1, so two spellings of one phone compare equal. */
-const digits = (p: string) => p.replace(/\D/g, '').replace(/^(\d{10})$/, '1$1');
 
 /**
  * What the card can refuse before dialling. The household-member check stays on
@@ -70,13 +74,12 @@ const digits = (p: string) => p.replace(/\D/g, '').replace(/^(\d{10})$/, '1$1');
  */
 function precheck(drafts: Draft[]): string | null {
   if (drafts.every((d) => d.name.trim() === '' && d.phone.trim() === '')) return REQUIRED;
+  if (drafts.length > MAX_CONTACTS) return TOO_MANY;
   if (drafts.some((d) => d.name.trim() === '')) return NAME_REQUIRED;
   if (drafts.some((d) => d.phone.trim() === '')) return PHONE_REQUIRED;
   if (drafts.some((d) => d.name.trim().length > NAME_MAX)) return NAME_TOO_LONG;
   if (drafts.some((d) => d.phone.trim().length > PHONE_MAX)) return PHONE_TOO_LONG;
   if (drafts.some((d) => d.relationship.trim().length > RELATIONSHIP_MAX)) return RELATIONSHIP_TOO_LONG;
-  const [first, second] = drafts;
-  if (first && second && digits(first.phone) === digits(second.phone)) return SAME_PHONE;
   return null;
 }
 
@@ -128,8 +131,10 @@ function InfoTip({ text, label }: { text: string; label: string }) {
 }
 
 /**
- * The household's Emergency Contacts (#829): up to two, the first called first,
- * never messaged, no portal access. Read by any household member; edited only by
+ * The household's Emergency Contact (#829): one per household (operator ruling
+ * 2026-09-27, Q2), never messaged, no portal access. A household with two on
+ * file from the earlier rule shows both; an editor sees them under a notice,
+ * each with Remove, and cannot save both back. Read by any household member; edited only by
  * someone holding home_access, with the #844 sentence saying why otherwise.
  *
  * Reads and writes ONLY through `listEmergencyContacts` / `saveEmergencyContacts`.
@@ -286,7 +291,6 @@ function EmergencyContactsCardFor({
             <ol className="ec-list">
               {view.data.contacts.map((c, i) => (
                 <li key={`${c.phone}-${i}`}>
-                  <span className="ec-list__order">{i === 0 ? 'Called first' : 'Called second'}</span>
                   <span className="ec-list__name">{c.name}</span>
                   {c.relationship ? <span className="ec-list__rel">{c.relationship}</span> : null}
                   <a className="ec-list__phone mono" href={`tel:${c.phone}`}>
@@ -308,9 +312,14 @@ function EmergencyContactsCardFor({
               {REQUIRED}
             </p>
           )}
+          {drafts.length > MAX_CONTACTS && (
+            <p className="sub ec-prompt" role="note">
+              {OVER_LIMIT}
+            </p>
+          )}
           {drafts.map((d, i) => (
             <fieldset key={i} className="ec-slot" aria-label={`Emergency Contact ${i + 1}`} disabled={saving}>
-              <legend className="sectlabel">{i === 0 ? 'Called first' : 'Called second'}</legend>
+              {drafts.length > MAX_CONTACTS && <legend className="sectlabel">{`On file ${i + 1}`}</legend>}
               <div className="grid2">
                 <div className="field">
                   <label htmlFor={`ec-${i}-name`}>Name</label>
@@ -325,33 +334,16 @@ function EmergencyContactsCardFor({
                   <input id={`ec-${i}-relationship`} className="inp" type="text" maxLength={40} autoComplete="off" value={d.relationship} onChange={(e) => set(i, { relationship: e.target.value })} />
                 </div>
               </div>
-              {(i > 0 || drafts.length > 1) && (
+              {drafts.length > MAX_CONTACTS && (
                 <div className="contactactions">
-                  {i > 0 && (
-                    <button
-                      type="button"
-                      className="btn ghost"
-                      aria-label={`Call ${d.name.trim() || 'this contact'} first`}
-                      onClick={() =>
-                        edit((ds) => {
-                          const chosen = ds[i];
-                          return chosen === undefined ? ds : [chosen, ...ds.filter((_, j) => j !== i)];
-                        })
-                      }
-                    >
-                      Call first
-                    </button>
-                  )}
-                  {drafts.length > 1 && (
-                    <button
-                      type="button"
-                      className="btn ghost"
-                      aria-label={`Remove Emergency Contact ${i + 1}`}
-                      onClick={() => edit((ds) => ds.filter((_, j) => j !== i))}
-                    >
-                      Remove
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    aria-label={`Remove Emergency Contact ${i + 1}`}
+                    onClick={() => edit((ds) => ds.filter((_, j) => j !== i))}
+                  >
+                    Remove
+                  </button>
                 </div>
               )}
             </fieldset>
@@ -362,11 +354,6 @@ function EmergencyContactsCardFor({
             </p>
           )}
           <div className="contactactions ec-actions">
-            {drafts.length < MAX_CONTACTS && (
-              <button type="button" className="btn ghost" disabled={saving} onClick={() => edit((ds) => [...ds, { ...EMPTY_DRAFT }])}>
-                Add a second Emergency Contact
-              </button>
-            )}
             <button type="button" className="btn grad" disabled={saving} onClick={() => void save()}>
               {saving ? <BusyLabel>Saving…</BusyLabel> : 'Save Emergency Contacts'}
             </button>

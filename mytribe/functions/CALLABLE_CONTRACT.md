@@ -1540,9 +1540,10 @@ every client in both directions: these callables are the only door.
 
 ### saveEmergencyContacts / listEmergencyContacts (#829)
 - `saveEmergencyContacts`
-  - req `{ kinfolkId?: string, contacts: Array<{ name: string /* 1..80 */, phone: string /* valid, stored E.164 */, relationship?: string | null /* <= 40, '' and null persist as null */ }> }` (strict, max 2)
+  - req `{ kinfolkId?: string, contacts: Array<{ name: string /* 1..80 */, phone: string /* valid, stored E.164 */, relationship?: string | null /* <= 40, '' and null persist as null */ }> }` (strict, max 1)
   - res `{ contacts: EmergencyContactDTO[] }`
-  - Replaces `kinfolk/{id}.emergencyContacts` whole, index 0 called first. A contact matched by phone, then name, keeps `recordedAt`.
+  - One Emergency Contact per household (operator ruling 2026-09-27, Q2). More than one is refused with `invalid-argument` "A household can have only one Emergency Contact." A household that already has two on file (the 2026-09-13 ruling allowed two) keeps both until someone removes one; every admin client shows both with a notice asking for that. `saveTribeProfile`'s old-client path edits slot 1 and carries a stored slot 2 through, so it keeps a second contact but never adds one. `npm --prefix mytribe/functions run report:multiple-emergency-contacts` counts those households.
+  - Replaces `kinfolk/{id}.emergencyContacts` whole. A contact matched by phone, then name, keeps `recordedAt`.
   - Refuses `[]` with `failed-precondition` "A household needs at least one Emergency Contact".
   - Refuses a contact whose phone matches the primary's `phoneNumber`/`secondaryPhone` or any member's `phone`, or whose name matches a member name (case and spacing ignored), with `failed-precondition` "An Emergency Contact has to be someone outside the household."
 - `listEmergencyContacts`

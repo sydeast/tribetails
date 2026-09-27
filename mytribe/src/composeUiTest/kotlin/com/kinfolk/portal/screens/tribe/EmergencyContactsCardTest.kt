@@ -141,41 +141,43 @@ class EmergencyContactsCardTest {
         assertEquals(1, onAllNodesWithText(required).fetchSemanticsNodes().size)
     }
 
+    // Operator ruling 2026-09-27 (Q2): one Emergency Contact per household.
     @Test
-    fun addsASecondAndMovesItFirst() = runComposeUiTest {
+    fun oneOnFileOffersNoAddCallFirstRemoveOrNotice() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.list(canEdit = true, withRae = true)
+        setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("ec-0-name").assertIsDisplayed()
+        assertTrue(onAllNodesWithText("Add a second Emergency Contact").fetchSemanticsNodes().isEmpty())
+        assertTrue(onAllNodesWithText("Call first").fetchSemanticsNodes().isEmpty())
+        assertTrue(onAllNodesWithText("Remove").fetchSemanticsNodes().isEmpty())
+        assertTrue(onAllNodesWithText(EMERGENCY_CONTACTS_OVER_LIMIT).fetchSemanticsNodes().isEmpty())
+        assertTrue(onAllNodesWithText("Called first").fetchSemanticsNodes().isEmpty())
+    }
+    @Test
+    fun twoOnFileShowTheNoticeRefuseASaveOfBothAndSaveOneAfterRemove() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("listEmergencyContacts", listJson(true, raeJson(), contactJson("Lee Park", "+18055550177")))
         fake.stub("saveEmergencyContacts", buildJsonObject { put("contacts", buildJsonArray { add(raeJson()) }) })
         setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
         waitForIdle()
-        onNodeWithText("Add a second Emergency Contact").performScrollTo().performClick()
-        onNodeWithTag("ec-1-name").performTextInput("Lee Park")
-        onNodeWithTag("ec-1-phone").performTextInput("8055550177")
+        onNodeWithText(EMERGENCY_CONTACTS_OVER_LIMIT).assertIsDisplayed()
+        assertEquals(2, onAllNodesWithText("Remove").fetchSemanticsNodes().size)
+        assertTrue(onAllNodesWithText("Call first").fetchSemanticsNodes().isEmpty())
+        onNodeWithText("Save Emergency Contacts").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("A household can have only one Emergency Contact.").assertIsDisplayed()
+        assertTrue(fake.calls.none { it.first == "saveEmergencyContacts" })
+        onAllNodesWithText("Remove")[1].performScrollTo().performClick()
+        assertTrue(onAllNodesWithTag("ec-1-name").fetchSemanticsNodes().isEmpty())
+        assertTrue(onAllNodesWithText(EMERGENCY_CONTACTS_OVER_LIMIT).fetchSemanticsNodes().isEmpty())
         onNodeWithText("Unsaved changes").assertIsDisplayed()
-        // Two slots means no third offer.
-        onNodeWithText("Add a second Emergency Contact").assertDoesNotExist()
-        onNodeWithText("Call first").performScrollTo().performClick()
         onNodeWithText("Save Emergency Contacts").performScrollTo().performClick()
         waitForIdle()
         val slots = fake.calls.last { it.first == "saveEmergencyContacts" }.second!!["contacts"]!!.jsonArray
-        assertEquals(listOf("Lee Park", "Rae Mercer"), slots.map { it.jsonObject["name"]!!.jsonPrimitive.content })
+        assertEquals(listOf("Rae Mercer"), slots.map { it.jsonObject["name"]!!.jsonPrimitive.content })
     }
-
-    @Test
-    fun removesTheSecond() = runComposeUiTest {
-        val fake = FakeFunctionsClient()
-        fake.list(canEdit = true, withRae = true)
-        setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
-        waitForIdle()
-        onNodeWithText("Add a second Emergency Contact").performScrollTo().performClick()
-        assertEquals(2, onAllNodesWithText("Remove").fetchSemanticsNodes().size)
-        onAllNodesWithText("Remove")[1].performScrollTo().performClick()
-        assertTrue(onAllNodesWithTag("ec-1-name").fetchSemanticsNodes().isEmpty())
-        // One slot left: nothing to remove, and the edit is back to the stored copy.
-        assertTrue(onAllNodesWithText("Remove").fetchSemanticsNodes().isEmpty())
-        onNodeWithText("Unsaved changes").assertDoesNotExist()
-    }
-
     @Test
     fun readOnlyWithoutHomeAccess() = runComposeUiTest {
         val fake = FakeFunctionsClient()
@@ -183,7 +185,7 @@ class EmergencyContactsCardTest {
         setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
         waitForIdle()
         onNodeWithText("Rae Mercer").assertIsDisplayed()
-        onNodeWithText("Called first").assertIsDisplayed()
+        assertTrue(onAllNodesWithText("Called first").fetchSemanticsNodes().isEmpty())
         onNodeWithText("Sister").assertIsDisplayed()
         // The phone is a tap to call.
         onNode(hasText("+18055550199") and hasClickAction()).assertIsDisplayed()
@@ -298,11 +300,10 @@ class EmergencyContactsCardTest {
         setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(gated)) }
         waitForIdle()
 
-        // One slot: Save, Add and the inputs are on screen.
+        // One slot: Save and the inputs are on screen.
         onNodeWithText("Save Emergency Contacts").performScrollTo().performClick()
         mainClock.advanceTimeBy(100L)
         onNodeWithText("Saving…").assertIsDisplayed().assertIsNotEnabled()
-        onNodeWithText("Add a second Emergency Contact").assertIsNotEnabled()
         onNodeWithTag("ec-0-name").assertIsNotEnabled()
         onNodeWithTag("ec-0-phone").assertIsNotEnabled()
         onNodeWithTag("ec-0-relationship").assertIsNotEnabled()
@@ -310,26 +311,7 @@ class EmergencyContactsCardTest {
         waitForIdle()
         onNodeWithText("Saved.").assertIsDisplayed()
         onNodeWithText("Save Emergency Contacts").assertIsEnabled()
-
-        // Two slots: Call first and both Removes are on screen.
-        gate = CompletableDeferred()
-        onNodeWithText("Add a second Emergency Contact").performScrollTo().performClick()
-        onNodeWithTag("ec-1-name").performTextInput("Lee Park")
-        onNodeWithTag("ec-1-phone").performTextInput("8055550177")
-        onNodeWithText("Save Emergency Contacts").performScrollTo().performClick()
-        mainClock.advanceTimeBy(100L)
-        onNodeWithText("Saving…").assertIsNotEnabled()
-        onNodeWithText("Call first").assertIsNotEnabled()
-        assertEquals(2, onAllNodesWithText("Remove").fetchSemanticsNodes().size)
-        onAllNodesWithText("Remove").assertAll(isNotEnabled())
-        onNodeWithTag("ec-1-name").assertIsNotEnabled()
-        gate.complete(buildJsonObject {
-            put("contacts", buildJsonArray { add(raeJson()); add(contactJson("Lee Park", "+18055550177")) })
-        })
-        waitForIdle()
-        onNodeWithText("Call first").assertIsEnabled()
     }
-
     @Test
     fun aLoadFailureSaysSoAndCanBeTriedAgain() = runComposeUiTest {
         val fake = FakeFunctionsClient()

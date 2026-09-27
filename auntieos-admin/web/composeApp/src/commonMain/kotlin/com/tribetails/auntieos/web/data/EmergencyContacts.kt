@@ -12,9 +12,11 @@ import kotlinx.serialization.json.jsonObject
  * Emergency Contacts (#829). Same rules and messages as the Android admin, admin
  * web and the server. Read from the kinfolk doc (array first, flat triple as the
  * fallback until the migration is verified); written ONLY through the
- * `saveEmergencyContacts` callable. Index 0 is called first.
+ * `saveEmergencyContacts` callable. One per household (operator ruling
+ * 2026-09-27, Q2); a household with two on file from the earlier rule keeps both
+ * until an admin removes one.
  */
-const val EMERGENCY_CONTACTS_MAX = 2
+const val EMERGENCY_CONTACTS_MAX = 1
 const val EMERGENCY_CONTACT_NAME_MAX = 80
 const val EMERGENCY_CONTACT_PHONE_MAX = 32
 const val EMERGENCY_CONTACT_RELATIONSHIP_MAX = 40
@@ -29,9 +31,10 @@ const val EMERGENCY_CONTACT_PHONE_REQUIRED = "An Emergency Contact needs a phone
 const val EMERGENCY_CONTACT_NAME_TOO_LONG = "An Emergency Contact's name can be at most $EMERGENCY_CONTACT_NAME_MAX characters."
 const val EMERGENCY_CONTACT_PHONE_TOO_LONG = "An Emergency Contact's phone number can be at most $EMERGENCY_CONTACT_PHONE_MAX characters."
 const val EMERGENCY_CONTACT_RELATIONSHIP_TOO_LONG = "A relationship can be at most $EMERGENCY_CONTACT_RELATIONSHIP_MAX characters."
-const val EMERGENCY_CONTACTS_TOO_MANY = "A household can have at most two Emergency Contacts."
-const val EMERGENCY_CONTACTS_SAME_PHONE = "The two Emergency Contacts need different phone numbers."
-const val EMERGENCY_CONTACT_WHO_GETS_CALLED = "Called only when no kinfolk can be reached. The first one is called first."
+const val EMERGENCY_CONTACTS_TOO_MANY = "A household can have only one Emergency Contact."
+/** Above the contacts when a household still has two on file (2026-09-27 Q2). */
+const val EMERGENCY_CONTACTS_OVER_LIMIT = "This household has two Emergency Contacts on file. A household has only one now, so remove one of them."
+const val EMERGENCY_CONTACT_WHO_GETS_CALLED = "Called only when no kinfolk can be reached."
 /** The flag a household with none shows (Directory card, profile, edit form). A flag, never a block on other edits. */
 const val NO_EMERGENCY_CONTACT = "No Emergency Contact"
 
@@ -103,9 +106,6 @@ fun validateEmergencyContactDrafts(
     if (drafts.any { it.name.trim().length > EMERGENCY_CONTACT_NAME_MAX }) return EMERGENCY_CONTACT_NAME_TOO_LONG
     if (drafts.any { it.phone.trim().length > EMERGENCY_CONTACT_PHONE_MAX }) return EMERGENCY_CONTACT_PHONE_TOO_LONG
     if (drafts.any { it.relationship.trim().length > EMERGENCY_CONTACT_RELATIONSHIP_MAX }) return EMERGENCY_CONTACT_RELATIONSHIP_TOO_LONG
-    if (drafts.size == 2 && comparablePhone(drafts[0].phone) == comparablePhone(drafts[1].phone)) {
-        return EMERGENCY_CONTACTS_SAME_PHONE
-    }
     val names = householdNames.map(::comparableName).filter { it.isNotEmpty() }.toSet()
     val phones = householdPhones.map(::comparablePhone).filter { it.isNotEmpty() }.toSet()
     if (drafts.any { comparableName(it.name) in names || comparablePhone(it.phone) in phones }) return EMERGENCY_CONTACT_OUTSIDE

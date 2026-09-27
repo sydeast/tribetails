@@ -241,7 +241,7 @@ describe('AddKinfolkDialog', () => {
     render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} />);
     const heading = screen.getByRole('heading', { name: /^Emergency Contacts/ });
     const tip = within(heading).getByRole('tooltip', { hidden: true });
-    expect(tip).toHaveTextContent('Called only when no kinfolk can be reached. The first one is called first.');
+    expect(tip).toHaveTextContent('Called only when no kinfolk can be reached.');
     await userEvent.click(within(heading).getByRole('button', { name: 'About this section' }));
     expect(tip).toBeVisible();
   });
