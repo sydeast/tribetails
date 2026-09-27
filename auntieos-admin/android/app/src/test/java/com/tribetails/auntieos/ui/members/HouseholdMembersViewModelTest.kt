@@ -85,29 +85,12 @@ class HouseholdMembersViewModelTest {
         revokedAt = null,
     )
 
-    private fun contact(
-        contactId: String = "c1",
-        name: String = "Ada Rivera",
-        phone: String? = "805 555 0143",
-        email: String? = null,
-    ) = MembersRepository.Contact(
-        contactId = contactId,
-        name = name,
-        label = "Sister",
-        phone = phone,
-        email = email,
-        createdAt = null,
-        updatedAt = null,
-    )
-
     private fun stubLoads(
         members: List<MembersRepository.Member> = listOf(member()),
         invites: List<MembersRepository.Invite> = listOf(invite()),
-        contacts: List<MembersRepository.Contact> = emptyList(),
     ) {
         coEvery { repo.listMembers("fam1") } returns Result.success(members)
         coEvery { repo.listInvites("fam1") } returns Result.success(invites)
-        coEvery { repo.listHouseholdContacts("fam1") } returns Result.success(contacts)
     }
 
     // ── HAPPY ───────────────────────────────────────────────────────────────
@@ -285,7 +268,6 @@ class HouseholdMembersViewModelTest {
             coEvery { repo.listMembers("fam1") } returns
                 Result.failure(RuntimeException("permission-denied: Admin claim required."))
             coEvery { repo.listInvites("fam1") } returns Result.success(emptyList())
-            coEvery { repo.listHouseholdContacts("fam1") } returns Result.success(emptyList())
             val vm = vm()
             vm.load(); advanceUntilIdle()
 
@@ -304,7 +286,6 @@ class HouseholdMembersViewModelTest {
         coEvery { repo.listMembers("fam1") } returns Result.success(listOf(member()))
         coEvery { repo.listInvites("fam1") } returns
             Result.failure(RuntimeException("not-found: kinfolkId not found."))
-        coEvery { repo.listHouseholdContacts("fam1") } returns Result.success(emptyList())
         val vm = vm()
         vm.load(); advanceUntilIdle()
 
@@ -451,136 +432,28 @@ class HouseholdMembersViewModelTest {
         assertEquals("ACCEPTED · 1", inviteGroupNote(INVITE_GROUPS[1], 1))
     }
 
-    // ── A CONTACT IS NOT AN INVITE (ruling, 2026-09-12) ──────────────────────
+    // ── THERE IS NO CONTACTS LIST (ruling 2026-09-27, #829) ──────────────────
     //
-    // "a secondary contact does not have to be a portal user. primary kinfolk
-    // user will invite a second kinfolk to the household to manage and receive
-    // notifications." Two actions with two outcomes; the #755 sweep shipped one
-    // of them wearing the other's label.
+    // "there is no true 'Contact List'. There can be up to 3 ppl's contact info
+    // to a household: Primary Kinfolk (PK), Secondary Kinfolk (SK), and
+    // Emergency Contact (EC)." It replaces the 2026-09-12 ruling that put a
+    // contacts list beside the invite. The ViewModel holds no contact state and
+    // never calls the three contact callables; the repository keeps them until
+    // the operator has read `report:household-contacts`.
 
-    @Test fun `RULING contacts load separately and a contact failure leaves the roster alone`() =
-        runTest(testDispatcher) {
-            coEvery { repo.listMembers("fam1") } returns Result.success(listOf(member()))
-            coEvery { repo.listInvites("fam1") } returns Result.success(listOf(invite()))
-            coEvery { repo.listHouseholdContacts("fam1") } returns
-                Result.failure(Exception("backend down"))
-            val vm = vm()
-            vm.load(); advanceUntilIdle()
-
-            val s = vm.uiState.value
-            assertTrue(s.contactsError!!.contains("backend down"))
-            // Never promoted to "proven empty": an unknown list and an empty one
-            // are opposite facts.
-            assertFalse(s.contactsLoaded)
-            assertTrue(s.membersLoaded)
-            assertEquals(1, s.members.size)
-        }
-
-    @Test fun `RULING saving a contact says no portal account was created`() =
-        runTest(testDispatcher) {
-            stubLoads()
-            val draft = MembersRepository.ContactDraft(
-                contactId = null,
-                name = "Ada Rivera",
-                label = "Sister",
-                phone = "805 555 0143",
-                email = "",
-            )
-            coEvery { repo.saveHouseholdContact("fam1", draft) } returns Result.success("c9")
-            val vm = vm()
-            vm.load(); advanceUntilIdle()
-
-            var closed = false
-            vm.saveContact(draft) { closed = true }
-            advanceUntilIdle()
-
-            assertTrue(closed)
-            val toast = vm.uiState.value.toast!!
-            assertTrue(toast.contains("Ada Rivera"))
-            assertTrue(toast.contains("No portal account was created"))
-            // The list is re-read, and nothing was invited.
-            coVerify(exactly = 2) { repo.listHouseholdContacts("fam1") }
-            coVerify(exactly = 0) { repo.inviteKinfolkToPortal(any()) }
-        }
-
-    @Test fun `RULING a save is a DIFF - every editable field goes, cleared ones included`() =
-        runTest(testDispatcher) {
-            stubLoads(contacts = listOf(contact(email = "ada@example.com")))
-            // The phone was cleared on the form. It must be SENT empty, not
-            // omitted: a field that cannot be emptied is not editable.
-            val edit = MembersRepository.ContactDraft(
-                contactId = "c1",
-                name = "Ada Rivera",
-                label = "Sister",
-                phone = "",
-                email = "ada@example.com",
-            )
-            coEvery { repo.saveHouseholdContact("fam1", edit) } returns Result.success("c1")
-            val vm = vm()
-            vm.load(); advanceUntilIdle()
-
-            vm.saveContact(edit) {}
-            advanceUntilIdle()
-
-            coVerify(exactly = 1) { repo.saveHouseholdContact("fam1", edit) }
-            assertEquals("Saved Ada Rivera.", vm.uiState.value.toast)
-        }
-
-    @Test fun `RULING a nameless contact is refused before the call, and named`() =
+    @Test fun `RULING loading the screen never reads the contacts list`() =
         runTest(testDispatcher) {
             stubLoads()
             val vm = vm()
             vm.load(); advanceUntilIdle()
 
-            vm.saveContact(
-                MembersRepository.ContactDraft(name = "  ", label = "", phone = "", email = ""),
-            ) {}
-            advanceUntilIdle()
-
-            assertEquals("A contact needs a name.", vm.uiState.value.contactSaveError)
+            assertTrue(vm.uiState.value.membersLoaded)
+            coVerify(exactly = 0) { repo.listHouseholdContacts(any()) }
             coVerify(exactly = 0) { repo.saveHouseholdContact(any(), any()) }
+            coVerify(exactly = 0) { repo.removeHouseholdContact(any(), any()) }
         }
 
-    @Test fun `RULING a failed save is named and the form is not told it worked`() =
-        runTest(testDispatcher) {
-            stubLoads()
-            val draft = MembersRepository.ContactDraft(
-                name = "Ada", label = "", phone = "", email = "",
-            )
-            coEvery { repo.saveHouseholdContact("fam1", draft) } returns
-                Result.failure(Exception("permission-denied"))
-            val vm = vm()
-            vm.load(); advanceUntilIdle()
-
-            var closed = false
-            vm.saveContact(draft) { closed = true }
-            advanceUntilIdle()
-
-            assertFalse(closed)
-            assertTrue(vm.uiState.value.contactSaveError!!.contains("permission-denied"))
-            assertNull(vm.uiState.value.toast)
-        }
-
-    @Test fun `RULING removing a contact leaves no row behind, unlike removing a member`() =
-        runTest(testDispatcher) {
-            stubLoads(contacts = listOf(contact()))
-            coEvery { repo.removeHouseholdContact("fam1", "c1") } returns Result.success(Unit)
-            val vm = vm()
-            vm.load(); advanceUntilIdle()
-
-            var closed = false
-            vm.removeContact(contact()) { closed = true }
-            advanceUntilIdle()
-
-            assertTrue(closed)
-            val toast = vm.uiState.value.toast!!
-            assertTrue(toast.contains("Ada Rivera"))
-            // Not "suspended": there is no account to suspend.
-            assertFalse(toast.contains("suspended"))
-            coVerify(exactly = 2) { repo.listHouseholdContacts("fam1") }
-        }
-
-    @Test fun `RULING the portal invite is the OTHER gesture, and says what the claimant gets`() =
+    @Test fun `RULING the portal invite says what the claimant gets`() =
         runTest(testDispatcher) {
             stubLoads()
             coEvery { repo.inviteKinfolkToPortal("fam1") } returns Result.success("sent")
@@ -593,7 +466,7 @@ class HouseholdMembersViewModelTest {
             assertTrue(toast.contains("manages the household"))
             assertTrue(toast.contains("receives its notifications"))
             assertNull(vm.uiState.value.portalInviteNotice)
-            // Nothing was recorded as a contact by inviting.
+            // Inviting records no contact.
             coVerify(exactly = 0) { repo.saveHouseholdContact(any(), any()) }
         }
 
@@ -642,29 +515,11 @@ class HouseholdMembersViewModelTest {
         assertNull(rows[1].phone)
     }
 
-    @Test fun `the panel note counts both kinds, and each half only once its own read lands`() {
+    @Test fun `the panel note counts secondaries, and only once the roster read lands`() {
         assertNull(secondaryMeta(HouseholdMembersUiState(), 0))
         assertEquals(
             "1 of role: SECONDARY",
             secondaryMeta(HouseholdMembersUiState(membersLoaded = true), 1),
-        )
-        assertEquals(
-            "2 contacts, no portal account",
-            secondaryMeta(
-                HouseholdMembersUiState(contacts = listOf(contact(), contact("c2")), contactsLoaded = true),
-                0,
-            ),
-        )
-        assertEquals(
-            "1 of role: SECONDARY · 1 contact, no portal account",
-            secondaryMeta(
-                HouseholdMembersUiState(
-                    contacts = listOf(contact()),
-                    membersLoaded = true,
-                    contactsLoaded = true,
-                ),
-                1,
-            ),
         )
     }
 }
