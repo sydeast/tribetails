@@ -148,6 +148,25 @@ describe('saveHouseholdSection', () => {
     expect(addDoc).not.toHaveBeenCalled();
   });
 
+  it('#994: leaves out a section field the operator did not change', async () => {
+    // A section dialog passes every field of its section; one sent unchanged
+    // would put back the value read at load time over another operator's edit.
+    updateDoc.mockResolvedValue(undefined);
+    const existing = { ...blankHouseholdRecord('kf1'), _id: 'hd1', foodLocation: 'Pantry', treatLocation: 'Jar' };
+    await saveHouseholdSection(existing, { foodLocation: 'Garage shelf', treatLocation: 'Jar' });
+
+    const changes = updateDoc.mock.calls[0]?.[1] as Record<string, string>;
+    expect(Object.keys(changes).sort()).toEqual(['foodLocation', 'updatedAt']);
+  });
+
+  it('#994: writes nothing, not even updatedAt, when no field changed', async () => {
+    const existing = { ...blankHouseholdRecord('kf1'), _id: 'hd1', foodLocation: 'Pantry' };
+    const saved = await saveHouseholdSection(existing, { foodLocation: 'Pantry', treatLocation: '' });
+    expect(updateDoc).not.toHaveBeenCalled();
+    expect(addDoc).not.toHaveBeenCalled();
+    expect(saved).toBe(existing);
+  });
+
   it('returns the record as it now stands, so the caller needs no second read', async () => {
     updateDoc.mockResolvedValue(undefined);
     const existing = { ...blankHouseholdRecord('kf1'), _id: 'hd1', foodLocation: 'Pantry' };

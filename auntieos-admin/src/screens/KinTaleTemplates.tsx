@@ -429,7 +429,9 @@ function TemplateWizard({
     try {
       // The streamed list doubles as the sibling set for default exclusivity, so
       // the writer needn't re-read a collection this screen is already holding.
-      const id = await saveKinTaleTemplate(draft, siblings);
+      // #994: an existing template is diffed against the row the wizard opened
+      // with, so only what the operator changed is written.
+      const id = await saveKinTaleTemplate(draft, siblings, isNew ? undefined : seed);
       setSaving(false);
       // Cleared BEFORE handing back: the caller closes the wizard, and a stale
       // dirty flag would ask the operator to confirm discarding work that has

@@ -80,6 +80,22 @@ function templateFields(t: KinTaleTemplate) {
 }
 
 /**
+ * #994: the entries of `templateFields(edited)` whose value differs from
+ * `templateFields(loaded)`. Both come out of the same builder, so key order
+ * inside the nested checklist and mood maps is identical and a JSON compare is
+ * exact.
+ */
+export function changedTemplateFields(loaded: KinTaleTemplate, edited: KinTaleTemplate): Record<string, unknown> {
+  const before = templateFields(loaded) as Record<string, unknown>;
+  const after = templateFields(edited) as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(after)) {
+    if (JSON.stringify(value) !== JSON.stringify(before[key])) out[key] = value;
+  }
+  return out;
+}
+
+/**
  * The minimum a sibling template has to tell us for default exclusivity. The
  * editor already streams the whole collection, so it passes what it has rather
  * than making this module re-read a list it is holding.
@@ -112,6 +128,12 @@ export interface TemplateDefaultFlag {
  * set the flag has no cross-document work to do and keeps the plain single-doc
  * path.
  *
+ * #994: an UPDATE sends only the fields that differ from `loaded`, the template
+ * as the editor opened it, so a field the operator did not touch (a checklist
+ * another admin edited meanwhile, say) is never put back to the value read at
+ * load time. An update with nothing changed writes nothing and answers the id.
+ * An update without `loaded` is refused: there is nothing to diff against.
+ *
  * Fail-loud: any Firestore rejection (permission-denied, offline, a batch that
  * aborts) propagates to the caller unchanged; nothing is swallowed, no
  * partial/fake success is reported.
@@ -119,10 +141,15 @@ export interface TemplateDefaultFlag {
 export async function saveKinTaleTemplate(
   template: KinTaleTemplate,
   siblings: readonly TemplateDefaultFlag[] = [],
+  loaded?: KinTaleTemplate,
 ): Promise<string> {
   const now = new Date().toISOString();
-  const fields = templateFields(template);
   const isCreate = template._id.trim() === '';
+  if (!isCreate && !loaded) {
+    throw new Error('saveKinTaleTemplate: an update needs the template as it was loaded');
+  }
+  const fields = isCreate ? templateFields(template) : changedTemplateFields(loaded!, template);
+  if (!isCreate && Object.keys(fields).length === 0) return template._id;
 
   // Setting the default is a multi-document change; see the note on
   // `TemplateDefaultFlag` for why the flag has to be exclusive and why one

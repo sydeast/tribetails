@@ -126,13 +126,22 @@ fun HouseholdDataScreen(
                             onClick = onBack,
                             modifier = Modifier.weight(1f),
                         )
-                        PrimaryButton(
-                            label = "Save Household Data",
-                            onClick = viewModel::saveHouseholdData,
-                            loading = state.isSaving,
-                            enabled = !state.isSaving,
-                            modifier = Modifier.weight(1f),
-                        )
+                        if (state.householdLoaded) {
+                            PrimaryButton(
+                                label = "Save Household Data",
+                                onClick = viewModel::saveHouseholdData,
+                                loading = state.isSaving,
+                                enabled = !state.isSaving,
+                                modifier = Modifier.weight(1f),
+                            )
+                        } else {
+                            // #994: a failed read offers Retry, never Save.
+                            PrimaryButton(
+                                label = "Retry",
+                                onClick = { viewModel.loadHouseholdData(kinfolkId) },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
                     }
                 }
             }
