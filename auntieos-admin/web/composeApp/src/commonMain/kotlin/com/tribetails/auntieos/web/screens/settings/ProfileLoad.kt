@@ -115,6 +115,7 @@ internal fun rememberProfileLoad(client: FirestoreClient, uid: String): ProfileL
         saved = { profile -> pending = SavedProfile(readBefore = streamProfile, saved = profile) },
     )
 }
+
 /** Why a profile write was refused, for a screen that has no Save button to disable. */
 internal fun profileNotReadyMessage(load: ProfileLoad, what: String): String = when (load) {
     is ProfileLoad.Failed -> "Couldn't load your profile, $what. ${load.message}"

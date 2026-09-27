@@ -1,4 +1,5 @@
 package com.tribetails.auntieos.web.screens
+
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -20,6 +21,7 @@ import com.tribetails.auntieos.web.theme.ThemeMode
 import com.tribetails.auntieos.web.ui.components.LOAD_ERROR_RETRY_TAG
 import kotlin.test.AfterTest
 import kotlin.test.Test
+
 /**
  * #897: on the account screen (the one place the Profile form renders), a failed
  * profile read shows its error with a Retry, and Save Profile stays disabled with
@@ -28,8 +30,10 @@ import kotlin.test.Test
  */
 @OptIn(ExperimentalTestApi::class)
 class ProfileLoadGateRenderTest {
+
     @AfterTest
     fun tearDown() = JvmFirestoreFixtures.clear()
+
     @Test
     fun aFailedProfileReadDisablesSaveAndRetryRecovers() = runDesktopComposeUiTest {
         // No fixture and no transport: the read fails at the token check.
@@ -45,11 +49,13 @@ class ProfileLoadGateRenderTest {
         val title = "Couldn't load your profile"
         waitUntil(timeoutMillis = 10_000) { onAllNodesWithText(title, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
         onNode(hasText("Save Profile") and hasClickAction()).assertIsNotEnabled()
+
         JvmFirestoreFixtures.provideUserProfile = true
         JvmFirestoreFixtures.userProfile = UserProfile(uid = "u1", email = "op@example.com", displayName = "Syd", phone = "555-0100")
         onNodeWithTag(LOAD_ERROR_RETRY_TAG, useUnmergedTree = true).performClick()
         waitUntil(timeoutMillis = 10_000) { onAllNodesWithText(title, useUnmergedTree = true).fetchSemanticsNodes().isEmpty() }
         waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("555-0100", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+
         // Loaded but untouched: nothing to save.
         onNode(hasText("Save Profile") and hasClickAction()).assertIsNotEnabled()
         onNode(hasSetTextAction() and hasText("555-0100")).performTextReplacement("555-0199")

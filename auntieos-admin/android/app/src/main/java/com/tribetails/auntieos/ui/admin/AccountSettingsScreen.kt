@@ -168,6 +168,7 @@ fun AccountSettingsScreen(
                     profile = uiState.profile,
                     isUploadingAvatar = uiState.isUploadingAvatar,
                     isLoading = uiState.isLoading,
+                    profileLoaded = uiState.profileLoaded,
                     onBack = onBack,
                     onPickAvatar = {
                         avatarPicker.launch(
@@ -177,6 +178,13 @@ fun AccountSettingsScreen(
                     onSaveProfile = { viewModel.saveProfile() },
                 )
                 Spacer(Modifier.height(dims.space5))
+
+                // #897: a failed read shows here with a retry, and Save stays off,
+                // because the form below is only a blank placeholder until it loads.
+                uiState.profileLoadError?.let { msg ->
+                    ProfileLoadErrorBanner(message = msg, onRetry = { viewModel.loadUserProfile() })
+                    Spacer(Modifier.height(dims.space5))
+                }
 
                 // One column on a phone, in the mock's order: its left column
                 // (Profile, Business profile) then its right (Notifications,
@@ -256,6 +264,7 @@ private fun AccountHero(
     profile: UserProfile,
     isUploadingAvatar: Boolean,
     isLoading: Boolean,
+    profileLoaded: Boolean,
     onBack: () -> Unit,
     onPickAvatar: () -> Unit,
     onSaveProfile: () -> Unit,
@@ -317,13 +326,15 @@ private fun AccountHero(
                     label = if (isUploadingAvatar) "Uploading…" else "Change photo",
                     leading = { Icon(Lucide.Camera, contentDescription = null, modifier = Modifier.size(16.dp), tint = c.textPrimary) },
                     onClick = onPickAvatar,
-                    enabled = !isUploadingAvatar,
+                    // #897: the new photo is stamped by a profile save.
+                    enabled = !isUploadingAvatar && profileLoaded,
                 )
                 PrimaryButton(
-                    label = "Save profile",
+                    label = if (profileLoaded) "Save profile" else "Loading profile…",
                     leading = { Icon(Lucide.Check, contentDescription = null, modifier = Modifier.size(16.dp), tint = c.background) },
                     onClick = onSaveProfile,
-                    enabled = !isLoading && !isUploadingAvatar,
+                    // #897: never before the profile read has answered.
+                    enabled = !isLoading && !isUploadingAvatar && profileLoaded,
                 )
             }
         },
@@ -677,5 +688,20 @@ internal fun SecurityPanel(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+    }
+}
+
+/**
+ * #897: the profile read failed, so the form is a blank placeholder and every
+ * profile save is off. Retry starts the read again.
+ */
+@Composable
+internal fun ProfileLoadErrorBanner(message: String, onRetry: () -> Unit) {
+    AuntieBanner(
+        tone = AuntieBannerTone.Error,
+        title = "Couldn't load your profile",
+        trailing = { GhostButton(label = "Retry", onClick = onRetry) },
+    ) {
+        Text(message, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
     }
 }

@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import com.google.firebase.messaging.FirebaseMessaging
@@ -43,6 +44,14 @@ data class AdminSettingsUiState(
     val error: String? = null,
     val saveSuccess: Boolean = false,
     val profileSaveSuccess: Boolean = false,
+    /**
+     * #897: true once the users/{uid} read has answered (a missing document
+     * counts: that is a create). Every profile save waits on it, because until
+     * then [profile] is a blank placeholder and saving it would write blanks.
+     */
+    val profileLoaded: Boolean = false,
+    /** #897: the first profile read failed. Shown with a retry; Save stays off. */
+    val profileLoadError: String? = null,
     /**
      * The two facts a server genuinely cannot see, because they are about the
      * handset in the operator's hand rather than about the business.
@@ -322,18 +331,59 @@ class AdminSettingsViewModel(
      */
     private var profileBaseline: UserProfile? = null
 
+    private var profileJob: Job? = null
+
+    /**
+     * Starts (or, from the error banner's Retry, restarts) the profile read.
+     *
+     * #897: a failed read is never folded into "no document". It used to be:
+     * the listener sent null on error, the baseline became null (which
+     * [AuntieRepository.saveUserProfile] reads as CREATE, a whole-model write)
+     * and the form showed a blank profile with Save live. Now a failure before
+     * the first answer sets [AdminSettingsUiState.profileLoadError] and leaves
+     * [AdminSettingsUiState.profileLoaded] false, and every save refuses. A
+     * failure after a good read keeps that read as the baseline.
+     */
     fun loadUserProfile() {
         val user = FirebaseAuth.getInstance().currentUser ?: return
-        viewModelScope.launch {
-            repository.observeUserProfile(user.uid).collect { stored ->
-                profileBaseline = stored
-                val profile = stored ?: UserProfile(
-                    uid = user.uid,
-                    email = user.email.orEmpty(),
+        profileJob?.cancel()
+        _uiState.value = _uiState.value.copy(profileLoadError = null)
+        profileJob = viewModelScope.launch {
+            repository.observeUserProfileResult(user.uid).collect { result ->
+                result.fold(
+                    onSuccess = { stored ->
+                        profileBaseline = stored
+                        val profile = stored ?: UserProfile(
+                            uid = user.uid,
+                            email = user.email.orEmpty(),
+                        )
+                        _uiState.value = _uiState.value.copy(
+                            profile = profile,
+                            profileLoaded = true,
+                            profileLoadError = null,
+                        )
+                    },
+                    onFailure = { e ->
+                        if (!_uiState.value.profileLoaded) {
+                            _uiState.value = _uiState.value.copy(
+                                profileLoadError = "Couldn't load your profile: ${e.message ?: "read failed"}",
+                            )
+                        }
+                    },
                 )
-                _uiState.value = _uiState.value.copy(profile = profile)
             }
         }
+    }
+
+    /** #897: the refusal every profile write gives before the read has answered. */
+    private fun profileNotLoaded(): Boolean {
+        val s = _uiState.value
+        if (s.profileLoaded) return false
+        _uiState.value = s.copy(
+            error = s.profileLoadError ?: "Your profile is still loading. Nothing was saved.",
+            profileSaveSuccess = false,
+        )
+        return true
     }
 
     fun updateProfileField(transform: (UserProfile) -> UserProfile) {
@@ -349,6 +399,7 @@ class AdminSettingsViewModel(
             _uiState.value = _uiState.value.copy(error = "Sign in required to save profile")
             return
         }
+        if (profileNotLoaded()) return
         viewModelScope.launch {
             val toSave = current.copy(
                 uid = user.uid,
@@ -391,6 +442,7 @@ class AdminSettingsViewModel(
             _uiState.value = _uiState.value.copy(error = "Sign in required to save navigation")
             return
         }
+        if (profileNotLoaded()) return
         viewModelScope.launch {
             val base = profileBaseline ?: _uiState.value.profile
             val toSave = base.copy(
@@ -414,6 +466,8 @@ class AdminSettingsViewModel(
             _uiState.value = _uiState.value.copy(error = "Sign in required to upload avatar")
             return
         }
+        // Refused before the upload, not after: the photo is stamped by a profile save.
+        if (profileNotLoaded()) return
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isUploadingAvatar = true, error = null)
             val manager = mediaUploadManagerFactory(context)
