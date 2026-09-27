@@ -99,7 +99,15 @@ function ledgerRow(): Record<string, unknown> | undefined {
  * applied part); step 2 carries the Payment amount box when she filled it, and
  * otherwise applied + tip.
  */
-async function webMarkPaid(opts: { applied: number; tip: number; fee: number; total?: number; autoApply: boolean }) {
+async function webMarkPaid(opts: {
+  applied: number;
+  tip: number;
+  fee: number;
+  total?: number;
+  autoApply: boolean;
+  /** #988: the account credit she entered, in cents. Omitted = an install from before #988. */
+  creditCents?: number;
+}) {
   const settled = await markInvoicePaidHandler(
     adminReq({
       invoiceId: 'inv1',
@@ -124,6 +132,7 @@ async function webMarkPaid(opts: { applied: number; tip: number; fee: number; to
       fee: opts.fee,
       notes: '',
       autoApply: opts.autoApply,
+      ...(opts.creditCents !== undefined ? { creditToAccountCents: opts.creditCents } : {}),
       sendConfirmationEmail: false,
       invoiceId: 'inv1',
       invoiceNumber: '1029',
@@ -191,12 +200,56 @@ describe('#977 admin web two-step Mark paid, auto-apply ticked', () => {
     expect(ledgerRow()).toMatchObject({ appliedCents: 12750, unappliedCents: 0, creditedToAccountCents: 0 });
   });
 
-  it('credits exactly the real leftover when the payment was larger', async () => {
-    // $200 in: $127.50 on the invoice, $10 tip, $62.50 left over.
+  it('#988: a ticked auto-apply with no amount credits NOTHING, even for a real leftover', async () => {
+    // The issue's example: $200 in, $127.50 on the invoice, $10 tip, $62.50 left
+    // over. Under the 2026-09-27 ruling that $62.50 is tip unless she enters a
+    // credit, so an old install's bare tick credits nothing.
     const { res } = await webMarkPaid({ applied: 127.5, tip: 10, fee: 2.71, total: 200, autoApply: true });
     expect(res.unappliedCents).toBe(6250);
-    expect(res.creditedToAccountCents).toBe(6250);
-    expect(creditedToFamily()).toBe(6250);
+    expect(res.creditedToAccountCents).toBe(0);
+    expect(creditedToFamily()).toBe(0);
+  });
+
+  it('#988: the new dialog shape, all leftover as tip, credits nothing', async () => {
+    // Tip defaults to paid minus applied: $72.50 gross, the fee out of it.
+    const { res } = await webMarkPaid({
+      applied: 127.5,
+      tip: 72.5,
+      fee: 2.71,
+      total: 200,
+      autoApply: false,
+      creditCents: 0,
+    });
+    expect(res.unappliedCents).toBe(0);
+    expect(res.creditedToAccountCents).toBe(0);
+    expect(creditedToFamily()).toBe(0);
+    expect(res.tipCents).toBe(7250);
+    expect(res.tipNetCents).toBe(7250 - 271);
+  });
+
+  it('#988: the new dialog shape, part of the leftover left as credit, credits exactly that part', async () => {
+    // $200 in: $127.50 applied, she moves $20 of the $72.50 into credit, $52.50 tip.
+    const { res } = await webMarkPaid({
+      applied: 127.5,
+      tip: 52.5,
+      fee: 2.71,
+      total: 200,
+      autoApply: true,
+      creditCents: 2000,
+    });
+    expect(res.unappliedCents).toBe(2000);
+    expect(res.creditedToAccountCents).toBe(2000);
+    expect(creditedToFamily()).toBe(2000);
+    expect(ledgerRow()).toMatchObject({ tipCents: 5250, feeCents: 271, creditedToAccountCents: 2000 });
+  });
+
+  it('#988: a credit that reaches into the tip is refused, and nothing is credited', async () => {
+    // $200 - $127.50 - $52.50 tip = $20 left; $20.01 does not fit.
+    await expect(
+      webMarkPaid({ applied: 127.5, tip: 52.5, fee: 2.71, total: 200, autoApply: true, creditCents: 2001 }),
+    ).rejects.toMatchObject({ code: 'invalid-argument', details: { code: 'credit_exceeds_leftover' } });
+    expect(creditedToFamily()).toBe(0);
+    expect(ledgerRow()).toBeUndefined();
   });
 
   it('keeps the gross tip and the fee on the row, fee out of the tip', async () => {
@@ -220,6 +273,36 @@ describe('#977 admin Android two-step recordPayment, auto-apply ticked', () => {
   it('credits none of the invoice money to the account balance', async () => {
     const { res } = await androidRecordPayment({ applied: 127.5, tip: 10, fee: 2.71, autoApply: true });
     expect(res.creditedToAccountCents).toBe(0);
+    expect(creditedToFamily()).toBe(0);
+  });
+});
+
+describe('#988 a chosen credit whose leftover cannot be read is refused, not guessed', () => {
+  it('no settlement id: refused with credit_leftover_unknown, nothing credited or stored', async () => {
+    await markInvoicePaidHandler(adminReq({ invoiceId: 'inv1', amount: 127.5, method: 'venmo' }));
+    const before = ctx.writes.length;
+    await expect(
+      recordPaymentHandler(
+        adminReq({ kinfolkId: 'fam1', amount: 200, tip: 52.5, invoiceId: 'inv1', creditToAccountCents: 2000 }),
+      ),
+    ).rejects.toMatchObject({ code: 'failed-precondition', details: { code: 'credit_leftover_unknown' } });
+    expect(ctx.writes.length).toBe(before);
+    expect(creditedToFamily()).toBe(0);
+  });
+
+  it('a settlement id that names no row: refused the same way', async () => {
+    await expect(
+      recordPaymentHandler(
+        adminReq({
+          kinfolkId: 'fam1',
+          amount: 200,
+          tip: 52.5,
+          invoiceId: 'inv1',
+          creditToAccountCents: 2000,
+          settledByInvoicePaymentId: 'ipay_does_not_exist',
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'failed-precondition', details: { code: 'credit_leftover_unknown' } });
     expect(creditedToFamily()).toBe(0);
   });
 });
@@ -283,18 +366,29 @@ describe('#977 the single-call shape with `apply` (desktop after #881, PR #978) 
     };
   }
 
-  it('applies once and credits amount - apply - tip', async () => {
+  it('#988: applies once, and a ticked auto-apply with no amount credits nothing', async () => {
     const res = await recordPaymentHandler(adminReq(desktopPayload()));
     expect(res.application).toMatchObject({ invoiceId: 'inv1', appliedCents: 12750, state: 'settled' });
     expect(res.appliedCents).toBe(12750);
     expect(res.unappliedCents).toBe(6250);
-    expect(res.creditedToAccountCents).toBe(6250);
-    expect(creditedToFamily()).toBe(6250);
+    expect(res.creditedToAccountCents).toBe(0);
+    expect(creditedToFamily()).toBe(0);
     expect(ledgerRow()).toMatchObject({ appliedInvoiceId: 'inv1', settledByInvoicePaymentId: '' });
   });
 
+  it('#988: the apply shape with a chosen credit credits exactly that', async () => {
+    // $200: $127.50 applied, $62.50 tip, $10 left as credit.
+    const res = await recordPaymentHandler(adminReq(desktopPayload({ tip: 62.5, creditToAccountCents: 1000 })));
+    expect(res.appliedCents).toBe(12750);
+    expect(res.unappliedCents).toBe(1000);
+    expect(res.creditedToAccountCents).toBe(1000);
+    expect(creditedToFamily()).toBe(1000);
+  });
+
   it('`apply` wins over a settlement id sent beside it: no second read, no second deduction', async () => {
-    const res = await recordPaymentHandler(adminReq(desktopPayload({ settledByInvoicePaymentId: 'ipay_other' })));
+    const res = await recordPaymentHandler(
+      adminReq(desktopPayload({ settledByInvoicePaymentId: 'ipay_other', creditToAccountCents: 6250 })),
+    );
     expect(res.appliedCents).toBe(12750);
     expect(res.creditedToAccountCents).toBe(6250);
   });
@@ -302,7 +396,14 @@ describe('#977 the single-call shape with `apply` (desktop after #881, PR #978) 
 
 describe('#977 the stored row and a replay agree', () => {
   it('records which settlement the applied part came from', async () => {
-    const { settled } = await webMarkPaid({ applied: 127.5, tip: 10, fee: 2.71, total: 200, autoApply: true });
+    const { settled } = await webMarkPaid({
+      applied: 127.5,
+      tip: 10,
+      fee: 2.71,
+      total: 200,
+      autoApply: true,
+      creditCents: 6250,
+    });
     expect(ledgerRow()).toMatchObject({
       appliedInvoiceId: '',
       appliedCents: 12750,
@@ -313,7 +414,14 @@ describe('#977 the stored row and a replay agree', () => {
   });
 
   it('a same-key retry answers with the first figures and credits nothing more', async () => {
-    const { settled, res: first } = await webMarkPaid({ applied: 127.5, tip: 10, fee: 2.71, total: 200, autoApply: true });
+    const { settled, res: first } = await webMarkPaid({
+      applied: 127.5,
+      tip: 10,
+      fee: 2.71,
+      total: 200,
+      autoApply: true,
+      creditCents: 6250,
+    });
     const again = await recordPaymentHandler(
       adminReq({
         kinfolkId: 'fam1',
@@ -322,6 +430,7 @@ describe('#977 the stored row and a replay agree', () => {
         fee: 2.71,
         invoiceId: 'inv1',
         autoApply: true,
+        creditToAccountCents: 6250,
         settledByInvoicePaymentId: settled.paymentId,
         idempotencyKey: 'pay_1759000000000_abc123',
       }),

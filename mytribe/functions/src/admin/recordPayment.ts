@@ -97,8 +97,9 @@ import { PAYMENT_APPLIED_CLAIM_FIELD, claimableMarkInvoicePaidOwner } from '../l
  *
  *   `fee`                    the processor's cut. Stored as `fee` + `feeCents`.
  *   `apply`                  the "Apply: $" box. ONE invoice, never a list.
- *   `autoApply`              put the leftover into the household's EXISTING
- *                            account credit, for a FUTURE invoice.
+ *   `autoApply`              recorded only since #988; the credit is the
+ *                            admin's `creditToAccountCents`, into the
+ *                            household's EXISTING account credit.
  *   `sendConfirmationEmail`  enqueue the existing `invoice.payment.applied`
  *                            notification to the household.
  *   (`notes` already existed and is STAFF ONLY. Nothing kinfolk-facing reads
@@ -215,8 +216,29 @@ export const Args = z.object({
    *
    * A stored boolean nothing acts on is a switch wired to nothing, which is
    * exactly what the operator's feature-flag ruling forbids.
+   *
+   * #988: IT NO LONGER MOVES MONEY BY ITSELF. Operator ruling, 2026-09-27: an
+   * overpayment is all tip, and account credit happens only when she enters an
+   * amount. The amount is `creditToAccountCents` below. This flag is still
+   * accepted and stored (new clients send it as `creditToAccountCents > 0`), and
+   * an install from before #988 that sends `true` with no amount credits
+   * NOTHING, where it used to credit the whole leftover.
    */
   autoApply: z.boolean().default(false),
+  /**
+   * #988: HOW MUCH OF THIS PAYMENT THE ADMIN CHOSE TO LEAVE AS ACCOUNT CREDIT,
+   * in integer CENTS. This, and only this, goes into
+   * `families/{id}.accountBalanceCents`.
+   *
+   * It comes out of the leftover after the applied part, which the dialogs
+   * otherwise record as tip: `amount = applied + tip + credit`. The server
+   * refuses a credit larger than `amount - applied - tip`, a credit for a
+   * payment with no household, and a credit on an invoice-linked payment whose
+   * applied part it cannot read. It never rewrites the tip the admin entered.
+   *
+   * OPTIONAL. Omitted means no credit, whatever `autoApply` says.
+   */
+  creditToAccountCents: z.number().int().min(0).max(1_000_000_000).optional(),
   /**
    * "Send Confirmation Email". Enqueues the EXISTING `invoice.payment.applied`
    * notification to the household, honouring their own channel preferences.
@@ -324,7 +346,7 @@ export const Result = z
     proceedsCents: CentsSchema,
     /** What she keeps of the tip: `tipGross - fee`. Signed; a fee can exceed a small tip. */
     tipNetCents: SignedCentsSchema,
-    /** Whether the leftover was moved into the household's account credit. */
+    /** The `autoApply` flag as sent. Since #988 it moves no money; `creditedToAccountCents` is what was credited. */
     autoApply: z.boolean(),
     /** What the apply did, or null when no invoice balance was touched. */
     application: PaymentApplicationSchema.nullable(),
@@ -333,10 +355,10 @@ export const Result = z
      * `families/{kinfolkId}.accountBalanceCents`, the EXISTING credit ledger
      * `redeemCredit` fills and the portal already shows, not a new one.
      *
-     * Zero when auto-apply was off, when there was no remainder, or when the
-     * payment belongs to no household. It is reported separately from
-     * `unappliedCents` because those are two different facts: what is left over,
-     * and what was done with it.
+     * #988: exactly the `creditToAccountCents` the admin entered, and zero when
+     * she entered none. It is reported separately from `unappliedCents` because
+     * those are two different facts: what is left over, and what she chose to
+     * leave as credit.
      */
     creditedToAccountCents: CentsSchema,
     /**
@@ -477,31 +499,66 @@ export async function recordPaymentHandler(
     }
     plannedStep = plan.step;
   }
-  // THE LEFTOVER BECOMES ACCOUNT CREDIT, in the ledger this repo already has.
-  // Her label says "apply any Unapplied amount to FUTURE invoices", so the
-  // remainder is HELD rather than spread across today's bills, and
-  // `triggers/onInvoiceAutoApply.ts` spends it on the next invoice that becomes
-  // collectable.
+  // ── ACCOUNT CREDIT: EXACTLY THE AMOUNT THE ADMIN ENTERED (#988) ─────────
   //
-  // #977: a row linked to an invoice whose applied part could not be read is
-  // credited NOTHING. Its leftover is unknown, and guessing it as `amount - tip`
-  // is exactly the double credit: the invoice money a second time, as spendable
-  // account balance. The row still stores `unappliedCents` as computed, so the
-  // operator can see the figure and credit the household by hand.
+  // Operator ruling, 2026-09-27: "any overpayment made by the kinfolk, it is
+  // assumed the extra is all tip ... I as admin should be able to decide if any
+  // money remains as credit and how much." So nothing here turns a leftover
+  // into credit by itself. Before #988 a ticked `autoApply` credited the whole
+  // `unappliedCents`; now the credit is `creditToAccountCents`, checked and then
+  // credited to the cent, and `triggers/onInvoiceAutoApply.ts` still spends it
+  // on the next invoice that becomes collectable.
+  //
+  // Every refusal below happens BEFORE any write, so a refused call stores no
+  // row and credits nothing. In the two-step admin flow `markInvoicePaid` has
+  // already settled the invoice by now; the dialog checks the same bounds
+  // first, so a refusal here means a client and the server disagree, and the
+  // admin gets the form back to correct.
+  //
+  // #977 still holds: a row linked to an invoice whose applied part could not be
+  // read has an unknown leftover, so a chosen credit cannot be checked against
+  // it and is refused rather than guessed.
   const leftoverKnown = twoStep === null || twoStep.known;
-  const creditedToAccountCents =
-    args.autoApply && leftoverKnown && money.unappliedCents > 0 && kinfolkId !== '' ? money.unappliedCents : 0;
-  if (args.autoApply && !leftoverKnown) {
+  const chosenCreditCents = args.creditToAccountCents ?? 0;
+  if (chosenCreditCents > 0) {
+    if (kinfolkId === '') {
+      throw new HttpsError(
+        'invalid-argument',
+        `Account credit of ${dollars(chosenCreditCents)} needs a household. This payment is not linked to one.`,
+        { code: 'credit_without_household' },
+      );
+    }
+    if (!leftoverKnown) {
+      throw new HttpsError(
+        'failed-precondition',
+        `Account credit of ${dollars(chosenCreditCents)} cannot be checked: the part of this payment applied to ` +
+          `the invoice could not be read. Record it with no account credit.`,
+        { code: 'credit_leftover_unknown' },
+      );
+    }
+    if (chosenCreditCents > money.unappliedCents) {
+      throw new HttpsError(
+        'invalid-argument',
+        `Account credit of ${dollars(chosenCreditCents)} is more than the ${dollars(Math.max(0, money.unappliedCents))} ` +
+          `left after ${dollars(money.appliedCents)} applied and a ${dollars(tipCents)} tip.`,
+        { code: 'credit_exceeds_leftover' },
+      );
+    }
+  }
+  const creditedToAccountCents = chosenCreditCents;
+  if (args.autoApply && args.creditToAccountCents === undefined) {
+    // An install from before #988: the tick used to mean "credit the whole
+    // leftover". It now credits nothing; logged so those submissions can be found.
     logEvent({
-      severity: 'warn',
+      severity: 'info',
       function: 'recordPayment',
-      event: 'admin.payment.autoapply.withheld',
+      event: 'admin.payment.autoapply.no_amount',
       uid: actor.uid,
       extra: {
         kinfolkId,
         invoiceId: args.invoiceId,
+        unappliedCents: money.unappliedCents,
         settledByInvoicePaymentId: args.settledByInvoicePaymentId ?? null,
-        reason: twoStep?.reason ?? null,
       },
     });
   }

@@ -658,6 +658,7 @@ export interface RecordPaymentArgs {
   apply?: RecordPaymentArgsApply;
   /** Optional in the request; the server defaults it to false. */
   autoApply?: boolean;
+  creditToAccountCents?: number;
   /** Optional in the request; the server defaults it to false. */
   sendConfirmationEmail?: boolean;
   idempotencyKey?: string;

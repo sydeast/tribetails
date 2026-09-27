@@ -1280,6 +1280,8 @@ data class RecordPaymentArgs(
     val apply: RecordPaymentArgsApply? = null,
     /** The server defaults this to `false`. */
     val autoApply: Boolean = false,
+    /** Optional: omitted from the payload when null. */
+    val creditToAccountCents: Long? = null,
     /** The server defaults this to `false`. */
     val sendConfirmationEmail: Boolean = false,
     /** Optional: omitted from the payload when null. */
@@ -1308,6 +1310,7 @@ data class RecordPaymentArgs(
         put("invoiceNumber", invoiceNumber)
         if (apply != null) put("apply", apply.toPayload())
         put("autoApply", autoApply)
+        if (creditToAccountCents != null) put("creditToAccountCents", creditToAccountCents)
         put("sendConfirmationEmail", sendConfirmationEmail)
         if (idempotencyKey != null) put("idempotencyKey", idempotencyKey)
         if (settledByInvoicePaymentId != null) put("settledByInvoicePaymentId", settledByInvoicePaymentId)
