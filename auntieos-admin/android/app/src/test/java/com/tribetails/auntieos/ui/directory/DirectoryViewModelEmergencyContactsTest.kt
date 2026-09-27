@@ -65,6 +65,7 @@ class DirectoryViewModelEmergencyContactsTest {
     @Test
     fun `add refuses to create a household without an Emergency Contact`() {
         vm.updateFirstName("Jamie")
+        vm.updateEmail("household@example.com")
         vm.saveKinfolk()
         assertEquals(EMERGENCY_CONTACT_REQUIRED, vm.addKinfolkState.value.error)
         coVerify(exactly = 0) { repo.createKinfolkComplete(any(), any()) }
@@ -75,6 +76,7 @@ class DirectoryViewModelEmergencyContactsTest {
         coEvery { repo.createKinfolkComplete(any(), any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-new"), null)) }
         coEvery { repo.saveEmergencyContacts("kf-new", any()) } returns Result.success(emptyList())
         vm.updateFirstName("Jamie")
+        vm.updateEmail("household@example.com")
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         vm.saveKinfolk()
         coVerify { repo.saveEmergencyContacts("kf-new", listOf(EmergencyContactDraft("Rae Halbrook", "5125550190"))) }
@@ -86,6 +88,7 @@ class DirectoryViewModelEmergencyContactsTest {
         coEvery { repo.createKinfolkComplete(any(), any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-new"), null)) }
         coEvery { repo.saveEmergencyContacts("kf-new", any()) } returnsMany listOf(Result.failure(Exception("offline")), Result.success(emptyList()))
         vm.updateFirstName("Jamie")
+        vm.updateEmail("household@example.com")
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         vm.saveKinfolk()
         assertEquals("kf-new", vm.addKinfolkState.value.createdKinfolkId)
@@ -103,6 +106,7 @@ class DirectoryViewModelEmergencyContactsTest {
         coEvery { repo.createKinfolkComplete(any(), any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-new"), null)) }
         coEvery { repo.saveEmergencyContacts("kf-new", any()) } returnsMany listOf(Result.failure(Exception("offline")), Result.success(emptyList()))
         vm.updateFirstName("Jamie")
+        vm.updateEmail("household@example.com")
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "8055550199"))
         vm.saveKinfolk()
 
@@ -118,6 +122,7 @@ class DirectoryViewModelEmergencyContactsTest {
     @Test
     fun `leaving Add with only a draft clears it`() {
         vm.updateFirstName("Jamie")
+        vm.updateEmail("household@example.com")
         vm.leaveAddKinfolk()
         assertEquals("", vm.addKinfolkState.value.firstName)
     }
@@ -128,6 +133,7 @@ class DirectoryViewModelEmergencyContactsTest {
         coEvery { repo.saveEmergencyContacts("kf-new", any()) } returnsMany listOf(Result.failure(Exception("offline")), Result.success(emptyList()))
         coEvery { repo.logActivity(any()) } returns Result.success(Unit)
         vm.updateFirstName("Jamie")
+        vm.updateEmail("household@example.com")
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "8055550199"))
         vm.saveKinfolk()
         coVerify(exactly = 1) {
@@ -156,6 +162,7 @@ class DirectoryViewModelEmergencyContactsTest {
         coEvery { repo.createKinfolkComplete(any(), any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-new"), null)) }
         coEvery { repo.saveEmergencyContacts("kf-new", any()) } returns Result.failure(Exception("offline"))
         vm.updateFirstName("Jamie")
+        vm.updateEmail("household@example.com")
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "8055550199"))
         vm.saveKinfolk()
         vm.prefillAddKinfolkFromCall("Someone Else", "+18055550111", "CA829waiting")
@@ -210,6 +217,7 @@ class DirectoryViewModelEmergencyContactsTest {
 
         // An ordinary Add opened from the Directory afterwards is not the call's household.
         vm.updateFirstName("Pat")
+        vm.updateEmail("household@example.com")
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Lee Park", "8055550144"))
         vm.saveKinfolk()
         assertTrue(vm.addKinfolkState.value.isSuccess)
@@ -229,6 +237,7 @@ class DirectoryViewModelEmergencyContactsTest {
         coEvery { repo.createKinfolkComplete(any(), any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-new"), null)) }
         coEvery { repo.saveEmergencyContacts("kf-new", any()) } returns Result.failure(Exception("offline"))
         vm.updateFirstName("Jamie")
+        vm.updateEmail("household@example.com")
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         vm.saveKinfolk()
         assertEquals("kf-new", vm.addKinfolkState.value.createdKinfolkId)
@@ -256,6 +265,7 @@ class DirectoryViewModelEmergencyContactsTest {
         coEvery { repo.createKinfolkComplete(any(), any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-new"), null)) }
         coEvery { repo.saveEmergencyContacts("kf-new", any()) } returnsMany listOf(Result.failure(Exception("offline")), Result.success(emptyList()))
         vm.updateFirstName("Jamie")
+        vm.updateEmail("household@example.com")
         vm.updatePhoneNumber("5125550134")
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         vm.saveKinfolk()

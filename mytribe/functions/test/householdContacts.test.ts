@@ -2,8 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
 
 /**
- * Household secondary contacts: the no-portal-account half of the operator's
- * 2026-09-12 ruling.
+ * Household secondary contacts, built for the 2026-09-12 "a secondary contact
+ * does not have to be a portal user" ruling. That ruling is gone: the operator's
+ * 2026-09-27 ruling on #829 says "there is no true 'Contact List'", and takes
+ * the list off every screen. The three callables stay deployed, unreferenced, until
+ * the operator has read `report:household-contacts` and ruled on the data, so
+ * their behaviour stays pinned here until then.
  *
  * The tests that matter most here are the REFUSALS. A contact callable that
  * quietly accepted `permissions` or `invitedEmail` would re-merge the two

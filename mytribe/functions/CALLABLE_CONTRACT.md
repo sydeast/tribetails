@@ -1398,14 +1398,25 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
   carries no `email`.
 - Read only.
 
-### listHouseholdContacts / saveHouseholdContact / removeHouseholdContact (net-new 2026-09-12)
+### listHouseholdContacts / saveHouseholdContact / removeHouseholdContact (net-new 2026-09-12, orphaned by #829)
+
+**Orphaned by #829: no client should call these.** Operator ruling 2026-09-27,
+verbatim: "there is no true 'Contact List'. There can be up to 3 ppl's contact
+info to a household: Primary Kinfolk (PK), Secondary Kinfolk (SK), and Emergency
+Contact (EC). PK: contact info required, portal access required. SK: contact
+info optional, portal access optional. EC: contact info required, portal access
+never. EC's contact info is a household item." It replaces the 2026-09-12 ruling
+below in full, and takes the contacts list off every screen on all four
+surfaces. The three callables, the `families/{id}/contacts` rows and the closed
+rules block stay until the operator has read `report:household-contacts` and
+ruled on the data. The contract below is the shape as built.
 
 A household's secondary CONTACTS: people it can be reached through who hold no
-portal account. Operator ruling, 2026-09-12, verbatim: "a secondary contact does
-not have to be a portal user. primary kinfolk user will invite a second kinfolk
-to the household to manage and receive notifications." Two actions with two
-outcomes, and until these three the codebase had only the second:
-`addSecondaryContact` is named for the contact and mints an invite.
+portal account. The 2026-09-12 ruling it was built for, verbatim: "a secondary
+contact does not have to be a portal user. primary kinfolk user will invite a
+second kinfolk to the household to manage and receive notifications." Two
+actions with two outcomes, and until these three the codebase had only the
+second: `addSecondaryContact` is named for the contact and mints an invite.
 
 A contact is NOT a member and NOT an invite. It has no uid, no role, no
 `MemberPermissions` and no `inviteRequests` row, because there is nothing for it
@@ -1543,6 +1554,7 @@ every client in both directions: these callables are the only door.
 - `ignoreDuplicateOf` (#907 review): the household the operator chose to Discard on the Add prompt. Discard means "the next Add is a new household", so the duplicate check skips exactly that id. Only the caller's own households are candidates at all, so an id created by another operator skips nothing. Clients keep it per operator next to the pending household, send it on the next create, and clear it once a create is answered; a failed create keeps it for the retry.
 - res `{ kinfolkId: string, duplicateOf: string | null }`
 - `kinfolk.firstName` must be a non-blank string, else `invalid-argument` "A household needs a first name."
+- At least one of `kinfolk.phoneNumber`, `kinfolk.secondaryPhone` or `kinfolk.email` must be a non-blank string, else `invalid-argument` "The primary kinfolk needs a phone number or an email." (#829, operator ruling 2026-09-27: "PK: contact info required"). Create only: an edit of a household with neither is not refused. Admin web and admin Android pre-check with the same message; the desktop console already requires a valid phone and a valid email on Add and Edit.
 - Dropped before the write, whatever the client sent: `emergencyContacts`, `emergencyContactName`, `emergencyContactPhone`, `emergencyContactRelation` (only `saveEmergencyContacts` writes those), `id`, `_id`, `createdAt`, `createdAtSource`, `createdByUid`, `myTribeLinkedAt`, `isTestData`. Every other field is written as sent; `updatedAt` is not touched.
 - Stamps `createdAt` (server time), `createdAtSource: 'live'`, `createdByUid` (the caller).
 - **DUPLICATE RULE.** Before creating, in one transaction, it reads `kinfolk` where `createdAt >= now - 10 minutes`. A document counts as the same household when `createdByUid` is the caller AND it has the same primary phone (E.164 digits, or the digits when it does not parse; fewer than 7 digits never match) OR the same primary email (trimmed, lower-cased; must contain `@`). A blank never matches a blank. On a match nothing is written and the answer is `{ kinfolkId: <existing id>, duplicateOf: <existing id> }` (the newest match when several). Otherwise the household is created and `duplicateOf` is `null`. Rule: `src/lib/kinfolkDuplicate.ts`.

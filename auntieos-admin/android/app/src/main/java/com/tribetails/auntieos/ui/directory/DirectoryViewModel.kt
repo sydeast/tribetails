@@ -251,6 +251,18 @@ fun pendingHouseholdName(state: AddKinfolkUiState): String =
 /** #907 review item 2: `saveEmergencyContacts`'s `not-found` answer when the household was deleted. */
 const val HOUSEHOLD_NO_LONGER_EXISTS = "That household no longer exists."
 
+/**
+ * #829, operator ruling 2026-09-27: "PK: contact info required". The server's
+ * `PRIMARY_CONTACT_REQUIRED_MESSAGE` (mytribe/functions/src/admin/createKinfolk.ts),
+ * word for word. A phone, a secondary phone or an email is enough. Add only:
+ * an edit is never refused for it.
+ */
+const val PRIMARY_CONTACT_REQUIRED = "The primary kinfolk needs a phone number or an email."
+
+/** True when Add has some way to reach the primary kinfolk. */
+fun hasPrimaryContact(state: AddKinfolkUiState): Boolean =
+    state.phoneNumber.isNotBlank() || state.secondaryPhone.isNotBlank() || state.email.isNotBlank()
+
 /** #907 review item 1(b): what an Add answered `duplicateOf` [kinfolkId] had typed, kept for that household's edit screen. */
 data class DuplicateAddPrefill(val kinfolkId: String, val typed: AddKinfolkUiState)
 
@@ -914,6 +926,10 @@ class DirectoryViewModel(
         }
         if (state.firstName.isBlank()) {
             _addKinfolkState.value = state.copy(error = "First name is required.")
+            return
+        }
+        if (!hasPrimaryContact(state)) {
+            _addKinfolkState.value = state.copy(error = PRIMARY_CONTACT_REQUIRED)
             return
         }
         validateEmergencyContactDrafts(

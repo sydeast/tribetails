@@ -1,5 +1,12 @@
 import { useCallback, useState } from 'react';
-import { createKinfolk, NEW_KINFOLK_STATUS_OPTIONS, type NewKinfolkInput, type NewKinfolkStatus } from '../api/directoryWrite';
+import {
+  createKinfolk,
+  hasPrimaryContact,
+  NEW_KINFOLK_STATUS_OPTIONS,
+  PRIMARY_CONTACT_REQUIRED,
+  type NewKinfolkInput,
+  type NewKinfolkStatus,
+} from '../api/directoryWrite';
 import {
   EMERGENCY_CONTACT_WHO_GETS_CALLED,
   saveEmergencyContacts,
@@ -228,6 +235,12 @@ export function AddKinfolkDialog({
       return;
     }
     if (firstName.trim() === '' || lastName.trim() === '') return;
+    // #829, ruling 2026-09-27: the primary's contact info is required. Checked
+    // before the Emergency Contact so the household's own fields are fixed first.
+    if (!hasPrimaryContact({ phoneNumber, email })) {
+      setSaveError(PRIMARY_CONTACT_REQUIRED);
+      return;
+    }
     const ecError = validateEmergencyContactDrafts(ecDrafts, {
       names: [`${firstName} ${lastName}`],
       phones: [phoneNumber],

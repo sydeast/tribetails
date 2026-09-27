@@ -62,6 +62,7 @@ class AddKinfolkPendingPromptUiTest {
         coEvery { repo.createKinfolkComplete(any(), any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-890"), null)) }
         coEvery { repo.saveEmergencyContacts("kf-890", any()) } returns Result.failure(Exception("offline"))
         vm.updateFirstName("Jamie")
+        vm.updateEmail("household@example.com")
         vm.updateLastName("Halbrook")
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Park", "8055550199"))
         vm.saveKinfolk()
@@ -114,6 +115,7 @@ class AddKinfolkPendingPromptUiTest {
         vm.discardPendingAdd()
         coEvery { repo.createKinfolkComplete(any(), any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-existing"), "kf-existing")) }
         vm.updateFirstName("Jamie")
+        vm.updateEmail("household@example.com")
         vm.updateLastName("Halbrook")
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Park", "8055550199"))
         vm.saveKinfolk()

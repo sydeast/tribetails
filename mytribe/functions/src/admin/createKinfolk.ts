@@ -76,6 +76,26 @@ export type CreateKinfolkResult = z.infer<typeof Result>;
 
 export const FIRST_NAME_REQUIRED_MESSAGE = 'A household needs a first name.';
 
+/**
+ * #829, operator ruling 2026-09-27: "PK: contact info required". The primary
+ * kinfolk is the household's one required person, so a household cannot be
+ * created with no way to reach them. A phone OR an email is enough; the ruling
+ * says contact info, not both. Checked on create only: households that already
+ * exist with neither keep saving, the same way a missing Emergency Contact
+ * never blocks an edit.
+ */
+export const PRIMARY_CONTACT_REQUIRED_MESSAGE = 'The primary kinfolk needs a phone number or an email.';
+
+/** The keys that count as a way to reach the primary. */
+export const PRIMARY_CONTACT_KEYS: readonly string[] = ['phoneNumber', 'secondaryPhone', 'email'];
+
+export function hasPrimaryContact(kinfolk: Record<string, unknown>): boolean {
+  return PRIMARY_CONTACT_KEYS.some((k) => {
+    const v = kinfolk[k];
+    return typeof v === 'string' && v.trim() !== '';
+  });
+}
+
 function millisOf(v: unknown): number {
   if (v && typeof v === 'object' && typeof (v as { toMillis?: unknown }).toMillis === 'function') {
     return (v as { toMillis: () => number }).toMillis();
@@ -93,6 +113,9 @@ export async function createKinfolkHandler(req: CallableRequest<unknown>): Promi
   const firstName = parsed.data.kinfolk['firstName'];
   if (typeof firstName !== 'string' || firstName.trim() === '') {
     throw new HttpsError('invalid-argument', FIRST_NAME_REQUIRED_MESSAGE);
+  }
+  if (!hasPrimaryContact(parsed.data.kinfolk)) {
+    throw new HttpsError('invalid-argument', PRIMARY_CONTACT_REQUIRED_MESSAGE);
   }
   const body = Object.fromEntries(Object.entries(parsed.data.kinfolk).filter(([k]) => !SERVER_OWNED_KEYS.includes(k)));
   const ignoreDuplicateOf = parsed.data.ignoreDuplicateOf?.trim() || null;

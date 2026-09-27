@@ -125,6 +125,7 @@ class DirectoryViewModelArchiveTest {
         coEvery { repository.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
         viewModel.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         viewModel.updateFirstName("Pat")
+        viewModel.updateEmail("household@example.com")
 
         viewModel.saveKinfolk()
         advanceUntilIdle()
@@ -140,6 +141,7 @@ class DirectoryViewModelArchiveTest {
         coEvery { repository.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
         viewModel.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         viewModel.updateFirstName("Pat")
+        viewModel.updateEmail("household@example.com")
         viewModel.updateAddStatus("active")
 
         viewModel.saveKinfolk()

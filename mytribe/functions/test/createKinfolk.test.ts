@@ -15,7 +15,15 @@ vi.mock('firebase-admin/firestore', async () => {
   return { ...actual, FieldValue: { serverTimestamp: () => actual.Timestamp.fromMillis(Date.now()) } };
 });
 
-import { createKinfolk, createKinfolkHandler, Args, Result, SERVER_OWNED_KEYS } from '../src/admin/createKinfolk';
+import {
+  createKinfolk,
+  createKinfolkHandler,
+  Args,
+  Result,
+  SERVER_OWNED_KEYS,
+  PRIMARY_CONTACT_REQUIRED_MESSAGE,
+  hasPrimaryContact,
+} from '../src/admin/createKinfolk';
 
 const NOW = Date.UTC(2026, 8, 14, 15, 0, 0);
 const MIN = 60_000;
@@ -164,6 +172,33 @@ describe('createKinfolk', () => {
     });
   });
 
+  // #829, ruling 2026-09-27: "PK: contact info required".
+  it('refuses a household whose primary has no phone and no email, and writes nothing', async () => {
+    const mock = buildDbMock({ queryDocs: { kinfolk: [] } });
+    mocks.dbFn.mockReturnValue(mock.db);
+    await expect(
+      createKinfolkHandler(call({ kinfolk: household({ phoneNumber: '  ', email: '' }) })),
+    ).rejects.toMatchObject({
+      code: 'invalid-argument',
+      message: 'The primary kinfolk needs a phone number or an email.',
+    });
+    const { phoneNumber: _p, email: _e, ...neither } = household();
+    await expect(createKinfolkHandler(call({ kinfolk: neither }))).rejects.toMatchObject({
+      message: PRIMARY_CONTACT_REQUIRED_MESSAGE,
+    });
+    expect(mock.writes).toHaveLength(0);
+  });
+
+  it('takes a phone alone, an email alone, or a secondary phone alone as the primary contact', async () => {
+    const mock = buildDbMock({ queryDocs: { kinfolk: [] } });
+    mocks.dbFn.mockReturnValue(mock.db);
+    await createKinfolkHandler(call({ kinfolk: household({ email: '' }) }));
+    await createKinfolkHandler(call({ kinfolk: household({ phoneNumber: '', email: 'b@example.com' }) }));
+    await createKinfolkHandler(call({ kinfolk: household({ phoneNumber: '', email: '', secondaryPhone: '805 555 0177' }) }));
+    expect(mock.writes).toHaveLength(3);
+    expect(hasPrimaryContact({ phoneNumber: 42 })).toBe(false);
+  });
+
   it('refuses a payload that is not { kinfolk: {...} }', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock({ queryDocs: { kinfolk: [] } }).db);
     await expect(createKinfolkHandler(call(household()))).rejects.toMatchObject({ code: 'invalid-argument' });
@@ -219,7 +254,9 @@ describe('createKinfolk', () => {
     });
     mocks.dbFn.mockReturnValue(mock.db);
     expect((await createKinfolkHandler(call({ kinfolk: household() }))).duplicateOf).toBeNull();
-    expect((await createKinfolkHandler(call({ kinfolk: household({ phoneNumber: '', email: '' }) }))).duplicateOf).toBeNull();
+    // A blank phone never matches the stored blank one. (Blank phone AND email is
+    // refused outright since the 2026-09-27 ruling, so the email here is new.)
+    expect((await createKinfolkHandler(call({ kinfolk: household({ phoneNumber: '', email: 'new@example.com' }) }))).duplicateOf).toBeNull();
     expect(mock.writes).toHaveLength(2);
   });
 
