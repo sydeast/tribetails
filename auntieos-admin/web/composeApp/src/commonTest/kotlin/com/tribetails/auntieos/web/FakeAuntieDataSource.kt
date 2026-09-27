@@ -77,6 +77,8 @@ class FakeAuntieDataSource(
     fun emitVetClinics(result: FirestoreResult<List<VetClinic>>) { _vetClinics.value = result }
     val createdVetClinics = mutableListOf<VetClinic>()
     val updatedVetClinics = mutableListOf<VetClinic>()
+    /** #994: the baseline each update was diffed against, parallel to [updatedVetClinics]. */
+    val updatedVetClinicBaselines = mutableListOf<VetClinic>()
     val deletedVetClinicIds = mutableListOf<String>()
     var vetClinicWriteShouldFail = false
     var vetClinicWriteFailMessage = "boom"
@@ -86,8 +88,9 @@ class FakeAuntieDataSource(
         createdVetClinics += clinic
         return if (vetClinicWriteShouldFail) WriteResult.Err(vetClinicWriteFailMessage) else WriteResult.Ok(clinic._id.ifBlank { "new-id" })
     }
-    override suspend fun updateVetClinic(clinic: VetClinic): WriteResult<Unit> {
-        updatedVetClinics += clinic
+    override suspend fun updateVetClinic(loaded: VetClinic, edited: VetClinic): WriteResult<Unit> {
+        updatedVetClinicBaselines += loaded
+        updatedVetClinics += edited
         return if (vetClinicWriteShouldFail) WriteResult.Err(vetClinicWriteFailMessage) else WriteResult.Ok(Unit)
     }
     override suspend fun deleteVetClinic(id: String): WriteResult<Unit> {
@@ -260,6 +263,10 @@ class FakeAuntieDataSource(
     var lastSavedReport: KinCareReport? = null
         private set
 
+    /** #994: the baseline the most recent [saveReport] was diffed against. */
+    var lastSavedReportBaseline: KinCareReport? = null
+        private set
+
     /** How many times [saveReport] has been entered, for in-flight-guard assertions. */
     var saveReportCalls: Int = 0
         private set
@@ -271,10 +278,12 @@ class FakeAuntieDataSource(
      */
     var saveGate: CompletableDeferred<Unit>? = null
 
-    override suspend fun saveReport(report: KinCareReport): WriteResult<String> {
+    override suspend fun saveReport(loaded: KinCareReport, edited: KinCareReport): WriteResult<String> {
+        val report = edited
         saveReportCalls++
         saveGate?.await()
         lastSavedReport = report
+        lastSavedReportBaseline = loaded
         if (saveShouldFail) return WriteResult.Err(saveFailMessage)
         val id = report._id.ifBlank { "report-fake-id" }
         val saved = report.copy(_id = id)

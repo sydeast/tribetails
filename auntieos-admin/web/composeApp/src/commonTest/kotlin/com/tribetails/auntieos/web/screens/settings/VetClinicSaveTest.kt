@@ -50,6 +50,12 @@ class VetClinicSaveTest {
         assertTrue(vetClinicFieldsChanged(base, base.copy(website = "https://x.com")))
     }
 
+    /** #994: hours is carried by the updateVetClinic callable and editable here. */
+    @Test
+    fun hoursChangeIsDirty() {
+        assertTrue(vetClinicFieldsChanged(base, base.copy(hours = "8-6")))
+    }
+
     @Test
     fun emergencyToggleIsDirty() {
         assertTrue(vetClinicFieldsChanged(base, base.copy(isEmergency = true)))

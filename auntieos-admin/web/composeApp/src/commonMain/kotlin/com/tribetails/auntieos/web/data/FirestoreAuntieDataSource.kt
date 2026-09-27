@@ -10,7 +10,7 @@ class FirestoreAuntieDataSource(
     override fun allKinStream(): Flow<FirestoreResult<List<Kin>>> = client.allKinStream()
     override fun vetClinicsStream(): Flow<FirestoreResult<List<VetClinic>>> = client.vetClinicsStream()
     override suspend fun createVetClinic(clinic: VetClinic): WriteResult<String> = client.createVetClinic(clinic)
-    override suspend fun updateVetClinic(clinic: VetClinic): WriteResult<Unit> = client.updateVetClinic(clinic)
+    override suspend fun updateVetClinic(loaded: VetClinic, edited: VetClinic): WriteResult<Unit> = client.updateVetClinic(loaded, edited).let { r -> if (r is WriteResult.Err) WriteResult.Err(r.message) else WriteResult.Ok(Unit) }
     override suspend fun deleteVetClinic(id: String): WriteResult<Unit> = client.deleteVetClinic(id)
     override fun sessionsStream(): Flow<FirestoreResult<List<KinCareSession>>> = client.sessionsStream()
     override fun sessionForIdStream(sessionId: String): Flow<FirestoreResult<KinCareSession?>> = client.sessionForIdStream(sessionId)
@@ -53,7 +53,7 @@ class FirestoreAuntieDataSource(
     override suspend fun uploadMedia(entityId: String, entityType: String, bytes: ByteArray, mimeType: String): WriteResult<MediaFile> = client.uploadMedia(entityId, entityType, bytes, mimeType)
     override suspend fun deleteMedia(mediaId: String, entityId: String): WriteResult<Unit> = client.deleteMedia(mediaId, entityId)
     override fun reportForSessionStream(sessionId: String): Flow<FirestoreResult<KinCareReport?>> = client.reportForSessionStream(sessionId)
-    override suspend fun saveReport(report: KinCareReport): WriteResult<String> = client.saveReport(report)
+    override suspend fun saveReport(loaded: KinCareReport, edited: KinCareReport): WriteResult<String> = client.saveReport(loaded, edited)
     override suspend fun sendReport(report: KinCareReport, session: KinCareSession): WriteResult<Unit> = client.sendReport(report, session)
     override fun trainingDocsStream(): Flow<FirestoreResult<List<TrainingDocument>>> = client.trainingDocsStream()
     override fun bookingNotesStream(kinfolkId: String, bookingId: String): Flow<FirestoreResult<List<BookingNote>>> =

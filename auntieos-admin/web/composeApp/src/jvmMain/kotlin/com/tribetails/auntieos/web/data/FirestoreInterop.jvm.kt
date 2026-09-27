@@ -403,6 +403,22 @@ internal actual suspend fun platformUpdateKinFields(kinId: String, changes: List
         if (changes.isNotEmpty()) JvmFirestoreRest.mergeFieldChanges("kin", kinId, changes)
         WriteResult.Ok(Unit)
     }
+// #994: a MERGE write, not setDoc, for kin_care_reports, kintale_templates,
+// household_data and dynamic_fields. setDoc (a PATCH with no
+// updateMask) replaced the whole document: fields the desktop model lacks were
+// deleted and every field another client changed since load went back to its
+// stale value. The body is only the fields the caller changed (FirestoreClient
+// diffs against the record the screen loaded), and bodyFrom inside
+// mergeFieldChanges keeps a field read as a Timestamp typed (#857). vet_clinics
+// saves go through the updateVetClinic callable instead (rules refuse client
+// writes there).
+internal actual suspend fun platformUpdateFields(collection: String, id: String, changes: List<FieldChange>): WriteResult<Unit> =
+    transportResult("update failed") {
+        require(id.isNotBlank()) { "update of $collection requires a document id" }
+        require(changes.none { it.path.first() == "_id" }) { "update of $collection: _id reached the write" }
+        if (changes.isNotEmpty()) JvmFirestoreRest.mergeFieldChanges(collection, id, changes)
+        WriteResult.Ok(Unit)
+    }
 internal actual suspend fun platformArchiveKin(id: String): WriteResult<Unit> =
     transportWrite("archive failed") { JvmFirestoreRest.patchFields("kin", id, mapOf("status" to JsonPrimitive("archived"))) }
 internal actual suspend fun platformPatchKinCare(id: String, patch: Map<String, String>): WriteResult<Unit> =
@@ -433,8 +449,6 @@ internal actual fun platformTemplatesStream(): Flow<FirestoreResult<List<KinTale
     JvmFirestoreRest.pollingStream { JvmFirestoreRest.list<KinTaleTemplate>("kintale_templates") }
 internal actual suspend fun platformCreateKinTaleReport(report: KinCareReport): WriteResult<String> =
     transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("kin_care_reports", jsonOut.encodeToString(report))) }
-internal actual suspend fun platformUpdateKinTaleReport(report: KinCareReport): WriteResult<Unit> =
-    transportResult("update failed") { JvmFirestoreRest.setDoc("kin_care_reports", report._id, jsonOut.encodeToString(report)); WriteResult.Ok(Unit) }
 internal actual suspend fun platformMarkKinTaleReportSent(reportId: String, sessionId: String, sentVia: String, deliveryReceiptId: String, sentAtIso: String): WriteResult<Unit> {
     // WARNING-15: one atomic Firestore :commit. The report side flips status to
     // "SENT" (uppercase to match the wasm bridge + the report screen's
@@ -516,8 +530,6 @@ internal actual suspend fun platformPickAndUploadMedia(entityId: String, entityT
     stubWriteResult("Bulk media upload is mobile-only")
 internal actual suspend fun platformCreateKinTaleTemplate(template: KinTaleTemplate): WriteResult<String> =
     transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("kintale_templates", jsonOut.encodeToString(template))) }
-internal actual suspend fun platformUpdateKinTaleTemplate(template: KinTaleTemplate): WriteResult<Unit> =
-    transportResult("update failed") { JvmFirestoreRest.setDoc("kintale_templates", template._id, jsonOut.encodeToString(template)); WriteResult.Ok(Unit) }
 // ISSUE #616. This was patchFields("kintale_templates", id, {"deleted": true}), a
 // soft-delete flag NOTHING in this repo reads: not the React admin's
 // `api/kinTaleTemplates.ts`, not `TemplateService.kt`, not Android's
@@ -631,8 +643,6 @@ internal actual suspend fun platformUpdateUserProfile(uid: String, loaded: UserP
 }
 internal actual suspend fun platformCreateVetClinic(clinic: VetClinic): WriteResult<String> =
     transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("vet_clinics", jsonOut.encodeToString(clinic))) }
-internal actual suspend fun platformUpdateVetClinic(clinic: VetClinic): WriteResult<Unit> =
-    transportResult("update failed") { JvmFirestoreRest.setDoc("vet_clinics", clinic._id, jsonOut.encodeToString(clinic)); WriteResult.Ok(Unit) }
 internal actual suspend fun platformDeleteVetClinic(id: String): WriteResult<Unit> =
     transportResult("delete failed") { if (JvmFirestoreRest.deleteDoc("vet_clinics", id)) WriteResult.Ok(Unit) else WriteResult.Err("delete failed") }
 internal actual suspend fun platformLogActivity(entry: ActivityLogEntry): WriteResult<String> =
@@ -640,12 +650,8 @@ internal actual suspend fun platformLogActivity(entry: ActivityLogEntry): WriteR
 
 internal actual suspend fun platformGetHouseholdData(kinfolkId: String): WriteResult<HouseholdData?> =
     transportResult("read failed") { WriteResult.Ok(JvmFirestoreRest.first<HouseholdData>("household_data") { it["kinfolkId"]?.jsonPrimitive?.content == kinfolkId }) }
-internal actual suspend fun platformSaveHouseholdData(data: HouseholdData): WriteResult<Unit> =
-    transportResult("save failed") { JvmFirestoreRest.setDoc("household_data", data._id.ifBlank { data.kinfolkId }, jsonOut.encodeToString(data)); WriteResult.Ok(Unit) }
 internal actual suspend fun platformCreateDynamicField(field: DynamicField): WriteResult<String> =
     transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("dynamic_fields", jsonOut.encodeToString(field))) }
-internal actual suspend fun platformUpdateDynamicField(field: DynamicField): WriteResult<Unit> =
-    transportResult("update failed") { JvmFirestoreRest.setDoc("dynamic_fields", field._id, jsonOut.encodeToString(field)); WriteResult.Ok(Unit) }
 internal actual suspend fun platformArchiveDynamicField(id: String): WriteResult<Unit> =
     transportWrite("archive failed") { JvmFirestoreRest.patchFields("dynamic_fields", id, mapOf("status" to JsonPrimitive("archived"))) }
 

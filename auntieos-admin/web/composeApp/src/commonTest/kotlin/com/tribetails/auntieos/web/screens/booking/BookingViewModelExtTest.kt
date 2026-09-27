@@ -206,7 +206,7 @@ class BookingViewModelExtTest {
             override suspend fun uploadMedia(entityId: String, entityType: String, bytes: ByteArray, mimeType: String) = _fake.uploadMedia(entityId, entityType, bytes, mimeType)
             override suspend fun deleteMedia(mediaId: String, entityId: String) = _fake.deleteMedia(mediaId, entityId)
             override fun reportForSessionStream(sessionId: String) = _fake.reportForSessionStream(sessionId)
-            override suspend fun saveReport(report: com.tribetails.auntieos.web.data.KinCareReport) = _fake.saveReport(report)
+            override suspend fun saveReport(loaded: com.tribetails.auntieos.web.data.KinCareReport, edited: com.tribetails.auntieos.web.data.KinCareReport) = _fake.saveReport(loaded, edited)
             override suspend fun sendReport(report: com.tribetails.auntieos.web.data.KinCareReport, session: com.tribetails.auntieos.web.data.KinCareSession) = _fake.sendReport(report, session)
             override fun trainingDocsStream() = _fake.trainingDocsStream()
             override fun bookingNotesStream(kinfolkId: String, bookingId: String) = _fake.bookingNotesStream(kinfolkId, bookingId)
