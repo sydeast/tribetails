@@ -1,5 +1,57 @@
 # O-3 App Check Ruling, 2026-07-13 [SEC]
 
+> **R3 ruling, 2026-09-27, closes the Android question this document left
+> open.** Docket R3: "Android has no App Check. Rely on sign-in and rate
+> limits. Stop the failing Play request." This supersedes D1's Android
+> paragraph and Phase 2 below, and the non-Play "sideload attestation path"
+> Phase 2 was re-scoped to (per the OWNER-1 note further down) is not being
+> designed; the topic is closed, not deferred again.
+>
+> Why: OWNER-1 already made Play Integrity permanently unusable here (no
+> Play Console registration, ever), so every launch of both Android apps
+> (`com.tribetails.auntieos`, `com.kinfolk.portal`) spent one Play Integrity
+> token request that could only fail, plus a captured Sentry exception for
+> it. App Check is not this system's authorization boundary and is log-only
+> on the server per this docket's ruling (see `appCheckDecision` in
+> `functions/src/lib/appCheckPolicy.ts`: a request outside the enforced
+> cohort is always allowed, and `business_settings/security.appCheckMode`
+> gates even cohort members): `req.auth` claims, firestore.rules, and the
+> callables' own rate limits
+> (`functions/src/lib/rateLimit.ts`, `functions/src/auth/loginSecurity.ts`)
+> are what actually guard both apps, and they cost Android nothing to keep
+> failing at.
+>
+> Removed: the Play Integrity dependency, its provider install, and the
+> token-fetch probe, from both Android apps' release builds. Also removed:
+> the debug App Check provider in both apps. It existed only to feed the
+> same probe/telemetry that release App Check fed, which nothing on the
+> server enforces for Android; keeping a debug-only provider around after
+> release App Check is gone would mean developers registering console
+> tokens for a check nobody reads.
+>
+> D3's flip condition #1 ("≥14 days since... the Android provider shipped to
+> production clients") no longer applies to any cohort: an Android client
+> will never carry a token, so that clock can only ever be started by the
+> web provider now. D2's cohort membership, the L1/L2 wrapper telemetry, and
+> the web reCAPTCHA Enterprise provider (D1's web paragraph) are unchanged by
+> this ruling. This is an Android-client-only change, not a server
+> enforcement change.
+>
+> One finding surfaced while implementing this: D2's Cohort 1 docstring
+> (`functions/src/lib/appCheckPolicy.ts`, `APP_CHECK_COHORT` comment) says
+> `getBusinessClosures` is "not reachable from the Compose tree." It is:
+> `mytribe/src/commonMain/kotlin/com/kinfolk/portal/portal/PortalApi.kt`'s
+> `getBusinessClosures` is called from `BookingWizardScreen.kt`, which
+> `AppNavHost.kt` wires into the app both Android and desktop ship. Today
+> this costs nothing because the mode has never left `log` for that cohort,
+> so a token-less request there is served with a `wouldReject` log line, not
+> a refusal. But `getBusinessClosures` is the one cohort-1 member, and if its
+> mode is ever flipped to `enforce` while Android has no App Check (which,
+> per this ruling, is permanent), the portal Android booking calendar breaks
+> for every kinfolk on it. Left unfixed here because item 2 of this docket
+> is an Android-client change, not a server enforcement change; flagging it
+> for whoever owns the next cohort-1 enforcement decision.
+
 Design ruling per docs/DEVELOPMENT_PLAN_2026-07-10.md S6: "O-3 App Check
 (design ruling: providers per platform, enforcement order, grace mode),
 Fable 5 designs, Opus implements." This document is the design. The
