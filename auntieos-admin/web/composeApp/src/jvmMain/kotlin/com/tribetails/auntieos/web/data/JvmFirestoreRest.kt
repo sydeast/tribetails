@@ -118,8 +118,10 @@ internal object JvmFirestoreRest {
     }
 
     private fun docToPlain(doc: JsonObject): JsonObject {
-        val id = doc["name"]?.jsonPrimitive?.content?.substringAfterLast('/') ?: ""
+        val name = doc["name"]?.jsonPrimitive?.content ?: ""
+        val id = name.substringAfterLast('/')
         val fields = doc["fields"]?.jsonObject ?: JsonObject(emptyMap())
+        recordTimestampPaths(name.substringAfter("/documents/", ""), fields)
         return buildJsonObject {
             put("_id", id)
             for ((k, v) in fields) put(k, fsToPlain(v.jsonObject))
@@ -133,6 +135,7 @@ internal object JvmFirestoreRest {
         val name = doc["name"]?.jsonPrimitive?.content ?: ""
         val relPath = name.substringAfter("/documents/", "")
         val fields = doc["fields"]?.jsonObject ?: JsonObject(emptyMap())
+        recordTimestampPaths(relPath, fields)
         return buildJsonObject {
             put("_id", name.substringAfterLast('/'))
             put("_path", relPath)
@@ -140,6 +143,59 @@ internal object JvmFirestoreRest {
         }
     }
 
+    // ── #857: timestamps survive a load-then-save ────────────────────────────
+    /**
+     * #857: the models read a Firestore Timestamp as its ISO string, and flat JSON
+     * has no timestamp type, so a save used to write that string back as a
+     * `stringValue`. This records, per document, which field paths ARRIVED as a
+     * `timestampValue`, so a later write of the same document sends them back as
+     * one. Keyed by the document's path under `/documents/` (`kin/k1`,
+     * `families/f1/bookings/b1`). A path is its field names in order, with
+     * [ARRAY_ELEMENT] standing in for any array index.
+     *
+     * Only the type that was READ is carried. A time-shaped string is never
+     * promoted on its shape alone: the web admin and functions store several time
+     * fields as ISO strings on purpose (inbox `repliedAt`, template `updatedAt`,
+     * booking `startTime`), and turning those into Timestamps would break their
+     * readers. A document the desktop never read (an `addDoc` create) writes
+     * strings, as it always has.
+     *
+     * The map is as fresh as the last read of that document (a list poll or a
+     * single get), which is how every desktop edit screen reaches its save.
+     */
+    private val timestampPaths = java.util.concurrent.ConcurrentHashMap<String, Set<List<String>>>()
+    internal const val ARRAY_ELEMENT = "[]"
+    /** Test hook: forget every recorded timestamp path. */
+    internal fun clearTimestampPaths() = timestampPaths.clear()
+    /** The recorded timestamp paths of the document at [docPath] (for tests). */
+    internal fun timestampPathsOf(docPath: String): Set<List<String>> = timestampPaths[docPath].orEmpty()
+    private fun recordTimestampPaths(docPath: String, fields: JsonObject) {
+        if (docPath.isEmpty()) return
+        val found = HashSet<List<String>>()
+        fun walk(value: JsonObject, path: List<String>) {
+            val (type, raw) = value.entries.firstOrNull() ?: return
+            when (type) {
+                "timestampValue" -> found += path
+                "mapValue" -> raw.jsonObject["fields"]?.jsonObject?.forEach { (k, v) -> walk(v.jsonObject, path + k) }
+                "arrayValue" -> raw.jsonObject["values"]?.jsonArray?.forEach { walk(it.jsonObject, path + ARRAY_ELEMENT) }
+            }
+        }
+        for ((k, v) in fields) walk(v.jsonObject, listOf(k))
+        if (found.isEmpty()) timestampPaths.remove(docPath) else timestampPaths[docPath] = found
+    }
+    /**
+     * Pure: the `timestampValue` to send for [raw], or null when it is not a
+     * date-time. An RFC 3339 string (Z or an offset) goes as written, so its
+     * fractional digits survive. A zone-less date-time is what the desktop's
+     * `nowIso()` stamps (local wall time), so it is read in the system zone. A
+     * bare date (`joinDate` as the web editor writes it) is not a timestamp.
+     */
+    internal fun timestampValueOf(raw: String): String? {
+        runCatching { java.time.OffsetDateTime.parse(raw) }.getOrNull()?.let { return raw }
+        return runCatching {
+            java.time.LocalDateTime.parse(raw).atZone(java.time.ZoneId.systemDefault()).toInstant().toString()
+        }.getOrNull()
+    }
     /** Convert one Firestore typed value envelope to flat JSON. */
     private fun fsToPlain(value: JsonObject): JsonElement {
         val (type, raw) = value.entries.firstOrNull() ?: return JsonNull
@@ -361,18 +417,31 @@ internal object JvmFirestoreRest {
 
     // ── write ─────────────────────────────────────────────────────────────────
 
-    /** Convert flat JSON to a Firestore typed value envelope. */
-    private fun plainToFs(element: JsonElement): JsonObject = when (element) {
+    /**
+     * Convert flat JSON to a Firestore typed value envelope. #857: [path] is where
+     * [element] sits in the document and [timestamps] the paths that document read
+     * back as Timestamps; a string at one of those paths that still parses as a
+     * date-time is sent as a `timestampValue`.
+     */
+    private fun plainToFs(
+        element: JsonElement,
+        timestamps: Set<List<String>> = emptySet(),
+        path: List<String> = emptyList(),
+    ): JsonObject = when (element) {
         is JsonNull -> buildJsonObject { put("nullValue", "NULL_VALUE") }
         is JsonObject -> buildJsonObject {
             put("mapValue", buildJsonObject {
-                put("fields", buildJsonObject { for ((k, v) in element) put(k, plainToFs(v)) })
+                put("fields", buildJsonObject { for ((k, v) in element) put(k, plainToFs(v, timestamps, path + k)) })
             })
         }
         is JsonArray -> buildJsonObject {
-            put("arrayValue", buildJsonObject { put("values", buildJsonArray { element.forEach { add(plainToFs(it)) } }) })
+            put("arrayValue", buildJsonObject {
+                put("values", buildJsonArray { element.forEach { add(plainToFs(it, timestamps, path + ARRAY_ELEMENT)) } })
+            })
         }
         is JsonPrimitive -> when {
+            element.isString && path in timestamps && timestampValueOf(element.content) != null ->
+                buildJsonObject { put("timestampValue", timestampValueOf(element.content)) }
             element.isString -> buildJsonObject { put("stringValue", element.content) }
             element.booleanOrNullSafe() != null -> buildJsonObject { put("booleanValue", element.boolean) }
             element.longOrNull != null -> buildJsonObject { put("integerValue", element.content) }
@@ -384,11 +453,19 @@ internal object JvmFirestoreRest {
     private fun JsonPrimitive.booleanOrNullSafe(): Boolean? = content.toBooleanStrictOrNull()
     private fun JsonPrimitive.doubleOrNullSafe(): Double? = content.toDoubleOrNull()
 
-    /** Build a Firestore document body (fields envelope) from a flat JSON object, dropping `_id`. */
-    private fun bodyFrom(plain: JsonObject): JsonObject = buildJsonObject {
-        put("fields", buildJsonObject {
-            for ((k, v) in plain) if (k != "_id") put(k, plainToFs(v))
-        })
+    /**
+     * Build a Firestore document body (fields envelope) from a flat JSON object,
+     * dropping `_id`. #857: [docPath] (`collection/id`) names the document being
+     * written, so fields it read as Timestamps are written as Timestamps. Null for
+     * a create, which has no read behind it.
+     */
+    private fun bodyFrom(plain: JsonObject, docPath: String?): JsonObject {
+        val timestamps = docPath?.let { timestampPaths[it] }.orEmpty()
+        return buildJsonObject {
+            put("fields", buildJsonObject {
+                for ((k, v) in plain) if (k != "_id") put(k, plainToFs(v, timestamps, listOf(k)))
+            })
+        }
     }
 
     /** PATCH (upsert) a document at collection/id from a serialized model. Returns the id. */
@@ -405,7 +482,7 @@ internal object JvmFirestoreRest {
         val resp = http.patch("$BASE/$collection/$id") {
             header(HttpHeaders.Authorization, "Bearer $token")
             contentType(ContentType.Application.Json)
-            setBody(bodyFrom(plain).toString())
+            setBody(bodyFrom(plain, "$collection/$id").toString())
         }
         if (!resp.status.isSuccess()) error("Firestore write ${resp.status.value}: ${resp.bodyAsText().take(180)}")
         return id
@@ -429,7 +506,7 @@ internal object JvmFirestoreRest {
             header(HttpHeaders.Authorization, "Bearer $token")
             paths.forEach { parameter("updateMask.fieldPaths", it) }
             contentType(ContentType.Application.Json)
-            setBody(bodyFrom(plain).toString())
+            setBody(bodyFrom(plain, "$collection/$id").toString())
         }
         if (!resp.status.isSuccess()) error("Firestore write ${resp.status.value}: ${resp.bodyAsText().take(180)}")
         return id
@@ -447,7 +524,7 @@ internal object JvmFirestoreRest {
         val paths = changes.map { firestoreFieldPath(it.path) }
         JvmFirestoreFixtures.lastWrite = RestWrite("MERGE", collection, id, paths.toSet())
         val token = bearerToken() ?: error("Not signed in")
-        val body = bodyFrom(kinfolkChangesBody(changes))
+        val body = bodyFrom(kinfolkChangesBody(changes), "$collection/$id")
         val resp = http.patch("$BASE/$collection/$id") {
             header(HttpHeaders.Authorization, "Bearer $token")
             // Pre-encoded with %20 for a space. `parameter()` form-encodes a space
@@ -483,7 +560,7 @@ internal object JvmFirestoreRest {
         val resp = http.post("$BASE/$collection") {
             header(HttpHeaders.Authorization, "Bearer $token")
             contentType(ContentType.Application.Json)
-            setBody(bodyFrom(plain).toString())
+            setBody(bodyFrom(plain, null).toString())
         }
         if (!resp.status.isSuccess()) error("Firestore create ${resp.status.value}: ${resp.bodyAsText().take(180)}")
         val name = codec.parseToJsonElement(resp.bodyAsText()).jsonObject["name"]?.jsonPrimitive?.content
@@ -512,9 +589,7 @@ internal object JvmFirestoreRest {
             header(HttpHeaders.Authorization, "Bearer $token")
             fields.keys.forEach { parameter("updateMask.fieldPaths", it) }
             contentType(ContentType.Application.Json)
-            setBody(buildJsonObject {
-                put("fields", buildJsonObject { for ((k, v) in fields) put(k, plainToFs(v)) })
-            }.toString())
+            setBody(bodyFrom(JsonObject(fields), "$collection/$id").toString())
         }
         return resp.status.isSuccess()
     }
@@ -540,6 +615,11 @@ internal object JvmFirestoreRest {
         val token = bearerToken() ?: error("Not signed in")
         val reportName = "$BASE/kin_care_reports/$reportId"
         val sessionName = "$BASE/kin_care_sessions/$sessionId"
+        // #857: sentAt / updatedAt go back as Timestamps where these docs hold them.
+        val reportTs = timestampPaths["kin_care_reports/$reportId"].orEmpty()
+        val sessionTs = timestampPaths["kin_care_sessions/$sessionId"].orEmpty()
+        fun report(field: String, v: String) = plainToFs(JsonPrimitive(v), reportTs, listOf(field))
+        fun session(field: String, v: String) = plainToFs(JsonPrimitive(v), sessionTs, listOf(field))
         val body = buildJsonObject {
             put("writes", buildJsonArray {
                 // 1) report doc: plain field update (masked so siblings survive).
@@ -549,9 +629,9 @@ internal object JvmFirestoreRest {
                         put("fields", buildJsonObject {
                             put("status", plainToFs(JsonPrimitive("SENT")))
                             put("sentVia", plainToFs(JsonPrimitive(sentVia)))
-                            put("sentAt", plainToFs(JsonPrimitive(sentAtIso)))
+                            put("sentAt", report("sentAt", sentAtIso))
                             put("deliveryReceiptId", plainToFs(JsonPrimitive(deliveryReceiptId)))
-                            put("updatedAt", plainToFs(JsonPrimitive(updatedAtIso)))
+                            put("updatedAt", report("updatedAt", updatedAtIso))
                         })
                     })
                     put("updateMask", buildJsonObject {
@@ -568,7 +648,7 @@ internal object JvmFirestoreRest {
                         put("name", sessionName)
                         put("fields", buildJsonObject {
                             put("autoCompleteEligible", plainToFs(JsonPrimitive(true)))
-                            put("updatedAt", plainToFs(JsonPrimitive(updatedAtIso)))
+                            put("updatedAt", session("updatedAt", updatedAtIso))
                         })
                     })
                     put("updateMask", buildJsonObject {

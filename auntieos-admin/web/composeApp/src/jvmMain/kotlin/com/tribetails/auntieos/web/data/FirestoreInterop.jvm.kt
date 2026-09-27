@@ -116,6 +116,7 @@ object JvmFirestoreFixtures {
         lastCallableName = null; lastCallablePayloadJson = null; callablePayloads.clear()
         lastWrite = null
         restTransport = null
+        JvmFirestoreRest.clearTimestampPaths()
     }
 }
 
