@@ -13,6 +13,22 @@ function open(content: string): Editor {
   return editor;
 }
 const out = (e: Editor) => toEmailContent(e.getHTML());
+/** The position right before the first text node reading exactly `text`. */
+function at(e: Editor, text: string): number {
+  let found = -1;
+  e.state.doc.descendants((node, pos) => {
+    if (found === -1 && node.isText && node.text === text) found = pos;
+  });
+  return found;
+}
+/**
+ * `insertContentAt(..., { applyInputRules: true })` only schedules the actual
+ * rule match; `@tiptap/core`'s `inputRulesPlugin` runs it inside its own
+ * `setTimeout(..., 0)`. One macrotask here waits for exactly that -- if a
+ * future TipTap version moves it to a microtask or `requestAnimationFrame`,
+ * these input-rule tests are the first place to look.
+ */
+const flushInputRules = () => new Promise((resolve) => setTimeout(resolve, 0));
 afterEach(() => {
   editor?.destroy();
   editor = null;
@@ -214,13 +230,6 @@ describe('each-block lists', () => {
 });
 describe('the keyboard cannot break a repeating list (#953 loop protection)', () => {
   const LOOP = '<p>x</p><ul>{{#each visits}}<li>a</li><li>b</li><li>c</li>{{/each}}</ul><p>y</p>';
-  function at(e: Editor, text: string): number {
-    let found = -1;
-    e.state.doc.descendants((node, pos) => {
-      if (found === -1 && node.isText && node.text === text) found = pos;
-    });
-    return found;
-  }
   it('loopedListName names the loop around the selection, and nothing outside it', () => {
     const e = open(LOOP);
     e.commands.setTextSelection(at(e, 'b') + 1);
@@ -321,6 +330,70 @@ describe('the keyboard cannot break a repeating list (#953 loop protection)', ()
     e.commands.keyboardShortcut('Enter');
     e.commands.insertContent('z');
     expect(out(e)).toBe('<p>x</p><ul>{{#each visits}}<li>a</li><li>b</li><li>c</li>{{/each}}</ul><p>z</p><p>y</p>');
+  });
+});
+describe('starting a list right beside a repeating list (#963)', () => {
+  const LOOP = '<ul>{{#each visits}}<li>a</li>{{/each}}</ul><p>y</p>';
+  const LOOP_BEFORE = '<p>y</p><ul>{{#each visits}}<li>a</li>{{/each}}</ul>';
+
+  it('the toolbar\'s Bulleted list wraps the paragraph after the loop instead of doing nothing', () => {
+    const e = open(LOOP);
+    e.commands.setTextSelection(at(e, 'y'));
+    expect(e.chain().focus().toggleBulletList().run()).toBe(true);
+    expect(out(e)).toBe('<ul>{{#each visits}}<li>a</li>{{/each}}</ul><ul><li>y</li></ul>');
+  });
+
+  it('the same toggle before a repeating list wraps instead of joining into it', () => {
+    const e = open(LOOP_BEFORE);
+    e.commands.setTextSelection(at(e, 'y'));
+    expect(e.chain().focus().toggleBulletList().run()).toBe(true);
+    expect(out(e)).toBe('<ul><li>y</li></ul><ul>{{#each visits}}<li>a</li>{{/each}}</ul>');
+  });
+
+  it('typing "- " right after a repeating list creates a list instead of losing the space', async () => {
+    const e = open(LOOP);
+    e.commands.insertContentAt(at(e, 'y'), '- ', { applyInputRules: true });
+    await flushInputRules();
+    expect(out(e)).toBe('<ul>{{#each visits}}<li>a</li>{{/each}}</ul><ul><li>y</li></ul>');
+  });
+
+  it('typing "- " right before a repeating list also creates a list instead of losing the space', async () => {
+    const e = open(LOOP_BEFORE);
+    e.commands.insertContentAt(at(e, 'y'), '- ', { applyInputRules: true });
+    await flushInputRules();
+    expect(out(e)).toBe('<ul><li>y</li></ul><ul>{{#each visits}}<li>a</li>{{/each}}</ul>');
+  });
+
+  it('the new list never carries the loop: no edit here can set each on it', () => {
+    const e = open(LOOP);
+    e.commands.setTextSelection(at(e, 'y'));
+    e.chain().focus().toggleBulletList().run();
+    const lists: unknown[] = [];
+    e.state.doc.descendants((node) => {
+      if (node.type.name === 'bulletList') lists.push(node.attrs['each']);
+    });
+    expect(lists).toEqual(['visits', null]);
+  });
+
+  it('a numbered list right after a bulleted loop already worked (different types never join)', () => {
+    const e = open(LOOP);
+    e.commands.setTextSelection(at(e, 'y'));
+    e.chain().focus().toggleOrderedList().run();
+    expect(out(e)).toBe('<ul>{{#each visits}}<li>a</li>{{/each}}</ul><ol><li>y</li></ol>');
+  });
+
+  it('two plain bulleted lists still join into one: the loop guard changes nothing outside a loop', () => {
+    const e = open('<ul><li>a</li></ul><p>y</p>');
+    e.commands.setTextSelection(at(e, 'y'));
+    e.chain().focus().toggleBulletList().run();
+    expect(out(e)).toBe('<ul><li>a</li><li>y</li></ul>');
+  });
+
+  it('typing "- " right after a plain (non-looped) bulleted list still joins into it', async () => {
+    const e = open('<ul><li>a</li></ul><p>y</p>');
+    e.commands.insertContentAt(at(e, 'y'), '- ', { applyInputRules: true });
+    await flushInputRules();
+    expect(out(e)).toBe('<ul><li>a</li><li>y</li></ul>');
   });
 });
 describe('no edit can break a repeating list (#953 fix round 2, structural guard)', () => {
