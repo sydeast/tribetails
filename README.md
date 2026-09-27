@@ -6,17 +6,18 @@ spans them lands as one commit.
 
 | Folder | What it is |
 |---|---|
-| `mytribe/functions` | Cloud Functions. The real backend, 185 callables |
+| `mytribe/functions` | Cloud Functions. The real backend: about 230 callables plus triggers and scheduled jobs |
 | `mytribe/web` | The kinfolk portal React app at `kinfolk.tribetails.com` |
 | `mytribe/src` | The kinfolk portal Android app (Compose, `com.kinfolk.portal`). Live, not a leftover |
 | `auntieos-admin/src` | The live operator admin at `auntie.tribetails.com` |
 | `auntieos-admin/android` | The operator Android app (`com.tribetails.auntieos`) |
-| `auntieos-admin/web` | AuntieOS-owned functions, plus the SUPERSEDED Compose wasm build and the PAUSED desktop (JVM) build |
+| `auntieos-admin/web` | AuntieOS-owned functions (`default` and `reconcile` codebases), plus the Compose desktop (JVM) console. Desktop gets no new features, but it is kept working as the fallback if the web admin breaks. The wasm build was deleted in #481 |
 
 Two Android apps ship from here, so "the Android app" is never specific enough
 to act on. Name the package.
 
-All of it deploys into a single Firebase project, `auntieos-ttpc`.
+All of it deploys into a single Firebase project, `auntieos-ttpc`. There is no
+staging project. Click-testing happens on the local emulators.
 
 `docs/RUNBOOK.md` is the standing operational doc: setup, scripts, builds,
 deploys, secrets and troubleshooting.
@@ -34,8 +35,10 @@ either could overwrite the other's. `mytribe/firestore.rules` is the source of
 truth and `auntieos-admin/web/firestore.rules` is a mirror, with a test and a
 pre-commit hook guarding the drift.
 
-History from all three original repos is preserved, grafted in via
-`git subtree`, so `git log` reaches back through the full history of each.
+History from all three original repos is grafted in via `git subtree`, but
+each of those repos starts at an initial commit dated 2026-07-16. Most of the
+code predates that, so `git log` does not show when older code was written or
+prove that something never existed.
 
 ## Deploying
 
@@ -44,12 +47,26 @@ The production release is one command:
     npm run deploy:bg     # detached, logged, survives the terminal closing
     npm run deploy        # foreground, when you want to answer the prompts
 
+A full release, the normal case, also ships the AuntieOS function codebases
+and skips the pre-deploy revision prune:
+
+    RELEASE_INCLUDE_ADMIN_FUNCTIONS=1 RELEASE_PREDEPLOY_KEEP=0 npm run deploy:bg
+
+Run it from the repo root, and never pipe it through `tail` or anything else.
+
 `scripts/release.sh` runs the whole ordered procedure: preconditions, CI
-verdict, `npm run check`, the Android build, indexes, index wait, rules,
-functions, both hosting targets, the APK upload, and a verify step that fetches
-the live bundles and proves they changed. Order is the point. Indexes go before
-the code that queries them and functions before the clients that call them,
-because both failures land at runtime rather than at build.
+verdict, dependency drift, secret and client-config checks, `npm run check`,
+the Android build, indexes, index wait, rules, functions, both hosting targets,
+the APK upload, a verify step that fetches the live bundles and proves they
+changed, the Cloud Run revision prune, the release tag and the merged-branch
+prune. Order is the point. Indexes go before the code that queries them and
+functions before the clients that call them, because both failures land at
+runtime rather than at build.
+
+Merging to `main` does not release anything. `.github/workflows/main-channel.yml`
+publishes main's HEAD to one fixed Firebase Hosting preview channel per web
+app, so main's UI can be walked before a release. Functions, Firestore and Auth
+behind those URLs are production, so do not submit forms there.
 
 Do not rebuild that sequence by hand. A menu of deploy commands is what this
 repo had before, and on 2026-07-26 the live admin sat 33 hours and ~19 merged
@@ -100,10 +117,10 @@ install, built independently of everything else here.
 
     npm run setup       one-time: hooks, Android SDK path, all installs
     npm test            every JS suite
-    npm run check       typecheck, lint, test, build
+    npm run check       typecheck, lint, contracts, seeds, test, build
 
-Suffix `test`, `typecheck` or `build` with `:functions`, `:geo`, `:admin` or
-`:portal` to run one project. `docs/RUNBOOK.md` has the full table.
+Suffix `test`, `typecheck` or `build` with `:functions`, `:admin` or `:portal`
+to run one project (`packages/geo` has `test:geo` and `typecheck:geo` only). `docs/RUNBOOK.md` has the full table.
 
 ## Secrets
 

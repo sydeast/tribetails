@@ -1,5 +1,13 @@
 # Moving CI off the Mac and onto the media server
 
+> **Retired. Do not follow this procedure.** The repo went public on
+> 2026-09-11, GitHub-hosted runners became free, and the self-hosted runners
+> were stopped that day. CI runs on GitHub-hosted `ubuntu-latest`. Do not
+> register or start a self-hosted runner, and do not set the `CI_RUNNER`
+> repository variable: every job still reads `vars.CI_RUNNER || 'ubuntu-latest'`,
+> so setting it would move CI back onto a machine. The rest of this page is
+> kept as the record of what was tried.
+
 Written 2026-08-27, after two Cypress jobs were refused outright by GitHub over
 billing. The target is `hanasamku2`, the media server: Debian, `x86_64`.
 

@@ -57,19 +57,19 @@ press-3 live-connect path had never once executed.
 `docs/twilio/studio-flow-reference.md` as descriptions of what runs.** Both are
 retained as history. The blueprint in particular is subtitled "Twilio Assets
 Edition" and routes six `.mp3` greetings that do not exist:
-`auntieos-admin/twilio-service/assets/` is empty and all six URLs 404. The live
+`auntieos-admin/twilio-service/assets/` does not exist and all six URLs 404. The live
 flow used text-to-speech, which is what `twilioVoice.ts` reproduces.
 
 ## Where the code lives
 
 | Integration | Path | Deploy mechanism |
 |---|---|---|
-| **Business voice flow (LIVE)** | `mytribe/functions/src/twilio/twilioVoice.ts` | `firebase deploy --only functions:mytribe:twilioVoice` |
+| **Business voice flow (LIVE)** | `mytribe/functions/src/twilio/twilioVoice.ts` | `scripts/safe-deploy.sh mytribe -- firebase deploy --only functions:mytribe:twilioVoice`, or the release |
 | Business hours resolution | `mytribe/functions/src/lib/businessHours.ts` | (same) |
 | Business voice service (screening, Voice SDK) | `auntieos-admin/twilio-service/functions/` | `twilio-run deploy` (Twilio Serverless) |
 | Studio Flow definition (SUPERSEDED, kept for rollback) | `auntieos-admin/studio_flow_v2.json` | Import into Twilio Console → Studio |
 | Studio Flow blueprint (SUPERSEDED, and drifted) | `docs/twilio/studio-flow-reference.md` | history only |
-| Kinfolk app outbound SMS | `mytribe/functions/src/lib/twilio.ts`, `src/notifications/senders/smsChannel.ts`, `src/admin/sendExternalMessage.ts`, `src/admin/broadcastMessage.ts` | `firebase deploy --only functions` |
+| Kinfolk app outbound SMS | `mytribe/functions/src/lib/twilio.ts`, `src/notifications/senders/smsChannel.ts`, `src/admin/sendExternalMessage.ts`, `src/admin/broadcastMessage.ts` | the production release (`npm run deploy:bg`); by hand, `scripts/safe-deploy.sh mytribe -- firebase deploy --only "functions:mytribe:NAME"` per function |
 | Kinfolk app inbound webhooks | `mytribe/functions/src/twilio/twilioInbound.ts` | deployed as Cloud Run services (`twilioinboundsms`, `twilioinboundvoicemail`, `twilioinboundcall`) |
 | Smoke tests | `mytribe/functions/docs/NOTIFICATION_SMOKE_TESTS.md` | — |
 
@@ -121,8 +121,8 @@ TWILIO_INBOUND_CALL_URL       # https://us-central1-<project>.cloudfunctions.net
 
 A gcfv2 function is mounted only the secrets its own `secrets:` array declares,
 and all three inbound handlers declare `['TWILIO_AUTH_TOKEN', 'SENTRY_DSN']`
-(`mytribe/functions/src/twilio/twilioInbound.ts:557-590`). They read the URLs
-off `process.env` (`:136`), which a Secret Manager entry never reaches. Set them
+(`mytribe/functions/src/twilio/twilioInbound.ts:518-540`). They read the URLs
+off `process.env` (`twilioSignature.ts:27-28`), which a Secret Manager entry never reaches. Set them
 with the `gcloud run services update` commands in step 7 below. `docs/RUNBOOK.md`
 § *Activating the Twilio inbound webhooks* has the failure modes.
 
@@ -147,23 +147,26 @@ developer to the existing one), do this in order:
    npm install
    npm run deploy              # runs `twilio-run deploy`
    ```
-   This publishes to a new `<service-name>-####.twil.io` domain — update
+   This publishes to a new `<service-name>-####.twil.io` domain. Update
    `DOMAIN_NAME` and anywhere the old domain is hardcoded (Android:
-   `CallScreenActivity.kt`, `CallsViewModel.kt`, `TwilioApi.kt`) if you're
-   standing up a fresh service rather than reusing the existing one.
-4. **Build the Studio Flow.** Console → Studio → Create new Flow → build it
-   per `docs/twilio/studio-flow-reference.md` (widget-by-widget graph), or
-   import `auntieos-admin/studio_flow_v2.json` directly. That JSON is NOT
-   templated: it hardcodes the live domain `tribetailsattendant-8587.twil.io`
-   in 13 places and contains no placeholders. A fresh import therefore points
-   your new flow at the production service. If you are standing up a separate
-   service, search-and-replace that domain with the one from step 3 before you
-   publish the flow. Upload the 6 audio assets it references
-   (`after_hours_greeting`, `open_hours_greeting`, `open_hours_retry`,
-   `gather_intro`, `try_text_suggestion`, `thank_you_vm`) into
-   `twilio-service/assets/`.
-5. **Point the number at the Flow.** Console → Phone Numbers → your number →
-   Voice → "A Call Comes In" → Studio Flow → select the flow from step 4.
+   `voice/VoiceTokenManager.kt`, `data/api/RetrofitClient.kt`,
+   `data/repository/AuntieRepository.kt`) if you're standing up a fresh
+   service rather than reusing the existing one.
+4. **Deploy the call flow.** The business line is `twilioVoice` in
+   `mytribe/functions`, shipped by the production release. By hand:
+   ```bash
+   scripts/safe-deploy.sh mytribe -- firebase deploy --only functions:mytribe:twilioVoice
+   ```
+   Set its env `TWILIO_VOICE_BASE_URL` to the function's exact public URL with
+   no trailing slash. Signature validation hashes the full URL Twilio posted
+   to, so any drift is a 403, which on a live call is a rejected caller.
+   `TWILIO_INBOUND_VOICEMAIL_URL` (step 7) must already be set, because the
+   voicemail recording posts there. The activation notes at the top of
+   `twilioVoice.ts` are the authority.
+5. **Point the number at `twilioVoice`.** Console → Phone Numbers → your
+   number → Voice → "A Call Comes In" → Webhook, HTTP POST, the same URL as
+   `TWILIO_VOICE_BASE_URL`. The Studio Flow (`auntieos-admin/studio_flow_v2.json`)
+   is only the rollback target; do not build a new one.
 6. **Set up the Voice SDK path (if you need in-app calling).** Console →
    Voice → TwiML Apps → create one, set its Voice Request URL to your
    service's `/incoming-call-client` endpoint, put its SID in
