@@ -1184,7 +1184,13 @@ class PortalApi(private val fns: FunctionsClient) {
      * account. Backed by `listHouseholdContacts` (PRIMARY-only, operator
      * bypasses), returned in the server's order, which is by name.
      *
-     * A CONTACT IS NOT A MEMBER AND NOT AN INVITE (ruling, 2026-09-12). Nothing
+     * ORPHANED (#829). The operator's 2026-09-27 ruling replaces the 2026-09-12
+     * one these were built for: "there is no true 'Contact List'." The Tribe
+     * screen no longer draws a contacts card, so nothing should call these
+     * three. They stay until the operator has read `report:household-contacts`
+     * and ruled on the rows in `families/{id}/contacts`.
+     *
+     * As built, a contact was not a member and not an invite. Nothing
      * in these three functions mints an `inviteRequests` row, sends mail or
      * creates an account; [addSecondaryContact] above is the gesture that does.
      * The wall is in the payloads: every argument schema in

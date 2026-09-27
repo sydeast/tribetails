@@ -396,9 +396,16 @@ export function addSecondaryContact(req: AddSecondaryContactRequest): Promise<Ad
 /**
  * A person the household can be reached through who holds no portal account.
  *
- * OPERATOR RULING (2026-09-12): "a secondary contact does not have to be a
- * portal user. primary kinfolk user will invite a second kinfolk to the
- * household to manage and receive notifications." Two gestures, two outcomes.
+ * ORPHANED (#829). Built for the 2026-09-12 ruling ("a secondary contact does
+ * not have to be a portal user"), which the operator's 2026-09-27 ruling
+ * replaces: "there is no true 'Contact List'. There can be up to 3 ppl's
+ * contact info to a household: Primary Kinfolk (PK), Secondary Kinfolk (SK),
+ * and Emergency Contact (EC)." The Tribe profile no longer draws a contacts
+ * card, so no screen should call the three functions below. They stay, with
+ * their tests, until the operator has read `report:household-contacts` and
+ * ruled on the rows in `families/{id}/contacts`.
+ *
+ * As built: two gestures, two outcomes.
  * `addSecondaryContact` above is the second one — it mints an invite and hands
  * somebody a sign-in. This block is the first, and it mints nothing: no
  * `inviteRequests` row, no account, no `MemberPermissions`.

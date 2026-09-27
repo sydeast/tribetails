@@ -22,6 +22,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -216,6 +217,33 @@ class DirectoryViewModelExtTest {
             "Expected lowercase 'rosa' to match 'Rosa Parks' (case-insensitive), got $displayed",
             displayed.any { it.firstName == "Rosa" }
         )
+    }
+
+    // #829, operator ruling 2026-09-27: "PK: contact info required".
+    @Test
+    fun `saveKinfolk refuses a primary with no phone and no email, and creates nothing`() = runTest(testDispatcher) {
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
+        vm.updateFirstName("New")
+        vm.updatePhoneNumber("  ")
+        vm.saveKinfolk()
+        advanceUntilIdle()
+
+        assertEquals("The primary kinfolk needs a phone number or an email.", vm.addKinfolkState.value.error)
+        assertEquals(PRIMARY_CONTACT_REQUIRED, vm.addKinfolkState.value.error)
+        coVerify(exactly = 0) { mockRepo.createKinfolkComplete(any(), any()) }
+        coVerify(exactly = 0) { mockRepo.saveEmergencyContacts(any(), any()) }
+    }
+
+    @Test
+    fun `a phone, a secondary phone or an email each counts as the primary contact`() {
+        val blank = AddKinfolkUiState()
+        assertFalse(hasPrimaryContact(blank))
+        assertTrue(hasPrimaryContact(blank.copy(phoneNumber = "8055550100")))
+        assertTrue(hasPrimaryContact(blank.copy(secondaryPhone = "8055550100")))
+        assertTrue(hasPrimaryContact(blank.copy(email = "a@example.com")))
     }
 
     // H-A4: saveKinfolk with blank firstName must set an error - not silently return

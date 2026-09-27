@@ -272,9 +272,10 @@ export { addKin, updateKin, archiveKin } from './portal/kinWrites';
 export { setActiveTribe } from './portal/setActiveTribe';
 export { signKinPhotoUpload, confirmKinPhotoUpload } from './portal/signKinPhotoUpload';
 export { addSecondaryContact } from './portal/addSecondaryContact';
-// The other half of the operator's 2026-09-12 ruling. `addSecondaryContact`
-// above INVITES a second kinfolk to the portal; these three record a household
-// contact who holds no portal account at all. Two actions, two outcomes.
+// #829: the household contacts list. Operator ruling 2026-09-27 says there is
+// no contacts list, so the screens that called these three are removed. They stay exported,
+// unreferenced, until the operator has read `report:household-contacts` and ruled
+// on the rows in `families/{id}/contacts`. See the header of householdContacts.ts.
 export {
   listHouseholdContacts,
   saveHouseholdContact,

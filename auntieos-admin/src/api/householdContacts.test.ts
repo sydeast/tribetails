@@ -29,11 +29,13 @@ function contact(over: Partial<HouseholdContact> = {}): HouseholdContact {
 }
 
 /**
- * RULING (2026-09-12): "a secondary contact does not have to be a portal user.
- * primary kinfolk user will invite a second kinfolk to the household to manage
- * and receive notifications."
+ * Built for the 2026-09-12 ruling ("a secondary contact does not have to be a
+ * portal user"), which the operator's 2026-09-27 ruling on #829 replaces: "there
+ * is no true 'Contact List'." No screen uses these wrappers any more; they and
+ * this test stay until the operator has read `report:household-contacts` and
+ * ruled on the data.
  *
- * These three callables are the first half of that, and the cases that matter
+ * These three callables were the first half of the old ruling, and the cases that matter
  * are the ones that keep it from growing back into the second: a contact
  * carries no permission set, no role and no invite, and a save is a diff of the
  * four editable fields rather than a rebuild of the stored document.

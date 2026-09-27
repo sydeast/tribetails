@@ -104,6 +104,19 @@ export interface CreateKinfolkResult {
 }
 
 /**
+ * #829, operator ruling 2026-09-27: "PK: contact info required". The server's
+ * `PRIMARY_CONTACT_REQUIRED_MESSAGE` in `mytribe/functions/src/admin/createKinfolk.ts`,
+ * word for word, so the refusal reads the same whichever side caught it. A
+ * phone or an email is enough. Add only: an edit is never refused for it.
+ */
+export const PRIMARY_CONTACT_REQUIRED = 'The primary kinfolk needs a phone number or an email.';
+
+/** True when the primary kinfolk has a phone or an email to reach them on. */
+export function hasPrimaryContact(input: Pick<NewKinfolkInput, 'phoneNumber' | 'email'>): boolean {
+  return input.phoneNumber.trim() !== '' || input.email.trim() !== '';
+}
+
+/**
  * `ignoreDuplicateOf` (#907 review item 1a): the household this operator just
  * Discarded on the Add prompt. Discard means the next Add is a new household, so
  * the server's duplicate check skips that one id.
@@ -113,6 +126,7 @@ export async function createKinfolk(input: NewKinfolkInput, ignoreDuplicateOf?: 
   const lastName = input.lastName.trim();
   if (firstName === '') throw new Error('createKinfolk requires a first name');
   if (lastName === '') throw new Error('createKinfolk requires a last name');
+  if (!hasPrimaryContact(input)) throw new Error(PRIMARY_CONTACT_REQUIRED);
 
   const ignore = ignoreDuplicateOf?.trim() ?? '';
   const res = await call<

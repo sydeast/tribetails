@@ -15,12 +15,24 @@ import { SECONDARY_LABEL_MAX } from '../lib/schema';
  * Household secondary CONTACTS: people a household can be reached through who
  * hold no portal account at all.
  *
- * OPERATOR RULING (2026-09-12): "a secondary contact does not have to be a
- * portal user. primary kinfolk user will invite a second kinfolk to the
- * household to manage and receive notifications."
+ * ORPHANED, KEPT ON PURPOSE (#829). Operator ruling 2026-09-27 (docket R1),
+ * which replaces the 2026-09-12 "a secondary contact does not have to be a
+ * portal user" ruling this file was built for: "there is no true 'Contact
+ * List'. There can be up to 3 ppl's contact info to a household: Primary
+ * Kinfolk (PK), Secondary Kinfolk (SK), and Emergency Contact (EC). PK: contact
+ * info required, portal access required. SK: contact info optional, portal
+ * access optional. EC: contact info required, portal access never. EC's contact
+ * info is a household item."
  *
- * Those are two actions with two outcomes, and until this file the codebase had
- * only the second one. `addSecondaryContact` is named for the first and does
+ * The ruling takes the contacts list off every screen, so no client should call
+ * these three callables. They stay deployed, unreferenced, together with the collection and
+ * its closed rules block, until the operator has read `report:household-contacts`
+ * (mytribe/scripts/reportHouseholdContacts.ts) and ruled on the rows it finds.
+ * Do not delete them, the rules block or the data before that ruling.
+ *
+ * What follows is the design as it was built. At the time, recording a contact
+ * and inviting a second kinfolk were two actions with two outcomes, and until
+ * this file the codebase had only the second one. `addSecondaryContact` is named for the first and does
  * the second: it takes an `invitedEmail`, mints an `inviteRequests` document
  * and hands the recipient a portal account with a `MemberPermissions` set. A
  * household whose second contact will never sign in — the other pet parent who

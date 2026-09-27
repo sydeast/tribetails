@@ -53,6 +53,7 @@ class DirectoryViewModelPendingAddTest {
         coEvery { repo.createKinfolkComplete(any(), any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = id), duplicateOf)) }
         coEvery { repo.saveEmergencyContacts(id, any()) } returns Result.failure(Exception("offline"))
         vm.updateFirstName("Jamie")
+        vm.updateEmail("household@example.com")
         vm.updateLastName("Halbrook")
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Park", "8055550199"))
         vm.saveKinfolk()
@@ -74,6 +75,7 @@ class DirectoryViewModelPendingAddTest {
     @Test
     fun `leaving Add with only a draft offers nothing`() {
         vm.updateFirstName("Jamie")
+        vm.updateEmail("household@example.com")
         vm.leaveAddKinfolk()
         assertFalse(vm.addKinfolkState.value.offerPendingOnOpen)
         assertNull(vm.addKinfolkState.value.createdKinfolkId)
@@ -131,6 +133,7 @@ class DirectoryViewModelPendingAddTest {
     private fun addDuplicate() {
         coEvery { repo.createKinfolkComplete(any(), any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-existing"), "kf-existing")) }
         vm.updateFirstName("Jamie")
+        vm.updateEmail("household@example.com")
         vm.updateLastName("Halbrook-Park")
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Park", "8055550199"))
         vm.saveKinfolk()
@@ -141,7 +144,7 @@ class DirectoryViewModelPendingAddTest {
     fun `the household's edit form opens with what Add typed that differs, unsaved, and saves only that`() {
         addDuplicate()
         coEvery { repo.getKinfolk() } returns Result.success(
-            listOf(Kinfolk(id = "kf-existing", firstName = "Jamie", lastName = "Halbrook", phoneNumber = "8055550134", status = "prospect", preferredContactMethod = "Text")),
+            listOf(Kinfolk(id = "kf-existing", firstName = "Jamie", lastName = "Halbrook", phoneNumber = "8055550134", email = "household@example.com", status = "prospect", preferredContactMethod = "Text")),
         )
         coEvery { repo.updateKinfolkFields(any(), any()) } returns Result.success(Unit)
         coEvery { repo.saveEmergencyContacts("kf-existing", any()) } returns Result.success(emptyList())
@@ -180,6 +183,7 @@ class DirectoryViewModelPendingAddTest {
         coEvery { repo.createKinfolkComplete(any(), any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-new"), null)) }
         coEvery { repo.saveEmergencyContacts("kf-new", any()) } returns Result.success(emptyList())
         vm.updateFirstName("Jamie")
+        vm.updateEmail("household@example.com")
         vm.updateLastName("Halbrook")
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Park", "8055550199"))
         vm.saveKinfolk()

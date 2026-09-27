@@ -65,10 +65,14 @@ data class Member(
 /**
  * A person the household can be reached through who holds NO portal account.
  *
- * OPERATOR RULING (2026-09-12): "a secondary contact does not have to be a
- * portal user. primary kinfolk user will invite a second kinfolk to the
- * household to manage and receive notifications." Two gestures with two
- * outcomes. [Member] above is the second one: a uid, a role, a status and a
+ * ORPHANED (#829). Built for the 2026-09-12 ruling ("a secondary contact does
+ * not have to be a portal user"), which the operator's 2026-09-27 ruling
+ * replaces: "there is no true 'Contact List'. There can be up to 3 ppl's
+ * contact info to a household: Primary Kinfolk (PK), Secondary Kinfolk (SK),
+ * and Emergency Contact (EC)." Kept, with the [PortalApi] calls that decode it,
+ * until the operator has read `report:household-contacts` and ruled on the data.
+ *
+ * As built: two gestures with two outcomes. [Member] above is the second one: a uid, a role, a status and a
  * [MemberPermissions] set, because there is something to sign in to. A contact
  * has none of those four, and the absence is the type — there is no field here
  * for a screen to fill with a permission, so the two cannot quietly merge back

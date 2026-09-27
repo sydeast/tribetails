@@ -117,6 +117,7 @@ describe('AddKinfolkDialog', () => {
 
     await userEvent.type(screen.getByLabelText('First name'), 'Jamie');
     await userEvent.type(screen.getByLabelText('Last name'), 'Halbrook');
+    await userEvent.type(screen.getByLabelText('Email'), 'jamie@example.com');
     await userEvent.type(screen.getByLabelText('Address'), '123 Bark');
     await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
     await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
@@ -140,6 +141,7 @@ describe('AddKinfolkDialog', () => {
 
     await userEvent.type(screen.getByLabelText('First name'), 'Jamie');
     await userEvent.type(screen.getByLabelText('Last name'), 'Halbrook');
+    await userEvent.type(screen.getByLabelText('Email'), 'jamie@example.com');
     await userEvent.type(screen.getByLabelText('Address'), '9 Unmapped Rd');
     expect(await screen.findByText(/address lookup failed: mapbox_502/i)).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
@@ -177,6 +179,7 @@ describe('AddKinfolkDialog', () => {
 
     await userEvent.type(screen.getByLabelText('First name'), 'Jamie');
     await userEvent.type(screen.getByLabelText('Last name'), 'Halbrook');
+    await userEvent.type(screen.getByLabelText('Email'), 'jamie@example.com');
     await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
     await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
@@ -196,6 +199,7 @@ describe('AddKinfolkDialog', () => {
 
     await userEvent.type(screen.getByLabelText('First name'), 'Jamie');
     await userEvent.type(screen.getByLabelText('Last name'), 'Halbrook');
+    await userEvent.type(screen.getByLabelText('Email'), 'jamie@example.com');
     await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
     await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
@@ -211,6 +215,18 @@ describe('AddKinfolkDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
     expect(onClose).toHaveBeenCalledOnce();
     expect(createKinfolk).not.toHaveBeenCalled();
+  });
+
+  // #829, ruling 2026-09-27: "PK: contact info required".
+  it('requires a phone or an email for the primary before anything is created', async () => {
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText('First name'), 'Jamie');
+    await userEvent.type(screen.getByLabelText('Last name'), 'Halbrook');
+    await fillContact();
+    await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
+    expect(await screen.findByText('The primary kinfolk needs a phone number or an email.')).toBeInTheDocument();
+    expect(createKinfolk).not.toHaveBeenCalled();
+    expect(saveEmergencyContacts).not.toHaveBeenCalled();
   });
 
   it('requires an Emergency Contact before anything is created', async () => {

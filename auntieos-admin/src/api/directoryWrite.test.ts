@@ -17,6 +17,7 @@ import {
   createKin,
   updateKinTags,
   updateKinfolkTags,
+  PRIMARY_CONTACT_REQUIRED,
   type NewKinfolkInput,
   type NewKinInput,
 } from './directoryWrite';
@@ -108,6 +109,20 @@ describe('createKinfolk', () => {
   it('rejects a blank last name without calling the callable', async () => {
     await expect(createKinfolk(kinfolkInput({ lastName: '' }))).rejects.toThrow(/last name/i);
     expect(call).not.toHaveBeenCalled();
+  });
+
+  // #829, ruling 2026-09-27: "PK: contact info required".
+  it('rejects a primary with no phone and no email without calling the callable', async () => {
+    await expect(createKinfolk(kinfolkInput({ phoneNumber: ' ', email: '' }))).rejects.toThrow(PRIMARY_CONTACT_REQUIRED);
+    expect(PRIMARY_CONTACT_REQUIRED).toBe('The primary kinfolk needs a phone number or an email.');
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it('takes a phone alone or an email alone as the primary contact', async () => {
+    call.mockResolvedValue({ kinfolkId: 'kf-1', duplicateOf: null });
+    await createKinfolk(kinfolkInput({ email: '' }));
+    await createKinfolk(kinfolkInput({ phoneNumber: '' }));
+    expect(call).toHaveBeenCalledTimes(2);
   });
 
   it('propagates a genuine failure for the caller to surface fail-loud', async () => {

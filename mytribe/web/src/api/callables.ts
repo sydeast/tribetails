@@ -45,8 +45,9 @@ export const PENDING_CALLABLES = [
   'listMembers',
   'addSecondaryContact',
   'updateSecondaryPermissions',
-  // Household CONTACTS, which are not members and not invites: see the block in
-  // api/tribeApi.ts and the 2026-09-12 ruling it quotes.
+  // Household CONTACTS. Orphaned by the 2026-09-27 ruling (#829, "there is no
+  // true 'Contact List'"); kept until the operator rules on the data. See the
+  // block in api/tribeApi.ts.
   'listHouseholdContacts',
   'saveHouseholdContact',
   'removeHouseholdContact',

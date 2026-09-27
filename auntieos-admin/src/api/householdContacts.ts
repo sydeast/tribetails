@@ -2,11 +2,16 @@
  * Household secondary CONTACTS: the people a household can be reached through
  * who hold no portal account.
  *
- * OPERATOR RULING (2026-09-12): "a secondary contact does not have to be a
- * portal user. primary kinfolk user will invite a second kinfolk to the
- * household to manage and receive notifications."
+ * ORPHANED, KEPT ON PURPOSE (#829). Operator ruling 2026-09-27, which
+ * replaces the 2026-09-12 "a secondary contact does not have to be a portal
+ * user" ruling this file was built for: "there is no true 'Contact List'. There
+ * can be up to 3 ppl's contact info to a household: Primary Kinfolk (PK),
+ * Secondary Kinfolk (SK), and Emergency Contact (EC)." The ruling takes the
+ * contacts list off Household Members, so no screen should import this file.
+ * It stays, with its test, until the operator has read
+ * `report:household-contacts` and ruled on the rows in `families/{id}/contacts`.
  *
- * Two actions, two outcomes, and this file is the first one only. Nothing here
+ * As built: two actions, two outcomes, and this file is the first one only. Nothing here
  * mints an invite, sends mail, or creates an account. The second one is
  * `inviteKinfolkToPortal` in `membersWrite.ts` (the admin's one invite, the
  * primary claim) and `addSecondaryContact` on MyTribe (the primary inviting a

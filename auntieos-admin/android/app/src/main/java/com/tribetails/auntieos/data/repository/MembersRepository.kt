@@ -22,11 +22,17 @@ import com.tribetails.auntieos.util.AuntieLog
  * PRIMARY-only per the 2026-08-04 invite ruling, and the server side of it is
  * not dead code just because the client-side form is gone.
  *
- * A CONTACT IS NOT AN INVITE (operator ruling, 2026-09-12): "a secondary
- * contact does not have to be a portal user. primary kinfolk user will invite a
- * second kinfolk to the household to manage and receive notifications." Two
- * actions with two outcomes, so three more callables:
- * `listHouseholdContacts`, `saveHouseholdContact` and `removeHouseholdContact`.
+ * THE THREE CONTACT CALLS ARE ORPHANED (#829). Operator ruling 2026-09-27,
+ * which replaces the 2026-09-12 "a secondary contact does not have to be a
+ * portal user" ruling they were built for: "there is no true 'Contact List'.
+ * There can be up to 3 ppl's contact info to a household: Primary Kinfolk (PK),
+ * Secondary Kinfolk (SK), and Emergency Contact (EC)." The ruling takes the
+ * contacts list off the members screen, so nothing on this client should call
+ * [listHouseholdContacts], [saveHouseholdContact] or [removeHouseholdContact].
+ * They stay, with their tests, until the operator has read
+ * `report:household-contacts` and ruled on the rows in `families/{id}/contacts`.
+ * As built, they were `listHouseholdContacts`, `saveHouseholdContact` and
+ * `removeHouseholdContact`.
  * A contact is a name, a label, a phone and sometimes an email for somebody who
  * holds no portal account: no uid, no role, no `MemberPermissions`, and no
  * `inviteRequests` row anywhere. The server's argument schema is `.strict()`
@@ -36,9 +42,10 @@ import com.tribetails.auntieos.util.AuntieLog
  * `inviteKinfolkToPortal` IS HERE NOW, and was not. It already ships on this
  * client as [AuntieRepository.inviteKinfolkToPortal], driven by the button on
  * the household profile, and this file used to leave it out on the grounds
- * that a second button one tap away would be duplication. The same 2026-09-12
- * ruling settles that: the members screen carries BOTH gestures on BOTH
- * clients, or the two read as one on whichever client is missing half. This is
+ * that a second button one tap away would be duplication. The 2026-09-12
+ * ruling put the invite on the members screen of both clients, and it stays
+ * there under the 2026-09-27 ruling: portal access is required for the Primary
+ * Kinfolk, and this button is how the office sends it. This is
  * the same callable, not a second invite path; [portalInviteMessage] is shared
  * with the Directory so the two say the same thing about the same answer.
  *
@@ -110,8 +117,10 @@ class MembersRepository(
      * Deliberately not a [Member] with null fields: a member has a uid, a role,
      * a status and a permission set because there is an account to authorise,
      * and a contact has none of those because there is nothing to sign in to.
-     * Modelling them as one type is exactly the conflation the 2026-09-12
-     * ruling separates.
+     * Modelling them as one type was the conflation the 2026-09-12 ruling
+     * separated. Orphaned since the 2026-09-27 ruling (#829): no screen draws a
+     * contact any more; kept for the three calls below until the operator rules
+     * on the data.
      */
     data class Contact(
         val contactId: String,
@@ -348,8 +357,9 @@ class MembersRepository(
      * server's three-way answer verbatim: "sent", "already_active", "no_email".
      *
      * The SAME callable [AuntieRepository.inviteKinfolkToPortal] calls, reached
-     * from the members screen as well as the household profile, because the
-     * 2026-09-12 ruling puts both gestures on both clients' members screen. Two
+     * from the members screen as well as the household profile (2026-09-12
+     * ruling; the 2026-09-27 ruling keeps it: the Primary Kinfolk needs portal
+     * access). Two
      * of the three answers emailed nobody, so the status is handed back rather
      * than flattened into a boolean; [portalInviteMessage] turns it into the one
      * sentence both screens say.
