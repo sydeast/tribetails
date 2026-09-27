@@ -155,25 +155,11 @@ export function hasKinTaleContent(
  * `nowIsoUtc()`, never `serverTimestamp()`, matching every other field on
  * this doc.
  */
-export async function saveKinTaleDraft(draft: KinTaleDraft): Promise<string | null> {
+export async function saveKinTaleDraft(draft: KinTaleDraft, loaded?: KinTaleDraft): Promise<string | null> {
   if (!hasKinTaleContent(draft)) return draft._id ?? null;
   const now = new Date().toISOString();
 
-  const fields = {
-    sessionId: draft.sessionId,
-    kinfolkId: draft.kinfolkId,
-    kinfolkName: draft.kinfolkName,
-    kinIds: draft.kinIds,
-    serviceType: draft.serviceType,
-    visitDate: draft.visitDate,
-    arrivedAt: draft.arrivedAt,
-    title: draft.title,
-    titleGeneratedByAi: draft.titleGeneratedByAi,
-    bodyCopy: draft.bodyCopy,
-    mediaFileIds: draft.mediaFileIds,
-    templateId: draft.templateId,
-    fieldResponses: draft.fieldResponses,
-  };
+  const fields = draftFields(draft);
 
   if (draft._id === undefined || draft._id === '') {
     const auth = getAuthState();
@@ -192,8 +178,66 @@ export async function saveKinTaleDraft(draft: KinTaleDraft): Promise<string | nu
     return ref.id;
   }
 
-  await setDoc(doc(db, 'kin_care_reports', draft._id), { ...fields, updatedAt: now }, { merge: true });
+  // #994: an update sends only what changed since `loaded`, the draft as this
+  // screen read it or last wrote it. Every editable field used to go out on
+  // every save, so a field another client changed meanwhile went back to the
+  // value read at load time. `fieldResponses` goes per answer: `{ merge: true }`
+  // merges a nested map key by key, so ticking one item leaves the rest alone.
+  if (!loaded) throw new Error('saveKinTaleDraft: an update needs the draft as it was loaded');
+  const changes = changedDraftFields(loaded, draft);
+  if (Object.keys(changes).length === 0) return draft._id;
+  await setDoc(doc(db, 'kin_care_reports', draft._id), { ...changes, updatedAt: now }, { merge: true });
   return draft._id;
+}
+
+/** The fields a draft save persists. One place, so create and update cannot drift. */
+function draftFields(draft: KinTaleDraft) {
+  return {
+    sessionId: draft.sessionId,
+    kinfolkId: draft.kinfolkId,
+    kinfolkName: draft.kinfolkName,
+    kinIds: draft.kinIds,
+    serviceType: draft.serviceType,
+    visitDate: draft.visitDate,
+    arrivedAt: draft.arrivedAt,
+    title: draft.title,
+    titleGeneratedByAi: draft.titleGeneratedByAi,
+    bodyCopy: draft.bodyCopy,
+    mediaFileIds: draft.mediaFileIds,
+    templateId: draft.templateId,
+    fieldResponses: draft.fieldResponses,
+  };
+}
+
+/** JSON with object keys sorted, so two equal values compare equal whatever order they were built in. */
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) =>
+    v && typeof v === 'object' && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : v,
+  );
+}
+
+/**
+ * #994: the persisted fields of `edited` that differ from `loaded`.
+ * `fieldResponses` holds only the answers that changed. An answer is never
+ * removed from this screen (unticking writes `false`), so a key missing from
+ * `edited` is left as stored.
+ */
+export function changedDraftFields(loaded: KinTaleDraft, edited: KinTaleDraft): Record<string, unknown> {
+  const before = draftFields(loaded) as Record<string, unknown>;
+  const after = draftFields(edited) as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(after)) {
+    if (key === 'fieldResponses') continue;
+    if (stableJson(value) !== stableJson(before[key])) out[key] = value;
+  }
+  const responses: Record<string, FieldResponse> = {};
+  for (const [key, answer] of Object.entries(edited.fieldResponses)) {
+    if (stableJson(answer) !== stableJson(loaded.fieldResponses[key])) responses[key] = answer;
+  }
+  if (Object.keys(responses).length > 0) out['fieldResponses'] = responses;
+  return out;
 }
 
 export interface SendKinTaleInput {

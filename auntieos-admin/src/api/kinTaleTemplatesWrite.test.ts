@@ -152,7 +152,7 @@ describe('saveKinTaleTemplate: create (blank _id)', () => {
 describe('saveKinTaleTemplate: update (real _id)', () => {
   it('updates via a MERGE setDoc, restamps only updatedAt, never createdAt', async () => {
     setDoc.mockResolvedValue(undefined);
-    const result = await saveKinTaleTemplate(template({ _id: 'tpl9', name: 'Renamed' }));
+    const result = await saveKinTaleTemplate(template({ _id: 'tpl9', name: 'Renamed' }), [], template({ _id: 'tpl9' }));
 
     expect(result).toBe('tpl9');
     expect(setDoc).toHaveBeenCalledTimes(1);
@@ -168,6 +168,37 @@ describe('saveKinTaleTemplate: update (real _id)', () => {
     expect(payload).not.toHaveProperty('_id');
     expect(payload).not.toHaveProperty('createdAt');
     expect(typeof payload.updatedAt).toBe('string');
+  });
+
+  it('#994: sends only the fields that changed since the template was loaded', async () => {
+    setDoc.mockResolvedValue(undefined);
+    await saveKinTaleTemplate(template({ _id: 'tpl9', name: 'Renamed' }), [], template({ _id: 'tpl9' }));
+    const payload = setDoc.mock.calls[0]?.[1] as Record<string, unknown>;
+    // Not the checklist, not the mood options: another admin's edit to either
+    // made after this wizard opened must survive this save.
+    expect(Object.keys(payload).sort()).toEqual(['name', 'updatedAt']);
+  });
+
+  it('#994: sends a whole checklist only when the checklist changed', async () => {
+    setDoc.mockResolvedValue(undefined);
+    const loaded = template({ _id: 'tpl9' });
+    const edited = { ...loaded, checklistItems: [...loaded.checklistItems, makeChecklistItem({ key: 'water', text: 'Water bowl filled', order: 1 })] };
+    await saveKinTaleTemplate(edited, [], loaded);
+    const payload = setDoc.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(Object.keys(payload).sort()).toEqual(['checklistItems', 'updatedAt']);
+  });
+
+  it('#994: writes nothing when nothing changed', async () => {
+    const loaded = template({ _id: 'tpl9', isDefault: true });
+    const result = await saveKinTaleTemplate({ ...loaded }, [{ _id: 'tpl1', isDefault: true }], loaded);
+    expect(result).toBe('tpl9');
+    expect(setDoc).not.toHaveBeenCalled();
+    expect(writeBatch).not.toHaveBeenCalled();
+  });
+
+  it('#994: refuses an update with no loaded template to diff against', async () => {
+    await expect(saveKinTaleTemplate(template({ _id: 'tpl9' }))).rejects.toThrow(/loaded/);
+    expect(setDoc).not.toHaveBeenCalled();
   });
 
   it('treats a whitespace-only _id as create, never an update to the empty id', async () => {
@@ -187,7 +218,7 @@ describe('saveKinTaleTemplate: fail-loud', () => {
 
   it('propagates an update rejection unchanged', async () => {
     setDoc.mockRejectedValue(new Error('unavailable'));
-    await expect(saveKinTaleTemplate(template({ _id: 'tpl9' }))).rejects.toThrow('unavailable');
+    await expect(saveKinTaleTemplate(template({ _id: 'tpl9', name: 'x' }), [], template({ _id: 'tpl9' }))).rejects.toThrow('unavailable');
   });
 });
 
@@ -211,7 +242,7 @@ describe('saveKinTaleTemplate: isDefault is exclusive, in one batched write', ()
   ];
 
   it('clears the flag on the prior default and writes this one, in a single commit', async () => {
-    const result = await saveKinTaleTemplate(template({ _id: 'tpl9', isDefault: true }), siblings);
+    const result = await saveKinTaleTemplate(template({ _id: 'tpl9', isDefault: true }), siblings, template({ _id: 'tpl9' }));
 
     expect(result).toBe('tpl9');
     expect(writeBatch).toHaveBeenCalledTimes(1);
@@ -231,12 +262,12 @@ describe('saveKinTaleTemplate: isDefault is exclusive, in one batched write', ()
   }
 
   it('never unsets the flag on the template being saved', async () => {
-    await saveKinTaleTemplate(template({ _id: 'tpl9', isDefault: true }), siblings);
+    await saveKinTaleTemplate(template({ _id: 'tpl9', isDefault: true }), siblings, template({ _id: 'tpl9' }));
     expect(unsetIds()).not.toContain('tpl9');
   });
 
   it('leaves non-default siblings untouched', async () => {
-    await saveKinTaleTemplate(template({ _id: 'tpl9', isDefault: true }), siblings);
+    await saveKinTaleTemplate(template({ _id: 'tpl9', isDefault: true }), siblings, template({ _id: 'tpl9' }));
     expect(unsetIds()).toEqual(['tpl1']);
   });
 
@@ -256,7 +287,7 @@ describe('saveKinTaleTemplate: isDefault is exclusive, in one batched write', ()
   it('still uses one batch when no other template is default, so the write stays atomic either way', async () => {
     await saveKinTaleTemplate(template({ _id: 'tpl9', isDefault: true }), [
       { _id: 'tpl2', isDefault: false },
-    ]);
+    ], template({ _id: 'tpl9' }));
     expect(writeBatch).toHaveBeenCalledTimes(1);
     expect(batch.update).not.toHaveBeenCalled();
     expect(batch.commit).toHaveBeenCalledTimes(1);
@@ -264,7 +295,7 @@ describe('saveKinTaleTemplate: isDefault is exclusive, in one batched write', ()
 
   it('leaves the plain single-doc path alone when the template is NOT default', async () => {
     setDoc.mockResolvedValue(undefined);
-    await saveKinTaleTemplate(template({ _id: 'tpl9', isDefault: false }), siblings);
+    await saveKinTaleTemplate(template({ _id: 'tpl9', isDefault: false, name: 'Renamed' }), siblings, template({ _id: 'tpl9' }));
     expect(writeBatch).not.toHaveBeenCalled();
     expect(setDoc).toHaveBeenCalledTimes(1);
   });
@@ -272,7 +303,7 @@ describe('saveKinTaleTemplate: isDefault is exclusive, in one batched write', ()
   it('propagates a batch-commit rejection unchanged, never a fake success', async () => {
     batch.commit.mockRejectedValue(new Error('aborted'));
     await expect(
-      saveKinTaleTemplate(template({ _id: 'tpl9', isDefault: true }), siblings),
+      saveKinTaleTemplate(template({ _id: 'tpl9', isDefault: true }), siblings, template({ _id: 'tpl9' })),
     ).rejects.toThrow('aborted');
   });
 });

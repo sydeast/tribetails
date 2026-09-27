@@ -331,6 +331,11 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
   const effectiveSessionId = sessionId ?? pickedSessionId;
 
   const [draft, setDraft] = useState<KinTaleDraft | null>(null);
+  /**
+   * #994: the draft as read from the stream, then as last saved. A save sends
+   * only what differs from it. `null` for a scaffolded draft not yet created.
+   */
+  const [loadedDraft, setLoadedDraft] = useState<KinTaleDraft | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -392,6 +397,7 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
   // PREVIOUS target's draft on screen.
   useEffect(() => {
     setDraft(null);
+    setLoadedDraft(null);
     setHydrated(false);
     setBanner(null);
   }, [kinTaleId, effectiveSessionId]);
@@ -407,7 +413,9 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
       if (reports.status !== 'ready') return;
       const found = reports.data.find((r) => r._id === kinTaleId);
       if (found) {
-        setDraft(draftFromKinTaleEntry(found));
+        const read = draftFromKinTaleEntry(found);
+        setDraft(read);
+        setLoadedDraft(read);
         setHydrated(true);
       }
       return;
@@ -468,13 +476,14 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
     setIsSaving(true);
     setBanner(null);
     try {
-      const id = await saveKinTaleDraft(draft);
+      const id = await saveKinTaleDraft(draft, loadedDraft ?? undefined);
       setIsSaving(false);
       if (id === null) {
         setBanner({ tone: 'info', text: NOTHING_YET_HINT });
         return;
       }
       if (id !== draft._id) setDraft({ ...draft, _id: id });
+      setLoadedDraft({ ...draft, _id: id });
       setBanner(null);
       showToast('Draft saved.');
     } catch (err) {
@@ -490,7 +499,7 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
     try {
       // Send always saves first, mirrors the wasm's own onSend(): a still-new
       // draft is created on the way to being sent, never sent unsaved.
-      const id = await saveKinTaleDraft(draft);
+      const id = await saveKinTaleDraft(draft, loadedDraft ?? undefined);
       if (id === null) {
         setIsSending(false);
         setConfirmSend(false);
@@ -498,6 +507,7 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
         return;
       }
       if (id !== draft._id) setDraft({ ...draft, _id: id });
+      setLoadedDraft({ ...draft, _id: id });
       await sendKinTale({ reportId: id, sessionId: draft.sessionId });
       setIsSending(false);
       setConfirmSend(false);
