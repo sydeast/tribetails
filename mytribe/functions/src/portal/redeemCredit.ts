@@ -10,6 +10,7 @@ import { requireKinfolkPrimary } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { validateResponse } from '../lib/callableResponse';
+import { invoiceIsPaid, PAID_INVOICE_REFUSAL, PAID_INVOICE_REFUSAL_CODE } from '../lib/invoicePaidGate';
 import { CentsSchema, OkSchema, SignedCentsSchema } from '../lib/invoiceResponseSchema';
 
 export const Args = z.object({
@@ -106,6 +107,15 @@ export async function redeemCreditHandler(req: CallableRequest<unknown>): Promis
 
     // `status` is canonical; `invoiceStatus` is the legacy spelling still written
     // by the sandbox seed, so it is read as a fallback.
+    // A PAID INVOICE IS NOT A CREDIT (operator ruling 2026-09-27, docket Q5).
+    // An invoice marked paid whose balance went negative (an overpayment) is
+    // money the ADMIN decides about: account credit happens only when the admin
+    // enters an amount (#988). Redeeming it here would be the automatic credit
+    // that ruling forbids. Asked first, before the money-shaped credit test
+    // below, which reads a negative balance as a credit whatever the label says.
+    if (invoiceIsPaid(txInv)) {
+      throw new HttpsError('failed-precondition', PAID_INVOICE_REFUSAL, { code: PAID_INVOICE_REFUSAL_CODE });
+    }
     const rawStatus = txInv['status'] ?? txInv['invoiceStatus'];
     const status = typeof rawStatus === 'string' ? rawStatus.toLowerCase() : null;
     const amountDue = numericFrom(txInv['amountDue']);

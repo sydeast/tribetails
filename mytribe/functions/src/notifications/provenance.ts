@@ -595,6 +595,13 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       ],
     },
   ],
+  'invoice.payment.unapplied': [
+    {
+      trigger: 'A card payment completes on an invoice already paid (or on a stale checkout round).',
+      source: 'src/billing/stripeWebhook.ts',
+      dataKeys: ['kinfolkId', 'invoiceId', 'stripeEventId', 'unappliedAmount', 'unappliedReason'],
+    },
+  ],
   'quote.accepted': [
     {
       // Both halves of this row come from ONE call. The catalog gives

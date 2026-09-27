@@ -18,6 +18,7 @@ import {
   invoiceRowStatusInfo,
   longDateLabel,
   longDateLabelFromMs,
+  offersPayment,
   partPaidSummary,
 } from '../lib/invoiceFormat';
 import { useSignOut } from '../lib/auth';
@@ -261,7 +262,10 @@ export function InvoiceDetail() {
   // cancelled/not-paid negation, which — now that the enum carries all eight
   // stamped states — would have offered a Pay button on a quote (not yet a
   // bill) and on a draft (never sent).
-  const payable = inv.status === 'open' && inv.amountDue > 0;
+  //
+  // A PAID INVOICE TAKES NO PAYMENT (docket Q5): `offersPayment` also refuses
+  // on `isPaid`, so the list and this screen share one rule.
+  const payable = offersPayment(inv);
   // A quote still waiting for an answer. `quoteDecision` is what separates it
   // from one already answered: a DECLINED quote keeps `status: 'quote'` on the
   // server (see functions/src/portal/quoteDecision.ts), and an ACCEPTED one is

@@ -1,5 +1,6 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import type Stripe from 'stripe';
+import { FieldValue } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { getStripe } from '../lib/stripe';
@@ -20,6 +21,8 @@ import {
 import { CheckoutIdempotencyKeyArg } from '../lib/moneyIdempotency';
 import { amountDueCentsOf, statesNoBalance } from '../lib/amountDueRule';
 import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
+import { invoiceIsPaid, PAID_INVOICE_REFUSAL, PAID_INVOICE_REFUSAL_CODE } from '../lib/invoicePaidGate';
+import { OPEN_CHECKOUT_SESSIONS_FIELD } from '../lib/checkoutSessionSweep';
 
 export const Args = z.object({
   invoiceId: z.string().min(1),
@@ -139,6 +142,21 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   if (statesNoBalance(inv)) {
     const rows = await invoiceSnap.ref.collection('payments').get();
     legacyPaidCents = paidCentsFromPayments(rows.docs.map((d) => d.data() as PaymentAmount));
+  }
+  // A PAID INVOICE TAKES NO PAYMENT (operator ruling 2026-09-27, docket Q5).
+  // Asked BEFORE the balance and before the session reuse below, because the
+  // mark alone is enough: an invoice labelled paid whose stated balance still
+  // reads positive is the partial-payment corruption the admin repairs, not a
+  // bill the household can pay into. `lib/invoicePaidGate.ts` is the rule.
+  if (invoiceIsPaid(inv, legacyPaidCents)) {
+    logEvent({
+      severity: 'info',
+      function: 'payInvoice',
+      event: 'portal.invoice.checkout.refused.paid',
+      uid,
+      extra: { invoiceId: args.invoiceId, kinfolkId },
+    });
+    throw new HttpsError('failed-precondition', PAID_INVOICE_REFUSAL, { code: PAID_INVOICE_REFUSAL_CODE });
   }
   const amountCents = amountDueCentsOf(inv, legacyPaidCents);
   if (amountCents <= 0) throw new HttpsError('failed-precondition', 'Invoice is fully paid.');
@@ -376,9 +394,16 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
     session = await createSession(['card'], '_card');
   }
 
+  // `pendingCheckoutSessionId` is the ONE session the reuse above can hand
+  // back. `openCheckoutSessionIds` is EVERY session this invoice has minted,
+  // because the web and Android portals send different return URLs and so each
+  // mint their own: when the invoice becomes paid, the sweep
+  // (`triggers/onInvoicePaidExpireCheckouts.ts`) expires all of them at Stripe,
+  // so a household with a second tab open cannot pay a settled bill.
   await firestore.collection('invoices').doc(args.invoiceId).set({
     pendingCheckoutSessionId: session.id,
     pendingAt: new Date(),
+    [OPEN_CHECKOUT_SESSIONS_FIELD]: FieldValue.arrayUnion(session.id),
   }, { merge: true });
 
   logEvent({

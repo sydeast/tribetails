@@ -155,6 +155,13 @@ export const AUDIT_EVENTS = {
   // 2026-08-06) an account-balance credit is the entire remedy. Somebody has to
   // know it happened.
   BILLING_PAYMENT_DUPLICATE_CREDITED: 'BILLING_PAYMENT_DUPLICATE_CREDITED',
+  // Docket Q5 (2026-09-27): the webhook no longer writes the event above. A card
+  // charge that lands on an invoice already paid (or a stale checkout round) is
+  // recorded as an UNAPPLIED payment linked to the invoice and flagged for the
+  // admin, who decides what it becomes. Account credit only when the admin
+  // enters an amount (#988); never a refund. The old key stays for the entries
+  // already written under it.
+  BILLING_PAYMENT_UNAPPLIED: 'BILLING_PAYMENT_UNAPPLIED',
 
   THEME_BRAND_TOKENS_UPDATED: 'THEME_BRAND_TOKENS_UPDATED',
   THEME_KINFOLK_OVERRIDES_UPDATED: 'THEME_KINFOLK_OVERRIDES_UPDATED',

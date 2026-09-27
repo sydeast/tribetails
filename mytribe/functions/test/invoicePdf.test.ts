@@ -288,3 +288,28 @@ describe('formatPaymentMethods (issue #409)', () => {
     expect(formatPaymentMethods({})).toBe('');
   });
 });
+describe('generateAndStoreInvoicePdf prints no "How to pay" on a PAID invoice (docket Q5)', () => {
+  function withSettingsSpy() {
+    const settingsGet = vi.fn(async () => ({ data: () => ({ venmoHandle: '@auntie' }) }));
+    const firestore = vi.fn(() => ({ collection: () => ({ doc: () => ({ get: settingsGet }) }) }));
+    mocks.getAdmin.mockReturnValue({
+      firestore,
+      storage: () => ({ bucket: () => ({ name: 'demo.appspot.com', file: () => ({ save: mocks.save }) }) }),
+    });
+    return { settingsGet };
+  }
+  it('does not read or print the pay handles once the invoice is paid, even with a balance showing', async () => {
+    const { settingsGet } = withSettingsSpy();
+    const { generateAndStoreInvoicePdf } = await import('../src/lib/invoicePdf');
+    const url = await generateAndStoreInvoicePdf('i1', { ...INV, status: 'paid', amountDue: 40 });
+    expect(url).toContain('firebasestorage.googleapis.com');
+    expect(settingsGet).not.toHaveBeenCalled();
+    expect(mocks.save).toHaveBeenCalledTimes(1);
+  });
+  it('still prints them on an open invoice', async () => {
+    const { settingsGet } = withSettingsSpy();
+    const { generateAndStoreInvoicePdf } = await import('../src/lib/invoicePdf');
+    await generateAndStoreInvoicePdf('i1', INV);
+    expect(settingsGet).toHaveBeenCalledTimes(1);
+  });
+});

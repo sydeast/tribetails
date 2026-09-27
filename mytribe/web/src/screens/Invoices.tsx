@@ -9,6 +9,7 @@ import {
   formatUsd,
   invoiceRowStatusInfo,
   invoiceStatusInfo,
+  offersPayment,
   partPaidSummary,
   shortDateLabel,
 } from '../lib/invoiceFormat';
@@ -245,7 +246,8 @@ function OpenRow(props: { invoice: InvoiceDto; divider: boolean; payPhase: Mutat
     : inv.status === 'quote' ? (inv.quoteDecision === 'denied' ? 'You declined this' : 'Needs your answer')
     : inv.status === 'zero' ? 'No charge'
     : `Due ${shortDateLabel(inv.dueDate) ?? '—'}`;
-  const payable = inv.status === 'open' && inv.amountDue > 0;
+  // One rule with the detail screen, and never on a paid invoice (docket Q5).
+  const payable = offersPayment(inv);
 
   return (
     <>

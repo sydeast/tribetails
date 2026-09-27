@@ -122,6 +122,14 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     pushTxt: "Card dispute update. {{disputeAmount}} on invoice {{invoiceNumber}} is {{disputeStatus}} with the cardholder's bank. Tap to review.\n",
   },
   {
+    key: "invoice.payment.unapplied",
+    emailSubject: "Card payment not applied: {{unappliedAmount}}",
+    emailHeadline: "Card payment not applied",
+    emailContent: "<p>A card payment of {{unappliedAmount}} came in for invoice {{invoiceNumber}}, but {{unappliedReason}}.</p><p>Nothing has been done with the money. It is not on the invoice and it is not on the household's account balance. The payment is recorded on the invoice as not applied.</p><p>Open the invoice in AuntieOS and decide what it becomes. Account credit happens only when you enter an amount. There are no refunds.</p>",
+    smsTxt: "Tribe Tails: a card payment of {{unappliedAmount}} on invoice {{invoiceNumber}} was not applied because {{unappliedReason}}. Open AuntieOS to decide.\n",
+    pushTxt: "Card payment of {{unappliedAmount}} on invoice {{invoiceNumber}} was not applied. Tap to decide what it becomes.\n",
+  },
+  {
     key: "invoice.receipt",
     emailSubject: "Here's your receipt",
     emailHeadline: "Here's your receipt",

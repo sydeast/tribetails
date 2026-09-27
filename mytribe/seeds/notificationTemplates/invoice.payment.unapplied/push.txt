@@ -1,0 +1,1 @@
+Card payment of {{unappliedAmount}} on invoice {{invoiceNumber}} was not applied. Tap to decide what it becomes.
