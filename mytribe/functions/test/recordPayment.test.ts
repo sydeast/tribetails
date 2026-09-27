@@ -364,7 +364,7 @@ describe('recordPayment: the Apply box', () => {
     ).rejects.toMatchObject({ code: 'failed-precondition' });
   });
 });
-describe('recordPayment: Auto-apply routes the leftover into the EXISTING credit ledger', () => {
+describe('recordPayment: account credit is the amount the admin entered, into the EXISTING ledger (#988)', () => {
   /** $300 in, $180 applied, no tip: $120 left over. */
   const leftoverArgs = {
     kinfolkId: 'fam1',
@@ -372,47 +372,109 @@ describe('recordPayment: Auto-apply routes the leftover into the EXISTING credit
     invoiceId: 'inv1',
     apply: { invoiceId: 'inv1', amount: 180 },
   };
-  it('credits families/{id}.accountBalanceCents, not a second ledger of its own', async () => {
-    const ctx = seed({ invoice: { kinfolkId: 'fam1', status: 'open', total: 180 } });
+  const invoice = { kinfolkId: 'fam1', status: 'open', total: 180 };
+  it('credits exactly the chosen amount to families/{id}.accountBalanceCents, not a second ledger', async () => {
+    const ctx = seed({ invoice });
     mocks.dbFn.mockReturnValue(ctx.db);
-    const res = await recordPaymentHandler(req({ ...leftoverArgs, autoApply: true }));
+    // She leaves all $120 as credit: tip 0, credit 120.
+    const res = await recordPaymentHandler(req({ ...leftoverArgs, autoApply: true, creditToAccountCents: 12000 }));
     expect(res.unappliedCents).toBe(12000);
     expect(res.creditedToAccountCents).toBe(12000);
     const fam = ctx.writes.find((w) => w.path === 'families/fam1');
     // An INCREMENT, so two payments in the same second cannot lose a credit.
     expect(fam?.data.accountBalanceCents).toEqual({ __increment: 12000 });
   });
-  it('leaves the balance alone when auto-apply is OFF, and says so', async () => {
-    // The leftover is still reported. What differs is what was DONE with it.
-    const ctx = seed({ invoice: { kinfolkId: 'fam1', status: 'open', total: 180 } });
+  it('credits the part she chose and records the rest as tip', async () => {
+    const ctx = seed({ invoice });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    // $300 paid: $180 applied, $20 credit, $100 tip (gross), $3 fee out of the tip.
+    const res = await recordPaymentHandler(
+      req({ ...leftoverArgs, tip: 100, fee: 3, autoApply: true, creditToAccountCents: 2000 }),
+    );
+    expect(res.creditedToAccountCents).toBe(2000);
+    expect(res.unappliedCents).toBe(2000);
+    expect(res.tipCents).toBe(10000);
+    expect(res.tipNetCents).toBe(9700);
+    expect(ctx.writes.find((w) => w.path === 'families/fam1')?.data.accountBalanceCents).toEqual({ __increment: 2000 });
+    expect(paymentWriteOf(ctx)?.data).toMatchObject({ tip: 100, tipCents: 10000, fee: 3, feeCents: 300, creditedToAccountCents: 2000 });
+  });
+  it('credits NOTHING for a ticked auto-apply with no amount (an install from before #988)', async () => {
+    const ctx = seed({ invoice });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await recordPaymentHandler(req({ ...leftoverArgs, autoApply: true }));
+    // The leftover is still reported. Nothing is done with it.
+    expect(res.unappliedCents).toBe(12000);
+    expect(res.creditedToAccountCents).toBe(0);
+    expect(ctx.writes.find((w) => w.path === 'families/fam1')).toBeUndefined();
+    // The row says no credit was given, so no ledger screen can call it held.
+    expect(paymentWriteOf(ctx)?.data).toMatchObject({ autoApply: false, unappliedCents: 12000, creditedToAccountCents: 0 });
+    expect(res.autoApply).toBe(false);
+  });
+  it('leaves the balance alone when no credit is chosen, and says so', async () => {
+    const ctx = seed({ invoice });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await recordPaymentHandler(req(leftoverArgs));
     expect(res.unappliedCents).toBe(12000);
     expect(res.creditedToAccountCents).toBe(0);
     expect(ctx.writes.find((w) => w.path === 'families/fam1')).toBeUndefined();
   });
-  it('credits nothing when there is no leftover, however the box is set', async () => {
-    const ctx = seed();
+  it('an explicit zero credits nothing, even with auto-apply ticked', async () => {
+    const ctx = seed({ invoice });
     mocks.dbFn.mockReturnValue(ctx.db);
-    const res = await recordPaymentHandler(
-      req({ ...feeArgs, autoApply: true, apply: { invoiceId: 'inv1', amount: 127.5 } }),
-    );
-    expect(res.unappliedCents).toBe(0);
+    const res = await recordPaymentHandler(req({ ...leftoverArgs, autoApply: true, creditToAccountCents: 0 }));
     expect(res.creditedToAccountCents).toBe(0);
     expect(ctx.writes.find((w) => w.path === 'families/fam1')).toBeUndefined();
   });
-  it('credits nothing on a standalone payment, which belongs to no household', async () => {
+  it('refuses a credit larger than what is left after the applied part and the tip, and writes nothing', async () => {
+    const ctx = seed({ invoice });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    // $300 - $180 applied - $100 tip = $20 left; $20.01 is one cent too many.
+    await expect(
+      recordPaymentHandler(req({ ...leftoverArgs, tip: 100, creditToAccountCents: 2001 })),
+    ).rejects.toMatchObject({ code: 'invalid-argument', details: { code: 'credit_exceeds_leftover' } });
+    expect(ctx.writes).toHaveLength(0);
+  });
+  it('refuses any credit when nothing is left over', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      recordPaymentHandler(req({ ...feeArgs, apply: { invoiceId: 'inv1', amount: 127.5 }, creditToAccountCents: 1 })),
+    ).rejects.toMatchObject({ code: 'invalid-argument', details: { code: 'credit_exceeds_leftover' } });
+    expect(ctx.writes).toHaveLength(0);
+  });
+  it('refuses a credit on a standalone payment, which belongs to no household', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      recordPaymentHandler(req({ amount: 300, autoApply: true, creditToAccountCents: 5000 })),
+    ).rejects.toMatchObject({ code: 'invalid-argument', details: { code: 'credit_without_household' } });
+    expect(ctx.writes).toHaveLength(0);
+  });
+  it('a standalone payment with no credit chosen credits nothing', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await recordPaymentHandler(req({ amount: 300, autoApply: true }));
     expect(res.creditedToAccountCents).toBe(0);
     expect(ctx.writes.filter((w) => w.path.startsWith('families/'))).toHaveLength(0);
   });
-  it('records the decision on the payment, so a reader can see why the credit exists', async () => {
-    const ctx = seed({ invoice: { kinfolkId: 'fam1', status: 'open', total: 180 } });
+  it('a household payment with no invoice credits the chosen part of it', async () => {
+    const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
-    await recordPaymentHandler(req({ ...leftoverArgs, autoApply: true }));
-    expect(paymentWriteOf(ctx)?.data).toMatchObject({ autoApply: true, unappliedCents: 12000 });
+    // $50 handed over as a prepayment; she leaves $50 as credit.
+    const res = await recordPaymentHandler(req({ kinfolkId: 'fam1', amount: 50, creditToAccountCents: 5000 }));
+    expect(res.creditedToAccountCents).toBe(5000);
+    expect(ctx.writes.find((w) => w.path === 'families/fam1')?.data.accountBalanceCents).toEqual({ __increment: 5000 });
+  });
+  it('refuses a fractional or negative cent figure at the schema', async () => {
+    const ctx = seed({ invoice });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(recordPaymentHandler(req({ ...leftoverArgs, creditToAccountCents: 10.5 }))).rejects.toMatchObject({
+      code: 'invalid-argument',
+    });
+    await expect(recordPaymentHandler(req({ ...leftoverArgs, creditToAccountCents: -1 }))).rejects.toMatchObject({
+      code: 'invalid-argument',
+    });
+    expect(ctx.writes).toHaveLength(0);
   });
 });
 describe('recordPayment: the Send Confirmation Email toggle', () => {

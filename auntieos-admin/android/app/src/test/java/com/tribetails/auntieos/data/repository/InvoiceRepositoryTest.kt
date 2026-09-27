@@ -61,6 +61,8 @@ class InvoiceRepositoryTest {
                 // Auto-apply and Send Confirmation Email switches.
                 "fee", "notes", "invoiceId", "invoiceNumber",
                 "autoApply", "sendConfirmationEmail",
+                // #988: the account credit she chose, in cents; always sent.
+                "creditToAccountCents",
             ),
             p.keys,
         )

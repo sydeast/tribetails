@@ -132,7 +132,8 @@ fun parseRecordPaymentForm(
     reference: String,
     date: String,
     notes: String,
-    autoApply: Boolean,
+    /** #988: "Leave as account credit", dollars, blank for none. */
+    credit: String,
     sendConfirmationEmail: Boolean,
 ): RecordPaymentForm {
     fun money(s: String): Double? = s.trim().removePrefix("$").trim().toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 }
@@ -141,28 +142,98 @@ fun parseRecordPaymentForm(
         ?: return RecordPaymentForm.Invalid("\"${amountPaid.trim()}\" is not a payment amount. Enter dollars, for example 300 or 300.50.")
     val applied = money(applyAmount)?.takeIf { it > 0.0 }
         ?: return RecordPaymentForm.Invalid("\"${applyAmount.trim()}\" is not an amount to apply. Enter dollars, for example 120 or 120.50.")
-    val tipValue = optionalMoney(tip)
+    optionalMoney(tip)
         ?: return RecordPaymentForm.Invalid("\"${tip.trim()}\" is not a tip. Enter dollars, for example 10 or 10.50.")
     val feeValue = optionalMoney(fee)
         ?: return RecordPaymentForm.Invalid("\"${fee.trim()}\" is not a fee. Enter dollars, for example 2.71.")
-    if (method.isBlank()) return RecordPaymentForm.Invalid("Enter how the payment was made, for example Venmo or cash.")
-    // Compared in cents, so 0.1 + 0.2 style float error cannot refuse a payment that fits.
-    fun cents(d: Double) = kotlin.math.round(d * 100).toLong()
-    if (cents(applied) + cents(tipValue) > cents(paid)) {
-        return RecordPaymentForm.Invalid(
-            "A payment of ${formatMoney(paid)} does not cover ${formatMoney(applied)} applied plus a ${formatMoney(tipValue)} tip. " +
-                "Raise the payment amount, or lower one of the other two.",
+    optionalMoney(credit)
+        ?: return RecordPaymentForm.Invalid(
+            "\"${credit.trim()}\" is not an amount of account credit. Enter dollars, for example 20 or 20.50, or leave it blank for none.",
         )
+    if (method.isBlank()) return RecordPaymentForm.Invalid("Enter how the payment was made, for example Venmo or cash.")
+    val split = when (val s = recordPaymentSplit(amountPaid, applyAmount, tip, credit)) {
+        is RecordPaymentSplit.Ok -> s
+        is RecordPaymentSplit.Refused -> return RecordPaymentForm.Invalid(s.message)
+        null -> return RecordPaymentForm.Invalid("One of the amounts cannot be read.")
+    }
+    if (split.creditCents > 0L && invoice.kinfolkId.isBlank()) {
+        return RecordPaymentForm.Invalid("Account credit needs a household, and this invoice is not linked to one.")
     }
     val payment = buildInvoicePayment(invoice, paid, method, reference, date, notes)
-        .copy(client = invoice.client, tip = tipValue)
+        .copy(client = invoice.client, tip = split.tipCents / 100.0)
     return RecordPaymentForm.Ready(
         InvoicePaymentEntry(
             payment = payment,
             applyAmount = applied,
             fee = feeValue,
-            autoApply = autoApply,
+            creditToAccountCents = split.creditCents,
             sendConfirmationEmail = sendConfirmationEmail,
         ),
     )
+}
+
+/**
+ * #988: WHERE ONE PAYMENT GOES, in integer cents. Pure; unit-tested.
+ *
+ * Operator ruling, 2026-09-27: an overpayment is all tip, the processor fee
+ * comes out of the tip, and account credit happens only when she enters an
+ * amount. So `paid = applied + tip + credit`, exactly:
+ *
+ * - a blank TIP takes the rest, paid minus applied minus credit;
+ * - a typed tip has to make the three add up to the amount paid;
+ * - the CREDIT defaults to nothing and cannot be more than what is left after
+ *   the applied part.
+ *
+ * Same rules as admin web (`paymentSplit`) and admin Android. Null while a box
+ * cannot be read.
+ */
+sealed interface RecordPaymentSplit {
+    data class Ok(val paidCents: Long, val appliedCents: Long, val tipCents: Long, val creditCents: Long) : RecordPaymentSplit
+    data class Refused(val message: String) : RecordPaymentSplit
+}
+
+fun recordPaymentSplit(amountPaid: String, applyAmount: String, tip: String, credit: String): RecordPaymentSplit? {
+    fun money(s: String): Double? = s.trim().removePrefix("$").trim().toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 }
+    fun optionalMoney(s: String): Double? = if (s.isBlank()) 0.0 else money(s)
+    // Compared in cents, so 0.1 + 0.2 style float error cannot refuse a payment that fits.
+    fun cents(d: Double) = kotlin.math.round(d * 100).toLong()
+    fun usd(c: Long) = formatMoney(c / 100.0)
+    val paidCents = cents(money(amountPaid) ?: return null)
+    val appliedCents = cents(money(applyAmount) ?: return null)
+    val tipBlank = tip.isBlank()
+    val tipCentsTyped = cents(optionalMoney(tip) ?: return null)
+    val creditCents = cents(optionalMoney(credit) ?: return null)
+    if (appliedCents + tipCentsTyped > paidCents) {
+        return RecordPaymentSplit.Refused(
+            "A payment of ${usd(paidCents)} does not cover ${usd(appliedCents)} applied plus a ${usd(tipCentsTyped)} tip. " +
+                "Raise the payment amount, or lower one of the other two.",
+        )
+    }
+    val leftoverCents = paidCents - appliedCents
+    if (creditCents > leftoverCents) {
+        return RecordPaymentSplit.Refused(
+            "Account credit of ${usd(creditCents)} is more than the ${usd(leftoverCents)} left after the ${usd(appliedCents)} applied to this invoice.",
+        )
+    }
+    val tipCents = if (tipBlank) leftoverCents - creditCents else tipCentsTyped
+    val sum = appliedCents + tipCents + creditCents
+    if (sum != paidCents) {
+        return RecordPaymentSplit.Refused(
+            "${usd(appliedCents)} applied, a ${usd(tipCents)} tip and ${usd(creditCents)} account credit add up to ${usd(sum)}, " +
+                "not the ${usd(paidCents)} paid. Change the tip or the credit, or leave the tip blank to take the rest.",
+        )
+    }
+    return RecordPaymentSplit.Ok(paidCents, appliedCents, tipCents, creditCents)
+}
+
+/** #988: the line under the Record Payment fields, before Save. Pure; unit-tested. */
+fun recordPaymentSplitLine(split: RecordPaymentSplit?, fee: String): String = when (split) {
+    null -> "Not yet: one of the amounts above cannot be read."
+    is RecordPaymentSplit.Refused -> split.message
+    is RecordPaymentSplit.Ok -> {
+        val feeValue = fee.trim().removePrefix("$").trim().toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
+        val feeClause = if (feeValue != null) " (the ${formatMoney(feeValue)} fee comes out of it)" else ""
+        "${formatMoney(split.paidCents / 100.0)} paid: ${formatMoney(split.appliedCents / 100.0)} to this invoice, " +
+            "${formatMoney(split.tipCents / 100.0)} tip$feeClause, ${formatMoney(split.creditCents / 100.0)} account credit."
+    }
 }

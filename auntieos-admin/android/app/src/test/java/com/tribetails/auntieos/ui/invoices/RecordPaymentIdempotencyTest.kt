@@ -256,6 +256,26 @@ class RecordPaymentIdempotencyTest {
             advanceUntilIdle()
             assertNotEquals(ledgerKeys(2)[0], ledgerKeys(2)[1])
         }
+    /**
+     * #988: the same $200 with $20 moved from tip into account credit is a
+     * different payment. Amount, applied part and every box but two are equal,
+     * so only the credit in the signature tells a held key not to replay the
+     * first submission's split.
+     */
+    @Test
+    fun `a changed account credit on the same transaction mints a new pair`() =
+        runTest(testDispatcher) {
+            coEvery { invoiceRepo.markInvoicePaid(any(), any(), any(), any(), any()) } returns
+                Result.failure(RuntimeException("internal")) andThen
+                Result.success(settled())
+            val vm = loaded()
+            advanceUntilIdle()
+            vm.recordPayment(payment(amount = 200.0).copy(tip = 72.5, creditToAccountCents = 0L), 127.5)
+            advanceUntilIdle()
+            vm.recordPayment(payment(amount = 200.0).copy(tip = 72.5, creditToAccountCents = 2_000L), 127.5)
+            advanceUntilIdle()
+            assertNotEquals(ledgerKeys(2)[0], ledgerKeys(2)[1])
+        }
     @Test
     fun `a corrected reference number is an edit too, not the same payment retried`() =
         runTest(testDispatcher) {

@@ -15,6 +15,7 @@ import com.tribetails.auntieos.data.repository.mintInvoicePaymentIdempotencyKey
 import com.tribetails.auntieos.data.repository.mintPaymentIdempotencyKey
 import com.tribetails.auntieos.domain.InvoiceState
 import com.tribetails.auntieos.domain.formatCentsUsd
+import com.tribetails.auntieos.domain.dollarsToCents
 import com.tribetails.auntieos.domain.invoicePartPaid
 import com.tribetails.auntieos.domain.invoiceStateOrNull
 import com.tribetails.auntieos.util.AuntieLog
@@ -435,6 +436,9 @@ class InvoiceDetailViewModel(
         payment.notes.orEmpty(),
         payment.invoiceNumber,
         payment.autoApply.toString(),
+        // #988: a changed credit is a different payment, even when every other
+        // box, the payment total included, is the same.
+        payment.creditToAccountCents.toString(),
         payment.sendConfirmationEmail.toString(),
     ).joinToString("\u001F") // a separator no typed field can contain
 
@@ -922,7 +926,11 @@ internal fun buildInvoicePayment(
      * amount plus the tip. `0.0` means "exactly those two", the ordinary case.
      */
     paymentTotal: Double = 0.0,
-    autoApply: Boolean = false,
+    /**
+     * #988: dollars the admin chose to leave as account credit, out of what would
+     * otherwise be tip. Included in the transaction when [paymentTotal] is 0.
+     */
+    creditToAccount: Double = 0.0,
     sendConfirmationEmail: Boolean = false,
 ): Payment = Payment(
     kinfolkId = invoice.kinfolkId,
@@ -939,13 +947,15 @@ internal fun buildInvoicePayment(
     // with [amount], which the caller passes to `recordPayment` separately
     // (#982); this row records what the client actually paid, which is larger
     // whenever there was a tip or money left over.
-    amount = if (paymentTotal > 0.0) paymentTotal else amount + tip,
+    amount = if (paymentTotal > 0.0) paymentTotal else amount + tip + creditToAccount,
     tip = tip,
     fee = fee,
     notes = notes.trim(),
     invoiceId = invoice.id,
     invoiceNumber = invoice.invoiceNumber,
-    autoApply = autoApply,
+    // #988: the credit is the amount she entered; `autoApply` only says there is one.
+    autoApply = dollarsToCents(creditToAccount) > 0L,
+    creditToAccountCents = dollarsToCents(creditToAccount),
     sendConfirmationEmail = sendConfirmationEmail,
 )
 /**
@@ -1053,7 +1063,7 @@ internal fun recordPaymentConfirmationNote(
  */
 internal fun recordPaymentCreditNote(creditedToAccountCents: Long?): String =
     if (creditedToAccountCents != null && creditedToAccountCents > 0L) {
-        " ${formatCentsUsd(creditedToAccountCents)} was left over and has been added to the household's " +
+        " ${formatCentsUsd(creditedToAccountCents)} has been added to the household's " +
             "account credit, which goes onto their next invoice automatically."
     } else {
         ""

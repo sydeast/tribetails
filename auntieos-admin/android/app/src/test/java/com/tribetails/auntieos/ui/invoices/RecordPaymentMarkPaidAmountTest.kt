@@ -97,7 +97,7 @@ class RecordPaymentMarkPaidAmountTest {
             tip = tip,
             fee = fee,
             paymentTotal = paymentTotal,
-            autoApply = true,
+            creditToAccount = if (paymentTotal > 0.0) paymentTotal - amount - tip else 0.0,
         )
 
     /** Runs one Record press and answers (markInvoicePaid amount, ledger payment). */
@@ -153,7 +153,7 @@ class RecordPaymentMarkPaidAmountTest {
         val state = vm.uiState.value
         assertFalse(state.recordingPayment)
         assertEquals(
-            "Payment recorded. The invoice is paid in full. \$62.50 was left over and has been added to the " +
+            "Payment recorded. The invoice is paid in full. \$62.50 has been added to the " +
                 "household's account credit, which goes onto their next invoice automatically.",
             state.toastMessage,
         )
@@ -163,7 +163,7 @@ class RecordPaymentMarkPaidAmountTest {
         assertEquals("", recordPaymentCreditNote(null))
         assertEquals("", recordPaymentCreditNote(0L))
         assertEquals(
-            " \$0.01 was left over and has been added to the household's account credit, " +
+            " \$0.01 has been added to the household's account credit, " +
                 "which goes onto their next invoice automatically.",
             recordPaymentCreditNote(1L),
         )

@@ -124,10 +124,11 @@ describe('#825 recordPayment: one key, one payment, one credit', () => {
     kinfolkId: 'fam1',
     amount: 100,
     paymentMethod: 'Venmo',
-    // AUTO-APPLY ON: the whole payment has no invoice to land on, so all of it
-    // becomes account credit. This is the setting that turns a replay into
-    // money from nowhere.
+    // CREDIT CHOSEN: the whole payment has no invoice to land on, and the admin
+    // left all of it as account credit (#988: credit is only ever an amount she
+    // enters). This is the setting that turns a replay into money from nowhere.
     autoApply: true,
+    creditToAccountCents: 10_000,
     ...over,
   });
 
@@ -185,6 +186,7 @@ describe('#825 recordPayment: one key, one payment, one credit', () => {
     const payload = args({
       idempotencyKey: PAY_A,
       autoApply: false,
+      creditToAccountCents: 0,
       apply: { invoiceId: 'inv1', amount: 100 },
     });
 

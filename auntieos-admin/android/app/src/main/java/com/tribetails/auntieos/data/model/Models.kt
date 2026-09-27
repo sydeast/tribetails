@@ -760,11 +760,19 @@ data class Payment(
     /**
      * "Will automatically apply any Unapplied amount to FUTURE invoices."
      *
-     * When set, the server moves the leftover into the household's EXISTING
-     * account credit (`families/{id}.accountBalanceCents`) and spends it on the
-     * next invoice that becomes collectable.
+     * #988: it moves no money by itself any more. On a row the server wrote it
+     * says whether account credit was given; on a request, whether
+     * [creditToAccountCents] is above zero.
      */
     var autoApply: Boolean = false,
+    /**
+     * #988: the account credit the admin chose to leave, in integer cents. Sent
+     * to `recordPayment`, which credits exactly this into
+     * `families/{id}.accountBalanceCents`. A request field, like
+     * [sendConfirmationEmail]: the server stores what it credited as
+     * `creditedToAccountCents`, so this reads 0 on a row loaded back.
+     */
+    var creditToAccountCents: Long = 0L,
     /** Ask the server to send the household the payment confirmation. Not stored. */
     var sendConfirmationEmail: Boolean = false
 )

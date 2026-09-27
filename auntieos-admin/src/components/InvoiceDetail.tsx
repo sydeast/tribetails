@@ -358,6 +358,81 @@ export function unappliedPreview(input: {
   const payment = total > 0 ? total : applied + tip;
   return Math.round((payment - applied - tip) * 100) / 100;
 }
+/**
+ * #988: WHERE ONE PAYMENT GOES, before Save. Integer cents.
+ *
+ * Operator ruling, 2026-09-27: an overpayment is all tip, the processor fee
+ * comes out of the tip, and account credit happens only when she enters an
+ * amount. So the money splits three ways and adds up exactly:
+ *
+ *   paid = applied + tip + credit
+ *
+ * - The TIP box left blank means "the rest": paid minus applied minus credit.
+ *   Typed, it has to make the three add up to the payment amount.
+ * - The CREDIT box defaults to nothing. It comes out of what would otherwise be
+ *   tip, and it cannot be more than what is left after the applied part.
+ * - The PAYMENT AMOUNT box left blank means "exactly applied + tip + credit".
+ *
+ * `null` means a box cannot be read yet (half-typed); the panel then shows no
+ * figures rather than ones derived from a number it cannot read. `error` is a
+ * sentence for the operator; Save refuses with it.
+ */
+export type PaymentSplit =
+  | {
+      ok: true;
+      paidCents: number;
+      appliedCents: number;
+      tipCents: number;
+      creditCents: number;
+    }
+  | { ok: false; error: string };
+
+export function paymentSplit(input: {
+  paymentTotal: string;
+  applied: string;
+  tip: string;
+  credit: string;
+  /** Used when the applied box is blank, which means "settle the rest". */
+  fallbackApplied: number;
+}): PaymentSplit | null {
+  const cents = (d: number) => Math.round(d * 100);
+  const total = parseOptionalMoney(input.paymentTotal);
+  const credit = parseOptionalMoney(input.credit);
+  const typedApplied = input.applied.trim();
+  const applied = typedApplied === '' ? input.fallbackApplied : parseOptionalMoney(typedApplied);
+  const tipBlank = input.tip.trim() === '';
+  const tip = tipBlank ? 0 : parseOptionalMoney(input.tip);
+  if (total === null || credit === null || applied === null || tip === null) return null;
+  const appliedCents = cents(applied);
+  const creditCents = cents(credit);
+  const usd = (c: number) => formatUsd(c / 100);
+  if (total <= 0) {
+    const tipCents = cents(tip);
+    return { ok: true, paidCents: appliedCents + tipCents + creditCents, appliedCents, tipCents, creditCents };
+  }
+  const paidCents = cents(total);
+  const leftoverCents = paidCents - appliedCents;
+  if (leftoverCents < 0) {
+    return {
+      ok: false,
+      error: `A payment of ${usd(paidCents)} does not cover the ${usd(appliedCents)} applied to this invoice. Raise the payment amount, or lower the amount collected.`,
+    };
+  }
+  if (creditCents > leftoverCents) {
+    return {
+      ok: false,
+      error: `Account credit of ${usd(creditCents)} is more than the ${usd(leftoverCents)} left after the ${usd(appliedCents)} applied to this invoice.`,
+    };
+  }
+  const tipCents = tipBlank ? leftoverCents - creditCents : cents(tip);
+  if (appliedCents + tipCents + creditCents !== paidCents) {
+    return {
+      ok: false,
+      error: `${usd(appliedCents)} applied, a ${usd(tipCents)} tip and ${usd(creditCents)} account credit add up to ${usd(appliedCents + tipCents + creditCents)}, not the ${usd(paidCents)} paid. Change the tip or the credit, or leave the tip blank to take the rest.`,
+    };
+  }
+  return { ok: true, paidCents, appliedCents, tipCents, creditCents };
+}
 type PendingAction = InvoiceAction;
 
 interface ActionMeta {
@@ -548,8 +623,10 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // "Notes (staff only)" on her screen, and staff-only here: nothing
   // kinfolk-facing reads the root `payments` collection.
   const [paidNotes, setPaidNotes] = useState('');
-  // "Will automatically apply any Unapplied amount to future invoices."
-  const [paidAutoApply, setPaidAutoApply] = useState(false);
+  // #988: "Leave as account credit", an AMOUNT, blank for none. It replaced the
+  // "automatically apply any unapplied amount" tick: under the 2026-09-27 ruling
+  // a leftover is tip, and credit is only ever what she enters here.
+  const [paidCredit, setPaidCredit] = useState('');
   const [paidSendConfirmation, setPaidSendConfirmation] = useState(false);
   /**
    * #825: ONE PAIR OF KEYS PER SUBMISSION, held across a re-press.
@@ -587,7 +664,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     paidMethod,
     paidReference,
     paidNotes,
-    paidAutoApply,
+    paidCredit,
     paidSendConfirmation,
   ]);
 
@@ -695,12 +772,15 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   const totalCheck = checkInvoiceTotal(invoice);
   // Recomputed every render from the boxes themselves, so it can never lag the
   // number she is looking at. Null while something is half-typed.
-  const unapplied = unappliedPreview({
+  const split = paymentSplit({
     paymentTotal: paidTotal,
     applied: paidAmount,
     tip: paidTip,
+    credit: paidCredit,
     fallbackApplied: invoice.amountDue,
   });
+  // The fee, for the "comes out of the tip" clause. Null while half-typed.
+  const splitFee = parseOptionalMoney(paidFee);
 
   // The STORED editScope decides only whether to OFFER the control; the server
   // still enforces on the write, and a refusal comes back with a code and is
@@ -752,7 +832,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     setPaidFee('');
     setPaidTotal('');
     setPaidNotes('');
-    setPaidAutoApply(false);
+    setPaidCredit('');
     // OFF by default. A confirmation is a message to a real household, so it
     // goes out because she ticked the box, never because the panel assumed.
     setPaidSendConfirmation(false);
@@ -979,18 +1059,37 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           );
           return;
         }
-        // THE UNAPPLIED BALANCE, checked before anything is written. It is the
-        // figure the operator watches to catch a mis-keyed amount, so the panel
-        // must refuse the impossible version of it rather than let the server
-        // do it after `markInvoicePaid` has already collected.
-        const appliedForCheck = amount ?? invoice.amountDue;
-        if (typedTotal > 0 && typedTotal < appliedForCheck + tip) {
+        const credit = parseOptionalMoney(paidCredit);
+        if (credit === null) {
           setBusy(false);
           setActionError(
-            `A payment of ${formatUsd(typedTotal)} does not cover ${formatUsd(appliedForCheck)} applied plus a ${formatUsd(tip)} tip. Raise the payment amount, or lower one of the other two.`,
+            `"${paidCredit.trim()}" is not an amount of account credit. Enter dollars, for example 20 or 20.50, or leave it blank for none.`,
           );
           return;
         }
+        // #988: WHERE THE MONEY GOES, checked before anything is written, so the
+        // panel refuses a split that does not add up rather than let the server
+        // do it after `markInvoicePaid` has already collected.
+        const checked = paymentSplit({
+          paymentTotal: paidTotal,
+          applied: typed,
+          tip: paidTip,
+          credit: paidCredit,
+          fallbackApplied: invoice.amountDue,
+        });
+        if (checked === null || !checked.ok) {
+          setBusy(false);
+          setActionError(checked === null ? 'One of the amounts cannot be read.' : checked.error);
+          return;
+        }
+        if (checked.creditCents > 0 && !invoice.kinfolkId) {
+          setBusy(false);
+          setActionError('Account credit needs a household, and this invoice is not linked to one.');
+          return;
+        }
+        // The tip that is sent: typed, or the rest of the payment when blank.
+        const tipToSend = typedTotal > 0 ? checked.tipCents / 100 : tip;
+        const creditCents = checked.creditCents;
 
         // STEP 1 OF 2, AND THE ORDER MATTERS. `markInvoicePaid` is the money
         // authority: it writes the `invoices/{id}/payments` subcollection and
@@ -1051,11 +1150,14 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
               // `markInvoicePaid` above settled the bill with the applied part;
               // this row is the TRANSACTION, which is larger whenever there was
               // a tip or money over.
-              amount: typedTotal > 0 ? typedTotal : thisPaymentCents / 100 + tip,
-              tip,
+              amount: typedTotal > 0 ? typedTotal : (thisPaymentCents + creditCents) / 100 + tipToSend,
+              tip: tipToSend,
               fee,
               notes: paidNotes.trim(),
-              autoApply: paidAutoApply,
+              // #988: the credit is the amount she entered, and nothing else.
+              // `autoApply` only says whether there is one.
+              autoApply: creditCents > 0,
+              creditToAccountCents: creditCents,
               sendConfirmationEmail: paidSendConfirmation,
               invoiceId: invoice._id,
               invoiceNumber: invoice.invoiceNumber,
@@ -1082,7 +1184,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                 ' The office copy of the payment notice did not go out, because the admin roster could not be read. The household copy is not affected.';
             }
             if (ledgerRow.creditedToAccountCents > 0) {
-              ledgerNote += ` ${formatUsd(ledgerRow.creditedToAccountCents / 100)} was left over and has been added to the household's account credit, which goes onto their next invoice automatically.`;
+              ledgerNote += ` ${formatUsd(ledgerRow.creditedToAccountCents / 100)} has been added to the household's account credit, which goes onto their next invoice automatically.`;
             }
           } catch (caught) {
             incomplete = true;
@@ -1445,12 +1547,12 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                   />
                 </label>
                 <label className="invoice-detail__field">
-                  <span className="invoice-detail__field-label">Tip, optional</span>
+                  <span className="invoice-detail__field-label">Tip</span>
                   <input
                     className="invoice-detail__field-input"
                     value={paidTip}
                     onChange={(e) => setPaidTip(e.target.value)}
-                    placeholder="0.00"
+                    placeholder="the rest of the payment"
                     inputMode="decimal"
                     disabled={busy}
                     aria-label="Tip in dollars, before any processor fee"
@@ -1480,6 +1582,18 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                     inputMode="decimal"
                     disabled={busy}
                     aria-label="Total payment amount in dollars"
+                  />
+                </label>
+                <label className="invoice-detail__field">
+                  <span className="invoice-detail__field-label">Leave as account credit</span>
+                  <input
+                    className="invoice-detail__field-input"
+                    value={paidCredit}
+                    onChange={(e) => setPaidCredit(e.target.value)}
+                    placeholder="0.00"
+                    inputMode="decimal"
+                    disabled={busy}
+                    aria-label="Leave as account credit in dollars"
                   />
                 </label>
                 <label className="invoice-detail__field">
@@ -1515,41 +1629,32 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                     aria-label="Staff-only notes on this payment"
                   />
                 </label>
-                {/* THE UNAPPLIED BALANCE, live. This is what it is for: it is
-                    how a mis-keyed amount is caught while it is still a typo.
-                    The fee is deliberately not in it: a processor fee is a
-                    deduction from what the business receives, not from what the
-                    client paid. */}
-                <p className="invoice-detail__unapplied" role="status">
-                  {unapplied === null ? (
+                {/* #988: WHERE THE MONEY GOES, live, before Save. The tip is
+                    what is left after the applied part and any credit she
+                    chose; the fee comes out of the tip, not out of the bill. */}
+                <p className="invoice-detail__unapplied" role="status" aria-label="Where this payment goes">
+                  {split === null ? (
                     <span className="invoice-detail__unapplied-unknown">
-                      Unapplied balance: not yet, one of the amounts above cannot be read.
+                      Not yet: one of the amounts above cannot be read.
                     </span>
+                  ) : !split.ok ? (
+                    <span className="invoice-detail__unapplied-unknown">{split.error}</span>
                   ) : (
                     <>
-                      <span className="invoice-detail__unapplied-label">Unapplied balance</span>
-                      <span className="invoice-detail__unapplied-value">
-                        {formatUsd(unapplied)}
+                      <span className="invoice-detail__unapplied-label">
+                        {formatUsd(split.paidCents / 100)} paid
                       </span>
-                      {unapplied > 0 && (
-                        <span className="invoice-detail__unapplied-note">
-                          {paidAutoApply
-                            ? "left over, and it will be held as this household's account credit for their next invoice"
-                            : 'left over, and it will not be applied to anything unless you switch on auto-apply'}
-                        </span>
-                      )}
+                      <span className="invoice-detail__unapplied-note">
+                        {formatUsd(split.appliedCents / 100)} to this invoice,{' '}
+                        {formatUsd(split.tipCents / 100)} tip
+                        {splitFee !== null && splitFee > 0
+                          ? ` (the ${formatUsd(splitFee)} fee comes out of it)`
+                          : ''}
+                        , {formatUsd(split.creditCents / 100)} account credit.
+                      </span>
                     </>
                   )}
                 </p>
-                <label className="invoice-detail__check">
-                  <input
-                    type="checkbox"
-                    checked={paidAutoApply}
-                    onChange={(e) => setPaidAutoApply(e.target.checked)}
-                    disabled={busy}
-                  />
-                  <span>Automatically apply any unapplied amount to future invoices</span>
-                </label>
                 <label className="invoice-detail__check">
                   <input
                     type="checkbox"

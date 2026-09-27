@@ -27,9 +27,9 @@ import kotlin.math.abs
  * account credit, the root `payments` row and the #825 dedupe in one
  * transaction (`recordPayment.ts`), refuses drafts, quotes, cancelled and
  * settled invoices through `planApply`, writes the BILLING_PAYMENT_RECORDED
- * audit entry and sends the confirmation when it is ticked. It also computes the
- * unapplied remainder as `amount - applied - tip`, so auto-apply credits only
- * money that is really left over. One payment, one invoice: `apply` is a single
+ * audit entry and sends the confirmation when it is ticked. #988: account credit
+ * is only the amount the admin enters, checked by the server against
+ * `amount - applied - tip`. One payment, one invoice: `apply` is a single
  * object, never a list.
  */
 data class InvoicePaymentEntry(
@@ -39,8 +39,12 @@ data class InvoicePaymentEntry(
     val applyAmount: Double,
     /** The processor's cut. Stored beside the gross tip; never subtracted from it. */
     val fee: Double,
-    /** Put any unapplied remainder into the household's account balance. */
-    val autoApply: Boolean,
+    /**
+     * #988: the account credit the admin chose to leave, in integer cents, out of
+     * what would otherwise be tip. The server credits exactly this. `autoApply`
+     * goes on the wire as `creditToAccountCents > 0`.
+     */
+    val creditToAccountCents: Long,
     /** Send the household the `invoice.payment.applied` confirmation. */
     val sendConfirmationEmail: Boolean,
 )
@@ -72,7 +76,9 @@ fun recordPaymentPayload(entry: InvoicePaymentEntry, kinfolkId: String, idempote
             put("invoiceNumber", p.invoiceNumber)
             put("amount", entry.applyAmount)
         })
-        put("autoApply", entry.autoApply)
+        // #988: the credit is the amount she entered; `autoApply` only says there is one.
+        put("autoApply", entry.creditToAccountCents > 0L)
+        put("creditToAccountCents", entry.creditToAccountCents)
         put("sendConfirmationEmail", entry.sendConfirmationEmail)
         idempotencyKey?.let { put("idempotencyKey", JsonPrimitive(it)) }
     }
@@ -144,7 +150,7 @@ fun recordPaymentOutcomeMessage(outcome: RecordPaymentOutcome, confirmationReque
         " The office copy of the payment notice did not go out, because the admin roster could not be read. The household copy is not affected."
     } else ""
     val credit = if (outcome.creditedToAccountCents > 0) {
-        " ${centsUsd(outcome.creditedToAccountCents)} was left over and has been added to the household's account balance for their next invoice."
+        " ${centsUsd(outcome.creditedToAccountCents)} has been added to the household's account balance for their next invoice."
     } else ""
     return head + household + office + credit
 }

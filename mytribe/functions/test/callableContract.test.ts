@@ -273,8 +273,10 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
     // `settledByInvoicePaymentId` (#866) is optional too: the id `markInvoicePaid`
     // returned to the same submission, the only thing that lets this call claim
     // that settlement and tell the office "paid".
+    // `creditToAccountCents` (#988) is optional: the account credit the admin
+    // chose, in cents. Without it nothing is credited, whatever `autoApply` says.
     keys: [
-      'address', 'amount', 'apply', 'autoApply', 'client', 'date', 'email', 'fee',
+      'address', 'amount', 'apply', 'autoApply', 'client', 'creditToAccountCents', 'date', 'email', 'fee',
       'idempotencyKey', 'invoiceId', 'invoiceNumber', 'kinfolkId', 'kinfolkName', 'notes',
       'paymentMethod', 'referenceNumber', 'sendConfirmationEmail', 'settledByInvoicePaymentId', 'tip',
     ],

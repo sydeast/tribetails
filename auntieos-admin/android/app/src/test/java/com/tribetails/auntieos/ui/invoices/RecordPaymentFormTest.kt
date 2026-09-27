@@ -98,7 +98,9 @@ class RecordPaymentFormTest {
     }
 
     @Test
-    fun `the switches travel when they are turned on`() {
+    fun `the chosen credit and the confirmation travel when she sets them`() {
+        // #988: $127.50 applied and $20 left as account credit, no total typed:
+        // the transaction is $147.50, and autoApply only says a credit exists.
         val payment = buildInvoicePayment(
             invoice = invoice(),
             amount = 127.5,
@@ -106,11 +108,20 @@ class RecordPaymentFormTest {
             referenceNumber = "",
             date = "",
             notes = "",
-            autoApply = true,
+            creditToAccount = 20.0,
             sendConfirmationEmail = true,
         )
         assertTrue(payment.autoApply)
+        assertEquals(2_000L, payment.creditToAccountCents)
+        assertEquals(147.5, payment.amount, 0.0001)
         assertTrue(payment.sendConfirmationEmail)
+    }
+
+    @Test
+    fun `no credit chosen sends zero credit and autoApply false`() {
+        val payload = recordPaymentArgs(buildInvoicePayment(invoice(), 127.5, "cash", "", "", "")).toPayload()
+        assertEquals(0L, payload["creditToAccountCents"])
+        assertEquals(false, payload["autoApply"])
     }
 
     @Test
@@ -137,15 +148,17 @@ class RecordPaymentFormTest {
                 notes = "staff only",
                 tip = 10.0,
                 fee = 2.71,
-                autoApply = true,
+                paymentTotal = 200.0,
+                creditToAccount = 62.5,
                 sendConfirmationEmail = true,
             )
         ).toPayload()
-        assertEquals(137.5, payload["amount"])
+        assertEquals(200.0, payload["amount"])
         assertEquals(10.0, payload["tip"])
         assertEquals(2.71, payload["fee"])
         assertEquals("staff only", payload["notes"])
         assertEquals(true, payload["autoApply"])
+        assertEquals(6_250L, payload["creditToAccountCents"])
         assertEquals(true, payload["sendConfirmationEmail"])
     }
 
