@@ -1,9 +1,19 @@
-import { Extension, Node, mergeAttributes, type Editor, type Extensions } from '@tiptap/core';
+import {
+  Extension,
+  Node,
+  findParentNode,
+  mergeAttributes,
+  wrappingInputRule,
+  type CommandProps,
+  type Editor,
+  type Extensions,
+} from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
+import { BulletList, OrderedList } from '@tiptap/extension-list';
 import { Fragment, Slice, type Node as PMNode } from '@tiptap/pm/model';
 import { Plugin, PluginKey, type Transaction } from '@tiptap/pm/state';
-import { ReplaceAroundStep, ReplaceStep } from '@tiptap/pm/transform';
+import { ReplaceAroundStep, ReplaceStep, canJoin } from '@tiptap/pm/transform';
 import { CLOUDINARY_IMAGE, EACH_BLOCK_NAME, isLinkTarget } from '../../lib/emailContent';
 
 /**
@@ -540,6 +550,120 @@ export const LoopedListIntegrity = Extension.create({
   },
 });
 
+/**
+ * #963: TipTap's own `toggleBulletList` / `toggleOrderedList` wrap the
+ * selection AND (unconditionally) try to join the new list into whichever
+ * list sits right before or after it, all as ONE transaction -- see
+ * `joinListBackwards` / `joinListForwards` inside `@tiptap/core`'s
+ * `toggleList`, neither of which is exported. When that neighbour is a
+ * repeating list, LoopedListIntegrity correctly refuses the whole
+ * transaction, wrap included, so starting a list right after a repeating
+ * list did nothing at all: the toolbar button looked dead, and typing `- `
+ * lost the space with no list to show for it.
+ *
+ * `joinSide` below is that same join, minus the object-identity type check
+ * (redone here by name) and the numbering-style check (`sameListStyle`,
+ * copied since it is not exported either), plus the one condition neither
+ * original function has: a freshly wrapped list never joins into a node
+ * that carries a loop.
+ */
+function normalizeListStyle(type: unknown): unknown {
+  return !type || type === '1' ? null : type;
+}
+
+function sameListStyle(a: PMNode, b: PMNode): boolean {
+  return normalizeListStyle(a.attrs['type']) === normalizeListStyle(b.attrs['type']);
+}
+
+function joinSide(tr: Transaction, typeName: string, direction: -1 | 1): void {
+  const list = findParentNode((node) => node.type.name === typeName)(tr.selection);
+  if (!list) return;
+  const boundary =
+    direction === -1
+      ? tr.doc.resolve(Math.max(0, list.pos - 1)).before(list.depth)
+      : tr.doc.resolve(list.start).after(list.depth);
+  if (boundary === undefined) return;
+  const neighbour = tr.doc.nodeAt(boundary);
+  const joinAt = direction === -1 ? list.pos : boundary;
+  if (!neighbour || neighbour.type.name !== typeName || !sameListStyle(list.node, neighbour) || !canJoin(tr.doc, joinAt)) {
+    return;
+  }
+  if (isLoopedList(neighbour)) return; // the one condition `toggleList` doesn't check
+  tr.join(joinAt);
+}
+
+/**
+ * Replaces `toggleBulletList` / `toggleOrderedList` for exactly the case
+ * that matters here: wrapping a selection that is not already inside a
+ * list. Toggling a list off, or converting an existing list's type, is
+ * untouched -- both defer straight to the original `toggleList` command,
+ * which this file does not otherwise reproduce.
+ */
+function safeToggleList(name: 'bulletList' | 'orderedList') {
+  return () =>
+    ({ state, chain, commands }: CommandProps) => {
+      const insideList = Boolean(
+        findParentNode((node) => node.type.name === 'bulletList' || node.type.name === 'orderedList')(state.selection),
+      );
+      if (insideList) return commands.toggleList(name, 'listItem', false);
+      return chain()
+        .command(() => commands.wrapInList(name))
+        .command(({ tr }: CommandProps) => {
+          joinSide(tr, name, -1);
+          joinSide(tr, name, 1);
+          return true;
+        })
+        .run();
+    };
+}
+
+/**
+ * #963: the bullet-list input rule (typing `- `, `* ` or `+ ` at the start
+ * of a line) joins into an adjacent bullet list the same unconditional way
+ * `toggleBulletList` does. `wrappingInputRule` already takes a
+ * `joinPredicate` for exactly this; the built-in bullet list just never
+ * passes one.
+ */
+const SafeBulletList = BulletList.extend({
+  addInputRules() {
+    return [
+      wrappingInputRule({
+        find: /^\s*([-+*])\s$/,
+        type: this.type,
+        joinPredicate: (_match, node) => !isLoopedList(node),
+      }),
+    ];
+  },
+  addCommands() {
+    return { toggleBulletList: safeToggleList('bulletList') };
+  },
+});
+
+/**
+ * #963: `OrderedList`'s input rule already carries a `joinPredicate` (it
+ * checks the typed marker continues the list's numbering). This keeps that
+ * check and adds the loop guard alongside it.
+ */
+const SafeOrderedList = OrderedList.extend({
+  addInputRules() {
+    const joinPredicate = (match: RegExpMatchArray, node: PMNode) =>
+      (!node.attrs['type'] || node.attrs['type'] === '1') &&
+      node.childCount + Number(node.attrs['start'] ?? 1) === Number(match[1]) &&
+      !isLoopedList(node);
+    return [
+      wrappingInputRule({
+        find: /^(\d+)\.\s$/,
+        type: this.type,
+        getAttributes: (match) => ({ start: Number(match[1]) }),
+        joinPredicate,
+      }),
+    ];
+  },
+  addCommands() {
+    return { toggleOrderedList: safeToggleList('orderedList') };
+  },
+});
+
 /** The full extension list. One function, so the component and the tests build the same schema. */
 export function emailEditorExtensions(): Extensions {
   return [
@@ -551,7 +675,13 @@ export function emailEditorExtensions(): Extensions {
       underline: false,
       horizontalRule: false,
       link: false,
+      // #963: replaced below by SafeBulletList/SafeOrderedList, which never
+      // join a freshly started list into an adjacent repeating one.
+      bulletList: false,
+      orderedList: false,
     }),
+    SafeBulletList,
+    SafeOrderedList,
     Link.configure({
       openOnClick: false,
       autolink: false,
