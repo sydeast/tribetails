@@ -84,6 +84,9 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   // from. `invoiceNumber` is the one the enricher fills, and it renders blank
   // on an unattributed dispute — which is the honest output, not a defect.
   'invoice.payment.disputed': ['disputeAmount', 'disputeReason', 'disputeStatus', 'invoiceNumber'],
+  // `unappliedAmount` / `unappliedReason` are emitter-supplied by
+  // `billing/stripeWebhook.ts` (docket Q5), off the Stripe event.
+  'invoice.payment.unapplied': ['invoiceNumber', 'unappliedAmount', 'unappliedReason'],
   'invoice.receipt': ['amount', 'invoiceNumber', 'kinfolkName'],
   'invoice.reminder': ['amount', 'invoiceNumber', 'kinName'],
   'invoice.updated': ['invoiceNumber', 'kinName'],

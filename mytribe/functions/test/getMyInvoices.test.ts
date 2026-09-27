@@ -650,6 +650,28 @@ describe('getMyInvoices per-invoice payMethods (issue #409)', () => {
     expect(res.credits[0].payMethods).toEqual([]);
   });
 
+  it('offers NOTHING on an invoice marked paid whose stated balance still reads positive (docket Q5)', async () => {
+    // The partial-payment corruption shape: labelled paid, balance positive.
+    // `resolvePayMethods` alone would offer Stripe and a Venmo link on it.
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'business_settings/business_settings': { venmoHandle: '@auntie' },
+      },
+      queryDocs: {
+        invoices: [
+          { id: 'inv-p', data: { kinfolkId: '3', status: 'paid', amountDue: 40, amountDueCents: 4000, total: 137.5 } },
+          { id: 'inv-q', data: { kinfolkId: '3', paymentStatus: 'PAID', invoiceStatus: 'open', amountDue: 40, total: 137.5 } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyInvoicesHandler } = await import('../src/portal/getMyInvoices');
+    const res = await getMyInvoicesHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    const all = [...res.open, ...res.paid, ...res.credits];
+    expect(all.find((i) => i.id === 'inv-p')!.payMethods).toEqual([]);
+    expect(all.find((i) => i.id === 'inv-q')!.payMethods).toEqual([]);
+  });
   it('reads the integer cents field in preference to the dollars float', async () => {
     // The cents seam is real: this collection's `amountDue` is a legacy
     // dollars float while the resolver reads cents. An invoice whose float

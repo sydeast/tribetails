@@ -8,6 +8,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import com.kinfolk.portal.portal.CreditTarget
 import com.kinfolk.portal.portal.Invoice
+import com.kinfolk.portal.portal.InvoiceStatus
 import com.kinfolk.portal.portal.InvoicesResult
 import com.kinfolk.portal.portal.PayMethod
 import com.kinfolk.portal.portal.PayMethodKind
@@ -197,6 +198,13 @@ class InvoicesController internal constructor(
 
     fun startPay(invoice: Invoice) {
         if (paying != null) return
+        // A PAID INVOICE TAKES NO PAYMENT (docket Q5). The screens already hide
+        // the button; this is for a stale screen or a caller that skips them.
+        // The server refuses too (`payInvoice`), with the same sentence.
+        if (!offersPayment(invoice)) {
+            if (invoice.isPaid || invoice.status == InvoiceStatus.Paid) error = PAID_INVOICE_REFUSAL
+            return
+        }
         paying = invoice.id
         scope.launch {
             try {
@@ -229,6 +237,12 @@ class InvoicesController internal constructor(
      * because the resolved URL already came back with the invoice payload.
      */
     fun startPayMethod(invoice: Invoice, method: PayMethod) {
+        // Same gate as [startPay], and it matters more here: a Link method is
+        // a Venmo/PayPal/Cash App URL that never reaches the server.
+        if (!offersPayment(invoice)) {
+            if (invoice.isPaid || invoice.status == InvoiceStatus.Paid) error = PAID_INVOICE_REFUSAL
+            return
+        }
         when (method.kind) {
             PayMethodKind.Checkout -> startPay(invoice)
             PayMethodKind.Link -> method.url?.takeIf { it.isNotBlank() }?.let { openUrl(it) }

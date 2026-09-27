@@ -4,7 +4,7 @@ import { sanitizeEmailContent, MERGE_TOKEN } from '../src/lib/emailContent';
 import { TEMPLATE_FIELDS } from '../src/notifications/enrichTemplateData';
 
 describe('every seed is a valid visual template', () => {
-  it('there are 52', () => expect(SEED_CORPUS.length).toBe(52));
+  it('there are 53', () => expect(SEED_CORPUS.length).toBe(53));
   for (const s of SEED_CORPUS) {
     it(`${s.key}: headline, clean content, known tokens`, () => {
       expect(s.emailSubject.trim()).not.toBe('');

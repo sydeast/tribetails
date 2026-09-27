@@ -470,3 +470,44 @@ describe('redeemCredit CRITICAL-3 claim-first atomicity (race)', () => {
     expect((fulfilled[0] as PromiseFulfilledResult<any>).value.newAccountBalanceCents).toBe(3550);
   });
 });
+describe('redeemCredit refuses a PAID invoice (operator ruling 2026-09-27, docket Q5)', () => {
+  async function redeem(invoice: Record<string, unknown>) {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'invoices/inv-c1': { kinfolkId: '3', ...invoice },
+        'families/3': { accountBalanceCents: 500 },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { redeemCreditHandler } = await import('../src/portal/redeemCredit');
+    const err = await redeemCreditHandler({ data: redeemData, auth: { uid: 'u1' } } as any).then(
+      () => null,
+      (e) => e,
+    );
+    return { ctx, err };
+  }
+  it('an invoice marked paid whose balance went negative is NOT a credit the household can redeem', async () => {
+    // The overpayment shape. Before this, `amountDue < 0` alone read as a
+    // credit and the whole overpayment went onto the account balance: the
+    // automatic credit the #988 ruling forbids.
+    const { ctx, err } = await redeem({ status: 'paid', amountDue: -25.5, total: 100 });
+    expect(err).toMatchObject({
+      code: 'failed-precondition',
+      message: 'This invoice is already paid, so it cannot take another payment.',
+      details: { code: 'invoice_already_paid' },
+    });
+    expect(ctx.writes.find((w) => w.path === 'families/3')).toBeUndefined();
+    expect(ctx.writes.find((w) => w.path === 'invoices/inv-c1')).toBeUndefined();
+  });
+  it('refuses on paymentStatus PAID too', async () => {
+    const { ctx, err } = await redeem({ paymentStatus: 'PAID', amountDue: -10, total: 90 });
+    expect(err).toMatchObject({ details: { code: 'invoice_already_paid' } });
+    expect(ctx.writes.find((w) => w.path === 'families/3')).toBeUndefined();
+  });
+  it('a real credit invoice still redeems', async () => {
+    const { ctx, err } = await redeem({ status: 'credit', amountDue: -25.5, total: -25.5 });
+    expect(err).toBeNull();
+    expect(ctx.writes.find((w) => w.path === 'families/3')!.data.accountBalanceCents).toBe(3050);
+  });
+});

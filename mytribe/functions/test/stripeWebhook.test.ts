@@ -598,6 +598,25 @@ vi.mock('../src/lib/stripe', () => ({
     // by a route that never touched Stripe (`markInvoicePaid`, or the
     // account-credit auto-apply). All that is left to notice is that it owes
     // nothing.
+    // Docket Q5: an invoice MARKED paid whose stated balance still reads
+    // positive (the partial-payment corruption shape). The money test alone
+    // would apply this charge; the mark says the invoice takes no payment.
+    if (sig === 'marked-paid-with-balance') {
+      return {
+        id: 'evt_66a',
+        type: 'checkout.session.completed',
+        created: 6006,
+        data: {
+          object: {
+            id: 'cs_66',
+            payment_intent: 'pi_66',
+            payment_status: 'paid',
+            amount_total: 4000,
+            metadata: { familyId: 'f66', invoiceId: 'i66', checkoutRound: '0' },
+          },
+        },
+      };
+    }
     if (sig === 'marked-paid-elsewhere') {
       return {
         id: 'evt_64a',
@@ -1769,10 +1788,12 @@ describe('stripeWebhook', () => {
     );
     expect(paidAudits).toHaveLength(1);
     expect(auditMock.writeAuditEntry.mock.calls.at(-1)![0]).toMatchObject({
-      event: 'BILLING_PAYMENT_DUPLICATE_CREDITED',
+      event: 'BILLING_PAYMENT_UNAPPLIED',
       severity: 'critical',
       status: 'FAILURE',
       familyId: 'f60',
+      payload: { invoiceId: 'i60', paymentId: 'evt_61a', unappliedCents: 13750, duplicateReason: 'stale-round' },
+      docId: 'stripe_evt_61a_unapplied',
     });
     // And the household was told once, about the payment that was real.
     const applied = notifyMock.enqueueNotification.mock.calls.filter(
@@ -1781,15 +1802,15 @@ describe('stripeWebhook', () => {
     expect(applied).toHaveLength(1);
   });
 
-  it('routes the duplicate charge to account balance, the only destination there is', async () => {
+  it('records the duplicate charge as UNAPPLIED and credits nothing (docket Q5)', async () => {
     unpaidInvoice('i60', 'f60');
     expect(await deliver('race-a')).toEqual([200]);
     expect(await deliver('race-b')).toEqual([200]);
-
-    // No refunds, ever (operator ruling). The money is already off the card by
-    // the time this event arrives, so the credit IS the remedy.
-    const family = writes.find((w) => w.path === 'families/f60');
-    expect(family!.data.accountBalanceCents).toEqual(FieldValue.increment(13750));
+    // Operator ruling 2026-09-27: a paid invoice takes no payment, and account
+    // credit happens only when the admin enters an amount (#988). The old
+    // branch incremented the household balance here by itself. No refund
+    // either: the money waits for the admin.
+    expect(writes.find((w) => w.path === 'families/f60')).toBeUndefined();
 
     // The display ledger carries the row, labelled. The root `payments`
     // collection is counted in no settlement arithmetic, so naming the invoice
@@ -1801,7 +1822,9 @@ describe('stripeWebhook', () => {
       kinfolkId: 'f60',
       amountCents: 13750,
       appliedToInvoice: false,
-      appliedTo: 'accountCredit',
+      appliedTo: 'unapplied',
+      needsAdminDecision: true,
+      creditedToAccountCents: 0,
       duplicateCheckoutReason: 'stale-round',
       duplicateOfPaymentIntentId: 'pi_60',
     });
@@ -1809,16 +1832,40 @@ describe('stripeWebhook', () => {
     expect(docState['invoices/i60'].data!.duplicateCheckoutPaymentIntentIds).toEqual(
       FieldValue.arrayUnion('pi_61'),
     );
+    expect(docState['invoices/i60'].data!.unappliedPaymentIds).toEqual(FieldValue.arrayUnion('evt_61a'));
+    expect(docState['invoices/i60'].data!.status).toBe('paid');
+    // The admin is flagged through the business-only notice, with the amount
+    // and the reason; the household hears nothing about it.
+    const flagged = notifyMock.enqueueNotification.mock.calls.filter(
+      (c) => c[0]?.key === 'invoice.payment.unapplied',
+    );
+    expect(flagged).toHaveLength(1);
+    expect(flagged[0]![0]).toMatchObject({
+      recipientUid: '',
+      data: {
+        kinfolkId: 'f60',
+        invoiceId: 'i60',
+        stripeEventId: 'evt_61a',
+        unappliedAmount: '$137.50',
+      },
+    });
+    // The event record carries what a retry needs to finish the follow-up.
+    expect(docState['stripeEvents/evt_61a'].data).toMatchObject({
+      appliedOutcome: 'SKIPPED_DUPLICATE_INVOICE',
+      followupTracked: true,
+      paymentIntentId: 'pi_61',
+      unappliedCents: 13750,
+    });
     // Loud, at error: this is a household charged twice, not a dedupe going
     // about its business.
     const loud = logMock.logEvent.mock.calls.find(
       (c) => c[0]?.event === 'stripe.invoice.duplicateCheckout',
     );
     expect(loud![0].severity).toBe('error');
-    expect(loud![0].extra).toMatchObject({ creditedCents: 13750, duplicateReason: 'stale-round' });
+    expect(loud![0].extra).toMatchObject({ creditedCents: 0, unappliedCents: 13750, duplicateReason: 'stale-round' });
   });
 
-  it('credits the duplicate ONCE, not once per event the second payment delivers', async () => {
+  it('records the duplicate ONCE, not once per event the second payment delivers', async () => {
     unpaidInvoice('i60', 'f60');
     expect(await deliver('race-a')).toEqual([200]);
     expect(await deliver('race-b')).toEqual([200]);
@@ -1829,8 +1876,69 @@ describe('stripeWebhook', () => {
     // Without it the sibling reaches the duplicate branch too and the household
     // is credited twice for one extra charge: the original bug, one level along.
     expect(docState['stripeEvents/evt_61b'].data!.appliedOutcome).toBe('SKIPPED_DUPLICATE_PAYMENT');
-    expect(writes.filter((w) => w.path === 'families/f60')).toHaveLength(1);
+    expect(writes.filter((w) => w.path === 'families/f60')).toHaveLength(0);
     expect(writes.filter((w) => w.path.startsWith('payments/'))).toHaveLength(2);
+    // One admin flag for one extra charge.
+    expect(
+      notifyMock.enqueueNotification.mock.calls.filter((c) => c[0]?.key === 'invoice.payment.unapplied'),
+    ).toHaveLength(1);
+  });
+
+  it('a failed admin notice answers 500, and Stripe retry finishes it without a second row', async () => {
+    unpaidInvoice('i60', 'f60');
+    expect(await deliver('race-a')).toEqual([200]);
+    // The office roster read fails once, on the unapplied notice only.
+    notifyMock.enqueueNotification.mockImplementationOnce(async () => {
+      throw new Error('roster unreachable');
+    });
+    expect(await deliver('race-b')).toEqual([500]);
+    // The money row committed; the audit entry was written and stamped.
+    expect(docState['payments/evt_61a'].data!.appliedTo).toBe('unapplied');
+    expect(docState['stripeEvents/evt_61a'].data!.auditWrittenAt).toBeDefined();
+    expect(docState['stripeEvents/evt_61a'].data!.noticeSentAt).toBeUndefined();
+    // Stripe redelivers the same event.
+    const paymentWritesBefore = writes.filter((w) => w.path === 'payments/evt_61a').length;
+    expect(await deliver('race-b')).toEqual([200]);
+    expect(writes.filter((w) => w.path === 'payments/evt_61a').length).toBe(paymentWritesBefore);
+    expect(docState['stripeEvents/evt_61a'].data!.noticeSentAt).toBeDefined();
+    const unappliedAudits = auditMock.writeAuditEntry.mock.calls.filter(
+      (c) => c[0]?.event === 'BILLING_PAYMENT_UNAPPLIED',
+    );
+    // Written once: the retry sees the audit stamp and skips it.
+    expect(unappliedAudits).toHaveLength(1);
+    const flagged = notifyMock.enqueueNotification.mock.calls.filter(
+      (c) => c[0]?.key === 'invoice.payment.unapplied',
+    );
+    expect(flagged.at(-1)![0]).toMatchObject({ data: { unappliedAmount: '$137.50' } });
+    expect(writes.find((w) => w.path === 'families/f60')).toBeUndefined();
+  });
+
+  it('holds a charge on an invoice MARKED paid even while a balance still shows (docket Q5)', async () => {
+    docState['invoices/i66'] = {
+      exists: true,
+      data: { kinfolkId: 'f66', status: 'paid', paymentStatus: 'PAID', amountDue: 40, amountDueCents: 4000, total: 137.5 },
+    };
+    stripeMock.paymentIntentsRetrieve.mockResolvedValue({
+      latest_charge: { balance_transaction: { fee: 146 } },
+    });
+    expect(await deliver('marked-paid-with-balance')).toEqual([200]);
+    expect(docState['stripeEvents/evt_66a'].data).toMatchObject({
+      appliedOutcome: 'SKIPPED_DUPLICATE_INVOICE',
+      duplicateReason: 'invoice-marked-paid',
+    });
+    // Not applied: the balance, the round and the settled intent are untouched.
+    expect(docState['invoices/i66'].data).toMatchObject({ amountDue: 40, amountDueCents: 4000 });
+    expect(docState['invoices/i66'].data!.stripeSettledPaymentIntentId).toBeUndefined();
+    expect(docState['payments/evt_66a'].data).toMatchObject({
+      appliedTo: 'unapplied',
+      needsAdminDecision: true,
+      amountCents: 4000,
+      feeCents: 146,
+    });
+    expect(writes.find((w) => w.path === 'families/f66')).toBeUndefined();
+    expect(
+      notifyMock.enqueueNotification.mock.calls.filter((c) => c[0]?.key === 'invoice.payment.applied'),
+    ).toHaveLength(0);
   });
 
   it('APPLIES a second payment minted after the first settled: the balance came back', async () => {
@@ -1925,9 +2033,9 @@ describe('stripeWebhook', () => {
       duplicateReason: 'settled-by-other-intent',
     });
     expect(docState['invoices/i63'].data!.stripeSettledPaymentIntentId).toBe('pi_59');
-    expect(writes.find((w) => w.path === 'families/f63')!.data.accountBalanceCents).toEqual(
-      FieldValue.increment(13750),
-    );
+    // Held for the admin, never credited (docket Q5).
+    expect(writes.find((w) => w.path === 'families/f63')).toBeUndefined();
+    expect(docState['payments/evt_63a'].data).toMatchObject({ appliedTo: 'unapplied', amountCents: 13750 });
   });
 
   it('catches a duplicate on an invoice settled by a route that never touched Stripe', async () => {
@@ -1949,8 +2057,10 @@ describe('stripeWebhook', () => {
       duplicateReason: 'invoice-not-owed',
     });
     expect(docState['payments/evt_64a'].data).toMatchObject({
-      appliedTo: 'accountCredit',
+      appliedTo: 'unapplied',
+      needsAdminDecision: true,
       duplicateOfPaymentIntentId: null,
     });
+    expect(writes.find((w) => w.path === 'families/f64')).toBeUndefined();
   });
 });

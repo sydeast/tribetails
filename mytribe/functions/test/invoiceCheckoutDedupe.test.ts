@@ -178,6 +178,44 @@ describe('duplicateCheckoutReason', () => {
   });
 });
 
+describe('duplicateCheckoutReason: a paid invoice takes no payment (docket Q5)', () => {
+  it('holds a charge on an invoice MARKED paid while a stated balance still shows', () => {
+    // The partial-payment corruption shape. The money test says "owed"; the
+    // mark says the invoice takes no payment, and the ruling goes by the mark.
+    expect(
+      duplicateCheckoutReason({
+        invoice: { ...invoice({ amountDueCents: 4000 }), status: 'paid' },
+        paymentIntentId: 'pi_2',
+        eventRound: 0,
+      }),
+    ).toBe('invoice-marked-paid');
+    expect(
+      duplicateCheckoutReason({
+        invoice: { ...invoice({ amountDue: 40 }), paymentStatus: 'PAID' },
+        paymentIntentId: 'pi_2',
+        eventRound: null,
+      }),
+    ).toBe('invoice-marked-paid');
+  });
+  it('still lets the SAME payment through on an invoice it just marked paid', () => {
+    expect(
+      duplicateCheckoutReason({
+        invoice: { ...invoice({ settledPaymentIntentId: 'pi_1', amountDueCents: 0 }), status: 'paid' },
+        paymentIntentId: 'pi_1',
+        eventRound: 0,
+      }),
+    ).toBeNull();
+  });
+  it('an open label with a balance is still a payment in its own right', () => {
+    expect(
+      duplicateCheckoutReason({
+        invoice: { ...invoice({ amountDueCents: 4000 }), status: 'open', paymentStatus: 'PARTIAL' },
+        paymentIntentId: 'pi_2',
+        eventRound: 0,
+      }),
+    ).toBeNull();
+  });
+});
 describe('the field names this module restates', () => {
   it('holds the same account-balance field `lib/accountCredit.ts` owns', () => {
     // The one duplicated string in the module, restated rather than imported so

@@ -1,0 +1,1 @@
+Tribe Tails: a card payment of {{unappliedAmount}} on invoice {{invoiceNumber}} was not applied because {{unappliedReason}}. Open AuntieOS to decide.

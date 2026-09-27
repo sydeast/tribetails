@@ -749,3 +749,63 @@ describe('payInvoice checkout round and session reuse (issue #826)', () => {
     expect(mocks.stripeMock.checkout.sessions.retrieve).not.toHaveBeenCalled();
   });
 });
+describe('payInvoice refuses a PAID invoice (operator ruling 2026-09-27, docket Q5)', () => {
+  async function callFor(invoice: Record<string, unknown>, pending?: string) {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'invoices/inv-1': { kinfolkId: '3', ...invoice, ...(pending ? { pendingCheckoutSessionId: pending } : {}) },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    const outcome = await payInvoiceHandler({ data: payData, auth: { uid: 'u1' } } as any).then(
+      (r) => ({ ok: r }),
+      (e) => ({ err: e }),
+    );
+    return { ctx, outcome };
+  }
+  it('refuses an invoice MARKED paid even while its stated balance reads positive', async () => {
+    const { ctx, outcome } = await callFor({ status: 'paid', amountDue: 40, amountDueCents: 4000, total: 137.5 });
+    expect((outcome as { err: unknown }).err).toMatchObject({
+      code: 'failed-precondition',
+      message: 'This invoice is already paid, so it cannot take another payment.',
+      details: { code: 'invoice_already_paid' },
+    });
+    expect(mocks.stripeMock.checkout.sessions.create).not.toHaveBeenCalled();
+    expect(ctx.writes.find((w) => w.path === 'invoices/inv-1')).toBeUndefined();
+  });
+  it("refuses on markInvoicePaid's second label, paymentStatus PAID", async () => {
+    const { outcome } = await callFor({ status: 'open', paymentStatus: 'PAID', amountDue: 40, total: 137.5 });
+    expect((outcome as { err: unknown }).err).toMatchObject({ details: { code: 'invoice_already_paid' } });
+    expect(mocks.stripeMock.checkout.sessions.create).not.toHaveBeenCalled();
+  });
+  it('refuses BEFORE the session reuse, so an open session is never handed back on a paid bill', async () => {
+    mocks.stripeMock.checkout.sessions.retrieve.mockResolvedValueOnce({
+      id: 'cs_open',
+      url: 'https://checkout.stripe.com/open',
+      status: 'open',
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+      amount_total: 4000,
+      success_url: payData.successUrl,
+      cancel_url: payData.cancelUrl,
+      metadata: { invoiceId: 'inv-1', checkoutRound: '0' },
+    });
+    const { outcome } = await callFor({ status: 'paid', amountDue: 40, total: 137.5 }, 'cs_open');
+    expect((outcome as { err: unknown }).err).toMatchObject({ details: { code: 'invoice_already_paid' } });
+    expect(mocks.stripeMock.checkout.sessions.retrieve).not.toHaveBeenCalled();
+    expect(mocks.stripeMock.checkout.sessions.create).not.toHaveBeenCalled();
+  });
+  it('refuses an unlabelled invoice whose balance is zero as paid, with the paid sentence', async () => {
+    const { outcome } = await callFor({ amountDue: 0, amountDueCents: 0, total: 137.5 });
+    expect((outcome as { err: unknown }).err).toMatchObject({ details: { code: 'invoice_already_paid' } });
+  });
+  it('still charges an open invoice, and records the session in the list the paid sweep expires', async () => {
+    const { ctx, outcome } = await callFor({ status: 'open', amountDue: 40, total: 40 });
+    expect((outcome as { ok: { sessionId: string } }).ok.sessionId).toBe('cs_test_1');
+    const w = ctx.writes.find((x) => x.path === 'invoices/inv-1');
+    expect(w!.data.pendingCheckoutSessionId).toBe('cs_test_1');
+    const { FieldValue } = await import('firebase-admin/firestore');
+    expect(w!.data.openCheckoutSessionIds).toEqual(FieldValue.arrayUnion('cs_test_1'));
+  });
+});

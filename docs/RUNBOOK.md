@@ -1799,6 +1799,7 @@ Three statuses, and only these three:
 | `report:payment-applied-without-payments` | #884 | post-import check | Read-only. Lists every invoice a household was told "Payment applied" about that has no payment row behind it anywhere. Exactly the check a data migration needs: an import that marks an invoice paid without carrying its payment history over would show up here. Run once the invoice and payment re-upload is done. |
 | `report:over-applied-invoices` | #982 | still applies | Read-only, no write mode. Lists every invoice whose settlement rows (`invoices/{id}/payments`) add up to more than its total, with those rows and the root `payments` rows linked to it. A ledger row with a tip whose amount equals a settlement row is marked `settlement=whole-transaction`: the shape admin Android left when it sent `markInvoicePaid` the amount plus tip instead of the applied part. That mark is a match on figures, not a link, and an overpayment can be genuine. Nothing is repaired: what a household is owed back needs an operator ruling. |
 | `report:autoapply-double-credit` | #977 | still applies | Read-only, no write mode. Lists root `payments` rows with auto-apply ticked, linked to an invoice, that applied nothing themselves and credited the household account, with the household's current `accountBalanceCents` and the invoice's settlement rows. Rows labelled `pre-fix` were credited `amount - tip`, which includes the invoice money `markInvoicePaid` had already applied; `post-fix` rows are a real leftover. Nothing is repaired: what a household is owed back needs an operator ruling. |
+| `report:duplicate-checkout-credits` | docket Q5 (2026-09-27) | still applies | Read-only, no write mode; `--allow-prod` only confirms which database is read. Lists root `payments` rows the Stripe webhook's old duplicate-checkout branch wrote (`appliedTo: 'accountCredit'`): a card charge on an invoice already settled, credited in full to the household account balance with nobody deciding it. Prints each row's credited cents, reason, the invoice's status now and the household's `accountBalanceCents` now. Nothing is repaired: what happens to credit already given needs an operator ruling. Run `npm --prefix mytribe/functions run report:duplicate-checkout-credits -- --project <id> --allow-prod`. |
 | `report:household-contacts` | #829, ruling 2026-09-27 | still applies | Read-only, no write mode. Counts `families/{id}/contacts` rows per household and shows, for each row, its label, the name as initials, the phone as its last four digits and the email as first letter and domain, next to whether that household has an Emergency Contact. Marks each row that matches an Emergency Contact, reads like one, or is an outside person on a household with none. The contacts list is off every screen; its rows and callables stay until the operator has read this and ruled on the data. |
 | `report:overdue-notices-non-bills` | #871, already on the operator docket | post-import check | Read-only. Lists every overdue or reminder notice sent about an invoice that was not actually a live bill at the time (cancelled, an unaccepted quote, archived). The household-send-gate section above already says the re-upload will hand the crons a batch of old invoices that look freshly overdue the moment the gate reopens. Run this after that happens, to check none of those notices went out about an invoice that was never really open. |
 | `report:desktop-direct-payments` | #881 | still applies | Read-only, and it has no write mode: `--allow-prod` is refused. Lists root `payments` rows that name an invoice but carry no `recordedBy` and no `BILLING_PAYMENT_RECORDED` audit entry, whose invoice is still open. Those are the rows the desktop console's old Record Payment dialog wrote directly, which never moved the invoice or the balance. Pre-W2-1 Android rows and imported rows can match too; the printed columns are there to tell them apart. Run `npm --prefix mytribe/functions run report:desktop-direct-payments -- --project <id>`. |
@@ -2319,6 +2320,23 @@ repayment nobody made. Where contested money ends up is the operator's call, and
 `stripeDisputes/{disputeId}` plus the `critical` activity-log entries are the
 record it is contested. If the dispute is later **won**, nothing needs undoing.
 
+**A paid invoice takes no payment** (operator ruling 2026-09-27, docket Q5).
+`payInvoice` and `redeemCredit` refuse a paid invoice with "This invoice is
+already paid, so it cannot take another payment." (`details.code:
+invoice_already_paid`), `getMyInvoices` ships no pay methods for one, and the
+invoice PDF prints no "How to pay" once it is paid. When an invoice becomes paid,
+the `onInvoicePaidExpireCheckouts` trigger expires every Checkout Session still
+open for it (`openCheckoutSessionIds`, recorded in `closedCheckoutSessionIds`).
+If a checkout still completes on a paid invoice (the household paid in the
+seconds before the expire), the webhook records the charge as an **unapplied**
+root `payments/{eventId}` row (`appliedTo: 'unapplied'`, `needsAdminDecision:
+true`), adds the event id to the invoice's `unappliedPaymentIds`, writes a
+`critical` `BILLING_PAYMENT_UNAPPLIED` audit entry and sends the business-only
+`invoice.payment.unapplied` notice. It no longer credits the household account
+by itself: account credit happens only when the admin enters an amount (#988),
+and there are no refunds. `report:duplicate-checkout-credits` lists the charges
+the old branch did credit.
+
 **`disputeStatus` and `disputeFundsState` are two different facts, on purpose.**
 `disputeStatus` mirrors Stripe's dispute lifecycle (`needs_response`,
 `under_review`, `won`, `lost`): where the contest stands. `disputeFundsState`
@@ -2409,7 +2427,8 @@ merges the content fields and leaves the rest alone.
 Do this instead, on the web admin or the phone:
 1. Admin, then **Templates**.
 2. **Import from repo** on web, or the **Import** tab on Android.
-3. Read the plan. It writes nothing yet. `invoice.payment.disputed` shows one
+3. Read the plan. It writes nothing yet. `invoice.payment.disputed` (and
+   `invoice.payment.unapplied`, added for docket Q5) shows one
    line per channel: `create` where Firestore has no copy, `unchanged` where the
    stored copy already matches, `skipped` where it differs.
 4. A `skipped` line means somebody edited that template here. Tick **Replace the

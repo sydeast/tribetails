@@ -86,17 +86,23 @@
  * By the time the webhook sees a duplicate the card has ALREADY been charged.
  * There is no refusal that unwinds it, and the standing operator ruling is that
  * there are no refunds, ever. So the caller's duty is reconciliation, not
- * rejection: do not apply the money to the invoice a second time, and route it
- * to the household's account balance, which is the only destination money owed
- * back has (`lib/accountCredit.ts`, `portal/redeemCredit.ts`). This module
- * decides; `billing/stripeWebhook.ts` acts.
+ * rejection: do not apply the money to the invoice a second time. Since the
+ * 2026-09-27 ruling (docket Q5) it is NOT credited automatically either: the
+ * charge is recorded as an unapplied payment linked to the invoice and flagged
+ * for the admin, who decides what it becomes (account credit happens only when
+ * the admin enters an amount, #988). This module decides; `billing/stripeWebhook.ts`
+ * acts.
  *
  * Pure on purpose: every boundary below is a unit test rather than an emulator
  * run, the same way `planApply` and `planCreditDraw` are.
  */
+import { invoiceMarkedPaid } from './invoicePaidGate';
 
 /**
- * `families/{kinfolkId}.accountBalanceCents`, where a duplicate charge goes.
+ * `families/{kinfolkId}.accountBalanceCents`, where a duplicate charge USED TO
+ * go. Since docket Q5 (2026-09-27) the webhook no longer credits a duplicate
+ * automatically. The constant stays because its test pins it to
+ * `lib/accountCredit.ts`; it is reported as orphaned, not deleted.
  *
  * RESTATED, not imported, and this is the one duplicated string in this file.
  * `lib/accountCredit.ts` owns the name and is the module that explains it, but
@@ -155,6 +161,13 @@ export interface InvoiceCheckoutState {
   amountDueCents: unknown;
   /** Legacy float dollars. All an older invoice carries. */
   amountDue: unknown;
+  /**
+   * The label, read for `invoice-marked-paid` (docket Q5). Optional so a
+   * caller built before the ruling still type-checks; absent reads as unmarked.
+   */
+  status?: unknown;
+  /** `markInvoicePaid`'s second label. Same treatment as `status`. */
+  paymentStatus?: unknown;
 }
 
 /**
@@ -211,6 +224,7 @@ export type DuplicateCheckoutReason =
   | 'stale-round'
   | 'settled-by-other-intent'
   | 'invoice-not-owed'
+  | 'invoice-marked-paid'
   | null;
 
 export function duplicateCheckoutReason(input: {
@@ -243,6 +257,14 @@ export function duplicateCheckoutReason(input: {
 
   if (invoiceOwesNothing(input.invoice)) {
     return settled !== null ? 'settled-by-other-intent' : 'invoice-not-owed';
+  }
+
+  // MARKED PAID WHILE A BALANCE STILL SHOWS (operator ruling 2026-09-27,
+  // docket Q5: a paid invoice takes no payment). The mark is enough. That shape
+  // is the partial-payment corruption the admin repairs; a card charge landing
+  // on it is not applied, it is held for the admin to decide.
+  if (invoiceMarkedPaid({ status: input.invoice.status, paymentStatus: input.invoice.paymentStatus })) {
+    return 'invoice-marked-paid';
   }
 
   return null;
