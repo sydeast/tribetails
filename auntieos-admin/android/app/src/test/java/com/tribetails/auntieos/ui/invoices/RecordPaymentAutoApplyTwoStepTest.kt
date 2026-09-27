@@ -98,7 +98,9 @@ class RecordPaymentAutoApplyTwoStepTest {
         tip = 10.0,
         fee = 2.71,
         paymentTotal = paymentTotal,
-        autoApply = true,
+        // #988: the tick is gone. A stated total leaves its leftover as the credit
+        // she chose here; with no total there is no leftover and no credit.
+        creditToAccount = if (paymentTotal > 0.0) paymentTotal - 127.5 - 10.0 else 0.0,
     )
 
     private fun ledgerAnswer(creditedToAccountCents: Long) = decodeRecordPaymentResult(
@@ -126,7 +128,9 @@ class RecordPaymentAutoApplyTwoStepTest {
         assertEquals(137.5, payload["amount"])
         assertEquals(10.0, payload["tip"])
         assertEquals(2.71, payload["fee"])
-        assertEquals(true, payload["autoApply"])
+        // #988: no leftover, so no credit is asked for.
+        assertEquals(false, payload["autoApply"])
+        assertEquals(0L, payload["creditToAccountCents"])
         assertEquals("inv1", payload["invoiceId"])
         assertEquals("1029", payload["invoiceNumber"])
         assertEquals("fam1", payload["kinfolkId"])
@@ -140,6 +144,9 @@ class RecordPaymentAutoApplyTwoStepTest {
         val payload = recordPaymentArgs(ticked(paymentTotal = 200.0), null, "ipay-1").toPayload()
         assertEquals(200.0, payload["amount"])
         assertEquals(10.0, payload["tip"])
+        // #988: the $62.50 leftover is credit only because she entered it.
+        assertEquals(true, payload["autoApply"])
+        assertEquals(6_250L, payload["creditToAccountCents"])
         assertFalse(payload.containsKey("apply"))
     }
 
@@ -166,7 +173,8 @@ class RecordPaymentAutoApplyTwoStepTest {
             }
             assertEquals(listOf<String?>("ipay-1"), settledBy)
             val p = sent.single()
-            assertEquals(true, p.autoApply)
+            assertEquals(false, p.autoApply)
+            assertEquals(0L, p.creditToAccountCents)
             assertEquals(137.5, p.amount, 0.0001)
             assertEquals(10.0, p.tip, 0.0001)
             assertEquals(2.71, p.fee, 0.0001)

@@ -57,7 +57,8 @@ import com.tribetails.auntieos.domain.invoiceIsOverdue
 import com.tribetails.auntieos.domain.formatCentsUsd
 import com.tribetails.auntieos.domain.dollarsToCents
 import com.tribetails.auntieos.domain.parseOptionalMoney
-import com.tribetails.auntieos.domain.unappliedCents
+import com.tribetails.auntieos.domain.PaymentSplit
+import com.tribetails.auntieos.domain.paymentSplit
 import com.tribetails.auntieos.domain.invoicePartPaid
 import com.tribetails.auntieos.domain.InvoiceDisputeDeadline
 import com.tribetails.auntieos.domain.InvoiceDisputeFundsState
@@ -1596,26 +1597,25 @@ private fun RecordPaymentDialog(
     var tip       by remember(invoice.id) { mutableStateOf("") }
     var fee       by remember(invoice.id) { mutableStateOf("") }
     var total     by remember(invoice.id) { mutableStateOf("") }
-    var autoApply by remember(invoice.id) { mutableStateOf(false) }
+    // #988: "Leave as account credit", an AMOUNT, blank for none. It replaced the
+    // auto-apply tick: under the 2026-09-27 ruling a leftover is tip, and credit
+    // is only ever what she enters here.
+    var credit    by remember(invoice.id) { mutableStateOf("") }
     // OFF by default. A confirmation is a message to a real household, so it
     // goes out because she ticked the box, never because the dialog assumed.
     var sendConfirmation by remember(invoice.id) { mutableStateOf(false) }
     val amountValue = amount.trim().toDoubleOrNull()
     val tipValue    = parseOptionalMoney(tip)
     val feeValue    = parseOptionalMoney(fee)
-    val totalValue  = parseOptionalMoney(total)
-    // THE UNAPPLIED BALANCE, recomputed as she types, so a mis-keyed amount is
-    // caught while it is still a typo rather than a payment. Null while a box is
-    // half-typed: the dialog then shows nothing rather than a figure derived
-    // from a number it cannot read.
-    val unapplied: Long? = if (amountValue != null && tipValue != null && totalValue != null) {
-        val appliedC = dollarsToCents(amountValue)
-        val tipC     = dollarsToCents(tipValue)
-        val paymentC = if (totalValue > 0.0) dollarsToCents(totalValue) else appliedC + tipC
-        unappliedCents(paymentC, appliedC, tipC)
+    // #988: WHERE THE MONEY GOES, recomputed as she types: the applied part, the
+    // tip (the rest, unless she typed one) and the credit she chose. Null while a
+    // box is half-typed.
+    val split: PaymentSplit? = if (amountValue != null && amountValue > 0.0) {
+        paymentSplit(amountValue, tip, credit, total)
     } else null
-    val canSave = amountValue != null && amountValue > 0.0 && method.isNotBlank() &&
-        feeValue != null && unapplied != null && unapplied >= 0L
+    val creditNeedsHousehold = split is PaymentSplit.Ok && split.creditCents > 0L && invoice.kinfolkId.isBlank()
+    val canSave = split is PaymentSplit.Ok && method.isNotBlank() && tipValue != null &&
+        feeValue != null && !creditNeedsHousehold
     AuntieModal(
         onDismissRequest = onDismiss,
         title = "Record payment",
@@ -1623,6 +1623,7 @@ private fun RecordPaymentDialog(
             PrimaryButton(
                 label   = "Record payment",
                 onClick = {
+                    val ok = split as? PaymentSplit.Ok ?: return@PrimaryButton
                     onSubmit(
                         buildInvoicePayment(
                             invoice = invoice,
@@ -1631,10 +1632,12 @@ private fun RecordPaymentDialog(
                             referenceNumber = reference,
                             date = date,
                             notes = notes,
-                            tip = tipValue ?: 0.0,
+                            // The tip as split: typed, or the rest of the payment.
+                            tip = ok.tipCents / 100.0,
                             fee = feeValue ?: 0.0,
-                            paymentTotal = totalValue ?: 0.0,
-                            autoApply = autoApply,
+                            // The whole transaction, applied + tip + credit.
+                            paymentTotal = ok.paidCents / 100.0,
+                            creditToAccount = ok.creditCents / 100.0,
                             sendConfirmationEmail = sendConfirmation,
                         ),
                         amountValue ?: 0.0,
@@ -1648,26 +1651,23 @@ private fun RecordPaymentDialog(
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             AuntieField(value = amount, onValueChange = { amount = it }, label = "Amount *", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
-            AuntieField(value = tip, onValueChange = { tip = it }, label = "Tip", placeholder = "before any processor fee", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+            AuntieField(value = tip, onValueChange = { tip = it }, label = "Tip", placeholder = "the rest of the payment", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
             AuntieField(value = fee, onValueChange = { fee = it }, label = "Fees", placeholder = "what the processor took", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
             AuntieField(value = total, onValueChange = { total = it }, label = "Payment amount, if more than the above", placeholder = "same as amount plus tip", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+            AuntieField(value = credit, onValueChange = { credit = it }, label = "Leave as account credit", placeholder = "0.00", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
             AuntieField(value = method, onValueChange = { method = it }, label = "Method *", placeholder = "card, cash, transfer...", modifier = Modifier.fillMaxWidth())
             AuntieField(value = reference, onValueChange = { reference = it }, label = "Reference #", modifier = Modifier.fillMaxWidth())
             AuntieField(value = date, onValueChange = { date = it }, label = "Date (YYYY-MM-DD)", modifier = Modifier.fillMaxWidth())
             AuntieField(value = notes, onValueChange = { notes = it }, label = "Notes (staff only)", placeholder = "not shown to the household", modifier = Modifier.fillMaxWidth())
             Text(
-                text  = recordPaymentBalanceCopy(unapplied, autoApply),
+                text  = if (creditNeedsHousehold) {
+                    "Account credit needs a household, and this invoice is not linked to one."
+                } else {
+                    recordPaymentSplitCopy(split, feeValue?.let { dollarsToCents(it) })
+                },
                 style = AuntieTheme.typography.bodySmall,
                 color = AuntieTheme.colors.textDim,
             )
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AuntieCheckbox(checked = autoApply, onCheckedChange = { autoApply = it })
-                Text(
-                    text  = "Automatically apply any unapplied amount to future invoices",
-                    style = AuntieTheme.typography.bodySmall,
-                    color = AuntieTheme.colors.textDim,
-                )
-            }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 AuntieCheckbox(checked = sendConfirmation, onCheckedChange = { sendConfirmation = it })
                 Text(
@@ -1685,7 +1685,24 @@ private fun RecordPaymentDialog(
     }
 }
 /**
+ * #988: where the payment goes, in words, shown before Save. Pure; unit-tested.
+ *
+ * The fee is named as coming out of the tip, never out of the bill.
+ */
+internal fun recordPaymentSplitCopy(split: PaymentSplit?, feeCents: Long?): String = when (split) {
+    null -> "Not yet: one of the amounts above cannot be read."
+    is PaymentSplit.Refused -> split.message
+    is PaymentSplit.Ok -> {
+        val fee = if (feeCents != null && feeCents > 0L) " (the ${formatCentsUsd(feeCents)} fee comes out of it)" else ""
+        "${formatCentsUsd(split.paidCents)} paid: ${formatCentsUsd(split.appliedCents)} to this invoice, " +
+            "${formatCentsUsd(split.tipCents)} tip$fee, ${formatCentsUsd(split.creditCents)} account credit."
+    }
+}
+/**
  * The Unapplied Balance line, in words.
+ *
+ * #988: no longer shown; [recordPaymentSplitCopy] replaced it. Kept, not deleted
+ * (payment code is never deleted), and listed as orphaned on the PR.
  *
  * PURE AND UNIT-TESTED, like every other decision on this screen. It says three
  * different things and which one it says is the point:

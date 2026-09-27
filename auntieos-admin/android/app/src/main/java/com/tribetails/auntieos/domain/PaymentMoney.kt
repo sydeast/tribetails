@@ -128,3 +128,63 @@ fun parseOptionalMoney(raw: String): Double? {
     val parsed = trimmed.toDoubleOrNull() ?: return null
     return if (parsed.isFinite() && parsed >= 0.0) parsed else null
 }
+
+/**
+ * #988: WHERE ONE PAYMENT GOES, before Save. Integer cents.
+ *
+ * Operator ruling, 2026-09-27: an overpayment is all tip, the processor fee
+ * comes out of the tip, and account credit happens only when she enters an
+ * amount. So the payment splits three ways and adds up exactly:
+ *
+ *   paid = applied + tip + credit
+ *
+ * - The TIP box left blank means "the rest": paid minus applied minus credit.
+ *   Typed, it has to make the three add up to the payment amount.
+ * - The CREDIT box defaults to nothing, comes out of what would otherwise be
+ *   tip, and cannot be more than what is left after the applied part.
+ * - The PAYMENT AMOUNT box left blank means "exactly applied + tip + credit".
+ *
+ * Same rules and words as admin web (`paymentSplit` in `InvoiceDetail.tsx`) and
+ * the desktop console. `null` means a box cannot be read yet.
+ */
+sealed interface PaymentSplit {
+    data class Ok(val paidCents: Long, val appliedCents: Long, val tipCents: Long, val creditCents: Long) : PaymentSplit
+    data class Refused(val message: String) : PaymentSplit
+}
+
+fun paymentSplit(applied: Double, tip: String, credit: String, paymentTotal: String): PaymentSplit? {
+    val total = parseOptionalMoney(paymentTotal) ?: return null
+    val creditDollars = parseOptionalMoney(credit) ?: return null
+    val tipBlank = tip.isBlank()
+    val tipDollars = if (tipBlank) 0.0 else (parseOptionalMoney(tip) ?: return null)
+    val appliedCents = dollarsToCents(applied)
+    val creditCents = dollarsToCents(creditDollars)
+    if (total <= 0.0) {
+        val tipCents = dollarsToCents(tipDollars)
+        return PaymentSplit.Ok(appliedCents + tipCents + creditCents, appliedCents, tipCents, creditCents)
+    }
+    val paidCents = dollarsToCents(total)
+    val leftoverCents = paidCents - appliedCents
+    if (leftoverCents < 0L) {
+        return PaymentSplit.Refused(
+            "A payment of ${formatCentsUsd(paidCents)} does not cover the ${formatCentsUsd(appliedCents)} " +
+                "applied to this invoice. Raise the payment amount, or lower the amount.",
+        )
+    }
+    if (creditCents > leftoverCents) {
+        return PaymentSplit.Refused(
+            "Account credit of ${formatCentsUsd(creditCents)} is more than the ${formatCentsUsd(leftoverCents)} " +
+                "left after the ${formatCentsUsd(appliedCents)} applied to this invoice.",
+        )
+    }
+    val tipCents = if (tipBlank) leftoverCents - creditCents else dollarsToCents(tipDollars)
+    val sum = appliedCents + tipCents + creditCents
+    if (sum != paidCents) {
+        return PaymentSplit.Refused(
+            "${formatCentsUsd(appliedCents)} applied, a ${formatCentsUsd(tipCents)} tip and " +
+                "${formatCentsUsd(creditCents)} account credit add up to ${formatCentsUsd(sum)}, not the " +
+                "${formatCentsUsd(paidCents)} paid. Change the tip or the credit, or leave the tip blank to take the rest.",
+        )
+    }
+    return PaymentSplit.Ok(paidCents, appliedCents, tipCents, creditCents)
+}

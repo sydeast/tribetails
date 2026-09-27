@@ -882,6 +882,9 @@ internal fun recordPaymentArgs(
     invoiceId = payment.invoiceId,
     invoiceNumber = payment.invoiceNumber,
     autoApply = payment.autoApply,
+    // #988: the credit she entered, and nothing else is credited. Always sent,
+    // so 0 says "no credit" rather than leaving it to a default.
+    creditToAccountCents = payment.creditToAccountCents,
     sendConfirmationEmail = payment.sendConfirmationEmail,
     // #825. THE ID OF THE ROW, so a replay is answered with the payment the
     // first attempt recorded rather than recording a second one and crediting
