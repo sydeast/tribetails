@@ -679,31 +679,67 @@ internal object JvmFirestoreRest {
 
     // ── callable ────────────────────────────────────────────────────────────
 
+    /**
+     * #955: the only callables the desktop may dial with no signed-in token. Both
+     * serve the sign-in screen, where there is never a token: `recordFailedLogin`
+     * counts a wrong password toward the #886 lock, and `requestPasswordReset`
+     * sends the operator's reset email (#905). On the server both take anonymous
+     * callers, are exempt from App Check (`UNATTESTED_CLIENT_CALLABLES`) and spend
+     * the per-IP limit before doing anything else.
+     *
+     * A fixed list on purpose. Nothing a caller passes can add a name to it, and
+     * every other callable keeps the #867 rule: no token, no request.
+     */
+    internal val SIGNED_OUT_CALLABLES: Set<String> = setOf("recordFailedLogin", "requestPasswordReset")
+
     /** Invoke a 2nd-gen onCall HTTPS function. payloadJson is the `data` object. */
-    suspend fun callable(name: String, payloadJson: String): WriteResult<String> {
+    suspend fun callable(name: String, payloadJson: String): WriteResult<String> =
+        when (val reply = callableReply(name, payloadJson)) {
+            is CallableReply.Ok -> WriteResult.Ok(reply.resultJson)
+            is CallableReply.Refused -> WriteResult.Err(reply.message)
+            is CallableReply.NotSent -> WriteResult.Err(reply.message)
+        }
+
+    /**
+     * [callable], keeping the server's error status (`RESOURCE_EXHAUSTED`,
+     * `INVALID_ARGUMENT`, ...) apart from a request that never got an answer.
+     */
+    internal suspend fun callableReply(name: String, payloadJson: String): CallableReply {
         // #867: no token, no request. Every desktop callable needs a signed-in admin,
         // and sending one without a token only earns a refusal (in a test, from prod).
-        val token = jvmFirebaseIdToken() ?: return WriteResult.Err("Not signed in")
+        // #955: except the two signed-out callables above, which go without one.
+        val token = jvmFirebaseIdToken()
+        if (token == null && name !in SIGNED_OUT_CALLABLES) return CallableReply.NotSent("Not signed in")
         return try {
             val resp = http.post("$FUNCTIONS/$name") {
-                header(HttpHeaders.Authorization, "Bearer $token")
+                if (token != null) header(HttpHeaders.Authorization, "Bearer $token")
                 timeout { requestTimeoutMillis = callableRequestTimeoutMs(name) }
                 contentType(ContentType.Application.Json)
                 setBody("{\"data\":$payloadJson}")
             }
             val text = resp.bodyAsText()
             if (!resp.status.isSuccess()) {
-                val msg = runCatching {
-                    codec.parseToJsonElement(text).jsonObject["error"]?.jsonObject
-                        ?.get("message")?.jsonPrimitive?.content
-                }.getOrNull() ?: "callable ${resp.status.value}"
-                WriteResult.Err(msg)
+                val error = runCatching { codec.parseToJsonElement(text).jsonObject["error"]?.jsonObject }.getOrNull()
+                val msg = runCatching { error?.get("message")?.jsonPrimitive?.content }.getOrNull()
+                    ?: "callable ${resp.status.value}"
+                val status = runCatching { error?.get("status")?.jsonPrimitive?.content }.getOrNull()
+                CallableReply.Refused(status, msg)
             } else {
                 val result = codec.parseToJsonElement(text).jsonObject["result"]
-                WriteResult.Ok(result?.toString() ?: "{}")
+                CallableReply.Ok(result?.toString() ?: "{}")
             }
         } catch (e: Exception) {
-            WriteResult.Err(e.transportMessage("callable failed"))
+            CallableReply.NotSent(e.transportMessage("callable failed"))
         }
     }
+}
+
+/** What a callable POST came back with. See [JvmFirestoreRest.callableReply]. */
+internal sealed class CallableReply {
+    /** 2xx: the `result` object as JSON text. */
+    data class Ok(val resultJson: String) : CallableReply()
+    /** The server answered with an error. [status] is the callable code, e.g. `RESOURCE_EXHAUSTED`. */
+    data class Refused(val status: String?, val message: String) : CallableReply()
+    /** No answer: not signed in, a timeout or a network failure. */
+    data class NotSent(val message: String) : CallableReply()
 }

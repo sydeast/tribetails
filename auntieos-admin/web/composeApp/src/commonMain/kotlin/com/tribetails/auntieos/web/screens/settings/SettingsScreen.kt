@@ -77,6 +77,7 @@ import com.tribetails.auntieos.web.config.LocalFeatureFlags
 import com.tribetails.auntieos.web.data.AuditLog
 import com.tribetails.auntieos.web.data.AuthClient
 import com.tribetails.auntieos.web.data.AuthOpResult
+import com.tribetails.auntieos.web.data.PasswordResetResult
 import com.tribetails.auntieos.web.ui.components.AuntiePasswordField
 import com.tribetails.auntieos.web.data.VetClinic
 import com.tribetails.auntieos.web.data.AuthUser
@@ -3289,10 +3290,15 @@ internal fun SecurityPanel(
                 onClick = {
                     resetSending = true
                     scope.launch {
-                        val ok = auth.sendPasswordReset(authUser.email!!)
-                        resetSending = false
-                        toast = (if (ok) "Reset email sent to ${authUser.email}" else "Failed to send reset email.") to
-                            (if (ok) ToastKind.Success else ToastKind.Error)
+                        // #955: the `requestPasswordReset` callable, like admin web and Android.
+                        try {
+                            toast = when (val r = auth.sendPasswordReset(authUser.email!!)) {
+                                is PasswordResetResult.Sent -> "Reset email sent to ${authUser.email}" to ToastKind.Success
+                                is PasswordResetResult.Failed -> "Failed to send reset email: ${r.message}" to ToastKind.Error
+                            }
+                        } finally {
+                            resetSending = false
+                        }
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
