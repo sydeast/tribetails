@@ -427,6 +427,7 @@ and prints `resumed:` instead of refusing. It uses the same rule as the release
 | 2 | Firestore indexes | Before the code that queries them. A query with no index fails at RUNTIME, not at build. |
 | 3 | Wait for indexes | The CLI returns when Firestore ACCEPTS an index, not when it is Enabled. The run blocks; the CLI will not. |
 | 4 | Firestore rules | From `mytribe` only. Refused outright if the admin mirror has drifted. |
+| 4b | Storage rules | From `mytribe` only, same as step 4. `mytribe/firebase.json` is the only `firebase.json` that declares a storage section, so there is no admin mirror to drift. Used to be no step at all: a `storage.rules` fix (#999) shipped nowhere in a real release unless someone ran `scripts/safe-deploy.sh mytribe -- firebase deploy --only storage` by hand. |
 | 5 | Functions | Before the clients that call them. **Skipped when `mytribe/functions` is unchanged since the last release AND no declared secret is newer than it**. Otherwise deployed **by name, in batches of 25, with retries**, because the whole fleet does not fit the regional CPU quota. See below. A rerun of the **same commit** skips it once its fleet verify passed; see "A stopped release resumes on the same commit". |
 | 6 | Hosting | Admin, then portal. |
 | 6b | Android | Uploads both APKs from step 1c to App Distribution, each to its own Firebase app, in the same run as the web. |
@@ -840,6 +841,10 @@ tree is not clean` followed by `git status --short`. Skippable:
   answered it. `deploy:bg` and `RELEASE_BG_FORCE=1` both run with `RELEASE_YES=1`,
   so neither is recorded as a confirmation
 - rules (step 4)
+- storage rules (step 4b). `mytribe/firebase.json` is the only `firebase.json`
+  that declares a storage section, so unlike rules there is no admin mirror to
+  drift; a `storage.rules` fix used to ship nowhere in a real release until a
+  hand-run `firebase deploy --only storage` shipped it, which this step ends
 - the `mytribe` functions (step 5), recorded as done **only when the fleet
   verify passed**. A step 5 with nothing to deploy has its own record, and the
   resume and the tag say "nothing to deploy". A deploy whose verify could not run
@@ -855,9 +860,9 @@ commit done for work the old one deployed. If HEAD moves, or the working tree
 changes after the first deploy, the run stops at the next check with `REFUSED:
 HEAD moved during the release` (or `the working tree changed during the
 release`), naming where it was caught. The checks run at every step boundary,
-before and after each functions batch, after the rules deploy, before each admin
-codebase attempt and after its deploy, before step 5 is recorded, and before
-`.release-state` is written.
+before and after each functions batch, after the rules deploy, after the
+storage rules deploy, before each admin codebase attempt and after its deploy,
+before step 5 is recorded, and before `.release-state` is written.
 
 They are that dense because the deploys read the working tree: `firebase deploy`
 rebuilds `lib/` for every functions batch (the predeploy in
@@ -924,6 +929,7 @@ RELEASE STOPPED during: deploying the admin functions codebases (functions:defau
 Completed and LIVE for e245053:
     - firestore indexes (steps 2-3)
     - firestore rules (step 4)
+    - storage rules (step 4b)
     - functions:mytribe, fleet verified (step 5)
 ```
 
@@ -1431,8 +1437,9 @@ a prune that prints only its deletions reads as "everything mergeable is gone".
 
 List releases oldest-first with `git tag -l 'release/*' | sort`. To revert:
 hosting rolls back instantly from the Firebase console, as above. Functions
-and rules do not, and `release.sh` itself only runs from `main`, so it cannot
-redeploy a tag directly. Either check the tag out somewhere other than your
+and rules (Firestore and Storage) do not, and `release.sh` itself only runs
+from `main`, so it cannot redeploy a tag directly. Either check the tag out
+somewhere other than your
 `main` worktree and run `scripts/safe-deploy.sh` against it target by target
 (see below), or `git revert` forward to that state on `main` and release
 normally.
@@ -1562,7 +1569,15 @@ scripts/safe-deploy.sh mytribe -- firebase deploy --only functions:mytribe
 scripts/safe-deploy.sh auntieos-admin -- firebase deploy --only hosting:app
 scripts/safe-deploy.sh mytribe -- firebase deploy --only hosting:kinfolk_portal
 scripts/safe-deploy.sh mytribe -- firebase deploy --only firestore:indexes
+scripts/safe-deploy.sh mytribe -- firebase deploy --only storage
 ```
+
+Storage rules are `mytribe`-only too, same as Firestore rules, but
+`auntieos-admin` declares no storage section at all, so there is no mirror to
+drift and nothing to refuse there. This used to be the ONLY way storage rules
+shipped: `scripts/release.sh` deployed indexes and Firestore rules but never
+Storage rules (step 4b closes that gap), so a `storage.rules` change landed on
+`main` and stayed off production until someone ran the command above by hand.
 
 Doing it this way puts the ordering above back in your head. Prefer the run.
 

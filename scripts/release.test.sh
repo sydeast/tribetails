@@ -1862,7 +1862,8 @@ else
 fi
 if grep -q "Completed and LIVE for $(cd "$DB/repo" && git rev-parse --short HEAD)" "$DB/out" &&
    grep -q "functions:mytribe, fleet verified" "$DB/out" &&
-   grep -q "firestore rules" "$DB/out"; then
+   grep -q "firestore rules" "$DB/out" &&
+   grep -q "storage rules" "$DB/out"; then
   ok "the stop message names the steps that completed for this commit"
 else
   bad "the stop message does not name what shipped"; tail -15 "$DB/out"
@@ -1890,10 +1891,10 @@ if grep -q "firebase functions:delete retiredFn" "$DB/out" &&
 else
   bad "the resumed step 5 did not report the removed function"; grep -n "retiredFn\|functions:delete" "$DB/out" "$DB/calls2"
 fi
-if grep -q 'firestore:indexes\|firestore:rules' "$DB/calls2"; then
-  bad "the rerun redeployed indexes or rules it had already shipped"
+if grep -q 'firestore:indexes\|firestore:rules' "$DB/calls2" || grep -q -- '--only storage ' "$DB/calls2" 2>/dev/null; then
+  bad "the rerun redeployed indexes, firestore rules or storage rules it had already shipped"
 else
-  ok "the rerun skips indexes and rules it had already shipped"
+  ok "the rerun skips indexes, firestore rules and storage rules it had already shipped"
 fi
 # Step 3 was answered by RELEASE_YES in the first run, so nothing may say the
 # indexes were confirmed Enabled.
@@ -1927,8 +1928,9 @@ commit_change "$DC" "note.txt" "a later commit"
 arm_ci "$DC"
 RCC="$(run_release "$DC" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DC/calls2")"
 if [ "$RCC" = "0" ] && [ -n "$(fn_deploys "$DC/calls2")" ] &&
-   grep -q 'firestore:rules' "$DC/calls2" && ! grep -q "RESUMED" "$DC/out"; then
-  ok "a different commit redeploys everything and resumes nothing"
+   grep -q 'firestore:rules' "$DC/calls2" && grep -q -- '--only storage ' "$DC/calls2" 2>/dev/null &&
+   ! grep -q "RESUMED" "$DC/out"; then
+  ok "a different commit redeploys everything (including storage rules) and resumes nothing"
 else
   bad "a different commit skipped work (rc=$RCC, functions '$(fn_deploys "$DC/calls2" | tr '\n' ' ')')"
 fi
@@ -1938,8 +1940,9 @@ DD="$(admin_repo)"
 run_release "$DD" "${ADMIN_ENV[@]}" FIREBASE_ADMIN_FAIL_TEXT="$MISSING_TEXT" >/dev/null
 RCD="$(run_release "$DD" "${ADMIN_ENV[@]}" RELEASE_NO_RESUME=1 FIREBASE_CALL_LOG="$DD/calls2")"
 if [ "$RCD" = "0" ] && [ -n "$(fn_deploys "$DD/calls2")" ] &&
-   grep -q 'firestore:rules' "$DD/calls2" && ! grep -q "RESUMED" "$DD/out"; then
-  ok "RELEASE_NO_RESUME=1 redeploys every step on the same commit"
+   grep -q 'firestore:rules' "$DD/calls2" && grep -q -- '--only storage ' "$DD/calls2" 2>/dev/null &&
+   ! grep -q "RESUMED" "$DD/out"; then
+  ok "RELEASE_NO_RESUME=1 redeploys every step, including storage rules, on the same commit"
 else
   bad "RELEASE_NO_RESUME=1 still skipped work (rc=$RCD)"
 fi
@@ -1950,10 +1953,11 @@ DE="$(admin_repo)"
 stub_npm_verify "$DE" 2
 run_release "$DE" "${ADMIN_ENV[@]}" FIREBASE_ADMIN_FAIL_TEXT="$MISSING_TEXT" >/dev/null
 if grep -q " rules$" "$DE/repo/.release-progress" 2>/dev/null &&
+   grep -q " storage-rules$" "$DE/repo/.release-progress" 2>/dev/null &&
    ! grep -q " functions-mytribe$" "$DE/repo/.release-progress" 2>/dev/null; then
-  ok "an unverified functions deploy is not recorded as done"
+  ok "an unverified functions deploy is not recorded as done, but rules and storage rules are"
 else
-  bad "an unverified functions deploy was recorded"; cat "$DE/repo/.release-progress" 2>/dev/null
+  bad "an unverified functions deploy was recorded, or rules/storage rules were not"; cat "$DE/repo/.release-progress" 2>/dev/null
 fi
 LIVE_E="$(sed 's/\x1b\[[0-9;]*m//g' "$DE/out" | awk '/^Completed and LIVE for /{f=1; next} /^[^ ]/{f=0} f')"
 UNVER_E="$(sed 's/\x1b\[[0-9;]*m//g' "$DE/out" | awk '/^Deployed, NOT verified, for /{f=1; next} /^[^ ]/{f=0} f')"
@@ -1967,8 +1971,9 @@ else
   bad "the stop message did not say the functions were deployed but not verified"; tail -12 "$DE/out"
 fi
 RCE="$(run_release "$DE" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DE/calls2")"
-if [ "$RCE" = "0" ] && [ -n "$(fn_deploys "$DE/calls2")" ] && ! grep -q 'firestore:rules' "$DE/calls2"; then
-  ok "the rerun redeploys the unverified functions and skips the recorded rules"
+if [ "$RCE" = "0" ] && [ -n "$(fn_deploys "$DE/calls2")" ] && ! grep -q 'firestore:rules' "$DE/calls2" &&
+   ! grep -q -- '--only storage ' "$DE/calls2" 2>/dev/null; then
+  ok "the rerun redeploys the unverified functions and skips the recorded rules and storage rules"
 else
   bad "the rerun after an unverified deploy was wrong (rc=$RCE)"; cat "$DE/calls2"
 fi
@@ -2851,6 +2856,61 @@ if printf '%s' "$OUT" | grep -q "curl -4" && printf '%s' "$OUT" | grep -q "curl 
   ok "a LIST timeout prints the IPv4/IPv6 check"
 else
   bad "a LIST timeout never printed the network check"; echo "$OUT" | tail -25
+fi
+
+# ---------------------------------------------------------------------------
+# 27. Storage rules (step 4b) deploy from mytribe with --only storage, land
+#     between firestore rules and functions, and are recorded so a resumed run
+#     skips them. This step used to not exist at all: a storage.rules fix
+#     (#999, excluding an Auntie from acting as kinfolk on kin photos and
+#     KinTale media) landed on main and shipped nowhere in a real release
+#     unless someone ran `scripts/safe-deploy.sh mytribe -- firebase deploy
+#     --only storage` by hand.
+# ---------------------------------------------------------------------------
+DSR="$(make_repo)"; write_stubs "$DSR"; arm_ci "$DSR"
+RC="$(run_release "$DSR" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
+  RELEASE_FUNCTIONS_SETTLE=0 FIREBASE_CALL_LOG="$DSR/calls")"
+OUT="$(cat "$DSR/out")"
+if [ "$RC" = "0" ]; then
+  ok "a real run with the storage rules step completes"
+else
+  bad "a real run with the storage rules step failed (rc=$RC)"; echo "$OUT" | tail -25
+fi
+if grep -q -- '--only storage ' "$DSR/calls" 2>/dev/null; then
+  ok "the release deploys storage rules with --only storage, from mytribe"
+else
+  bad "the release never deployed storage rules"; cat "$DSR/calls" 2>/dev/null
+fi
+RULES_LINE="$(grep -n -- '--only firestore:rules' "$DSR/calls" 2>/dev/null | head -1 | cut -d: -f1)"
+STORAGE_LINE="$(grep -n -- '--only storage ' "$DSR/calls" 2>/dev/null | head -1 | cut -d: -f1)"
+FUNCTIONS_LINE="$(grep -n -- '--only functions:mytribe:' "$DSR/calls" 2>/dev/null | head -1 | cut -d: -f1)"
+if [ -n "$RULES_LINE" ] && [ -n "$STORAGE_LINE" ] && [ -n "$FUNCTIONS_LINE" ] &&
+   [ "$RULES_LINE" -lt "$STORAGE_LINE" ] && [ "$STORAGE_LINE" -lt "$FUNCTIONS_LINE" ]; then
+  ok "storage rules deploy right after firestore rules and before functions"
+else
+  bad "storage rules deployed out of order"; cat "$DSR/calls" 2>/dev/null
+fi
+if [ ! -e "$DSR/repo/.release-progress" ] &&
+   [ "$(cat "$DSR/repo/.release-state" 2>/dev/null)" = "$(cd "$DSR/repo" && git rev-parse HEAD)" ]; then
+  ok "a completed release with the storage rules step records .release-state and clears progress"
+else
+  bad "a completed release did not record itself correctly"; cat "$DSR/repo/.release-progress" 2>/dev/null
+fi
+
+# A pre-marked storage-rules record for THIS commit is skipped on a rerun, the
+# same as the rules and indexes records (progress_done is generic over the key,
+# but this proves the step under test actually reads it).
+DST="$(make_repo)"; write_stubs "$DST"; arm_ci "$DST"
+HEAD_ST="$(cd "$DST/repo" && git rev-parse HEAD)"
+printf '%s storage-rules\n' "$HEAD_ST" > "$DST/repo/.release-progress"
+RC="$(run_release "$DST" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
+  RELEASE_FUNCTIONS_SETTLE=0 FIREBASE_CALL_LOG="$DST/calls")"
+OUT="$(cat "$DST/out")"
+if [ "$RC" = "0" ] && ! grep -q -- '--only storage ' "$DST/calls" 2>/dev/null &&
+   printf '%s' "$OUT" | grep -q "RESUMED: an earlier run of .* deployed the storage rules"; then
+  ok "a rerun with storage-rules already recorded skips the deploy and says RESUMED"
+else
+  bad "a pre-recorded storage-rules step was not resumed"; echo "$OUT" | tail -25; cat "$DST/calls" 2>/dev/null
 fi
 
 echo
