@@ -20,7 +20,8 @@ All of it deploys into a single Firebase project, `auntieos-ttpc`. There is no
 staging project. Click-testing happens on the local emulators.
 
 `docs/RUNBOOK.md` is the standing operational doc: setup, scripts, builds,
-deploys, secrets and troubleshooting.
+deploys, secrets and troubleshooting. `docs/DECISIONS.md` is the standing
+record of operator rulings, the ones code points back to by ID.
 
 ## Why one repo
 

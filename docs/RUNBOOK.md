@@ -3101,6 +3101,7 @@ unauthenticated); this is for when it can be asked and the honest answer is
 | File | For |
 |---|---|
 | `README.md` | What the repo is, why one repo |
+| `docs/DECISIONS.md` | The operator rulings the code obeys, one entry per ID |
 | `auntieos-admin/CLAUDE.md` | Vertical-slice rule, error-handling philosophy |
 | `mytribe/functions/CALLABLE_CONTRACT.md` | Canonical request and response shapes |
 | `docs/twilio/README.md` | Both Twilio integrations, the call flow, the live account's known issues |
