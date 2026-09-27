@@ -50,11 +50,16 @@ import com.tribetails.auntieos.web.data.Payment
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.lastReminderLabel
 import com.tribetails.auntieos.web.data.reminderOutcomeMessage
-import com.tribetails.auntieos.web.data.mintPaymentIdempotencyKey
+import com.tribetails.auntieos.web.data.InvoicePaymentEntry
+import com.tribetails.auntieos.web.data.PaymentSubmissionKeys
+import com.tribetails.auntieos.web.data.recordPaymentOutcomeMessage
+import com.tribetails.auntieos.web.data.recordPaymentRefusalText
+import com.tribetails.auntieos.web.data.submitInvoicePayment
 import com.tribetails.auntieos.web.util.openUrl
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
+import com.tribetails.auntieos.web.ui.components.AuntieCheckbox
 import com.tribetails.auntieos.web.ui.components.AuntieChip
 import com.tribetails.auntieos.web.ui.components.AuntieChipTone
 import com.tribetails.auntieos.web.ui.components.AuntieDialog
@@ -192,41 +197,23 @@ private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
     // Record-payment dialog (spec 17 item 6): prefilled from the invoice, stamps
     // invoiceId so the join above is populated.
     //
-    // This line used to say "uses the existing recordPayment callable". It does
-    // not, and never did: `FirestoreClient.recordPayment` writes the `payments`
-    // row directly over REST on this surface. Corrected in #825 rather than left
-    // standing, because #825 is precisely about what that write does with its
-    // document id, and a comment pointing at the wrong mechanism is where the
-    // next reader's reasoning would go wrong.
+    // #881: it goes through the `recordPayment` callable, one call with an
+    // `apply` for this invoice (see InvoicePaymentEntry). Until #881 it wrote the
+    // `payments` row directly over REST, which left the invoice open, the
+    // account balance untouched, and no audit entry or confirmation.
     var showRecordPayment by remember { mutableStateOf(false) }
     var recordingPayment  by remember { mutableStateOf(false) }
+    // The callable's refusal, shown inside the dialog, which stays open with
+    // every field filled in so the operator can correct and press again.
+    var recordPaymentError by remember(invoice._id) { mutableStateOf<String?>(null) }
 
     /**
-     * #825: the submission this key was minted for, and the key. ONE KEY PER
-     * SUBMISSION, NOT PER PRESS.
-     *
-     * This dialog is where the re-press is not hypothetical: a failed attempt
-     * leaves it OPEN with every field still filled in, so the natural next move
-     * is to press Record payment again -- and until #825 that second press
-     * wrote a second `payments` row for money that arrived once.
-     *
-     * The signature is the [Payment] itself. A data class's `toString` names
-     * every field it has, so a field added to `Payment` later cannot quietly
-     * fall out of the comparison the way a hand-listed set of fields would; and
-     * `buildInvoicePayment` is pure, with no clock and no counter in it, so
-     * reopening the dialog on the same invoice with the same entries rebuilds an
-     * equal Payment and the held key survives. Change any entry and the
-     * signature changes, which mints a new key -- a held key would otherwise
-     * replay the OLD payment and report it as the new one.
+     * #825 and #881: ONE KEY PER SUBMISSION, NOT PER PRESS. A failed attempt
+     * leaves the dialog open, so the next press is a retry of the same payment
+     * and carries the same key; a changed entry mints a new one. Remembered per
+     * invoice so reopening the dialog with the same entries keeps the key.
      */
-    var paymentSubmission by remember(invoice._id) { mutableStateOf<Pair<String, String>?>(null) }
-
-    fun paymentKeyFor(signature: String): String {
-        paymentSubmission?.let { (held, key) -> if (held == signature) return key }
-        val minted = mintPaymentIdempotencyKey()
-        paymentSubmission = signature to minted
-        return minted
-    }
+    val paymentKeys = remember(invoice._id) { PaymentSubmissionKeys() }
 
     // Edit-mode state
     var editMode     by remember { mutableStateOf(false) }
@@ -294,30 +281,35 @@ private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
         onSave        = { saveLinks() },
     )
 
-    // ── Record-payment dialog (writes Payment.invoiceId) ──────────────────────
+    // ── Record-payment dialog (recordPayment callable with an apply, #881) ────
     RecordPaymentDialog(
         visible    = showRecordPayment,
         invoice    = invoice,
         submitting = recordingPayment,
-        onDismiss  = { showRecordPayment = false },
-        onSubmit   = { payment ->
+        error      = recordPaymentError,
+        onDismiss  = {
+            // Not while the call is in flight: its answer has to land somewhere.
+            if (!recordingPayment) {
+                showRecordPayment = false
+                recordPaymentError = null
+            }
+        },
+        onInvalid  = { message -> recordPaymentError = message },
+        onSubmit   = { entry ->
+            if (recordingPayment) return@RecordPaymentDialog
             recordingPayment = true
-            val key = paymentKeyFor(payment.toString())
+            recordPaymentError = null
             scope.launch {
-                when (val r = client.recordPayment(payment, idempotencyKey = key)) {
+                // Holds the key on Err and releases it on Ok (submitInvoicePayment).
+                when (val r = submitInvoicePayment(client, entry, paymentKeys)) {
                     is WriteResult.Ok  -> {
                         recordingPayment = false
                         showRecordPayment = false
-                        // #825: drop the held key once the row exists. Two cash
-                        // instalments of the same amount on the same day is an
-                        // ordinary thing; holding the key would write the second
-                        // one over the first and report success.
-                        paymentSubmission = null
-                        showToast("Payment recorded.", false)
+                        showToast(recordPaymentOutcomeMessage(r.value, entry.sendConfirmationEmail), false)
                     }
                     is WriteResult.Err -> {
                         recordingPayment = false
-                        showToast("Couldn't record payment: ${r.message}", true)
+                        recordPaymentError = recordPaymentRefusalText(r.message)
                     }
                 }
             }
@@ -628,52 +620,92 @@ private fun PaymentRow(payment: Payment, showDivider: Boolean) {
 }
 
 /**
- * Record-payment dialog prefilled from the invoice. Stamps invoiceId/invoiceNumber
- * via [buildInvoicePayment] so the per-invoice join is populated (spec 17 item 6).
+ * Record-payment dialog prefilled from the invoice. #881: the fields are the
+ * `recordPayment` callable's (amount paid, apply to this invoice, gross tip,
+ * processor fee, auto-apply, send confirmation), checked by
+ * [parseRecordPaymentForm]. While the call runs the button says so and nothing
+ * can be pressed twice; a refusal is shown here and the fields stay filled in.
  */
 @Composable
 private fun RecordPaymentDialog(
     visible: Boolean,
     invoice: Invoice,
     submitting: Boolean,
+    error: String?,
     onDismiss: () -> Unit,
-    onSubmit: (Payment) -> Unit,
+    onInvalid: (String) -> Unit,
+    onSubmit: (InvoicePaymentEntry) -> Unit,
 ) {
-    var amount    by remember(invoice._id, visible) { mutableStateOf(if (invoice.amountDue > 0.0) invoice.amountDue.toString() else "") }
+    val due = if (invoice.amountDue > 0.0) formatMoney(invoice.amountDue).removePrefix("$") else ""
+    var amount    by remember(invoice._id, visible) { mutableStateOf(due) }
+    var apply     by remember(invoice._id, visible) { mutableStateOf(due) }
+    var tip       by remember(invoice._id, visible) { mutableStateOf("") }
+    var fee       by remember(invoice._id, visible) { mutableStateOf("") }
     var method    by remember(invoice._id, visible) { mutableStateOf("") }
     var reference by remember(invoice._id, visible) { mutableStateOf("") }
-    var date      by remember(invoice._id, visible) { mutableStateOf("") }
+    var date      by remember(invoice._id, visible) { mutableStateOf(nowIso().take(10)) }
     var notes     by remember(invoice._id, visible) { mutableStateOf("") }
-
-    val amountValue = amount.trim().toDoubleOrNull()
-    val canSave = amountValue != null && amountValue > 0.0 && method.isNotBlank()
-
+    var autoApply by remember(invoice._id, visible) { mutableStateOf(false) }
+    var sendConfirmation by remember(invoice._id, visible) { mutableStateOf(false) }
+    val canSave = amount.isNotBlank() && apply.isNotBlank() && method.isNotBlank()
     AuntieDialog(
         visible   = visible,
         title     = "Record payment",
         onDismiss = onDismiss,
-        hint      = "Logs a payment against invoice #${invoice.invoiceNumber.ifBlank { "-" }}.",
+        hint      = "Applies a payment to invoice #${invoice.invoiceNumber.ifBlank { "-" }}.",
         maxWidth  = 460.dp,
         footer    = {
-            GhostButton(label = "Cancel", onClick = onDismiss)
+            GhostButton(label = "Cancel", onClick = onDismiss, enabled = !submitting)
             Spacer(Modifier.width(8.dp))
             PrimaryButton(
-                label   = if (submitting) "Saving" else "Record payment",
+                label   = if (submitting) "Recording..." else "Record payment",
                 enabled = canSave && !submitting,
-                onClick = { onSubmit(buildInvoicePayment(invoice, amountValue ?: 0.0, method, reference, date, notes)) },
+                onClick = {
+                    when (val form = parseRecordPaymentForm(
+                        invoice, amount, apply, tip, fee, method, reference, date, notes, autoApply, sendConfirmation,
+                    )) {
+                        is RecordPaymentForm.Invalid -> onInvalid(form.message)
+                        is RecordPaymentForm.Ready   -> onSubmit(form.entry)
+                    }
+                },
             )
         },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            BottomBorderField(amount, { amount = it }, label = "Amount *", keyboardType = KeyboardType.Decimal, modifier = Modifier.fillMaxWidth())
-            BottomBorderField(method, { method = it }, label = "Method *", placeholder = "card, cash, transfer...", modifier = Modifier.fillMaxWidth())
-            BottomBorderField(reference, { reference = it }, label = "Reference #", modifier = Modifier.fillMaxWidth())
-            BottomBorderField(date, { date = it }, label = "Date (YYYY-MM-DD)", modifier = Modifier.fillMaxWidth())
-            BottomBorderField(notes, { notes = it }, label = "Notes", modifier = Modifier.fillMaxWidth())
+            if (error != null) {
+                AuntieBanner(
+                    tone  = AuntieBannerTone.Error,
+                    title = "Not recorded",
+                    icon  = Lucide.CircleAlert,
+                    body  = {
+                        Text(error, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+                    },
+                )
+            }
+            val on = !submitting
+            BottomBorderField(amount, { amount = it }, label = "Amount paid *", placeholder = "the whole sum, tip included", keyboardType = KeyboardType.Decimal, enabled = on, modifier = Modifier.fillMaxWidth())
+            BottomBorderField(apply, { apply = it }, label = "Apply to this invoice *", keyboardType = KeyboardType.Decimal, enabled = on, modifier = Modifier.fillMaxWidth())
+            BottomBorderField(tip, { tip = it }, label = "Tip (gross)", keyboardType = KeyboardType.Decimal, enabled = on, modifier = Modifier.fillMaxWidth())
+            BottomBorderField(fee, { fee = it }, label = "Processor fee", keyboardType = KeyboardType.Decimal, enabled = on, modifier = Modifier.fillMaxWidth())
+            BottomBorderField(method, { method = it }, label = "Method *", placeholder = "Venmo, PayPal, cash...", enabled = on, modifier = Modifier.fillMaxWidth())
+            BottomBorderField(reference, { reference = it }, label = "Reference #", enabled = on, modifier = Modifier.fillMaxWidth())
+            BottomBorderField(date, { date = it }, label = "Date (YYYY-MM-DD)", enabled = on, modifier = Modifier.fillMaxWidth())
+            BottomBorderField(notes, { notes = it }, label = "Staff-only notes", enabled = on, modifier = Modifier.fillMaxWidth())
+            AuntieCheckbox(
+                checked = autoApply,
+                onCheckedChange = { autoApply = it },
+                label = "Put any unapplied amount on the household's account balance",
+                enabled = on,
+            )
+            AuntieCheckbox(
+                checked = sendConfirmation,
+                onCheckedChange = { sendConfirmation = it },
+                label = "Send a confirmation email to the household",
+                enabled = on,
+            )
         }
     }
 }
-
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun LinkSessionsDialog(
