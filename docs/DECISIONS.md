@@ -49,6 +49,8 @@ so the ID resolves.
 | D-2026-08-06-ONE-TRIBE | 2026-08-06 | One kinfolk, one tribe | Households, kinfolk and kin |
 | D-2026-08-04-WHO-INVITES-WHOM | 2026-08-04 | The admin invites the primary; the primary invites the secondary | Households, kinfolk and kin |
 | D-SECONDARY-PERMISSIONS |  | The primary sets the secondary's permissions | Households, kinfolk and kin |
+| D-2026-09-28-BILLING-ACCESS-PAYS | 2026-09-28 | Billing access includes paying | Households, kinfolk and kin |
+| D-2026-09-28-VISIT-PRICES-ARE-BILLING | 2026-09-28 | Visit prices are billing information | Households, kinfolk and kin |
 | D-SECONDARY-EMAIL-VERIFY |  | Secondaries verify their email too | Households, kinfolk and kin |
 | D-684-NO-TYPED-PRIMARY-INVITE |  | No typed-email primary invite | Households, kinfolk and kin |
 | D-2026-09-12-CONTACT-NOT-INVITE | 2026-09-12 | A contact is not a portal user | Households, kinfolk and kin |
@@ -273,6 +275,16 @@ so the ID resolves.
 ### D-SECONDARY-PERMISSIONS: The primary sets the secondary's permissions
 - Ruling: "Primary kinfolk is allowed to set the permissions of the secondary". A primary may grant a secondary any permission, billing included, except the one excluded in `members.ts`. What a secondary receives depends on the primary's settings, whether or not the secondary has portal access.
 - Enforced in: `auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/data/repository/MembersRepository.kt`, `auntieos-admin/src/api/members.ts`, `auntieos-admin/web/firestore.rules`, `mytribe/firestore.rules`
+
+### D-2026-09-28-BILLING-ACCESS-PAYS: Billing access includes paying
+- Date: 2026-09-28. Source: docket Q7
+- Ruling: "Yes: billing access includes paying, using credit, answering quotes and saved cards." A secondary the primary granted billing access can pay an invoice, redeem account credit, accept or decline a quote, and manage saved cards, not only see them.
+- Enforced in: `mytribe/functions/src/lib/memberGate.ts`
+
+### D-2026-09-28-VISIT-PRICES-ARE-BILLING: Visit prices are billing information
+- Date: 2026-09-28. Source: docket Q8
+- Ruling: "Yes: visit prices are billing information; hide them from members without billing access."
+- Enforced in: `mytribe/functions/src/lib/memberGate.ts`
 
 ### D-SECONDARY-EMAIL-VERIFY: Secondaries verify their email too
 - Ruling: "secondary needs email verification as well."
