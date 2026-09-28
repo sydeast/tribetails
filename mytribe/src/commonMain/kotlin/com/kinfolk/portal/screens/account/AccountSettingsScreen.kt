@@ -204,15 +204,21 @@ fun AccountSettingsScreen(
                 onClick = {
                     inviting = true
                     status = null
+                    // #1018 item 3: addSecondaryContact really sends this email now
+                    // (functions/src/portal/addSecondaryContact.ts); captured before
+                    // the field is cleared, so the confirmation names the address.
+                    // Lowercased: the server lowercases invitedEmail before sending,
+                    // so this is the address the mail actually goes to.
+                    val sentTo = accountValues["secondaryEmail"].orEmpty().trim().lowercase()
                     scope.launch {
                         try {
                             portalApi.addSecondaryContact(
                                 kinfolkId = kinfolkId,
-                                invitedEmail = accountValues["secondaryEmail"].orEmpty().trim(),
+                                invitedEmail = sentTo,
                                 secondaryLabel = accountValues["secondaryRole"].orEmpty().trim().ifBlank { null },
                             )
                             accountValues = accountValues + ("secondaryEmail" to "") + ("secondaryRole" to "")
-                            status = "Invite sent."
+                            status = "Invite sent to $sentTo."
                         } catch (t: Throwable) {
                             status = "Invite failed: ${t.message ?: t}"
                         } finally {

@@ -255,6 +255,54 @@ describe('Account avatar upload', () => {
  * app already linked from Home.tsx:222. A tooltip is not a label; it never
  * appears on touch.
  */
+/**
+ * #1018 item 3: `addSecondaryContact` used to send no email of its own, which
+ * made "Invite sent." false. It now sends the real invite email
+ * (mytribe/functions/src/portal/addSecondaryContact.ts, via
+ * lib/inviteEmails.ts), so the confirmation says exactly that, naming the
+ * address, and a failed send shows the server's own refusal rather than a
+ * generic line. No claim link is ever shown here: the email is the delivery.
+ */
+describe('Account: secondary invite confirmation (#1018 item 3)', () => {
+  it('says the invite was sent, and names the address', async () => {
+    const user = userEvent.setup();
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.addSecondaryContact).mockResolvedValue({ inviteId: 'inv-1' });
+    const { getByLabelText, getByRole, findByText, queryByText } = await renderAccount();
+
+    await user.type(getByLabelText('Backup Email'), 'sam@example.com');
+    await user.click(getByRole('button', { name: /Send Invite/ }));
+
+    expect(await findByText('Invite sent to sam@example.com.')).toBeInTheDocument();
+    expect(queryByText(/claim\?invite=/)).not.toBeInTheDocument();
+  });
+
+  it('names the lowercased address the server actually mails, even when typed in mixed case', async () => {
+    const user = userEvent.setup();
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.addSecondaryContact).mockResolvedValue({ inviteId: 'inv-2' });
+    const { getByLabelText, getByRole, findByText } = await renderAccount();
+
+    await user.type(getByLabelText('Backup Email'), 'Sam@Example.COM');
+    await user.click(getByRole('button', { name: /Send Invite/ }));
+
+    expect(await findByText('Invite sent to sam@example.com.')).toBeInTheDocument();
+  });
+
+  it('shows the server\'s own refusal when the send fails, not a generic line', async () => {
+    const user = userEvent.setup();
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.addSecondaryContact).mockRejectedValue(new Error('failed-precondition: already invited'));
+    const { getByLabelText, getByRole, findByText, queryByText } = await renderAccount();
+
+    await user.type(getByLabelText('Backup Email'), 'sam@example.com');
+    await user.click(getByRole('button', { name: /Send Invite/ }));
+
+    expect(await findByText(/Invite failed.*already invited/)).toBeInTheDocument();
+    expect(queryByText(/Invite sent/)).not.toBeInTheDocument();
+  });
+});
+
 describe('Account: Message your Auntie', () => {
   it('is a real link to /messages, not a coming-soon span', async () => {
     const { getByRole, queryByTitle } = await renderAccount();

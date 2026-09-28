@@ -140,6 +140,10 @@ class HouseholdMembersViewModelTest {
         // wording must not claim the member is gone.
         assertTrue(vm.uiState.value.toast!!.contains("suspended"))
         assertTrue(vm.uiState.value.toast!!.contains("the Walls"))
+        // #1018 item 1: a removed ACTIVE secondary's person record may have
+        // just gone back to 'NONE' server-side, so the no-access list reloads
+        // too (load() once, then again from removeMember's success).
+        coVerify(exactly = 2) { repo.listSecondaryKinfolk("fam1") }
     }
 
     // ── THE CASE THAT MATTERS ───────────────────────────────────────────────

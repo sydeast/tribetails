@@ -43,7 +43,7 @@ import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { BusyLabel } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
-import { usePortalMutation } from '../lib/mutationState';
+import { errorLine, usePortalMutation } from '../lib/mutationState';
 
 /**
  * Reads one of the three reserved home-access fields when a homeAccess schema
@@ -952,6 +952,9 @@ function InviteKinfolkCard(props: {
   const [role, setRole] = useState('');
   const [canEditPets, setCanEditPets] = useState(false);
   const [canAccessHome, setCanAccessHome] = useState(false);
+  // Captured at submit time, since `email` is cleared on success: the
+  // confirmation names the address the invite actually went to.
+  const [sentTo, setSentTo] = useState<string | null>(null);
   useEffect(() => {
     if (prefill === null) return;
     setEmail(prefill.email ?? '');
@@ -959,9 +962,9 @@ function InviteKinfolkCard(props: {
   }, [prefill]);
 
   // HOLD. `addSecondaryContact` short-circuits on a live PENDING inviteRequest
-  // for the same address rather than minting a second, and sends no email of
-  // its own (the create trigger is an explicit no-op). A resumed invite is the
-  // same invite.
+  // for the same address rather than minting a second, and re-sends the invite
+  // email either way (functions/src/portal/addSecondaryContact.ts): a resumed
+  // invite still really goes out.
   const invite = usePortalMutation({
     mutationFn: () =>
       addSecondaryContact({
@@ -971,6 +974,9 @@ function InviteKinfolkCard(props: {
         permissions: { kin_edit: canEditPets, home_access: canAccessHome },
         ...(prefill !== null ? { personId: prefill.personId } : {}),
       }),
+    // Lowercased: the server lowercases invitedEmail before sending, so this
+    // is the address the mail actually goes to (#1018 item 3 review).
+    onMutate: () => setSentTo(email.trim().toLowerCase()),
     onSuccess: () => {
       setEmail('');
       setRole('');
@@ -1031,9 +1037,13 @@ function InviteKinfolkCard(props: {
           Send Invite
         </MutationLabel>
       </button>
-      {invite.isSuccess && <p className="sub" style={{ color: 'var(--teal)', marginTop: 8 }}>Invite sent.</p>}
+      {invite.isSuccess && sentTo !== null && (
+        <p className="sub" style={{ color: 'var(--teal)', marginTop: 8 }}>Invite sent to {sentTo}.</p>
+      )}
       <OfflineMutationNotice phase={invite.phase} what="this invite" check="your Members list" />
-      {invite.phase === 'failed' && <p className="sub" style={{ color: 'var(--coral)', marginTop: 8 }}>Invite failed. Try again.</p>}
+      {invite.phase === 'failed' && (
+        <p className="sub" style={{ color: 'var(--coral)', marginTop: 8 }}>{errorLine(invite, 'Invite failed. Try again.')}</p>
+      )}
     </section>
   );
 }

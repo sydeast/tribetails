@@ -1502,6 +1502,11 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
 - SOFT delete: sets the member `status: 'SUSPENDED'`, removes `familyId` from
   `clients/{targetUid}.kinfolkIds`, and revokes the user's refresh tokens. The
   member doc is retained. Audits `MEMBERSHIP_MEMBER_REMOVED` at severity `warn`.
+- #1018 item 1: if a `families/{familyId}/secondaryKinfolk` record's
+  `memberUid` matches `targetUid`, it goes back to `access: 'NONE'` with
+  `memberUid` and `inviteId` cleared. The person stays on the household; only
+  their portal access is undone. A primary or a person who was never linked to
+  this uid has no matching record, which is not an error.
 
 ### listMembers (pre-existing, admin + household primary; documented here 2026-08-01)
 - req `{ kinfolkId?: string }`
@@ -1528,7 +1533,8 @@ Operator ruling 2026-09-27 (Q3): "A Secondary kinfolk can be added to the househ
 - `removeSecondaryKinfolk` req `{ kinfolkId?: string, personId: string }` (strict) res `{ ok: true }`. Deletes a NONE or INVITED record. ACTIVE is refused with `failed-precondition` "This secondary kinfolk has portal access. Remove them from the portal first." (an INVITED record is deletable so a revoked or expired invite never strands it).
 - PORTAL ACCESS: `addSecondaryContact` takes an optional `personId`. The invite carries it and the record moves to `INVITED` with `inviteId`; a deduped live invite is stamped with it too. Refused: `not-found` for a missing record, `failed-precondition` "This secondary kinfolk already has portal access." `acceptInvite` then sets the record to `ACTIVE` with `memberUid` in the same transaction (skipped if the record was deleted).
 - `addSecondaryContact` now refuses every staff caller (owner claim or `AUNTIE_OPERATOR_UIDS`) with `permission-denied` "Only the primary kinfolk can invite a secondary kinfolk to the portal." No admin client called it.
-- Known gap: `removeMember` on an ACTIVE secondary does not return their person record to `NONE`.
+- #1018 item 3: `addSecondaryContact` used to send no email of its own (`onInviteRequestCreate` is a no-op), which made the portal's "Invite sent." false. `mintInviteFromPrimary` had always sent three real emails through `sendFromTemplate` (`invite.secondary`, `invite.auntie-notify`, `invite.primary-receipt`) that `addSecondaryContact` never gained. It now sends the identical set, with identical template data, through the shared `lib/inviteEmails.ts` helper (`resolveInviteEmailConfig` / `sendPrimaryInviteEmails`) both callables use. A send failure throws out of the handler exactly as it always has out of `mintInviteFromPrimary`: never swallowed, and the invite doc is left `PENDING` (not `EMAIL_SENT`) so its real state stays visible. A resend of a still-live deduped invite (S7-BLOCKER-2) re-sends the email too. Requires `CLAIM_LINK_BASE_URL` (fail-loud, before any write, same guard `mintInviteFromPrimary` uses) and, when `AUNTIE_NOTIFY_EMAIL` is set, `AUNTIE_OS_REVIEW_BASE_URL`.
+- `removeMember` on an ACTIVE secondary returns their person record to `NONE` (memberUid and inviteId cleared); see `removeMember` above (#1018).
 - NEVER a recipient: nothing that sends reads this collection. NEVER logged: name, phone or email.
 ### listHouseholdContacts / saveHouseholdContact / removeHouseholdContact (net-new 2026-09-12, orphaned by #829)
 

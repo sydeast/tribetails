@@ -78,6 +78,7 @@ function parseSegment(s: string, prefix: string): string | null {
   }
   return null;
 }
+
 /**
  * O-35: hard client-side bound for the auto-accept call. The callable SDK
  * acquires its context (auth/App Check/messaging tokens) BEFORE its own

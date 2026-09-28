@@ -347,6 +347,10 @@ class HouseholdMembersViewModel(
                     )
                     onRemoved()
                     loadMembers()
+                    // #1018 item 1: a removed ACTIVE secondary's person record may
+                    // have just gone back to 'NONE' server-side, so the no-access
+                    // list needs a refetch too.
+                    loadPeople()
                 },
                 onFailure = { err ->
                     _uiState.value = _uiState.value.copy(

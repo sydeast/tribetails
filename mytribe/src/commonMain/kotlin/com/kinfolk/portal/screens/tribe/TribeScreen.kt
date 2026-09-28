@@ -1405,11 +1405,17 @@ private fun SecondaryInviteCard(
                 onClick = {
                     inviting = true
                     msg = null
+                    // #1018 item 3: addSecondaryContact really sends this email now
+                    // (functions/src/portal/addSecondaryContact.ts); captured before
+                    // the field is cleared, so the confirmation names the address.
+                    // Lowercased: the server lowercases invitedEmail before sending,
+                    // so this is the address the mail actually goes to.
+                    val sentTo = email.trim().lowercase()
                     scope.launch {
                         try {
                             portalApi.addSecondaryContact(
                                 kinfolkId = kinfolkId,
-                                invitedEmail = email.trim(),
+                                invitedEmail = sentTo,
                                 secondaryLabel = role.trim().ifBlank { null },
                                 kinEdit = canEditPets,
                                 homeAccess = canAccessHome,
@@ -1420,7 +1426,7 @@ private fun SecondaryInviteCard(
                             role = ""
                             canEditPets = false
                             canAccessHome = false
-                            msg = "Invite sent."
+                            msg = "Invite sent to $sentTo."
                         } catch (t: Throwable) {
                             msg = "Invite failed: ${t.message ?: t}"
                         } finally {

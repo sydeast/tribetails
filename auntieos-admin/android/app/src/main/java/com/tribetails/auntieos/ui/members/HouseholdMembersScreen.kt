@@ -304,8 +304,11 @@ fun HouseholdMembersBody(
                 // ruling's own term, in place of the mock's "Secondary contacts".
                 title = "Secondary kinfolk",
                 meta = secondaryMeta(state, secondaries.size),
-                subtitle = "Portal members their primary invited from MyTribe, and anyone added " +
-                    "here with no portal access. Only the primary can invite a secondary kinfolk.",
+                // 2026-09-11 ruling: a tooltip at most, one sentence. DenPanel
+                // already renders this behind the info button, never as copy
+                // under the title.
+                subtitle = "Added here with no portal access, or invited to the portal " +
+                    "by their own primary.",
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     when {

@@ -169,12 +169,15 @@ export function Account() {
 
   // HOLD. `addSecondaryContact` looks for a live PENDING inviteRequest for the
   // same address first and returns it instead of minting a second
-  // (functions/src/portal/addSecondaryContact.ts), and it sends no email of its
-  // own — the create trigger is an explicit no-op. A resumed invite is the
-  // same invite.
+  // (functions/src/portal/addSecondaryContact.ts), and re-sends the invite
+  // email either way, so a resumed invite still really goes out.
   const invite = usePortalMutation({
     mutationFn: () => addSecondaryContact(backupEmail.trim(), kinfolkId !== undefined ? { kinfolkId } : {}),
-    onSuccess: () => setInviteStatus({ text: 'Invite sent.', tone: 'ok' }),
+    // Clears a stale status from a previous attempt before this one resolves.
+    onMutate: () => setInviteStatus(null),
+    // Lowercased: the server lowercases invitedEmail before sending, so this
+    // is the address the mail actually goes to (#1018 item 3 review).
+    onSuccess: () => setInviteStatus({ text: `Invite sent to ${backupEmail.trim().toLowerCase()}.`, tone: 'ok' }),
     onError: (err: unknown) => {
       if (isOfflineError(err)) return;
       setInviteStatus({ text: `Invite failed: ${err instanceof Error ? err.message : 'try again'}`, tone: 'err' });

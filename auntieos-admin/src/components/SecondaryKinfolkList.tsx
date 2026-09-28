@@ -34,7 +34,18 @@ function errText(err: unknown, fallback: string): string {
  * Saves are pessimistic: the dialog locks and reads "Saving…" until the server
  * answers, and a refusal keeps what was typed under the server's own sentence.
  */
-export function SecondaryKinfolkList({ kinfolkId }: { kinfolkId: string }) {
+export function SecondaryKinfolkList({
+  kinfolkId,
+  reloadKey,
+}: {
+  kinfolkId: string;
+  /**
+   * Bump this from the parent to refetch (#1018): `removeMember` on an
+   * ACTIVE secondary can move their person record back here, and this list
+   * otherwise only loads once on mount.
+   */
+  reloadKey?: number;
+}) {
   const [people, setPeople] = useState<Async<SecondaryKinfolk[]>>({ status: 'loading' });
   const [editing, setEditing] = useState<{ personId?: string; draft: SecondaryKinfolkDraft } | null>(null);
   const [saving, setSaving] = useState(false);
@@ -58,7 +69,7 @@ export function SecondaryKinfolkList({ kinfolkId }: { kinfolkId: string }) {
     };
   }, [kinfolkId]);
 
-  useEffect(() => load(), [load]);
+  useEffect(() => load(), [load, reloadKey]);
 
   function open(person?: SecondaryKinfolk) {
     setSaveError(null);

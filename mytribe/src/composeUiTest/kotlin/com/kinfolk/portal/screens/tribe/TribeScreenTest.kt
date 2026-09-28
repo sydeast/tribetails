@@ -913,6 +913,21 @@ class TribeScreenTest {
         // The people list is read again, so the row can say Invited.
         assertEquals(2, fake.calls.count { it.first == "listSecondaryKinfolk" })
         assertTrue(onAllNodesWithText("Giving portal access to Sam Lee").fetchSemanticsNodes().isEmpty())
+        // #1018 item 3: addSecondaryContact really sends this email now, so the
+        // confirmation says so and names the address, never a claim link.
+        onNodeWithText("Invite sent to sam@x.com.", substring = true).performScrollTo().assertIsDisplayed()
+        assertTrue(onAllNodesWithText("claim?invite", substring = true).fetchSemanticsNodes().isEmpty())
+    }
+    @Test
+    fun secondaryKinfolk_invite_namesTheLowercasedAddressEvenWhenTypedInMixedCase() = runComposeUiTest {
+        val fake = secondaryHousehold()
+        fake.stub("addSecondaryContact", buildJsonObject { put("inviteId", "i5") })
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("invite-email").performScrollTo().performTextInput("Jo@Example.COM")
+        onNodeWithText("Send Invite").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("Invite sent to jo@example.com.", substring = true).performScrollTo().assertIsDisplayed()
     }
     @Test
     fun secondaryKinfolk_anInviteWithoutGivePortalAccessCarriesNoPerson() = runComposeUiTest {
