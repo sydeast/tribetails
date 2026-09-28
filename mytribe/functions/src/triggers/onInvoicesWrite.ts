@@ -1,7 +1,8 @@
 import { onDocumentWritten, FirestoreEvent, Change, DocumentSnapshot } from 'firebase-functions/v2/firestore';
 import { logEvent } from '../lib/logger';
 import { wrapTrigger } from '../lib/wrapTrigger';
-import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
+// #1005: money notices go to a member with billing access, not the last-synced account.
+import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { paymentAppliedNoticeOwnedByWriter } from '../lib/paymentAppliedOwner';
 import { invoiceStateOf, type InvoiceState } from '../lib/invoiceEditPolicy';
@@ -161,7 +162,7 @@ export async function onInvoicesWriteHandler(event: InvoicesWriteEvent): Promise
     });
     return;
   }
-  const recipientUid = await resolveKinfolkUid(kinfolkId);
+  const recipientUid = await resolveBillingRecipientUid(kinfolkId);
   const baseData = {
     kinfolkId,
     invoiceId,

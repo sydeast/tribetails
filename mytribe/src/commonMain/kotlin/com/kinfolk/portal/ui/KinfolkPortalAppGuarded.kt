@@ -147,6 +147,7 @@ fun KinfolkPortalAppGuarded() {
                             shellBannerDismissedByUser = home?.bannerDismissedByUser ?: false,
                             shellHomeSections = home?.portal?.home ?: emptyList(),
                             shellChat = home?.portal?.chat ?: com.kinfolk.portal.portal.PortalChat(),
+                            shellBillingAccess = home?.billingAccess ?: true,
                             onDismissBannerPerUser = { bannerId ->
                                 // Best-effort sync; never blocks the local hide.
                                 scope.launch {

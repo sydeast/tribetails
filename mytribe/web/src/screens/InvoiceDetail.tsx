@@ -25,6 +25,8 @@ import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { PayOptions } from '../components/PayOptions';
+import { LeaveBilling } from '../components/LeaveBilling';
+import { isPermissionDenied } from '../lib/billingAccess';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { LoadingLine } from '../components/Loading';
@@ -185,6 +187,8 @@ export function InvoiceDetail() {
 
   const { signOut, signingOut } = useSignOut();
 
+  // #1005: refused billing access is not a failure to report. Back to Home.
+  if (invoices.isError && isPermissionDenied(invoices.error)) return <LeaveBilling />;
   if (invoices.isError) {
     return <LaunchError onRetry={() => void invoices.refetch()} retrying={invoices.isRefetching} onSignOut={signOut} signingOut={signingOut} />;
   }

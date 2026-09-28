@@ -9,7 +9,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { isOwner, refuseAuntie } from '../lib/staffGate';
 import { testModeOf } from '../lib/testMode';
 import { resolveNonStaffKinfolkId } from '../lib/resolveNonStaffKinfolkId';
-import { hasKinfolkPerm } from '../lib/memberGate';
+import { hasBillingAccess } from '../lib/memberGate';
 import { validateResponse } from '../lib/callableResponse';
 import { CentsSchema, OkSchema, SignedCentsSchema } from '../lib/invoiceResponseSchema';
 import { ACCOUNT_BALANCE_FIELD, readAccountBalanceCents } from '../lib/accountCredit';
@@ -35,7 +35,7 @@ import {
  *                          there: the PRIMARY, or a secondary holding
  *                          `billing_full`. The same test the rules make with
  *                          `hasPerm(fid, 'billing_full')`, through
- *                          `hasKinfolkPerm`.
+ *                          `hasBillingAccess` (#1005's one helper).
  *
  * The household check runs FIRST and is not optional. `hasKinfolkPerm` answers
  * true when the caller has no member doc there (the legacy-primary
@@ -129,7 +129,7 @@ async function resolveHousehold(
   }
 
   const kinfolkId = await resolveNonStaffKinfolkId(uid, requested);
-  const billing = await hasKinfolkPerm(uid, kinfolkId, 'billing_full', false, 'getAccountCreditHistory');
+  const billing = await hasBillingAccess(uid, kinfolkId, false, 'getAccountCreditHistory');
   if (!billing) {
     logEvent({
       severity: 'info',

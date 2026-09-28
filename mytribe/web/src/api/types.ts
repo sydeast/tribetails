@@ -100,6 +100,12 @@ export interface GetMyHomeResult {
    * the server is older than this bundle.
    */
   payMethods: PayMethod[];
+  /**
+   * #1005: whether the caller has billing access to this household. Optional
+   * because an older server does not send it; read it through
+   * `billingAccessOf` (lib/billingAccess.ts), which treats absent as true.
+   */
+  billingAccess?: boolean;
 }
 
 // ── getMyBookings (functions/src/portal/getMyBookings.ts) ───────────────────

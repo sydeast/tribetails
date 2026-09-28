@@ -39,6 +39,17 @@ class ShellNavTest {
         )
     }
 
+    /** #1005: no Invoices link for a member without billing access; the rest unchanged. */
+    @Test
+    fun wideLinksFor_dropsInvoicesOnlyWithoutBillingAccess() {
+        assertEquals(ShellNav.wideLinks, ShellNav.wideLinksFor(billingAccess = true))
+        assertEquals(
+            listOf(ShellDestination.Home, ShellDestination.Tribe, ShellDestination.Schedule),
+            ShellNav.wideLinksFor(billingAccess = false),
+        )
+        assertFalse(ShellDestination.Invoices in ShellNav.narrowTabs, "Invoices is not a narrow tab to hide")
+    }
+
     @Test
     fun wideLinks_excludeKinTalesKinAccountNotifications() {
         assertFalse(ShellDestination.KinTales in ShellNav.wideLinks, "KinTales reachable via avatar menu / Tribe hub, not a wide link")

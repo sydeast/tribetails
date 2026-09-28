@@ -97,6 +97,49 @@ export async function hasKinfolkPerm(
   return member.permissions?.[perm] === true;
 }
 
+/**
+ * BILLING ACCESS (#1005, operator ruling 2026-09-27): the business owner or
+ * admin, the household PRIMARY, and a SECONDARY only when the PRIMARY granted
+ * `billing_full`. Every portal read of money asks this one question.
+ *
+ * CALL IT ONLY AFTER THE HOUSEHOLD IS RESOLVED (`resolveKinfolkAccess` or
+ * `resolveNonStaffKinfolkId`). It answers through `hasKinfolkPerm`, which says
+ * yes when the caller has no member doc in the household (the legacy-primary
+ * anti-lockout). On its own that would admit anyone naming a household that is
+ * not theirs; after the household check it admits only a real account holder
+ * who predates the member model.
+ */
+export async function hasBillingAccess(
+  uid: string,
+  kinfolkId: string,
+  hasAdminClaim: boolean,
+  functionName: string,
+): Promise<boolean> {
+  return hasKinfolkPerm(uid, kinfolkId, 'billing_full', hasAdminClaim, functionName);
+}
+
+/** The refusal every billing read throws, so the clients key off one code. */
+export const BILLING_ACCESS_REFUSAL = 'Billing access is required to see invoices and account balance.';
+
+/** Throwing form of `hasBillingAccess`. Same precondition: household resolved first. */
+export async function requireBillingAccess(
+  uid: string,
+  kinfolkId: string,
+  hasAdminClaim: boolean,
+  functionName: string,
+): Promise<void> {
+  if (await hasBillingAccess(uid, kinfolkId, hasAdminClaim, functionName)) return;
+  logEvent({
+    severity: 'info',
+    function: functionName,
+    event: 'portal.billing.refused',
+    uid,
+    familyId: kinfolkId,
+    extra: { reason: 'no_billing_access' },
+  });
+  throw new HttpsError('permission-denied', BILLING_ACCESS_REFUSAL);
+}
+
 export async function requireKinfolkPerm(
   uid: string,
   kinfolkId: string,

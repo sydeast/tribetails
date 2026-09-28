@@ -77,6 +77,13 @@ object ShellNav {
         ShellDestination.Invoices,
     )
 
+    /**
+     * #1005: the wide links for a member with or without billing access.
+     * Without it, Invoices is not drawn at all.
+     */
+    fun wideLinksFor(billingAccess: Boolean): List<ShellDestination> =
+        if (billingAccess) wideLinks else wideLinks.filter { it != ShellDestination.Invoices }
+
     /** Narrow (< 880dp) bottom tab bar. Account is a tab here (Invoices via Home/menu). */
     val narrowTabs: List<ShellDestination> = listOf(
         ShellDestination.Home,

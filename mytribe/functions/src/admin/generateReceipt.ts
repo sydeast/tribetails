@@ -5,7 +5,8 @@ import { db } from '../lib/firestoreAdmin';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
-import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
+// #1005: money notices go to a member with billing access, not the last-synced account.
+import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { contentDedupeKey, enqueueNotification } from '../notifications/dispatcher';
 import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
@@ -83,7 +84,7 @@ export async function generateReceiptHandler(
     payload: { invoiceId: args.invoiceId },
   });
 
-  const recipientUid = await resolveKinfolkUid(familyId);
+  const recipientUid = await resolveBillingRecipientUid(familyId);
   try {
     await enqueueNotification({
       key: 'invoice.receipt',

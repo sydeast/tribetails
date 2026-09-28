@@ -1,6 +1,7 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { db } from '../lib/firestoreAdmin';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
+import { hasBillingAccess } from '../lib/memberGate';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
@@ -89,6 +90,14 @@ interface GetMyHomeResult {
    * should read it. This field remains the business-wide fallback.
    */
   payMethods: PayMethod[];
+  /**
+   * #1005: whether the caller has billing access to this household (owner,
+   * the PRIMARY, or a SECONDARY the PRIMARY granted `billing_full`). The
+   * portals hide Invoices, the balance and the card section when false, and
+   * `payMethods` is empty. Clients decode a missing field as true so a
+   * skewed deploy hides nothing from a household that has access.
+   */
+  billingAccess: boolean;
 }
 
 /**
@@ -116,7 +125,8 @@ export async function getMyHomeHandler(
   refuseAuntie(req.auth, 'getMyHome');
 
   const firestore = db();
-  const { kinfolkId } = await resolveKinfolkAccess(uid, req.data?.kinfolkId, req.auth?.token?.admin === true, 'getMyHome');
+  const hasAdminClaim = req.auth?.token?.admin === true;
+  const { kinfolkId } = await resolveKinfolkAccess(uid, req.data?.kinfolkId, hasAdminClaim, 'getMyHome');
 
   // Resolve displayName via fallback chain:
   //   1. families/{kinfolkId}.displayName    (MyTribe-shaped, kinfolk-edited)
@@ -127,10 +137,13 @@ export async function getMyHomeHandler(
   // Family doc + business branding + caller's client doc in parallel (no extra
   // round-trip cost). The client doc carries `dismissedBanners` for the per-user
   // banner dismiss mode.
-  const [familySnap, settingsSnap, clientSnap] = await Promise.all([
+  // The billing answer joins the same batch: one member-doc read, asked after
+  // the household resolved above, which `hasBillingAccess` requires.
+  const [familySnap, settingsSnap, clientSnap, billingAccess] = await Promise.all([
     firestore.collection('families').doc(kinfolkId).get(),
     firestore.collection('business_settings').doc('business_settings').get(),
     firestore.collection('clients').doc(uid).get(),
+    hasBillingAccess(uid, kinfolkId, hasAdminClaim, 'getMyHome'),
   ]);
   let displayName = (familySnap.data()?.displayName as string | undefined) ?? null;
 
@@ -237,14 +250,18 @@ export async function getMyHomeHandler(
   // apart. `resolveHomePayMethods` rather than `resolvePayMethods` because
   // this business-wide list still ships only the two kinds an older portal
   // bundle knows how to draw — that function's own header says why at length.
-  const payMethods = resolveHomePayMethods(payMethodSettingsFrom(settings), { amountDue: 1 });
+  //
+  // #1005: pay links are billing, so a member without billing access gets none.
+  const payMethods = billingAccess
+    ? resolveHomePayMethods(payMethodSettingsFrom(settings), { amountDue: 1 })
+    : [];
 
   logEvent({
     severity: 'info',
     function: 'getMyHome',
     event: 'portal.home.resolved',
     uid,
-    extra: { kinfolkId },
+    extra: { kinfolkId, billingAccess },
   });
 
   return {
@@ -255,6 +272,7 @@ export async function getMyHomeHandler(
     portal,
     bannerDismissedByUser,
     payMethods,
+    billingAccess,
   };
 }
 

@@ -82,9 +82,12 @@ fun TabShell(
     banner: PortalBanner = PortalBanner(),
     bannerDismissedByUser: Boolean = false,
     onDismissBannerPerUser: ((bannerId: String) -> Unit)? = null,
+    /** #1005: false hides the Invoices link. See [ShellNav.wideLinksFor]. */
+    billingAccess: Boolean = true,
     content: @Composable (Modifier) -> Unit,
 ) {
     val backStackEntry by navController.currentBackStackEntryAsState()
+    val wideLinks = ShellNav.wideLinksFor(billingAccess)
     val currentDestination = backStackEntry?.destination
 
     // Local dismissal state for the top banner. perDevice persists via
@@ -166,12 +169,13 @@ fun TabShell(
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val wide = isWideShell(maxWidth.value)
         if (wide) {
-            val active = resolveActiveDestination(ShellNav.wideLinks) { currentDestination.isOn(it) }
+            val active = resolveActiveDestination(wideLinks) { currentDestination.isOn(it) }
             Column(modifier = Modifier.fillMaxSize()) {
                 bannerBar()
                 WideTopNav(
                     familyName = familyName,
                     logoUrl = logoUrl,
+                    links = wideLinks,
                     active = active,
                     isOperator = onBackToDirectory != null,
                     onLink = { onTabLink(it) },
@@ -225,6 +229,7 @@ fun TabShell(
 private fun WideTopNav(
     familyName: String,
     logoUrl: String?,
+    links: List<ShellDestination>,
     active: ShellDestination?,
     isOperator: Boolean,
     onLink: (ShellDestination) -> Unit,
@@ -244,7 +249,7 @@ private fun WideTopNav(
                 Wordmark()
                 Spacer(Modifier.width(KinfolkSpacing.l))
                 Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
-                    ShellNav.wideLinks.forEach { link ->
+                    links.forEach { link ->
                         NavLinkPill(
                             label = link.label,
                             selected = link == active,

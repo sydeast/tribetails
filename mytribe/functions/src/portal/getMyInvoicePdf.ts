@@ -9,6 +9,7 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
+import { requireBillingAccess } from '../lib/memberGate';
 import { generateAndStoreInvoicePdf } from '../lib/invoicePdf';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
@@ -60,7 +61,10 @@ export async function getMyInvoicePdfHandler(
     throw err;
   }
 
-  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, req.auth?.token?.admin === true, 'getMyInvoicePdf');
+  const hasAdminClaim = req.auth?.token?.admin === true;
+  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, hasAdminClaim, 'getMyInvoicePdf');
+  // #1005: a bill is money. Billing access, asked after the household resolves.
+  await requireBillingAccess(uid, kinfolkId, hasAdminClaim, 'getMyInvoicePdf');
   const snap = await db().collection('invoices').doc(args.invoiceId).get();
   if (!snap.exists) {
     throw new HttpsError('not-found', `Invoice ${args.invoiceId} does not exist.`);

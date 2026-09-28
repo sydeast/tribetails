@@ -6,6 +6,10 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: mocks.enqueue }));
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveUid }));
+// #1005: the trigger addresses money notices through resolveBillingRecipientUid,
+// which reads families/{id}/members. This file has no db mock, so the resolver
+// is pointed at the same stub; its own rules live in resolveBillingRecipientUid.test.ts.
+vi.mock('../src/lib/resolveBillingRecipientUid', () => ({ resolveBillingRecipientUid: mocks.resolveUid }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError: vi.fn() }));
 vi.mock('../src/lib/wrapTrigger', () => ({

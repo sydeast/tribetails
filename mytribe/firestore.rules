@@ -119,6 +119,19 @@ service cloud.firestore {
       return isPrimary(fid) || (activeMember(fid) && memberDoc(fid).permissions[p] == true);
     }
 
+ // #1005, BILLING ACCESS for a caller holding the kinfolk claim on household
+ // `fid` (operator ruling 2026-09-27): the PRIMARY, or a SECONDARY the PRIMARY
+ // granted `billing_full`. A caller with NO member doc passes: that is a
+ // legacy primary who predates the member model, the same anti-lockout
+ // `hasKinfolkPerm` makes server-side. It is safe only because every use sits
+ // behind `isKinfolk() && ... == request.auth.token.kinfolkId`, and the claim
+ // is minted by the server from `clients/{uid}.kinfolkIds`, which no client
+ // can write. An Auntie never reaches it: `isKinfolk()` is false for her.
+    function kinfolkBillingAccess(fid) {
+      return !exists(/databases/$(database)/documents/families/$(fid)/members/$(request.auth.uid))
+        || hasPerm(fid, 'billing_full');
+    }
+
     function invoiceKeys() {
       return ['payment', 'invoiceStatus', 'paymentStatus', 'amountMinor', 'currency', 'invoiceId'];
     }
@@ -520,8 +533,15 @@ service cloud.firestore {
     }
 
     match /invoices/{invoiceId} {
+ // #1005: the kinfolk branch used to admit ANY holder of the household's claim,
+ // and `syncKinfolkClaim` mints that claim for a SECONDARY too, so a member
+ // without billing access could read every bill and amount. The member lookup
+ // keys off the claim, which the clause before it has just pinned equal to the
+ // document's `kinfolkId`, so a `where('kinfolkId', '==', ...)` list query can
+ // still be proven.
       allow read: if isOwner()
-                  || (isKinfolk() && resource.data.kinfolkId == request.auth.token.kinfolkId)
+                  || (isKinfolk() && resource.data.kinfolkId == request.auth.token.kinfolkId
+                      && kinfolkBillingAccess(request.auth.token.kinfolkId))
                   || testOwnsExisting();
       // Callable-only writes (ADR-0002): every invoice write, production and
       // TestMode sandbox alike, goes through a callable so the Invoice State
@@ -776,7 +796,22 @@ service cloud.firestore {
  // a retired grants collection that still holds one stale prod document.
 
     match /families/{fid} {
-      allow read: if activeMember(fid) || isOwner();
+ // #1005: this document carries `accountBalanceCents`, the household's money,
+ // and rules gate a document, never a field. So the read now needs billing
+ // access (the PRIMARY, or a SECONDARY granted `billing_full`) rather than any
+ // active membership.
+ //
+ // GATED, NOT SPLIT. Moving the balance to its own document would mean moving
+ // every writer of it (payment apply, credit given, credit drawn, redeem), all
+ // of it payment code, for no reader: no portal client reads this document
+ // directly. Both portals get the household name and settings through
+ // `getMyHome` / `getMyTribeProfile` (Admin SDK), which is where a member
+ // without billing keeps getting them. If the portal ever takes direct reads
+ // of this document (accepted, not yet built), split the balance out first.
+ // The PRIMARY still passes through `isPrimary` inside `hasPerm`; a caller
+ // with no member doc was already denied here by `activeMember`, so nobody who
+ // could read it before and has billing access loses it.
+      allow read: if hasPerm(fid, 'billing_full') || isOwner();
       allow create, delete: if false;
       allow update: if isPrimary(fid) && diffOnly(['displayName','updatedAt']);
 
@@ -981,7 +1016,8 @@ service cloud.firestore {
  // mytribe/web/src and mytribe/functions/src targets the flat collection.
  // test/rules/auntieAccess.test.ts pins the denial so it cannot reopen quietly.
       match /invoices/{id} {
-        allow read: if activeMember(fid) || isOwner();
+        // #1005: still a bill, so billing access, like the flat path.
+        allow read: if hasPerm(fid, 'billing_full') || isOwner();
         allow create, update, delete: if false;
       }
 

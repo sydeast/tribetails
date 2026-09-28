@@ -54,6 +54,8 @@ class PortalApi(private val fns: FunctionsClient) {
             portal = decodePortalConfig(raw["portal"] as? JsonObject),
             bannerDismissedByUser = raw["bannerDismissedByUser"]?.jsonPrimitive?.booleanOrNull ?: false,
             payMethods = decodePayMethods(raw["payMethods"] as? JsonArray),
+            // #1005: absent means an older server that gated nothing, so true.
+            billingAccess = raw["billingAccess"]?.jsonPrimitive?.booleanOrNull ?: true,
         )
     }
 
@@ -2011,6 +2013,14 @@ data class MyHomeResult(
      * pay.
      */
     val payMethods: List<PayMethod> = emptyList(),
+    /**
+     * #1005: whether the signed-in member has billing access to this
+     * household (the PRIMARY, or a SECONDARY the PRIMARY granted billing).
+     * When false the shell draws no Invoices link, Home no "View invoices",
+     * Account no Billing Details card, and the invoice routes go back to Home.
+     * Defaults true so an older server never hides a household's bills.
+     */
+    val billingAccess: Boolean = true,
 )
 
 data class MyAccessResult(

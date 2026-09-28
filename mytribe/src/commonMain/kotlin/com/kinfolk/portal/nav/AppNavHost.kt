@@ -90,6 +90,12 @@ fun AppNavHost(
     onDismissBannerPerUser: ((bannerId: String) -> Unit)? = null,
     shellHomeSections: List<com.kinfolk.portal.portal.PortalHomeSection> = emptyList(),
     shellChat: com.kinfolk.portal.portal.PortalChat = com.kinfolk.portal.portal.PortalChat(),
+    /**
+     * #1005: `getMyHome.billingAccess`. False hides the Invoices link, Home's
+     * "View invoices" and Account's Billing Details, and sends the invoice
+     * routes back to Home, with no error shown.
+     */
+    shellBillingAccess: Boolean = true,
     cameFromPicker: Boolean,
     resolveTribes: suspend () -> List<TribeSummary>,
     onPick: (kinfolkId: String) -> Unit,
@@ -144,8 +150,20 @@ fun AppNavHost(
             banner = shellBanner,
             bannerDismissedByUser = shellBannerDismissedByUser,
             onDismissBannerPerUser = onDismissBannerPerUser,
+            billingAccess = shellBillingAccess,
             content = content,
         )
+    }
+
+    /** #1005: an invoice route reached without billing access goes back to Home. */
+    @Composable
+    fun LeaveBilling() {
+        LaunchedEffect(Unit) {
+            navController.navigate(HomeRoute) {
+                popUpTo(navController.graph.findStartDestination().id)
+                launchSingleTop = true
+            }
+        }
     }
 
     NavHost(navController = navController, startDestination = startRoute) {
@@ -251,7 +269,11 @@ fun AppNavHost(
                             onOpenKinDetail = { kinId2 -> navController.navigate(KinDetailRoute(kinId2)) },
                             onAddKin = { navController.navigate(KinAddEditRoute()) },
                             onBookVisit = { navController.navigate(BookingWizardRoute(startWeekly = false)) },
-                            onOpenInvoices = { navController.navigate(InvoicesRoute) { launchSingleTop = true } },
+                            onOpenInvoices = if (shellBillingAccess) {
+                                { navController.navigate(InvoicesRoute) { launchSingleTop = true } }
+                            } else {
+                                null
+                            },
                         )
                     }
                 }
@@ -294,6 +316,10 @@ fun AppNavHost(
                 }
             }
             composable<InvoicesRoute> {
+                if (!shellBillingAccess) {
+                    LeaveBilling()
+                    return@composable
+                }
                 Shell { mod ->
                     Box(mod) {
                         InvoicesScreen(
@@ -348,6 +374,7 @@ fun AppNavHost(
                             portalApi,
                             kinfolkId = kinId,
                             onSignOut = onSignOut,
+                            billingAccess = shellBillingAccess,
                             onOpenTribeProfile = {
                                 // Account is a chrome-level destination, so
                                 // save/restore is safe here; pop to the
@@ -412,6 +439,10 @@ fun AppNavHost(
                 }
             }
             composable<InvoiceDetailRoute> { entry ->
+                if (!shellBillingAccess) {
+                    LeaveBilling()
+                    return@composable
+                }
                 Shell { mod ->
                     Box(mod) {
                         val invoiceId = entry.toRoute<InvoiceDetailRoute>().invoiceId
