@@ -2827,7 +2827,8 @@ else
   # Named honestly from the same state the run already tracked, not a
   # blanket "shipped everything": a skipped or failed piece says so here too.
   SHIPPED="hosting: admin + kinfolk portal
-firestore: indexes + rules (mytribe)"
+firestore: indexes + rules (mytribe)
+storage: rules (mytribe)"
   if [ "$FUNCTIONS_CHANGED" -eq 1 ]; then
     SHIPPED="$SHIPPED
 functions: mytribe ($FUNCTIONS_SHIPPED_DESC)"

@@ -2896,6 +2896,12 @@ if [ ! -e "$DSR/repo/.release-progress" ] &&
 else
   bad "a completed release did not record itself correctly"; cat "$DSR/repo/.release-progress" 2>/dev/null
 fi
+TAGMSG_SR="$(cd "$DSR/repo" && git tag -l 'release/*' --format='%(contents)')"
+if printf '%s' "$TAGMSG_SR" | grep -q "storage: rules (mytribe)"; then
+  ok "the tag names storage rules as shipped, alongside firestore"
+else
+  bad "the tag does not name storage rules as shipped"; printf '%s\n' "$TAGMSG_SR"
+fi
 
 # A pre-marked storage-rules record for THIS commit is skipped on a rerun, the
 # same as the rules and indexes records (progress_done is generic over the key,
