@@ -43,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import com.composables.icons.lucide.Archive
 import com.composables.icons.lucide.Bell
 import com.composables.icons.lucide.Building2
 import com.composables.icons.lucide.CalendarClock
@@ -2211,10 +2212,22 @@ internal fun vetClinicMatchesQuery(clinic: VetClinic, query: String): Boolean {
 internal fun filterVetClinics(all: List<VetClinic>, query: String): List<VetClinic> =
     all.filter { vetClinicMatchesQuery(it, query) }
 
-/** Pending = a kinfolk submission awaiting operator approval (explicit verified=false). Pure; tested. */
-internal fun pendingVetClinics(all: List<VetClinic>): List<VetClinic> = all.filter { !it.verified }
-/** Approved = everything visible to households (verified, incl. legacy defaults). Pure; tested. */
-internal fun approvedVetClinics(all: List<VetClinic>): List<VetClinic> = all.filter { it.verified }
+/**
+ * #998: Pending = a kinfolk submission awaiting operator approval (explicit
+ * verified=false), and not yet retired. A rejected submission (archived=true)
+ * moves to [archivedVetClinics] instead of staying in this queue forever.
+ * Pure; tested.
+ */
+internal fun pendingVetClinics(all: List<VetClinic>): List<VetClinic> = all.filter { !it.verified && !it.archived }
+/** Approved = everything visible to households: verified (incl. legacy defaults) and not retired. Pure; tested. */
+internal fun approvedVetClinics(all: List<VetClinic>): List<VetClinic> = all.filter { it.verified && !it.archived }
+/**
+ * #998: retired rows, kept so a household already linked to one still resolves
+ * it (`archiveVetClinic` never touches the household's own copy). Includes
+ * both a retired catalog clinic and a rejected pending submission - archived is
+ * archived either way. Pure; tested.
+ */
+internal fun archivedVetClinics(all: List<VetClinic>): List<VetClinic> = all.filter { it.archived }
 
 /**
  * #6: how many households (kinfolk) currently list this clinic. Kinfolk link to a
@@ -2245,6 +2258,7 @@ private fun VetClinicsPanel(vm: SettingsViewModel) {
     val kinfolkState by remember { client.kinfolkStream() }.collectAsState(initial = FirestoreResult.Loading)
     val allKinfolk = (kinfolkState as? FirestoreResult.Data)?.value ?: emptyList()
     val writeError by vm.vetClinicError.collectAsState()
+    val busyIds by vm.vetClinicBusyIds.collectAsState()
     var query by remember { mutableStateOf("") }
 
     DenPanel(
@@ -2260,7 +2274,7 @@ private fun VetClinicsPanel(vm: SettingsViewModel) {
                     style = AuntieTheme.typography.bodySmall, color = c.textDim,
                 )
             }
-            // Fail loud: surface any add / save / delete / approve failure, never swallow it.
+            // Fail loud: surface any add / save / retire / restore / approve failure, never swallow it.
             writeError?.let { msg ->
                 AuntieBanner(tone = AuntieBannerTone.Error, title = "Vet clinic action failed") {
                     Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
@@ -2279,6 +2293,8 @@ private fun VetClinicsPanel(vm: SettingsViewModel) {
                     val all = s.value
                     val pending = pendingVetClinics(all)
                     val approved = filterVetClinics(approvedVetClinics(all), query)
+                    // #998: retired clinics, matching admin web's third section.
+                    val retired = filterVetClinics(archivedVetClinics(all), query)
 
                     // Pending-approval queue: kinfolk submissions awaiting a verdict.
                     if (pending.isNotEmpty()) {
@@ -2288,12 +2304,13 @@ private fun VetClinicsPanel(vm: SettingsViewModel) {
                             color = c.textPrimary,
                         )
                         Text(
-                            "A household submitted these. Approve to add them to the shared bank, or reject to discard.",
+                            "A household added these from its own record. Approving publishes a clinic to the shared bank. Rejecting retires it and keeps who submitted it on file.",
                             style = AuntieTheme.typography.bodySmall, color = c.textDim,
                         )
                         pending.forEach { clinic ->
                             PendingVetClinicCard(
                                 clinic = clinic,
+                                busy = clinic._id in busyIds,
                                 onApprove = { vm.approveVetClinic(clinic) },
                                 onReject = { vm.rejectVetClinic(clinic._id, clinic.name) },
                             )
@@ -2332,15 +2349,39 @@ private fun VetClinicsPanel(vm: SettingsViewModel) {
                                     VetClinicCard(
                                         clinic = clinic,
                                         householdCount = vetClinicHouseholdCount(clinic, allKinfolk),
+                                        busy = clinic._id in busyIds,
                                         onSave = { loaded, updated -> vm.saveVetClinic(loaded, updated) },
-                                        onDelete = { vm.removeVetClinic(clinic._id, clinic.name) },
+                                        onRetire = { vm.retireVetClinic(clinic._id, clinic.name) },
                                     )
                                 }
                             }
                             if (pair.size == 1) Spacer(modifier = Modifier.weight(1f))
                         }
                     }
-                    AddVetClinicForm(onCreate = { draft -> vm.addVetClinic(draft) })
+                    AddVetClinicForm(
+                        busy = SettingsViewModel.ADD_VET_CLINIC_BUSY_ID in busyIds,
+                        onCreate = { draft -> vm.addVetClinicAwait(draft) },
+                    )
+
+                    // #998: retired section, matching admin web's "Retired" panel.
+                    if (retired.isNotEmpty()) {
+                        Text(
+                            "Retired (${retired.size})",
+                            style = AuntieTheme.typography.titleSmall,
+                            color = c.textPrimary,
+                        )
+                        Text(
+                            "Retired clinics are hidden from every picker and from the kinfolk portal. A household already linked to one keeps its name, phone and address. Restoring puts a clinic back in the bank.",
+                            style = AuntieTheme.typography.bodySmall, color = c.textDim,
+                        )
+                        retired.forEach { clinic ->
+                            RetiredVetClinicCard(
+                                clinic = clinic,
+                                busy = clinic._id in busyIds,
+                                onRestore = { vm.restoreVetClinic(clinic._id, clinic.name) },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -2374,10 +2415,31 @@ private fun VetDetailLine(label: String, value: String) {
     }
 }
 
+/**
+ * #998: Reject now retires through `archiveVetClinic` instead of hard-deleting
+ * (the row keeps its `submittedBy`, matching the reject-is-archive ruling), but
+ * keeps its confirm step. Admin web has no confirm on Reject; Android does
+ * (`Confirm reject`/`Cancel`, same as this card already had). Desktop follows
+ * Android here rather than dropping a click-to-confirm guard that was already
+ * in place, worth a note in review rather than a silent behavior change.
+ */
 @Composable
-private fun PendingVetClinicCard(clinic: VetClinic, onApprove: () -> Unit, onReject: () -> Unit) {
+private fun PendingVetClinicCard(clinic: VetClinic, busy: Boolean, onApprove: () -> Unit, onReject: () -> Unit) {
     val c = AuntieTheme.colors
     var confirmingReject by remember(clinic) { mutableStateOf(false) }
+    // #998: which of the two writes THIS card started, so busy (shared by both,
+    // keyed on the clinic id) does not label Approve "Approving…" while a reject
+    // is what's actually in flight, or vice versa. Cleared once busy drops,
+    // whether the write succeeded or failed.
+    var approving by remember(clinic) { mutableStateOf(false) }
+    var rejecting by remember(clinic) { mutableStateOf(false) }
+    LaunchedEffect(busy) {
+        if (!busy) {
+            approving = false
+            rejecting = false
+            confirmingReject = false
+        }
+    }
     VetCardSurface {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(clinic.name, style = AuntieTheme.typography.titleSmall, color = c.textPrimary, modifier = Modifier.weight(1f))
@@ -2387,22 +2449,43 @@ private fun PendingVetClinicCard(clinic: VetClinic, onApprove: () -> Unit, onRej
         VetDetailLine("Address", clinic.address)
         VetDetailLine("Website", clinic.website)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            PrimaryButton(label = "Approve", onClick = onApprove)
+            PrimaryButton(label = if (approving) "Approving…" else "Approve", enabled = !busy, onClick = { approving = true; onApprove() })
             if (confirmingReject) {
-                GhostButton(label = "Confirm reject", onClick = { confirmingReject = false; onReject() })
-                GhostButton(label = "Cancel", onClick = { confirmingReject = false })
+                GhostButton(label = if (rejecting) "Rejecting…" else "Confirm reject", enabled = !busy, onClick = { rejecting = true; onReject() })
+                GhostButton(label = "Cancel", enabled = !busy, onClick = { confirmingReject = false })
             } else {
-                GhostButton(label = "Reject", onClick = { confirmingReject = true })
+                GhostButton(label = "Reject", enabled = !busy, onClick = { confirmingReject = true })
             }
         }
     }
 }
 
+/**
+ * #998: the trash-can "Delete" is now [onRetire] through `archiveVetClinic` (no
+ * delete callable exists, and the operator ruling is that clinics are retired,
+ * never deleted). Kept the archive glyph and "Retire" wording admin web uses,
+ * and kept this card's existing confirm-click shape ("Confirm retire"), which
+ * matches Android; web has no confirm step here (see [PendingVetClinicCard]).
+ */
 @Composable
-private fun VetClinicCard(clinic: VetClinic, householdCount: Int, onSave: (loaded: VetClinic, edited: VetClinic) -> Unit, onDelete: () -> Unit) {
+private fun VetClinicCard(clinic: VetClinic, householdCount: Int, busy: Boolean, onSave: (loaded: VetClinic, edited: VetClinic) -> Unit, onRetire: () -> Unit) {
     val c = AuntieTheme.colors
     var editing by remember(clinic) { mutableStateOf(false) }
-    var confirmingDelete by remember(clinic) { mutableStateOf(false) }
+    var confirmingRetire by remember(clinic) { mutableStateOf(false) }
+    // #998: set only by this card's own Confirm retire click, so the label
+    // reads "Retiring…" while the write is in flight rather than sitting on
+    // "Confirm retire" the whole time (busy alone can't tell a retire from a
+    // save on the same clinic id, either). A save closes the edit form the
+    // same way, through [saving] below.
+    var retiring by remember(clinic) { mutableStateOf(false) }
+    var saving by remember(clinic) { mutableStateOf(false) }
+    LaunchedEffect(busy) {
+        if (!busy) {
+            retiring = false
+            confirmingRetire = false
+            if (saving) { saving = false; editing = false }
+        }
+    }
 
     VetCardSurface {
         // #6: logo avatar (monogram) + name + emergency pill.
@@ -2427,7 +2510,7 @@ private fun VetClinicCard(clinic: VetClinic, householdCount: Int, onSave: (loade
             VetDetailLine("Website", clinic.website)
             VetDetailLine("Hours", clinic.hours)
             VetDetailLine("Notes", clinic.notes)
-            // #6: icon actions (mock fidelity): Maps + Website deep-links + edit/delete.
+            // #6: icon actions (mock fidelity): Maps + Website deep-links + edit/retire.
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (clinic.googleMapsUrl.isNotBlank()) {
                     AuntieIconButton(icon = Lucide.MapPin, contentDescription = "Open in Maps", onClick = { launchUri(clinic.googleMapsUrl) })
@@ -2435,24 +2518,27 @@ private fun VetClinicCard(clinic: VetClinic, householdCount: Int, onSave: (loade
                 if (clinic.website.isNotBlank()) {
                     AuntieIconButton(icon = Lucide.ExternalLink, contentDescription = "Open website", onClick = { launchUri(clinic.website) })
                 }
-                AuntieIconButton(icon = Lucide.Pencil, contentDescription = "Edit clinic", onClick = { editing = true })
-                if (confirmingDelete) {
-                    GhostButton(label = "Confirm delete", onClick = { confirmingDelete = false; onDelete() })
-                    GhostButton(label = "Cancel", onClick = { confirmingDelete = false })
+                AuntieIconButton(icon = Lucide.Pencil, contentDescription = "Edit clinic", enabled = !busy, onClick = { editing = true })
+                if (confirmingRetire) {
+                    GhostButton(label = if (retiring) "Retiring…" else "Confirm retire", enabled = !busy, onClick = { retiring = true; onRetire() })
+                    GhostButton(label = "Cancel", enabled = !busy, onClick = { confirmingRetire = false })
                 } else {
-                    AuntieIconButton(icon = Lucide.Trash2, contentDescription = "Delete clinic", destructive = true, onClick = { confirmingDelete = true })
+                    AuntieIconButton(icon = Lucide.Archive, contentDescription = "Retire clinic", destructive = true, enabled = !busy, onClick = { confirmingRetire = true })
                 }
             }
         } else {
             // #994: the clinic the form was seeded from is the diff baseline.
-            VetClinicEditFields(clinic = clinic, onSaved = { onSave(clinic, it); editing = false }, onCancel = { editing = false })
+            // The form closes once the save attempt finishes (`!busy`, via the
+            // effect above), success or failure alike, same as retire above;
+            // it does not stay open to preserve a failed edit.
+            VetClinicEditFields(clinic = clinic, busy = busy, saving = saving, onSaved = { saving = true; onSave(clinic, it) }, onCancel = { editing = false })
         }
     }
 }
 
 /** Inline editor for an existing clinic (name/phone/address/website/emergency/notes). */
 @Composable
-private fun VetClinicEditFields(clinic: VetClinic, onSaved: (VetClinic) -> Unit, onCancel: () -> Unit) {
+private fun VetClinicEditFields(clinic: VetClinic, busy: Boolean, saving: Boolean, onSaved: (VetClinic) -> Unit, onCancel: () -> Unit) {
     var name        by remember(clinic) { mutableStateOf(clinic.name) }
     var phone       by remember(clinic) { mutableStateOf(clinic.phone) }
     var address     by remember(clinic) { mutableStateOf(clinic.address) }
@@ -2465,7 +2551,7 @@ private fun VetClinicEditFields(clinic: VetClinic, onSaved: (VetClinic) -> Unit,
         name = name, phone = phone, address = address,
         website = website, hours = hours, notes = notes, isEmergency = isEmergency,
     )
-    val canSave = vetClinicSaveEnabled(clinic, draft)
+    val canSave = vetClinicSaveEnabled(clinic, draft) && !busy
 
     BottomBorderField(value = name, onValueChange = { name = it }, label = "Clinic name")
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
@@ -2480,40 +2566,84 @@ private fun VetClinicEditFields(clinic: VetClinic, onSaved: (VetClinic) -> Unit,
         Text("24hr / emergency clinic", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textPrimary)
     }
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        PrimaryButton(label = "Save", enabled = canSave, onClick = { onSaved(draft.copy(name = name.trim(), phone = phone.trim(), address = address.trim(), website = website.trim(), hours = hours.trim(), notes = notes.trim())) })
-        GhostButton(label = "Cancel", onClick = onCancel)
+        PrimaryButton(
+            label = if (saving) "Saving…" else "Save",
+            enabled = canSave,
+            onClick = { onSaved(draft.copy(name = name.trim(), phone = phone.trim(), address = address.trim(), website = website.trim(), hours = hours.trim(), notes = notes.trim())) },
+        )
+        GhostButton(label = "Cancel", enabled = !busy, onClick = onCancel)
     }
 }
 
+/**
+ * #998: a retired clinic's card. Matches admin web's retired row: name, the
+ * clinic's own details for reference, and Restore - no confirm step, since
+ * restoring is reversible (both web and Android skip a confirm here too).
+ */
 @Composable
-private fun AddVetClinicForm(onCreate: (VetClinic) -> Unit) {
+private fun RetiredVetClinicCard(clinic: VetClinic, busy: Boolean, onRestore: () -> Unit) {
+    val c = AuntieTheme.colors
+    VetCardSurface {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            AuntieAvatar(initials = vetClinicMonogram(clinic.name), size = 40.dp)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(clinic.name, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                Text("vet_clinics/${clinic._id}", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
+            AuntieStatusPill(label = "Retired", tone = AuntieStatusTone.Muted, showDot = true)
+        }
+        VetDetailLine("Phone", clinic.phone)
+        VetDetailLine("Address", clinic.address)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            GhostButton(label = if (busy) "Restoring…" else "Restore", enabled = !busy, onClick = onRestore)
+        }
+    }
+}
+
+/**
+ * #998: create now goes through `submitVetClinic`, which has no `notes` field
+ * (admin web's own add card has no Notes input either, for the same reason -
+ * see `VetClinics.tsx`'s `AddClinicCard`), so the field is gone here too rather
+ * than left in place silently discarding whatever an operator typed into it.
+ *
+ * The form clears only on a successful create; a refusal (a name collision, a
+ * dropped connection) leaves what was typed in place rather than eating it.
+ * [VetClinicEditFields] does not get the same treatment: its form closes once
+ * a save attempt finishes either way, which is the pre-existing shape kept
+ * here rather than widened.
+ */
+@Composable
+private fun AddVetClinicForm(busy: Boolean, onCreate: suspend (VetClinic) -> WriteResult<String>) {
     var name        by remember { mutableStateOf("") }
     var phone       by remember { mutableStateOf("") }
     var address     by remember { mutableStateOf("") }
     var website     by remember { mutableStateOf("") }
-    var notes       by remember { mutableStateOf("") }
     var isEmergency by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
         Text("Add a clinic", style = AuntieTheme.typography.titleSmall, color = AuntieTheme.colors.textPrimary)
-        BottomBorderField(value = name, onValueChange = { name = it }, label = "Clinic name", placeholder = "e.g. Creekside Animal Hospital")
+        BottomBorderField(value = name, onValueChange = { name = it }, label = "Clinic name", placeholder = "e.g. Creekside Animal Hospital", enabled = !busy)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-            BottomBorderField(value = phone, onValueChange = { phone = it }, label = "Phone", modifier = Modifier.weight(1f))
-            BottomBorderField(value = address, onValueChange = { address = it }, label = "Address", modifier = Modifier.weight(2f))
+            BottomBorderField(value = phone, onValueChange = { phone = it }, label = "Phone", modifier = Modifier.weight(1f), enabled = !busy)
+            BottomBorderField(value = address, onValueChange = { address = it }, label = "Address", modifier = Modifier.weight(2f), enabled = !busy)
         }
-        BottomBorderField(value = website, onValueChange = { website = it }, label = "Website")
-        BottomBorderField(value = notes, onValueChange = { notes = it }, label = "Notes")
+        BottomBorderField(value = website, onValueChange = { website = it }, label = "Website", enabled = !busy)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            AuntieToggle(checked = isEmergency, onCheckedChange = { isEmergency = it })
+            AuntieToggle(checked = isEmergency, onCheckedChange = { isEmergency = it }, enabled = !busy)
             Text("24hr / emergency clinic", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textPrimary)
         }
         PrimaryButton(
-            label = "Add clinic",
-            enabled = name.isNotBlank(),
+            label = if (busy) "Adding…" else "Add clinic",
+            enabled = name.isNotBlank() && !busy,
             onClick = {
                 // Admin-authored clinics are approved immediately (verified defaults true).
-                onCreate(VetClinic(name = name.trim(), phone = phone.trim(), address = address.trim(), website = website.trim(), notes = notes.trim(), isEmergency = isEmergency))
-                name = ""; phone = ""; address = ""; website = ""; notes = ""; isEmergency = false
+                val draft = VetClinic(name = name.trim(), phone = phone.trim(), address = address.trim(), website = website.trim(), isEmergency = isEmergency)
+                scope.launch {
+                    if (onCreate(draft) is WriteResult.Ok) {
+                        name = ""; phone = ""; address = ""; website = ""; isEmergency = false
+                    }
+                }
             },
         )
     }
@@ -3732,7 +3862,7 @@ private class FirestoreClientSettingsDataSource(
     override suspend fun createVetClinic(clinic: com.tribetails.auntieos.web.data.VetClinic) = client.createVetClinic(clinic)
     override suspend fun updateVetClinic(loaded: com.tribetails.auntieos.web.data.VetClinic, edited: com.tribetails.auntieos.web.data.VetClinic): WriteResult<Unit> =
         client.updateVetClinic(loaded, edited).let { r -> if (r is WriteResult.Err) WriteResult.Err(r.message) else WriteResult.Ok(Unit) }
-    override suspend fun deleteVetClinic(id: String) = client.deleteVetClinic(id)
+    override suspend fun archiveVetClinic(id: String, archived: Boolean) = client.archiveVetClinic(id, archived)
     override suspend fun logActivity(entry: com.tribetails.auntieos.web.data.ActivityLogEntry) = client.logActivity(entry)
     override fun bookingNotesStream(kinfolkId: String, bookingId: String) =
         client.bookingNotesStream(kinfolkId, bookingId, internal = false)

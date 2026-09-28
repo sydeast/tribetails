@@ -2,6 +2,7 @@ package com.tribetails.auntieos.web.data
 
 import kotlinx.serialization.SerializationStrategy
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -84,12 +85,13 @@ internal fun <T> modelChanges(
 internal val KIN_CARE_REPORT_PER_KEY_MAPS: Set<String> = setOf(PER_KEY_MAP_FIELD, "fieldResponses")
 
 /**
- * #994: [VetClinic] fields the `updateVetClinic` callable does not take. A change
- * to only these is not a save (the callable could not write it), and they are
- * never in the payload. `createdAt`/`updatedAt` are server-owned.
+ * #994/#998: [VetClinic] fields the `updateVetClinic` callable does not take. A
+ * change to only these is not a save (the callable could not write it), and
+ * they are never in the payload. `createdAt`/`updatedAt` are server-owned;
+ * `archived` is `archiveVetClinic`'s field, not this callable's.
  */
 internal val VET_CLINIC_NOT_CALLABLE_FIELDS: Set<String> =
-    setOf("googleMapsUrl", "submittedBy", "createdAt", "updatedAt")
+    setOf("googleMapsUrl", "submittedBy", "archived", "createdAt", "updatedAt")
 
 /**
  * #994: the `updateVetClinic` request for [edited]: the whole editable record
@@ -106,4 +108,27 @@ internal fun updateVetClinicPayload(loaded: VetClinic, edited: VetClinic): JsonO
     put("notes", edited.notes.trim())
     put("isEmergency", edited.isEmergency)
     if (edited.verified != loaded.verified) put("verified", edited.verified)
+}
+
+/**
+ * #998: the `submitVetClinic` request for [clinic] - the same payload admin web
+ * sends for a staff-authored create (`api/vetClinicsWrite.ts#submitVetClinic`).
+ * `acknowledgedMatchIds` is always empty: this form, like web's "Add a clinic"
+ * card, offers no near-match picker to echo ids back from. `hours` and `notes`
+ * are absent because the callable has no fields for them; both are curated
+ * afterwards through Edit, same as on web.
+ */
+internal fun submitVetClinicPayload(clinic: VetClinic): JsonObject = buildJsonObject {
+    put("name", clinic.name.trim())
+    put("phone", clinic.phone.trim())
+    put("address", clinic.address.trim())
+    put("website", clinic.website.trim())
+    put("isEmergency", clinic.isEmergency)
+    put("acknowledgedMatchIds", JsonArray(emptyList()))
+}
+
+/** #998: the `archiveVetClinic` request. `archived = true` retires or rejects; `false` restores. */
+internal fun archiveVetClinicPayload(clinicId: String, archived: Boolean): JsonObject = buildJsonObject {
+    put("clinicId", clinicId)
+    put("archived", archived)
 }
