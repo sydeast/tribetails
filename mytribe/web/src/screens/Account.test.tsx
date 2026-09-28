@@ -380,7 +380,7 @@ describe('Account billing management', () => {
     await userEvent.click(getByRole('button', { name: 'Manage' }));
     await findByTestId('billing-manage');
     await userEvent.click(getByRole('button', { name: 'Add a card' }));
-    await findByText('Only the primary kinfolk on this tribe can manage billing.');
+    await findByText('You need billing access to manage billing. Your primary kinfolk can give it to you.');
   });
   it('takes two clicks to remove a card, and says what removal does not do', async () => {
     const accountApi = await import('../api/accountApi');
@@ -406,7 +406,7 @@ describe('Account billing management', () => {
       paymentMethod: Object.assign(new Error('permission-denied'), { code: 'functions/permission-denied' }),
     });
     await userEvent.click(getByRole('button', { name: 'Manage' }));
-    await findByText('Only the primary kinfolk on this tribe can manage billing.');
+    await findByText('You need billing access to manage billing. Your primary kinfolk can give it to you.');
   });
   it('syncs the card when the browser comes back from Stripe', async () => {
     window.history.replaceState({}, '', '/account?billing=saved');
@@ -501,7 +501,7 @@ describe('Account billing, member without billing access (#1005)', () => {
     await waitFor(() => expect(result.getByText('Add your name to save.')).toBeTruthy());
     await waitFor(() => expect(vi.mocked(portalApi.getMyHome)).toHaveBeenCalled());
     await waitFor(() => expect(result.queryByText('Billing Details')).toBeNull());
-    expect(result.queryByText(/Only the primary kinfolk/)).toBeNull();
+    expect(result.queryByText(/You need billing access/)).toBeNull();
     expect(vi.mocked(accountApi.getMyPaymentMethod)).not.toHaveBeenCalled();
   });
   it('a member with billing access still gets the card', async () => {

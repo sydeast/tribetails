@@ -8,7 +8,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { refuseAuntie } from '../lib/staffGate';
-import { requireKinfolkPrimary } from '../lib/memberGate';
+import { requireBillingActor } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { settingsForInvoice, stripeCheckoutMethodTypes } from '../lib/paymentMethods';
@@ -114,7 +114,10 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   const kinfolkId = (typeof inv['kinfolkId'] === 'string' ? (inv['kinfolkId'] as string) : null);
   if (!kinfolkId) throw new HttpsError('failed-precondition', 'Invoice not linked to a tribe.');
   if (!allowedIds.includes(kinfolkId)) throw new HttpsError('permission-denied', 'No access to this invoice.');
-  await requireKinfolkPrimary(uid, kinfolkId, req.auth?.token?.admin === true, 'payInvoice');
+  // D-2026-09-28-BILLING-ACCESS-PAYS: paying is billing access, not primary-only.
+  // The PRIMARY and a SECONDARY granted `billing_full` pay; `uid` rides in the
+  // checkout metadata below so the webhook's audit names who actually paid.
+  await requireBillingActor(uid, kinfolkId, req.auth?.token?.admin === true, 'payInvoice');
 
   // WHAT THE HOUSEHOLD IS CHARGED IS THE REMAINING BALANCE, not the total, and
   // on a part-paid invoice those differ. `amountDueCents` is the integer figure

@@ -689,3 +689,81 @@ describe('InvoiceDetail: a PAID invoice offers no way to pay (docket Q5)', () =>
     expect(await screen.findByText('Pay with Credit Card')).toBeInTheDocument();
   });
 });
+
+/**
+ * D-2026-09-28-BILLING-ACCESS-PAYS (#1036): billing access includes paying,
+ * using credit and answering quotes. The portal never asks "is this the
+ * primary" for these controls; the one signal it has is billing access
+ * (`getMyHome.billingAccess`, and `getMyInvoices` answering at all). So a
+ * secondary the primary granted billing sees every control a primary does, and
+ * a member without it reaches none of them.
+ */
+describe('InvoiceDetail: money controls follow billing access, not the primary role', () => {
+  function stubHome(billingAccess: boolean) {
+    getMyHome.mockResolvedValue({
+      kinfolkId: 'kin-fam-1',
+      displayName: 'The Test Family',
+      businessLogoUrl: '',
+      businessName: 'Tribe Tails',
+      portal: { logoUrl: '', themeId: 'default', banner: { enabled: false, message: '', tone: 'info', dismissMode: 'none', id: '' }, home: [], chat: { enabled: true, awayMessage: '', hoursEnabled: false, hours: {}, maxMessageLength: 2000, rateLimitPerHour: 0 } },
+      bannerDismissedByUser: false,
+      billingAccess,
+      payMethods: billingAccess
+        ? [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null }]
+        : [],
+    });
+  }
+  function renderDetail() {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InvoiceDetail />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('a member with billing access gets the Pay button on an open bill', async () => {
+    stubHome(true);
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue({ open: [OPEN_INVOICE], paid: [], credits: [], accountBalanceCents: 0 });
+    renderDetail();
+    expect(await screen.findByRole('button', { name: 'Pay with Credit Card' })).toBeInTheDocument();
+  });
+
+  it('a member with billing access gets the use-credit button on a credit', async () => {
+    stubHome(true);
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue({ open: [], paid: [], credits: [CREDIT_INVOICE], accountBalanceCents: 0 });
+    renderDetail();
+    expect(await screen.findByRole('button', { name: 'Save to Account Balance' })).toBeInTheDocument();
+  });
+
+  it('a member with billing access gets Accept and Decline on a quote', async () => {
+    stubHome(true);
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue({
+      open: [{ ...OPEN_INVOICE, status: 'quote', total: 240, amountDue: 240, dueDate: '2999-12-31' }],
+      paid: [],
+      credits: [],
+      accountBalanceCents: 0,
+    });
+    renderDetail();
+    expect(await screen.findByRole('button', { name: 'Accept quote' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Decline' })).toBeInTheDocument();
+  });
+
+  it('a member without billing access is shown no pay, credit or quote control', async () => {
+    stubHome(false);
+    const invoicesApi = await import('../api/invoicesApi');
+    const { FirebaseError } = await import('firebase/app');
+    vi.mocked(invoicesApi.getMyInvoices).mockRejectedValue(
+      new FirebaseError('functions/permission-denied', 'Billing access is required to see invoices and account balance.'),
+    );
+    renderDetail();
+    await waitFor(() => expect(invoicesApi.getMyInvoices).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: /Pay/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save to Account Balance' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Accept quote' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Decline' })).toBeNull();
+  });
+});

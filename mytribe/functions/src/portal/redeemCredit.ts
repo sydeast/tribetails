@@ -6,7 +6,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { refuseAuntie } from '../lib/staffGate';
-import { requireKinfolkPrimary } from '../lib/memberGate';
+import { requireBillingActor } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { validateResponse } from '../lib/callableResponse';
@@ -93,7 +93,9 @@ export async function redeemCreditHandler(req: CallableRequest<unknown>): Promis
   const invKinfolkId = typeof inv['kinfolkId'] === 'string' ? (inv['kinfolkId'] as string) : null;
   if (!invKinfolkId) throw new HttpsError('failed-precondition', 'Invoice not linked to a tribe.');
   if (!allowed.includes(invKinfolkId)) throw new HttpsError('permission-denied', 'No access.');
-  await requireKinfolkPrimary(uid, invKinfolkId, req.auth?.token?.admin === true, 'redeemCredit');
+  // D-2026-09-28-BILLING-ACCESS-PAYS: using credit is billing access, not
+  // primary-only. `creditRedeemedByUid` below records whoever redeemed.
+  await requireBillingActor(uid, invKinfolkId, req.auth?.token?.admin === true, 'redeemCredit');
 
   const familyRef = firestore.collection('families').doc(invKinfolkId);
 

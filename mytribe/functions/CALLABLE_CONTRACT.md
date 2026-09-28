@@ -428,9 +428,11 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   callable existed: the catalog carried both keys, `createQuote`'s header
   claimed the flow was "handled elsewhere", and nothing anywhere emitted
   either. Issue #385.
-- Auth: the caller must be the household's PRIMARY member
-  (`requireKinfolkPrimary`, the same gate `payInvoice` and `redeemCredit` use)
-  and the invoice's `kinfolkId` must be one of theirs, or `permission-denied`.
+- Auth: the invoice's `kinfolkId` must be one of the caller's, then billing
+  access (`requireBillingActor`, the same gate `payInvoice` and `redeemCredit`
+  use; D-2026-09-28-BILLING-ACCESS-PAYS): the PRIMARY, or a SECONDARY granted
+  `billing_full`. Otherwise `permission-denied`. The audit entry's `actorRole`
+  is the caller's real role, so a secondary's answer is recorded as SECONDARY.
 - The decision is recorded on the invoice as `quoteDecision`
   (`accepted` | `denied`), `quoteDecidedAt`, `quoteDecidedByUid`, inside ONE
   transaction that re-reads `quoteDecision` first, so two racing taps cannot
@@ -1032,7 +1034,7 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   `permission-denied`; the clients hide the section on that code.
 - Errors: `permission-denied`, `invalid-argument`, `not-found`.
 
-### Billing access on the portal's money reads (#1005)
+### Billing access on the portal's money reads and actions (#1005, #1036)
 
 Operator ruling 2026-09-27: billing access is the business owner or admin, the
 household PRIMARY, and a SECONDARY only when the PRIMARY granted `billing_full`.
@@ -1047,8 +1049,18 @@ One helper answers it, `hasBillingAccess` / `requireBillingAccess` in
 - `getMyHome`: never refuses on billing. It answers `billingAccess: boolean`
   and sends `payMethods: []` when false. Clients read a missing field as true.
 - `getAccountCreditHistory`: unchanged gate, now through the same helper.
-- `payInvoice`, `redeemCredit`, `acceptQuote`/`denyQuote` and the card
-  callables stay PRIMARY-only (`requireKinfolkPrimary`), which is narrower.
+- `payInvoice`, `redeemCredit`, `acceptQuote`/`denyQuote` and the four card
+  callables take the same billing access (operator ruling 2026-09-28,
+  D-2026-09-28-BILLING-ACCESS-PAYS: "billing access includes paying, using
+  credit, answering quotes and saved cards"), through `requireBillingActor`.
+  It passes exactly who `hasBillingAccess` passes and refuses the rest with
+  `permission-denied`, message `BILLING_ACTION_REFUSAL` (same opening words as
+  `BILLING_ACCESS_REFUSAL`), and the same `portal.billing.refused` log line.
+  Before #1036 these were PRIMARY-only (`requireKinfolkPrimary`).
+- Who acted is recorded as who acted: `quoteDecidedByUid` and the quote audit
+  entry's `actorRole`, `creditRedeemedByUid`, and `paidByUid` on the
+  `BILLING_INVOICE_PAID` audit payload (read off the checkout metadata `uid`
+  that `payInvoice` stamps).
 - Money notifications (`invoice.new`, `invoice.receipt`, `invoice.reminder`,
   `invoice.overdue`, `invoice.payment.applied`, `invoice.charge.failed`,
   `quote.accepted`) address `resolveBillingRecipientUid`, not
@@ -2716,7 +2728,7 @@ read pair takes `notificationId`, the archive family takes `id` / `ids`.
   tile, and a file attached to two tales appears once, credited to the more
   recent.
 - kinfolk portal only. `mytribe/web/src/screens/Gallery.tsx` is the surface.
-## Card on file (kinfolk, primary only)
+## Card on file (kinfolk, billing access)
 The four callables behind the portal's Billing Details "Manage" button
 (`src/portal/billing.ts`, issue #399 item 3). Card state has no generated
 contract: the registry in `scripts/contracts/registry.ts` publishes the invoice
@@ -2725,7 +2737,10 @@ decision to publish. This surface reaches one client tree beyond the React
 portal (the portal Android app, which hand-decodes JSON), so it is documented
 here and hand-mirrored, like the rest of the account callables.
 GATE, all four: the resolved `kinfolkId` must be in the CALLER's own
-`clients/{uid}.kinfolkIds`, then `requireKinfolkPrimary`. Deliberately NOT
+`clients/{uid}.kinfolkIds`, then `requireBillingActor` (billing access: the
+PRIMARY, or a SECONDARY granted `billing_full`; D-2026-09-28-BILLING-ACCESS-PAYS,
+PRIMARY-only before #1036). The card is the caller's own, on their own
+`clients/{uid}`, so a secondary's card is not the primary's. Deliberately NOT
 `resolveKinfolkAccess`: that resolver grants staff a cross-tenant resolution by
 design, and every write here lands on `clients/{uid}` — the caller's own doc — so
 an operator who stepped into a household would attach a card to their own

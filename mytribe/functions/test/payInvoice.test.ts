@@ -59,7 +59,10 @@ vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), get
 vi.mock('../src/lib/stripe', () => ({ getStripe: () => mocks.stripeMock }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
+import { logEvent } from '../src/lib/logger';
+import { BILLING_ACTION_REFUSAL } from '../src/lib/memberGate';
 beforeEach(() => {
+  (logEvent as any).mockClear();
   mocks.dbFn.mockReset();
   mocks.stripeMock.checkout.sessions.create.mockClear();
   mocks.stripeMock.checkout.sessions.retrieve.mockClear();
@@ -91,8 +94,8 @@ const BILLING_FULL_SECONDARY = {
 const PRIMARY_MEMBER = { role: 'PRIMARY', status: 'ACTIVE', permissions: {} };
 const payData = { invoiceId: 'inv-1', successUrl: 'https://x/ok', cancelUrl: 'https://x/cancel' };
 
-describe('payInvoice PRIMARY-only billing gate', () => {
-  it('DENIES a kintales_only secondary and never creates a Checkout Session', async () => {
+describe('payInvoice billing-access gate (D-2026-09-28-BILLING-ACCESS-PAYS)', () => {
+  it('DENIES a secondary without billing access, logs the refusal, and never creates a Checkout Session', async () => {
     const ctx = buildDbMock({
       docs: {
         'clients/u1': { kinfolkIds: ['3'] },
@@ -104,17 +107,21 @@ describe('payInvoice PRIMARY-only billing gate', () => {
     const { payInvoiceHandler } = await import('../src/portal/payInvoice');
     await expect(payInvoiceHandler({ data: payData, auth: { uid: 'u1' } } as any)).rejects.toMatchObject({
       code: 'permission-denied',
+      message: BILLING_ACTION_REFUSAL,
     });
+    expect(logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ function: 'payInvoice', event: 'portal.billing.refused', uid: 'u1', familyId: '3' }),
+    );
     expect(mocks.stripeMock.checkout.sessions.create).not.toHaveBeenCalled();
     expect(ctx.writes.find((w) => w.path === 'invoices/inv-1')).toBeUndefined();
   });
 
-  it('DENIES a secondary with billing_full=true (PK-only policy: billing_full is no longer honored)', async () => {
+  it('DENIES a billing_full secondary whose membership is not ACTIVE', async () => {
     const ctx = buildDbMock({
       docs: {
         'clients/u1': { kinfolkIds: ['3'] },
         'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
-        'families/3/members/u1': BILLING_FULL_SECONDARY,
+        'families/3/members/u1': { ...BILLING_FULL_SECONDARY, status: 'SUSPENDED' },
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -123,7 +130,24 @@ describe('payInvoice PRIMARY-only billing gate', () => {
       code: 'permission-denied',
     });
     expect(mocks.stripeMock.checkout.sessions.create).not.toHaveBeenCalled();
-    expect(ctx.writes.find((w) => w.path === 'invoices/inv-1')).toBeUndefined();
+  });
+
+  it('ALLOWS a secondary with billing_full=true, and the checkout names that secondary as the payer', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/sk1': { kinfolkIds: ['3'] },
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+        'families/3/members/sk1': BILLING_FULL_SECONDARY,
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    const res = await payInvoiceHandler({ data: payData, auth: { uid: 'sk1' } } as any);
+    expect(res.sessionId).toBe('cs_test_1');
+    const params = mocks.stripeMock.checkout.sessions.create.mock.calls[0][0];
+    // The webhook's paid audit entry reads the payer from this metadata.
+    expect(params.metadata.uid).toBe('sk1');
+    expect(params.payment_intent_data?.metadata?.uid).toBe('sk1');
   });
 
   it('ALLOWS a PRIMARY member', async () => {

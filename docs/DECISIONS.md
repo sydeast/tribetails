@@ -279,7 +279,7 @@ so the ID resolves.
 ### D-2026-09-28-BILLING-ACCESS-PAYS: Billing access includes paying
 - Date: 2026-09-28. Source: docket Q7
 - Ruling: "Yes: billing access includes paying, using credit, answering quotes and saved cards." A secondary the primary granted billing access can pay an invoice, redeem account credit, accept or decline a quote, and manage saved cards, not only see them.
-- Enforced in: `mytribe/functions/src/lib/memberGate.ts`
+- Enforced in: `mytribe/functions/src/lib/memberGate.ts`, `mytribe/functions/src/portal/payInvoice.ts`, `mytribe/functions/src/portal/redeemCredit.ts`, `mytribe/functions/src/portal/quoteDecision.ts`, `mytribe/functions/src/portal/billing.ts`, `mytribe/functions/src/billing/stripeWebhook.ts`, `mytribe/src/commonMain/kotlin/com/kinfolk/portal/screens/account/AccountSettingsScreen.kt`
 
 ### D-2026-09-28-VISIT-PRICES-ARE-BILLING: Visit prices are billing information
 - Date: 2026-09-28. Source: docket Q8

@@ -28,6 +28,8 @@ vi.mock('firebase-admin/firestore', async () => {
 
 import { acceptQuoteHandler, denyQuoteHandler, quoteDecisionRefusal } from '../src/portal/quoteDecision';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
+import { logEvent } from '../src/lib/logger';
+import { BILLING_ACTION_REFUSAL } from '../src/lib/memberGate';
 import { quoteHasExpired } from '../src/lib/quoteDecision';
 
 beforeEach(() => {
@@ -35,10 +37,16 @@ beforeEach(() => {
   mocks.resolveUid.mockReset().mockResolvedValue('kin-uid-1');
   mocks.enqueue.mockReset().mockResolvedValue(['n1']);
   (writeAuditEntry as any).mockClear();
+  (logEvent as any).mockClear();
   delete process.env.AUNTIE_OPERATOR_UIDS;
 });
 
 const PRIMARY_MEMBER = { role: 'PRIMARY', status: 'ACTIVE', permissions: {} };
+const NO_BILLING_SECONDARY = {
+  role: 'SECONDARY',
+  status: 'ACTIVE',
+  permissions: { billing_full: false, kintales_only: true },
+};
 const SECONDARY_MEMBER = {
   role: 'SECONDARY',
   status: 'ACTIVE',
@@ -262,14 +270,19 @@ describe('the guards', () => {
     expect(ctx.writes).toHaveLength(0);
   });
 
-  it('REFUSES a secondary member: answering a quote is the primary kinfolk’s call', async () => {
-    const ctx = ctxFor(quoteDoc(), { 'families/fam1/members/u1': SECONDARY_MEMBER });
+  it('REFUSES a secondary without billing access, and logs the refusal', async () => {
+    const ctx = ctxFor(quoteDoc(), { 'families/fam1/members/u1': NO_BILLING_SECONDARY });
     mocks.dbFn.mockReturnValue(ctx.db);
 
     await expect(acceptQuoteHandler(req({ invoiceId: 'q1' }))).rejects.toMatchObject({
       code: 'permission-denied',
+      message: BILLING_ACTION_REFUSAL,
     });
     expect(ctx.writes).toHaveLength(0);
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ function: 'acceptQuote', event: 'portal.billing.refused', uid: 'u1', familyId: 'fam1' }),
+    );
   });
 
   it('REFUSES a quote that does not exist', async () => {
@@ -363,5 +376,57 @@ describe('quoteDecisionRefusal', () => {
 
   it('passes a fresh, in-date quote', () => {
     expect(quoteDecisionRefusal({ status: 'quote', dueDate: '2026-08-18' }, 'accepted', '2026-08-18')).toBeNull();
+  });
+});
+
+describe('D-2026-09-28-BILLING-ACCESS-PAYS: a secondary with billing access answers quotes', () => {
+  it('accepts, and the audit entry and notice name the secondary as the actor', async () => {
+    const ctx = ctxFor(quoteDoc(), { 'families/fam1/members/u1': SECONDARY_MEMBER });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await acceptQuoteHandler(req({ invoiceId: 'q1' }));
+
+    expect(res.status).toBe('open');
+    expect(quoteWrite(ctx)['quoteDecidedByUid']).toBe('u1');
+    expect(writeAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ actorRole: 'SECONDARY', actorUid: 'u1', familyId: 'fam1' }),
+    );
+    // The recipient is still whoever the billing-recipient rule picks; the
+    // secondary is named as the actor, never added as a new recipient.
+    expect(mocks.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'quote.accepted', recipientUid: 'kin-uid-1', actorUid: 'u1' }),
+    );
+  });
+
+  it('declines, and the audit entry names the secondary', async () => {
+    const ctx = ctxFor(quoteDoc(), { 'families/fam1/members/u1': SECONDARY_MEMBER });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await denyQuoteHandler(req({ invoiceId: 'q1' }));
+
+    expect(quoteWrite(ctx)['quoteDecision']).toBe('denied');
+    expect(writeAuditEntry).toHaveBeenCalledWith(expect.objectContaining({ actorRole: 'SECONDARY', actorUid: 'u1' }));
+  });
+
+  it('refuses the decline too for a secondary without billing access', async () => {
+    const ctx = ctxFor(quoteDoc(), { 'families/fam1/members/u1': NO_BILLING_SECONDARY });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(denyQuoteHandler(req({ invoiceId: 'q1' }))).rejects.toMatchObject({
+      code: 'permission-denied',
+      message: BILLING_ACTION_REFUSAL,
+    });
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('lets the operator through (bypass, no member doc)', async () => {
+    process.env.AUNTIE_OPERATOR_UIDS = 'op-uid';
+    const ctx = ctxFor(quoteDoc(), { 'clients/op-uid': { kinfolkIds: ['fam1'] } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await acceptQuoteHandler(req({ invoiceId: 'q1' }, 'op-uid'));
+
+    expect(res.status).toBe('open');
+    expect(quoteWrite(ctx)['quoteDecidedByUid']).toBe('op-uid');
   });
 });

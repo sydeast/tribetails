@@ -131,8 +131,10 @@ fun AccountSettingsScreen(
                 "backupPhone" to backupPhone,
             )
         } catch (_: Throwable) { /* admin has not set up schema yet, keep static fields */ }
-        // Card on file. Best-effort: a secondary kinfolk is refused by the
-        // callable (billing is primary-only), and that refusal is a fact about
+        // Card on file. Best-effort: a member without billing access is refused
+        // by the callable (cards take billing access, the PRIMARY or a
+        // SECONDARY granted it, D-2026-09-28-BILLING-ACCESS-PAYS), and that
+        // refusal is a fact about
         // this screen's billing card, not a reason to fail the whole account
         // load, so it lands in `billingError` and nowhere else.
         if (billingAccess) {

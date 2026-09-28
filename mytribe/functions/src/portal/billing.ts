@@ -7,7 +7,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { refuseAuntie } from '../lib/staffGate';
-import { requireKinfolkPrimary } from '../lib/memberGate';
+import { requireBillingActor } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 
@@ -85,8 +85,10 @@ type PaymentMethodDto = z.infer<typeof PaymentMethodResult>;
  * returns `impersonated: true` for exactly that state and the portal renders
  * the screen read-only from it; this is the server-side half of the same rule.
  *
- * Billing is PRIMARY-only, the same standing policy `payInvoice` enforces: a
- * secondary member, `billing_full` or not, does not hold the household's card.
+ * Saved cards take BILLING ACCESS, the same gate `payInvoice` uses
+ * (D-2026-09-28-BILLING-ACCESS-PAYS): the PRIMARY, or a SECONDARY the PRIMARY
+ * granted `billing_full`. The card is stored on the CALLER's own
+ * `clients/{uid}`, so a secondary's saved card is theirs, not the primary's.
  */
 async function resolveOwnBillingHousehold(
   uid: string,
@@ -110,7 +112,7 @@ async function resolveOwnBillingHousehold(
     );
   }
   const kinfolkId = requested ?? ownIds[0];
-  await requireKinfolkPrimary(uid, kinfolkId, hasAdminClaim, functionName);
+  await requireBillingActor(uid, kinfolkId, hasAdminClaim, functionName);
   return { kinfolkId, clientData };
 }
 
