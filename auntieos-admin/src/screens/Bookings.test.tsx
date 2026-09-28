@@ -1,11 +1,20 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { ReactNode } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 import type { Timestamp } from 'firebase/firestore';
 import { type Async } from '../lib/async';
 import { type BookingEntry } from '../api/bookings';
+import { ToastProvider } from '../components/Toast';
+
+// The stubbed BookingDetailModal below still renders `props.actions` verbatim,
+// which is the real BookingStatusActions: it confirms a landed transition
+// through useToast(), which throws outside a ToastProvider. Same wrap
+// KinfolkEdit.test.tsx uses.
+function render(ui: ReactElement) {
+  return rtlRender(<ToastProvider>{ui}</ToastProvider>);
+}
 
 const { useCollection, useDocById } = vi.hoisted(() => ({
   useCollection: vi.fn(),
@@ -360,7 +369,11 @@ describe('Bookings screen', () => {
 
     // The row leaves the bounded stream (deleted, or pushed past the 200 cap).
     useCollection.mockReturnValue({ status: 'ready', data: [] });
-    rerender(<Bookings />);
+    rerender(
+      <ToastProvider>
+        <Bookings />
+      </ToastProvider>,
+    );
     expect(screen.queryByTestId('booking-detail-modal')).toBeNull();
     // The sentence now names all three readings of a miss, including the one a
     // notification produces (a request approved into existence later); see the
@@ -407,6 +420,9 @@ describe('Bookings screen', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Yes, approve it' }));
     expect(approveBooking).toHaveBeenCalledWith('ses-42');
     expect(screen.queryByTestId('booking-detail-modal')).toBeNull();
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      "The Whitfields's request is now Scheduled.",
+    );
   });
 
   /**

@@ -1,8 +1,16 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactElement } from 'react';
 import { type FormField, type FormSection, type FormSchemaDetail } from '../api/formSchemasWrite';
+import { ToastProvider } from '../components/Toast';
+
+// FormSchemaEditor now confirms a save through useToast(), which throws
+// outside a ToastProvider. Same wrap KinfolkEdit.test.tsx uses.
+function render(ui: ReactElement) {
+  return rtlRender(<ToastProvider>{ui}</ToastProvider>);
+}
 
 const { getFormSchema, saveFormSchema } = vi.hoisted(() => ({
   getFormSchema: vi.fn(),
@@ -598,6 +606,7 @@ describe('FormSchemaEditor: create mode', () => {
       },
     ]);
     await waitFor(() => expect(onSaved).toHaveBeenCalledWith('newSchema'));
+    expect(await screen.findByText('Saved New Schema.')).toBeInTheDocument();
   });
 
   it('fails loud when saveFormSchema rejects, naming the callable, and does not call onSaved', async () => {

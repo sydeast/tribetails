@@ -3,9 +3,17 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactElement } from 'react';
 import type { TemplateSummary } from '../api/templates';
+import { ToastProvider } from '../components/Toast';
+
+// TemplateEditor now confirms save/delete through useToast(), which throws
+// outside a ToastProvider. Same wrap KinfolkEdit.test.tsx uses.
+function render(ui: ReactElement) {
+  return rtlRender(<ToastProvider>{ui}</ToastProvider>);
+}
 
 const { saveTemplate, deleteTemplate, previewEmailTemplate, convertTemplateToVisual } = vi.hoisted(() => ({
   saveTemplate: vi.fn(),
@@ -207,6 +215,8 @@ describe('TemplateEditor: create mode', () => {
       }),
     );
     expect(onSaved).toHaveBeenCalledWith('booking.confirmed');
+    // No Display name was typed, so the toast falls back to the template key.
+    expect(await screen.findByText('Saved booking.confirmed.')).toBeInTheDocument();
   });
 
   it('offers a datalist of known categories without forcing one', () => {
@@ -273,6 +283,8 @@ describe('TemplateEditor: edit mode', () => {
       ),
     );
     expect(onSaved).toHaveBeenCalledWith('booking.confirmed');
+    // `tpl()`'s default title, unedited by this test.
+    expect(await screen.findByText('Saved Booking Confirmed.')).toBeInTheDocument();
   });
 
   it('does not require a template key in edit mode (it is not user input there)', async () => {
@@ -442,6 +454,7 @@ describe('TemplateEditor: delete (edit mode only)', () => {
       }),
     );
     expect(onDeleted).toHaveBeenCalledWith('booking.confirmed');
+    expect(await screen.findByText('Deleted Booking Confirmed.')).toBeInTheDocument();
   });
 
   it('an ordinary template needs no acknowledgement: one press, one call, no second dialog state', async () => {
@@ -1032,12 +1045,14 @@ describe('TemplateEditor: content the editor cannot reproduce (#953 C5a)', () =>
     );
     expect(screen.getByLabelText('Email content')).toBeDisabled();
     rerender(
-      <TemplateEditor
-        key="b"
-        template={visualTpl({ templateId: 'assignment.assigned', content: LOOPED })}
-        onClose={vi.fn()}
-        onSaved={vi.fn()}
-      />,
+      <ToastProvider>
+        <TemplateEditor
+          key="b"
+          template={visualTpl({ templateId: 'assignment.assigned', content: LOOPED })}
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>,
     );
     expect(screen.getByLabelText('Email content')).not.toBeDisabled();
     expect(screen.queryByText(LOCK_NOTE)).toBeNull();

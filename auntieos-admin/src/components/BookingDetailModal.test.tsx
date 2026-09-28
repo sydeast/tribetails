@@ -1,10 +1,18 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactElement } from 'react';
 import { type Async } from '../lib/async';
 import { type ScheduleSessionEntry } from '../api/schedule';
 import { type BookingNoteEntry } from '../api/bookingNotes';
+import { ToastProvider } from './Toast';
+
+// A landed reschedule now confirms through useToast(), which throws outside a
+// ToastProvider. Same wrap KinfolkEdit.test.tsx uses.
+function render(ui: ReactElement) {
+  return rtlRender(<ToastProvider>{ui}</ToastProvider>);
+}
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
@@ -281,6 +289,9 @@ describe('BookingDetailModal reschedule', () => {
         '2026-07-16T16:00:00.000Z',
       ),
     );
+    // The sheet closes on a landed reschedule (see ReschedulePanel's own doc),
+    // so this is the only surface that can confirm it happened.
+    expect(await screen.findByRole('status')).toHaveTextContent("The Whitfields's visit is rescheduled.");
   });
 
   it('surfaces a reschedule rejection fail-loud', async () => {

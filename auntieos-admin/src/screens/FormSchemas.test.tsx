@@ -1,9 +1,17 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor } from '@testing-library/react';
+import type { ReactElement } from 'react';
 import userEvent from '@testing-library/user-event';
 import { type FormSchemaSummary } from '../api/formSchemas';
 import { type BusinessAdminRoster } from '../api/businessAdmins';
+import { ToastProvider } from '../components/Toast';
+
+// FormSchemas now confirms a delete through useToast(), which throws outside
+// a ToastProvider. Same wrap KinfolkEdit.test.tsx uses.
+function render(ui: ReactElement) {
+  return rtlRender(<ToastProvider>{ui}</ToastProvider>);
+}
 
 const { listFormSchemas, deleteFormSchema, listBusinessAdmins } = vi.hoisted(() => ({
   listFormSchemas: vi.fn(),
@@ -453,6 +461,7 @@ describe('FormSchemas screen', () => {
     await waitFor(() => expect(deleteFormSchema).toHaveBeenCalledWith('tribeProfile'));
     await waitFor(() => expect(listFormSchemas).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(await screen.findByText('Deleted Tribe Profile.')).toBeInTheDocument();
   });
 
   it('cancels the delete confirm without calling deleteFormSchema', async () => {
