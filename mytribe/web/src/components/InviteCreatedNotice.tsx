@@ -8,6 +8,12 @@ import { buildClaimUrl } from '../api/claimFlow';
  * thing that reaches the secondary, and today nothing hands it to them but the
  * primary. This is that link, with a copy button so the primary can pass it
  * along themselves.
+ *
+ * Trust note: `claimInviteSignup` marks the claiming account `emailVerified`
+ * on the theory that only the invited mailbox ever sees the link. That
+ * theory was already untested here (no email was ever sent), so showing the
+ * link changes nothing about what a wrong recipient could do, only how
+ * easily a RIGHT one gets it. See #1018's PR body for the fuller note.
  */
 export function InviteCreatedNotice({ inviteId }: { inviteId: string }) {
   const [copied, setCopied] = useState(false);

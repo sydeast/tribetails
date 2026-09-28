@@ -43,12 +43,15 @@ export async function removeMemberHandler(req: CallableRequest<unknown>): Promis
   const snap = await ref.get();
   if (!snap.exists) throw new HttpsError('not-found', 'member not found');
   await ref.update({ status: 'SUSPENDED', updatedAt: FieldValue.serverTimestamp() });
-  await resetSecondaryKinfolkAccess(args.familyId, args.targetUid, req.auth!.uid);
   await db().doc(`clients/${args.targetUid}`).update({
     kinfolkIds: FieldValue.arrayRemove(args.familyId),
     updatedAt: FieldValue.serverTimestamp(),
   });
+  // Security-critical: kills any live session before the (non-critical)
+  // secondary-kinfolk reset below, so a failure in that reset never leaves a
+  // suspended member holding working tokens.
   await auth().revokeRefreshTokens(args.targetUid);
+  await resetSecondaryKinfolkAccess(args.familyId, args.targetUid, req.auth!.uid);
   await writeAuditEntry({
     status: 'SUCCESS',
     event: AUDIT_EVENTS.MEMBERSHIP_MEMBER_REMOVED,

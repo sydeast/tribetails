@@ -1032,7 +1032,7 @@ function InviteKinfolkCard(props: {
           Send Invite
         </MutationLabel>
       </button>
-      {invite.isSuccess && invite.data && <InviteCreatedNotice inviteId={invite.data.inviteId} />}
+      {invite.isSuccess && invite.data && <InviteCreatedNotice key={invite.data.inviteId} inviteId={invite.data.inviteId} />}
       <OfflineMutationNotice phase={invite.phase} what="this invite" check="your Members list" />
       {invite.phase === 'failed' && <p className="sub" style={{ color: 'var(--coral)', marginTop: 8 }}>Invite failed. Try again.</p>}
     </section>

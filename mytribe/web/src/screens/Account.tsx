@@ -441,7 +441,7 @@ export function Account() {
                     </span>
                   )}
                 </div>
-                {invite.isSuccess && invite.data && <InviteCreatedNotice inviteId={invite.data.inviteId} />}
+                {invite.isSuccess && invite.data && <InviteCreatedNotice key={invite.data.inviteId} inviteId={invite.data.inviteId} />}
               </div>
             </section>
 
