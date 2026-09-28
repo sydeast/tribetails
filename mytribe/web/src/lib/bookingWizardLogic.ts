@@ -254,7 +254,9 @@ function slotVisitOn(
     endTimeMs: null,
     serviceId: service.id,
     serviceName: service.name,
-    priceCents: service.priceCents ?? service.priceMinCents,
+    // `?? null`: a member without billing access gets no price keys at all
+    // (#1037), and the request schema takes null, not undefined.
+    priceCents: service.priceCents ?? service.priceMinCents ?? null,
     timeBlockId: timing.mode === 'TIME_BLOCK' ? slot.timeBlockId : null,
   };
 }
@@ -590,12 +592,15 @@ export function dateKey(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-/** "$42 / night" / "$15 – $80" / "from $15" / "" (mirrors BookingWizardScreen.kt's `priceLabel`, en dash included: matches the Kotlin range separator for platform parity). */
+/**
+ * "$42 / night" / "$15 – $80" / "from $15" / "" (mirrors BookingWizardScreen.kt's `priceLabel`, en dash included: matches the Kotlin range separator for platform parity).
+ * `!= null`, not `!== null`: a member without billing access gets the price keys removed (#1037), and an absent key must print nothing, never "$NaN".
+ */
 export function priceLabel(s: Pick<ServiceDto, 'priceCents' | 'priceMinCents' | 'priceMaxCents' | 'isOvernight'>): string {
   const { priceCents: p, priceMinCents: min, priceMaxCents: max } = s;
-  if (p !== null) return `${formatUsd(p / 100)}${s.isOvernight ? ' / night' : ''}`;
-  if (min !== null && max !== null) return `${formatUsd(min / 100)} – ${formatUsd(max / 100)}`;
-  if (min !== null) return `from ${formatUsd(min / 100)}`;
+  if (p != null) return `${formatUsd(p / 100)}${s.isOvernight ? ' / night' : ''}`;
+  if (min != null && max != null) return `${formatUsd(min / 100)} – ${formatUsd(max / 100)}`;
+  if (min != null) return `from ${formatUsd(min / 100)}`;
   return '';
 }
 

@@ -9,6 +9,7 @@ import type {
   GetBusinessClosuresRequest,
   GetBusinessClosuresResult,
   GetServiceCatalogResult,
+  ServiceDto,
   TimeBlockDto,
 } from '../api/bookingApi';
 import type { RequestBookingArgs, RequestBookingResult } from '../contracts/bookingContracts.generated';
@@ -119,7 +120,7 @@ function visitMs(d: Date, hour: number, minute: number) {
 }
 
 const getMyKin = vi.fn<() => Promise<GetMyKinResult>>();
-const getServiceCatalog = vi.fn<() => Promise<GetServiceCatalogResult>>();
+const getServiceCatalog = vi.fn<(kinfolkId?: string) => Promise<GetServiceCatalogResult>>();
 const requestBooking = vi.fn<(req: RequestBookingArgs) => Promise<RequestBookingResult>>();
 const getBusinessClosures = vi.fn<(req: GetBusinessClosuresRequest) => Promise<GetBusinessClosuresResult>>();
 const getBookingPolicy = vi.fn<() => Promise<GetBookingPolicyResult>>();
@@ -131,7 +132,7 @@ vi.mock('../api/bookingApi', async () => {
   const actual = await vi.importActual<typeof import('../api/bookingApi')>('../api/bookingApi');
   return {
     ...actual,
-    getServiceCatalog: () => getServiceCatalog(),
+    getServiceCatalog: (kinfolkId?: string) => getServiceCatalog(kinfolkId),
     requestBooking: (req: RequestBookingArgs) => requestBooking(req),
     getBusinessClosures: (req: GetBusinessClosuresRequest) => getBusinessClosures(req),
     getBookingPolicy: () => getBookingPolicy(),
@@ -1060,5 +1061,74 @@ describe('BookingWizard, signal lost with the tab open', () => {
     onlineManager.setOnline(false);
     renderWizard();
     expect(screen.queryByRole('button', { name: /try again/i })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * #1037, D-2026-09-28-VISIT-PRICES-ARE-BILLING: "visit prices are billing
+ * information; hide them from members without billing access." The server
+ * strips the price keys and says `pricesVisible: false`; the wizard must then
+ * draw no price label, no estimate row and no "$0", "$NaN" or "undefined".
+ */
+describe('BookingWizard: #1037 visit prices are billing information', () => {
+  const strip = ({ priceCents: _p, priceMinCents: _min, priceMaxCents: _max, ...rest }: ServiceDto): ServiceDto => rest;
+  function assertNoMoney() {
+    const text = document.body.textContent ?? '';
+    expect(text).not.toMatch(/\$/);
+    expect(text).not.toMatch(/NaN|undefined/);
+    expect(screen.queryByText(/Estimated Price|Est\. Price/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/confirms the final price/)).not.toBeInTheDocument();
+  }
+  it('asks for the catalog of the active tribe, so a multi-tribe account is answered for the right household', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await goToStep2(user);
+    expect(getServiceCatalog).toHaveBeenCalledWith('fam1');
+  });
+  it('a member without billing access sees the services and no price anywhere, through Review', async () => {
+    getServiceCatalog.mockResolvedValue({ services: [strip(SERVICE_A), strip(SERVICE_B)], pricesVisible: false });
+    const user = userEvent.setup();
+    renderWizard();
+    await goToStep2(user);
+    expect(screen.getByText('Daily Visit')).toBeInTheDocument();
+    expect(screen.getByText('Overnight Stays')).toBeInTheDocument();
+    assertNoMoney();
+    await addKinCare(user, 'Daily Visit');
+    expect(document.querySelector('.slotprice')).toBeNull();
+    expect(document.querySelector('.svc .pr')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByRole('heading', { name: 'Schedule Dates' });
+    await pickDay(user, TOMORROW);
+    await setKinCareTime(user, 1, 'Daily Visit', '09:00');
+    assertNoMoney();
+    await goToReview(user);
+    assertNoMoney();
+    expect(screen.getByText('KinCare')).toBeInTheDocument();
+  });
+  it('a member without billing access still books, sending a null price the server ignores', async () => {
+    getServiceCatalog.mockResolvedValue({ services: [strip(SERVICE_A)], pricesVisible: false });
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+    await pickDay(user, TOMORROW);
+    await setKinCareTime(user, 1, 'Daily Visit', '09:00');
+    await goToReview(user);
+    await user.click(screen.getByRole('button', { name: 'Create Booking' }));
+    await vi.waitFor(() => expect(requestBooking).toHaveBeenCalledTimes(1));
+    const req = requestBooking.mock.calls[0]![0];
+    expect(req.visits![0]!.priceCents).toBeNull();
+  });
+  it('a member with billing access (pricesVisible: true) keeps every price and the estimate', async () => {
+    getServiceCatalog.mockResolvedValue({ services: [SERVICE_A, SERVICE_B], pricesVisible: true });
+    const user = userEvent.setup();
+    renderWizard();
+    await goToStep2(user);
+    expect(screen.getByText('$150.00 / NIGHT')).toBeInTheDocument();
+    await addKinCare(user, 'Daily Visit');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByRole('heading', { name: 'Schedule Dates' });
+    await pickDay(user, TOMORROW);
+    expect(await screen.findByText('$42.00')).toBeInTheDocument();
+    expect(screen.getByText('Estimated Price')).toBeInTheDocument();
   });
 });

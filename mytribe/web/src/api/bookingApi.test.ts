@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { call } from '../lib/fns';
-import { addBookingNote, requestBooking, requestBookingCancellation } from './bookingApi';
+import { addBookingNote, getServiceCatalog, pricesVisibleOf, requestBooking, requestBookingCancellation } from './bookingApi';
 
 // Replace the single callables choke point so each test asserts the exact
 // payload the wrapper builds, without touching the network. Mirrors
@@ -79,5 +79,24 @@ describe('addBookingNote wrapper', () => {
 describe('requestBooking wrapper (pre-existing, unchanged)', () => {
   it('still rejects an empty visits array client-side', () => {
     expect(() => requestBooking({ visits: [] })).toThrow('No visits to book. Check the days and weeks.');
+  });
+});
+
+describe('#1037 getServiceCatalog wrapper and pricesVisibleOf', () => {
+  beforeEach(() => {
+    vi.mocked(call).mockReset();
+    vi.mocked(call).mockResolvedValue({ services: [], pricesVisible: true } as never);
+  });
+  it('sends the active tribe when it has one, and nothing when it does not', async () => {
+    await getServiceCatalog('fam1');
+    expect(call).toHaveBeenLastCalledWith('getServiceCatalog', { kinfolkId: 'fam1' });
+    await getServiceCatalog();
+    expect(call).toHaveBeenLastCalledWith('getServiceCatalog', {});
+  });
+  it('hides prices only on an explicit false; a missing field is an older server', () => {
+    expect(pricesVisibleOf({ pricesVisible: false })).toBe(false);
+    expect(pricesVisibleOf({ pricesVisible: true })).toBe(true);
+    expect(pricesVisibleOf({})).toBe(true);
+    expect(pricesVisibleOf(undefined)).toBe(true);
   });
 });
