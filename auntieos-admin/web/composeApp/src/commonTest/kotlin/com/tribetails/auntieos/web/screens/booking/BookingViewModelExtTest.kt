@@ -252,6 +252,7 @@ class BookingViewModelExtTest {
         assertEquals("CANCEL", ds.seriesCalls.single().first)
         assertNotNull(vm.errorMessage)
         assertEquals(true, vm.errorMessage!!.contains("nope"))
+        assertNull(vm.seriesActionMessage, "a failed series action must not show a false success confirmation")
     }
 
     // 16.5 fail-loud: a partial failure (ok with failedVisits > 0) must NOT read
@@ -270,5 +271,88 @@ class BookingViewModelExtTest {
         assertEquals(true, vm.errorMessage!!.contains("3"))
         assertEquals(true, vm.errorMessage!!.contains("2"))
         assertNull(vm.seriesActionBatchId)
+        assertNull(vm.seriesActionMessage, "a partial failure must not also show a success confirmation")
+    }
+
+    // ---- 1030: approveSeries/cancelSeries used to confirm nothing on a clean
+    // success, only on failure. These pin the wording, matched to admin web's
+    // own single-booking sentences (desktop's ManageSeriesResult carries no
+    // householdNotified/newlyConfirmed to back a richer message). ----
+
+    @Test
+    fun approveSeries_success_confirmsWithWebsApproveSentence() = runTest {
+        val ds = FakeAuntieDataSource()
+        ds.manageBookingSeriesResult = com.tribetails.auntieos.web.data.WriteResult.Ok(
+            com.tribetails.auntieos.web.data.ManageSeriesResult(affectedVisits = 3)
+        )
+        val vm = BookingViewModel(ds)
+
+        vm.approveSeries(kinfolkId = "kf1", batchId = "b1", kinfolkName = "The Whitfields")
+
+        assertEquals("The Whitfields's request is now Scheduled.", vm.seriesActionMessage)
+    }
+
+    @Test
+    fun approveSeries_success_fallsBackToKinfolkIdWhenNameIsBlank() = runTest {
+        val ds = FakeAuntieDataSource()
+        ds.manageBookingSeriesResult = com.tribetails.auntieos.web.data.WriteResult.Ok(
+            com.tribetails.auntieos.web.data.ManageSeriesResult(affectedVisits = 1)
+        )
+        val vm = BookingViewModel(ds)
+
+        vm.approveSeries(kinfolkId = "kf1", batchId = "b1")
+
+        assertEquals("kf1's request is now Scheduled.", vm.seriesActionMessage)
+    }
+
+    // cancelSeries is fed only from the incoming-requests stream (requested
+    // visits), so a landed CANCEL here is always a DECLINE of a request, not
+    // a cancellation of an already-scheduled visit -- the REJECT sentence,
+    // not the CANCEL one. Mirrors the constraint Android's own
+    // EnhancedSchedulingViewModel.householdLine documents.
+    @Test
+    fun cancelSeries_success_confirmsWithWebsRejectSentence() = runTest {
+        val ds = FakeAuntieDataSource()
+        ds.manageBookingSeriesResult = com.tribetails.auntieos.web.data.WriteResult.Ok(
+            com.tribetails.auntieos.web.data.ManageSeriesResult(affectedVisits = 2)
+        )
+        val vm = BookingViewModel(ds)
+
+        vm.cancelSeries(kinfolkId = "kf1", batchId = "b1", kinfolkName = "The Whitfields")
+
+        assertEquals("The Whitfields's request is cancelled.", vm.seriesActionMessage)
+    }
+
+    @Test
+    fun clearSeriesActionMessage_resetsToNull() = runTest {
+        val ds = FakeAuntieDataSource()
+        ds.manageBookingSeriesResult = com.tribetails.auntieos.web.data.WriteResult.Ok(
+            com.tribetails.auntieos.web.data.ManageSeriesResult(affectedVisits = 1)
+        )
+        val vm = BookingViewModel(ds)
+        vm.approveSeries(kinfolkId = "kf1", batchId = "b1")
+        assertNotNull(vm.seriesActionMessage, "precondition: a message should be set")
+
+        vm.clearSeriesActionMessage()
+
+        assertNull(vm.seriesActionMessage)
+    }
+
+    // A stale confirmation from a prior series must not linger onto the next
+    // one's in-flight window or its own outcome.
+    @Test
+    fun seriesActionMessage_fromAPriorCall_doesNotLeakIntoTheNextFailure() = runTest {
+        val ds = FakeAuntieDataSource()
+        ds.manageBookingSeriesResult = com.tribetails.auntieos.web.data.WriteResult.Ok(
+            com.tribetails.auntieos.web.data.ManageSeriesResult(affectedVisits = 1)
+        )
+        val vm = BookingViewModel(ds)
+        vm.approveSeries(kinfolkId = "kf1", batchId = "b1", kinfolkName = "The Whitfields")
+        assertEquals("The Whitfields's request is now Scheduled.", vm.seriesActionMessage)
+
+        ds.manageBookingSeriesResult = com.tribetails.auntieos.web.data.WriteResult.Err("nope")
+        vm.cancelSeries(kinfolkId = "kf2", batchId = "b2", kinfolkName = "The Devlins")
+
+        assertNull(vm.seriesActionMessage, "a new call's failure must not leave the prior call's success message standing")
     }
 }

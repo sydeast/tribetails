@@ -189,19 +189,19 @@ private fun BookingListScreen(
     fun runApprove(booking: KinCareSession) {
         scope.launch {
             vm.approveBooking(booking._id)
-            if (vm.errorMessage == null) actionNotice = bookingActionNotice("Approved", booking)
+            if (vm.errorMessage == null) actionNotice = bookingActionNotice(BookingActionOutcome.APPROVED, booking)
         }
     }
     fun runReject(booking: KinCareSession) {
         scope.launch {
             vm.rejectBooking(booking._id)
-            if (vm.errorMessage == null) actionNotice = bookingActionNotice("Rejected", booking)
+            if (vm.errorMessage == null) actionNotice = bookingActionNotice(BookingActionOutcome.REJECTED, booking)
         }
     }
     fun runCancel(booking: KinCareSession) {
         scope.launch {
             vm.rejectBooking(booking._id)
-            if (vm.errorMessage == null) actionNotice = bookingActionNotice("Cancelled", booking)
+            if (vm.errorMessage == null) actionNotice = bookingActionNotice(BookingActionOutcome.CANCELLED, booking)
         }
     }
 
@@ -305,6 +305,19 @@ private fun BookingListScreen(
             Spacer(Modifier.height(16.dp))
         }
 
+        // 1030: approveSeries/cancelSeries used to report nothing on success,
+        // only on failure (vm.errorMessage). Confirms the way the single-row
+        // actionNotice above does.
+        vm.seriesActionMessage?.let { msg ->
+            AuntieBanner(
+                tone      = AuntieBannerTone.Success,
+                title     = "Booking",
+                icon      = Lucide.CircleCheckBig,
+                onDismiss = { vm.clearSeriesActionMessage() },
+            ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim) }
+            Spacer(Modifier.height(16.dp))
+        }
+
         // Bulk action bar: visible in select-mode. Applies ONE transition to all
         // selected bookings via batchUpdateBookings (real, fail-loud counts).
         if (selecting) {
@@ -392,8 +405,8 @@ private fun BookingListScreen(
                                 series = series,
                                 busy = vm.seriesActionBatchId == series.batchId,
                                 locked = vm.seriesActionBatchId != null,
-                                onApprove = { scope.launch { vm.approveSeries(series.kinfolkId, series.batchId) } },
-                                onCancel  = { scope.launch { vm.cancelSeries(series.kinfolkId, series.batchId) } },
+                                onApprove = { scope.launch { vm.approveSeries(series.kinfolkId, series.batchId, series.kinfolkName) } },
+                                onCancel  = { scope.launch { vm.cancelSeries(series.kinfolkId, series.batchId, series.kinfolkName) } },
                             )
                         }
                     }
@@ -556,12 +569,31 @@ private fun HistorySubsection(
 }
 
 /**
- * 1025: the single-row approve/reject/cancel confirmation text. Pure +
- * unit-tested for the same reason [bookingHistoryBuckets] is: the wording is
- * covered without a live callable or a full Compose render.
+ * 1030: which single-row transition just landed. Named by outcome, not by the
+ * callable invoked underneath -- [BookingScreen]'s own `runReject` (pending
+ * card) and `runCancel` (scheduled card) both call `vm.rejectBooking`, but
+ * read as different sentences to the operator, the same distinction admin
+ * web's `ActionDef` (REJECT vs CANCEL) draws.
  */
-internal fun bookingActionNotice(verb: String, booking: KinCareSession): String =
-    "$verb ${booking.kinfolkName.ifBlank { booking.kinfolkId }}."
+internal enum class BookingActionOutcome { APPROVED, REJECTED, CANCELLED }
+
+/**
+ * 1025/1030: the single-row approve/reject/cancel confirmation text. Pure +
+ * unit-tested for the same reason [bookingHistoryBuckets] is: the wording is
+ * covered without a live callable or a full Compose render. Wording matches
+ * admin web's `BookingActions.tsx` `ActionDef.confirmedToast` sentences
+ * exactly (#1030): this app had been sending "Approved {name}." /
+ * "Cancelled {name}." instead, a drift #1030 closes the same way #1009 closed
+ * it for kinfolk saves.
+ */
+internal fun bookingActionNotice(outcome: BookingActionOutcome, booking: KinCareSession): String {
+    val name = booking.kinfolkName.ifBlank { booking.kinfolkId }
+    return when (outcome) {
+        BookingActionOutcome.APPROVED  -> "$name's request is now Scheduled."
+        BookingActionOutcome.REJECTED  -> "$name's request is cancelled."
+        BookingActionOutcome.CANCELLED -> "$name's visit is cancelled."
+    }
+}
 
 /** Most-recent rows shown per History subsection before "Show more". */
 private const val HISTORY_PAGE = 6

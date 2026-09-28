@@ -149,17 +149,37 @@ class EnhancedSchedulingViewModelCancelBridgeTest {
     // moved sections on the next load, the same gap admin web's #1013/#1024
     // closed for kin/kinfolk.
     @Test
-    fun `cancelling a booking confirms which booking was cancelled`() = runTest(testDispatcher) {
+    fun `cancelling a scheduled booking confirms the visit was cancelled`() = runTest(testDispatcher) {
         coEvery { kinCareRepo.getKinCareSessionsBySourceBookingId("b1") } returns
             Result.success(listOf(linkedSession("s1")))
         coEvery { kinCareRepo.cancelSession(any(), any()) } returns Result.success(Unit)
 
         val vm = buildViewModel()
+        // booking() is ACCEPTED (scheduled), the "Cancel" button's shape.
         vm.cancelBooking(booking(), "household away")
 
         // booking() sets no kinfolkName, so the confirmation falls back to the
         // kinfolkId, the same fallback approveBooking's own message uses.
-        assertEquals("Cancelled kf1.", vm.state.value.bookingActionMessage)
+        // 1030: matches admin web's ActionDef CANCEL confirmedToast exactly;
+        // this used to say "Cancelled kf1." for both Reject and Cancel alike.
+        assertEquals("kf1's visit is cancelled.", vm.state.value.bookingActionMessage)
+    }
+
+    // 1030: `cancelBooking` also backs the Pending row's "Reject" button
+    // (ScheduleViewScreen.kt onReject), where the booking is still a DRAFT
+    // request that was never scheduled. That reads as web's REJECT sentence
+    // ("request is cancelled"), not the CANCEL one ("visit is cancelled") the
+    // ACCEPTED case above gets - the two admin web keeps as separate
+    // ActionDefs and this app used to collapse into one "Cancelled {name}."
+    @Test
+    fun `rejecting a pending request confirms the request was cancelled, not a visit`() = runTest(testDispatcher) {
+        val draft = booking().copy(status = BookingStatus.DRAFT)
+        coEvery { kinCareRepo.getKinCareSessionsBySourceBookingId("b1") } returns Result.success(emptyList())
+
+        val vm = buildViewModel()
+        vm.cancelBooking(draft, "household away")
+
+        assertEquals("kf1's request is cancelled.", vm.state.value.bookingActionMessage)
     }
 
     @Test

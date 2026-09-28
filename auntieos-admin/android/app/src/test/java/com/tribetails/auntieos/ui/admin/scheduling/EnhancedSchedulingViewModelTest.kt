@@ -133,7 +133,10 @@ class EnhancedSchedulingViewModelTest {
         vm.approveBooking(booking)
         advanceUntilIdle()
 
-        assertEquals("Approved The Whitfields.", vm.state.value.bookingActionMessage)
+        // 1030: matches admin web's BookingActions.tsx ActionDef.confirmedToast
+        // exactly; this used to say "Approved The Whitfields.", drifted from
+        // web's own sentence.
+        assertEquals("The Whitfields's request is now Scheduled.", vm.state.value.bookingActionMessage)
 
         vm.clearBookingActionMessage()
         assertNull(vm.state.value.bookingActionMessage)
