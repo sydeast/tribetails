@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getRouteApi, useNavigate } from '@tanstack/react-router';
-import { getBookingPolicy, getBusinessClosures, getServiceCatalog, requestBooking } from '../api/bookingApi';
+import { getBookingPolicy, getBusinessClosures, getServiceCatalog, pricesVisibleOf, requestBooking } from '../api/bookingApi';
 import { mintBookingIdempotencyKey } from '../lib/bookingIdempotency';
 import type { BookingMode, GetBookingPolicyResult, ServiceDto, TimeBlockDto } from '../api/bookingApi';
 import type { RequestBookingArgsVisit, RequestBookingResult } from '../contracts/bookingContracts.generated';
@@ -220,7 +220,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
   const [modeChoice, setModeChoice] = useState<BookingMode | null>(null);
 
   const kinQuery = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId) });
-  const servicesQuery = useQuery({ queryKey: ['serviceCatalog'], queryFn: () => getServiceCatalog() });
+  const servicesQuery = useQuery({ queryKey: ['serviceCatalog', kinfolkId], queryFn: () => getServiceCatalog(kinfolkId) });
 
   // C1: which dates are closed. A failed or still-loading read degrades to
   // "nothing known closed" (the picker offers every date, same as before this
@@ -300,6 +300,10 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
 
   const activeKin = useMemo(() => (kinQuery.data?.kin ?? []).filter((k) => k.status === 'active'), [kinQuery.data]);
   const services = useMemo(() => servicesQuery.data?.services ?? [], [servicesQuery.data]);
+  // D-2026-09-28-VISIT-PRICES-ARE-BILLING (#1037): a member without billing
+  // access is shown no price label and no estimate row. The server has already
+  // stripped the prices; this only keeps the empty rows off the screen.
+  const showPrices = pricesVisibleOf(servicesQuery.data);
   const resolvedKinIds = allKinMode ? activeKin.map((k) => k.id) : [...selectedKinIds];
 
   // Single source of truth for the visit list, BOTH patterns; see the doc
@@ -539,7 +543,9 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
                   }
                 />
               )}
-              {step === 2 && <Step2KinCareSelect services={services} slots={slots} onAdd={addSlot} onRemove={removeSlot} />}
+              {step === 2 && (
+                <Step2KinCareSelect services={services} showPrices={showPrices} slots={slots} onAdd={addSlot} onRemove={removeSlot} />
+              )}
               {step === 3 && (
                 <Step3ScheduleDates
                   pattern={pattern}
@@ -591,7 +597,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
                   visits={plannedVisits}
                   timeBlocks={timeBlocks}
                   notes={notes}
-                  estimateLabel={formatEstimate(estimate)}
+                  estimateLabel={showPrices ? formatEstimate(estimate) : null}
                   capped={weeklyCapped}
                   submitting={submit.isPending}
                   error={submitErrorMessage}
@@ -673,20 +679,24 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
                   )}
                 </div>
 
-                <div className="price-box">
-                  <span className="pl">Estimated Price</span>
-                  <span className="pv">{formatEstimate(estimate)}</span>
-                </div>
-                <p className="sub" style={{ marginTop: 12 }}>
-                  {/*
-                    The old line here promised the estimate updates "as you add
-                    Kin and dates". Kin have never moved the price — the catalog
-                    is priced per visit, not per animal — so half of that
-                    sentence was describing something the app does not do.
-                  */}
-                  Your estimate updates as you add KinCare and dates. Your Auntie confirms the final price before the booking
-                  starts.
-                </p>
+                {showPrices && (
+                  <>
+                    <div className="price-box">
+                      <span className="pl">Estimated Price</span>
+                      <span className="pv">{formatEstimate(estimate)}</span>
+                    </div>
+                    <p className="sub" style={{ marginTop: 12 }}>
+                      {/*
+                        The old line here promised the estimate updates "as you add
+                        Kin and dates". Kin have never moved the price — the catalog
+                        is priced per visit, not per animal — so half of that
+                        sentence was describing something the app does not do.
+                      */}
+                      Your estimate updates as you add KinCare and dates. Your Auntie confirms the final price before the
+                      booking starts.
+                    </p>
+                  </>
+                )}
               </section>
             </div>
           )}
@@ -812,6 +822,8 @@ function Step1KinSelect(props: {
  */
 function Step2KinCareSelect(props: {
   services: ServiceDto[];
+  /** #1037: false for a member without billing access; no price is drawn. */
+  showPrices: boolean;
   slots: readonly KinCareSlot[];
   onAdd: (serviceId: string) => void;
   onRemove: (slotId: string) => void;
@@ -843,7 +855,7 @@ function Step2KinCareSelect(props: {
                   <div className="ico">{serviceIcon(s)}</div>
                   <h4>{s.name}</h4>
                   {s.description && <p>{s.description}</p>}
-                  <div className="pr">{priceLabel(s).toUpperCase()}</div>
+                  {props.showPrices && priceLabel(s) !== '' && <div className="pr">{priceLabel(s).toUpperCase()}</div>}
                 </button>
               );
             })}
@@ -866,7 +878,7 @@ function Step2KinCareSelect(props: {
                 <span className="slotname">
                   {idx + 1}. {name}
                 </span>
-                <span className="slotprice">{service ? priceLabel(service) : ''}</span>
+                {props.showPrices && <span className="slotprice">{service ? priceLabel(service) : ''}</span>}
                 <button type="button" className="btn ghost" aria-label={`Remove ${name}`} onClick={() => props.onRemove(slot.slotId)}>
                   Remove
                 </button>
@@ -1150,7 +1162,8 @@ function Step5Review(props: {
   /** Time-block booking: needed to NAME the window each visit was booked into. */
   timeBlocks: readonly TimeBlockDto[];
   notes: string;
-  estimateLabel: string;
+  /** #1037: null for a member without billing access; the row is not drawn. */
+  estimateLabel: string | null;
   capped: boolean;
   submitting: boolean;
   error: string | null;
@@ -1174,10 +1187,12 @@ function Step5Review(props: {
           <div className="sk">Pattern</div>
           <div className="sv">{pattern === 'individual' ? 'Individual Dates' : 'Repeating Schedule'}</div>
         </div>
-        <div className="sum-row">
-          <div className="sk">Est. Price</div>
-          <div className="sv">{estimateLabel}</div>
-        </div>
+        {estimateLabel !== null && (
+          <div className="sum-row">
+            <div className="sk">Est. Price</div>
+            <div className="sv">{estimateLabel}</div>
+          </div>
+        )}
       </div>
 
       {/*

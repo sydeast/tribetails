@@ -347,7 +347,7 @@ export async function loadServicePriceBook(): Promise<ServicePriceBook> {
   try {
     const settingsSnap = await db().collection('business_settings').doc('business_settings').get();
     for (const s of mapServiceRates(settingsSnap.data()?.serviceRates)) {
-      book.set(s.id, { name: s.name, priceCents: s.priceCents });
+      book.set(s.id, { name: s.name, priceCents: s.priceCents ?? null });
     }
   } catch (err) {
     // A settings read that fails must not take the booking down with it: the

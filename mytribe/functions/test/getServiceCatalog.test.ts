@@ -219,3 +219,87 @@ describe('serviceRates pure mappers', () => {
     expect(isRenderableService(mapBaseServiceDoc('junk', { priceMinCents: 1500 }))).toBe(true);
   });
 });
+// D-2026-09-28-VISIT-PRICES-ARE-BILLING (#1037): a member without billing
+// access gets the catalog with the price keys removed, not nulled.
+describe('getServiceCatalogHandler: visit prices are billing information', () => {
+  const RATES = { '30Minute': '25', '60Minute': '45' };
+  const PRICE_KEYS = ['priceCents', 'priceMinCents', 'priceMaxCents'];
+  function household(extraDocs: Record<string, unknown> = {}) {
+    return buildDbMock({
+      docs: {
+        'business_settings/business_settings': { serviceRates: RATES },
+        'clients/pk1': { kinfolkIds: ['fam1'] },
+        'clients/sk-bill': { kinfolkIds: ['fam1'] },
+        'clients/sk-none': { kinfolkIds: ['fam1'] },
+        'families/fam1/members/pk1': { role: 'PRIMARY', status: 'ACTIVE', permissions: {} },
+        'families/fam1/members/sk-bill': { role: 'SECONDARY', status: 'ACTIVE', permissions: { billing_full: true } },
+        'families/fam1/members/sk-none': { role: 'SECONDARY', status: 'ACTIVE', permissions: { billing_full: false } },
+        ...extraDocs,
+      },
+    });
+  }
+  async function callAs(uid: string, data: unknown = {}, token: Record<string, unknown> = {}) {
+    mocks.dbFn.mockReturnValue(household().db);
+    const { getServiceCatalogHandler } = await import('../src/portal/getServiceCatalog');
+    return getServiceCatalogHandler({ data, auth: { uid, token } } as any);
+  }
+  it('PRIMARY sees every price', async () => {
+    const res = await callAs('pk1');
+    expect(res.pricesVisible).toBe(true);
+    expect(res.services.map((s) => s.priceCents)).toEqual([2500, 4500]);
+  });
+  it('SECONDARY with billing_full sees every price', async () => {
+    const res = await callAs('sk-bill', { kinfolkId: 'fam1' });
+    expect(res.pricesVisible).toBe(true);
+    expect(res.services.map((s) => s.priceCents)).toEqual([2500, 4500]);
+  });
+  it('SECONDARY without billing_full gets the services with no price field at all', async () => {
+    const res = await callAs('sk-none', { kinfolkId: 'fam1' });
+    expect(res.pricesVisible).toBe(false);
+    expect(res.services.map((s) => s.name)).toEqual(['30 Minute', '60 Minute']);
+    for (const s of res.services) {
+      for (const k of PRICE_KEYS) expect(Object.prototype.hasOwnProperty.call(s, k)).toBe(false);
+    }
+    expect(JSON.stringify(res)).not.toMatch(/2500|4500/);
+  });
+  it('strips the base_services fallback too, and keeps a row the junk guard kept by its price', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/sk-none': { kinfolkIds: ['fam1'] },
+        'families/fam1/members/sk-none': { role: 'SECONDARY', status: 'ACTIVE', permissions: {} },
+      },
+      queryDocs: {
+        base_services: [{ id: 'svc1', data: { basePrice: 25, priceMinCents: 1000, priceMaxCents: 3000, active: true } }],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getServiceCatalogHandler } = await import('../src/portal/getServiceCatalog');
+    const res = await getServiceCatalogHandler({ data: {}, auth: { uid: 'sk-none' } } as any);
+    expect(res.pricesVisible).toBe(false);
+    expect(res.services.map((s) => s.id)).toEqual(['svc1']);
+    for (const k of PRICE_KEYS) expect(Object.prototype.hasOwnProperty.call(res.services[0], k)).toBe(false);
+  });
+  it('an unresolvable household (2+ tribes, none named) gets the catalog without prices, not an error', async () => {
+    const res = await callAs('multi', {}, {});
+    // `multi` has no clients doc in this fixture: no tribe linked at all.
+    expect(res.pricesVisible).toBe(false);
+    expect(res.services).toHaveLength(2);
+    for (const s of res.services) expect(s.priceCents).toBeUndefined();
+    const ctx = household({ 'clients/two': { kinfolkIds: ['fam1', 'fam2'] } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getServiceCatalogHandler } = await import('../src/portal/getServiceCatalog');
+    const two = await getServiceCatalogHandler({ data: {}, auth: { uid: 'two' } } as any);
+    expect(two.pricesVisible).toBe(false);
+    expect(two.services[0].priceCents).toBeUndefined();
+  });
+  it('a household the caller does not belong to hides prices rather than borrowing that household\'s answer', async () => {
+    const res = await callAs('sk-none', { kinfolkId: 'someone-else' });
+    expect(res.pricesVisible).toBe(false);
+    expect(res.services[0].priceCents).toBeUndefined();
+  });
+  it('the owner sees prices without naming a household', async () => {
+    const res = await callAs('owner1', {}, { admin: true });
+    expect(res.pricesVisible).toBe(true);
+    expect(res.services.map((s) => s.priceCents)).toEqual([2500, 4500]);
+  });
+});

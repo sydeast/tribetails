@@ -32,12 +32,16 @@ export interface ServiceDto {
   name: string;
   category: string | null;
   description: string | null;
-  /** Single price (cents). When set, price is fixed. */
-  priceCents: number | null;
+  /**
+   * Single price (cents). When set, price is fixed. The three price fields
+   * are ABSENT for a member without billing access (#1037,
+   * D-2026-09-28-VISIT-PRICES-ARE-BILLING); see `pricesVisible`.
+   */
+  priceCents?: number | null;
   /** Range minimum (cents). When set, price is variable. */
-  priceMinCents: number | null;
+  priceMinCents?: number | null;
   /** Range maximum (cents). When set, price is variable. */
-  priceMaxCents: number | null;
+  priceMaxCents?: number | null;
   durationMinutes: number | null;
   isOvernight: boolean;
   iconKey: string | null;
@@ -45,11 +49,34 @@ export interface ServiceDto {
 
 export interface GetServiceCatalogResult {
   services: ServiceDto[];
+  /**
+   * #1037: false when the caller has no billing access to the household; the
+   * server has then stripped every price. Missing means an older server that
+   * never gated prices. Read it through {@link pricesVisibleOf}.
+   */
+  pricesVisible?: boolean;
 }
 
-/** The business's bookable service catalog (no args beyond auth). */
-export function getServiceCatalog(): Promise<GetServiceCatalogResult> {
-  return call<Record<string, never>, GetServiceCatalogResult>('getServiceCatalog', {});
+/**
+ * Whether to draw prices for this catalog answer. Only an explicit `false`
+ * hides them, the same deploy-skew rule as `billingAccessOf`: a missing field
+ * is an older server, and a household must not lose its prices to a deploy
+ * window. Not loaded yet counts as shown; the server still strips.
+ */
+export function pricesVisibleOf(catalog: { pricesVisible?: boolean } | null | undefined): boolean {
+  return catalog?.pricesVisible !== false;
+}
+
+/**
+ * The business's bookable service catalog. `kinfolkId` is the active tribe:
+ * the server needs it to decide billing access for an account holding more
+ * than one, and without it that account sees no prices.
+ */
+export function getServiceCatalog(kinfolkId?: string): Promise<GetServiceCatalogResult> {
+  return call<{ kinfolkId?: string }, GetServiceCatalogResult>(
+    'getServiceCatalog',
+    kinfolkId !== undefined ? { kinfolkId } : {},
+  );
 }
 
 // ── getBusinessClosures (functions/src/portal/getBusinessClosures.ts) ───────

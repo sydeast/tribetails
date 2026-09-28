@@ -128,11 +128,19 @@ fun BookingWizardScreen(
     var policy by remember { mutableStateOf(BookingPolicy.CLOCK_ONLY) }
     /** null means "whatever this business opens on"; set once the household uses the toggle. */
     var modeChoice by remember { mutableStateOf<BookingMode?>(null) }
+    /**
+     * D-2026-09-28-VISIT-PRICES-ARE-BILLING (#1037): false for a member without
+     * billing access. The server has already stripped the prices; this keeps
+     * the empty price label and the estimate row off the screen.
+     */
+    var pricesVisible by remember { mutableStateOf(true) }
 
     LaunchedEffect(kinfolkId) {
         try {
             kin = portalApi.getMyKin(kinfolkId).kin.filter { it.status == com.kinfolk.portal.portal.KinStatus.Active }
-            services = portalApi.getServiceCatalog().services
+            val catalogRes = portalApi.getServiceCatalog(kinfolkId)
+            services = catalogRes.services
+            pricesVisible = catalogRes.pricesVisible
         } catch (t: Throwable) {
             loadError = t.message ?: "Could not load wizard"
         }
@@ -285,6 +293,7 @@ fun BookingWizardScreen(
             )
             2 -> Step2KinCareSelect(
                 services = services!!,
+                showPrices = pricesVisible,
                 slots = slots,
                 onAdd = { id ->
                     slotSeq += 1
@@ -345,7 +354,7 @@ fun BookingWizardScreen(
                 pattern = pattern,
                 visits = plannedVisits,
                 timeBlocks = policy.timeBlocks,
-                estimateLabel = formatEstimate(estimate),
+                estimateLabel = estimateRowLabel(pricesVisible, estimate),
                 capped = weeklyCapped,
                 submitting = submitting,
                 error = submitError,
@@ -579,6 +588,8 @@ private fun Step1KinSelect(
  */
 private fun Step2KinCareSelect(
     services: List<Service>,
+    /** #1037: false for a member without billing access; no price is drawn. */
+    showPrices: Boolean = true,
     slots: List<KinCareSlot>,
     onAdd: (String) -> Unit,
     onRemove: (String) -> Unit,
@@ -611,7 +622,7 @@ private fun Step2KinCareSelect(
                         Column {
                             Text(s.name, style = type.heritageTitle)
                             val priceStr = priceLabel(s)
-                            Text(priceStr, style = type.sansLabel)
+                            if (showPrices && priceStr.isNotEmpty()) Text(priceStr, style = type.sansLabel)
                         }
                         when {
                             count > 1 -> Text("×$count", style = type.sansLabel.copy(color = KinfolkBrand.KinTeal))
@@ -914,7 +925,8 @@ private fun Step5Review(
     visits: List<BookingVisit>,
     /** Time-block booking: needed to NAME the window each visit was booked into. */
     timeBlocks: List<TimeBlock> = emptyList(),
-    estimateLabel: String,
+    /** #1037: null for a member without billing access; the row is not drawn. */
+    estimateLabel: String?,
     capped: Boolean,
     submitting: Boolean,
     error: String?,
@@ -934,7 +946,7 @@ private fun Step5Review(
                 ReviewRow("Kin", kinNames.joinToString(", ").ifBlank { "—" })
                 ReviewRow("KinCare", kinCareSummary.ifBlank { "—" })
                 ReviewRow("Pattern", if (pattern == BookingPattern.Individual) "Individual Dates" else "Repeating Schedule")
-                ReviewRow("Estimated Price", estimateLabel)
+                if (estimateLabel != null) ReviewRow("Estimated Price", estimateLabel)
                 ReviewRow("Extra Love & Context", notes.ifBlank { "None added" })
                 if (capped) {
                     Text(
@@ -1110,7 +1122,16 @@ private fun MonthNavButton(
     }
 }
 
-private fun priceLabel(s: Service): String {
+/**
+ * The Review step's estimate, or null when the row must not be drawn: a member
+ * without billing access (#1037) would otherwise read "Pending" off a catalog
+ * the server stripped of prices.
+ */
+internal fun estimateRowLabel(pricesVisible: Boolean, estimate: BookingEstimate): String? =
+    if (pricesVisible) formatEstimate(estimate) else null
+
+/** "" when the service carries no price, which is every service for a member without billing access (#1037). */
+internal fun priceLabel(s: Service): String {
     val p = s.priceCents
     val min = s.priceMinCents
     val max = s.priceMaxCents

@@ -309,9 +309,13 @@ class PortalApi(private val fns: FunctionsClient) {
         else -> FormFieldType.Text
     }
 
-    /** Reads `base_services` catalog (active only). */
-    suspend fun getServiceCatalog(): ServiceCatalog {
-        val raw = fns.call("getServiceCatalog", null)
+    /**
+     * The bookable service catalog. [kinfolkId] is the active tribe: the
+     * server needs it to decide billing access for an account holding more
+     * than one, and without it that account sees no prices (#1037).
+     */
+    suspend fun getServiceCatalog(kinfolkId: String? = null): ServiceCatalog {
+        val raw = fns.call("getServiceCatalog", kinfolkId?.let { buildJsonObject { put("kinfolkId", it) } })
         val list = (raw["services"] as? JsonArray)?.map { el ->
             val o = el.jsonObject
             Service(
@@ -326,7 +330,10 @@ class PortalApi(private val fns: FunctionsClient) {
                 iconKey = o["iconKey"]?.jsonPrimitive?.contentOrNull,
             )
         }.orEmpty()
-        return ServiceCatalog(services = list)
+        return ServiceCatalog(
+            services = list,
+            pricesVisible = raw["pricesVisible"]?.jsonPrimitive?.booleanOrNull ?: true,
+        )
     }
 
     /**

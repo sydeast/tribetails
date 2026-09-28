@@ -931,7 +931,16 @@ service cloud.firestore {
  // isAuntie() update branch is the AuntieOS write-back path that lands
  // visitProgress, auntieDisplayName, sourceBookingId, sessionId, etc.
         match /kinCares/{visitId} {
-          allow read: if activeMember(fid) || isStaff();
+ // D-2026-09-28-VISIT-PRICES-ARE-BILLING (#1037): this document carries
+ // `priceCents`, and rules gate a document, never a field. So the read needs
+ // billing access (the PRIMARY, or a SECONDARY granted `billing_full`), the
+ // same move #1005 made on `families/{fid}`. No portal client reads this
+ // document directly: both portals get visits through `getMyBookings`, which
+ // never projects a price, so a member without billing loses nothing. If the
+ // portal ever takes direct reads of visits (accepted, not yet built), split
+ // the price out of this document first. The envelope above carries no amount
+ // and stays readable by every active member.
+          allow read: if hasPerm(fid, 'billing_full') || isStaff();
           allow create: if activeMember(fid)
             && request.resource.data.familyId == fid
             && request.resource.data.targetType in ['KIN','KINFOLK']
@@ -1275,14 +1284,21 @@ service cloud.firestore {
     match /booking_time_slots/{id}              { allow read: if isStaff(); allow write: if false; }
  // Service-Management catalog collections (WARNING-16): the AuntieOS Android
  // client reads/writes these directly from Settings. They had NO rule, so the
- // direct reads/writes hit default-deny and failed with permission errors. Any
- // signed-in user may READ the service catalog (kinfolk price lists render from
- // it); only admins may WRITE. promo_codes is the exception - both read and
- // write are admin-only so kinfolk cannot enumerate unredeemed codes.
-    match /base_services/{id}                   { allow read: if signedIn(); allow write: if isOwner(); }
-    match /supplemental_services/{id}           { allow read: if signedIn(); allow write: if isOwner(); }
-    match /surcharges/{id}                      { allow read: if signedIn(); allow write: if isOwner(); }
-    match /discounts/{id}                       { allow read: if signedIn(); allow write: if isOwner(); }
+ // direct reads/writes hit default-deny and failed with permission errors.
+ // Only admins may WRITE. promo_codes is admin-only both ways so kinfolk cannot
+ // enumerate unredeemed codes.
+ //
+ // D-2026-09-28-VISIT-PRICES-ARE-BILLING (#1037): the four price-carrying
+ // collections were readable by any signed-in account, which let a SECONDARY
+ // without billing access read what a visit costs straight from the SDK. No
+ // portal client reads them: both portals get the catalog from
+ // `getServiceCatalog`, which strips the prices for that member. Reads are now
+ // staff (and the Stage-0I test admin, as on `business_settings`).
+ // business_hours carries no price and stays open to any signed-in account.
+    match /base_services/{id}                   { allow read: if isStaff() || isTestAdmin(); allow write: if isOwner(); }
+    match /supplemental_services/{id}           { allow read: if isStaff() || isTestAdmin(); allow write: if isOwner(); }
+    match /surcharges/{id}                      { allow read: if isStaff() || isTestAdmin(); allow write: if isOwner(); }
+    match /discounts/{id}                       { allow read: if isStaff() || isTestAdmin(); allow write: if isOwner(); }
     match /business_hours/{id}                  { allow read: if signedIn(); allow write: if isOwner(); }
     match /promo_codes/{id}                     { allow read: if isOwner(); allow write: if isOwner(); }
     match /calls_log/{id}                       { allow read, write: if isOwner(); }

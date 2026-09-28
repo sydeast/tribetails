@@ -2146,6 +2146,20 @@ the handler.
 - kinfolk portal only; not called by the React admin or android (android
   reads the underlying Firestore docs directly for its own booking views).
 
+### getServiceCatalog (#1037)
+- req `{ kinfolkId?: string }` (no zod schema; read raw off `req.data`). Needed
+  only by an account holding 2+ tribes; both portals send their active tribe.
+- res `{ services: ServiceDto[], pricesVisible: boolean }`
+- D-2026-09-28-VISIT-PRICES-ARE-BILLING: visit prices are billing information.
+  The owner always sees them. Anyone else has the household resolved
+  (`resolveNonStaffKinfolkId`), then `hasBillingAccess`. Without it,
+  `pricesVisible` is false and `priceCents`, `priceMinCents` and
+  `priceMaxCents` are removed from every service (absent, not null). A
+  household that cannot be resolved gets the same stripped catalog, never an
+  error. Clients read a missing `pricesVisible` as true and draw no price
+  label and no estimate row when it is false.
+- An Auntie is refused (`refuseAuntie`). `getMyBookings` never projects a
+  price, so this is the only portal read that carries one.
 ### requestBooking
 - req: see `src/portal/requestBooking.ts`'s `export const Args` for the full
   shape and why it is one schema covering two accepted payloads. The kinfolk

@@ -517,6 +517,10 @@ describe('priceLabel', () => {
   it('renders empty string when no price fields are set', () => {
     expect(priceLabel({ priceCents: null, priceMinCents: null, priceMaxCents: null, isOvernight: false })).toBe('');
   });
+  it('#1037: renders empty string, never "$NaN", when the server stripped the price keys', () => {
+    expect(priceLabel({ isOvernight: true })).toBe('');
+    expect(priceLabel({ isOvernight: false })).toBe('');
+  });
 });
 
 /**

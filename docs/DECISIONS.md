@@ -284,7 +284,7 @@ so the ID resolves.
 ### D-2026-09-28-VISIT-PRICES-ARE-BILLING: Visit prices are billing information
 - Date: 2026-09-28. Source: docket Q8
 - Ruling: "Yes: visit prices are billing information; hide them from members without billing access."
-- Enforced in: `mytribe/functions/src/lib/memberGate.ts`
+- Enforced in: `mytribe/functions/src/lib/memberGate.ts`, `mytribe/functions/src/portal/getServiceCatalog.ts`, `mytribe/firestore.rules`, `mytribe/web/src/api/bookingApi.ts`, `mytribe/web/src/screens/BookingWizard.tsx`, `mytribe/src/commonMain/kotlin/com/kinfolk/portal/portal/ServiceCatalogDtos.kt`, `mytribe/src/commonMain/kotlin/com/kinfolk/portal/screens/schedule/BookingWizardScreen.kt`
 
 ### D-SECONDARY-EMAIL-VERIFY: Secondaries verify their email too
 - Ruling: "secondary needs email verification as well."

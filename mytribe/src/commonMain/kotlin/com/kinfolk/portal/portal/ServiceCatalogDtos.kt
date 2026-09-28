@@ -17,6 +17,13 @@ data class Service(
 
 data class ServiceCatalog(
     val services: List<Service>,
+    /**
+     * #1037, D-2026-09-28-VISIT-PRICES-ARE-BILLING: false when the caller has
+     * no billing access to the household. The server has then removed every
+     * price, and the wizard draws no price label and no estimate row. A
+     * missing field decodes as true: an older server that never gated prices.
+     */
+    val pricesVisible: Boolean = true,
 )
 
 /**
