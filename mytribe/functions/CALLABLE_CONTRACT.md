@@ -1055,6 +1055,55 @@ One helper answers it, `hasBillingAccess` / `requireBillingAccess` in
   `resolveKinfolkUid`: the synced account when it has billing access, the
   ACTIVE PRIMARY otherwise.
 
+### listUnappliedPayments
+- req `{ kinfolkId: string /* 1..200 */ }` (`.strict()`)
+- res `{ ok: true, kinfolkId: string, payments: Array<{ paymentId: string, kinfolkId: string, invoiceId: string, invoiceNumber: string, amountCents: number, amountResolved: boolean, feeCents: number, reason: string, receivedAtMs: number, referenceNumber: string }>, openInvoices: Array<{ invoiceId: string, invoiceNumber: string, amountDueCents: number }> }`
+- #1003. Read only. `payments` are the household's root `payments` rows with
+  `needsAdminDecision: true` (the Stripe webhook's unapplied charges, docket
+  Q5), newest first. `reason` is the notice's plain sentence.
+- `openInvoices` are the invoices a decision may apply to: sent, not cancelled
+  or a credit note, not archived, not paid by label or by money
+  (`lib/invoicePaidGate.ts`), and something still owed. Oldest first.
+  `resolveUnappliedPayment` re-checks everything, so this list is never the gate.
+- Two equality filters, no `orderBy`: no composite index.
+- GATE: `refuseAuntie` first, then `resolveInvoiceWriteActor` (owner; a sandbox
+  test admin only inside their test tribe). Kinfolk are refused. No portal
+  reader: the household is told nothing until the admin decides.
+- Errors: `permission-denied`, `invalid-argument`.
+
+### resolveUnappliedPayment
+- req `{ paymentId: string, creditCents: number /* int >= 0 */, creditReason: string /* trimmed, <= 1000, non-blank when creditCents > 0 */, applyInvoiceId: string /* '' for none */, applyCents: number /* int >= 0 */, idempotencyKey: string /* upd_<millis>_<suffix>, REQUIRED */ }` (`.strict()`)
+- res `{ ok: true, paymentId, kinfolkId, paymentCents, creditedCents, creditId /* '' when none */, appliedCents, appliedInvoiceId, appliedInvoiceNumber, appliedInvoiceState /* '' when none */, appliedInvoiceAmountDueCents, keptCents, newAccountBalanceCents /* SIGNED */, replayed: boolean }`
+- #1003. The owner decides what an unapplied card payment becomes, in one
+  transaction: `creditCents` into account credit through
+  `lib/creditLedger.ts#stageGivenCredit` (the `giveAccountCredit` path; event
+  id `unapplied_<paymentId>`, with the reason and `sourcePaymentId`, so the
+  credit history shows it), and `applyCents` onto ONE other open invoice of the
+  same household through `planApply`/`stageApply` (the `recordPayment` rows,
+  with `sourcePaymentId`). The rest is `keptCents` and stays recorded on the
+  payment. An all-zero decision is legal and clears the flag. No refunds.
+- The payment row gets `needsAdminDecision: false`, `appliedTo: 'adminDecision'`,
+  `appliedInvoiceId`/`appliedInvoiceNumber`/`appliedCents`,
+  `creditedToAccountCents`, `adminDecision` (every part, reason, key, who,
+  when) and `decidedBy`. The original invoice and its `unappliedPaymentIds` are
+  not touched. One `BILLING_UNAPPLIED_PAYMENT_DECIDED` audit entry at docId
+  `unapplied_payment_decided_<paymentId>`.
+- Notices: none from here. An apply that pays the invoice off stamps no notice
+  owner, so `onInvoicesWrite` sends the household the ordinary
+  `invoice.payment.applied`.
+- Refusals (`failed-precondition`, `details.code`): `decision_exceeds_payment`,
+  `payment_amount_unknown` (no amount from Stripe: only the all-zero decision),
+  `invoice_already_paid` (label or money, checked before `planApply`),
+  `apply_exceeds_due`, every `planApply` code (`apply_wrong_household`,
+  `apply_invoice_not_sent`, `apply_invoice_not_found`, and the rest),
+  `already_decided` (another key), `no_decision_needed`.
+- Idempotent on the key: the same key replays the stored decision with
+  `replayed: true` and writes nothing; another admin's key is `already-exists`.
+- GATE: `refuseAuntie` first, then `resolveInvoiceWriteActor`; a sandbox test
+  admin only inside their test tribe. Kinfolk are refused.
+- Errors: `permission-denied`, `invalid-argument`, `not-found`,
+  `failed-precondition`, `already-exists`.
+
 ## Household members and invites (admin-gated; B1)
 
 The write half of this surface predates the read half by months:

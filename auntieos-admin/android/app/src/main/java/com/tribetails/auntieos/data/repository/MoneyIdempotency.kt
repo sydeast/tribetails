@@ -79,3 +79,13 @@ fun mintGiveCreditIdempotencyKey(
     nowMs: Long = System.currentTimeMillis(),
     random: Random = Random.Default,
 ): String = mintMoneyKey("crd", nowMs, random)
+
+/**
+ * #1003: the key for one decision on an unapplied card payment
+ * (`resolveUnappliedPayment`). Minted once per submission: kept across a failed
+ * attempt so the retry lands on the same decision, fresh when any input changes.
+ */
+fun mintUnappliedDecisionIdempotencyKey(
+    nowMs: Long = System.currentTimeMillis(),
+    random: Random = Random.Default,
+): String = mintMoneyKey("upd", nowMs, random)

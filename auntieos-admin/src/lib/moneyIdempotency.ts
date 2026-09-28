@@ -59,3 +59,13 @@ export function mintQuoteIdempotencyKey(): string {
 export function mintGiveCreditIdempotencyKey(): string {
   return mintKey('crd');
 }
+
+/**
+ * #1003: the key for one `resolveUnappliedPayment` decision. The server uses it
+ * to answer a retry with the first decision instead of crediting or applying
+ * the same card payment twice. Kept across a failed attempt, minted fresh when
+ * any field of the decision changes.
+ */
+export function mintUnappliedDecisionIdempotencyKey(): string {
+  return mintKey('upd');
+}

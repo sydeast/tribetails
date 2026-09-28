@@ -266,6 +266,15 @@ export function stageApply(
     reference: string | null;
     paidAtIso: string;
     uid: string;
+    /**
+     * #1003: who owns the `invoice.payment.applied` notice when this apply pays
+     * the invoice off. Left out, `recordPayment` owns it (its Send Confirmation
+     * toggle), which is every caller before #1003. `null` stamps no owner, so
+     * `onInvoicesWrite` sends the ordinary notice on the open-to-paid
+     * transition, which is what an admin decision about an unapplied card
+     * payment wants: it sends nothing itself.
+     */
+    noticeOwner?: string | null;
   },
 ): ApplyOutcome {
   const { step } = input;
@@ -303,7 +312,12 @@ export function stageApply(
           // #866: `recordPayment` is this payment's only confirmation sender
           // (its Send Confirmation toggle), so the write that pays the bill
           // says so and `onInvoicesWrite` stands down.
-          [PAYMENT_APPLIED_OWNER_FIELD]: paymentAppliedOwner('recordPayment', input.sourcePaymentId),
+          ...(input.noticeOwner === null
+            ? {}
+            : {
+                [PAYMENT_APPLIED_OWNER_FIELD]:
+                  input.noticeOwner ?? paymentAppliedOwner('recordPayment', input.sourcePaymentId),
+              }),
         }
       : {}),
     lastPaymentAt: FieldValue.serverTimestamp(),

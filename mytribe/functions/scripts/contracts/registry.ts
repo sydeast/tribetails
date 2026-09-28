@@ -50,6 +50,14 @@ import { Args as RunAutoApplyArgs, Result as RunAutoApplyResult } from '../../sr
 // household's billing people and the owner read its history.
 import { Args as GiveAccountCreditArgs, Result as GiveAccountCreditResult } from '../../src/admin/giveAccountCredit';
 import {
+  Args as ListUnappliedPaymentsArgs,
+  Result as ListUnappliedPaymentsResult,
+} from '../../src/admin/listUnappliedPayments';
+import {
+  Args as ResolveUnappliedPaymentArgs,
+  Result as ResolveUnappliedPaymentResult,
+} from '../../src/admin/resolveUnappliedPayment';
+import {
   Args as GetAccountCreditHistoryArgs,
   Result as GetAccountCreditHistoryResult,
 } from '../../src/portal/getAccountCreditHistory';
@@ -163,6 +171,9 @@ export const INVOICE_CONTRACT_REGISTRY: ContractRegistry = {
     { name: 'runAutoApply', args: RunAutoApplyArgs, result: RunAutoApplyResult },
     { name: 'giveAccountCredit', args: GiveAccountCreditArgs, result: GiveAccountCreditResult },
     { name: 'getAccountCreditHistory', args: GetAccountCreditHistoryArgs, result: GetAccountCreditHistoryResult },
+    // #1003: the admin's decision about an unapplied card payment.
+    { name: 'listUnappliedPayments', args: ListUnappliedPaymentsArgs, result: ListUnappliedPaymentsResult },
+    { name: 'resolveUnappliedPayment', args: ResolveUnappliedPaymentArgs, result: ResolveUnappliedPaymentResult },
     { name: 'resendQuote', args: ResendQuoteArgs, result: ResendQuoteResult },
     { name: 'reviewAndSendDraftInvoice', args: ReviewAndSendDraftInvoiceArgs, result: ReviewAndSendDraftInvoiceResult },
     { name: 'sendInvoiceReminder', args: SendInvoiceReminderArgs, result: SendInvoiceReminderResult },

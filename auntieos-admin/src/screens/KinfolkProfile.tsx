@@ -68,6 +68,13 @@ interface KinfolkProfileProps {
   duplicateAdd?: DuplicateAddKinfolk | null;
   /** The editor has filled the typing in, so the caller can let it go. */
   onDuplicateAddApplied?: (() => void) | undefined;
+  /**
+   * #1003: opened from the `invoice.payment.unapplied` notice. The Account
+   * credit panel then shows "Payments needing a decision" even when empty, and
+   * opens `unappliedPaymentId`'s Decide dialog if it is still waiting.
+   */
+  openUnappliedPayments?: boolean;
+  unappliedPaymentId?: string;
 }
 
 /**
@@ -171,6 +178,8 @@ export function KinfolkProfile({
   onOpenKin,
   duplicateAdd = null,
   onDuplicateAddApplied,
+  openUnappliedPayments = false,
+  unappliedPaymentId = '',
 }: KinfolkProfileProps) {
   const [view, setView] = useState<ProfileView>(() => (duplicateAdd !== null ? 'edit' : 'profile'));
   // #907 review item 1(b): held here and let go once the editor has used it, so
@@ -632,7 +641,11 @@ export function KinfolkProfile({
           <UpcomingVisitsPanel kinfolkId={kinfolkId} />
           <RecentKinTalesPanel kinfolkId={kinfolkId} />
           <HouseholdInvoicesPanel kinfolkId={kinfolkId} />
-          <AccountCreditPanel kinfolkId={kinfolkId} />
+          <AccountCreditPanel
+            kinfolkId={kinfolkId}
+            openUnappliedPayments={openUnappliedPayments}
+            unappliedPaymentId={unappliedPaymentId}
+          />
         </div>
       </div>
     </div>

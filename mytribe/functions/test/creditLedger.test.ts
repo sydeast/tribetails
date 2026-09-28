@@ -172,3 +172,42 @@ describe('readCreditLedgerEvent', () => {
     expect(readCreditLedgerEvent('x', { kind: 'draw', amountCents: '5', atMs: 5 })).toBeNull();
   });
 });
+describe('stageGivenCredit (#1003: the one path a given credit takes)', () => {
+  it('names the same balance field as accountCredit.ts', async () => {
+    const { ACCOUNT_BALANCE_FIELD_NAME } = await import('../src/lib/creditLedger');
+    const { ACCOUNT_BALANCE_FIELD } = await import('../src/lib/accountCredit');
+    expect(ACCOUNT_BALANCE_FIELD_NAME).toBe(ACCOUNT_BALANCE_FIELD);
+  });
+  it('creates the event and sets the balance from the figure read, with the source payment when there is one', async () => {
+    const { stageGivenCredit } = await import('../src/lib/creditLedger');
+    const calls: Array<{ op: string; path: string; data: Record<string, unknown>; opts?: unknown }> = [];
+    const refOf = (path: string): any => ({
+      path,
+      collection: (c: string) => ({ doc: (d: string) => refOf(`${path}/${c}/${d}`) }),
+    });
+    const firestore: any = { collection: (c: string) => ({ doc: (d: string) => refOf(`${c}/${d}`) }) };
+    const tx: any = {
+      create: (ref: any, data: any) => calls.push({ op: 'create', path: ref.path, data }),
+      set: (ref: any, data: any, opts: any) => calls.push({ op: 'set', path: ref.path, data, opts }),
+    };
+    const out = stageGivenCredit(firestore, tx, {
+      kinfolkId: 'fam1',
+      eventId: 'unapplied_evt1',
+      amountCents: 700,
+      reason: 'Second charge',
+      givenBy: 'owner1',
+      balanceBeforeCents: 300,
+      atMs: 5,
+      testMode: false,
+      sourcePaymentId: 'evt1',
+    });
+    expect(out.balanceAfterCents).toBe(1000);
+    expect(calls[0]).toMatchObject({
+      op: 'create',
+      path: 'families/fam1/creditLedger/unapplied_evt1',
+      data: { kind: 'given', amountCents: 700, balanceBeforeCents: 300, balanceAfterCents: 1000, sourcePaymentId: 'evt1' },
+    });
+    expect(calls[1]).toMatchObject({ op: 'set', path: 'families/fam1', data: { accountBalanceCents: 1000 }, opts: { merge: true } });
+    expect(readCreditLedgerEvent('unapplied_evt1', calls[0].data)).toMatchObject({ kind: 'given', amountCents: 700, reason: 'Second charge' });
+  });
+});

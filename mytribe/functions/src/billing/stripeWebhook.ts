@@ -31,6 +31,7 @@ import {
   duplicateCheckoutReason,
   roundFromMetadata,
   type DuplicateCheckoutReason,
+  unappliedReasonLabel,
 } from '../lib/invoiceCheckoutDedupe';
 
 /**
@@ -225,23 +226,11 @@ async function finishEventFollowup(input: {
 
 /**
  * A plain sentence for the admin notice, off `duplicateCheckoutReason`'s code.
- * Exported for the test.
+ * Lives in `lib/invoiceCheckoutDedupe.ts` since #1003 (the admin's list of
+ * payments waiting for a decision prints the same sentence); re-exported here
+ * for the callers and the test that import it from this module.
  */
-export function unappliedReasonLabel(reason: string | null): string {
-  switch (reason) {
-    case 'stale-round':
-      return 'it was paid on a checkout opened before an earlier payment on this invoice';
-    case 'settled-by-other-intent':
-      return 'the invoice had already been paid by another card payment';
-    case 'invoice-not-owed':
-      return 'the invoice had already been paid';
-    case 'invoice-marked-paid':
-      return 'the invoice was already marked paid';
-    default:
-      return 'the invoice was not owed this payment';
-  }
-}
-
+export { unappliedReasonLabel };
 export async function stripeWebhookHandler(req: Request, res: Response): Promise<void> {
   if (req.method !== 'POST') { res.status(405).end(); return; }
   const sig = req.headers['stripe-signature'] as string | undefined;

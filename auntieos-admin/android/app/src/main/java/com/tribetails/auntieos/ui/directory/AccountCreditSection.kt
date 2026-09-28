@@ -37,13 +37,28 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  * given (amount, date, reason, date applied) and every use of credit.
  */
 @Composable
-internal fun AccountCreditPanel(state: AccountCreditUiState, onGiveCredit: () -> Unit) {
-    val c = AuntieTheme.colors
-    val history = state.history
+internal fun AccountCreditPanel(
+    state: AccountCreditUiState,
+    onGiveCredit: () -> Unit,
+    /** #1003: the "Payments needing a decision" sub-section, under the history. */
+    below: @Composable () -> Unit = {},
+) {
     DenPanel(
         title = "Account credit",
         trailing = { GhostButton(label = "Give credit", onClick = onGiveCredit, enabled = !state.busy) },
     ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            AccountCreditHistoryBody(state)
+            below()
+        }
+    }
+}
+
+@Composable
+private fun AccountCreditHistoryBody(state: AccountCreditUiState) {
+    val c = AuntieTheme.colors
+    val history = state.history
+    run {
         when {
             history == null && state.loadError != null -> EmptyHint(state.loadError, error = true)
             history == null -> EmptyHint("Loading account credit...")

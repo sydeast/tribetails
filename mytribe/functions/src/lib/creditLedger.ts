@@ -105,6 +105,75 @@ export function stageDrawEvent(
   });
 }
 
+/**
+ * `accountCredit.ts#ACCOUNT_BALANCE_FIELD`, restated because that module
+ * imports this one (the draw event) and a cycle would leave one of the two
+ * undefined at load. `creditLedger.test.ts` asserts the two agree.
+ */
+export const ACCOUNT_BALANCE_FIELD_NAME = 'accountBalanceCents';
+
+/** The writer `stageGivenCredit` needs: a transaction's `create` and `set`. */
+export interface GivenCreditWriter extends StagedWriter {
+  create(ref: DocumentReference, data: Record<string, unknown>): unknown;
+}
+
+/**
+ * Stages a `given` event and the balance it adds, on one transaction.
+ *
+ * THE ONE PATH CREDIT IS GIVEN BY. `admin/giveAccountCredit.ts` gives credit
+ * outright, and `admin/resolveUnappliedPayment.ts` (#1003) gives credit out of
+ * a card payment the admin decided about. Both stage through here, so a credit
+ * from either shows in the history the same way and moves the balance the same
+ * way: the absolute figure read in the same transaction plus the amount.
+ *
+ * `create`, so a second attempt at the same event id fails the commit instead
+ * of adding the credit twice. The caller has already read the balance
+ * (`balanceBeforeCents`) inside the same transaction; every read comes before
+ * every write.
+ *
+ * `sourcePaymentId` is set when the credit came out of a payment and left off
+ * for a credit given outright. `readCreditLedgerEvent` ignores it, so the
+ * history reads both the same way.
+ */
+export function stageGivenCredit(
+  firestore: Firestore,
+  tx: GivenCreditWriter,
+  input: {
+    kinfolkId: string;
+    eventId: string;
+    amountCents: number;
+    reason: string;
+    givenBy: string;
+    balanceBeforeCents: number;
+    atMs: number;
+    testMode: boolean;
+    sourcePaymentId?: string;
+  },
+): { balanceAfterCents: number } {
+  const balanceAfterCents = input.balanceBeforeCents + input.amountCents;
+  tx.create(creditLedgerRef(firestore, input.kinfolkId, input.eventId), {
+    kind: 'given',
+    amountCents: input.amountCents,
+    reason: input.reason,
+    givenBy: input.givenBy,
+    balanceBeforeCents: input.balanceBeforeCents,
+    balanceAfterCents,
+    atMs: input.atMs,
+    testMode: input.testMode,
+    ...(input.sourcePaymentId ? { sourcePaymentId: input.sourcePaymentId } : {}),
+    createdAt: FieldValue.serverTimestamp(),
+  });
+  tx.set(
+    firestore.collection('families').doc(input.kinfolkId),
+    {
+      [ACCOUNT_BALANCE_FIELD_NAME]: balanceAfterCents,
+      accountBalanceUpdatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true },
+  );
+  return { balanceAfterCents };
+}
+
 /** One stored event, as the history reads it. Anything unreadable is skipped, never guessed. */
 export type CreditLedgerEvent =
   | {

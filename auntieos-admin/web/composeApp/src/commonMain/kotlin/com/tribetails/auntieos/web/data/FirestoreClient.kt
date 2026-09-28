@@ -1244,6 +1244,34 @@ class FirestoreClient {
                 .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
     }
+
+    /** #1003: the household's card payments waiting on a decision, through `listUnappliedPayments`. */
+    suspend fun listUnappliedPayments(kinfolkId: String): WriteResult<UnappliedPaymentsList> {
+        val payload = listUnappliedPaymentsPayload(kinfolkId)
+        return when (val r = platformInvokeCallable("listUnappliedPayments", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatching { WriteResult.Ok(decodeUnappliedPaymentsList(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+
+    /**
+     * #1003: records what one flagged payment becomes, through
+     * `resolveUnappliedPayment`. [idempotencyKey] makes a retry of the same
+     * decision land on the first attempt.
+     */
+    suspend fun resolveUnappliedPayment(
+        decision: UnappliedDecision,
+        idempotencyKey: String,
+    ): WriteResult<UnappliedDecisionOutcome> {
+        val payload = resolveUnappliedPaymentPayload(decision, idempotencyKey)
+        return when (val r = platformInvokeCallable("resolveUnappliedPayment", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatching { WriteResult.Ok(decodeUnappliedDecisionOutcome(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+
     // ---- Booking time slots (availability + Google-busy blocks) ----
     /**
      * Live stream of `booking_time_slots`. The Schedule grid filters this to the
@@ -3596,12 +3624,27 @@ data class NotificationEntry(
     // Blank == in the active inbox; non-blank == archived (filtered out by default).
     @Serializable(with = FirestoreInstantStringSerializer::class)
     val archivedAt: String = "",
+    // The dispatch data the notice was sent with (e.g. `invoice.payment.unapplied`
+    // carries kinfolkId, invoiceId and stripeEventId). Null when absent or not a
+    // map, so an odd `data` never drops the whole notification from the list.
+    @Serializable(with = LenientJsonObjectSerializer::class)
+    val data: JsonObject? = null,
 ) {
     /** True once the recipient (or an admin) has marked this notification read. */
     val isRead: Boolean get() = readAt.isNotBlank()
 
     /** True once this notification has been archived out of the active inbox. */
     val isArchived: Boolean get() = archivedAt.isNotBlank()
+}
+
+/** Decodes a JSON map as itself and anything else (string, array, null) as null. */
+internal object LenientJsonObjectSerializer : KSerializer<JsonObject?> {
+    override val descriptor: SerialDescriptor = JsonElement.serializer().descriptor
+    override fun deserialize(decoder: Decoder): JsonObject? =
+        (decoder as? JsonDecoder)?.decodeJsonElement() as? JsonObject
+    override fun serialize(encoder: Encoder, value: JsonObject?) {
+        encoder.encodeSerializableValue(JsonElement.serializer(), value ?: JsonNull)
+    }
 }
 
 /**
