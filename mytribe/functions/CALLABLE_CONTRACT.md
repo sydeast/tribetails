@@ -1402,6 +1402,21 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
   carries no `email`.
 - Read only.
 
+### listSecondaryKinfolk / saveSecondaryKinfolk / removeSecondaryKinfolk (net-new 2026-09-27, Q3)
+Operator ruling 2026-09-27 (Q3): "A Secondary kinfolk can be added to the household but doesn't have portal access unless PK invites them and set access." The admin invites only the primary; the primary invites the secondary and sets their permissions.
+- STORAGE: `families/{kinfolkId}/secondaryKinfolk/{personId}` `{ name, phone: E.164 | null, email: lowercased | null, access: 'NONE' | 'INVITED' | 'ACTIVE', memberUid: string | null, inviteId: string | null, createdAt, createdBy, updatedAt, updatedBy }`. The person record from section 2 of the 2026-09-13 household roles spec. Member docs stay keyed by uid and no member gate changes. Closed to every client in `firestore.rules`.
+- GATE (all three): `resolveKinfolkAccess` + `requireKinfolkPrimary`, so the PRIMARY or staff. An Auntie may list and save, not remove.
+- `listSecondaryKinfolk` req `{ kinfolkId?: string }` (strict) res `{ people: Array<{ personId, name, phone: string | null, email: string | null, access, memberUid: string | null, createdAt: string | null }> }`, sorted by name. Clients show `access !== 'ACTIVE'` rows; an ACTIVE one is already in `listMembers`.
+- `saveSecondaryKinfolk` req `{ kinfolkId?: string, personId?: string, name: string /* 1..80 */, phone?: string | null /* valid if given, stored E.164 */, email?: string | null /* valid if given */ }` (strict, frozen in `callableContract.test.ts`) res `{ person, created: boolean }`.
+  - No `personId` creates with `access: 'NONE'`. No invite, no email, no member doc.
+  - With `personId` it writes only `name`, `phone`, `email`, `updatedAt`, `updatedBy` (a cleared field lands as null). `access`, `memberUid` and provenance are never written here. Unknown id: `not-found` "That secondary kinfolk is no longer on this household."
+  - Refuses the primary's own name, phone or email (`failed-precondition` "That is the primary kinfolk. A secondary kinfolk is someone else in the household.") and the household's Emergency Contact by name or phone ("That is the household's Emergency Contact. An Emergency Contact is someone outside the household."). `saveEmergencyContacts` in turn refuses a contact who matches a secondary kinfolk.
+  - Refusals are the message alone: "A secondary kinfolk needs a name.", "That phone number is not a valid number.", "That email address is not valid."
+- `removeSecondaryKinfolk` req `{ kinfolkId?: string, personId: string }` (strict) res `{ ok: true }`. Deletes a NONE or INVITED record. ACTIVE is refused with `failed-precondition` "This secondary kinfolk has portal access. Remove them from the portal first." (an INVITED record is deletable so a revoked or expired invite never strands it).
+- PORTAL ACCESS: `addSecondaryContact` takes an optional `personId`. The invite carries it and the record moves to `INVITED` with `inviteId`; a deduped live invite is stamped with it too. Refused: `not-found` for a missing record, `failed-precondition` "This secondary kinfolk already has portal access." `acceptInvite` then sets the record to `ACTIVE` with `memberUid` in the same transaction (skipped if the record was deleted).
+- `addSecondaryContact` now refuses every staff caller (owner claim or `AUNTIE_OPERATOR_UIDS`) with `permission-denied` "Only the primary kinfolk can invite a secondary kinfolk to the portal." No admin client called it.
+- Known gap: `removeMember` on an ACTIVE secondary does not return their person record to `NONE`.
+- NEVER a recipient: nothing that sends reads this collection. NEVER logged: name, phone or email.
 ### listHouseholdContacts / saveHouseholdContact / removeHouseholdContact (net-new 2026-09-12, orphaned by #829)
 
 **Orphaned by #829: no client should call these.** Operator ruling 2026-09-27,

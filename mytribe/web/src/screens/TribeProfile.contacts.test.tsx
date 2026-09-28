@@ -54,6 +54,8 @@ vi.mock('../api/tribeApi', async () => {
     removeHouseholdContact: (...a: unknown[]) => mocks.removeHouseholdContact(...a),
     listEmergencyContacts: (...a: unknown[]) => mocks.listEmergencyContacts(...a),
     saveEmergencyContacts: (...a: unknown[]) => mocks.saveEmergencyContacts(...a),
+    // 2026-09-27 Q3: the Secondary Kinfolk card reads its own callable.
+    listSecondaryKinfolk: async () => [],
   };
 });
 

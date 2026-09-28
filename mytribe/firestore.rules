@@ -841,6 +841,14 @@ service cloud.firestore {
         allow read, write: if false;
       }
 
+      // 2026-09-27 Q3: secondary kinfolk person records (a secondary with no
+      // portal account yet). Closed to every client, the same as contacts: the
+      // listSecondaryKinfolk / saveSecondaryKinfolk / removeSecondaryKinfolk
+      // callables are the only door, and acceptInvite marks one ACTIVE.
+      match /secondaryKinfolk/{personId} {
+        allow read, write: if false;
+      }
+
       match /kin/{kinId} {
         allow read: if activeMember(fid) || isStaff();
         allow create, delete: if hasPerm(fid, 'kin_edit');

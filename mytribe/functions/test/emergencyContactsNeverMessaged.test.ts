@@ -96,6 +96,10 @@ describe('Emergency Contacts are never a recipient (#829)', () => {
       // household, so a create can never write an Emergency Contact. It reads
       // no phone and sends nothing.
       'admin/createKinfolk.ts',
+      // 2026-09-27 Q3: saveSecondaryKinfolk reads the stored Emergency Contact
+      // only to refuse adding that person as a secondary kinfolk. It sends
+      // nothing to anyone.
+      'portal/secondaryKinfolk.ts',
     ]);
     const offenders = walk(src)
       .map((f) => relative(src, f).split('\\').join('/'))

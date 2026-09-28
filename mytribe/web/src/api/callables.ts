@@ -45,6 +45,10 @@ export const PENDING_CALLABLES = [
   'listMembers',
   'addSecondaryContact',
   'updateSecondaryPermissions',
+  // Secondary kinfolk with no portal account (2026-09-27 Q3).
+  'listSecondaryKinfolk',
+  'saveSecondaryKinfolk',
+  'removeSecondaryKinfolk',
   // Household CONTACTS. Orphaned by the 2026-09-27 ruling (#829, "there is no
   // true 'Contact List'"); kept until the operator rules on the data. See the
   // block in api/tribeApi.ts.

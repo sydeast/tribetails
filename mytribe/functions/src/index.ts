@@ -272,6 +272,8 @@ export { addKin, updateKin, archiveKin } from './portal/kinWrites';
 export { setActiveTribe } from './portal/setActiveTribe';
 export { signKinPhotoUpload, confirmKinPhotoUpload } from './portal/signKinPhotoUpload';
 export { addSecondaryContact } from './portal/addSecondaryContact';
+// 2026-09-27 Q3: a secondary kinfolk added with no invite and no portal access.
+export { listSecondaryKinfolk, saveSecondaryKinfolk, removeSecondaryKinfolk } from './portal/secondaryKinfolk';
 // #829: the household contacts list. Operator ruling 2026-09-27 says there is
 // no contacts list, so the screens that called these three are removed. They stay exported,
 // unreferenced, until the operator has read `report:household-contacts` and ruled

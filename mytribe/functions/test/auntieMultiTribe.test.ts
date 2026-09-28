@@ -78,7 +78,7 @@ function fixture() {
   }).db;
 }
 
-type Outcome = 'staff' | 'own' | 'multi' | 'caretaker';
+type Outcome = 'staff' | 'own' | 'multi' | 'caretaker' | 'primaryOnly';
 type Handler = (req: never) => Promise<unknown>;
 
 interface Case {
@@ -102,6 +102,13 @@ const HOUSEHOLD: Record<Caller, Outcome> = {
 const NOT_HERS: Record<Caller, Outcome> = {
   owner: 'staff', auntie1: 'caretaker', auntie2: 'caretaker', kin1: 'own', kin2: 'multi',
 };
+/**
+ * 2026-09-27 Q3: inviting a secondary kinfolk is the primary's alone. The owner
+ * is refused too, before any household is resolved.
+ */
+const PRIMARY_ONLY: Record<Caller, Outcome> = {
+  owner: 'primaryOnly', auntie1: 'caretaker', auntie2: 'caretaker', kin1: 'own', kin2: 'multi',
+};
 /** Money: refused by role; the owner keeps the raw-claim staff branch. */
 const MONEY: Record<Caller, Outcome> = NOT_HERS;
 
@@ -122,10 +129,13 @@ const CASES: Case[] = [
   { name: 'updateKin', load: async () => (await p('kinWrites')).updateKinHandler, data: { kinId: 'kin1', kin: { name: 'Biscuit' } }, expect: NOT_HERS },
   { name: 'listHouseholdContacts', load: async () => (await p('householdContacts')).listHouseholdContactsHandler, data: {}, expect: HOUSEHOLD },
   { name: 'saveHouseholdContact', load: async () => (await p('householdContacts')).saveHouseholdContactHandler, data: { name: 'Neighbour Jo' }, expect: HOUSEHOLD },
+  { name: 'listSecondaryKinfolk', load: async () => (await p('secondaryKinfolk')).listSecondaryKinfolkHandler, data: {}, expect: HOUSEHOLD },
+  { name: 'saveSecondaryKinfolk', load: async () => (await p('secondaryKinfolk')).saveSecondaryKinfolkHandler, data: { name: 'Neighbour Jo' }, expect: HOUSEHOLD },
 
   { name: 'archiveKin', load: async () => (await p('kinWrites')).archiveKinHandler, data: { kinId: 'kin1', reason: 'noLongerWithUs' }, expect: NOT_HERS },
   { name: 'removeHouseholdContact', load: async () => (await p('householdContacts')).removeHouseholdContactHandler, data: { contactId: 'c1' }, expect: NOT_HERS },
-  { name: 'addSecondaryContact', load: async () => (await p('addSecondaryContact')).addSecondaryContactHandler, data: { invitedEmail: 'jo@example.com' }, expect: NOT_HERS },
+  { name: 'addSecondaryContact', load: async () => (await p('addSecondaryContact')).addSecondaryContactHandler, data: { invitedEmail: 'jo@example.com' }, expect: PRIMARY_ONLY },
+  { name: 'removeSecondaryKinfolk', load: async () => (await p('secondaryKinfolk')).removeSecondaryKinfolkHandler, data: { personId: 'p1' }, expect: NOT_HERS },
   { name: 'sendKinfolkMessage', load: async () => (await p('sendKinfolkMessage')).sendKinfolkMessageHandler, data: { body: 'hello' }, expect: NOT_HERS },
   { name: 'getMyConversation', load: async () => (await p('sendKinfolkMessage')).getMyConversationHandler, data: {}, expect: NOT_HERS },
   { name: 'markThreadRead', load: async () => (await p('sendKinfolkMessage')).markThreadReadHandler, data: {}, expect: NOT_HERS },
@@ -176,6 +186,11 @@ describe.each(CASES)('#984 $name', (c) => {
       expect(err).toMatchObject({ code: 'permission-denied', message: CARETAKER_MESSAGE });
       // Refused before a household was ever resolved, so no tribe count
       // could have been what decided it.
+      expect(mocks.resolved).toEqual([]);
+      return;
+    }
+    if (want === 'primaryOnly') {
+      expect(err).toMatchObject({ code: 'permission-denied', message: 'Only the primary kinfolk can invite a secondary kinfolk to the portal.' });
       expect(mocks.resolved).toEqual([]);
       return;
     }

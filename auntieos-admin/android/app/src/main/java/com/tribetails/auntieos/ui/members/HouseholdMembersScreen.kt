@@ -46,6 +46,7 @@ import com.tribetails.auntieos.ui.components.AuntieAvatar
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieDialog
+import com.tribetails.auntieos.ui.components.AuntieField
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
 import com.tribetails.auntieos.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.ui.components.AuntieStatusTone
@@ -75,7 +76,7 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  * THE SHAPE IS THE MOCK'S (#755). The kit hero band carries the household's
  * crest, its name, and the mock's mono `.where` line (family id and the
  * member counts). Under it the roster is split by role: a Primary contact
- * panel with the mock's `role: PRIMARY` note, a Secondary contacts panel with
+ * panel with the mock's `role: PRIMARY` note, a Secondary kinfolk panel with
  * `N of role: SECONDARY`, then Invites. Every member is the mock's `.member`
  * block: a 58dp circle, the name in Fraunces, a compact role capsule and a
  * compact status capsule, the uid in mono, and for a secondary the label
@@ -173,6 +174,7 @@ fun HouseholdMembersBody(
     val state by viewModel.uiState.collectAsState()
 
     var removeTarget by remember { mutableStateOf<MembersRepository.Member?>(null) }
+    var removePersonTarget by remember { mutableStateOf<MembersRepository.SecondaryPerson?>(null) }
 
     LaunchedEffect(Unit) { viewModel.load() }
 
@@ -298,28 +300,24 @@ fun HouseholdMembersBody(
 
         item {
             DenPanel(
-                title = "Secondary contacts",
+                // Operator ruling 2026-09-27 (Q4): "Secondary kinfolk", the
+                // ruling's own term, in place of the mock's "Secondary contacts".
+                title = "Secondary kinfolk",
                 meta = secondaryMeta(state, secondaries.size),
-                subtitle = "Invited to the portal by their primary from MyTribe: they sign in, " +
-                    "they carry a label and a permission set you can edit here, and KinTales " +
-                    "access is locked on by the server for everyone.",
+                subtitle = "Portal members their primary invited from MyTribe, and anyone added " +
+                    "here with no portal access. Only the primary can invite a secondary kinfolk.",
             ) {
-                when {
-                    // The failure is named once, in the panel above. This one
-                    // only says it is unknown.
-                    state.membersError != null -> EmptyHint(
-                        "Secondary contacts unavailable while the member list is failing.",
-                        error = true,
-                    )
-                    state.membersLoading && !state.membersLoaded ->
-                        LoadingHint("Loading secondary contacts…")
-                    state.membersLoaded && secondaries.isEmpty() ->
-                        EmptyHint(
-                            "Nobody on this household has been invited to the portal as a " +
-                                "secondary. Their primary does that from MyTribe.",
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    when {
+                        // The failure is named once, in the panel above. This one
+                        // only says it is unknown.
+                        state.membersError != null -> EmptyHint(
+                            "Secondary kinfolk unavailable while the member list is failing.",
+                            error = true,
                         )
-                    else -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        secondaries.forEach { member ->
+                        state.membersLoading && !state.membersLoaded ->
+                            LoadingHint("Loading secondary kinfolk…")
+                        else -> secondaries.forEach { member ->
                             MemberBlock(
                                 member = member,
                                 savingPermission = state.savingPermission,
@@ -328,10 +326,33 @@ fun HouseholdMembersBody(
                             )
                         }
                     }
+                    // 2026-09-27 Q3: people with no portal account yet. An ACTIVE
+                    // one is already a member row above, so it is not repeated.
+                    val noAccess = state.people.filter { it.access != MembersRepository.PersonAccess.ACTIVE }
+                    when {
+                        state.peopleError != null -> {
+                            EmptyHint(state.peopleError!!, error = true)
+                            GhostButton(label = "Retry", onClick = { viewModel.loadPeople() })
+                        }
+                        state.peopleLoading && !state.peopleLoaded -> LoadingHint("Loading secondary kinfolk…")
+                        else -> noAccess.forEach { person ->
+                            SecondaryPersonRow(
+                                person = person,
+                                onEdit = { viewModel.startPersonEdit(person) },
+                                onRemove = { removePersonTarget = person },
+                            )
+                        }
+                    }
+                    if (state.membersLoaded && state.peopleLoaded && secondaries.isEmpty() && noAccess.isEmpty()) {
+                        EmptyHint("No secondary kinfolk on this household yet.")
+                    }
+                    GhostButton(
+                        label = "Add secondary kinfolk",
+                        onClick = { viewModel.startPersonEdit(null) },
+                    )
                 }
             }
         }
-
         item {
             DenPanel(
                 title = "Invites",
@@ -428,10 +449,57 @@ fun HouseholdMembersBody(
             }
         }
     }
+
+    state.personDraft?.let { draft ->
+        SecondaryPersonDialog(
+            draft = draft,
+            saving = state.personSaving,
+            error = state.personError,
+            onChange = viewModel::updatePersonDraft,
+            onSave = viewModel::savePerson,
+            onCancel = viewModel::cancelPersonEdit,
+        )
+    }
+    removePersonTarget?.let { target ->
+        val busy = state.removingPersonId == target.personId
+        AuntieDialog(
+            visible = true,
+            title = "Remove this secondary kinfolk?",
+            onDismiss = { if (!busy) removePersonTarget = null },
+            maxWidth = 520.dp,
+            footer = {
+                GhostButton(
+                    label = "Cancel",
+                    onClick = { removePersonTarget = null },
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f),
+                )
+                PrimaryButton(
+                    label = if (busy) "Removing…" else "Remove",
+                    onClick = { viewModel.removePerson(target) { removePersonTarget = null } },
+                    enabled = !busy,
+                    loading = busy,
+                    modifier = Modifier.weight(1f),
+                )
+            },
+        ) {
+            Text(
+                "${target.name} will be taken off $kinfolkName.",
+                style = AuntieTheme.typography.bodyMedium,
+                color = c.textPrimary,
+            )
+            state.personRemoveError?.let { msg ->
+                Spacer(Modifier.height(dims.space3))
+                AuntieBanner(tone = AuntieBannerTone.Error, title = "That did not work") {
+                    Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
+                }
+            }
+        }
+    }
 }
 
 /**
- * The mock's `.ct` note on the Secondary contacts panel. Written only once the
+ * The mock's `.ct` note on the Secondary kinfolk panel. Written only once the
  * roster read has landed, so an unread roster never reads as zero. Null until
  * then.
  */
@@ -894,4 +962,103 @@ internal fun inviteMetaLine(invite: MembersRepository.Invite): String {
     }
     parts += inviteHandle(invite.inviteId)
     return parts.joinToString(" · ")
+}
+/** The state label on a secondary kinfolk person row (2026-09-27 Q3). */
+internal fun personAccessLabel(access: MembersRepository.PersonAccess): String = when (access) {
+    MembersRepository.PersonAccess.NONE -> "No portal access"
+    MembersRepository.PersonAccess.INVITED -> "Invited"
+    MembersRepository.PersonAccess.ACTIVE -> "Portal access"
+}
+/**
+ * One secondary kinfolk with no portal account: name, how to reach them, the
+ * access state, Edit and Remove. Deliberately no invite control: the admin
+ * never invites a secondary kinfolk (2026-09-27 Q3); their primary does.
+ */
+@Composable
+private fun SecondaryPersonRow(
+    person: MembersRepository.SecondaryPerson,
+    onEdit: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    val c = AuntieTheme.colors
+    Column(
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MemberBlockShape)
+            .border(1.dp, c.border, MemberBlockShape)
+            .padding(18.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(person.name, style = AuntieTheme.typography.titleMedium, color = c.textPrimary)
+            AuntieStatusPill(label = personAccessLabel(person.access), tone = AuntieStatusTone.Orange, compact = true)
+        }
+        val reach = listOfNotNull(person.phone, person.email).joinToString(" · ")
+        if (reach.isNotBlank()) {
+            Text(reach, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GhostButton(label = "Edit", onClick = onEdit)
+            GhostButton(label = "Remove", onClick = onRemove)
+        }
+    }
+}
+/**
+ * Add or edit a secondary kinfolk. Every field the save sends has a control
+ * here, and an edit is seeded from the stored person, so a save rebuilds
+ * nothing it cannot show. Pessimistic: inputs lock and Save reads "Saving…"
+ * until the server answers; a refusal stays on the dialog word for word.
+ */
+@Composable
+private fun SecondaryPersonDialog(
+    draft: MembersRepository.SecondaryPersonDraft,
+    saving: Boolean,
+    error: String?,
+    onChange: (MembersRepository.SecondaryPersonDraft) -> Unit,
+    onSave: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val c = AuntieTheme.colors
+    AuntieDialog(
+        visible = true,
+        title = if (draft.personId == null) "Add secondary kinfolk" else "Edit secondary kinfolk",
+        onDismiss = { if (!saving) onCancel() },
+        maxWidth = 520.dp,
+        hint = "No invite is sent. Only their primary can give them portal access.",
+        footer = {
+            GhostButton(label = "Cancel", onClick = onCancel, enabled = !saving, modifier = Modifier.weight(1f))
+            PrimaryButton(
+                label = if (saving) "Saving…" else "Save",
+                onClick = onSave,
+                enabled = !saving,
+                loading = saving,
+                modifier = Modifier.weight(1f),
+            )
+        },
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            AuntieField(
+                value = draft.name,
+                onValueChange = { onChange(draft.copy(name = it.take(MembersRepository.SECONDARY_KINFOLK_NAME_MAX))) },
+                label = "Name",
+                enabled = !saving,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            AuntieField(
+                value = draft.phone,
+                onValueChange = { onChange(draft.copy(phone = it.take(32))) },
+                label = "Phone (optional)",
+                enabled = !saving,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            AuntieField(
+                value = draft.email,
+                onValueChange = { onChange(draft.copy(email = it.take(254))) },
+                label = "Email (optional)",
+                enabled = !saving,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            error?.let { Text(it, style = AuntieTheme.typography.bodySmall, color = c.error) }
+        }
+    }
 }

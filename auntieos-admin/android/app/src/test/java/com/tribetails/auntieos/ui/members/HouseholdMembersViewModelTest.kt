@@ -41,6 +41,8 @@ class HouseholdMembersViewModelTest {
     @Before fun setUp() {
         Dispatchers.setMain(testDispatcher)
         repo = mockk()
+        // 2026-09-27 Q3: load() also reads the secondary kinfolk person records.
+        coEvery { repo.listSecondaryKinfolk(any()) } returns Result.success(emptyList())
     }
 
     @After fun tearDown() = Dispatchers.resetMain()
@@ -521,5 +523,96 @@ class HouseholdMembersViewModelTest {
             "1 of role: SECONDARY",
             secondaryMeta(HouseholdMembersUiState(membersLoaded = true), 1),
         )
+    }
+
+    // ── secondary kinfolk person records (2026-09-27 Q3) ────────────────────
+    private fun person(
+        id: String = "p1",
+        access: MembersRepository.PersonAccess = MembersRepository.PersonAccess.NONE,
+    ) = MembersRepository.SecondaryPerson(id, "Sam Lee", "+18055550177", null, access, null)
+    @Test fun `Q3 load reads the people alongside the roster`() = runTest(testDispatcher) {
+        stubLoads()
+        coEvery { repo.listSecondaryKinfolk("fam1") } returns Result.success(listOf(person()))
+        val vm = vm()
+        vm.load(); advanceUntilIdle()
+        assertEquals(listOf(person()), vm.uiState.value.people)
+        assertTrue(vm.uiState.value.peopleLoaded)
+    }
+    @Test fun `Q3 a failed people read is a named error, never an empty list`() = runTest(testDispatcher) {
+        stubLoads()
+        coEvery { repo.listSecondaryKinfolk("fam1") } returns Result.failure(RuntimeException("permission-denied"))
+        val vm = vm()
+        vm.load(); advanceUntilIdle()
+        val s = vm.uiState.value
+        assertTrue(s.peopleError!!.contains("listSecondaryKinfolk failed"))
+        assertFalse(s.peopleLoaded)
+        // The roster is independent and did load.
+        assertTrue(s.membersLoaded)
+    }
+    @Test fun `Q3 add sends a new draft with no personId, closes the dialog, and reloads`() = runTest(testDispatcher) {
+        stubLoads()
+        val draft = MembersRepository.SecondaryPersonDraft(name = "Sam Lee", phone = "805 555 0177")
+        coEvery { repo.saveSecondaryKinfolk("fam1", draft) } returns Result.success(person())
+        val vm = vm()
+        vm.load(); advanceUntilIdle()
+        vm.startPersonEdit(null)
+        vm.updatePersonDraft(draft)
+        vm.savePerson(); advanceUntilIdle()
+        coVerify(exactly = 1) { repo.saveSecondaryKinfolk("fam1", draft) }
+        assertNull(vm.uiState.value.personDraft)
+        assertTrue(vm.uiState.value.toast!!.contains("Added Sam Lee"))
+        coVerify(exactly = 2) { repo.listSecondaryKinfolk("fam1") }
+    }
+    @Test fun `Q3 a blank name is refused locally with the server wording and nothing is sent`() = runTest(testDispatcher) {
+        stubLoads()
+        val vm = vm()
+        vm.startPersonEdit(null)
+        vm.savePerson(); advanceUntilIdle()
+        assertEquals("A secondary kinfolk needs a name.", vm.uiState.value.personError)
+        coVerify(exactly = 0) { repo.saveSecondaryKinfolk(any(), any()) }
+    }
+    /**
+     * DIFF VS REBUILD. The edit dialog is seeded from the stored person and
+     * every field the save sends has a control, so an edit that changes only
+     * the name sends the stored phone and email back untouched: nothing is
+     * rebuilt at a default.
+     */
+    @Test fun `Q3 edit is seeded from the stored person and changing the name sends phone and email as stored`() = runTest(testDispatcher) {
+        stubLoads()
+        val stored = MembersRepository.SecondaryPerson("p1", "Sam Lee", "+18055550177", "sam@example.com", MembersRepository.PersonAccess.INVITED, null)
+        val expected = MembersRepository.SecondaryPersonDraft("p1", "Sam Leigh", "+18055550177", "sam@example.com")
+        coEvery { repo.saveSecondaryKinfolk("fam1", expected) } returns Result.success(stored.copy(name = "Sam Leigh"))
+        val vm = vm()
+        vm.startPersonEdit(stored)
+        assertEquals(MembersRepository.SecondaryPersonDraft("p1", "Sam Lee", "+18055550177", "sam@example.com"), vm.uiState.value.personDraft)
+        vm.updatePersonDraft(vm.uiState.value.personDraft!!.copy(name = "Sam Leigh"))
+        vm.savePerson(); advanceUntilIdle()
+        coVerify(exactly = 1) { repo.saveSecondaryKinfolk("fam1", expected) }
+    }
+    @Test fun `Q3 a refused save keeps the dialog open with the server's words`() = runTest(testDispatcher) {
+        stubLoads()
+        coEvery { repo.saveSecondaryKinfolk("fam1", any()) } returns
+            Result.failure(RuntimeException("That is the household's Emergency Contact. An Emergency Contact is someone outside the household."))
+        val vm = vm()
+        vm.startPersonEdit(null)
+        vm.updatePersonDraft(MembersRepository.SecondaryPersonDraft(name = "Rae Park"))
+        vm.savePerson(); advanceUntilIdle()
+        val s = vm.uiState.value
+        assertNotNull(s.personDraft)
+        assertFalse(s.personSaving)
+        assertEquals("That is the household's Emergency Contact. An Emergency Contact is someone outside the household.", s.personError)
+    }
+    @Test fun `Q3 remove calls removeSecondaryKinfolk and reloads, and a refusal is kept verbatim`() = runTest(testDispatcher) {
+        stubLoads()
+        coEvery { repo.removeSecondaryKinfolk("fam1", "p1") } returns Result.success(Unit)
+        coEvery { repo.removeSecondaryKinfolk("fam1", "p2") } returns
+            Result.failure(RuntimeException("This secondary kinfolk has portal access. Remove them from the portal first."))
+        val vm = vm()
+        var removed = false
+        vm.removePerson(person()) { removed = true }; advanceUntilIdle()
+        assertTrue(removed)
+        coVerify(exactly = 1) { repo.listSecondaryKinfolk("fam1") }
+        vm.removePerson(person("p2")) {}; advanceUntilIdle()
+        assertEquals("This secondary kinfolk has portal access. Remove them from the portal first.", vm.uiState.value.personRemoveError)
     }
 }

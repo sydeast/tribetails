@@ -298,6 +298,41 @@ describe('acceptInviteHandler', () => {
     expect(keys).toEqual(['account.welcome.kinfolk']);
   });
 
+  // 2026-09-27 Q3: an invite the primary sent for a secondary kinfolk they
+  // added first carries personId; accepting marks that person ACTIVE.
+  function personInvite() {
+    return {
+      status: 'PENDING',
+      invitedEmail: 'a@b',
+      tribeId: 't1',
+      proposedRole: 'SECONDARY',
+      proposedPermissions: {},
+      personId: 'p1',
+      createdAt: 0,
+      expiresAt: { toMillis: () => Date.now() + 100000 },
+    };
+  }
+  it('Q3: an invite with personId marks that secondary kinfolk ACTIVE with the new uid, and still creates the member', async () => {
+    inviteGet.mockImplementation(async (p: string) =>
+      p === 'families/t1/secondaryKinfolk/p1' ? { exists: true, data: () => ({ access: 'INVITED' }) } : { exists: true, data: personInvite },
+    );
+    const { acceptInviteHandler } = await import('../src/membership/acceptInvite');
+    await acceptInviteHandler({ auth: { uid: 'u1', token: { email: 'a@b', email_verified: true } }, data: { inviteId: 'i1' } } as any);
+    const personWrite = inviteUpdate.mock.calls.find((c) => (c[0] as { path?: string })?.path === 'families/t1/secondaryKinfolk/p1');
+    expect(personWrite?.[1]).toMatchObject({ access: 'ACTIVE', memberUid: 'u1' });
+    const memberWrite = memberSet.mock.calls.find((c) => (c[0] as { path?: string })?.path === 'families/t1/members/u1');
+    expect(memberWrite?.[1]).toMatchObject({ uid: 'u1', role: 'SECONDARY', status: 'ACTIVE' });
+  });
+  it('Q3: a person deleted since the invite was sent is skipped, and the accept still completes', async () => {
+    inviteGet.mockImplementation(async (p: string) =>
+      p === 'families/t1/secondaryKinfolk/p1' ? { exists: false, data: () => undefined } : { exists: true, data: personInvite },
+    );
+    const { acceptInviteHandler } = await import('../src/membership/acceptInvite');
+    const res = await acceptInviteHandler({ auth: { uid: 'u1', token: { email: 'a@b', email_verified: true } }, data: { inviteId: 'i1' } } as any);
+    expect(res.familyId).toBe('t1');
+    expect(inviteUpdate.mock.calls.some((c) => (c[0] as { path?: string })?.path === 'families/t1/secondaryKinfolk/p1')).toBe(false);
+    expect(memberSet.mock.calls.some((c) => (c[0] as { path?: string })?.path === 'families/t1/members/u1')).toBe(true);
+  });
   /**
    * O-37. Membership used to land here with the role/kinfolkId claims left to
    * onClientsWrite, which fires whenever it fires — so a kinfolk could be a

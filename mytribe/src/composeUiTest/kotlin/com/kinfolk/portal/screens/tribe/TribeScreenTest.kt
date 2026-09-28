@@ -2,6 +2,7 @@
 
 package com.kinfolk.portal.screens.tribe
 
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -806,5 +807,122 @@ class TribeScreenTest {
 
         val (profile, home) = blameUnfinishedHalf(SaveHalf.Skipped, SaveHalf.Skipped, boom)
         assertEquals(PageSaveStatus("Save failed: nope", ok = false), pageSaveOutcome(profile, home, emergencyContactsDirty = false))
+    }
+
+    // ---- 2026-09-27 Q3: secondary kinfolk with no invite and no portal access ----
+    private fun person(id: String, name: String, access: String, email: String? = null, phone: String? = null) = buildJsonObject {
+        put("personId", id); put("name", name)
+        if (phone == null) put("phone", JsonNull) else put("phone", phone)
+        if (email == null) put("email", JsonNull) else put("email", email)
+        put("access", access); put("memberUid", JsonNull); put("createdAt", JsonNull)
+    }
+    private fun secondaryHousehold(vararg people: JsonObject): FakeFunctionsClient {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithSavedField()
+        fake.stubEmergencyContacts()
+        fake.stub("getVetClinics", buildJsonObject { put("clinics", buildJsonArray {}) })
+        fake.stub("listMembers", buildJsonObject { put("members", buildJsonArray {}) })
+        fake.stub("listSecondaryKinfolk", buildJsonObject { put("people", buildJsonArray { people.forEach { add(it) } }) })
+        return fake
+    }
+    @Test
+    fun secondaryKinfolk_addWithANameOnly_sendsNoInvite() = runComposeUiTest {
+        val fake = secondaryHousehold()
+        fake.stub("saveSecondaryKinfolk", buildJsonObject { put("person", person("p1", "Sam Lee", "NONE")); put("created", true) })
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Add secondary kinfolk").performScrollTo().performClick()
+        onNodeWithText("Phone (optional)").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Email (optional)").performScrollTo().assertIsDisplayed()
+        onNodeWithTag("sk-name").performTextInput("Sam Lee")
+        onNodeWithText("Save").performScrollTo().performClick()
+        waitForIdle()
+        val payload = fake.calls.last { it.first == "saveSecondaryKinfolk" }.second!!
+        assertEquals(setOf("kinfolkId", "name", "phone", "email"), payload.keys)
+        assertEquals("Sam Lee", payload["name"]!!.jsonPrimitive.content)
+        assertTrue(fake.calls.none { it.first == "addSecondaryContact" })
+        // The list is read again after the save.
+        assertEquals(2, fake.calls.count { it.first == "listSecondaryKinfolk" })
+    }
+    @Test
+    fun secondaryKinfolk_rowsSayTheirAccess_andAnActiveOneIsLeftToHouseholdMembers() = runComposeUiTest {
+        val fake = secondaryHousehold(
+            person("p1", "Sam Lee", "NONE", phone = "+18055550177"),
+            person("p2", "Jo Park", "INVITED", email = "jo@x.com"),
+            person("p3", "Alex Ray", "ACTIVE"),
+        )
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Sam Lee").performScrollTo().assertIsDisplayed()
+        onNodeWithText(SK_NO_PORTAL_ACCESS).performScrollTo().assertIsDisplayed()
+        onNodeWithText("Jo Park").performScrollTo().assertIsDisplayed()
+        onNodeWithText(SK_INVITED).performScrollTo().assertIsDisplayed()
+        assertTrue(onAllNodesWithText("Alex Ray").fetchSemanticsNodes().isEmpty())
+    }
+    @Test
+    fun secondaryKinfolk_editSendsThePersonId_andRemoveAsksFirst() = runComposeUiTest {
+        val fake = secondaryHousehold(person("p1", "Sam Lee", "NONE", phone = "+18055550177"))
+        fake.stub("saveSecondaryKinfolk", buildJsonObject { put("person", person("p1", "Sam Leigh", "NONE")); put("created", false) })
+        fake.stub("removeSecondaryKinfolk", buildJsonObject { put("ok", true) })
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Edit").performScrollTo().performClick()
+        onNodeWithTag("sk-name").performTextReplacement("Sam Leigh")
+        onNodeWithTag("sk-phone").performTextClearance()
+        onNodeWithText("Save").performScrollTo().performClick()
+        waitForIdle()
+        val edit = fake.calls.last { it.first == "saveSecondaryKinfolk" }.second!!
+        assertEquals("p1", edit["personId"]!!.jsonPrimitive.content)
+        assertEquals("Sam Leigh", edit["name"]!!.jsonPrimitive.content)
+        assertEquals("", edit["phone"]!!.jsonPrimitive.content)
+        onNodeWithText("Remove").performScrollTo().performClick()
+        onNodeWithText("Remove Sam Lee from your household?").assertIsDisplayed()
+        assertTrue(fake.calls.none { it.first == "removeSecondaryKinfolk" })
+        onNodeWithText("Remove").performClick()
+        waitForIdle()
+        assertEquals("p1", fake.calls.last { it.first == "removeSecondaryKinfolk" }.second!!["personId"]!!.jsonPrimitive.content)
+    }
+    @Test
+    fun secondaryKinfolk_aRefusalShowsTheServerMessage() = runComposeUiTest {
+        val fake = secondaryHousehold()
+        fake.stubError("saveSecondaryKinfolk", IllegalStateException("That is the primary kinfolk. A secondary kinfolk is someone else in the household."))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Add secondary kinfolk").performScrollTo().performClick()
+        onNodeWithTag("sk-name").performTextInput("Dana Mercer")
+        onNodeWithText("Save").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("That is the primary kinfolk. A secondary kinfolk is someone else in the household.").performScrollTo().assertIsDisplayed()
+    }
+    @Test
+    fun secondaryKinfolk_givePortalAccess_fillsTheInvite_andTheInviteCarriesThePerson() = runComposeUiTest {
+        val fake = secondaryHousehold(person("p1", "Sam Lee", "NONE", email = "sam@x.com"))
+        fake.stub("addSecondaryContact", buildJsonObject { put("inviteId", "i1") })
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Give portal access").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("Giving portal access to Sam Lee").performScrollTo().assertIsDisplayed()
+        onNodeWithTag("invite-email").assert(androidx.compose.ui.test.hasText("sam@x.com"))
+        onNodeWithTag("invite-role").assert(androidx.compose.ui.test.hasText("Sam Lee"))
+        onNodeWithText("Send Invite").performScrollTo().performClick()
+        waitForIdle()
+        val invite = fake.calls.last { it.first == "addSecondaryContact" }.second!!
+        assertEquals("p1", invite["personId"]!!.jsonPrimitive.content)
+        assertEquals("sam@x.com", invite["invitedEmail"]!!.jsonPrimitive.content)
+        // The people list is read again, so the row can say Invited.
+        assertEquals(2, fake.calls.count { it.first == "listSecondaryKinfolk" })
+        assertTrue(onAllNodesWithText("Giving portal access to Sam Lee").fetchSemanticsNodes().isEmpty())
+    }
+    @Test
+    fun secondaryKinfolk_anInviteWithoutGivePortalAccessCarriesNoPerson() = runComposeUiTest {
+        val fake = secondaryHousehold()
+        fake.stub("addSecondaryContact", buildJsonObject { put("inviteId", "i1") })
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("invite-email").performScrollTo().performTextInput("jo@x.com")
+        onNodeWithText("Send Invite").performScrollTo().performClick()
+        waitForIdle()
+        assertTrue(!fake.calls.last { it.first == "addSecondaryContact" }.second!!.containsKey("personId"))
     }
 }
