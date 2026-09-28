@@ -121,6 +121,16 @@ jobs:
               - 'package.json'
               - 'package-lock.json'
               - '.github/workflows/ci.yml'
+              # #1012: emailRoundTrip.test.ts, TemplateEditor.test.tsx,
+              # extensions.test.ts and EmailContentEditor.test.tsx all walk up
+              # from their own file to read mytribe/seeds/notificationTemplates
+              # directly (readFileSync/readdirSync against a relative path),
+              # not through any file under auntieos-admin/. #1001 added a seed
+              # there and touched no admin path, so this job was skipped and
+              # main failed four "finds all N seeds" assertions until #1011
+              # hand-fixed the count. Without this line the same gap reopens on
+              # the next seed the corpus gets.
+              - 'mytribe/seeds/**'
             # Its own filter rather than a step inside `admin`, because this job
             # downloads Chromium and boots two emulators and so costs minutes
             # where the unit suite costs seconds. It still watches src/** and
@@ -198,6 +208,14 @@ jobs:
               # tests" reported "skipping", so a workflow edit that breaks the
               # Android build could ship green.
               - '.github/workflows/ci.yml'
+              # #1012: EmailContentRoundTripTest and VisualSeedTemplatesOpenTest
+              # both call seedsRoot(), which walks up from the JVM's working
+              # directory looking for mytribe/seeds/notificationTemplates. No
+              # Gradle sourceSet or copy task wires the corpus in; it is a plain
+              # filesystem read at test time. Same #1001/#1011 gap as `admin`
+              # above: a seed-only change skipped this job and left two
+              # assertions pinned to the old count.
+              - 'mytribe/seeds/**'
             mytribe:
               - 'mytribe/functions/**'
               # The backfill and seed scripts sit outside functions/ but are
@@ -219,6 +237,16 @@ jobs:
               - 'mytribe/web/src/contracts/**'
               - 'auntieos-admin/src/contracts/**'
               - 'auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/data/contracts/**'
+              # #1012: same gap as `admin` and `android` above, one tree over.
+              # `npm run seeds:check` (generateSeedCorpus.ts --check) reads
+              # mytribe/seeds/notificationTemplates directly, and
+              # seedTemplateIntegrity.test.ts does too, but mytribe/seeds/ sits
+              # outside mytribe/functions/** so neither line above catches a
+              # seed-only edit. In practice a real template change also touches
+              # the generated seedCorpus.generated.ts under functions/src/,
+              # which does trigger this job, so this line closes the gap for
+              # the case where it doesn't: a seed edited without regenerating.
+              - 'mytribe/seeds/**'
             # Its own filter for the same reason `adminE2e` has one: the rules
             # suite boots the Firestore emulator, so it costs minutes where the
             # `mytribe` unit job costs seconds, and it must not be paid for by
