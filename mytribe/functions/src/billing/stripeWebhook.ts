@@ -133,6 +133,14 @@ async function finishEventFollowup(input: {
   noticeDone: boolean;
   /** Set for `unapplied` only. */
   unapplied?: UnappliedDetail;
+  /**
+   * Who started the checkout: `payInvoice` stamps the caller's uid into the
+   * session metadata. Since D-2026-09-28-BILLING-ACCESS-PAYS that can be a
+   * SECONDARY with billing access, so the paid audit entry names them rather
+   * than leaving "the household" to be read as the primary. Absent on a
+   * session minted before the stamp existed.
+   */
+  paidByUid?: string | null;
 }): Promise<void> {
   const eventRef = db().doc(`stripeEvents/${input.eventId}`);
   const stamp = async (fields: Record<string, unknown>) => {
@@ -169,7 +177,11 @@ async function finishEventFollowup(input: {
             // The root `payments/{eventId}` row that holds the money.
             paymentId: input.eventId,
           }
-        : { invoiceId: input.invoiceId, stripeEventId: input.eventId },
+        : {
+            invoiceId: input.invoiceId,
+            stripeEventId: input.eventId,
+            ...(paid && input.paidByUid ? { paidByUid: input.paidByUid } : {}),
+          },
       docId: stripeAuditDocId(input.eventId, input.kind),
     });
     await stamp({ [AUDIT_WRITTEN_FIELD]: FieldValue.serverTimestamp() });
@@ -1005,6 +1017,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
         auditDone: decision.auditDone,
         noticeDone: decision.noticeDone,
         ...(recoverKind === 'unapplied' ? { unapplied: decision.unapplied } : {}),
+        paidByUid: metadata?.uid ?? null,
       });
     } catch (err) {
       logEvent({
@@ -1063,6 +1076,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       eventId: event.id,
       auditDone: false,
       noticeDone: false,
+      paidByUid: metadata?.uid ?? null,
     });
   } catch (err) {
     logEvent({

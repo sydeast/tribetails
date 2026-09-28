@@ -47,7 +47,7 @@ function isPermissionDenied(err: unknown): boolean {
  * the action is more use than repeating it.
  */
 function billingErrorText(err: unknown, action: string): string {
-  if (isPermissionDenied(err)) return 'Only the primary kinfolk on this tribe can manage billing.';
+  if (isPermissionDenied(err)) return 'You need billing access to manage billing. Your primary kinfolk can give it to you.';
   const message = err instanceof Error ? err.message : '';
   if (message && !/^internal$/i.test(message)) return message;
   return `We could not ${action} just now. Try again in a moment.`;
@@ -322,7 +322,7 @@ export function Account() {
       ? 'Charges run through your care team'
       : 'Settle up directly with your Auntie for now';
   const billingReadError = isPermissionDenied(paymentMethod.error)
-    ? 'Only the primary kinfolk on this tribe can manage billing.'
+    ? 'You need billing access to manage billing. Your primary kinfolk can give it to you.'
     : 'We could not read your billing details just now.';
 
   return (

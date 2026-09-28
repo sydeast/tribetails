@@ -608,14 +608,14 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       // quote.accepted a secondary resolver, so the single dispatch below fans
       // out to the household and to the office; there is no separate office
       // emitter to look for.
-      trigger: 'A household primary accepts a quote, which turns it into a bill they can pay.',
+      trigger: 'A household member with billing access accepts a quote, which turns it into a bill they can pay.',
       source: 'src/portal/quoteDecision.ts',
       dataKeys: ['kinfolkId', 'invoiceId', 'invoiceNumber'],
     },
   ],
   'quote.denied': [
     {
-      trigger: 'A household primary declines a quote. The quote stays on their screen, marked declined.',
+      trigger: 'A household member with billing access declines a quote. The quote stays on their screen, marked declined.',
       source: 'src/portal/quoteDecision.ts',
       dataKeys: ['kinfolkId', 'invoiceId', 'invoiceNumber'],
     },

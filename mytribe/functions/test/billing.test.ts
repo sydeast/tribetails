@@ -50,6 +50,8 @@ vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), get
 vi.mock('../src/lib/stripe', () => ({ getStripe: async () => mocks.stripeMock }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
+import { logEvent } from '../src/lib/logger';
+import { BILLING_ACTION_REFUSAL } from '../src/lib/memberGate';
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('firebase-admin/firestore');
   return {
@@ -69,6 +71,7 @@ beforeEach(() => {
   });
   mocks.stripeMock.paymentMethods.detach.mockImplementation(async (id: string) => ({ id }));
   delete process.env.AUNTIE_OPERATOR_UIDS;
+  (logEvent as any).mockClear();
 });
 
 const PRIMARY_MEMBER = { role: 'PRIMARY', status: 'ACTIVE', permissions: {} };
@@ -412,5 +415,102 @@ describe('stripeWebhook setup-session branch', () => {
     const code = await handleSetupSessionCompleted(setupEvent({ purpose: 'save-card', uid: 'ghost' }));
     expect(code).toBe(202);
     expect(mocks.stripeMock.paymentMethods.list).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * D-2026-09-28-BILLING-ACCESS-PAYS: saved cards take billing access, not the
+ * PRIMARY role. A SECONDARY the PRIMARY granted `billing_full` manages a card,
+ * and it lands on that secondary's OWN `clients/{uid}`; a secondary without it
+ * is refused on every card callable with the billing-action refusal.
+ */
+describe('saved cards follow billing access (D-2026-09-28-BILLING-ACCESS-PAYS)', () => {
+  const URLS = { successUrl: 'https://kinfolk.example/account?billing=saved', cancelUrl: 'https://kinfolk.example/account' };
+  const BILLING_SECONDARY = {
+    role: 'SECONDARY',
+    status: 'ACTIVE',
+    permissions: { billing_full: true, kintales_only: false },
+  };
+  function secondary(member: Record<string, unknown>, card = false) {
+    return buildDbMock({
+      docs: {
+        'clients/sk1': {
+          kinfolkIds: ['f1'],
+          email: 'sk@example.com',
+          displayName: 'Sam',
+          ...(card
+            ? {
+                stripeCustomerId: 'cus_sk',
+                stripePaymentMethodId: 'pm_sk',
+                stripeCardBrand: 'visa',
+                stripeCardLast4: '2222',
+                stripeCardExpMonth: 1,
+                stripeCardExpYear: 2031,
+              }
+            : {}),
+        },
+        'families/f1/members/sk1': member,
+      },
+    });
+  }
+
+  it('a billing secondary reads their card', async () => {
+    mocks.dbFn.mockReturnValue(secondary(BILLING_SECONDARY, true).db);
+    const { getMyPaymentMethodHandler } = await import('../src/portal/billing');
+    const res = await getMyPaymentMethodHandler(callableRequest({}, { uid: 'sk1' }));
+    expect(res.card).toEqual({ brand: 'visa', last4: '2222', expMonth: 1, expYear: 2031 });
+  });
+
+  it('a billing secondary opens the save-card flow, on their own customer record', async () => {
+    const ctx = secondary(BILLING_SECONDARY);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { createBillingSetupSessionHandler } = await import('../src/portal/billing');
+    const res = await createBillingSetupSessionHandler(callableRequest(URLS, { uid: 'sk1' }));
+    expect(res.sessionId).toBe('cs_setup_1');
+    expect(mocks.stripeMock.customers.create.mock.calls[0][0]['metadata']).toMatchObject({ uid: 'sk1', familyId: 'f1' });
+    expect(ctx.writes.find((w) => w.path === 'clients/sk1')?.data?.['stripeCustomerId']).toBe('cus_new');
+    expect(mocks.stripeMock.checkout.sessions.create.mock.calls[0][0].metadata['uid']).toBe('sk1');
+  });
+
+  it('a billing secondary syncs and removes their card', async () => {
+    const ctx = secondary(BILLING_SECONDARY, true);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { syncMyPaymentMethodHandler, removeMyPaymentMethodHandler } = await import('../src/portal/billing');
+    const synced = await syncMyPaymentMethodHandler(callableRequest({}, { uid: 'sk1' }));
+    expect(synced.hasPaymentMethod).toBe(true);
+    const removed = await removeMyPaymentMethodHandler(callableRequest({}, { uid: 'sk1' }));
+    expect(removed.ok).toBe(true);
+    expect(mocks.stripeMock.paymentMethods.detach).toHaveBeenCalled();
+  });
+
+  it('a secondary without billing access is refused on every card callable, and each refusal is logged', async () => {
+    const billing = await import('../src/portal/billing');
+    const calls: Array<[string, () => Promise<unknown>]> = [
+      ['getMyPaymentMethod', () => billing.getMyPaymentMethodHandler(callableRequest({}, { uid: 'sk1' }))],
+      ['createBillingSetupSession', () => billing.createBillingSetupSessionHandler(callableRequest(URLS, { uid: 'sk1' }))],
+      ['syncMyPaymentMethod', () => billing.syncMyPaymentMethodHandler(callableRequest({}, { uid: 'sk1' }))],
+      ['removeMyPaymentMethod', () => billing.removeMyPaymentMethodHandler(callableRequest({}, { uid: 'sk1' }))],
+    ];
+    for (const [fn, call] of calls) {
+      mocks.dbFn.mockReturnValue(secondary(KINTALES_ONLY_MEMBER, true).db);
+      await expect(call()).rejects.toMatchObject({ code: 'permission-denied', message: BILLING_ACTION_REFUSAL });
+      expect(logEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ function: fn, event: 'portal.billing.refused', uid: 'sk1', familyId: 'f1' }),
+      );
+    }
+    expect(mocks.stripeMock.checkout.sessions.create).not.toHaveBeenCalled();
+    expect(mocks.stripeMock.paymentMethods.detach).not.toHaveBeenCalled();
+  });
+
+  it('the operator bypass still passes on a household of their own', async () => {
+    process.env.AUNTIE_OPERATOR_UIDS = 'op-uid';
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({ docs: { 'clients/op-uid': { kinfolkIds: ['f1'], email: 'op@example.com' } } }).db,
+    );
+    const { getMyPaymentMethodHandler } = await import('../src/portal/billing');
+    const res = await getMyPaymentMethodHandler(
+      callableRequest({ kinfolkId: 'f1' }, { uid: 'op-uid', token: { admin: true } }),
+    );
+    expect(res.hasPaymentMethod).toBe(false);
   });
 });

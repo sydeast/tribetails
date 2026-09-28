@@ -100,7 +100,9 @@ export async function hasKinfolkPerm(
 /**
  * BILLING ACCESS (#1005, operator ruling 2026-09-27): the business owner or
  * admin, the household PRIMARY, and a SECONDARY only when the PRIMARY granted
- * `billing_full`. Every portal read of money asks this one question.
+ * `billing_full`. Every portal read of money asks this one question, and
+ * since D-2026-09-28-BILLING-ACCESS-PAYS every money action asks it too
+ * (through `requireBillingActor`).
  *
  * CALL IT ONLY AFTER THE HOUSEHOLD IS RESOLVED (`resolveKinfolkAccess` or
  * `resolveNonStaffKinfolkId`). It answers through `hasKinfolkPerm`, which says
@@ -121,6 +123,14 @@ export async function hasBillingAccess(
 /** The refusal every billing read throws, so the clients key off one code. */
 export const BILLING_ACCESS_REFUSAL = 'Billing access is required to see invoices and account balance.';
 
+/**
+ * The refusal every billing ACTION throws (paying, using credit, answering a
+ * quote, saved cards). Same `permission-denied` code as the read refusal and
+ * the same opening words, so a client matching "Billing access is required"
+ * treats both alike.
+ */
+export const BILLING_ACTION_REFUSAL = 'Billing access is required to pay, use credit, answer quotes or manage cards.';
+
 /** Throwing form of `hasBillingAccess`. Same precondition: household resolved first. */
 export async function requireBillingAccess(
   uid: string,
@@ -138,6 +148,64 @@ export async function requireBillingAccess(
     extra: { reason: 'no_billing_access' },
   });
   throw new HttpsError('permission-denied', BILLING_ACCESS_REFUSAL);
+}
+
+/**
+ * THE GATE ON EVERY PORTAL MONEY ACTION (D-2026-09-28-BILLING-ACCESS-PAYS,
+ * operator ruling 2026-09-28, docket Q7): "billing access includes paying,
+ * using credit, answering quotes and saved cards." `payInvoice`,
+ * `redeemCredit`, `acceptQuote` / `denyQuote` and the saved-card callables in
+ * `portal/billing.ts` used `requireKinfolkPrimary`, so a SECONDARY the PRIMARY
+ * granted `billing_full` could see a bill and not pay it.
+ *
+ * Who passes is exactly who `hasBillingAccess` says yes to, branch for branch:
+ * - operator (`isOwner`) bypasses, returns null;
+ * - no member doc: the legacy single-primary account, allowed, returns null,
+ *   with the same `portal.member.missing` warning the primary gate logged;
+ * - member not ACTIVE: refused;
+ * - PRIMARY: allowed;
+ * - SECONDARY with `billing_full === true`: allowed;
+ * - anyone else: refused with BILLING_ACTION_REFUSAL and the same
+ *   `portal.billing.refused` log line `requireBillingAccess` writes.
+ *
+ * Returns the member doc when there is one, so the caller can name the real
+ * role (PRIMARY or SECONDARY) on its audit entry. Same precondition as
+ * `hasBillingAccess`: CALL IT ONLY AFTER THE HOUSEHOLD IS RESOLVED against the
+ * caller's own `kinfolkIds`, or the legacy branch admits a stranger.
+ */
+export async function requireBillingActor(
+  uid: string,
+  kinfolkId: string,
+  hasAdminClaim: boolean,
+  functionName: string,
+): Promise<MemberDoc | null> {
+  if (isOwner(uid, hasAdminClaim, functionName)) return null;
+  const snap = await db().doc(`families/${kinfolkId}/members/${uid}`).get();
+  if (!snap.exists) {
+    logEvent({
+      severity: 'warn',
+      function: 'requireBillingActor',
+      event: 'portal.member.missing',
+      uid,
+      familyId: kinfolkId,
+      extra: { kinfolkId, caller: functionName },
+    });
+    return null; // legacy primary; same anti-lockout as hasKinfolkPerm
+  }
+  const member = snap.data() as MemberDoc;
+  const allowed =
+    member.status === 'ACTIVE' &&
+    (member.role === 'PRIMARY' || member.permissions?.billing_full === true);
+  if (allowed) return member;
+  logEvent({
+    severity: 'info',
+    function: functionName,
+    event: 'portal.billing.refused',
+    uid,
+    familyId: kinfolkId,
+    extra: { reason: 'no_billing_access', action: true },
+  });
+  throw new HttpsError('permission-denied', BILLING_ACTION_REFUSAL);
 }
 
 export async function requireKinfolkPerm(

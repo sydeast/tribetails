@@ -6,7 +6,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { refuseAuntie } from '../lib/staffGate';
-import { requireKinfolkPrimary } from '../lib/memberGate';
+import { requireBillingActor } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { validateResponse } from '../lib/callableResponse';
@@ -209,9 +209,10 @@ async function decideQuote(
   if (!allowed.includes(invKinfolkId)) {
     throw new HttpsError('permission-denied', 'This quote belongs to another household.');
   }
-  // Same gate the money paths use: answering a quote commits the household to a
-  // bill, so it is the primary kinfolk's call, not a secondary member's.
-  await requireKinfolkPrimary(uid, invKinfolkId, req.auth?.token?.admin === true, functionName);
+  // Same gate the money paths use. D-2026-09-28-BILLING-ACCESS-PAYS: answering
+  // a quote commits the household to a bill, so it takes billing access: the
+  // PRIMARY, or a SECONDARY the PRIMARY granted `billing_full`.
+  const member = await requireBillingActor(uid, invKinfolkId, req.auth?.token?.admin === true, functionName);
 
   // Read the business's own calendar day ONLY when the quote carries a due date
   // to be measured against, so an undated quote costs no extra read.
@@ -261,7 +262,9 @@ async function decideQuote(
     status: 'SUCCESS',
     event: decision === 'accepted' ? AUDIT_EVENTS.BILLING_QUOTE_ACCEPTED : AUDIT_EVENTS.BILLING_QUOTE_DENIED,
     severity: 'info',
-    actorRole: 'PRIMARY',
+    // Who actually answered. A SECONDARY with billing access is named as one;
+    // no member doc (legacy primary, or the operator bypass) keeps PRIMARY.
+    actorRole: member?.role ?? 'PRIMARY',
     actorUid: uid,
     familyId: outcome.kinfolkId,
     description: decision === 'accepted' ? 'Kinfolk accepted a quote' : 'Kinfolk declined a quote',

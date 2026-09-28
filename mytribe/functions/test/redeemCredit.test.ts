@@ -12,6 +12,8 @@ vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), get
 vi.mock('../src/lib/stripe', () => ({ getStripe: () => mocks.stripeMock }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
+import { logEvent } from '../src/lib/logger';
+import { BILLING_ACTION_REFUSAL } from '../src/lib/memberGate';
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<any>('firebase-admin/firestore');
   return {
@@ -24,6 +26,7 @@ vi.mock('firebase-admin/firestore', async () => {
 });
 beforeEach(() => {
   mocks.dbFn.mockReset();
+  (logEvent as any).mockClear();
   mocks.stripeMock.refunds.create.mockReset();
   delete process.env.AUNTIE_OPERATOR_UIDS;
 });
@@ -53,8 +56,8 @@ const BILLING_FULL_SECONDARY = {
 const PRIMARY_MEMBER = { role: 'PRIMARY', status: 'ACTIVE', permissions: {} };
 const redeemData = { invoiceId: 'inv-c1', target: 'accountBalance' as const };
 
-describe('redeemCredit PRIMARY-only billing gate', () => {
-  it('DENIES a kintales_only secondary and never touches the family balance', async () => {
+describe('redeemCredit billing-access gate (D-2026-09-28-BILLING-ACCESS-PAYS)', () => {
+  it('DENIES a secondary without billing access, logs the refusal, and never touches the family balance', async () => {
     const ctx = buildDbMock({
       docs: {
         'clients/u1': { kinfolkIds: ['3'] },
@@ -67,29 +70,32 @@ describe('redeemCredit PRIMARY-only billing gate', () => {
     const { redeemCreditHandler } = await import('../src/portal/redeemCredit');
     await expect(redeemCreditHandler({ data: redeemData, auth: { uid: 'u1' } } as any)).rejects.toMatchObject({
       code: 'permission-denied',
+      message: BILLING_ACTION_REFUSAL,
     });
+    expect(logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ function: 'redeemCredit', event: 'portal.billing.refused', uid: 'u1', familyId: '3' }),
+    );
     // no balance bump, no invoice stamp
     expect(ctx.writes.find((w) => w.path === 'families/3')).toBeUndefined();
     expect(ctx.writes.find((w) => w.path === 'invoices/inv-c1')).toBeUndefined();
   });
 
-  it('DENIES a secondary with billing_full=true (PK-only policy: billing_full is no longer honored)', async () => {
+  it('ALLOWS a secondary with billing_full=true, and stamps that secondary as the redeemer', async () => {
     const ctx = buildDbMock({
       docs: {
-        'clients/u1': { kinfolkIds: ['3'] },
+        'clients/sk1': { kinfolkIds: ['3'] },
         'invoices/inv-c1': { kinfolkId: '3', amountDue: -25.5, invoiceStatus: 'credit' },
         'families/3': { accountBalanceCents: 0 },
-        'families/3/members/u1': BILLING_FULL_SECONDARY,
+        'families/3/members/sk1': BILLING_FULL_SECONDARY,
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     const { redeemCreditHandler } = await import('../src/portal/redeemCredit');
-    await expect(redeemCreditHandler({ data: redeemData, auth: { uid: 'u1' } } as any)).rejects.toMatchObject({
-      code: 'permission-denied',
-    });
-    // no balance bump, no invoice stamp
-    expect(ctx.writes.find((w) => w.path === 'families/3')).toBeUndefined();
-    expect(ctx.writes.find((w) => w.path === 'invoices/inv-c1')).toBeUndefined();
+    const res = await redeemCreditHandler({ data: redeemData, auth: { uid: 'sk1' } } as any);
+    expect(res.ok).toBe(true);
+    expect(res.redeemedAmountCents).toBe(2550);
+    const stamp = ctx.writes.find((w) => w.path === 'invoices/inv-c1');
+    expect(stamp?.data?.['creditRedeemedByUid']).toBe('sk1');
   });
 
   it('ALLOWS a PRIMARY member', async () => {

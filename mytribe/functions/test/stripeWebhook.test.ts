@@ -117,7 +117,9 @@ vi.mock('../src/lib/stripe', () => ({
             payment_intent: 'pi_9',
             payment_status: 'paid',
             amount_total: 13750,
-            metadata: { familyId: 'f9', invoiceId: 'i9' },
+            // `uid` is who opened the checkout: `payInvoice` stamps its caller,
+            // which may be a SECONDARY with billing access.
+            metadata: { familyId: 'f9', invoiceId: 'i9', uid: 'sk-payer' },
           },
         },
       };
@@ -1024,8 +1026,28 @@ describe('stripeWebhook', () => {
     // The household is told, and the operator gets an audit trail — the two
     // things that never fired once on this rail.
     expect(auditMock.writeAuditEntry).toHaveBeenCalledTimes(1);
+    // D-2026-09-28-BILLING-ACCESS-PAYS: the paid entry names who paid, which
+    // can be a secondary with billing access rather than the primary.
+    expect(auditMock.writeAuditEntry.mock.calls[0][0]).toMatchObject({
+      event: 'BILLING_INVOICE_PAID',
+      actorRole: 'SYSTEM',
+      payload: { invoiceId: 'i9', stripeEventId: 'evt_9', paidByUid: 'sk-payer' },
+    });
     expect(notifyMock.enqueueNotification).toHaveBeenCalledTimes(1);
     expect(notifyMock.enqueueNotification.mock.calls[0][0].key).toBe('invoice.payment.applied');
+  });
+
+  it('writes no paidByUid when the checkout carried no payer uid (a session minted before the stamp)', async () => {
+    docState['invoices/i1'] = { exists: true, data: { kinfolkId: 'f1', amountDue: 25, total: 25 } };
+    const { stripeWebhookHandler } = await import('../src/billing/stripeWebhook');
+    const status = vi.fn().mockReturnThis();
+    await (stripeWebhookHandler as any)(
+      { method: 'POST', headers: { 'stripe-signature': 'good' }, rawBody: Buffer.from('{}') },
+      { status, json: vi.fn(), end: vi.fn() },
+    );
+    const paid = auditMock.writeAuditEntry.mock.calls.find((c) => c[0]?.event === 'BILLING_INVOICE_PAID');
+    expect(paid).toBeDefined();
+    expect(paid![0].payload).not.toHaveProperty('paidByUid');
   });
 
   it('refuses to mark paid when the session completed but the money did not arrive', async () => {

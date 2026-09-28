@@ -72,6 +72,22 @@ class AccountSettingsScreenTest {
         assertFalse(fake.calls.any { it.first == "getMyPaymentMethod" }, "getMyPaymentMethod must not be called")
     }
 
+    /**
+     * D-2026-09-28-BILLING-ACCESS-PAYS (#1036): saved cards follow billing
+     * access, not the primary role. A member the server says has billing
+     * access (a PRIMARY, or a SECONDARY the PRIMARY granted billing) gets the
+     * Billing Details card and the card on file is asked for.
+     */
+    @Test
+    fun billingAccess_drawsBillingDetails_andAsksForTheCard() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubAccount(fake)
+        setThemedContent { AccountSettingsScreen("The Foster", PortalApi(fake), billingAccess = true) }
+        waitForIdle()
+        onNodeWithText("Billing Details").assertExists()
+        assertTrue(fake.calls.any { it.first == "getMyPaymentMethod" }, "getMyPaymentMethod must be called")
+    }
+
     @Test
     fun noPaymentMethod_showsCorrectCopy() = runComposeUiTest {
         val fake = FakeFunctionsClient()
