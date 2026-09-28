@@ -175,7 +175,9 @@ export function Account() {
     mutationFn: () => addSecondaryContact(backupEmail.trim(), kinfolkId !== undefined ? { kinfolkId } : {}),
     // Clears a stale status from a previous attempt before this one resolves.
     onMutate: () => setInviteStatus(null),
-    onSuccess: () => setInviteStatus({ text: `Invite sent to ${backupEmail.trim()}.`, tone: 'ok' }),
+    // Lowercased: the server lowercases invitedEmail before sending, so this
+    // is the address the mail actually goes to (#1018 item 3 review).
+    onSuccess: () => setInviteStatus({ text: `Invite sent to ${backupEmail.trim().toLowerCase()}.`, tone: 'ok' }),
     onError: (err: unknown) => {
       if (isOfflineError(err)) return;
       setInviteStatus({ text: `Invite failed: ${err instanceof Error ? err.message : 'try again'}`, tone: 'err' });

@@ -818,6 +818,15 @@ describe('invite confirmation (#1018 item 3)', () => {
     expect(view.queryByText(/claim\?invite=/)).not.toBeInTheDocument();
   });
 
+  it('names the lowercased address the server actually mails, even when typed in mixed case', async () => {
+    const tribeApi = await import('../api/tribeApi');
+    vi.mocked(tribeApi.addSecondaryContact).mockResolvedValue({ inviteId: 'i4' });
+    const view = await renderTribeProfile({});
+    fireEvent.change(await view.findByLabelText('Email'), { target: { value: 'Jo@Example.COM' } });
+    fireEvent.click(view.getByRole('button', { name: 'Send Invite' }));
+    expect(await view.findByText('Invite sent to jo@example.com.')).toBeInTheDocument();
+  });
+
   it('shows the server\'s own refusal when the send fails', async () => {
     const tribeApi = await import('../api/tribeApi');
     vi.mocked(tribeApi.addSecondaryContact).mockRejectedValue(new Error('failed-precondition: You cannot invite yourself.'));

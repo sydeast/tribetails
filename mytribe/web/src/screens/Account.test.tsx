@@ -277,6 +277,18 @@ describe('Account: secondary invite confirmation (#1018 item 3)', () => {
     expect(queryByText(/claim\?invite=/)).not.toBeInTheDocument();
   });
 
+  it('names the lowercased address the server actually mails, even when typed in mixed case', async () => {
+    const user = userEvent.setup();
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.addSecondaryContact).mockResolvedValue({ inviteId: 'inv-2' });
+    const { getByLabelText, getByRole, findByText } = await renderAccount();
+
+    await user.type(getByLabelText('Backup Email'), 'Sam@Example.COM');
+    await user.click(getByRole('button', { name: /Send Invite/ }));
+
+    expect(await findByText('Invite sent to sam@example.com.')).toBeInTheDocument();
+  });
+
   it('shows the server\'s own refusal when the send fails, not a generic line', async () => {
     const user = userEvent.setup();
     const accountApi = await import('../api/accountApi');

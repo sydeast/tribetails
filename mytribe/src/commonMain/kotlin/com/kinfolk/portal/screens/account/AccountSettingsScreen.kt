@@ -207,7 +207,9 @@ fun AccountSettingsScreen(
                     // #1018 item 3: addSecondaryContact really sends this email now
                     // (functions/src/portal/addSecondaryContact.ts); captured before
                     // the field is cleared, so the confirmation names the address.
-                    val sentTo = accountValues["secondaryEmail"].orEmpty().trim()
+                    // Lowercased: the server lowercases invitedEmail before sending,
+                    // so this is the address the mail actually goes to.
+                    val sentTo = accountValues["secondaryEmail"].orEmpty().trim().lowercase()
                     scope.launch {
                         try {
                             portalApi.addSecondaryContact(

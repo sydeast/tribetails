@@ -33,6 +33,12 @@ vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError:
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockResolvedValue('a1') }));
 vi.mock('../src/lib/rateLimit', () => ({ enforceRateLimit: vi.fn().mockResolvedValue(undefined) }));
+// #1018 item 3: addSecondaryContact's 'own' case (kin1) now reaches the real
+// send. This suite is about the tribe-resolution gate, not the send itself,
+// so it succeeds rather than leaning on the generic post-gate-failure
+// tolerance below (a real send failure there is exercised, with assertions,
+// in addSecondaryContact.test.ts).
+vi.mock('../src/lib/sendFromTemplate', () => ({ sendFromTemplate: vi.fn().mockResolvedValue('m1') }));
 vi.mock('../src/lib/aiCopy', async (importActual) => ({
   ...(await importActual<typeof import('../src/lib/aiCopy')>()),
   generateCopy: vi.fn().mockResolvedValue({ text: 'ok' }),

@@ -974,7 +974,9 @@ function InviteKinfolkCard(props: {
         permissions: { kin_edit: canEditPets, home_access: canAccessHome },
         ...(prefill !== null ? { personId: prefill.personId } : {}),
       }),
-    onMutate: () => setSentTo(email.trim()),
+    // Lowercased: the server lowercases invitedEmail before sending, so this
+    // is the address the mail actually goes to (#1018 item 3 review).
+    onMutate: () => setSentTo(email.trim().toLowerCase()),
     onSuccess: () => {
       setEmail('');
       setRole('');

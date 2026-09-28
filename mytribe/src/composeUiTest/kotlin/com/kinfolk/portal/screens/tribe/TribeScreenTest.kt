@@ -919,6 +919,17 @@ class TribeScreenTest {
         assertTrue(onAllNodesWithText("claim?invite", substring = true).fetchSemanticsNodes().isEmpty())
     }
     @Test
+    fun secondaryKinfolk_invite_namesTheLowercasedAddressEvenWhenTypedInMixedCase() = runComposeUiTest {
+        val fake = secondaryHousehold()
+        fake.stub("addSecondaryContact", buildJsonObject { put("inviteId", "i5") })
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("invite-email").performScrollTo().performTextInput("Jo@Example.COM")
+        onNodeWithText("Send Invite").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("Invite sent to jo@example.com.", substring = true).performScrollTo().assertIsDisplayed()
+    }
+    @Test
     fun secondaryKinfolk_anInviteWithoutGivePortalAccessCarriesNoPerson() = runComposeUiTest {
         val fake = secondaryHousehold()
         fake.stub("addSecondaryContact", buildJsonObject { put("inviteId", "i1") })
