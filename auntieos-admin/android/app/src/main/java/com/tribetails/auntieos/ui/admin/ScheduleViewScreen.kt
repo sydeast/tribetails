@@ -448,6 +448,22 @@ fun ScheduleViewScreen(
                 }
             }
 
+            // 1025: the single-row analog of the bulk banner above. approveBooking/
+            // cancelBooking used to report nothing on success; the row just moved
+            // sections on the next load with no confirmation.
+            state.bookingActionMessage?.let { msg ->
+                item {
+                    AuntieBanner(
+                        tone = AuntieBannerTone.Success,
+                        title = "Booking",
+                        icon = Lucide.CircleCheckBig,
+                        onDismiss = { viewModel.clearBookingActionMessage() },
+                    ) {
+                        Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+                    }
+                }
+            }
+
             // ── Stage 3 / 16.5: incoming MyTribe booking requests (per-envelope) ──
             state.incomingError?.let { msg ->
                 item {

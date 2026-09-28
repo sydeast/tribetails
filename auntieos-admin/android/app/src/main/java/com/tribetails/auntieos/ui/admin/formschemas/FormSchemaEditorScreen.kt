@@ -56,6 +56,7 @@ import com.tribetails.auntieos.ui.components.DynamicFormFields
 import com.tribetails.auntieos.ui.components.EmptyHint
 import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.components.GlassSurface
+import com.tribetails.auntieos.ui.components.LocalSaveConfirmation
 import com.tribetails.auntieos.ui.components.SegmentedPicker
 import com.tribetails.auntieos.ui.components.StatusToast
 import com.tribetails.auntieos.ui.components.ToastKind
@@ -89,8 +90,35 @@ fun FormSchemaEditorScreen(
 ) {
     val c = AuntieTheme.colors
     val state by viewModel.state.collectAsState()
+    // 1025: read once here, at the top of the composable, matching
+    // EditKinfolkScreen's #1009 fix. delete() below sets state.successMessage
+    // and calls onDeleted() (a nav pop) in the same breath, which used to give
+    // the screen-local StatusToast no frame to render before it was unmounted
+    // - the same bug #1024 found and fixed on admin web's KinTaleCompose.
+    val confirmation = LocalSaveConfirmation.current
 
     LaunchedEffect(schemaId) { viewModel.load(schemaId) }
+
+    // Covers both ways this screen sets a success message - a save (stays on
+    // this screen) and a delete (navigates away via onDeleted) - the same one
+    // effect handling both #1009 documents on EditKinfolkScreen. The host that
+    // renders this lives above the NavHost, so the message survives the pop.
+    LaunchedEffect(state.successMessage) {
+        state.successMessage?.let {
+            confirmation.show(it)
+            viewModel.clearTransientMessages()
+        }
+    }
+
+    // A SEPARATE effect, deliberately: `delete()` sets isDeleted alongside
+    // successMessage in the SAME state update (#1009's own shape), so both
+    // effects react to that one update in the same recomposition. Calling
+    // onDeleted() from inside the successMessage effect above (or from the
+    // ViewModel directly) raced the confirmation host's own recomposition and
+    // lost the message the one time this was tried.
+    LaunchedEffect(state.isDeleted) {
+        if (state.isDeleted) onDeleted()
+    }
 
     var showDeleteConfirm by remember { mutableStateOf(false) }
 
@@ -266,13 +294,11 @@ fun FormSchemaEditorScreen(
                 onDismiss = { viewModel.clearTransientMessages() },
                 modifier = Modifier.padding(16.dp).align(Alignment.TopCenter),
             )
-            StatusToast(
-                visible = state.successMessage != null,
-                message = state.successMessage.orEmpty(),
-                kind = ToastKind.Success,
-                onDismiss = { viewModel.clearTransientMessages() },
-                modifier = Modifier.padding(16.dp).align(Alignment.TopCenter),
-            )
+            // 1025: the success toast used to live here, local to this screen.
+            // Moved to the LaunchedEffect(state.successMessage) above, which
+            // shows it through LocalSaveConfirmation instead - the host above
+            // the NavHost, so a delete's confirmation survives the onDeleted()
+            // pop this screen's own composable does not survive.
         }
     }
 
@@ -286,7 +312,7 @@ fun FormSchemaEditorScreen(
                 label = "Delete",
                 onClick = {
                     showDeleteConfirm = false
-                    viewModel.delete(onDeleted = onDeleted)
+                    viewModel.delete()
                 },
             )
         },

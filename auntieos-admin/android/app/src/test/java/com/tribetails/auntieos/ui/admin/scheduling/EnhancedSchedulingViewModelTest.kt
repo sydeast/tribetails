@@ -110,6 +110,35 @@ class EnhancedSchedulingViewModelTest {
         assertNull("errorMessage must be null on success", state.errorMessage)
     }
 
+    // 1025: approveBooking used to report nothing on success -- the row just
+    // moved sections on the next load, the same gap admin web's #1013/#1024
+    // closed for kin/kinfolk (this screen never navigates, so a persistent
+    // banner is enough; see ScheduleViewScreen's own bookingActionMessage banner).
+    @Test
+    fun `approveBooking confirms which booking landed`() = runTest(testDispatcher) {
+        val booking = EnhancedBooking(
+            id = "b1",
+            kinfolkId = "kf1",
+            kinfolkName = "The Whitfields",
+            startDateTime = "2026-06-02T10:00:00",
+            endDateTime = "2026-06-02T11:00:00",
+            status = BookingStatus.DRAFT
+        )
+
+        coEvery { bookingRepo.updateBooking(any()) } returns Result.success(Unit)
+        coEvery { kinCareRepo.getKinCareSessionsBySourceBookingId("b1") } returns Result.success(emptyList())
+        coEvery { kinCareRepo.createKinCareSession(any()) } returns Result.success("session1")
+
+        val vm = buildViewModel()
+        vm.approveBooking(booking)
+        advanceUntilIdle()
+
+        assertEquals("Approved The Whitfields.", vm.state.value.bookingActionMessage)
+
+        vm.clearBookingActionMessage()
+        assertNull(vm.state.value.bookingActionMessage)
+    }
+
     @Test
     fun `approveBooking sets errorMessage when updateBooking fails`() = runTest(testDispatcher) {
         val booking = EnhancedBooking(

@@ -145,6 +145,23 @@ class EnhancedSchedulingViewModelCancelBridgeTest {
         coVerify(exactly = 0) { kinCareRepo.cancelSession(any(), any()) }
     }
 
+    // 1025: cancelBooking used to report nothing on success -- the row just
+    // moved sections on the next load, the same gap admin web's #1013/#1024
+    // closed for kin/kinfolk.
+    @Test
+    fun `cancelling a booking confirms which booking was cancelled`() = runTest(testDispatcher) {
+        coEvery { kinCareRepo.getKinCareSessionsBySourceBookingId("b1") } returns
+            Result.success(listOf(linkedSession("s1")))
+        coEvery { kinCareRepo.cancelSession(any(), any()) } returns Result.success(Unit)
+
+        val vm = buildViewModel()
+        vm.cancelBooking(booking(), "household away")
+
+        // booking() sets no kinfolkName, so the confirmation falls back to the
+        // kinfolkId, the same fallback approveBooking's own message uses.
+        assertEquals("Cancelled kf1.", vm.state.value.bookingActionMessage)
+    }
+
     @Test
     fun `a server refusal on a linked session surfaces, it is not swallowed`() = runTest(testDispatcher) {
         coEvery { kinCareRepo.getKinCareSessionsBySourceBookingId("b1") } returns
