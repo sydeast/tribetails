@@ -20,7 +20,9 @@ interface AuntieDataSource {
      * Shared vet-clinic catalog (vet_clinics) for the Settings "Vet clinics"
      * manager (spec 29 item 8). Defaults emit empty / fail-loud so existing test
      * fakes keep compiling; the real settings data source overrides these.
-     * There is no deleteVetClinic callable, so delete stays gated dark in the UI.
+     * `firestore.rules` refuses every client write to `vet_clinics`; create
+     * goes through `submitVetClinic` and retire/restore through
+     * `archiveVetClinic` (#998). There is no delete callable and none planned.
      */
     fun vetClinicsStream(): Flow<FirestoreResult<List<VetClinic>>> =
         flowOf(FirestoreResult.Data(emptyList()))
@@ -29,8 +31,9 @@ interface AuntieDataSource {
     /** #994: writes only the fields [edited] changed relative to [loaded], the clinic the caller read. */
     suspend fun updateVetClinic(loaded: VetClinic, edited: VetClinic): WriteResult<Unit> =
         WriteResult.Err("updateVetClinic not supported by this data source")
-    suspend fun deleteVetClinic(id: String): WriteResult<Unit> =
-        WriteResult.Err("deleteVetClinic not supported by this data source")
+    /** #998: `archived = true` retires (or rejects a pending submission); `false` restores. */
+    suspend fun archiveVetClinic(id: String, archived: Boolean): WriteResult<Unit> =
+        WriteResult.Err("archiveVetClinic not supported by this data source")
 
     /**
      * Server-bound "Set as profile photo" for a media gallery cell. Defaults to a

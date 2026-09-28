@@ -79,13 +79,17 @@ class FakeAuntieDataSource(
     val updatedVetClinics = mutableListOf<VetClinic>()
     /** #994: the baseline each update was diffed against, parallel to [updatedVetClinics]. */
     val updatedVetClinicBaselines = mutableListOf<VetClinic>()
-    val deletedVetClinicIds = mutableListOf<String>()
+    /** #998: one entry per `archiveVetClinic` call: the id and the `archived` flag sent. */
+    val archivedVetClinicCalls = mutableListOf<Pair<String, Boolean>>()
     var vetClinicWriteShouldFail = false
     var vetClinicWriteFailMessage = "boom"
+    /** #998: when set, [createVetClinic] and [archiveVetClinic] suspend on this gate before completing, so a test can observe the busy state mid-write. */
+    var vetClinicGate: CompletableDeferred<Unit>? = null
 
     override fun vetClinicsStream(): Flow<FirestoreResult<List<VetClinic>>> = _vetClinics.asStateFlow()
     override suspend fun createVetClinic(clinic: VetClinic): WriteResult<String> {
         createdVetClinics += clinic
+        vetClinicGate?.await()
         return if (vetClinicWriteShouldFail) WriteResult.Err(vetClinicWriteFailMessage) else WriteResult.Ok(clinic._id.ifBlank { "new-id" })
     }
     override suspend fun updateVetClinic(loaded: VetClinic, edited: VetClinic): WriteResult<Unit> {
@@ -93,8 +97,9 @@ class FakeAuntieDataSource(
         updatedVetClinics += edited
         return if (vetClinicWriteShouldFail) WriteResult.Err(vetClinicWriteFailMessage) else WriteResult.Ok(Unit)
     }
-    override suspend fun deleteVetClinic(id: String): WriteResult<Unit> {
-        deletedVetClinicIds += id
+    override suspend fun archiveVetClinic(id: String, archived: Boolean): WriteResult<Unit> {
+        archivedVetClinicCalls += id to archived
+        vetClinicGate?.await()
         return if (vetClinicWriteShouldFail) WriteResult.Err(vetClinicWriteFailMessage) else WriteResult.Ok(Unit)
     }
 

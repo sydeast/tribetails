@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -31,7 +32,9 @@ import kotlin.test.assertTrue
  *
  * `vet_clinics` is refused to every client by `firestore.rules`, so its save
  * goes through the `updateVetClinic` callable instead; those tests answer the
- * callable from JvmFirestoreFixtures and pin the request.
+ * callable from JvmFirestoreFixtures and pin the request. #998 extends this to
+ * create (`submitVetClinic`, replacing a direct `addDoc`) and archive/restore
+ * (`archiveVetClinic`, replacing a direct `deleteDoc`).
  */
 class DesktopDiffedSavesTest {
 
@@ -290,6 +293,85 @@ class DesktopDiffedSavesTest {
         JvmFirestoreFixtures.callableErrors = mapOf("updateVetClinic" to "Another clinic is already called 'Creekside'.")
         val r = FirestoreClient().updateVetClinic(clinic, clinic.copy(phone = "556"))
         assertEquals(WriteResult.Err("Another clinic is already called 'Creekside'."), r)
+    }
+
+    // ── #998: vet_clinics create through submitVetClinic, never a client addDoc ─
+
+    @Test
+    fun creatingAVetClinicGoesThroughSubmitVetClinicWithWebsPayload() = runBlocking<Unit> {
+        JvmFirestoreFixtures.callableResponses =
+            mapOf("submitVetClinic" to """{"status":"created","clinicId":"new1","created":true,"pending":false,"candidates":[]}""")
+        val draft = VetClinic(name = "  Corner Vet  ", phone = " 555 ", address = " 1 Ln ", website = " https://c.example ", isEmergency = true, notes = "ignored", hours = "ignored")
+        val r = FirestoreClient().createVetClinic(draft)
+        assertEquals(WriteResult.Ok("new1"), r)
+        assertEquals("submitVetClinic", JvmFirestoreFixtures.lastCallableName)
+        val p = lastPayload()
+        assertEquals(
+            setOf("name", "phone", "address", "website", "isEmergency", "acknowledgedMatchIds"),
+            p.keys,
+            "the same payload admin web sends - no hours, no notes, the callable has no fields for them",
+        )
+        assertEquals("Corner Vet", p["name"]?.jsonPrimitive?.content, "trimmed")
+        assertEquals("555", p["phone"]?.jsonPrimitive?.content)
+        assertTrue(p["acknowledgedMatchIds"]!!.jsonArray.isEmpty(), "no near-match picker on this form")
+        assertEquals(emptyList<List<String>?>(), masks, "no direct vet_clinics write (rules refuse it)")
+    }
+
+    @Test
+    fun aNeedsChoiceResponseCreatesNothingAndIsAnError() = runBlocking<Unit> {
+        JvmFirestoreFixtures.callableResponses =
+            mapOf("submitVetClinic" to """{"status":"needs_choice","clinicId":"","created":false,"pending":false,"candidates":[{"id":"a","name":"Riverside","address":"","phone":"","isEmergency":false,"verified":true,"reason":"name"}]}""")
+        val r = FirestoreClient().createVetClinic(VetClinic(name = "Riverside"))
+        assertTrue(r is WriteResult.Err, "nothing was written; a needs_choice is not a create")
+    }
+
+    @Test
+    fun aRefusedVetClinicCreateIsAnError() = runBlocking<Unit> {
+        JvmFirestoreFixtures.callableErrors = mapOf("submitVetClinic" to "permission-denied")
+        val r = FirestoreClient().createVetClinic(VetClinic(name = "Corner Vet"))
+        assertEquals(WriteResult.Err("permission-denied"), r)
+    }
+
+    @Test
+    fun createWithABlankNameNeverCalls() = runBlocking<Unit> {
+        val r = FirestoreClient().createVetClinic(VetClinic(name = "   "))
+        assertTrue(r is WriteResult.Err)
+        assertNull(JvmFirestoreFixtures.lastCallableName)
+    }
+
+    // ── #998: vet_clinics archive/restore through archiveVetClinic, never a client deleteDoc ─
+
+    @Test
+    fun retiringAVetClinicGoesThroughArchiveVetClinic() = runBlocking<Unit> {
+        JvmFirestoreFixtures.callableResponses = mapOf("archiveVetClinic" to """{"ok":true,"clinicId":"v1","archived":true,"householdCount":2}""")
+        val r = FirestoreClient().archiveVetClinic("v1", true)
+        assertEquals(WriteResult.Ok(Unit), r)
+        assertEquals("archiveVetClinic", JvmFirestoreFixtures.lastCallableName)
+        assertEquals(setOf("clinicId", "archived"), lastPayload().keys)
+        assertEquals("v1", lastPayload()["clinicId"]?.jsonPrimitive?.content)
+        assertTrue(lastPayload()["archived"]!!.jsonPrimitive.boolean)
+        assertEquals(emptyList<List<String>?>(), masks, "no direct vet_clinics write (rules refuse it)")
+    }
+
+    @Test
+    fun restoringAVetClinicSendsArchivedFalse() = runBlocking<Unit> {
+        JvmFirestoreFixtures.callableResponses = mapOf("archiveVetClinic" to """{"ok":true,"clinicId":"v1","archived":false,"householdCount":0}""")
+        FirestoreClient().archiveVetClinic("v1", false)
+        assertFalse(lastPayload()["archived"]!!.jsonPrimitive.boolean)
+    }
+
+    @Test
+    fun aRefusedArchiveIsAnError() = runBlocking<Unit> {
+        JvmFirestoreFixtures.callableErrors = mapOf("archiveVetClinic" to "Clinic 'v1' not found.")
+        val r = FirestoreClient().archiveVetClinic("v1", true)
+        assertEquals(WriteResult.Err("Clinic 'v1' not found."), r)
+    }
+
+    @Test
+    fun archiveWithABlankIdNeverCalls() = runBlocking<Unit> {
+        val r = FirestoreClient().archiveVetClinic("", true)
+        assertTrue(r is WriteResult.Err)
+        assertNull(JvmFirestoreFixtures.lastCallableName)
     }
 
     // ── the shared diff ─────────────────────────────────────────────────────
