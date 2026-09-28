@@ -40,8 +40,11 @@ import com.kinfolk.portal.util.openExternalUrl
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
-/** `EMERGENCY_CONTACTS_MAX` and the field limits in `mytribe/functions/src/lib/emergencyContacts.ts`. */
-private const val MAX_CONTACTS = 2
+/**
+ * `EMERGENCY_CONTACTS_MAX` and the field limits in `mytribe/functions/src/lib/emergencyContacts.ts`.
+ * Operator ruling 2026-09-27 (Q2): one Emergency Contact per household.
+ */
+private const val MAX_CONTACTS = 1
 private const val NAME_MAX = 80
 private const val PHONE_MAX = 32
 private const val RELATIONSHIP_MAX = 40
@@ -54,7 +57,12 @@ private const val PHONE_REQUIRED = "An Emergency Contact needs a phone number."
 private const val NAME_TOO_LONG = "An Emergency Contact's name can be at most $NAME_MAX characters."
 private const val PHONE_TOO_LONG = "An Emergency Contact's phone number can be at most $PHONE_MAX characters."
 private const val RELATIONSHIP_TOO_LONG = "A relationship can be at most $RELATIONSHIP_MAX characters."
-private const val SAME_PHONE = "The two Emergency Contacts need different phone numbers."
+private const val TOO_MANY = "A household can have only one Emergency Contact."
+/**
+ * A household that still has two on file from before the 2026-09-27 ruling sees
+ * both, each with Remove, under this. The same sentence as portal web.
+ */
+const val EMERGENCY_CONTACTS_OVER_LIMIT = "This household has two Emergency Contacts on file. A household has only one now, so remove one of them."
 
 /** The #844 sentence, word for word the same on portal web. */
 private const val LOCKED = "Only someone with Home access can change the Emergency Contact."
@@ -66,15 +74,13 @@ private const val LOCKED = "Only someone with Home access can change the Emergen
 private const val NONE_READ_ONLY = "No Emergency Contact on file. Someone with Home access can add one."
 
 /** Same sentence admin web, admin Android, desktop and portal web show. */
-const val EMERGENCY_CONTACT_WHO_GETS_CALLED = "Called only when no kinfolk can be reached. The first one is called first."
+const val EMERGENCY_CONTACT_WHO_GETS_CALLED = "Called only when no kinfolk can be reached."
 
 private val EMPTY_DRAFT = EmergencyContactInput("", "", "")
 
 private fun toDrafts(contacts: List<EmergencyContactDto>): List<EmergencyContactInput> =
     contacts.map { EmergencyContactInput(it.name, it.phone, it.relationship.orEmpty()) }.ifEmpty { listOf(EMPTY_DRAFT) }
 
-/** Digits only, a bare 10-digit US number read as +1, so two spellings of one phone compare equal. */
-private fun comparable(p: String) = p.filter(Char::isDigit).let { if (it.length == 10) "1$it" else it }
 
 /**
  * What the card can refuse before dialling. The household-member check stays on
@@ -82,12 +88,12 @@ private fun comparable(p: String) = p.filter(Char::isDigit).let { if (it.length 
  */
 private fun precheck(drafts: List<EmergencyContactInput>): String? = when {
     drafts.all { it.name.isBlank() && it.phone.isBlank() } -> REQUIRED
+    drafts.size > MAX_CONTACTS -> TOO_MANY
     drafts.any { it.name.isBlank() } -> NAME_REQUIRED
     drafts.any { it.phone.isBlank() } -> PHONE_REQUIRED
     drafts.any { it.name.trim().length > NAME_MAX } -> NAME_TOO_LONG
     drafts.any { it.phone.trim().length > PHONE_MAX } -> PHONE_TOO_LONG
     drafts.any { it.relationship.trim().length > RELATIONSHIP_MAX } -> RELATIONSHIP_TOO_LONG
-    drafts.size == 2 && comparable(drafts[0].phone) == comparable(drafts[1].phone) -> SAME_PHONE
     else -> null
 }
 
@@ -102,8 +108,10 @@ private fun sameDrafts(a: List<EmergencyContactInput>, b: List<EmergencyContactI
     }
 
 /**
- * The household's Emergency Contacts (#829): up to two, the first called first,
- * never messaged, no portal access. Any ACTIVE member reads; only a caller with
+ * The household's Emergency Contact (#829): one per household (operator ruling
+ * 2026-09-27, Q2), never messaged, no portal access. A household with two on
+ * file from the earlier rule shows both; an editor sees them under
+ * [EMERGENCY_CONTACTS_OVER_LIMIT], each with Remove, and cannot save both back. Any ACTIVE member reads; only a caller with
  * home_access edits, and everyone else gets the list with the #844 sentence.
  * The twin of portal web's `EmergencyContactsCard.tsx`.
  *
@@ -230,7 +238,6 @@ fun EmergencyContactsCard(
                         r.contacts.forEachIndexed { i, c ->
                             if (i > 0) CardDivider()
                             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(if (i == 0) "Called first" else "Called second", style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted))
                                 Text(c.name, style = type.sansBody)
                                 c.relationship?.let { Text(it, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted)) }
                                 Text(
@@ -248,9 +255,13 @@ fun EmergencyContactsCard(
                     if (r.contacts.isEmpty()) {
                         Text(REQUIRED, style = type.sansLabel.copy(color = KinfolkBrand.SnuggleCoral))
                     }
+                    val overLimit = drafts.size > MAX_CONTACTS
+                    if (overLimit) {
+                        Text(EMERGENCY_CONTACTS_OVER_LIMIT, style = type.sansLabel.copy(color = KinfolkBrand.SnuggleCoral))
+                    }
                     drafts.forEachIndexed { i, d ->
                         if (i > 0) CardDivider()
-                        Text(if (i == 0) "Called first" else "Called second", style = type.sansMeta)
+                        if (overLimit) Text("On file ${i + 1}", style = type.sansMeta)
                         KinField(
                             value = d.name,
                             onValueChange = { set(i, d.copy(name = it.take(80))) },
@@ -275,35 +286,18 @@ fun EmergencyContactsCard(
                             fieldTestTag = "ec-$i-relationship",
                             modifier = Modifier.fillMaxWidth(),
                         )
-                        if (i > 0 || drafts.size > 1) {
+                        if (overLimit) {
                             Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
-                                if (i > 0) {
-                                    KinGhostButton(
-                                        label = "Call first",
-                                        enabled = !saving,
-                                        onClick = { edit(listOf(drafts[i]) + drafts.filterIndexed { j, _ -> j != i }) },
-                                    )
-                                }
-                                if (drafts.size > 1) {
-                                    KinGhostButton(
-                                        label = "Remove",
-                                        enabled = !saving,
-                                        onClick = { edit(drafts.filterIndexed { j, _ -> j != i }) },
-                                    )
-                                }
+                                KinGhostButton(
+                                    label = "Remove",
+                                    enabled = !saving,
+                                    onClick = { edit(drafts.filterIndexed { j, _ -> j != i }) },
+                                )
                             }
                         }
                     }
                     if (dirty) {
                         Text("Unsaved changes", style = type.sansLabel.copy(color = KinfolkBrand.KinfolkOrange))
-                    }
-                    if (drafts.size < MAX_CONTACTS) {
-                        KinGhostButton(
-                            label = "Add a second Emergency Contact",
-                            enabled = !saving,
-                            onClick = { edit(drafts + EMPTY_DRAFT) },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
                     }
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),

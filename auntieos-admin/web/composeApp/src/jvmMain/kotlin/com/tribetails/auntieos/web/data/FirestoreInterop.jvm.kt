@@ -641,10 +641,10 @@ internal actual suspend fun platformUpdateUserProfile(uid: String, loaded: UserP
         )
     }
 }
-internal actual suspend fun platformCreateVetClinic(clinic: VetClinic): WriteResult<String> =
-    transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("vet_clinics", jsonOut.encodeToString(clinic))) }
-internal actual suspend fun platformDeleteVetClinic(id: String): WriteResult<Unit> =
-    transportResult("delete failed") { if (JvmFirestoreRest.deleteDoc("vet_clinics", id)) WriteResult.Ok(Unit) else WriteResult.Err("delete failed") }
+// #998: vet_clinics create/archive route through FirestoreClient directly
+// (submitVetClinic / archiveVetClinic via platformInvokeCallable); rules refuse
+// a direct addDoc/deleteDoc here the same way they refuse the whole-doc PATCH
+// updateVetClinic replaced in #994.
 internal actual suspend fun platformLogActivity(entry: ActivityLogEntry): WriteResult<String> =
     JvmFirestoreRest.callable("logActivity", jsonOut.encodeToString(entry)).let { if (it is WriteResult.Ok) WriteResult.Ok("ok") else WriteResult.Err((it as WriteResult.Err).message) }
 

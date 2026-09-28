@@ -57,12 +57,12 @@ Run it from the repo root, and never pipe it through `tail` or anything else.
 
 `scripts/release.sh` runs the whole ordered procedure: preconditions, CI
 verdict, dependency drift, secret and client-config checks, `npm run check`,
-the Android build, indexes, index wait, rules, functions, both hosting targets,
-the APK upload, a verify step that fetches the live bundles and proves they
-changed, the Cloud Run revision prune, the release tag and the merged-branch
-prune. Order is the point. Indexes go before the code that queries them and
-functions before the clients that call them, because both failures land at
-runtime rather than at build.
+the Android build, indexes, index wait, Firestore rules, Storage rules,
+functions, both hosting targets, the APK upload, a verify step that fetches the
+live bundles and proves they changed, the Cloud Run revision prune, the release
+tag and the merged-branch prune. Order is the point. Indexes go before the code
+that queries them and functions before the clients that call them, because both
+failures land at runtime rather than at build.
 
 Merging to `main` does not release anything. `.github/workflows/main-channel.yml`
 publishes main's HEAD to one fixed Firebase Hosting preview channel per web

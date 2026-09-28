@@ -197,6 +197,19 @@ export async function acceptInviteHandler(req: CallableRequest<unknown>): Promis
     if ((freshInvite.expiresAt as unknown as { toMillis(): number }).toMillis() < Date.now()) {
       throw new HttpsError('failed-precondition', 'invite expired');
     }
+    // 2026-09-27 Q3: an invite the primary sent for a secondary kinfolk they
+    // added first carries `personId`. That record becomes ACTIVE with this uid.
+    // Read before any write (a transaction refuses a read after a write). A
+    // record deleted since the invite was sent is skipped; the member is
+    // created exactly as before either way.
+    const personRef =
+      typeof freshInvite.personId === 'string' && freshInvite.personId !== ''
+        ? db().doc(`families/${invite.tribeId}/secondaryKinfolk/${freshInvite.personId}`)
+        : null;
+    const personSnap = personRef !== null ? await tx.get(personRef) : null;
+    if (personRef !== null && personSnap?.exists) {
+      tx.update(personRef, { access: 'ACTIVE', memberUid: req.auth!.uid, updatedAt: FieldValue.serverTimestamp() });
+    }
     tx.set(memberRef, {
       uid: req.auth!.uid,
       displayName: tokenEmail,

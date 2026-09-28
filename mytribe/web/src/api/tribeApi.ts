@@ -112,7 +112,7 @@ export interface ListEmergencyContactsResult {
   legacy: boolean;
 }
 
-/** Any ACTIVE household member may read. Index 0 is called first. */
+/** Any ACTIVE household member may read. One per household since 2026-09-27 (Q2); two only on a household that had two before. */
 export function listEmergencyContacts(kinfolkId?: string): Promise<ListEmergencyContactsResult> {
   return call<{ kinfolkId?: string }, ListEmergencyContactsResult>('listEmergencyContacts', kinfolkId !== undefined ? { kinfolkId } : {});
 }
@@ -122,7 +122,7 @@ export interface SaveEmergencyContactsRequest {
   contacts: Array<{ name: string; phone: string; relationship: string | null }>;
 }
 
-/** Replaces the household's list whole, index 0 called first. Needs home_access. */
+/** Replaces the household's list whole; more than one is refused (2026-09-27 Q2). Needs home_access. */
 export function saveEmergencyContacts(req: SaveEmergencyContactsRequest): Promise<{ contacts: EmergencyContactDto[] }> {
   return call<SaveEmergencyContactsRequest, { contacts: EmergencyContactDto[] }>('saveEmergencyContacts', req);
 }
@@ -380,6 +380,11 @@ export interface AddSecondaryContactRequest {
     kintales_only?: boolean;
     home_access?: boolean;
   };
+  /**
+   * 2026-09-27 Q3: the secondary kinfolk (added first, with no portal access)
+   * this invite is for. Accepting it marks that person as having portal access.
+   */
+  personId?: string;
 }
 
 export interface AddSecondaryContactResult {
@@ -391,6 +396,45 @@ export function addSecondaryContact(req: AddSecondaryContactRequest): Promise<Ad
   return call<AddSecondaryContactRequest, AddSecondaryContactResult>('addSecondaryContact', req);
 }
 
+// ── secondary kinfolk (functions/src/portal/secondaryKinfolk.ts) ───────────
+/**
+ * Operator ruling 2026-09-27 (Q3): "A Secondary kinfolk can be added to the
+ * household but doesn't have portal access unless PK invites them and set
+ * access." A person record on the household, PRIMARY-only here. Adding one
+ * sends no invite; `addSecondaryContact` with `personId` is the invite.
+ */
+export type SecondaryKinfolkAccess = 'NONE' | 'INVITED' | 'ACTIVE';
+export interface SecondaryKinfolkDto {
+  personId: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  access: SecondaryKinfolkAccess;
+  memberUid: string | null;
+  createdAt: string | null;
+}
+export async function listSecondaryKinfolk(kinfolkId?: string): Promise<SecondaryKinfolkDto[]> {
+  const res = await call<{ kinfolkId?: string }, { people?: SecondaryKinfolkDto[] }>(
+    'listSecondaryKinfolk',
+    kinfolkId !== undefined ? { kinfolkId } : {},
+  );
+  // A missing array is an error, never "nobody".
+  if (!Array.isArray(res?.people)) throw new Error('listSecondaryKinfolk: the server returned no people array.');
+  return res.people;
+}
+export interface SaveSecondaryKinfolkRequest {
+  kinfolkId?: string;
+  personId?: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+}
+export function saveSecondaryKinfolk(req: SaveSecondaryKinfolkRequest): Promise<{ person: SecondaryKinfolkDto; created: boolean }> {
+  return call<SaveSecondaryKinfolkRequest, { person: SecondaryKinfolkDto; created: boolean }>('saveSecondaryKinfolk', req);
+}
+export function removeSecondaryKinfolk(req: { kinfolkId?: string; personId: string }): Promise<{ ok: true }> {
+  return call<{ kinfolkId?: string; personId: string }, { ok: true }>('removeSecondaryKinfolk', req);
+}
 // ── household contacts (functions/src/portal/householdContacts.ts) ──────────
 
 /**

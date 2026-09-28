@@ -35,6 +35,15 @@ function stubMembersCallables() {
     statusCode: 200,
     body: { result: { contacts: [] } },
   }).as('listHouseholdContacts');
+  // 2026-09-27 Q3: secondary kinfolk with no portal account.
+  cy.intercept('POST', CALLABLE('listSecondaryKinfolk'), {
+    statusCode: 200,
+    body: { result: { people: [{ personId: 'p1', name: 'Sam Lee', phone: '+18055550177', email: null, access: 'NONE', memberUid: null, createdAt: null }] } },
+  }).as('listSecondaryKinfolk');
+  cy.intercept('POST', CALLABLE('saveSecondaryKinfolk'), {
+    statusCode: 200,
+    body: { result: { person: { personId: 'p2', name: 'Jo Park', phone: null, email: null, access: 'NONE', memberUid: null, createdAt: null }, created: true } },
+  }).as('saveSecondaryKinfolk');
 }
 
 describe('household members', () => {
@@ -69,5 +78,23 @@ describe('household members', () => {
     cy.get('.hmembers__addrow').should('not.exist');
     cy.get('#hmcontact-name').should('not.exist');
     cy.get('@listHouseholdContacts.all').should('have.length', 0);
+  });
+
+  // Operator rulings 2026-09-27. Q4: the panel reads "Secondary kinfolk". Q3: the
+  // admin adds a secondary kinfolk with no invite and no portal access; only
+  // their primary can invite them.
+  it('Q3/Q4: the Secondary kinfolk panel lists one with no portal access and adds another with no invite', () => {
+    stubMembersCallables();
+    cy.signIn();
+    cy.visit('/household-members/e2e-kf-1');
+    cy.contains('.den-panel-title', 'Secondary kinfolk', { timeout: 8_000 }).should('exist');
+    cy.contains('.den-panel-title', 'Secondary contacts').should('not.exist');
+    cy.contains('[data-testid="secondary-kinfolk-row"]', 'Sam Lee').should('contain.text', 'No portal access');
+    cy.get('[data-testid="secondary-kinfolk"]').contains('button', /invite/i).should('not.exist');
+    cy.contains('button', 'Add secondary kinfolk').click();
+    cy.get('#skin-name').type('Jo Park');
+    cy.contains('[role="dialog"] button', 'Save').click();
+    cy.wait('@saveSecondaryKinfolk').its('request.body.data').should('deep.equal', { kinfolkId: 'e2e-kf-1', name: 'Jo Park', phone: null, email: null });
+    cy.get('[role="dialog"]').should('not.exist');
   });
 });

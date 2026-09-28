@@ -58,6 +58,8 @@ import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.NO_EMERGENCY_CONTACT
 import com.tribetails.auntieos.web.data.emergencyContactsOf
+import com.tribetails.auntieos.web.data.EMERGENCY_CONTACTS_MAX
+import com.tribetails.auntieos.web.data.EMERGENCY_CONTACTS_OVER_LIMIT
 import com.tribetails.auntieos.web.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
@@ -345,12 +347,26 @@ fun KinfolkProfileScreen(
                 if (emergencyContacts.isEmpty()) {
                     AuntieStatusPill(label = NO_EMERGENCY_CONTACT, tone = AuntieStatusTone.Orange)
                 } else {
+                    // 2026-09-27 Q2: one per household. Two on file from the
+                    // earlier rule both show, under the notice, until one is
+                    // removed on Edit.
+                    if (emergencyContacts.size > EMERGENCY_CONTACTS_MAX) {
+                        Text(EMERGENCY_CONTACTS_OVER_LIMIT, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.warning)
+                        Spacer(Modifier.height(6.dp))
+                    }
                     emergencyContacts.forEachIndexed { i, ec ->
-                        FactRow(label = if (i == 0) "Called first" else "Called second", value = ec.name)
+                        FactRow(label = "Name",         value = ec.name)
                         FactRow(label = "Phone",        value = ec.phone, mono = true)
                         FactRow(label = "Relationship", value = ec.relationship.orEmpty(), last = i == emergencyContacts.lastIndex)
                     }
                 }
+            }
+            // ---- Secondary kinfolk (2026-09-27, Q3 and Q4) ----
+            // People in the household with no portal account yet. Added here
+            // with no invite; only the household's primary can invite one.
+            Spacer(Modifier.height(18.dp))
+            Panel(title = "Secondary kinfolk", icon = Lucide.Users, tone = AuntieStatusTone.Teal) {
+                SecondaryKinfolkSection(client = client, kinfolkId = kinfolkId, householdName = kinfolk.displayName)
             }
             // ---- Vet Clinic (household-level) ----
             if (kinfolk.vetClinicName.isNotBlank() ||

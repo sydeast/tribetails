@@ -6,7 +6,8 @@
  */
 import { call } from '../lib/fns';
 
-export const EMERGENCY_CONTACTS_MAX = 2;
+/** Operator ruling 2026-09-27 (Q2): one Emergency Contact per household. */
+export const EMERGENCY_CONTACTS_MAX = 1;
 export const EMERGENCY_CONTACT_NAME_MAX = 80;
 export const EMERGENCY_CONTACT_PHONE_MAX = 32;
 export const EMERGENCY_CONTACT_RELATIONSHIP_MAX = 40;
@@ -22,10 +23,15 @@ export const EMERGENCY_CONTACT_PHONE_REQUIRED = 'An Emergency Contact needs a ph
 export const EMERGENCY_CONTACT_NAME_TOO_LONG = `An Emergency Contact's name can be at most ${EMERGENCY_CONTACT_NAME_MAX} characters.`;
 export const EMERGENCY_CONTACT_PHONE_TOO_LONG = `An Emergency Contact's phone number can be at most ${EMERGENCY_CONTACT_PHONE_MAX} characters.`;
 export const EMERGENCY_CONTACT_RELATIONSHIP_TOO_LONG = `A relationship can be at most ${EMERGENCY_CONTACT_RELATIONSHIP_MAX} characters.`;
-export const EMERGENCY_CONTACTS_TOO_MANY = 'A household can have at most two Emergency Contacts.';
-export const EMERGENCY_CONTACTS_SAME_PHONE = 'The two Emergency Contacts need different phone numbers.';
+export const EMERGENCY_CONTACTS_TOO_MANY = 'A household can have only one Emergency Contact.';
+/**
+ * Shown above the contacts when a household still has two on file from before
+ * the 2026-09-27 ruling. Both stay until the admin removes one; nothing deletes
+ * the second on its own.
+ */
+export const EMERGENCY_CONTACTS_OVER_LIMIT = 'This household has two Emergency Contacts on file. A household has only one now, so remove one of them.';
 /** The tip beside the Emergency Contacts title on every client. */
-export const EMERGENCY_CONTACT_WHO_GETS_CALLED = 'Called only when no kinfolk can be reached. The first one is called first.';
+export const EMERGENCY_CONTACT_WHO_GETS_CALLED = 'Called only when no kinfolk can be reached.';
 
 export interface EmergencyContact {
   name: string;
@@ -124,10 +130,6 @@ export function validateEmergencyContactDrafts(
   if (drafts.some((d) => d.name.trim().length > EMERGENCY_CONTACT_NAME_MAX)) return EMERGENCY_CONTACT_NAME_TOO_LONG;
   if (drafts.some((d) => d.phone.trim().length > EMERGENCY_CONTACT_PHONE_MAX)) return EMERGENCY_CONTACT_PHONE_TOO_LONG;
   if (drafts.some((d) => d.relationship.trim().length > EMERGENCY_CONTACT_RELATIONSHIP_MAX)) return EMERGENCY_CONTACT_RELATIONSHIP_TOO_LONG;
-  const [first, second] = drafts;
-  if (drafts.length === 2 && first !== undefined && second !== undefined && comparablePhone(first.phone) === comparablePhone(second.phone)) {
-    return EMERGENCY_CONTACTS_SAME_PHONE;
-  }
   const names = new Set(household.names.map(comparableName).filter((n) => n !== ''));
   const phones = new Set(household.phones.map(comparablePhone).filter((p) => p !== ''));
   if (drafts.some((d) => names.has(comparableName(d.name)) || phones.has(comparablePhone(d.phone)))) {

@@ -33,6 +33,10 @@ fun AddKinfolkScreen(
     onDuplicate: (kinfolkId: String) -> Unit = {},
 ) {
     val state by viewModel.addKinfolkState.collectAsState()
+    // #1009: reached once, at the top of this composable, never inside the
+    // effect below - `LocalSaveConfirmation.current` is a composition read,
+    // not something a coroutine can do once this screen starts tearing down.
+    val confirmation = LocalSaveConfirmation.current
     // #829 Fix round 1: once the household exists (a retry after a failed
     // contact save), every household field locks - only the Emergency
     // Contact editor stays live, the one thing a retry exists to fix. Web
@@ -41,6 +45,15 @@ fun AddKinfolkScreen(
     // these edits (see `updateAddHouseholdField`), so this is belt and
     // braces, not the only guard.
     val householdFieldsEnabled = !state.isSaving && state.createdKinfolkId == null
+
+    // #1009: shows on the host BEFORE onSaved() pops this screen, so the
+    // confirmation survives the pop instead of being torn down with it.
+    LaunchedEffect(state.successMessage) {
+        state.successMessage?.let {
+            confirmation.show(it)
+            viewModel.clearAddKinfolkSuccessMessage()
+        }
+    }
 
     LaunchedEffect(state.isSuccess) {
         if (state.isSuccess) {
@@ -251,9 +264,7 @@ fun AddKinfolkScreen(
                 EmergencyContactsSection(
                     drafts = state.emergencyContacts,
                     onChange = viewModel::updateAddEmergencyContact,
-                    onAdd = viewModel::addAddEmergencyContact,
                     onRemove = viewModel::removeAddEmergencyContact,
-                    onMoveFirst = viewModel::moveAddEmergencyContactFirst,
                     enabled = !state.isSaving,
                     showNoneOnFile = state.createdKinfolkId != null,
                 )

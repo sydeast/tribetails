@@ -439,4 +439,75 @@ class MembersRepositoryTest {
         assertEquals("rq_8fk29…", inviteHandle("rq_8fk29aLONGTAIL"))
         assertEquals("short", inviteHandle("short"))
     }
+
+    // ── secondary kinfolk person records (2026-09-27 Q3) ────────────────────
+    @Test
+    fun `Q3 listSecondaryKinfolk sends the kinfolkId and decodes each access state`() = runBlocking {
+        val functions = mockk<FirebaseFunctions>()
+        val sent = slot<Map<String, Any?>>()
+        callableReturning(
+            functions, "listSecondaryKinfolk",
+            mapOf("people" to listOf(
+                mapOf("personId" to "p1", "name" to "Sam Lee", "phone" to "+18055550177", "email" to null, "access" to "NONE", "memberUid" to null),
+                mapOf("personId" to "p2", "name" to "Jo", "phone" to null, "email" to "jo@example.com", "access" to "INVITED", "memberUid" to null),
+                mapOf("personId" to "p3", "name" to "Ann", "access" to "ACTIVE", "memberUid" to "u9"),
+                mapOf("name" to "no id, dropped"),
+            )),
+            sent,
+        )
+        val people = repoWith(functions).listSecondaryKinfolk("fam1").getOrThrow()
+        assertEquals(mapOf("kinfolkId" to "fam1"), sent.captured)
+        assertEquals(listOf("p1", "p2", "p3"), people.map { it.personId })
+        assertEquals(
+            listOf(MembersRepository.PersonAccess.NONE, MembersRepository.PersonAccess.INVITED, MembersRepository.PersonAccess.ACTIVE),
+            people.map { it.access },
+        )
+        assertEquals("+18055550177", people[0].phone)
+        assertNull(people[0].email)
+        assertEquals("u9", people[2].memberUid)
+    }
+    @Test
+    fun `Q3 a missing people array is an error, not an empty household`() {
+        assertTrue(runCatching { decodeSecondaryPeople(mapOf("members" to emptyList<Any>())) }.isFailure)
+    }
+    @Test
+    fun `Q3 saveSecondaryKinfolk sends exactly the three fields, blanks included, and no invite or access key`() = runBlocking {
+        val functions = mockk<FirebaseFunctions>()
+        val sent = slot<Map<String, Any?>>()
+        callableReturning(
+            functions, "saveSecondaryKinfolk",
+            mapOf("person" to mapOf("personId" to "p9", "name" to "Sam Lee", "access" to "NONE"), "created" to true),
+            sent,
+        )
+        val saved = repoWith(functions)
+            .saveSecondaryKinfolk("fam1", MembersRepository.SecondaryPersonDraft(name = " Sam Lee ", phone = "", email = " sam@example.com "))
+            .getOrThrow()
+        assertEquals(mapOf("kinfolkId" to "fam1", "name" to "Sam Lee", "phone" to "", "email" to "sam@example.com"), sent.captured)
+        assertEquals("p9", saved.personId)
+    }
+    @Test
+    fun `Q3 an edit carries the personId`() = runBlocking {
+        val functions = mockk<FirebaseFunctions>()
+        val sent = slot<Map<String, Any?>>()
+        callableReturning(functions, "saveSecondaryKinfolk", mapOf("person" to mapOf("personId" to "p1", "name" to "Sam")), sent)
+        repoWith(functions).saveSecondaryKinfolk("fam1", MembersRepository.SecondaryPersonDraft("p1", "Sam", "+18055550177", "")).getOrThrow()
+        assertEquals("p1", sent.captured["personId"])
+        assertEquals(setOf("kinfolkId", "personId", "name", "phone", "email"), sent.captured.keys)
+    }
+    @Test
+    fun `Q3 a blank name is refused with no round trip`() = runBlocking {
+        val functions = mockk<FirebaseFunctions>()
+        val result = repoWith(functions).saveSecondaryKinfolk("fam1", MembersRepository.SecondaryPersonDraft(name = "  "))
+        assertTrue(result.isFailure)
+        assertEquals("A secondary kinfolk needs a name.", result.exceptionOrNull()?.message)
+        io.mockk.verify(exactly = 0) { functions.getHttpsCallable(any()) }
+    }
+    @Test
+    fun `Q3 removeSecondaryKinfolk sends the household and the person`() = runBlocking {
+        val functions = mockk<FirebaseFunctions>()
+        val sent = slot<Map<String, Any?>>()
+        callableReturning(functions, "removeSecondaryKinfolk", mapOf("ok" to true), sent)
+        repoWith(functions).removeSecondaryKinfolk("fam1", "p1").getOrThrow()
+        assertEquals(mapOf("kinfolkId" to "fam1", "personId" to "p1"), sent.captured)
+    }
 }

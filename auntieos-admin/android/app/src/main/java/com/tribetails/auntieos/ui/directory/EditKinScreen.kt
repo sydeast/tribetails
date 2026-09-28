@@ -28,6 +28,9 @@ fun EditKinScreen(
     val breedBank by viewModel.breedBank.collectAsState()
     val breedBankFailed by viewModel.breedBankFailed.collectAsState()
     val context = LocalContext.current
+    // #1009: read once here, at the top of the composable - see
+    // AddKinfolkScreen's identical comment for why.
+    val confirmation = LocalSaveConfirmation.current
 
     // Phase 3: refresh-intelligence (synthesize) state + feedback. Synthesis is
     // per-household, so this passes the kin's parent kinfolkId (state.kinfolkId).
@@ -47,6 +50,16 @@ fun EditKinScreen(
     LaunchedEffect(kinId) {
         viewModel.loadKinForEdit(kinId)
         viewModel.loadBreeds()
+    }
+
+    // #1009: covers both ways this screen sets a message - a save
+    // (saveKinChanges) and an archive/restore (setKinArchived) - both flip the
+    // same isSuccess flag below, so one effect handles both.
+    LaunchedEffect(state.successMessage) {
+        state.successMessage?.let {
+            confirmation.show(it)
+            viewModel.clearEditKinSuccessMessage()
+        }
     }
 
     LaunchedEffect(state.isSuccess) {

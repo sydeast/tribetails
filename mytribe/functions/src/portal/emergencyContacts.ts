@@ -112,7 +112,12 @@ export function parseEmergencyContactsInput(contacts: unknown[]): EmergencyConta
 
 /**
  * The rules every Emergency Contact write passes: at least one, two different
- * phones, the household still exists, and nobody from the household. Shared by
+ * phones, the household still exists, and nobody from the household.
+ *
+ * No count check here on purpose (2026-09-27 Q2, one per household). The direct
+ * callable refuses more than one in `SaveArgs`. saveTribeProfile's old-client
+ * path edits slot 1 and carries a second contact that is already on file, so
+ * it can keep what a household has but never add one. Shared by
  * `saveEmergencyContacts` and saveTribeProfile's old-client path (#829). Reads
  * only: returns the doc to write and the merged list, and throws the same
  * HttpsErrors either caller shows. The caller has already checked home_access.
@@ -136,12 +141,22 @@ export async function prepareEmergencyContactsSave(
 
   const ref = firestore.doc(`kinfolk/${kinfolkId}`);
   const members = firestore.collection(`families/${kinfolkId}/members`);
-  const [kinSnap, membersSnap] = tx
-    ? await Promise.all([tx.get(ref), tx.get(members)])
-    : await Promise.all([ref.get(), members.get()]);
+  // 2026-09-27 Q3: a secondary kinfolk with no portal account is a household
+  // member too (a person record, not a member doc), so an Emergency Contact
+  // cannot be one of them either.
+  const people = firestore.collection(`families/${kinfolkId}/secondaryKinfolk`);
+  const [kinSnap, membersSnap, peopleSnap] = tx
+    ? await Promise.all([tx.get(ref), tx.get(members), tx.get(people)])
+    : await Promise.all([ref.get(), members.get(), people.get()]);
   if (!kinSnap.exists) throw new HttpsError('not-found', 'That household no longer exists.');
   const kinfolk = (kinSnap.data() ?? {}) as Record<string, unknown>;
-  const who = householdIdentity(kinfolk, membersSnap.docs.map((d) => (d.data() ?? {}) as Record<string, unknown>));
+  const who = householdIdentity(kinfolk, [
+    ...membersSnap.docs.map((d) => (d.data() ?? {}) as Record<string, unknown>),
+    ...peopleSnap.docs.map((d) => {
+      const p = (d.data() ?? {}) as Record<string, unknown>;
+      return { displayName: p['name'], phone: p['phone'] };
+    }),
+  ]);
   if (householdClash(contacts, who) !== -1) {
     throw new HttpsError('failed-precondition', EMERGENCY_CONTACT_OUTSIDE_MESSAGE);
   }

@@ -7,6 +7,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import com.tribetails.auntieos.data.repository.MembersRepository
 import com.tribetails.auntieos.ui.theme.AuntieOSTheme
 import io.mockk.coEvery
@@ -22,7 +23,7 @@ import org.robolectric.annotation.Config
  * [HouseholdMembersScreen] laid out as `ui-ideas/auntieos-members-2026-05-27.html`
  * draws it (#755, checklist line Members): the hero names the household and
  * carries the mono where line, the roster is split by role into Primary
- * contact and Secondary contacts with the mock's notes, a primary carries the
+ * contact and Secondary kinfolk (Q4, 2026-09-27) with the mock's notes, a primary carries the
  * "granted by role" capsule and no switch, a secondary carries the permission
  * list with the Locked on chip. And the rulings that have been rebuilt wrong
  * before: no switch on a primary, no admin-minted secondary invite, and (since
@@ -54,10 +55,12 @@ class HouseholdMembersScreenUiTest {
 
     private fun setContent(
         members: List<MembersRepository.Member>,
+        people: List<MembersRepository.SecondaryPerson> = emptyList(),
     ) {
         val repo = mockk<MembersRepository>()
         coEvery { repo.listMembers("fam1") } returns Result.success(members)
         coEvery { repo.listInvites("fam1") } returns Result.success(emptyList())
+        coEvery { repo.listSecondaryKinfolk("fam1") } returns Result.success(people)
         composeRule.setContent {
             AuntieOSTheme {
                 HouseholdMembersBody(
@@ -92,7 +95,7 @@ class HouseholdMembersScreenUiTest {
         // The panels and their notes, in the mock's order.
         composeRule.onNodeWithText("Primary contact").assertIsDisplayed()
         composeRule.onNodeWithText("role: PRIMARY").assertIsDisplayed()
-        composeRule.onNodeWithText("Secondary contacts").assertIsDisplayed()
+        composeRule.onNodeWithText("Secondary kinfolk").assertIsDisplayed()
         composeRule.onNodeWithText("1 of role: SECONDARY").assertIsDisplayed()
         composeRule.onNodeWithText("Invites").assertIsDisplayed()
         // The old single Members panel and its "on file" pill are gone.
@@ -155,6 +158,7 @@ class HouseholdMembersScreenUiTest {
         val repo = mockk<MembersRepository>()
         coEvery { repo.listMembers("fam1") } returns Result.failure(Exception("permission-denied"))
         coEvery { repo.listInvites("fam1") } returns Result.success(emptyList())
+        coEvery { repo.listSecondaryKinfolk("fam1") } returns Result.success(emptyList())
         composeRule.setContent {
             AuntieOSTheme {
                 HouseholdMembersBody(
@@ -170,7 +174,7 @@ class HouseholdMembersScreenUiTest {
         composeRule.waitForIdle()
 
         assertEquals(1, composeRule.onAllNodesWithText("permission-denied", substring = true).fetchSemanticsNodes().size)
-        composeRule.onNodeWithText("Secondary contacts unavailable", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("Secondary kinfolk unavailable", substring = true).assertIsDisplayed()
         assertEquals(0, composeRule.onAllNodesWithText("Nobody has claimed", substring = true).fetchSemanticsNodes().size)
         assertEquals(
             0,
@@ -183,7 +187,7 @@ class HouseholdMembersScreenUiTest {
 
     /**
      * RULING (2026-09-27, #829): "there is no true 'Contact List'." The hero
-     * carries the invite alone, the Secondary contacts panel holds members
+     * carries the invite alone, the Secondary kinfolk panel holds members
      * only, and nothing reads the contacts. `mockk` is strict here, so a call
      * to `listHouseholdContacts` would fail the test on its own.
      */
@@ -200,5 +204,45 @@ class HouseholdMembersScreenUiTest {
             )
         }
         composeRule.onNodeWithText("marcus@example.com").assertIsDisplayed()
+    }
+
+    /**
+     * Operator rulings 2026-09-27. Q4: the panel is "Secondary kinfolk". Q3:
+     * the admin adds a secondary kinfolk with no invite and no portal access,
+     * and never invites one.
+     */
+    @Test
+    fun `Q3 Q4 the panel is Secondary kinfolk, offers Add, and lists people with their access state and no invite control`() {
+        setContent(
+            members = listOf(member("u1", MembersRepository.MemberRole.SECONDARY, "marcus@example.com")),
+            people = listOf(
+                MembersRepository.SecondaryPerson("p1", "Sam Lee", "+18055550177", null, MembersRepository.PersonAccess.NONE, null),
+                MembersRepository.SecondaryPerson("p2", "Jo Park", null, "jo@example.com", MembersRepository.PersonAccess.INVITED, null),
+                MembersRepository.SecondaryPerson("p3", "Ann Doe", null, null, MembersRepository.PersonAccess.ACTIVE, "u9"),
+            ),
+        )
+        composeRule.onNodeWithText("Secondary kinfolk").assertIsDisplayed()
+        assertEquals(0, composeRule.onAllNodesWithText("Secondary contacts", substring = true).fetchSemanticsNodes().size)
+        composeRule.onNode(hasText("Add secondary kinfolk") and hasClickAction()).assertIsDisplayed()
+        composeRule.onNodeWithText("Sam Lee").assertIsDisplayed()
+        composeRule.onNodeWithText("No portal access").assertIsDisplayed()
+        composeRule.onNodeWithText("Jo Park").assertIsDisplayed()
+        assertEquals(true, composeRule.onAllNodesWithText("Invited").fetchSemanticsNodes().isNotEmpty())
+        // ACTIVE is already a member row; the person record is not repeated.
+        assertEquals(0, composeRule.onAllNodesWithText("Ann Doe").fetchSemanticsNodes().size)
+        // The admin cannot invite a secondary kinfolk: no invite control on any row.
+        for (text in listOf("Give portal access", "Invite to MyTribe", "Send invite")) {
+            assertEquals(0, composeRule.onAllNodesWithText(text, substring = true, ignoreCase = true).fetchSemanticsNodes().size)
+        }
+    }
+    @Test
+    fun `Q3 Add opens the dialog with Name, Phone (optional) and Email (optional)`() {
+        setContent(members = emptyList())
+        composeRule.onNode(hasText("Add secondary kinfolk") and hasClickAction()).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("No invite is sent. Only their primary can give them portal access.").assertIsDisplayed()
+        composeRule.onNodeWithText("PHONE (OPTIONAL)").assertExists()
+        composeRule.onNodeWithText("EMAIL (OPTIONAL)").assertExists()
+        // AuntieField draws its label uppercased.
     }
 }

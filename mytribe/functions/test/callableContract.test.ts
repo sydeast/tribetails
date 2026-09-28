@@ -58,6 +58,8 @@ import { Args as SaveTemplateArgs } from '../src/admin/saveTemplate';
 // portal Android) mirror this payload, and `contacts[]` is nested, so it gets
 // the recursive signature.
 import { Args as SaveEmergencyContactsArgs } from '../src/portal/emergencyContacts';
+// 2026-09-27 Q3: five hand-built clients add a secondary kinfolk with no invite.
+import { Args as SaveSecondaryKinfolkArgs } from '../src/portal/secondaryKinfolk';
 // #890: three admin clients (React admin, Android, desktop) now create a
 // household through this callable instead of a direct write.
 import { Args as CreateKinfolkArgs } from '../src/admin/createKinfolk';
@@ -427,6 +429,10 @@ const FROZEN_DEEP_SHAPES: Record<string, { schema: z.ZodTypeAny; signature: stri
   saveEmergencyContacts: {
     schema: SaveEmergencyContactsArgs,
     signature: ['contacts[].name', 'contacts[].phone', 'contacts[].relationship', 'kinfolkId'],
+  },
+  saveSecondaryKinfolk: {
+    schema: SaveSecondaryKinfolkArgs,
+    signature: ['email', 'kinfolkId', 'name', 'personId', 'phone'],
   },
   // Issue #468. Frozen from birth, because two hand-built clients mirror it:
   // the React admin's import view and the Android Templates screen.

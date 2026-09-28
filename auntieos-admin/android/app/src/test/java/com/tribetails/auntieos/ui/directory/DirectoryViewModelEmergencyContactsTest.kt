@@ -290,18 +290,56 @@ class DirectoryViewModelEmergencyContactsTest {
     }
 
     @Test
-    fun `edit with no other change still saves a changed contact list, and never puts it in the diff`() {
+    fun `edit with no other change still saves a changed contact, and never puts it in the diff`() {
         val stored = Kinfolk(id = "kf1", firstName = "Jamie", phoneNumber = "5125550134", emergencyContactName = "Rae", emergencyContactPhone = "5125550190")
         coEvery { repo.getKinfolk() } returns Result.success(listOf(stored))
         coEvery { repo.saveEmergencyContacts("kf1", any()) } returns Result.success(emptyList())
         vm.loadKinfolkForEdit("kf1")
-        vm.addEditEmergencyContact()
-        vm.updateEditEmergencyContact(1, EmergencyContactDraft("Lee Park", "5125550177"))
+        vm.updateEditEmergencyContact(0, EmergencyContactDraft("Lee Park", "5125550177"))
         vm.saveKinfolkChanges()
         coVerify(exactly = 0) { repo.updateKinfolkFields(any(), any()) }
-        coVerify { repo.saveEmergencyContacts("kf1", listOf(EmergencyContactDraft("Rae", "5125550190"), EmergencyContactDraft("Lee Park", "5125550177"))) }
+        coVerify { repo.saveEmergencyContacts("kf1", listOf(EmergencyContactDraft("Lee Park", "5125550177"))) }
     }
-
+    // Operator ruling 2026-09-27 (Q2): one per household. Two on file from the
+    // earlier rule are kept and shown; saving both back is refused, removing one saves.
+    @Test
+    fun `two on file cannot be saved back as two, and removing one saves the other`() {
+        val stored = Kinfolk(
+            id = "kf1", firstName = "Jamie", phoneNumber = "5125550134",
+            emergencyContacts = listOf(
+                mapOf("name" to "Rae", "phone" to "+15125550190"),
+                mapOf("name" to "Lee Park", "phone" to "+15125550177"),
+            ),
+        )
+        coEvery { repo.getKinfolk() } returns Result.success(listOf(stored))
+        coEvery { repo.saveEmergencyContacts("kf1", any()) } returns Result.success(emptyList())
+        vm.loadKinfolkForEdit("kf1")
+        assertEquals(2, vm.editKinfolkState.value.emergencyContacts.size)
+        vm.updateEditEmergencyContact(0, EmergencyContactDraft("Rae", "+15125550190", "Sister"))
+        vm.saveKinfolkChanges()
+        assertEquals("A household can have only one Emergency Contact.", vm.editKinfolkState.value.emergencyContactsError)
+        coVerify(exactly = 0) { repo.saveEmergencyContacts(any(), any()) }
+        vm.removeEditEmergencyContact(0)
+        vm.saveKinfolkChanges()
+        coVerify { repo.saveEmergencyContacts("kf1", listOf(EmergencyContactDraft("Lee Park", "+15125550177"))) }
+    }
+    @Test
+    fun `two on file never block an unrelated edit`() {
+        val stored = Kinfolk(
+            id = "kf1", firstName = "Jamie", phoneNumber = "5125550134",
+            emergencyContacts = listOf(
+                mapOf("name" to "Rae", "phone" to "+15125550190"),
+                mapOf("name" to "Lee Park", "phone" to "+15125550177"),
+            ),
+        )
+        coEvery { repo.getKinfolk() } returns Result.success(listOf(stored))
+        coEvery { repo.updateKinfolkFields("kf1", any()) } returns Result.success(Unit)
+        vm.loadKinfolkForEdit("kf1")
+        vm.updateEditFirstName("Jamey")
+        vm.saveKinfolkChanges()
+        coVerify { repo.updateKinfolkFields("kf1", mapOf("firstName" to "Jamey")) }
+        coVerify(exactly = 0) { repo.saveEmergencyContacts(any(), any()) }
+    }
     @Test
     fun `a household with none saves unrelated edits without being asked for one`() {
         val stored = Kinfolk(id = "kf1", firstName = "Jamie", phoneNumber = "5125550134")

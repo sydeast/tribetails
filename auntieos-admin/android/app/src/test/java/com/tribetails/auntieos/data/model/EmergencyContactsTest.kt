@@ -52,9 +52,11 @@ class EmergencyContactsTest {
             "A relationship can be at most 40 characters.",
             validateEmergencyContactDrafts(listOf(EmergencyContactDraft("Rae", "8055550199", "S".repeat(41))), names, phones),
         )
+        // Operator ruling 2026-09-27 (Q2): one Emergency Contact per household.
+        assertEquals(1, EMERGENCY_CONTACTS_MAX)
         assertEquals(
-            "The two Emergency Contacts need different phone numbers.",
-            validateEmergencyContactDrafts(listOf(EmergencyContactDraft("Rae", "8055550199"), EmergencyContactDraft("Lee", "(805) 555-0199")), names, phones),
+            "A household can have only one Emergency Contact.",
+            validateEmergencyContactDrafts(listOf(EmergencyContactDraft("Rae", "8055550199"), EmergencyContactDraft("Lee", "8055550177")), names, phones),
         )
         assertEquals(EMERGENCY_CONTACT_OUTSIDE, validateEmergencyContactDrafts(listOf(EmergencyContactDraft("Rae", "+1 805 555 0100")), names, phones))
         assertEquals(EMERGENCY_CONTACT_OUTSIDE, validateEmergencyContactDrafts(listOf(EmergencyContactDraft(" dana  MERCER", "8055550199")), names, phones))

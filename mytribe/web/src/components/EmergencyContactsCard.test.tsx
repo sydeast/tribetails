@@ -33,7 +33,9 @@ function mount(props: { onDirtyChange?: (dirty: boolean) => void } = {}) {
 
 const RAE = { name: 'Rae Mercer', phone: '+18055550199', relationship: 'Sister', recordedAt: null, updatedAt: null };
 const LOCKED = 'Only someone with Home access can change the Emergency Contact.';
-const WHO_GETS_CALLED = 'Called only when no kinfolk can be reached. The first one is called first.';
+const WHO_GETS_CALLED = 'Called only when no kinfolk can be reached.';
+const LEE = { name: 'Lee Park', phone: '+18055550177', relationship: null, recordedAt: null, updatedAt: null };
+const OVER_LIMIT = 'This household has two Emergency Contacts on file. A household has only one now, so remove one of them.';
 
 beforeEach(() => {
   mocks.listEmergencyContacts.mockReset();
@@ -58,42 +60,36 @@ describe('EmergencyContactsCard', () => {
     expect(await screen.findByText('Saved.')).toBeInTheDocument();
   });
 
-  it('adds a second contact, moves it first, and clears a relationship', async () => {
+  // Operator ruling 2026-09-27 (Q2): one Emergency Contact per household.
+  it('one on file: no way to add a second, no Call first, no Remove, no notice', async () => {
     mocks.listEmergencyContacts.mockResolvedValue({ contacts: [RAE], canEdit: true, legacy: false });
     mount();
     await screen.findByDisplayValue('Rae Mercer');
-    await userEvent.click(screen.getByRole('button', { name: 'Add a second Emergency Contact' }));
-    await userEvent.type(screen.getByLabelText('Name', { selector: '#ec-1-name' }), 'Lee Park');
-    await userEvent.type(screen.getByLabelText('Phone', { selector: '#ec-1-phone' }), '8055550177');
-    await userEvent.click(screen.getByRole('button', { name: 'Call Lee Park first' }));
-    await userEvent.clear(screen.getByLabelText('Relationship (optional)', { selector: '#ec-1-relationship' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contacts' }));
-    await waitFor(() => expect(mocks.saveEmergencyContacts).toHaveBeenCalledTimes(1));
-    expect(mocks.saveEmergencyContacts.mock.calls[0]?.[0].contacts).toEqual([
-      { name: 'Lee Park', phone: '8055550177', relationship: null },
-      { name: 'Rae Mercer', phone: '+18055550199', relationship: null },
-    ]);
+    expect(screen.queryByRole('button', { name: /add/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /first/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /remove/i })).toBeNull();
+    expect(screen.queryByRole('note')).toBeNull();
+    expect(screen.queryByText('Called first')).toBeNull();
   });
-
-  it('removes the second contact, and never offers a third', async () => {
-    mocks.listEmergencyContacts.mockResolvedValue({
-      contacts: [RAE, { name: 'Lee Park', phone: '+18055550177', relationship: null, recordedAt: null, updatedAt: null }],
-      canEdit: true,
-      legacy: false,
-    });
+  it('two on file: both show under the notice, saving both is refused, and removing one saves the other', async () => {
+    mocks.listEmergencyContacts.mockResolvedValue({ contacts: [RAE, LEE], canEdit: true, legacy: false });
     mount();
     await screen.findByDisplayValue('Lee Park');
-    expect(screen.queryByRole('button', { name: 'Add a second Emergency Contact' })).toBeNull();
+    expect(screen.getByRole('note')).toHaveTextContent(OVER_LIMIT);
+    expect(screen.queryByRole('button', { name: /add/i })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contacts' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('A household can have only one Emergency Contact.');
+    expect(mocks.saveEmergencyContacts).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole('button', { name: 'Remove Emergency Contact 2' }));
     expect(screen.queryByDisplayValue('Lee Park')).toBeNull();
+    expect(screen.queryByRole('note')).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contacts' }));
     await waitFor(() => expect(mocks.saveEmergencyContacts).toHaveBeenCalledTimes(1));
     expect(mocks.saveEmergencyContacts.mock.calls[0]?.[0].contacts).toEqual([
       { name: 'Rae Mercer', phone: '+18055550199', relationship: 'Sister' },
     ]);
   });
-
-  it('refuses to send an empty list, a missing phone, or the same phone twice', async () => {
+  it('refuses to send an empty list or a missing phone', async () => {
     mocks.listEmergencyContacts.mockResolvedValue({ contacts: [], canEdit: true, legacy: false });
     mount();
     await screen.findByLabelText('Name', { selector: '#ec-0-name' });
@@ -104,15 +100,8 @@ describe('EmergencyContactsCard', () => {
     await userEvent.type(screen.getByLabelText('Name', { selector: '#ec-0-name' }), 'Rae Mercer');
     await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contacts' }));
     expect(await screen.findByText('An Emergency Contact needs a phone number.')).toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText('Phone', { selector: '#ec-0-phone' }), '(805) 555-0199');
-    await userEvent.click(screen.getByRole('button', { name: 'Add a second Emergency Contact' }));
-    await userEvent.type(screen.getByLabelText('Name', { selector: '#ec-1-name' }), 'Lee Park');
-    await userEvent.type(screen.getByLabelText('Phone', { selector: '#ec-1-phone' }), '+1 805 555 0199');
-    await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contacts' }));
-    expect(await screen.findByText('The two Emergency Contacts need different phone numbers.')).toBeInTheDocument();
     expect(mocks.saveEmergencyContacts).not.toHaveBeenCalled();
   });
-
   it('shows the server refusal verbatim and keeps what was typed', async () => {
     mocks.listEmergencyContacts.mockResolvedValue({ contacts: [RAE], canEdit: true, legacy: false });
     mocks.saveEmergencyContacts.mockRejectedValue(new Error('An Emergency Contact has to be someone outside the household.'));
@@ -239,14 +228,13 @@ describe('EmergencyContactsCard', () => {
     expect(screen.getByTestId('ec-unsaved')).toBeInTheDocument();
   });
 
-  it('adding or removing a slot is an unsaved change too', async () => {
-    mocks.listEmergencyContacts.mockResolvedValue({ contacts: [RAE], canEdit: true, legacy: false });
+  it('removing one of two on file is an unsaved change too', async () => {
+    mocks.listEmergencyContacts.mockResolvedValue({ contacts: [RAE, LEE], canEdit: true, legacy: false });
     mount();
-    await screen.findByDisplayValue('Rae Mercer');
-    await userEvent.click(screen.getByRole('button', { name: 'Add a second Emergency Contact' }));
-    expect(screen.getByTestId('ec-unsaved')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Remove Emergency Contact 2' }));
+    await screen.findByDisplayValue('Lee Park');
     expect(screen.queryByTestId('ec-unsaved')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Remove Emergency Contact 2' }));
+    expect(screen.getByTestId('ec-unsaved')).toBeInTheDocument();
   });
 
   it('a save writes the reply into the cache instead of refetching, and shows what the server stored', async () => {

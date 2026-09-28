@@ -31,43 +31,62 @@ describe('addSecondaryContactHandler', () => {
     expect(ctx.adds.find((a) => a.collection === 'inviteRequests')).toBeUndefined();
   });
 
-  it('STAFF GATE: an operator with the admin claim can mint an invite for a household that is not their own', async () => {
-    const ctx = buildDbMock({
-      docs: {
-        'clients/op-uid': { kinfolkIds: [] },
-        'kinfolk/3': { firstName: 'Doe' },
-      },
-    });
+  // Operator ruling 2026-09-27 (Q3): the admin invites only the primary; the
+  // primary invites the secondary. Staff used to pass the bypass here.
+  it('STAFF GATE: an operator with the admin claim is refused, and nothing is written', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/op-uid': { kinfolkIds: [] }, 'kinfolk/3': { firstName: 'Doe' } } });
     mocks.dbFn.mockReturnValue(ctx.db);
-    const { addSecondaryContactHandler } = await import('../src/portal/addSecondaryContact');
-    const res = await addSecondaryContactHandler({
-      data: { kinfolkId: '3', invitedEmail: 'partner@x.com' },
-      auth: { uid: 'op-uid', token: { admin: true } },
-    } as any);
-    expect(res.inviteId).toBeTypeOf('string');
-    const wrote = ctx.adds.find((a) => a.collection === 'inviteRequests');
-    expect(wrote?.data.tribeId).toBe('3');
+    const { addSecondaryContactHandler, ONLY_PRIMARY_INVITES_MESSAGE } = await import('../src/portal/addSecondaryContact');
+    await expect(
+      addSecondaryContactHandler({ data: { kinfolkId: '3', invitedEmail: 'partner@x.com' }, auth: { uid: 'op-uid', token: { admin: true } } } as any),
+    ).rejects.toMatchObject({ code: 'permission-denied', message: ONLY_PRIMARY_INVITES_MESSAGE });
+    expect(ctx.adds.find((a) => a.collection === 'inviteRequests')).toBeUndefined();
   });
-
-  it('STAFF GATE: an operator on the AUNTIE_OPERATOR_UIDS allowlist (no admin claim) can mint an invite for a household that is not their own', async () => {
+  it('STAFF GATE: an operator on the AUNTIE_OPERATOR_UIDS allowlist (no admin claim) is refused too', async () => {
     process.env.AUNTIE_OPERATOR_UIDS = 'op-uid';
+    const ctx = buildDbMock({ docs: { 'clients/op-uid': { kinfolkIds: [] }, 'kinfolk/3': { firstName: 'Doe' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { addSecondaryContactHandler } = await import('../src/portal/addSecondaryContact');
+    await expect(
+      addSecondaryContactHandler({ data: { kinfolkId: '3', invitedEmail: 'partner@x.com' }, auth: { uid: 'op-uid' } } as any),
+    ).rejects.toMatchObject({ code: 'permission-denied' });
+    expect(ctx.adds.find((a) => a.collection === 'inviteRequests')).toBeUndefined();
+  });
+  it('PERSON: an invite for a secondary kinfolk the primary added carries personId and marks them INVITED', async () => {
     const ctx = buildDbMock({
       docs: {
-        'clients/op-uid': { kinfolkIds: [] },
-        'kinfolk/3': { firstName: 'Doe' },
+        'clients/u1': { kinfolkIds: ['3'] },
+        'families/3/members/u1': { role: 'PRIMARY', status: 'ACTIVE' },
+        'families/3/secondaryKinfolk/p1': { name: 'Sam Lee', access: 'NONE', memberUid: null },
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     const { addSecondaryContactHandler } = await import('../src/portal/addSecondaryContact');
-    const res = await addSecondaryContactHandler({
-      data: { kinfolkId: '3', invitedEmail: 'partner@x.com' },
-      auth: { uid: 'op-uid' },
-    } as any);
-    expect(res.inviteId).toBeTypeOf('string');
-    const wrote = ctx.adds.find((a) => a.collection === 'inviteRequests');
-    expect(wrote?.data.tribeId).toBe('3');
+    const res = await addSecondaryContactHandler({ data: { kinfolkId: '3', invitedEmail: 'sam@x.com', personId: 'p1' }, auth: { uid: 'u1' } } as any);
+    const invite = ctx.adds.find((a) => a.collection === 'inviteRequests');
+    expect(invite?.data.personId).toBe('p1');
+    const person = ctx.writes.find((w) => w.path === 'families/3/secondaryKinfolk/p1');
+    expect(person?.data).toMatchObject({ access: 'INVITED', inviteId: res.inviteId });
   });
-
+  it('PERSON: refuses a person who already has portal access, or one who is gone, and writes nothing', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'families/3/members/u1': { role: 'PRIMARY', status: 'ACTIVE' },
+        'families/3/secondaryKinfolk/p1': { name: 'Sam Lee', access: 'ACTIVE', memberUid: 'sam-uid' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { addSecondaryContactHandler } = await import('../src/portal/addSecondaryContact');
+    await expect(
+      addSecondaryContactHandler({ data: { kinfolkId: '3', invitedEmail: 'sam@x.com', personId: 'p1' }, auth: { uid: 'u1' } } as any),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+    await expect(
+      addSecondaryContactHandler({ data: { kinfolkId: '3', invitedEmail: 'sam@x.com', personId: 'nope' }, auth: { uid: 'u1' } } as any),
+    ).rejects.toMatchObject({ code: 'not-found' });
+    expect(ctx.adds.find((a) => a.collection === 'inviteRequests')).toBeUndefined();
+    expect(ctx.writes).toHaveLength(0);
+  });
   it('rejects malformed email', async () => {
     const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
     mocks.dbFn.mockReturnValue(ctx.db);

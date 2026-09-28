@@ -25,6 +25,17 @@ fun AddKinScreen(
     val state by viewModel.addKinState.collectAsState()
     val breedBank by viewModel.breedBank.collectAsState()
     val breedBankFailed by viewModel.breedBankFailed.collectAsState()
+    // #1009: read once here, at the top of the composable - see
+    // AddKinfolkScreen's identical comment for why.
+    val confirmation = LocalSaveConfirmation.current
+
+    // #1009: shows on the host BEFORE onSaved() pops this screen.
+    LaunchedEffect(state.successMessage) {
+        state.successMessage?.let {
+            confirmation.show(it)
+            viewModel.clearAddKinSuccessMessage()
+        }
+    }
 
     LaunchedEffect(state.isSuccess) {
         if (state.isSuccess) {

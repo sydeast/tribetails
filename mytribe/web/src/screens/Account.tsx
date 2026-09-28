@@ -391,7 +391,7 @@ export function Account() {
             {/* RECOVERY CONTACTS */}
             <section className="glass card d2">
               <div className="sectlabel">Recovery Contacts</div>
-              <h3 className="title">Secondary Contact</h3>
+              <h3 className="title">Secondary Kinfolk</h3>
               <p className="sub">A backup person we can reach if we cannot reach you during a visit.</p>
 
               <div style={{ marginTop: 18 }}>

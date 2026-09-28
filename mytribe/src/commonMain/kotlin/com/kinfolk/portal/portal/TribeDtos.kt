@@ -141,3 +141,19 @@ data class SavedHouseholdContact(
 /** "Sister · 805 555 0143 · ada@example.com", skipping what is absent. */
 fun HouseholdContact.metaLine(): String =
     listOfNotNull(label, phone, email).filter { it.isNotBlank() }.joinToString(" · ")
+/**
+ * 2026-09-27 Q3. A secondary kinfolk the primary added to the household, from
+ * `listSecondaryKinfolk` (`families/{id}/secondaryKinfolk`). [access] is "NONE"
+ * (no portal account), "INVITED" (the primary sent an invite) or "ACTIVE" (they
+ * accepted, and are already in the household members list). Phone and email
+ * are optional; null means there is none.
+ */
+data class SecondaryKinfolkDto(
+    val personId: String,
+    val name: String,
+    val phone: String?,
+    val email: String?,
+    val access: String,
+    val memberUid: String?,
+    val createdAt: String?,
+)

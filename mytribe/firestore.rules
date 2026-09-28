@@ -498,7 +498,7 @@ service cloud.firestore {
                   || (isTestAdmin() && kinfolkId == testScope());
       // #829: no client writes an Emergency Contact key, staff included. The
       // saveEmergencyContacts callable (Admin SDK, rules bypassed) is the only
-      // writer, so its limits (at most two, not a household member, a valid
+      // writer, so its limits (one per household, not a household member, a valid
       // phone) cannot be skipped by a direct write. `diff()` needs an existing
       // document, so create checks the incoming keys instead. The kinfolk
       // branch stays update-only: on a create or delete its diff() has no
@@ -873,6 +873,14 @@ service cloud.firestore {
  //     by direct SDK read would be a wider audience than the callable grants,
  //     for no screen that asks for it.
       match /contacts/{contactId} {
+        allow read, write: if false;
+      }
+
+      // 2026-09-27 Q3: secondary kinfolk person records (a secondary with no
+      // portal account yet). Closed to every client, the same as contacts: the
+      // listSecondaryKinfolk / saveSecondaryKinfolk / removeSecondaryKinfolk
+      // callables are the only door, and acceptInvite marks one ACTIVE.
+      match /secondaryKinfolk/{personId} {
         allow read, write: if false;
       }
 

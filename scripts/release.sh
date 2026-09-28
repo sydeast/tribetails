@@ -42,6 +42,15 @@
 #   3. index wait     - deploying an index returns before it is Enabled. The
 #                       CLI will not block for you, so this step does.
 #   4. rules          - from mytribe only; safe-deploy refuses a drifted mirror.
+#  4b. storage rules   - from mytribe only, same as 4. mytribe/firebase.json is
+#                       the only firebase.json that declares a storage section
+#                       (no admin mirror exists to drift), but it shipped no
+#                       differently from any other hand-run step until this: a
+#                       storage.rules fix (#999, excluding an Auntie from acting
+#                       as kinfolk on kin photos and KinTale media) landed on
+#                       main and did not go live until someone remembered to run
+#                       `scripts/safe-deploy.sh mytribe -- firebase deploy
+#                       --only storage` by hand.
 #   5. functions      - BEFORE the clients that call them, same reason as 2 in
 #                       reverse: a client calling a function that is not there
 #                       fails at runtime.
@@ -81,9 +90,9 @@
 #                                       this SAME commit already completed it.
 #                                       Without it a rerun skips what
 #                                       .release-progress records as done for
-#                                       HEAD (indexes, rules, fleet-verified
-#                                       mytribe functions, admin codebases) and
-#                                       says so.
+#                                       HEAD (indexes, rules, storage rules,
+#                                       fleet-verified mytribe functions, admin
+#                                       codebases) and says so.
 #   RELEASE_YES=1                      do not prompt (CI). Preconditions still
 #                                       apply; nothing is bypassed.
 #   RELEASE_SKIP_CLIENT_SECRETS=1       skip step 0c and build both web apps
@@ -267,6 +276,7 @@ progress_label() {
     indexes)                   printf 'firestore indexes (steps 2-3)' ;;
     indexes-confirmed)         printf 'firestore indexes confirmed Enabled by the operator at the step 3 prompt' ;;
     rules)                     printf 'firestore rules (step 4)' ;;
+    storage-rules)             printf 'storage rules (step 4b)' ;;
     functions-mytribe)         printf 'functions:mytribe, fleet verified (step 5)' ;;
     functions-mytribe-none)    printf 'functions:mytribe, nothing to deploy (step 5)' ;;
     functions-mytribe-unverified) printf 'functions:mytribe, deployed, not verified (step 5)' ;;
@@ -478,6 +488,7 @@ release_forget_deploy() {
   case "$1" in
     firestore:indexes)     progress_forget indexes; progress_forget indexes-confirmed ;;
     firestore:rules)       progress_forget rules ;;
+    storage)               progress_forget storage-rules ;;
     functions:mytribe)     progress_forget functions-mytribe
                            progress_forget functions-mytribe-none
                            progress_forget functions-mytribe-unverified ;;
@@ -2050,6 +2061,35 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 4b. Storage rules.
+# ---------------------------------------------------------------------------
+banner "4b. Storage rules"
+
+# mytribe/firebase.json is the only firebase.json that declares a storage
+# section (auntieos-admin has none), so unlike firestore.rules there is no
+# admin-tree mirror for a drifted copy to overwrite live rules with, and
+# safe-deploy needs no mirror guard here the way GUARD 3 has one for firestore
+# rules. Still mytribe-only, same as step 4, because mytribe/storage.rules is
+# the one source of truth.
+#
+# THIS STEP EXISTS because it used to not: storage.rules shipped nowhere in
+# this run, so a fix to it (#999, excluding an Auntie from acting as kinfolk on
+# kin photos and KinTale media) sat on main, live only if someone remembered
+# `scripts/safe-deploy.sh mytribe -- firebase deploy --only storage` by hand.
+STEP="deploying storage rules"
+if progress_done storage-rules; then
+  ylw "RESUMED: an earlier run of $RELEASE_SHORT deployed the storage rules. Skipping."
+  ylw "  RELEASE_NO_RESUME=1 redeploys them."
+else
+  deploy mytribe storage
+  grn "storage rules: deployed"
+  # Same reason as the firestore rules check above: the deploy just read
+  # storage.rules from the working tree.
+  release_head_guard "after deploying storage rules"
+  progress_mark storage-rules
+fi
+
+# ---------------------------------------------------------------------------
 # 5. Functions, before the clients that call them.
 # ---------------------------------------------------------------------------
 banner "5. Functions"
@@ -2787,7 +2827,8 @@ else
   # Named honestly from the same state the run already tracked, not a
   # blanket "shipped everything": a skipped or failed piece says so here too.
   SHIPPED="hosting: admin + kinfolk portal
-firestore: indexes + rules (mytribe)"
+firestore: indexes + rules (mytribe)
+storage: rules (mytribe)"
   if [ "$FUNCTIONS_CHANGED" -eq 1 ]; then
     SHIPPED="$SHIPPED
 functions: mytribe ($FUNCTIONS_SHIPPED_DESC)"

@@ -379,10 +379,27 @@ fun TribeScreen(
             )
 
             // Household members: edit an existing secondary's permissions.
-            HouseholdMembersCard(kinfolkId = kinfolkId, portalApi = portalApi)
+            var invitePrefill by remember(kinfolkId) { mutableStateOf<InvitePrefill?>(null) }
+            var secondaryReload by remember(kinfolkId) { mutableStateOf(0) }
+            HouseholdMembersCard(kinfolkId = kinfolkId, portalApi = portalApi, reloadKey = secondaryReload)
 
-            // Secondary Kinfolk invite — moved here from Account settings.
-            SecondaryInviteCard(kinfolkId = kinfolkId, portalApi = portalApi)
+            // 2026-09-27 Q3: a secondary kinfolk added with no invite and no
+            // portal access. "Give portal access" fills the invite card below.
+            SecondaryKinfolkCard(
+                kinfolkId = kinfolkId,
+                portalApi = portalApi,
+                reloadKey = secondaryReload,
+                onGivePortalAccess = { invitePrefill = it },
+            )
+
+            // Secondary Kinfolk invite, moved here from Account settings.
+            SecondaryInviteCard(
+                kinfolkId = kinfolkId,
+                portalApi = portalApi,
+                prefill = invitePrefill,
+                onClearPrefill = { invitePrefill = null },
+                onInvited = { invitePrefill = null; secondaryReload += 1 },
+            )
 
             // No contacts card: the 2026-09-27 ruling (#829) says "there is no
             // true 'Contact List'". The Emergency Contact is a household item and
@@ -1157,14 +1174,14 @@ internal fun clinicAlreadyOnList(name: String, clinics: List<VetClinic>): Boolea
  * `messaging_group` is preserved as-is on save.
  */
 @Composable
-private fun HouseholdMembersCard(kinfolkId: String, portalApi: PortalApi) {
+private fun HouseholdMembersCard(kinfolkId: String, portalApi: PortalApi, reloadKey: Int = 0) {
     val type = LocalKinfolkTypography.current
     var members by remember { mutableStateOf<List<com.kinfolk.portal.portal.Member>?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
     // Bumped after a successful save to re-fetch and reflect persisted state.
-    var reloadKey by remember { mutableStateOf(0) }
+    var localReload by remember { mutableStateOf(0) }
 
-    LaunchedEffect(kinfolkId, reloadKey) {
+    LaunchedEffect(kinfolkId, reloadKey, localReload) {
         try {
             members = portalApi.listMembers(kinfolkId)
             loadError = null
@@ -1208,7 +1225,7 @@ private fun HouseholdMembersCard(kinfolkId: String, portalApi: PortalApi) {
                                 kinfolkId = kinfolkId,
                                 member = member,
                                 portalApi = portalApi,
-                                onSaved = { reloadKey += 1 },
+                                onSaved = { localReload += 1 },
                             )
                         }
                     }
@@ -1324,11 +1341,27 @@ private fun statusLabel(status: String): String = when (status) {
 /** Invite a secondary kinfolk (partner / family / trusted friend) to the Tribe.
  *  Moved here from Account settings; backed by the addSecondaryContact callable. */
 @Composable
-private fun SecondaryInviteCard(kinfolkId: String, portalApi: PortalApi) {
+private fun SecondaryInviteCard(
+    kinfolkId: String,
+    portalApi: PortalApi,
+    prefill: InvitePrefill? = null,
+    onClearPrefill: () -> Unit = {},
+    onInvited: () -> Unit = {},
+) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
     var email by remember { mutableStateOf("") }
     var role by remember { mutableStateOf("") }
+    // 2026-09-27 Q3: "Give portal access" on a secondary kinfolk the primary
+    // added first fills the email (blank when none is on file) and the role
+    // with their name; the person id rides into the invite so the server links
+    // the two. The primary still sets the permissions with the toggles below.
+    LaunchedEffect(prefill) {
+        if (prefill != null) {
+            email = prefill.email
+            role = prefill.name.take(24)
+        }
+    }
     var canEditPets by remember { mutableStateOf(false) }
     var canAccessHome by remember { mutableStateOf(false) }
     var inviting by remember { mutableStateOf(false) }
@@ -1344,8 +1377,18 @@ private fun SecondaryInviteCard(kinfolkId: String, portalApi: PortalApi) {
                 title = "Invite a Kinfolk",
                 sub = "Add a partner, family member, or trusted friend to your Tribe.",
             )
-            KinField(value = email, onValueChange = { email = it }, label = "Email", modifier = Modifier.fillMaxWidth())
-            KinField(value = role, onValueChange = { role = it }, label = "Their role (e.g. Co-Parent, Sister)", modifier = Modifier.fillMaxWidth())
+            prefill?.let { p ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Giving portal access to ${p.name}",
+                        style = type.sansLabel.copy(color = KinfolkBrand.KinTeal),
+                        modifier = Modifier.weight(1f),
+                    )
+                    com.kinfolk.portal.components.KinGhostButton(label = "Clear", onClick = onClearPrefill)
+                }
+            }
+            KinField(value = email, onValueChange = { email = it }, label = "Email", fieldTestTag = "invite-email", modifier = Modifier.fillMaxWidth())
+            KinField(value = role, onValueChange = { role = it }, label = "Their role (e.g. Co-Parent, Sister)", fieldTestTag = "invite-role", modifier = Modifier.fillMaxWidth())
             AccessToggleRow(
                 label = "Can edit pets",
                 value = canEditPets,
@@ -1370,7 +1413,9 @@ private fun SecondaryInviteCard(kinfolkId: String, portalApi: PortalApi) {
                                 secondaryLabel = role.trim().ifBlank { null },
                                 kinEdit = canEditPets,
                                 homeAccess = canAccessHome,
+                                personId = prefill?.personId,
                             )
+                            onInvited()
                             email = ""
                             role = ""
                             canEditPets = false
