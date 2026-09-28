@@ -480,6 +480,14 @@ class DirectoryViewModel(
      */
     val accountCredit: AccountCreditController by lazy { AccountCreditController(invoiceRepository, viewModelScope) }
 
+    /**
+     * #1003: "Payments needing a decision" inside the Account credit section. A
+     * saved decision may add credit, so it reloads [accountCredit] too.
+     */
+    val unappliedPayments: UnappliedPaymentsController by lazy {
+        UnappliedPaymentsController(invoiceRepository, viewModelScope, onSaved = { accountCredit.load(it) })
+    }
+
     private val _addKinfolkState = MutableStateFlow(AddKinfolkUiState())
     val addKinfolkState: StateFlow<AddKinfolkUiState> = _addKinfolkState.asStateFlow()
 
