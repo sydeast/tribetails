@@ -477,6 +477,50 @@ class FirestoreClient {
         }
     }
 
+    // ── secondary kinfolk person records (2026-09-27 Q3) ─────────────────────
+    suspend fun listSecondaryKinfolk(kinfolkId: String): WriteResult<List<SecondaryPerson>> {
+        val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
+        return when (val r = platformInvokeCallable("listSecondaryKinfolk", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatching {
+                WriteResult.Ok(secondaryPeopleFromJson(callableJson.parseToJsonElement(r.value).jsonObject))
+            }.getOrElse { WriteResult.Err(it.message ?: "listSecondaryKinfolk decode failed") }
+        }
+    }
+    /**
+     * Adds (no personId) or edits a secondary kinfolk. No invite, no portal
+     * access. Sends exactly the three fields the dialog shows, blanks included
+     * (the server stores a cleared field as null); never `access` or `memberUid`.
+     */
+    suspend fun saveSecondaryKinfolk(kinfolkId: String, draft: SecondaryPersonDraft): WriteResult<SecondaryPerson> {
+        val name = draft.name.trim()
+        if (name.isBlank()) return WriteResult.Err(SECONDARY_KINFOLK_NAME_REQUIRED)
+        val payload = buildJsonObject {
+            put("kinfolkId", JsonPrimitive(kinfolkId))
+            draft.personId?.takeIf { it.isNotBlank() }?.let { put("personId", JsonPrimitive(it)) }
+            put("name", JsonPrimitive(name))
+            put("phone", JsonPrimitive(draft.phone.trim()))
+            put("email", JsonPrimitive(draft.email.trim()))
+        }
+        return when (val r = platformInvokeCallable("saveSecondaryKinfolk", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatching {
+                val person = callableJson.parseToJsonElement(r.value).jsonObject["person"] as? JsonObject
+                    ?: error("saveSecondaryKinfolk: no person in the answer")
+                WriteResult.Ok(secondaryPersonFromJson(person) ?: error("saveSecondaryKinfolk: no personId in the answer"))
+            }.getOrElse { WriteResult.Err(it.message ?: "saveSecondaryKinfolk decode failed") }
+        }
+    }
+    suspend fun removeSecondaryKinfolk(kinfolkId: String, personId: String): WriteResult<Unit> {
+        val payload = buildJsonObject {
+            put("kinfolkId", JsonPrimitive(kinfolkId))
+            put("personId", JsonPrimitive(personId))
+        }
+        return when (val r = platformInvokeCallable("removeSecondaryKinfolk", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+        }
+    }
     suspend fun listAudienceSegments(): WriteResult<List<com.tribetails.auntieos.web.screens.communicate.AudienceSegment>> {
         return when (val r = platformInvokeCallable("listAudienceSegments", "{}")) {
             is WriteResult.Err -> WriteResult.Err(r.message)

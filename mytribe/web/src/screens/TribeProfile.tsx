@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getBusinessContact } from '../api/portal';
 import { SecretField } from '../components/SecretField';
 import { EmergencyContactsCard } from '../components/EmergencyContactsCard';
+import { SecondaryKinfolkCard, secondaryKinfolkQueryKey } from '../components/SecondaryKinfolkCard';
 import {
   addSecondaryContact,
   blameUnfinishedHalf,
@@ -32,6 +33,7 @@ import {
   type FormFieldDto,
   type FormSchemaDto,
   type MemberDto,
+  type SecondaryKinfolkDto,
 } from '../api/tribeApi';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
@@ -106,6 +108,8 @@ export function TribeProfile() {
   const vetClinicsQ = useQuery({ queryKey: ['vetClinics'], queryFn: () => getVetClinics() });
   const contactQ = useQuery({ queryKey: ['businessContact'], queryFn: () => getBusinessContact() });
   const membersQ = useQuery({ queryKey: ['members', kinfolkId], queryFn: () => listMembers(kinfolkId) });
+  // 2026-09-27 Q3: a secondary kinfolk handed to the invite card by "Give portal access".
+  const [invitePrefill, setInvitePrefill] = useState<SecondaryKinfolkDto | null>(null);
 
   // ---- Family ----
   const [displayName, setDisplayName] = useState('');
@@ -677,8 +681,22 @@ export function TribeProfile() {
                 )}
               </section>
 
+              {/* SECONDARY KINFOLK (2026-09-27 Q3): added with no invite and no
+                  portal access. "Give portal access" pre-fills the invite below. */}
+              <SecondaryKinfolkCard
+                kinfolkId={kinfolkId}
+                onGiveAccess={(p) => {
+                  setInvitePrefill(p);
+                  document.getElementById('invite-kinfolk')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+                }}
+              />
               {/* INVITE A KINFOLK — no mockup coverage; ported from SecondaryInviteCard in TribeScreen.kt */}
-              <InviteKinfolkCard kinfolkId={kinfolkId} />
+              <InviteKinfolkCard
+                kinfolkId={kinfolkId}
+                prefill={invitePrefill}
+                onClearPrefill={() => setInvitePrefill(null)}
+                onInvited={() => void queryClient.invalidateQueries({ queryKey: secondaryKinfolkQueryKey(kinfolkId) })}
+              />
 
               {/* No contacts card: the 2026-09-27 ruling (#829) says "there is no
                   true 'Contact List'". The Emergency Contact is a household item
@@ -916,13 +934,29 @@ function MemberPermissionRow(props: { kinfolkId: string | undefined; member: Mem
   );
 }
 
-/** Invite a secondary kinfolk, ported from SecondaryInviteCard in TribeScreen.kt. */
-function InviteKinfolkCard(props: { kinfolkId: string | undefined }) {
-  const { kinfolkId } = props;
+/**
+ * Invite a secondary kinfolk, ported from SecondaryInviteCard in TribeScreen.kt.
+ *
+ * 2026-09-27 Q3: `prefill` is a secondary kinfolk the primary added earlier with
+ * no portal access. Their email (blank if none) and name fill the form, and the
+ * invite carries their `personId`, so accepting it gives THAT person access.
+ */
+function InviteKinfolkCard(props: {
+  kinfolkId: string | undefined;
+  prefill?: SecondaryKinfolkDto | null;
+  onClearPrefill?: () => void;
+  onInvited?: () => void;
+}) {
+  const { kinfolkId, prefill = null, onClearPrefill, onInvited } = props;
   const [email, setEmail] = useState('');
   const [role, setRole] = useState('');
   const [canEditPets, setCanEditPets] = useState(false);
   const [canAccessHome, setCanAccessHome] = useState(false);
+  useEffect(() => {
+    if (prefill === null) return;
+    setEmail(prefill.email ?? '');
+    setRole(prefill.name.slice(0, 40));
+  }, [prefill]);
 
   // HOLD. `addSecondaryContact` short-circuits on a live PENDING inviteRequest
   // for the same address rather than minting a second, and sends no email of
@@ -935,17 +969,20 @@ function InviteKinfolkCard(props: { kinfolkId: string | undefined }) {
         invitedEmail: email.trim(),
         ...(role.trim() ? { secondaryLabel: role.trim() } : {}),
         permissions: { kin_edit: canEditPets, home_access: canAccessHome },
+        ...(prefill !== null ? { personId: prefill.personId } : {}),
       }),
     onSuccess: () => {
       setEmail('');
       setRole('');
       setCanEditPets(false);
       setCanAccessHome(false);
+      onClearPrefill?.();
+      onInvited?.();
     },
   }, { policy: 'hold', what: 'this invite' });
 
   return (
-    <section className="glass card d4">
+    <section className="glass card d4" id="invite-kinfolk">
       <div className="cardhead">
         <div className="ic teal">{'\u{1F46A}'}</div>
         <div className="htxt">
@@ -953,6 +990,14 @@ function InviteKinfolkCard(props: { kinfolkId: string | undefined }) {
           <p className="sub">Add a partner, family member, or trusted friend to your Tribe.</p>
         </div>
       </div>
+      {prefill !== null && (
+        <div className="contactactions" data-testid="invite-for-person">
+          <span className="sub">Giving portal access to {prefill.name}</span>
+          <button type="button" className="btn ghost" onClick={() => onClearPrefill?.()}>
+            Cancel
+          </button>
+        </div>
+      )}
       <div className="grid2">
         <div className="field full">
           <label htmlFor="inv-email">Email</label>

@@ -56,6 +56,7 @@ function household(opts: {
   caller?: { uid: string; member?: Record<string, unknown> | null };
   kinfolk?: Record<string, unknown>;
   members?: Array<{ id: string; data: Record<string, unknown> }>;
+  people?: Array<{ id: string; data: Record<string, unknown> }>;
 } = {}) {
   const caller = opts.caller ?? { uid: 'primary-uid', member: { role: 'PRIMARY', status: 'ACTIVE' } };
   const members = opts.members ?? [];
@@ -66,7 +67,7 @@ function household(opts: {
       ...Object.fromEntries(members.map((m) => [`families/fam1/members/${m.id}`, m.data])),
       'kinfolk/fam1': opts.kinfolk ?? PRIMARY_DOC,
     },
-    queryDocs: { 'families/fam1/members': members },
+    queryDocs: { 'families/fam1/members': members, 'families/fam1/secondaryKinfolk': opts.people ?? [] },
   });
 }
 
@@ -295,5 +296,21 @@ describe('listEmergencyContactsHandler', () => {
     const ctx = household({ caller: { uid: 'second-uid', member: { role: 'SECONDARY', status: 'REMOVED', permissions: { home_access: true } } } });
     mocks.dbFn.mockReturnValue(ctx.db);
     await expect(listEmergencyContactsHandler(call({ kinfolkId: 'fam1' }, 'second-uid'))).rejects.toMatchObject({ code: 'permission-denied' });
+  });
+});
+
+describe('saveEmergencyContactsHandler and secondary kinfolk (2026-09-27 Q3)', () => {
+  // 2026-09-27 Q3: a secondary kinfolk with no portal account is a household
+  // member (a person record), so they cannot be the Emergency Contact either.
+  it("OUTSIDE: refuses a secondary kinfolk with no portal account, by name or phone", async () => {
+    const ctx = household({ people: [{ id: 'p1', data: { name: 'Sam Lee', phone: '+18055550177', access: 'NONE' } }] });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [{ name: 'sam  LEE', phone: '8055550199' }] }))).rejects.toMatchObject({
+      message: EMERGENCY_CONTACT_OUTSIDE_MESSAGE,
+    });
+    await expect(saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [{ name: 'Rae', phone: '(805) 555-0177' }] }))).rejects.toMatchObject({
+      message: EMERGENCY_CONTACT_OUTSIDE_MESSAGE,
+    });
+    expect(ctx.writes).toHaveLength(0);
   });
 });

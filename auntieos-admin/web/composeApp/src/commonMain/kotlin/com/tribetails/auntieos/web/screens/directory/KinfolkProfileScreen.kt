@@ -361,6 +361,13 @@ fun KinfolkProfileScreen(
                     }
                 }
             }
+            // ---- Secondary kinfolk (2026-09-27, Q3 and Q4) ----
+            // People in the household with no portal account yet. Added here
+            // with no invite; only the household's primary can invite one.
+            Spacer(Modifier.height(18.dp))
+            Panel(title = "Secondary kinfolk", icon = Lucide.Users, tone = AuntieStatusTone.Teal) {
+                SecondaryKinfolkSection(client = client, kinfolkId = kinfolkId, householdName = kinfolk.displayName)
+            }
             // ---- Vet Clinic (household-level) ----
             if (kinfolk.vetClinicName.isNotBlank() ||
                 kinfolk.vetClinicPhone.isNotBlank() ||

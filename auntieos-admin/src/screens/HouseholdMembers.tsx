@@ -45,6 +45,7 @@ import { Toggle } from '../components/Toggle';
 import { Dialog } from '../components/Dialog';
 import { useToast } from '../components/Toast';
 import { useHistoryBack } from '../lib/useHistoryBack';
+import { SecondaryKinfolkList } from '../components/SecondaryKinfolkList';
 import './HouseholdMembers.css';
 
 /**
@@ -100,7 +101,7 @@ import './HouseholdMembers.css';
  * THE SHAPE IS THE MOCK'S (#755). `ui-ideas/auntieos-members-2026-05-27.html`
  * draws a hero band with the household's crest, its name, a mono line with the
  * family id and the member counts, and the actions on the right; then a
- * Primary contact panel and a Secondary contacts panel, each member a block
+ * Primary contact panel and a Secondary kinfolk panel, each member a block
  * with a 58px circle, the name, a role capsule and a status capsule. The
  * invites half follows `auntieos-invites-2026-05-27.html` the way the
  * admin-wide Invites screen draws it: a tone stripe, a 42px circle, the
@@ -414,7 +415,7 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
     setRemoveTarget(member);
   }
 
-  // The mock's `.ct` on the Secondary contacts panel: "2 of role: SECONDARY".
+  // The mock's `.ct` on the Secondary kinfolk panel: "2 of role: SECONDARY".
   // Written only from a read roster; a count is a claim.
   const secondaryCount =
     members.status === 'ready' ? members.data.filter((m) => m.role === 'SECONDARY').length : null;
@@ -545,15 +546,16 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
 
       <DenPanel
         className="d2"
-        title="Secondary contacts"
+        // Q4 (operator, 2026-09-27): "Secondary kinfolk", the ruling's own term.
+        title="Secondary kinfolk"
         meta={secondaryMeta}
-        subtitle="Invited to the portal by their primary from MyTribe: they sign in, they carry a label and a permission set you can edit here, and KinTales access is locked on by the server for everyone."
+        subtitle="Added here with no portal access, or invited to the portal by their primary from MyTribe. Only the primary can invite one. Once they sign in they carry a label and a permission set you can edit here, and KinTales access is locked on by the server."
       >
-        {members.status === 'loading' && <AsyncLoading what="secondary contacts" />}
+        {members.status === 'loading' && <AsyncLoading what="secondary kinfolk" />}
         {/* One named failure on the page, in the panel above. This one only
             says it is unknown, so the same message is not read out twice. */}
         {members.status === 'error' && (
-          <ErrorHint>Secondary contacts unavailable while the member list is failing.</ErrorHint>
+          <ErrorHint>Secondary kinfolk with portal access are unavailable while the member list is failing.</ErrorHint>
         )}
         {members.status === 'ready' &&
           (members.data.some((m) => m.role === 'SECONDARY') ? (
@@ -576,6 +578,9 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
               does that from MyTribe.
             </EmptyHint>
           ))}
+        {/* 2026-09-27 Q3: secondary kinfolk with no portal account. Added
+            here with no invite; portal access only through their primary. */}
+        <SecondaryKinfolkList kinfolkId={kinfolkId} />
 
       </DenPanel>
 

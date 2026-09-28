@@ -44,6 +44,9 @@ const api = vi.hoisted(() => ({
   listHouseholdContacts: vi.fn(),
   saveHouseholdContact: vi.fn(),
   removeHouseholdContact: vi.fn(),
+  listSecondaryKinfolk: vi.fn(),
+  saveSecondaryKinfolk: vi.fn(),
+  removeSecondaryKinfolk: vi.fn(),
 }));
 
 vi.mock('../api/members', async (orig) => ({
@@ -67,6 +70,12 @@ vi.mock('../api/householdContacts', async (orig) => ({
   removeHouseholdContact: api.removeHouseholdContact,
 }));
 
+vi.mock('../api/secondaryKinfolk', async (orig) => ({
+  ...(await orig<typeof import('../api/secondaryKinfolk')>()),
+  listSecondaryKinfolk: api.listSecondaryKinfolk,
+  saveSecondaryKinfolk: api.saveSecondaryKinfolk,
+  removeSecondaryKinfolk: api.removeSecondaryKinfolk,
+}));
 import { ToastProvider } from '../components/Toast';
 import { HouseholdMembers, householdInitial, inviteMetaLine, whereLine } from './HouseholdMembers';
 import type { HouseholdInvite, HouseholdMember, RecoveryCandidate } from '../api/members';
@@ -147,6 +156,7 @@ function mount(
 
 beforeEach(() => {
   for (const fn of Object.values(api)) fn.mockReset();
+  api.listSecondaryKinfolk.mockResolvedValue([]);
   routerHistory.canGoBack.mockReset();
   routerHistory.canGoBack.mockReturnValue(false);
   routerHistory.back.mockReset();
@@ -733,13 +743,14 @@ describe('HouseholdMembers mock structure', () => {
     expect(householdInitial('fam1')).toBe('F');
   });
 
-  it('splits the roster by role into Primary contact and Secondary contacts, then Invites, with the mock meta', async () => {
+  // Q4 (operator, 2026-09-27): the panel is "Secondary kinfolk".
+  it('splits the roster by role into Primary contact and Secondary kinfolk, then Invites, with the mock meta', async () => {
     mount({ members: [primary(), member()] });
     await screen.findByText('marcus@example.com');
     const titles = Array.from(document.querySelectorAll('.den-panel-title')).map(
       (el) => el.textContent,
     );
-    expect(titles).toEqual(['Primary contact', 'Secondary contacts', 'Invites']);
+    expect(titles).toEqual(['Primary contact', 'Secondary kinfolk', 'Invites']);
     const metas = Array.from(document.querySelectorAll('.den-panel-meta')).map(
       (el) => el.textContent,
     );
@@ -842,7 +853,7 @@ describe('HouseholdMembers mock structure', () => {
     api.listHouseholdInvites.mockResolvedValue([]);
     render(<HouseholdMembers kinfolkId="fam1" kinfolkName="the Walls" onBack={() => {}} />);
     expect(await screen.findByText(/listMembers failed/)).toBeInTheDocument();
-    expect(screen.getByText(/Secondary contacts unavailable/)).toBeInTheDocument();
+    expect(screen.getByText(/Secondary kinfolk with portal access are unavailable/)).toBeInTheDocument();
     expect(screen.queryByText(/No secondary contacts yet/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Swap primary' })).toBeNull();
   });
@@ -919,5 +930,81 @@ describe('HouseholdMembers has no contacts list', () => {
     expect(api.listHouseholdContacts).not.toHaveBeenCalled();
     expect(api.saveHouseholdContact).not.toHaveBeenCalled();
     expect(api.removeHouseholdContact).not.toHaveBeenCalled();
+  });
+});
+/**
+ * Operator rulings 2026-09-27. Q3: "A Secondary kinfolk can be added to the
+ * household but doesn't have portal access unless PK invites them and set
+ * access." The admin invites only the primary. Q4: the panel reads "Secondary
+ * kinfolk".
+ */
+describe('HouseholdMembers secondary kinfolk with no portal access (Q3)', () => {
+  const sam = { personId: 'p1', name: 'Sam Lee', phone: '+18055550177', email: null, access: 'NONE' as const, memberUid: null };
+  const jo = { personId: 'p2', name: 'Jo Park', phone: null, email: 'jo@example.com', access: 'INVITED' as const, memberUid: null };
+  const active = { personId: 'p3', name: 'Ada Wall', phone: null, email: null, access: 'ACTIVE' as const, memberUid: 'u1' };
+  it('lists the ones without portal access with their state, skips an ACTIVE one, and offers no invite', async () => {
+    api.listSecondaryKinfolk.mockResolvedValue([sam, jo, active]);
+    mount();
+    const panel = (await screen.findByText('Sam Lee')).closest('[data-testid="secondary-kinfolk"]') as HTMLElement;
+    const rows = within(panel).getAllByTestId('secondary-kinfolk-row');
+    expect(rows.map((r) => r.textContent)).toEqual([
+      expect.stringContaining('No portal access'),
+      expect.stringContaining('Invited'),
+    ]);
+    expect(within(panel).queryByText('Ada Wall')).toBeNull();
+    expect(api.listSecondaryKinfolk).toHaveBeenCalledWith('fam1');
+    expect(within(panel).queryByRole('button', { name: /invite|portal access/i })).toBeNull();
+  });
+  it('adds one with a name only: no invite is sent, and the list reloads', async () => {
+    api.saveSecondaryKinfolk.mockResolvedValue(undefined);
+    mount();
+    await userEvent.click(await screen.findByRole('button', { name: 'Add secondary kinfolk' }));
+    const dialog = screen.getByRole('dialog');
+    await userEvent.type(within(dialog).getByLabelText('Name'), 'Sam Lee');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(api.saveSecondaryKinfolk).toHaveBeenCalledWith('fam1', { name: 'Sam Lee', phone: '', email: '' }, undefined));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(api.listSecondaryKinfolk).toHaveBeenCalledTimes(2);
+    expect(api.inviteKinfolkToPortal).not.toHaveBeenCalled();
+  });
+  it('refuses a blank name locally, and shows a server refusal verbatim with the typing kept', async () => {
+    api.saveSecondaryKinfolk.mockRejectedValue(new Error("That is the household's Emergency Contact. An Emergency Contact is someone outside the household."));
+    mount();
+    await userEvent.click(await screen.findByRole('button', { name: 'Add secondary kinfolk' }));
+    const dialog = screen.getByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    expect(within(dialog).getByText('A secondary kinfolk needs a name.')).toBeInTheDocument();
+    expect(api.saveSecondaryKinfolk).not.toHaveBeenCalled();
+    await userEvent.type(within(dialog).getByLabelText('Name'), 'Rae Park');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    expect(await within(dialog).findByText(/Emergency Contact is someone outside the household/)).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Name')).toHaveValue('Rae Park');
+  });
+  it('edits one, sending every field with its person id', async () => {
+    api.listSecondaryKinfolk.mockResolvedValue([sam]);
+    api.saveSecondaryKinfolk.mockResolvedValue(undefined);
+    mount();
+    const row = (await screen.findByText('Sam Lee')).closest('li') as HTMLElement;
+    await userEvent.click(within(row).getByRole('button', { name: 'Edit' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByLabelText('Phone (optional)')).toHaveValue('+18055550177');
+    await userEvent.clear(within(dialog).getByLabelText('Phone (optional)'));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(api.saveSecondaryKinfolk).toHaveBeenCalledWith('fam1', { name: 'Sam Lee', phone: '', email: '' }, 'p1'));
+  });
+  it('removes one after a confirm', async () => {
+    api.listSecondaryKinfolk.mockResolvedValue([sam]);
+    api.removeSecondaryKinfolk.mockResolvedValue(undefined);
+    mount();
+    const row = (await screen.findByText('Sam Lee')).closest('li') as HTMLElement;
+    await userEvent.click(within(row).getByRole('button', { name: 'Remove' }));
+    const dialog = screen.getByRole('dialog', { name: 'Remove Sam Lee?' });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(api.removeSecondaryKinfolk).toHaveBeenCalledWith('fam1', 'p1'));
+  });
+  it('a failed read says so by name, never an empty list', async () => {
+    api.listSecondaryKinfolk.mockRejectedValue(new Error('permission-denied'));
+    mount();
+    expect(await screen.findByText(/listSecondaryKinfolk failed: permission-denied/)).toBeInTheDocument();
   });
 });

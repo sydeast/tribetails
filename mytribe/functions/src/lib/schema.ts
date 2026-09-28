@@ -69,6 +69,8 @@ export interface InviteRequestDoc {
   secondaryLabel?: string | null;
   proposedPermissions: MemberPermissions;
   proposedRole: MemberRole;
+  /** 2026-09-27 Q3: the `families/{tribeId}/secondaryKinfolk` record this invite is for, if any. */
+  personId?: string;
   // `requiresAuntieAck` used to live here. It was set true only when an invite
   // carried `billing_full`, and NOTHING ever acknowledged it or read it as a
   // gate: `acceptInvite` applied `proposedPermissions` verbatim either way. Per
