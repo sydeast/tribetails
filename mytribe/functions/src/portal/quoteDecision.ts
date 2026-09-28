@@ -13,7 +13,8 @@ import { validateResponse } from '../lib/callableResponse';
 import { InvoiceStateSchema, OkSchema } from '../lib/invoiceResponseSchema';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
-import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
+// #1005: money notices go to a member with billing access, not the last-synced account.
+import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import {
   businessTodayIso,
@@ -289,7 +290,7 @@ async function decideQuote(
   // `data` because the template enricher hydrates {{kinName}} from it.
   const key = decision === 'accepted' ? 'quote.accepted' : 'quote.denied';
   try {
-    const recipientUid = decision === 'accepted' ? await resolveKinfolkUid(outcome.kinfolkId) : null;
+    const recipientUid = decision === 'accepted' ? await resolveBillingRecipientUid(outcome.kinfolkId) : null;
     await enqueueNotification({
       key,
       recipientUid: recipientUid ?? '',

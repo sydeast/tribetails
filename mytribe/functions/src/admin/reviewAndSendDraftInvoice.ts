@@ -7,7 +7,8 @@ import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
-import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
+// #1005: money notices go to a member with billing access, not the last-synced account.
+import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
@@ -127,7 +128,7 @@ export async function reviewAndSendDraftInvoiceHandler(
   }
 
   const familyId = data.kinfolkId as string;
-  const recipientUid = await resolveKinfolkUid(familyId);
+  const recipientUid = await resolveBillingRecipientUid(familyId);
 
   // Fail loud: if dispatch throws, the callable surfaces it (no swallow) and
   // the invoice stays in DRAFT, so the admin sees the send did NOT happen

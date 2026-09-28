@@ -467,3 +467,35 @@ describe('Account: Sign Out', () => {
     expect(signOutSpy).not.toHaveBeenCalled();
   });
 });
+/**
+ * #1005: a member without billing access (a SECONDARY the PRIMARY did not
+ * grant billing) sees no Billing Details card at all, and the card callable
+ * is never asked. No error line either: there is nothing wrong.
+ */
+describe('Account billing, member without billing access (#1005)', () => {
+  it('draws no Billing Details card and never asks for the card on file', async () => {
+    const accountApi = await import('../api/accountApi');
+    const portalApi = await import('../api/portal');
+    vi.mocked(accountApi.getMyPaymentMethod).mockClear();
+    vi.mocked(accountApi.getMyAccount).mockResolvedValue(ACCOUNT);
+    vi.mocked(portalApi.getMyHome).mockResolvedValue({ ...HOME, payMethods: [], billingAccess: false });
+    vi.mocked(portalApi.getMyKin).mockResolvedValue(KIN);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const result = render(
+      <QueryClientProvider client={queryClient}>
+        <Account />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(result.getByText('Add your name to save.')).toBeTruthy());
+    await waitFor(() => expect(vi.mocked(portalApi.getMyHome)).toHaveBeenCalled());
+    await waitFor(() => expect(result.queryByText('Billing Details')).toBeNull());
+    expect(result.queryByText(/Only the primary kinfolk/)).toBeNull();
+    expect(vi.mocked(accountApi.getMyPaymentMethod)).not.toHaveBeenCalled();
+  });
+  it('a member with billing access still gets the card', async () => {
+    const portalApi = await import('../api/portal');
+    const result = await renderAccountWithBilling();
+    expect(vi.mocked(portalApi.getMyHome)).toHaveBeenCalled();
+    expect(result.getByText('Billing Details')).toBeTruthy();
+  });
+});

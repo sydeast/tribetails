@@ -925,10 +925,21 @@ fun KinfolkEditScreen(
                 )
                 BottomBorderField(vetAddress, { vetAddress = it }, label = "Clinic address", enabled = householdFieldsEnabled, modifier = Modifier.weight(2f))
             }
+            // #1015: a household already on a clinic the operator has since
+            // retired keeps showing it here, labelled, rather than being
+            // silently cleared. The picker's own suggestions stop offering the
+            // clinic (`vetClinicSuggestions`, below); this callout is what says
+            // why the current value can't be found by typing it again.
+            val retiredVetMatch = retiredVetClinicMatch(vetName, vetClinics)
             if (vetName.isNotBlank() && vetClinics.none { it.name.equals(vetName, ignoreCase = true) }) {
                 Spacer(Modifier.height(10.dp))
                 AuntieNoteCallout(
                     text = "“${vetName.trim()}” is a new clinic. Saved to the shared catalog.",
+                )
+            } else if (retiredVetMatch != null) {
+                Spacer(Modifier.height(10.dp))
+                AuntieNoteCallout(
+                    text = "“${vetName.trim()}” is retired from the shared catalog. This household keeps what is on file; pick a different clinic to replace it.",
                 )
             }
         }
@@ -1221,13 +1232,34 @@ private fun generateMapboxSessionToken(): String {
  * Pure filter for the vet-clinic search box. Prefix matches rank first, then substring
  * matches, capped at [limit] so a 100+ clinic catalog stays a short, scannable dropdown.
  * A blank query returns nothing: the box is a search field, not a full-catalog dump.
+ *
+ * #1015: a retired (archived) clinic drops out of what can be OFFERED here,
+ * matching admin web (`selectableClinics`) and admin Android
+ * (`ui/directory/VetClinicSearch.kt#vetClinicSuggestions`). A household already
+ * on a retired clinic is unaffected: `vetClinics` still holds its denormalized
+ * name/phone/address on the household fields, so the field keeps showing what
+ * is on file. Retiring only stops the clinic from being picked again.
  */
 internal fun vetClinicSuggestions(query: String, clinics: List<VetClinic>, limit: Int = 8): List<VetClinic> {
     val q = query.trim().lowercase()
     if (q.isEmpty()) return emptyList()
-    val starts = clinics.filter { it.name.lowercase().startsWith(q) }
-    val contains = clinics.filter { !it.name.lowercase().startsWith(q) && it.name.lowercase().contains(q) }
+    val live = clinics.filter { !it.archived }
+    val starts = live.filter { it.name.lowercase().startsWith(q) }
+    val contains = live.filter { !it.name.lowercase().startsWith(q) && it.name.lowercase().contains(q) }
     return (starts + contains).take(limit)
+}
+
+/**
+ * The archived catalog clinic a household's typed vet name matches, if any.
+ * `null` covers both "no clinic by that name" and "the clinic is still
+ * active" - callers that need to tell those apart already have `vetClinics`
+ * to check separately. Case-insensitive and trimmed, matching how the "new
+ * clinic" check above it compares names.
+ */
+internal fun retiredVetClinicMatch(name: String, clinics: List<VetClinic>): VetClinic? {
+    val trimmed = name.trim()
+    if (trimmed.isEmpty()) return null
+    return clinics.firstOrNull { it.archived && it.name.equals(trimmed, ignoreCase = true) }
 }
 
 /**

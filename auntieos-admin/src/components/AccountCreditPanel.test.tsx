@@ -9,6 +9,12 @@ const api = vi.hoisted(() => ({
   giveAccountCredit: vi.fn(),
 }));
 vi.mock('../api/accountCredit', () => api);
+// #1003: the panel also lists payments needing a decision; empty here, so the
+// section stays hidden. UnappliedPaymentsSection.test.tsx covers it.
+vi.mock('../api/unappliedPayments', () => ({
+  listUnappliedPayments: vi.fn().mockResolvedValue({ ok: true, kinfolkId: 'fam1', payments: [], openInvoices: [] }),
+  resolveUnappliedPayment: vi.fn(),
+}));
 
 import { AccountCreditPanel } from './AccountCreditPanel';
 

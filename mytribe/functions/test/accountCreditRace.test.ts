@@ -3,6 +3,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), delivered: new Set<string>() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: async () => 'kin-uid-1' }));
+// #1005: this suite's hand-rolled db has no members subcollection, so the billing
+// recipient resolver is pointed at the resolveKinfolkUid mock above. The resolver's
+// own rules are pinned in resolveBillingRecipientUid.test.ts.
+vi.mock('../src/lib/resolveBillingRecipientUid', async () => ({
+  resolveBillingRecipientUid: (await import('../src/lib/resolveKinfolkUid')).resolveKinfolkUid,
+}));
 // #884: a dispatcher double that keeps the ledger's rule for these notices: one
 // delivery per (key, invoice, payment row), however many sends race.
 vi.mock('../src/notifications/dispatcher', () => ({

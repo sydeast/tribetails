@@ -7,7 +7,8 @@ import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
-import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
+// #1005: money notices go to a member with billing access, not the last-synced account.
+import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import {
   NOTIFICATION_DEDUPE_WINDOW_MS,
   enqueueNotificationDetailed,
@@ -173,7 +174,7 @@ async function completedResendAnswer(
 ): Promise<z.infer<typeof Result> | null> {
   const count = data['quoteResendCount'];
   if (typeof count !== 'number' || count < 1) return null;
-  const recipientUid = await resolveKinfolkUid(kinfolkId);
+  const recipientUid = await resolveBillingRecipientUid(kinfolkId);
   if (recipientUid === null) return null;
   const at = await lastDeliveredAtMs('invoice.new', `quote:${invoiceId}:resend:${count}`, recipientUid);
   if (at === null || Date.now() - at >= NOTIFICATION_DEDUPE_WINDOW_MS) return null;
@@ -245,7 +246,7 @@ export async function resendQuoteHandler(
   }
 
   const invoiceNumber = typeof data['invoiceNumber'] === 'string' ? (data['invoiceNumber'] as string) : '';
-  const recipientUid = await resolveKinfolkUid(kinfolkId);
+  const recipientUid = await resolveBillingRecipientUid(kinfolkId);
 
   // #832: no household account means nobody the resend is FOR. `invoice.new`
   // also copies the office, so without this the dispatcher would write that

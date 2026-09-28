@@ -4,6 +4,7 @@ import { FirebaseError } from 'firebase/app';
 import { DenPanel, EmptyHint, ErrorHint } from './DenScreenKit';
 import { Dialog } from './Dialog';
 import { GhostButton, PrimaryButton } from './Buttons';
+import { UnappliedPaymentsSection } from './UnappliedPaymentsSection';
 import { getAccountCreditHistory, giveAccountCredit } from '../api/accountCredit';
 import type { GetAccountCreditHistoryResult } from '../contracts/invoiceContracts.generated';
 import { mintGiveCreditIdempotencyKey } from '../lib/moneyIdempotency';
@@ -18,6 +19,7 @@ import {
   giveCreditConfirmLine,
   parseGiveCreditForm,
 } from '../lib/accountCreditFormat';
+import { decisionSavedNote } from '../lib/unappliedPaymentFormat';
 import './AccountCreditPanel.css';
 
 /**
@@ -43,7 +45,17 @@ function errorText(err: unknown): string {
   return err instanceof Error && err.message ? err.message : 'Something went wrong.';
 }
 
-export function AccountCreditPanel({ kinfolkId }: { kinfolkId: string }) {
+export function AccountCreditPanel({
+  kinfolkId,
+  openUnappliedPayments = false,
+  unappliedPaymentId = '',
+}: {
+  kinfolkId: string;
+  /** #1003: opened from the `invoice.payment.unapplied` notice, so the decision list shows even when empty. */
+  openUnappliedPayments?: boolean;
+  /** #1003: the notice's payment; its Decide dialog opens if it is still waiting. */
+  unappliedPaymentId?: string;
+}) {
   const [history, setHistory] = useState<HistoryState>({ status: 'loading' });
   const [reloadTick, setReloadTick] = useState(0);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -100,6 +112,17 @@ export function AccountCreditPanel({ kinfolkId }: { kinfolkId: string }) {
       {history.status === 'loading' && <EmptyHint>Loading account credit…</EmptyHint>}
       {history.status === 'error' && <ErrorHint>Could not load account credit. {history.message}</ErrorHint>}
       {history.status === 'ready' && <CreditHistoryList data={history.data} />}
+      <UnappliedPaymentsSection
+        kinfolkId={kinfolkId}
+        fromNotice={openUnappliedPayments}
+        focusPaymentId={unappliedPaymentId}
+        onDecided={(res) => {
+          // A credit lands in this household's ledger, so the history and the
+          // balance above are read again. The note repeats the server's figures only.
+          setNotice(decisionSavedNote(res));
+          setReloadTick((t) => t + 1);
+        }}
+      />
       {dialogOpen && history.status === 'ready' && (
         <GiveCreditDialog
           kinfolkId={kinfolkId}

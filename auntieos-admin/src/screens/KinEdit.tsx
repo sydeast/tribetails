@@ -10,6 +10,7 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { BreedField } from '../components/BreedField';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
+import { useToast } from '../components/Toast';
 import './KinEdit.css';
 
 interface KinEditProps {
@@ -134,6 +135,13 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
   // NOT fatal and NOT silent: banks come back empty, breed degrades to the free
   // text it already was, and BreedField's note says so.
   const { banks: breedBanks, failed: breedBanksFailed } = useBreedBanks();
+  const { showToast } = useToast();
+
+  // The name as it should be SPOKEN, for the toasts: prefer what the form now
+  // holds (so a rename shows its new name, not the stale one the caller opened
+  // with), matching KinfolkEdit's own `displayName`.
+  const displayName =
+    form && form.name.trim() !== '' ? form.name.trim() : kinName.trim() !== '' ? kinName.trim() : kinId;
 
   const load = useCallback(() => {
     let live = true;
@@ -204,6 +212,10 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
         loaded.status === 'ready' ? changedKinFields(edited, toForm(loaded.data)) : edited;
       if (Object.keys(patch).length > 0) await updateKin(kinId, patch);
       setSaving(false);
+      // #895 review: a save with nothing changed still confirms, matching
+      // KinfolkEdit (a no-op write and a real one are the same outcome to the
+      // operator, who pressed Save either way).
+      showToast(`Saved ${displayName}.`);
       onDone();
     } catch (err) {
       setSaving(false);
@@ -219,6 +231,7 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
     try {
       await setKinArchived(kinId, archived);
       setArchiving(false);
+      showToast(archived ? `${displayName} is archived.` : `${displayName} is active again.`);
       onDone();
     } catch (err) {
       setArchiving(false);

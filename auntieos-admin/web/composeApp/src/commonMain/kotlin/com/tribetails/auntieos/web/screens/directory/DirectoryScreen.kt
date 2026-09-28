@@ -84,7 +84,8 @@ import com.tribetails.auntieos.web.util.sortedByOption
  */
 private sealed interface DirectoryRoute {
     data object List : DirectoryRoute
-    data class Profile     (val kinfolkId: String) : DirectoryRoute
+    // #1003: decidePaymentId is set only on the profile a payment notice opened.
+    data class Profile     (val kinfolkId: String, val decidePaymentId: String? = null) : DirectoryRoute
     data object NewKinfolk : DirectoryRoute
     data class EditKinfolk (val kinfolkId: String) : DirectoryRoute
     data class NewKin      (val kinfolkId: String) : DirectoryRoute
@@ -104,20 +105,23 @@ private val CARD_HEIGHT = 196.dp
  *        kinfolk's profile (global-search / external deep-link). If
  *        [initialKinId] is also set, it opens the kin editor under that kinfolk.
  * @param initialKinId optional kin to open under [initialKinfolkId].
+ * @param initialDecidePaymentId #1003: a payment notice's paymentId; the profile
+ *        opens that payment's Decide dialog.
  */
 @Composable
 fun DirectoryScreen(
     initialKinfolkId: String? = null,
     initialKinId: String? = null,
     onOpenTale: (sessionId: String) -> Unit = {},
+    initialDecidePaymentId: String? = null,
 ) {
     // Seed the back-stack from a deep-link once per (kinfolkId, kinId) target.
-    val initialRoute: DirectoryRoute = remember(initialKinfolkId, initialKinId) {
+    val initialRoute: DirectoryRoute = remember(initialKinfolkId, initialKinId, initialDecidePaymentId) {
         when {
             initialKinfolkId != null && initialKinId != null ->
                 DirectoryRoute.ViewKin(initialKinfolkId, initialKinId)
             initialKinfolkId != null ->
-                DirectoryRoute.Profile(initialKinfolkId)
+                DirectoryRoute.Profile(initialKinfolkId, initialDecidePaymentId)
             else -> DirectoryRoute.List
         }
     }
@@ -143,6 +147,7 @@ fun DirectoryScreen(
                 onViewKin       = { kinId -> route = DirectoryRoute.ViewKin(r.kinfolkId, kinId) },
                 onOpenHousehold = { route = DirectoryRoute.Household(r.kinfolkId) },
                 onOpenTale      = onOpenTale,
+                decidePaymentId = r.decidePaymentId,
             )
 
         DirectoryRoute.NewKinfolk ->

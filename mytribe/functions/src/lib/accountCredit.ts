@@ -91,7 +91,8 @@ import {
 import { writeAuditEntry } from './writeAuditEntry';
 import { AUDIT_EVENTS } from './auditEvents';
 import { stageDrawEvent } from './creditLedger';
-import { resolveKinfolkUid } from './resolveKinfolkUid';
+// #1005: money notices go to a member with billing access, not the last-synced account.
+import { resolveBillingRecipientUid } from './resolveBillingRecipientUid';
 import { enqueueNotificationDetailed } from '../notifications/dispatcher';
 import { isNoRecipientsError } from '../notifications/recipientErrors';
 
@@ -732,7 +733,7 @@ async function deliverCreditPaymentNotice(
 
   let finished: Record<string, unknown>;
   try {
-    const recipientUid = await resolveKinfolkUid(notice.kinfolkId);
+    const recipientUid = await resolveBillingRecipientUid(notice.kinfolkId);
     const outcome = await enqueueNotificationDetailed({
       key: 'invoice.payment.applied',
       recipientUid: recipientUid ?? '',

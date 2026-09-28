@@ -126,6 +126,12 @@ fun NotificationsScreen(
     onBack: () -> Unit,
     onOpenTarget: (targetType: String, targetId: String) -> Unit = { _, _ -> },
     onCreateQuote: (kinfolkId: String) -> Unit = {},
+    /**
+     * #1003: the whole entry, for keys whose Open goes somewhere other than
+     * their target (see [unappliedPaymentNotice]). Null keeps the plain
+     * targetType/targetId routing through [onOpenTarget].
+     */
+    onOpenEntry: ((NotificationEntry) -> Unit)? = null,
 ) {
     val entries by viewModel.notifications.collectAsState()
     // Issue #20: notification docs carry a household ID and almost never a
@@ -346,7 +352,9 @@ fun NotificationsScreen(
                                     onToggleRead = { entry ->
                                         viewModel.toggleNotificationRead(entry.id, isNotificationUnread(entry))
                                     },
-                                    onOpen = { entry -> onOpenTarget(entry.targetType, entry.targetId) },
+                                    onOpen = { entry ->
+                                        onOpenEntry?.invoke(entry) ?: onOpenTarget(entry.targetType, entry.targetId)
+                                    },
                                     onCreateQuote = { entry -> onCreateQuote(notificationKinfolkId(entry)) },
                                     onDismiss = { entry -> viewModel.archiveNotification(entry.id) },
                                     onApprove = { entry -> viewModel.quickBookingAction(entry.targetId, "APPROVE") },
@@ -928,7 +936,34 @@ internal fun applicableNotificationActions(entry: NotificationEntry): Notificati
     val kinfolkId = notificationKinfolkId(entry)
     val quoteEligible = kinfolkId.isNotBlank() && (isQuoteDenial || isUninvoicedBookingRequest)
 
-    return base.copy(canApproveDeny = isPendingBookingRequest, canCreateQuote = quoteEligible)
+    return base.copy(
+        // #1003: the unapplied-payment notice opens the household, so it can
+        // open whenever the household is known, whatever its target says.
+        canOpen = base.canOpen || unappliedPaymentNotice(entry) != null,
+        canApproveDeny = isPendingBookingRequest,
+        canCreateQuote = quoteEligible,
+    )
+}
+
+/** #1003: a card payment the webhook recorded but could not apply to its invoice. */
+internal const val UNAPPLIED_PAYMENT_NOTICE_KEY = "invoice.payment.unapplied"
+
+/** Where the unapplied-payment notice points: the household, and the payment to decide on. */
+internal data class UnappliedPaymentNotice(val kinfolkId: String, val paymentId: String)
+
+/**
+ * #1003: the `invoice.payment.unapplied` notice targets the INVOICE on the
+ * server, but what needs doing is on the household profile: its "Payments
+ * needing a decision" list, with this payment's Decide dialog open. The
+ * payment id is `data.stripeEventId` (the webhook records the payment under
+ * the event id). Null for every other key, or when no household is known, so
+ * those rows keep their target routing. Pure; unit-tested.
+ */
+internal fun unappliedPaymentNotice(entry: NotificationEntry): UnappliedPaymentNotice? {
+    if (entry.key.trim() != UNAPPLIED_PAYMENT_NOTICE_KEY) return null
+    val kinfolkId = notificationKinfolkId(entry)
+    if (kinfolkId.isBlank()) return null
+    return UnappliedPaymentNotice(kinfolkId, dataString(entry, "stripeEventId"))
 }
 
 // ---- row DETAIL: what the notification is actually about (R5) ----------------

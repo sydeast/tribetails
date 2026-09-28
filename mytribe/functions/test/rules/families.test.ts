@@ -84,11 +84,13 @@ describe('rules: /families/{fid}', () => {
     await assertSucceeds(fs.doc('families/f1/members/u-prim').get());
   });
 
-  it('an active member can still read the family and its member docs', async () => {
+  // #1005: the family doc carries the balance, so a SECONDARY reads it only
+  // with billing access. `billingAccess.test.ts` pins the refusal.
+  it('an active member with billing access can still read the family and its member docs', async () => {
     const env = await getEnv();
     await seedFamily({
       fid: 'f1', primaryUid: 'u-prim',
-      secondaries: [{ uid: 'u-sec', perms: {} }],
+      secondaries: [{ uid: 'u-sec', perms: { billing_full: true } }],
     });
     const fs = asUser(env, 'u-sec').firestore();
     await assertSucceeds(fs.doc('families/f1').get());

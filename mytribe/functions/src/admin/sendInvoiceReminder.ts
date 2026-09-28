@@ -7,7 +7,8 @@ import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
-import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
+// #1005: money notices go to a member with billing access, not the last-synced account.
+import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotificationDetailed } from '../notifications/dispatcher';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
@@ -334,7 +335,7 @@ export async function sendInvoiceReminderHandler(
   let recipientUid: string | null;
   let dispatched: Awaited<ReturnType<typeof enqueueNotificationDetailed>>;
   try {
-    recipientUid = await resolveKinfolkUid(familyId);
+    recipientUid = await resolveBillingRecipientUid(familyId);
     dispatched = await enqueueNotificationDetailed({
       key: 'invoice.reminder',
       recipientUid: recipientUid ?? '',

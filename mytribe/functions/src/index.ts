@@ -362,6 +362,9 @@ export { recordPayment } from './admin/recordPayment';
 // for an operator whose invoice was already sent when she ticked the box.
 export { runAutoApply } from './admin/runAutoApply';
 export { giveAccountCredit } from './admin/giveAccountCredit';
+// #1003: the admin decides what an unapplied card payment becomes.
+export { listUnappliedPayments } from './admin/listUnappliedPayments';
+export { resolveUnappliedPayment } from './admin/resolveUnappliedPayment';
 export { archiveInvoice } from './admin/archiveInvoice';
 export { unarchiveInvoice } from './admin/unarchiveInvoice';
 // Detection + repair for invoices wrecked by the pre-2026-07-25 partial-payment

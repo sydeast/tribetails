@@ -10,6 +10,7 @@ import { PortalNav } from '../components/PortalNav';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { LoadingLine } from '../components/Loading';
 import { viewOfQuery } from '../lib/queryState';
+import { billingAccessOf } from '../lib/billingAccess';
 import {
   bookingChip,
   calTile,
@@ -282,9 +283,11 @@ export function Home() {
                 <Link className="btn ghost block" to="/messages">
                   {'\u{1F4AC}'} Message your Auntie
                 </Link>
-                <Link className="btn ghost block" to="/invoices">
-                  {'\u{1F4B0}'} View invoices
-                </Link>
+                {billingAccessOf(home.data) && (
+                  <Link className="btn ghost block" to="/invoices">
+                    {'\u{1F4B0}'} View invoices
+                  </Link>
+                )}
               </div>
             </section>
           );

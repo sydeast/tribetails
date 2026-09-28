@@ -4,6 +4,7 @@ import { useAuth } from '../lib/auth';
 import { useAccessState, getActiveKinfolkId } from '../lib/activeTribe';
 import { getMyHome } from '../api/portal';
 import { BrandLogo } from './BrandLogo';
+import { billingAccessOf } from '../lib/billingAccess';
 
 export type PortalNavTab = 'home' | 'tribe' | 'schedule' | 'kintales' | 'invoices' | 'account' | 'messages';
 
@@ -70,6 +71,9 @@ export function PortalNav(props: { active: PortalNavTab; displayName?: string })
     queryFn: () => getMyHome(kinfolkId),
     staleTime: 5 * 60_000,
   });
+  // #1005: the same cached answer says whether this member has billing
+  // access. Without it the Invoices link is not drawn at all.
+  const navLinks = billingAccessOf(branding.data) ? NAV_LINKS : NAV_LINKS.filter((l) => l.id !== 'invoices');
   const initial =
     (props.displayName || (authState.status === 'signedIn' ? (authState.user.email ?? '') : '') || 'M')
       .charAt(0)
@@ -87,7 +91,7 @@ export function PortalNav(props: { active: PortalNavTab; displayName?: string })
             My<span className="grad">Tribe</span>
           </div>
           <div className="navlinks">
-            {NAV_LINKS.map((link) =>
+            {navLinks.map((link) =>
               link.to ? (
                 <Link key={link.id} className={link.id === props.active ? 'on' : ''} to={link.to}>
                   {link.label}

@@ -517,6 +517,20 @@ describe('KinTaleCompose: Send, gated behind a confirm dialog', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
   });
 
+  // #1013 sweep: this confirmation used to live on `banner`, this screen's own
+  // local state set in the same breath as `onClose()`, so it never painted a
+  // frame in the real app (the component unmounts the instant onClose runs).
+  // `showToast` survives because `ToastProvider` is mounted above the router.
+  it('#1013: confirms a send with a toast', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report({ title: 'Hi' })] } });
+    saveKinTaleDraft.mockResolvedValue('tale1');
+    sendKinTale.mockResolvedValue(undefined);
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: /send to the whitfields/i }));
+    await user.click(screen.getByRole('button', { name: /^send kintale$/i }));
+    expect(await screen.findByText('KinTale sent. Kinfolk will hear from you soon.')).toBeInTheDocument();
+  });
+
   it('cancelling the confirm dialog never calls sendKinTale', async () => {
     mockStreams({ reports: { status: 'ready', data: [report({ title: 'Hi' })] } });
     render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);

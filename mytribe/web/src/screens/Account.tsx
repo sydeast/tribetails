@@ -28,6 +28,7 @@ import '../styles/account.css';
 import { BusyLabel } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { isOfflineError, usePortalMutation } from '../lib/mutationState';
+import { billingAccessOf } from '../lib/billingAccess';
 
 type Status = { text: string; tone: 'ok' | 'err' };
 
@@ -190,7 +191,9 @@ export function Account() {
   const paymentMethod = useQuery({
     queryKey: ['myPaymentMethod', kinfolkId],
     queryFn: () => getMyPaymentMethod(kinfolkId),
-    enabled: account.isSuccess && account.data?.impersonated !== true,
+    // #1005: not asked for a member the server says has no billing access, so
+    // it waits for that answer (a failed Home read still lets it through).
+    enabled: account.isSuccess && account.data?.impersonated !== true && !home.isPending && billingAccessOf(home.data),
     retry: false,
   });
 
@@ -442,125 +445,128 @@ export function Account() {
               </div>
             </section>
 
-            {/* BILLING */}
-            <section className="glass card d3">
-              <div className="sectlabel">Billing Details</div>
-              <div className="billrow">
-                <div className="ico">{'\u{1F4B3}'}</div>
-                <div className="bt">
-                  <b>{cardOnFile ? 'Payment method on file' : 'No payment method on file'}</b>
-                  <small>{cardSubtitle}</small>
-                </div>
-                {readOnly ? (
-                  <span className="btn ghost sm navlink-inert" title="Operator view is read-only">
-                    Manage
-                  </span>
-                ) : (
-                  <button
-                    className="btn ghost sm"
-                    type="button"
-                    onClick={() => setManagingBilling((open) => !open)}
-                    aria-expanded={managingBilling}
-                    aria-controls="billing-manage"
-                  >
-                    {managingBilling ? 'Close' : 'Manage'}
-                  </button>
-                )}
-              </div>
-
-              {managingBilling && !readOnly && (
-                <div className="billing-manage" id="billing-manage" data-testid="billing-manage">
-                  {paymentView.kind === 'offline' ? (
-                    <OfflineNotice what="what card is on file" />
-                  ) : paymentView.kind !== 'data' && paymentView.kind !== 'error' ? (
-                    <p className="sub">Checking what is on file…</p>
-                  ) : paymentView.kind === 'error' ? (
-                    <div className="note err" role="alert">
-                      <span className="dot" />
-                      {billingReadError}
-                      <button
-                        className="btn ghost sm"
-                        type="button"
-                        style={{ marginLeft: 10 }}
-                        onClick={() => void paymentMethod.refetch()}
-                      >
-                        Try again
-                      </button>
-                    </div>
+            {/* BILLING. #1005: only for a member with billing access; for anyone
+                else the section is not drawn, with no message. */}
+            {billingAccessOf(home.data) && (
+              <section className="glass card d3">
+                <div className="sectlabel">Billing Details</div>
+                <div className="billrow">
+                  <div className="ico">{'\u{1F4B3}'}</div>
+                  <div className="bt">
+                    <b>{cardOnFile ? 'Payment method on file' : 'No payment method on file'}</b>
+                    <small>{cardSubtitle}</small>
+                  </div>
+                  {readOnly ? (
+                    <span className="btn ghost sm navlink-inert" title="Operator view is read-only">
+                      Manage
+                    </span>
                   ) : (
-                    <>
-                      <p className="sub" style={{ marginTop: 0 }}>
-                        {cardOnFile
-                          ? 'Cards are held by Stripe. Tribe Tails never sees the full number.'
-                          : 'Adding a card sends you to Stripe. Nothing is charged when you save it.'}
-                      </p>
-                      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    <button
+                      className="btn ghost sm"
+                      type="button"
+                      onClick={() => setManagingBilling((open) => !open)}
+                      aria-expanded={managingBilling}
+                      aria-controls="billing-manage"
+                    >
+                      {managingBilling ? 'Close' : 'Manage'}
+                    </button>
+                  )}
+                </div>
+
+                {managingBilling && !readOnly && (
+                  <div className="billing-manage" id="billing-manage" data-testid="billing-manage">
+                    {paymentView.kind === 'offline' ? (
+                      <OfflineNotice what="what card is on file" />
+                    ) : paymentView.kind !== 'data' && paymentView.kind !== 'error' ? (
+                      <p className="sub">Checking what is on file…</p>
+                    ) : paymentView.kind === 'error' ? (
+                      <div className="note err" role="alert">
+                        <span className="dot" />
+                        {billingReadError}
                         <button
-                          className="btn grad sm"
+                          className="btn ghost sm"
                           type="button"
-                          onClick={() => startCardSetup.mutate()}
-                          disabled={startCardSetup.isPending || removeCard.isPending}
+                          style={{ marginLeft: 10 }}
+                          onClick={() => void paymentMethod.refetch()}
                         >
-                          <MutationLabel mutation={startCardSetup} busy="Opening Stripe…">
-                            {cardOnFile ? 'Replace card' : 'Add a card'}
-                          </MutationLabel>
+                          Try again
                         </button>
-                        {cardOnFile &&
-                          (confirmingCardRemoval ? (
-                            <>
-                              <button
-                                className="btn purple sm"
-                                type="button"
-                                onClick={() => removeCard.mutate()}
-                                disabled={removeCard.isPending}
-                              >
-                                <MutationLabel mutation={removeCard} busy="Removing…">
-                                  Yes, take it off
-                                </MutationLabel>
-                              </button>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="sub" style={{ marginTop: 0 }}>
+                          {cardOnFile
+                            ? 'Cards are held by Stripe. Tribe Tails never sees the full number.'
+                            : 'Adding a card sends you to Stripe. Nothing is charged when you save it.'}
+                        </p>
+                        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                          <button
+                            className="btn grad sm"
+                            type="button"
+                            onClick={() => startCardSetup.mutate()}
+                            disabled={startCardSetup.isPending || removeCard.isPending}
+                          >
+                            <MutationLabel mutation={startCardSetup} busy="Opening Stripe…">
+                              {cardOnFile ? 'Replace card' : 'Add a card'}
+                            </MutationLabel>
+                          </button>
+                          {cardOnFile &&
+                            (confirmingCardRemoval ? (
+                              <>
+                                <button
+                                  className="btn purple sm"
+                                  type="button"
+                                  onClick={() => removeCard.mutate()}
+                                  disabled={removeCard.isPending}
+                                >
+                                  <MutationLabel mutation={removeCard} busy="Removing…">
+                                    Yes, take it off
+                                  </MutationLabel>
+                                </button>
+                                <button
+                                  className="btn ghost sm"
+                                  type="button"
+                                  onClick={() => setConfirmingCardRemoval(false)}
+                                  disabled={removeCard.isPending}
+                                >
+                                  Never mind
+                                </button>
+                              </>
+                            ) : (
                               <button
                                 className="btn ghost sm"
                                 type="button"
-                                onClick={() => setConfirmingCardRemoval(false)}
-                                disabled={removeCard.isPending}
+                                onClick={() => setConfirmingCardRemoval(true)}
+                                disabled={startCardSetup.isPending}
                               >
-                                Never mind
+                                Remove card
                               </button>
-                            </>
-                          ) : (
-                            <button
-                              className="btn ghost sm"
-                              type="button"
-                              onClick={() => setConfirmingCardRemoval(true)}
-                              disabled={startCardSetup.isPending}
-                            >
-                              Remove card
-                            </button>
-                          ))}
-                      </div>
-                      <OfflineMutationNotice phase={startCardSetup.phase} what="the card setup" />
-                      <OfflineMutationNotice phase={removeCard.phase} what="the card removal" check="your card on file" />
-                      {confirmingCardRemoval && (
-                        <p className="sub">
-                          Removing the card leaves any unpaid invoices exactly as they are. You will settle them
-                          another way until a new card is added.
-                        </p>
-                      )}
-                      {billingStatus && (
-                        <span className={`note${billingStatus.tone === 'err' ? ' err' : ''}`} role="status">
-                          <span className="dot" />
-                          {billingStatus.text}
-                        </span>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
+                            ))}
+                        </div>
+                        <OfflineMutationNotice phase={startCardSetup.phase} what="the card setup" />
+                        <OfflineMutationNotice phase={removeCard.phase} what="the card removal" check="your card on file" />
+                        {confirmingCardRemoval && (
+                          <p className="sub">
+                            Removing the card leaves any unpaid invoices exactly as they are. You will settle them
+                            another way until a new card is added.
+                          </p>
+                        )}
+                        {billingStatus && (
+                          <span className={`note${billingStatus.tone === 'err' ? ' err' : ''}`} role="status">
+                            <span className="dot" />
+                            {billingStatus.text}
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
 
-              <p className="sub" style={{ marginTop: 12 }}>
-                No payment method on file means visits cannot be charged automatically.
-              </p>
-            </section>
+                <p className="sub" style={{ marginTop: 12 }}>
+                  No payment method on file means visits cannot be charged automatically.
+                </p>
+              </section>
+            )}
           </div>
 
           {/* aside */}

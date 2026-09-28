@@ -8,7 +8,8 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { logEvent } from '../lib/logger';
 import { wrapHttp } from '../lib/wrapHttp';
-import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
+// #1005: money notices go to a member with billing access, not the last-synced account.
+import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotificationDetailed, type UnresolvedResolver } from '../notifications/dispatcher';
 import { isNoRecipientsError } from '../notifications/recipientErrors';
 import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
@@ -30,6 +31,7 @@ import {
   duplicateCheckoutReason,
   roundFromMetadata,
   type DuplicateCheckoutReason,
+  unappliedReasonLabel,
 } from '../lib/invoiceCheckoutDedupe';
 
 /**
@@ -176,7 +178,7 @@ async function finishEventFollowup(input: {
     const key = paid ? 'invoice.payment.applied' : unapplied ? UNAPPLIED_NOTICE_KEY : 'invoice.charge.failed';
     // The unapplied notice is BUSINESS-ONLY: the household is told nothing
     // until the admin has decided what the money becomes.
-    const recipientUid = unapplied ? null : await resolveKinfolkUid(input.familyId);
+    const recipientUid = unapplied ? null : await resolveBillingRecipientUid(input.familyId);
     let unresolved: UnresolvedResolver[];
     try {
       const outcome = await enqueueNotificationDetailed({
@@ -224,23 +226,11 @@ async function finishEventFollowup(input: {
 
 /**
  * A plain sentence for the admin notice, off `duplicateCheckoutReason`'s code.
- * Exported for the test.
+ * Lives in `lib/invoiceCheckoutDedupe.ts` since #1003 (the admin's list of
+ * payments waiting for a decision prints the same sentence); re-exported here
+ * for the callers and the test that import it from this module.
  */
-export function unappliedReasonLabel(reason: string | null): string {
-  switch (reason) {
-    case 'stale-round':
-      return 'it was paid on a checkout opened before an earlier payment on this invoice';
-    case 'settled-by-other-intent':
-      return 'the invoice had already been paid by another card payment';
-    case 'invoice-not-owed':
-      return 'the invoice had already been paid';
-    case 'invoice-marked-paid':
-      return 'the invoice was already marked paid';
-    default:
-      return 'the invoice was not owed this payment';
-  }
-}
-
+export { unappliedReasonLabel };
 export async function stripeWebhookHandler(req: Request, res: Response): Promise<void> {
   if (req.method !== 'POST') { res.status(405).end(); return; }
   const sig = req.headers['stripe-signature'] as string | undefined;

@@ -36,6 +36,26 @@ class PortalApiTest {
     }
 
     @Test
+    fun `getMyHome decodes billingAccess, and reads a missing field as true`() = runTest {
+        // #1005. Absent is an older server that gated nothing: a household
+        // with access must not lose its bills to a deploy window.
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyHome", buildJsonObject {
+            put("kinfolkId", "demo-family-001")
+            put("displayName", "The Foster")
+            put("billingAccess", false)
+        })
+        assertEquals(false, PortalApi(fake).getMyHome("demo-family-001").billingAccess)
+
+        val old = FakeFunctionsClient()
+        old.stub("getMyHome", buildJsonObject {
+            put("kinfolkId", "demo-family-001")
+            put("displayName", "The Foster")
+        })
+        assertEquals(true, PortalApi(old).getMyHome("demo-family-001").billingAccess)
+    }
+
+    @Test
     fun `getMyHome throws when displayName is missing`() = runTest {
         val fake = FakeFunctionsClient()
         fake.stub("getMyHome", buildJsonObject { put("kinfolkId", "x") })

@@ -1,6 +1,7 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { z } from 'zod';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
+import { requireBillingAccess } from '../lib/memberGate';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
@@ -321,7 +322,12 @@ export async function getMyInvoicesHandler(
   refuseAuntie(req.auth, 'getMyInvoices');
 
   const firestore = db();
-  const { kinfolkId } = await resolveKinfolkAccess(uid, req.data?.kinfolkId, req.auth?.token?.admin === true, 'getMyInvoices');
+  const hasAdminClaim = req.auth?.token?.admin === true;
+  const { kinfolkId } = await resolveKinfolkAccess(uid, req.data?.kinfolkId, hasAdminClaim, 'getMyInvoices');
+  // #1005: the household's bills and balance are for those with billing
+  // access (owner, PRIMARY, a SECONDARY granted `billing_full`). Asked after
+  // the household is resolved, which the helper requires.
+  await requireBillingAccess(uid, kinfolkId, hasAdminClaim, 'getMyInvoices');
 
   // The settings read joins the existing parallel batch rather than adding a
   // round trip: it is one document, it is needed for every invoice in the

@@ -864,6 +864,84 @@ export interface GetAccountCreditHistoryResult {
   uses: GetAccountCreditHistoryResultUse[];
 }
 
+// ---------- listUnappliedPayments ----------
+
+/**
+ * Request payload for the `listUnappliedPayments` callable.
+ */
+export interface ListUnappliedPaymentsArgs {
+  kinfolkId: string;
+}
+
+/**
+ * Nested in the `listUnappliedPayments` contract.
+ */
+export interface ListUnappliedPaymentsResultPayment {
+  paymentId: string;
+  kinfolkId: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  amountCents: number;
+  amountResolved: boolean;
+  feeCents: number;
+  reason: string;
+  receivedAtMs: number;
+  referenceNumber: string;
+}
+
+/**
+ * Nested in the `listUnappliedPayments` contract.
+ */
+export interface ListUnappliedPaymentsResultOpenInvoice {
+  invoiceId: string;
+  invoiceNumber: string;
+  amountDueCents: number;
+}
+
+/**
+ * Response from the `listUnappliedPayments` callable.
+ */
+export interface ListUnappliedPaymentsResult {
+  ok: true;
+  kinfolkId: string;
+  payments: ListUnappliedPaymentsResultPayment[];
+  openInvoices: ListUnappliedPaymentsResultOpenInvoice[];
+}
+
+// ---------- resolveUnappliedPayment ----------
+
+/**
+ * Request payload for the `resolveUnappliedPayment` callable.
+ */
+export interface ResolveUnappliedPaymentArgs {
+  paymentId: string;
+  creditCents: number;
+  creditReason: string;
+  applyInvoiceId: string;
+  applyCents: number;
+  idempotencyKey: string;
+}
+
+/**
+ * Response from the `resolveUnappliedPayment` callable.
+ */
+export interface ResolveUnappliedPaymentResult {
+  ok: true;
+  paymentId: string;
+  kinfolkId: string;
+  paymentCents: number;
+  creditedCents: number;
+  creditId: string;
+  appliedCents: number;
+  appliedInvoiceId: string;
+  appliedInvoiceNumber: string;
+  appliedInvoiceState: string;
+  appliedInvoiceAmountDueCents: number;
+  keptCents: number;
+  newAccountBalanceCents: number;
+  replayed: boolean;
+}
+
 // ---------- resendQuote ----------
 
 /**

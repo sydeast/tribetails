@@ -27,7 +27,8 @@ import {
 import { creditAccount } from '../lib/accountCredit';
 import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { PaymentIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
-import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
+// #1005: money notices go to a member with billing access, not the last-synced account.
+import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotificationDetailed } from '../notifications/dispatcher';
 import { isNoRecipientsError } from '../notifications/recipientErrors';
 import { PAYMENT_APPLIED_CLAIM_FIELD, claimableMarkInvoicePaidOwner } from '../lib/paymentAppliedOwner';
@@ -1177,7 +1178,7 @@ async function sendPaymentConfirmation(input: {
   const officeOnlyAllowed = input.settlesInvoice || input.officeOwedWithoutHousehold === true;
   try {
     if (input.householdRequested) {
-      recipientUid = await resolveKinfolkUid(input.kinfolkId);
+      recipientUid = await resolveBillingRecipientUid(input.kinfolkId);
       if (recipientUid === null) {
         noPortalAccount = true;
         logEvent({
