@@ -1,5 +1,4 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
-import { FieldValue } from 'firebase-admin/firestore';
 import { z, ZodError } from 'zod';
 
 import { db } from '../lib/firestoreAdmin';
@@ -20,6 +19,7 @@ import {
   MAX_CREDIT_REASON_LENGTH,
   MAX_GIVEN_CREDIT_CENTS,
   creditLedgerRef,
+  stageGivenCredit,
 } from '../lib/creditLedger';
 
 /**
@@ -163,27 +163,18 @@ export async function giveAccountCreditHandler(
     const famSnap = await tx.get(famRef);
     if (!famSnap.exists) throw new HttpsError('not-found', 'Household not found.');
     const before = readAccountBalanceCents((famSnap.data() ?? {})[ACCOUNT_BALANCE_FIELD]);
-    const after = before + args.amountCents;
-
-    tx.create(eventRef, {
-      kind: 'given',
+    // The one path every given credit takes (`lib/creditLedger.ts`), shared
+    // with the credit part of an unapplied-payment decision (#1003).
+    const { balanceAfterCents: after } = stageGivenCredit(firestore, tx, {
+      kinfolkId: args.kinfolkId,
+      eventId: args.idempotencyKey,
       amountCents: args.amountCents,
       reason: args.reason,
       givenBy: actor.uid,
       balanceBeforeCents: before,
-      balanceAfterCents: after,
       atMs,
       testMode: actor.testMode.active,
-      createdAt: FieldValue.serverTimestamp(),
     });
-    tx.set(
-      famRef,
-      {
-        [ACCOUNT_BALANCE_FIELD]: after,
-        accountBalanceUpdatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
     return { replayed: null, before, after };
   });
 

@@ -166,6 +166,11 @@ export const AUDIT_EVENTS = {
   // (`admin/giveAccountCredit.ts`, operator ruling 2026-09-27, docket Q6).
   // The only path that adds credit with no payment behind it.
   BILLING_ACCOUNT_CREDIT_GIVEN: 'BILLING_ACCOUNT_CREDIT_GIVEN',
+  // #1003: the owner decided what an unapplied card payment becomes: some or
+  // all of it as account credit, some or all of it on another open invoice of
+  // the same household, and the rest kept as recorded.
+  // `admin/resolveUnappliedPayment.ts`.
+  BILLING_UNAPPLIED_PAYMENT_DECIDED: 'BILLING_UNAPPLIED_PAYMENT_DECIDED',
 
   THEME_BRAND_TOKENS_UPDATED: 'THEME_BRAND_TOKENS_UPDATED',
   THEME_KINFOLK_OVERRIDES_UPDATED: 'THEME_KINFOLK_OVERRIDES_UPDATED',

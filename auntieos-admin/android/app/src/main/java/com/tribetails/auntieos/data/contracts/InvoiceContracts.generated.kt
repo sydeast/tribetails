@@ -1736,6 +1736,160 @@ internal fun decodeGetAccountCreditHistoryResult(raw: Map<String, Any?>?): GetAc
         uses = (raw?.get("uses") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetAccountCreditHistoryResultUse(nested) } },
     )
 
+// ---------- listUnappliedPayments ----------
+
+/** Request payload for the `listUnappliedPayments` callable. */
+data class ListUnappliedPaymentsArgs(
+    val kinfolkId: String,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        put("kinfolkId", kinfolkId)
+    }
+}
+
+/** Nested in the `listUnappliedPayments` contract. */
+data class ListUnappliedPaymentsResultPayment(
+    val paymentId: String,
+    val kinfolkId: String,
+    val invoiceId: String,
+    val invoiceNumber: String,
+    val amountCents: Long,
+    val amountResolved: Boolean,
+    val feeCents: Long,
+    val reason: String,
+    val receivedAtMs: Long,
+    val referenceNumber: String,
+)
+
+/**
+ * Fail-soft decode of `ListUnappliedPaymentsResultPayment` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeListUnappliedPaymentsResultPayment(raw: Map<String, Any?>?): ListUnappliedPaymentsResultPayment =
+    ListUnappliedPaymentsResultPayment(
+        paymentId = (raw?.get("paymentId") as? String).orEmpty(),
+        kinfolkId = (raw?.get("kinfolkId") as? String).orEmpty(),
+        invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
+        invoiceNumber = (raw?.get("invoiceNumber") as? String).orEmpty(),
+        amountCents = (raw?.get("amountCents") as? Number)?.toLong() ?: 0L,
+        amountResolved = raw?.get("amountResolved") as? Boolean ?: false,
+        feeCents = (raw?.get("feeCents") as? Number)?.toLong() ?: 0L,
+        reason = (raw?.get("reason") as? String).orEmpty(),
+        receivedAtMs = (raw?.get("receivedAtMs") as? Number)?.toLong() ?: 0L,
+        referenceNumber = (raw?.get("referenceNumber") as? String).orEmpty(),
+    )
+
+/** Nested in the `listUnappliedPayments` contract. */
+data class ListUnappliedPaymentsResultOpenInvoice(
+    val invoiceId: String,
+    val invoiceNumber: String,
+    val amountDueCents: Long,
+)
+
+/**
+ * Fail-soft decode of `ListUnappliedPaymentsResultOpenInvoice` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeListUnappliedPaymentsResultOpenInvoice(raw: Map<String, Any?>?): ListUnappliedPaymentsResultOpenInvoice =
+    ListUnappliedPaymentsResultOpenInvoice(
+        invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
+        invoiceNumber = (raw?.get("invoiceNumber") as? String).orEmpty(),
+        amountDueCents = (raw?.get("amountDueCents") as? Number)?.toLong() ?: 0L,
+    )
+
+/** Response from the `listUnappliedPayments` callable. */
+data class ListUnappliedPaymentsResult(
+    val ok: Boolean,
+    val kinfolkId: String,
+    val payments: List<ListUnappliedPaymentsResultPayment>,
+    val openInvoices: List<ListUnappliedPaymentsResultOpenInvoice>,
+)
+
+/**
+ * Fail-soft decode of `ListUnappliedPaymentsResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeListUnappliedPaymentsResult(raw: Map<String, Any?>?): ListUnappliedPaymentsResult =
+    ListUnappliedPaymentsResult(
+        ok = raw?.get("ok") as? Boolean ?: false,
+        kinfolkId = (raw?.get("kinfolkId") as? String).orEmpty(),
+        payments = (raw?.get("payments") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeListUnappliedPaymentsResultPayment(nested) } },
+        openInvoices = (raw?.get("openInvoices") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeListUnappliedPaymentsResultOpenInvoice(nested) } },
+    )
+
+// ---------- resolveUnappliedPayment ----------
+
+/** Request payload for the `resolveUnappliedPayment` callable. */
+data class ResolveUnappliedPaymentArgs(
+    val paymentId: String,
+    val creditCents: Long,
+    val creditReason: String,
+    val applyInvoiceId: String,
+    val applyCents: Long,
+    val idempotencyKey: String,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        put("paymentId", paymentId)
+        put("creditCents", creditCents)
+        put("creditReason", creditReason)
+        put("applyInvoiceId", applyInvoiceId)
+        put("applyCents", applyCents)
+        put("idempotencyKey", idempotencyKey)
+    }
+}
+
+/** Response from the `resolveUnappliedPayment` callable. */
+data class ResolveUnappliedPaymentResult(
+    val ok: Boolean,
+    val paymentId: String,
+    val kinfolkId: String,
+    val paymentCents: Long,
+    val creditedCents: Long,
+    val creditId: String,
+    val appliedCents: Long,
+    val appliedInvoiceId: String,
+    val appliedInvoiceNumber: String,
+    val appliedInvoiceState: String,
+    val appliedInvoiceAmountDueCents: Long,
+    val keptCents: Long,
+    val newAccountBalanceCents: Long,
+    val replayed: Boolean,
+)
+
+/**
+ * Fail-soft decode of `ResolveUnappliedPaymentResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeResolveUnappliedPaymentResult(raw: Map<String, Any?>?): ResolveUnappliedPaymentResult =
+    ResolveUnappliedPaymentResult(
+        ok = raw?.get("ok") as? Boolean ?: false,
+        paymentId = (raw?.get("paymentId") as? String).orEmpty(),
+        kinfolkId = (raw?.get("kinfolkId") as? String).orEmpty(),
+        paymentCents = (raw?.get("paymentCents") as? Number)?.toLong() ?: 0L,
+        creditedCents = (raw?.get("creditedCents") as? Number)?.toLong() ?: 0L,
+        creditId = (raw?.get("creditId") as? String).orEmpty(),
+        appliedCents = (raw?.get("appliedCents") as? Number)?.toLong() ?: 0L,
+        appliedInvoiceId = (raw?.get("appliedInvoiceId") as? String).orEmpty(),
+        appliedInvoiceNumber = (raw?.get("appliedInvoiceNumber") as? String).orEmpty(),
+        appliedInvoiceState = (raw?.get("appliedInvoiceState") as? String).orEmpty(),
+        appliedInvoiceAmountDueCents = (raw?.get("appliedInvoiceAmountDueCents") as? Number)?.toLong() ?: 0L,
+        keptCents = (raw?.get("keptCents") as? Number)?.toLong() ?: 0L,
+        newAccountBalanceCents = (raw?.get("newAccountBalanceCents") as? Number)?.toLong() ?: 0L,
+        replayed = raw?.get("replayed") as? Boolean ?: false,
+    )
+
 // ---------- resendQuote ----------
 
 /** Request payload for the `resendQuote` callable. */
