@@ -72,6 +72,9 @@ class SettingsViewModel(private val dataSource: AuntieDataSource) {
 
         /** How many settings reads are running in this process, for the leak test. */
         internal val activeSettingsPolls: StateFlow<Int> = activePolls.asStateFlow()
+
+        /** #998: the busy-id [addVetClinic] uses, since a new clinic has no id yet. */
+        const val ADD_VET_CLINIC_BUSY_ID: String = "__add_vet_clinic__"
     }
 
     /** #867 review: read business settings again now, for the load error banner's Retry. */
@@ -100,7 +103,8 @@ class SettingsViewModel(private val dataSource: AuntieDataSource) {
     // Suspend delegations (return the raw result; used for unit/integration tests).
     suspend fun createVetClinic(clinic: VetClinic): WriteResult<String> = dataSource.createVetClinic(clinic)
     suspend fun updateVetClinic(loaded: VetClinic, edited: VetClinic): WriteResult<Unit> = dataSource.updateVetClinic(loaded, edited)
-    suspend fun deleteVetClinic(id: String): WriteResult<Unit> = dataSource.deleteVetClinic(id)
+    /** #998: `archived = true` retires (or rejects a pending submission); `false` restores. */
+    suspend fun archiveVetClinic(id: String, archived: Boolean): WriteResult<Unit> = dataSource.archiveVetClinic(id, archived)
 
     // Fail-loud write actions for the UI: each launches on the VM scope and pushes
     // a human message to [vetClinicError] on failure (never silently swallowed).
@@ -108,24 +112,61 @@ class SettingsViewModel(private val dataSource: AuntieDataSource) {
     val vetClinicError: StateFlow<String?> = _vetClinicError.asStateFlow()
     fun clearVetClinicError() { _vetClinicError.update { null } }
 
+    /**
+     * #998: ids of a write in flight, so a card's button can show a busy label
+     * and disable itself for the wait, rather than looking clickable while an
+     * archive/restore/create round-trips. [ADD_VET_CLINIC_BUSY_ID] stands in
+     * for the add-clinic form, which has no clinic id yet.
+     */
+    private val _vetClinicBusyIds = MutableStateFlow<Set<String>>(emptySet())
+    val vetClinicBusyIds: StateFlow<Set<String>> = _vetClinicBusyIds.asStateFlow()
+
     private fun report(label: String, result: WriteResult<*>) {
         _vetClinicError.value = if (result is WriteResult.Err) "$label: ${result.message}" else null
     }
 
+    /**
+     * Runs [write], tracking [busyId] busy for its duration and reporting a
+     * failure to [vetClinicError]. A plain `suspend fun`, not `scope.async`:
+     * `async` stores a thrown exception in its `Deferred` instead of routing it
+     * to [scope]'s `reportingExceptionHandler`, which would silently drop a
+     * `NetworkBlockedError` or a revoked-session rethrow that Sentry needs to
+     * see. Every caller below wraps this in `scope.launch` so the handler stays
+     * wired; [addVetClinicAwait] is the one caller that also wants the result.
+     */
+    private suspend fun <T> trackedVetClinicWrite(busyId: String, label: String, write: suspend () -> WriteResult<T>): WriteResult<T> {
+        _vetClinicBusyIds.update { it + busyId }
+        return try {
+            val result = write()
+            report(label, result)
+            result
+        } finally {
+            _vetClinicBusyIds.update { it - busyId }
+        }
+    }
+
     fun addVetClinic(clinic: VetClinic) =
-        scope.launch { report("Couldn't add ${clinic.name}", dataSource.createVetClinic(clinic)) }
+        scope.launch { trackedVetClinicWrite(ADD_VET_CLINIC_BUSY_ID, "Couldn't add ${clinic.name}") { dataSource.createVetClinic(clinic) } }
+    /** [addVetClinic], but awaits the result so the add form can clear itself only on success. */
+    suspend fun addVetClinicAwait(clinic: VetClinic): WriteResult<String> =
+        trackedVetClinicWrite(ADD_VET_CLINIC_BUSY_ID, "Couldn't add ${clinic.name}") { dataSource.createVetClinic(clinic) }
     /** #994: [loaded] is the clinic the edit form was seeded from; only what changed is written. */
     fun saveVetClinic(loaded: VetClinic, edited: VetClinic) =
-        scope.launch { report("Couldn't save ${edited.name}", dataSource.updateVetClinic(loaded, edited)) }
-    fun removeVetClinic(id: String, name: String) =
-        scope.launch { report("Couldn't delete ${name.ifBlank { "clinic" }}", dataSource.deleteVetClinic(id)) }
+        scope.launch { trackedVetClinicWrite(loaded._id, "Couldn't save ${edited.name}") { dataSource.updateVetClinic(loaded, edited) } }
+    /** #998: retires an active clinic through `archiveVetClinic`. There is no delete. */
+    fun retireVetClinic(id: String, name: String) =
+        scope.launch { trackedVetClinicWrite(id, "Couldn't retire ${name.ifBlank { "clinic" }}") { dataSource.archiveVetClinic(id, true) } }
+    /** #998: brings a retired clinic back into the bank. */
+    fun restoreVetClinic(id: String, name: String) =
+        scope.launch { trackedVetClinicWrite(id, "Couldn't restore ${name.ifBlank { "clinic" }}") { dataSource.archiveVetClinic(id, false) } }
 
     /** Approve a kinfolk-submitted pending clinic: flip verified=true (and clear the
      *  submittedBy tag) so it joins the shared bank visible to every household. */
     fun approveVetClinic(clinic: VetClinic) =
-        scope.launch { report("Couldn't approve ${clinic.name}", dataSource.updateVetClinic(clinic, clinic.copy(verified = true, submittedBy = ""))) }
+        scope.launch { trackedVetClinicWrite(clinic._id, "Couldn't approve ${clinic.name}") { dataSource.updateVetClinic(clinic, clinic.copy(verified = true, submittedBy = "")) } }
 
-    /** Reject a pending submission: hard-delete the pending doc (it was never approved). */
+    /** #998: reject a pending submission by retiring it through `archiveVetClinic`.
+     *  The row stays, still carrying `submittedBy`, rather than being hard-deleted. */
     fun rejectVetClinic(id: String, name: String) =
-        scope.launch { report("Couldn't reject ${name.ifBlank { "clinic" }}", dataSource.deleteVetClinic(id)) }
+        scope.launch { trackedVetClinicWrite(id, "Couldn't reject ${name.ifBlank { "clinic" }}") { dataSource.archiveVetClinic(id, true) } }
 }

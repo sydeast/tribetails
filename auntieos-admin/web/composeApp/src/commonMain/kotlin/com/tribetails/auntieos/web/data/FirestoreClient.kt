@@ -1914,7 +1914,38 @@ class FirestoreClient {
 
     // ---- Vet clinics (shared catalog used by Kinfolk vet section) ----
     fun vetClinicsStream(): Flow<FirestoreResult<List<VetClinic>>> = platformVetClinicsStream()
-    suspend fun createVetClinic(clinic: VetClinic): WriteResult<String> = platformCreateVetClinic(clinic)
+    /**
+     * #998: creates a new catalog clinic through the `submitVetClinic` callable,
+     * the same one admin web and Android use, with the same payload web sends
+     * (`api/vetClinicsWrite.ts#submitVetClinic`). `firestore.rules` refuses every
+     * client write to `vet_clinics`, so the old direct `addDoc` was refused
+     * outright, including `KinfolkEditScreen`'s inline create-on-save, which
+     * shares this method. A staff caller lands `verified: true` server-side, so
+     * a clinic added here is live immediately rather than queued for approval.
+     *
+     * `acknowledgedMatchIds` is always empty: like web's own "Add a clinic"
+     * card, this offers no near-match picker. A name/phone match comes back
+     * `status: 'needs_choice'` with nothing written, reported here as an error
+     * rather than claimed as a create that did not happen.
+     */
+    suspend fun createVetClinic(clinic: VetClinic): WriteResult<String> {
+        if (clinic.name.isBlank()) return WriteResult.Err("A clinic name is required.")
+        val payload = submitVetClinicPayload(clinic)
+        return when (val r = platformInvokeCallable("submitVetClinic", payload.toString())) {
+            is WriteResult.Ok -> {
+                val obj = runCatching { Json.parseToJsonElement(r.value).jsonObject }.getOrNull()
+                val status = obj?.get("status")?.jsonPrimitive?.contentOrNull
+                if (status == "needs_choice") {
+                    WriteResult.Err(
+                        "A similar clinic already exists. Pick it from a household's vet field on admin web instead, or create this one anyway from there.",
+                    )
+                } else {
+                    WriteResult.Ok(obj?.get("clinicId")?.jsonPrimitive?.contentOrNull.orEmpty())
+                }
+            }
+            is WriteResult.Err -> r
+        }
+    }
     /**
      * #994: saves an edit of one catalog clinic through the `updateVetClinic`
      * callable, the path admin web and Android use. `firestore.rules` refuses every
@@ -1935,7 +1966,23 @@ class FirestoreClient {
             is WriteResult.Err -> WriteResult.Err(r.message)
         }
     }
-    suspend fun deleteVetClinic(id: String): WriteResult<Unit> = platformDeleteVetClinic(id)
+    /**
+     * #998: retires (`archived = true`) or restores (`false`) a clinic through
+     * the `archiveVetClinic` callable, the path admin web and Android use.
+     * There is no delete callable and none is planned: a household points at a
+     * clinic by id with no referential integrity, so a hard delete would strand
+     * every linked household outside `updateVetClinic`'s fan-out for good. This
+     * also covers rejecting a pending kinfolk submission (`archived = true` on
+     * an unverified row): the row stays, still carrying `submittedBy`, and is
+     * invisible everywhere a rejected submission should be.
+     */
+    suspend fun archiveVetClinic(id: String, archived: Boolean): WriteResult<Unit> {
+        if (id.isBlank()) return WriteResult.Err("archive of vet_clinics requires a document id")
+        return when (val r = platformInvokeCallable("archiveVetClinic", archiveVetClinicPayload(id, archived).toString())) {
+            is WriteResult.Ok  -> WriteResult.Ok(Unit)
+            is WriteResult.Err -> r
+        }
+    }
 
     // ---- Activity log writes ----
     suspend fun logActivity(entry: ActivityLogEntry): WriteResult<String> = platformLogActivity(entry)
@@ -2373,9 +2420,10 @@ internal expect fun platformTrainingDocsStream(): Flow<FirestoreResult<List<Trai
 internal expect fun platformUserProfileStream(uid: String): Flow<FirestoreResult<UserProfile?>>
 internal expect suspend fun platformUpdateUserProfile(uid: String, loaded: UserProfile?, edited: UserProfile): WriteResult<Unit>
 
+// #998: create and archive/restore route through platformInvokeCallable
+// (submitVetClinic / archiveVetClinic) directly from FirestoreClient, same as
+// updateVetClinic; there is no platform-specific create or delete actual.
 internal expect fun platformVetClinicsStream(): Flow<FirestoreResult<List<VetClinic>>>
-internal expect suspend fun platformCreateVetClinic(clinic: VetClinic): WriteResult<String>
-internal expect suspend fun platformDeleteVetClinic(id: String): WriteResult<Unit>
 
 internal expect suspend fun platformLogActivity(entry: ActivityLogEntry): WriteResult<String>
 
@@ -4132,6 +4180,14 @@ data class VetClinic(
     val verified: Boolean = true,
     /** Firebase Auth uid of the kinfolk who submitted a pending entry (else ""). */
     val submittedBy: String = "",
+    /**
+     * #998: retired from the bank by `archiveVetClinic`. False means active: the
+     * field is newer than the catalog, and a row curated before it existed reads
+     * as active by this default. An archived clinic is hidden from the pickers
+     * and from `getVetClinics`, but NEVER from a household already linked to it,
+     * which keeps its own copy of the name, phone and address regardless.
+     */
+    val archived: Boolean = false,
     val createdAt: String = "",
     val updatedAt: String = "",
 )

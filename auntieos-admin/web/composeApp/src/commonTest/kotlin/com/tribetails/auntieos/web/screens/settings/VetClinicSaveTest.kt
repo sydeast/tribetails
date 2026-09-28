@@ -62,30 +62,39 @@ class VetClinicSaveTest {
     }
 }
 
-/** Search filter + pending/approved partition for the redesigned vet bank panel. */
+/** Search filter + pending/approved/retired partition for the redesigned vet bank panel. */
 class VetClinicBankTest {
 
     private val approved = VetClinic(_id = "a", name = "Riverside Animal Hospital", phone = "(512) 744-4644", address = "3675 Gattis School Rd", verified = true)
     private val approvedEr = VetClinic(_id = "e", name = "Heart of Texas", isEmergency = true, verified = true)
     private val pending = VetClinic(_id = "p", name = "New Place", verified = false, submittedBy = "kin1")
     private val legacy = VetClinic(_id = "l", name = "Old Clinic")  // verified defaults true
+    /** #998: a retired catalog clinic - was approved, archived through `archiveVetClinic`. */
+    private val retired = VetClinic(_id = "r", name = "Closed Practice", verified = true, archived = true)
+    /** #998: a rejected pending submission - archived, but never verified. */
+    private val rejected = VetClinic(_id = "j", name = "Rejected Place", verified = false, submittedBy = "kin2", archived = true)
 
-    private val all = listOf(approved, approvedEr, pending, legacy)
+    private val all = listOf(approved, approvedEr, pending, legacy, retired, rejected)
 
     @Test
-    fun pendingPicksOnlyUnverified() {
+    fun pendingPicksOnlyUnverifiedAndNotArchived() {
         assertEquals(listOf("p"), pendingVetClinics(all).map { it._id })
     }
 
     @Test
-    fun approvedIncludesLegacyDefaultTrue() {
+    fun approvedIncludesLegacyDefaultTrueButExcludesArchived() {
         assertEquals(setOf("a", "e", "l"), approvedVetClinics(all).map { it._id }.toSet())
     }
 
     @Test
+    fun archivedIncludesRetiredCatalogAndRejectedPendingRows() {
+        assertEquals(setOf("r", "j"), archivedVetClinics(all).map { it._id }.toSet())
+    }
+
+    @Test
     fun blankQueryMatchesAll() {
-        assertEquals(4, filterVetClinics(all, "").size)
-        assertEquals(4, filterVetClinics(all, "   ").size)
+        assertEquals(6, filterVetClinics(all, "").size)
+        assertEquals(6, filterVetClinics(all, "   ").size)
     }
 
     @Test

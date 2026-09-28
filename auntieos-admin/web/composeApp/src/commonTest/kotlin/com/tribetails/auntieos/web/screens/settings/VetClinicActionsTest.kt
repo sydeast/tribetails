@@ -3,10 +3,12 @@ package com.tribetails.auntieos.web.screens.settings
 import com.tribetails.auntieos.web.FakeAuntieDataSource
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.VetClinic
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -59,20 +61,38 @@ class VetClinicActionsTest {
     }
 
     @Test
-    fun `remove happy path hard-deletes by id`() = runTest {
+    fun `retire happy path archives by id`() = runTest {
         val ds = FakeAuntieDataSource()
         val vm = SettingsViewModel(ds)
-        vm.removeVetClinic("c1", "Creekside").join()
-        assertEquals(listOf("c1"), ds.deletedVetClinicIds)
+        vm.retireVetClinic("c1", "Creekside").join()
+        assertEquals(listOf("c1" to true), ds.archivedVetClinicCalls)
         assertNull(vm.vetClinicError.value)
     }
 
     @Test
-    fun `delete failure surfaces a fail-loud error message`() = runTest {
+    fun `restore happy path unarchives by id`() = runTest {
+        val ds = FakeAuntieDataSource()
+        val vm = SettingsViewModel(ds)
+        vm.restoreVetClinic("c1", "Creekside").join()
+        assertEquals(listOf("c1" to false), ds.archivedVetClinicCalls)
+        assertNull(vm.vetClinicError.value)
+    }
+
+    @Test
+    fun `reject archives a pending submission rather than deleting it`() = runTest {
+        val ds = FakeAuntieDataSource()
+        val vm = SettingsViewModel(ds)
+        vm.rejectVetClinic("p1", "New Place").join()
+        assertEquals(listOf("p1" to true), ds.archivedVetClinicCalls)
+        assertNull(vm.vetClinicError.value)
+    }
+
+    @Test
+    fun `retire failure surfaces a fail-loud error message`() = runTest {
         val ds = FakeAuntieDataSource().apply { vetClinicWriteShouldFail = true; vetClinicWriteFailMessage = "permission-denied" }
         val vm = SettingsViewModel(ds)
-        vm.removeVetClinic("c1", "Creekside").join()
-        assertEquals(listOf("c1"), ds.deletedVetClinicIds)
+        vm.retireVetClinic("c1", "Creekside").join()
+        assertEquals(listOf("c1" to true), ds.archivedVetClinicCalls)
         val err = vm.vetClinicError.value
         assertTrue(err != null && err.contains("Creekside") && err.contains("permission-denied"), "got: $err")
     }
@@ -86,5 +106,34 @@ class VetClinicActionsTest {
         ds.vetClinicWriteShouldFail = false
         vm.addVetClinic(clinic).join()
         assertNull(vm.vetClinicError.value)
+    }
+
+    // ── #998: busy state, so a card's button can show a wait rather than looking clickable ──
+
+    @Test
+    fun `add is busy only while the create is in flight`() = runTest {
+        val ds = FakeAuntieDataSource().apply { vetClinicGate = CompletableDeferred() }
+        val vm = SettingsViewModel(ds)
+        assertFalse(SettingsViewModel.ADD_VET_CLINIC_BUSY_ID in vm.vetClinicBusyIds.value)
+        val job = vm.addVetClinic(clinic)
+        assertTrue(SettingsViewModel.ADD_VET_CLINIC_BUSY_ID in vm.vetClinicBusyIds.value)
+        ds.vetClinicGate?.complete(Unit)
+        job.join()
+        assertFalse(SettingsViewModel.ADD_VET_CLINIC_BUSY_ID in vm.vetClinicBusyIds.value)
+    }
+
+    @Test
+    fun `retire is busy by clinic id only while in flight, and clears on failure too`() = runTest {
+        val ds = FakeAuntieDataSource().apply {
+            vetClinicGate = CompletableDeferred()
+            vetClinicWriteShouldFail = true
+        }
+        val vm = SettingsViewModel(ds)
+        val job = vm.retireVetClinic("c1", "Creekside")
+        assertTrue("c1" in vm.vetClinicBusyIds.value)
+        ds.vetClinicGate?.complete(Unit)
+        job.join()
+        assertFalse("c1" in vm.vetClinicBusyIds.value)
+        assertTrue(vm.vetClinicError.value != null)
     }
 }
