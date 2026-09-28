@@ -44,6 +44,8 @@ import com.tribetails.auntieos.web.ui.components.DenPanel
 import com.tribetails.auntieos.web.ui.components.GhostButton
 import com.tribetails.auntieos.web.ui.components.MultilineField
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
+import com.tribetails.auntieos.web.ui.components.ReadStatusBanner
+import com.tribetails.auntieos.web.ui.components.rememberLiveRead
 import kotlinx.coroutines.launch
 import kotlinx.datetime.TimeZone
 
@@ -65,10 +67,12 @@ fun NewVisitDialog(
     val c = AuntieTheme.colors
     val scope = rememberReportingScope()
 
-    val kinfolkState by remember { client.kinfolkStream() }.collectAsState(initial = FirestoreResult.Loading)
+    // #898: a stream, not collectAsState directly, so a failed read (first load or a
+    // later dropped poll) shows a visible error instead of an empty "no kinfolk" hint.
+    val kinfolkRead = rememberLiveRead { client.kinfolkStream() }
     val settingsState by remember { client.businessSettingsStream() }.collectAsState(initial = FirestoreResult.Loading)
 
-    val kinfolk = (kinfolkState as? FirestoreResult.Data)?.value.orEmpty()
+    val kinfolk = kinfolkRead.data.orEmpty()
         .sortedBy { it.displayName.lowercase() }
     // KinCare types come from Business-Settings serviceRates (never hardcoded); fall
     // back to a small default list only when settings carry none yet.
@@ -127,8 +131,10 @@ fun NewVisitDialog(
 
                 DenPanel(title = "Details") {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        ReadStatusBanner(kinfolkRead, "kinfolk")
                         when {
-                            kinfolkState is FirestoreResult.Loading -> Text("Loading kinfolk...", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                            kinfolkRead.snapshot.loading -> Text("Loading kinfolk...", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                            kinfolkRead.snapshot.failed -> Unit // ReadStatusBanner above already says why
                             kinfolk.isEmpty() -> Text("No kinfolk on file to schedule for.", style = AuntieTheme.typography.bodySmall, color = c.textDim)
                             else -> AuntieSelectField(
                                 label = "Kinfolk *",

@@ -10,7 +10,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.tribetails.auntieos.web.data.BusinessSettings
@@ -20,6 +19,7 @@ import com.tribetails.auntieos.web.data.TagDef
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.DEFAULT_TAG_COLOR
 import com.tribetails.auntieos.web.data.addTag
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import kotlinx.coroutines.launch
 
@@ -207,7 +207,11 @@ fun ProfileTagsSection(
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
-    val coroutineScope = rememberCoroutineScope()
+    // #898: was rememberCoroutineScope(), which has no uncaught-exception handler.
+    // A `require` failure in FirestoreClient (updateKinfolkTags/updateKinTags)
+    // reached the coroutine's default handler and could crash the desktop window
+    // instead of reporting and letting the revert-with-message above run.
+    val coroutineScope = rememberReportingScope("ui:ProfileTagsSection")
 
     var state by remember(scope) { mutableStateOf(ProfileTagsState(tags = initialTags)) }
 

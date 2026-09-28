@@ -54,6 +54,7 @@ import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.web.ui.components.GhostButton
 import com.tribetails.auntieos.web.ui.components.KeyValueStyle
 import com.tribetails.auntieos.web.ui.components.LoadErrorBanner
+import com.tribetails.auntieos.web.ui.components.NotFoundNotice
 import com.tribetails.auntieos.web.ui.components.rememberReloadableRead
 import com.tribetails.auntieos.web.ui.components.settlesRetry
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
@@ -111,6 +112,13 @@ fun KinCareDetailScreen(
             (sessions as? FirestoreResult.Error)?.let {
                 SectionHeader(title = "Kin Care", subtitle = "", icon = Lucide.PawPrint, onBack = onBack)
                 LoadErrorBanner("Couldn't load this Kin Care", it.message, onRetry = reload::retry, retrying = reload.retrying)
+                return@ScreenScaffold
+            }
+            // #898: the read answered and this id is not in it (deleted, or a
+            // stale link), distinct from still-loading, which used to shimmer forever.
+            if (sessions is FirestoreResult.Data) {
+                SectionHeader(title = "Kin Care", subtitle = "", icon = Lucide.PawPrint, onBack = onBack)
+                NotFoundNotice("This Kin Care couldn't be found. It may have been removed.", onBack = onBack)
                 return@ScreenScaffold
             }
             SectionHeader(title = "Loading…", subtitle = "Pulling Kin Care detail", icon = Lucide.PawPrint)

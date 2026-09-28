@@ -77,9 +77,11 @@ import com.tribetails.auntieos.web.ui.components.GhostButton
 import com.tribetails.auntieos.web.ui.components.GlassSurface
 import com.tribetails.auntieos.web.ui.components.MultilineField
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
+import com.tribetails.auntieos.web.ui.components.ReadStatusBanner
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.color
+import com.tribetails.auntieos.web.ui.components.rememberLiveRead
 import kotlinx.coroutines.launch
 
 private sealed interface BookingRoute {
@@ -856,15 +858,19 @@ private fun buildStartTimesMs(
     }
 }
 
+// #898: internal, not private, so a render test can drive it directly with
+// JvmFirestoreFixtures rather than navigating there through BookingListScreen.
 @Composable
-private fun BookingCreateScreen(
+internal fun BookingCreateScreen(
     vm: BookingViewModel,
     onBack: () -> Unit,
 ) {
     val c     = AuntieTheme.colors
     val scope = rememberReportingScope()
     val client = remember { FirestoreClient() }
-    val kinfolkResult by remember { client.kinfolkStream() }.collectAsState(initial = FirestoreResult.Loading)
+    // #898: a failed read used to leave the kinfolk picker showing zero
+    // households with nothing to explain why.
+    val kinfolkRead = rememberLiveRead { client.kinfolkStream() }
     // KinCare types are sourced from Business Settings serviceRates (NOT hardcoded), per the
     // create-booking mockup. Falls back to SERVICE_TYPES when settings have no rates yet.
     val settingsResult by remember { client.businessSettingsStream() }.collectAsState(initial = FirestoreResult.Loading)
@@ -913,8 +919,8 @@ private fun BookingCreateScreen(
         }
     }
 
-    val allKinfolk: List<Kinfolk> = (kinfolkResult as? FirestoreResult.Data)
-        ?.value?.filter { it.status != "archived" }
+    val allKinfolk: List<Kinfolk> = kinfolkRead.data
+        ?.filter { it.status != "archived" }
         ?: emptyList()
 
     val filteredKinfolk = if (kinfolkSearch.isBlank()) emptyList()
@@ -946,6 +952,8 @@ private fun BookingCreateScreen(
             ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim) }
             Spacer(Modifier.height(16.dp))
         }
+
+        ReadStatusBanner(kinfolkRead, "kinfolk")
 
         DenPanel(title = "Details", subtitle = "KinCare applies to the whole household.") {
             // ── Kinfolk selector ───────────────────────────────────────────────

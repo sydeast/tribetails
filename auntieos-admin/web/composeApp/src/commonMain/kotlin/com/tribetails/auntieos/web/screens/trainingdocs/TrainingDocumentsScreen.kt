@@ -567,6 +567,8 @@ private fun AddDocumentForm(
                 required    = true,
                 modifier    = Modifier.fillMaxWidth(),
             )
+            // #898: a failed read used to leave this picker silently empty.
+            state.kinfolkLoadError?.let { EmptyHint("Couldn't load kinfolk: $it", error = true) }
 
             if (draft.targetType == "KIN") {
                 Spacer(Modifier.height(AuntieTheme.dims.space3))
@@ -583,6 +585,7 @@ private fun AddDocumentForm(
                     enabled     = draft.selectedKinfolkId.isNotBlank(),
                     modifier    = Modifier.fillMaxWidth(),
                 )
+                state.kinForSelectedLoadError?.let { EmptyHint("Couldn't load this household's pets: $it", error = true) }
             }
 
             Spacer(Modifier.height(AuntieTheme.dims.space5))

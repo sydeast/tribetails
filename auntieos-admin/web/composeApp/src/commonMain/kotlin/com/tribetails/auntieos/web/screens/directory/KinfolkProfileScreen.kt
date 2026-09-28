@@ -72,6 +72,7 @@ import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.web.ui.components.LoadErrorBanner
+import com.tribetails.auntieos.web.ui.components.NotFoundNotice
 import com.tribetails.auntieos.web.ui.components.rememberReloadableRead
 import com.tribetails.auntieos.web.ui.components.settlesRetry
 import com.tribetails.auntieos.web.ui.components.AuntieChip
@@ -326,6 +327,12 @@ fun KinfolkProfileScreen(
             // #867: a failed read shows its error, not a shimmer that never ends.
             if (loadError != null) {
                 LoadErrorBanner("Couldn't load this household", loadError, onRetry = reload::retry, retrying = reload.retrying)
+                return@ScreenScaffold
+            }
+            // #898: the read answered and this id is not in it (deleted, or a
+            // stale link), distinct from still-loading, which used to shimmer forever.
+            if (state is FirestoreResult.Data) {
+                NotFoundNotice("This household couldn't be found. It may have been removed.", onBack = onBack)
                 return@ScreenScaffold
             }
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -949,6 +956,12 @@ internal fun HouseholdNotesMigrationBox(
     onClear: suspend () -> WriteResult<Unit>,
     scope: CoroutineScope,
     onOpenHousehold: (() -> Unit)? = null,
+    // #898: the one-shot household read this box depends on failed silently
+    // before this, leaving "Loading household data…" showing forever. Null
+    // household with a null error just means the read has not answered yet.
+    householdError: String? = null,
+    onRetryHousehold: (() -> Unit)? = null,
+    retryingHousehold: Boolean = false,
 ) {
     val c = AuntieTheme.colors
     var clearBusy by remember { mutableStateOf(false) }
@@ -960,6 +973,13 @@ internal fun HouseholdNotesMigrationBox(
 
         val gaps = household?.let { missingHouseholdFields(it) }.orEmpty()
         when {
+            householdError != null ->
+                LoadErrorBanner(
+                    "Couldn't load household data",
+                    householdError,
+                    onRetry = onRetryHousehold,
+                    retrying = retryingHousehold,
+                )
             household == null ->
                 Text("Loading household data…", style = AuntieTheme.typography.bodySmall, color = c.textDim)
             gaps.isNotEmpty() -> {
