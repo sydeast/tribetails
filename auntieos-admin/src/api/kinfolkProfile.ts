@@ -41,7 +41,7 @@ export interface KinfolkProfile {
   wifiName: string;
   wifiPassword: string;
   // Emergency (#829). Array first, the old flat triple as a fallback until the
-  // migration is verified. Index 0 is called first. Written only through the
+  // migration is verified. One per household (2026-09-27 Q2). Written only through the
   // `saveEmergencyContacts` callable; see `api/emergencyContacts.ts`.
   emergencyContacts: EmergencyContact[];
   // Vet clinic (household-level)

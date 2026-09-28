@@ -6,7 +6,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.data.model.BreedBank
 import com.tribetails.auntieos.data.model.Dossier
-import com.tribetails.auntieos.data.model.EMERGENCY_CONTACTS_MAX
 import com.tribetails.auntieos.data.model.EmergencyContactDraft
 import com.tribetails.auntieos.data.model.draftsEqual
 import com.tribetails.auntieos.data.model.emergencyContactsOf
@@ -910,12 +909,9 @@ class DirectoryViewModel(
     fun updateInternalNotes(value: String) = updateAddHouseholdField { it.copy(internalNotes = value) }
 
     private fun List<EmergencyContactDraft>.replaced(i: Int, d: EmergencyContactDraft) = mapIndexed { j, x -> if (j == i) d else x }
-    private fun List<EmergencyContactDraft>.movedFirst(i: Int) = listOf(this[i]) + filterIndexed { j, _ -> j != i }
 
     fun updateAddEmergencyContact(i: Int, d: EmergencyContactDraft) { _addKinfolkState.value = _addKinfolkState.value.let { it.copy(emergencyContacts = it.emergencyContacts.replaced(i, d)) } }
-    fun addAddEmergencyContact() { _addKinfolkState.value = _addKinfolkState.value.let { if (it.emergencyContacts.size >= EMERGENCY_CONTACTS_MAX) it else it.copy(emergencyContacts = it.emergencyContacts + EmergencyContactDraft()) } }
     fun removeAddEmergencyContact(i: Int) { _addKinfolkState.value = _addKinfolkState.value.let { it.copy(emergencyContacts = it.emergencyContacts.filterIndexed { j, _ -> j != i }.ifEmpty { listOf(EmergencyContactDraft()) }) } }
-    fun moveAddEmergencyContactFirst(i: Int) { _addKinfolkState.value = _addKinfolkState.value.let { it.copy(emergencyContacts = it.emergencyContacts.movedFirst(i)) } }
 
     /**
      * Creating a household REQUIRES an Emergency Contact (operator ruling,
@@ -1171,9 +1167,7 @@ class DirectoryViewModel(
     fun updateEditWifiPassword(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(wifiPassword = value) }
     // Each contact edit clears a contact error, so a stale refusal never outlives the change it described.
     fun updateEditEmergencyContact(i: Int, d: EmergencyContactDraft) { _editKinfolkState.value = _editKinfolkState.value.let { it.copy(emergencyContacts = it.emergencyContacts.replaced(i, d), emergencyContactsError = null) } }
-    fun addEditEmergencyContact() { _editKinfolkState.value = _editKinfolkState.value.let { if (it.emergencyContacts.size >= EMERGENCY_CONTACTS_MAX) it else it.copy(emergencyContacts = it.emergencyContacts + EmergencyContactDraft(), emergencyContactsError = null) } }
     fun removeEditEmergencyContact(i: Int) { _editKinfolkState.value = _editKinfolkState.value.let { it.copy(emergencyContacts = it.emergencyContacts.filterIndexed { j, _ -> j != i }.ifEmpty { listOf(EmergencyContactDraft()) }, emergencyContactsError = null) } }
-    fun moveEditEmergencyContactFirst(i: Int) { _editKinfolkState.value = _editKinfolkState.value.let { it.copy(emergencyContacts = it.emergencyContacts.movedFirst(i), emergencyContactsError = null) } }
 
     /**
      * #829 review item 10: whether Save would change anything, from the same

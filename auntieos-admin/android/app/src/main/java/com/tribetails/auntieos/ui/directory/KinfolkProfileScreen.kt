@@ -32,6 +32,8 @@ import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kin411
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.emergencyContactsOf
+import com.tribetails.auntieos.data.model.EMERGENCY_CONTACTS_MAX
+import com.tribetails.auntieos.data.model.EMERGENCY_CONTACTS_OVER_LIMIT
 import com.tribetails.auntieos.data.model.FormSchema
 // Tags (2026-07-19): the vocabulary lives on business_settings, so the scope ->
 // field mapping is shared with the Den's Tags editor rather than duplicated.
@@ -594,9 +596,14 @@ private fun EmergencyContactsPanel(kinfolk: Kinfolk) {
             // #829 review item 14: the compact pill, as on every other surface.
             AuntieStatusPill(label = "No Emergency Contact", tone = AuntieStatusTone.Orange, compact = true)
         } else {
-            contacts.forEachIndexed { i, c ->
+            // 2026-09-27 Q2: one per household. Two on file from the earlier
+            // rule both show, under the notice, until one is removed on Edit.
+            if (contacts.size > EMERGENCY_CONTACTS_MAX) {
+                Text(EMERGENCY_CONTACTS_OVER_LIMIT, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.kinfolkOrange)
+            }
+            contacts.forEach { c ->
                 FieldRows(
-                    Field(if (i == 0) "Called first" else "Called second", c.name),
+                    Field("Name", c.name),
                     Field("Phone", c.phone, mono = true),
                     Field("Relationship", c.relationship.orEmpty()),
                 )

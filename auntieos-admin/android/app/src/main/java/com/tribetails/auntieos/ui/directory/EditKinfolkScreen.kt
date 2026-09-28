@@ -341,9 +341,7 @@ fun EditKinfolkScreen(
                     EmergencyContactsSection(
                         drafts = state.emergencyContacts,
                         onChange = viewModel::updateEditEmergencyContact,
-                        onAdd = viewModel::addEditEmergencyContact,
                         onRemove = viewModel::removeEditEmergencyContact,
-                        onMoveFirst = viewModel::moveEditEmergencyContactFirst,
                         enabled = !state.isSaving,
                         showNoneOnFile = state.emergencyContactsBaseline.isBlankDrafts(),
                         unsaved = viewModel.editHasUnsavedChanges(state),

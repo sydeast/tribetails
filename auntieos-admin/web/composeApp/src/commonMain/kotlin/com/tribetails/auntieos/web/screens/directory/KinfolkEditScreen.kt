@@ -846,9 +846,7 @@ fun KinfolkEditScreen(
             EmergencyContactsEditor(
                 drafts      = ecDrafts,
                 onChange    = { i, d -> ecDrafts = ecDrafts.mapIndexed { j, x -> if (j == i) d else x }; ecError = null },
-                onAdd       = { if (ecDrafts.size < com.tribetails.auntieos.web.data.EMERGENCY_CONTACTS_MAX) ecDrafts = ecDrafts + EmergencyContactDraft(); ecError = null },
                 onRemove    = { i -> ecDrafts = ecDrafts.filterIndexed { j, _ -> j != i }.ifEmpty { listOf(EmergencyContactDraft()) }; ecError = null },
-                onMoveFirst = { i -> ecDrafts = listOf(ecDrafts[i]) + ecDrafts.filterIndexed { j, _ -> j != i }; ecError = null },
                 enabled     = !saving,
             )
             ecError?.let {

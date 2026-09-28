@@ -4,6 +4,7 @@ const { call } = vi.hoisted(() => ({ call: vi.fn() }));
 vi.mock('../lib/fns', () => ({ call }));
 
 import {
+  EMERGENCY_CONTACTS_MAX,
   EMERGENCY_CONTACT_OUTSIDE,
   EMERGENCY_CONTACT_REQUIRED,
   draftsEqual,
@@ -72,10 +73,12 @@ describe('validateEmergencyContactDrafts', () => {
       'A relationship can be at most 40 characters.',
     );
   });
-  it('refuses the same phone twice and a household member', () => {
+  // Operator ruling 2026-09-27 (Q2): one Emergency Contact per household.
+  it('refuses a second contact with the server wording, and a household member', () => {
+    expect(EMERGENCY_CONTACTS_MAX).toBe(1);
     expect(
-      validateEmergencyContactDrafts([{ name: 'Rae', phone: '8055550199', relationship: '' }, { name: 'Lee', phone: '(805) 555-0199', relationship: '' }], HOUSEHOLD),
-    ).toBe('The two Emergency Contacts need different phone numbers.');
+      validateEmergencyContactDrafts([{ name: 'Rae', phone: '8055550199', relationship: '' }, { name: 'Lee', phone: '8055550177', relationship: '' }], HOUSEHOLD),
+    ).toBe('A household can have only one Emergency Contact.');
     expect(validateEmergencyContactDrafts([{ name: 'Rae', phone: '+1 805 555 0100', relationship: '' }], HOUSEHOLD)).toBe(EMERGENCY_CONTACT_OUTSIDE);
     expect(validateEmergencyContactDrafts([{ name: ' dana  MERCER', phone: '8055550199', relationship: '' }], HOUSEHOLD)).toBe(EMERGENCY_CONTACT_OUTSIDE);
     expect(validateEmergencyContactDrafts([{ name: 'Rae', phone: '8055550199', relationship: '' }], HOUSEHOLD)).toBeNull();

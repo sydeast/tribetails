@@ -112,7 +112,12 @@ export function parseEmergencyContactsInput(contacts: unknown[]): EmergencyConta
 
 /**
  * The rules every Emergency Contact write passes: at least one, two different
- * phones, the household still exists, and nobody from the household. Shared by
+ * phones, the household still exists, and nobody from the household.
+ *
+ * No count check here on purpose (2026-09-27 Q2, one per household). The direct
+ * callable refuses more than one in `SaveArgs`. saveTribeProfile's old-client
+ * path edits slot 1 and carries a second contact that is already on file, so
+ * it can keep what a household has but never add one. Shared by
  * `saveEmergencyContacts` and saveTribeProfile's old-client path (#829). Reads
  * only: returns the doc to write and the merged list, and throws the same
  * HttpsErrors either caller shows. The caller has already checked home_access.

@@ -264,9 +264,7 @@ fun AddKinfolkScreen(
                 EmergencyContactsSection(
                     drafts = state.emergencyContacts,
                     onChange = viewModel::updateAddEmergencyContact,
-                    onAdd = viewModel::addAddEmergencyContact,
                     onRemove = viewModel::removeAddEmergencyContact,
-                    onMoveFirst = viewModel::moveAddEmergencyContactFirst,
                     enabled = !state.isSaving,
                     showNoneOnFile = state.createdKinfolkId != null,
                 )

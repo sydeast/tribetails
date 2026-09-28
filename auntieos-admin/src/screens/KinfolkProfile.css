@@ -95,7 +95,7 @@
   font-family: var(--font-mono);
 }
 
-/* #829: up to two Emergency Contact groups, each its own `.kprofile__facts`
+/* #829: the Emergency Contact group (two only on a household still over the 2026-09-27 one-contact rule), each its own `.kprofile__facts`
    list, with a rule between the groups matching the hairline between rows. */
 .kprofile__ec-list {
   list-style: none;

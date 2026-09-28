@@ -42,7 +42,7 @@ class KinInfoTipTest {
     @Test
     fun theSentenceIsTheSameOneTheAdminClientsShow() {
         // auntieos-admin/src/components/EmergencyContactsEditor.tsx WHO_GETS_CALLED.
-        assertEquals("Called only when no kinfolk can be reached. The first one is called first.", EMERGENCY_CONTACT_WHO_GETS_CALLED)
+        assertEquals("Called only when no kinfolk can be reached.", EMERGENCY_CONTACT_WHO_GETS_CALLED)
     }
 
     @Test

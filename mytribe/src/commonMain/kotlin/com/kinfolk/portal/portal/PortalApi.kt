@@ -1305,7 +1305,8 @@ class PortalApi(private val fns: FunctionsClient) {
     }
 
     /**
-     * #829. Replaces the household's list whole, index 0 called first. Sends
+     * #829. Replaces the household's list whole; more than one is refused
+     * (2026-09-27 Q2, one per household). Sends
      * exactly name, phone and relationship per slot; an empty relationship goes
      * as null so it clears. Returns what the server stored.
      */
