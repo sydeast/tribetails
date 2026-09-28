@@ -5,6 +5,7 @@ import { breedCatalogForSpecies, speciesWantsBreedBank } from '../lib/breedSearc
 import { BreedField } from './BreedField';
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
+import { useToast } from './Toast';
 import './AddKinDialog.css';
 
 export interface KinfolkOption {
@@ -66,6 +67,7 @@ export function AddKinDialog({ kinfolkOptions, initialKinfolkId, onClose, onCrea
     sex: false,
   });
   const [saveError, setSaveError] = useState<string | null>(null);
+  const { showToast } = useToast();
 
   const kinfolkError = touched.kinfolk && kinfolkId === '' ? 'Pick a household.' : null;
   const nameError = touched.name && name.trim() === '' ? "Name can't be blank." : null;
@@ -87,6 +89,9 @@ export function AddKinDialog({ kinfolkOptions, initialKinfolkId, onClose, onCrea
     try {
       const id = await createKin({ kinfolkId, name, species, breed, age, sex });
       setSaving(false);
+      // #1013 sweep: matches Android/desktop's "Added {name}." wording for a new
+      // Kin/Kinfolk, and KinfolkEdit/KinEdit's own confirmation voice.
+      showToast(`Added ${name.trim()}.`);
       onCreated(id);
     } catch (err) {
       setSaving(false);

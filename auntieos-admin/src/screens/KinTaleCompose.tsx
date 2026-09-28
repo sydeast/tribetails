@@ -511,7 +511,13 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
       await sendKinTale({ reportId: id, sessionId: draft.sessionId });
       setIsSending(false);
       setConfirmSend(false);
-      setBanner({ tone: 'success', text: 'KinTale sent. Kinfolk will hear from you soon.' });
+      // #1013 sweep: this used to set the confirmation on `banner`, this
+      // screen's own local state, in the same breath as `onClose()`, so it was
+      // torn down before it ever painted a frame (the same race #854/#1007
+      // fixed on desktop). `showToast` survives `onClose()` because
+      // `ToastProvider` is mounted once above the router (main.tsx), the same
+      // reason every other confirmation in this file already uses it.
+      showToast('KinTale sent. Kinfolk will hear from you soon.');
       onClose();
     } catch (err) {
       setIsSending(false);

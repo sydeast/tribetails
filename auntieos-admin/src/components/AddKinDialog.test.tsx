@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactElement } from 'react';
+import { ToastProvider } from './Toast';
+
+function render(ui: ReactElement) {
+  return rtlRender(<ToastProvider>{ui}</ToastProvider>);
+}
 
 const { createKin } = vi.hoisted(() => ({ createKin: vi.fn() }));
 vi.mock('../api/directoryWrite', async () => {
@@ -79,6 +85,18 @@ describe('AddKinDialog', () => {
       }),
     );
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith('new-kin-1'));
+  });
+
+  // #1013 sweep: Add kin had no confirmation at all, the same gap as the Kin
+  // editor's save/archive.
+  it('#1013: confirms a create with a toast naming the (trimmed) kin', async () => {
+    createKin.mockResolvedValue('new-kin-1');
+    render(<AddKinDialog kinfolkOptions={OPTIONS} onClose={vi.fn()} onCreated={vi.fn()} />);
+    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+    await userEvent.type(screen.getByLabelText('Name'), '  Biscuit  ');
+    await userEvent.selectOptions(screen.getByLabelText('Gender'), 'Female');
+    await userEvent.click(screen.getByRole('button', { name: /^add kin$/i }));
+    expect(await screen.findByText('Added Biscuit.')).toBeInTheDocument();
   });
 
   it('rejects saving with no household, no name, or no gender chosen', async () => {
