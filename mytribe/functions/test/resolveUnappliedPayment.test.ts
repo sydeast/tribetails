@@ -146,7 +146,7 @@ describe('resolveUnappliedPayment: account credit', () => {
       sourcePaymentId: PAY,
     });
     // The history reads it like any other given credit, reason and all.
-    const read = readCreditLedgerEvent(event!.id ?? `unapplied_${PAY}`, event!.data);
+    const read = readCreditLedgerEvent(unappliedCreditEventId(PAY), event!.data);
     expect(creditHistoryOf(read ? [read] : []).credits[0]).toMatchObject({
       amountCents: 5000,
       reason: 'Second card charge on a paid bill',
