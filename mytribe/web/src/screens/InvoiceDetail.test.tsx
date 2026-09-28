@@ -26,6 +26,17 @@ vi.mock('@tanstack/react-router', () => ({
 vi.mock('../lib/activeTribe', () => ({
   getActiveKinfolkId: () => 'kin-fam-1',
 }));
+// #1039: the decided-quote sentence compares the stored actor with the
+// signed-in viewer, so the viewer is a fixture here. The rest of the module
+// stays real, as it was before this mock existed.
+const authState = vi.hoisted(() => ({ uid: 'viewer-1' }));
+vi.mock('../lib/auth', async () => {
+  const actual = await vi.importActual<typeof import('../lib/auth')>('../lib/auth');
+  return {
+    ...actual,
+    useAuth: () => ({ status: 'signedIn', user: { uid: authState.uid } }),
+  };
+});
 
 const payInvoice = vi.fn();
 const redeemCredit = vi.fn();
@@ -105,6 +116,8 @@ const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   viewed: true,
   quoteDecision: null,
   quoteDecidedAtMs: null,
+  quoteDecidedByUid: null,
+  quoteDecidedByName: null,
   creditAmountCents: null,
   creditTarget: null,
   creditRedeemedAtMs: null,
@@ -500,7 +513,13 @@ describe('InvoiceDetail: answering a quote', () => {
     );
   });
   it('a declined quote shows the decision and no buttons at all', async () => {
-    await renderWith({ ...QUOTE, quoteDecision: 'denied', quoteDecidedAtMs: 1_755_000_000_000 });
+    await renderWith({
+      ...QUOTE,
+      quoteDecision: 'denied',
+      quoteDecidedAtMs: 1_755_000_000_000,
+      quoteDecidedByUid: 'viewer-1',
+      quoteDecidedByName: 'Alicia',
+    });
     expect(await screen.findByText(/You declined this quote/)).toBeInTheDocument();
     expect(screen.getByText('DECLINED')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Accept quote' })).toBeNull();
@@ -512,10 +531,59 @@ describe('InvoiceDetail: answering a quote', () => {
       status: 'open',
       quoteDecision: 'accepted',
       quoteDecidedAtMs: 1_755_000_000_000,
+      quoteDecidedByUid: 'viewer-1',
+      quoteDecidedByName: 'Alicia',
     });
     expect(await screen.findByText(/You accepted this quote/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Accept quote' })).toBeNull();
     expect(await screen.findByRole('button', { name: 'Pay with Credit Card' })).toBeInTheDocument();
+  });
+  // #1039: a SECONDARY with billing access can answer a quote too
+  // (D-2026-09-28-BILLING-ACCESS-PAYS), so "You" is only for the one who did.
+  it('names the household member who accepted it when the viewer did not', async () => {
+    await renderWith({
+      ...QUOTE,
+      status: 'open',
+      quoteDecision: 'accepted',
+      quoteDecidedAtMs: 1_755_000_000_000,
+      quoteDecidedByUid: 'secondary-1',
+      quoteDecidedByName: 'Sam',
+    });
+    expect(await screen.findByText(/Sam accepted this quote on/)).toBeInTheDocument();
+    expect(screen.queryByText(/You accepted this quote/)).toBeNull();
+  });
+  it('names the household member who declined it when the viewer did not', async () => {
+    await renderWith({
+      ...QUOTE,
+      quoteDecision: 'denied',
+      quoteDecidedAtMs: 1_755_000_000_000,
+      quoteDecidedByUid: 'secondary-1',
+      quoteDecidedByName: 'Sam',
+    });
+    expect(await screen.findByText(/Sam declined this quote on/)).toBeInTheDocument();
+  });
+  it('says "You" off the uid alone when no name was stored', async () => {
+    await renderWith({
+      ...QUOTE,
+      status: 'open',
+      quoteDecision: 'accepted',
+      quoteDecidedAtMs: 1_755_000_000_000,
+      quoteDecidedByUid: 'viewer-1',
+      quoteDecidedByName: null,
+    });
+    expect(await screen.findByText(/You accepted this quote on/)).toBeInTheDocument();
+  });
+  it('falls back to "Accepted on <date>" when someone else answered and no name was stored', async () => {
+    await renderWith({
+      ...QUOTE,
+      status: 'open',
+      quoteDecision: 'accepted',
+      quoteDecidedAtMs: 1_755_000_000_000,
+      quoteDecidedByUid: 'secondary-1',
+      quoteDecidedByName: null,
+    });
+    expect(await screen.findByText(/Accepted on /)).toBeInTheDocument();
+    expect(screen.queryByText(/accepted this quote/)).toBeNull();
   });
 });
 
@@ -569,6 +637,8 @@ describe('InvoiceDetail payment option sources (issue #409)', () => {
     viewed: false,
     quoteDecision: null,
     quoteDecidedAtMs: null,
+    quoteDecidedByUid: null,
+    quoteDecidedByName: null,
     creditAmountCents: null,
     creditTarget: null,
     creditRedeemedAtMs: null,

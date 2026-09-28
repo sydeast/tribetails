@@ -62,6 +62,8 @@ export interface InvoiceDto {
   viewed: boolean;
   quoteDecision: 'accepted' | 'denied' | null;
   quoteDecidedAtMs: number | null;
+  quoteDecidedByUid: string | null;
+  quoteDecidedByName: string | null;
   creditAmountCents: number | null;
   creditTarget: 'accountBalance' | null;
   creditRedeemedAtMs: number | null;

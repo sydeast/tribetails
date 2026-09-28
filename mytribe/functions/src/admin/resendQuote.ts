@@ -38,6 +38,7 @@ import { businessTodayIso, quoteDecisionOf, quoteHasExpired } from '../lib/quote
  *   quoteDecision      deleted   there is no answer on this quote any more
  *   quoteDecidedAt     deleted
  *   quoteDecidedByUid  deleted
+ *   quoteDecidedByName deleted   #1039: goes with the three above
  *   quoteResentAt      stamped   when the office sent it back
  *   quoteResentByUid   stamped   who sent it
  *   quoteResendCount   +1        how many times round this has been
@@ -359,6 +360,10 @@ export async function resendQuoteHandler(
       quoteDecision: FieldValue.delete(),
       quoteDecidedAt: FieldValue.delete(),
       quoteDecidedByUid: FieldValue.delete(),
+      // #1039: the name goes with the decision it named. Deleted alongside
+      // the other three so a resent quote never carries the PREVIOUS round's
+      // "Sam accepted" into an invoice nobody has answered yet.
+      quoteDecidedByName: FieldValue.delete(),
       quoteResentAt: FieldValue.serverTimestamp(),
       quoteResentByUid: uid,
       quoteResendCount: FieldValue.increment(1),

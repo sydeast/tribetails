@@ -54,7 +54,12 @@ vi.mock('../api/portal', () => ({
   getBusinessContact: (...a: unknown[]) => mocks.getBusinessContact(...a),
 }));
 vi.mock('../lib/activeTribe', () => ({ getActiveKinfolkId: () => 'fam1' }));
-vi.mock('../lib/auth', () => ({ useSignOut: () => ({ signOut: vi.fn(), signingOut: false }) }));
+vi.mock('../lib/auth', () => ({
+  useSignOut: () => ({ signOut: vi.fn(), signingOut: false }),
+  // #1039: the quote-decision panel reads this to name the actor. None of
+  // these fixtures render a decided quote, so signed-out is a safe default.
+  useAuth: () => ({ status: 'signedOut' }),
+}));
 vi.mock('../components/PortalNav', () => ({ PortalNav: () => null }));
 /** Which invoice the route is on. Set per test; the two policies live on
     different rows of the same screen. */

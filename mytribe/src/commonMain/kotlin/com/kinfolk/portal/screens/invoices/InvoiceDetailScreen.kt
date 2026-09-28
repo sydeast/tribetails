@@ -63,6 +63,14 @@ fun InvoiceDetailScreen(
     decidingQuote: Boolean = false,
     /** The server's refusal of that answer, shown on the quote panel itself. */
     quoteError: String? = null,
+    /**
+     * ISSUE #1039: the signed-in viewer's own uid, so the decided-quote
+     * sentence can say "You accepted/declined this quote" only when the
+     * viewer is the one who did — see `quoteActorLabel`. Null (the default)
+     * always falls back to naming the actor or, when neither is known,
+     * neutral wording; it never guesses "You".
+     */
+    viewerUid: String? = null,
     onPayMethod: (PayMethod) -> Unit = {},
     /** `true` accepts the quote, `false` declines it. */
     onQuoteDecision: (Boolean) -> Unit = {},
@@ -184,9 +192,13 @@ fun InvoiceDetailScreen(
                 onDecision = onQuoteDecision,
             )
         } else if (invoice.quoteDecision != null) {
+            // #1039: "You" only when the viewer is the one who answered;
+            // otherwise the actor's name, or a subject-less neutral sentence
+            // when no name was stored.
+            val actor = quoteActorLabel(invoice, viewerUid)
             val decided = when (invoice.quoteDecision) {
-                QuoteDecision.Accepted -> "You accepted this quote"
-                QuoteDecision.Denied -> "You declined this quote"
+                QuoteDecision.Accepted -> if (actor != null) "$actor accepted this quote" else "Accepted"
+                QuoteDecision.Denied -> if (actor != null) "$actor declined this quote" else "Declined"
             }
             val whenLabel = relativeTime(invoice.quoteDecidedAtMs).takeIf { it.isNotBlank() }
             Text(

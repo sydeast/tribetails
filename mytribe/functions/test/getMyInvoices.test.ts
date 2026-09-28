@@ -37,6 +37,65 @@ describe('getMyInvoicesHandler', () => {
     expect(res.accountBalanceCents).toBe(500);
   });
 
+  // #1039: who decided, carried straight from the doc so the screens can
+  // tell the actor from a bystander.
+  it('maps quoteDecidedByUid / quoteDecidedByName when the doc carries them', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['3'] } },
+      queryDocs: {
+        invoices: [
+          {
+            id: 'q1',
+            data: {
+              kinfolkId: '3',
+              status: 'quote',
+              invoiceStatus: 'quote',
+              total: 240,
+              amountDue: 240,
+              quoteDecision: 'denied',
+              quoteDecidedByUid: 'u9',
+              quoteDecidedByName: 'Sam',
+            },
+          },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyInvoicesHandler } = await import('../src/portal/getMyInvoices');
+    const res = await getMyInvoicesHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    const inv = res.open.find((i) => i.id === 'q1');
+    expect(inv?.quoteDecidedByUid).toBe('u9');
+    expect(inv?.quoteDecidedByName).toBe('Sam');
+  });
+
+  it('reads null, not undefined, when the doc carries neither field', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['3'] } },
+      queryDocs: {
+        invoices: [
+          {
+            id: 'q2',
+            data: {
+              kinfolkId: '3',
+              status: 'quote',
+              invoiceStatus: 'quote',
+              total: 240,
+              amountDue: 240,
+              quoteDecision: 'accepted',
+              // No quoteDecidedByUid/Name at all.
+            },
+          },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyInvoicesHandler } = await import('../src/portal/getMyInvoices');
+    const res = await getMyInvoicesHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    const inv = res.open.find((i) => i.id === 'q2');
+    expect(inv?.quoteDecidedByUid).toBeNull();
+    expect(inv?.quoteDecidedByName).toBeNull();
+  });
+
   // MIGRATED (was "NEW RULE: missing amountDue routes invoice to OPEN, not
   // paid"): same doc, same bucket, different reasoning. The money heuristic
   // that used to place this doc is retired (ADR-0002 W2-5); an unstamped doc

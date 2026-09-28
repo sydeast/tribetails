@@ -5,6 +5,7 @@ import type { InvoiceDto } from '../contracts/invoiceContracts.generated';
 import {
   calTileFor,
   creditTargetLabel,
+  declinedRowLabel,
   formatCentsUsd,
   formatUsd,
   invoiceRowStatusInfo,
@@ -13,7 +14,7 @@ import {
   partPaidSummary,
   shortDateLabel,
 } from '../lib/invoiceFormat';
-import { useSignOut } from '../lib/auth';
+import { useAuth, useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { LeaveBilling } from '../components/LeaveBilling';
@@ -39,6 +40,11 @@ export function Invoices() {
   const queryClient = useQueryClient();
   const kinfolkId = getActiveKinfolkId();
   const invoices = useQuery({ queryKey: ['myInvoices', kinfolkId], queryFn: () => getMyInvoices(kinfolkId) });
+  // #1039: the viewer's own uid, so a declined quote's meta line can tell
+  // "you declined this" from "Sam declined this" instead of assuming the
+  // reader is always the one who answered.
+  const auth = useAuth();
+  const viewerUid = auth.status === 'signedIn' ? auth.user.uid : null;
 
   const pay = usePortalMutation({
     mutationFn: (invoiceId: string) =>
@@ -168,6 +174,7 @@ export function Invoices() {
                     payPhase={pay.variables === inv.id ? pay.phase : 'idle'}
                     onPay={() => pay.mutate(inv.id)}
                     payError={pay.variables !== inv.id ? null : errorLine(pay, "Couldn't open checkout. Try again.")}
+                    viewerUid={viewerUid}
                   />
                 ))
               )}
@@ -229,8 +236,15 @@ function invoiceTitle(inv: InvoiceDto): string {
   return inv.client ?? `Invoice #${inv.id}`;
 }
 
-function OpenRow(props: { invoice: InvoiceDto; divider: boolean; payPhase: MutationPhase; onPay: () => void; payError?: string | null }) {
-  const { invoice: inv, payPhase, onPay, payError } = props;
+function OpenRow(props: {
+  invoice: InvoiceDto;
+  divider: boolean;
+  payPhase: MutationPhase;
+  onPay: () => void;
+  payError?: string | null;
+  viewerUid: string | null;
+}) {
+  const { invoice: inv, payPhase, onPay, payError, viewerUid } = props;
   // Was a `paying: boolean` off `isPending`, which is true for a mutation that
   // PAUSED offline as well as one the server is working on. The phase tells
   // those apart, which is all #807 is about.
@@ -249,7 +263,7 @@ function OpenRow(props: { invoice: InvoiceDto; divider: boolean; payPhase: Mutat
     // billed yet" would read as still pending, which is the state they just
     // left. See functions/src/portal/quoteDecision.ts for why a declined quote
     // keeps `quote` status instead of becoming `cancelled`.
-    : inv.status === 'quote' ? (inv.quoteDecision === 'denied' ? 'You declined this' : 'Needs your answer')
+    : inv.status === 'quote' ? (inv.quoteDecision === 'denied' ? declinedRowLabel(inv, viewerUid) : 'Needs your answer')
     : inv.status === 'zero' ? 'No charge'
     : `Due ${shortDateLabel(inv.dueDate) ?? '—'}`;
   // One rule with the detail screen, and never on a paid invoice (docket Q5).

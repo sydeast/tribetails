@@ -368,6 +368,30 @@ describe('enrichTemplateData: no-op cases', () => {
   });
 });
 
+// #1039: one quote.accepted dispatch reaches the billing recipient and the
+// office. Only the copy addressed to the person who acted says "You".
+describe('enrichTemplateData: recipient is the actor (#1039)', () => {
+  const base = { kinfolkId: 'fam1', kinName: 'Rex', actorName: 'Sam', actorUid: 'u-sam' };
+
+  it('says "You" on the copy addressed to the person who acted', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock().db);
+    const out = await enrichTemplateData('quote.accepted', 'u-sam', base);
+    expect(out.actorName).toBe('You');
+  });
+
+  it('keeps the name on every other copy (the PRIMARY, the office)', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock().db);
+    expect((await enrichTemplateData('quote.accepted', 'u-primary', base)).actorName).toBe('Sam');
+    expect((await enrichTemplateData('quote.denied', 'admin1', base)).actorName).toBe('Sam');
+  });
+
+  it('leaves actorName alone when the emitter passed no actorUid', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock().db);
+    const out = await enrichTemplateData('quote.accepted', 'u-sam', { ...base, actorUid: undefined });
+    expect(out.actorName).toBe('Sam');
+  });
+});
+
 describe('TEMPLATE_FIELDS mirrors the on-disk seed tokens (drift guard)', () => {
   const seedsDir = join(__dirname, '..', '..', 'seeds', 'notificationTemplates');
 

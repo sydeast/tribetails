@@ -214,6 +214,25 @@ async function decideQuote(
   // PRIMARY, or a SECONDARY the PRIMARY granted `billing_full`.
   const member = await requireBillingActor(uid, invKinfolkId, req.auth?.token?.admin === true, functionName);
 
+  // #1039: WHO GETS NAMED. `member.displayName` is the member-model record
+  // (present for every account created since the member model, PRIMARY or
+  // SECONDARY alike). `requireBillingActor` returns null for the two cases
+  // that predate it — a legacy single-primary account with no member doc, and
+  // the operator bypass — so `clientSnap` (already fetched above) is the
+  // fallback for the first of those. Neither is guaranteed a name; `null`
+  // here is a real, expected outcome, not a bug, and every reader of
+  // `quoteDecidedByName` (the screens, the notification) already has to
+  // handle a missing name, because quotes answered before #1039 never got
+  // one and nothing backfills them.
+  const actorDisplayName = (
+    member?.displayName ||
+    (clientSnap.data() as { displayName?: string } | undefined)?.displayName ||
+    ''
+  ).trim();
+  // First name only: the wording this whole feature exists for is "Sam
+  // accepted the quote", not "Sam Alicia Rivera-Torres accepted the quote".
+  const actorFirstName = actorDisplayName ? actorDisplayName.split(/\s+/)[0] : null;
+
   // Read the business's own calendar day ONLY when the quote carries a due date
   // to be measured against, so an undated quote costs no extra read.
   const todayIso =
@@ -235,6 +254,11 @@ async function decideQuote(
       quoteDecision: decision,
       quoteDecidedAt: FieldValue.serverTimestamp(),
       quoteDecidedByUid: uid,
+      // #1039: null rather than omitted, same call as every other nullable
+      // decision field on this doc — an absent name on a quote decided before
+      // this field existed is a real "unknown", and the screens branch on a
+      // present null exactly as they already do for `quoteDecision` itself.
+      quoteDecidedByName: actorFirstName,
       updatedAt: FieldValue.serverTimestamp(),
       // An accepted quote is a bill. Both spellings move together, exactly as
       // createQuote writes both: `status` is the admin/classifier field and
@@ -301,6 +325,15 @@ async function decideQuote(
         kinfolkId: outcome.kinfolkId,
         invoiceId: outcome.invoiceId,
         invoiceNumber: outcome.invoiceNumber,
+        // #1039: {{actorName}} in quote.accepted/quote.denied. The actor is
+        // always THIS caller. 'Someone' covers an account with no display
+        // name on either its member doc or its client doc.
+        actorName: actorFirstName ?? 'Someone',
+        // Rides in `data` so the per-copy enricher can tell the actor's own
+        // copy from everyone else's and say "You" there instead of a name
+        // (enrichTemplateData.ts, RECIPIENT IS THE ACTOR). The work order the
+        // channel senders read carries `data` and nothing else about the actor.
+        actorUid: uid,
       },
       actorUid: uid,
       targetType: 'invoice',

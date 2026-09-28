@@ -141,7 +141,7 @@ class ZeroAndRedeemedInvoiceTest {
     @Test
     fun aZeroInvoiceIsNotDueOnADate() {
         val invoice = invoice(status = InvoiceStatus.Zero, amountDue = 0.0, total = 0.0)
-        assertEquals("Nothing due", openRowMetaLabel(invoice))
+        assertEquals("Nothing due", openRowMetaLabel(invoice, viewerUid = null))
     }
 
     // ---- The list ----
