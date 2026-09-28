@@ -56,6 +56,9 @@ fun EditKinfolkScreen(
     onDeleted: () -> Unit
 ) {
     val state by viewModel.editKinfolkState.collectAsState()
+    // #1009: read once here, at the top of the composable - see AddKinfolkScreen's
+    // identical comment for why.
+    val confirmation = LocalSaveConfirmation.current
     // K3 (A8): the dossier (with householdNotes) lives in profileState, loaded when the
     // operator opened this kinfolk's profile — which is the only way into this editor.
     // We guard on the id match so a stale profile never bleeds into the wrong editor.
@@ -116,6 +119,18 @@ fun EditKinfolkScreen(
 
     LaunchedEffect(kinfolkId) {
         viewModel.loadKinfolkForEdit(kinfolkId)
+    }
+
+    // #1009: covers all three ways this screen sets a message - a save
+    // (isSuccess), an archive (isDeleted, below), and an unarchive, which sets
+    // ONLY this field and navigates nowhere. One effect, keyed on the message
+    // itself, is enough for all three; the nav effects below are independent
+    // and still fire from the same state update.
+    LaunchedEffect(state.successMessage) {
+        state.successMessage?.let {
+            confirmation.show(it)
+            viewModel.clearEditKinfolkSuccessMessage()
+        }
     }
 
     LaunchedEffect(state.isSuccess) {

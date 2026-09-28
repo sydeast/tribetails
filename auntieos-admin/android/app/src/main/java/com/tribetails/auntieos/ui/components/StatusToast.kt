@@ -33,6 +33,14 @@ fun StatusToast(
     kind: ToastKind = ToastKind.Info,
     onDismiss: () -> Unit = {},
     autoDismissMillis: Long = 4000L,
+    // #1009: defaults to `message`, unchanged for the one pre-existing caller
+    // (EditKinfolkScreen's `savedNotice`). A host that can show the SAME text
+    // twice in a row for two different events (`SaveConfirmationHost`, whose
+    // messages are often the short, repeatable "Saved." family) needs its own
+    // key, a token that changes on every `show()` call whether or not the text
+    // itself changed - matching desktop's `StatusToast.kt` `resetKey` fix
+    // (PR #1007) for the identical problem.
+    resetKey: Any = message,
     modifier: Modifier = Modifier,
 ) {
     val (borderColor, tint) = when (kind) {
@@ -47,7 +55,7 @@ fun StatusToast(
     }
 
     if (visible && autoDismissMillis > 0) {
-        LaunchedEffect(message) {
+        LaunchedEffect(resetKey) {
             delay(autoDismissMillis)
             onDismiss()
         }
