@@ -62,6 +62,7 @@ function declinedQuote(over: Record<string, unknown> = {}): Record<string, unkno
     quoteDecision: 'denied',
     quoteDecidedAt: '__OLD_TS__',
     quoteDecidedByUid: 'u1',
+    quoteDecidedByName: 'Sam',
     total: 240,
     amountDue: 240,
     // Far in the future: the expiry guard is exercised on its own below, and
@@ -104,12 +105,14 @@ describe('resendQuote happy path', () => {
 
     expect(res).toEqual({ ok: true, invoiceId: 'q1', status: 'quote' });
     const data = quoteWrite(ctx)!;
-    // The three decision fields are DELETED, not overwritten with a value: an
+    // The four decision fields are DELETED, not overwritten with a value: an
     // answer that is not there is what every client's `quoteDecision == null`
     // gate reads as "still waiting".
     expect(data.quoteDecision).toBe('__DELETE__');
     expect(data.quoteDecidedAt).toBe('__DELETE__');
     expect(data.quoteDecidedByUid).toBe('__DELETE__');
+    // #1039: the name goes with the decision it named.
+    expect(data.quoteDecidedByName).toBe('__DELETE__');
     // Still a quote on both spellings, so neither side re-buckets it.
     expect(data.status).toBe('quote');
     expect(data.invoiceStatus).toBe('quote');

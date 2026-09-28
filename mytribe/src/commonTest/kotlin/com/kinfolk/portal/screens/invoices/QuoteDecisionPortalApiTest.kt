@@ -26,6 +26,8 @@ class QuoteDecisionPortalApiTest {
         status: String,
         decision: String? = null,
         decidedAtMs: Long? = null,
+        decidedByUid: String? = null,
+        decidedByName: String? = null,
     ) = buildJsonObject {
         put("id", "q1")
         put("kinfolkId", "3")
@@ -35,6 +37,8 @@ class QuoteDecisionPortalApiTest {
         put("status", status)
         decision?.let { put("quoteDecision", it) }
         decidedAtMs?.let { put("quoteDecidedAtMs", it) }
+        decidedByUid?.let { put("quoteDecidedByUid", it) }
+        decidedByName?.let { put("quoteDecidedByName", it) }
     }
     private fun stubInvoices(fake: FakeFunctionsClient, invoice: kotlinx.serialization.json.JsonObject) {
         fake.stub("getMyInvoices", buildJsonObject {
@@ -59,6 +63,26 @@ class QuoteDecisionPortalApiTest {
         val inv = PortalApi(fake).getMyInvoices("3").open.single()
         assertEquals(QuoteDecision.Denied, inv.quoteDecision)
         assertEquals(1_755_000_000_000L, inv.quoteDecidedAtMs)
+    }
+    // #1039: who decided, so the screens can tell "you" from a household-mate.
+    @Test
+    fun actorFields_decodeWhenPresent() = runTest {
+        val fake = FakeFunctionsClient()
+        stubInvoices(
+            fake,
+            invoiceJson("quote", "accepted", 1_755_000_000_000L, decidedByUid = "u9", decidedByName = "Sam"),
+        )
+        val inv = PortalApi(fake).getMyInvoices("3").open.single()
+        assertEquals("u9", inv.quoteDecidedByUid)
+        assertEquals("Sam", inv.quoteDecidedByName)
+    }
+    @Test
+    fun actorFields_absentOnAnOlderDecidedQuote_readAsUnknownRatherThanThrowing() = runTest {
+        val fake = FakeFunctionsClient()
+        stubInvoices(fake, invoiceJson("quote", "accepted", 1_755_000_000_000L))
+        val inv = PortalApi(fake).getMyInvoices("3").open.single()
+        assertNull(inv.quoteDecidedByUid)
+        assertNull(inv.quoteDecidedByName)
     }
     @Test
     fun unknownDecision_readsAsNoAnswerRatherThanThrowing() = runTest {

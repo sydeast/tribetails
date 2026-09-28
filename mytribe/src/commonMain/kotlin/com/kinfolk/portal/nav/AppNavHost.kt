@@ -135,6 +135,12 @@ fun AppNavHost(
     // switching tribes (rare) rebuilds them. Safe to build with a placeholder
     // id when not signed in; the shell graph is only entered with a real id.
     val kinId = shellKinfolkId ?: ""
+    // #1039: the signed-in viewer's own uid, read off the same repo the
+    // shell already holds, so the invoice screens can tell "you accepted
+    // this quote" from "Sam accepted this quote" instead of assuming the
+    // reader is always the one who answered.
+    val authState by repo.state.collectAsState()
+    val viewerUid = (authState as? com.kinfolk.portal.auth.AuthState.SignedIn)?.uid
     val invoicesController = rememberInvoicesController(kinId, portalApi)
     val kinController = rememberKinController(kinId, portalApi)
     val messageAuntieController = com.kinfolk.portal.screens.messages.rememberMessageAuntieController(kinId, portalApi)
@@ -328,6 +334,7 @@ fun AppNavHost(
                             portalApi = portalApi,
                             onOpenInvoice = { invoiceId -> navController.navigate(InvoiceDetailRoute(invoiceId)) },
                             controller = invoicesController,
+                            viewerUid = viewerUid,
                         )
                     }
                 }
@@ -460,6 +467,7 @@ fun AppNavHost(
                                 payMethods = payMethodsFor(invoice, invoicesController.payMethods),
                                 decidingQuote = invoicesController.decidingQuote == invoice.id,
                                 quoteError = invoicesController.quoteErrorFor(invoice.id),
+                                viewerUid = viewerUid,
                                 onPayMethod = { method -> invoicesController.startPayMethod(invoice, method) },
                                 onQuoteDecision = { accept -> invoicesController.startQuoteDecision(invoice, accept) },
                                 onRedeem = { tgt -> invoicesController.startRedeem(invoice, tgt) },

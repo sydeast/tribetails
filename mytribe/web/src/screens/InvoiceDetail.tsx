@@ -20,8 +20,9 @@ import {
   longDateLabelFromMs,
   offersPayment,
   partPaidSummary,
+  quoteActorLabel,
 } from '../lib/invoiceFormat';
-import { useSignOut } from '../lib/auth';
+import { useAuth, useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { PayOptions } from '../components/PayOptions';
@@ -58,6 +59,11 @@ export function InvoiceDetail() {
   const queryClient = useQueryClient();
   const { invoiceId } = useParams({ from: '/invoices/$invoiceId' });
   const kinfolkId = getActiveKinfolkId();
+  // #1039: whose name goes in "___ accepted/declined this quote". A
+  // SECONDARY with billing access can answer a quote now, so the signed-in
+  // reader is not always the one who did.
+  const auth = useAuth();
+  const viewerUid = auth.status === 'signedIn' ? auth.user.uid : null;
 
   const invoices = useQuery({ queryKey: ['myInvoices', kinfolkId], queryFn: () => getMyInvoices(kinfolkId) });
   const business = useQuery({ queryKey: ['businessContact'], queryFn: () => getBusinessContact() });
@@ -276,6 +282,9 @@ export function InvoiceDetail() {
   // an open invoice by the time it gets back here.
   const isQuote = inv.status === 'quote';
   const awaitingDecision = isQuote && inv.quoteDecision === null;
+  // #1039: "You" only when the viewer is the one who answered; otherwise the
+  // actor's name, or null when no name was stored (see `quoteActorLabel`).
+  const quoteActor = quoteActorLabel(inv, viewerUid);
   // THREE SOURCES, IN ORDER OF HOW MUCH THEY KNOW (issue #409).
   //
   //   1. the invoice's OWN list, resolved server-side off the options this
@@ -534,7 +543,7 @@ export function InvoiceDetail() {
               <section className="glass card d3">
                 <div className="sectlabel">Quote declined</div>
                 <p className="note">
-                  {'✓'} You declined this quote
+                  {'✓'} {quoteActor ? `${quoteActor} declined this quote` : 'Declined'}
                   {longDateLabelFromMs(inv.quoteDecidedAtMs) ? ` on ${longDateLabelFromMs(inv.quoteDecidedAtMs)}` : ''}.
                   Nothing has been billed. Ask your Auntie if you would like a fresh one.
                 </p>
@@ -544,7 +553,7 @@ export function InvoiceDetail() {
               <section className="glass card d3">
                 <div className="sectlabel">Quote accepted</div>
                 <p className="note" style={{ color: 'var(--teal)' }}>
-                  {'✓'} You accepted this quote
+                  {'✓'} {quoteActor ? `${quoteActor} accepted this quote` : 'Accepted'}
                   {longDateLabelFromMs(inv.quoteDecidedAtMs) ? ` on ${longDateLabelFromMs(inv.quoteDecidedAtMs)}` : ''}.
                   It is an invoice now, and the amount above is what is due.
                 </p>

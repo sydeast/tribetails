@@ -1954,6 +1954,11 @@ class PortalApi(private val fns: FunctionsClient) {
                 else -> null
             },
             quoteDecidedAtMs = o["quoteDecidedAtMs"]?.jsonPrimitive?.longOrNull,
+            // #1039: absent on a server older than this field, and on a quote
+            // decided before it shipped — both read as null, same as every
+            // other lenient decode in this function.
+            quoteDecidedByUid = o["quoteDecidedByUid"]?.jsonPrimitive?.contentOrNull,
+            quoteDecidedByName = o["quoteDecidedByName"]?.jsonPrimitive?.contentOrNull,
             originalPaymentIntentId = o["originalPaymentIntentId"]?.jsonPrimitive?.contentOrNull,
             // Optional per-visit breakdown; lenient so an older backend (field
             // absent) or a malformed payload just yields null, never a throw.

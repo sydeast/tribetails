@@ -1343,6 +1343,9 @@ describe('ADR-0001 W3-1 response contract drift guard (getMyInvoices DTO)', () =
     // invoice, and a declined one (status still 'quote') from one nobody has
     // answered yet.
     'quoteDecidedAtMs',
+    // #1039: who answered, so the portal can say "You" or name them.
+    'quoteDecidedByName',
+    'quoteDecidedByUid',
     'quoteDecision',
     'status',
     'terms',

@@ -82,6 +82,22 @@ data class Invoice(
     val quoteDecision: QuoteDecision? = null,
     /** When that answer was given, epoch millis. */
     val quoteDecidedAtMs: Long? = null,
+    /**
+     * ISSUE #1039: who decided. A SECONDARY with billing access can answer a
+     * quote as of D-2026-09-28-BILLING-ACCESS-PAYS, so "you accepted this
+     * quote" is only true when the viewer's own uid matches this one — the
+     * screens compare it, never render it directly.
+     *
+     * Stamped on every decision since #430, so an older quote still lets its
+     * own actor read "You". Null on an invoice that was never answered.
+     */
+    val quoteDecidedByUid: String? = null,
+    /**
+     * The first name that goes with the uid above. New in #1039 and never
+     * backfilled, so a quote answered before it reads null: the screens then
+     * fall back to neutral wording unless the uid is the viewer's own.
+     */
+    val quoteDecidedByName: String? = null,
     val originalPaymentIntentId: String?,
     /** Optional per-visit breakdown ("What this covers" on the detail screen).
      *  Null/empty until the backend ships the field — decode is lenient, so a

@@ -135,8 +135,14 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   'pet.marked.inactive': ['kinName'],
   'pets.updated': ['kinName'],
   'profile.updated': [],
-  'quote.accepted': ['kinName'],
-  'quote.denied': [],
+  // #1039: {{actorName}} is emitter-supplied (portal/quoteDecision.ts passes
+  // it directly, same as `invoiceNumber` on other keys) rather than hydrated
+  // here — there is no id to fetch it FROM, the decision itself is the
+  // source. Still listed below so the drift guard, which mirrors every token
+  // a seed uses regardless of who fills it in, does not flag the seed as
+  // carrying a token this map never heard of.
+  'quote.accepted': ['actorName', 'kinName'],
+  'quote.denied': ['actorName'],
   'rating.submitted.bad': ['score'],
   'rating.submitted.good': ['score'],
   'schedule.upcoming.digest': ['count'],
@@ -229,6 +235,16 @@ export async function enrichTemplateData(
   extraFields: readonly string[] = [],
 ): Promise<Record<string, unknown>> {
   const ctx: Record<string, unknown> = { ...data };
+  // RECIPIENT IS THE ACTOR (#1039). An emitter that names who acted passes
+  // `actorName` and `actorUid` in `data`, and one dispatch fans out to several
+  // copies. The copy addressed to the person who acted says "You" rather than
+  // their own first name; every other copy keeps the name. Templates put
+  // {{actorName}} at the start of a sentence so the capital reads right.
+  // Runs before the early return below: it needs no Firestore read.
+  const actorUid = str(ctx.actorUid);
+  if (actorUid && actorUid === recipientUid && hasValue(ctx.actorName)) {
+    ctx.actorName = 'You';
+  }
   const fields = [...(TEMPLATE_FIELDS[key] ?? []), ...extraFields];
   const want = new Set(fields.filter((f) => ENRICHABLE.has(f) && !hasValue(ctx[f])));
   if (want.size === 0) return ctx;

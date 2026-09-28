@@ -194,6 +194,24 @@ export const InvoiceDtoSchema = z
     quoteDecision: z.enum(['accepted', 'denied']).nullable(),
     /** Epoch millis of the decision above, or null when there has not been one. */
     quoteDecidedAtMs: z.number().nullable(),
+    /**
+     * ISSUE #1039: who decided. A SECONDARY with billing access can answer a
+     * quote as of D-2026-09-28-BILLING-ACCESS-PAYS, so "you accepted this
+     * quote" is only true when the viewer IS this uid — the client compares
+     * it against its own signed-in uid, never renders it directly.
+     *
+     * The uid has been stamped on every decision since #430, so an older
+     * quote still lets its own actor read "You". Null only on an invoice that
+     * has never been answered.
+     */
+    quoteDecidedByUid: z.string().nullable(),
+    /**
+     * The first name that goes with the uid above. New in #1039 and never
+     * backfilled, so a quote answered before it reads null here. The screens
+     * then say "You" when the uid is the viewer's and neutral wording
+     * otherwise, rather than guessing a name.
+     */
+    quoteDecidedByName: z.string().nullable(),
     // Credit-specific (only meaningful when status is 'credit' or 'redeemed';
     // 'redeemed' is what the stamp writes once `creditRedeemedAt` is set).
     // Account balance is the only redemption target: credits are NOT refundable.
@@ -437,6 +455,8 @@ export async function getMyInvoicesHandler(
       viewed: boolFrom(data['viewed']),
       quoteDecision: quoteDecisionOf(data['quoteDecision']),
       quoteDecidedAtMs: tsMillis(data['quoteDecidedAt']),
+      quoteDecidedByUid: stringOrNull(data['quoteDecidedByUid']),
+      quoteDecidedByName: stringOrNull(data['quoteDecidedByName']),
       creditAmountCents: isCredit ? Math.round(Math.abs(amountDue !== 0 ? amountDue : total) * 100) : null,
       creditTarget: isCredit && data['creditTarget'] === 'accountBalance' ? 'accountBalance' : null,
       creditRedeemedAtMs: isCredit ? tsMillis(data['creditRedeemedAt']) : null,

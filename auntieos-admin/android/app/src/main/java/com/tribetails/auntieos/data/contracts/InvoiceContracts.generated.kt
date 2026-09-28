@@ -105,6 +105,8 @@ data class InvoiceDto(
     /** One of `accepted`, `denied`, or null when the payload omits it. */
     val quoteDecision: String?,
     val quoteDecidedAtMs: Double?,
+    val quoteDecidedByUid: String?,
+    val quoteDecidedByName: String?,
     val creditAmountCents: Long?,
     /** Always `accountBalance` on the wire. */
     val creditTarget: String?,
@@ -141,6 +143,8 @@ internal fun decodeInvoiceDto(raw: Map<String, Any?>?): InvoiceDto =
         viewed = raw?.get("viewed") as? Boolean ?: false,
         quoteDecision = raw?.get("quoteDecision") as? String,
         quoteDecidedAtMs = (raw?.get("quoteDecidedAtMs") as? Number)?.toDouble(),
+        quoteDecidedByUid = raw?.get("quoteDecidedByUid") as? String,
+        quoteDecidedByName = raw?.get("quoteDecidedByName") as? String,
         creditAmountCents = (raw?.get("creditAmountCents") as? Number)?.toLong(),
         creditTarget = raw?.get("creditTarget") as? String,
         creditRedeemedAtMs = (raw?.get("creditRedeemedAtMs") as? Number)?.toDouble(),

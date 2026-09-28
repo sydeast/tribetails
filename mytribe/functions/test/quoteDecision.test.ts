@@ -110,6 +110,10 @@ describe('acceptQuote happy path', () => {
     const data = quoteWrite(ctx);
     expect(data.quoteDecision).toBe('accepted');
     expect(data.quoteDecidedByUid).toBe('u1');
+    // #1039: neither the fixture's member doc nor its client doc carries a
+    // display name, which is the same shape a pre-#1039 account has. Null,
+    // never a guessed name.
+    expect(data.quoteDecidedByName).toBeNull();
     expect(data.quoteDecidedAt).toBe('__TS__');
     // Both spellings move together, or the two sides bucket the doc differently.
     expect(data.status).toBe('open');
@@ -428,5 +432,59 @@ describe('D-2026-09-28-BILLING-ACCESS-PAYS: a secondary with billing access answ
 
     expect(res.status).toBe('open');
     expect(quoteWrite(ctx)['quoteDecidedByUid']).toBe('op-uid');
+  });
+});
+
+describe('issue #1039: naming who acted', () => {
+  it('stores the first name off the member doc, and passes it to the notification', async () => {
+    const ctx = ctxFor(quoteDoc(), {
+      'families/fam1/members/u1': { ...PRIMARY_MEMBER, displayName: 'Alicia Rivera' },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await acceptQuoteHandler(req({ invoiceId: 'q1' }));
+
+    expect(quoteWrite(ctx).quoteDecidedByName).toBe('Alicia');
+    expect(mocks.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ actorName: 'Alicia', actorUid: 'u1' }) }),
+    );
+  });
+
+  it('falls back to the client doc display name when there is no member doc (legacy primary)', async () => {
+    const ctx = ctxFor(quoteDoc(), {
+      'clients/u1': { kinfolkIds: ['fam1'], displayName: 'Jordan Lee' },
+      'families/fam1/members/u1': null,
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await acceptQuoteHandler(req({ invoiceId: 'q1' }));
+
+    expect(quoteWrite(ctx).quoteDecidedByName).toBe('Jordan');
+  });
+
+  it('names the SECONDARY as the actor when she is the one who answered', async () => {
+    const ctx = ctxFor(quoteDoc(), {
+      'families/fam1/members/u1': { ...SECONDARY_MEMBER, displayName: 'Sam Rivera' },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await denyQuoteHandler(req({ invoiceId: 'q1' }));
+
+    expect(quoteWrite(ctx).quoteDecidedByName).toBe('Sam');
+    expect(mocks.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ actorName: 'Sam', actorUid: 'u1' }) }),
+    );
+  });
+
+  it('stores null, and tells the notification "Someone", when no display name exists anywhere', async () => {
+    const ctx = ctxFor(quoteDoc());
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await acceptQuoteHandler(req({ invoiceId: 'q1' }));
+
+    expect(quoteWrite(ctx).quoteDecidedByName).toBeNull();
+    expect(mocks.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ actorName: 'Someone' }) }),
+    );
   });
 });

@@ -301,10 +301,14 @@ class InvoiceDetailScreenTest {
     private fun quote(
         decision: QuoteDecision? = null,
         decidedAtMs: Long? = null,
+        decidedByUid: String? = null,
+        decidedByName: String? = null,
     ) = openInvoice().copy(
         status = InvoiceStatus.Quote,
         quoteDecision = decision,
         quoteDecidedAtMs = decidedAtMs,
+        quoteDecidedByUid = decidedByUid,
+        quoteDecidedByName = decidedByName,
     )
     @Test
     fun quote_offersBothAnswersAndNoPayButton() = runComposeUiTest {
@@ -368,7 +372,12 @@ class InvoiceDetailScreenTest {
     @Test
     fun quote_alreadyDeclined_saysSoAndOffersNoButtons() = runComposeUiTest {
         setThemedContent {
-            InvoiceDetailScreen("The Foster", quote(QuoteDecision.Denied, 1_755_000_000_000L), onBack = {})
+            InvoiceDetailScreen(
+                "The Foster",
+                quote(QuoteDecision.Denied, 1_755_000_000_000L, decidedByUid = "viewer-1"),
+                viewerUid = "viewer-1",
+                onBack = {},
+            )
         }
         waitForIdle()
         onNodeWithText("You declined this quote", substring = true).assertIsDisplayed()
@@ -380,7 +389,12 @@ class InvoiceDetailScreenTest {
         setThemedContent {
             InvoiceDetailScreen(
                 "The Foster",
-                openInvoice().copy(quoteDecision = QuoteDecision.Accepted, quoteDecidedAtMs = 1_755_000_000_000L),
+                openInvoice().copy(
+                    quoteDecision = QuoteDecision.Accepted,
+                    quoteDecidedAtMs = 1_755_000_000_000L,
+                    quoteDecidedByUid = "viewer-1",
+                ),
+                viewerUid = "viewer-1",
                 payMethods = listOf(PayMethod("stripe", "Pay with Credit Card", PayMethodKind.Checkout, null)),
                 onBack = {},
             )
@@ -388,5 +402,41 @@ class InvoiceDetailScreenTest {
         waitForIdle()
         onNodeWithText("You accepted this quote", substring = true).assertIsDisplayed()
         onNodeWithText("Pay with Credit Card").assertIsDisplayed()
+    }
+
+    // ---- #1039: a SECONDARY with billing access can answer a quote too
+    // (D-2026-09-28-BILLING-ACCESS-PAYS), so "You" is only right when the
+    // viewer is the one who answered. ----
+    @Test
+    fun quote_declinedBySomeoneElseInTheHousehold_namesThemRatherThanSayingYou() = runComposeUiTest {
+        setThemedContent {
+            InvoiceDetailScreen(
+                "The Foster",
+                quote(QuoteDecision.Denied, 1_755_000_000_000L, decidedByUid = "secondary-1", decidedByName = "Sam"),
+                viewerUid = "primary-1",
+                onBack = {},
+            )
+        }
+        waitForIdle()
+        onNodeWithText("Sam declined this quote", substring = true).assertIsDisplayed()
+        onNodeWithText("You declined this quote", substring = true).assertDoesNotExist()
+    }
+    @Test
+    fun quote_acceptedWithNoStoredActor_readsNeutralRatherThanGuessingYou() = runComposeUiTest {
+        // No actor on the doc the viewer can match or name (for example a
+        // quote someone else answered before #1039 stored names).
+        setThemedContent {
+            InvoiceDetailScreen(
+                "The Foster",
+                openInvoice().copy(quoteDecision = QuoteDecision.Accepted, quoteDecidedAtMs = 1_755_000_000_000L),
+                viewerUid = "primary-1",
+                payMethods = listOf(PayMethod("stripe", "Pay with Credit Card", PayMethodKind.Checkout, null)),
+                onBack = {},
+            )
+        }
+        waitForIdle()
+        // "Accepted Aug 12" style: the decision and its date, no subject.
+        onNodeWithText("Accepted Aug", substring = true).assertIsDisplayed()
+        onNodeWithText("accepted this quote", substring = true).assertDoesNotExist()
     }
 }

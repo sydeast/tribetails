@@ -26,8 +26,12 @@ vi.mock('../lib/activeTribe', () => ({
   getActiveKinfolkId: () => 'kin-fam-1',
 }));
 
+// #1039: the row-level "declined this" wording compares the stored actor
+// with the signed-in viewer, so the viewer is a fixture here.
+const authState = vi.hoisted(() => ({ uid: 'viewer-1' }));
 vi.mock('../lib/auth', () => ({
   useSignOut: () => ({ signOut: vi.fn(), signingOut: false }),
+  useAuth: () => ({ status: 'signedIn', user: { uid: authState.uid } }),
 }));
 
 const payInvoice = vi.fn();
@@ -66,6 +70,8 @@ const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   viewed: true,
   quoteDecision: null,
   quoteDecidedAtMs: null,
+  quoteDecidedByUid: null,
+  quoteDecidedByName: null,
   creditAmountCents: null,
   creditTarget: null,
   creditRedeemedAtMs: null,
@@ -158,5 +164,48 @@ describe('Invoices: a PAID invoice has no Pay now button (docket Q5)', () => {
   it('an open row still does', async () => {
     await renderWith({ open: [OPEN_INVOICE], paid: [], credits: [], accountBalanceCents: 0 });
     expect(await screen.findByRole('button', { name: /Pay now/ })).toBeInTheDocument();
+  });
+});
+// #1039: a SECONDARY with billing access can decline a quote too
+// (D-2026-09-28-BILLING-ACCESS-PAYS), so the row names whoever did.
+describe('Invoices: a declined quote row names who declined it (#1039)', () => {
+  async function renderQuote(by: { uid: string | null; name: string | null }) {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue({
+      open: [
+        {
+          ...OPEN_INVOICE,
+          id: 'q1',
+          status: 'quote',
+          quoteDecision: 'denied',
+          quoteDecidedAtMs: 1_755_000_000_000,
+          quoteDecidedByUid: by.uid,
+          quoteDecidedByName: by.name,
+        },
+      ],
+      paid: [],
+      credits: [],
+      accountBalanceCents: 0,
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Invoices />
+      </QueryClientProvider>,
+    );
+  }
+  it('says "You declined this" to the person who declined it', async () => {
+    await renderQuote({ uid: 'viewer-1', name: 'Alicia' });
+    expect(await screen.findByText('You declined this')).toBeInTheDocument();
+  });
+  it('names the household member who declined it to everyone else', async () => {
+    await renderQuote({ uid: 'secondary-1', name: 'Sam' });
+    expect(await screen.findByText('Sam declined this')).toBeInTheDocument();
+    expect(screen.queryByText('You declined this')).toBeNull();
+  });
+  it('reads a bare "Declined" when no name was stored for someone else', async () => {
+    await renderQuote({ uid: 'secondary-1', name: null });
+    expect(await screen.findByText('Declined')).toBeInTheDocument();
+    expect(screen.queryByText(/declined this/)).toBeNull();
   });
 });

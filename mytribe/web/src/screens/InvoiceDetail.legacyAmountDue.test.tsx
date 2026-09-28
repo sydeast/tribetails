@@ -98,6 +98,8 @@ const LEGACY_INVOICE: GetMyInvoicesResult['open'][number] = {
   viewed: true,
   quoteDecision: null,
   quoteDecidedAtMs: null,
+  quoteDecidedByUid: null,
+  quoteDecidedByName: null,
   creditAmountCents: null,
   creditTarget: null,
   creditRedeemedAtMs: null,

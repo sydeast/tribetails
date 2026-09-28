@@ -610,14 +610,14 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       // emitter to look for.
       trigger: 'A household member with billing access accepts a quote, which turns it into a bill they can pay.',
       source: 'src/portal/quoteDecision.ts',
-      dataKeys: ['kinfolkId', 'invoiceId', 'invoiceNumber'],
+      dataKeys: ['kinfolkId', 'invoiceId', 'invoiceNumber', 'actorName', 'actorUid'],
     },
   ],
   'quote.denied': [
     {
       trigger: 'A household member with billing access declines a quote. The quote stays on their screen, marked declined.',
       source: 'src/portal/quoteDecision.ts',
-      dataKeys: ['kinfolkId', 'invoiceId', 'invoiceNumber'],
+      dataKeys: ['kinfolkId', 'invoiceId', 'invoiceNumber', 'actorName', 'actorUid'],
     },
   ],
 

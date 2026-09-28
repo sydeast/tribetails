@@ -192,3 +192,43 @@ export function partPaidSummary(
   if (!invoice.partiallyPaid) return null;
   return `${formatCentsUsd(invoice.paidCents)} of ${formatUsd(invoice.total)} paid`;
 }
+
+/**
+ * ISSUE #1039: who to name in "___ accepted/declined this quote".
+ *
+ * A SECONDARY with billing access can answer a quote as of
+ * D-2026-09-28-BILLING-ACCESS-PAYS, so the reader is not always the actor —
+ * this used to be hardcoded "You" no matter who was signed in, which told the
+ * PRIMARY they had accepted a quote another household member answered.
+ *
+ *   - `viewerUid` matches the stored actor    -> "You"
+ *   - it does not, but a name was stored      -> that name
+ *   - no name stored                          -> null
+ *
+ * The last case is not a bug: `quoteDecidedByName` is new in #1039 and was
+ * never backfilled, so a quote answered by someone else before it shipped has
+ * a uid but no name. The caller drops the subject ("Accepted on ...") rather
+ * than guess.
+ */
+export function quoteActorLabel(
+  invoice: Pick<InvoiceDto, 'quoteDecidedByUid' | 'quoteDecidedByName'>,
+  viewerUid: string | null,
+): string | null {
+  if (invoice.quoteDecidedByUid && viewerUid && invoice.quoteDecidedByUid === viewerUid) return 'You';
+  if (invoice.quoteDecidedByName) return invoice.quoteDecidedByName;
+  return null;
+}
+
+/**
+ * The invoice list's meta line for a quote already declined: "You declined
+ * this" / "Sam declined this" / bare "Declined" when the actor is unknown
+ * (see `quoteActorLabel`). The list row has no room for a date, so unlike
+ * the detail screen's sentence this never grows one.
+ */
+export function declinedRowLabel(
+  invoice: Pick<InvoiceDto, 'quoteDecidedByUid' | 'quoteDecidedByName'>,
+  viewerUid: string | null,
+): string {
+  const actor = quoteActorLabel(invoice, viewerUid);
+  return actor ? `${actor} declined this` : 'Declined';
+}

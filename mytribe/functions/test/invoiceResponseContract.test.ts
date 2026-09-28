@@ -101,6 +101,8 @@ function invoiceDto(over: Record<string, unknown> = {}): Record<string, unknown>
     viewed: false,
     quoteDecision: null,
     quoteDecidedAtMs: null,
+    quoteDecidedByUid: null,
+    quoteDecidedByName: null,
     creditAmountCents: null,
     creditTarget: null,
     creditRedeemedAtMs: null,

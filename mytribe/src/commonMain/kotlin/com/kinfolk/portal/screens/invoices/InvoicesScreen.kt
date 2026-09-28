@@ -68,6 +68,14 @@ fun InvoicesScreen(
     portalApi: PortalApi,
     onOpenInvoice: (String) -> Unit = {},
     controller: InvoicesController = rememberInvoicesController(kinfolkId, portalApi),
+    /**
+     * ISSUE #1039: the signed-in viewer's own uid, so a decided quote's row
+     * can say "You accepted/declined this" only when the viewer is the one
+     * who actually did. Null renders every decided quote's row with the
+     * actor's name (or neutral wording) instead of guessing "You" — the same
+     * fallback an unauthenticated read would need.
+     */
+    viewerUid: String? = null,
 ) {
     val type = LocalKinfolkTypography.current
     val data = controller.data
@@ -108,6 +116,7 @@ fun InvoicesScreen(
                     payingId = controller.paying,
                     onPay = { controller.startPay(it) },
                     onOpenInvoice = onOpenInvoice,
+                    viewerUid = viewerUid,
                 )
                 PaidHistoryCard(
                     data = controller.data,
@@ -204,6 +213,7 @@ private fun OpenInvoicesCard(
     payingId: String?,
     onPay: (Invoice) -> Unit,
     onOpenInvoice: (String) -> Unit,
+    viewerUid: String?,
 ) {
     GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(KinfolkSpacing.m)) {
         Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
@@ -225,6 +235,7 @@ private fun OpenInvoicesCard(
                         paying = payingId == inv.id,
                         onPay = { onPay(inv) },
                         onClick = { onOpenInvoice(inv.id) },
+                        viewerUid = viewerUid,
                     )
                 }
             }
@@ -264,6 +275,7 @@ private fun OpenInvoiceRow(
     paying: Boolean,
     onPay: () -> Unit,
     onClick: () -> Unit,
+    viewerUid: String?,
 ) {
     val type = LocalKinfolkTypography.current
     Column(
@@ -290,7 +302,7 @@ private fun OpenInvoiceRow(
                 if (invoice.client != null) {
                     Text("Invoice #${invoice.id}", style = type.sansMeta)
                 }
-                Text(openRowMetaLabel(invoice), style = type.sansMeta)
+                Text(openRowMetaLabel(invoice, viewerUid), style = type.sansMeta)
             }
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
                 Text(formatUsd(invoice.amountDue), style = type.heritageTitle.copy(fontSize = 18.sp))
@@ -421,17 +433,43 @@ private fun CreditEntry(
 // ---- Shared bits ----
 
 /**
+ * ISSUE #1039: who to name in "___ accepted/declined this [quote]".
+ *
+ * A SECONDARY with billing access can answer a quote as of
+ * D-2026-09-28-BILLING-ACCESS-PAYS, so the signed-in viewer is not always the
+ * one who did — this used to be hardcoded "You" no matter who was looking at
+ * the screen, which told the PRIMARY they had answered a quote their
+ * household-mate actually decided.
+ *
+ *   - [viewerUid] matches the stored actor -> "You"
+ *   - it does not, but a name was stored   -> that name
+ *   - no name stored                       -> null
+ *
+ * The last case is not a bug: `quoteDecidedByName` is new in #1039 and was
+ * never backfilled, so a quote answered by someone else before it shipped has
+ * a uid but no name. Callers drop the subject ("Accepted", "Declined") rather
+ * than guess.
+ */
+internal fun quoteActorLabel(invoice: Invoice, viewerUid: String?): String? = when {
+    invoice.quoteDecidedByUid != null && viewerUid != null && invoice.quoteDecidedByUid == viewerUid -> "You"
+    !invoice.quoteDecidedByName.isNullOrBlank() -> invoice.quoteDecidedByName
+    else -> null
+}
+
+/**
  * The meta line under an open-bucket row. A quote is not due on a date the way
  * a bill is: it is either waiting for the household's answer or already
  * answered, and that is what the line says. A $0 invoice is not due on a date
  * either, because there is nothing to be late with, so it says that instead
  * of printing "Due" over an empty due date (issue #449).
  */
-internal fun openRowMetaLabel(invoice: Invoice): String = when {
+internal fun openRowMetaLabel(invoice: Invoice, viewerUid: String?): String = when {
     invoice.status == InvoiceStatus.Zero -> "Nothing due"
     invoice.status != InvoiceStatus.Quote -> "Due ${invoice.dueDate ?: "—"}"
-    invoice.quoteDecision == QuoteDecision.Denied -> "You declined this"
-    invoice.quoteDecision == QuoteDecision.Accepted -> "You accepted this"
+    invoice.quoteDecision == QuoteDecision.Denied ->
+        quoteActorLabel(invoice, viewerUid)?.let { "$it declined this" } ?: "Declined"
+    invoice.quoteDecision == QuoteDecision.Accepted ->
+        quoteActorLabel(invoice, viewerUid)?.let { "$it accepted this" } ?: "Accepted"
     else -> "Needs your answer"
 }
 

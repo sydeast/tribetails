@@ -221,4 +221,61 @@ class InvoicesScreenTest {
         waitForIdle()
         onNodeWithText("Couldn't load invoices").assertIsDisplayed()
     }
+
+    // ---- #1039: a SECONDARY with billing access can answer a quote too, so
+    // the row can no longer assume the viewer is the one who did. ----
+    private fun quoteStub(fake: FakeFunctionsClient, decidedByUid: String?, decidedByName: String?) {
+        fake.stub("getMyInvoices", buildJsonObject {
+            put("accountBalanceCents", 0L)
+            put("open", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "q1")
+                    put("kinfolkId", "3")
+                    put("amountDue", 240.0)
+                    put("total", 240.0)
+                    put("isPaid", false)
+                    put("status", "quote")
+                    put("client", "Buddy (Nora)")
+                    put("quoteDecision", "denied")
+                    decidedByUid?.let { put("quoteDecidedByUid", it) }
+                    decidedByName?.let { put("quoteDecidedByName", it) }
+                })
+            })
+            put("paid", buildJsonArray {})
+            put("credits", buildJsonArray {})
+        })
+    }
+
+    @Test
+    fun declinedQuote_viewerWasTheActor_rowSaysYou() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        quoteStub(fake, decidedByUid = "u1", decidedByName = "Sam")
+        setThemedContent {
+            InvoicesScreen("The Foster", "3", PortalApi(fake), viewerUid = "u1")
+        }
+        waitForIdle()
+        onNodeWithText("You declined this").assertIsDisplayed()
+    }
+
+    @Test
+    fun declinedQuote_householdMateWasTheActor_rowNamesThem() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        quoteStub(fake, decidedByUid = "u2", decidedByName = "Sam")
+        setThemedContent {
+            InvoicesScreen("The Foster", "3", PortalApi(fake), viewerUid = "u1")
+        }
+        waitForIdle()
+        onNodeWithText("Sam declined this").assertIsDisplayed()
+    }
+
+    @Test
+    fun declinedQuote_noStoredActor_rowIsNeutralRatherThanGuessingYou() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        quoteStub(fake, decidedByUid = null, decidedByName = null)
+        setThemedContent {
+            InvoicesScreen("The Foster", "3", PortalApi(fake), viewerUid = "u1")
+        }
+        waitForIdle()
+        onNodeWithText("Declined").assertIsDisplayed()
+    }
 }

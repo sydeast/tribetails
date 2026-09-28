@@ -3,6 +3,7 @@ import {
   offersPayment,
   calTileFor,
   creditTargetLabel,
+  declinedRowLabel,
   formatCentsUsd,
   formatUsd,
   invoiceRowStatusInfo,
@@ -12,6 +13,7 @@ import {
   parseDateMs,
   partPaidStatusInfo,
   partPaidSummary,
+  quoteActorLabel,
   shortDateLabel,
 } from './invoiceFormat';
 
@@ -176,5 +178,36 @@ describe('offersPayment (docket Q5: a paid invoice takes no payment)', () => {
     expect(offersPayment({ status: 'paid', amountDue: 40, isPaid: false })).toBe(false);
     expect(offersPayment({ status: 'open', amountDue: 0, isPaid: false })).toBe(false);
     expect(offersPayment({ status: 'quote', amountDue: 40, isPaid: false })).toBe(false);
+  });
+});
+
+// ISSUE #1039: a SECONDARY with billing access can accept/decline a quote
+// too (D-2026-09-28-BILLING-ACCESS-PAYS), so "You accepted/declined this"
+// can no longer assume the signed-in viewer is always the one who answered.
+describe('quoteActorLabel', () => {
+  it('says "You" when the viewer is the one who decided', () => {
+    expect(quoteActorLabel({ quoteDecidedByUid: 'u1', quoteDecidedByName: 'Sam' }, 'u1')).toBe('You');
+  });
+  it('names the actor when someone else in the household decided', () => {
+    expect(quoteActorLabel({ quoteDecidedByUid: 'u1', quoteDecidedByName: 'Sam' }, 'u2')).toBe('Sam');
+  });
+  it('says "You" off the uid alone when no name was stored', () => {
+    expect(quoteActorLabel({ quoteDecidedByUid: 'u1', quoteDecidedByName: null }, 'u1')).toBe('You');
+  });
+  it('still names the actor with no viewer to compare against', () => {
+    expect(quoteActorLabel({ quoteDecidedByUid: 'u1', quoteDecidedByName: 'Sam' }, null)).toBe('Sam');
+  });
+  it('is null when the doc carries neither field (no actor to match or name)', () => {
+    expect(quoteActorLabel({ quoteDecidedByUid: null, quoteDecidedByName: null }, 'u1')).toBeNull();
+  });
+});
+
+describe('declinedRowLabel', () => {
+  it('"You declined this" for the viewer, the actor\'s name for anyone else', () => {
+    expect(declinedRowLabel({ quoteDecidedByUid: 'u1', quoteDecidedByName: 'Sam' }, 'u1')).toBe('You declined this');
+    expect(declinedRowLabel({ quoteDecidedByUid: 'u1', quoteDecidedByName: 'Sam' }, 'u2')).toBe('Sam declined this');
+  });
+  it('falls back to bare "Declined" rather than guessing a subject', () => {
+    expect(declinedRowLabel({ quoteDecidedByUid: null, quoteDecidedByName: null }, 'u1')).toBe('Declined');
   });
 });
