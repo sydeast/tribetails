@@ -1,8 +1,14 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactElement } from 'react';
 import type { KinDetail } from '../api/kinView';
+import { ToastProvider } from '../components/Toast';
+
+function render(ui: ReactElement) {
+  return rtlRender(<ToastProvider>{ui}</ToastProvider>);
+}
 
 const { getKin } = vi.hoisted(() => ({ getKin: vi.fn() }));
 vi.mock('../api/kinView', async (orig) => ({
@@ -64,6 +70,28 @@ describe('KinEdit', () => {
     await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
   });
 
+  // #1013: admin web showed no confirmation after a kin save or archive.
+  // ToastProvider is mounted once above the router (main.tsx), so this
+  // survives navigation everywhere it's called, same as KinfolkEdit.
+  it('#1013: confirms a save with a toast, naming the (possibly renamed) kin', async () => {
+    getKin.mockResolvedValue(kin());
+    updateKin.mockResolvedValue(undefined);
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    const nameInput = (await screen.findByText('Name')).parentElement!.querySelector('input')!;
+    await userEvent.clear(nameInput);
+    await userEvent.type(nameInput, 'Willow B');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    expect(await screen.findByText('Saved Willow B.')).toBeInTheDocument();
+  });
+
+  it('#1013: a save with nothing changed still confirms', async () => {
+    getKin.mockResolvedValue(kin());
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByText('Name');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    expect(await screen.findByText('Saved Willow.')).toBeInTheDocument();
+  });
+
   it('#895: an untouched field is never written back, so a concurrent portal edit to it survives', async () => {
     getKin.mockResolvedValue(kin({ vaccinations: 'Rabies 2025', medicationHealthNotes: 'none' }));
     updateKin.mockResolvedValue(undefined);
@@ -106,6 +134,26 @@ describe('KinEdit', () => {
     await userEvent.click(screen.getByRole('button', { name: /^archive$/i }));
     await waitFor(() => expect(setKinArchived).toHaveBeenCalledWith('p1', true));
     await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+  });
+
+  // #1013: archive/restore showed no confirmation either. Wording matches
+  // KinfolkEdit's own archive/restore toasts word for word.
+  it('#1013: confirms an archive with a toast', async () => {
+    getKin.mockResolvedValue(kin({ status: 'active' }));
+    setKinArchived.mockResolvedValue(undefined);
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByText('Name');
+    await userEvent.click(screen.getByRole('button', { name: /^archive$/i }));
+    expect(await screen.findByText('Willow is archived.')).toBeInTheDocument();
+  });
+
+  it('#1013: confirms a restore with a toast', async () => {
+    getKin.mockResolvedValue(kin({ status: 'archived' }));
+    setKinArchived.mockResolvedValue(undefined);
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByRole('button', { name: /restore/i });
+    await userEvent.click(screen.getByRole('button', { name: /restore/i }));
+    expect(await screen.findByText('Willow is active again.')).toBeInTheDocument();
   });
 
   it('shows Restore (not Archive) for an already-archived pet', async () => {

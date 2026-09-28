@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactElement } from 'react';
+import { ToastProvider } from './Toast';
+
+function render(ui: ReactElement) {
+  return rtlRender(<ToastProvider>{ui}</ToastProvider>);
+}
 
 const { createKinfolk, mapboxSuggest, mapboxRetrieve, saveEmergencyContacts } = vi.hoisted(() => ({
   createKinfolk: vi.fn(),
@@ -105,6 +111,20 @@ describe('AddKinfolkDialog', () => {
       }, null),
     );
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith('new-kf-1'));
+  });
+
+  // #1013 sweep: Add kinfolk had no confirmation at all on the clean success
+  // path (household + contact both saved).
+  it('#1013: confirms a create with a toast naming the household', async () => {
+    createKinfolk.mockResolvedValue({ kinfolkId: 'new-kf-1', duplicateOf: null });
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText('First name'), 'Jamie');
+    await userEvent.type(screen.getByLabelText('Last name'), 'Halbrook');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-phone' }), '(512) 555-0134');
+    await userEvent.type(screen.getByLabelText('Name', { selector: '#add-kinfolk-ec-0-name' }), 'Rae Halbrook');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
+    await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
+    expect(await screen.findByText('Added Jamie Halbrook.')).toBeInTheDocument();
   });
 
   it('offers Mapbox suggestions on the address, and saves the RESOLVED address (#12)', async () => {

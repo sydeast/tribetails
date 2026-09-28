@@ -31,6 +31,7 @@ import { InfoTip } from './DenScreenKit';
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { EmergencyContactsEditor } from './EmergencyContactsEditor';
+import { useToast } from './Toast';
 import './AddKinfolkDialog.css';
 
 interface AddKinfolkDialogProps {
@@ -130,6 +131,7 @@ export function AddKinfolkDialog({
     lastName: false,
   });
   const [saveError, setSaveError] = useState<string | null>(null);
+  const { showToast } = useToast();
 
   const firstNameError = touched.firstName && firstName.trim() === '' ? "First name can't be blank." : null;
   const lastNameError = touched.lastName && lastName.trim() === '' ? "Last name can't be blank." : null;
@@ -190,6 +192,11 @@ export function AddKinfolkDialog({
       await saveEmergencyContacts(id, ecDrafts);
       clearPendingAddKinfolk(operatorUid);
       setSaving(false);
+      // #1013 sweep: only the clean success path toasts. A left-without-contact
+      // household gets Directory's own banner (onLeftWithoutContact), and a
+      // failed contact save keeps its persistent `saveError` on this dialog, so
+      // neither needs a second, transient confirmation on top of those.
+      showToast(`Added ${`${firstName} ${lastName}`.trim()}.`);
       onCreated(id);
     } catch (err) {
       if (isNotFound(err)) {

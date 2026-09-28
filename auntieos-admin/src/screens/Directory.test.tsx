@@ -1,11 +1,18 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { ReactNode } from 'react';
-import { render, screen, within } from '@testing-library/react';
+import type { ReactElement, ReactNode } from 'react';
+import { render as rtlRender, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Timestamp } from 'firebase/firestore';
 import { type Async } from '../lib/async';
 import { type Kinfolk, type Kin } from '../api/directory';
+import { ToastProvider } from '../components/Toast';
+
+// #1013 sweep: Directory renders AddKinfolkDialog/AddKinDialog directly, and
+// both now call useToast(), which throws outside a <ToastProvider>.
+function render(ui: ReactElement) {
+  return rtlRender(<ToastProvider>{ui}</ToastProvider>);
+}
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
