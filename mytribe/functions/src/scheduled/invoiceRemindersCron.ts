@@ -3,7 +3,8 @@ import type { QueryDocumentSnapshot } from 'firebase-admin/firestore';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
-import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
+// #1005: money notices go to a member with billing access, not the last-synced account.
+import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotificationDetailed } from '../notifications/dispatcher';
 import { INVOICE_REMINDER_RESEND_WINDOW_MS } from '../admin/sendInvoiceReminder';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
@@ -148,7 +149,7 @@ export async function processReminderInvoice(
   const familyId = data.kinfolkId;
   if (!familyId) return false;
   if (await chaseRefusal(docSnap, data)) return false;
-  const recipientUid = await resolveKinfolkUid(familyId);
+  const recipientUid = await resolveBillingRecipientUid(familyId);
   try {
     const outcome = await enqueueNotificationDetailed({
       key: 'invoice.reminder',
@@ -345,7 +346,7 @@ export async function processOverdueInvoice(
   const familyId = data.kinfolkId;
   if (!familyId) return false;
   if (await chaseRefusal(docSnap, data)) return false;
-  const recipientUid = await resolveKinfolkUid(familyId);
+  const recipientUid = await resolveBillingRecipientUid(familyId);
   try {
     const outcome = await enqueueNotificationDetailed({
       key: 'invoice.overdue',

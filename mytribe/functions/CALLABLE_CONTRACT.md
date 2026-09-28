@@ -1027,10 +1027,33 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 - GATE: an Auntie is refused by role. The owner reads any household and must
   name it. A sandbox test admin reads only their test tribe. Kinfolk must hold
   the household in `clients/{uid}.kinfolkIds` AND have billing access there
-  (`hasKinfolkPerm(..., 'billing_full')`: the PRIMARY, or a secondary holding
-  `billing_full`). Everyone else gets `permission-denied`; the clients hide the
-  section on that code.
+  (`hasBillingAccess`, which is `hasKinfolkPerm(..., 'billing_full')`: the
+  PRIMARY, or a secondary holding `billing_full`). Everyone else gets
+  `permission-denied`; the clients hide the section on that code.
 - Errors: `permission-denied`, `invalid-argument`, `not-found`.
+
+### Billing access on the portal's money reads (#1005)
+
+Operator ruling 2026-09-27: billing access is the business owner or admin, the
+household PRIMARY, and a SECONDARY only when the PRIMARY granted `billing_full`.
+One helper answers it, `hasBillingAccess` / `requireBillingAccess` in
+`lib/memberGate.ts`, and it is only ever asked AFTER the household is resolved
+(it says yes to a caller with no member doc, the legacy-primary anti-lockout).
+
+- `getMyInvoices`, `getMyInvoicePdf`: household resolved, then
+  `requireBillingAccess`. A member without it gets `permission-denied` with the
+  message `BILLING_ACCESS_REFUSAL`; the portals go back to Home on that code and
+  show nothing.
+- `getMyHome`: never refuses on billing. It answers `billingAccess: boolean`
+  and sends `payMethods: []` when false. Clients read a missing field as true.
+- `getAccountCreditHistory`: unchanged gate, now through the same helper.
+- `payInvoice`, `redeemCredit`, `acceptQuote`/`denyQuote` and the card
+  callables stay PRIMARY-only (`requireKinfolkPrimary`), which is narrower.
+- Money notifications (`invoice.new`, `invoice.receipt`, `invoice.reminder`,
+  `invoice.overdue`, `invoice.payment.applied`, `invoice.charge.failed`,
+  `quote.accepted`) address `resolveBillingRecipientUid`, not
+  `resolveKinfolkUid`: the synced account when it has billing access, the
+  ACTIVE PRIMARY otherwise.
 
 ## Household members and invites (admin-gated; B1)
 

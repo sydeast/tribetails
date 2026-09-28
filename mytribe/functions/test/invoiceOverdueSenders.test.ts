@@ -25,6 +25,12 @@ vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError:
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockResolvedValue('audit-1') }));
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveUid }));
+// #1005: this suite's hand-rolled db has no members subcollection, so the billing
+// recipient resolver is pointed at the resolveKinfolkUid mock above. The resolver's
+// own rules are pinned in resolveBillingRecipientUid.test.ts.
+vi.mock('../src/lib/resolveBillingRecipientUid', async () => ({
+  resolveBillingRecipientUid: (await import('../src/lib/resolveKinfolkUid')).resolveKinfolkUid,
+}));
 vi.mock('../src/notifications/dispatcher', () => ({
   enqueueNotification: mocks.enqueue,
   enqueueNotificationDetailed: mocks.enqueueDetailed,

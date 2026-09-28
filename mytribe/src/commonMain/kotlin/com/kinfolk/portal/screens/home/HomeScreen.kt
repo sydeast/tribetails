@@ -78,7 +78,8 @@ fun HomeScreen(
     onOpenKinDetail: (String) -> Unit = {},
     onAddKin: () -> Unit = {},
     onBookVisit: () -> Unit = {},
-    onOpenInvoices: () -> Unit = {},
+    /** #1005: null for a member without billing access, and "View invoices" is not drawn. */
+    onOpenInvoices: (() -> Unit)? = {},
 ) {
     val type = LocalKinfolkTypography.current
     var data by remember { mutableStateOf<BookingsResult?>(null) }
@@ -541,7 +542,7 @@ private fun QuickStartSection(
     showMessageAuntie: Boolean,
     onBookVisit: () -> Unit,
     onMessageAuntie: () -> Unit,
-    onOpenInvoices: () -> Unit,
+    onOpenInvoices: (() -> Unit)?,
 ) {
     GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(KinfolkSpacing.m)) {
         Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
@@ -550,7 +551,9 @@ private fun QuickStartSection(
             if (showMessageAuntie) {
                 KinGhostButton("Message your Auntie", onClick = onMessageAuntie, modifier = Modifier.fillMaxWidth())
             }
-            KinGhostButton("View invoices", onClick = onOpenInvoices, modifier = Modifier.fillMaxWidth())
+            if (onOpenInvoices != null) {
+                KinGhostButton("View invoices", onClick = onOpenInvoices, modifier = Modifier.fillMaxWidth())
+            }
         }
     }
 }

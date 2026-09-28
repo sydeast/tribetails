@@ -8,7 +8,8 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { logEvent } from '../lib/logger';
 import { wrapHttp } from '../lib/wrapHttp';
-import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
+// #1005: money notices go to a member with billing access, not the last-synced account.
+import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotificationDetailed, type UnresolvedResolver } from '../notifications/dispatcher';
 import { isNoRecipientsError } from '../notifications/recipientErrors';
 import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
@@ -176,7 +177,7 @@ async function finishEventFollowup(input: {
     const key = paid ? 'invoice.payment.applied' : unapplied ? UNAPPLIED_NOTICE_KEY : 'invoice.charge.failed';
     // The unapplied notice is BUSINESS-ONLY: the household is told nothing
     // until the admin has decided what the money becomes.
-    const recipientUid = unapplied ? null : await resolveKinfolkUid(input.familyId);
+    const recipientUid = unapplied ? null : await resolveBillingRecipientUid(input.familyId);
     let unresolved: UnresolvedResolver[];
     try {
       const outcome = await enqueueNotificationDetailed({

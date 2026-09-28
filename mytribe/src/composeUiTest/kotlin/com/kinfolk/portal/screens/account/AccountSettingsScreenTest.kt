@@ -55,6 +55,23 @@ class AccountSettingsScreenTest {
         onNodeWithText("n@x.com").assertExists()
     }
 
+    /**
+     * #1005: a member without billing access (a SECONDARY the PRIMARY did not
+     * grant billing) gets no Billing Details card, no refusal line, and the
+     * card on file is never asked for.
+     */
+    @Test
+    fun noBillingAccess_hidesBillingDetails_andNeverAsksForTheCard() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubAccount(fake)
+        setThemedContent { AccountSettingsScreen("The Foster", PortalApi(fake), billingAccess = false) }
+        waitForIdle()
+        onNodeWithText("Account Settings").assertExists()
+        onNodeWithText("Billing Details").assertDoesNotExist()
+        onNodeWithText("No payment method on file").assertDoesNotExist()
+        assertFalse(fake.calls.any { it.first == "getMyPaymentMethod" }, "getMyPaymentMethod must not be called")
+    }
+
     @Test
     fun noPaymentMethod_showsCorrectCopy() = runComposeUiTest {
         val fake = FakeFunctionsClient()
