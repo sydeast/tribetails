@@ -72,6 +72,7 @@ import com.tribetails.auntieos.web.util.isValidPhone
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.web.ui.components.LoadErrorBanner
+import com.tribetails.auntieos.web.ui.components.NotFoundNotice
 import com.tribetails.auntieos.web.ui.components.rememberReloadableRead
 import com.tribetails.auntieos.web.ui.components.settlesRetry
 import com.tribetails.auntieos.web.ui.components.AuntieFieldLabel
@@ -156,9 +157,20 @@ fun KinfolkEditScreen(
     val dossier by remember(kinfolkId) { client.dossierStream(kinfolkId.orEmpty()) }
         .collectAsState(initial = FirestoreResult.Loading)
     var householdData by remember(kinfolkId) { mutableStateOf<HouseholdData?>(null) }
-    LaunchedEffect(kinfolkId) {
+    // #898: an Err used to be dropped here, leaving the household gap list below
+    // stuck on "Loading household data…" forever with no way to tell it apart
+    // from a slow read.
+    var householdDataError by remember(kinfolkId) { mutableStateOf<String?>(null) }
+    var householdDataRetrying by remember(kinfolkId) { mutableStateOf(false) }
+    var householdDataAttempt by remember(kinfolkId) { mutableStateOf(0) }
+    LaunchedEffect(kinfolkId, householdDataAttempt) {
         if (!isNew && !kinfolkId.isNullOrBlank()) {
-            (client.getHouseholdData(kinfolkId) as? WriteResult.Ok)?.let { householdData = it.value }
+            householdDataRetrying = householdDataAttempt > 0
+            when (val r = client.getHouseholdData(kinfolkId)) {
+                is WriteResult.Ok -> { householdData = r.value; householdDataError = null }
+                is WriteResult.Err -> householdDataError = r.message
+            }
+            householdDataRetrying = false
         }
     }
 
@@ -669,6 +681,12 @@ fun KinfolkEditScreen(
                 LoadErrorBanner("Couldn't load this household", it.message, onRetry = reload::retry, retrying = reload.retrying)
                 return@ScreenScaffold
             }
+            // #898: the read answered and this id is not in it (deleted, or a stale
+            // link), distinct from still-loading, which used to shimmer forever.
+            if (state is FirestoreResult.Data) {
+                NotFoundNotice("This household couldn't be found. It may have been removed.", onBack = onBack)
+                return@ScreenScaffold
+            }
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 repeat(4) { ShimmerCard(height = 56.dp) }
             }
@@ -985,6 +1003,9 @@ fun KinfolkEditScreen(
                 household = householdData,
                 onClear = { client.clearDossierHouseholdNotes(kinfolkId) },
                 scope = scope,
+                householdError = householdDataError,
+                onRetryHousehold = { householdDataAttempt++ },
+                retryingHousehold = householdDataRetrying,
             )
             Spacer(Modifier.height(20.dp))
         }

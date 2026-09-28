@@ -59,8 +59,10 @@ import com.tribetails.auntieos.web.ui.components.MediaCellGlyphs
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.AuntieDialog
+import com.tribetails.auntieos.web.ui.components.ReadStatusBanner
 import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
+import com.tribetails.auntieos.web.ui.components.rememberLiveRead
 import kotlinx.coroutines.launch
 
 /**
@@ -77,11 +79,14 @@ fun GalleryScreen() {
     val dims = AuntieTheme.dims
     val client = remember { FirestoreClient() }
 
-    val mediaResult by remember { client.allMediaStream() }.collectAsState(initial = FirestoreResult.Loading)
+    // #898: a failed read used to show "No media uploaded yet", indistinguishable
+    // from an actually-empty library. rememberLiveRead keeps the last good page on
+    // a dropped poll and surfaces the error instead of silently going empty.
+    val mediaRead = rememberLiveRead { client.allMediaStream() }
     val kinResult by remember { client.allKinStream() }.collectAsState(initial = FirestoreResult.Loading)
     val kinfolkResult by remember { client.kinfolkStream() }.collectAsState(initial = FirestoreResult.Loading)
 
-    val allMedia = (mediaResult as? FirestoreResult.Data)?.value ?: emptyList()
+    val allMedia = mediaRead.data ?: emptyList()
     val allKin = (kinResult as? FirestoreResult.Data)?.value ?: emptyList()
     val allKinfolk = (kinfolkResult as? FirestoreResult.Data)?.value ?: emptyList()
     val kinById = remember(allKin) { allKin.associateBy { it._id } }
@@ -189,8 +194,10 @@ fun GalleryScreen() {
                 Spacer(Modifier.height(dims.space4))
             }
 
+            ReadStatusBanner(mediaRead, "media")
             when {
-                mediaResult is FirestoreResult.Loading -> Text("Loading media...", style = AuntieTheme.typography.bodyMedium, color = c.textDim)
+                mediaRead.snapshot.loading -> Text("Loading media...", style = AuntieTheme.typography.bodyMedium, color = c.textDim)
+                mediaRead.snapshot.failed -> Unit // ReadStatusBanner above already says why
                 allMedia.isEmpty() -> Text("No media uploaded yet. Photos and videos from KinTales show up here.", style = AuntieTheme.typography.bodyMedium, color = c.textDim)
                 shown.isEmpty() -> Text("No media matches these filters.", style = AuntieTheme.typography.bodyMedium, color = c.textDim)
                 else -> {

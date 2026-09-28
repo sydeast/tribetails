@@ -47,6 +47,7 @@ import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.web.ui.components.LoadErrorBanner
+import com.tribetails.auntieos.web.ui.components.NotFoundNotice
 import com.tribetails.auntieos.web.ui.components.rememberReloadableRead
 import com.tribetails.auntieos.web.ui.components.settlesRetry
 import com.tribetails.auntieos.web.ui.components.AuntieSelectField
@@ -344,6 +345,12 @@ fun KinEditScreen(
             // #867: a failed read shows its error, not a shimmer that never ends.
             (state as? FirestoreResult.Error)?.let {
                 LoadErrorBanner("Couldn't load this kin", it.message, onRetry = reload::retry, retrying = reload.retrying)
+                return@ScreenScaffold
+            }
+            // #898: the read answered and this id is not in it (deleted, or a stale
+            // link), distinct from still-loading, which used to shimmer forever.
+            if (state is FirestoreResult.Data) {
+                NotFoundNotice("This kin couldn't be found. It may have been removed.", onBack = onBack)
                 return@ScreenScaffold
             }
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {

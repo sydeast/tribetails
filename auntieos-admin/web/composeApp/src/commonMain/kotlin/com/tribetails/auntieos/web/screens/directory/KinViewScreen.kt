@@ -8,25 +8,25 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.tribetails.auntieos.web.data.FirestoreClient
-import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieKeyValueRow
 import com.tribetails.auntieos.web.ui.components.DenPanel
-import com.tribetails.auntieos.web.ui.components.EmptyHint
 import com.tribetails.auntieos.web.ui.components.GhostButton
+import com.tribetails.auntieos.web.ui.components.LoadErrorBanner
+import com.tribetails.auntieos.web.ui.components.NotFoundNotice
 import com.tribetails.auntieos.web.ui.components.ProfileTagsSection
+import com.tribetails.auntieos.web.ui.components.ReadStatusBanner
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.TagScope
+import com.tribetails.auntieos.web.ui.components.rememberLiveRead
 
 /**
  * B4: read-only view of a Kin (pet).
@@ -48,10 +48,12 @@ fun KinViewScreen(
     onEdit: () -> Unit,
 ) {
     val client = remember { FirestoreClient() }
-    val state by remember(kinfolkId) { client.kinStream(kinfolkId) }
-        .collectAsState(initial = FirestoreResult.Loading)
-    val kin: Kin? = remember(state, kinId) {
-        (state as? FirestoreResult.Data)?.value?.firstOrNull { it._id == kinId }
+    // #898: a stream, not collectAsState directly, so a failed read (first load or a
+    // dropped poll) shows its error instead of the same "couldn't be found" message
+    // a genuinely deleted kin gets.
+    val kinRead = rememberLiveRead(kinfolkId) { client.kinStream(kinfolkId) }
+    val kin: Kin? = remember(kinRead.data, kinId) {
+        kinRead.data?.firstOrNull { it._id == kinId }
     }
     val c = AuntieTheme.colors
 
@@ -67,9 +69,12 @@ fun KinViewScreen(
             }
 
             when {
-                state is FirestoreResult.Loading && kin == null -> ShimmerCard(height = 120.dp)
-                kin == null -> EmptyHint("This kin couldn't be found. It may have been removed.")
+                kinRead.snapshot.loading && kin == null -> ShimmerCard(height = 120.dp)
+                kinRead.snapshot.failed && kin == null ->
+                    LoadErrorBanner("Couldn't load this kin", kinRead.error.orEmpty(), onRetry = kinRead::retry, retrying = kinRead.retrying)
+                kin == null -> NotFoundNotice("This kin couldn't be found. It may have been removed.", onBack = onBack)
                 else -> {
+                    ReadStatusBanner(kinRead, "kin")
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,

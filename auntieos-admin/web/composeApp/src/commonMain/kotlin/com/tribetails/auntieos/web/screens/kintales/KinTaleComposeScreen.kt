@@ -71,6 +71,7 @@ import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.web.ui.components.LoadErrorBanner
+import com.tribetails.auntieos.web.ui.components.NotFoundNotice
 import com.tribetails.auntieos.web.ui.components.rememberReloadableRead
 import com.tribetails.auntieos.web.ui.components.settlesRetry
 import com.tribetails.auntieos.web.ui.components.AuntieBreadcrumbs
@@ -166,6 +167,13 @@ fun KinTaleComposeScreen(
             (sessions as? FirestoreResult.Error)?.let {
                 SectionHeader(title = "KinTale", subtitle = "", icon = Lucide.ClipboardList, onBack = onClose)
                 LoadErrorBanner("Couldn't load this Kin Care", it.message, onRetry = reload::retry, retrying = reload.retrying)
+                return@ScreenScaffold
+            }
+            // #898: the read answered and this id is not in it (deleted, or a
+            // stale link), distinct from still-loading, which used to shimmer forever.
+            if (sessions is FirestoreResult.Data) {
+                SectionHeader(title = "KinTale", subtitle = "", icon = Lucide.ClipboardList, onBack = onClose)
+                NotFoundNotice("This Kin Care couldn't be found. It may have been removed.", onBack = onClose)
                 return@ScreenScaffold
             }
             SectionHeader(title = "Loading…", subtitle = "Pulling Kin Care", icon = Lucide.ClipboardList)

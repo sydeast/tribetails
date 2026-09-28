@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.onEach
 
 const val LOAD_ERROR_RETRY_TAG = "load-error-retry"
+const val LOAD_ERROR_BANNER_TAG = "load-error-banner"
 
 /**
  * #867: what a screen shows in place of its loading shimmer when the read it is
@@ -38,27 +39,33 @@ fun LoadErrorBanner(
     retrying: Boolean = false,
 ) {
     AuntieBanner(
-        modifier = modifier,
+        modifier = modifier.testTag(LOAD_ERROR_BANNER_TAG),
         tone = AuntieBannerTone.Error,
         title = title,
-        trailing = onRetry?.let { retry ->
-            {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space2)) {
-                    GhostButton(
-                        label = if (retrying) "Retrying" else "Retry",
-                        onClick = retry,
-                        enabled = !retrying,
-                        modifier = Modifier.testTag(LOAD_ERROR_RETRY_TAG),
-                        leading = if (retrying) {
-                            { AuntieSpinner(modifier = Modifier.size(14.dp)) }
-                        } else null,
-                    )
-                    AuntieInfoTip("This also tries again by itself every few seconds.")
-                }
-            }
-        },
+        trailing = onRetry?.let { retry -> { RetryControl(retry, retrying) } },
     ) {
         Text(message, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.error)
+    }
+}
+
+/**
+ * #898: the Retry button and "this also tries again by itself" tooltip [LoadErrorBanner]
+ * and [StaleReadBanner] (`ReadState.kt`) both need. Pulled out so the two banners cannot
+ * drift on what Retry looks like.
+ */
+@Composable
+internal fun RetryControl(onRetry: () -> Unit, retrying: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space2)) {
+        GhostButton(
+            label = if (retrying) "Retrying" else "Retry",
+            onClick = onRetry,
+            enabled = !retrying,
+            modifier = Modifier.testTag(LOAD_ERROR_RETRY_TAG),
+            leading = if (retrying) {
+                { AuntieSpinner(modifier = Modifier.size(14.dp)) }
+            } else null,
+        )
+        AuntieInfoTip("This also tries again by itself every few seconds.")
     }
 }
 

@@ -28,6 +28,10 @@ private class FakeTrainingDocsDataSource : TrainingDocsDataSource {
 
     var kinfolk: List<Kinfolk> = emptyList()
     var kinForKinfolk: Map<String, List<Kin>> = emptyMap()
+    // #898: null (the default) means "answer with kinfolk/kinForKinfolk above";
+    // set to emit a FirestoreResult.Error instead, for the dropped-error tests.
+    var kinfolkStreamResult: FirestoreResult<List<Kinfolk>>? = null
+    var kinStreamResult: FirestoreResult<List<Kin>>? = null
     var uploadResult: WriteResult<MediaFile> = WriteResult.Ok(MediaFile(storageUrl = "https://res.cloudinary.com/x/a.jpg", cloudinaryPublicId = "x/a", fileType = "IMAGE", mimeType = "image/jpeg", originalFileName = "a.jpg"))
     var createResult: WriteResult<String> = WriteResult.Ok("new1")
     var updateResult: WriteResult<Unit> = WriteResult.Ok(Unit)
@@ -38,9 +42,10 @@ private class FakeTrainingDocsDataSource : TrainingDocsDataSource {
     var lastCreateKinId: String? = null
     var lastDeletedId: String? = null
 
-    override fun kinfolkStream(): Flow<FirestoreResult<List<Kinfolk>>> = flowOf(FirestoreResult.Data(kinfolk))
+    override fun kinfolkStream(): Flow<FirestoreResult<List<Kinfolk>>> =
+        flowOf(kinfolkStreamResult ?: FirestoreResult.Data(kinfolk))
     override fun kinStream(kinfolkId: String): Flow<FirestoreResult<List<Kin>>> =
-        flowOf(FirestoreResult.Data(kinForKinfolk[kinfolkId] ?: emptyList()))
+        flowOf(kinStreamResult ?: FirestoreResult.Data(kinForKinfolk[kinfolkId] ?: emptyList()))
 
     override suspend fun uploadMedia(entityId: String, entityType: String, bytes: ByteArray, mimeType: String) = uploadResult
 
@@ -222,6 +227,61 @@ class TrainingDocumentsViewModelTest {
         val vm = TrainingDocumentsViewModel(ds)
         vm.deleteDoc("d9")
         assertEquals("d9", ds.lastDeletedId)
+    }
+
+    // ---- #898: a failed kinfolk/kin read used to be dropped, leaving the target
+    // pickers silently empty with nothing telling the operator why. ----
+
+    @Test
+    fun `a failed kinfolk read surfaces kinfolkLoadError, not a silent empty picker`() = runTest {
+        val ds = FakeTrainingDocsDataSource()
+        ds.kinfolkStreamResult = FirestoreResult.Error("permission-denied")
+        val vm = TrainingDocumentsViewModel(ds)
+        assertEquals("permission-denied", vm.uiState.value.kinfolkLoadError)
+        assertTrue(vm.uiState.value.kinfolk.isEmpty())
+    }
+
+    @Test
+    fun `a good kinfolk read after a failed one clears kinfolkLoadError`() = runTest {
+        val ds = FakeTrainingDocsDataSource()
+        ds.kinfolkStreamResult = FirestoreResult.Error("boom")
+        val vm = TrainingDocumentsViewModel(ds)
+        assertEquals("boom", vm.uiState.value.kinfolkLoadError)
+        // No API to re-collect the stream directly here (init{} launches it once);
+        // this pins the reducer's own clearing behavior via a second VM against a
+        // data source that now answers with Data.
+        val ds2 = FakeTrainingDocsDataSource()
+        ds2.kinfolk = listOf(Kinfolk(_id = "kf1"))
+        val vm2 = TrainingDocumentsViewModel(ds2)
+        assertNull(vm2.uiState.value.kinfolkLoadError)
+        assertEquals(1, vm2.uiState.value.kinfolk.size)
+    }
+
+    @Test
+    fun `a failed kin-for-household read surfaces kinForSelectedLoadError`() = runTest {
+        val ds = FakeTrainingDocsDataSource()
+        ds.kinfolk = listOf(Kinfolk(_id = "kf1"))
+        ds.kinStreamResult = FirestoreResult.Error("timed out")
+        val vm = TrainingDocumentsViewModel(ds)
+        vm.selectKinfolk("kf1")
+        assertEquals("timed out", vm.uiState.value.kinForSelectedLoadError)
+        assertTrue(vm.uiState.value.kinForSelected.isEmpty())
+    }
+
+    @Test
+    fun `selecting a kinfolk clears the previous kinForSelectedLoadError`() = runTest {
+        val ds = FakeTrainingDocsDataSource()
+        ds.kinfolk = listOf(Kinfolk(_id = "kf1"), Kinfolk(_id = "kf2"))
+        ds.kinForKinfolk = mapOf("kf2" to listOf(Kin(_id = "k1", name = "Rex")))
+        ds.kinStreamResult = FirestoreResult.Error("timed out")
+        val vm = TrainingDocumentsViewModel(ds)
+        vm.selectKinfolk("kf1")
+        assertEquals("timed out", vm.uiState.value.kinForSelectedLoadError)
+
+        ds.kinStreamResult = null // the second household's read succeeds
+        vm.selectKinfolk("kf2")
+        assertNull(vm.uiState.value.kinForSelectedLoadError)
+        assertEquals(1, vm.uiState.value.kinForSelected.size)
     }
 
     @Test

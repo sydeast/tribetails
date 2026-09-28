@@ -29,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -63,6 +64,9 @@ import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 
 private const val NOTE_CUTOFF_MS: Long = 3L * 60L * 60L * 1000L
+
+/** #898: the assignment-lookup retry button, so a render test can find it without ambiguity. */
+const val ASSIGN_LOAD_RETRY_TAG = "assign-load-retry"
 
 @OptIn(ExperimentalTime::class)
 @Composable
@@ -116,13 +120,25 @@ fun BookingDetailModal(
     var assignedName by remember(session._id) { mutableStateOf<String?>(null) }
     var assigning by remember { mutableStateOf(false) }
     var assignError by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(session._id) {
+    // #898: a failed read here used to leave assignedUid/assignedName at their
+    // initial null and render as "Unassigned", indistinguishable from a booking
+    // that really has nobody assigned. assignLoadError + assignLoadAttempt let
+    // the row say "couldn't check" instead, with a retry.
+    var assignLoadError by remember(session._id) { mutableStateOf<String?>(null) }
+    var assignLoading by remember(session._id) { mutableStateOf(false) }
+    var assignLoadAttempt by remember(session._id) { mutableStateOf(0) }
+    LaunchedEffect(session._id, assignLoadAttempt) {
         if (canAssign) {
-            val r = client.kinCareAssignment(session.kinfolkId, assignBatchId, assignVisitId)
-            if (r is WriteResult.Ok) {
-                assignedUid = r.value?.assignedAuntieUid
-                assignedName = r.value?.auntieDisplayName
+            assignLoading = true
+            when (val r = client.kinCareAssignment(session.kinfolkId, assignBatchId, assignVisitId)) {
+                is WriteResult.Ok -> {
+                    assignedUid = r.value?.assignedAuntieUid
+                    assignedName = r.value?.auntieDisplayName
+                    assignLoadError = null
+                }
+                is WriteResult.Err -> assignLoadError = r.message
             }
+            assignLoading = false
         }
     }
     // Staff roster for the picker. Loaded once, the first time the operator
@@ -250,7 +266,27 @@ fun BookingDetailModal(
                             AuntieStatusPill(label = session.status.ifBlank { "SCHEDULED" }, showDot = true)
                         }
                         if (canAssign) {
-                            FactRow("Assigned Auntie", assignedName ?: if (assignedUid != null) "Assigned" else "Unassigned")
+                            if (assignLoadError != null) {
+                                FactRow("Assigned Auntie", "Couldn't check")
+                            } else {
+                                FactRow("Assigned Auntie", assignedName ?: if (assignedUid != null) "Assigned" else "Unassigned")
+                            }
+                            assignLoadError?.let { err ->
+                                AuntieBanner(
+                                    tone = AuntieBannerTone.Error,
+                                    title = "Couldn't check the assignment",
+                                    trailing = {
+                                        GhostButton(
+                                            label = if (assignLoading) "Retrying" else "Retry",
+                                            enabled = !assignLoading,
+                                            onClick = { assignLoadAttempt++ },
+                                            modifier = Modifier.testTag(ASSIGN_LOAD_RETRY_TAG),
+                                        )
+                                    },
+                                ) {
+                                    Text(err, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                                }
+                            }
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 GhostButton(
                                     label = when {

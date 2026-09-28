@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -22,7 +21,6 @@ import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.ReceiptText
 import com.composables.icons.lucide.X
 import com.tribetails.auntieos.web.data.FirestoreClient
-import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Invoice
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.theme.AuntieTheme
@@ -33,7 +31,9 @@ import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.web.ui.components.AuntieToggle
 import com.tribetails.auntieos.web.ui.components.BottomBorderField
 import com.tribetails.auntieos.web.ui.components.GhostButton
+import com.tribetails.auntieos.web.ui.components.LoadErrorBanner
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
+import com.tribetails.auntieos.web.ui.components.rememberLiveRead
 
 /**
  * Slice 2: New-invoice composer. Mirrors RecordPaymentDialog: a kinfolk picker
@@ -96,14 +96,21 @@ fun NewInvoiceDialog(
     // N1: preselect this household (quote composed from a kinfolk notification).
     initialKinfolkId: String = "",
 ) {
-    val kinfolkState by remember { client.kinfolkStream() }.collectAsState(initial = FirestoreResult.Loading)
-    val kinfolk: List<Kinfolk> = (kinfolkState as? FirestoreResult.Data)?.value ?: emptyList()
+    // #898: a failed read used to leave the picker showing only "Pick a
+    // household..." with no indication anything went wrong.
+    val kinfolkRead = rememberLiveRead { client.kinfolkStream() }
+    val kinfolk: List<Kinfolk> = kinfolkRead.data ?: emptyList()
     val picks = remember(kinfolk) {
         listOf(PICK_KINFOLK) + kinfolk.map {
             KinfolkPick(it._id, "${it.firstName} ${it.lastName}".trim().ifBlank { it.email.ifBlank { it._id } })
         }
     }
-    NewInvoiceDialogContent(visible, picks, onDismiss, onConfirm, quoteMode, onConfirmQuote, initialKinfolkId)
+    NewInvoiceDialogContent(
+        visible, picks, onDismiss, onConfirm, quoteMode, onConfirmQuote, initialKinfolkId,
+        pickError = kinfolkRead.error,
+        onRetryPick = kinfolkRead::retry,
+        retryingPick = kinfolkRead.retrying,
+    )
 }
 
 /**
@@ -118,6 +125,11 @@ internal fun NewInvoiceDialogContent(
     quoteMode: Boolean = false,
     onConfirmQuote: (Invoice, Boolean) -> Unit = { _, _ -> },
     initialKinfolkId: String = "",
+    // #898: the household picker's load state. Null pickError with an empty
+    // (sentinel-only) picks list just means the read is still loading.
+    pickError: String? = null,
+    onRetryPick: (() -> Unit)? = null,
+    retryingPick: Boolean = false,
 ) {
     var pick by remember(initialKinfolkId, picks) {
         mutableStateOf(picks.firstOrNull { it.id == initialKinfolkId } ?: PICK_KINFOLK)
@@ -188,6 +200,9 @@ internal fun NewInvoiceDialogContent(
             }
         }
 
+        pickError?.let {
+            LoadErrorBanner("Couldn't load households", it, onRetry = onRetryPick, retrying = retryingPick)
+        }
         AuntieSelectField(
             label = "Household",
             options = picks,

@@ -71,7 +71,9 @@ data class TrainingDocumentsUiState(
 
     // Picker + form state.
     val kinfolk: List<Kinfolk> = emptyList(),
+    val kinfolkLoadError: String? = null,
     val kinForSelected: List<Kin> = emptyList(),
+    val kinForSelectedLoadError: String? = null,
     val draft: TribalIntelDraft = TribalIntelDraft(),
     val isSaving: Boolean = false,
     val isUploading: Boolean = false,
@@ -112,9 +114,13 @@ class TrainingDocumentsViewModel(private val dataSource: TrainingDocsDataSource)
             }
         }
         scope.launch {
+            // #898: an Error used to be dropped here, leaving the kinfolk picker
+            // silently empty with nothing telling the operator why.
             dataSource.kinfolkStream().collect { result ->
-                if (result is FirestoreResult.Data) {
-                    _uiState.update { it.copy(kinfolk = result.value) }
+                when (result) {
+                    is FirestoreResult.Data -> _uiState.update { it.copy(kinfolk = result.value, kinfolkLoadError = null) }
+                    is FirestoreResult.Error -> _uiState.update { it.copy(kinfolkLoadError = result.message) }
+                    FirestoreResult.Loading -> Unit
                 }
             }
         }
@@ -142,12 +148,22 @@ class TrainingDocumentsViewModel(private val dataSource: TrainingDocsDataSource)
     }
 
     fun selectKinfolk(kinfolkId: String) {
-        _uiState.update { it.copy(draft = it.draft.copy(selectedKinfolkId = kinfolkId, selectedKinId = ""), kinForSelected = emptyList(), queuedMessage = null) }
+        _uiState.update {
+            it.copy(
+                draft = it.draft.copy(selectedKinfolkId = kinfolkId, selectedKinId = ""),
+                kinForSelected = emptyList(),
+                kinForSelectedLoadError = null,
+                queuedMessage = null,
+            )
+        }
         if (kinfolkId.isBlank()) return
         scope.launch {
+            // #898: same drop as kinfolkStream above, for the per-household pet picker.
             dataSource.kinStream(kinfolkId).collect { result ->
-                if (result is FirestoreResult.Data) {
-                    _uiState.update { it.copy(kinForSelected = result.value) }
+                when (result) {
+                    is FirestoreResult.Data -> _uiState.update { it.copy(kinForSelected = result.value, kinForSelectedLoadError = null) }
+                    is FirestoreResult.Error -> _uiState.update { it.copy(kinForSelectedLoadError = result.message) }
+                    FirestoreResult.Loading -> Unit
                 }
             }
         }
