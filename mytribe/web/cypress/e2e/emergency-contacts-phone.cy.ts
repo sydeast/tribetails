@@ -24,7 +24,7 @@ const TWO_CONTACTS: ListEmergencyContactsResult['contacts'] = [
   { name: 'Lee Park', phone: '+18055550177', relationship: null, recordedAt: null, updatedAt: null },
 ];
 
-const WHO_GETS_CALLED = 'Called only when no kinfolk can be reached. The first one is called first.';
+const WHO_GETS_CALLED = 'Called only when no kinfolk can be reached.';
 
 function openTribeProfile(list: ListEmergencyContactsResult, onSave?: (payload: unknown) => void) {
   cy.signIn();
@@ -68,17 +68,21 @@ for (const width of [390, 360]) {
       cy.viewport(width, 844);
     });
 
-    it('with Home access: both slots, their buttons and Save fit, and a save goes through', () => {
+    // Operator ruling 2026-09-27 (Q2): one per household. Two on file from the
+    // earlier rule show under a notice, each with Remove; one must go before a save.
+    it('with Home access and two on file: the notice, both slots, Remove and Save fit, and a save after Remove goes through', () => {
       const saved: unknown[] = [];
       openTribeProfile({ contacts: TWO_CONTACTS, canEdit: true, legacy: false }, (p) => saved.push(p));
       cy.get('#ec-1-name').should('have.value', 'Lee Park');
       for (const id of ['#ec-0-name', '#ec-0-phone', '#ec-0-relationship', '#ec-1-name', '#ec-1-phone', '#ec-1-relationship']) {
         cy.get(id).should('be.visible');
       }
-      cy.contains('button', 'Call first').should('be.visible');
+      cy.contains('.ec-card p', 'This household has two Emergency Contacts on file.').should('be.visible');
+      cy.get('button[aria-label="Remove Emergency Contact 2"]').should('be.visible');
       cy.contains('button', 'Save Emergency Contacts').should('be.visible');
       assertFitsWidth(width);
 
+      cy.get('button[aria-label="Remove Emergency Contact 2"]').click();
       cy.contains('button', 'Save Emergency Contacts').click();
       cy.contains('.ec-card p', 'Saved.').should('be.visible');
       cy.wrap(saved).should('have.length', 1);
@@ -88,7 +92,7 @@ for (const width of [390, 360]) {
       openTribeProfile({ contacts: [], canEdit: true, legacy: false });
       cy.contains('.ec-card', 'A household needs at least one Emergency Contact.').should('be.visible');
       cy.get('#ec-0-name').should('be.visible');
-      cy.contains('button', 'Add a second Emergency Contact').should('be.visible');
+      cy.contains('button', 'Add a second Emergency Contact').should('not.exist');
       assertFitsWidth(width);
     });
 

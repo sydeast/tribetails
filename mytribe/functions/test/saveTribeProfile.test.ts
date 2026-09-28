@@ -368,6 +368,8 @@ describe('saveTribeProfileHandler: an old client editing the Emergency Contact',
     return saveTribeProfileHandler({ data: { kinfolkId: '3', ...data }, auth: { uid: 'u9' } } as any);
   }
 
+  // 2026-09-27 Q2: one Emergency Contact per household, but a second one already
+  // on file is kept by this path (never deleted, never added).
   it('a primary edit lands in kinfolk slot 1, slot 2 is kept, the rows are stripped, and the audit says PRIMARY', async () => {
     const ctx = oldClientHousehold('primary');
     mocks.dbFn.mockReturnValue(ctx.db);

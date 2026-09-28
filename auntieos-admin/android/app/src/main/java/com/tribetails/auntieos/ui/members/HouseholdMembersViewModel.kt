@@ -62,6 +62,22 @@ data class HouseholdMembersUiState(
     val portalInviteNotice: String? = null,
     /** One-shot confirmation text for a write that landed. */
     val toast: String? = null,
+    /**
+     * Secondary kinfolk person records (2026-09-27 Q3), people with no portal
+     * account yet. Same fail-loud rules as the roster: `peopleLoaded` earns the
+     * empty state, `peopleError` names a failed read.
+     */
+    val people: List<MembersRepository.SecondaryPerson> = emptyList(),
+    val peopleLoading: Boolean = false,
+    val peopleLoaded: Boolean = false,
+    val peopleError: String? = null,
+    /** The add/edit dialog's draft; null when the dialog is closed. */
+    val personDraft: MembersRepository.SecondaryPersonDraft? = null,
+    val personSaving: Boolean = false,
+    /** The server's refusal on the dialog, verbatim. */
+    val personError: String? = null,
+    val removingPersonId: String? = null,
+    val personRemoveError: String? = null,
 )
 
 class HouseholdMembersViewModel(
@@ -76,6 +92,94 @@ class HouseholdMembersViewModel(
     fun load() {
         loadMembers()
         loadInvites()
+        loadPeople()
+    }
+    fun loadPeople() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(peopleLoading = true, peopleError = null)
+            repository.listSecondaryKinfolk(kinfolkId).fold(
+                onSuccess = { rows ->
+                    _uiState.value = _uiState.value.copy(people = rows, peopleLoading = false, peopleLoaded = true)
+                },
+                onFailure = { err ->
+                    _uiState.value = _uiState.value.copy(
+                        peopleLoading = false,
+                        peopleError = "listSecondaryKinfolk failed: ${err.message ?: "Load failed"}",
+                    )
+                },
+            )
+        }
+    }
+    /** Opens the dialog empty (add) or seeded from [person] exactly as stored (edit). */
+    fun startPersonEdit(person: MembersRepository.SecondaryPerson?) {
+        _uiState.value = _uiState.value.copy(
+            personDraft = if (person == null) {
+                MembersRepository.SecondaryPersonDraft()
+            } else {
+                MembersRepository.SecondaryPersonDraft(person.personId, person.name, person.phone.orEmpty(), person.email.orEmpty())
+            },
+            personError = null,
+        )
+    }
+    fun updatePersonDraft(draft: MembersRepository.SecondaryPersonDraft) {
+        if (_uiState.value.personSaving) return
+        _uiState.value = _uiState.value.copy(personDraft = draft, personError = null)
+    }
+    fun cancelPersonEdit() {
+        if (_uiState.value.personSaving) return
+        _uiState.value = _uiState.value.copy(personDraft = null, personError = null)
+    }
+    /**
+     * Adds or edits a secondary kinfolk: no invite, no portal access (the admin
+     * never invites a secondary). Pessimistic: the dialog stays open and busy
+     * until the server answers, and a refusal keeps the typing under the
+     * server's own words.
+     */
+    fun savePerson() {
+        val draft = _uiState.value.personDraft ?: return
+        if (_uiState.value.personSaving) return
+        if (draft.name.isBlank()) {
+            _uiState.value = _uiState.value.copy(personError = MembersRepository.SECONDARY_KINFOLK_NAME_REQUIRED)
+            return
+        }
+        _uiState.value = _uiState.value.copy(personSaving = true, personError = null)
+        viewModelScope.launch {
+            repository.saveSecondaryKinfolk(kinfolkId, draft).fold(
+                onSuccess = { saved ->
+                    _uiState.value = _uiState.value.copy(
+                        personSaving = false,
+                        personDraft = null,
+                        toast = if (draft.personId == null) "Added ${saved.name} to $householdName." else "Saved ${saved.name}.",
+                    )
+                    loadPeople()
+                },
+                onFailure = { err ->
+                    _uiState.value = _uiState.value.copy(
+                        personSaving = false,
+                        personError = err.message?.ifBlank { null } ?: "The secondary kinfolk was not saved. Try again.",
+                    )
+                },
+            )
+        }
+    }
+    fun removePerson(person: MembersRepository.SecondaryPerson, onRemoved: () -> Unit) {
+        if (_uiState.value.removingPersonId != null) return
+        _uiState.value = _uiState.value.copy(removingPersonId = person.personId, personRemoveError = null)
+        viewModelScope.launch {
+            repository.removeSecondaryKinfolk(kinfolkId, person.personId).fold(
+                onSuccess = {
+                    _uiState.value = _uiState.value.copy(removingPersonId = null, toast = "Removed ${person.name} from $householdName.")
+                    onRemoved()
+                    loadPeople()
+                },
+                onFailure = { err ->
+                    _uiState.value = _uiState.value.copy(
+                        removingPersonId = null,
+                        personRemoveError = err.message?.ifBlank { null } ?: "${person.name} was not removed.",
+                    )
+                },
+            )
+        }
     }
 
     fun loadMembers() {
@@ -267,6 +371,8 @@ class HouseholdMembersViewModel(
             removeError = null,
             portalInviteError = null,
             portalInviteNotice = null,
+            peopleError = null,
+            personRemoveError = null,
         )
     }
 }

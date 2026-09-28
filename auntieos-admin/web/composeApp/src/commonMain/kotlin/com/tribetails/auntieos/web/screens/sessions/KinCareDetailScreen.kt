@@ -266,14 +266,15 @@ fun KinCareDetailScreen(
         }
 
         // ---- Emergency contact ----
-        // #829: up to two, in call order.
+        // #829. One per household since 2026-09-27 (Q2); a household still
+        // holding two from the earlier rule shows both.
         val emergencyContacts = kinfolk?.let { emergencyContactsOf(it) }.orEmpty()
         if (emergencyContacts.isNotEmpty()) {
             DenPanel {
                 PanelHeading(if (emergencyContacts.size > 1) "Emergency Contacts" else "Emergency Contact", Lucide.ShieldAlert)
                 Spacer(Modifier.height(6.dp))
-                emergencyContacts.forEachIndexed { i, ec ->
-                    FactRow(Lucide.ShieldAlert, label = if (i == 0) "Called first" else "Called second", value = ec.name)
+                emergencyContacts.forEach { ec ->
+                    FactRow(Lucide.ShieldAlert, label = "Name",         value = ec.name)
                     FactRow(Lucide.ShieldAlert, label = "Phone",        value = ec.phone)
                     FactRow(Lucide.ShieldAlert, label = "Relationship", value = ec.relationship.orEmpty())
                 }

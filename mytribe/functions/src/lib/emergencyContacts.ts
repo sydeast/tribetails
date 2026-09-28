@@ -7,12 +7,16 @@ import { normalizeE164 } from './phoneNormalize';
  * answers. Never a recipient of anything (see
  * test/emergencyContactsNeverMessaged.test.ts), never a household member.
  *
- * Stored as `kinfolk/{id}.emergencyContacts`, index 0 called first. Until the
+ * Stored as `kinfolk/{id}.emergencyContacts`. Operator ruling 2026-09-27 (Q2):
+ * one Emergency Contact per household. The array shape stays because some
+ * households still have two on file from the 2026-09-13 ruling; that data is
+ * kept, and nothing can add a second (`saveEmergencyContacts` refuses more than
+ * one). `scripts/reportMultipleEmergencyContacts.ts` counts them. Until the
  * operator verifies the migration, a doc with no array still carries the old
  * flat `emergencyContactName/Phone/Relation` triple; `readStoredEmergencyContacts`
  * projects it as one legacy contact so no reader goes blank in between.
  */
-export const EMERGENCY_CONTACTS_MAX = 2;
+export const EMERGENCY_CONTACTS_MAX = 1;
 export const EMERGENCY_CONTACT_NAME_MAX = 80;
 export const EMERGENCY_CONTACT_PHONE_MAX = 32;
 export const EMERGENCY_CONTACT_RELATIONSHIP_MAX = 40;
@@ -29,7 +33,11 @@ export const EMERGENCY_CONTACT_PHONE_INVALID_MESSAGE = 'That phone number is not
 export const EMERGENCY_CONTACT_NAME_TOO_LONG_MESSAGE = `An Emergency Contact's name can be at most ${EMERGENCY_CONTACT_NAME_MAX} characters.`;
 export const EMERGENCY_CONTACT_PHONE_TOO_LONG_MESSAGE = `An Emergency Contact's phone number can be at most ${EMERGENCY_CONTACT_PHONE_MAX} characters.`;
 export const EMERGENCY_CONTACT_RELATIONSHIP_TOO_LONG_MESSAGE = `A relationship can be at most ${EMERGENCY_CONTACT_RELATIONSHIP_MAX} characters.`;
-export const EMERGENCY_CONTACTS_TOO_MANY_MESSAGE = 'A household can have at most two Emergency Contacts.';
+export const EMERGENCY_CONTACTS_TOO_MANY_MESSAGE = 'A household can have only one Emergency Contact.';
+/**
+ * Reachable only through saveTribeProfile's old-client path, which carries a
+ * second contact already on file through a slot 1 edit (2026-09-27 Q2).
+ */
 export const EMERGENCY_CONTACTS_SAME_PHONE_MESSAGE = 'The two Emergency Contacts need different phone numbers.';
 
 export interface EmergencyContactInput {

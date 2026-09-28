@@ -111,6 +111,30 @@ class MembersRepository(
             get() = invitedEmail?.ifBlank { null } ?: secondaryLabel?.ifBlank { null } ?: uid
     }
 
+    /** `access` on a secondary kinfolk person record (2026-09-27 Q3). */
+    enum class PersonAccess { NONE, INVITED, ACTIVE }
+    /**
+     * A secondary kinfolk as a PERSON RECORD, `families/{id}/secondaryKinfolk`
+     * (operator ruling 2026-09-27, Q3): somebody in the household who may have
+     * no portal account at all. Not a [Member]: a member doc exists only once
+     * the primary invites them and they accept. The admin adds, edits and
+     * removes these, and never invites one; that is the primary's call.
+     */
+    data class SecondaryPerson(
+        val personId: String,
+        val name: String,
+        val phone: String?,
+        val email: String?,
+        val access: PersonAccess,
+        val memberUid: String?,
+    )
+    /** What the add/edit dialog sends. `personId` null creates. */
+    data class SecondaryPersonDraft(
+        val personId: String? = null,
+        val name: String = "",
+        val phone: String = "",
+        val email: String = "",
+    )
     /**
      * Somebody a household can be reached through who holds NO portal account.
      *
@@ -431,6 +455,54 @@ class MembersRepository(
         Unit
     }.onFailure { AuntieLog.e("MembersRepository.removeMember failed", it) }
 
+    // ── secondary kinfolk person records (2026-09-27 Q3) ───────────────────
+    /**
+     * Every secondary kinfolk person on this household, by name. A missing
+     * `people` array is an error, never "nobody".
+     */
+    suspend fun listSecondaryKinfolk(kinfolkId: String): Result<List<SecondaryPerson>> = runCatching {
+        require(kinfolkId.isNotBlank()) { "listSecondaryKinfolk requires a household id" }
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("listSecondaryKinfolk")
+            .call(mapOf("kinfolkId" to kinfolkId)).awaitCallable().data as? Map<String, Any?>
+            ?: error("listSecondaryKinfolk: non-map payload")
+        decodeSecondaryPeople(raw)
+    }.onFailure { AuntieLog.e("MembersRepository.listSecondaryKinfolk failed", it) }
+    /**
+     * Adds (no personId) or edits one secondary kinfolk. NO invite, NO portal
+     * access. Sends exactly the three fields the dialog has a control for, the
+     * blank ones included (the server stores a cleared phone as null), plus the
+     * id on an edit. `access`, `memberUid` and provenance are the server's and
+     * are never sent, so an edit cannot grant or revoke anything.
+     */
+    suspend fun saveSecondaryKinfolk(kinfolkId: String, draft: SecondaryPersonDraft): Result<SecondaryPerson> = runCatching {
+        require(kinfolkId.isNotBlank()) { "saveSecondaryKinfolk requires a household id" }
+        val name = draft.name.trim()
+        require(name.isNotBlank()) { SECONDARY_KINFOLK_NAME_REQUIRED }
+        authGate.ensureAuthenticated()
+        val payload = buildMap<String, Any?> {
+            put("kinfolkId", kinfolkId)
+            draft.personId?.takeIf { it.isNotBlank() }?.let { put("personId", it) }
+            put("name", name)
+            put("phone", draft.phone.trim())
+            put("email", draft.email.trim())
+        }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("saveSecondaryKinfolk").call(payload).awaitCallable().data
+            as? Map<String, Any?> ?: error("saveSecondaryKinfolk: non-map payload")
+        val person = raw["person"] as? Map<*, *> ?: error("saveSecondaryKinfolk: response carried no person")
+        decodeSecondaryPerson(person) ?: error("saveSecondaryKinfolk: response carried no personId")
+    }.onFailure { AuntieLog.e("MembersRepository.saveSecondaryKinfolk failed", it) }
+    /** Deletes one secondary kinfolk. The server refuses one with portal access. */
+    suspend fun removeSecondaryKinfolk(kinfolkId: String, personId: String): Result<Unit> = runCatching {
+        require(kinfolkId.isNotBlank()) { "removeSecondaryKinfolk requires a household id" }
+        require(personId.isNotBlank()) { "removeSecondaryKinfolk requires a person id" }
+        authGate.ensureAuthenticated()
+        functions.getHttpsCallable("removeSecondaryKinfolk")
+            .call(mapOf("kinfolkId" to kinfolkId, "personId" to personId)).awaitCallable()
+        Unit
+    }.onFailure { AuntieLog.e("MembersRepository.removeSecondaryKinfolk failed", it) }
     companion object {
         /** `INVITE_TTL_DAYS` in `mytribe/functions/src/lib/schema.ts`. */
         const val INVITE_TTL_DAYS = 14
@@ -444,6 +516,10 @@ class MembersRepository(
         /** `SECONDARY_LABEL_MAX` in `functions/src/lib/schema.ts`. */
         const val CONTACT_LABEL_MAX = 24
 
+        /** `SECONDARY_KINFOLK_NAME_MAX` in `functions/src/portal/secondaryKinfolk.ts`. */
+        const val SECONDARY_KINFOLK_NAME_MAX = 80
+        /** The server's own refusal, word for word. */
+        const val SECONDARY_KINFOLK_NAME_REQUIRED = "A secondary kinfolk needs a name."
         /** `DEFAULT_CONTACT_LABEL`: what a contact is called when nobody says. */
         const val DEFAULT_CONTACT_LABEL = "Folk"
 
@@ -631,3 +707,24 @@ internal fun inviteDate(iso: String?): String? =
  */
 internal fun inviteHandle(inviteId: String): String =
     if (inviteId.length <= 8) inviteId else inviteId.take(8) + "…"
+/** One `listSecondaryKinfolk` / `saveSecondaryKinfolk` row; null when it has no id. */
+internal fun decodeSecondaryPerson(m: Map<*, *>): MembersRepository.SecondaryPerson? {
+    val id = (m["personId"] as? String)?.ifBlank { null } ?: return null
+    return MembersRepository.SecondaryPerson(
+        personId = id,
+        name = (m["name"] as? String)?.ifBlank { null } ?: "(no name)",
+        phone = (m["phone"] as? String)?.ifBlank { null },
+        email = (m["email"] as? String)?.ifBlank { null },
+        access = when (m["access"]) {
+            "INVITED" -> MembersRepository.PersonAccess.INVITED
+            "ACTIVE" -> MembersRepository.PersonAccess.ACTIVE
+            else -> MembersRepository.PersonAccess.NONE
+        },
+        memberUid = (m["memberUid"] as? String)?.ifBlank { null },
+    )
+}
+/** A missing `people` array is an error, never an empty household. */
+internal fun decodeSecondaryPeople(raw: Map<*, *>?): List<MembersRepository.SecondaryPerson> {
+    val rows = (raw?.get("people") as? List<*>) ?: error("listSecondaryKinfolk: response carried no people")
+    return rows.mapNotNull { (it as? Map<*, *>)?.let(::decodeSecondaryPerson) }
+}

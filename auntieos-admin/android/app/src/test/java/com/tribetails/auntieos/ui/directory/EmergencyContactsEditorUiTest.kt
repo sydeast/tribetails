@@ -10,6 +10,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import com.tribetails.auntieos.data.model.EMERGENCY_CONTACTS_OVER_LIMIT
 import com.tribetails.auntieos.data.model.EMERGENCY_CONTACT_WHO_GETS_CALLED
 import com.tribetails.auntieos.data.model.EmergencyContactDraft
 import com.tribetails.auntieos.ui.theme.AuntieOSTheme
@@ -26,41 +27,42 @@ class EmergencyContactsEditorUiTest {
 
     @get:Rule val composeRule = createAndroidComposeRule<ComponentActivity>()
 
+    // Operator ruling 2026-09-27 (Q2): one Emergency Contact per household.
     @Test
-    fun addsASecondSlotMovesItFirstAndRemovesIt() {
+    fun oneContactOffersNoAddRemoveOrNotice() {
         val drafts = mutableStateListOf(EmergencyContactDraft("Rae", "8055550199"))
         composeRule.setContent {
             AuntieOSTheme {
-                EmergencyContactsEditor(
-                    drafts = drafts,
-                    onChange = { i, d -> drafts[i] = d },
-                    onAdd = { drafts.add(EmergencyContactDraft()) },
-                    onRemove = { drafts.removeAt(it) },
-                    onMoveFirst = { i -> val d = drafts.removeAt(i); drafts.add(0, d) },
-                )
+                EmergencyContactsEditor(drafts = drafts, onChange = { i, d -> drafts[i] = d }, onRemove = { drafts.removeAt(it) })
             }
         }
-        // One contact: nothing to reorder or remove.
         composeRule.onAllNodesWithText("Remove", useUnmergedTree = true).assertCountEquals(0)
-        composeRule.onNodeWithText("Add a second Emergency Contact").performClick()
-        assertEquals(2, drafts.size)
-        composeRule.onNodeWithText("Called second").assertExists()
-        // #829 review item 10: Remove on BOTH slots, Call first on the second only.
-        composeRule.onAllNodesWithText("Remove", useUnmergedTree = true).assertCountEquals(2)
-        composeRule.onAllNodesWithText("Call first", useUnmergedTree = true).assertCountEquals(1)
-        composeRule.onNodeWithText("Call first").performClick()
-        assertEquals("", drafts[0].name)
-        composeRule.onAllNodesWithText("Remove", useUnmergedTree = true)[0].performClick()
-        assertEquals(1, drafts.size)
-        assertEquals("Rae", drafts[0].name)
+        composeRule.onAllNodesWithText("Add a second Emergency Contact", useUnmergedTree = true).assertCountEquals(0)
+        composeRule.onNodeWithText(EMERGENCY_CONTACTS_OVER_LIMIT).assertDoesNotExist()
+        composeRule.onNodeWithText("Called first").assertDoesNotExist()
     }
-
+    @Test
+    fun twoOnFileShowBothUnderTheNoticeWithRemoveAndNoCallFirst() {
+        val drafts = mutableStateListOf(EmergencyContactDraft("Rae", "8055550199"), EmergencyContactDraft("Lee", "8055550177"))
+        composeRule.setContent {
+            AuntieOSTheme {
+                EmergencyContactsEditor(drafts = drafts, onChange = { i, d -> drafts[i] = d }, onRemove = { drafts.removeAt(it) })
+            }
+        }
+        composeRule.onNodeWithText(EMERGENCY_CONTACTS_OVER_LIMIT).assertExists()
+        composeRule.onAllNodesWithText("Remove", useUnmergedTree = true).assertCountEquals(2)
+        composeRule.onAllNodesWithText("Call first", useUnmergedTree = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("Remove", useUnmergedTree = true)[0].performClick()
+        assertEquals(listOf(EmergencyContactDraft("Lee", "8055550177")), drafts.toList())
+        composeRule.onNodeWithText(EMERGENCY_CONTACTS_OVER_LIMIT).assertDoesNotExist()
+        composeRule.onAllNodesWithText("Remove", useUnmergedTree = true).assertCountEquals(0)
+    }
     @Test
     fun capsEachInputAtTheServerLimit() {
         val drafts = mutableStateListOf(EmergencyContactDraft())
         composeRule.setContent {
             AuntieOSTheme {
-                EmergencyContactsEditor(drafts = drafts, onChange = { i, d -> drafts[i] = d }, onAdd = {}, onRemove = {}, onMoveFirst = {})
+                EmergencyContactsEditor(drafts = drafts, onChange = { i, d -> drafts[i] = d }, onRemove = {})
             }
         }
         // The first editable field in the slot is Name.
@@ -76,9 +78,7 @@ class EmergencyContactsEditorUiTest {
                 EmergencyContactsSection(
                     drafts = listOf(EmergencyContactDraft()),
                     onChange = { _, _ -> },
-                    onAdd = {},
                     onRemove = {},
-                    onMoveFirst = {},
                     showNoneOnFile = true,
                     unsaved = true,
                     error = "An Emergency Contact needs a phone number.",
@@ -99,9 +99,7 @@ class EmergencyContactsEditorUiTest {
                 EmergencyContactsSection(
                     drafts = listOf(EmergencyContactDraft("Rae", "8055550199")),
                     onChange = { _, _ -> },
-                    onAdd = {},
                     onRemove = {},
-                    onMoveFirst = {},
                 )
             }
         }

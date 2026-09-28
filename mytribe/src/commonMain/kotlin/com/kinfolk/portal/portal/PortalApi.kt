@@ -1109,7 +1109,7 @@ class PortalApi(private val fns: FunctionsClient) {
         p.legacyKinId?.let { put("legacyKinId", it) }
     }
 
-    // -- Secondary contact --
+    // -- Invite a secondary kinfolk to the portal (the primary only) --
     suspend fun addSecondaryContact(
         kinfolkId: String? = null,
         invitedEmail: String,
@@ -1117,11 +1117,17 @@ class PortalApi(private val fns: FunctionsClient) {
         billingFull: Boolean = false,
         kinEdit: Boolean = false,
         homeAccess: Boolean = false,
+        /**
+         * 2026-09-27 Q3: the secondary kinfolk this invite gives portal access
+         * to, when the primary added them first. Sent only when present.
+         */
+        personId: String? = null,
     ): String {
         val raw = fns.call("addSecondaryContact", buildJsonObject {
             kinfolkId?.let { put("kinfolkId", it) }
             put("invitedEmail", invitedEmail)
             secondaryLabel?.let { put("secondaryLabel", it) }
+            personId?.takeIf { it.isNotBlank() }?.let { put("personId", it) }
             put("permissions", buildJsonObject {
                 put("billing_full", billingFull)
                 put("messaging_direct", true)
@@ -1134,6 +1140,58 @@ class PortalApi(private val fns: FunctionsClient) {
         return raw["inviteId"]?.jsonPrimitive?.contentOrNull ?: error("addSecondaryContact: missing inviteId")
     }
 
+    // -- Secondary kinfolk with no portal access (2026-09-27 Q3) --
+    /**
+     * The household's secondary kinfolk person records, PRIMARY-only (the
+     * server's `requireKinfolkPrimary`). Fail-loud: an answer with no `people`
+     * array throws rather than reading as a household with nobody on it.
+     */
+    suspend fun listSecondaryKinfolk(kinfolkId: String? = null): List<SecondaryKinfolkDto> {
+        val raw = fns.call("listSecondaryKinfolk", buildJsonObject { kinfolkId?.let { put("kinfolkId", it) } })
+        val rows = raw["people"] as? JsonArray ?: error("listSecondaryKinfolk: missing people array")
+        return rows.map { decodeSecondaryKinfolk(it.jsonObject) }
+    }
+    /**
+     * Adds ([personId] null) or edits a secondary kinfolk. Never an invite and
+     * never portal access. Every editable field is sent, blanks included, so a
+     * cleared phone or email is cleared on the server too.
+     */
+    suspend fun saveSecondaryKinfolk(
+        kinfolkId: String? = null,
+        personId: String? = null,
+        name: String,
+        phone: String,
+        email: String,
+    ): SecondaryKinfolkDto {
+        val raw = fns.call("saveSecondaryKinfolk", buildJsonObject {
+            kinfolkId?.let { put("kinfolkId", it) }
+            personId?.takeIf { it.isNotBlank() }?.let { put("personId", it) }
+            put("name", name.trim())
+            put("phone", phone.trim())
+            put("email", email.trim())
+        })
+        val person = raw["person"] as? JsonObject ?: error("saveSecondaryKinfolk: missing person")
+        return decodeSecondaryKinfolk(person)
+    }
+    /** Removes a secondary kinfolk with no portal access. The server refuses one who has it. */
+    suspend fun removeSecondaryKinfolk(kinfolkId: String? = null, personId: String) {
+        fns.call("removeSecondaryKinfolk", buildJsonObject {
+            kinfolkId?.let { put("kinfolkId", it) }
+            put("personId", personId)
+        })
+    }
+    private fun decodeSecondaryKinfolk(o: JsonObject): SecondaryKinfolkDto {
+        fun text(key: String): String? = o[key]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotEmpty() }
+        return SecondaryKinfolkDto(
+            personId = text("personId") ?: error("secondary kinfolk: missing personId"),
+            name = text("name") ?: "(no name)",
+            phone = text("phone"),
+            email = text("email"),
+            access = text("access") ?: "NONE",
+            memberUid = text("memberUid"),
+            createdAt = text("createdAt"),
+        )
+    }
     // -- Household members (PRIMARY edits a secondary's permissions) --
     /**
      * Lists the household members so a PRIMARY can edit each secondary's access.
@@ -1305,7 +1363,8 @@ class PortalApi(private val fns: FunctionsClient) {
     }
 
     /**
-     * #829. Replaces the household's list whole, index 0 called first. Sends
+     * #829. Replaces the household's list whole; more than one is refused
+     * (2026-09-27 Q2, one per household). Sends
      * exactly name, phone and relationship per slot; an empty relationship goes
      * as null so it clears. Returns what the server stored.
      */

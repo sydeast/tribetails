@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, waitFor } from '@testing-library/react';
+import { fireEvent, render, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TribeProfile } from './TribeProfile';
-import type { FormFieldDto, FormSchemaDto, GetMyTribeProfileResult, ListEmergencyContactsResult, MemberDto } from '../api/tribeApi';
+import type { FormFieldDto, FormSchemaDto, GetMyTribeProfileResult, ListEmergencyContactsResult, MemberDto, SecondaryKinfolkDto } from '../api/tribeApi';
 
 /**
  * Regression cover for the schema-mode save path.
@@ -51,6 +51,10 @@ vi.mock('../api/tribeApi', async () => {
     // #829: the Emergency Contacts card reads and writes through its own callables.
     listEmergencyContacts: vi.fn(),
     saveEmergencyContacts: vi.fn(),
+    // 2026-09-27 Q3: the Secondary Kinfolk card.
+    listSecondaryKinfolk: vi.fn(),
+    saveSecondaryKinfolk: vi.fn(),
+    removeSecondaryKinfolk: vi.fn(),
   };
 });
 
@@ -104,6 +108,7 @@ async function renderTribeProfile(opts: {
   profile?: GetMyTribeProfileResult;
   emergencyContacts?: ListEmergencyContactsResult;
   members?: MemberDto[];
+  secondaryKinfolk?: SecondaryKinfolkDto[];
 }) {
   const tribeApi = await import('../api/tribeApi');
   const portal = await import('../api/portal');
@@ -112,6 +117,7 @@ async function renderTribeProfile(opts: {
   vi.mocked(tribeApi.getMyTribeProfile).mockResolvedValue(opts.profile ?? PROFILE);
   vi.mocked(tribeApi.getVetClinics).mockResolvedValue({ clinics: opts.clinics ?? [] });
   vi.mocked(tribeApi.listMembers).mockResolvedValue({ members: opts.members ?? [] });
+  vi.mocked(tribeApi.listSecondaryKinfolk).mockResolvedValue(opts.secondaryKinfolk ?? []);
   vi.mocked(tribeApi.saveTribeProfile).mockResolvedValue({ ok: true });
   vi.mocked(tribeApi.saveHomeAccess).mockResolvedValue({ ok: true });
   vi.mocked(portal.getBusinessContact).mockResolvedValue({ name: 'Tribe Tails Pet Care', email: '', phone: '', address: '' });
@@ -761,5 +767,36 @@ describe('a schema default is a hint, never a stored value (#901)', () => {
     const view = await renderTribeProfile({ profile: stored, profileSchema: PROFILE_FORM });
     const input = (await view.findByDisplayValue('Three times')) as HTMLInputElement;
     expect(input.placeholder).toBe('Twice a day');
+  });
+});
+/**
+ * Operator ruling 2026-09-27 (Q3): "A Secondary kinfolk can be added to the
+ * household but doesn't have portal access unless PK invites them and set
+ * access." The primary gives access later through the same invite card, which
+ * then carries the person's id so accepting it gives THAT person access.
+ */
+describe('secondary kinfolk: add now, invite later (Q3)', () => {
+  const sam: SecondaryKinfolkDto = { personId: 'p1', name: 'Sam Lee', phone: null, email: 'sam@example.com', access: 'NONE', memberUid: null, createdAt: null };
+  it('Give portal access pre-fills the invite card, and the invite carries the person id', async () => {
+    const tribeApi = await import('../api/tribeApi');
+    vi.mocked(tribeApi.addSecondaryContact).mockResolvedValue({ inviteId: 'i1' });
+    const view = await renderTribeProfile({ secondaryKinfolk: [sam] });
+    const row = (await view.findByText('Sam Lee')).closest('li') as HTMLElement;
+    fireEvent.click(within(row).getByRole('button', { name: 'Give portal access' }));
+    expect(await view.findByTestId('invite-for-person')).toHaveTextContent('Giving portal access to Sam Lee');
+    expect(view.getByLabelText('Email')).toHaveValue('sam@example.com');
+    fireEvent.click(view.getByRole('button', { name: 'Send Invite' }));
+    await waitFor(() => expect(tribeApi.addSecondaryContact).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(tribeApi.addSecondaryContact).mock.calls[0]?.[0]).toMatchObject({ invitedEmail: 'sam@example.com', personId: 'p1' });
+    await waitFor(() => expect(view.queryByTestId('invite-for-person')).toBeNull());
+  });
+  it('an ordinary invite sends no person id', async () => {
+    const tribeApi = await import('../api/tribeApi');
+    vi.mocked(tribeApi.addSecondaryContact).mockResolvedValue({ inviteId: 'i2' });
+    const view = await renderTribeProfile({});
+    fireEvent.change(await view.findByLabelText('Email'), { target: { value: 'jo@example.com' } });
+    fireEvent.click(view.getByRole('button', { name: 'Send Invite' }));
+    await waitFor(() => expect(tribeApi.addSecondaryContact).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(tribeApi.addSecondaryContact).mock.calls[0]?.[0]).not.toHaveProperty('personId');
   });
 });

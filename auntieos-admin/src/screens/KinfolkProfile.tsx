@@ -24,6 +24,8 @@ import { Avatar } from '../components/Avatar';
 import { GhostButton } from '../components/Buttons';
 import { MaskedValue } from '../components/MaskedValue';
 import { NoEmergencyContactFlag } from '../components/NoEmergencyContactFlag';
+import { EMERGENCY_CONTACTS_MAX, EMERGENCY_CONTACTS_OVER_LIMIT } from '../api/emergencyContacts';
+import '../components/EmergencyContactsEditor.css';
 import { KinfolkEdit } from './KinfolkEdit';
 import type { DuplicateAddKinfolk } from '../lib/pendingAddKinfolk';
 import { HouseholdData } from './HouseholdData';
@@ -502,21 +504,27 @@ export function KinfolkProfile({
                   {p.emergencyContacts.length === 0 ? (
                     <NoEmergencyContactFlag />
                   ) : (
+                    <>
+                    {/* 2026-09-27 Q2: one per household. Two on file from the
+                        earlier rule both show, with the notice, until one is
+                        removed on Edit. */}
+                    {p.emergencyContacts.length > EMERGENCY_CONTACTS_MAX && (
+                      <p className="ec-editor__notice" role="note">
+                        {EMERGENCY_CONTACTS_OVER_LIMIT}
+                      </p>
+                    )}
                     <ol className="kprofile__ec-list">
                       {p.emergencyContacts.map((c, i) => (
                         <li key={`${c.phone}-${i}`}>
                           <dl className="kprofile__facts">
-                            <Fact
-                              label={i === 0 ? 'Called first' : 'Called second'}
-                              value={c.name}
-                              testId="ec-name"
-                            />
+                            <Fact label="Name" value={c.name} testId="ec-name" />
                             <Fact label="Phone" value={c.phone} mono />
                             <Fact label="Relationship" value={c.relationship ?? ''} />
                           </dl>
                         </li>
                       ))}
                     </ol>
+                    </>
                   )}
                 </DenPanel>
 

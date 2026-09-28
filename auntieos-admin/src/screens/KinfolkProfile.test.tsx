@@ -308,7 +308,9 @@ describe('KinfolkProfile', () => {
 });
 
 describe('Emergency Contacts panel (#829)', () => {
-  it('lists both contacts in call order under Emergency Contacts', async () => {
+  // Operator ruling 2026-09-27 (Q2): one per household. Two on file from the
+  // earlier rule both show, under a notice asking the admin to remove one.
+  it('two on file: lists both under the notice asking for one to be removed', async () => {
     getKinfolkProfile.mockResolvedValue(
       mergeKinfolkProfile('kf1', {
         firstName: 'Jamie',
@@ -324,6 +326,23 @@ describe('Emergency Contacts panel (#829)', () => {
     const names = within(panel).getAllByTestId('ec-name').map((n) => n.textContent);
     expect(names).toEqual(['Rae Halbrook', 'Lee Park']);
     expect(within(panel).queryByText('No Emergency Contact')).toBeNull();
+    expect(within(panel).getByRole('note')).toHaveTextContent(
+      'This household has two Emergency Contacts on file. A household has only one now, so remove one of them.',
+    );
+    expect(within(panel).queryByText('Called first')).toBeNull();
+  });
+  it('one on file: no notice', async () => {
+    getKinfolkProfile.mockResolvedValue(
+      mergeKinfolkProfile('kf1', {
+        firstName: 'Jamie',
+        lastName: 'Halbrook',
+        emergencyContacts: [{ name: 'Rae Halbrook', phone: '+15125550190', relationship: 'Sister' }],
+      }),
+    );
+    render(<KinfolkProfile kinfolkId="kf1" kinfolkName="Jamie Halbrook" kin={[]} onBack={vi.fn()} />);
+    const panel = (await screen.findByText('Emergency Contacts')).closest('section') as HTMLElement;
+    expect(within(panel).getAllByTestId('ec-name').map((n) => n.textContent)).toEqual(['Rae Halbrook']);
+    expect(within(panel).queryByRole('note')).toBeNull();
   });
 
   it('flags a household with none, and still renders the panel', async () => {

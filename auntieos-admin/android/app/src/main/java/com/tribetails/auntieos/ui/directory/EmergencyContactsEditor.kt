@@ -12,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.tribetails.auntieos.data.model.EMERGENCY_CONTACTS_MAX
+import com.tribetails.auntieos.data.model.EMERGENCY_CONTACTS_OVER_LIMIT
 import com.tribetails.auntieos.data.model.EMERGENCY_CONTACT_NAME_MAX
 import com.tribetails.auntieos.data.model.EMERGENCY_CONTACT_PHONE_MAX
 import com.tribetails.auntieos.data.model.EMERGENCY_CONTACT_RELATIONSHIP_MAX
@@ -36,9 +37,7 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
 fun EmergencyContactsSection(
     drafts: List<EmergencyContactDraft>,
     onChange: (Int, EmergencyContactDraft) -> Unit,
-    onAdd: () -> Unit,
     onRemove: (Int) -> Unit,
-    onMoveFirst: (Int) -> Unit,
     enabled: Boolean = true,
     showNoneOnFile: Boolean = false,
     unsaved: Boolean = false,
@@ -57,7 +56,7 @@ fun EmergencyContactsSection(
             if (showNoneOnFile) {
                 AuntieStatusPill(label = "No Emergency Contact", tone = AuntieStatusTone.Orange, compact = true)
             }
-            EmergencyContactsEditor(drafts, onChange, onAdd, onRemove, onMoveFirst, enabled)
+            EmergencyContactsEditor(drafts, onChange, onRemove, enabled)
             if (unsaved) {
                 Text("Unsaved changes", style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.kinfolkOrange)
             }
@@ -67,29 +66,31 @@ fun EmergencyContactsSection(
 }
 
 /**
- * Up to two Emergency Contacts, the first called first. Every field is
- * clearable (#829): a household is allowed to have none on file, and clearing
- * a relationship sends it as blank, never a leftover value.
+ * The household's Emergency Contact. One per household (operator ruling
+ * 2026-09-27, Q2): there is no way to add a second. A household that still has
+ * two on file from the earlier rule shows both, each with Remove, under
+ * [EMERGENCY_CONTACTS_OVER_LIMIT]. Every field is clearable (#829): a household
+ * is allowed to have none on file, and clearing a relationship sends it as
+ * blank, never a leftover value.
  *
- * #829 review: inputs stop at the server's limits (80/32/40). With two
- * contacts, both slots offer Remove and the second offers Call first.
+ * #829 review: inputs stop at the server's limits (80/32/40).
  */
 @Composable
 fun EmergencyContactsEditor(
     drafts: List<EmergencyContactDraft>,
     onChange: (Int, EmergencyContactDraft) -> Unit,
-    onAdd: () -> Unit,
     onRemove: (Int) -> Unit,
-    onMoveFirst: (Int) -> Unit,
     enabled: Boolean = true,
 ) {
+    val overLimit = drafts.size > EMERGENCY_CONTACTS_MAX
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (overLimit) {
+            Text(EMERGENCY_CONTACTS_OVER_LIMIT, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.kinfolkOrange)
+        }
         drafts.forEachIndexed { i, d ->
-            Text(
-                if (i == 0) "Called first" else "Called second",
-                style = AuntieTheme.typography.labelSmall,
-                color = AuntieTheme.colors.kinfolkOrange,
-            )
+            if (overLimit) {
+                Text("On file ${i + 1}", style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.kinfolkOrange)
+            }
             AuntieField(
                 value = d.name,
                 onValueChange = { onChange(i, d.copy(name = it.take(EMERGENCY_CONTACT_NAME_MAX))) },
@@ -111,15 +112,11 @@ fun EmergencyContactsEditor(
                 enabled = enabled,
                 modifier = Modifier.fillMaxWidth(),
             )
-            if (drafts.size > 1) {
+            if (overLimit) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (i > 0) TextButton(onClick = { onMoveFirst(i) }, enabled = enabled) { Text("Call first") }
                     TextButton(onClick = { onRemove(i) }, enabled = enabled) { Text("Remove") }
                 }
             }
-        }
-        if (drafts.size < EMERGENCY_CONTACTS_MAX) {
-            TextButton(onClick = onAdd, enabled = enabled) { Text("Add a second Emergency Contact") }
         }
     }
 }

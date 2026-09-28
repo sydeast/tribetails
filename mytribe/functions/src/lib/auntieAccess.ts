@@ -113,6 +113,11 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   'getMyKinTaleMedia', // admin web KinTale detail (api/kinTaleDetail.ts)
   'listHouseholdContacts', // admin web + Android household screen
   'saveHouseholdContact', // and this one
+  // 2026-09-27 Q3: the secondary kinfolk on a household (no portal account).
+  // Household information, so she may read and add; removing is destructive
+  // (rule 6), so removeSecondaryKinfolk is left out.
+  'listSecondaryKinfolk',
+  'saveSecondaryKinfolk',
 
   // ── Talking to a household ─────────────────────────────────────────────
   // She is the counterparty on these threads, not an observer of them.
