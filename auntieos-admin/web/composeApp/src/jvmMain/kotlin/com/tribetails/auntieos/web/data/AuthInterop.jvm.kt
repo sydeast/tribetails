@@ -110,10 +110,37 @@ internal fun mapIdentityToolkitError(errBody: String): String {
     }
 }
 
+/**
+ * #898: the `accounts` base a sign-in, refresh, reset or account-change call
+ * posts to. With a trusted `FIREBASE_AUTH_EMULATOR_HOST` this points at the
+ * Auth emulator, which serves the same paths under
+ * `http://host/identitytoolkit.googleapis.com/v1`; otherwise production.
+ * Pure, so a test can pin both branches without touching process env.
+ */
+internal fun identityToolkitAccountsBase(emulatorHost: String?): String =
+    if (emulatorHost != null) "http://$emulatorHost/identitytoolkit.googleapis.com/v1/accounts"
+    else "https://identitytoolkit.googleapis.com/v1/accounts"
+
+/** #898: the refresh-token endpoint, same emulator switch as [identityToolkitAccountsBase]. */
+internal fun secureTokenUrl(emulatorHost: String?): String =
+    if (emulatorHost != null) "http://$emulatorHost/securetoken.googleapis.com/v1/token"
+    else "https://securetoken.googleapis.com/v1/token"
+
 private object FirebaseRestAuth {
     private const val API_KEY = "AIzaSyBnR7D4gORVehTr_-WB42_NyFeNO7acDTo"
-    private const val IDENTITY = "https://identitytoolkit.googleapis.com/v1/accounts"
-    private const val SECURETOKEN = "https://securetoken.googleapis.com/v1/token"
+
+    /**
+     * #898: `FIREBASE_AUTH_EMULATOR_HOST` (the variable every Firebase SDK and
+     * the Auth emulator itself use), validated the same way as
+     * [JvmFirestoreRest]'s `FIRESTORE_EMULATOR_HOST` and
+     * `FUNCTIONS_EMULATOR_HOST`: only a loopback or private address is
+     * honored, and a rejected value falls back to production rather than
+     * silently going nowhere.
+     */
+    private val AUTH_EMULATOR_HOST: String? =
+        trustedEmulatorHost("FIREBASE_AUTH_EMULATOR_HOST", System.getenv("FIREBASE_AUTH_EMULATOR_HOST"))
+    private val IDENTITY = identityToolkitAccountsBase(AUTH_EMULATOR_HOST)
+    private val SECURETOKEN = secureTokenUrl(AUTH_EMULATOR_HOST)
 
     private val json = authRestJson
     // #867: timeouts and the test network guard come from the shared factory.

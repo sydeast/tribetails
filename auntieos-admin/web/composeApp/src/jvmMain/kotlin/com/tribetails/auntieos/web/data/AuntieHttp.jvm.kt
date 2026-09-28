@@ -26,7 +26,8 @@ class NetworkBlockedError(message: String) : Error(message)
  * Switched on by the `auntieos.test.blockNetwork` system property, which the
  * `jvmTest` task in `composeApp/build.gradle.kts` sets for every test class. The
  * desktop app never sets it. Loopback is always allowed, and so is the host of
- * `FIRESTORE_EMULATOR_HOST` or `FUNCTIONS_EMULATOR_HOST` when one is set.
+ * `FIRESTORE_EMULATOR_HOST`, `FUNCTIONS_EMULATOR_HOST` or
+ * `FIREBASE_AUTH_EMULATOR_HOST` (#898) when one is set.
  */
 object NetworkGuard {
     const val PROPERTY = "auntieos.test.blockNetwork"
@@ -41,7 +42,11 @@ object NetworkGuard {
     var onBlocked: (String) -> Unit = { System.err.println(it) }
 
     private fun emulatorHosts(): List<String?> =
-        listOf(System.getenv("FIRESTORE_EMULATOR_HOST"), System.getenv("FUNCTIONS_EMULATOR_HOST"))
+        listOf(
+            System.getenv("FIRESTORE_EMULATOR_HOST"),
+            System.getenv("FUNCTIONS_EMULATOR_HOST"),
+            System.getenv("FIREBASE_AUTH_EMULATOR_HOST"),
+        )
 
     /**
      * Pure: why a request to [host] is refused, or null when it may go. [emulatorHosts]

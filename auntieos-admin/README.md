@@ -57,6 +57,32 @@ Do not pipe gradle to `tail`. It masks the exit code, and a failing build then
 reports success. `scripts/loud-build.sh` preserves the code and prints a
 heartbeat.
 
+### Desktop console emulator switches
+
+The desktop (jvm) console has no Firebase SDK, so it talks to Firestore, Cloud
+Functions and Firebase Auth over REST, straight to production, unless one of
+these is set (dev/debug only; production behavior is unchanged when none are
+set):
+
+| Variable | Points | Set by |
+|---|---|---|
+| `FIRESTORE_EMULATOR_HOST` | Reads and writes (`JvmFirestoreRest`) | `firebase emulators:exec`/`:start`, e.g. `127.0.0.1:8080` |
+| `FUNCTIONS_EMULATOR_HOST` | Callables (`JvmFirestoreRest`) | This project's own convention (not a `firebase-tools` variable), e.g. `127.0.0.1:5001` |
+| `FIREBASE_AUTH_EMULATOR_HOST` | Sign-in, token refresh, password reset and account changes (`AuthInterop.jvm.kt`, #898) | The Auth emulator itself sets this under `firebase emulators:exec`, e.g. `127.0.0.1:9099` |
+
+Each value is validated the same way: it must be nothing but a loopback or
+private address (`localhost`, `127.0.0.0/8`, `::1`, `10/8`, `172.16/12`,
+`192.168/16`) plus a port, or it is refused and logged, and the call goes to
+production instead. Run all three together with:
+
+```
+firebase emulators:exec --project auntieos-ttpc --only auth,firestore,functions \
+  'FUNCTIONS_EMULATOR_HOST=127.0.0.1:5001 ./gradlew :composeApp:jvmTest --no-daemon'
+```
+
+`emulators:exec` sets `FIREBASE_AUTH_EMULATOR_HOST` and `FIRESTORE_EMULATOR_HOST`
+itself; `FUNCTIONS_EMULATOR_HOST` is exported alongside the command.
+
 ## The brand-voice corpus, and the copy nobody sees
 
 `generateAuntieCopy` reads the voice corpus from `web/functions/voice/`, which is
