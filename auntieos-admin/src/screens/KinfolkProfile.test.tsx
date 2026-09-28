@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ReactNode } from 'react';
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Kin } from '../api/directory';
 import type { KinfolkProfile as Profile } from '../api/kinfolkProfile';
+import { listUnappliedPayments } from '../api/unappliedPayments';
 
 const { getKinfolkProfile } = vi.hoisted(() => ({ getKinfolkProfile: vi.fn() }));
 vi.mock('../api/kinfolkProfile', async (orig) => ({
@@ -44,6 +45,11 @@ vi.mock('./HouseholdData', () => ({
 vi.mock('../api/accountCredit', () => ({
   getAccountCreditHistory: vi.fn().mockResolvedValue({ ok: true, kinfolkId: 'k1', accountBalanceCents: 0, credits: [], uses: [] }),
   giveAccountCredit: vi.fn(),
+}));
+// #1003: so does its "Payments needing a decision" list.
+vi.mock('../api/unappliedPayments', () => ({
+  listUnappliedPayments: vi.fn().mockResolvedValue({ ok: true, kinfolkId: 'k1', payments: [], openInvoices: [] }),
+  resolveUnappliedPayment: vi.fn(),
 }));
 // "Members and invites" is a real anchor to `/household-members/{id}` rather
 // than a sub-view swap, so this file needs the router's `Link`. The stub
@@ -752,5 +758,31 @@ describe('KinfolkProfile: the mock', () => {
     const left = headingsIn(leftCol);
     expect(left[0]).toBe('Contact');
     expect(left[left.length - 1]).toBe('Auntie’s notes');
+  });
+
+  it('#1003 opened from the unapplied-payment notice, the Account credit panel shows the decision list even when empty', async () => {
+    getKinfolkProfile.mockResolvedValue(profile());
+    render(
+      <KinfolkProfile
+        kinfolkId="k1"
+        kinfolkName="Jamie"
+        kin={[]}
+        onBack={vi.fn()}
+        openUnappliedPayments
+        unappliedPaymentId="evt_1"
+      />,
+    );
+    expect(await screen.findByText('No card payments are waiting for a decision.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Payments needing a decision' })).toBeInTheDocument();
+  });
+
+  it('#1003 a plain visit hides the empty decision list', async () => {
+    getKinfolkProfile.mockResolvedValue(profile());
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    await screen.findByRole('heading', { name: 'Account credit' });
+    // Wait for the list read to land, so the absence below is not a race.
+    await waitFor(() => expect(vi.mocked(listUnappliedPayments)).toHaveBeenCalledWith('k1'));
+    await act(async () => {});
+    expect(screen.queryByRole('heading', { name: 'Payments needing a decision' })).toBeNull();
   });
 });

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   applicableNotificationActions,
+  notificationOpenRoute,
   notificationQuoteRoute,
   notificationTargetRoute,
 } from './notificationActions';
@@ -177,5 +178,41 @@ describe('applicableNotificationActions', () => {
         ).quote,
       ).toBeNull();
     });
+  });
+});
+
+describe('notificationOpenRoute: invoice.payment.unapplied (#1003)', () => {
+  const unapplied = (data: Record<string, unknown>) =>
+    entry({ key: 'invoice.payment.unapplied', targetType: 'invoice', targetId: 'inv_9', data });
+
+  it('opens the HOUSEHOLD profile on the decision list with the payment named', () => {
+    const route = {
+      to: '/directory/$kinfolkId',
+      params: { kinfolkId: 'fam1' },
+      search: { section: 'unapplied-payments', paymentId: 'evt_123' },
+    };
+    const e = unapplied({ kinfolkId: 'fam1', invoiceId: 'inv_9', stripeEventId: 'evt_123' });
+    expect(notificationOpenRoute(e)).toEqual(route);
+    expect(applicableNotificationActions(e).open).toEqual(route);
+  });
+
+  it('still opens the list when the notice carries no payment id', () => {
+    expect(notificationOpenRoute(unapplied({ kinfolkId: 'fam1', invoiceId: 'inv_9' }))).toEqual({
+      to: '/directory/$kinfolkId',
+      params: { kinfolkId: 'fam1' },
+      search: { section: 'unapplied-payments' },
+    });
+  });
+
+  it('falls back to the invoice when no household is named', () => {
+    expect(notificationOpenRoute(unapplied({ stripeEventId: 'evt_123' }))).toEqual({
+      to: '/invoices',
+      search: { invoiceId: 'inv_9' },
+    });
+  });
+
+  it('leaves every other invoice key on the invoice', () => {
+    const e = entry({ key: 'invoice.paid', targetType: 'invoice', targetId: 'inv_9', data: { kinfolkId: 'fam1' } });
+    expect(notificationOpenRoute(e)).toEqual({ to: '/invoices', search: { invoiceId: 'inv_9' } });
   });
 });

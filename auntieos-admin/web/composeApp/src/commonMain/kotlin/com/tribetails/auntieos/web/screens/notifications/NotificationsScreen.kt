@@ -99,7 +99,16 @@ import kotlinx.coroutines.launch
 fun NotificationsScreen(
     onOpenTarget: (targetType: String, targetId: String) -> Unit = { _, _ -> },
     onCreateQuote: (kinfolkId: String) -> Unit = {},
+    // #1003: `invoice.payment.unapplied` opens the household profile with that
+    // payment's Decide dialog instead of the invoice (see [notificationOpenRoute]).
+    onOpenUnappliedPayment: (kinfolkId: String, paymentId: String?) -> Unit = { _, _ -> },
 ) {
+    val openEntry: (NotificationEntry) -> Unit = { entry ->
+        when (val r = notificationOpenRoute(entry)) {
+            is NotificationOpenRoute.UnappliedPayment -> onOpenUnappliedPayment(r.kinfolkId, r.paymentId)
+            is NotificationOpenRoute.Target -> onOpenTarget(r.targetType, r.targetId)
+        }
+    }
     val client = remember { FirestoreClient() }
     val scope = rememberReportingScope()
 
@@ -325,7 +334,7 @@ fun NotificationsScreen(
                                     else selectedIds.remove(id)
                                 },
                                 onToggleRead = onToggleRead,
-                                onOpenTarget = onOpenTarget,
+                                onOpenTarget = openEntry,
                                 onCreateQuote = onCreateQuote,
                                 onArchive = onArchive,
                                 onBookingAction = onBookingAction,
@@ -421,7 +430,7 @@ private fun Feed(
     selectedIds: List<String>,
     onToggleSelect: (String, Boolean) -> Unit,
     onToggleRead: (NotificationEntry) -> Unit,
-    onOpenTarget: (String, String) -> Unit,
+    onOpenTarget: (NotificationEntry) -> Unit,
     onCreateQuote: (String) -> Unit,
     onArchive: (NotificationEntry) -> Unit,
     onBookingAction: (NotificationEntry, String) -> Unit,
@@ -450,7 +459,7 @@ private fun row(
     selectedIds: List<String>,
     onToggleSelect: (String, Boolean) -> Unit,
     onToggleRead: (NotificationEntry) -> Unit,
-    onOpenTarget: (String, String) -> Unit,
+    onOpenTarget: (NotificationEntry) -> Unit,
     onCreateQuote: (String) -> Unit,
     onArchive: (NotificationEntry) -> Unit,
     onBookingAction: (NotificationEntry, String) -> Unit,
@@ -460,7 +469,7 @@ private fun row(
         selected = entry._id in selectedIds,
         onToggleSelect = { checked -> onToggleSelect(entry._id, checked) },
         onToggleRead = { onToggleRead(entry) },
-        onOpenTarget = { onOpenTarget(entry.targetType, entry.targetId) },
+        onOpenTarget = { onOpenTarget(entry) },
         onCreateQuote = { onCreateQuote(entry.targetId) },
         onArchive = { onArchive(entry) },
         onApprove = { onBookingAction(entry, "APPROVE") },

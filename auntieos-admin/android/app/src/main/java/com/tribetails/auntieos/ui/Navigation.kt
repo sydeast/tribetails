@@ -336,6 +336,18 @@ internal fun notificationTargetRoute(targetType: String, targetId: String): Stri
     }
 }
 
+/**
+ * #1003: the Open route for a whole notification. The `invoice.payment.unapplied`
+ * notice opens the HOUSEHOLD profile (where "Payments needing a decision" is),
+ * not the invoice it targets; every other key keeps [notificationTargetRoute].
+ * Pure; unit-tested.
+ */
+internal fun notificationOpenRoute(entry: com.tribetails.auntieos.data.admin.NotificationEntry): String? {
+    val notice = unappliedPaymentNotice(entry)
+    if (notice != null) return Screen.KinfolkProfile.createRoute(notice.kinfolkId)
+    return notificationTargetRoute(entry.targetType, entry.targetId)
+}
+
 @Composable
 fun AuntieNavHost(
     startOnCalls: Boolean = false,
@@ -1037,6 +1049,17 @@ private fun AuthenticatedNavHost(
                         },
                         onCreateQuote = { kinfolkId ->
                             navController.navigate(Screen.AdminInvoicesQuote.createRoute(kinfolkId)) { launchSingleTop = true }
+                        },
+                        // #1003: the unapplied-payment notice opens the household
+                        // with that payment's Decide dialog; the controller is told
+                        // which payment before the profile's load runs.
+                        onOpenEntry = { entry ->
+                            unappliedPaymentNotice(entry)?.let { n ->
+                                directoryVm.unappliedPayments.openFromNotice(n.kinfolkId, n.paymentId)
+                            }
+                            notificationOpenRoute(entry)?.let { route ->
+                                navController.navigate(route) { launchSingleTop = true }
+                            }
                         },
                     )
                 }

@@ -1,4 +1,5 @@
-import { useNavigate, useParams } from '@tanstack/react-router';
+import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
+import { UNAPPLIED_PAYMENTS_SECTION } from '../lib/notificationActions';
 import { Directory } from '../screens/Directory';
 
 /**
@@ -16,10 +17,14 @@ import { Directory } from '../screens/Directory';
  */
 export function DirectoryProfileView() {
   const { kinfolkId } = useParams({ from: '/admin/directory/$kinfolkId' });
+  const { section, paymentId } = useSearch({ from: '/admin/directory/$kinfolkId' });
   const navigate = useNavigate();
   return (
     <Directory
       initialKinfolkId={kinfolkId}
+      // #1003: opened from the `invoice.payment.unapplied` notice.
+      openUnappliedPayments={section === UNAPPLIED_PAYMENTS_SECTION}
+      {...(paymentId ? { unappliedPaymentId: paymentId } : {})}
       onProfileClose={() => void navigate({ to: '/directory' })}
     />
   );

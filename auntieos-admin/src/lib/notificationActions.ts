@@ -77,6 +77,41 @@ export function notificationTargetRoute(rawType: unknown, rawId: unknown): Notif
   }
 }
 
+/** #1003: the `section` search value that opens "Payments needing a decision". */
+export const UNAPPLIED_PAYMENTS_SECTION = 'unapplied-payments';
+
+/**
+ * #1003: a card payment Stripe took that could not be applied to its invoice.
+ * The server targets the INVOICE, but the decision lives on the HOUSEHOLD
+ * profile (its Account credit panel), so this key opens the profile instead.
+ * `data.stripeEventId` is the payment's id; its Decide dialog opens on arrival.
+ */
+const UNAPPLIED_PAYMENT_KEY = 'invoice.payment.unapplied';
+
+/**
+ * Where "Open" goes for one notification: a per-key override first, then the
+ * target-type table above. Only `invoice.payment.unapplied` overrides today,
+ * and only when the notice names its household; without one it falls back to
+ * the invoice like any other invoice notice.
+ */
+export function notificationOpenRoute(entry: NotificationEntry): NotificationRoute | null {
+  if (str(entry.key).trim() === UNAPPLIED_PAYMENT_KEY) {
+    const kinfolkId = notificationKinfolkId(entry);
+    if (kinfolkId !== '') {
+      const paymentId = str(rec(entry.data)['stripeEventId']).trim();
+      return {
+        to: '/directory/$kinfolkId',
+        params: { kinfolkId },
+        search: {
+          section: UNAPPLIED_PAYMENTS_SECTION,
+          ...(paymentId !== '' ? { paymentId } : {}),
+        },
+      };
+    }
+  }
+  return notificationTargetRoute(entry.targetType, entry.targetId);
+}
+
 /**
  * The Invoices quote composer, seeded with a household. The archive threaded
  * the same seed through its App shell as `composeQuoteForKinfolkId`; here it
@@ -163,7 +198,7 @@ export function applicableNotificationActions(entry: NotificationEntry): Notific
   const quoteEligible = kinfolkId !== '' && (isQuoteDenial || isUninvoicedBookingRequest);
 
   return {
-    open: notificationTargetRoute(entry.targetType, entry.targetId),
+    open: notificationOpenRoute(entry),
     bookingId: isPendingBookingRequest ? targetId : '',
     quote: quoteEligible ? notificationQuoteRoute(kinfolkId) : null,
   };

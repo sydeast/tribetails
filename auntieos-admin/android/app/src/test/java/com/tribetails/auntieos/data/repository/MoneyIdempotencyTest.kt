@@ -45,6 +45,14 @@ class MoneyIdempotencyTest {
         assertTrue(key.startsWith("crd_$nowMs" + "_"))
         assertNotEquals(key, mintGiveCreditIdempotencyKey(nowMs, Random(8)))
     }
+
+    @Test
+    fun `1003 the unapplied-decision key is upd_ and satisfies the server guard`() {
+        val key = mintUnappliedDecisionIdempotencyKey(nowMs, seeded())
+        assertTrue(key.matches(serverGuard("upd")))
+        assertTrue(key.startsWith("upd_$nowMs" + "_"))
+        assertNotEquals(key, mintUnappliedDecisionIdempotencyKey(nowMs, Random(8)))
+    }
     @Test
     fun `every minted key satisfies the guard the server refuses everything else with`() {
         assertTrue(mintPaymentIdempotencyKey(nowMs, seeded()).matches(serverGuard("pay")))

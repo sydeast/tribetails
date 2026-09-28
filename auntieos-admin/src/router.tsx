@@ -234,6 +234,10 @@ const invitesRoute = createRoute({
 const directoryProfileRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'directory/$kinfolkId',
+  // #1003: the `invoice.payment.unapplied` notice lands here with
+  // `?section=unapplied-payments&paymentId=...`, which opens the Account credit
+  // panel's "Payments needing a decision" list and that payment's dialog.
+  validateSearch: optionalIdSearch(['section', 'paymentId'] as const),
   component: lazyRouteComponent(
     () => import('./routes/DirectoryProfileView'),
     'DirectoryProfileView',

@@ -16,6 +16,12 @@ import com.tribetails.auntieos.data.contracts.GiveAccountCreditArgs
 import com.tribetails.auntieos.data.contracts.GiveAccountCreditResult
 import com.tribetails.auntieos.data.contracts.decodeGetAccountCreditHistoryResult
 import com.tribetails.auntieos.data.contracts.decodeGiveAccountCreditResult
+import com.tribetails.auntieos.data.contracts.ListUnappliedPaymentsArgs
+import com.tribetails.auntieos.data.contracts.ListUnappliedPaymentsResult
+import com.tribetails.auntieos.data.contracts.ResolveUnappliedPaymentArgs
+import com.tribetails.auntieos.data.contracts.ResolveUnappliedPaymentResult
+import com.tribetails.auntieos.data.contracts.decodeListUnappliedPaymentsResult
+import com.tribetails.auntieos.data.contracts.decodeResolveUnappliedPaymentResult
 import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerArgs
 import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerResult
 import com.tribetails.auntieos.data.contracts.LinkInvoiceSessionsArgs
@@ -740,6 +746,58 @@ class InvoiceRepository(
             ?: error("getAccountCreditHistory: non-map payload")
         decodeGetAccountCreditHistoryResult(raw)
     }.onFailure { AuntieLog.e("Failed to load account credit history", it) }
+
+    /**
+     * #1003: a household's card payments that were recorded but not applied to
+     * their invoice (newest first), and the open invoices a decision may apply
+     * one to. Owner only: Auntie gets permission-denied.
+     */
+    suspend fun listUnappliedPayments(kinfolkId: String): Result<ListUnappliedPaymentsResult> = runCatching {
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("listUnappliedPayments")
+            .call(ListUnappliedPaymentsArgs(kinfolkId = kinfolkId).toPayload())
+            .awaitCallable().data as? Map<String, Any?>
+            ?: error("listUnappliedPayments: non-map payload")
+        val result = decodeListUnappliedPaymentsResult(raw)
+        if (!result.ok) error("listUnappliedPayments: not ok")
+        result
+    }.onFailure { AuntieLog.e("Failed to load unapplied payments", it) }
+
+    /**
+     * #1003: decide what an unapplied card payment becomes: part to account
+     * credit (with a reason), part applied to one open invoice, the rest kept on
+     * the payment. There are no refunds. [idempotencyKey] is REQUIRED (mint it
+     * with [mintUnappliedDecisionIdempotencyKey], once per submission) so a
+     * retry lands on the same decision.
+     */
+    suspend fun resolveUnappliedPayment(
+        paymentId: String,
+        creditCents: Long,
+        creditReason: String,
+        applyInvoiceId: String,
+        applyCents: Long,
+        idempotencyKey: String,
+    ): Result<ResolveUnappliedPaymentResult> = runCatching {
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("resolveUnappliedPayment")
+            .call(
+                ResolveUnappliedPaymentArgs(
+                    paymentId = paymentId,
+                    creditCents = creditCents,
+                    creditReason = creditReason,
+                    applyInvoiceId = applyInvoiceId,
+                    applyCents = applyCents,
+                    idempotencyKey = idempotencyKey,
+                ).toPayload(),
+            )
+            .awaitCallable().data as? Map<String, Any?>
+            ?: error("resolveUnappliedPayment: non-map payload")
+        val result = decodeResolveUnappliedPaymentResult(raw)
+        if (!result.ok) error("resolveUnappliedPayment: not ok")
+        result
+    }.onFailure { AuntieLog.e("Failed to resolve unapplied payment", it) }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

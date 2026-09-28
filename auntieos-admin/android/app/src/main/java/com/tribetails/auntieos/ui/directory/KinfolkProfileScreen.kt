@@ -114,6 +114,18 @@ fun KinfolkProfileScreen(
             viewModel.accountCredit.clearMessage()
         }
     }
+    // #1003: payments needing a decision, their own read. A notice link set the
+    // payment to open before navigating here; load() picks that up.
+    val unappliedState by viewModel.unappliedPayments.state.collectAsState()
+    LaunchedEffect(kinfolkId) {
+        viewModel.unappliedPayments.load(kinfolkId)
+    }
+    LaunchedEffect(unappliedState.message) {
+        unappliedState.message?.let {
+            android.widget.Toast.makeText(profileContext, it, android.widget.Toast.LENGTH_LONG).show()
+            viewModel.unappliedPayments.clearMessage()
+        }
+    }
 
     val back = {
         viewModel.clearProfile()
@@ -128,6 +140,15 @@ fun KinfolkProfileScreen(
         onBack = viewModel.accountCredit::back,
         onConfirm = viewModel.accountCredit::confirm,
         onDismiss = viewModel.accountCredit::dismiss,
+    )
+    DecidePaymentDialog(
+        state = unappliedState,
+        onCredit = viewModel.unappliedPayments::setCredit,
+        onReason = viewModel.unappliedPayments::setReason,
+        onApplyInvoice = viewModel.unappliedPayments::setApplyInvoice,
+        onApply = viewModel.unappliedPayments::setApply,
+        onSave = viewModel.unappliedPayments::save,
+        onDismiss = viewModel.unappliedPayments::dismiss,
     )
     AuntieScreenScaffold(
         title = state.kinfolk?.displayName ?: "Profile",
@@ -357,6 +378,14 @@ fun KinfolkProfileScreen(
                         AccountCreditPanel(
                             state = creditState,
                             onGiveCredit = viewModel.accountCredit::open,
+                            // #1003: card payments waiting on a decision.
+                            below = {
+                                UnappliedPaymentsSubsection(
+                                    state = unappliedState,
+                                    onDecide = viewModel.unappliedPayments::open,
+                                    onRetry = viewModel.unappliedPayments::reload,
+                                )
+                            },
                         )
                     }
                 }

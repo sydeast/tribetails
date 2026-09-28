@@ -269,3 +269,22 @@ export function duplicateCheckoutReason(input: {
 
   return null;
 }
+
+/**
+ * A plain sentence for the admin notice, off `duplicateCheckoutReason`'s code.
+ * Shared by the webhook's notice and `admin/listUnappliedPayments.ts` (#1003).
+ */
+export function unappliedReasonLabel(reason: string | null): string {
+  switch (reason) {
+    case 'stale-round':
+      return 'it was paid on a checkout opened before an earlier payment on this invoice';
+    case 'settled-by-other-intent':
+      return 'the invoice had already been paid by another card payment';
+    case 'invoice-not-owed':
+      return 'the invoice had already been paid';
+    case 'invoice-marked-paid':
+      return 'the invoice was already marked paid';
+    default:
+      return 'the invoice was not owed this payment';
+  }
+}
