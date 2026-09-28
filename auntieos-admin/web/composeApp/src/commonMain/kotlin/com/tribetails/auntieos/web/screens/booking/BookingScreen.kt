@@ -41,6 +41,7 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.datetime.todayIn
 import com.composables.icons.lucide.Ban
+import com.composables.icons.lucide.CircleCheckBig
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.tribetails.auntieos.web.data.AuntieDataSource
@@ -163,6 +164,13 @@ private fun BookingListScreen(
     val selectedIds = remember { mutableStateMapOf<String, Boolean>() }
     var bulkBusy by remember { mutableStateOf(false) }
     var bulkNotice by remember { mutableStateOf<String?>(null) }
+    // 1025: a landed single approve/reject used to report nothing -- the card
+    // just moved sections on the next stream update, the same gap admin
+    // web (React)'s BookingActions and Android's approveBooking/cancelBooking
+    // closed for the same single-row shape. Screen-local, the same split
+    // bulkNotice above already uses (the ViewModel owns the write + error,
+    // this screen owns the confirmation).
+    var actionNotice by remember { mutableStateOf<String?>(null) }
     // B2: tap a Pending/Scheduled/History card to open its detail modal (the modal
     // already existed but was wired to nothing). Lifted here so one modal serves all
     // three sections; rendered only when a real client is injected (not in fakes).
@@ -174,6 +182,28 @@ private fun BookingListScreen(
         if (selectedIds[id] == true) selectedIds.remove(id) else selectedIds[id] = true
     }
     fun clearSelection() = selectedIds.clear()
+
+    // 1025: the single-row confirmations. Each awaits the ViewModel write (which
+    // owns errorMessage) and only sets actionNotice when nothing failed, so a
+    // refusal shows its own error banner instead of a false "Approved."
+    fun runApprove(booking: KinCareSession) {
+        scope.launch {
+            vm.approveBooking(booking._id)
+            if (vm.errorMessage == null) actionNotice = bookingActionNotice("Approved", booking)
+        }
+    }
+    fun runReject(booking: KinCareSession) {
+        scope.launch {
+            vm.rejectBooking(booking._id)
+            if (vm.errorMessage == null) actionNotice = bookingActionNotice("Rejected", booking)
+        }
+    }
+    fun runCancel(booking: KinCareSession) {
+        scope.launch {
+            vm.rejectBooking(booking._id)
+            if (vm.errorMessage == null) actionNotice = bookingActionNotice("Cancelled", booking)
+        }
+    }
 
     fun runBulk(action: String) {
         val ids = selectedIds.filterValues { it }.keys.toList()
@@ -260,6 +290,17 @@ private fun BookingListScreen(
                 title     = "Bulk action done",
                 icon      = Lucide.Plus,
                 onDismiss = { bulkNotice = null },
+            ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim) }
+            Spacer(Modifier.height(16.dp))
+        }
+
+        // 1025: confirms a single approve/reject now that the card has moved.
+        actionNotice?.let { msg ->
+            AuntieBanner(
+                tone      = AuntieBannerTone.Success,
+                title     = "Booking",
+                icon      = Lucide.CircleCheckBig,
+                onDismiss = { actionNotice = null },
             ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim) }
             Spacer(Modifier.height(16.dp))
         }
@@ -381,8 +422,8 @@ private fun BookingListScreen(
                             selecting = selecting,
                             selected  = selectedIds[batchVisitId(booking)] == true,
                             onToggleSelect = { toggleSelect(booking) },
-                            onApprove = { scope.launch { vm.approveBooking(booking._id) } },
-                            onReject  = { scope.launch { vm.rejectBooking(booking._id) } },
+                            onApprove = { runApprove(booking) },
+                            onReject  = { runReject(booking) },
                             onCancel  = null,
                             onOpenDetail = { selectedBooking = booking },
                             timeBlockLabel = timeBlockLabelFor(booking),
@@ -415,7 +456,7 @@ private fun BookingListScreen(
                             onToggleSelect = { toggleSelect(booking) },
                             onApprove = null,
                             onReject  = null,
-                            onCancel  = { scope.launch { vm.rejectBooking(booking._id) } },
+                            onCancel  = { runCancel(booking) },
                             onOpenDetail = { selectedBooking = booking },
                             timeBlockLabel = timeBlockLabelFor(booking),
                         )
@@ -513,6 +554,14 @@ private fun HistorySubsection(
         }
     }
 }
+
+/**
+ * 1025: the single-row approve/reject/cancel confirmation text. Pure +
+ * unit-tested for the same reason [bookingHistoryBuckets] is: the wording is
+ * covered without a live callable or a full Compose render.
+ */
+internal fun bookingActionNotice(verb: String, booking: KinCareSession): String =
+    "$verb ${booking.kinfolkName.ifBlank { booking.kinfolkId }}."
 
 /** Most-recent rows shown per History subsection before "Show more". */
 private const val HISTORY_PAGE = 6

@@ -44,6 +44,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.Bold
 import com.composables.icons.lucide.Braces
+import com.composables.icons.lucide.CircleCheckBig
 import com.composables.icons.lucide.Eye
 import com.composables.icons.lucide.Heading
 import com.composables.icons.lucide.Image
@@ -145,6 +146,11 @@ fun TemplateBankBody(
     var categories by remember { mutableStateOf<List<String>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
+    // 1025: a landed save used to close the editor and reload with nothing
+    // confirming which template was saved, the same gap admin web (React) and
+    // Android's #1013/#1024 closed for kin/kinfolk. The bank itself, not the
+    // editor, shows this: the editor closes in the same breath that sets it.
+    var notice by remember { mutableStateOf<String?>(null) }
     var selectedFilter by remember { mutableStateOf("All") }
     // Edit/create overlay target. `creating` distinguishes a fresh blank template
     // (Save persists a new doc) from editing an existing one.
@@ -286,6 +292,19 @@ fun TemplateBankBody(
             }
         }
 
+        // 1025: confirms a landed save now that the editor has closed.
+        notice?.let { msg ->
+            AuntieBanner(
+                tone = AuntieBannerTone.Success,
+                title = "Saved",
+                icon = Lucide.CircleCheckBig,
+                onDismiss = { notice = null },
+                modifier = Modifier.padding(bottom = 20.dp),
+            ) {
+                Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
+        }
+
         DenPanel(
             title = "Templates",
             subtitle = "Tap a card to read it, or Edit to change the subject, body, and HTML. Long-press a card to drag it onto a category.",
@@ -409,7 +428,12 @@ fun TemplateBankBody(
             onSave = { updated ->
                 scope.launch {
                     when (val r = templateService.saveTemplate(updated)) {
-                        is WriteResult.Ok -> { editing = null; creating = false; reload() }
+                        is WriteResult.Ok -> {
+                            editing = null
+                            creating = false
+                            notice = "Saved ${updated.title.ifBlank { updated.templateId }}."
+                            reload()
+                        }
                         is WriteResult.Err -> error = r.message
                     }
                 }

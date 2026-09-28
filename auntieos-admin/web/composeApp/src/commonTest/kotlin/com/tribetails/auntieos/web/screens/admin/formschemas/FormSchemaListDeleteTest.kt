@@ -66,4 +66,23 @@ class FormSchemaListDeleteTest {
         assertTrue(message != null && message.contains("boom"))
         assertTrue(repo.schemas.containsKey("s1"), "a failed delete must not drop the row")
     }
+
+    // 1025: a landed delete used to reload the list with nothing confirming
+    // which schema was removed, the same gap admin web (React) and Android's
+    // #1013/#1024 closed for kin/kinfolk.
+    @Test
+    fun deletedNoticeNamesTheSchema() {
+        assertEquals(
+            "Deleted Tribe Profile.",
+            deletedNoticeMessage(FormSchemaSummary(id = "tribeProfile", name = "Tribe Profile", version = 3)),
+        )
+    }
+
+    @Test
+    fun deletedNoticeFallsBackToTheIdWhenNameIsBlank() {
+        assertEquals(
+            "Deleted tribeProfile.",
+            deletedNoticeMessage(FormSchemaSummary(id = "tribeProfile", name = "", version = 1)),
+        )
+    }
 }

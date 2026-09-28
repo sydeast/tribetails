@@ -46,9 +46,11 @@ import com.tribetails.auntieos.web.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.web.ui.components.BottomBorderField
 import com.tribetails.auntieos.web.ui.components.DenPanel
 import com.tribetails.auntieos.web.ui.components.GhostButton
+import com.tribetails.auntieos.web.ui.components.LocalRouteToast
 import com.tribetails.auntieos.web.ui.components.MultilineField
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ServicePill
+import com.tribetails.auntieos.web.ui.components.ToastKind
 import com.tribetails.auntieos.web.ui.components.serviceTone
 import kotlinx.coroutines.launch
 import kotlin.time.Clock
@@ -74,6 +76,12 @@ fun BookingDetailModal(
     val scope = rememberReportingScope()
     val localZone = remember { TimeZone.currentSystemDefault() }
     val bookingId = session.sourceBookingId.ifBlank { session._id }
+    // 1025: a landed reschedule used to call onDismiss() with nothing
+    // confirming it, closing this modal in the same breath (the same gap
+    // #854/#1007 closed elsewhere on desktop and #1024 closed on admin web's
+    // own BookingDetailModal.tsx). Route-level, not local: onDismiss() disposes
+    // this composable's own state in the same step.
+    val routeToast = LocalRouteToast.current
 
     val kinfolkNotes by remember(session.kinfolkId, bookingId) {
         client.bookingNotesStream(session.kinfolkId, bookingId, internal = false)
@@ -331,7 +339,13 @@ fun BookingDetailModal(
                                             rescheduling = true
                                             reschedError = null
                                             when (val r = client.rescheduleBooking(session._id, times.first, times.second)) {
-                                                is WriteResult.Ok -> onDismiss()
+                                                is WriteResult.Ok -> {
+                                                    routeToast.show(
+                                                        "${session.kinfolkName.ifBlank { "Unnamed" }}'s visit is rescheduled.",
+                                                        ToastKind.Success,
+                                                    )
+                                                    onDismiss()
+                                                }
                                                 is WriteResult.Err -> reschedError = r.message
                                             }
                                             rescheduling = false
