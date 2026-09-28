@@ -13,7 +13,7 @@ STOP and ASK. Do not fabricate sample data to continue.
 Project Routing Rules (AI + Human)
 
 `auntieos-admin/CLAUDE.md` is the authority for this tree and `docs/RUNBOOK.md`
-for operations. What follows is the routing map only. Where this file disagrees
+and `docs/runbooks/` for operations. What follows is the routing map only. Where this file disagrees
 with those, they win and this file is the bug.
 
 - **The live operator admin is `src/`** (React + Vite + TanStack). It serves

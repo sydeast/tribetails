@@ -56,7 +56,7 @@
  * Runbook: run DRY first, read the before/after, then re-run with --allow-prod.
  * The real write is an operator step, never an agent's.
  *
- * STATUS (docs/RUNBOOK.md, "Scripts and the data re-upload"): still applies.
+ * STATUS (docs/runbooks/after-release.md, "Scripts and the data re-upload"): still applies.
  * Run again after the reload regardless of whether `business_settings`
  * survives the wipe: a recreated document falls back to
  * `America/New_York` (DEFAULT_BUSINESS_SETTINGS), the wrong zone.

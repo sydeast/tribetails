@@ -20,7 +20,7 @@ import { setGlobalOptions } from 'firebase-functions/v2';
 //   was chosen because 240 Cloud Run services at 1 vCPU appeared to sit above
 //   the 200 vCPU `CpuAllocPerProjectRegion` ceiling for us-central1, and that
 //   appeared to be what broke five consecutive full deploys. Both halves were
-//   wrong, and docs/RUNBOOK.md has said so since 2026-08-03:
+//   wrong, and docs/runbooks/release-internals.md has said so since 2026-08-03:
 //
 //     - The deploys were refused by a RATE limit, not a capacity one:
 //       'Per project mutation requests per minute per region' on

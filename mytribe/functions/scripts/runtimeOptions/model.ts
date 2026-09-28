@@ -190,7 +190,7 @@ export function diffShape(
  * tool exists to prevent. (For the record, since it's a genuinely interesting
  * data point: the live dump pulled while building this tool shows
  * `onAuthUserCreate` deployed in `us-east1`, not `us-central1` — worth an
- * operator gut-check, but reported as an observation in the RUNBOOK, not as
+ * operator gut-check, but reported as an observation in docs/runbooks/release-internals.md, not as
  * an automated finding this tool stands behind.)
  */
 export const GEN1_COMPARABLE_FIELDS: readonly RuntimeKey[] = [];

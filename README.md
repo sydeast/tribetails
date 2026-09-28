@@ -19,8 +19,9 @@ to act on. Name the package.
 All of it deploys into a single Firebase project, `auntieos-ttpc`. There is no
 staging project. Click-testing happens on the local emulators.
 
-`docs/RUNBOOK.md` is the standing operational doc: setup, scripts, builds,
-deploys, secrets and troubleshooting. `docs/DECISIONS.md` is the standing
+`docs/RUNBOOK.md` is the release procedure. `docs/runbooks/` holds the rest of
+the operational docs: machine setup, day-to-day commands, secrets, Stripe,
+Twilio and troubleshooting. `docs/DECISIONS.md` is the standing
 record of operator rulings, the ones code points back to by ID.
 
 ## Why one repo
@@ -74,7 +75,7 @@ repo had before, and on 2026-07-26 the live admin sat 33 hours and ~19 merged
 PRs behind `main` because a green `npm run build` was read as a shipped one.
 Build writes `dist/` on your disk and uploads nothing.
 
-`docs/RUNBOOK.md` has the step table, the environment overrides
+`docs/RUNBOOK.md` has the step table, the release settings
 (`RELEASE_SKIP_ANDROID`, `RELEASE_ANDROID_GROUPS`, and the rest), and what to do
 when a step fails.
 
@@ -121,7 +122,7 @@ install, built independently of everything else here.
     npm run check       typecheck, lint, contracts, seeds, test, build
 
 Suffix `test`, `typecheck` or `build` with `:functions`, `:admin` or `:portal`
-to run one project (`packages/geo` has `test:geo` and `typecheck:geo` only). `docs/RUNBOOK.md` has the full table.
+to run one project (`packages/geo` has `test:geo` and `typecheck:geo` only). `docs/runbooks/development.md` has the full table.
 
 ## Secrets
 

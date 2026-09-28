@@ -50,7 +50,7 @@
  * Needs GOOGLE_APPLICATION_CREDENTIALS (or gcloud application-default login)
  * with read access, or FIRESTORE_EMULATOR_HOST for a local run.
  *
- * STATUS (docs/RUNBOOK.md, "Scripts and the data re-upload"): post-import
+ * STATUS (docs/runbooks/after-release.md, "Scripts and the data re-upload"): post-import
  * check. Run once the invoice and payment re-upload is done, to catch an
  * import that marked an invoice paid without carrying its payment rows over.
  */

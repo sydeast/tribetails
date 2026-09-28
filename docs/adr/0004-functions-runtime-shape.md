@@ -11,7 +11,7 @@ about 193 MiB resident, which is within measurement noise of the
 `cpu: 0.25` explicitly rather than becoming pure `maxInstances` policy, so the
 four nightly sweep crons that use it keep the shape they have today.
 Decision 5 (memory) is answered as of issue #453
-(`mytribe/functions/scripts/runtimeOptions`; procedure in `docs/RUNBOOK.md`,
+(`mytribe/functions/scripts/runtimeOptions`; procedure in `docs/runbooks/release-internals.md`,
 "Checking source and deployed runtime options agree"): the live fleet, read
 2026-08-19, has zero `memory` drift against source — some deploy between
 2026-08-04 and now already carried out the "nothing to touch" this ADR
@@ -19,7 +19,7 @@ anticipated. `cpu`, `minInstances` and `maxInstances` remain unconfirmed
 against the live fleet (the check needs an operator-run `gcloud functions
 list --v2 --format=json` dump for those three; only `memory` and `region`
 were checked, via the Firebase MCP tool, which is all it reports) — see that
-RUNBOOK section for the exact remaining step. Decision 4 (prune
+section for the exact remaining step. Decision 4 (prune
 `minInstances`) is still open and is the operator's call.
 
 ## Context
@@ -41,7 +41,7 @@ That chain is sound. Its first link is not.
 
 ### The CPU quota was never the constraint, and this is already written down
 
-`docs/RUNBOOK.md:301-408` records the correction, measured 2026-08-03 by
+`docs/runbooks/release-internals.md`, "The quota that was actually refusing the deploy", records the correction, measured 2026-08-03 by
 deploying all 227 functions in one batch and reading the error text instead of
 inferring it:
 
@@ -59,7 +59,7 @@ three minutes stopped at 197 and 201 and looked like a 200 vCPU wall printing
 itself.
 
 The Cloud Run CPU quota, read off the console the same day
-(`RUNBOOK.md:368-375`):
+(same section of `docs/runbooks/release-internals.md`):
 
 | Quota, `us-central1` | Limit | In use | |
 |---|---|---|---|
@@ -72,7 +72,7 @@ Two facts sit inside that first row. The limit was raised to 400 vCPU on
 The "240 services x 1 vCPU = 240 vCPU" arithmetic that produced `cpu: 0.25`
 described a quantity Google does not meter. Even before the raise, with the
 whole fleet at 1 vCPU and a 200 vCPU limit, actual draw was ~36 vCPU
-(`RUNBOOK.md:353-356`).
+(same section of `docs/runbooks/release-internals.md`).
 
 So `cpu: 0.25` bought headroom against a ceiling that had 25x headroom already,
 and it did not fix the deploys. Batching fixed the deploys.
@@ -255,7 +255,7 @@ work rather than lead it.
 
 **1. Correct the written record now.** `index.ts:12-18` and
 `lib/runtimeOptions.ts:5-12` both assert the CPU ceiling as the reason for the
-current shape. It is not the reason, `RUNBOOK.md` has said so since 2026-08-03,
+current shape. It is not the reason, the runbook has said so since 2026-08-03,
 and a comment that survives its own refutation is how a workaround becomes an
 architecture. This is comment-only, changes no runtime value, and is the only
 part of this ADR implemented in the same PR.
@@ -311,11 +311,11 @@ Read live against the deployed fleet the day this landed: **zero functions
 disagree with source on `memory`.** The 53-function gap this ADR recorded on
 2026-08-04 is gone; a deploy sometime in the fifteen days since already did
 the "nothing to touch" outcome this decision anticipated. See
-`docs/RUNBOOK.md`, "Checking source and deployed runtime options agree", for
+`docs/runbooks/release-internals.md`, "Checking source and deployed runtime options agree", for
 the procedure and how to re-run it. `cpu`, `minInstances` and `maxInstances`
 are still unconfirmed against the live fleet — the Firebase MCP tool this was
 checked with reports only `memory` and `region`; getting the other three needs
-an operator-run `gcloud` dump, documented in the same RUNBOOK section.
+an operator-run `gcloud` dump, documented in the same section.
 
 **Ahead of all of it:** 53 functions are still serving at 256 MiB against a
 290 MB import, and `getInvoiceLedger` is crash-looping right now. That is an
@@ -362,10 +362,10 @@ incident is over: the fleet is back at 256 MiB across the board.)
   and found zero drift (decision 5, above). `cpu`, `minInstances` and
   `maxInstances` remain here; confirming them needs an operator-run `gcloud
   functions list --v2 --format=json` dump, which this tool also accepts (see
-  `docs/RUNBOOK.md`) — nothing changed about `gcloud`'s availability from an
+  `docs/runbooks/release-internals.md`); nothing changed about `gcloud`'s availability from an
   agent session.
 - **The quota numbers are second-hand.** 400,000 milli vCPU limit, 16,000 in
-  use, is quoted from `RUNBOOK.md:371-375`, recorded off the console on
+  use, is quoted from `docs/runbooks/release-internals.md`, "The quota that was actually refusing the deploy", recorded off the console on
   2026-08-03. Not re-read live, for the same tooling reason.
 - **Total request volume.** Sentry says 1,850/day at 10% sampling; Cloud Run
   request logs imply ~7,000/day but the query capped at 1,000 entries covering

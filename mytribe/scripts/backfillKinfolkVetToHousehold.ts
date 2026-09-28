@@ -64,7 +64,7 @@
  * --allow-prod. This script has NOT been run against production as part of the
  * PR that ships it; it is a runbook step.
  *
- * STATUS (docs/RUNBOOK.md, "Scripts and the data re-upload"): post-import
+ * STATUS (docs/runbooks/after-release.md, "Scripts and the data re-upload"): post-import
  * check. The scan reads every `kinfolk` document by field presence, not by
  * write date, so run the dry run again after the household/kin re-upload.
  */

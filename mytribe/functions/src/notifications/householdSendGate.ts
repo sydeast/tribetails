@@ -61,7 +61,7 @@ import { BUSINESS_SETTINGS_DOC, BUSINESS_SETTINGS_DOC_LEGACY } from '../lib/busi
  * It lives on the settings document every other business-wide switch lives on
  * (`timeZone`, `businessHours`, `voiceLiveTransferEnabled`), read through the
  * same modern-id-then-legacy-`singleton` fallback, rather than in a collection
- * of its own. `docs/RUNBOOK.md` has the operator's instructions for setting it.
+ * of its own. `docs/runbooks/household-notifications.md` has the operator's instructions for setting it.
  */
 export const HOUSEHOLD_SEND_GATE_FIELD = 'householdNotificationsLive';
 
@@ -100,7 +100,7 @@ export interface HouseholdSendGateSettings {
  *
  * STRICTLY `=== true`. A string `'true'`, a `1`, or anything else a hand-edit
  * or a half-typed client could leave behind is not a switch-on. The operator
- * turns this on deliberately, once, from the RUNBOOK, and a value we cannot
+ * turns this on deliberately, once, from the admin Settings or that doc, and a value we cannot
  * read as the literal boolean is not evidence that they did.
  */
 export function resolveHouseholdSendGate(
