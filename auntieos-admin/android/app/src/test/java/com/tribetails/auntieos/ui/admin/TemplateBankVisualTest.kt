@@ -98,6 +98,31 @@ class TemplateBankVisualTest {
         composeRule.onNodeWithText("Password reset (updated)").assertExists()
     }
 
+    // 1025: the editor used to close and reload with nothing confirming which
+    // template had been saved, the same gap admin web's #1013/#1024 closed for
+    // kin/kinfolk. The bank names it once the editor has closed.
+    @Test
+    fun `a successful visual save confirms which template was saved`() {
+        val updated = visual.copy(title = "Password reset (updated)")
+        val r = mockk<TemplateRepository>()
+        coEvery { r.listTemplates() } returnsMany listOf(Result.success(listOf(visual)), Result.success(listOf(updated)))
+        coEvery { r.listCategories() } returns Result.success(emptyList())
+        coEvery { r.listBindings() } returns Result.success(emptyList())
+        coEvery { r.previewEmailTemplate(any(), any(), any(), any()) } returns
+            Result.success(TemplateRepository.EmailPreview("s", "<p>x</p>", "x", emptyList()))
+        coEvery { r.saveTemplate(any(), any()) } returns Result.success(visual.templateId)
+
+        composeRule.setContent { AuntieOSTheme { TemplateBankBody(templateRepo = r) } }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Edit").performClick()
+        composeRule.onNodeWithTag(VISUAL_SAVE_TAG).performClick()
+        composeRule.waitForIdle()
+
+        // The saved payload's own title (unedited here), the same fallback the
+        // failed-save banner already uses for its own message.
+        composeRule.onNodeWithText("Saved Password reset.").assertExists()
+    }
+
     // Review fix round 1, Important #1: the failed-save path the report claimed
     // was tested and was not. A refused save must stay on the editor with the
     // server's own message, and must not reload (which would discard the draft).

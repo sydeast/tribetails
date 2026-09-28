@@ -224,7 +224,14 @@ class FormSchemaEditorViewModelTest {
 
     // ── delete ──────────────────────────────────────────────────────────────
 
-    @Test fun `delete success invokes onDeleted callback`() = runTest(testDispatcher) {
+    // 1025: `delete()` no longer takes an onDeleted callback. It sets
+    // isDeleted alongside successMessage in ONE state update, mirroring
+    // DirectoryViewModel.archiveKinfolk's #1009 shape; the screen's own
+    // LaunchedEffect(state.isDeleted) is what calls onDeleted now, in a
+    // SEPARATE effect from the one that shows the confirmation. Calling
+    // onDeleted directly from here (the old shape) raced the confirmation
+    // host's own recomposition and lost the message.
+    @Test fun `delete success sets isDeleted and the confirmation message`() = runTest(testDispatcher) {
         coEvery { mockRepo.deleteFormSchema("foo") } returns Result.success(Unit)
         coEvery { mockRepo.getFormSchema("foo") } returns Result.success(
             FormSchema(id = "foo", name = "F", version = 1,
@@ -235,11 +242,11 @@ class FormSchemaEditorViewModelTest {
         v.load("foo")
         advanceUntilIdle()
 
-        var deletedCalled = false
-        v.delete { deletedCalled = true }
+        v.delete()
         advanceUntilIdle()
 
-        assertTrue(deletedCalled)
+        assertTrue(v.state.value.isDeleted)
+        assertEquals("Schema deleted", v.state.value.successMessage)
         assertNull(v.state.value.errorMessage)
         coVerify { mockRepo.deleteFormSchema("foo") }
     }
@@ -255,11 +262,10 @@ class FormSchemaEditorViewModelTest {
         v.load("foo")
         advanceUntilIdle()
 
-        var deletedCalled = false
-        v.delete { deletedCalled = true }
+        v.delete()
         advanceUntilIdle()
 
-        assertFalse(deletedCalled)
+        assertFalse(v.state.value.isDeleted)
         assertEquals(SaveStatus.FAILED, v.state.value.saveStatus)
         val msg = v.state.value.errorMessage.orEmpty()
         assertTrue("expected fail-loud delete error, got $msg", msg.contains("Delete failed") && msg.contains("network"))
@@ -268,10 +274,9 @@ class FormSchemaEditorViewModelTest {
     @Test fun `delete on blank id is no-op`() = runTest(testDispatcher) {
         val v = vm()
         v.load(null)
-        var deletedCalled = false
-        v.delete { deletedCalled = true }
+        v.delete()
         advanceUntilIdle()
-        assertFalse(deletedCalled)
+        assertFalse(v.state.value.isDeleted)
         coVerify(exactly = 0) { mockRepo.deleteFormSchema(any()) }
     }
 

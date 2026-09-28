@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.ChevronUp
+import com.composables.icons.lucide.CircleCheckBig
 import com.composables.icons.lucide.ClipboardList
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
@@ -213,6 +214,11 @@ fun FormSchemaListScreen(
     var deleteTarget by remember { mutableStateOf<FormSchemaSummary?>(null) }
     var deletingId by remember { mutableStateOf<String?>(null) }
     var deleteError by remember { mutableStateOf<String?>(null) }
+    // 1025: a landed delete used to reload the list with nothing confirming
+    // which schema was removed, the same gap admin web's #1013/#1024 closed
+    // for kin/kinfolk. This screen never navigates on delete, so a local
+    // banner (not a nav-surviving host) is enough.
+    var deleteNotice by remember { mutableStateOf<String?>(null) }
 
     suspend fun reload() {
         loading = true
@@ -243,6 +249,7 @@ fun FormSchemaListScreen(
             repository.deleteFormSchema(schema.id)
                 .onSuccess {
                     deletingId = null
+                    deleteNotice = "Deleted ${formSchemaDeleteTargetLabel(schema)}."
                     reload()
                 }
                 .onFailure {
@@ -338,6 +345,24 @@ fun FormSchemaListScreen(
                         title = "Delete failed",
                         icon = Lucide.TriangleAlert,
                         onDismiss = { deleteError = null },
+                    ) {
+                        Text(
+                            text = msg,
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textDim,
+                        )
+                    }
+                }
+            }
+
+            // 1025: confirms a landed delete now that the row is gone.
+            deleteNotice?.let { msg ->
+                item {
+                    AuntieBanner(
+                        tone = AuntieBannerTone.Success,
+                        title = "Deleted",
+                        icon = Lucide.CircleCheckBig,
+                        onDismiss = { deleteNotice = null },
                     ) {
                         Text(
                             text = msg,

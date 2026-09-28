@@ -116,6 +116,13 @@ data class SchedulingState(
     val incomingError: String? = null,
     val seriesActionBatchId: String? = null, // batchId currently being approved/cancelled
     val seriesActionMessage: String? = null,
+    // 1025: [approveBooking]/[cancelBooking] below (the single native
+    // enhanced_bookings row, not a whole incoming series) used to report
+    // nothing on success -- the row just moved sections on the next load,
+    // same gap admin web's #1013/#1024 closed for kin/kinfolk. Same
+    // banner-and-clear shape as [seriesActionMessage], since this screen
+    // never navigates away either.
+    val bookingActionMessage: String? = null,
     // #438 (+ #399 item 2): the household's OWN asks on visits that already
     // exist -- move this one, cancel that one -- merged into one queue and
     // ordered oldest first. Distinct from [incomingSeries] above, which is a
@@ -1031,6 +1038,13 @@ class EnhancedSchedulingViewModel(
                 targetId         = booking.id,
                 targetCollection = "enhanced_bookings",
             )
+            // 1025: the approval itself has landed at this point (the write
+            // above did not fail). A session-creation problem below gets its
+            // own distinct "Booking approved, but..." error; this confirms the
+            // approval whether or not that secondary bridge succeeds.
+            _state.value = _state.value.copy(
+                bookingActionMessage = "Approved ${booking.kinfolkName.ifBlank { booking.kinfolkId }}.",
+            )
 
             // Bridge: create a KinCareSession so the visit appears on the Home screen,
             // but keep this idempotent by using explicit booking linkage.
@@ -1144,6 +1158,12 @@ class EnhancedSchedulingViewModel(
                 targetId         = booking.id,
                 targetCollection = "enhanced_bookings",
             )
+            // 1025: same reasoning as approveBooking above -- the cancellation
+            // itself has landed here, whatever the secondary session bridge
+            // below does.
+            _state.value = _state.value.copy(
+                bookingActionMessage = "Cancelled ${booking.kinfolkName.ifBlank { booking.kinfolkId }}.",
+            )
 
             bridgeCancellationToSession(booking, reason).onFailure { e ->
                 _state.value = _state.value.copy(
@@ -1153,6 +1173,8 @@ class EnhancedSchedulingViewModel(
             loadBookingsForDateRange()
         }
     }
+
+    fun clearBookingActionMessage() { _state.value = _state.value.copy(bookingActionMessage = null) }
 
     /**
      * Stage 2 tail: apply ONE transition (APPROVE/REJECT/CANCEL) to many bookings at

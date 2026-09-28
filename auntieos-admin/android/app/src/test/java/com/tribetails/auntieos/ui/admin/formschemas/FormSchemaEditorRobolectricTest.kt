@@ -1,6 +1,15 @@
 package com.tribetails.auntieos.ui.admin.formschemas
 
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.Text
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasTestTag
@@ -19,6 +28,9 @@ import com.tribetails.auntieos.data.model.FormSchema
 import com.tribetails.auntieos.data.model.FormSchemaField
 import com.tribetails.auntieos.data.model.FormSchemaSection
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.ui.components.LocalSaveConfirmation
+import com.tribetails.auntieos.ui.components.SaveConfirmationHost
+import com.tribetails.auntieos.ui.components.SaveConfirmationHostState
 import com.tribetails.auntieos.ui.theme.AuntieOSTheme
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -264,6 +276,61 @@ class FormSchemaEditorRobolectricTest {
         rule.waitForIdle()
 
         assertEquals(listOf("a", "b", "c"), vm.state.value.sections[0].fields[0].options)
+    }
+
+    /**
+     * 1025. `delete()` sets `state.successMessage` ("Schema deleted") and calls
+     * `onDeleted()` (a nav pop, in production) in the same breath. Reproduces
+     * that shape the way [SaveConfirmationHostRenderTest] pins the mechanism
+     * generically: [SaveConfirmationHost] as a SIBLING of the editor, so the
+     * editor swapping out from under `onDeleted` does not take the
+     * confirmation with it, unlike this screen's own now-removed local
+     * StatusToast.
+     */
+    @Test
+    fun deletingASchema_confirmsThroughTheHost_survivingTheScreenItWasShownFrom() {
+        val repo = mockk<AuntieRepository>(relaxed = true)
+        coEvery { repo.getFormSchema("tribeProfile") } returns Result.success(buildSchemaWithOneField())
+        coEvery { repo.deleteFormSchema("tribeProfile") } returns Result.success(Unit)
+
+        val vm = FormSchemaEditorViewModel(repository = repo)
+        val confirmation = SaveConfirmationHostState()
+        rule.setContent {
+            var deleted by remember { mutableStateOf(false) }
+            AuntieOSTheme {
+                CompositionLocalProvider(LocalSaveConfirmation provides confirmation) {
+                    Column {
+                        SaveConfirmationHost(state = confirmation)
+                        if (!deleted) {
+                            FormSchemaEditorScreen(
+                                schemaId = "tribeProfile",
+                                onBack = {},
+                                onDeleted = { deleted = true },
+                                viewModel = vm,
+                            )
+                        } else {
+                            Text("Form Schemas", modifier = Modifier.testTag("schemas-list"))
+                        }
+                    }
+                }
+            }
+        }
+        rule.waitForIdle()
+
+        // The Den layout is taller than the test viewport, so Delete schema
+        // starts below the fold; scroll it into view before clicking (same as
+        // addFieldButton_addsFieldToSection above).
+        rule.onNodeWithTag("form-schema-editor-list")
+            .performScrollToNode(hasText("Delete schema"))
+        rule.onNodeWithText("Delete schema").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithText("Delete").performClick()
+        rule.waitForIdle()
+
+        // The editor is gone (onDeleted popped it)...
+        rule.onNodeWithTag("schemas-list").assertIsDisplayed()
+        // ...and the confirmation it raised is still standing.
+        rule.onNodeWithText("Schema deleted").assertIsDisplayed()
     }
 
     private fun buildSchemaWithOneField() = FormSchema(

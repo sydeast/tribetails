@@ -51,6 +51,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.composables.icons.lucide.CircleCheckBig
 import com.composables.icons.lucide.Mail
 import androidx.compose.ui.unit.sp
 import com.composables.icons.lucide.Lucide
@@ -247,6 +248,12 @@ fun TemplateBankBody(
     var templates by remember { mutableStateOf<List<TemplateRepository.EmailTemplate>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
+    // 1025: a landed save used to close the editor and reload with nothing
+    // confirming which template was saved, the same gap admin web's
+    // #1013/#1024 closed for kin/kinfolk. The bank itself, not the editor,
+    // shows this: the editor closes in the same breath that sets it, and the
+    // bank is what is left on screen once it does.
+    var notice by remember { mutableStateOf<String?>(null) }
     var selectedFilter by remember { mutableStateOf("All") }
     // Edit/create overlay target. `creating` distinguishes a fresh blank template
     // (Save persists a new doc) from editing an existing one.
@@ -392,6 +399,7 @@ fun TemplateBankBody(
                         result
                             .onSuccess {
                                 if (stillOpen) { editing = null; editingId = null; saveError = null }
+                                notice = "Saved ${updated.title.ifBlank { updated.templateId }}."
                                 reload()
                             }
                             .onFailure {
@@ -436,6 +444,7 @@ fun TemplateBankBody(
                     result
                         .onSuccess {
                             if (stillOpen) { editing = null; editingId = null; creating = false; saveError = null }
+                            notice = "Saved ${updated.title.ifBlank { updated.templateId }}."
                             reload()
                         }
                         .onFailure {
@@ -495,6 +504,20 @@ fun TemplateBankBody(
                     title = "Template Bank hit an error",
                     icon = Lucide.X,
                     onDismiss = { error = null },
+                    body = {
+                        Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                    },
+                )
+            }
+        }
+        // 1025: confirms a landed save now that the editor has closed.
+        notice?.let { msg ->
+            item {
+                AuntieBanner(
+                    tone = AuntieBannerTone.Success,
+                    title = "Saved",
+                    icon = Lucide.CircleCheckBig,
+                    onDismiss = { notice = null },
                     body = {
                         Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                     },

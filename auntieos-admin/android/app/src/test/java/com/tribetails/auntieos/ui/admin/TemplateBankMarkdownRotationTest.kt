@@ -76,6 +76,22 @@ class TemplateBankMarkdownRotationTest {
         composeRule.onNodeWithText("Billing").assertExists()
     }
 
+    // 1025: the editor used to close and reload with nothing confirming which
+    // template had been saved, the same gap admin web's #1013/#1024 closed for
+    // kin/kinfolk. The bank names it once the editor has closed.
+    @Test
+    fun `a successful markdown save confirms which template was saved`() {
+        val r = repo()
+        coEvery { r.saveTemplate(any(), any()) } returns Result.success(plain.templateId)
+        composeRule.setContent { AuntieOSTheme { TemplateBankBody(templateRepo = r) } }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Edit").performClick()
+        composeRule.onNodeWithText("Save").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Edit template").assertDoesNotExist()
+        composeRule.onNodeWithText("Saved Invoice sent.").assertExists()
+    }
+
     // Final review I1, same rule on the markdown editor the bank also opens:
     // back never throws an edited draft away unasked.
     @Test

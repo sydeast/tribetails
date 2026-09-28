@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.tribetails.auntieos.data.model.BusinessAdminMember
@@ -146,6 +147,29 @@ class FormSchemaListScreenUiTest {
 
         composeRule.onNodeWithText("No schemas yet. Tap New schema to create one.").assertIsDisplayed()
         assertEquals(0, composeRule.onAllNodesWithText("0 schemas").fetchSemanticsNodes().size)
+    }
+
+    // 1025: a landed delete used to reload the list with nothing confirming
+    // which schema was removed, the same gap admin web's #1013/#1024 closed
+    // for kin/kinfolk. This screen never navigates on delete, so a local
+    // banner confirms it.
+    @Test
+    fun `a confirmed delete shows a Deleted banner naming the schema`() {
+        val repo = repoReturning(listOf(row()))
+        coEvery { repo.deleteFormSchema("tribeProfile") } returns Result.success(Unit)
+        composeRule.setContent {
+            AuntieOSTheme {
+                FormSchemaListScreen(onBack = {}, onOpenEditor = {}, repository = repo)
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithContentDescription("Delete Tribe Profile").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Delete").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("Deleted Tribe Profile.").assertIsDisplayed()
     }
 
     /** "Nothing is authored" and "we could not find out" are opposite facts. */

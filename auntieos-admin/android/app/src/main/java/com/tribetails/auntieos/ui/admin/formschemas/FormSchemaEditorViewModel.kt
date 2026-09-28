@@ -27,6 +27,10 @@ data class FormSchemaEditorState(
     val isLoading: Boolean = false,
     val isDirty: Boolean = false,
     val saveStatus: SaveStatus = SaveStatus.IDLE,
+    // 1025: set alongside [successMessage] by a successful delete, mirroring
+    // DirectoryViewModel's EditKinfolkUiState.isDeleted (#1009). The screen's
+    // own LaunchedEffect(state.isDeleted) calls onDeleted from there.
+    val isDeleted: Boolean = false,
     val validationErrors: List<FormSchemaValidationError> = emptyList(),
     val errorMessage: String? = null,
     val successMessage: String? = null,
@@ -302,18 +306,25 @@ class FormSchemaEditorViewModel(
         }
     }
 
-    fun delete(onDeleted: () -> Unit = {}) {
+    fun delete() {
         val id = _state.value.schemaId
         if (id.isBlank()) return
         viewModelScope.launch {
             _state.value = _state.value.copy(saveStatus = SaveStatus.SAVING, errorMessage = null)
             repository.deleteFormSchema(id)
                 .onSuccess {
+                    // 1025: isDeleted set ALONGSIDE successMessage, in the same
+                    // state update, mirroring DirectoryViewModel.archiveKinfolk's
+                    // #1009 shape. The screen's own LaunchedEffect(state.isDeleted)
+                    // calls onDeleted from there, in a SEPARATE effect from the one
+                    // that shows the confirmation - calling onDeleted from HERE,
+                    // synchronously after setting successMessage, raced the
+                    // confirmation off screen before its own effect ever ran.
                     _state.value = _state.value.copy(
                         saveStatus = SaveStatus.IDLE,
+                        isDeleted = true,
                         successMessage = "Schema deleted",
                     )
-                    onDeleted()
                 }
                 .onFailure { err ->
                     _state.value = _state.value.copy(
