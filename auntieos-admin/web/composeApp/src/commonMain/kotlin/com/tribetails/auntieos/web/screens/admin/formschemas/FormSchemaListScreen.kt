@@ -45,6 +45,8 @@ import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
+import com.tribetails.auntieos.web.ui.components.StatusToast
+import com.tribetails.auntieos.web.ui.components.ToastKind
 import com.tribetails.auntieos.web.ui.components.AuntieChip
 import com.tribetails.auntieos.web.ui.components.AuntieChipTone
 import com.tribetails.auntieos.web.ui.components.AuntieDialog
@@ -103,6 +105,14 @@ internal fun deleteResultMessage(result: WriteResult<Unit>): String? = when (res
     is WriteResult.Err -> "deleteFormSchema failed: ${result.message}"
 }
 
+/**
+ * 1025: the confirmation `confirmDelete` shows once [deleteResultMessage] comes
+ * back null (a landed delete). Pure + unit-tested for the same reason
+ * [deleteResultMessage] is: the wording is covered without a live callable.
+ */
+internal fun deletedNoticeMessage(target: FormSchemaSummary): String =
+    "Deleted ${target.name.ifBlank { target.id }}."
+
 @Composable
 fun FormSchemaListScreen(
     repository: FormSchemaRepository = remember { CloudFormSchemaRepository() },
@@ -121,6 +131,11 @@ fun FormSchemaListScreen(
     // summary keeps the dialog copy honest (real name/id) without an extra fetch.
     var pendingDelete by remember { mutableStateOf<FormSchemaSummary?>(null) }
     var deleting by remember { mutableStateOf(false) }
+    // 1025: a landed delete used to reload the list with nothing confirming
+    // which schema was removed, the same gap admin web (React) and Android's
+    // #1013/#1024 closed for kin/kinfolk. This screen never navigates on
+    // delete, so a local toast is enough (no LocalRouteToast needed).
+    var deletedNotice by remember { mutableStateOf<String?>(null) }
     // Default: most-recently-updated first to match Android operator workflow
     // (mirrors Android SortColumn.UPDATED_AT semantics: descending by updatedAt).
     var sortCol by remember { mutableStateOf(SortCol.UpdatedAt) }
@@ -147,6 +162,7 @@ fun FormSchemaListScreen(
         deleting = false
         pendingDelete = null
         if (message == null) {
+            deletedNotice = deletedNoticeMessage(target)
             reload()
         } else {
             loadError = message
@@ -210,6 +226,17 @@ fun FormSchemaListScreen(
             },
         )
         Spacer(Modifier.height(20.dp))
+
+        // 1025: confirms a landed delete now that the row is gone.
+        if (deletedNotice != null) {
+            StatusToast(
+                visible = true,
+                message = deletedNotice.orEmpty(),
+                kind = ToastKind.Success,
+                onDismiss = { deletedNotice = null },
+            )
+            Spacer(Modifier.height(12.dp))
+        }
 
         // Fail-loud: surface a list-load failure as a persistent error banner with a
         // retry, never a silent empty list. Surfaced above the panel so it is unmissable.
