@@ -787,6 +787,83 @@ export interface RunAutoApplyResult {
   accountBalanceCents: number;
 }
 
+// ---------- giveAccountCredit ----------
+
+/**
+ * Request payload for the `giveAccountCredit` callable.
+ */
+export interface GiveAccountCreditArgs {
+  kinfolkId: string;
+  amountCents: number;
+  reason: string;
+  idempotencyKey: string;
+}
+
+/**
+ * Response from the `giveAccountCredit` callable.
+ */
+export interface GiveAccountCreditResult {
+  ok: true;
+  creditId: string;
+  amountCents: number;
+  newAccountBalanceCents: number;
+  replayed: boolean;
+}
+
+// ---------- getAccountCreditHistory ----------
+
+/**
+ * Request payload for the `getAccountCreditHistory` callable.
+ */
+export interface GetAccountCreditHistoryArgs {
+  kinfolkId?: string;
+}
+
+/**
+ * Nested in the `getAccountCreditHistory` contract.
+ */
+export interface GetAccountCreditHistoryResultCreditApplication {
+  appliedAtMs: number;
+  amountCents: number;
+  invoiceId: string;
+  invoiceNumber: string | null;
+}
+
+/**
+ * Nested in the `getAccountCreditHistory` contract.
+ */
+export interface GetAccountCreditHistoryResultCredit {
+  creditId: string;
+  amountCents: number;
+  reason: string;
+  givenAtMs: number;
+  remainingCents: number;
+  fullyAppliedAtMs: number | null;
+  applications: GetAccountCreditHistoryResultCreditApplication[];
+}
+
+/**
+ * Nested in the `getAccountCreditHistory` contract.
+ */
+export interface GetAccountCreditHistoryResultUse {
+  useId: string;
+  usedAtMs: number;
+  amountCents: number;
+  invoiceId: string;
+  invoiceNumber: string | null;
+}
+
+/**
+ * Response from the `getAccountCreditHistory` callable.
+ */
+export interface GetAccountCreditHistoryResult {
+  ok: true;
+  kinfolkId: string;
+  accountBalanceCents: number;
+  credits: GetAccountCreditHistoryResultCredit[];
+  uses: GetAccountCreditHistoryResultUse[];
+}
+
 // ---------- resendQuote ----------
 
 /**

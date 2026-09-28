@@ -1582,6 +1582,160 @@ internal fun decodeRunAutoApplyResult(raw: Map<String, Any?>?): RunAutoApplyResu
         accountBalanceCents = (raw?.get("accountBalanceCents") as? Number)?.toLong() ?: 0L,
     )
 
+// ---------- giveAccountCredit ----------
+
+/** Request payload for the `giveAccountCredit` callable. */
+data class GiveAccountCreditArgs(
+    val kinfolkId: String,
+    val amountCents: Long,
+    val reason: String,
+    val idempotencyKey: String,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        put("kinfolkId", kinfolkId)
+        put("amountCents", amountCents)
+        put("reason", reason)
+        put("idempotencyKey", idempotencyKey)
+    }
+}
+
+/** Response from the `giveAccountCredit` callable. */
+data class GiveAccountCreditResult(
+    val ok: Boolean,
+    val creditId: String,
+    val amountCents: Long,
+    val newAccountBalanceCents: Long,
+    val replayed: Boolean,
+)
+
+/**
+ * Fail-soft decode of `GiveAccountCreditResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeGiveAccountCreditResult(raw: Map<String, Any?>?): GiveAccountCreditResult =
+    GiveAccountCreditResult(
+        ok = raw?.get("ok") as? Boolean ?: false,
+        creditId = (raw?.get("creditId") as? String).orEmpty(),
+        amountCents = (raw?.get("amountCents") as? Number)?.toLong() ?: 0L,
+        newAccountBalanceCents = (raw?.get("newAccountBalanceCents") as? Number)?.toLong() ?: 0L,
+        replayed = raw?.get("replayed") as? Boolean ?: false,
+    )
+
+// ---------- getAccountCreditHistory ----------
+
+/** Request payload for the `getAccountCreditHistory` callable. */
+data class GetAccountCreditHistoryArgs(
+    /** Optional: omitted from the payload when null. */
+    val kinfolkId: String? = null,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        if (kinfolkId != null) put("kinfolkId", kinfolkId)
+    }
+}
+
+/** Nested in the `getAccountCreditHistory` contract. */
+data class GetAccountCreditHistoryResultCreditApplication(
+    val appliedAtMs: Long,
+    val amountCents: Long,
+    val invoiceId: String,
+    val invoiceNumber: String?,
+)
+
+/**
+ * Fail-soft decode of `GetAccountCreditHistoryResultCreditApplication` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeGetAccountCreditHistoryResultCreditApplication(raw: Map<String, Any?>?): GetAccountCreditHistoryResultCreditApplication =
+    GetAccountCreditHistoryResultCreditApplication(
+        appliedAtMs = (raw?.get("appliedAtMs") as? Number)?.toLong() ?: 0L,
+        amountCents = (raw?.get("amountCents") as? Number)?.toLong() ?: 0L,
+        invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
+        invoiceNumber = raw?.get("invoiceNumber") as? String,
+    )
+
+/** Nested in the `getAccountCreditHistory` contract. */
+data class GetAccountCreditHistoryResultCredit(
+    val creditId: String,
+    val amountCents: Long,
+    val reason: String,
+    val givenAtMs: Long,
+    val remainingCents: Long,
+    val fullyAppliedAtMs: Long?,
+    val applications: List<GetAccountCreditHistoryResultCreditApplication>,
+)
+
+/**
+ * Fail-soft decode of `GetAccountCreditHistoryResultCredit` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeGetAccountCreditHistoryResultCredit(raw: Map<String, Any?>?): GetAccountCreditHistoryResultCredit =
+    GetAccountCreditHistoryResultCredit(
+        creditId = (raw?.get("creditId") as? String).orEmpty(),
+        amountCents = (raw?.get("amountCents") as? Number)?.toLong() ?: 0L,
+        reason = (raw?.get("reason") as? String).orEmpty(),
+        givenAtMs = (raw?.get("givenAtMs") as? Number)?.toLong() ?: 0L,
+        remainingCents = (raw?.get("remainingCents") as? Number)?.toLong() ?: 0L,
+        fullyAppliedAtMs = (raw?.get("fullyAppliedAtMs") as? Number)?.toLong(),
+        applications = (raw?.get("applications") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetAccountCreditHistoryResultCreditApplication(nested) } },
+    )
+
+/** Nested in the `getAccountCreditHistory` contract. */
+data class GetAccountCreditHistoryResultUse(
+    val useId: String,
+    val usedAtMs: Long,
+    val amountCents: Long,
+    val invoiceId: String,
+    val invoiceNumber: String?,
+)
+
+/**
+ * Fail-soft decode of `GetAccountCreditHistoryResultUse` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeGetAccountCreditHistoryResultUse(raw: Map<String, Any?>?): GetAccountCreditHistoryResultUse =
+    GetAccountCreditHistoryResultUse(
+        useId = (raw?.get("useId") as? String).orEmpty(),
+        usedAtMs = (raw?.get("usedAtMs") as? Number)?.toLong() ?: 0L,
+        amountCents = (raw?.get("amountCents") as? Number)?.toLong() ?: 0L,
+        invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
+        invoiceNumber = raw?.get("invoiceNumber") as? String,
+    )
+
+/** Response from the `getAccountCreditHistory` callable. */
+data class GetAccountCreditHistoryResult(
+    val ok: Boolean,
+    val kinfolkId: String,
+    val accountBalanceCents: Long,
+    val credits: List<GetAccountCreditHistoryResultCredit>,
+    val uses: List<GetAccountCreditHistoryResultUse>,
+)
+
+/**
+ * Fail-soft decode of `GetAccountCreditHistoryResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeGetAccountCreditHistoryResult(raw: Map<String, Any?>?): GetAccountCreditHistoryResult =
+    GetAccountCreditHistoryResult(
+        ok = raw?.get("ok") as? Boolean ?: false,
+        kinfolkId = (raw?.get("kinfolkId") as? String).orEmpty(),
+        accountBalanceCents = (raw?.get("accountBalanceCents") as? Number)?.toLong() ?: 0L,
+        credits = (raw?.get("credits") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetAccountCreditHistoryResultCredit(nested) } },
+        uses = (raw?.get("uses") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetAccountCreditHistoryResultUse(nested) } },
+    )
+
 // ---------- resendQuote ----------
 
 /** Request payload for the `resendQuote` callable. */

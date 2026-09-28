@@ -38,6 +38,7 @@ export const PENDING_CALLABLES = [
   'getMyInvoicePdf',
   'payInvoice',
   'redeemCredit',
+  'getAccountCreditHistory',
   // tribe profile / members
   'getMyTribeProfile',
   'saveTribeProfile',

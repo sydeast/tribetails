@@ -288,8 +288,9 @@ describe('the committed Contracts module', () => {
     // callables belong to this registry rather than a fourth one). 25 since
     // issue #448, which added the office's answer to a decline: resendQuote.
     // 26 since issue #408, which added the other thing an operator can do with
-    // un-invoiced work: setSessionDoNotInvoice.
-    expect(model.callables).toHaveLength(26);
+    // un-invoiced work: setSessionDoNotInvoice. 28 since docket Q6
+    // (2026-09-27): giveAccountCredit and getAccountCreditHistory.
+    expect(model.callables).toHaveLength(28);
     // getMyInvoices is the only one with no zod request schema; see the
     // registry header.
     const withoutArgs = model.callables.filter((c) => c.argsObject === null).map((c) => c.name);

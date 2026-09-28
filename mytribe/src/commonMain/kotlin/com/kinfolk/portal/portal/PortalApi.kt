@@ -743,6 +743,20 @@ class PortalApi(private val fns: FunctionsClient) {
     }
 
     /**
+     * Q6 (operator ruling 2026-09-27): the household's account credit history.
+     * Only the PRIMARY, or a secondary the PRIMARY granted billing, gets an
+     * answer; anyone else is refused with permission-denied, and the screen
+     * hides the section on that refusal. Unknown keys are ignored.
+     */
+    suspend fun getAccountCreditHistory(kinfolkId: String? = null): CreditHistoryResult {
+        val raw = fns.call(
+            "getAccountCreditHistory",
+            buildJsonObject { kinfolkId?.let { put("kinfolkId", it) } },
+        )
+        return decodeCreditHistory(raw)
+    }
+
+    /**
      * THE HOUSEHOLD'S ANSWER TO A QUOTE (issue #385). Accepting turns the quote
      * into a bill server-side, so the caller reloads rather than patching its
      * own copy. Both refuse a quote that has already been answered, and accept

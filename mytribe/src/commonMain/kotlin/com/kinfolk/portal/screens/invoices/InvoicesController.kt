@@ -110,6 +110,14 @@ class InvoicesController internal constructor(
     var payMethods by mutableStateOf<List<PayMethod>>(STRIPE_ONLY_FALLBACK)
         private set
 
+    /**
+     * Q6: the account credit history. Loaded beside the invoices and never
+     * allowed to break them: a refusal (no billing access) hides the section,
+     * any other failure shows one line in it.
+     */
+    var creditHistory by mutableStateOf<CreditHistoryState>(CreditHistoryState.Loading)
+        private set
+
     fun find(invoiceId: String): Invoice? {
         val d = data ?: return null
         return (d.open + d.credits + d.paid).firstOrNull { it.id == invoiceId }
@@ -133,6 +141,13 @@ class InvoicesController internal constructor(
             // Stripe-only list IS the shipped behavior on this path, not a
             // degraded one, so there is no error worth showing the household.
         }
+        creditHistory = creditHistoryStateOf(
+            try {
+                Result.success(portalApi.getAccountCreditHistory(kinfolkId))
+            } catch (t: Throwable) {
+                Result.failure(t)
+            },
+        )
     }
 
     /** 16.2: render the invoice PDF server-side and open the returned URL. */

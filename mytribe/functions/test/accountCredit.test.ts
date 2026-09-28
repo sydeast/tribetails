@@ -206,6 +206,44 @@ describe('drawAccountCredit: the pass that finally spends the balance', () => {
     // operator then has to unpick.
     expect(inv?.data).toMatchObject({ status: 'paid', overpaidCents: 0 });
   });
+
+  it('Q6: records the draw in the credit history, in the same transaction, with the balance before and after', async () => {
+    const ctx = seed({
+      invoice: { kinfolkId: 'fam1', status: 'open', total: 20, invoiceNumber: 'INV-1042' },
+      family: { accountBalanceCents: 12000 },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await drawAccountCredit(ctx.db as any, { invoiceId: 'inv1', actorUid: 'admin1' });
+
+    const sub = writeAt(ctx, 'invoices/inv1/payments/');
+    const paymentId = sub!.path.split('/').pop();
+    const event = ctx.writes.find((w) => w.path === `families/fam1/creditLedger/draw_${paymentId}`);
+    expect(event?.data).toMatchObject({
+      kind: 'draw',
+      amountCents: 2000,
+      invoiceId: 'inv1',
+      invoiceNumber: 'INV-1042',
+      paymentId,
+      heldBeforeCents: 12000,
+      heldAfterCents: 10000,
+      actorUid: 'admin1',
+    });
+    expect(typeof event?.data['atMs']).toBe('number');
+    // Staged between the balance write and the invoice write, both of which
+    // are the draw transaction's own.
+    const paths = ctx.writes.map((w) => w.path);
+    const at = paths.indexOf(`families/fam1/creditLedger/draw_${paymentId}`);
+    expect(paths[at - 1]).toBe('families/fam1');
+    expect(paths[at + 1]).toBe('invoices/inv1');
+  });
+
+  it('Q6: a pass that draws nothing writes no history event', async () => {
+    const ctx = seed({ family: { accountBalanceCents: 0 } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await drawAccountCredit(ctx.db as any, { invoiceId: 'inv1', actorUid: 'a' });
+    expect(ctx.writes.some((w) => w.path.includes('/creditLedger/'))).toBe(false);
+  });
 });
 
 describe('drawAccountCredit: every way it correctly does nothing', () => {

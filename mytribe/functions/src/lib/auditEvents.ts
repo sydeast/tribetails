@@ -162,6 +162,10 @@ export const AUDIT_EVENTS = {
   // enters an amount (#988); never a refund. The old key stays for the entries
   // already written under it.
   BILLING_PAYMENT_UNAPPLIED: 'BILLING_PAYMENT_UNAPPLIED',
+  // The owner gave a household account credit by hand, with a reason
+  // (`admin/giveAccountCredit.ts`, operator ruling 2026-09-27, docket Q6).
+  // The only path that adds credit with no payment behind it.
+  BILLING_ACCOUNT_CREDIT_GIVEN: 'BILLING_ACCOUNT_CREDIT_GIVEN',
 
   THEME_BRAND_TOKENS_UPDATED: 'THEME_BRAND_TOKENS_UPDATED',
   THEME_KINFOLK_OVERRIDES_UPDATED: 'THEME_KINFOLK_OVERRIDES_UPDATED',

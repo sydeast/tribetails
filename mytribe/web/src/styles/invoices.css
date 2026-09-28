@@ -175,3 +175,14 @@
   .items tbody td.r { text-align: left; }
   .totals { width: 100%; }
 }
+/* Q6: the account credit history, for people with billing access. */
+.credithistory .chhead { font-size: 13px; font-weight: 600; color: var(--navy-muted); margin: 12px 0 4px; }
+.credithistory .chlist { list-style: none; margin: 0; padding: 0; }
+.credithistory .chrow { padding: 10px 0; }
+.credithistory .chrow + .chrow { border-top: 1px solid var(--hairline); }
+.credithistory .chline { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.credithistory .chline b { font-family: var(--serif); font-size: 17px; font-weight: 400; }
+.credithistory small { color: var(--navy-muted); font-size: 12.5px; }
+.credithistory .chstatus { display: block; margin-top: 2px; }
+.credithistory .chreason { margin: 4px 0 0; font-size: 14px; overflow-wrap: anywhere; }
+.credithistory .chnote { margin: 8px 0 0; color: var(--navy-muted); font-size: 13px; }

@@ -473,6 +473,13 @@ class DirectoryViewModel(
     private val _profileState = MutableStateFlow(ProfileUiState())
     val profileState: StateFlow<ProfileUiState> = _profileState.asStateFlow()
 
+    /**
+     * Q6: the profile's Account credit section and Give credit dialog. Loaded by
+     * the screen (not by [loadProfile]) so the household's other reads never
+     * wait on it and a refusal here hides one section, not the profile.
+     */
+    val accountCredit: AccountCreditController by lazy { AccountCreditController(invoiceRepository, viewModelScope) }
+
     private val _addKinfolkState = MutableStateFlow(AddKinfolkUiState())
     val addKinfolkState: StateFlow<AddKinfolkUiState> = _addKinfolkState.asStateFlow()
 

@@ -46,6 +46,13 @@ import { Args as PostInvoiceEventArgs, Result as PostInvoiceEventResult } from '
 import { Args as RecordPaymentArgs, Result as RecordPaymentResult } from '../../src/admin/recordPayment';
 import { Args as RepairInvoicePaymentsArgs, Result as RepairInvoicePaymentsResult } from '../../src/admin/repairInvoicePayments';
 import { Args as RunAutoApplyArgs, Result as RunAutoApplyResult } from '../../src/admin/runAutoApply';
+// Q6 (operator ruling 2026-09-27): the owner gives a household credit, and the
+// household's billing people and the owner read its history.
+import { Args as GiveAccountCreditArgs, Result as GiveAccountCreditResult } from '../../src/admin/giveAccountCredit';
+import {
+  Args as GetAccountCreditHistoryArgs,
+  Result as GetAccountCreditHistoryResult,
+} from '../../src/portal/getAccountCreditHistory';
 import { Args as ReviewAndSendDraftInvoiceArgs, Result as ReviewAndSendDraftInvoiceResult } from '../../src/admin/reviewAndSendDraftInvoice';
 import { Args as SendInvoiceReminderArgs, Result as SendInvoiceReminderResult } from '../../src/admin/sendInvoiceReminder';
 import { Args as UnarchiveInvoiceArgs, Result as UnarchiveInvoiceResult } from '../../src/admin/unarchiveInvoice';
@@ -154,6 +161,8 @@ export const INVOICE_CONTRACT_REGISTRY: ContractRegistry = {
     { name: 'redeemCredit', args: RedeemCreditArgs, result: RedeemCreditResult },
     { name: 'repairInvoicePayments', args: RepairInvoicePaymentsArgs, result: RepairInvoicePaymentsResult },
     { name: 'runAutoApply', args: RunAutoApplyArgs, result: RunAutoApplyResult },
+    { name: 'giveAccountCredit', args: GiveAccountCreditArgs, result: GiveAccountCreditResult },
+    { name: 'getAccountCreditHistory', args: GetAccountCreditHistoryArgs, result: GetAccountCreditHistoryResult },
     { name: 'resendQuote', args: ResendQuoteArgs, result: ResendQuoteResult },
     { name: 'reviewAndSendDraftInvoice', args: ReviewAndSendDraftInvoiceArgs, result: ReviewAndSendDraftInvoiceResult },
     { name: 'sendInvoiceReminder', args: SendInvoiceReminderArgs, result: SendInvoiceReminderResult },

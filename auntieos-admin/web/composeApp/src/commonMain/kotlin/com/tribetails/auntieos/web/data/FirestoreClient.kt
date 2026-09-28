@@ -1174,6 +1174,32 @@ class FirestoreClient {
         }
     }
 
+    /**
+     * Q6: gives a household account credit through the `giveAccountCredit`
+     * callable. The server writes the credit, the new balance and the audit entry
+     * in one go; [idempotencyKey] makes a retry of the same submission safe.
+     */
+    suspend fun giveAccountCredit(
+        entry: GiveCreditEntry,
+        idempotencyKey: String,
+    ): WriteResult<GiveCreditOutcome> {
+        val scopedKinfolkId = enforceWriteKinfolkId(testMode, entry.kinfolkId)
+        val payload = giveAccountCreditPayload(entry, scopedKinfolkId, idempotencyKey)
+        return when (val r = platformInvokeCallable("giveAccountCredit", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatching { WriteResult.Ok(decodeGiveCreditOutcome(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+    /** Q6: the household's credit history, through `getAccountCreditHistory`. */
+    suspend fun getAccountCreditHistory(kinfolkId: String): WriteResult<AccountCreditHistory> {
+        val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
+        return when (val r = platformInvokeCallable("getAccountCreditHistory", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatching { WriteResult.Ok(decodeAccountCreditHistory(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
     // ---- Booking time slots (availability + Google-busy blocks) ----
     /**
      * Live stream of `booking_time_slots`. The Schedule grid filters this to the

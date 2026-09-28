@@ -1,0 +1,99 @@
+/* Q6: the household's account credit card and the Give credit dialog. */
+.acredit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.acredit__heading {
+  margin: var(--space-2) 0 0;
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: var(--type-label-md-tracking);
+  color: var(--color-text-dim);
+}
+
+.acredit__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.acredit__row {
+  padding: 10px 0;
+  border-bottom: var(--border-hairline) solid color-mix(in srgb, var(--color-hairline) 60%, transparent);
+}
+.acredit__list li:last-child {
+  border-bottom: none;
+}
+
+.acredit__line {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.acredit__amount {
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.acredit__date,
+.acredit__status,
+.acredit__use,
+.acredit__hint {
+  color: var(--color-text-dim);
+  font-size: var(--type-body-md-size);
+}
+
+.acredit__reason,
+.acredit__status,
+.acredit__use,
+.acredit__hint,
+.acredit__confirm,
+.acredit__notice {
+  margin: var(--space-1) 0 0;
+}
+
+.acredit__reason,
+.acredit__confirm,
+.acredit__notice {
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.acredit__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.acredit__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.acredit__field-label {
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: var(--type-label-md-tracking);
+  color: var(--color-text-dim);
+}
+
+.acredit__field-input {
+  font: inherit;
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+}
+
+.acredit__field-input:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+}

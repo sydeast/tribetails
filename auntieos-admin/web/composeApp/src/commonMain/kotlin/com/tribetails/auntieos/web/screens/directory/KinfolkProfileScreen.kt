@@ -40,6 +40,12 @@ import com.composables.icons.lucide.Receipt
 import com.composables.icons.lucide.ShieldAlert
 import com.composables.icons.lucide.TriangleAlert
 import com.composables.icons.lucide.Users
+import com.composables.icons.lucide.Wallet
+import com.tribetails.auntieos.web.data.CreditHistoryLoad
+import com.tribetails.auntieos.web.data.GiveCreditEntry
+import com.tribetails.auntieos.web.data.GiveCreditSubmissionKeys
+import com.tribetails.auntieos.web.data.loadAccountCreditHistory
+import com.tribetails.auntieos.web.data.submitGiveCredit
 import com.tribetails.auntieos.web.data.ContactOverride
 import com.tribetails.auntieos.web.data.Dossier
 import com.tribetails.auntieos.web.data.FirestoreClient
@@ -184,6 +190,35 @@ fun KinfolkProfileScreen(
         }
     }
 
+    // Q6: account credit. The history read, the Give credit dialog, and one key
+    // per submission so a retry of the same credit cannot give it twice.
+    var creditGeneration by remember { mutableStateOf(0) }
+    var creditLoad by remember(kinfolkId) { mutableStateOf<CreditHistoryLoad?>(null) }
+    LaunchedEffect(kinfolkId, creditGeneration) {
+        creditLoad = loadAccountCreditHistory(client, kinfolkId)
+    }
+    val creditKeys = remember(kinfolkId) { GiveCreditSubmissionKeys() }
+    var showGiveCredit by remember { mutableStateOf(false) }
+    var givingCredit by remember { mutableStateOf(false) }
+    var giveCreditError by remember { mutableStateOf<String?>(null) }
+    var creditToast by remember { mutableStateOf<Pair<String, ToastKind>?>(null) }
+    fun giveCredit(entry: GiveCreditEntry) {
+        if (givingCredit) return
+        givingCredit = true
+        giveCreditError = null
+        scope.launch {
+            when (val r = submitGiveCredit(client, entry, creditKeys)) {
+                is WriteResult.Ok -> {
+                    showGiveCredit = false
+                    creditToast = giveCreditSuccessText(r.value.newAccountBalanceCents) to ToastKind.Success
+                    creditGeneration += 1
+                }
+                // The key is kept (submitGiveCredit), so pressing again retries this credit.
+                is WriteResult.Err -> giveCreditError = giveCreditRefusalText(r.message)
+            }
+            givingCredit = false
+        }
+    }
     ScreenScaffold {
         inviteToast?.let { (msg, kind) ->
             StatusToast(visible = true, message = msg, kind = kind, onDismiss = { inviteToast = null })
@@ -191,6 +226,26 @@ fun KinfolkProfileScreen(
         refreshToast?.let { (msg, kind) ->
             StatusToast(visible = true, message = msg, kind = kind, onDismiss = { refreshToast = null })
         }
+        creditToast?.let { (msg, kind) ->
+            StatusToast(visible = true, message = msg, kind = kind, onDismiss = { creditToast = null })
+        }
+        GiveCreditDialog(
+            visible = showGiveCredit,
+            kinfolkId = kinfolkId,
+            balanceCents = (creditLoad as? CreditHistoryLoad.Loaded)?.history?.accountBalanceCents ?: 0L,
+            submitting = givingCredit,
+            error = giveCreditError,
+            onDismiss = {
+                // Not while the call is in flight: its answer has to land somewhere.
+                if (!givingCredit) {
+                    showGiveCredit = false
+                    giveCreditError = null
+                }
+            },
+            onInvalid = { giveCreditError = it },
+            onClearError = { giveCreditError = null },
+            onSubmit = { entry -> giveCredit(entry) },
+        )
         if (kinfolk == null) {
             val loadError = (state as? FirestoreResult.Error)?.message
             SectionHeader(
@@ -453,6 +508,31 @@ fun KinfolkProfileScreen(
                             )
                         }
                     }
+                }
+            }
+            // ---- Account credit (Q6). Hidden when the server refuses this account. ----
+            val credit = creditLoad
+            if (credit !is CreditHistoryLoad.Hidden) {
+                Spacer(Modifier.height(18.dp))
+                Panel(
+                    title = "Account credit",
+                    icon = Lucide.Wallet,
+                    tone = AuntieStatusTone.Purple,
+                    trailing = {
+                        if (credit is CreditHistoryLoad.Loaded) {
+                            GhostButton(
+                                label = "Give credit",
+                                enabled = !givingCredit,
+                                onClick = {
+                                    giveCreditError = null
+                                    showGiveCredit = true
+                                },
+                            )
+                        }
+                    },
+                ) {
+                    if (credit == null) AccountCreditLoading()
+                    else AccountCreditBody(credit, onRetry = { creditGeneration += 1 })
                 }
             }
             Spacer(Modifier.height(18.dp))

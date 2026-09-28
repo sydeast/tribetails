@@ -267,6 +267,7 @@ export {
   removeMyPaymentMethod,
 } from './portal/billing';
 export { redeemCredit } from './portal/redeemCredit';
+export { getAccountCreditHistory } from './portal/getAccountCreditHistory';
 export { acceptQuote, denyQuote } from './portal/quoteDecision';
 export { addKin, updateKin, archiveKin } from './portal/kinWrites';
 export { setActiveTribe } from './portal/setActiveTribe';
@@ -358,6 +359,7 @@ export { recordPayment } from './admin/recordPayment';
 // invoices". The trigger below is the automatic half; this is the same pass
 // for an operator whose invoice was already sent when she ticked the box.
 export { runAutoApply } from './admin/runAutoApply';
+export { giveAccountCredit } from './admin/giveAccountCredit';
 export { archiveInvoice } from './admin/archiveInvoice';
 export { unarchiveInvoice } from './admin/unarchiveInvoice';
 // Detection + repair for invoices wrecked by the pre-2026-07-25 partial-payment

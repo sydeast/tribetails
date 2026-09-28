@@ -91,6 +91,8 @@ describe('#944 the allowlist is a real list of real callables', () => {
       'getMyInvoices', 'getMyInvoicePdf', 'getMyHome', 'getMyPaymentMethod',
       'createBillingSetupSession', 'syncMyPaymentMethod', 'removeMyPaymentMethod',
       'acceptQuote', 'denyQuote', 'requestBooking',
+      // Q6: giving account credit, and reading its history.
+      'giveAccountCredit', 'getAccountCreditHistory',
     ];
     const leaked = money.filter((n) => AUNTIE_ALLOWED_CALLABLES.has(n));
     expect(leaked).toEqual([]);
@@ -253,6 +255,7 @@ describe('#944 money callables in the portal keep the owner-only bypass', () => 
     'portal/getMyInvoices.ts',
     'portal/getMyInvoicePdf.ts',
     'portal/getMyHome.ts', // #984: the pay links, and a dossier read for the name
+    'portal/getAccountCreditHistory.ts', // Q6: the household's credit history
   ];
   it('none of them routes its staff check through staffBypass', () => {
     const offenders = MONEY_PORTAL_FILES.filter((rel) =>

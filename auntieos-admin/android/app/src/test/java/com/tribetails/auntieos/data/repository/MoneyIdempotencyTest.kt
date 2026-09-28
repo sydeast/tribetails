@@ -39,6 +39,13 @@ class MoneyIdempotencyTest {
     private fun seeded() = Random(7)
 
     @Test
+    fun `Q6 the give-credit key is crd_ and satisfies the server guard`() {
+        val key = mintGiveCreditIdempotencyKey(nowMs, seeded())
+        assertTrue(key.matches(serverGuard("crd")))
+        assertTrue(key.startsWith("crd_$nowMs" + "_"))
+        assertNotEquals(key, mintGiveCreditIdempotencyKey(nowMs, Random(8)))
+    }
+    @Test
     fun `every minted key satisfies the guard the server refuses everything else with`() {
         assertTrue(mintPaymentIdempotencyKey(nowMs, seeded()).matches(serverGuard("pay")))
         assertTrue(mintInvoicePaymentIdempotencyKey(nowMs, seeded()).matches(serverGuard("ipay")))

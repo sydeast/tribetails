@@ -40,6 +40,8 @@ vi.mock('../api/invoicesApi', async () => {
     getMyInvoices: vi.fn(),
     payInvoice: (...args: unknown[]) => payInvoice(...args),
     redeemCredit: (...args: unknown[]) => redeemCredit(...args),
+    // Q6: covered by CreditHistorySection.test.tsx; empty here.
+    getAccountCreditHistory: vi.fn().mockResolvedValue({ ok: true, kinfolkId: 'kin-fam-1', accountBalanceCents: 0, credits: [], uses: [] }),
   };
 });
 

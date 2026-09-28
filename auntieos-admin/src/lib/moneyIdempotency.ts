@@ -50,3 +50,12 @@ export function mintInvoiceIdempotencyKey(): string {
 export function mintQuoteIdempotencyKey(): string {
   return mintKey('quot');
 }
+
+/**
+ * Q6: the key for one `giveAccountCredit` submission. The server requires it
+ * and uses it as the credit's id, so a retry after a lost reply lands on the
+ * same credit instead of giving it twice.
+ */
+export function mintGiveCreditIdempotencyKey(): string {
+  return mintKey('crd');
+}
