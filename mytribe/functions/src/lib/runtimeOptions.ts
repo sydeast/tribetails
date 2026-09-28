@@ -25,7 +25,7 @@
  * are the exceptions it forced.
  *
  * That diagnosis was wrong, measured 2026-08-03 and written up in
- * docs/RUNBOOK.md. The deploys were refused by a per-minute mutation rate limit
+ * docs/runbooks/release-internals.md. The deploys were refused by a per-minute mutation rate limit
  * on cloudfunctions.googleapis.com (60/min, unraisable), which batching fixed.
  * And `CpuAllocPerProjectRegion` meters running instances rather than deployed
  * services, so the fleet never drew what the arithmetic claimed: the console

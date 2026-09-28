@@ -50,7 +50,7 @@
  * Needs GOOGLE_APPLICATION_CREDENTIALS (or gcloud application-default login)
  * with read access, or FIRESTORE_EMULATOR_HOST for a local run.
  *
- * STATUS (docs/RUNBOOK.md, "Scripts and the data re-upload"): post-import
+ * STATUS (docs/runbooks/after-release.md, "Scripts and the data re-upload"): post-import
  * check. Run after the invoice re-upload and after the household
  * notification gate reopens, to confirm none of the re-uploaded invoices'
  * newly-overdue notices went to a household about a bill that was never live.

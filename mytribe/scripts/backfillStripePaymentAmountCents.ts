@@ -90,10 +90,10 @@
  * that were actually wrong on screen; a large total `planned` count by
  * itself is not evidence of anything unusual.
  *
- * STATUS (docs/RUNBOOK.md, "Scripts and the data re-upload"): post-import
+ * STATUS (docs/runbooks/after-release.md, "Scripts and the data re-upload"): post-import
  * check, run if payment history is ever re-uploaded into the ROOT `payments`
  * collection; it plans zero and costs nothing to check if none is. Payment
- * code: document it, do not delete it, and see the RUNBOOK's flag on what a
+ * code: document it, do not delete it, and see the flag in docs/runbooks/after-release.md on what a
  * marker-less imported row resolves to.
  */
 

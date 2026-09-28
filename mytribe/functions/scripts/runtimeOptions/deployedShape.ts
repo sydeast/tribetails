@@ -1,8 +1,8 @@
 /**
  * Adapters from what an operator can actually produce to the
  * `PartialRuntimeShape` map the diff needs. Two shapes are supported because
- * two tools were tried while building this (see the RUNBOOK entry this ships
- * with):
+ * two tools were tried while building this (see the entry in
+ * docs/runbooks/release-internals.md that shipped with it):
  *
  *   - The Firebase MCP `functions_list_functions` tool, which DOES work from
  *     an agent session here (confirmed while building this, 2026-08-19) but

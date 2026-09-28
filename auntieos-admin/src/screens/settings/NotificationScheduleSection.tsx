@@ -13,7 +13,7 @@ import '../SettingsEdit.css';
  *
  * `householdNotificationsLive` shipped in PR #943 as the pre-launch send gate
  * and has had NO control anywhere: turning the product on meant editing a
- * Firestore document by hand, with `docs/RUNBOOK.md` walking through it. This
+ * Firestore document by hand, with `docs/runbooks/household-notifications.md` walking through it. This
  * panel is its first switch.
  *
  * `householdNotificationHour` and `scheduleDigestHour` are new, and they are the

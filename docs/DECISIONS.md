@@ -43,6 +43,7 @@ so the ID resolves.
 | D-FEATURE-FLAGS-FUNCTIONAL | 2026-07-31 | Feature flags ship functional | Money and payments |
 | D-DO-NOT-DELETE-PAYMENT-CODE | 2026-07-28 | Payment code is reported, not deleted | Money and payments |
 | D-2026-09-27-CREDIT-IS-ADMIN-CHOSEN | 2026-09-27 | Credit is admin-chosen, not automatic | Money and payments |
+| D-2026-09-27-PAID-INVOICE-NO-PAYMENT | 2026-09-27 | A paid invoice takes no payment | Money and payments |
 | R1 |  | A KinCare session covers every Kin in the household | Households, kinfolk and kin |
 | D-2026-08-18-THREE-BANKS | 2026-08-18 | Three admin-only record banks | Households, kinfolk and kin |
 | D-2026-08-06-ONE-TRIBE | 2026-08-06 | One kinfolk, one tribe | Households, kinfolk and kin |
@@ -144,6 +145,7 @@ so the ID resolves.
 | D-2026-09-12-PORTAL-DIRECT-READS | 2026-09-12 | The portal reads Firestore directly | Platform and clients |
 | D-FULL-RELEASE-INCLUDES-ADMIN-FUNCTIONS | 2026-08-04 | A full release ships every codebase | Release and ops |
 | D-PREDEPLOY-KEEP-ZERO |  | Skip the pre-deploy prune | Release and ops |
+| D-2026-09-14-NIGHTLY-OFF | 2026-09-14 | The nightly release stays off | Release and ops |
 | D-2026-08-29-NO-STAGING | 2026-08-29 | One Firebase project, no staging | Release and ops |
 | D-2026-08-29-MAIN-CHANNEL | 2026-08-29 | Main publishes to a fixed hosting channel | Release and ops |
 | D-2026-09-11-NO-SELF-HOSTED-RUNNERS | 2026-09-11 | CI runs on GitHub-hosted runners only | Release and ops |
@@ -240,6 +242,11 @@ so the ID resolves.
 - Ruling: "1) any overpayment made by the kinfolk, it is assumed the extra is all tip. since we dont charge kinfolk the service fees around payments, I take service fees out of the tip when recording the payments. 2) I as admin should be able to decide if any money remains as credit and how much. 3) credits are usually 'rewards' given by the biz or the remaining balance+ should admin leave any."
 - Why: point 1 restates D-2026-08-04-GROSS-TIP-AND-FEE. Points 2 and 3 are new: whether a leftover becomes credit, and how much, is the admin's call, not an automatic computation.
 - Supersedes: automatic leftover-to-credit (the `autoApply` tick in `mytribe/functions/src/admin/recordPayment.ts`, which credits any positive leftover to the household's account balance with no admin decision). #977 fixed the leftover arithmetic on that automatic path; this ruling goes further and says the automatic path itself should not decide the credit.
+
+### D-2026-09-27-PAID-INVOICE-NO-PAYMENT: A paid invoice takes no payment
+- Date: 2026-09-27. Source: docket Q5
+- Ruling: "Invoices shouldn't allow payment once marked as paid."
+- Enforced in: `mytribe/functions/src/lib/invoicePaidGate.ts`, `mytribe/functions/src/portal/payInvoice.ts`, `mytribe/functions/src/portal/redeemCredit.ts`, `mytribe/functions/src/portal/getMyInvoices.ts`
 
 ## Households, kinfolk and kin
 
@@ -410,7 +417,7 @@ so the ID resolves.
 ### D-HOUSEHOLD-SEND-GATE: Household notifications are off until switched on
 - Date: 2026-09-22. Source: PR #943
 - Ruling: every household-bound notification through the dispatcher is suppressed unless `business_settings.householdNotificationsLive === true`. Absent reads as off. Staff and operator alerts are not gated.
-- Enforced in: `mytribe/functions/src/notifications/`, `docs/RUNBOOK.md` ("Opening household notifications")
+- Enforced in: `mytribe/functions/src/notifications/`, `docs/runbooks/household-notifications.md`
 
 ### D-2026-09-22-NO-DEFAULT-HOUR: No scheduled notification job runs by default
 - Date: 2026-09-22
@@ -746,6 +753,11 @@ so the ID resolves.
 - Ruling: every release sets `RELEASE_PREDEPLOY_KEEP=0`.
 - Why: batching the functions deploy is what keeps it under the Cloud Run CPU quota; the pre-deploy prune does not help. Step 8 still prunes after verification.
 - Enforced in: `scripts/release.sh`, `.github/workflows/nightly-release.yml`
+
+### D-2026-09-14-NIGHTLY-OFF: The nightly release stays off
+- Date: 2026-09-14. Source: #850, #851
+- Ruling: `NIGHTLY_RELEASE=off`. Releases run by hand from the operator Mac until the hosted runner can authenticate (#851), then `preflight` for a few nights before `on`.
+- Enforced in: `.github/workflows/nightly-release.yml`, `docs/RUNBOOK.md`
 
 ### D-2026-08-29-NO-STAGING: One Firebase project, no staging
 - Date: 2026-08-29

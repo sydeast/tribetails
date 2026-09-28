@@ -70,7 +70,7 @@
  * --allow-prod. The PR that ships this script ran neither side against
  * production; both are operator steps.
  *
- * STATUS (docs/RUNBOOK.md, "Scripts and the data re-upload"): post-import
+ * STATUS (docs/runbooks/after-release.md, "Scripts and the data re-upload"): post-import
  * check. The scan is by shape (is `date`/`dueDate` ISO?), not by write date,
  * so run the dry run again after invoices are re-uploaded.
  */

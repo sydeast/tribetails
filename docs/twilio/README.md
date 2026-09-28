@@ -123,8 +123,7 @@ A gcfv2 function is mounted only the secrets its own `secrets:` array declares,
 and all three inbound handlers declare `['TWILIO_AUTH_TOKEN', 'SENTRY_DSN']`
 (`mytribe/functions/src/twilio/twilioInbound.ts:518-540`). They read the URLs
 off `process.env` (`twilioSignature.ts:27-28`), which a Secret Manager entry never reaches. Set them
-with the `gcloud run services update` commands in step 7 below. `docs/RUNBOOK.md`
-§ *Activating the Twilio inbound webhooks* has the failure modes.
+with the `gcloud run services update` commands in step 7 below. `docs/runbooks/twilio-webhooks.md` has the failure modes.
 
 ## Getting Twilio connected from scratch
 
