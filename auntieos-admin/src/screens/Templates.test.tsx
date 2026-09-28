@@ -1,8 +1,17 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within, waitFor, fireEvent } from '@testing-library/react';
+import { render as rtlRender, screen, within, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactElement } from 'react';
 import { type TemplateSummary } from '../api/templates';
+import { ToastProvider } from '../components/Toast';
+
+// TemplateEditor (opened by a row or "New template") calls useToast() to
+// confirm a save/delete, and useToast() throws outside a ToastProvider. Same
+// wrap KinfolkEdit.test.tsx uses for its own editor.
+function render(ui: ReactElement) {
+  return rtlRender(<ToastProvider>{ui}</ToastProvider>);
+}
 
 const { listTemplates, listTemplateCategories } = vi.hoisted(() => ({
   listTemplates: vi.fn(),
@@ -476,6 +485,9 @@ describe('Templates screen', () => {
     await waitFor(() => expectBankShowing());
     await waitFor(() => expect(listTemplates).toHaveBeenCalledTimes(2));
     expect(await screen.findByText('Booking Confirmed')).toBeInTheDocument();
+    // No Display name was typed, so the toast falls back to the template key,
+    // the same fallback `templateRowTitle` uses for the row itself.
+    expect(await screen.findByText('Saved booking.confirmed.')).toBeInTheDocument();
   });
 
   it('deleting a template through the editor closes it and reloads the list', async () => {
@@ -501,6 +513,7 @@ describe('Templates screen', () => {
     await waitFor(() => expectBankShowing());
     await waitFor(() => expect(listTemplates).toHaveBeenCalledTimes(2));
     expect(await screen.findByText(TEMPLATE_BANK_EMPTY_COPY)).toBeInTheDocument();
+    expect(await screen.findByText('Deleted Booking Confirmed.')).toBeInTheDocument();
   });
 
   it('a stale/missing row id (list not yet loaded) is a silent no-op, never a crash or a blank editor', async () => {

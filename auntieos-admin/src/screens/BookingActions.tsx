@@ -12,6 +12,7 @@ import { Dialog } from '../components/Dialog';
 import { Banner } from '../components/Banner';
 import { DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
+import { useToast } from '../components/Toast';
 import './BookingActions.css';
 
 /**
@@ -61,6 +62,13 @@ interface ActionDef {
   confirmTitle: string;
   confirmBody: (displayName: string) => string;
   confirmLabel: string;
+  /**
+   * The confirmation toast, once the transition has actually landed. Present
+   * tense (the future-tense `confirmBody` above is now true), and never a
+   * repeat of `confirmBody`'s own wording: the operator already read that
+   * sentence once, on the button they just pressed.
+   */
+  confirmedToast: (displayName: string) => string;
   run: (bookingId: string) => Promise<void>;
 }
 
@@ -88,6 +96,7 @@ const APPROVE: ActionDef = {
   confirmTitle: 'Approve this booking?',
   confirmBody: (name) => `${name}'s request will move to Scheduled and appear on the calendar.`,
   confirmLabel: 'Yes, approve it',
+  confirmedToast: (name) => `${name}'s request is now Scheduled.`,
   run: approveBooking,
 };
 
@@ -98,6 +107,7 @@ const REJECT: ActionDef = {
   confirmTitle: 'Reject this booking?',
   confirmBody: (name) => `${name}'s request will be cancelled. This cannot be undone.`,
   confirmLabel: 'Yes, reject it',
+  confirmedToast: (name) => `${name}'s request is cancelled.`,
   run: rejectBooking,
 };
 
@@ -108,6 +118,7 @@ const CANCEL: ActionDef = {
   confirmTitle: 'Cancel this scheduled visit?',
   confirmBody: (name) => `${name}'s visit will be cancelled. This cannot be undone.`,
   confirmLabel: 'Yes, cancel the visit',
+  confirmedToast: (name) => `${name}'s visit is cancelled.`,
   run: cancelBooking,
 };
 
@@ -118,6 +129,7 @@ const COMPLETE: ActionDef = {
   confirmTitle: 'Mark this visit completed?',
   confirmBody: (name) => `${name}'s visit will be marked Completed and leave the scheduled list.`,
   confirmLabel: 'Yes, mark it completed',
+  confirmedToast: (name) => `${name}'s visit is marked Completed.`,
   run: (id) => markBookingCompleted(id, new Date().toISOString()),
 };
 
@@ -161,6 +173,7 @@ function toDatetimeLocal(raw: string): string {
 }
 
 export function BookingActions({ entry, onClose }: BookingActionsProps) {
+  const { showToast } = useToast();
   const [mode, setMode] = useState<Mode>({ kind: 'detail' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -225,6 +238,7 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
     try {
       await action.run(booking._id);
       setBusy(false);
+      showToast(action.confirmedToast(displayName));
       onClose();
     } catch (err) {
       setBusy(false);
@@ -247,6 +261,7 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
     try {
       await rescheduleBooking(booking._id, startTime, endTime);
       setBusy(false);
+      showToast(`${displayName}'s visit is rescheduled.`);
       onClose();
     } catch (err) {
       setBusy(false);
@@ -415,6 +430,7 @@ export interface BookingStatusActionsProps {
  * duplicating something.
  */
 export function BookingStatusActions({ entry, onDone, initialAction }: BookingStatusActionsProps) {
+  const { showToast } = useToast();
   const state = bookingState({ status: entry.status ?? '' });
   const actions = actionsFor(state);
   const [confirming, setConfirming] = useState<ActionDef | null>(
@@ -432,6 +448,7 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
     try {
       await action.run(entry._id);
       setBusy(false);
+      showToast(action.confirmedToast(displayName));
       onDone();
     } catch (err) {
       // Fail loud, and stay on the confirm step: the operator sees which

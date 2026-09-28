@@ -1,9 +1,17 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render as rtlRender, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactElement } from 'react';
 import type { Timestamp } from 'firebase/firestore';
 import { type BookingEntry } from '../api/bookings';
+import { ToastProvider } from '../components/Toast';
+
+// Both surfaces confirm a landed transition through useToast(), which throws
+// outside a ToastProvider. Same wrap KinfolkEdit.test.tsx uses.
+function render(ui: ReactElement) {
+  return rtlRender(<ToastProvider>{ui}</ToastProvider>);
+}
 
 const { approveBooking, rejectBooking, cancelBooking, markBookingCompleted, rescheduleBooking } = vi.hoisted(
   () => ({
@@ -140,6 +148,9 @@ describe('BookingActions: Approve', () => {
     await userEvent.click(screen.getByRole('button', { name: /yes, approve it/i }));
     expect(approveBooking).toHaveBeenCalledWith('ses-9');
     expect(onClose).toHaveBeenCalledOnce();
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      "The Whitfields's request is now Scheduled.",
+    );
   });
 
   it('Back returns to the detail view without approving', async () => {
@@ -184,6 +195,7 @@ describe('BookingActions: Reject / Cancel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
     await userEvent.click(screen.getByRole('button', { name: /yes, reject it/i }));
     expect(rejectBooking).toHaveBeenCalledWith('ses-1');
+    expect(await screen.findByRole('status')).toHaveTextContent("The Whitfields's request is cancelled.");
   });
 
   it('Cancel confirms, then calls cancelBooking (a different action than Reject)', async () => {
@@ -193,6 +205,7 @@ describe('BookingActions: Reject / Cancel', () => {
     await userEvent.click(screen.getByRole('button', { name: /yes, cancel the visit/i }));
     expect(cancelBooking).toHaveBeenCalledWith('ses-2');
     expect(rejectBooking).not.toHaveBeenCalled();
+    expect(await screen.findByRole('status')).toHaveTextContent("The Whitfields's visit is cancelled.");
   });
 });
 
@@ -265,6 +278,7 @@ describe('BookingActions: Mark Completed', () => {
     expect(markBookingCompleted).toHaveBeenCalledWith('ses-3', expect.any(String));
     const [, iso] = markBookingCompleted.mock.calls[0] as [string, string];
     expect(Number.isNaN(Date.parse(iso))).toBe(false);
+    expect(await screen.findByRole('status')).toHaveTextContent("The Whitfields's visit is marked Completed.");
   });
 });
 
@@ -306,6 +320,7 @@ describe('BookingActions: Reschedule', () => {
     await userEvent.click(screen.getByRole('button', { name: /save new time/i }));
     expect(rescheduleBooking).toHaveBeenCalledWith('ses-5', '2026-07-20T09:00', '2026-07-20T10:00');
     expect(onClose).toHaveBeenCalledOnce();
+    expect(await screen.findByRole('status')).toHaveTextContent("The Whitfields's visit is rescheduled.");
   });
 
   it('fails loud, naming the callable, when rescheduleBooking rejects', async () => {
@@ -406,6 +421,9 @@ describe('BookingStatusActions (the panel composed into the detail sheet)', () =
     await userEvent.click(screen.getByRole('button', { name: 'Yes, approve it' }));
     expect(approveBooking).toHaveBeenCalledWith('ses-9');
     expect(onDone).toHaveBeenCalledOnce();
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      "The Whitfields's request is now Scheduled.",
+    );
   });
   it('marks completed with a parseable ISO stamp, the same payload the dialog sends', async () => {
     markBookingCompleted.mockResolvedValue(undefined);

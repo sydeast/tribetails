@@ -14,6 +14,7 @@ import { WizardModal, type WizardStep } from '../components/WizardModal';
 import { SchemaPreview } from '../components/SchemaPreview';
 import { GhostButton, IconButton } from '../components/Buttons';
 import { Banner } from '../components/Banner';
+import { useToast } from '../components/Toast';
 import './FormSchemaEditor.css';
 
 /**
@@ -316,6 +317,7 @@ interface FormSchemaEditorProps {
 }
 
 export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEditorProps) {
+  const { showToast } = useToast();
   const creating = isCreateMode(schemaId);
 
   const [loading, setLoading] = useState(!creating);
@@ -466,6 +468,7 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
       // dirty flag would ask the operator to confirm discarding work that has
       // just been written.
       setDirty(false);
+      showToast(`Saved ${name.trim() !== '' ? name.trim() : res.id}.`);
       onSaved(res.id);
     } catch (err) {
       setSaving(false);

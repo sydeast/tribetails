@@ -33,6 +33,7 @@ import { MergePreview } from '../components/MergePreview';
 import { ENRICHABLE_SAMPLE } from '../lib/mergeFields';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Banner } from '../components/Banner';
+import { useToast } from '../components/Toast';
 import { DenPanel, DenScreenHeading, StatusPill } from '../components/DenScreenKit';
 import './TemplateEditor.css';
 
@@ -170,6 +171,7 @@ function MailGlyph() {
  * the rejection rather than pattern-matching the sentence.
  */
 export function TemplateEditor({ template, categories, onClose, onSaved, onDeleted }: TemplateEditorProps) {
+  const { showToast } = useToast();
   const isCreate = template === null;
   const [fields, setFields] = useState<TemplateFormFields>(() =>
     template ? templateToFormFields(template) : blankFormFields(),
@@ -448,6 +450,8 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
       const result = await saveTemplate(payload);
       setConvertedUnsaved(false);
       setSaving(false);
+      const savedName = effective.title.trim() !== '' ? effective.title.trim() : effective.templateId.trim();
+      showToast(`Saved ${savedName}.`);
       onSaved(result.templateId);
     } catch (err) {
       setSaving(false);
@@ -494,6 +498,7 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
     try {
       const { templateId } = await deleteTemplate(fields.templateId, { acknowledgeLiveKey });
       setDeleting(false);
+      showToast(`Deleted ${fields.title || fields.templateId}.`);
       onDeleted?.(templateId);
     } catch (err) {
       setDeleting(false);

@@ -33,6 +33,7 @@ import { Dialog } from './Dialog';
 import { Banner } from './Banner';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { DenPanel, EmptyHint, ServicePill } from './DenScreenKit';
+import { useToast } from './Toast';
 import './BookingDetailModal.css';
 
 /** Whatever a rejected callable or Firestore read gave us, as operator copy. */
@@ -132,6 +133,7 @@ export function BookingDetailModal({
   actions,
   nowMs = Date.now,
 }: BookingDetailModalProps) {
+  const { showToast } = useToast();
   const kinfolkId = str(entry.kinfolkId);
   const batchId = str(entry.kinCareBatchId);
   const visitId = str(entry.kinCareVisitId);
@@ -145,6 +147,16 @@ export function BookingDetailModal({
   const durationMinutes = visitDurationMinutes(entry);
   const locked = notesLocked(startTime, nowMs());
   const reportIds = arr<string>(entry.reportIds).filter((id) => typeof id === 'string' && id !== '');
+
+  // The sheet closes the instant a reschedule lands (see ReschedulePanel's own
+  // doc: the live listener carries the new window back on its own), which is
+  // exactly the shape that used to leave nothing confirming the move. Owned
+  // here, not inside ReschedulePanel, so the confirmation names the same
+  // `household` the rest of this sheet already reads.
+  const handleRescheduled = useCallback(() => {
+    showToast(`${household}'s visit is rescheduled.`);
+    onClose();
+  }, [household, onClose, showToast]);
 
   return (
     <Dialog title="Visit detail" onClose={onClose} variant="sheet">
@@ -212,7 +224,7 @@ export function BookingDetailModal({
           )}
         </DenPanel>
 
-        <ReschedulePanel entry={entry} durationMinutes={durationMinutes} onDone={onClose} />
+        <ReschedulePanel entry={entry} durationMinutes={durationMinutes} onDone={handleRescheduled} />
 
         {isEnvelopeVisit ? (
           <>

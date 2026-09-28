@@ -14,6 +14,7 @@ import { PrimaryButton, GhostButton, IconButton } from '../components/Buttons';
 import { Dialog } from '../components/Dialog';
 import { IconTile } from '../components/IconTile';
 import { BRAND_GRADIENTS } from '../components/Avatar';
+import { useToast } from '../components/Toast';
 import './FormSchemas.css';
 
 export type SortColumn = 'name' | 'version' | 'updatedAt' | 'updatedBy';
@@ -271,6 +272,7 @@ interface FormSchemasProps {
  * wires the `onSelect` and `onNew` handlers. See the props doc above.
  */
 export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
+  const { showToast } = useToast();
   const [schemas, setSchemas] = useState<Async<FormSchemaSummary[]>>({ status: 'loading' });
   const [emailByUid, setEmailByUid] = useState<ReadonlyMap<string, string>>(new Map());
   const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
@@ -350,6 +352,7 @@ export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
       await deleteFormSchema(target.id);
       setDeleting(false);
       setPendingDelete(null);
+      showToast(`Deleted ${target.name || target.id}.`);
       load();
     } catch (err) {
       setDeleting(false);
