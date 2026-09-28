@@ -368,6 +368,101 @@ describe('VetClinics: adding', () => {
 
     expect(await screen.findByText(/was already in the bank/)).toBeInTheDocument();
   });
+
+  /**
+   * #1015: `needs_choice` used to fall into the same branch as a real dedupe
+   * and show "already in the bank, nothing was duplicated" - a toast, with
+   * nothing written and no candidate ever shown. The operator ruling
+   * (2026-08-01) is that a near-match clinic is a choice, never a
+   * substitution, matching the household vet picker's inline create.
+   */
+  describe('a near match (needs_choice)', () => {
+    const CANDIDATE = {
+      id: 'near1',
+      name: 'Riverside Animal Hosp.',
+      address: '418 Mill St',
+      phone: '(512) 555 0100',
+      isEmergency: false,
+      verified: true,
+      reason: 'similar' as const,
+    };
+
+    it('offers the near match instead of a toast, and writes nothing', async () => {
+      submitVetClinic.mockResolvedValue({
+        status: 'needs_choice',
+        clinicId: '',
+        created: false,
+        pending: false,
+        candidates: [CANDIDATE],
+      });
+      seed();
+      render(<VetClinics />);
+      await screen.findByText('Riverside Animal Hospital');
+      await user.click(screen.getByRole('button', { name: 'Add clinic' }));
+
+      await user.type(screen.getByLabelText('Name'), 'Riverside Animal Hosp');
+      await user.click(screen.getByRole('button', { name: 'Add to bank' }));
+
+      expect(await screen.findByText('Riverside Animal Hosp.')).toBeInTheDocument();
+      expect(
+        screen.getByText('A clinic like this is already in the bank. Use it, or add yours separately.'),
+      ).toBeInTheDocument();
+      // The wrong toast this replaces never fires.
+      expect(screen.queryByText(/nothing was duplicated/)).toBeNull();
+      // The add form is still open (onDone was not called): nothing closed silently.
+      expect(screen.getByRole('button', { name: 'Add to bank' })).toBeInTheDocument();
+    });
+
+    it('using the offered clinic closes the card without a second write', async () => {
+      submitVetClinic.mockResolvedValue({
+        status: 'needs_choice',
+        clinicId: '',
+        created: false,
+        pending: false,
+        candidates: [CANDIDATE],
+      });
+      seed();
+      render(<VetClinics />);
+      await screen.findByText('Riverside Animal Hospital');
+      await user.click(screen.getByRole('button', { name: 'Add clinic' }));
+      await user.type(screen.getByLabelText('Name'), 'Riverside Animal Hosp');
+      await user.click(screen.getByRole('button', { name: 'Add to bank' }));
+      await screen.findByText('Riverside Animal Hosp.');
+
+      await user.click(screen.getByText('Riverside Animal Hosp.'));
+
+      expect(await screen.findByText(/this links to that record instead/)).toBeInTheDocument();
+      // Only the one call: picking the candidate is pure client-side.
+      expect(submitVetClinic).toHaveBeenCalledTimes(1);
+      // The card closed (Add clinic is offered again, not the open form).
+      expect(await screen.findByRole('button', { name: 'Add clinic' })).toBeInTheDocument();
+    });
+
+    it('"add as different clinic" resubmits with the candidate acknowledged', async () => {
+      submitVetClinic
+        .mockResolvedValueOnce({
+          status: 'needs_choice',
+          clinicId: '',
+          created: false,
+          pending: false,
+          candidates: [CANDIDATE],
+        })
+        .mockResolvedValueOnce({ status: 'created', clinicId: 'new1', created: true, pending: false, candidates: [] });
+      seed();
+      render(<VetClinics />);
+      await screen.findByText('Riverside Animal Hospital');
+      await user.click(screen.getByRole('button', { name: 'Add clinic' }));
+      await user.type(screen.getByLabelText('Name'), 'Riverside Animal Hosp');
+      await user.click(screen.getByRole('button', { name: 'Add to bank' }));
+      await screen.findByText('Riverside Animal Hosp.');
+
+      await user.click(screen.getByRole('button', { name: /No, add .* as a different clinic/ }));
+
+      await waitFor(() => expect(submitVetClinic).toHaveBeenCalledTimes(2));
+      expect(submitVetClinic.mock.calls[1]?.[1]).toEqual(['near1']);
+      expect(await screen.findByText(/^Added Riverside Animal Hosp\.?$/)).toBeInTheDocument();
+    });
+  });
 });
 
 describe('VetClinics: the mock shape (#755)', () => {

@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { clinicDetail, clinicName, type VetClinic } from '../api/vetClinics';
 import { vetClinicSuggestions } from '../lib/vetClinicSearch';
 import { submitVetClinic, type ClinicCandidate } from '../api/vetClinicsWrite';
+import { VetClinicNearMatchChoice } from './VetClinicNearMatch';
 import './VetClinicPicker.css';
 
 /**
@@ -435,36 +436,15 @@ function CreateClinicForm({
 
       {/* THE CHOICE. The bank already holds something that looks like this
           practice, and nothing has been written. Using an existing clinic is
-          listed first; creating a second record is the deliberate fallback. */}
-      {candidates.length > 0 && (
-        <div className="vetpick__candidates" role="group" aria-label="Possible matches">
-          <p className="vetpick__createTitle">
-            A clinic like this is already in the bank. Use it, or add yours separately.
-          </p>
-          {candidates.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              className="vetpick__candidate"
-              onClick={() => useCandidate(c)}
-            >
-              <b>{c.isEmergency ? `${c.name} · 24hr` : c.name}</b>
-              <small>
-                {[c.address, c.phone].filter((v) => v !== '').join(' · ')}
-                {!c.verified && ' · waiting for approval'}
-              </small>
-            </button>
-          ))}
-          <button
-            type="button"
-            className="vetpick__ghost"
-            disabled={saving}
-            onClick={() => void save(candidates.map((c) => c.id))}
-          >
-            {saving ? 'Saving…' : `No, add "${name.trim()}" as a different clinic`}
-          </button>
-        </div>
-      )}
+          listed first; creating a second record is the deliberate fallback.
+          Shared with the vet clinics manager's "Add a clinic" card (#1015). */}
+      <VetClinicNearMatchChoice
+        candidates={candidates}
+        clinicName={name}
+        saving={saving}
+        onUseCandidate={useCandidate}
+        onAddAnyway={() => void save(candidates.map((c) => c.id))}
+      />
       <div className="vetpick__createActions">
         <button type="button" className="vetpick__ghost" disabled={saving} onClick={onCancel}>
           Cancel

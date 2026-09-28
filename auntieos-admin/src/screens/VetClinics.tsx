@@ -13,7 +13,9 @@ import {
   archiveVetClinic,
   submitVetClinic,
   type VetClinicEdit,
+  type ClinicCandidate,
 } from '../api/vetClinicsWrite';
+import { VetClinicNearMatchChoice } from '../components/VetClinicNearMatch';
 import {
   activeClinics,
   archivedClinics,
@@ -565,6 +567,16 @@ function Field({ label, value, onChange, hint }: FieldProps) {
  * Hours are deliberately absent here: a brand new row is added from a phone
  * call or a card, and the hours get curated on the clinic afterwards through
  * Edit. `submitVetClinic` has no `hours` field for the same reason.
+ *
+ * `needs_choice` (#1015) shares the household picker's answer
+ * (`VetClinicNearMatchChoice`): the bank already holds something that looks
+ * like this practice, nothing has been written, and which one to use is the
+ * operator's call, never the server's (ruling 2026-08-01: a near-match clinic
+ * is a choice, never a substitution). Before this, `res.created` was `false`
+ * on a `needs_choice` answer too, so this card showed the SAME "already in
+ * the bank, nothing was duplicated" toast it shows for a real exact-name
+ * dedupe - which was wrong twice over: nothing was linked, and the operator
+ * was never shown what the near match actually was.
  */
 function AddClinicCard({ onDone, all }: { onDone: () => void; all: readonly VetClinic[] }) {
   const { showToast } = useToast();
@@ -572,6 +584,8 @@ function AddClinicCard({ onDone, all }: { onDone: () => void; all: readonly VetC
   const [emergency, setEmergency] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Near-matches the server offered. Non-empty means nothing has been written yet. */
+  const [candidates, setCandidates] = useState<ClinicCandidate[]>([]);
 
   const collides = draftNameCollides(
     '',
@@ -579,11 +593,16 @@ function AddClinicCard({ onDone, all }: { onDone: () => void; all: readonly VetC
     all,
   );
 
-  async function add() {
+  async function add(acknowledged: readonly string[] = []) {
     setBusy(true);
     setError(null);
     try {
-      const res = await submitVetClinic({ ...draft, isEmergency: emergency });
+      const res = await submitVetClinic({ ...draft, isEmergency: emergency }, acknowledged);
+      if (res.status === 'needs_choice') {
+        setCandidates(res.candidates);
+        return;
+      }
+      setCandidates([]);
       showToast(
         res.created
           ? `Added ${draft.name.trim()}.`
@@ -595,6 +614,13 @@ function AddClinicCard({ onDone, all }: { onDone: () => void; all: readonly VetC
     } finally {
       setBusy(false);
     }
+  }
+
+  /** Use an offered clinic. Pure client-side: it already has the id, so this just closes the card. */
+  function useCandidate(c: ClinicCandidate) {
+    setCandidates([]);
+    showToast(`${c.name} was already in the bank, so this links to that record instead.`);
+    onDone();
   }
 
   return (
@@ -636,6 +662,14 @@ function AddClinicCard({ onDone, all }: { onDone: () => void; all: readonly VetC
             existing record rather than create a second copy.
           </p>
         )}
+
+        <VetClinicNearMatchChoice
+          candidates={candidates}
+          clinicName={draft.name}
+          saving={busy}
+          onUseCandidate={useCandidate}
+          onAddAnyway={() => void add(candidates.map((c) => c.id))}
+        />
 
         <div className="vetcard-actions">
           <PrimaryButton
