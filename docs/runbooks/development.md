@@ -30,7 +30,7 @@ From the repo root. Each fans out to the project that owns it.
 | `npm run setup` | One-time machine setup: hooks, Android SDK path, every install (`scripts/bootstrap.sh`) |
 | `npm run preflight` | Reports what a release needs that setup does not provide, with the fix for each |
 | `npm run dev:record:admin` / `dev:record:portal` | Dev server with the issue recorder on. See `packages/issue-recorder/README.md` |
-| `npm run deploy` | The production run. See [Deploying](#deploying). |
+| `npm run deploy` | The production run. See `docs/RUNBOOK.md`. |
 | `npm run deploy:bg` | The same run, detached, logged, one command. Use this one. |
 
 Suffix any of `test`, `typecheck`, `build` with `:functions`, `:admin` or

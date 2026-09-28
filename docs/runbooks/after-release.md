@@ -39,7 +39,8 @@ The import, on the web admin or the phone:
    `invoice.payment.unapplied`, added for docket Q5) shows one
    line per channel: `create` where Firestore has no copy, `unchanged` where the
    stored copy already matches, `skipped` where it differs.
-4. A `skipped` line means somebody edited that template here. Tick **Replace the
+4. A `skipped` line means the stored copy differs from the repo: somebody edited
+   that template here, or it predates #953 (see below). Tick **Replace the
    stored copy with the repo wording** only if you mean to lose that edit.
 5. Press **Import**. The button names how many documents it will write.
 A template that is refused (a Handlebars triple stash, an unparseable seed file)

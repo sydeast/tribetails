@@ -4,7 +4,7 @@ How to ship `main` to production, and what to do right after. Follow it top to
 bottom from the repo root on the release Mac.
 
 Everything else that used to live here moved to `docs/runbooks/` on
-2026-09-28. The text there is unchanged:
+2026-09-28, with cross-references repointed at the new files:
 
 | Doc | For |
 |---|---|
@@ -350,7 +350,7 @@ for the quoted text.
 | `REFUSED: installed dependencies do not match their lockfile(s)` | Stale `node_modules`. Run the `npm ci` it names, at the repo root |
 | "CI is not green for `<sha>`" | A check failed or is still running on that commit. Wait or fix; do not skip the gate |
 | "gh could not ask GitHub for CI's verdict" | `gh` is signed out or GitHub is down. `RELEASE_SKIP_CI_GATE=1` only for that |
-| "GitHub reports no check runs at all for `<sha>`" | CI never ran on that commit |
+| "GitHub reports no check runs at all for `<sha>`" | CI never ran on that commit. Start it with `gh workflow run ci.yml --ref main`, wait for green, rerun |
 | Release hangs at step 0c, silent | gcloud stuck on IPv6, usually a VPN. Compare `curl -4` and `curl -6` to `https://secretmanager.googleapis.com` (see `docs/runbooks/secrets.md`) |
 | "could not be read" for a secret | gcloud is signed out. Run `gcloud auth login`; do not create the secret |
 | `Failed to validate secret versions ... not found or has no versions` | A secret the code declares was never set. Step 1b prints the `firebase functions:secrets:set` command |
