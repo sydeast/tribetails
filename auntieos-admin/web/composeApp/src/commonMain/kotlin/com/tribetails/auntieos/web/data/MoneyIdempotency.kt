@@ -76,6 +76,13 @@ fun mintQuoteIdempotencyKey(random: Random = Random.Default): String = moneyKey(
 
 /** Q6: `giveAccountCredit` -> `families/{id}/creditLedger/{key}`. */
 fun mintGiveCreditIdempotencyKey(random: Random = Random.Default): String = moneyKey("crd", random)
+
+/**
+ * #1003: `resolveUnappliedPayment`. The server's shape is
+ * `upd_<epochMillis>_<suffix [a-z0-9]{1,16}>`, the same builder as `crd_`.
+ */
+fun mintUnappliedDecisionIdempotencyKey(random: Random = Random.Default): String = moneyKey("upd", random)
+
 /**
  * The one place the shape is built. Four prefixes drifting apart one copy at a
  * time is exactly what `moneyIdempotency.ts` refuses to allow on the server, by

@@ -46,6 +46,12 @@ import com.tribetails.auntieos.web.data.GiveCreditEntry
 import com.tribetails.auntieos.web.data.GiveCreditSubmissionKeys
 import com.tribetails.auntieos.web.data.loadAccountCreditHistory
 import com.tribetails.auntieos.web.data.submitGiveCredit
+import com.tribetails.auntieos.web.data.UnappliedDecision
+import com.tribetails.auntieos.web.data.UnappliedDecisionSubmissionKeys
+import com.tribetails.auntieos.web.data.UnappliedPaymentDto
+import com.tribetails.auntieos.web.data.UnappliedPaymentsLoad
+import com.tribetails.auntieos.web.data.loadUnappliedPayments
+import com.tribetails.auntieos.web.data.submitUnappliedDecision
 import com.tribetails.auntieos.web.data.ContactOverride
 import com.tribetails.auntieos.web.data.Dossier
 import com.tribetails.auntieos.web.data.FirestoreClient
@@ -113,6 +119,11 @@ fun KinfolkProfileScreen(
     onViewKin: (kinId: String) -> Unit,
     onOpenHousehold: () -> Unit = {},
     onOpenTale: (sessionId: String) -> Unit = {},
+    // #1003: set when the screen was opened from an `invoice.payment.unapplied`
+    // notice ("" when the notice named no payment). The "Payments needing a
+    // decision" list shows, and that payment's Decide dialog opens once if it
+    // is still waiting.
+    decidePaymentId: String? = null,
 ) {
     val client = remember { FirestoreClient() }
     val reload = rememberReloadableRead()
@@ -219,6 +230,48 @@ fun KinfolkProfileScreen(
             givingCredit = false
         }
     }
+
+    // #1003: card payments waiting on a decision, and the Decide dialog. The
+    // dialog builds its request from its own fields; nothing stored is rebuilt.
+    var unappliedGeneration by remember { mutableStateOf(0) }
+    var unappliedLoad by remember(kinfolkId) { mutableStateOf<UnappliedPaymentsLoad?>(null) }
+    LaunchedEffect(kinfolkId, unappliedGeneration) {
+        unappliedLoad = loadUnappliedPayments(client, kinfolkId)
+    }
+    val decisionKeys = remember(kinfolkId) { UnappliedDecisionSubmissionKeys() }
+    var deciding by remember(kinfolkId) { mutableStateOf<UnappliedPaymentDto?>(null) }
+    var decisionSaving by remember { mutableStateOf(false) }
+    var decisionError by remember { mutableStateOf<String?>(null) }
+    var decisionNote by remember(kinfolkId) { mutableStateOf<String?>(null) }
+    var noticeConsumed by remember(kinfolkId, decidePaymentId) { mutableStateOf(false) }
+    LaunchedEffect(unappliedLoad, decidePaymentId) {
+        if (noticeConsumed || decidePaymentId.isNullOrBlank()) return@LaunchedEffect
+        if (unappliedLoad !is UnappliedPaymentsLoad.Loaded) return@LaunchedEffect
+        noticeConsumed = true
+        paymentToOpenFromNotice(unappliedLoad, decidePaymentId)?.let {
+            decisionError = null
+            deciding = it
+        }
+    }
+    fun saveDecision(decision: UnappliedDecision) {
+        if (decisionSaving) return
+        decisionSaving = true
+        decisionError = null
+        scope.launch {
+            when (val r = submitUnappliedDecision(client, decision, decisionKeys)) {
+                is WriteResult.Ok -> {
+                    deciding = null
+                    decisionNote = decisionResultText(r.value)
+                    unappliedGeneration += 1
+                    creditGeneration += 1
+                }
+                // The key is kept, so pressing Save decision again retries this decision.
+                is WriteResult.Err -> decisionError = r.message
+            }
+            decisionSaving = false
+        }
+    }
+
     ScreenScaffold {
         inviteToast?.let { (msg, kind) ->
             StatusToast(visible = true, message = msg, kind = kind, onDismiss = { inviteToast = null })
@@ -245,6 +298,19 @@ fun KinfolkProfileScreen(
             onInvalid = { giveCreditError = it },
             onClearError = { giveCreditError = null },
             onSubmit = { entry -> giveCredit(entry) },
+        )
+        DecideUnappliedPaymentDialog(
+            payment = deciding,
+            openInvoices = (unappliedLoad as? UnappliedPaymentsLoad.Loaded)?.list?.openInvoices.orEmpty(),
+            saving = decisionSaving,
+            error = decisionError,
+            onDismiss = {
+                if (decideDialogCanDismiss(decisionSaving)) {
+                    deciding = null
+                    decisionError = null
+                }
+            },
+            onSubmit = { decision -> saveDecision(decision) },
         )
         if (kinfolk == null) {
             val loadError = (state as? FirestoreResult.Error)?.message
@@ -533,6 +599,19 @@ fun KinfolkProfileScreen(
                 ) {
                     if (credit == null) AccountCreditLoading()
                     else AccountCreditBody(credit, onRetry = { creditGeneration += 1 })
+                    // #1003: payments needing a decision, inside the same panel.
+                    UnappliedPaymentsSection(
+                        load = unappliedLoad,
+                        openedFromNotice = decidePaymentId != null,
+                        resultNote = decisionNote,
+                        enabled = !decisionSaving,
+                        onRetry = { unappliedGeneration += 1 },
+                        onDecide = { p ->
+                            decisionError = null
+                            decisionNote = null
+                            deciding = p
+                        },
+                    )
                 }
             }
             Spacer(Modifier.height(18.dp))

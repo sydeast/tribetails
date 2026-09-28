@@ -350,6 +350,10 @@ interface DirectoryProps {
    * profile the operator has already left.
    */
   onProfileClose?: () => void;
+  /** #1003: the profile was opened from the `invoice.payment.unapplied` notice. */
+  openUnappliedPayments?: boolean;
+  /** #1003: that notice's payment, whose Decide dialog opens on arrival. */
+  unappliedPaymentId?: string;
 }
 
 /**
@@ -371,6 +375,8 @@ export function Directory({
   onSelectKin,
   initialKinfolkId,
   onProfileClose,
+  openUnappliedPayments = false,
+  unappliedPaymentId = '',
 }: DirectoryProps) {
   const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
   const kinState = useCollection<Kin>(KIN_QUERY);
@@ -532,6 +538,8 @@ export function Directory({
         // Told apart from "this household has no pets", so the profile does not
         // stamp "0 kin" on a read that has not landed.
         kinPending={kinPending}
+        openUnappliedPayments={openUnappliedPayments}
+        unappliedPaymentId={unappliedPaymentId}
         // #907 review item 1(b): an Add the server answered `duplicateOf` for this
         // household opens it on its editor with the typing filled in, unsaved.
         duplicateAdd={readDuplicateAddKinfolk(operatorUid, openKinfolkId)}

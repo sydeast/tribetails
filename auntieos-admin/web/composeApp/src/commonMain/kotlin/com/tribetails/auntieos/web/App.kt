@@ -200,6 +200,9 @@ private fun SignedInApp(
     // detailType = kinId (opens the kin under that kinfolk). Null = list view.
     var directoryKinfolkId by remember { mutableStateOf(if (initialRoute.dest == Destination.Directory) initialRoute.detailId else null) }
     var directoryKinId by remember { mutableStateOf(if (initialRoute.dest == Destination.Directory) initialRoute.detailType else null) }
+    // #1003: the payment an `invoice.payment.unapplied` notice points at. Not in
+    // the hash; set only by that notice and cleared by every other navigation.
+    var directoryDecidePaymentId by remember { mutableStateOf<String?>(null) }
     // null = list view, "" = create-new editor, "<id>" = edit-existing editor
     var editingFormSchemaId by remember { mutableStateOf(if (initialRoute.dest == Destination.FormSchemas) initialRoute.detailId else null) }
     // Active tab on the merged Templates screen (Decision 2). Seeded from the route's
@@ -336,6 +339,7 @@ private fun SignedInApp(
             mediaEntityType     = if (r.dest == Destination.MediaGallery) r.detailType else null
             directoryKinfolkId  = if (r.dest == Destination.Directory) r.detailId else null
             directoryKinId      = if (r.dest == Destination.Directory) r.detailType else null
+            directoryDecidePaymentId = null
             if (r.dest == Destination.Templates) templatesTab = templatesTabFromSlug(r.detailId)
         }
     }
@@ -356,6 +360,7 @@ private fun SignedInApp(
             editingFormSchemaId = null
             directoryKinfolkId = null
             directoryKinId = null
+            directoryDecidePaymentId = null
             current = it
         },
         onSignOut = { signOutScope.launch { auth.signOut() } },
@@ -384,6 +389,7 @@ private fun SignedInApp(
             editingFormSchemaId = null
             directoryKinfolkId = if (r.dest == Destination.Directory) r.detailId else null
             directoryKinId = if (r.dest == Destination.Directory) r.detailType else null
+            directoryDecidePaymentId = null
             current = r.dest
             // Clear the query so the dropdown closes after navigation.
             searchQuery = ""
@@ -400,6 +406,7 @@ private fun SignedInApp(
             Destination.Directory   -> DirectoryScreen(
                 initialKinfolkId = directoryKinfolkId,
                 initialKinId     = directoryKinId,
+                initialDecidePaymentId = directoryDecidePaymentId,
                 // K1: recent-tale rows on a kinfolk profile open the tale (cross-destination).
                 onOpenTale       = { sessId -> reportSessionId = sessId; current = Destination.KinTales },
             )
@@ -484,6 +491,7 @@ private fun SignedInApp(
                     reportSessionId = null
                     directoryKinfolkId = null
                     directoryKinId = null
+                    directoryDecidePaymentId = null
                     when (targetType.trim().lowercase()) {
                         "invoice" -> { selectedInvoiceId = targetId; current = Destination.Invoices }
                         "kintale" -> { reportSessionId = targetId; current = Destination.KinTales }
@@ -500,8 +508,18 @@ private fun SignedInApp(
                     reportSessionId = null
                     directoryKinfolkId = null
                     directoryKinId = null
+                    directoryDecidePaymentId = null
                     composeQuoteForKinfolkId = kinfolkId
                     current = Destination.Invoices
+                },
+                onOpenUnappliedPayment = { kinfolkId, paymentId ->
+                    // #1003: the household profile, with that payment's Decide dialog.
+                    selectedInvoiceId = null
+                    reportSessionId = null
+                    directoryKinId = null
+                    directoryKinfolkId = kinfolkId
+                    directoryDecidePaymentId = paymentId ?: ""
+                    current = Destination.Directory
                 },
             )
             Destination.Templates -> com.tribetails.auntieos.web.screens.admin.TemplatesScreen(

@@ -1,6 +1,8 @@
 package com.tribetails.auntieos.web.screens.notifications
 
 import com.tribetails.auntieos.web.data.NotificationEntry
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 
 /**
  * Pure (unit-tested) logic for the Notifications screen quick actions, kept out of
@@ -66,7 +68,9 @@ fun applicableActions(entry: NotificationEntry): List<NotificationAction> {
 
     val hasTarget = entry.targetId.isNotBlank() &&
         entry.targetType.trim().lowercase() in NAVIGABLE_TARGET_TYPES
-    if (hasTarget) actions += NotificationAction.OpenTarget
+    if (hasTarget || notificationOpenRoute(entry) is NotificationOpenRoute.UnappliedPayment) {
+        actions += NotificationAction.OpenTarget
+    }
 
     // A kinfolk-targeted notification can spawn a quote for that household
     // (targetId is the kinfolkId); other target types have no kinfolk to seed.
@@ -81,4 +85,38 @@ fun applicableActions(entry: NotificationEntry): List<NotificationAction> {
 
     actions += NotificationAction.Archive
     return actions
+}
+
+/** #1003: the admin notice for a card payment that could not be applied. */
+const val UNAPPLIED_PAYMENT_NOTICE_KEY = "invoice.payment.unapplied"
+
+/** Where "open linked item" goes for one notification. */
+sealed class NotificationOpenRoute {
+    /** The default: by the dispatcher's targetType / targetId. */
+    data class Target(val targetType: String, val targetId: String) : NotificationOpenRoute()
+
+    /**
+     * #1003: the household profile, with "Payments needing a decision" showing
+     * and [paymentId]'s Decide dialog open when it is still waiting.
+     */
+    data class UnappliedPayment(val kinfolkId: String, val paymentId: String?) : NotificationOpenRoute()
+}
+
+private fun NotificationEntry.dataString(key: String): String =
+    (data?.get(key) as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+
+/**
+ * The route for [entry]. Only `invoice.payment.unapplied` with a kinfolkId in
+ * its data is overridden (its server targetType is `invoice`, but the decision
+ * lives on the household); the notice's `stripeEventId` IS the paymentId. Every
+ * other key keeps the targetType / targetId route. Pure; unit-tested.
+ */
+fun notificationOpenRoute(entry: NotificationEntry): NotificationOpenRoute {
+    if (entry.key.trim() == UNAPPLIED_PAYMENT_NOTICE_KEY) {
+        val kinfolkId = entry.dataString("kinfolkId")
+        if (kinfolkId.isNotEmpty()) {
+            return NotificationOpenRoute.UnappliedPayment(kinfolkId, entry.dataString("stripeEventId").ifEmpty { null })
+        }
+    }
+    return NotificationOpenRoute.Target(entry.targetType, entry.targetId)
 }

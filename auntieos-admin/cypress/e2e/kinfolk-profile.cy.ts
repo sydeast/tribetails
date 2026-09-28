@@ -86,6 +86,11 @@ describe('kinfolk profile', () => {
       statusCode: 200,
       body: { result: { ok: true, kinfolkId: 'e2e-kf-1', accountBalanceCents: 0, credits: [], uses: [] } },
     });
+    // #1003: the card also lists payments needing a decision; none here.
+    cy.intercept('POST', CALLABLE('listUnappliedPayments'), {
+      statusCode: 200,
+      body: { result: { ok: true, kinfolkId: 'e2e-kf-1', payments: [], openInvoices: [] } },
+    });
     cy.signIn();
     cy.visit('/directory/e2e-kf-1');
     cy.get('.kprofile__cols .kprofile__col', { timeout: 8_000 })
