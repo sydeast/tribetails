@@ -1038,12 +1038,16 @@ class EnhancedSchedulingViewModel(
                 targetId         = booking.id,
                 targetCollection = "enhanced_bookings",
             )
-            // 1025: the approval itself has landed at this point (the write
+            // 1025/1030: the approval itself has landed at this point (the write
             // above did not fail). A session-creation problem below gets its
             // own distinct "Booking approved, but..." error; this confirms the
-            // approval whether or not that secondary bridge succeeds.
+            // approval whether or not that secondary bridge succeeds. Wording
+            // matches admin web's BookingActions.tsx ActionDef.confirmedToast
+            // exactly (#1030): this used to say "Approved {name}.", drifted
+            // from web's own sentence, the same fix #1009 made for kinfolk
+            // saves.
             _state.value = _state.value.copy(
-                bookingActionMessage = "Approved ${booking.kinfolkName.ifBlank { booking.kinfolkId }}.",
+                bookingActionMessage = "${booking.kinfolkName.ifBlank { booking.kinfolkId }}'s request is now Scheduled.",
             )
 
             // Bridge: create a KinCareSession so the visit appears on the Home screen,
@@ -1158,11 +1162,24 @@ class EnhancedSchedulingViewModel(
                 targetId         = booking.id,
                 targetCollection = "enhanced_bookings",
             )
-            // 1025: same reasoning as approveBooking above -- the cancellation
-            // itself has landed here, whatever the secondary session bridge
-            // below does.
+            // 1025/1030: same reasoning as approveBooking above -- the
+            // cancellation itself has landed here, whatever the secondary
+            // session bridge below does. `cancelBooking` backs BOTH the
+            // Pending row's "Reject" button (booking.status == DRAFT, a
+            // request never scheduled) and the Scheduled row's "Cancel"
+            // button (booking.status == ACCEPTED, a real visit taken off the
+            // calendar); `booking` here is still the PRE-transition value, so
+            // its status tells us which one this was. Wording matches admin
+            // web's BookingActions.tsx ActionDef.confirmedToast exactly
+            // (#1030): this used to say "Cancelled {name}." for both cases,
+            // drifted from web's own two distinct sentences (REJECT vs
+            // CANCEL), the same fix #1009 made for kinfolk saves.
+            val who = booking.kinfolkName.ifBlank { booking.kinfolkId }
             _state.value = _state.value.copy(
-                bookingActionMessage = "Cancelled ${booking.kinfolkName.ifBlank { booking.kinfolkId }}.",
+                bookingActionMessage = if (booking.status == BookingStatus.DRAFT)
+                    "$who's request is cancelled."
+                else
+                    "$who's visit is cancelled.",
             )
 
             bridgeCancellationToSession(booking, reason).onFailure { e ->

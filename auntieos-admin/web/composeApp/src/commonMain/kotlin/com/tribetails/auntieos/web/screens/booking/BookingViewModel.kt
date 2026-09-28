@@ -33,25 +33,60 @@ class BookingViewModel(
     var seriesActionBatchId: String? by mutableStateOf(null)
         private set
 
+    /**
+     * 1030: [approveSeries]/[cancelSeries] used to report nothing on a clean
+     * success -- only [errorMessage] (a failure or a partial failure) ever
+     * changed, so the operator saw the envelope disappear from "Incoming
+     * requests" with nothing naming what had happened. Confirms the way the
+     * single-row actions ([BookingScreen]'s own `actionNotice`) already do.
+     *
+     * Desktop's [com.tribetails.auntieos.web.data.ManageSeriesResult] carries
+     * only affectedVisits/failedVisits (no householdNotified/newlyConfirmed
+     * the way Android's richer series result does), so this reuses the exact
+     * single-booking sentences rather than inventing a household-aware one
+     * the data here cannot honestly back.
+     */
+    var seriesActionMessage: String? by mutableStateOf(null)
+        private set
+
+    fun clearSeriesActionMessage() { seriesActionMessage = null }
+
     /** Approve/cancel a whole incoming series. The backend creates the linked
      *  sessions on APPROVE, so the client just calls + the stream refreshes. */
-    suspend fun approveSeries(kinfolkId: String, batchId: String) = runSeries(BookingSeriesAction.APPROVE, kinfolkId, batchId)
-    suspend fun cancelSeries(kinfolkId: String, batchId: String) = runSeries(BookingSeriesAction.CANCEL, kinfolkId, batchId)
+    suspend fun approveSeries(kinfolkId: String, batchId: String, kinfolkName: String = "") =
+        runSeries(BookingSeriesAction.APPROVE, kinfolkId, batchId, kinfolkName)
+    suspend fun cancelSeries(kinfolkId: String, batchId: String, kinfolkName: String = "") =
+        runSeries(BookingSeriesAction.CANCEL, kinfolkId, batchId, kinfolkName)
 
-    private suspend fun runSeries(action: String, kinfolkId: String, batchId: String) {
+    private suspend fun runSeries(action: String, kinfolkId: String, batchId: String, kinfolkName: String = "") {
         if (seriesActionBatchId != null) return
         seriesActionBatchId = batchId
+        // Cleared on every call, not just on a landed success: a stale
+        // confirmation from a prior series must not linger while this one is
+        // still in flight or ends in an error.
+        seriesActionMessage = null
         val verb = if (action == BookingSeriesAction.APPROVE) "Approve" else "Cancel"
+        val who = kinfolkName.ifBlank { kinfolkId }
         when (val r = dataSource.manageBookingSeries(action, kinfolkId, batchId)) {
             is WriteResult.Ok -> {
                 val res = r.value
                 // FAIL LOUD on a partial failure: the backend returns ok with
                 // failedVisits > 0 and leaves the envelope 'requested'. Reporting
                 // that as a clean success would hide the stuck visits.
-                errorMessage = if (res.failedVisits > 0) {
-                    "$verb series $batchId: ${res.affectedVisits} succeeded, ${res.failedVisits} failed and stay pending. Retry after resolving."
+                if (res.failedVisits > 0) {
+                    errorMessage = "$verb series $batchId: ${res.affectedVisits} succeeded, ${res.failedVisits} failed and stay pending. Retry after resolving."
                 } else {
-                    null
+                    errorMessage = null
+                    // 1030: cancelSeries is fed only from the incoming-requests
+                    // stream (requested visits), so a CANCEL here is always a
+                    // DECLINE of a request, never a cancellation of an already-
+                    // scheduled visit -- the same constraint Android's own
+                    // EnhancedSchedulingViewModel.householdLine documents. That
+                    // is the REJECT sentence, not the CANCEL one.
+                    seriesActionMessage = if (action == BookingSeriesAction.APPROVE)
+                        "$who's request is now Scheduled."
+                    else
+                        "$who's request is cancelled."
                 }
                 audit(
                     if (action == BookingSeriesAction.APPROVE) "APPROVE_BOOKING_SERIES" else "CANCEL_BOOKING_SERIES",
