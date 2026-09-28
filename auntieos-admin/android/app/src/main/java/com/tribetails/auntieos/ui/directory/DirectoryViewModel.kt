@@ -222,6 +222,11 @@ data class AddKinfolkUiState(
     val internalNotes: String = "",
     val isSaving: Boolean = false,
     val isSuccess: Boolean = false,
+    // #1009: set alongside [isSuccess]. `AddKinfolkScreen` shows it on
+    // `SaveConfirmationHost` (survives the `onSaved()` pop that follows in the
+    // same effect) rather than anywhere on this screen, which is gone by the
+    // time a message here would render.
+    val successMessage: String? = null,
     val error: String? = null,
     // #829: the household saved by a prior submit, once creation succeeded but
     // the contact save failed. A retry with this set must save contacts
@@ -382,6 +387,12 @@ data class EditKinfolkUiState(
     val isSaving: Boolean = false,
     val isSuccess: Boolean = false,
     val isDeleted: Boolean = false,
+    // #1009: set alongside [isSuccess] (a save) or [isDeleted] (an archive),
+    // and also on its own for an unarchive, which does not navigate at all.
+    // `EditKinfolkScreen` shows it on `SaveConfirmationHost` rather than
+    // anywhere on this screen: the save/archive paths pop this screen in the
+    // same effect that reads it, so a message rendered here would never be seen.
+    val successMessage: String? = null,
     val error: String? = null,
     /** #907 review item 1(b): shown when this household opened from an Add answered `duplicateOf`. */
     val duplicateAddNotice: String? = null,
@@ -406,6 +417,8 @@ data class AddKinUiState(
     val pottyRoutine: String = "",
     val isSaving: Boolean = false,
     val isSuccess: Boolean = false,
+    // #1009: set alongside [isSuccess]; see [AddKinfolkUiState.successMessage].
+    val successMessage: String? = null,
     val error: String? = null
 )
 
@@ -452,6 +465,10 @@ data class EditKinUiState(
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
     val isSuccess: Boolean = false,
+    // #1009: set alongside [isSuccess], whether the success came from a save
+    // (saveKinChanges) or an archive/restore (setKinArchived) - both flip the
+    // same flag on this screen, so both need their own wording here.
+    val successMessage: String? = null,
     val error: String? = null
 )
 
@@ -1014,7 +1031,12 @@ class DirectoryViewModel(
             _addKinfolkState.value = state.copy(isSaving = true, error = null, createdKinfolkId = id)
             repository.saveEmergencyContacts(id, state.emergencyContacts).onSuccess {
                 auditCreatedName?.let { name -> auditCreate(id, "Created kinfolk $name") }
-                _addKinfolkState.value = AddKinfolkUiState(isSuccess = true)
+                // #1009: no web wording exists for Add (`AddKinfolkDialog.tsx` has no
+                // toast), so this follows the wording web's own Edit save uses
+                // ("Saved {name}.") rather than inventing an unrelated voice.
+                val displayName = auditCreatedName
+                    ?: "${state.firstName} ${state.lastName}".trim().ifBlank { "Kinfolk" }
+                _addKinfolkState.value = AddKinfolkUiState(isSuccess = true, successMessage = "Added $displayName.")
                 loadDirectory()
             }.onFailure { e ->
                 // #907 review item 2: deleted while it waited on its contact. Retrying
@@ -1055,6 +1077,11 @@ class DirectoryViewModel(
 
     fun clearAddKinfolkForm() {
         _addKinfolkState.value = AddKinfolkUiState()
+    }
+
+    /** #1009: consumes [AddKinfolkUiState.successMessage] once the screen has handed it to the confirmation host. */
+    fun clearAddKinfolkSuccessMessage() {
+        _addKinfolkState.value = _addKinfolkState.value.copy(successMessage = null)
     }
 
     /**
@@ -1445,7 +1472,17 @@ class DirectoryViewModel(
         } else null
 
         if (changes.isEmpty() && !saveContacts) {
-            _editKinfolkState.value = state.copy(isSaving = false, isSuccess = true, error = null, emergencyContactsError = null)
+            // #1009: web's exact wording (`KinfolkEdit.tsx`'s `showToast(\`Saved
+            // ${displayName}.\`)`). "Saved" and "nothing to save" are the same
+            // outcome to the operator (see this function's own doc comment), so
+            // this no-op branch confirms exactly like the real-write branch below.
+            _editKinfolkState.value = state.copy(
+                isSaving = false,
+                isSuccess = true,
+                error = null,
+                emergencyContactsError = null,
+                successMessage = "Saved ${updatedKinfolk.displayName}.",
+            )
             return
         }
         if (changes.isEmpty() && contactProblem != null) {
@@ -1504,7 +1541,13 @@ class DirectoryViewModel(
                 }
             }
 
-            _editKinfolkState.value = state.copy(isSaving = false, isSuccess = true, emergencyContactsBaseline = state.emergencyContacts)
+            _editKinfolkState.value = state.copy(
+                isSaving = false,
+                isSuccess = true,
+                emergencyContactsBaseline = state.emergencyContacts,
+                // #1009: web's exact wording, `KinfolkEdit.tsx`'s `showToast(\`Saved ${displayName}.\`)`.
+                successMessage = "Saved ${updatedKinfolk.displayName}.",
+            )
             loadDirectory()
         }
     }
@@ -1529,7 +1572,13 @@ class DirectoryViewModel(
                     targetId         = kinfolkId,
                     targetCollection = "kinfolk",
                 )
-                _editKinfolkState.value = _editKinfolkState.value.copy(isDeleted = true)
+                // #1009: web's exact wording, `KinfolkEdit.tsx`'s
+                // `showToast(\`${displayName} is archived.\`)`.
+                val displayName = loadedKinfolk?.displayName ?: "Unnamed Kinfolk"
+                _editKinfolkState.value = _editKinfolkState.value.copy(
+                    isDeleted = true,
+                    successMessage = "$displayName is archived.",
+                )
                 loadDirectory()
             }.onFailure { error ->
                 AuntieLog.e("Failed to archive kinfolk", error)
@@ -1555,7 +1604,17 @@ class DirectoryViewModel(
                     targetId         = kinfolkId,
                     targetCollection = "kinfolk",
                 )
-                _editKinfolkState.value = _editKinfolkState.value.copy(status = "active")
+                // #1009: web's exact wording, `KinfolkEdit.tsx`'s
+                // `showToast(\`${displayName} is active again.\`)`. This save does
+                // not navigate anywhere - the operator stays on this editor - so
+                // unlike every other confirmation here, nothing else prompts the
+                // host; the screen's own successMessage effect is the only thing
+                // that shows it.
+                val displayName = loadedKinfolk?.displayName ?: "Unnamed Kinfolk"
+                _editKinfolkState.value = _editKinfolkState.value.copy(
+                    status = "active",
+                    successMessage = "$displayName is active again.",
+                )
                 loadDirectory()
             }.onFailure { error ->
                 AuntieLog.e("Failed to unarchive kinfolk", error)
@@ -1568,6 +1627,11 @@ class DirectoryViewModel(
 
     fun clearEditKinfolkForm() {
         _editKinfolkState.value = EditKinfolkUiState()
+    }
+
+    /** #1009: consumes [EditKinfolkUiState.successMessage] once the screen has handed it to the confirmation host. */
+    fun clearEditKinfolkSuccessMessage() {
+        _editKinfolkState.value = _editKinfolkState.value.copy(successMessage = null)
     }
 
     /**
@@ -1708,7 +1772,10 @@ class DirectoryViewModel(
                     targetId         = saved.id,
                     targetCollection = "kin",
                 )
-                _addKinState.value = AddKinUiState(isSuccess = true)
+                // #1009: no web wording exists for Add Kin either (`KinView.tsx`
+                // shows no toast for it), so this follows the same "Added X."
+                // voice chosen for Add Kinfolk above, for the same reason.
+                _addKinState.value = AddKinUiState(isSuccess = true, successMessage = "Added ${newKin.name}.")
                 loadProfile(state.kinfolkId)
             }.onFailure { error ->
                 AuntieLog.e("Failed to save kin", error)
@@ -1722,6 +1789,11 @@ class DirectoryViewModel(
 
     fun clearAddKinForm() {
         _addKinState.value = AddKinUiState()
+    }
+
+    /** #1009: consumes [AddKinUiState.successMessage] once the screen has handed it to the confirmation host. */
+    fun clearAddKinSuccessMessage() {
+        _addKinState.value = _addKinState.value.copy(successMessage = null)
     }
 
     // --- Edit Kin Methods ---
@@ -1861,7 +1933,15 @@ class DirectoryViewModel(
         val updatedKin = buildKinFromEditState(state)
         val changes = kinFieldChanges(baseline, updatedKin)
         if (changes.isEmpty()) {
-            _editKinState.value = state.copy(isSaving = false, isSuccess = true, error = null)
+            // #1009: no web wording for Kin edit either (`KinEdit.tsx`'s
+            // `handleSave` calls `onDone()` with no toast) - "Saved X." mirrors
+            // the kinfolk editor's own wording for the identical outcome.
+            _editKinState.value = state.copy(
+                isSaving = false,
+                isSuccess = true,
+                error = null,
+                successMessage = "Saved ${updatedKin.name}.",
+            )
             return
         }
 
@@ -1880,7 +1960,7 @@ class DirectoryViewModel(
                     targetId         = updatedKin.id,
                     targetCollection = "kin",
                 )
-                _editKinState.value = EditKinUiState(isSuccess = true)
+                _editKinState.value = EditKinUiState(isSuccess = true, successMessage = "Saved ${updatedKin.name}.")
                 loadProfile(state.kinfolkId)
             }.onFailure { error ->
                 AuntieLog.e("Failed to update kin", error)
@@ -1918,8 +1998,14 @@ class DirectoryViewModel(
             return
         }
         val next = if (archived) "archived" else "active"
+        // #1009: web's exact wording for kinfolk ("X is archived." / "X is
+        // active again.") reused here - `KinEdit.tsx`'s own archive control
+        // (`handleArchiveToggle`) has no toast to match, so this follows the
+        // sibling editor's voice for the identical action rather than inventing
+        // a third one.
+        val toggleMessage = if (archived) "${baseline.name} is archived." else "${baseline.name} is active again."
         if (baseline.status == next) {
-            _editKinState.value = state.copy(isSaving = false, isSuccess = true, error = null)
+            _editKinState.value = state.copy(isSaving = false, isSuccess = true, error = null, successMessage = toggleMessage)
             return
         }
         viewModelScope.launch {
@@ -1935,7 +2021,7 @@ class DirectoryViewModel(
                         targetId         = state.kinId,
                         targetCollection = "kin",
                     )
-                    _editKinState.value = EditKinUiState(isSuccess = true)
+                    _editKinState.value = EditKinUiState(isSuccess = true, successMessage = toggleMessage)
                     loadProfile(state.kinfolkId)
                 }
                 .onFailure { error ->
@@ -1950,6 +2036,11 @@ class DirectoryViewModel(
 
     fun clearEditKinForm() {
         _editKinState.value = EditKinUiState()
+    }
+
+    /** #1009: consumes [EditKinUiState.successMessage] once the screen has handed it to the confirmation host. */
+    fun clearEditKinSuccessMessage() {
+        _editKinState.value = _editKinState.value.copy(successMessage = null)
     }
 
     /**

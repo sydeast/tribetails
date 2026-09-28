@@ -699,7 +699,15 @@ private fun AuthenticatedNavHost(
     val sessionHealth by SessionHealthMonitor.state.collectAsState()
     val shellScope = rememberCoroutineScope()
 
-    CompositionLocalProvider(LocalFeatureFlags provides flags) {
+    // #1009: held here, above the NavHost below, so a save's confirmation
+    // survives the SAME pop that raised it. See
+    // `ui/components/SaveConfirmationHost.kt`'s doc comment for the full story.
+    val saveConfirmation = remember { com.tribetails.auntieos.ui.components.SaveConfirmationHostState() }
+
+    CompositionLocalProvider(
+        LocalFeatureFlags provides flags,
+        com.tribetails.auntieos.ui.components.LocalSaveConfirmation provides saveConfirmation,
+    ) {
     Box(modifier = Modifier.fillMaxSize().background(AuntieTheme.colors.background)) {
     Column(
         modifier = Modifier.fillMaxSize()
@@ -732,6 +740,13 @@ private fun AuthenticatedNavHost(
             TestModeBanner(testTribeId = testMode.testTribeId)
         }
         voiceRegistrationNotice(voiceState)?.let { VoiceRegistrationBanner(notice = it) }
+        // #1009: same shell level as the banners above, for the same reason -
+        // a save's confirmation belongs to the nav host, not to whichever
+        // screen happened to trigger it, and needs to still be standing after
+        // that screen pops.
+        Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+            com.tribetails.auntieos.ui.components.SaveConfirmationHost(state = saveConfirmation)
+        }
         NavHost(
             navController    = navController,
             startDestination = startRoute,

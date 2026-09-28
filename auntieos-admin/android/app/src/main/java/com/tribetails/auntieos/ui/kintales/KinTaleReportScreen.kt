@@ -77,6 +77,7 @@ import com.tribetails.auntieos.ui.components.DenScreenHeading
 import com.tribetails.auntieos.ui.components.DynamicFormFields
 import com.tribetails.auntieos.ui.components.EmptyHint
 import com.tribetails.auntieos.ui.components.GhostButton
+import com.tribetails.auntieos.ui.components.LocalSaveConfirmation
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.components.RouteMap
 import com.tribetails.auntieos.ui.components.ServicePill
@@ -114,6 +115,9 @@ fun KinTaleReportScreen(
     val state by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     val flags = LocalFeatureFlags.current
+    // #1009: read once here, at the top of the composable - see
+    // `AddKinfolkScreen`'s identical comment for why.
+    val confirmation = LocalSaveConfirmation.current
 
     LaunchedEffect(sessionId, existingReportId) {
         viewModel.load(sessionId, existingReportId)
@@ -125,8 +129,17 @@ fun KinTaleReportScreen(
         if (uri != null) viewModel.addMedia(context, uri)
     }
 
+    // #1009: same gap as the directory screens (a flag flips, this effect pops
+    // the screen, and there was no message to lose to that pop because none
+    // existed). No web wording exists for this either - `KinTaleCompose.tsx`'s
+    // own `handleConfirmSend` calls `onClose()` with no toast - so this
+    // reuses desktop's already-established wording for the identical send
+    // (#1007's `KinTaleComposeScreen.kt`), rather than inventing a third string.
     LaunchedEffect(state.sentSuccessfully) {
-        if (state.sentSuccessfully) onBack()
+        if (state.sentSuccessfully) {
+            confirmation.show("KinTale sent. Kinfolk will hear from you soon.")
+            onBack()
+        }
     }
 
     val isSent = state.report.status == ReportStatus.SENT.name
