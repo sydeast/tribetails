@@ -47,3 +47,52 @@ class VetClinicSuggestionsTest {
         assertEquals(emptyList(), vetClinicSuggestions("zzzzz", catalog))
     }
 }
+
+/**
+ * #1015: a retired clinic stops being OFFERED by the picker, matching admin
+ * web (`selectableClinics`) and admin Android (`VetClinicSearch.kt`). A
+ * household already on one keeps it as the current value, labelled retired
+ * (`retiredVetClinicMatch`), rather than losing it silently.
+ */
+class VetClinicSuggestionsArchivedTest {
+
+    private val live = VetClinic(name = "Riverside Animal Hospital")
+    private val retired = VetClinic(name = "Riverside Closed Branch", archived = true)
+
+    @Test fun archivedClinicsAreNotOffered() {
+        val hits = vetClinicSuggestions("riverside", listOf(live, retired)).map { it.name }
+        assertEquals(listOf("Riverside Animal Hospital"), hits)
+    }
+
+    @Test fun anAllArchivedCatalogSuggestsNothing() {
+        assertEquals(emptyList(), vetClinicSuggestions("riverside", listOf(retired)))
+    }
+
+    @Test fun archivedClinicIsExcludedRegardlessOfMatchKind() {
+        // Also covers the prefix branch, not just contains.
+        assertEquals(emptyList(), vetClinicSuggestions("riverside closed", listOf(retired)))
+    }
+
+    @Test fun retiredVetClinicMatch_findsTheArchivedClinicByName() {
+        val match = retiredVetClinicMatch("Riverside Closed Branch", listOf(live, retired))
+        assertEquals(retired, match)
+    }
+
+    @Test fun retiredVetClinicMatch_isCaseInsensitiveAndTrimmed() {
+        val match = retiredVetClinicMatch("  riverside closed branch  ", listOf(retired))
+        assertEquals(retired, match)
+    }
+
+    @Test fun retiredVetClinicMatch_isNullForALiveClinic() {
+        assertEquals(null, retiredVetClinicMatch("Riverside Animal Hospital", listOf(live, retired)))
+    }
+
+    @Test fun retiredVetClinicMatch_isNullWhenNothingMatchesByName() {
+        assertEquals(null, retiredVetClinicMatch("Somewhere Else", listOf(live, retired)))
+    }
+
+    @Test fun retiredVetClinicMatch_isNullForABlankName() {
+        assertEquals(null, retiredVetClinicMatch("", listOf(retired)))
+        assertEquals(null, retiredVetClinicMatch("   ", listOf(retired)))
+    }
+}
