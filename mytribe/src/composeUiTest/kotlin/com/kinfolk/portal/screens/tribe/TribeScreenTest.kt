@@ -913,6 +913,11 @@ class TribeScreenTest {
         // The people list is read again, so the row can say Invited.
         assertEquals(2, fake.calls.count { it.first == "listSecondaryKinfolk" })
         assertTrue(onAllNodesWithText("Giving portal access to Sam Lee").fetchSemanticsNodes().isEmpty())
+        // #1018 item 3: addSecondaryContact sends no email, so the confirmation
+        // is the claim link, never the old "Invite sent."
+        onNodeWithText("No email goes out", substring = true).performScrollTo().assertIsDisplayed()
+        onNodeWithText("/claim?invite=i1", substring = true).performScrollTo().assertIsDisplayed()
+        assertTrue(onAllNodesWithText("Invite sent.").fetchSemanticsNodes().isEmpty())
     }
     @Test
     fun secondaryKinfolk_anInviteWithoutGivePortalAccessCarriesNoPerson() = runComposeUiTest {

@@ -78,6 +78,18 @@ function parseSegment(s: string, prefix: string): string | null {
   }
   return null;
 }
+
+/**
+ * The claim link for an invite just minted by `addSecondaryContact` (#1018,
+ * item 3). That callable sends no email of its own — `onInviteRequestCreate`
+ * is an explicit no-op — so this is the one fact that makes "an invite was
+ * created" into something the primary can actually act on: the link
+ * `parseInviteId` above reads back, built off the origin the primary is
+ * standing on rather than a hardcoded host.
+ */
+export function buildClaimUrl(origin: string, inviteId: string): string {
+  return `${origin}/claim?invite=${encodeURIComponent(inviteId)}`;
+}
 /**
  * O-35: hard client-side bound for the auto-accept call. The callable SDK
  * acquires its context (auth/App Check/messaging tokens) BEFORE its own

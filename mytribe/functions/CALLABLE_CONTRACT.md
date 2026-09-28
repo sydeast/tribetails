@@ -1430,6 +1430,11 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
 - SOFT delete: sets the member `status: 'SUSPENDED'`, removes `familyId` from
   `clients/{targetUid}.kinfolkIds`, and revokes the user's refresh tokens. The
   member doc is retained. Audits `MEMBERSHIP_MEMBER_REMOVED` at severity `warn`.
+- #1018 item 1: if a `families/{familyId}/secondaryKinfolk` record's
+  `memberUid` matches `targetUid`, it goes back to `access: 'NONE'` with
+  `memberUid` and `inviteId` cleared. The person stays on the household; only
+  their portal access is undone. A primary or a person who was never linked to
+  this uid has no matching record, which is not an error.
 
 ### listMembers (pre-existing, admin + household primary; documented here 2026-08-01)
 - req `{ kinfolkId?: string }`
@@ -1456,7 +1461,8 @@ Operator ruling 2026-09-27 (Q3): "A Secondary kinfolk can be added to the househ
 - `removeSecondaryKinfolk` req `{ kinfolkId?: string, personId: string }` (strict) res `{ ok: true }`. Deletes a NONE or INVITED record. ACTIVE is refused with `failed-precondition` "This secondary kinfolk has portal access. Remove them from the portal first." (an INVITED record is deletable so a revoked or expired invite never strands it).
 - PORTAL ACCESS: `addSecondaryContact` takes an optional `personId`. The invite carries it and the record moves to `INVITED` with `inviteId`; a deduped live invite is stamped with it too. Refused: `not-found` for a missing record, `failed-precondition` "This secondary kinfolk already has portal access." `acceptInvite` then sets the record to `ACTIVE` with `memberUid` in the same transaction (skipped if the record was deleted).
 - `addSecondaryContact` now refuses every staff caller (owner claim or `AUNTIE_OPERATOR_UIDS`) with `permission-denied` "Only the primary kinfolk can invite a secondary kinfolk to the portal." No admin client called it.
-- Known gap: `removeMember` on an ACTIVE secondary does not return their person record to `NONE`.
+- #1018 item 3: `addSecondaryContact` sends no email (`onInviteRequestCreate` is a no-op) and no client shows the claim link either, so "Invite sent." was never true. Portal web and Android now confirm with the claim link the returned `inviteId` builds (`<origin>/claim?invite=<id>`), since sharing it is the only way the invite reaches anyone.
+- `removeMember` on an ACTIVE secondary returns their person record to `NONE` (memberUid and inviteId cleared); see `removeMember` above (#1018).
 - NEVER a recipient: nothing that sends reads this collection. NEVER logged: name, phone or email.
 ### listHouseholdContacts / saveHouseholdContact / removeHouseholdContact (net-new 2026-09-12, orphaned by #829)
 

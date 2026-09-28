@@ -31,6 +31,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.kinfolk.portal.auth.AuthRepository
 import com.kinfolk.portal.components.GlassCard
+import com.kinfolk.portal.components.InviteCreatedNotice
 import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinField
 import com.kinfolk.portal.components.KinGhostButton
@@ -67,6 +68,9 @@ fun AccountSettingsScreen(
     var loaded by remember { mutableStateOf<Account?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
+    // #1018 item 3: the invite id from a just-created invite, so its claim
+    // link can be shown instead of the old "Invite sent." (no email is sent).
+    var invitedId by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
 
     var showSignOutConfirm by remember { mutableStateOf(false) }
@@ -197,15 +201,16 @@ fun AccountSettingsScreen(
                 onClick = {
                     inviting = true
                     status = null
+                    invitedId = null
                     scope.launch {
                         try {
-                            portalApi.addSecondaryContact(
+                            val inviteId = portalApi.addSecondaryContact(
                                 kinfolkId = kinfolkId,
                                 invitedEmail = accountValues["secondaryEmail"].orEmpty().trim(),
                                 secondaryLabel = accountValues["secondaryRole"].orEmpty().trim().ifBlank { null },
                             )
                             accountValues = accountValues + ("secondaryEmail" to "") + ("secondaryRole" to "")
-                            status = "Invite sent."
+                            invitedId = inviteId
                         } catch (t: Throwable) {
                             status = "Invite failed: ${t.message ?: t}"
                         } finally {
@@ -216,6 +221,9 @@ fun AccountSettingsScreen(
                 enabled = !inviting && accountValues["secondaryEmail"].orEmpty().contains("@"),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
             )
+            invitedId?.let { id ->
+                InviteCreatedNotice(inviteId = id, modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l))
+            }
         } else {
             GlassCard(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),

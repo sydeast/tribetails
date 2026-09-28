@@ -207,6 +207,10 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
   const [removeTarget, setRemoveTarget] = useState<HouseholdMember | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
+  // #1018 item 1: removeMember can move a secondary kinfolk's person record
+  // back to 'NONE' server-side. SecondaryKinfolkList loads once on mount, so
+  // bumping this key is what tells it to refetch after a remove succeeds.
+  const [secondaryKinfolkReloadKey, setSecondaryKinfolkReloadKey] = useState(0);
   // Primary recovery. The choice list is loaded when the dialog opens, never on
   // first paint: it costs an Auth lookup per member and nobody recovers a
   // household by accident.
@@ -348,6 +352,8 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
       showToast(`${memberLabel(target)} is suspended and signed out.`);
       setRemoveTarget(null);
       loadMembers();
+      // A removed SECONDARY's person record may have just gone back to 'NONE'.
+      setSecondaryKinfolkReloadKey((k) => k + 1);
     } catch (err: unknown) {
       setRemoveError(`removeMember failed: ${errText(err, 'The member was not removed.')}`);
     } finally {
@@ -549,7 +555,9 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
         // Q4 (operator, 2026-09-27): "Secondary kinfolk", the ruling's own term.
         title="Secondary kinfolk"
         meta={secondaryMeta}
-        subtitle="Added here with no portal access, or invited to the portal by their primary from MyTribe. Only the primary can invite one. Once they sign in they carry a label and a permission set you can edit here, and KinTales access is locked on by the server."
+        // 2026-09-11 ruling: a tooltip at most, one sentence. DenPanel already
+        // renders this behind the info button, never as copy under the title.
+        subtitle="Added here with no portal access, or invited to the portal by their own primary."
       >
         {members.status === 'loading' && <AsyncLoading what="secondary kinfolk" />}
         {/* One named failure on the page, in the panel above. This one only
@@ -580,7 +588,7 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
           ))}
         {/* 2026-09-27 Q3: secondary kinfolk with no portal account. Added
             here with no invite; portal access only through their primary. */}
-        <SecondaryKinfolkList kinfolkId={kinfolkId} />
+        <SecondaryKinfolkList kinfolkId={kinfolkId} reloadKey={secondaryKinfolkReloadKey} />
 
       </DenPanel>
 

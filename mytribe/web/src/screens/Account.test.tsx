@@ -255,6 +255,41 @@ describe('Account avatar upload', () => {
  * app already linked from Home.tsx:222. A tooltip is not a label; it never
  * appears on touch.
  */
+/**
+ * #1018 item 3: `addSecondaryContact` sends no email of its own
+ * (`onInviteRequestCreate` is a no-op), so "Invite sent." was a lie. The
+ * confirmation now shows the claim link the callable's `inviteId` builds,
+ * since nothing else hands it to the secondary.
+ */
+describe('Account: secondary invite confirmation (#1018 item 3)', () => {
+  it('shows the claim link instead of "Invite sent.", and never claims an email went out', async () => {
+    const user = userEvent.setup();
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.addSecondaryContact).mockResolvedValue({ inviteId: 'inv-1' });
+    const { getByLabelText, getByRole, findByText, queryByText } = await renderAccount();
+
+    await user.type(getByLabelText('Backup Email'), 'sam@example.com');
+    await user.click(getByRole('button', { name: /Send Invite/ }));
+
+    expect(await findByText(/No email goes out/)).toBeInTheDocument();
+    expect(document.body.textContent).toContain('/claim?invite=inv-1');
+    expect(queryByText('Invite sent.')).not.toBeInTheDocument();
+  });
+
+  it('keeps the failure message when the invite is refused, and never shows a claim link for it', async () => {
+    const user = userEvent.setup();
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.addSecondaryContact).mockRejectedValue(new Error('failed-precondition: already invited'));
+    const { getByLabelText, getByRole, findByText, queryByText } = await renderAccount();
+
+    await user.type(getByLabelText('Backup Email'), 'sam@example.com');
+    await user.click(getByRole('button', { name: /Send Invite/ }));
+
+    expect(await findByText(/Invite failed/)).toBeInTheDocument();
+    expect(queryByText(/No email goes out/)).not.toBeInTheDocument();
+  });
+});
+
 describe('Account: Message your Auntie', () => {
   it('is a real link to /messages, not a coming-soon span', async () => {
     const { getByRole, queryByTitle } = await renderAccount();

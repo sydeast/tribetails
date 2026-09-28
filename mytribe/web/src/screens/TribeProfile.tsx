@@ -44,6 +44,7 @@ import { viewOfQuery } from '../lib/queryState';
 import { BusyLabel } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { usePortalMutation } from '../lib/mutationState';
+import { InviteCreatedNotice } from '../components/InviteCreatedNotice';
 
 /**
  * Reads one of the three reserved home-access fields when a homeAccess schema
@@ -1031,7 +1032,7 @@ function InviteKinfolkCard(props: {
           Send Invite
         </MutationLabel>
       </button>
-      {invite.isSuccess && <p className="sub" style={{ color: 'var(--teal)', marginTop: 8 }}>Invite sent.</p>}
+      {invite.isSuccess && invite.data && <InviteCreatedNotice inviteId={invite.data.inviteId} />}
       <OfflineMutationNotice phase={invite.phase} what="this invite" check="your Members list" />
       {invite.phase === 'failed' && <p className="sub" style={{ color: 'var(--coral)', marginTop: 8 }}>Invite failed. Try again.</p>}
     </section>

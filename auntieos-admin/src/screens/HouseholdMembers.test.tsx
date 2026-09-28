@@ -431,6 +431,24 @@ describe('HouseholdMembers NEGATIVE', () => {
   });
 });
 
+describe('HouseholdMembers removal (#1018 item 1)', () => {
+  it('reloads the secondary kinfolk list after a successful removal, since the person record may have just gone back to NONE', async () => {
+    const user = userEvent.setup();
+    api.removeMember.mockResolvedValue({ ok: true });
+    mount();
+
+    expect(await screen.findByText('marcus@example.com')).toBeInTheDocument();
+    expect(api.listSecondaryKinfolk).toHaveBeenCalledTimes(1);
+
+    await user.click(await screen.findByRole('button', { name: 'Remove' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Remove' }));
+
+    await waitFor(() => expect(api.listSecondaryKinfolk).toHaveBeenCalledTimes(2));
+    expect(api.listHouseholdMembers).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('HouseholdMembers ERROR', () => {
   it('reverts an optimistic permission toggle and names the failure', async () => {
     const user = userEvent.setup();

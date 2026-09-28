@@ -469,12 +469,14 @@ describe('seedDemoKinfolk (form schemas)', () => {
     expect(account, 'account schema must be built').toBeDefined();
     expect(account!._demo).toBe(true);
     const sectionTitles = account!.sections.map((s) => s.title);
-    expect(sectionTitles).toEqual(['Profile', 'Secondary Contact', 'Recovery']);
+    // #1018 item 4: renamed to match the operator's Q4 ruling ("Secondary
+    // kinfolk", not "Secondary contact").
+    expect(sectionTitles).toEqual(['Profile', 'Secondary Kinfolk', 'Recovery']);
     const keysBySection = Object.fromEntries(
       account!.sections.map((s) => [s.title, s.fields.map((f) => f.key)]),
     );
     expect(keysBySection.Profile).toEqual(['displayName', 'phone']);
-    expect(keysBySection['Secondary Contact']).toEqual(['secondaryEmail', 'secondaryRole']);
+    expect(keysBySection['Secondary Kinfolk']).toEqual(['secondaryEmail', 'secondaryRole']);
     expect(keysBySection.Recovery).toEqual(['backupEmail', 'backupPhone']);
     // displayName is the one required field the typed save depends on.
     const displayName = account!.sections[0].fields.find((f) => f.key === 'displayName')!;

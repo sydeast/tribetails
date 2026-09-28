@@ -821,7 +821,11 @@ export function buildFormSchemas(): FormSchemaDoc[] {
           ],
         },
         {
-          title: 'Secondary Contact',
+          // #1018 item 4: the demo seed default, renamed to match the
+          // operator's Q4 ruling ("Secondary kinfolk", not "Secondary
+          // contact"). This is only the seed's starting value; the operator
+          // still owns the live form content in Forms.
+          title: 'Secondary Kinfolk',
           description: 'A partner or family member who can step in.',
           fields: [
             { key: 'secondaryEmail', label: 'Email', type: 'email', required: false },

@@ -28,6 +28,7 @@ import '../styles/account.css';
 import { BusyLabel } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { isOfflineError, usePortalMutation } from '../lib/mutationState';
+import { InviteCreatedNotice } from '../components/InviteCreatedNotice';
 
 type Status = { text: string; tone: 'ok' | 'err' };
 
@@ -173,7 +174,9 @@ export function Account() {
   // same invite.
   const invite = usePortalMutation({
     mutationFn: () => addSecondaryContact(backupEmail.trim(), kinfolkId !== undefined ? { kinfolkId } : {}),
-    onSuccess: () => setInviteStatus({ text: 'Invite sent.', tone: 'ok' }),
+    // Clears a stale failure from a previous attempt; the success case renders
+    // from `invite.data` below (the claim link), not from this status line.
+    onMutate: () => setInviteStatus(null),
     onError: (err: unknown) => {
       if (isOfflineError(err)) return;
       setInviteStatus({ text: `Invite failed: ${err instanceof Error ? err.message : 'try again'}`, tone: 'err' });
@@ -438,6 +441,7 @@ export function Account() {
                     </span>
                   )}
                 </div>
+                {invite.isSuccess && invite.data && <InviteCreatedNotice inviteId={invite.data.inviteId} />}
               </div>
             </section>
 

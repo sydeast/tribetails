@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseInviteId, stepForPreview, validateNewPassword } from './claimFlow';
+import { buildClaimUrl, parseInviteId, stepForPreview, validateNewPassword } from './claimFlow';
 
 describe('stepForPreview', () => {
   const valid = { status: 'valid', invitedEmail: 'Kin@Example.com', tribeName: 'The Parkers' } as const;
@@ -82,6 +82,19 @@ describe('parseInviteId', () => {
     expect(parseInviteId({ hash: '', pathname: '/claim', search: '?invite=' })).toBeNull();
   });
 });
+describe('buildClaimUrl (#1018 item 3)', () => {
+  it('builds a ?invite= link off the given origin', () => {
+    expect(buildClaimUrl('https://portal.example.com', 'i1')).toBe('https://portal.example.com/claim?invite=i1');
+  });
+  it('encodes an invite id with characters that would otherwise break the query string', () => {
+    expect(buildClaimUrl('https://portal.example.com', 'a b&c')).toBe('https://portal.example.com/claim?invite=a%20b%26c');
+  });
+  it('round-trips through parseInviteId', () => {
+    const url = new URL(buildClaimUrl('https://portal.example.com', 'i1'));
+    expect(parseInviteId({ hash: '', pathname: url.pathname, search: url.search })).toBe('i1');
+  });
+});
+
 describe('withTimeout (O-35)', () => {
   it('resolves with the value when the promise wins', async () => {
     const { withTimeout } = await import('./claimFlow');
