@@ -884,16 +884,19 @@ const UNGATED_TRIGGERS: Record<string, { trigger: string; source: string }> = {
     source: 'src/admin/inviteKinfolkToPortal.ts',
   },
   'invite.secondary': {
-    trigger: 'A household primary invites a second member.',
-    source: 'src/membership/mintInviteFromPrimary.ts',
+    // #1018 item 3: both mintInviteFromPrimary and the portal's
+    // addSecondaryContact fire this, through the shared sendPrimaryInviteEmails
+    // helper, which is where the literal template id actually lives.
+    trigger: 'A household primary invites a second member, from the admin or from MyTribe.',
+    source: 'src/lib/inviteEmails.ts',
   },
   'invite.auntie-notify': {
-    trigger: 'A household primary invites a second member, and the office is copied.',
-    source: 'src/membership/mintInviteFromPrimary.ts',
+    trigger: 'A household primary invites a second member, from the admin or from MyTribe, and the office is copied.',
+    source: 'src/lib/inviteEmails.ts',
   },
   'invite.primary-receipt': {
-    trigger: 'A household primary invites a second member, and the primary gets a receipt.',
-    source: 'src/membership/mintInviteFromPrimary.ts',
+    trigger: 'A household primary invites a second member, from the admin or from MyTribe, and the primary gets a receipt.',
+    source: 'src/lib/inviteEmails.ts',
   },
   'invite.verify-email': {
     trigger: 'An invite is accepted and the address needs verifying.',

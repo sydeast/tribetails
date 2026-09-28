@@ -1,18 +1,7 @@
 package com.kinfolk.portal.util
 
-import com.kinfolk.portal.auth.EmailAction
-
 /** Returns the invite id parsed from the platform's launch URL, or null. */
 expect fun readInitialClaimInviteId(): String?
-
-/**
- * The claim link for an invite `addSecondaryContact` just minted (#1018, item
- * 3). That callable sends no email of its own — the create trigger is an
- * explicit no-op — so this is the one fact that makes "an invite was created"
- * something a primary can act on: the same `?invite=<id>` query form
- * [readInitialClaimInviteId] parses back on the other end.
- */
-fun claimInviteUrl(inviteId: String): String = "https://${EmailAction.PORTAL_HOST}/claim?invite=$inviteId"
 
 /**
  * Returns the share token parsed from the platform's launch URL, or null.

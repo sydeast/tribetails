@@ -4,10 +4,9 @@ import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { wrapCallable } from '../lib/wrapCallable';
 import { loadMember, requirePrimary } from '../lib/memberGate';
-import { sendFromTemplate } from '../lib/sendFromTemplate';
+import { resolveInviteEmailConfig, sendPrimaryInviteEmails } from '../lib/inviteEmails';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
-import { requireBaseUrl } from '../lib/requireBaseUrl';
 import { INVITE_TTL_DAYS, SECONDARY_LABEL_MAX } from '../lib/schema';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
@@ -20,9 +19,12 @@ import { TRIBETAILS_CORS } from '../lib/cors';
  * `portal/addSecondaryContact.ts` (TribeProfile.tsx's InviteKinfolkCard), and
  * the admin path is `admin/mintInvite.ts`. It is the older and stricter of the
  * two primary-side mints (`loadMember` + `requirePrimary` before it writes
- * anything) and it sends three emails the newer path does not, so if the two
- * are ever reconciled this is the one to reconcile TOWARDS. Left deployed and
- * unchanged: an unreferenced invite mint is a thing to report, not to remove.
+ * anything). It used to be the only one of the two that sent the three invite
+ * emails (`invite.secondary`, `invite.auntie-notify`, `invite.primary-receipt`,
+ * via `lib/inviteEmails.ts`'s `sendPrimaryInviteEmails`); #1018 item 3 gave
+ * `addSecondaryContact` the same sends, with the same template data, so the
+ * two no longer drift on this. Left deployed and unchanged otherwise: an
+ * unreferenced invite mint is a thing to report, not to remove.
  */
 const PermSchema = z.object({
   billing_full: z.boolean(),
@@ -55,9 +57,7 @@ export async function mintInviteFromPrimaryHandler(req: CallableRequest<unknown>
   // auntie-notify template is sent below (it needs the invite id), so this
   // check has to run up here, ahead of them, rather than at its own point of
   // use.
-  const claimBaseUrl = requireBaseUrl('CLAIM_LINK_BASE_URL');
-  const auntieNotifyEmail = process.env.AUNTIE_NOTIFY_EMAIL;
-  const auntieReviewBaseUrl = auntieNotifyEmail ? requireBaseUrl('AUNTIE_OS_REVIEW_BASE_URL') : undefined;
+  const { claimBaseUrl, auntieNotify } = resolveInviteEmailConfig();
   const member = await loadMember(args.familyId, req.auth.uid);
   requirePrimary(member);
   const proposedPermissions = { ...args.permissions, kintales_only: true };
@@ -74,33 +74,18 @@ export async function mintInviteFromPrimaryHandler(req: CallableRequest<unknown>
     expiresAt,
   });
   // Send emails (handled inline; trigger version is alternative)
-  const claimUrl = `${claimBaseUrl}?invite=${ref.id}`;
-  await sendFromTemplate('invite.secondary', args.invitedEmail, {
-    primaryDisplayName: req.auth.token?.name ?? 'Your Kin Parent',
-    secondaryDisplayName: args.invitedEmail,
+  await sendPrimaryInviteEmails({
+    inviteId: ref.id,
+    invitedEmail: args.invitedEmail,
     secondaryLabel: sanitizeLabel(args.secondaryLabel),
     tribeName: args.familyId,
-    claimUrl,
+    claimBaseUrl,
     expiresInDays: INVITE_TTL_DAYS,
+    proposedPermissions,
+    authorName: req.auth.token?.name,
+    primaryEmail: req.auth.token?.email,
+    auntieNotify,
   });
-  if (auntieNotifyEmail) {
-    await sendFromTemplate('invite.auntie-notify', auntieNotifyEmail, {
-      primaryDisplayName: req.auth.token?.name ?? 'Kin Parent',
-      invitedEmail: args.invitedEmail,
-      secondaryLabel: sanitizeLabel(args.secondaryLabel),
-      tribeName: args.familyId,
-      permissionsCsv: Object.entries(proposedPermissions).filter(([, v]) => v).map(([k]) => k).join(','),
-      auntieReviewUrl: `${auntieReviewBaseUrl}/invites/${ref.id}`,
-    });
-  }
-  if (req.auth.token?.email) {
-    await sendFromTemplate('invite.primary-receipt', req.auth.token.email, {
-      invitedEmail: args.invitedEmail,
-      secondaryLabel: sanitizeLabel(args.secondaryLabel),
-      tribeName: args.familyId,
-      expiresInDays: INVITE_TTL_DAYS,
-    });
-  }
   await ref.update({ status: 'EMAIL_SENT', sentToInviteeAt: FieldValue.serverTimestamp(), auntieNotifiedAt: FieldValue.serverTimestamp() });
   await writeAuditEntry({
     status: 'SUCCESS',

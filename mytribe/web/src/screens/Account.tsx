@@ -28,7 +28,6 @@ import '../styles/account.css';
 import { BusyLabel } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { isOfflineError, usePortalMutation } from '../lib/mutationState';
-import { InviteCreatedNotice } from '../components/InviteCreatedNotice';
 
 type Status = { text: string; tone: 'ok' | 'err' };
 
@@ -169,14 +168,13 @@ export function Account() {
 
   // HOLD. `addSecondaryContact` looks for a live PENDING inviteRequest for the
   // same address first and returns it instead of minting a second
-  // (functions/src/portal/addSecondaryContact.ts), and it sends no email of its
-  // own — the create trigger is an explicit no-op. A resumed invite is the
-  // same invite.
+  // (functions/src/portal/addSecondaryContact.ts), and re-sends the invite
+  // email either way, so a resumed invite still really goes out.
   const invite = usePortalMutation({
     mutationFn: () => addSecondaryContact(backupEmail.trim(), kinfolkId !== undefined ? { kinfolkId } : {}),
-    // Clears a stale failure from a previous attempt; the success case renders
-    // from `invite.data` below (the claim link), not from this status line.
+    // Clears a stale status from a previous attempt before this one resolves.
     onMutate: () => setInviteStatus(null),
+    onSuccess: () => setInviteStatus({ text: `Invite sent to ${backupEmail.trim()}.`, tone: 'ok' }),
     onError: (err: unknown) => {
       if (isOfflineError(err)) return;
       setInviteStatus({ text: `Invite failed: ${err instanceof Error ? err.message : 'try again'}`, tone: 'err' });
@@ -441,7 +439,6 @@ export function Account() {
                     </span>
                   )}
                 </div>
-                {invite.isSuccess && invite.data && <InviteCreatedNotice key={invite.data.inviteId} inviteId={invite.data.inviteId} />}
               </div>
             </section>
 

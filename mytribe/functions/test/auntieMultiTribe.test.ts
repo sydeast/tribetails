@@ -163,6 +163,12 @@ async function run(c: Case, who: Caller): Promise<{ err: { code?: string; messag
 
 beforeEach(() => {
   process.env.AUNTIE_OPERATOR_UIDS = '';
+  // #1018 item 3: addSecondaryContact now guards on this before any gate
+  // check (see lib/inviteEmails.ts's resolveInviteEmailConfig), matching
+  // mintInviteFromPrimary's own fail-loud-before-authz shape. This suite is
+  // about the tribe-resolution gate, not that guard, so it stays configured.
+  process.env.CLAIM_LINK_BASE_URL = 'https://claim.tribetails.com';
+  delete process.env.AUNTIE_NOTIFY_EMAIL;
   mocks.resolved.length = 0;
   mocks.dbFn.mockReset();
   mocks.dbFn.mockReturnValue(fixture());

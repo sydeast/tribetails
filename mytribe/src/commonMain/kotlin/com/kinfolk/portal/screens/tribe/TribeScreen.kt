@@ -48,7 +48,6 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.kinfolk.portal.components.GlassCard
-import com.kinfolk.portal.components.InviteCreatedNotice
 import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinField
 import com.kinfolk.portal.components.KinSpinner
@@ -1367,9 +1366,6 @@ private fun SecondaryInviteCard(
     var canAccessHome by remember { mutableStateOf(false) }
     var inviting by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf<String?>(null) }
-    // #1018 item 3: the invite id from a just-created invite, so its claim
-    // link can be shown instead of the old "Invite sent." (no email is sent).
-    var invitedId by remember { mutableStateOf<String?>(null) }
     GlassCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
         contentPadding = PaddingValues(KinfolkSpacing.l),
@@ -1409,12 +1405,15 @@ private fun SecondaryInviteCard(
                 onClick = {
                     inviting = true
                     msg = null
-                    invitedId = null
+                    // #1018 item 3: addSecondaryContact really sends this email now
+                    // (functions/src/portal/addSecondaryContact.ts); captured before
+                    // the field is cleared, so the confirmation names the address.
+                    val sentTo = email.trim()
                     scope.launch {
                         try {
-                            val inviteId = portalApi.addSecondaryContact(
+                            portalApi.addSecondaryContact(
                                 kinfolkId = kinfolkId,
-                                invitedEmail = email.trim(),
+                                invitedEmail = sentTo,
                                 secondaryLabel = role.trim().ifBlank { null },
                                 kinEdit = canEditPets,
                                 homeAccess = canAccessHome,
@@ -1425,7 +1424,7 @@ private fun SecondaryInviteCard(
                             role = ""
                             canEditPets = false
                             canAccessHome = false
-                            invitedId = inviteId
+                            msg = "Invite sent to $sentTo."
                         } catch (t: Throwable) {
                             msg = "Invite failed: ${t.message ?: t}"
                         } finally {
@@ -1437,7 +1436,6 @@ private fun SecondaryInviteCard(
                 modifier = Modifier.fillMaxWidth(),
             )
             msg?.let { Text(it, style = type.sansLabel.copy(color = KinfolkBrand.KinTeal)) }
-            invitedId?.let { id -> InviteCreatedNotice(inviteId = id) }
         }
     }
 }

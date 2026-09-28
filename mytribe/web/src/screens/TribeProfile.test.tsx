@@ -800,3 +800,31 @@ describe('secondary kinfolk: add now, invite later (Q3)', () => {
     expect(vi.mocked(tribeApi.addSecondaryContact).mock.calls[0]?.[0]).not.toHaveProperty('personId');
   });
 });
+
+/**
+ * #1018 item 3: `addSecondaryContact` now sends a real invite email
+ * (functions/src/portal/addSecondaryContact.ts, via lib/inviteEmails.ts), so
+ * the confirmation says what happened, names the address, and never shows a
+ * claim link (that would tell the primary to deliver it by hand instead).
+ */
+describe('invite confirmation (#1018 item 3)', () => {
+  it('says the invite was sent, and names the address', async () => {
+    const tribeApi = await import('../api/tribeApi');
+    vi.mocked(tribeApi.addSecondaryContact).mockResolvedValue({ inviteId: 'i3' });
+    const view = await renderTribeProfile({});
+    fireEvent.change(await view.findByLabelText('Email'), { target: { value: 'jo@example.com' } });
+    fireEvent.click(view.getByRole('button', { name: 'Send Invite' }));
+    expect(await view.findByText('Invite sent to jo@example.com.')).toBeInTheDocument();
+    expect(view.queryByText(/claim\?invite=/)).not.toBeInTheDocument();
+  });
+
+  it('shows the server\'s own refusal when the send fails', async () => {
+    const tribeApi = await import('../api/tribeApi');
+    vi.mocked(tribeApi.addSecondaryContact).mockRejectedValue(new Error('failed-precondition: You cannot invite yourself.'));
+    const view = await renderTribeProfile({});
+    fireEvent.change(await view.findByLabelText('Email'), { target: { value: 'jo@example.com' } });
+    fireEvent.click(view.getByRole('button', { name: 'Send Invite' }));
+    expect(await view.findByText(/You cannot invite yourself/)).toBeInTheDocument();
+    expect(view.queryByText(/Invite sent/)).not.toBeInTheDocument();
+  });
+});

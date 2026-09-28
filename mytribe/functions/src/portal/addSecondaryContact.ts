@@ -9,6 +9,7 @@ import { householdStaffFlag } from '../lib/staffGate';
 import { requireKinfolkPrimary } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
+import { resolveInviteEmailConfig, sendPrimaryInviteEmails } from '../lib/inviteEmails';
 import { FULL_CPU } from '../lib/runtimeOptions';
 import { SECONDARY_KINFOLK_GONE_MESSAGE } from './secondaryKinfolk';
 
@@ -43,6 +44,14 @@ const INVITE_TTL_DAYS = 14;
  * NOTE: existing `mintInviteFromPrimary` requires `families/{fid}/members/{uid}`
  * with role=PRIMARY, that membership tree is sparsely populated for portal
  * users. This wrapper sidesteps it and uses the kinfolk-uid auth model.
+ *
+ * #1018 item 3: this used to send no email at all, which made the portal's
+ * "Invite sent." false. It now sends the same three invite emails
+ * `mintInviteFromPrimary` does (`lib/inviteEmails.ts`'s
+ * `sendPrimaryInviteEmails`), with the same template data. A send failure is
+ * NEVER swallowed: it throws out of this handler exactly as it always has out
+ * of `mintInviteFromPrimary`, so a client that sees success can trust an
+ * email really went out.
  */
 /** 2026-09-27 Q3: "the admin invites only the primary; the primary invites the secondary". */
 export const ONLY_PRIMARY_INVITES_MESSAGE = 'Only the primary kinfolk can invite a secondary kinfolk to the portal.';
@@ -51,6 +60,11 @@ export async function addSecondaryContactHandler(req: CallableRequest<unknown>):
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const args = Args.parse(req.data);
+  // Fail loud before any Firestore write, and before the authz checks below —
+  // matching mintInviteFromPrimary's own guard-before-authz shape (see
+  // lib/requireBaseUrl.ts): nothing is minted that this call could not then
+  // tell the invitee, the business, or the primary about.
+  const { claimBaseUrl, auntieNotify } = resolveInviteEmailConfig();
   // Operator ruling 2026-09-27 (Q3): portal access for a secondary kinfolk
   // comes only from the primary's own invite. Staff used to pass through the
   // bypass below; no admin client called this, and now the server says no too.
@@ -96,10 +110,46 @@ export async function addSecondaryContactHandler(req: CallableRequest<unknown>):
     throw new HttpsError('failed-precondition', 'You cannot invite yourself.');
   }
 
+  const secondaryLabel = (args.secondaryLabel ?? 'Folk').replace(/[<>{} -]/g, '').trim().slice(0, 40) || 'Folk';
+  const proposedPermissions = {
+    billing_full: args.permissions.billing_full ?? false,
+    messaging_direct: args.permissions.messaging_direct ?? true,
+    messaging_group: args.permissions.messaging_group ?? true,
+    kin_edit: args.permissions.kin_edit ?? false,
+    kintales_only: args.permissions.kintales_only ?? true,
+    home_access: args.permissions.home_access ?? false,
+  };
+  const authorName = req.auth?.token?.name;
+
+  // A caller ends up here only after every gate above passed, so every path
+  // out of this point sends the same emails `mintInviteFromPrimary` sends,
+  // with a claim link this specific invite id resolves.
+  async function sendEmailsAndMarkSent(inviteRef: FirebaseFirestore.DocumentReference, inviteId: string): Promise<void> {
+    await sendPrimaryInviteEmails({
+      inviteId,
+      invitedEmail: lowerInvited,
+      secondaryLabel,
+      tribeName: kinfolkId,
+      claimBaseUrl,
+      expiresInDays: INVITE_TTL_DAYS,
+      proposedPermissions,
+      authorName,
+      primaryEmail: callerEmail,
+      auntieNotify,
+    });
+    await inviteRef.update({
+      status: 'EMAIL_SENT',
+      sentToInviteeAt: FieldValue.serverTimestamp(),
+      auntieNotifiedAt: FieldValue.serverTimestamp(),
+    });
+  }
+
   // S7-BLOCKER-2 dedupe: a cold-started first call can outlive the portal's
   // 20s callable timeout, so the kinfolk sees "failed" while the invite WAS
   // created — and their retry would mint a duplicate. Re-sending the same
   // email returns the live pending invite instead, making retries idempotent.
+  // The email really is re-sent here too: if the kinfolk saw "failed" and
+  // clicked again, the honest answer to "did it send" is to make sure it did.
   const pendingSnap = await firestore
     .collection('inviteRequests')
     .where('tribeId', '==', kinfolkId)
@@ -114,6 +164,7 @@ export async function addSecondaryContactHandler(req: CallableRequest<unknown>):
       typeof existingExpiry?.toMillis !== 'function' || existingExpiry.toMillis() > Date.now();
     if (stillLive) {
       if (personRef !== null) await linkPerson(personRef, existing.ref, existing.id, uid);
+      await sendEmailsAndMarkSent(existing.ref, existing.id);
       logEvent({
         severity: 'info',
         function: 'addSecondaryContact',
@@ -130,15 +181,8 @@ export async function addSecondaryContactHandler(req: CallableRequest<unknown>):
     tribeId: kinfolkId,
     primaryUid: uid,
     invitedEmail: args.invitedEmail.toLowerCase(),
-    secondaryLabel: (args.secondaryLabel ?? 'Folk').replace(/[<>{} -]/g, '').trim().slice(0, 40) || 'Folk',
-    proposedPermissions: {
-      billing_full: args.permissions.billing_full ?? false,
-      messaging_direct: args.permissions.messaging_direct ?? true,
-      messaging_group: args.permissions.messaging_group ?? true,
-      kin_edit: args.permissions.kin_edit ?? false,
-      kintales_only: args.permissions.kintales_only ?? true,
-      home_access: args.permissions.home_access ?? false,
-    },
+    secondaryLabel,
+    proposedPermissions,
     proposedRole: 'SECONDARY',
     status: 'PENDING',
     source: 'mytribe-portal',
@@ -147,6 +191,7 @@ export async function addSecondaryContactHandler(req: CallableRequest<unknown>):
     expiresAt,
   });
   if (personRef !== null) await linkPerson(personRef, null, ref.id, uid);
+  await sendEmailsAndMarkSent(ref, ref.id);
 
   logEvent({
     severity: 'info',
@@ -178,7 +223,9 @@ export const addSecondaryContact = onCall(
   {
     region: 'us-central1',
     cors: TRIBETAILS_CORS,
-    secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'],
+    // SMTP2GO_API_KEY/EMAIL_FROM: #1018 item 3, the same secrets
+    // mintInviteFromPrimary binds for sendPrimaryInviteEmails.
+    secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS', 'SMTP2GO_API_KEY', 'EMAIL_FROM'],
     minInstances: 1,
     ...FULL_CPU,
   },

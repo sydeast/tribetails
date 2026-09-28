@@ -256,13 +256,15 @@ describe('Account avatar upload', () => {
  * appears on touch.
  */
 /**
- * #1018 item 3: `addSecondaryContact` sends no email of its own
- * (`onInviteRequestCreate` is a no-op), so "Invite sent." was a lie. The
- * confirmation now shows the claim link the callable's `inviteId` builds,
- * since nothing else hands it to the secondary.
+ * #1018 item 3: `addSecondaryContact` used to send no email of its own, which
+ * made "Invite sent." false. It now sends the real invite email
+ * (mytribe/functions/src/portal/addSecondaryContact.ts, via
+ * lib/inviteEmails.ts), so the confirmation says exactly that, naming the
+ * address, and a failed send shows the server's own refusal rather than a
+ * generic line. No claim link is ever shown here: the email is the delivery.
  */
 describe('Account: secondary invite confirmation (#1018 item 3)', () => {
-  it('shows the claim link instead of "Invite sent.", and never claims an email went out', async () => {
+  it('says the invite was sent, and names the address', async () => {
     const user = userEvent.setup();
     const accountApi = await import('../api/accountApi');
     vi.mocked(accountApi.addSecondaryContact).mockResolvedValue({ inviteId: 'inv-1' });
@@ -271,12 +273,11 @@ describe('Account: secondary invite confirmation (#1018 item 3)', () => {
     await user.type(getByLabelText('Backup Email'), 'sam@example.com');
     await user.click(getByRole('button', { name: /Send Invite/ }));
 
-    expect(await findByText(/No email goes out/)).toBeInTheDocument();
-    expect(document.body.textContent).toContain('/claim?invite=inv-1');
-    expect(queryByText('Invite sent.')).not.toBeInTheDocument();
+    expect(await findByText('Invite sent to sam@example.com.')).toBeInTheDocument();
+    expect(queryByText(/claim\?invite=/)).not.toBeInTheDocument();
   });
 
-  it('keeps the failure message when the invite is refused, and never shows a claim link for it', async () => {
+  it('shows the server\'s own refusal when the send fails, not a generic line', async () => {
     const user = userEvent.setup();
     const accountApi = await import('../api/accountApi');
     vi.mocked(accountApi.addSecondaryContact).mockRejectedValue(new Error('failed-precondition: already invited'));
@@ -285,8 +286,8 @@ describe('Account: secondary invite confirmation (#1018 item 3)', () => {
     await user.type(getByLabelText('Backup Email'), 'sam@example.com');
     await user.click(getByRole('button', { name: /Send Invite/ }));
 
-    expect(await findByText(/Invite failed/)).toBeInTheDocument();
-    expect(queryByText(/No email goes out/)).not.toBeInTheDocument();
+    expect(await findByText(/Invite failed.*already invited/)).toBeInTheDocument();
+    expect(queryByText(/Invite sent/)).not.toBeInTheDocument();
   });
 });
 
