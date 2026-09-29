@@ -346,6 +346,16 @@ jobs:
               # timeout-minutes on every job. A change to that file alone,
               # touching nothing under scripts/**, must still run it.
               - '.github/workflows/ci-run-watch.yml'
+              # nightly-release.test.sh (deploy-guard) reads the nightly
+              # workflow, the runbook section that sets up its secrets and
+              # variables, the RUNBOOK heading the workflow links to, and the
+              # Python runtime firebase.json deploys. release.test.sh reads the
+              # root .gitignore. A change to any of them alone must run both.
+              - '.github/workflows/nightly-release.yml'
+              - 'docs/runbooks/release-internals.md'
+              - 'docs/RUNBOOK.md'
+              - 'auntieos-admin/web/firebase.json'
+              - '.gitignore'
 
   admin:
     name: React admin
@@ -1001,6 +1011,19 @@ jobs:
             bash scripts/workflow-budget.test.sh
           else
             echo "scripts/workflow-budget.test.sh not present yet, skipping."
+          fi
+      # The hosted nightly release (#851) cannot be run anywhere but GitHub,
+      # and not there until the operator's Google Cloud setup exists, so its
+      # safety properties are checked from the file: auth before the
+      # credential check, GH_TOKEN on the job, `off` a no-op, restored
+      # keystores deleted in an always() step, and a runbook command for every
+      # secret and variable it reads.
+      - name: Run the nightly release workflow test if present
+        run: |
+          if [ -f scripts/nightly-release.test.sh ]; then
+            bash scripts/nightly-release.test.sh
+          else
+            echo "scripts/nightly-release.test.sh not present yet, skipping."
           fi
       # The decision logic ci-run-watch.yml runs on a schedule: whether a
       # commit with no ci.yml run for HEAD is old enough to act on, and

@@ -1738,9 +1738,16 @@ banner "1c. Android release build"
 # first deploy, where its failure costs nothing, and the upload runs beside
 # hosting in step 6b.
 #
-# CI cannot do this: release signing needs the keystore, which lives in
-# local.properties (gitignored, per machine) alongside the Mapbox downloads
-# token. This script runs where those already are.
+# WHERE THE SIGNING MATERIAL COMES FROM. Release signing needs the operator
+# app's keystore, named in auntieos-admin/android/local.properties (gitignored,
+# per machine), the portal needs ~/.android/debug.keystore, and both need the
+# Mapbox downloads token in gradle.properties. On the operator Mac those are
+# already there. The hosted nightly (.github/workflows/nightly-release.yml,
+# #851) restores the same files from repository secrets before it runs this
+# script and deletes them afterwards, so this step reads them from the same
+# places on either machine and needs no branch for CI. The setup that fills
+# those secrets is in docs/runbooks/release-internals.md, "Hosted nightly
+# release".
 #
 # THERE ARE TWO ANDROID APPS, AND UNTIL 2026-08-04 THIS STEP SHIPPED ONE.
 #

@@ -824,15 +824,18 @@ The two builds are not the same shape, which is the part worth remembering.
 named from `rootProject.name`, which is `kinfolk-portal`, not `mytribe`.
 
 The builds run at 1c, before the first deploy, so a failure costs nothing. The
-uploads run at 6b, beside hosting. **CI cannot do either yet**: release signing
-needs the keystore, and the Mapbox SDK needs a downloads token, and both are per
-machine and gitignored. `nightly-release.yml` exists but stays off until the
-hosted runner has them (see "The nightly release stays off until it can
-authenticate" in `docs/RUNBOOK.md`), so today the release runs locally. What it needs:
+uploads run at 6b, beside hosting. Release signing needs the keystore and the
+Mapbox SDK needs a downloads token, and both are per machine and gitignored.
+The operator Mac has them. `nightly-release.yml` restores the same files from
+repository secrets before it calls `release.sh` (see
+[Hosted nightly release](#hosted-nightly-release)); it stays off until the
+operator has set those up, so today the release runs locally. What it needs:
 
 | Needs | For | Where |
 |---|---|---|
 | `KEYSTORE_PATH`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` | operator app | `auntieos-admin/android/local.properties` |
+| `SENTRY_DSN` | operator app (compiled in; without it the APK reports no crashes) | `auntieos-admin/android/local.properties` |
+| `MAPBOX_PUBLIC_TOKEN` | both apps (compiled in; without it the maps are blank) | `~/.gradle/gradle.properties` |
 | `MAPBOX_DOWNLOADS_TOKEN` | both apps (`mytribe/settings.gradle.kts` resolves the Mapbox SDK with it too) | `~/.gradle/gradle.properties`, or the environment |
 | `sdk.dir` (or `ANDROID_HOME`) | portal app | `mytribe/local.properties` |
 | `~/.android/debug.keystore` | portal app, see signing below | Android Studio, or `keytool` |
@@ -934,3 +937,242 @@ wasm build deleted in #481; nothing builds it, so do not deploy it. The target
 lists are per tree: `auntieos-admin/.firebaserc` (`app`, `sotu`, `legacy-wasm`)
 and `mytribe/.firebaserc` (`kinfolk_portal`, `mytribe_beta`). There is no root
 `.firebaserc`.
+
+## Hosted nightly release
+
+`.github/workflows/nightly-release.yml` runs `scripts/release.sh` on a
+GitHub-hosted ubuntu runner (#851). It is built and merged, and it stays off
+(`NIGHTLY_RELEASE=off`, ruling D-2026-09-14-NIGHTLY-OFF) until the setup below
+exists. After that, the only step left is a manual `preflight` run.
+
+### What the workflow does
+
+In order, and only when the mode is `preflight` or `on`:
+
+1. Refuses if `NIGHTLY_WIF_PROVIDER` or `NIGHTLY_SERVICE_ACCOUNT` is unset.
+2. Signs in to Google Cloud through Workload Identity as `github-release`. No
+   key file exists anywhere; GitHub's OIDC token is exchanged for a
+   short-lived one.
+3. Sets up `gcloud`, then runs the credential check from #850. `GH_TOKEN` is
+   the job's own token, set on the job so that check can see it, and
+   `gh auth status --hostname github.com` must pass.
+4. Stops if nothing has merged since the last `release/*` tag.
+5. Installs what the Mac already has: Node 22, `npm ci` in all three roots
+   step 0a checks, `firebase-tools` 15.18.0, Python 3.13 and the `reconcile`
+   venv, JDK 17 and 21, Gradle. The runner's own Android SDK is used through
+   `sdk.dir=$ANDROID_HOME`.
+6. Sets a git identity, because step 9's `git tag -a` fails without one and a
+   release with no tag is shipped again the next night.
+7. Restores the signing material from repository secrets: the operator app's
+   release keystore (into `$RUNNER_TEMP`), both `local.properties` files,
+   `~/.android/debug.keystore` and `~/.gradle/gradle.properties`.
+8. Opens both keystores with `keytool` and prints both SHA-256 fingerprints in
+   the run summary. A preflight never builds an APK, so this is the only thing
+   in a preflight that proves the signing secrets are right.
+9. Runs `npm run deploy` (preflight builds `mytribe/functions` first so step
+   1b compares the declared secrets for real).
+10. Deletes everything step 7 wrote, in an `always()` step.
+
+**Cost of a full run.** The runner starts empty every night, so it has no
+`.release-state` and deploys the whole functions fleet (about an hour), on top
+of `npm run check` and two cold Gradle builds. The job is capped at 180
+minutes.
+
+### Setup, once, on the operator Mac
+
+Run these from the repo root on `main`. They sign in as you, so run them
+yourself; nothing here can be run from an agent session.
+
+**1. Names used below.** Check the project number it prints. It should be
+`153396971788`, the number inside both Android app IDs.
+
+```bash
+PROJECT=auntieos-ttpc
+PROJECT_NUMBER="$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')"
+SA="github-release@${PROJECT}.iam.gserviceaccount.com"
+echo "$PROJECT_NUMBER"
+```
+
+**2. The APIs Workload Identity uses.** Safe to run when they are already on.
+
+```bash
+gcloud services enable iamcredentials.googleapis.com sts.googleapis.com --project "$PROJECT"
+```
+
+**3. The service account.**
+
+```bash
+gcloud iam service-accounts create github-release \
+  --project "$PROJECT" \
+  --display-name "GitHub hosted nightly release (#851)"
+```
+
+**4. The pool and its provider.** The attribute condition is the lock: only a
+workflow in `sydeast/tribetails` running on `refs/heads/main` gets a token.
+A fork, a pull request branch or any other repository is refused by Google
+before the service account is ever involved.
+
+```bash
+gcloud iam workload-identity-pools create github \
+  --project "$PROJECT" --location global \
+  --display-name "GitHub Actions"
+
+gcloud iam workload-identity-pools providers create-oidc tribetails \
+  --project "$PROJECT" --location global \
+  --workload-identity-pool github \
+  --display-name "sydeast/tribetails on main" \
+  --issuer-uri "https://token.actions.githubusercontent.com" \
+  --attribute-mapping "google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref" \
+  --attribute-condition "assertion.repository == 'sydeast/tribetails' && assertion.ref == 'refs/heads/main'"
+```
+
+**5. Let that provider act as the service account.**
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding "$SA" \
+  --project "$PROJECT" \
+  --role roles/iam.workloadIdentityUser \
+  --member "principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github/attribute.repository/sydeast/tribetails"
+```
+
+**6. The roles a release uses.** One per thing `release.sh` does, and nothing
+for what it does not do (it never creates projects, edits IAM on the project,
+or touches Auth users or Firestore data).
+
+| Role | Why the release needs it |
+|---|---|
+| `roles/cloudfunctions.admin` | Step 5 creates and updates functions in all three codebases, and reads the fleet back with `functions:list` to verify it. |
+| `roles/run.admin` | 2nd gen functions are Cloud Run services: the deploy sets their invoker policy. Step 8 lists and deletes old revisions. |
+| `roles/cloudscheduler.admin` | About 25 scheduled functions (`onSchedule`, and the Python `nightly_reconcile`) are Cloud Scheduler jobs the deploy creates and updates. |
+| `roles/eventarc.admin` | About 25 Firestore-triggered functions are Eventarc triggers the deploy creates and updates. |
+| `roles/secretmanager.admin` | Steps 0c and 1b list secrets and read the `VITE_*` values. The deploy also grants each function's runtime account access to the secrets it declares, which is a change to the secret's own IAM policy; no narrower predefined role allows that. |
+| `roles/firebasehosting.admin` | Step 6 deploys both sites. |
+| `roles/firebaserules.admin` | Steps 4 and 4b deploy Firestore and Storage rules. |
+| `roles/datastore.indexAdmin` | Step 2 deploys indexes and step 3 waits for them to finish building. |
+| `roles/firebaseappdistro.admin` | Step 1c reads the tester list, step 6b uploads both APKs. |
+| `roles/artifactregistry.reader` | The functions deploy reads the cleanup policy on the `gcf-artifacts` repository before it builds. |
+| `roles/serviceusage.serviceUsageConsumer` | `firebase-tools` checks the APIs it calls are enabled. |
+| `roles/firebase.viewer` | `firebase-tools` reads the project's Firebase configuration at the start of each command. |
+
+```bash
+for role in \
+  roles/cloudfunctions.admin \
+  roles/run.admin \
+  roles/cloudscheduler.admin \
+  roles/eventarc.admin \
+  roles/secretmanager.admin \
+  roles/firebasehosting.admin \
+  roles/firebaserules.admin \
+  roles/datastore.indexAdmin \
+  roles/firebaseappdistro.admin \
+  roles/artifactregistry.reader \
+  roles/serviceusage.serviceUsageConsumer \
+  roles/firebase.viewer
+do
+  gcloud projects add-iam-policy-binding "$PROJECT" \
+    --member "serviceAccount:$SA" --role "$role" --condition None --quiet > /dev/null
+done
+```
+
+**7. Let it deploy functions that run as other accounts.** A deploy has to be
+allowed to "act as" each function's runtime account. This is granted on those
+three accounts only, not on the project: the 2nd gen default (compute), the
+1st gen default (`onAuthUserCreate` is a v1 trigger), and the calendar sync
+account `syncGoogleCalendarBusyEvents` pins.
+
+```bash
+for runtime_sa in \
+  "${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+  "${PROJECT}@appspot.gserviceaccount.com" \
+  "auntieos-admin-calendar-sync@${PROJECT}.iam.gserviceaccount.com"
+do
+  gcloud iam service-accounts add-iam-policy-binding "$runtime_sa" \
+    --project "$PROJECT" \
+    --member "serviceAccount:$SA" --role roles/iam.serviceAccountUser --quiet > /dev/null
+done
+```
+
+**8. The two repository variables.** The workflow reads the provider and the
+account from these, so a renamed pool is a settings change, not a code change.
+
+```bash
+gh variable set NIGHTLY_WIF_PROVIDER --repo sydeast/tribetails \
+  --body "projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github/providers/tribetails"
+gh variable set NIGHTLY_SERVICE_ACCOUNT --repo sydeast/tribetails --body "$SA"
+```
+
+**9. The Android secrets, copied from the files the Mac signs with.** Every
+value goes through a pipe into `gh secret set`, so none of them lands in your
+shell history or on screen. `prop` reads one line of the operator app's
+`local.properties` exactly as written, which is how Gradle will read it back
+on the runner.
+
+```bash
+LP=auntieos-admin/android/local.properties
+GP="$HOME/.gradle/gradle.properties"
+prop() { grep "^$1=" "$2" | head -1 | cut -d= -f2- | tr -d '\n'; }
+
+base64 < "$(prop KEYSTORE_PATH "$LP")" | tr -d '\n' | gh secret set AUNTIEOS_KEYSTORE_B64 --repo sydeast/tribetails
+prop KEYSTORE_PASSWORD "$LP" | gh secret set AUNTIEOS_KEYSTORE_PASSWORD --repo sydeast/tribetails
+prop KEY_ALIAS "$LP" | gh secret set AUNTIEOS_KEY_ALIAS --repo sydeast/tribetails
+prop KEY_PASSWORD "$LP" | gh secret set AUNTIEOS_KEY_PASSWORD --repo sydeast/tribetails
+prop SENTRY_DSN "$LP" | gh secret set AUNTIEOS_ANDROID_SENTRY_DSN --repo sydeast/tribetails
+prop MAPBOX_PUBLIC_TOKEN "$GP" | gh secret set ANDROID_MAPBOX_PUBLIC_TOKEN --repo sydeast/tribetails
+base64 < "$HOME/.android/debug.keystore" | tr -d '\n' | gh secret set MYTRIBE_DEBUG_KEYSTORE_B64 --repo sydeast/tribetails
+```
+
+`MAPBOX_DOWNLOADS_TOKEN` is already a repository secret: CI's Android jobs use
+it. Leave it unless those jobs warn that it is missing or Mapbox answers 401,
+and then set it from the same file:
+
+```bash
+prop MAPBOX_DOWNLOADS_TOKEN "$GP" | gh secret set MAPBOX_DOWNLOADS_TOKEN --repo sydeast/tribetails
+```
+
+**The debug keystore must be the Mac's own file.** The Kinfolk Portal APK is
+signed with `~/.android/debug.keystore`. Android installs an update only when
+it is signed by the same key as the installed app, so a runner that made its
+own debug key would ship builds no tester could install over the current one.
+The preflight run prints the fingerprint of the key it restored. Compare it with
+the Mac's:
+
+```bash
+keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | grep SHA256
+```
+
+**10. Prove it.** Start a preflight by hand and watch it:
+
+```bash
+gh workflow run nightly-release.yml --repo sydeast/tribetails --ref main -f mode=preflight
+gh run watch --repo sydeast/tribetails "$(gh run list --repo sydeast/tribetails --workflow nightly-release.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+```
+
+A passing preflight has signed in through Workload Identity, read Secret Manager
+(steps 0c and 1b), read CI's verdict with the job token (step 0b), installed
+every dependency root, built the `reconcile` venv, and opened both keystores.
+Compare the two fingerprints in its summary with the Mac's before going on.
+
+**11. Then the switch.** A few nights of `preflight`, then `on`:
+
+```bash
+gh variable set NIGHTLY_RELEASE --repo sydeast/tribetails --body preflight
+gh variable set NIGHTLY_RELEASE --repo sydeast/tribetails --body on
+```
+
+To turn it off again at any point:
+
+```bash
+gh variable set NIGHTLY_RELEASE --repo sydeast/tribetails --body off
+```
+
+### What only a full run can prove
+
+A preflight deploys nothing, so three things are first tested by the first `on`
+night: the role list in step 6 (a missing permission fails that step and names
+the permission), the two Gradle release builds on this runner, and the App
+Distribution upload and tag push. The run stops at the first failure, as it
+does on the Mac. If it stops in step 5 or later, production may be part-way
+through a release. Fix the cause, then either release from the Mac or start
+another full run with `gh workflow run nightly-release.yml --repo sydeast/tribetails --ref main -f mode=full`.
+The runner keeps no `.release-progress`, so a rerun there repeats every step
+instead of resuming.
