@@ -412,6 +412,7 @@ export {
 export { addInternalBookingNote } from './admin/addInternalBookingNote';
 export { saveTemplate } from './admin/saveTemplate';
 export { previewEmailTemplate } from './admin/previewEmailTemplate';
+export { getEmailFrame, saveEmailFrame, previewEmailFrame } from './admin/emailFrameSettings';
 export { convertTemplateToVisual } from './admin/convertTemplateToVisual';
 export { importSeedTemplates } from './admin/importSeedTemplates';
 export { deleteTemplate } from './admin/deleteTemplate';

@@ -452,6 +452,10 @@ export const AUDIT_EVENTS = {
   // portalLogo) and the action, never the URL: the asset is operator-supplied
   // branding, and the doc itself is the record of what it currently is.
   BRANDING_ASSET_UPDATED: 'BRANDING_ASSET_UPDATED',
+  // #957: the shared email frame (`business_settings/email_frame`) was saved
+  // or reset (saveEmailFrame). Payload names each changed field with its new
+  // value, or null for a reset: colors, short text and an image URL.
+  EMAIL_FRAME_UPDATED: 'EMAIL_FRAME_UPDATED',
 
   // Shared `vet_clinics` catalog writes (punchlist B4). Until these landed, the
   // only mutation on this collection was `submitVetClinic` (create, unaudited)

@@ -165,6 +165,38 @@ the stale "~26":
     handler, not a file-scope import: it is this callable's only caller and
     pulls in `dom-serializer`, which `coldStartImportGraph.test.ts` would
     otherwise charge to every deployed function's cold start.
+- `getEmailFrame`, `saveEmailFrame`, `previewEmailFrame` (#957, net-new,
+  owner-only: admin-gated and NOT in `AUNTIE_ALLOWED_CALLABLES`). Spec:
+  `docs/superpowers/specs/2026-09-28-email-frame-editor-design.md`. The frame
+  fields are `pageBackground`, `cardBackground`, `textColor`,
+  `headlineColor`, `accentColor`, `buttonTextColor`, `calloutBackground`,
+  `footerBackground`, `footerTextColor` (each `#rrggbb`, stored lowercase),
+  `headerText` (at most 80 chars, one line), `footerText` (at most 300 chars,
+  one line), and `logoUrl` (a Cloudinary image in
+  `tribetails/business/business_settings`). Text fields refuse `{{` and `}}`.
+  Stored in `business_settings/email_frame`, which the rules deny to every
+  client.
+  - `getEmailFrame`: req `{}`; res `{ stored: Partial<Frame>; defaults: Frame;
+    updatedAt: string | null; updatedBy: string | null }`. `stored` holds only
+    the fields the operator set; `defaults` holds every field and is shown as
+    placeholders, never saved.
+  - `saveEmailFrame`: req `{ changes?: Record<field, string | null>;
+    resetAll?: true }` (exactly one of the two). A value sets the field; `null`
+    or a blank string resets it to its default; a field left out is untouched.
+    `resetAll` removes every frame field. Res: the same shape as
+    `getEmailFrame`. `invalid-argument` (with `details.field` when one field
+    is at fault) on any bad value, unknown field or empty save, and nothing is
+    written. `failed-precondition` for a logo when `CLOUDINARY_CLOUD_NAME` is
+    not configured. Audits `EMAIL_FRAME_UPDATED` with
+    `{ resetAll, fields: { [field]: newValue | null } }`.
+  - `previewEmailFrame`: req `{ frame: Partial<Frame> }` (the draft's set
+    fields, validated like a save); res `{ subject: string; html: string;
+    text: string }`. Renders fixed sample content through the real
+    `sendPartsFor` and `renderEmailParts`. Writes nothing.
+  - Send routes (`emailChannel`, `sendFromTemplate`, `requestPasswordReset`)
+    and `previewEmailTemplate` read the stored frame once per invocation with
+    `loadEmailFrame`, which falls back to the default frame (and logs
+    `email.frame.read_failed`) when the read fails.
 - The remaining ~34 are lower-complexity (2 to 3 flat fields); freeze as they churn.
 
 Two freeze levels now exist: `shapeKeys` (top-level, for flat shapes) and
