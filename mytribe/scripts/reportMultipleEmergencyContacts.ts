@@ -41,9 +41,11 @@
 // The single firebase-admin import point (#846), as in the other reports.
 import { getApps, initializeApp, getFirestore, type Firestore } from './lib/firebaseAdmin';
 import { readStoredEmergencyContacts } from '../functions/src/lib/emergencyContacts';
-import { describeTarget, initials, maskPhone, resolveTarget, type Args } from './reportHouseholdContacts';
 
-export { describeTarget, resolveTarget };
+export interface Args {
+  projectId: string | null;
+  allowProd: boolean;
+}
 
 export function parseArgs(argv: string[]): Args {
   const args: Args = { projectId: null, allowProd: false };
@@ -77,7 +79,57 @@ export function parseArgs(argv: string[]): Args {
   return args;
 }
 
+export type Target =
+  | { kind: 'emulator'; host: string; projectId: string }
+  | { kind: 'production'; projectId: string };
+
+/**
+ * Which database this run reads, or a refusal. Decided before anything connects.
+ * `env` is passed in so the unit test can drive every branch.
+ */
+export function resolveTarget(args: Args, env: Record<string, string | undefined>): Target {
+  const host = env['FIRESTORE_EMULATOR_HOST'];
+  const projectId = args.projectId ?? env['GCLOUD_PROJECT'] ?? env['GOOGLE_CLOUD_PROJECT'] ?? null;
+  if (host) {
+    if (args.allowProd) {
+      throw new Error(
+        `refusing --allow-prod while FIRESTORE_EMULATOR_HOST=${host} is set: this run would read the emulator, not production. Unset it to read production.`,
+      );
+    }
+    return { kind: 'emulator', host, projectId: projectId ?? 'demo-report-829' };
+  }
+  if (!args.allowProd) {
+    throw new Error('no FIRESTORE_EMULATOR_HOST, so this would read PRODUCTION: pass --allow-prod to confirm.');
+  }
+  if (!projectId) throw new Error('reading production needs --project <id>.');
+  return { kind: 'production', projectId };
+}
+
+export function describeTarget(t: Target): string {
+  return t.kind === 'emulator'
+    ? `Target: EMULATOR ${t.host}, project ${t.projectId}`
+    : `Target: PRODUCTION, project ${t.projectId}`;
+}
+
 type Data = Record<string, unknown>;
+
+function str(v: unknown): string {
+  return typeof v === 'string' ? v.trim() : '';
+}
+
+/** `…1234` for a phone with at least four digits, `…` for a shorter one, `none` for none. */
+export function maskPhone(v: unknown): string {
+  const digits = str(v).replace(/\D/g, '');
+  if (digits === '') return str(v) === '' ? 'none' : '(no digits)';
+  return digits.length >= 4 ? `…${digits.slice(-4)}` : '…';
+}
+
+/** `M. R.` for "Maria Rivera", `none` for a blank name. */
+export function initials(v: unknown): string {
+  const parts = str(v).split(/\s+/).filter((p) => p !== '');
+  if (parts.length === 0) return 'none';
+  return parts.map((p) => `${p.charAt(0).toUpperCase()}.`).join(' ');
+}
 
 export interface MaskedContact {
   name: string;

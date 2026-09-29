@@ -859,31 +859,8 @@ service cloud.firestore {
               || request.resource.data.permissions.kintales_only == resource.data.permissions.kintales_only);
       }
 
- // Secondary CONTACTS: the contacts list PRs #817 and #828 built. Operator
- // ruling 2026-09-27 (#829): "there is no true 'Contact List'". A household
- // has a Primary Kinfolk, a Secondary Kinfolk and an Emergency Contact, and
- // nothing else, so the ruling takes the contacts list off every screen. The
- // block stays (closed) until the operator has read `report:household-contacts`
- // and ruled on the rows it finds; do not delete the data or this block before
- // then.
- // Closed to every client in both directions, on purpose, and deliberately NOT
- // modelled on /members above:
- //
- //   * A contact has no uid, so `activeMember(fid)` cannot answer "is this row
- //     about me" and there is no self-service branch to write. Every read and
- //     write goes through listHouseholdContacts / saveHouseholdContact /
- //     removeHouseholdContact, which gate on PRIMARY-or-staff exactly as the
- //     roster callables do; the Admin SDK bypasses these rules.
- //   * A contact row carries a name, a phone and sometimes an email for someone
- //     who never agreed to a portal account. Serving that to every active member
- //     by direct SDK read would be a wider audience than the callable grants,
- //     for no screen that asks for it.
-      match /contacts/{contactId} {
-        allow read, write: if false;
-      }
-
       // 2026-09-27 Q3: secondary kinfolk person records (a secondary with no
-      // portal account yet). Closed to every client, the same as contacts: the
+      // portal account yet). Closed to every client: the
       // listSecondaryKinfolk / saveSecondaryKinfolk / removeSecondaryKinfolk
       // callables are the only door, and acceptInvite marks one ACTIVE.
       match /secondaryKinfolk/{personId} {

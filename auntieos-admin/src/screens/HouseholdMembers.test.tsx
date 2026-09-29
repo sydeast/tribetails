@@ -41,9 +41,6 @@ const api = vi.hoisted(() => ({
   inviteKinfolkToPortal: vi.fn(),
   listRecoveryCandidates: vi.fn(),
   executePrimaryRecovery: vi.fn(),
-  listHouseholdContacts: vi.fn(),
-  saveHouseholdContact: vi.fn(),
-  removeHouseholdContact: vi.fn(),
   listSecondaryKinfolk: vi.fn(),
   saveSecondaryKinfolk: vi.fn(),
   removeSecondaryKinfolk: vi.fn(),
@@ -62,12 +59,6 @@ vi.mock('../api/membersWrite', async (orig) => ({
   removeMember: api.removeMember,
   inviteKinfolkToPortal: api.inviteKinfolkToPortal,
   executePrimaryRecovery: api.executePrimaryRecovery,
-}));
-vi.mock('../api/householdContacts', async (orig) => ({
-  ...(await orig<typeof import('../api/householdContacts')>()),
-  listHouseholdContacts: api.listHouseholdContacts,
-  saveHouseholdContact: api.saveHouseholdContact,
-  removeHouseholdContact: api.removeHouseholdContact,
 }));
 
 vi.mock('../api/secondaryKinfolk', async (orig) => ({
@@ -931,12 +922,10 @@ describe('HouseholdMembers Back', () => {
  *
  * It replaces the 2026-09-12 ruling that put a contacts list on this screen.
  * The list, its dialog and both "Add secondary contact" buttons are gone, and
- * the screen no longer reads `listHouseholdContacts` at all. The callables and
- * their rows stay until the operator has read the report; that is not this
- * screen's business.
+ * #1042 removed the callables behind them.
  */
 describe('HouseholdMembers has no contacts list', () => {
-  it('offers no way to add, edit or remove a contact, and never reads the contacts', async () => {
+  it('offers no way to add, edit or remove a contact', async () => {
     mount({ members: [member()] });
     await screen.findByText('marcus@example.com');
 
@@ -945,9 +934,6 @@ describe('HouseholdMembers has no contacts list', () => {
     expect(screen.queryByText(/no contact has been recorded/i)).toBeNull();
     expect(document.querySelector('.hmembers__addrow')).toBeNull();
     expect(document.querySelector('[data-role="contact"]')).toBeNull();
-    expect(api.listHouseholdContacts).not.toHaveBeenCalled();
-    expect(api.saveHouseholdContact).not.toHaveBeenCalled();
-    expect(api.removeHouseholdContact).not.toHaveBeenCalled();
   });
 });
 /**

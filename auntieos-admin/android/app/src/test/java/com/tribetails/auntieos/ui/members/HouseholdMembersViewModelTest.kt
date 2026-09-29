@@ -1,7 +1,6 @@
 package com.tribetails.auntieos.ui.members
 
 import com.tribetails.auntieos.data.repository.MembersRepository
-import com.tribetails.auntieos.data.repository.decodeContacts
 import com.tribetails.auntieos.data.repository.portalInviteMessage
 import com.tribetails.auntieos.data.repository.portalInviteSent
 import com.tribetails.auntieos.ui.components.AuntieStatusTone
@@ -443,21 +442,8 @@ class HouseholdMembersViewModelTest {
     // "there is no true 'Contact List'. There can be up to 3 ppl's contact info
     // to a household: Primary Kinfolk (PK), Secondary Kinfolk (SK), and
     // Emergency Contact (EC)." It replaces the 2026-09-12 ruling that put a
-    // contacts list beside the invite. The ViewModel holds no contact state and
-    // never calls the three contact callables; the repository keeps them until
-    // the operator has read `report:household-contacts`.
-
-    @Test fun `RULING loading the screen never reads the contacts list`() =
-        runTest(testDispatcher) {
-            stubLoads()
-            val vm = vm()
-            vm.load(); advanceUntilIdle()
-
-            assertTrue(vm.uiState.value.membersLoaded)
-            coVerify(exactly = 0) { repo.listHouseholdContacts(any()) }
-            coVerify(exactly = 0) { repo.saveHouseholdContact(any(), any()) }
-            coVerify(exactly = 0) { repo.removeHouseholdContact(any(), any()) }
-        }
+    // contacts list beside the invite. The ViewModel holds no contact state,
+    // and #1042 removed the contact callables from the repository.
 
     @Test fun `RULING the portal invite says what the claimant gets`() =
         runTest(testDispatcher) {
@@ -472,8 +458,6 @@ class HouseholdMembersViewModelTest {
             assertTrue(toast.contains("manages the household"))
             assertTrue(toast.contains("receives its notifications"))
             assertNull(vm.uiState.value.portalInviteNotice)
-            // Inviting records no contact.
-            coVerify(exactly = 0) { repo.saveHouseholdContact(any(), any()) }
         }
 
     @Test fun `RULING an answer that emailed nobody is a notice, never a sent toast`() =
@@ -501,24 +485,6 @@ class HouseholdMembersViewModelTest {
         assertTrue(portalInviteMessage("sent", "   ").contains("This household"))
         // An answer this client does not know is reported, not assumed sent.
         assertTrue(portalInviteMessage("wat", "the Walls").startsWith("No invite sent"))
-    }
-
-    @Test fun `decodeContacts keeps a half-written row and drops one with no id`() {
-        val rows = decodeContacts(
-            mapOf(
-                "contacts" to listOf(
-                    mapOf("contactId" to "c1", "name" to "Ada", "label" to "Sister", "phone" to "805"),
-                    mapOf("contactId" to "c2", "phone" to ""),
-                    mapOf("name" to "no id"),
-                ),
-            ),
-        )
-        assertEquals(2, rows.size)
-        assertEquals("Sister · 805", rows[0].meta)
-        // Kept and labelled, so the operator can fix or delete it.
-        assertEquals("(unnamed contact)", rows[1].name)
-        assertEquals("Folk", rows[1].label)
-        assertNull(rows[1].phone)
     }
 
     @Test fun `the panel note counts secondaries, and only once the roster read lands`() {

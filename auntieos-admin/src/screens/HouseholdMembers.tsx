@@ -65,11 +65,10 @@ import './HouseholdMembers.css';
  * true 'Contact List'. There can be up to 3 ppl's contact info to a household:
  * Primary Kinfolk (PK), Secondary Kinfolk (SK), and Emergency Contact (EC)."
  * That replaces the 2026-09-12 ruling that put an "Add secondary contact" button
- * and a "No portal account" list on this screen, so both are gone. The
- * `families/{id}/contacts` rows, their rules and the three `householdContact*`
- * callables stay, unreferenced, until the operator has read
- * `report:household-contacts` and ruled on the data. The Emergency Contact is a
- * household item and lives on the household profile, not here.
+ * and a "No portal account" list on this screen, so both are gone, and #1042
+ * removed the contact list callables, rules and data path behind them. The
+ * Emergency Contact is a household item and lives on the household profile,
+ * not here.
  *
  * "Invite a primary by email" sent the same claim link to an address the
  * operator typed, for a household with the wrong email on file or none

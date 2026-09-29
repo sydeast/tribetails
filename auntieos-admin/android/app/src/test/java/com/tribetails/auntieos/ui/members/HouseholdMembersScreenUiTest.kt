@@ -187,9 +187,8 @@ class HouseholdMembersScreenUiTest {
 
     /**
      * RULING (2026-09-27, #829): "there is no true 'Contact List'." The hero
-     * carries the invite alone, the Secondary kinfolk panel holds members
-     * only, and nothing reads the contacts. `mockk` is strict here, so a call
-     * to `listHouseholdContacts` would fail the test on its own.
+     * carries the invite alone and the Secondary kinfolk panel holds members
+     * only.
      */
     @Test
     fun `there is no contacts list, and the invite is the hero's one action`() {

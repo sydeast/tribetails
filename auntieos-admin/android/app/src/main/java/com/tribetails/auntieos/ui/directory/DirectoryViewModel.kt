@@ -949,7 +949,7 @@ class DirectoryViewModel(
                 listOf("${state.firstName} ${state.lastName}"),
                 listOf(state.phoneNumber, state.secondaryPhone),
             )?.let { _addKinfolkState.value = state.copy(error = it); return }
-            saveNewHouseholdContacts(id, state)
+            saveNewHouseholdEmergencyContacts(id, state)
             return
         }
         if (state.firstName.isBlank()) {
@@ -1008,7 +1008,7 @@ class DirectoryViewModel(
                 // #909: the CREATE_KINFOLK audit is written by createKinfolk on the
                 // server, once per household, so nothing is logged from here.
                 // The discarded id has done its job once a create is answered.
-                saveNewHouseholdContacts(
+                saveNewHouseholdEmergencyContacts(
                     saved.id,
                     state.copy(isSaving = true, createdKinfolkId = saved.id, discardedKinfolkId = null),
                     createdName = saved.displayName,
@@ -1030,7 +1030,7 @@ class DirectoryViewModel(
      * rather than reporting the whole Add as failed and inviting a retry that
      * would create a second household.
      */
-    private fun saveNewHouseholdContacts(id: String, state: AddKinfolkUiState, createdName: String? = null) {
+    private fun saveNewHouseholdEmergencyContacts(id: String, state: AddKinfolkUiState, createdName: String? = null) {
         viewModelScope.launch {
             _addKinfolkState.value = state.copy(isSaving = true, error = null, createdKinfolkId = id)
             repository.saveEmergencyContacts(id, state.emergencyContacts).onSuccess {

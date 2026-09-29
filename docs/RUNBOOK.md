@@ -254,7 +254,6 @@ Paste the output back for a ruling. None of them changes anything.
 | After | Double credit from auto-apply (#977) | `npm --prefix mytribe/functions run report:autoapply-double-credit -- --project auntieos-ttpc --allow-prod` |
 | After | Invoices paid over their total (#982) | `npm --prefix mytribe/functions run report:over-applied-invoices -- --project auntieos-ttpc --allow-prod` |
 | After | Desktop payments that never applied (#881). Refuses `--allow-prod` | `npm --prefix mytribe/functions run report:desktop-direct-payments -- --project auntieos-ttpc` |
-| After | Old household contact lists (#829) | `npm --prefix mytribe/functions run report:household-contacts -- --project auntieos-ttpc --allow-prod` |
 | After | Duplicate card charges credited (docket Q5) | `npm --prefix mytribe/functions run report:duplicate-checkout-credits -- --project auntieos-ttpc --allow-prod` |
 | After | Households with two Emergency Contacts (Q2) | `npm --prefix mytribe/functions run report:multiple-emergency-contacts -- --project auntieos-ttpc --allow-prod` |
 | After | Two households for one family (#890) | `npm --prefix mytribe/functions run report:duplicate-kinfolk -- --allow-prod --project auntieos-ttpc` |

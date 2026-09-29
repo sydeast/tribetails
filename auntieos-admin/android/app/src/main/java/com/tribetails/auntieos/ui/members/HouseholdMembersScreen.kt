@@ -114,10 +114,8 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  * Primary Kinfolk (PK), Secondary Kinfolk (SK), and Emergency Contact (EC)."
  * It replaces the 2026-09-12 ruling that put a "No portal account" list, its
  * dialog and a dashed "Add secondary contact" row in the Secondary contacts
- * panel. The panel now holds members of role SECONDARY only. The
- * `families/{id}/contacts` rows and the `MembersRepository` contact calls stay,
- * unreferenced here, until the operator has read `report:household-contacts`
- * and ruled on the data.
+ * panel. The panel now holds members of role SECONDARY only. #1042 removed
+ * the contact list callables and the `MembersRepository` calls behind it.
  *
  * Two more of the mock's controls are PRIMARY-only on the server and so are
  * not offered to an admin: the editable `secondaryLabel` input

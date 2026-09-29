@@ -18,10 +18,9 @@ import kotlinx.coroutines.launch
  * `auntieos-admin/src/screens/HouseholdMembers.tsx`; the two screens call the
  * same callables and have to move together, including `inviteKinfolkToPortal`
  * (the claim link that hands somebody the household). The contacts list the
- * 2026-09-12 ruling added (`listHouseholdContacts` / `saveHouseholdContact` /
- * `removeHouseholdContact`) is gone under the operator's 2026-09-27 ruling on
- * #829 ("there is no true 'Contact List'"), so this ViewModel holds no contact
- * state and calls none of the three. `mintInvite` is not one of them either: the typed-address "Invite a primary by email" dialog is gone (issue
+ * 2026-09-12 ruling added is gone under the operator's 2026-09-27 ruling on
+ * #829 ("there is no true 'Contact List'"), and #1042 removed its callables,
+ * so this ViewModel holds no contact state. `mintInvite` is not called either: the typed-address "Invite a primary by email" dialog is gone (issue
  * #684), so this ViewModel has no mint state and no mint handler any more.
  *
  * FAIL LOUD, AND SEPARATELY. Each write carries its own error field and its

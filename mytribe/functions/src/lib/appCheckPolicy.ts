@@ -109,25 +109,38 @@ export function resetAppCheckModeCache(): void {
 }
 
 /**
- * Cohort 1: callables that ONLY the React portal calls.
+ * Cohort 1: the callables `enforce` governs. Empty since #987.
  *
- * The membership rule is not "portal-facing", it is "no other client can
- * possibly send this". Cross-checked 2026-08-24 against every callable name the
- * React tree invokes (`web/src/**`) and every one the Compose tree invokes
- * (`src/**`, which is the Android app, the retiring jsMain web build and the
- * desktop build sharing one `commonMain`). Of the 50 names the portal calls, 49
- * are also reachable from the Compose tree; `getBusinessClosures` is the one
- * that is not. The AuntieOS admin tree does not call it either.
+ * THE RULE. A name may be here only if no client without App Check can reach
+ * it. Only the two React web apps attest. Android has no App Check (ruling R3,
+ * 2026-09-27: "Rely on sign-in and rate limits"), the desktop builds have no
+ * App Check SDK, and the Compose js builds never wired one. For every one of
+ * those clients, sign-in and rate limits are the protection, not this gate.
  *
- * One name is a small cohort and that is the correct size for it. The ruling
- * calls cohort 1 "the proving ground" — its job is to exercise the reject path
- * against real traffic where a mistake cannot reach a client that was never
- * going to attest. Cohort 2 (the whole `wrapCallable` surface) is gated on the
- * jsMain retirement AND on the portal's two reCAPTCHA loaders being unified,
- * because until that lands a kinfolk who signs in through the form spends that
- * whole session unattested by design (web/src/lib/boot.ts).
+ * WHY IT IS EMPTY. It held `getBusinessClosures`, on a hand check from
+ * 2026-08-24 that said no Compose client calls it. That check was wrong: the
+ * shared `PortalApi.kt` calls it for the booking wizard's closed dates, on
+ * Android and desktop alike, so `enforce` would have broken the Android
+ * booking calendar with no way for that client to fix itself. No portal
+ * callable is web-only today, so the portal proving ground this cohort was
+ * meant to be has no eligible member.
+ *
+ * WHAT GUARDS IT. `scripts/clientCallables.ts` reads every client's source and
+ * lists which callables each can reach (`npm run callables:map` prints the map
+ * and the web-only names that are eligible here).
+ * `test/appCheckComposeReachable.test.ts` fails if any name here is reachable
+ * from a Compose or Android client, so the hand check is never needed again.
+ *
+ * With the cohort empty, `business_settings/security.appCheckMode` changes
+ * nothing: `enforce` has no callable to refuse. Adding a web-only admin
+ * callable here is an operator decision, not a code default.
+ *
+ * Cohort 2 (the whole `wrapCallable` surface) stays out of reach for the same
+ * reason, now permanently for anything a Compose client calls, and also because
+ * a kinfolk who signs in through the web form spends that session unattested by
+ * design (web/src/lib/boot.ts).
  */
-export const APP_CHECK_COHORT: readonly string[] = ['getBusinessClosures'];
+export const APP_CHECK_COHORT: readonly string[] = [];
 
 /**
  * #886: callables that must NEVER join an enforced cohort until every client
