@@ -19,9 +19,9 @@ export type Handler<T, R> = (req: CallableRequest<T>) => Promise<R>;
  * O-3 App Check telemetry (docs/O3_APP_CHECK_RULING_2026-07-13.md, D2).
  *
  * `req.app` is populated by the platform whenever the request carried a
- * VERIFIED App Check token, even with enforcement fully off — this is what
- * lets the grace-period metric (valid-token rate from portal/Android origins)
- * be measured before anything is ever rejected. `wrapAdminCallable` delegates
+ * VERIFIED App Check token, with no enforcement anywhere. Since
+ * D-2026-09-28-APP-CHECK-ONLY-LOGS this telemetry is all App Check does: it is
+ * logged on every call and never used to refuse one. `wrapAdminCallable` delegates
  * to this wrapper rather than logging separately, so this single call site
  * covers every onCall function that routes through either wrapper (all of
  * them).
