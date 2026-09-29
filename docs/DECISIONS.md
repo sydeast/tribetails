@@ -385,7 +385,7 @@ so the ID resolves.
 ### OWNER-1: No public app store, ever
 - Date: 2026-07-14/15 (`mytribe/docs/DEVELOPMENT_PLAN_2026-07-10.md`), restated 2026-08-25
 - Ruling: "NO, permanent. The app will never be in a public store. Android stays APK-sideload only... Never present Play Console registration as an option again." Applies to `com.tribetails.auntieos` and `com.kinfolk.portal`. Play Integrity needs Play Console registration, so neither app can attest with it.
-- Enforced in: `auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/data/repository/AppCheckActivation.kt`, `auntieos-admin/android/app/src/release/java/com/tribetails/auntieos/data/repository/AppCheckProvider.kt`
+- Enforced in: `auntieos-admin/android/app/build.gradle.kts`, `mytribe/build.gradle.kts`, `auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/AuntieOSApp.kt`, `mytribe/src/androidMain/kotlin/com/kinfolk/portal/KinfolkPortalApplication.kt`, `mytribe/src/jvmTest/kotlin/com/kinfolk/portal/attestation/AppCheckWiringTest.kt`
 
 ### D-2026-07-16-REMOVE-APK-MIGRATION: No migration tooling in the admin APK
 - Date: 2026-07-16. Status: done.
