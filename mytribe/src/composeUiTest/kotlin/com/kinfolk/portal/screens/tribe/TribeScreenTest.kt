@@ -317,7 +317,8 @@ class TribeScreenTest {
     }
 
     // #829, ruling 2026-09-27: "there is no true 'Contact List'". The Tribe
-    // screen draws no contacts card and never asks for one.
+    // screen draws no contacts card and never asks for one (#1042 removed the
+    // callables, so any call by that name would be to a function that is gone).
     @Test
     fun thereIsNoContactsCard() = runComposeUiTest {
         val fake = FakeFunctionsClient()

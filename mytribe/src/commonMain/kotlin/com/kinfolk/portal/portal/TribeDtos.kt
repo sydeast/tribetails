@@ -63,51 +63,6 @@ data class Member(
 )
 
 /**
- * A person the household can be reached through who holds NO portal account.
- *
- * ORPHANED (#829). Built for the 2026-09-12 ruling ("a secondary contact does
- * not have to be a portal user"), which the operator's 2026-09-27 ruling
- * replaces: "there is no true 'Contact List'. There can be up to 3 ppl's
- * contact info to a household: Primary Kinfolk (PK), Secondary Kinfolk (SK),
- * and Emergency Contact (EC)." Kept, with the [PortalApi] calls that decode it,
- * until the operator has read `report:household-contacts` and ruled on the data.
- *
- * As built: two gestures with two outcomes. [Member] above is the second one: a uid, a role, a status and a
- * [MemberPermissions] set, because there is something to sign in to. A contact
- * has none of those four, and the absence is the type — there is no field here
- * for a screen to fill with a permission, so the two cannot quietly merge back
- * into one.
- *
- * [label] is what this person is to the household — "Sister", "Neighbour" — and
- * the server defaults it to "Folk" when nobody says. [email] is somewhere to
- * reach them and nothing more: no `inviteRequests` row is written for a contact
- * and no account is minted.
- */
-/** `CONTACT_NAME_MAX` in `mytribe/functions/src/portal/householdContacts.ts`. */
-const val CONTACT_NAME_MAX = 80
-
-/** `CONTACT_PHONE_MAX`, same file. */
-const val CONTACT_PHONE_MAX = 32
-
-/** `SECONDARY_LABEL_MAX` in `mytribe/functions/src/lib/schema.ts`. */
-const val CONTACT_LABEL_MAX = 24
-
-/** `DEFAULT_CONTACT_LABEL`. What a contact is called when nobody says. */
-const val DEFAULT_CONTACT_LABEL = "Folk"
-
-data class HouseholdContact(
-    val contactId: String,
-    val name: String,
-    val label: String,
-    /** Null means there is none, never "unknown". */
-    val phone: String?,
-    val email: String?,
-    /** ISO-8601 from the server, or null. Display only. */
-    val createdAt: String?,
-    val updatedAt: String?,
-)
-
-/**
  * #829. An Emergency Contact: called only when no kinfolk can be reached, never
  * messaged, no portal access. [phone] is what the server stored (E.164).
  * [recordedAt] and [updatedAt] are ISO-8601 or null, display only.
@@ -126,21 +81,6 @@ data class EmergencyContactsResult(val contacts: List<EmergencyContactDto>, val 
 /** One slot as the card edits it. An empty [relationship] is sent as null, which clears it. */
 data class EmergencyContactInput(val name: String, val phone: String, val relationship: String)
 
-/**
- * What `saveHouseholdContact` answers.
- *
- * [created] is the difference between "we wrote somebody new down" and "we
- * corrected a row", and the card says different things about each: only the
- * first one needs to say that no portal account came with it.
- */
-data class SavedHouseholdContact(
-    val contactId: String,
-    val created: Boolean,
-)
-
-/** "Sister · 805 555 0143 · ada@example.com", skipping what is absent. */
-fun HouseholdContact.metaLine(): String =
-    listOfNotNull(label, phone, email).filter { it.isNotBlank() }.joinToString(" · ")
 /**
  * 2026-09-27 Q3. A secondary kinfolk the primary added to the household, from
  * `listSecondaryKinfolk` (`families/{id}/secondaryKinfolk`). [access] is "NONE"

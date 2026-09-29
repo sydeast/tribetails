@@ -97,8 +97,8 @@ interface Case {
 /**
  * Allowlisted household callables: an Auntie is staff whatever her tribe count.
  * Docket Q1 (operator ruling 2026-09-27, an Auntie never uses the portal) left
- * only the three the ADMIN clients call on this row: getMyKinTaleMedia,
- * listHouseholdContacts, saveHouseholdContact. The ten portal-only callables
+ * only the ones the ADMIN clients call on this row: getMyKinTaleMedia,
+ * listSecondaryKinfolk, saveSecondaryKinfolk. The ten portal-only callables
  * #984 had allowlisted moved to NOT_HERS.
  */
 const HOUSEHOLD: Record<Caller, Outcome> = {
@@ -133,13 +133,10 @@ const CASES: Case[] = [
   { name: 'saveHomeAccess', load: async () => (await p('saveHomeAccess')).saveHomeAccessHandler, data: { gateCode: '1234' }, expect: NOT_HERS },
   { name: 'addKin', load: async () => (await p('kinWrites')).addKinHandler, data: { kin: { name: 'Biscuit' } }, expect: NOT_HERS },
   { name: 'updateKin', load: async () => (await p('kinWrites')).updateKinHandler, data: { kinId: 'kin1', kin: { name: 'Biscuit' } }, expect: NOT_HERS },
-  { name: 'listHouseholdContacts', load: async () => (await p('householdContacts')).listHouseholdContactsHandler, data: {}, expect: HOUSEHOLD },
-  { name: 'saveHouseholdContact', load: async () => (await p('householdContacts')).saveHouseholdContactHandler, data: { name: 'Neighbour Jo' }, expect: HOUSEHOLD },
   { name: 'listSecondaryKinfolk', load: async () => (await p('secondaryKinfolk')).listSecondaryKinfolkHandler, data: {}, expect: HOUSEHOLD },
   { name: 'saveSecondaryKinfolk', load: async () => (await p('secondaryKinfolk')).saveSecondaryKinfolkHandler, data: { name: 'Neighbour Jo' }, expect: HOUSEHOLD },
 
   { name: 'archiveKin', load: async () => (await p('kinWrites')).archiveKinHandler, data: { kinId: 'kin1', reason: 'noLongerWithUs' }, expect: NOT_HERS },
-  { name: 'removeHouseholdContact', load: async () => (await p('householdContacts')).removeHouseholdContactHandler, data: { contactId: 'c1' }, expect: NOT_HERS },
   { name: 'addSecondaryContact', load: async () => (await p('addSecondaryContact')).addSecondaryContactHandler, data: { invitedEmail: 'jo@example.com' }, expect: PRIMARY_ONLY },
   { name: 'removeSecondaryKinfolk', load: async () => (await p('secondaryKinfolk')).removeSecondaryKinfolkHandler, data: { personId: 'p1' }, expect: NOT_HERS },
   { name: 'sendKinfolkMessage', load: async () => (await p('sendKinfolkMessage')).sendKinfolkMessageHandler, data: { body: 'hello' }, expect: NOT_HERS },
@@ -279,8 +276,8 @@ describe('#984 a double-claimed token', () => {
     });
   });
   it('is admitted as staff to an allowlisted household callable', async () => {
-    const { listHouseholdContactsHandler } = await p('householdContacts');
-    await listHouseholdContactsHandler({ auth: both, data: {} } as never);
+    const { listSecondaryKinfolkHandler } = await p('secondaryKinfolk');
+    await listSecondaryKinfolkHandler({ auth: both, data: {} } as never);
     expect(mocks.resolved[0]).toEqual({ kinfolkId: 'k1', isOperator: true });
   });
 });

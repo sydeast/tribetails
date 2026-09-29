@@ -2,7 +2,16 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Timestamp } from 'firebase-admin/firestore';
-import { findingOf, parseArgs, reportLines, reportOf, resolveTarget } from '../reportMultipleEmergencyContacts';
+import {
+  describeTarget,
+  findingOf,
+  initials,
+  maskPhone,
+  parseArgs,
+  reportLines,
+  reportOf,
+  resolveTarget,
+} from '../reportMultipleEmergencyContacts';
 
 /**
  * The read-only count of households with more than one Emergency Contact
@@ -19,10 +28,43 @@ describe('reportMultipleEmergencyContacts target resolution', () => {
     expect(resolveTarget(parseArgs(['--allow-prod', '--project', 'p1']), {})).toEqual({ kind: 'production', projectId: 'p1' });
   });
 
+  it('reads the emulator without --allow-prod, naming the host', () => {
+    expect(resolveTarget(parseArgs([]), { FIRESTORE_EMULATOR_HOST: '127.0.0.1:8385' })).toEqual({
+      kind: 'emulator',
+      host: '127.0.0.1:8385',
+      projectId: 'demo-report-829',
+    });
+  });
+
+  it('reading production needs a project id it will not guess', () => {
+    expect(() => resolveTarget(parseArgs(['--allow-prod']), {})).toThrow(/needs --project/);
+  });
+
+  it('describes the target in one line', () => {
+    expect(describeTarget({ kind: 'production', projectId: 'p1' })).toBe('Target: PRODUCTION, project p1');
+  });
+
   it('has no apply flag: anything but --project and --allow-prod is refused', () => {
     for (const flag of ['--apply', '--write', '--fix', '--delete', '--dedupe']) {
       expect(() => parseArgs([flag]), flag).toThrow(/unknown arg/);
     }
+  });
+});
+
+describe('reportMultipleEmergencyContacts masking', () => {
+  it('keeps only the last four digits of a phone', () => {
+    expect(maskPhone('(805) 555-0143')).toBe('…0143');
+    expect(maskPhone('+18055550143')).toBe('…0143');
+    expect(maskPhone('12')).toBe('…');
+    expect(maskPhone('')).toBe('none');
+    expect(maskPhone(null)).toBe('none');
+    expect(maskPhone('call the barn')).toBe('(no digits)');
+  });
+
+  it('reduces a name to initials', () => {
+    expect(initials('Maria de los Angeles Rivera')).toBe('M. D. L. A. R.');
+    expect(initials('  ada  ')).toBe('A.');
+    expect(initials('')).toBe('none');
   });
 });
 

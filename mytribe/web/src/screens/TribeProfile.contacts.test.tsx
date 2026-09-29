@@ -13,9 +13,7 @@ import type { GetMyTribeProfileResult } from '../api/tribeApi';
  * up to 3 ppl's contact info to a household: Primary Kinfolk (PK), Secondary
  * Kinfolk (SK), and Emergency Contact (EC)." It replaces the 2026-09-12 ruling
  * #818 built this card for. The card, its form and its remove confirm are gone,
- * and the screen never calls the three contact callables. They stay in
- * `api/tribeApi.ts` until the operator has read `report:household-contacts`
- * and ruled on the data.
+ * and #1042 removed the contact callables behind them.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -28,9 +26,6 @@ const mocks = vi.hoisted(() => ({
   submitVetClinic: vi.fn(),
   addSecondaryContact: vi.fn(),
   updateSecondaryPermissions: vi.fn(),
-  listHouseholdContacts: vi.fn(),
-  saveHouseholdContact: vi.fn(),
-  removeHouseholdContact: vi.fn(),
   listEmergencyContacts: vi.fn(),
   saveEmergencyContacts: vi.fn(),
   getBusinessContact: vi.fn(),
@@ -49,9 +44,6 @@ vi.mock('../api/tribeApi', async () => {
     submitVetClinic: (...a: unknown[]) => mocks.submitVetClinic(...a),
     addSecondaryContact: (...a: unknown[]) => mocks.addSecondaryContact(...a),
     updateSecondaryPermissions: (...a: unknown[]) => mocks.updateSecondaryPermissions(...a),
-    listHouseholdContacts: (...a: unknown[]) => mocks.listHouseholdContacts(...a),
-    saveHouseholdContact: (...a: unknown[]) => mocks.saveHouseholdContact(...a),
-    removeHouseholdContact: (...a: unknown[]) => mocks.removeHouseholdContact(...a),
     listEmergencyContacts: (...a: unknown[]) => mocks.listEmergencyContacts(...a),
     saveEmergencyContacts: (...a: unknown[]) => mocks.saveEmergencyContacts(...a),
     // 2026-09-27 Q3: the Secondary Kinfolk card reads its own callable.
@@ -106,7 +98,7 @@ async function renderProfile() {
 }
 
 describe('TribeProfile has no contacts card (#829, ruling 2026-09-27)', () => {
-  it('draws no contacts card, no add button and no contact form, and never reads the contacts', async () => {
+  it('draws no contacts card, no add button and no contact form', async () => {
     await renderProfile();
     // The screen did render: the invite card below the members list is there.
     expect(await screen.findByRole('button', { name: /send invite/i })).toBeInTheDocument();
@@ -115,8 +107,5 @@ describe('TribeProfile has no contacts card (#829, ruling 2026-09-27)', () => {
     expect(screen.queryByRole('button', { name: 'Add a contact' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Save contact' })).toBeNull();
     expect(document.querySelector('#hc-name')).toBeNull();
-    expect(mocks.listHouseholdContacts).not.toHaveBeenCalled();
-    expect(mocks.saveHouseholdContact).not.toHaveBeenCalled();
-    expect(mocks.removeHouseholdContact).not.toHaveBeenCalled();
   });
 });

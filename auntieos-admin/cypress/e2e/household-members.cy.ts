@@ -21,8 +21,8 @@ import { usingFixtureAdmin } from '../support/commands';
  * The second case is the operator's 2026-09-27 ruling on #829: "there is no
  * true 'Contact List'." It replaces the 2026-09-12 ruling that put an "Add
  * secondary contact" button beside the invite, so the screen has no contacts
- * list, no add button and no contact dialog, and never calls
- * `listHouseholdContacts`.
+ * list, no add button and no contact dialog. #1042 removed the contact list
+ * callables themselves.
  */
 
 const CALLABLE = (name: string) => `**/us-central1/${name}`;
@@ -30,11 +30,6 @@ const CALLABLE = (name: string) => `**/us-central1/${name}`;
 function stubMembersCallables() {
   cy.intercept('POST', CALLABLE('listMembers'), { statusCode: 200, body: { result: { members: [] } } });
   cy.intercept('POST', CALLABLE('listInvites'), { statusCode: 200, body: { result: { invites: [] } } });
-  // Stubbed only so the test below can prove the screen never asks for it.
-  cy.intercept('POST', CALLABLE('listHouseholdContacts'), {
-    statusCode: 200,
-    body: { result: { contacts: [] } },
-  }).as('listHouseholdContacts');
   // 2026-09-27 Q3: secondary kinfolk with no portal account.
   cy.intercept('POST', CALLABLE('listSecondaryKinfolk'), {
     statusCode: 200,
@@ -77,7 +72,6 @@ describe('household members', () => {
     cy.contains('No portal account').should('not.exist');
     cy.get('.hmembers__addrow').should('not.exist');
     cy.get('#hmcontact-name').should('not.exist');
-    cy.get('@listHouseholdContacts.all').should('have.length', 0);
   });
 
   // Operator rulings 2026-09-27. Q4: the panel reads "Secondary kinfolk". Q3: the

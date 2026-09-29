@@ -299,7 +299,7 @@ so the ID resolves.
 - Date: 2026-09-12
 - Ruling: "a secondary contact does not have to be a portal user." Adding a contact mints no invite.
 - Superseded by: D-2026-09-13-HOUSEHOLD-ROLES, then fully superseded by D-2026-09-27-HOUSEHOLD-CONTACTS (2026-09-27 operator ruling: "none of it stands"). The "secondary contact" this entry names is gone; a household now has at most a Primary Kinfolk, a Secondary Kinfolk and an Emergency Contact. Code still citing this ID for a "secondary contact" concept is stale and should move to D-2026-09-27-HOUSEHOLD-CONTACTS.
-- Enforced in (historical): `auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/data/repository/MembersRepository.kt`, `auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/ui/members/HouseholdMembersScreen.kt`, `auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/ui/members/HouseholdMembersViewModel.kt`, `auntieos-admin/src/api/householdContacts.ts`
+- Enforced in (historical): `auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/data/repository/MembersRepository.kt`, `auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/ui/members/HouseholdMembersScreen.kt`, `auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/ui/members/HouseholdMembersViewModel.kt`. `auntieos-admin/src/api/householdContacts.ts` and the other contact list code were removed in #1042.
 
 ### D-2026-09-13-HOUSEHOLD-ROLES: Three household people roles
 - Date: 2026-09-13. Source: #829
