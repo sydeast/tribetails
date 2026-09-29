@@ -247,6 +247,16 @@ jobs:
               # which does trigger this job, so this line closes the gap for
               # the case where it doesn't: a seed edited without regenerating.
               - 'mytribe/seeds/**'
+              # #987: test/appCheckComposeReachable.test.ts reads the Kotlin
+              # clients' source to prove no callable an Android or desktop
+              # client calls is in the App Check cohort. A Kotlin-only change
+              # that starts calling a cohort member touches none of the paths
+              # above, so without these lines the one test that catches it
+              # never runs. The web trees are left out on purpose: a web call
+              # can only make a name eligible, never unsafe.
+              - 'mytribe/src/**'
+              - 'auntieos-admin/android/app/src/main/**'
+              - 'auntieos-admin/web/composeApp/src/**'
             # Its own filter for the same reason `adminE2e` has one: the rules
             # suite boots the Firestore emulator, so it costs minutes where the
             # `mytribe` unit job costs seconds, and it must not be paid for by
