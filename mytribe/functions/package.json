@@ -24,6 +24,7 @@
     "contracts:check": "ts-node --project scripts/tsconfig.json scripts/generateContracts.ts --check",
     "seeds:generate": "ts-node --project scripts/tsconfig.json scripts/generateSeedCorpus.ts",
     "seeds:check": "ts-node --project scripts/tsconfig.json scripts/generateSeedCorpus.ts --check",
+    "callables:map": "ts-node --project scripts/tsconfig.json scripts/clientCallables.ts",
     "runtime-options:expected": "ts-node --project scripts/tsconfig.json scripts/runtimeOptions/cli.ts",
     "runtime-options:diff": "ts-node --project scripts/tsconfig.json scripts/runtimeOptions/cli.ts --deployed",
     "runtime-options:cli": "ts-node --project scripts/tsconfig.json scripts/runtimeOptions/cli.ts",

@@ -471,6 +471,12 @@ export const AUDIT_EVENTS = {
   // A success-only trail cannot answer "who tried to rename a clinic onto
   // another one", which is the shape an accidental catalog merge takes.
   VET_CLINIC_WRITE_REFUSED: 'VET_CLINIC_WRITE_REFUSED',
+  // #909: a household created through `createKinfolk`. The admin clients wrote
+  // this same actionType through `logActivity` until the create moved server
+  // side, and the rules closed direct creates; the value is unchanged so the
+  // Activity Log reads old and new entries alike. A `duplicateOf` answer writes
+  // nothing and is not audited.
+  CREATE_KINFOLK: 'CREATE_KINFOLK',
 
   // #1049: `saveEmergencyContacts` refused a save from a caller who may edit
   // that household's contacts (an invalid contact, a household member, none at

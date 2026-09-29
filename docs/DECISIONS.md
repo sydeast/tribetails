@@ -379,12 +379,13 @@ so the ID resolves.
 - Date: 2026-07-13. Record: `mytribe/docs/O3_APP_CHECK_RULING_2026-07-13.md`
 - Ruling: Phase 1 is monitor-only. O-3 D1 (spelled "D1" in code and the record; not D1-INBOX) made Play Integrity the Android provider and ruled out SafetyNet. D2 sets the enforcement order and the kill switch.
 - Updated 2026-09-27: D1 no longer stands for Android. OWNER-1's permanent no on Play Console registration means Play Integrity can never ship there, so Android drops App Check and relies on sign-in and rate limits instead; the failing Play Integrity request stops. The web half of D1 is unchanged: reCAPTCHA Enterprise stays the web provider.
-- Enforced in: `auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/data/repository/AppCheckActivation.kt`, `auntieos-admin/android/app/src/release/java/com/tribetails/auntieos/data/repository/AppCheckProvider.kt`, `auntieos-admin/src/lib/boot.ts`, `auntieos-admin/src/lib/firebase.ts`
+- Updated 2026-09-28 (#987): a callable any Compose or Android client can reach never joins the enforced cohort, whatever the mode. Only callables named by the web apps alone are eligible, and none of the portal's are, so the cohort is empty and `enforce` refuses nothing until the operator adds a web-only admin callable. Sign-in and rate limits stay the protection for Android and desktop, per R3.
+- Enforced in: `mytribe/functions/src/lib/appCheckPolicy.ts`, `mytribe/functions/scripts/clientCallables.ts`, `mytribe/functions/test/appCheckComposeReachable.test.ts`, `auntieos-admin/src/lib/boot.ts`, `auntieos-admin/src/lib/firebase.ts`
 
 ### OWNER-1: No public app store, ever
 - Date: 2026-07-14/15 (`mytribe/docs/DEVELOPMENT_PLAN_2026-07-10.md`), restated 2026-08-25
 - Ruling: "NO, permanent. The app will never be in a public store. Android stays APK-sideload only... Never present Play Console registration as an option again." Applies to `com.tribetails.auntieos` and `com.kinfolk.portal`. Play Integrity needs Play Console registration, so neither app can attest with it.
-- Enforced in: `auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/data/repository/AppCheckActivation.kt`, `auntieos-admin/android/app/src/release/java/com/tribetails/auntieos/data/repository/AppCheckProvider.kt`
+- Enforced in: `auntieos-admin/android/app/build.gradle.kts`, `mytribe/build.gradle.kts`, `auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/AuntieOSApp.kt`, `mytribe/src/androidMain/kotlin/com/kinfolk/portal/KinfolkPortalApplication.kt`, `mytribe/src/jvmTest/kotlin/com/kinfolk/portal/attestation/AppCheckWiringTest.kt`
 
 ### D-2026-07-16-REMOVE-APK-MIGRATION: No migration tooling in the admin APK
 - Date: 2026-07-16. Status: done.

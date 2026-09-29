@@ -250,5 +250,32 @@ else
 fi
 
 echo
+echo "--- a change to any workflow file alone runs this test (#1052)"
+# This test runs in deploy-guard, which runs only when ci.yml's `scripts` path
+# filter matches. Everything above reads every file in .github/workflows/, so a
+# file missing from that filter can lose its timeout in a PR that touches only
+# it, and CI stays green. main-channel.yml was missing that way. The filter's
+# entries are the quoted paths under `scripts:` in the paths-filter block.
+SCRIPTS_FILTER="$(awk '
+  /^            scripts:[[:space:]]*$/ { on = 1; next }
+  on && /^            [A-Za-z]/ { on = 0 }
+  on && /^[^[:space:]]/ { on = 0 }
+  on && /^              - / { v = $0; sub(/^              - /, "", v); gsub(/\047/, "", v); print v }
+' "$WORKFLOWS/ci.yml")"
+if [ -z "$SCRIPTS_FILTER" ]; then
+  bad "ci.yml: could not read the scripts path filter, so this proved nothing"
+else
+  for f in "$WORKFLOWS"/*.yml; do
+    rel=".github/workflows/$(basename "$f")"
+    if printf '%s\n' "$SCRIPTS_FILTER" | grep -qxF "$rel" ||
+       printf '%s\n' "$SCRIPTS_FILTER" | grep -qxF '.github/workflows/**'; then
+      ok "ci.yml: the scripts filter covers $rel"
+    else
+      bad "ci.yml: the scripts filter does not list $rel, so a PR changing only it skips this test"
+    fi
+  done
+fi
+
+echo
 echo "workflow budget tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

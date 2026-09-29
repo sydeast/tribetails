@@ -2,10 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Timestamp } from 'firebase-admin/firestore';
 import { buildDbMock } from './_helpers/mockDb';
 
-const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), logEvent: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), logEvent: vi.fn(), writeAuditEntry: vi.fn() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: mocks.logEvent }));
+vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: mocks.writeAuditEntry }));
 vi.mock('../src/lib/sessionRevocation', () => import('./_helpers/mockSessionRevocation'));
 // The stamp is a REAL Timestamp at the (faked) current time, not a sentinel
 // string. The duplicate lookup is a `createdAt >=` range query, and a string
@@ -23,6 +24,7 @@ import {
   SERVER_OWNED_KEYS,
   PRIMARY_CONTACT_REQUIRED_MESSAGE,
   hasPrimaryContact,
+  householdName,
 } from '../src/admin/createKinfolk';
 
 const NOW = Date.UTC(2026, 8, 14, 15, 0, 0);
@@ -31,6 +33,7 @@ const MIN = 60_000;
 beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.logEvent.mockReset();
+  mocks.writeAuditEntry.mockReset().mockResolvedValue('audit-1');
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(NOW));
 });
@@ -288,6 +291,57 @@ describe('createKinfolk', () => {
     expect(mock.adds.filter((a) => a.collection === 'kinfolk')).toHaveLength(0);
   });
 
+  // #909: the CREATE audit moved here from the Android and desktop clients (web
+  // wrote none). One entry per household created, none for a duplicateOf answer.
+  describe('the CREATE_KINFOLK audit entry (#909)', () => {
+    it('writes exactly one entry for a created household, naming the operator and the household', async () => {
+      mocks.dbFn.mockReturnValue(buildDbMock({ queryDocs: { kinfolk: [] } }).db);
+      const res = await createKinfolkHandler(call({ kinfolk: household() }));
+      expect(res.duplicateOf).toBeNull();
+      expect(mocks.writeAuditEntry).toHaveBeenCalledTimes(1);
+      expect(mocks.writeAuditEntry).toHaveBeenCalledWith({
+        status: 'SUCCESS',
+        event: 'CREATE_KINFOLK',
+        severity: 'info',
+        actorRole: 'AUNTIE',
+        actorUid: 'op-1',
+        targetUid: 'auto-1',
+        targetCollection: 'kinfolk',
+        description: 'Added Kinfolk Jamie Halbrook',
+      });
+    });
+    it('writes no entry when the answer is duplicateOf, because nothing was created', async () => {
+      mocks.dbFn.mockReturnValue(buildDbMock({ queryDocs: { kinfolk: [stored('kf-first', {})] } }).db);
+      const res = await createKinfolkHandler(call({ kinfolk: household() }));
+      expect(res.duplicateOf).toBe('kf-first');
+      expect(mocks.writeAuditEntry).not.toHaveBeenCalled();
+    });
+    it('writes no entry for a refused create', async () => {
+      mocks.dbFn.mockReturnValue(buildDbMock({ queryDocs: { kinfolk: [] } }).db);
+      await expect(createKinfolkHandler(call({ kinfolk: household({ firstName: ' ' }) }))).rejects.toMatchObject({ code: 'invalid-argument' });
+      await expect(
+        createKinfolkHandler(call({ kinfolk: household({ phoneNumber: '', email: '' }) })),
+      ).rejects.toMatchObject({ code: 'invalid-argument' });
+      expect(mocks.writeAuditEntry).not.toHaveBeenCalled();
+    });
+    it('a create then its retry audits once', async () => {
+      mocks.dbFn.mockReturnValue(buildDbMock({ queryDocs: { kinfolk: [] }, writeThrough: true }).db);
+      await createKinfolkHandler(call({ kinfolk: household() }));
+      vi.setSystemTime(new Date(NOW + 3 * MIN));
+      await createKinfolkHandler(call({ kinfolk: household() }));
+      expect(mocks.writeAuditEntry).toHaveBeenCalledTimes(1);
+    });
+    it('fails the call when the audit cannot be written, the same as every other audited admin callable', async () => {
+      mocks.dbFn.mockReturnValue(buildDbMock({ queryDocs: { kinfolk: [] } }).db);
+      mocks.writeAuditEntry.mockRejectedValueOnce(new Error('chain head busy'));
+      await expect(createKinfolkHandler(call({ kinfolk: household() }))).rejects.toThrow('chain head busy');
+    });
+    it('names the household the way the admin clients display it', () => {
+      expect(householdName({ firstName: ' Jamie ', lastName: 'Halbrook ' })).toBe('Jamie Halbrook');
+      expect(householdName({ firstName: 'Jamie', lastName: '' })).toBe('Jamie');
+      expect(householdName({ firstName: '', lastName: 7 })).toBe('Kinfolk');
+    });
+  });
   it('exports the request and response shapes the three admin clients mirror', () => {
     expect(Args.safeParse({ kinfolk: household() }).success).toBe(true);
     expect(Args.safeParse({ kinfolk: household(), extra: 1 }).success).toBe(false);

@@ -3,6 +3,8 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
+import { writeAuditEntry } from '../lib/writeAuditEntry';
+import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { KINFOLK_DUPLICATE_WINDOW_MS, duplicateMatch, type DuplicateMatch } from '../lib/kinfolkDuplicate';
@@ -34,9 +36,16 @@ import { KINFOLK_DUPLICATE_WINDOW_MS, duplicateMatch, type DuplicateMatch } from
  * mytribe/scripts/createdAtProvenance.ts) and `createdByUid`. `updatedAt` is left
  * exactly as sent: desktop decodes it as a String on this collection.
  *
- * NOT CLOSED HERE. `firestore.rules` still lets staff create a kinfolk doc
- * directly, so an old client install goes around this check. Tightening that rule
- * is a separate change.
+ * THE ONLY WAY IN (#909). `firestore.rules` refuses a staff client's direct
+ * create of a kinfolk doc, so every household an admin makes passes the duplicate
+ * check. The one direct create left is a sandbox test admin's own
+ * `kinfolk/{testTribeId}`, which this callable refuses them anyway.
+ *
+ * AUDIT (#909). A created household writes one `CREATE_KINFOLK` entry to
+ * `activity_log`, here and nowhere else. Android and desktop used to write it
+ * from the client after the create, and admin web wrote none. A `duplicateOf`
+ * answer creates nothing and writes no entry: the household was audited when it
+ * was made.
  */
 
 const EMERGENCY_CONTACT_KEYS = ['emergencyContacts', 'emergencyContactName', 'emergencyContactPhone', 'emergencyContactRelation'];
@@ -103,6 +112,11 @@ function millisOf(v: unknown): number {
   return 0;
 }
 
+/** "First Last" as the admin clients display it, or "Kinfolk" when both are blank. */
+export function householdName(kinfolk: Record<string, unknown>): string {
+  const part = (k: string) => (typeof kinfolk[k] === 'string' ? (kinfolk[k] as string).trim() : '');
+  return [part('firstName'), part('lastName')].filter((p) => p !== '').join(' ') || 'Kinfolk';
+}
 export async function createKinfolkHandler(req: CallableRequest<unknown>): Promise<CreateKinfolkResult> {
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign in required.');
@@ -162,6 +176,19 @@ export async function createKinfolkHandler(req: CallableRequest<unknown>): Promi
     });
   } else {
     logEvent({ severity: 'info', function: 'createKinfolk', event: 'kinfolk.created', uid, extra: { kinfolkId: outcome.kinfolkId } });
+    // After the create's own transaction: writeAuditEntry runs a transaction of its
+    // own on the chain head, and nesting the two is not possible. The description
+    // is the wording the desktop console wrote from the client.
+    await writeAuditEntry({
+      status: 'SUCCESS',
+      event: AUDIT_EVENTS.CREATE_KINFOLK,
+      severity: 'info',
+      actorRole: 'AUNTIE',
+      actorUid: uid,
+      targetUid: outcome.kinfolkId,
+      targetCollection: 'kinfolk',
+      description: `Added Kinfolk ${householdName(body)}`,
+    });
   }
   return { kinfolkId: outcome.kinfolkId, duplicateOf: outcome.duplicateOf };
 }

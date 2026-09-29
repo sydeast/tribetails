@@ -10,6 +10,16 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class KinfolkSaveTest {
+    // #909: createKinfolk writes the CREATE_KINFOLK audit on the server, so the
+    // console must not write a second one on Add. Edits are still client-audited.
+    @Test
+    fun anAddIsAuditedByTheServerNotTheConsole() {
+        assertNull(clientHouseholdAuditAction(isNew = true))
+    }
+    @Test
+    fun anEditIsStillAuditedByTheConsole() {
+        assertEquals("UPDATE_KINFOLK", clientHouseholdAuditAction(isNew = false))
+    }
 
     private class Calls {
         val log = mutableListOf<String>()

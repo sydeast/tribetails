@@ -14,6 +14,10 @@ import { getFirestore, type Firestore } from 'firebase-admin/firestore';
  * emulator. Nothing is mocked except `db()` (pointed at the emulator), the
  * logger and Sentry.
  *
+ * #909: this is also the proof that the callable path still creates now that
+ * the rules refuse a staff client's direct create, and that it writes the one
+ * CREATE_KINFOLK audit entry per household.
+ *
  * Lives under test/rules/ because `npm run test:rules` is the suite that starts
  * a Firestore emulator; without FIRESTORE_EMULATOR_HOST the describe skips.
  */
@@ -50,6 +54,15 @@ describe.skipIf(!EMULATOR)('createKinfolk under concurrency (Firestore emulator)
     return snap.docs.map((d) => d.id);
   }
 
+  // #909: the CREATE audit is the server's now, one entry per household created.
+  async function createAudits(uid: string): Promise<string[]> {
+    const snap = await firestore
+      .collection('activity_log')
+      .where('actorId', '==', uid)
+      .where('actionType', '==', 'CREATE_KINFOLK')
+      .get();
+    return snap.docs.map((d) => String(d.data()['targetId']));
+  }
   async function race(uid: string, a: Record<string, unknown>, b: Record<string, unknown>) {
     const results = await Promise.all([
       createKinfolkHandler(call({ kinfolk: a }, uid)),
@@ -74,6 +87,8 @@ describe.skipIf(!EMULATOR)('createKinfolk under concurrency (Firestore emulator)
     expect(duplicates).toHaveLength(1);
     expect(created[0].kinfolkId).toBe(ids[0]);
     expect(duplicates[0]).toEqual({ kinfolkId: ids[0], duplicateOf: ids[0] });
+    // One household, one CREATE_KINFOLK entry: the duplicateOf answer audits nothing.
+    expect(await createAudits(uid)).toEqual([ids[0]]);
   });
 
   it('two calls with the same operator and email create one household', async () => {
@@ -85,6 +100,7 @@ describe.skipIf(!EMULATOR)('createKinfolk under concurrency (Firestore emulator)
     );
     expect(ids).toHaveLength(1);
     expect(results.filter((r) => r.duplicateOf === ids[0])).toHaveLength(1);
+    expect(await createAudits(uid)).toEqual([ids[0]]);
   });
 
   it('two calls with different phones and emails create two households', async () => {
@@ -96,5 +112,6 @@ describe.skipIf(!EMULATOR)('createKinfolk under concurrency (Firestore emulator)
     );
     expect(ids).toHaveLength(2);
     expect(results.every((r) => r.duplicateOf === null)).toBe(true);
+    expect((await createAudits(uid)).sort()).toEqual([...ids].sort());
   });
 });

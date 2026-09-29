@@ -223,9 +223,11 @@ class DirectoryViewModelPendingAddTest {
         assertFalse(vm.addKinfolkState.value.offerPendingOnOpen)
     }
 
+    // #909: a new household is audited by createKinfolk on the server, not here.
     @Test
-    fun `a new household still logs its CREATE`() {
+    fun `a new household logs no client CREATE, the server audits it`() {
         addWithFailedContact()
-        coVerify(exactly = 1) { repo.logActivity(match { it.actionType == "CREATE_KINFOLK" && it.targetId == "kf-890" }) }
+        assertEquals("kf-890", vm.addKinfolkState.value.createdKinfolkId)
+        coVerify(exactly = 0) { repo.logActivity(match { it.actionType == "CREATE_KINFOLK" }) }
     }
 }
