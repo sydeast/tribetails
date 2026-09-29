@@ -417,9 +417,9 @@ rc=0
 for f in $names; do
   n=$((n + 1))
   if [ "$n" -le "$limit" ]; then
-    echo "✔  functions[$f(us-central1)] Successful update operation."
+    echo "✔  functions[mytribe:$f(us-central1)] Successful update operation."
   else
-    echo "⚠  functions[$f(us-central1)] Deployment error."
+    echo "⚠  functions[mytribe:$f(us-central1)] Deployment error."
     # The real text, captured 2026-08-03 from a single-batch deploy of all 227.
     # It is a per-minute RATE on cloudfunctions.googleapis.com, not the Cloud Run
     # CPU ceiling this stub used to claim. Nothing in release.sh parses it (the
@@ -1361,7 +1361,7 @@ case "$*" in
   *functions:mytribe:*)
     for a in "$@"; do
       # --force is the whole point: with it, the deploy is allowed through.
-      if [ "$a" = "--force" ]; then echo "✔  functions[alpha(us-central1)] Successful update operation."; exit 0; fi
+      if [ "$a" = "--force" ]; then echo "✔  functions[mytribe:alpha(us-central1)] Successful update operation."; exit 0; fi
     done
     echo "Error: Pass the --force option to deploy functions that increase the minimum bill"
     exit 1 ;;
