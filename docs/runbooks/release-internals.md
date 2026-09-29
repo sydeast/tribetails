@@ -959,13 +959,17 @@ In order, and only when the mode is `preflight` or `on`:
 4. Stops if nothing has merged since the last `release/*` tag.
 5. Installs what the Mac already has: Node 22, `npm ci` in all three roots
    step 0a checks, `firebase-tools` 15.18.0, Python 3.13 and the `reconcile`
-   venv, JDK 17 and 21, Gradle. The runner's own Android SDK is used through
+   venv, JDK 17 and 21, Gradle with its home pinned to
+   `$RUNNER_TEMP/gradle-home`. The runner's own Android SDK is used through
    `sdk.dir=$ANDROID_HOME`.
 6. Sets a git identity, because step 9's `git tag -a` fails without one and a
    release with no tag is shipped again the next night.
 7. Restores the signing material from repository secrets: the operator app's
    release keystore (into `$RUNNER_TEMP`), both `local.properties` files,
-   `~/.android/debug.keystore` and `~/.gradle/gradle.properties`.
+   `~/.android/debug.keystore` and `gradle.properties` in the pinned Gradle
+   home. This step and the cleanup step refuse to run anywhere but a GitHub
+   Actions runner, so pasting either one into a shell on the Mac changes
+   nothing there.
 8. Opens both keystores with `keytool` and prints both SHA-256 fingerprints in
    the run summary. A preflight never builds an APK, so this is the only thing
    in a preflight that proves the signing secrets are right.

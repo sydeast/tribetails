@@ -259,6 +259,134 @@ else
 fi
 
 echo
+echo "--- restore and cleanup cannot touch a developer's machine"
+# On 2026-09-28 a local trial of the restore and cleanup bodies inherited a
+# developer shell's GRADLE_USER_HOME, overwrote that machine's gradle.properties
+# and then deleted it. Three things now prevent that, and each is checked here:
+# the job pins its Gradle home under $RUNNER_TEMP, and both step bodies refuse
+# off a runner before writing or deleting anything.
+PIN="$(step_index 'Pin the Gradle home to this run')"
+SETUP_GRADLE="$(step_index 'gradle/actions/setup-gradle@')"
+PIN_BODY="$(awk '
+  /^      - name: Pin the Gradle home to this run/ { on = 1; next }
+  on && /^      - / { on = 0 }
+  on { print }
+' "$WF")"
+if [ -n "$PIN" ] && printf '%s' "$PIN_BODY" | grep -qF 'GRADLE_USER_HOME=$RUNNER_TEMP/' &&
+   printf '%s' "$PIN_BODY" | grep -qF '>> "$GITHUB_ENV"'; then
+  ok "a step writes GRADLE_USER_HOME=\$RUNNER_TEMP/... to GITHUB_ENV"
+else
+  bad "no step pins GRADLE_USER_HOME under RUNNER_TEMP through GITHUB_ENV"
+fi
+if [ -n "$PIN" ] && [ -n "$SETUP_GRADLE" ] && [ -n "$RESTORE" ] &&
+   [ "$PIN" -lt "$SETUP_GRADLE" ] && [ "$PIN" -lt "$RESTORE" ]; then
+  ok "the Gradle home is pinned before setup-gradle and before the restore step"
+else
+  bad "the pin step (${PIN:-missing}) is not before setup-gradle (${SETUP_GRADLE:-missing}) and restore (${RESTORE:-missing})"
+fi
+
+# guard_first <body> <label>: the runner guard is present and comes before the
+# first line that writes or deletes anything.
+guard_first() {
+  printf '%s\n' "$1" | awk -v label="$2" '
+    /^[[:space:]]*#/ { next }
+    !g && /GITHUB_ACTIONS:-}" != "true"/ && /-z "\$\{RUNNER_TEMP:-}"/ { g = NR }
+    !w && (/base64 -d/ || /rm -f/ || /mkdir/ || /> *"?\$/ || /> auntieos-admin/ || /> mytribe/) { w = NR }
+    END {
+      if (!g) { print "no GITHUB_ACTIONS/RUNNER_TEMP guard in " label; exit 1 }
+      if (w && w < g) { print "the " label " writes or deletes before its guard"; exit 1 }
+    }
+  '
+}
+for pair in "restore:$RESTORE_BODY" "cleanup:$CLEAN_BODY"; do
+  label="${pair%%:*}"; body="${pair#*:}"
+  if why="$(guard_first "$body" "$label step")"; then
+    ok "the $label step refuses off a runner before it writes or deletes anything"
+  else
+    bad "$why"
+  fi
+  if printf '%s' "$body" | grep -v '^[[:space:]]*#' | grep -qF '$HOME/.gradle'; then
+    bad "the $label step still falls back to \$HOME/.gradle"
+  else
+    ok "the $label step never names \$HOME/.gradle"
+  fi
+done
+if printf '%s' "$RESTORE_BODY" | grep -qF '"$RUNNER_TEMP"/*) ;;' &&
+   printf '%s' "$RESTORE_BODY" | grep -qF '> "$GRADLE_USER_HOME/gradle.properties"'; then
+  ok "the restore step writes gradle.properties only into a GRADLE_USER_HOME under RUNNER_TEMP"
+else
+  bad "the restore step does not require GRADLE_USER_HOME under RUNNER_TEMP before writing gradle.properties"
+fi
+if printf '%s' "$CLEAN_BODY" | grep -qF '"$RUNNER_TEMP"/*) rm -f "$GRADLE_USER_HOME/gradle.properties"'; then
+  ok "cleanup deletes gradle.properties only from a GRADLE_USER_HOME under RUNNER_TEMP"
+else
+  bad "cleanup can delete gradle.properties outside RUNNER_TEMP"
+fi
+
+# And by running them. Each body is extracted from the YAML and run in a
+# throwaway HOME, Gradle home and workspace seeded with sentinel files, never
+# the real ones. Off a runner both must refuse and leave every sentinel as it
+# was; on a "runner" with a Gradle home outside RUNNER_TEMP, restore must too.
+step_run_body() {
+  awk -v want="      - name: $1" '
+    $0 == want { on = 1; next }
+    on && /^      - / { exit }
+    on && /^        run: \|/ { body = 1; next }
+    body && /^          / { sub(/^          /, ""); print; next }
+    body && /^[[:space:]]*$/ { print ""; next }
+    body { exit }
+  ' "$WF"
+}
+SANDBOX="$(mktemp -d)"
+seed_sandbox() {
+  rm -rf "${SANDBOX:?}"/*
+  mkdir -p "$SANDBOX/home/.android" "$SANDBOX/gradle" "$SANDBOX/ws/mytribe" "$SANDBOX/ws/auntieos-admin/android" "$SANDBOX/rt"
+  for f in home/.android/debug.keystore gradle/gradle.properties ws/mytribe/local.properties ws/auntieos-admin/android/local.properties; do
+    printf 'sentinel\n' > "$SANDBOX/$f"
+  done
+}
+sandbox_intact() {
+  for f in home/.android/debug.keystore gradle/gradle.properties ws/mytribe/local.properties ws/auntieos-admin/android/local.properties; do
+    [ "$(cat "$SANDBOX/$f" 2>/dev/null)" = "sentinel" ] || return 1
+  done
+}
+# run_body <name> <GITHUB_ACTIONS> <RUNNER_TEMP>: runs with only the variables
+# named here plus PATH, from the sandbox workspace. Echoes the exit code.
+run_body() {
+  local body rc
+  body="$(step_run_body "$1")"
+  [ -n "$body" ] || { echo "empty"; return; }
+  ( cd "$SANDBOX/ws" && env -i PATH="$PATH" HOME="$SANDBOX/home" GRADLE_USER_HOME="$SANDBOX/gradle" \
+      ${2:+GITHUB_ACTIONS="$2"} ${3:+RUNNER_TEMP="$3"} \
+      AUNTIEOS_KEYSTORE_B64=eA== AUNTIEOS_KEYSTORE_PASSWORD=x AUNTIEOS_KEY_ALIAS=x AUNTIEOS_KEY_PASSWORD=x \
+      AUNTIEOS_ANDROID_SENTRY_DSN=x MYTRIBE_DEBUG_KEYSTORE_B64=eA== MAPBOX_DOWNLOADS_TOKEN=x ANDROID_MAPBOX_PUBLIC_TOKEN=x \
+      bash -c "$body" ) > "$SANDBOX/out" 2>&1
+  rc=$?
+  echo "$rc"
+}
+for step in 'Restore the Android signing material' 'Delete the restored signing material and credentials'; do
+  for env_case in 'none::' 'no-runner-temp:true:' 'not-actions:false:RT'; do
+    case_name="${env_case%%:*}"; rest="${env_case#*:}"
+    ga="${rest%%:*}"; rt="${rest#*:}"; [ "$rt" = "RT" ] && rt="$SANDBOX/rt"
+    seed_sandbox
+    rc="$(run_body "$step" "$ga" "$rt")"
+    if [ "$rc" != "0" ] && [ "$rc" != "empty" ] && sandbox_intact && grep -q 'REFUSED' "$SANDBOX/out"; then
+      ok "'$step' run off a runner ($case_name) refuses and leaves HOME, the Gradle home and the workspace alone"
+    else
+      bad "'$step' run off a runner ($case_name) exited $rc or changed a file: $(head -2 "$SANDBOX/out")"
+    fi
+  done
+done
+seed_sandbox
+rc="$(run_body 'Restore the Android signing material' true "$SANDBOX/rt")"
+if [ "$rc" != "0" ] && sandbox_intact && grep -q 'not under RUNNER_TEMP' "$SANDBOX/out"; then
+  ok "restore on a runner whose GRADLE_USER_HOME is outside RUNNER_TEMP refuses and writes nothing"
+else
+  bad "restore with GRADLE_USER_HOME outside RUNNER_TEMP exited $rc or changed a file: $(head -2 "$SANDBOX/out")"
+fi
+rm -rf "$SANDBOX"
+
+echo
 echo "--- the reconcile venv uses the runtime firebase.json deploys"
 PYRUNTIME="$(sed -n 's/.*"runtime":[[:space:]]*"python\([0-9]\)\([0-9][0-9]*\)".*/\1.\2/p' "$PYCFG" | head -1)"
 WFPY="$(sed -n "s/^          python-version: '\([0-9.]*\)'.*/\1/p" "$WF" | head -1)"

@@ -291,6 +291,18 @@ jobs:
             17
             21
 
+      # THIS RUN'S OWN GRADLE HOME, under $RUNNER_TEMP, the way ci.yml's Android
+      # jobs pin theirs. The restore step writes gradle.properties (two Mapbox
+      # tokens) into it and the cleanup step deletes that file, so pinning the
+      # directory here means neither step can reach any other Gradle home. On
+      # 2026-09-28 a local trial of those two step bodies inherited a developer
+      # shell's GRADLE_USER_HOME and overwrote, then deleted, that machine's own
+      # gradle.properties. Both steps now also refuse unless they are on a
+      # GitHub Actions runner, and the restore step refuses unless this is set.
+      - name: Pin the Gradle home to this run
+        if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
+        run: echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-home" >> "$GITHUB_ENV"
+
       - uses: gradle/actions/setup-gradle@v6
         if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
 
@@ -371,6 +383,21 @@ jobs:
           ANDROID_MAPBOX_PUBLIC_TOKEN: ${{ secrets.ANDROID_MAPBOX_PUBLIC_TOKEN }}
         run: |
           set -euo pipefail
+          # ONLY ON A RUNNER. This step writes into $HOME and the Gradle home.
+          # Run anywhere else (someone pasting the body into a shell to try
+          # it), it would overwrite that machine's own debug keystore and
+          # gradle.properties, so it refuses and writes nothing.
+          if [ "${GITHUB_ACTIONS:-}" != "true" ] || [ -z "${RUNNER_TEMP:-}" ]; then
+            echo "REFUSED: this step only runs on a GitHub Actions runner (GITHUB_ACTIONS=true and RUNNER_TEMP set). Nothing was written."
+            exit 1
+          fi
+          case "${GRADLE_USER_HOME:-}" in
+            "$RUNNER_TEMP"/*) ;;
+            *)
+              echo "REFUSED: GRADLE_USER_HOME is '${GRADLE_USER_HOME:-unset}', not under RUNNER_TEMP. Nothing was written."
+              exit 1
+              ;;
+          esac
           missing=""
           for name in AUNTIEOS_KEYSTORE_B64 AUNTIEOS_KEYSTORE_PASSWORD AUNTIEOS_KEY_ALIAS \
                       AUNTIEOS_KEY_PASSWORD AUNTIEOS_ANDROID_SENTRY_DSN MYTRIBE_DEBUG_KEYSTORE_B64 \
@@ -404,12 +431,11 @@ jobs:
           mkdir -p "$HOME/.android"
           printf '%s' "$MYTRIBE_DEBUG_KEYSTORE_B64" | base64 -d > "$HOME/.android/debug.keystore"
 
-          gradle_home="${GRADLE_USER_HOME:-$HOME/.gradle}"
-          mkdir -p "$gradle_home"
+          mkdir -p "$GRADLE_USER_HOME"
           {
             echo "MAPBOX_DOWNLOADS_TOKEN=$MAPBOX_DOWNLOADS_TOKEN"
             echo "MAPBOX_PUBLIC_TOKEN=$ANDROID_MAPBOX_PUBLIC_TOKEN"
-          } > "$gradle_home/gradle.properties"
+          } > "$GRADLE_USER_HOME/gradle.properties"
           echo "Restored: release keystore, both local.properties, debug keystore, gradle.properties"
 
       # PREFLIGHT NEVER BUILDS AN APK (release.sh skips step 1c in that mode),
@@ -517,11 +543,21 @@ jobs:
       - name: Delete the restored signing material and credentials
         if: always()
         run: |
-          rm -f "${RUNNER_TEMP:-/nonexistent}/auntieos-release.keystore" \
+          # ONLY ON A RUNNER, for the same reason as the restore step: run
+          # anywhere else, this would delete that machine's own debug keystore.
+          if [ "${GITHUB_ACTIONS:-}" != "true" ] || [ -z "${RUNNER_TEMP:-}" ]; then
+            echo "REFUSED: this step only runs on a GitHub Actions runner (GITHUB_ACTIONS=true and RUNNER_TEMP set). Nothing was deleted."
+            exit 1
+          fi
+          rm -f "$RUNNER_TEMP/auntieos-release.keystore" \
                 auntieos-admin/android/local.properties \
                 mytribe/local.properties \
-                "$HOME/.android/debug.keystore" \
-                "${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
+                "$HOME/.android/debug.keystore"
+          # Only the Gradle home this run pinned. Unset (mode off, or a run
+          # that stopped before the pin step) means nothing was written there.
+          case "${GRADLE_USER_HOME:-}" in
+            "$RUNNER_TEMP"/*) rm -f "$GRADLE_USER_HOME/gradle.properties" ;;
+          esac
           rm -f gha-creds-*.json
           echo "Removed the restored keystores, local.properties, gradle.properties and credentials files."
 
