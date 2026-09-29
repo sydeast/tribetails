@@ -7,7 +7,8 @@ const UNATTESTED = { auth: { uid: 'k1' } } as unknown as CallableRequest<unknown
 
 /**
  * #987, end to end through the real wrapper and the REAL cohort (no mock of
- * appCheckPolicy here, unlike wrapCallable.test.ts): with the mode at `enforce`,
+ * appCheckPolicy here, unlike wrapCallable.test.ts): with the settings doc still
+ * holding the retired `enforce` value (D-2026-09-28-APP-CHECK-ONLY-LOGS),
  * a request with no App Check token, which is every request the Android and
  * desktop clients send, is served for every callable those clients can reach.
  */
@@ -26,7 +27,7 @@ vi.mock('../src/lib/firestoreAdmin', () => ({
   db: () => ({ collection: () => ({ doc: () => ({ get: mocks.securityDocGet }) }) }),
 }));
 
-describe('#987 enforce never refuses an Android or desktop client', () => {
+describe('#987 a leftover enforce setting never refuses an Android or desktop client', () => {
   beforeEach(async () => {
     mocks.securityDocGet.mockResolvedValue({ data: () => ({ appCheckMode: 'enforce' }) });
     mocks.assertSessionNotRevoked.mockResolvedValue({ outcome: 'miss', durationMs: 1 });

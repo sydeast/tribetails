@@ -6,7 +6,6 @@ import { AUDIT_EVENTS } from './auditEvents';
 import { assertSessionNotRevoked, type RevocationCheck } from './sessionRevocation';
 import { randomUUID } from 'node:crypto';
 import {
-  APP_CHECK_REJECT_MESSAGE,
   appCheckDecision,
   appCheckStatusOf,
   currentAppCheckMode,
@@ -40,19 +39,17 @@ function appCheckFields(req: CallableRequest<unknown>): { appCheck: AppCheckStat
 }
 
 /**
- * O-3 L2: the gate that can actually refuse.
+ * O-3 cohort observation. It never refuses: App Check only logs
+ * (D-2026-09-28-APP-CHECK-ONLY-LOGS, docs/DECISIONS.md). This used to be O-3's
+ * L2 gate, which could throw `unauthenticated` in an `enforce` mode; that mode
+ * and the throw are gone.
  *
- * Costs nothing for a function outside the enforced cohort — no Firestore
- * read, no await — which is why it sits in front of ~230 callables without
- * being on any of their critical paths. For a cohort member it reads the
- * runtime mode (cached 60s, one read per instance per minute) and either
- * serves, records a would-have-refused, or refuses.
- *
- * `unauthenticated` is the code, per D2. `wrapCallable`'s own error path
- * already classifies that as user-fault, so a refusal logs and audits without
- * filling Sentry with events that are working as designed.
+ * Costs nothing for a function outside the cohort: no Firestore read, no
+ * await. The cohort is empty by ruling, so today that is every callable. For a
+ * cohort member in `log` mode, a request with no verified token gets a
+ * `<name>.appCheck.wouldReject` line and is served.
  */
-async function gateOnAppCheck(name: string, req: CallableRequest<unknown>, requestId: string): Promise<void> {
+async function observeAppCheck(name: string, req: CallableRequest<unknown>, requestId: string): Promise<void> {
   const inCohort = isAppCheckCohort(name);
   if (!inCohort) return;
   const status = appCheckStatusOf(req);
@@ -62,13 +59,12 @@ async function gateOnAppCheck(name: string, req: CallableRequest<unknown>, reque
   logEvent({
     severity: 'warn',
     function: name,
-    event: `${name}.appCheck.${decision === 'reject' ? 'rejected' : 'wouldReject'}`,
+    event: `${name}.appCheck.wouldReject`,
     requestId,
     uid: req.auth?.uid,
     ...appCheckFields(req),
     extra: { appCheckMode: mode },
   });
-  if (decision === 'reject') throw new HttpsError('unauthenticated', APP_CHECK_REJECT_MESSAGE);
 }
 
 export function wrapCallable<T, R>(name: string, handler: Handler<T, R>): Handler<T, R> {
@@ -79,38 +75,26 @@ export function wrapCallable<T, R>(name: string, handler: Handler<T, R>): Handle
     const clientErrorId = randomUUID();
     // #557: 'not-run' until the revocation gate is actually reached. It is a
     // distinct value from 'skipped' on purpose: 'skipped' means the caller was
-    // unauthenticated so there was nothing to look up, whereas this means an
-    // EARLIER gate refused first. Collapsing the two would let an App Check
-    // refusal masquerade in the logs as an ordinary anonymous call.
+    // unauthenticated so there was nothing to look up, whereas this means
+    // something ahead of the gate threw first. Since
+    // D-2026-09-28-APP-CHECK-ONLY-LOGS nothing ahead of it refuses (App Check
+    // only logs), so this value should not appear; if it does, the step above
+    // the gate failed unexpectedly, and the log line says so.
     let authCheck: RevocationCheck = { outcome: 'not-run', durationMs: 0 };
     try {
-      // ORDER: App Check (O-3 L2, #556) first, session revocation (#557)
-      // second. Both refuse with `unauthenticated`, both sit ahead of the
-      // handler, and they answer different questions, so the order is a
-      // decision rather than an accident:
+      // ORDER: App Check observation first, session revocation (#557)
+      // second. App Check never refuses (D-2026-09-28-APP-CHECK-ONLY-LOGS);
+      // it only logs. It still runs first so that every cohort request is
+      // observed, rather than some being pre-empted by a revocation refusal
+      // and never showing up in the valid-token numbers. It costs nothing
+      // outside the cohort (a synchronous array lookup and an early return),
+      // and the cohort is empty by ruling.
       //
-      //  - App Check asks "is this request from a client build we trust". It
-      //    costs nothing outside the enforced cohort (a synchronous array
-      //    lookup and an early return), so putting it first adds no latency to
-      //    the ~230 callables it does not police.
-      //  - Revocation asks "is the person behind this token still in a live
-      //    session". That one costs an Identity Toolkit lookup. Running it
-      //    second means a request we are about to refuse for failing
-      //    attestation never spends that lookup, or the quota behind it.
-      //  - Ordering it this way also keeps the App Check grace-period metric
-      //    honest: every cohort request reaches the App Check decision, rather
-      //    than some of them being pre-empted by an auth refusal and never
-      //    showing up in the valid-token rate D2 gates L3 on.
-      //
-      // Neither gate masks the other. They stay distinguishable to the caller
-      // (an App Check refusal carries no `details`; a revocation refusal
-      // carries `details.reason`, which is exactly what the portal and Android
-      // clients branch on before signing anybody out) and in the logs
-      // (`appCheck` / the `.appCheck.rejected` line vs `authCheck: 'revoked'`).
-      //
-      // Inside the try on purpose, both of them: a refusal is a failure like
-      // any other and belongs in the failure log and the audit trail.
-      await gateOnAppCheck(name, req, requestId);
+      // Revocation asks "is the person behind this token still in a live
+      // session" and refuses with `unauthenticated` plus `details.reason`,
+      // which the portal and Android clients branch on before signing anybody
+      // out. Sign-in and rate limits, not App Check, protect every function.
+      await observeAppCheck(name, req, requestId);
       // #557: `onCall` verified this token's signature and expiry, not whether
       // the session behind it was revoked. See sessionRevocation.ts for the
       // policy and what it costs.

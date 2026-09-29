@@ -7,9 +7,13 @@
  *   npm --prefix mytribe/functions run callables:map          the map, as text
  *   npm --prefix mytribe/functions run callables:map -- --json the map, as JSON
  *
- * WHY THIS EXISTS. App Check enforcement (`APP_CHECK_COHORT` in
- * src/lib/appCheckPolicy.ts) refuses a request that carries no verified token.
- * Only the two React web apps can send one. Android has no App Check (ruling R3,
+ * WHY THIS EXISTS. It was built (#987) for App Check enforcement, which could
+ * refuse a request carrying no verified token. Since
+ * D-2026-09-28-APP-CHECK-ONLY-LOGS (docs/DECISIONS.md) App Check only logs and
+ * `APP_CHECK_COHORT` in src/lib/appCheckPolicy.ts stays empty, so no name is
+ * eligible any more. The map stays useful as a record of which client calls
+ * what, and the reasoning below is why the old cohort was wrong.
+ * Only the two React web apps can send a token. Android has no App Check (ruling R3,
  * 2026-09-27) and neither has the desktop build, so a callable that any Compose
  * or Android client calls must never sit in an enforced cohort. The cohort was
  * once checked by hand, the check said `getBusinessClosures` was web-only, and
@@ -194,7 +198,7 @@ export interface CallableMap {
   byClient: Record<ClientId, string[]>;
   /** Named by at least one client that cannot send an App Check token. */
   unattestedReachable: string[];
-  /** Named by a web client and by no client without App Check: the only names a cohort may hold. */
+  /** Named by a web client and by no client without App Check. None may join the cohort: it is empty by ruling. */
   webOnly: string[];
 }
 
@@ -235,7 +239,9 @@ function main(): void {
   }
   lines.push('');
   lines.push(`Reachable from a client with no App Check (never enforce these): ${map.unattestedReachable.length}`);
-  lines.push(`Web-only (the only names APP_CHECK_COHORT may hold): ${map.webOnly.length}`);
+  lines.push(
+    `Web-only: ${map.webOnly.length} (none may join APP_CHECK_COHORT, which stays empty by D-2026-09-28-APP-CHECK-ONLY-LOGS)`,
+  );
   for (const name of map.webOnly) {
     const who = CLIENT_TREES.filter((t) => map.byClient[t.id].includes(name)).map((t) => t.id);
     lines.push(`  ${name}  [${who.join(', ')}]`);

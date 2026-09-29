@@ -31,26 +31,26 @@ All of these fail SILENTLY. No error, just wrong or empty results.
 **A query returns nothing, with no error.** Almost always the section above.
 Check the field type first.
 
-**Kinfolk are told "This app couldn't verify itself with our servers".** That is
-App Check refusing a request, and it has a switch that needs no deploy. In the
-Firestore console, set `business_settings/security.appCheckMode` to `log`. Every
-running instance picks it up within 60 seconds and stops refusing anything;
-`log` still records what it would have refused, so the incident stays
-measurable. The three values are `off`, `log` and `enforce`, and a missing or
-malformed field reads as `log`.
+**App Check never refuses a request.** Ruling
+D-2026-09-28-APP-CHECK-ONLY-LOGS (`docs/DECISIONS.md`, docket Q9): "No: App
+Check only logs. Sign-in and rate limits protect every function." If a
+kinfolk is refused, look at sign-in, session revocation or a rate limit, not
+App Check. The old refusal message ("This app couldn't verify itself with our
+servers") no longer exists anywhere in the server.
 
-Which callables the switch governs is a code list, `APP_CHECK_COHORT` in
-`mytribe/functions/src/lib/appCheckPolicy.ts`. Everything outside it is
-untouched in every mode. The list is empty today, so `enforce` refuses
-nothing yet. It may only ever hold a callable that no Android or desktop
-client calls: those clients have no App Check (ruling R3) and would be
-refused for good. `npm --prefix mytribe/functions run callables:map` prints
-which callables are web-only and so eligible, and the functions test suite
-fails if a name that an Android or desktop client calls is added. To read the traffic before flipping anything, filter
-Logs Explorer on `jsonPayload.appCheck`: `valid` is a verified token, `invalid`
-is a token that failed verification, `absent` is no token at all, and a
-`jsonPayload.event` ending in `appCheck.wouldReject` is what `enforce` would
-have turned away.
+`business_settings/security.appCheckMode` takes `off` or `log`, and a missing
+or malformed field reads as `log`. Neither refuses anything. The field is read
+only for callables in `APP_CHECK_COHORT`
+(`mytribe/functions/src/lib/appCheckPolicy.ts`), which stays empty by the same
+ruling, and the functions test suite fails if a name is added. So today the
+field is never read at all. A value of `enforce` left over from before the
+ruling would read as `log` and log `appCheck.enforceIgnored`; set it to `log`
+or delete it so the settings doc does not suggest protection that is not
+there.
+
+To read App Check traffic, filter Logs Explorer on `jsonPayload.appCheck`:
+`valid` is a verified token, `invalid` is a token that failed verification,
+`absent` is no token at all.
 
 **A callable works locally and 500s in production.** The secret is set but not
 DECLARED in that function's `secrets: [...]`. See `docs/runbooks/secrets.md`.

@@ -47,8 +47,9 @@ export const app = initializeApp(firebaseConfig);
 // ---------------------------------------------------------------------------
 // O-3 App Check, admin client half (#576). The backend policy layer shipped in
 // #562 (`MyTribe/functions/src/lib/appCheckPolicy.ts`): a cohort list in code, a
-// mode read from `business_settings/security.appCheckMode` (off | log | enforce,
-// default log, fails open), and telemetry that tells an INVALID attestation
+// mode read from `business_settings/security.appCheckMode` (off | log, default
+// log, fails open; App Check only logs per D-2026-09-28-APP-CHECK-ONLY-LOGS in
+// docs/DECISIONS.md), and telemetry that tells an INVALID attestation
 // apart from an ABSENT one. Until this file existed, every admin request was
 // `absent` — the admin had no attestation at all, and said so in a comment where
 // this code now is.
