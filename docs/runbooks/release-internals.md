@@ -1151,6 +1151,8 @@ A passing preflight has signed in through Workload Identity, read Secret Manager
 (steps 0c and 1b), read CI's verdict with the job token (step 0b), installed
 every dependency root, built the `reconcile` venv, and opened both keystores.
 Compare the two fingerprints in its summary with the Mac's before going on.
+If the run says "Nothing merged since the last release", it stopped after the
+credential check and proved none of the rest; run it again after the next merge.
 
 **11. Then the switch.** A few nights of `preflight`, then `on`:
 
