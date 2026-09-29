@@ -101,11 +101,11 @@ private fun EmailFrameEditor(
     val logoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) vm.uploadLogo(context, uri)
     }
-    // D-2026-09-12-SLOW-WAIT: a long save offers to ask again. Both writes are
-    // safe to repeat (a patch of the same values, or a reset).
+    // D-2026-09-12-SLOW-WAIT: a long save offers to ask again, which re-sends
+    // the write in flight (see EmailFrameViewModel.resend).
     val wait = rememberSlowWait(
         active = busy,
-        retry = { if (s.busy == EmailFrameViewModel.Busy.Reset) vm.reset() else vm.save() },
+        retry = { vm.resend() },
     )
 
     DenPanel(

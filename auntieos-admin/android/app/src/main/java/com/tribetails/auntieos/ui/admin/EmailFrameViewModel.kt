@@ -98,8 +98,24 @@ class EmailFrameViewModel(
         run(Busy.Reset, "Back to the default frame.") { repository.resetEmailFrame() }
     }
 
+    /** The write in flight, kept so a slow one can be sent again. */
+    private var inFlight: (() -> Unit)? = null
+    /**
+     * D-2026-09-12-SLOW-WAIT: "Sync now" on a slow save. Re-issues the write
+     * already in flight, skipping the busy guard that [save] and [reset] apply.
+     * Safe to repeat: a patch of the same values, or a reset, lands on the same
+     * document the second time.
+     */
+    fun resend() {
+        if (_state.value.busy == null) return
+        inFlight?.invoke()
+    }
     private fun run(kind: Busy, note: String, request: suspend () -> Result<EmailFrameRepository.EmailFrameState>) {
         _state.value = _state.value.copy(busy = kind, error = null, savedNote = null)
+        inFlight = { launchRequest(note, request) }
+        launchRequest(note, request)
+    }
+    private fun launchRequest(note: String, request: suspend () -> Result<EmailFrameRepository.EmailFrameState>) {
         viewModelScope.launch {
             request()
                 .onSuccess { frame ->

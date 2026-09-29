@@ -101,6 +101,21 @@ class EmailFrameViewModelTest {
     }
 
     @Test
+    fun `resend re-issues a slow save that is still in flight`() = runTest {
+        val never = kotlinx.coroutines.CompletableDeferred<Result<EmailFrameRepository.EmailFrameState>>()
+        coEvery { repo.getEmailFrame() } returns Result.success(state(emptyMap()))
+        coEvery { repo.saveEmailFrame(any()) } coAnswers { never.await() }
+        val vm = EmailFrameViewModel(repo)
+        vm.edit("footerText", "New")
+        vm.save()
+        assertEquals(EmailFrameViewModel.Busy.Save, vm.state.value.busy)
+        // save() refuses while busy; resend() is the slow-wait path and must not.
+        vm.save()
+        coVerify(exactly = 1) { repo.saveEmailFrame(any()) }
+        vm.resend()
+        coVerify(exactly = 2) { repo.saveEmailFrame(mapOf("footerText" to "New")) }
+    }
+    @Test
     fun `reset calls the reset callable and clears the draft`() = runTest {
         coEvery { repo.getEmailFrame() } returns Result.success(state(mapOf("accentColor" to "#123456")))
         coEvery { repo.resetEmailFrame() } returns Result.success(state(emptyMap()))
