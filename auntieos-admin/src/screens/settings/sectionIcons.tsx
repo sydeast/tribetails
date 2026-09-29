@@ -94,6 +94,13 @@ export const SECTION_ICONS = {
       <circle cx="7.5" cy="7.5" r="1" />
     </Glyph>
   ),
+  // #957: an envelope, for the Email frame section.
+  emailFrame: (
+    <Glyph>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M3 7l9 6 9-6" />
+    </Glyph>
+  ),
   integrations: (
     <Glyph>
       <path d="M8 7h8M8 12h8M8 17h5" />

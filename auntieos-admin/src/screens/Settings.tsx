@@ -19,6 +19,7 @@ import { IntegrationsSection } from './settings/IntegrationsSection';
 import { BusinessHoursEditor } from './settings/BusinessHoursEditor';
 import { TimeOffEditor } from './settings/TimeOffEditor';
 import { KinCareRatesEditor } from './settings/KinCareRatesEditor';
+import { EmailFrameSection } from './settings/EmailFrameSection';
 import { NotificationGate } from './NotificationGate';
 import { TagsEditor } from './TagsEditor';
 import './Settings.css';
@@ -96,6 +97,7 @@ type SectionId =
   | 'payments'
   | 'mytribe'
   | 'notifications'
+  | 'emailFrame'
   | 'tags'
   | 'integrations';
 
@@ -127,6 +129,9 @@ const SECTIONS: readonly SectionNavItem<SectionId>[] = [
   { id: 'payments', label: 'Payments', icon: SECTION_ICONS.payments },
   { id: 'mytribe', label: 'MyTribe portal', icon: SECTION_ICONS.mytribe },
   { id: 'notifications', label: 'Notifications', icon: SECTION_ICONS.notifications },
+  // #957: the shared frame every visual email is sent in. Beside
+  // Notifications because it is what those emails look like.
+  { id: 'emailFrame', label: 'Email frame', icon: SECTION_ICONS.emailFrame },
   { id: 'tags', label: 'Tags', icon: SECTION_ICONS.tags },
   // Last because it is the one section that reports rather than edits: the
   // place an operator goes when something ELSE on this screen stopped
@@ -275,6 +280,9 @@ function renderSection(
   applyServerChange: (patch: Partial<BusinessSettings>) => void,
 ): ReactNode {
   if (id === 'tags') return <TagsEditor />;
+  // #957: self-loading. The frame is its own server-only document behind
+  // `getEmailFrame`, not a field on the settings doc this screen loads.
+  if (id === 'emailFrame') return <EmailFrameSection />;
   // Self-loading, and for a stronger reason than Notifications/Tags: no
   // client can read a Cloud Functions secret at all, so this section's whole
   // answer is a callable's. It also receives `settings` and `persist`
