@@ -440,7 +440,10 @@ class AuntieRepository(
      * the same phone or email (`duplicateOf`) instead of creating a second one. The
      * returned [KinfolkCreated.kinfolk] then carries THAT id, so Add Kinfolk carries
      * on and saves the Emergency Contact onto the existing household, and
-     * [KinfolkCreated.duplicateOf] tells the caller not to audit a second CREATE.
+     * [KinfolkCreated.duplicateOf] tells the caller this is a household added
+     * earlier, not a new one. The CREATE_KINFOLK audit is the server's (#909):
+     * the callable writes it once for a created household and never for a
+     * duplicateOf answer, so no Android code logs a create.
      */
     //
     // [ignoreDuplicateOf] (#907 review item 1a): the household the operator just

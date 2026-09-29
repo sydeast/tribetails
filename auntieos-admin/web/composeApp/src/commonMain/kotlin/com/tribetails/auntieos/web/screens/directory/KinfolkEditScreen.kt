@@ -523,7 +523,7 @@ fun KinfolkEditScreen(
                         when (val r = client.createKinfolk(draft, PendingAddKinfolk.discardedFor(operatorUid))) {
                             // #890: kept the moment it exists, so leaving mid-save still
                             // offers it. A duplicateOf answer is a household that was
-                            // already created (and audited then): nothing is logged again,
+                            // already created (and audited by the server then): nothing is logged,
                             // nothing is kept pending, and the save stops there (#907).
                             is WriteResult.Ok  -> {
                                 // The discarded id has done its job once a create is answered.
@@ -545,18 +545,19 @@ fun KinfolkEditScreen(
                 },
                 writeContacts = { id -> client.saveEmergencyContacts(id, ecDrafts) },
                 onHouseholdWritten = { id ->
-                    AuditLog.fire(
-                        scope            = scope,
-                        client           = client,
-                        actorId          = "",
-                        actionType       = if (isNew) "CREATE_KINFOLK" else "UPDATE_KINFOLK",
-                        description      = if (isNew)
-                            "Added Kinfolk ${draft.displayName}"
-                        else
-                            "Updated Kinfolk ${draft.displayName}",
-                        targetId         = id,
-                        targetCollection = "kinfolk",
-                    )
+                    // #909: an Add is audited by createKinfolk on the server; only
+                    // an edit is logged from here.
+                    clientHouseholdAuditAction(isNew)?.let { action ->
+                        AuditLog.fire(
+                            scope            = scope,
+                            client           = client,
+                            actorId          = "",
+                            actionType       = action,
+                            description      = "Updated Kinfolk ${draft.displayName}",
+                            targetId         = id,
+                            targetCollection = "kinfolk",
+                        )
+                    }
                 },
             )
             saving = false

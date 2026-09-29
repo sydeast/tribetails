@@ -997,7 +997,7 @@ class DirectoryViewModel(
                     com.tribetails.auntieos.util.CallEventStore.linkKinfolk(callSid, saved.id, saved.displayName)
                 }
                 // #907 review item 1(b): a household this operator added minutes ago
-                // (and audited then). Not a success, no contact saved onto it: the
+                // (and the server audited then). Not a success, no contact saved onto it: the
                 // typing goes to that household's edit screen as unsaved changes.
                 val duplicateOf = created.duplicateOf
                 if (duplicateOf != null) {
@@ -1005,13 +1005,13 @@ class DirectoryViewModel(
                     _addKinfolkState.value = AddKinfolkUiState(duplicateOf = duplicateOf)
                     return@onSuccess
                 }
-                // #829 review item 6: the CREATE audit waits for the contact
-                // outcome, so the log says whether the household got its contact.
+                // #909: the CREATE_KINFOLK audit is written by createKinfolk on the
+                // server, once per household, so nothing is logged from here.
                 // The discarded id has done its job once a create is answered.
                 saveNewHouseholdContacts(
                     saved.id,
                     state.copy(isSaving = true, createdKinfolkId = saved.id, discardedKinfolkId = null),
-                    auditCreatedName = saved.displayName,
+                    createdName = saved.displayName,
                 )
             }.onFailure { error ->
                 AuntieLog.e("Failed to save kinfolk", error)
@@ -1030,15 +1030,14 @@ class DirectoryViewModel(
      * rather than reporting the whole Add as failed and inviting a retry that
      * would create a second household.
      */
-    private fun saveNewHouseholdContacts(id: String, state: AddKinfolkUiState, auditCreatedName: String? = null) {
+    private fun saveNewHouseholdContacts(id: String, state: AddKinfolkUiState, createdName: String? = null) {
         viewModelScope.launch {
             _addKinfolkState.value = state.copy(isSaving = true, error = null, createdKinfolkId = id)
             repository.saveEmergencyContacts(id, state.emergencyContacts).onSuccess {
-                auditCreatedName?.let { name -> auditCreate(id, "Created kinfolk $name") }
                 // #1009: no web wording exists for Add (`AddKinfolkDialog.tsx` has no
                 // toast), so this follows the wording web's own Edit save uses
                 // ("Saved {name}.") rather than inventing an unrelated voice.
-                val displayName = auditCreatedName
+                val displayName = createdName
                     ?: "${state.firstName} ${state.lastName}".trim().ifBlank { "Kinfolk" }
                 _addKinfolkState.value = AddKinfolkUiState(isSuccess = true, successMessage = "Added $displayName.")
                 loadDirectory()
@@ -1057,7 +1056,6 @@ class DirectoryViewModel(
                 }
                 // #829 review item 4: the server's own message, as the portals show it.
                 val reason = e.message?.takeIf { it.isNotBlank() } ?: "The Emergency Contact was not saved."
-                auditCreatedName?.let { name -> auditCreate(id, "Created kinfolk $name without an Emergency Contact: $reason") }
                 _addKinfolkState.value = state.copy(
                     isSaving = false,
                     createdKinfolkId = id,
@@ -1068,16 +1066,6 @@ class DirectoryViewModel(
         }
     }
 
-    private fun auditCreate(id: String, description: String) {
-        com.tribetails.auntieos.data.admin.AuditLog.fire(
-            scope            = viewModelScope,
-            repository       = repository,
-            actionType       = "CREATE_KINFOLK",
-            description      = description,
-            targetId         = id,
-            targetCollection = "kinfolk",
-        )
-    }
 
     fun clearAddKinfolkForm() {
         _addKinfolkState.value = AddKinfolkUiState()

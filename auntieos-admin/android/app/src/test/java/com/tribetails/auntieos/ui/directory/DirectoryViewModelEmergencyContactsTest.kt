@@ -127,8 +127,11 @@ class DirectoryViewModelEmergencyContactsTest {
         assertEquals("", vm.addKinfolkState.value.firstName)
     }
 
+    // #909: the CREATE_KINFOLK entry is the server's (createKinfolk writes it once,
+    // at the create). Android logs none, whether the contact saves or not, and
+    // the retry that saves the contact creates nothing, so it logs nothing either.
     @Test
-    fun `the CREATE audit waits for the contact outcome and says when the contact did not save`() {
+    fun `Add logs no client CREATE audit, through a failed contact save and its retry`() {
         coEvery { repo.createKinfolkComplete(any(), any()) } answers { Result.success(KinfolkCreated(firstArg<Kinfolk>().copy(id = "kf-new", firstName = "Jamie"), null)) }
         coEvery { repo.saveEmergencyContacts("kf-new", any()) } returnsMany listOf(Result.failure(Exception("offline")), Result.success(emptyList()))
         coEvery { repo.logActivity(any()) } returns Result.success(Unit)
@@ -136,12 +139,12 @@ class DirectoryViewModelEmergencyContactsTest {
         vm.updateEmail("household@example.com")
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "8055550199"))
         vm.saveKinfolk()
-        coVerify(exactly = 1) {
-            repo.logActivity(match { it.actionType == "CREATE_KINFOLK" && it.targetId == "kf-new" && it.description.contains("without an Emergency Contact: offline") })
-        }
-        // The retry succeeds, and the household is not logged as created twice.
+        assertEquals("kf-new", vm.addKinfolkState.value.createdKinfolkId)
+        // The retry saves the contact against the same household; no second create.
         vm.saveKinfolk()
-        coVerify(exactly = 1) { repo.logActivity(match { it.actionType == "CREATE_KINFOLK" }) }
+        assertTrue(vm.addKinfolkState.value.isSuccess)
+        coVerify(exactly = 1) { repo.createKinfolkComplete(any(), any()) }
+        coVerify(exactly = 0) { repo.logActivity(match { it.actionType == "CREATE_KINFOLK" }) }
     }
 
     // #829 review item 16.
