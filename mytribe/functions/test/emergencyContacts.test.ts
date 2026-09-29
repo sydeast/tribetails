@@ -2,11 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Timestamp } from 'firebase-admin/firestore';
 import { buildDbMock } from './_helpers/mockDb';
 
-const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), logEvent: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), logEvent: vi.fn(), writeAuditEntry: vi.fn() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: mocks.logEvent }));
-vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockResolvedValue('audit-1') }));
+vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: mocks.writeAuditEntry }));
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('firebase-admin/firestore');
   return { ...actual, FieldValue: { serverTimestamp: () => '__SERVER_TS__' } };
@@ -31,13 +31,17 @@ import {
 import {
   saveEmergencyContactsHandler,
   listEmergencyContactsHandler,
+  refusalReason,
+  REFUSAL_REASON_MAX,
 } from '../src/portal/emergencyContacts';
+import { maskPhoneDigits } from '../src/lib/maskPhoneDigits';
 
 const NOW_ISO = '2026-09-14T15:00:00.000Z';
 
 beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.logEvent.mockReset();
+  mocks.writeAuditEntry.mockReset().mockResolvedValue('audit-1');
   delete process.env.AUNTIE_OPERATOR_UIDS;
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(NOW_ISO));
@@ -312,5 +316,150 @@ describe('saveEmergencyContactsHandler and secondary kinfolk (2026-09-27 Q3)', (
       message: EMERGENCY_CONTACT_OUTSIDE_MESSAGE,
     });
     expect(ctx.writes).toHaveLength(0);
+  });
+});
+
+// #1049: a refused save is audited server side with the household, the caller and
+// the refusal, on every client (portals included), so the operator can see a
+// household that keeps failing to save its required Emergency Contact.
+describe('saveEmergencyContactsHandler refusal audit (#1049)', () => {
+  // Only this event: the access resolver writes its own OPERATOR_CROSSTENANT_ACCESS entry for staff.
+  const refusals = () =>
+    mocks.writeAuditEntry.mock.calls.map((c) => c[0] as Record<string, unknown>).filter((e) => e['event'] === 'EMERGENCY_CONTACT_SAVE_REFUSED');
+
+  it('audits a household-member refusal with the household, the caller, the code and the message', async () => {
+    const ctx = household();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [{ name: 'Rae', phone: '+1 805 555 0100' }] }))).rejects.toMatchObject({
+      code: 'failed-precondition',
+    });
+    expect(refusals()).toEqual([
+      {
+        status: 'FAILURE',
+        event: 'EMERGENCY_CONTACT_SAVE_REFUSED',
+        severity: 'warn',
+        actorRole: 'PRIMARY',
+        actorUid: 'primary-uid',
+        targetUid: 'fam1',
+        targetCollection: 'kinfolk',
+        familyId: 'fam1',
+        description: `Emergency Contact not saved: ${EMERGENCY_CONTACT_OUTSIDE_MESSAGE}`,
+        payload: { kinfolkId: 'fam1', code: 'failed-precondition', reason: EMERGENCY_CONTACT_OUTSIDE_MESSAGE },
+      },
+    ]);
+  });
+
+  it('audits an empty list, the refusal that leaves a household with no Emergency Contact', async () => {
+    const ctx = household();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [] }))).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(refusals()).toHaveLength(1);
+    expect(refusals()[0]['payload']).toEqual({ kinfolkId: 'fam1', code: 'failed-precondition', reason: EMERGENCY_CONTACT_REQUIRED_MESSAGE });
+  });
+
+  it('audits a contact that fails to parse, and never writes the name or the phone that was sent', async () => {
+    const ctx = household();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [{ name: 'Rae Mercer', phone: '805-555-01' }] }))).rejects.toMatchObject({
+      code: 'invalid-argument',
+    });
+    await expect(saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [{ name: 'Rae', phone: '8055550199', uid: 'x' }] }))).rejects.toMatchObject({
+      code: 'invalid-argument',
+    });
+    expect(refusals()).toHaveLength(2);
+    expect(refusals().every((r) => r['targetUid'] === 'fam1' && r['event'] === 'EMERGENCY_CONTACT_SAVE_REFUSED')).toBe(true);
+    const written = JSON.stringify(refusals());
+    expect(written).not.toContain('Rae');
+    expect(written).not.toMatch(/555/);
+  });
+
+  it('names a SECONDARY with Home access as SECONDARY', async () => {
+    const ctx = household({ caller: { uid: 'second-uid', member: { role: 'SECONDARY', status: 'ACTIVE', permissions: { home_access: true } } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [] }, 'second-uid'))).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(refusals()[0]).toMatchObject({ actorRole: 'SECONDARY', actorUid: 'second-uid' });
+  });
+
+  it('names staff as AUNTIE', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/op-uid': { kinfolkIds: [] }, 'kinfolk/fam1': PRIMARY_DOC }, queryDocs: { 'families/fam1/members': [] } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [] }, 'op-uid', { admin: true }))).rejects.toMatchObject({
+      code: 'failed-precondition',
+    });
+    expect(refusals()).toHaveLength(1);
+    expect(refusals()[0]).toMatchObject({ actorRole: 'AUNTIE', actorUid: 'op-uid', targetUid: 'fam1' });
+  });
+  it('a household deleted before the call is refused by the access check, which is not a contact refusal', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/op-uid': { kinfolkIds: [] } }, queryDocs: { 'families/gone/members': [] } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      saveEmergencyContactsHandler(call({ kinfolkId: 'gone', contacts: [{ name: 'Rae', phone: '8055550199' }] }, 'op-uid', { admin: true })),
+    ).rejects.toMatchObject({ code: 'not-found' });
+    expect(refusals()).toHaveLength(0);
+  });
+  it('writes one entry per refused call: two presses of Save are two entries', async () => {
+    const ctx = household();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const press = () => saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [] }));
+    await expect(press()).rejects.toMatchObject({ code: 'failed-precondition' });
+    await expect(press()).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(refusals()).toHaveLength(2);
+  });
+
+  it('writes nothing for a save that succeeds', async () => {
+    const ctx = household();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [{ name: 'Rae', phone: '8055550199' }] }));
+    expect(refusals()).toHaveLength(0);
+  });
+
+  it('writes nothing for a caller refused Home access: that is permission-denied, not a refused contact', async () => {
+    const ctx = household({ caller: { uid: 'second-uid', member: { role: 'SECONDARY', status: 'ACTIVE', permissions: { home_access: false } } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [] }, 'second-uid'))).rejects.toMatchObject({ code: 'permission-denied' });
+    expect(refusals()).toHaveLength(0);
+  });
+
+  it('a caller with no access sending a bad payload still gets the parse error, and nothing is audited', async () => {
+    const ctx = household();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [{ name: '', phone: '8055550199' }] }, 'stranger-uid')),
+    ).rejects.toMatchObject({ code: 'invalid-argument', message: EMERGENCY_CONTACT_NAME_REQUIRED_MESSAGE });
+    expect(refusals()).toHaveLength(0);
+  });
+
+  it('a kinfolkId that is not a string names no household: the parse error, and no audit', async () => {
+    const ctx = household();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(saveEmergencyContactsHandler(call({ kinfolkId: 7, contacts: [] }))).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(refusals()).toHaveLength(0);
+  });
+
+  it('a failed audit write never replaces the refusal the caller sees', async () => {
+    const ctx = household();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.writeAuditEntry.mockRejectedValueOnce(new Error('chain head busy'));
+    await expect(saveEmergencyContactsHandler(call({ kinfolkId: 'fam1', contacts: [] }))).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: EMERGENCY_CONTACT_REQUIRED_MESSAGE,
+    });
+    expect(mocks.logEvent).toHaveBeenCalledWith(expect.objectContaining({ event: 'audit.write.failed', extra: { kinfolkId: 'fam1' } }));
+  });
+
+  it('refusalReason masks phone-shaped digits and caps the length', () => {
+    expect(refusalReason('That is (805) 555-0143, the primary.')).toBe('That is …0143, the primary.');
+    expect(refusalReason("An Emergency Contact's name can be at most 80 characters.")).toBe("An Emergency Contact's name can be at most 80 characters.");
+    const long = refusalReason('x'.repeat(REFUSAL_REASON_MAX + 50));
+    expect(long).toHaveLength(REFUSAL_REASON_MAX);
+    expect(long.endsWith('…')).toBe(true);
+  });
+
+  it('maskPhoneDigits masks E.164, dotted and plain runs of 7 or more digits, and leaves short numbers', () => {
+    expect(maskPhoneDigits('+18055550143')).toBe('…0143');
+    expect(maskPhoneDigits('call 805.555.0143 now')).toBe('call …0143 now');
+    expect(maskPhoneDigits('5550143')).toBe('…0143');
+    expect(maskPhoneDigits('at most 32 characters, max 1')).toBe('at most 32 characters, max 1');
+    expect(maskPhoneDigits('')).toBe('');
   });
 });
