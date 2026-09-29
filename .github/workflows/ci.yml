@@ -335,6 +335,11 @@ jobs:
             scripts:
               - 'scripts/**'
               - '.github/workflows/ci.yml'
+              # Every other workflow file, because workflow-budget.test.sh
+              # reads all of them and a change to one alone must still run it
+              # (#1052). That test fails if a workflow file is missing here.
+              - '.github/workflows/main-channel.yml'
+              - '.github/workflows/nightly-release.yml'
               # deploy-guard runs scripts/client-secrets.test.mjs, and one of its
               # cases asserts that every client secret the web apps declare is
               # mirrored by a repo secret in preview.yml. Without this line a
