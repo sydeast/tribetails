@@ -760,7 +760,7 @@ deploy_one_function_batch() {
   fi
 
   # WHICH ONES ACTUALLY DIED, read from firebase's own per-function lines
-  # ("functions[getMyHome(us-central1)] Successful update operation."). Only
+  # ("functions[mytribe:getMyHome(us-central1)] Successful update operation."). Only
   # CONFIRMED successes are subtracted, so if the format ever changes this
   # parses nothing, treats the whole batch as failed, and retries too much
   # rather than too little. There is no version of this that silently drops a
@@ -769,6 +769,10 @@ deploy_one_function_batch() {
          if (match($0, /functions\[[^]]*\]/)) {
            s = substr($0, RSTART + 10, RLENGTH - 11)
            sub(/\(.*/, "", s)
+           # firebase names the codebase ("mytribe:getMyHome"); the batch
+           # holds bare names. Left on, nothing matched and every partial
+           # failure retried its whole batch (#1058).
+           sub(/^[^:]*:/, "", s)
            print s
          }
        }' "$log" | sort -u > "$log.ok"
