@@ -104,10 +104,10 @@ describe('#987 the enforced cohort holds no callable a Compose or Android client
     expect(APP_CHECK_COHORT).not.toContain('getBusinessClosures');
   });
 
-  it('under enforce, a token-less call to any Compose-reachable callable is served', () => {
+  it('a token-less call to any Compose-reachable callable is served without an observation', () => {
     for (const name of map.unattestedReachable) {
       for (const status of ['absent', 'invalid'] as const) {
-        expect(appCheckDecision({ mode: 'enforce', status, inCohort: isAppCheckCohort(name) }), name).toBe('allow');
+        expect(appCheckDecision({ mode: 'log', status, inCohort: isAppCheckCohort(name) }), name).toBe('allow');
       }
     }
   });

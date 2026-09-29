@@ -404,9 +404,16 @@ service cloud.firestore {
              && bsList('etaMinuteOptions', 12)
              && bsList('draftRetentionOptions', 12);
     }
+    // #957: `email_frame` is excluded from this wildcard. It is the shared
+    // email frame, and its colors and text go straight into every email's
+    // markup, so it is read and written only through the owner-only
+    // getEmailFrame / saveEmailFrame callables, which validate every field.
+    // The exclusion has to be HERE, not in a block of its own: in rules any
+    // matching `allow` grants access, so a separate deny block would not
+    // override this one.
     match /business_settings/{docId} {
-      allow read: if isOwner() || isTestAdmin();
-      allow write: if isOwner() && validBusinessSettings();
+      allow read: if docId != 'email_frame' && (isOwner() || isTestAdmin());
+      allow write: if docId != 'email_frame' && isOwner() && validBusinessSettings();
     }
 
  // Which business day each hour-driven cron last completed its scan on. DENIED
@@ -503,7 +510,13 @@ service cloud.firestore {
       // document, so create checks the incoming keys instead. The kinfolk
       // branch stays update-only: on a create or delete its diff() has no
       // resource to compare and it never allowed either.
-      allow create: if (isOwner() || (isTestAdmin() && kinfolkId == testScope()))
+      // #909: no staff client creates a household directly. `createKinfolk`
+      // (Admin SDK, rules bypassed) is the one way in, so its duplicate check
+      // and its CREATE_KINFOLK audit cannot be skipped by an old install or a
+      // hand-rolled write. A sandbox test admin keeps exactly what #907 left
+      // it: its own `kinfolk/{testTribeId}` and nothing else (the callable
+      // refuses test admins).
+      allow create: if isTestAdmin() && kinfolkId == testScope()
                     && !request.resource.data.keys().hasAny(emergencyContactKeys());
       // #944: an Auntie updates the household record, because that is the job,
       // but may not move `outstandingBalance` (Models.kt:185), the one money

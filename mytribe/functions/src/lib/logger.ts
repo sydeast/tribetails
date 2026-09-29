@@ -32,8 +32,10 @@ export interface LogFields {
    * — not a number anyone could honestly guess up front. 'skipped' =
    * unauthenticated call, 'hit'/'miss' = the per-instance TTL cache, 'error' =
    * the Identity Toolkit lookup failed and the call was let through, 'revoked'
-   * = the call was refused because the session was over, 'not-run' = the App
-   * Check gate above it (#556) refused first, so no lookup was reached.
+   * = the call was refused because the session was over, 'not-run' = something
+   * ahead of the check threw first, so no lookup was reached. That used to be
+   * an App Check refusal (#556); App Check only logs now
+   * (D-2026-09-28-APP-CHECK-ONLY-LOGS), so 'not-run' marks an unexpected failure.
    */
   authCheck?: 'not-run' | 'skipped' | 'hit' | 'miss' | 'error' | 'revoked';
   authCheckMs?: number;

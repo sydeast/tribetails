@@ -452,6 +452,10 @@ export const AUDIT_EVENTS = {
   // portalLogo) and the action, never the URL: the asset is operator-supplied
   // branding, and the doc itself is the record of what it currently is.
   BRANDING_ASSET_UPDATED: 'BRANDING_ASSET_UPDATED',
+  // #957: the shared email frame (`business_settings/email_frame`) was saved
+  // or reset (saveEmailFrame). Payload names each changed field with its new
+  // value, or null for a reset: colors, short text and an image URL.
+  EMAIL_FRAME_UPDATED: 'EMAIL_FRAME_UPDATED',
 
   // Shared `vet_clinics` catalog writes (punchlist B4). Until these landed, the
   // only mutation on this collection was `submitVetClinic` (create, unaudited)
@@ -471,6 +475,21 @@ export const AUDIT_EVENTS = {
   // A success-only trail cannot answer "who tried to rename a clinic onto
   // another one", which is the shape an accidental catalog merge takes.
   VET_CLINIC_WRITE_REFUSED: 'VET_CLINIC_WRITE_REFUSED',
+  // #909: a household created through `createKinfolk`. The admin clients wrote
+  // this same actionType through `logActivity` until the create moved server
+  // side, and the rules closed direct creates; the value is unchanged so the
+  // Activity Log reads old and new entries alike. A `duplicateOf` answer writes
+  // nothing and is not audited.
+  CREATE_KINFOLK: 'CREATE_KINFOLK',
+
+  // #1049: `saveEmergencyContacts` refused a save from a caller who may edit
+  // that household's contacts (an invalid contact, a household member, none at
+  // all, a deleted household). Emergency Contacts are required
+  // (D-829-EMERGENCY-CONTACT), so a household whose save keeps being refused is
+  // one the operator needs to see. Written on every client's refusal, the
+  // portals included. The payload carries the household, the error code and the
+  // refusal message with any phone-shaped digits masked; never a name or phone.
+  EMERGENCY_CONTACT_SAVE_REFUSED: 'EMERGENCY_CONTACT_SAVE_REFUSED',
 } as const;
 
 export type AuditEvent = (typeof AUDIT_EVENTS)[keyof typeof AUDIT_EVENTS];

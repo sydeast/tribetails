@@ -25,6 +25,12 @@ firebase-debug.log
 firebase-debug.*.log
 firestore-debug.log
 ui-debug.log
+# The Google Cloud credentials file google-github-actions/auth writes into the
+# workspace root on the hosted nightly release (#851). release.sh step 0 refuses
+# a working tree with anything untracked in it, so without this every full
+# nightly would refuse at its first check. The file holds no key (Workload
+# Identity), and the workflow deletes it at the end, but it must never be added.
+gha-creds-*.json
 __pycache__/
 node_modules/
 node_modules

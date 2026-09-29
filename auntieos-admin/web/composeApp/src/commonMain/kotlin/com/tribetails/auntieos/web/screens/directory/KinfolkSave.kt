@@ -42,6 +42,14 @@ private fun contactsFailed(kinfolkId: String, message: String): KinfolkSaveOutco
     else KinfolkSaveOutcome.ContactsFailed(kinfolkId, message)
 
 /**
+ * #909: the audit entry THIS client writes after a household save, or null when
+ * it writes none. A create is audited by the `createKinfolk` callable itself
+ * (`CREATE_KINFOLK`, one entry, server side), so the console writing one too
+ * would log every Add twice. An edit is still a direct field-merge update, and
+ * the console keeps auditing it.
+ */
+fun clientHouseholdAuditAction(isNew: Boolean): String? = if (isNew) null else "UPDATE_KINFOLK"
+/**
  * The household step of a save. [wrote] is false when an edit changed nothing,
  * so no write was sent (#829 review: nothing is audited then). [duplicateOf] is set
  * when createKinfolk answered with a household that already exists (#907).

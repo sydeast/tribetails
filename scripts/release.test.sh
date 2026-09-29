@@ -2919,6 +2919,47 @@ else
   bad "a pre-recorded storage-rules step was not resumed"; echo "$OUT" | tail -25; cat "$DST/calls" 2>/dev/null
 fi
 
+# ---------------------------------------------------------------------------
+# The hosted nightly (#851). google-github-actions/auth writes its credentials
+# file, gha-creds-<hex>.json, into the workspace root, which is the repo root
+# release.sh runs from. Step 0 refuses a tree with anything untracked in it, so
+# unless the real root .gitignore covers that name, every full nightly refuses
+# at its first check. Both halves are run: with the real ignore line the
+# release finishes, and without it the same file refuses at step 0, which is
+# what shows the first half is not passing for some other reason.
+# ---------------------------------------------------------------------------
+GHA_IGNORE='gha-creds-*.json'
+DGA="$(make_repo)"; write_stubs "$DGA"
+if grep -qxF "$GHA_IGNORE" "$REPO_SCRIPTS/../.gitignore" 2>/dev/null; then
+  GHA_IGNORED=1
+  printf '%s\n' "$GHA_IGNORE" >> "$DGA/repo/.gitignore"
+  ( cd "$DGA/repo" && git add -A && git commit -qm "ignore the auth action's credentials file" && git push -q origin main ) >/dev/null 2>&1
+else
+  GHA_IGNORED=0
+fi
+arm_ci "$DGA"
+printf '{"type":"external_account"}\n' > "$DGA/repo/gha-creds-0123456789abcdef.json"
+RCGA="$(run_release "$DGA" RELEASE_YES=1 RELEASE_ANDROID_TESTERS=a@b.test \
+  RELEASE_FUNCTIONS_SETTLE=0 FIREBASE_CALL_LOG="$DGA/calls")"
+if [ "$GHA_IGNORED" = "1" ] && [ "$RCGA" = "0" ] && grep -q "is live and verified" "$DGA/out"; then
+  ok "the root .gitignore covers the auth action's gha-creds file, and one in the root does not refuse"
+else
+  bad "the auth action's credentials file refused the release, or the root .gitignore lacks '$GHA_IGNORE' (rc=$RCGA)"
+  stripped "$DGA/out" | grep -n "REFUSED\|gha-creds" | head
+fi
+
+DGB="$(make_repo)"; write_stubs "$DGB"; arm_ci "$DGB"
+printf '{"type":"external_account"}\n' > "$DGB/repo/gha-creds-0123456789abcdef.json"
+RCGB="$(run_release "$DGB" RELEASE_YES=1 RELEASE_ANDROID_TESTERS=a@b.test \
+  RELEASE_FUNCTIONS_SETTLE=0 FIREBASE_CALL_LOG="$DGB/calls")"
+if [ "$RCGB" != "0" ] && grep -q "working tree has uncommitted changes" "$DGB/out" &&
+   grep -q "gha-creds-0123456789abcdef.json" "$DGB/out" && [ ! -s "$DGB/calls" ]; then
+  ok "without the ignore line the same credentials file refuses at step 0, before any deploy"
+else
+  bad "an unignored gha-creds file did not refuse at step 0 (rc=$RCGB)"
+  stripped "$DGB/out" | tail -15
+fi
+
 echo
 echo "release tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

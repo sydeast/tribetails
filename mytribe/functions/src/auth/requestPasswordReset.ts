@@ -14,6 +14,7 @@ import { wrapTrigger } from '../lib/wrapTrigger';
 import { loadEmailTemplate, type EmailTemplateDoc } from '../lib/sendFromTemplate';
 import { sendTemplatedEmail } from '../lib/email';
 import { sendPartsFor } from '../lib/emailFrame';
+import { loadEmailFrame } from '../lib/emailFrameStore';
 import { SEED_CORPUS } from '../notifications/seedCorpus.generated';
 import { isAuntieClaim, isOwner, isOwnerClaim } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
@@ -248,10 +249,13 @@ export async function processPasswordResetRequest(request: PasswordResetRequest)
       });
     }
 
+    // #957: the operator's frame. Never throws: a failed read sends the
+    // default frame, so it can never turn into a failed reset.
+    const frame = await loadEmailFrame('requestPasswordReset');
     await sendTemplatedEmail({
       to: user.email,
       data: { link, email: user.email, displayName: user.displayName || user.email },
-      ...sendPartsFor(loaded.template),
+      ...sendPartsFor(loaded.template, frame),
     });
   } catch (err) {
     // The request doc is already gone and the caller was told `ok`, so this

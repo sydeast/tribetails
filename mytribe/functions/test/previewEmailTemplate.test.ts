@@ -2,6 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { callableRequest } from './_helpers/callableRequest';
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError: vi.fn() }));
+// #957: the preview reads the stored email frame. An empty store, so these
+// tests exercise the real read (nothing stored, the default frame), not the
+// fallback a missing Firestore client would take.
+vi.mock('../src/lib/firestoreAdmin', async () => {
+  const { buildDbMock } = await import('./_helpers/mockDb');
+  const { db } = buildDbMock({ docs: {} });
+  return { db: () => db, auth: vi.fn(), getAdmin: vi.fn() };
+});
 import { previewEmailTemplateHandler, sampleDataFor } from '../src/admin/previewEmailTemplate';
 import { renderEmailParts } from '../src/lib/email';
 import { sendPartsFor } from '../src/lib/emailFrame';

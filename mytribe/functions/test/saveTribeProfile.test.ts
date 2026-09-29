@@ -462,6 +462,82 @@ describe('saveTribeProfileHandler: an old client editing the Emergency Contact',
     });
     expect(ctx.writes).toHaveLength(0);
   });
+
+  // #1049: the old-client contact path refuses through the same check as
+  // saveEmergencyContacts, so it writes the same EMERGENCY_CONTACT_SAVE_REFUSED
+  // entry, from the same helper. Other refusals of this call are not audited.
+  const ecRefusals = () =>
+    mocks.writeAuditEntryFn.mock.calls
+      .map((c) => c[0] as Record<string, unknown>)
+      .filter((e) => e['event'] === 'EMERGENCY_CONTACT_SAVE_REFUSED');
+
+  it('a refused contact edit is audited as EMERGENCY_CONTACT_SAVE_REFUSED, one entry per refused call', async () => {
+    const ctx = oldClientHousehold('primary');
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(save({ customFields: [K1, ...ec('Sam Ortiz', '+1 805 555 0100')] })).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(ecRefusals()).toEqual([
+      {
+        status: 'FAILURE',
+        event: 'EMERGENCY_CONTACT_SAVE_REFUSED',
+        severity: 'warn',
+        actorRole: 'PRIMARY',
+        actorUid: 'u9',
+        targetUid: '3',
+        targetCollection: 'kinfolk',
+        familyId: '3',
+        description: `Emergency Contact not saved: ${EMERGENCY_CONTACT_OUTSIDE_MESSAGE}`,
+        payload: { kinfolkId: '3', code: 'failed-precondition', reason: EMERGENCY_CONTACT_OUTSIDE_MESSAGE },
+      },
+    ]);
+    await expect(save({ customFields: [K1, ...ec('Sam Ortiz', '12')] })).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(ecRefusals()).toHaveLength(2);
+    expect(ecRefusals()[1]).toMatchObject({ payload: { code: 'invalid-argument', reason: 'That phone number is not a valid number.' } });
+    // Never the name or the phone that was sent.
+    expect(JSON.stringify(ecRefusals())).not.toMatch(/Sam|Ortiz|555/);
+  });
+
+  it('a SECONDARY with Home access is named SECONDARY on the refusal', async () => {
+    const ctx = oldClientHousehold('secondaryWithHome');
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(save({ customFields: [K1, ...ec('Sam Ortiz', '+1 805 555 0100')] })).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(ecRefusals()).toHaveLength(1);
+    expect(ecRefusals()[0]).toMatchObject({ actorRole: 'SECONDARY', actorUid: 'u9' });
+  });
+
+  it('a custom field refusal on the same call is not an Emergency Contact refusal and is not audited as one', async () => {
+    const ctx = oldClientHousehold('primary');
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      save({ customFields: [K1, { key: 'pool', label: '', value: 'Heated' }, ...ec('Sam Ortiz', '805-555-0111', 'Brother')] }),
+    ).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(ecRefusals()).toHaveLength(0);
+  });
+
+  it('the rate limit refusing a valid contact edit is not audited as an Emergency Contact refusal', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u9': { kinfolkIds: ['3'] },
+        'families/3': { displayName: 'The Foster', customFields: [K1] },
+        'families/3/members/u9': MEMBERS.primary,
+        'kinfolk/3': KINFOLK,
+        'rate_limits/profileSave:3': { count: 60, windowStart: Date.now() },
+      },
+      queryDocs: { 'families/3/members': [{ id: 'u9', data: MEMBERS.primary }] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(save({ customFields: [K1, ...ec('Sam Ortiz', '805-555-0111', 'Brother')] })).rejects.toMatchObject({ code: 'resource-exhausted' });
+    expect(ecRefusals()).toHaveLength(0);
+  });
+
+  it('a failed audit write never replaces the refusal', async () => {
+    const ctx = oldClientHousehold('primary');
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.writeAuditEntryFn.mockRejectedValueOnce(new Error('chain head busy'));
+    await expect(save({ customFields: [K1, ...ec('Sam Ortiz', '+1 805 555 0100')] })).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: EMERGENCY_CONTACT_OUTSIDE_MESSAGE,
+    });
+  });
 });
 
 /**

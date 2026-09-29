@@ -165,6 +165,38 @@ the stale "~26":
     handler, not a file-scope import: it is this callable's only caller and
     pulls in `dom-serializer`, which `coldStartImportGraph.test.ts` would
     otherwise charge to every deployed function's cold start.
+- `getEmailFrame`, `saveEmailFrame`, `previewEmailFrame` (#957, net-new,
+  owner-only: admin-gated and NOT in `AUNTIE_ALLOWED_CALLABLES`). Spec:
+  `docs/superpowers/specs/2026-09-28-email-frame-editor-design.md`. The frame
+  fields are `pageBackground`, `cardBackground`, `textColor`,
+  `headlineColor`, `accentColor`, `buttonTextColor`, `calloutBackground`,
+  `footerBackground`, `footerTextColor` (each `#rrggbb`, stored lowercase),
+  `headerText` (at most 80 chars, one line), `footerText` (at most 300 chars,
+  one line), and `logoUrl` (a Cloudinary image in
+  `tribetails/business/business_settings`). Text fields refuse `{{` and `}}`.
+  Stored in `business_settings/email_frame`, which the rules deny to every
+  client.
+  - `getEmailFrame`: req `{}`; res `{ stored: Partial<Frame>; defaults: Frame;
+    updatedAt: string | null; updatedBy: string | null }`. `stored` holds only
+    the fields the operator set; `defaults` holds every field and is shown as
+    placeholders, never saved.
+  - `saveEmailFrame`: req `{ changes?: Record<field, string | null>;
+    resetAll?: true }` (exactly one of the two). A value sets the field; `null`
+    or a blank string resets it to its default; a field left out is untouched.
+    `resetAll` removes every frame field. Res: the same shape as
+    `getEmailFrame`. `invalid-argument` (with `details.field` when one field
+    is at fault) on any bad value, unknown field or empty save, and nothing is
+    written. `failed-precondition` for a logo when `CLOUDINARY_CLOUD_NAME` is
+    not configured. Audits `EMAIL_FRAME_UPDATED` with
+    `{ resetAll, fields: { [field]: newValue | null } }`.
+  - `previewEmailFrame`: req `{ frame: Partial<Frame> }` (the draft's set
+    fields, validated like a save); res `{ subject: string; html: string;
+    text: string }`. Renders fixed sample content through the real
+    `sendPartsFor` and `renderEmailParts`. Writes nothing.
+  - Send routes (`emailChannel`, `sendFromTemplate`, `requestPasswordReset`)
+    and `previewEmailTemplate` read the stored frame once per invocation with
+    `loadEmailFrame`, which falls back to the default frame (and logs
+    `email.frame.read_failed`) when the read fails.
 - The remaining ~34 are lower-complexity (2 to 3 flat fields); freeze as they churn.
 
 Two freeze levels now exist: `shapeKeys` (top-level, for flat shapes) and
@@ -1569,6 +1601,7 @@ Operator ruling 2026-09-27 (Q3): "A Secondary kinfolk can be added to the househ
   - a blank label on a NEW key that would land (value not `''`, not removed) is refused with `invalid-argument`, and nothing is written. No client sends one: web and Android fall back to the key, and old clients send the schema label (`min 1`) or a fixed card label.
 - RATE LIMIT (second review round). 60 saves an hour per household (`rate_limits/{scope}:{kinfolkId}`), refused with `resource-exhausted` and "Too many attempts. Try again later." Each callable has its OWN bucket, `profileSave` and `homeAccessSave`: one page Save calls both, so a shared bucket would allow 30 clicks an hour, and a click landing on its edge would save the profile and refuse the home details. Since the final review the counter is read and written INSIDE the save transaction (`readRateLimitInTx`), so it counts only a save that commits a change: a refused save throws before any write, and a save that changes nothing writes nothing, counter included, and is never refused for the limit.
 - NO-OP SAVES (final review). Real clients always send `displayName` and `customFields`, so the skip compares the result with what is stored. When the merged list, `displayName` (or, on `saveHomeAccess`, `gateCode` / `keyLocation` / `wifiPassword`, a sent `null` matching a missing field) and the Emergency Contact are all unchanged, nothing is written: no `updatedAt` or `updatedByUid` bump, no rate count, no `PROFILE_UPDATED` or `HOME_ACCESS_UPDATED` audit entry. Web (`profileSaveErrorMessage`) and Android (`profileSaveFailureMessage`) show "Save failed: this household has saved too many times in the last hour. Wait a little, then save again."
+- REFUSED CONTACT EDIT (#1049): when the old-client contact edit is refused by the shared Emergency Contact check, the call writes the `EMERGENCY_CONTACT_SAVE_REFUSED` entry described under `saveEmergencyContacts`, after the transaction, through the same helper. A refusal of anything else on the call (a custom field, the rate limit) is not audited as that event.
 - HOME ACCESS CHECK for an old client's contact edit (`hasKinfolkPerm`) runs once, before the transaction, and only when contact rows were sent. It is a plain read either way; inside the transaction it ran again on every retry (and `isStaff` logged its allowlist fallback each time). A permission change racing a save is not a risk that needs a transactional read: `saveEmergencyContacts` applies the same gate without one.
 - MERGE, NEVER REPLACE. Until #873 both callables replaced `customFields` whole. The portal clients, in schema mode, rebuilt the list from the form schema's keys, so every stored row outside the schema (office-set rows shown as "Set by your Auntie", rows from an older schema, hand-added rows) was deleted on the household's next save. Now (`src/lib/customFieldsMerge.ts`):
   - a sent row replaces the stored row with the same key, in the stored row's position; later stored copies of that key fold into it;
@@ -1614,6 +1647,7 @@ Operator ruling 2026-09-27 (Q3): "A Secondary kinfolk can be added to the househ
   - Replaces `kinfolk/{id}.emergencyContacts` whole. A contact matched by phone, then name, keeps `recordedAt`.
   - Refuses `[]` with `failed-precondition` "A household needs at least one Emergency Contact".
   - Refuses a contact whose phone matches the primary's `phoneNumber`/`secondaryPhone` or any member's `phone`, or whose name matches a member name (case and spacing ignored), with `failed-precondition` "An Emergency Contact has to be someone outside the household."
+  - **REFUSAL AUDIT (#1049).** Every refused save (`invalid-argument`, `failed-precondition`, or `not-found` when the household is deleted after the access check) from a caller who passed the gate writes one `activity_log` entry, whichever client sent it, portals included: `actionType: EMERGENCY_CONTACT_SAVE_REFUSED`, `status: FAILURE`, `severity: warn`, `actorId` the caller, `actorRole` AUNTIE for staff or the member's role (PRIMARY, SECONDARY; no member doc reads as PRIMARY), `targetId` and `familyId` the household, `targetCollection: kinfolk`, description `Emergency Contact not saved: <message>`, payload `{ kinfolkId, code, reason }`. `reason` is the refusal message with any run of 7 or more digits masked to `…` plus its last four, capped at 300 characters. A payload that fails to parse is audited too, once the caller passes the gate; a caller who fails the gate gets the parse error as before and nothing is audited. A `permission-denied` or a server fault is not audited here. Not deduplicated: each refused call is one press of Save, and repeats are what the operator needs to see. Best effort: a failed audit write is logged (`audit.write.failed`) and the caller still gets the refusal. `wrapCallable` still writes its generic `ERROR_FUNCTION_FAILURE` entry (function and code only) for the same call. `saveTribeProfile`'s old-client contact path writes the same entry through the same helper (`auditEmergencyContactRefusal`) when its contact edit is refused; its other refusals (a custom field, the rate limit) are not audited as this event.
 - `listEmergencyContacts`
   - req `{ kinfolkId?: string }`, res `{ contacts: EmergencyContactDTO[], canEdit: boolean, legacy: boolean }`
   - `legacy: true` means the doc has no array yet and the flat `emergencyContact*` triple was projected as one contact.
@@ -1631,13 +1665,14 @@ Operator ruling 2026-09-27 (Q3): "A Secondary kinfolk can be added to the househ
 - Dropped before the write, whatever the client sent: `emergencyContacts`, `emergencyContactName`, `emergencyContactPhone`, `emergencyContactRelation` (only `saveEmergencyContacts` writes those), `id`, `_id`, `createdAt`, `createdAtSource`, `createdByUid`, `myTribeLinkedAt`, `isTestData`. Every other field is written as sent; `updatedAt` is not touched.
 - Stamps `createdAt` (server time), `createdAtSource: 'live'`, `createdByUid` (the caller).
 - **DUPLICATE RULE.** Before creating, in one transaction, it reads `kinfolk` where `createdAt >= now - 10 minutes`. A document counts as the same household when `createdByUid` is the caller AND it has the same primary phone (E.164 digits, or the digits when it does not parse; fewer than 7 digits never match) OR the same primary email (trimmed, lower-cased; must contain `@`). A blank never matches a blank. On a match nothing is written and the answer is `{ kinfolkId: <existing id>, duplicateOf: <existing id> }` (the newest match when several). Otherwise the household is created and `duplicateOf` is `null`. Rule: `src/lib/kinfolkDuplicate.ts`.
-- Clients treat `duplicateOf` as "this household was already added" (#907 review), never as a success: no "Kinfolk added.", no Emergency Contact saved onto it, no second CREATE audit, and nothing kept pending. What the operator typed is kept per operator for that household, and its edit screen opens with each typed value that is not blank and differs from the stored one filled in as an unsaved change, headed "<Household> was already added a few minutes ago." The operator saves through the normal field-merge update or backs out. Admin web and desktop fill in every field Add collects; Android fills in all but status and preferred contact, which Add starts at a default, and names those two in the notice when they differ. Desktop has no status control on edit, so a differing status is named in its notice too.
+- Clients treat `duplicateOf` as "this household was already added" (#907 review), never as a success: no "Kinfolk added.", no Emergency Contact saved onto it, and nothing kept pending. What the operator typed is kept per operator for that household, and its edit screen opens with each typed value that is not blank and differs from the stored one filled in as an unsaved change, headed "<Household> was already added a few minutes ago." The operator saves through the normal field-merge update or backs out. Admin web and desktop fill in every field Add collects; Android fills in all but status and preferred contact, which Add starts at a default, and names those two in the notice when they differ. Desktop has no status control on edit, so a differing status is named in its notice too.
 - CONCURRENCY. The `createdAt` range query runs inside the transaction, so two calls racing for the same operator and phone or email contend: exactly one household is created and the other call answers `duplicateOf` (`test/rules/createKinfolkRace.test.ts`, on the emulator; with the query moved outside the transaction that test fails). The query reads every household created in the last 10 minutes, so ALL creates in that window contend with each other, matching or not, and one may retry; at this business's volume that is a few households a day.
 - Offline: a callable is refused while the device is offline (admin web `OfflineCallError`), where the old direct `add` queued. The Add dialog shows that refusal as it is.
-- TEST ADMINS are refused (`permission-denied`), as before this callable existed. A sandbox test admin (`testTribeId` claim, no `admin`) may create only `kinfolk/{testTribeId}` under the rules, and every admin client's Add used an auto-id create, which the rules deny a test admin (`test/rules/kinfolkProfile.test.ts`).
+- TEST ADMINS are refused (`permission-denied`), as before this callable existed. A sandbox test admin (`testTribeId` claim, no `admin`) may still create only `kinfolk/{testTribeId}` directly under the rules, unchanged by #909, and every admin client's Add used an auto-id create, which the rules deny a test admin (`test/rules/kinfolkProfile.test.ts`).
+- **AUDIT (#909).** A created household writes exactly one `activity_log` entry, server side: `actionType: CREATE_KINFOLK`, `actorId` the caller, `targetId` the new household, `targetCollection: 'kinfolk'`, description `Added Kinfolk <first> <last>`, `actorRole: AUNTIE`, `status: SUCCESS`. A `duplicateOf` answer and a refused call write none. The entry is written after the create's transaction (the audit chain runs its own), and a failed audit write fails the call like every other audited admin callable; a retry then answers `duplicateOf` and writes nothing. No client writes a CREATE_KINFOLK entry: Android and desktop did until #909 and no longer do, and admin web never did. Edits are still audited by the clients (`UPDATE_KINFOLK`).
+- **ONLY PATH (#909).** `firestore.rules` refuses every staff client's direct create of `kinfolk/{id}`, owner and Auntie alike, auto id or chosen id, so this callable's duplicate check and audit cannot be skipped. Updates and deletes are unchanged. Precondition: release `release/2026.09.28-b17334e` contains #907's merge commit `2117549`, so admin web, admin Android and the desktop console built from it all create through this callable.
 - Logs `kinfolk.created` or `kinfolk.create.duplicate` (`warn`) with the id and the kind of match. NEVER logged: name, phone or email.
 - GATE: `wrapAdminCallable` (`isStaff`). Secrets `SENTRY_DSN`, `AUNTIE_OPERATOR_UIDS`.
-- NOT CLOSED: `firestore.rules` still allows a staff direct create of `kinfolk/{id}`, so an old client install goes around the duplicate check.
 - Households made before #890 have no `createdAt`; `npm --prefix mytribe/functions run report:duplicate-kinfolk -- --allow-prod --project <id>` (read-only) finds the duplicates among them by document create time.
 - Clients: `auntieos-admin/src/api/directoryWrite.ts#createKinfolk`, Android `AuntieRepository.createKinfolkComplete`, desktop `FirestoreClient.createKinfolk`.
 

@@ -3,6 +3,9 @@ import { FieldValue, Timestamp, type DocumentReference, type Firestore, type Tra
 import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
+import { writeAuditEntry } from '../lib/writeAuditEntry';
+import { AUDIT_EVENTS } from '../lib/auditEvents';
+import { maskPhoneDigits } from '../lib/maskPhoneDigits';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { hasKinfolkPerm, requireKinfolkPerm } from '../lib/memberGate';
@@ -165,20 +168,138 @@ export async function prepareEmergencyContactsSave(
   return { ref, merged };
 }
 
+/**
+ * #1049: the error codes that mean "these contacts were refused", as opposed to
+ * "you may not edit this household" (permission-denied, raised before this is
+ * reached) or a server fault. Only these are audited as EMERGENCY_CONTACT_SAVE_REFUSED.
+ */
+const REFUSAL_CODES: ReadonlySet<string> = new Set(['invalid-argument', 'failed-precondition', 'not-found']);
+
+/** The longest refusal message kept in the audit entry. Every shared message is far shorter. */
+export const REFUSAL_REASON_MAX = 300;
+
+/** The refusal message as it goes into the audit: phone-shaped digits masked, trimmed, capped. */
+export function refusalReason(message: string): string {
+  const masked = maskPhoneDigits(message).trim();
+  return masked.length > REFUSAL_REASON_MAX ? `${masked.slice(0, REFUSAL_REASON_MAX - 1)}…` : masked;
+}
+
+/** A `kinfolkId` the caller sent, read without the schema, for a payload that failed to parse. */
+function requestedKinfolkId(data: unknown): string | undefined {
+  const v = (data as { kinfolkId?: unknown } | null | undefined)?.kinfolkId;
+  return typeof v === 'string' ? v : undefined;
+}
+
+/**
+ * #1049: THE ONE WRITER of `EMERGENCY_CONTACT_SAVE_REFUSED`, shared by
+ * `saveEmergencyContacts` and `saveTribeProfile`'s old-client contact path, so
+ * both write the same fields, masking and cap. [err] is whatever the Emergency
+ * Contact check threw: only an HttpsError with a refusal code is audited, so a
+ * permission or server fault passing through writes nothing.
+ *
+ * Best effort: a failed audit write is logged under [fn] and never replaces the
+ * refusal the caller sees.
+ *
+ * NOT DEDUPLICATED, on purpose. The client SDKs never retry a callable on their
+ * own, so each refused call is one press of Save by a person, and "this
+ * household tried three times" is what the operator needs to see.
+ *
+ * [actorRole] when the caller already knows it; otherwise it is read here the
+ * way saveTribeProfile reads it: staff are AUNTIE, a missing member doc is a
+ * legacy primary.
+ */
+export async function auditEmergencyContactRefusal(opts: {
+  fn: string;
+  uid: string;
+  kinfolkId: string;
+  isOperator: boolean;
+  err: unknown;
+  actorRole?: 'AUNTIE' | 'PRIMARY' | 'SECONDARY';
+}): Promise<void> {
+  const { fn, uid, kinfolkId, isOperator, err } = opts;
+  if (!(err instanceof HttpsError) || !REFUSAL_CODES.has(err.code)) return;
+  try {
+    let actorRole = opts.actorRole;
+    if (actorRole === undefined) {
+      actorRole = 'AUNTIE';
+      if (!isOperator) {
+        const memberSnap = await db().doc(`families/${kinfolkId}/members/${uid}`).get();
+        const role = memberSnap.exists ? (memberSnap.data() as { role?: string }).role : undefined;
+        actorRole = role === 'SECONDARY' ? 'SECONDARY' : 'PRIMARY';
+      }
+    }
+    const reason = refusalReason(err.message);
+    await writeAuditEntry({
+      status: 'FAILURE',
+      event: AUDIT_EVENTS.EMERGENCY_CONTACT_SAVE_REFUSED,
+      severity: 'warn',
+      actorRole,
+      actorUid: uid,
+      targetUid: kinfolkId,
+      targetCollection: 'kinfolk',
+      familyId: kinfolkId,
+      description: `Emergency Contact not saved: ${reason}`,
+      payload: { kinfolkId, code: err.code, reason },
+    });
+  } catch (auditErr) {
+    logEvent({
+      severity: 'warn',
+      function: fn,
+      event: 'audit.write.failed',
+      uid,
+      errorMessage: (auditErr as Error)?.message,
+      extra: { kinfolkId },
+    });
+  }
+}
 export async function saveEmergencyContactsHandler(
   req: CallableRequest<unknown>,
 ): Promise<{ contacts: EmergencyContactDTO[] }> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
-  const args = parseArgs(SaveArgs, req.data);
+  // #1049: a payload that does not parse is still a refused save worth auditing,
+  // so the parse error is held while access is checked. A caller who may not
+  // edit this household gets the parse error exactly as before, and nothing is
+  // audited for them.
+  let args: z.infer<typeof SaveArgs> | null = null;
+  let parseRefusal: HttpsError | null = null;
+  try {
+    args = parseArgs(SaveArgs, req.data);
+  } catch (e) {
+    if (!(e instanceof HttpsError)) throw e;
+    // A household id that is there but not a string names no household to
+    // audit against; the refusal goes back as it always did.
+    const sentId = (req.data as { kinfolkId?: unknown } | null | undefined)?.kinfolkId;
+    if (sentId !== undefined && typeof sentId !== 'string') throw e;
+    parseRefusal = e;
+  }
   // #944: allowlisted - the admin clients write emergency contacts and an
   // Auntie needs them in hand on a visit.
   const isAdmin = staffBypass(req.auth, 'saveEmergencyContacts');
-  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, isAdmin, 'saveEmergencyContacts');
-  await requireKinfolkPerm(uid, kinfolkId, 'home_access', isAdmin, 'saveEmergencyContacts');
+  let kinfolkId: string;
+  let isOperator: boolean;
+  try {
+    ({ kinfolkId, isOperator } = await resolveKinfolkAccess(
+      uid,
+      args?.kinfolkId ?? requestedKinfolkId(req.data),
+      isAdmin,
+      'saveEmergencyContacts',
+    ));
+    await requireKinfolkPerm(uid, kinfolkId, 'home_access', isAdmin, 'saveEmergencyContacts');
+  } catch (e) {
+    throw parseRefusal ?? e;
+  }
 
-  const { ref, merged } = await prepareEmergencyContactsSave(db(), kinfolkId, args.contacts);
+  let prepared: Awaited<ReturnType<typeof prepareEmergencyContactsSave>>;
+  try {
+    if (parseRefusal !== null) throw parseRefusal;
+    prepared = await prepareEmergencyContactsSave(db(), kinfolkId, (args as z.infer<typeof SaveArgs>).contacts);
+  } catch (e) {
+    await auditEmergencyContactRefusal({ fn: 'saveEmergencyContacts', uid, kinfolkId, isOperator, err: e });
+    throw e;
+  }
+  const { ref, merged } = prepared;
   await ref.update({ emergencyContacts: merged, updatedAt: FieldValue.serverTimestamp() });
 
   logEvent({

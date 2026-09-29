@@ -65,6 +65,7 @@ import com.tribetails.auntieos.ui.components.GlassSurface
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.composables.icons.lucide.Archive
 import com.composables.icons.lucide.Bell
+import com.composables.icons.lucide.Mail
 import com.composables.icons.lucide.BellOff
 import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.CloudSun
@@ -247,6 +248,9 @@ internal enum class SettingsSection(
     CalendarSync("Google Calendar sync", "Import busy events as private blocks", Lucide.RefreshCw),
     TimeOff("Time off", "Holidays observed and Den closures", Lucide.Plane),
     Notifications("Notifications", "Whether notices send, when, and the per-channel gate", Lucide.Bell),
+    // #957: the shared frame every visual email is sent in. After
+    // Notifications, as on web. Panel lives in `EmailFramePanel.kt`.
+    EmailFrame("Email frame", "Colors, header, logo and footer every email is sent in", Lucide.Mail),
     // "Scheduling" is the settings mock's title for these three switches
     // (issue #755 pass); web's panel of the same name sits under Business
     // profile.
@@ -618,6 +622,9 @@ fun AdminSettingsScreen(
                             NotificationMatrixPanel()
                         }
 
+                        // #957: self-loading, like Vet clinics: its own
+                        // server-only document behind getEmailFrame.
+                        SettingsSection.EmailFrame -> EmailFramePanel()
                         SettingsSection.BookingBehavior -> BookingBehaviorPanel(
                             settings = uiState.businessSettings,
                             onSettingsChange = { viewModel.updateBusinessSettings(it) },

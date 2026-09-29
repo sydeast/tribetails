@@ -52,11 +52,37 @@ jobs:
   release:
     name: Release main to production
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    # A full release is about an hour. Three hours leaves room for a slow
-    # functions deploy without letting a wedged one hold the runner all day.
+    # A full release on this runner is: installs and `npm run check` (~15
+    # minutes), two cold Gradle release builds (~20), and the functions deploy.
+    # The runner is new every night, so it has no .release-state and deploys
+    # the whole fleet (~280 functions in batches of 25 with a 30 second settle,
+    # roughly an hour). Three hours leaves room for a slow functions deploy
+    # without letting a wedged one hold the runner all day.
     timeout-minutes: 180
+    # What the run touches on GitHub, and nothing else:
+    #   contents: write        release.sh step 9 pushes the release tag and
+    #                          prunes merged branches.
+    #   id-token: write        the OIDC token Workload Identity exchanges for
+    #                          Google Cloud access. Without it the auth step
+    #                          cannot ask for one.
+    #   actions: read          step 0b reads ci.yml's run for the commit and
+    #                          that run's jobs (the #838/#856 query).
+    #   checks: read           listed in #851. Step 0b no longer reads check
+    #                          runs directly, but the old query is one revert
+    #                          away and read access costs nothing.
+    #   pull-requests: read    the branch prune skips branches with an open PR.
     permissions:
       contents: write
+      id-token: write
+      actions: read
+      checks: read
+      pull-requests: read
+    # AT JOB LEVEL, not on the release step (#850 review). The credential check
+    # below reads GH_TOKEN too, and a token that exists only inside the release
+    # step's env is invisible to it, so the check would refuse a run that has
+    # one. release.sh step 0b asks `gh auth status --hostname github.com`.
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -71,17 +97,16 @@ jobs:
       #   unset / anything else  do nothing. This is the default, so merging
       #                          this workflow does not start deploying.
       #   preflight              run the preflight and STOP. Proves the runner
-      #                          can authenticate, that the secrets resolve and
+      #                          can authenticate, that the secrets resolve,
+      #                          that the Android signing material decodes and
       #                          that CI's verdict is green, without deploying.
       #   on                     the real thing.
       #
-      # The runner is GitHub-hosted ubuntu and holds NO credentials: no Google
-      # Cloud login and no GH_TOKEN. Operator ruling 2026-09-14:
-      # NIGHTLY_RELEASE stays `off` until #851 wires Workload Identity. Until
-      # then any mode but `off` stops at the credentials check below, because a
-      # preflight without them reports secrets that exist as unreadable and a
-      # CI verdict it could not fetch (#850). Once credentials exist, run
-      # `preflight` for a few nights before `on`.
+      # Operator ruling 2026-09-14 (D-2026-09-14-NIGHTLY-OFF): NIGHTLY_RELEASE
+      # stays `off` until the runner can authenticate. The Google Cloud setup it
+      # needs is in docs/runbooks/release-internals.md, "Hosted nightly
+      # release". Once that exists, prove it with a manual `preflight` run, then
+      # set `preflight` for a few nights before `on`.
       #
       # A manual run's `mode` input wins over the variable, so you can force a
       # preflight or a full release without touching settings.
@@ -102,13 +127,67 @@ jobs:
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "Mode: $mode"
 
+      # The Workload Identity provider and the service account live in
+      # repository variables, not in this file, so a renamed pool or account is
+      # a settings change rather than a workflow edit. The runbook section
+      # "Hosted nightly release" creates both and sets these two variables:
+      #
+      #   NIGHTLY_WIF_PROVIDER     projects/<number>/locations/global/
+      #                            workloadIdentityPools/github/providers/tribetails
+      #   NIGHTLY_SERVICE_ACCOUNT  github-release@auntieos-ttpc.iam.gserviceaccount.com
+      #
+      # Checked here, before the auth step, because the auth action's own
+      # error for an empty provider says nothing about where the value lives.
+      - name: Check the release variables are set
+        if: steps.decide.outputs.mode != 'off'
+        env:
+          WIF_PROVIDER: ${{ vars.NIGHTLY_WIF_PROVIDER }}
+          RELEASE_SA: ${{ vars.NIGHTLY_SERVICE_ACCOUNT }}
+        run: |
+          missing=""
+          [ -n "$WIF_PROVIDER" ] || missing="$missing NIGHTLY_WIF_PROVIDER"
+          [ -n "$RELEASE_SA" ] || missing="$missing NIGHTLY_SERVICE_ACCOUNT"
+          if [ -n "$missing" ]; then
+            echo "::error title=Nightly release is not configured::Repository variables not set:$missing"
+            echo "REFUSED: these repository variables are not set:$missing"
+            echo
+            echo "They name the Workload Identity provider and the service account this"
+            echo "run signs in as. The commands that create both and set these variables"
+            echo "are in docs/runbooks/release-internals.md, section 'Hosted nightly release'."
+            exit 1
+          fi
+          echo "Workload Identity provider: $WIF_PROVIDER"
+          echo "Service account: $RELEASE_SA"
+
+      # BEFORE the credential check, on purpose (#850 review). The check looks
+      # for GOOGLE_APPLICATION_CREDENTIALS, which is exactly what this step
+      # exports (create_credentials_file defaults to true). Run it after the
+      # check and every run refuses.
+      #
+      # The credentials file lands in the workspace as gha-creds-*.json. The
+      # root .gitignore ignores that pattern, because release.sh step 0 refuses
+      # a working tree with anything untracked in it. The action's post step
+      # deletes the file, and so does the cleanup step below.
+      - name: Authenticate to Google Cloud (Workload Identity)
+        if: steps.decide.outputs.mode != 'off'
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.NIGHTLY_WIF_PROVIDER }}
+          service_account: ${{ vars.NIGHTLY_SERVICE_ACCOUNT }}
+          project_id: auntieos-ttpc
+
+      # gcloud for Secret Manager (steps 0c and 1b) and Cloud Run (step 8). It
+      # picks up the credentials file the step above wrote.
+      - name: Set up gcloud
+        if: steps.decide.outputs.mode != 'off'
+        uses: google-github-actions/setup-gcloud@v3
+
       # FAIL FAST WITHOUT CREDENTIALS (#850). On 2026-09-12, 13 and 14 the
       # preflight ran here with no Google Cloud login and no GH_TOKEN, and got
       # as far as release steps 0b and 0c before failing with messages that
       # read as "your secrets are missing" and "CI never ran". Both were false.
       # This step adds no credentials and no permissions; it only says plainly
-      # that they are absent, before `npm ci` spends minutes. #851 is where
-      # Workload Identity gets wired.
+      # that they are absent, before the installs spend minutes.
       - name: Check the runner can authenticate
         if: steps.decide.outputs.mode != 'off'
         run: |
@@ -138,14 +217,19 @@ jobs:
             echo
             echo "A release run here would report Secret Manager values as unreadable and"
             echo "CI's verdict as unavailable, and would not be telling you anything about"
-            echo "the secrets or CI. Workload Identity for this workflow is #851:"
+            echo "the secrets or CI. The setup is in docs/runbooks/release-internals.md,"
+            echo "section 'Hosted nightly release' (#851):"
             echo "  https://github.com/${GITHUB_REPOSITORY}/issues/851"
-            echo "Until it lands, keep NIGHTLY_RELEASE off and release by hand:"
+            echo "Until it works, keep NIGHTLY_RELEASE off and release by hand:"
             echo "  gh variable set NIGHTLY_RELEASE --body off"
             exit 1
           fi
           echo "Google Cloud: $google"
           echo "GitHub: $github present"
+          if ! gh auth status --hostname github.com; then
+            echo "::error title=GitHub token rejected::gh auth status --hostname github.com failed with the job token"
+            exit 1
+          fi
 
       # Nothing merged since the last release means nothing to ship. Releasing
       # an unchanged commit would still take an hour, still churn ~280 Cloud Run
@@ -173,6 +257,10 @@ jobs:
             echo "$(git rev-list --count "$last_sha".."$head_sha") commit(s) to ship."
           fi
 
+      # ------------------------------------------------------------------
+      # THE TOOLCHAIN the operator Mac has and this runner does not. Each one
+      # is something release.sh assumes is already on the machine.
+      # ------------------------------------------------------------------
       - uses: actions/setup-node@v7
         if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
         with:
@@ -180,9 +268,228 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      # The `reconcile` codebase runs on the runtime auntieos-admin/web/
+      # firebase.json names (python313). The Firebase CLI discovers its
+      # endpoints by running the code out of functions-python/venv, so it needs
+      # this exact interpreter and a venv beside the source. On 2026-08-05 a
+      # missing one ended a release 25 minutes in. scripts/nightly-release.test.sh
+      # fails if this version and firebase.json's runtime disagree.
+      - uses: actions/setup-python@v7
+        if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
+        with:
+          python-version: '3.13'
+
+      # Both JDKs the two Android builds name: mytribe/build.gradle.kts has
+      # jvmToolchain(17) and auntieos-admin/android has jvmToolchain(21) with no
+      # toolchain resolver, so 21 has to be here. The last one listed is the
+      # default JAVA_HOME. keytool below comes from it too.
+      - uses: actions/setup-java@v6
+        if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
+        with:
+          distribution: temurin
+          java-version: |
+            17
+            21
+
+      # THIS RUN'S OWN GRADLE HOME, under $RUNNER_TEMP, the way ci.yml's Android
+      # jobs pin theirs. The restore step writes gradle.properties (two Mapbox
+      # tokens) into it and the cleanup step deletes that file, so pinning the
+      # directory here means neither step can reach any other Gradle home. On
+      # 2026-09-28 a local trial of those two step bodies inherited a developer
+      # shell's GRADLE_USER_HOME and overwrote, then deleted, that machine's own
+      # gradle.properties. Both steps now also refuse unless they are on a
+      # GitHub Actions runner, and the restore step refuses unless this is set.
+      - name: Pin the Gradle home to this run
+        if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
+        run: echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-home" >> "$GITHUB_ENV"
+
+      - uses: gradle/actions/setup-gradle@v6
+        if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
+
+      # Every npm root release.sh builds, tests or deploys. Step 0a checks all
+      # three against their lockfiles and nothing in the release installs them;
+      # on the Mac they are installed by hand. mytribe/functions and
+      # auntieos-admin/web/functions are standalone (their own lockfile), so the
+      # root `npm ci` does not reach them.
+      #
+      # firebase-tools is in no package.json; release.sh and safe-deploy.sh call
+      # a global `firebase`. Pinned to the version ci.yml's jobs use.
       - name: Install
         if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
-        run: npm ci
+        run: |
+          npm ci
+          npm ci --prefix mytribe/functions
+          npm ci --prefix auntieos-admin/web/functions
+          npm install -g firebase-tools@15.18.0
+
+      - name: Build the reconcile codebase's venv
+        if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
+        working-directory: auntieos-admin/web/functions-python
+        run: |
+          python3.13 -m venv venv
+          venv/bin/pip install --quiet --disable-pip-version-check -r requirements.txt
+          venv/bin/python3.13 -c 'import firebase_functions' && echo "reconcile: venv ready"
+
+      # release.sh step 9 makes an ANNOTATED tag, and `git tag -a` on a runner
+      # with no identity fails. release.sh treats a failed tag as a warning,
+      # not a stop, so the release would succeed untagged, the newness check
+      # above would never see it, and the next night would ship it all again.
+      - name: Name the release tagger
+        if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # ------------------------------------------------------------------
+      # ANDROID SIGNING AND BUILD CONFIG, restored from repository secrets into
+      # the same places the Mac keeps them. Every one is removed by the
+      # always() cleanup step at the end.
+      #
+      #   AUNTIEOS_KEYSTORE_B64        the operator app's release keystore,
+      #                                base64. Written to $RUNNER_TEMP, outside
+      #                                the checkout, and named by KEYSTORE_PATH.
+      #   AUNTIEOS_KEYSTORE_PASSWORD   \
+      #   AUNTIEOS_KEY_ALIAS            } local.properties, as on the Mac
+      #   AUNTIEOS_KEY_PASSWORD        /
+      #   AUNTIEOS_ANDROID_SENTRY_DSN  SENTRY_DSN in local.properties. Compiled
+      #                                into the operator APK; without it the app
+      #                                reports no crashes.
+      #   MYTRIBE_DEBUG_KEYSTORE_B64   ~/.android/debug.keystore. The portal APK
+      #                                signs with it. It must be the SAME file
+      #                                the Mac signs with: Android refuses an
+      #                                update signed by a different key, so a
+      #                                fresh debug key would leave every tester
+      #                                unable to install the next build.
+      #   MAPBOX_DOWNLOADS_TOKEN       gradle.properties. Both settings.gradle.kts
+      #                                files resolve the Mapbox SDK with it.
+      #   ANDROID_MAPBOX_PUBLIC_TOKEN  MAPBOX_PUBLIC_TOKEN in gradle.properties.
+      #                                Compiled into both APKs; without it the
+      #                                maps render blank.
+      #
+      # A missing one REFUSES, in preflight too. The last two would not break
+      # the build: the APK would build, ship, and do less than the Mac's does,
+      # which is the failure step 0c refuses for the web bundles.
+      # ------------------------------------------------------------------
+      - name: Restore the Android signing material
+        if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
+        env:
+          AUNTIEOS_KEYSTORE_B64: ${{ secrets.AUNTIEOS_KEYSTORE_B64 }}
+          AUNTIEOS_KEYSTORE_PASSWORD: ${{ secrets.AUNTIEOS_KEYSTORE_PASSWORD }}
+          AUNTIEOS_KEY_ALIAS: ${{ secrets.AUNTIEOS_KEY_ALIAS }}
+          AUNTIEOS_KEY_PASSWORD: ${{ secrets.AUNTIEOS_KEY_PASSWORD }}
+          AUNTIEOS_ANDROID_SENTRY_DSN: ${{ secrets.AUNTIEOS_ANDROID_SENTRY_DSN }}
+          MYTRIBE_DEBUG_KEYSTORE_B64: ${{ secrets.MYTRIBE_DEBUG_KEYSTORE_B64 }}
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+          ANDROID_MAPBOX_PUBLIC_TOKEN: ${{ secrets.ANDROID_MAPBOX_PUBLIC_TOKEN }}
+        run: |
+          set -euo pipefail
+          # ONLY ON A RUNNER. This step writes into $HOME and the Gradle home.
+          # Run anywhere else (someone pasting the body into a shell to try
+          # it), it would overwrite that machine's own debug keystore and
+          # gradle.properties, so it refuses and writes nothing.
+          if [ "${GITHUB_ACTIONS:-}" != "true" ] || [ -z "${RUNNER_TEMP:-}" ]; then
+            echo "REFUSED: this step only runs on a GitHub Actions runner (GITHUB_ACTIONS=true and RUNNER_TEMP set). Nothing was written."
+            exit 1
+          fi
+          case "${GRADLE_USER_HOME:-}" in
+            "$RUNNER_TEMP"/*) ;;
+            *)
+              echo "REFUSED: GRADLE_USER_HOME is '${GRADLE_USER_HOME:-unset}', not under RUNNER_TEMP. Nothing was written."
+              exit 1
+              ;;
+          esac
+          missing=""
+          for name in AUNTIEOS_KEYSTORE_B64 AUNTIEOS_KEYSTORE_PASSWORD AUNTIEOS_KEY_ALIAS \
+                      AUNTIEOS_KEY_PASSWORD AUNTIEOS_ANDROID_SENTRY_DSN MYTRIBE_DEBUG_KEYSTORE_B64 \
+                      MAPBOX_DOWNLOADS_TOKEN ANDROID_MAPBOX_PUBLIC_TOKEN; do
+            [ -n "$(printenv "$name" || true)" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error title=Android release secrets missing::Repository secrets not set:$missing"
+            echo "REFUSED: these repository secrets are empty or not set:$missing"
+            echo "The gh secret set command for each is in docs/runbooks/release-internals.md,"
+            echo "section 'Hosted nightly release'."
+            exit 1
+          fi
+          umask 077
+
+          keystore="$RUNNER_TEMP/auntieos-release.keystore"
+          printf '%s' "$AUNTIEOS_KEYSTORE_B64" | base64 -d > "$keystore"
+          # Values are written as the Mac's file holds them: the secrets were
+          # exported from its local.properties text, so Gradle parses the same
+          # string here as it does there.
+          {
+            echo "sdk.dir=$ANDROID_HOME"
+            echo "KEYSTORE_PATH=$keystore"
+            echo "KEYSTORE_PASSWORD=$AUNTIEOS_KEYSTORE_PASSWORD"
+            echo "KEY_ALIAS=$AUNTIEOS_KEY_ALIAS"
+            echo "KEY_PASSWORD=$AUNTIEOS_KEY_PASSWORD"
+            echo "SENTRY_DSN=$AUNTIEOS_ANDROID_SENTRY_DSN"
+          } > auntieos-admin/android/local.properties
+          echo "sdk.dir=$ANDROID_HOME" > mytribe/local.properties
+
+          mkdir -p "$HOME/.android"
+          printf '%s' "$MYTRIBE_DEBUG_KEYSTORE_B64" | base64 -d > "$HOME/.android/debug.keystore"
+
+          mkdir -p "$GRADLE_USER_HOME"
+          {
+            echo "MAPBOX_DOWNLOADS_TOKEN=$MAPBOX_DOWNLOADS_TOKEN"
+            echo "MAPBOX_PUBLIC_TOKEN=$ANDROID_MAPBOX_PUBLIC_TOKEN"
+          } > "$GRADLE_USER_HOME/gradle.properties"
+          echo "Restored: release keystore, both local.properties, debug keystore, gradle.properties"
+
+      # PREFLIGHT NEVER BUILDS AN APK (release.sh skips step 1c in that mode),
+      # so without this a preflight would say nothing about whether the
+      # signing secrets are right. keytool opens each keystore the way Gradle
+      # will: the store password, the alias, and the key password (-certreq
+      # needs the private key, which -list does not). Passwords reach keytool
+      # through :env, never the command line.
+      #
+      # The debug key's SHA-256 is printed for comparing with the Mac's, which
+      # is the only proof that testers can take the update. The runbook has the
+      # command that prints the Mac's.
+      - name: Verify the signing material opens
+        if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
+        env:
+          KS_PASS: ${{ secrets.AUNTIEOS_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.AUNTIEOS_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.AUNTIEOS_KEY_PASSWORD }}
+          DEBUG_PASS: android
+        run: |
+          set -euo pipefail
+          if ! keytool -certreq -keystore "$RUNNER_TEMP/auntieos-release.keystore" \
+                 -storepass:env KS_PASS -alias "$KS_ALIAS" -keypass:env KEY_PASS > /dev/null; then
+            echo "::error title=Release keystore does not open::AUNTIEOS_KEYSTORE_B64 with its password, alias and key password"
+            echo "REFUSED: the operator app's release keystore did not open with the stored"
+            echo "password, alias and key password. Re-export all four from the Mac, as the"
+            echo "runbook shows. (A password that local.properties stores with a backslash"
+            echo "escape reads differently here than in Gradle; export it unescaped.)"
+            exit 1
+          fi
+          echo "auntieos: release keystore opens (alias and key password verified)"
+          if ! keytool -certreq -keystore "$HOME/.android/debug.keystore" \
+                 -storepass:env DEBUG_PASS -alias androiddebugkey -keypass:env DEBUG_PASS > /dev/null; then
+            echo "::error title=Debug keystore does not open::MYTRIBE_DEBUG_KEYSTORE_B64"
+            echo "REFUSED: the restored debug keystore did not open as androiddebugkey/android."
+            exit 1
+          fi
+          release_sha="$(keytool -list -v -keystore "$RUNNER_TEMP/auntieos-release.keystore" \
+            -storepass:env KS_PASS -alias "$KS_ALIAS" | awk '/SHA256:/ {print $2; exit}')"
+          debug_sha="$(keytool -list -v -keystore "$HOME/.android/debug.keystore" \
+            -storepass:env DEBUG_PASS -alias androiddebugkey | awk '/SHA256:/ {print $2; exit}')"
+          echo "auntieos release key SHA-256: $release_sha"
+          echo "portal debug key SHA-256:     $debug_sha"
+          {
+            echo "### Signing keys on this runner"
+            echo
+            echo "Compare each with the Mac's (runbook: Hosted nightly release). A different"
+            echo "fingerprint means testers cannot install the update."
+            echo
+            echo "| Key | SHA-256 |"
+            echo "| --- | --- |"
+            echo "| AuntieOS release key | \`$release_sha\` |"
+            echo "| Kinfolk Portal debug key | \`$debug_sha\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # THE RUN ITSELF.
       #
@@ -205,13 +512,20 @@ jobs:
       #
       # RELEASE_SKIP_CI_GATE is deliberately NOT set. The CI verdict for the
       # commit being shipped is the whole safety of an unattended release.
+      #
+      # A preflight skips step 1 (`npm run check`), which is what builds the
+      # functions, so step 1b would read no declared secrets and print "Not
+      # checked". Building mytribe/functions first lets 1b compare the declared
+      # secrets against Secret Manager for real.
       - name: Preflight only
         if: steps.decide.outputs.mode == 'preflight' && steps.newness.outputs.new == 'true'
         env:
           RELEASE_YES: '1'
           RELEASE_PREFLIGHT_ONLY: '1'
           RELEASE_INCLUDE_ADMIN_FUNCTIONS: '1'
-        run: npm run deploy
+        run: |
+          npm run build:functions
+          npm run deploy
 
       - name: Release to production
         if: steps.decide.outputs.mode == 'full' && steps.newness.outputs.new == 'true'
@@ -220,6 +534,32 @@ jobs:
           RELEASE_INCLUDE_ADMIN_FUNCTIONS: '1'
           RELEASE_PREDEPLOY_KEEP: '0'
         run: npm run deploy
+
+      # Removes everything the restore step and the auth step wrote, pass or
+      # fail, cancelled or timed out. The runner is discarded after the job,
+      # but a keystore should not outlive the step that needed it on the
+      # strength of that. Runs in every mode, `off` included, because it costs
+      # nothing and an `if` here is one more thing to get wrong.
+      - name: Delete the restored signing material and credentials
+        if: always()
+        run: |
+          # ONLY ON A RUNNER, for the same reason as the restore step: run
+          # anywhere else, this would delete that machine's own debug keystore.
+          if [ "${GITHUB_ACTIONS:-}" != "true" ] || [ -z "${RUNNER_TEMP:-}" ]; then
+            echo "REFUSED: this step only runs on a GitHub Actions runner (GITHUB_ACTIONS=true and RUNNER_TEMP set). Nothing was deleted."
+            exit 1
+          fi
+          rm -f "$RUNNER_TEMP/auntieos-release.keystore" \
+                auntieos-admin/android/local.properties \
+                mytribe/local.properties \
+                "$HOME/.android/debug.keystore"
+          # Only the Gradle home this run pinned. Unset (mode off, or a run
+          # that stopped before the pin step) means nothing was written there.
+          case "${GRADLE_USER_HOME:-}" in
+            "$RUNNER_TEMP"/*) rm -f "$GRADLE_USER_HOME/gradle.properties" ;;
+          esac
+          rm -f gha-creds-*.json
+          echo "Removed the restored keystores, local.properties, gradle.properties and credentials files."
 
       - name: Summary
         if: always()
@@ -239,7 +579,7 @@ jobs:
             if [ "${MODE:-off}" = "off" ]; then
               echo "Nothing ran. The nightly release is off (operator ruling 2026-09-14)."
               echo "Before it can run, this runner needs the Google Cloud setup and the"
-              echo "signing secrets it does not have today: [#851](https://github.com/${GITHUB_REPOSITORY}/issues/851)."
+              echo "signing secrets described in the runbook: [#851](https://github.com/${GITHUB_REPOSITORY}/issues/851)."
               echo "See [the RUNBOOK](https://github.com/${GITHUB_REPOSITORY}/blob/main/docs/RUNBOOK.md#the-nightly-release-stays-off-until-it-can-authenticate)"
               echo "for what it needs. Leave \`NIGHTLY_RELEASE\` off until then."
             elif [ "${NEW:-}" = "false" ]; then

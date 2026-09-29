@@ -117,6 +117,40 @@ describe('rules: /kinfolk/{kinfolkId}', () => {
     );
   });
 
+  // #909: `createKinfolk` is the one way an admin client makes a household, so
+  // its duplicate check and its CREATE_KINFOLK audit cannot be skipped. Before
+  // this, an old admin install (or any direct write) created around both.
+  describe('no staff client creates a household directly (#909)', () => {
+    it('an owner cannot create a household with an auto id, the path every admin client used before #890', async () => {
+      const env = await getEnv();
+      await assertFails(asAuntie(env).firestore().collection('kinfolk').add({ firstName: 'Lee', lastName: 'Park' }));
+    });
+    it('an owner cannot create a household at a chosen id either', async () => {
+      const env = await getEnv();
+      await assertFails(asAuntie(env).firestore().doc('kinfolk/kin-new').set({ firstName: 'Lee', lastName: 'Park' }));
+    });
+    it('a contractor Auntie cannot create a household', async () => {
+      const env = await getEnv();
+      const asContractor = env.authenticatedContext('auntie-1', { staffRole: 'auntie' });
+      await assertFails(asContractor.firestore().doc('kinfolk/kin-new').set({ firstName: 'Lee' }));
+      await assertFails(asContractor.firestore().collection('kinfolk').add({ firstName: 'Lee' }));
+    });
+    it('a household cannot create a kinfolk document, its own id included', async () => {
+      const env = await getEnv();
+      await assertFails(asKinfolk(env, 'kin-9').firestore().doc('kinfolk/kin-9').set({ firstName: 'Lee' }));
+    });
+    it('an owner still updates a household, the field-merge save every admin Edit uses', async () => {
+      const env = await getEnv();
+      await seedKinfolk('kin-1');
+      await assertSucceeds(asAuntie(env).firestore().doc('kinfolk/kin-1').update({ serviceAddress: '1 Bark Ave' }));
+    });
+    it('a contractor Auntie still updates a household', async () => {
+      const env = await getEnv();
+      await seedKinfolk('kin-1');
+      const asContractor = env.authenticatedContext('auntie-1', { staffRole: 'auntie' });
+      await assertSucceeds(asContractor.firestore().doc('kinfolk/kin-1').update({ gateCode: '4321' }));
+    });
+  });
   // #829 review: the staff branches used to allow ANY kinfolk write, so an admin
   // client could put an array of five contacts, or a household member's own
   // number, straight onto the document and skip every check the callable makes.
@@ -143,12 +177,15 @@ describe('rules: /kinfolk/{kinfolkId}', () => {
       await assertFails(asAuntie(env).firestore().collection('kinfolk').add({ firstName: 'Lee', emergencyContactPhone: '805-555-0198' }));
     });
 
-    it('an Auntie still creates, updates and deletes a household without those keys', async () => {
+    // #909: create moved to the createKinfolk callable, so the direct create is
+    // gone; update and delete are untouched.
+    it('an Auntie still updates and deletes a household without those keys', async () => {
       const env = await getEnv();
       await seedKinfolk('kin-1');
-      await assertSucceeds(asAuntie(env).firestore().doc('kinfolk/kin-new').set({ firstName: 'Lee', lastName: 'Park' }));
+      await seedKinfolk('kin-new');
       // The seed carries flat keys already; an update that leaves them alone is fine.
       await assertSucceeds(asAuntie(env).firestore().doc('kinfolk/kin-1').update({ firstName: 'Dana M.' }));
+      await assertSucceeds(asAuntie(env).firestore().doc('kinfolk/kin-1').set({ lastName: 'Mercer-Lee' }, { merge: true }));
       await assertSucceeds(asAuntie(env).firestore().doc('kinfolk/kin-new').delete());
     });
 

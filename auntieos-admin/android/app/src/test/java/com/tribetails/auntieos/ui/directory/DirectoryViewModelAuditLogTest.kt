@@ -52,8 +52,10 @@ class DirectoryViewModelAuditLogTest {
         Dispatchers.resetMain()
     }
 
+    // #909: createKinfolk writes the CREATE_KINFOLK entry on the server, once per
+    // household created. Android logging one too would record every Add twice.
     @Test
-    fun `saveKinfolk fires CREATE_KINFOLK audit entry`() = runTest(testDispatcher) {
+    fun `saveKinfolk writes no client CREATE_KINFOLK audit entry, the server does`() = runTest(testDispatcher) {
         coEvery { repository.createKinfolkComplete(any(), any()) } returns
             Result.success(KinfolkCreated(Kinfolk(id = "new-id", firstName = "Pat", lastName = "S"), null))
         coEvery { repository.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
@@ -64,13 +66,9 @@ class DirectoryViewModelAuditLogTest {
         viewModel.saveKinfolk()
         advanceUntilIdle()
 
-        coVerify(exactly = 1) {
-            repository.logActivity(match<ActivityLogEntry> {
-                it.actionType == "CREATE_KINFOLK" &&
-                it.targetId == "new-id" &&
-                it.targetCollection == "kinfolk"
-            })
-        }
+        coVerify(exactly = 1) { repository.createKinfolkComplete(any(), any()) }
+        coVerify(exactly = 0) { repository.logActivity(match<ActivityLogEntry> { it.actionType == "CREATE_KINFOLK" }) }
+        assertTrue(viewModel.addKinfolkState.value.isSuccess)
     }
 
     @Test

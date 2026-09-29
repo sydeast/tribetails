@@ -1,6 +1,8 @@
 import { db } from './firestoreAdmin';
 import { sendTemplatedEmail } from './email';
 import { sendPartsFor } from './emailFrame';
+import { loadEmailFrame } from './emailFrameStore';
+import type { EmailFrame } from './emailFrameConfig';
 
 /**
  * Whether a `notificationTemplateBindings` doc is live, given its `active`
@@ -106,12 +108,19 @@ export async function loadEmailTemplate(key: string): Promise<EmailTemplateDoc |
   return snap.data() as EmailTemplateDoc;
 }
 
+/**
+ * `frame` (#957): the operator's email frame, when the caller already read it
+ * for this invocation (`inviteEmails.ts` sends up to three emails and reads it
+ * once). Left out, it is read here, once for this send.
+ */
 export async function sendFromTemplate(
   key: string,
   to: string,
   data: Record<string, unknown>,
+  frame?: EmailFrame,
 ): Promise<string> {
   const tpl = await loadEmailTemplate(key);
   if (!tpl) throw new Error(`email template missing: resolved from ${key}`);
-  return sendTemplatedEmail({ to, data, ...sendPartsFor(tpl) });
+  const resolvedFrame = frame ?? (await loadEmailFrame('sendFromTemplate'));
+  return sendTemplatedEmail({ to, data, ...sendPartsFor(tpl, resolvedFrame) });
 }

@@ -1,5 +1,17 @@
 # O-3 App Check Ruling, 2026-07-13 [SEC]
 
+> **Q9 ruling, 2026-09-28: App Check only logs.** Docket Q9: "No: App
+> Check only logs. Sign-in and rate limits protect every function."
+> Recorded as D-2026-09-28-APP-CHECK-ONLY-LOGS in `docs/DECISIONS.md`
+> (#1050). It supersedes D2's enforcement below: the L2 `enforce` mode is
+> removed, L3 platform `enforceAppCheck` never ships, and no cohort is ever
+> enforced, the web-only admin callables included. D3's flip conditions and
+> the Phase 4 and 5 rollout steps have nothing left to flip.
+> `business_settings/security.appCheckMode` takes `off` or `log`; a stored
+> `enforce` reads as `log` and logs a warning. What stands: D1's web
+> provider and the L1 telemetry, which logs `appCheck: valid | invalid |
+> absent` on every callable.
+
 > **R3 ruling, 2026-09-27, closes the Android question this document left
 > open.** Docket R3: "Android has no App Check. Rely on sign-in and rate
 > limits. Stop the failing Play request." This supersedes D1's Android
