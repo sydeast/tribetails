@@ -191,22 +191,42 @@ function requestedKinfolkId(data: unknown): string | undefined {
 }
 
 /**
- * #1049: one `activity_log` entry for a refused save. Best effort: a failed
- * audit write is logged and never replaces the refusal the caller sees.
+ * #1049: THE ONE WRITER of `EMERGENCY_CONTACT_SAVE_REFUSED`, shared by
+ * `saveEmergencyContacts` and `saveTribeProfile`'s old-client contact path, so
+ * both write the same fields, masking and cap. [err] is whatever the Emergency
+ * Contact check threw: only an HttpsError with a refusal code is audited, so a
+ * permission or server fault passing through writes nothing.
+ *
+ * Best effort: a failed audit write is logged under [fn] and never replaces the
+ * refusal the caller sees.
  *
  * NOT DEDUPLICATED, on purpose. The client SDKs never retry a callable on their
  * own, so each refused call is one press of Save by a person, and "this
  * household tried three times" is what the operator needs to see.
+ *
+ * [actorRole] when the caller already knows it; otherwise it is read here the
+ * way saveTribeProfile reads it: staff are AUNTIE, a missing member doc is a
+ * legacy primary.
  */
-async function auditRefusal(uid: string, kinfolkId: string, isOperator: boolean, err: HttpsError): Promise<void> {
+export async function auditEmergencyContactRefusal(opts: {
+  fn: string;
+  uid: string;
+  kinfolkId: string;
+  isOperator: boolean;
+  err: unknown;
+  actorRole?: 'AUNTIE' | 'PRIMARY' | 'SECONDARY';
+}): Promise<void> {
+  const { fn, uid, kinfolkId, isOperator, err } = opts;
+  if (!(err instanceof HttpsError) || !REFUSAL_CODES.has(err.code)) return;
   try {
-    // The caller's real role, read the way saveTribeProfile reads it: a missing
-    // member doc is a legacy primary.
-    let actorRole: 'AUNTIE' | 'PRIMARY' | 'SECONDARY' = 'AUNTIE';
-    if (!isOperator) {
-      const memberSnap = await db().doc(`families/${kinfolkId}/members/${uid}`).get();
-      const role = memberSnap.exists ? (memberSnap.data() as { role?: string }).role : undefined;
-      actorRole = role === 'SECONDARY' ? 'SECONDARY' : 'PRIMARY';
+    let actorRole = opts.actorRole;
+    if (actorRole === undefined) {
+      actorRole = 'AUNTIE';
+      if (!isOperator) {
+        const memberSnap = await db().doc(`families/${kinfolkId}/members/${uid}`).get();
+        const role = memberSnap.exists ? (memberSnap.data() as { role?: string }).role : undefined;
+        actorRole = role === 'SECONDARY' ? 'SECONDARY' : 'PRIMARY';
+      }
     }
     const reason = refusalReason(err.message);
     await writeAuditEntry({
@@ -224,7 +244,7 @@ async function auditRefusal(uid: string, kinfolkId: string, isOperator: boolean,
   } catch (auditErr) {
     logEvent({
       severity: 'warn',
-      function: 'saveEmergencyContacts',
+      function: fn,
       event: 'audit.write.failed',
       uid,
       errorMessage: (auditErr as Error)?.message,
@@ -232,7 +252,6 @@ async function auditRefusal(uid: string, kinfolkId: string, isOperator: boolean,
     });
   }
 }
-
 export async function saveEmergencyContactsHandler(
   req: CallableRequest<unknown>,
 ): Promise<{ contacts: EmergencyContactDTO[] }> {
@@ -277,7 +296,7 @@ export async function saveEmergencyContactsHandler(
     if (parseRefusal !== null) throw parseRefusal;
     prepared = await prepareEmergencyContactsSave(db(), kinfolkId, (args as z.infer<typeof SaveArgs>).contacts);
   } catch (e) {
-    if (e instanceof HttpsError && REFUSAL_CODES.has(e.code)) await auditRefusal(uid, kinfolkId, isOperator, e);
+    await auditEmergencyContactRefusal({ fn: 'saveEmergencyContacts', uid, kinfolkId, isOperator, err: e });
     throw e;
   }
   const { ref, merged } = prepared;
