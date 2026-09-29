@@ -2,13 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { CallableRequest } from 'firebase-functions/v2/https';
 
 /**
- * O-3 App Check L2 (docs/O3_APP_CHECK_RULING_2026-07-13.md, D2), the layer that
- * can actually refuse a request. Issue #556 found that nothing anywhere in this
- * codebase ever required an App Check token; L1 logged whether one turned up
- * and that was the whole of it.
+ * O-3 App Check policy (docs/O3_APP_CHECK_RULING_2026-07-13.md), as narrowed by
+ * D-2026-09-28-APP-CHECK-ONLY-LOGS (docs/DECISIONS.md): App Check only logs.
+ * The `enforce` mode and the `reject` decision are gone; a stored `enforce`
+ * reads as `log` with a warning.
  */
 
 const getMock = vi.fn();
+const logEventMock = vi.fn();
+vi.mock('../src/lib/logger', () => ({ logEvent: logEventMock }));
 vi.mock('../src/lib/firestoreAdmin', () => ({
   db: () => ({ collection: () => ({ doc: () => ({ get: getMock }) }) }),
 }));
@@ -56,45 +58,80 @@ describe('appCheckDecision', () => {
   });
 
   it('never touches a function outside the cohort, whatever the mode', async () => {
-    expect(decide({ mode: 'enforce', status: 'absent', inCohort: false })).toBe('allow');
-    expect(decide({ mode: 'enforce', status: 'invalid', inCohort: false })).toBe('allow');
+    expect(decide({ mode: 'log', status: 'absent', inCohort: false })).toBe('allow');
+    expect(decide({ mode: 'log', status: 'invalid', inCohort: false })).toBe('allow');
   });
 
-  it('mode off refuses nothing, even in the cohort', async () => {
+  it('mode off observes nothing, even in the cohort', async () => {
     expect(decide({ mode: 'off', status: 'absent', inCohort: true })).toBe('allow');
   });
 
-  it('mode log serves the request and records that enforcement would not have', async () => {
+  it('mode log serves the request and records that it carried no verified token', async () => {
     expect(decide({ mode: 'log', status: 'absent', inCohort: true })).toBe('observe');
     expect(decide({ mode: 'log', status: 'invalid', inCohort: true })).toBe('observe');
   });
 
-  it('mode enforce refuses a cohort request with no verified token', async () => {
-    expect(decide({ mode: 'enforce', status: 'absent', inCohort: true })).toBe('reject');
-    expect(decide({ mode: 'enforce', status: 'invalid', inCohort: true })).toBe('reject');
+  it('a verified token is served without an observation', async () => {
+    expect(decide({ mode: 'log', status: 'valid', inCohort: true })).toBe('allow');
   });
 
-  it('a verified token is served in every mode', async () => {
-    expect(decide({ mode: 'enforce', status: 'valid', inCohort: true })).toBe('allow');
-    expect(decide({ mode: 'log', status: 'valid', inCohort: true })).toBe('allow');
+  it('no input produces a refusal: App Check only logs', async () => {
+    for (const mode of ['off', 'log'] as const) {
+      for (const status of ['valid', 'invalid', 'absent'] as const) {
+        for (const inCohort of [true, false]) {
+          expect(['allow', 'observe']).toContain(decide({ mode, status, inCohort }));
+        }
+      }
+    }
   });
 });
 
 describe('currentAppCheckMode', () => {
   beforeEach(async () => {
     getMock.mockReset();
+    logEventMock.mockClear();
     const { resetAppCheckModeCache } = await import('../src/lib/appCheckPolicy');
     resetAppCheckModeCache();
   });
 
   it('reads business_settings/security', async () => {
-    getMock.mockResolvedValue({ data: () => ({ appCheckMode: 'enforce' }) });
+    getMock.mockResolvedValue({ data: () => ({ appCheckMode: 'off' }) });
     const { currentAppCheckMode } = await import('../src/lib/appCheckPolicy');
-    await expect(currentAppCheckMode()).resolves.toBe('enforce');
+    await expect(currentAppCheckMode()).resolves.toBe('off');
+    expect(logEventMock).not.toHaveBeenCalled();
+  });
+
+  it('reads log as log, with no warning', async () => {
+    getMock.mockResolvedValue({ data: () => ({ appCheckMode: 'log' }) });
+    const { currentAppCheckMode } = await import('../src/lib/appCheckPolicy');
+    await expect(currentAppCheckMode()).resolves.toBe('log');
+    expect(logEventMock).not.toHaveBeenCalled();
+  });
+
+  it('reads a leftover enforce as log and warns once per cache refresh', async () => {
+    getMock.mockResolvedValue({ data: () => ({ appCheckMode: 'enforce' }) });
+    const { currentAppCheckMode, resetAppCheckModeCache } = await import('../src/lib/appCheckPolicy');
+    await expect(currentAppCheckMode()).resolves.toBe('log');
+    await currentAppCheckMode();
+    await currentAppCheckMode();
+    expect(logEventMock).toHaveBeenCalledTimes(1);
+    expect(logEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: 'warn',
+        event: 'appCheck.enforceIgnored',
+        errorMessage: expect.stringContaining('D-2026-09-28-APP-CHECK-ONLY-LOGS'),
+      }),
+    );
+
+    // The next read after the cache expires warns again, so a field left at
+    // `enforce` keeps showing up in the logs until someone clears it.
+    resetAppCheckModeCache();
+    await currentAppCheckMode();
+    expect(logEventMock).toHaveBeenCalledTimes(2);
   });
 
   it('caches, so the gate costs one read per instance per minute and not one per request', async () => {
-    getMock.mockResolvedValue({ data: () => ({ appCheckMode: 'enforce' }) });
+    getMock.mockResolvedValue({ data: () => ({ appCheckMode: 'log' }) });
     const { currentAppCheckMode } = await import('../src/lib/appCheckPolicy');
     await currentAppCheckMode();
     await currentAppCheckMode();
@@ -102,10 +139,11 @@ describe('currentAppCheckMode', () => {
     expect(getMock).toHaveBeenCalledTimes(1);
   });
 
-  it('falls back to log when the doc is missing — no seeding required to get the metric', async () => {
+  it('falls back to log when the doc is missing, so no seeding is required', async () => {
     getMock.mockResolvedValue({ data: () => undefined });
     const { currentAppCheckMode } = await import('../src/lib/appCheckPolicy');
     await expect(currentAppCheckMode()).resolves.toBe('log');
+    expect(logEventMock).not.toHaveBeenCalled();
   });
 
   it('falls back to log on a garbage value rather than guessing at it', async () => {
@@ -114,7 +152,7 @@ describe('currentAppCheckMode', () => {
     await expect(currentAppCheckMode()).resolves.toBe('log');
   });
 
-  it('fails OPEN when Firestore is unreachable — App Check is not the authz boundary', async () => {
+  it('fails open when Firestore is unreachable: App Check is not the authz boundary', async () => {
     getMock.mockRejectedValue(new Error('DEADLINE_EXCEEDED'));
     const { currentAppCheckMode } = await import('../src/lib/appCheckPolicy');
     await expect(currentAppCheckMode()).resolves.toBe('log');

@@ -69,6 +69,7 @@ so the ID resolves.
 | O-6 | 2026-07-13 | Operator trust | Staff roles and access |
 | D-2026-07-15-RULES-SOURCE | 2026-07-15 | mytribe/firestore.rules is the source of truth | Staff roles and access |
 | O-3 | 2026-07-13 | App Check | Staff roles and access |
+| D-2026-09-28-APP-CHECK-ONLY-LOGS | 2026-09-28 | App Check only logs | Staff roles and access |
 | OWNER-1 | 2026-07-14/15 | No public app store, ever | Staff roles and access |
 | D-2026-07-16-REMOVE-APK-MIGRATION | 2026-07-16 | No migration tooling in the admin APK | Staff roles and access |
 | D-2026-08-24-SECRET-MANAGER | 2026-08-24 | Secret Manager is the source of secrets | Staff roles and access |
@@ -380,7 +381,15 @@ so the ID resolves.
 - Ruling: Phase 1 is monitor-only. O-3 D1 (spelled "D1" in code and the record; not D1-INBOX) made Play Integrity the Android provider and ruled out SafetyNet. D2 sets the enforcement order and the kill switch.
 - Updated 2026-09-27: D1 no longer stands for Android. OWNER-1's permanent no on Play Console registration means Play Integrity can never ship there, so Android drops App Check and relies on sign-in and rate limits instead; the failing Play Integrity request stops. The web half of D1 is unchanged: reCAPTCHA Enterprise stays the web provider.
 - Updated 2026-09-28 (#987): a callable any Compose or Android client can reach never joins the enforced cohort, whatever the mode. Only callables named by the web apps alone are eligible, and none of the portal's are, so the cohort is empty and `enforce` refuses nothing until the operator adds a web-only admin callable. Sign-in and rate limits stay the protection for Android and desktop, per R3.
+- Superseded in part by: D-2026-09-28-APP-CHECK-ONLY-LOGS. D2's enforcement is gone: no L2 `enforce` mode, no L3 platform `enforceAppCheck`, and no cohort ever enforced, including the web-only admin callables the #987 update above left eligible. D1's web provider and the L1 telemetry stand.
 - Enforced in: `mytribe/functions/src/lib/appCheckPolicy.ts`, `mytribe/functions/scripts/clientCallables.ts`, `mytribe/functions/test/appCheckComposeReachable.test.ts`, `auntieos-admin/src/lib/boot.ts`, `auntieos-admin/src/lib/firebase.ts`
+
+### D-2026-09-28-APP-CHECK-ONLY-LOGS: App Check only logs
+- Date: 2026-09-28. Source: docket Q9, #1050
+- Ruling: "No: App Check only logs. Sign-in and rate limits protect every function."
+- What it means: App Check never refuses a request. Every callable still logs `appCheck: valid | invalid | absent`. `APP_CHECK_COHORT` stays empty, web-only callables included. The `enforce` mode is removed, so `business_settings/security.appCheckMode` accepts only `off` or `log`; a stored `enforce` reads as `log` and logs an `appCheck.enforceIgnored` warning (only when read, and with the cohort empty the field is never read). No function sets the platform `enforceAppCheck` option.
+- Supersedes: O-3 D2's enforcement layers (L2 `enforce`, L3 platform enforcement) and its cohort 1 to 3 enforcement order.
+- Enforced in: `mytribe/functions/src/lib/appCheckPolicy.ts`, `mytribe/functions/src/lib/wrapCallable.ts`, `mytribe/functions/test/appCheckCohortEmpty.test.ts`, `mytribe/functions/test/appCheckPolicy.test.ts`, `mytribe/functions/test/wrapCallable.test.ts`
 
 ### OWNER-1: No public app store, ever
 - Date: 2026-07-14/15 (`mytribe/docs/DEVELOPMENT_PLAN_2026-07-10.md`), restated 2026-08-25

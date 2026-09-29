@@ -1,20 +1,18 @@
 import { CallableRequest } from 'firebase-functions/v2/https';
 import { db } from './firestoreAdmin';
+import { logEvent } from './logger';
 
 /**
- * O-3 App Check, L2 runtime enforcement
- * (docs/O3_APP_CHECK_RULING_2026-07-13.md, D2).
+ * O-3 App Check (docs/O3_APP_CHECK_RULING_2026-07-13.md), as narrowed by
+ * D-2026-09-28-APP-CHECK-ONLY-LOGS (docs/DECISIONS.md): "No: App Check only
+ * logs. Sign-in and rate limits protect every function."
  *
- * L1 was telemetry only: `wrapCallable` logged whether `req.app` was populated
- * and changed nothing. This module is the layer that can actually refuse a
- * request, and it is deliberately NOT the platform's `enforceAppCheck` option
- * (that is L3). The difference is the kill switch. `enforceAppCheck` is a
- * deploy-time flag on ~230 functions with no CI behind them, so reverting it is
- * a ten-minute redeploy. The mode below is one Firestore field, effective
- * within a minute, flippable from a phone. The ruling's whole argument for L2
- * is that the first enforcement flip on live family traffic needs the fast
- * revert, and D2 is explicit that L3 comes only after L2 has run clean for a
- * week on the same cohort.
+ * This module used to be O-3's L2 layer, the one that could refuse a request
+ * through an `enforce` mode. That mode is gone. App Check is telemetry here and
+ * nothing else: every callable logs `appCheck: valid | invalid | absent`
+ * (see `appCheckStatusOf` and wrapCallable.ts), and no mode, cohort or setting
+ * can turn that into a refusal. The platform `enforceAppCheck` option (O-3's
+ * L3) is never set on any function, for the same reason.
  */
 
 /** Header the client SDKs put the attestation in. Lower-cased: Node lower-cases incoming header names. */
@@ -49,42 +47,64 @@ export function appCheckStatusOf(req: CallableRequest<unknown>): AppCheckStatus 
 }
 
 /**
- * Runtime enforcement mode, read from Firestore rather than compiled in.
+ * Runtime mode, read from Firestore rather than compiled in. Two values only.
  *
- * - `off`     — the gate does nothing at all. L1 telemetry still logs.
- * - `log`     — every request that WOULD be rejected is logged as such, and
- *               served anyway. This is what proves a cohort is quiet before
- *               anyone risks refusing a real family's request.
- * - `enforce` — cohort requests without a verified token are refused.
+ * - `off`: the cohort gate does nothing at all. Per-call telemetry still logs.
+ * - `log`: a cohort request without a verified token is logged as
+ *   `<name>.appCheck.wouldReject` and served.
+ *
+ * There is no `enforce`. D-2026-09-28-APP-CHECK-ONLY-LOGS (docs/DECISIONS.md)
+ * removed it: App Check never refuses a request, so a value that promised to
+ * turn refusals on would be a setting that cannot do what it says
+ * (D-FEATURE-FLAGS-FUNCTIONAL). A stored `enforce` reads as `log` and logs a
+ * warning, see [parseMode].
  */
-export type AppCheckMode = 'off' | 'log' | 'enforce';
+export type AppCheckMode = 'off' | 'log';
 
 /**
- * The mode when the settings doc is missing, malformed, or unreadable.
+ * The mode when the settings doc is missing, malformed, or unreadable, and
+ * when it still says `enforce`.
  *
- * `log`, not `off`: a fresh project should produce the would-reject counts the
- * grace period is measured from without anyone remembering to seed a document,
- * and `log` refuses nothing. It is not `enforce` for the obvious reason — a
- * Firestore blip must never become an outage — and App Check is explicitly not
- * this system's authorization boundary (`req.auth` claims and firestore.rules
- * are), so failing open costs nothing that was load-bearing.
+ * `log`, not `off`: it refuses nothing either way, and `log` keeps the
+ * would-reject line should a cohort ever exist again. App Check is not this
+ * system's authorization boundary (`req.auth` claims, firestore.rules and the
+ * callables' rate limits are), so nothing load-bearing hangs on this value.
  */
 const DEFAULT_MODE: AppCheckMode = 'log';
 
-/** One cheap read per instance per minute, per the ruling's D2. */
+/** One cheap read per instance per minute, per O-3 D2. */
 const MODE_CACHE_TTL_MS = 60_000;
 
 let cachedMode: { mode: AppCheckMode; readAt: number } | null = null;
 
+/**
+ * `enforce` was a valid value until D-2026-09-28-APP-CHECK-ONLY-LOGS. A
+ * settings doc written before then may still hold it. It is read as `log`,
+ * never as a refusal, and says so in the logs so the operator can clear the
+ * field. The warning fires once per cache refresh (at most once a minute per
+ * instance), not once per request.
+ */
 function parseMode(raw: unknown): AppCheckMode {
-  return raw === 'off' || raw === 'log' || raw === 'enforce' ? raw : DEFAULT_MODE;
+  if (raw === 'off' || raw === 'log') return raw;
+  if (raw === 'enforce') {
+    logEvent({
+      severity: 'warn',
+      function: 'appCheckPolicy',
+      event: 'appCheck.enforceIgnored',
+      errorMessage:
+        "business_settings/security.appCheckMode is 'enforce', which no longer exists. " +
+        "App Check only logs (D-2026-09-28-APP-CHECK-ONLY-LOGS). Treating it as 'log'. " +
+        "Set the field to 'log' or 'off', or delete it.",
+    });
+  }
+  return DEFAULT_MODE;
 }
 
 /**
  * Current mode, cached for [MODE_CACHE_TTL_MS].
  *
- * Called only for functions that are actually in an enforced cohort, so the
- * other ~230 callables never pay for a read they cannot act on.
+ * Called only for functions in [APP_CHECK_COHORT], which is empty by ruling,
+ * so in practice no callable pays for this read.
  */
 export async function currentAppCheckMode(): Promise<AppCheckMode> {
   const now = Date.now();
@@ -96,8 +116,7 @@ export async function currentAppCheckMode(): Promise<AppCheckMode> {
     return mode;
   } catch {
     // Cache the fallback too, so a Firestore outage does not turn into one read
-    // per request. Deliberately not logged here — wrapCallable already logs the
-    // mode it acted on with every gated request.
+    // per request. Not logged here: wrapCallable logs the mode it acted on.
     cachedMode = { mode: DEFAULT_MODE, readAt: now };
     return DEFAULT_MODE;
   }
@@ -109,58 +128,39 @@ export function resetAppCheckModeCache(): void {
 }
 
 /**
- * Cohort 1: the callables `enforce` governs. Empty since #987.
+ * The callables the `log` mode watches for would-reject lines. Empty, and it
+ * stays empty by ruling.
  *
- * THE RULE. A name may be here only if no client without App Check can reach
- * it. Only the two React web apps attest. Android has no App Check (ruling R3,
- * 2026-09-27: "Rely on sign-in and rate limits"), the desktop builds have no
- * App Check SDK, and the Compose js builds never wired one. For every one of
- * those clients, sign-in and rate limits are the protection, not this gate.
+ * D-2026-09-28-APP-CHECK-ONLY-LOGS (docs/DECISIONS.md): "No: App Check only
+ * logs. Sign-in and rate limits protect every function." No callable joins
+ * this list, including the admin-web-only ones that #987 left eligible.
+ * `test/appCheckCohortEmpty.test.ts` fails if a name is added. Changing that
+ * takes a new operator ruling, not a code change.
  *
- * WHY IT IS EMPTY. It held `getBusinessClosures`, on a hand check from
- * 2026-08-24 that said no Compose client calls it. That check was wrong: the
- * shared `PortalApi.kt` calls it for the booking wizard's closed dates, on
- * Android and desktop alike, so `enforce` would have broken the Android
- * booking calendar with no way for that client to fix itself. No portal
- * callable is web-only today, so the portal proving ground this cohort was
- * meant to be has no eligible member.
- *
- * WHAT GUARDS IT. `scripts/clientCallables.ts` reads every client's source and
- * lists which callables each can reach (`npm run callables:map` prints the map
- * and the web-only names that are eligible here).
- * `test/appCheckComposeReachable.test.ts` fails if any name here is reachable
- * from a Compose or Android client, so the hand check is never needed again.
- *
- * With the cohort empty, `business_settings/security.appCheckMode` changes
- * nothing: `enforce` has no callable to refuse. Adding a web-only admin
- * callable here is an operator decision, not a code default.
- *
- * Cohort 2 (the whole `wrapCallable` surface) stays out of reach for the same
- * reason, now permanently for anything a Compose client calls, and also because
- * a kinfolk who signs in through the web form spends that session unattested by
- * design (web/src/lib/boot.ts).
+ * History. It held `getBusinessClosures` on a hand check from 2026-08-24 that
+ * said no Compose client calls it. The check was wrong: the shared
+ * `PortalApi.kt` calls it for the booking wizard on Android and desktop. #987
+ * emptied the list and added `test/appCheckComposeReachable.test.ts`, which
+ * fails if a name here is reachable from a client with no App Check. That test
+ * still runs, but with the list empty by ruling it passes trivially; the
+ * emptiness test is the one that bites.
  */
 export const APP_CHECK_COHORT: readonly string[] = [];
 
 /**
- * #886: callables that must NEVER join an enforced cohort until every client
- * that calls them sends an App Check token.
+ * #886: callables whose clients cannot all send an App Check token.
  *
  * `recordFailedLogin` is called right after a failed sign-in by six clients: both
  * web apps, the Android admin, the portal Android app, the portal desktop REST
  * client and the desktop console. The two desktop clients have no App Check SDK
- * at all, and a web sign-in session is unattested by design (see Cohort 2
- * above). Enforcing it would refuse every report, the clients swallow that
- * refusal by design (the report is fire and forget), and account lockout would
- * silently stop working with no error anywhere.
+ * at all, and a web sign-in session is unattested by design
+ * (web/src/lib/boot.ts). `requestPasswordReset` is the way out of a lockout,
+ * and the portal desktop REST client (`RestAuthClient.sendPasswordReset`) calls
+ * it with no token either.
  *
- * `requestPasswordReset` is the way out of that lock, and the portal desktop REST
- * client (`RestAuthClient.sendPasswordReset`) calls it with no token either.
- * Enforcing it would strand a locked desktop kinfolk with no reset.
- *
+ * Kept as a second, narrower guard beside the empty cohort:
  * `appCheckFailedLoginGuard.test.ts` fails if a name here is added to
- * [APP_CHECK_COHORT]; remove it from this list only in the same change that gives
- * all of its clients a token.
+ * [APP_CHECK_COHORT].
  */
 export const UNATTESTED_CLIENT_CALLABLES: readonly string[] = ['recordFailedLogin', 'requestPasswordReset'];
 
@@ -169,10 +169,11 @@ export function isAppCheckCohort(functionName: string): boolean {
 }
 
 /**
- * `allow` — serve it. `observe` — serve it, but record that enforcement would
- * have refused. `reject` — refuse it.
+ * `allow`: serve it. `observe`: serve it, and log that the request carried no
+ * verified token. There is no refusing decision: App Check only logs
+ * (D-2026-09-28-APP-CHECK-ONLY-LOGS).
  */
-export type AppCheckDecision = 'allow' | 'observe' | 'reject';
+export type AppCheckDecision = 'allow' | 'observe';
 
 export function appCheckDecision(input: {
   mode: AppCheckMode;
@@ -181,16 +182,5 @@ export function appCheckDecision(input: {
 }): AppCheckDecision {
   if (!input.inCohort || input.mode === 'off') return 'allow';
   if (input.status === 'valid') return 'allow';
-  return input.mode === 'enforce' ? 'reject' : 'observe';
+  return 'observe';
 }
-
-/**
- * The refusal message, which a kinfolk can actually see.
- *
- * No jargon about attestation, and no suggestion that they did something
- * wrong: the realistic causes are an old tab, a privacy extension that ate the
- * reCAPTCHA script, or a build we shipped. Reloading genuinely fixes the first
- * two.
- */
-export const APP_CHECK_REJECT_MESSAGE =
-  "This app couldn't verify itself with our servers. Reload the page and try again.";

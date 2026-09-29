@@ -34,10 +34,10 @@ describe('#886 recordFailedLogin is never App Check enforced without client toke
     ).toEqual([]);
   });
 
-  it('under full enforcement, token-less recordFailedLogin and requestPasswordReset calls are still served', () => {
+  it('token-less recordFailedLogin and requestPasswordReset calls are served without even an observation', () => {
     for (const name of UNATTESTED_CLIENT_CALLABLES) {
       for (const status of ['absent', 'invalid'] as const) {
-        expect(appCheckDecision({ mode: 'enforce', status, inCohort: isAppCheckCohort(name) }), name).toBe('allow');
+        expect(appCheckDecision({ mode: 'log', status, inCohort: isAppCheckCohort(name) }), name).toBe('allow');
       }
     }
   });
