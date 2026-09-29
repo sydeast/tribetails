@@ -62,6 +62,9 @@ export const CLIENT_TREES: readonly ClientTree[] = [
   {
     id: 'adminAndroid',
     label: 'admin Android (auntieos-admin/android)',
+    // `main` is the only production source set (checked 2026-09-28: `src/`
+    // holds `main` and `test`). If a `release`, `debug` or flavor source set
+    // is added, move this root up to `app/src` and widen the ci.yml filter.
     root: 'auntieos-admin/android/app/src/main',
     language: 'kotlin',
     sendsAppCheck: false,
