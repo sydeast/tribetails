@@ -88,6 +88,7 @@ jobs:
       mytribeGradle: ${{ steps.filter.outputs.mytribeGradle }}
       recorder: ${{ steps.filter.outputs.recorder }}
       scripts: ${{ steps.filter.outputs.scripts }}
+      decisions: ${{ steps.filter.outputs.decisions }}
     steps:
       - uses: actions/checkout@v7
       - id: filter
@@ -371,6 +372,22 @@ jobs:
               - 'docs/RUNBOOK.md'
               - 'auntieos-admin/web/firebase.json'
               - '.gitignore'
+            # #1047: every "- Enforced in:" path in docs/DECISIONS.md must exist.
+            # Two things can break that, and this filter has to see both: an
+            # edit to the doc (docs/**), and a change that removes a named file,
+            # which can happen in ANY directory. So the second half is a
+            # change-type rule on '**' rather than a list of paths. Both
+            # statuses are needed: on a pull request the filter reads GitHub's
+            # files API, which reports a move as `renamed`; on a push it runs
+            # `git diff --no-renames`, where the same move arrives as `deleted`
+            # plus `added`. An added or modified file cannot make a named path
+            # disappear, so those do not trigger it.
+            decisions:
+              - 'docs/**'
+              - 'scripts/decisions-paths.mjs'
+              - 'scripts/decisions-paths.test.mjs'
+              - '.github/workflows/ci.yml'
+              - deleted|renamed: '**'
 
   admin:
     name: React admin
@@ -1155,6 +1172,24 @@ jobs:
   # composeApp builds the desktop (jvm) app, which per auntieos-admin/CLAUDE.md
   # is off the delivery path by owner ruling: desktop parity is paused. It also
   # built a wasm admin until #481 deleted it, superseded by src/. No
+  # Its own job rather than a step in deploy-guard: deploy-guard runs
+  # release.test.sh (~55s) and five other suites, and this check has to run on
+  # every docs edit and every PR that deletes or renames anything. It needs a
+  # checkout and node, no install, and finishes in seconds (#1047).
+  decisions-paths:
+    name: DECISIONS enforced-in paths
+    needs: changes
+    if: needs.changes.outputs.decisions == 'true' || github.event_name == 'workflow_dispatch'
+    # No install and no build: checkout, setup-node, one node --test file.
+    timeout-minutes: 5
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Every Enforced-in path in docs/DECISIONS.md exists
+        run: node --test scripts/decisions-paths.test.mjs
   # PR needs this to go green, so it no longer runs on the path-filter
   # trigger. To run it, dispatch the workflow by hand: gh workflow run ci.yml
   # --ref <branch>, or Actions tab -> CI -> Run workflow. Note a dispatch runs
