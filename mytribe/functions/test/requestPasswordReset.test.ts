@@ -171,6 +171,17 @@ describe('sending', () => {
     expect(args.htmlTemplate).toContain('<div class="header"><h2>H</h2></div>');
   });
 
+  it("#957: sends a visual template in the operator's stored frame", async () => {
+    setup({
+      'emailTemplates/auth.password.reset': { subject: 'S', format: 'visual', headline: 'H', content: '<p>Hi</p>' },
+      'business_settings/email_frame': { accentColor: '#123456', footerText: 'Stored footer line' },
+    });
+    await processPasswordResetRequest({ email: KIN_EMAIL, networkKey: NET });
+    const args = mocks.sendTemplatedEmail.mock.calls[0]![0];
+    expect(args.htmlTemplate).toContain('border-top: 8px solid #123456');
+    expect(args.htmlTemplate).toContain('<div class="footer">Stored footer line</div>');
+  });
+
   it('a failed send is rethrown, so the trigger reports it, and writes no audit row', async () => {
     mocks.sendTemplatedEmail.mockRejectedValueOnce(new Error('smtp2go down'));
     await expect(processPasswordResetRequest({ email: KIN_EMAIL, networkKey: NET })).rejects.toThrow('smtp2go down');

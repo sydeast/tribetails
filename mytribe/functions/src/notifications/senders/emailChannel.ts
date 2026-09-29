@@ -2,6 +2,7 @@ import { db } from '../../lib/firestoreAdmin';
 import { loadEmailTemplate } from '../../lib/sendFromTemplate';
 import { sendTemplatedEmail } from '../../lib/email';
 import { sendPartsFor } from '../../lib/emailFrame';
+import { loadEmailFrame } from '../../lib/emailFrameStore';
 import { logEvent } from '../../lib/logger';
 import { fallbackEmail } from '../fallbackTemplate';
 import type { ChannelSendArgs, ChannelSendResult } from './index';
@@ -69,7 +70,9 @@ export async function sendEmailChannel(args: ChannelSendArgs): Promise<ChannelSe
     return { providerMessageId, usedFallback: true, fallbackReason: `emailTemplates/${templateId}` };
   }
 
-  const providerMessageId = await sendTemplatedEmail({ to: email, data: renderData, ...sendPartsFor(tpl) });
+  // #957: the operator's frame, read once for this send. Never throws.
+  const frame = await loadEmailFrame('emailChannel');
+  const providerMessageId = await sendTemplatedEmail({ to: email, data: renderData, ...sendPartsFor(tpl, frame) });
   return { providerMessageId };
 }
 

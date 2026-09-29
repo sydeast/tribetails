@@ -1,6 +1,7 @@
 import { parseDocument } from 'htmlparser2';
 import type { ChildNode, Element } from 'domhandler';
 import type { EmailTemplateDoc } from './sendFromTemplate';
+import { DEFAULT_EMAIL_FRAME, type EmailFrame } from './emailFrameConfig';
 
 /**
  * #953: the one shared frame every visual email is sent in, and the text part
@@ -17,18 +18,24 @@ import type { EmailTemplateDoc } from './sendFromTemplate';
  * selector changed to `blockquote`, for the Callout block. The 9 red
  * security-alert seeds now share this frame too; their warning content goes
  * in a Callout (`blockquote`) rather than getting its own color scheme.
+ *
+ * #957: the colors, the footer line, an optional header line and an optional
+ * logo are now the operator's (`emailFrameConfig.ts`, stored in
+ * `business_settings/email_frame`, read per send by `emailFrameStore.ts`).
+ * The values above are the defaults, and with nothing stored the output is
+ * byte-identical to the frame before it was editable.
  */
-const FRAME_STYLE = `
-        body { background-color: #fbfbf9; color: #11131f; font-family: 'Segoe UI', Tahoma, sans-serif; line-height: 1.6; margin: 0; padding: 0; }
-        .container { max-width: 600px; margin: 20px auto; background: #ffffff; border-top: 8px solid #df8431; border-bottom: 4px solid #11131f; }
+function frameStyle(f: EmailFrame): string {
+  return `
+        body { background-color: ${f.pageBackground}; color: ${f.textColor}; font-family: 'Segoe UI', Tahoma, sans-serif; line-height: 1.6; margin: 0; padding: 0; }
+        .container { max-width: 600px; margin: 20px auto; background: ${f.cardBackground}; border-top: 8px solid ${f.accentColor}; border-bottom: 4px solid ${f.footerBackground}; }
         .header { padding: 30px 40px 10px 40px; }
-        .header h2 { color: #11131f; margin: 0; }
+        .header h2 { color: ${f.headlineColor}; margin: 0; }
         .content { padding: 10px 40px 30px 40px; font-size: 16px; }
-        .footer { padding: 20px 40px; background-color: #11131f; color: #fbfbf9; font-size: 12px; text-align: center; }
-        .button { display: inline-block; padding: 14px 28px; background: #df8431; color: #ffffff; text-decoration: none; border-radius: 4px; font-weight: bold; margin: 20px 0; }
-        blockquote { background-color: #fff5f5; border-left: 4px solid #df8431; padding: 15px 20px; margin: 20px 0; border-radius: 0 4px 4px 0; }`;
-
-const FOOTER = "Tribe Tails Pet Care. Your Kin's Favorite Auntie.";
+        .footer { padding: 20px 40px; background-color: ${f.footerBackground}; color: ${f.footerTextColor}; font-size: 12px; text-align: center; }
+        .button { display: inline-block; padding: 14px 28px; background: ${f.accentColor}; color: ${f.buttonTextColor}; text-decoration: none; border-radius: 4px; font-weight: bold; margin: 20px 0; }
+        blockquote { background-color: ${f.calloutBackground}; border-left: 4px solid ${f.accentColor}; padding: 15px 20px; margin: 20px 0; border-radius: 0 4px 4px 0; }`;
+}
 
 export function isVisualTemplate(
   doc: EmailTemplateDoc,
@@ -56,19 +63,61 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
-export function frameHtml(headline: string, content: string): string {
+/**
+ * #957: operator text placed in the frame as element content. `&`, `<` and
+ * `>` are escaped so it can never become markup. The braces are escaped too:
+ * this HTML is Handlebars template text, and a `{{` typed into the footer
+ * would otherwise become a merge field. Quotes are left alone because this is
+ * element content, not an attribute, which keeps the default footer's
+ * apostrophe byte-identical to the frame before it was editable.
+ */
+function escapeText(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\{/g, '&#123;')
+    .replace(/\}/g, '&#125;');
+}
+
+/** An attribute value: full escaping plus the braces, for the same Handlebars reason. */
+function escapeAttr(s: string): string {
+  return escapeHtml(s).replace(/\{/g, '&#123;').replace(/\}/g, '&#125;');
+}
+
+/**
+ * The optional header additions. Inline styles, not new `<style>` rules, so a
+ * frame with neither set renders the exact `<style>` block it always has.
+ */
+function headerExtras(f: EmailFrame): string {
+  const parts: string[] = [];
+  if (f.logoUrl) {
+    const alt = f.headerText || 'Tribe Tails';
+    parts.push(
+      `<img src="${escapeAttr(f.logoUrl)}" alt="${escapeAttr(alt)}" width="160" style="display: block; max-width: 160px; height: auto; margin: 0 0 12px 0; border: 0;">`,
+    );
+  }
+  if (f.headerText) {
+    parts.push(
+      `<p style="margin: 0 0 8px 0; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: ${f.accentColor};">${escapeText(f.headerText)}</p>`,
+    );
+  }
+  return parts.join('');
+}
+
+export function frameHtml(headline: string, content: string, frame: EmailFrame = DEFAULT_EMAIL_FRAME): string {
   return [
     '<!DOCTYPE html>',
     '<html>',
     '<head>',
-    `    <style>${FRAME_STYLE}`,
+    `    <style>${frameStyle(frame)}`,
     '    </style>',
     '</head>',
     '<body>',
     '    <div class="container">',
-    `        <div class="header"><h2>${escapeHtml(headline)}</h2></div>`,
+    `        <div class="header">${headerExtras(frame)}<h2>${escapeHtml(headline)}</h2></div>`,
     `        <div class="content">${content}</div>`,
-    `        <div class="footer">${FOOTER}</div>`,
+    `        <div class="footer">${escapeText(frame.footerText)}</div>`,
     '    </div>',
     '</body>',
     '</html>',
@@ -184,13 +233,18 @@ export interface SendParts {
   htmlTemplate?: string;
 }
 
-/** Any stored template, old or visual, as the three Handlebars templates the transport takes. */
-export function sendPartsFor(doc: EmailTemplateDoc): SendParts {
+/**
+ * Any stored template, old or visual, as the three Handlebars templates the
+ * transport takes. `frame` is the stored frame the send route read once for
+ * this invocation (`loadEmailFrame`); it only affects a visual template, since
+ * an old-format template carries its own full HTML.
+ */
+export function sendPartsFor(doc: EmailTemplateDoc, frame: EmailFrame = DEFAULT_EMAIL_FRAME): SendParts {
   if (isVisualTemplate(doc)) {
     return {
       subjectTemplate: doc.subject,
       bodyTemplate: contentToText(doc.headline, doc.content),
-      htmlTemplate: frameHtml(doc.headline, doc.content),
+      htmlTemplate: frameHtml(doc.headline, doc.content, frame),
     };
   }
   // A document tagged `format: 'visual'` but missing `headline` or `content`

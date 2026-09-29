@@ -517,7 +517,7 @@ internal fun EmailPreviewPanel(
 }
 
 @Composable
-private fun EmailHtmlView(html: String, modifier: Modifier) {
+internal fun EmailHtmlView(html: String, modifier: Modifier) {
     AndroidView(
         factory = { context ->
             WebView(context).apply {

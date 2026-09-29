@@ -241,8 +241,10 @@ describe('Settings — section nav shell', () => {
     // and tracking into KinCare Settings (renamed from KinCare types), down
     // to 12. Issue #715 then folded the Calendar tab into Integrations, down
     // to 11. Integrations still sits last, because it reports on outside
-    // services rather than editing anything.
-    expect(tabs).toHaveLength(11);
+    // services rather than editing anything. Issue #957 then added Email
+    // frame after Notifications, making 12.
+    expect(tabs).toHaveLength(12);
+    expect(within(tablist).getByRole('tab', { name: 'Email frame' })).toBeInTheDocument();
     expect(within(tablist).getByRole('tab', { name: 'Booking rules' })).toBeInTheDocument();
     expect(within(tablist).getByRole('tab', { name: 'KinCare Settings' })).toBeInTheDocument();
     expect(within(tablist).getByRole('tab', { name: 'Phone line' })).toBeInTheDocument();

@@ -4,6 +4,7 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { sanitizeEmailContent } from '../lib/emailContent';
 import { sendPartsFor } from '../lib/emailFrame';
+import { loadEmailFrame } from '../lib/emailFrameStore';
 import { renderEmailParts } from '../lib/email';
 import { TEMPLATE_FIELDS } from '../notifications/enrichTemplateData';
 
@@ -113,7 +114,10 @@ export async function previewEmailTemplateHandler(
     throw new HttpsError('failed-precondition', 'Image uploads are not configured on the server (CLOUDINARY_CLOUD_NAME).');
   }
   const { content, issues } = sanitizeEmailContent(args.content, cloud);
-  const parts = sendPartsFor({ subject: args.subject, format: 'visual', headline: args.headline, content });
+  // #957: the stored frame, the same read a real send makes, so this preview
+  // shows the operator's colors and footer rather than the defaults.
+  const frame = await loadEmailFrame('previewEmailTemplate');
+  const parts = sendPartsFor({ subject: args.subject, format: 'visual', headline: args.headline, content }, frame);
   const out = renderEmailParts({ ...parts, data: sampleDataFor(args.catalogKey) });
   return { subject: out.subject, html: out.html ?? '', text: out.text, issues };
 }

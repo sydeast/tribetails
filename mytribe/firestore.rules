@@ -404,9 +404,16 @@ service cloud.firestore {
              && bsList('etaMinuteOptions', 12)
              && bsList('draftRetentionOptions', 12);
     }
+    // #957: `email_frame` is excluded from this wildcard. It is the shared
+    // email frame, and its colors and text go straight into every email's
+    // markup, so it is read and written only through the owner-only
+    // getEmailFrame / saveEmailFrame callables, which validate every field.
+    // The exclusion has to be HERE, not in a block of its own: in rules any
+    // matching `allow` grants access, so a separate deny block would not
+    // override this one.
     match /business_settings/{docId} {
-      allow read: if isOwner() || isTestAdmin();
-      allow write: if isOwner() && validBusinessSettings();
+      allow read: if docId != 'email_frame' && (isOwner() || isTestAdmin());
+      allow write: if docId != 'email_frame' && isOwner() && validBusinessSettings();
     }
 
  // Which business day each hour-driven cron last completed its scan on. DENIED

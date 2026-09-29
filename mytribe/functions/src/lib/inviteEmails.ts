@@ -1,5 +1,6 @@
 import { requireBaseUrl } from './requireBaseUrl';
 import { sendFromTemplate } from './sendFromTemplate';
+import { loadEmailFrame } from './emailFrameStore';
 
 /**
  * The env vars the three invite emails below need, read and validated
@@ -55,6 +56,8 @@ export interface SendPrimaryInviteEmailsArgs {
  */
 export async function sendPrimaryInviteEmails(args: SendPrimaryInviteEmailsArgs): Promise<void> {
   const claimUrl = `${args.claimBaseUrl}?invite=${args.inviteId}`;
+  // #957: one frame read for up to three sends in this invocation.
+  const frame = await loadEmailFrame('sendPrimaryInviteEmails');
   await sendFromTemplate('invite.secondary', args.invitedEmail, {
     primaryDisplayName: args.authorName ?? 'Your Kin Parent',
     secondaryDisplayName: args.invitedEmail,
@@ -62,7 +65,7 @@ export async function sendPrimaryInviteEmails(args: SendPrimaryInviteEmailsArgs)
     tribeName: args.tribeName,
     claimUrl,
     expiresInDays: args.expiresInDays,
-  });
+  }, frame);
   if (args.auntieNotify) {
     await sendFromTemplate('invite.auntie-notify', args.auntieNotify.email, {
       primaryDisplayName: args.authorName ?? 'Kin Parent',
@@ -74,7 +77,7 @@ export async function sendPrimaryInviteEmails(args: SendPrimaryInviteEmailsArgs)
         .map(([k]) => k)
         .join(','),
       auntieReviewUrl: `${args.auntieNotify.reviewBaseUrl}/invites/${args.inviteId}`,
-    });
+    }, frame);
   }
   if (args.primaryEmail) {
     await sendFromTemplate('invite.primary-receipt', args.primaryEmail, {
@@ -82,6 +85,6 @@ export async function sendPrimaryInviteEmails(args: SendPrimaryInviteEmailsArgs)
       secondaryLabel: args.secondaryLabel,
       tribeName: args.tribeName,
       expiresInDays: args.expiresInDays,
-    });
+    }, frame);
   }
 }

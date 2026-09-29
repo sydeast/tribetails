@@ -7,6 +7,9 @@ vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), get
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/sendFromTemplate', () => ({ sendFromTemplate: mocks.sendMock }));
+
+/** #957: the invite set reads the email frame once and hands it to every send (here the default, nothing stored). */
+const FRAME = expect.objectContaining({ accentColor: '#df8431', footerText: expect.any(String) });
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<any>('firebase-admin/firestore');
   return { ...actual, FieldValue: { serverTimestamp: () => '__SERVER_TS__' } };
@@ -77,7 +80,7 @@ describe('addSecondaryContactHandler', () => {
     expect(invite?.data.personId).toBe('p1');
     const person = ctx.writes.find((w) => w.path === 'families/3/secondaryKinfolk/p1');
     expect(person?.data).toMatchObject({ access: 'INVITED', inviteId: res.inviteId });
-    expect(mocks.sendMock).toHaveBeenCalledWith('invite.secondary', 'sam@x.com', expect.objectContaining({ claimUrl: `https://claim.tribetails.com?invite=${res.inviteId}` }));
+    expect(mocks.sendMock).toHaveBeenCalledWith('invite.secondary', 'sam@x.com', expect.objectContaining({ claimUrl: `https://claim.tribetails.com?invite=${res.inviteId}` }), FRAME);
   });
   it('PERSON: refuses a person who already has portal access, or one who is gone, and writes nothing', async () => {
     const ctx = buildDbMock({
@@ -203,7 +206,7 @@ describe('addSecondaryContactHandler — invite emails (#1018 item 3)', () => {
       tribeName: '3',
       claimUrl: `https://claim.tribetails.com?invite=${res.inviteId}`,
       expiresInDays: 14,
-    });
+    }, FRAME);
     const wrote = ctx.adds.find((a) => a.collection === 'inviteRequests');
     const updated = ctx.writes.find((w) => w.path === `inviteRequests/${wrote!.id}`);
     expect(updated?.data).toMatchObject({ status: 'EMAIL_SENT' });
@@ -229,7 +232,7 @@ describe('addSecondaryContactHandler — invite emails (#1018 item 3)', () => {
       data: { kinfolkId: '3', invitedEmail: 'partner@x.com' },
       auth: { uid: 'u1', token: { email: 'Dana@X.com' } },
     } as any);
-    expect(mocks.sendMock).toHaveBeenCalledWith('invite.primary-receipt', 'dana@x.com', expect.objectContaining({ invitedEmail: 'partner@x.com' }));
+    expect(mocks.sendMock).toHaveBeenCalledWith('invite.primary-receipt', 'dana@x.com', expect.objectContaining({ invitedEmail: 'partner@x.com' }), FRAME);
   });
 
   it('falls back to the clients doc email for the receipt when the token carries none', async () => {
@@ -240,7 +243,7 @@ describe('addSecondaryContactHandler — invite emails (#1018 item 3)', () => {
       data: { kinfolkId: '3', invitedEmail: 'partner@x.com' },
       auth: { uid: 'u1' },
     } as any);
-    expect(mocks.sendMock).toHaveBeenCalledWith('invite.primary-receipt', 'dana@stored.com', expect.anything());
+    expect(mocks.sendMock).toHaveBeenCalledWith('invite.primary-receipt', 'dana@stored.com', expect.anything(), FRAME);
   });
 
   it('sends no primary-receipt when no address can be resolved', async () => {
@@ -351,7 +354,7 @@ describe('addSecondaryContactHandler — invite emails (#1018 item 3)', () => {
     } as any);
     expect(res.inviteId).toBe('inv-existing');
     expect(ctx.adds).toHaveLength(0);
-    expect(mocks.sendMock).toHaveBeenCalledWith('invite.secondary', 'dupe@x.test', expect.anything());
+    expect(mocks.sendMock).toHaveBeenCalledWith('invite.secondary', 'dupe@x.test', expect.anything(), FRAME);
     const updated = ctx.writes.find((w) => w.path === 'inviteRequests/inv-existing');
     expect(updated?.data).toMatchObject({ status: 'EMAIL_SENT' });
   });
