@@ -291,3 +291,24 @@ describe('the collapsed row, per the mock', () => {
     expect(localDayKey(new Date(2026, 4, 7, 23, 30))).toBe('2026-05-07');
   });
 });
+
+// #1049: saveEmergencyContacts audits every refused save. The Activity Log has no
+// per-event formatter; this pins that the generic one reads the new event well.
+describe('EMERGENCY_CONTACT_SAVE_REFUSED (#1049)', () => {
+  const refused = entry({
+    actionType: 'EMERGENCY_CONTACT_SAVE_REFUSED',
+    description: 'Emergency Contact not saved: An Emergency Contact has to be someone outside the household.',
+    status: 'FAILURE',
+    payload: { kinfolkId: 'fam1', code: 'failed-precondition', reason: 'An Emergency Contact has to be someone outside the household.' },
+  });
+  it('reads as a sentence, counts as a problem, and shows the household, the code and the reason', () => {
+    expect(humanizeAction('EMERGENCY_CONTACT_SAVE_REFUSED')).toBe('Emergency contact save refused');
+    expect(activityIsFailure(refused)).toBe(true);
+    expect(activityMatchesStatus(refused, 'problems')).toBe(true);
+    expect(activityPayloadRows(refused)).toEqual([
+      { label: 'code', value: 'failed-precondition' },
+      { label: 'kinfolkId', value: 'fam1' },
+      { label: 'reason', value: 'An Emergency Contact has to be someone outside the household.' },
+    ]);
+  });
+});

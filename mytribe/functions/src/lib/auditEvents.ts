@@ -477,6 +477,15 @@ export const AUDIT_EVENTS = {
   // Activity Log reads old and new entries alike. A `duplicateOf` answer writes
   // nothing and is not audited.
   CREATE_KINFOLK: 'CREATE_KINFOLK',
+
+  // #1049: `saveEmergencyContacts` refused a save from a caller who may edit
+  // that household's contacts (an invalid contact, a household member, none at
+  // all, a deleted household). Emergency Contacts are required
+  // (D-829-EMERGENCY-CONTACT), so a household whose save keeps being refused is
+  // one the operator needs to see. Written on every client's refusal, the
+  // portals included. The payload carries the household, the error code and the
+  // refusal message with any phone-shaped digits masked; never a name or phone.
+  EMERGENCY_CONTACT_SAVE_REFUSED: 'EMERGENCY_CONTACT_SAVE_REFUSED',
 } as const;
 
 export type AuditEvent = (typeof AUDIT_EVENTS)[keyof typeof AUDIT_EVENTS];

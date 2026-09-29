@@ -172,4 +172,26 @@ class ActivityDetailTest {
     fun chainStillReportsTheSequenceForAnEntryWithNoHashes() {
         assertEquals(listOf("Sequence" to "#1482"), activityChainRows(entry()))
     }
+
+    // #1049: saveEmergencyContacts audits every refused save. There is no
+    // per-event formatter; this pins that the generic one reads the new event well.
+    @Test
+    fun aRefusedEmergencyContactSaveReadsAsASentenceAndShowsTheReason() {
+        assertEquals("Emergency contact save refused", humanizeAction("EMERGENCY_CONTACT_SAVE_REFUSED"))
+        val refused = entry(
+            payload = mapOf(
+                "kinfolkId" to "fam1",
+                "code" to "failed-precondition",
+                "reason" to "An Emergency Contact has to be someone outside the household.",
+            ),
+        )
+        assertEquals(
+            listOf(
+                "code" to "failed-precondition",
+                "kinfolkId" to "fam1",
+                "reason" to "An Emergency Contact has to be someone outside the household.",
+            ),
+            activityPayloadRows(refused),
+        )
+    }
 }

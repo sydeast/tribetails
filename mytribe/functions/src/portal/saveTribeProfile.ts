@@ -19,7 +19,12 @@ import {
   readStoredEmergencyContacts,
   sameLegacyContact,
 } from '../lib/emergencyContacts';
-import { parseEmergencyContactsInput, prepareEmergencyContactsSave, readLegacyServedKeys } from './emergencyContacts';
+import {
+  auditEmergencyContactRefusal,
+  parseEmergencyContactsInput,
+  prepareEmergencyContactsSave,
+  readLegacyServedKeys,
+} from './emergencyContacts';
 import {
   conflictingCustomFieldKeys,
   CustomFieldsZ,
@@ -150,7 +155,12 @@ export async function saveTribeProfileHandler(
   // in the SAME transaction, so it counts only a save that commits a change. A
   // refused save throws before any write, and a save that changes nothing
   // writes nothing, counter included.
+  // #1049: what the Emergency Contact check threw on the last attempt, so a
+  // refusal of the contact (and only that) is audited once the transaction is
+  // over. Reset per attempt, because the callback can run more than once.
+  let ecRefusal: unknown = null;
   const result = await firestore.runTransaction(async (tx) => {
+    ecRefusal = null;
     const stored = await tx.get(familiesRef);
     const storedData = (stored.data() ?? {}) as Record<string, unknown>;
     const storedFields = storedData['customFields'];
@@ -189,13 +199,18 @@ export async function saveTribeProfileHandler(
             // through as stored: one that no longer parses (a hand-typed phone the
             // migration carried) must not block a slot 1 edit. Both slots still go
             // through the outside-the-household and different-phone checks.
-            const [slot1Input] = parseEmergencyContactsInput([sent]);
-            if (slot1Input === undefined) throw new HttpsError('invalid-argument', 'Invalid arguments.');
-            const contacts = [
-              slot1Input,
-              ...current.slice(1).map((c) => ({ name: c.name, phone: c.phone, relationship: c.relationship })),
-            ];
-            ecWrite = await prepareEmergencyContactsSave(firestore, kinfolkId, contacts, tx);
+            try {
+              const [slot1Input] = parseEmergencyContactsInput([sent]);
+              if (slot1Input === undefined) throw new HttpsError('invalid-argument', 'Invalid arguments.');
+              const contacts = [
+                slot1Input,
+                ...current.slice(1).map((c) => ({ name: c.name, phone: c.phone, relationship: c.relationship })),
+              ];
+              ecWrite = await prepareEmergencyContactsSave(firestore, kinfolkId, contacts, tx);
+            } catch (e) {
+              ecRefusal = e;
+              throw e;
+            }
             outcome = 'applied';
           } else {
             outcome = 'ignored';
@@ -221,6 +236,14 @@ export async function saveTribeProfileHandler(
       limit.record();
       return { ecWrite, outcome, wrote: true };
     }
+  }).catch(async (e: unknown) => {
+    // #1049: the same entry saveEmergencyContacts writes, from the same helper.
+    // Only the error the contact check itself threw: the rate limit, a custom
+    // field refusal or a server fault is not a refused Emergency Contact.
+    if (e === ecRefusal) {
+      await auditEmergencyContactRefusal({ fn: 'saveTribeProfile', uid, kinfolkId, isOperator, err: e, actorRole });
+    }
+    throw e;
   });
   if (touchesCustomFields) update['customFields'] = true;
   const emergencyContactWrite = result.ecWrite;
