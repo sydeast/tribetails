@@ -6,14 +6,14 @@ import com.tribetails.auntieos.util.AuntieLog
 /**
  * Household members and invites. (B1)
  *
- * Ten callables: `listMembers` and the three `householdContact*` reads and
- * writes (portal, admin-or-primary), and the admin-gated `listInvites`,
+ * Callables: `listMembers` (portal, admin-or-primary), and the
+ * admin-gated `listInvites`,
  * `listAllInvites`, `mintInvite`, `revokeInvite`, `setMemberPermissions`,
  * `removeMember` and `inviteKinfolkToPortal`. Their request and response shapes
  * are written down in `mytribe/functions/CALLABLE_CONTRACT.md` under "Household
  * members and invites", and the React mirror is
- * `auntieos-admin/src/api/members.ts` + `membersWrite.ts` +
- * `householdContacts.ts`. Those files have to move together.
+ * `auntieos-admin/src/api/members.ts` + `membersWrite.ts`. Those files have to
+ * move together.
  *
  * `mintInvite` HAS NO CALLER ON EITHER CLIENT (again). Both UIs offered it as
  * a typed-address "Invite a primary by email" form; the operator rejected
@@ -22,22 +22,10 @@ import com.tribetails.auntieos.util.AuntieLog
  * PRIMARY-only per the 2026-08-04 invite ruling, and the server side of it is
  * not dead code just because the client-side form is gone.
  *
- * THE THREE CONTACT CALLS ARE ORPHANED (#829). Operator ruling 2026-09-27,
- * which replaces the 2026-09-12 "a secondary contact does not have to be a
- * portal user" ruling they were built for: "there is no true 'Contact List'.
- * There can be up to 3 ppl's contact info to a household: Primary Kinfolk (PK),
- * Secondary Kinfolk (SK), and Emergency Contact (EC)." The ruling takes the
- * contacts list off the members screen, so nothing on this client should call
- * [listHouseholdContacts], [saveHouseholdContact] or [removeHouseholdContact].
- * They stay, with their tests, until the operator has read
- * `report:household-contacts` and ruled on the rows in `families/{id}/contacts`.
- * As built, they were `listHouseholdContacts`, `saveHouseholdContact` and
- * `removeHouseholdContact`.
- * A contact is a name, a label, a phone and sometimes an email for somebody who
- * holds no portal account: no uid, no role, no `MemberPermissions`, and no
- * `inviteRequests` row anywhere. The server's argument schema is `.strict()`
- * and refuses `permissions`, `invitedEmail` and `role`, so the separation is
- * enforced on the wire rather than only in a screen.
+ * THERE IS NO CONTACT LIST (operator ruling 2026-09-27, docket R1): "there is
+ * no true 'Contact List'." A household holds contact info for its Primary
+ * Kinfolk, its Secondary Kinfolk and one Emergency Contact. #1042 removed the
+ * three contact list calls this file used to carry.
  *
  * `inviteKinfolkToPortal` IS HERE NOW, and was not. It already ships on this
  * client as [AuntieRepository.inviteKinfolkToPortal], driven by the button on
@@ -135,45 +123,6 @@ class MembersRepository(
         val phone: String = "",
         val email: String = "",
     )
-    /**
-     * Somebody a household can be reached through who holds NO portal account.
-     *
-     * Deliberately not a [Member] with null fields: a member has a uid, a role,
-     * a status and a permission set because there is an account to authorise,
-     * and a contact has none of those because there is nothing to sign in to.
-     * Modelling them as one type was the conflation the 2026-09-12 ruling
-     * separated. Orphaned since the 2026-09-27 ruling (#829): no screen draws a
-     * contact any more; kept for the three calls below until the operator rules
-     * on the data.
-     */
-    data class Contact(
-        val contactId: String,
-        val name: String,
-        /** What they are to the household: Sister, Co-parent, Neighbour. */
-        val label: String,
-        val phone: String?,
-        /** Somewhere to reach them. It grants nothing and invites nobody. */
-        val email: String?,
-        val createdAt: String?,
-        val updatedAt: String?,
-    ) {
-        /** "Sister · 805 555 0143 · ada@example.com", skipping what is absent. */
-        val meta: String
-            get() = listOfNotNull(label, phone, email)
-                .filter { it.isNotBlank() }
-                .joinToString(" · ")
-    }
-
-    /** What [saveHouseholdContact] is given. Every editable field, always. */
-    data class ContactDraft(
-        /** Null creates. Set edits that contact in place. */
-        val contactId: String? = null,
-        val name: String,
-        val label: String,
-        val phone: String,
-        val email: String,
-    )
-
     data class Invite(
         val inviteId: String,
         val invitedEmail: String,
@@ -242,23 +191,6 @@ class MembersRepository(
             ?: error("listMembers: non-map payload")
         decodeMembers(raw)
     }.onFailure { AuntieLog.e("MembersRepository.listMembers failed", it) }
-
-    /**
-     * Every contact on this household, by name, as the server sorts them.
-     *
-     * A missing top-level array is an ERROR, not an empty list, matching
-     * [listMembers]: "this household has nobody to call" is the one claim this
-     * screen must never make off a payload it could not read.
-     */
-    suspend fun listHouseholdContacts(kinfolkId: String): Result<List<Contact>> = runCatching {
-        require(kinfolkId.isNotBlank()) { "listHouseholdContacts requires a household id" }
-        authGate.ensureAuthenticated()
-        @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("listHouseholdContacts")
-            .call(mapOf("kinfolkId" to kinfolkId)).awaitCallable().data as? Map<String, Any?>
-            ?: error("listHouseholdContacts: non-map payload")
-        decodeContacts(raw)
-    }.onFailure { AuntieLog.e("MembersRepository.listHouseholdContacts failed", it) }
 
     suspend fun listInvites(familyId: String): Result<List<Invite>> = runCatching {
         require(familyId.isNotBlank()) { "listInvites requires a household id" }
@@ -330,51 +262,6 @@ class MembersRepository(
             as? Map<String, Any?> ?: error("mintInvite: non-map payload")
         raw["inviteId"] as? String ?: error("mintInvite: response carried no inviteId")
     }.onFailure { AuntieLog.e("MembersRepository.mintInvite failed", it) }
-
-    /**
-     * Creates or edits one contact. Creates NO account and sends NO invite.
-     *
-     * A DIFF, NOT A REBUILD. The payload carries the four editable fields and
-     * nothing else: `createdAt` / `createdBy` are the server's own and are never
-     * sent from a client, so an edit cannot rewrite a record's provenance. Every
-     * editable field is sent INCLUDING the blank ones, because the server writes
-     * null for a cleared phone rather than leaving the old value behind, and a
-     * field that cannot be emptied is not editable.
-     */
-    suspend fun saveHouseholdContact(
-        kinfolkId: String,
-        draft: ContactDraft,
-    ): Result<String> = runCatching {
-        require(kinfolkId.isNotBlank()) { "saveHouseholdContact requires a household id" }
-        val name = draft.name.trim()
-        require(name.isNotBlank()) { "A contact needs a name." }
-        authGate.ensureAuthenticated()
-        val payload = buildMap<String, Any?> {
-            put("kinfolkId", kinfolkId)
-            put("name", name)
-            put("label", draft.label.trim())
-            put("phone", draft.phone.trim())
-            put("email", draft.email.trim())
-            draft.contactId?.takeIf { it.isNotBlank() }?.let { put("contactId", it) }
-        }
-        @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("saveHouseholdContact").call(payload).awaitCallable().data
-            as? Map<String, Any?> ?: error("saveHouseholdContact: non-map payload")
-        raw["contactId"] as? String ?: error("saveHouseholdContact: response carried no contactId")
-    }.onFailure { AuntieLog.e("MembersRepository.saveHouseholdContact failed", it) }
-
-    /**
-     * Deletes one contact. HARD, unlike [removeMember]: there is no account to
-     * suspend and no sign-in to revoke, so no row is left behind.
-     */
-    suspend fun removeHouseholdContact(kinfolkId: String, contactId: String): Result<Unit> = runCatching {
-        require(kinfolkId.isNotBlank()) { "removeHouseholdContact requires a household id" }
-        require(contactId.isNotBlank()) { "removeHouseholdContact requires a contact id" }
-        authGate.ensureAuthenticated()
-        functions.getHttpsCallable("removeHouseholdContact")
-            .call(mapOf("kinfolkId" to kinfolkId, "contactId" to contactId)).awaitCallable()
-        Unit
-    }.onFailure { AuntieLog.e("MembersRepository.removeHouseholdContact failed", it) }
 
     /**
      * Invites this household to the portal as its PRIMARY, and returns the
@@ -507,21 +394,10 @@ class MembersRepository(
         /** `INVITE_TTL_DAYS` in `mytribe/functions/src/lib/schema.ts`. */
         const val INVITE_TTL_DAYS = 14
 
-        /** `CONTACT_NAME_MAX` in `functions/src/portal/householdContacts.ts`. */
-        const val CONTACT_NAME_MAX = 80
-
-        /** `CONTACT_PHONE_MAX`, same file. */
-        const val CONTACT_PHONE_MAX = 32
-
-        /** `SECONDARY_LABEL_MAX` in `functions/src/lib/schema.ts`. */
-        const val CONTACT_LABEL_MAX = 24
-
         /** `SECONDARY_KINFOLK_NAME_MAX` in `functions/src/portal/secondaryKinfolk.ts`. */
         const val SECONDARY_KINFOLK_NAME_MAX = 80
         /** The server's own refusal, word for word. */
         const val SECONDARY_KINFOLK_NAME_REQUIRED = "A secondary kinfolk needs a name."
-        /** `DEFAULT_CONTACT_LABEL`: what a contact is called when nobody says. */
-        const val DEFAULT_CONTACT_LABEL = "Folk"
 
         // SECONDARY_LABEL_MAX and DEFAULT_SECONDARY_LABEL lived here for the
         // admin invite form's label field. Both went with it: a label names a
@@ -646,30 +522,6 @@ internal fun decodePermissions(v: Any?): MembersRepository.MemberPermissions {
         kintalesOnly = flag("kintales_only"),
         homeAccess = flag("home_access"),
     )
-}
-
-/**
- * One household contact, or null when it carries no id and nothing could act on
- * it. A row missing its NAME is kept and labelled, not dropped: the operator has
- * to be able to see a half-written record in order to fix or delete it.
- */
-internal fun decodeContacts(raw: Map<*, *>?): List<MembersRepository.Contact> {
-    val rows = (raw?.get("contacts") as? List<*>)
-        ?: error("listHouseholdContacts: response carried no contacts")
-    return rows.mapNotNull { item ->
-        val m = item as? Map<*, *> ?: return@mapNotNull null
-        val id = (m["contactId"] as? String)?.ifBlank { null } ?: return@mapNotNull null
-        MembersRepository.Contact(
-            contactId = id,
-            name = (m["name"] as? String)?.ifBlank { null } ?: "(unnamed contact)",
-            label = (m["label"] as? String)?.ifBlank { null }
-                ?: MembersRepository.DEFAULT_CONTACT_LABEL,
-            phone = (m["phone"] as? String)?.ifBlank { null },
-            email = (m["email"] as? String)?.ifBlank { null },
-            createdAt = (m["createdAt"] as? String)?.ifBlank { null },
-            updatedAt = (m["updatedAt"] as? String)?.ifBlank { null },
-        )
-    }
 }
 
 /**

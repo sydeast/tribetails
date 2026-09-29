@@ -133,4 +133,22 @@ describe('rules: /families/{fid}', () => {
       await assertFails(fs.doc('families/f1/legacyEcServed/u-sec').set({ served: [{ key: 'forged', at: new Date() }] }));
     }
   });
+
+  // #1042: the household contact list is gone (ruling 2026-09-27, docket R1:
+  // "there is no true 'Contact List'"). Its rules block went with it, so
+  // families/{fid}/contacts has no match and stays closed to every client.
+  it('the retired contacts path is closed to every client', async () => {
+    const env = await getEnv();
+    await seedFamily({ fid: 'f1', primaryUid: 'u-prim', secondaries: [{ uid: 'u-sec', perms: {} }] });
+    const clients = [
+      asUser(env, 'u-prim').firestore(),
+      asUser(env, 'u-sec').firestore(),
+      env.authenticatedContext('staff-1', { admin: true }).firestore(),
+    ];
+    for (const fs of clients) {
+      await assertFails(fs.doc('families/f1/contacts/c1').get());
+      await assertFails(fs.collection('families/f1/contacts').get());
+      await assertFails(fs.doc('families/f1/contacts/c1').set({ name: 'Neighbour Jo' }));
+    }
+  });
 });

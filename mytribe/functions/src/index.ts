@@ -275,15 +275,6 @@ export { signKinPhotoUpload, confirmKinPhotoUpload } from './portal/signKinPhoto
 export { addSecondaryContact } from './portal/addSecondaryContact';
 // 2026-09-27 Q3: a secondary kinfolk added with no invite and no portal access.
 export { listSecondaryKinfolk, saveSecondaryKinfolk, removeSecondaryKinfolk } from './portal/secondaryKinfolk';
-// #829: the household contacts list. Operator ruling 2026-09-27 says there is
-// no contacts list, so the screens that called these three are removed. They stay exported,
-// unreferenced, until the operator has read `report:household-contacts` and ruled
-// on the rows in `families/{id}/contacts`. See the header of householdContacts.ts.
-export {
-  listHouseholdContacts,
-  saveHouseholdContact,
-  removeHouseholdContact,
-} from './portal/householdContacts';
 // #829 section 1: the one store and the one write path for Emergency Contacts,
 // used by all five clients. Gated on home_access.
 export { saveEmergencyContacts, listEmergencyContacts } from './portal/emergencyContacts';

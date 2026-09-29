@@ -33,7 +33,7 @@ import org.junit.Test
  * the target household in the list rather than `getKinfolkById`, to match.
  *
  * `getAllKin()` and `getKinCareSessions()` are stubbed too, even though no
- * test here asserts on them: `saveNewHouseholdContacts` calls `loadDirectory()`
+ * test here asserts on them: `saveNewHouseholdEmergencyContacts` calls `loadDirectory()`
  * on both its success and failure branch, and `loadDirectory()` reads both. A
  * relaxed mock's synthesized answer for an unstubbed `Result<List<T>>>` is not
  * actually a list, so `loadDirectory()`'s `.groupBy` throws a

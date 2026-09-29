@@ -102,7 +102,7 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   // portal refuses her at sign-in (getMyAccess), and this list is what the
   // admin app needs. Other portal callables she is refused on, and why:
   //   getMyHome, getMyInvoices, getMyInvoicePdf: money (rule 1).
-  //   archiveKin, removeHouseholdContact: destructive (rule 6).
+  //   archiveKin: destructive (rule 6).
   //   addSecondaryContact: grants a person portal access, billing_full
   //     included (rules 1 and 3).
   //   sendKinfolkMessage, getMyConversation, markThreadRead, generate: the
@@ -111,8 +111,6 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   //   requestBookingCancellation, requestBookingReschedule: the household
   //     asking. She answers through the admin resolve callables (rule 7).
   'getMyKinTaleMedia', // admin web KinTale detail (api/kinTaleDetail.ts)
-  'listHouseholdContacts', // admin web + Android household screen
-  'saveHouseholdContact', // and this one
   // 2026-09-27 Q3: the secondary kinfolk on a household (no portal account).
   // Household information, so she may read and add; removing is destructive
   // (rule 6), so removeSecondaryKinfolk is left out.
