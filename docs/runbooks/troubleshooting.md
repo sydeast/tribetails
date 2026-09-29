@@ -41,7 +41,12 @@ malformed field reads as `log`.
 
 Which callables the switch governs is a code list, `APP_CHECK_COHORT` in
 `mytribe/functions/src/lib/appCheckPolicy.ts`. Everything outside it is
-untouched in every mode. To read the traffic before flipping anything, filter
+untouched in every mode. The list is empty today, so `enforce` refuses
+nothing yet. It may only ever hold a callable that no Android or desktop
+client calls: those clients have no App Check (ruling R3) and would be
+refused for good. `npm --prefix mytribe/functions run callables:map` prints
+which callables are web-only and so eligible, and the functions test suite
+fails if a name that an Android or desktop client calls is added. To read the traffic before flipping anything, filter
 Logs Explorer on `jsonPayload.appCheck`: `valid` is a verified token, `invalid`
 is a token that failed verification, `absent` is no token at all, and a
 `jsonPayload.event` ending in `appCheck.wouldReject` is what `enforce` would

@@ -24,8 +24,17 @@ vi.mock('../src/lib/firestoreAdmin', () => ({
   db: () => ({ collection: () => ({ doc: () => ({ get: securityDocGet }) }) }),
 }));
 
-/** The one callable in cohort 1 — see src/lib/appCheckPolicy.ts. */
-const COHORT_FN = 'getBusinessClosures';
+/**
+ * A stand-in cohort member. The real cohort is empty since #987 (see
+ * src/lib/appCheckPolicy.ts), so the gate's refuse and observe paths are driven
+ * through a made-up web-only name instead. Only `isAppCheckCohort` is replaced;
+ * the mode read, the decision and the cache are the real ones.
+ */
+const { COHORT_FN } = vi.hoisted(() => ({ COHORT_FN: 'webOnlyCohortProbe' }));
+vi.mock('../src/lib/appCheckPolicy', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/lib/appCheckPolicy')>();
+  return { ...actual, isAppCheckCohort: (name: string) => name === COHORT_FN };
+});
 
 async function setMode(mode: 'off' | 'log' | 'enforce'): Promise<void> {
   securityDocGet.mockResolvedValue({ data: () => ({ appCheckMode: mode }) });

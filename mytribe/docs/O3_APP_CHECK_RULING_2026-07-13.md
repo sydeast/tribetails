@@ -51,6 +51,13 @@
 > for every kinfolk on it. Left unfixed here because item 2 of this docket
 > is an Android-client change, not a server enforcement change; flagging it
 > for whoever owns the next cohort-1 enforcement decision.
+>
+> **Resolved 2026-09-28 (#987).** `getBusinessClosures` left the cohort, and
+> the cohort is now empty: no portal callable is web-only. A name may join
+> it only if no Compose or Android client can reach it.
+> `functions/scripts/clientCallables.ts` extracts that from the client source
+> (`npm run callables:map`), and `functions/test/appCheckComposeReachable.test.ts`
+> fails the build if a cohort member is reachable from one.
 
 Design ruling per docs/DEVELOPMENT_PLAN_2026-07-10.md S6: "O-3 App Check
 (design ruling: providers per platform, enforcement order, grace mode),
