@@ -1,10 +1,13 @@
 package com.tribetails.auntieos.data.repository
 
 import com.google.android.gms.tasks.Tasks
+import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
+import com.google.firebase.auth.FirebaseAuthInvalidUserException
 import com.google.firebase.functions.FirebaseFunctionsException
 import com.google.firebase.functions.HttpsCallableResult
 import io.mockk.every
 import io.mockk.mockk
+import java.util.concurrent.ExecutionException
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -57,7 +60,43 @@ private fun refusal(
     every { err.cause } returns null
     return err
 }
+
+/**
+ * AUNTIEOS-ADMIN-1W exactly as Sentry saw it (#1066): the callable SDK's
+ * context lookup combines the ID-token fetch with another task, and when the
+ * token fetch fails the combined task fails with this wrapper around it.
+ */
+private fun credentialNoLongerValid(code: String = "ERROR_USER_TOKEN_EXPIRED") = ExecutionException(
+    "com.google.android.gms.tasks.RuntimeExecutionException: 1 out of 2 underlying tasks failed",
+    FirebaseAuthInvalidUserException(
+        code,
+        "The user's credential is no longer valid. The user must sign in again.",
+    ),
+)
+
 class SessionEndedReasonTest {
+
+    @Test
+    fun `an invalid user credential inside the SDK's combined task ends the session (1W)`() {
+        assertEquals(SessionEndedReason.Revoked, sessionEndedReason(credentialNoLongerValid()))
+    }
+
+    @Test
+    fun `a disabled user from the token refresh reads as Disabled`() {
+        assertEquals(
+            SessionEndedReason.Disabled,
+            sessionEndedReason(credentialNoLongerValid("ERROR_USER_DISABLED")),
+        )
+    }
+
+    @Test
+    fun `invalid credentials from the token refresh end the session too`() {
+        val err = RuntimeException(
+            "wrapped",
+            FirebaseAuthInvalidCredentialsException("ERROR_INVALID_CREDENTIAL", "stale"),
+        )
+        assertEquals(SessionEndedReason.Revoked, sessionEndedReason(err))
+    }
 
     @Test
     fun `it reads the reason off the callable details payload`() {
@@ -87,6 +126,7 @@ class SessionEndedReasonTest {
         // "Nobody is signed in" is the sign-in screen's business, not this seam's.
         assertNull(sessionEndedReason(refusal(FirebaseFunctionsException.Code.UNAUTHENTICATED, "Unauthenticated")))
         assertNull(sessionEndedReason(IllegalStateException(AuthGate.SIGN_IN_REQUIRED)))
+        assertNull(sessionEndedReason(SignInRequiredException()))
     }
 
     @Test
@@ -334,6 +374,20 @@ class AwaitCallableTest {
         assertEquals(1, signOutCount)
         assertEquals(sessionEndedMessage(SessionEndedReason.Revoked), SessionEndedNotice.consume())
     }
+
+    @Test
+    fun `an invalid credential from the callable SDK signs out, leaves a notice, and rethrows (1W)`() =
+        runBlocking {
+            val thrown = runCatching {
+                Tasks.forException<HttpsCallableResult>(credentialNoLongerValid()).awaitCallable()
+            }.exceptionOrNull()
+
+            // The sign-out is what routes the operator to the sign-in screen: the
+            // auth state goes null and AuntieNavHost follows it.
+            assertTrue(thrown is ExecutionException)
+            assertEquals(1, signOutCount)
+            assertEquals(sessionEndedMessage(SessionEndedReason.Revoked), SessionEndedNotice.consume())
+        }
 
     @Test
     fun `an ordinary refusal rethrows and signs nobody out`() = runBlocking {

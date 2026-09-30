@@ -2,6 +2,8 @@ package com.tribetails.auntieos.data.repository
 
 import com.google.android.gms.tasks.Task
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
+import com.google.firebase.auth.FirebaseAuthInvalidUserException
 import com.google.firebase.functions.FirebaseFunctionsException
 import com.google.firebase.functions.HttpsCallableResult
 import com.tribetails.auntieos.util.AuntieLog
@@ -30,6 +32,12 @@ import kotlinx.coroutines.tasks.await
  *  4. SESSION REVOKED, OR ACCOUNT DISABLED — `functions/src/lib/
  *     sessionRevocation.ts` tags these, and no amount of retrying clears them.
  *     The session is over; the only way forward is to sign in again.
+ *     So is the client-side twin (#1066, AUNTIEOS-ADMIN-1W): the callable SDK
+ *     could not refresh the ID token and threw a
+ *     `FirebaseAuthInvalidUserException` (disabled, deleted, token expired or
+ *     revoked) or `FirebaseAuthInvalidCredentialsException`, usually wrapped in
+ *     `ExecutionException: 1 out of 2 underlying tasks failed`. Matched by
+ *     type, since those never reach the server to be tagged.
  *
  * Only 4 tears anything down.
  *
@@ -80,6 +88,14 @@ fun sessionEndedReason(t: Throwable?): SessionEndedReason? {
     var cursor = t
     var depth = 0
     while (cursor != null && depth < 8) {
+        if (cursor is FirebaseAuthInvalidUserException) {
+            return if (cursor.errorCode.contains("USER_DISABLED")) {
+                SessionEndedReason.Disabled
+            } else {
+                SessionEndedReason.Revoked
+            }
+        }
+        if (cursor is FirebaseAuthInvalidCredentialsException) return SessionEndedReason.Revoked
         if (cursor is FirebaseFunctionsException) {
             val reason = (cursor.details as? Map<*, *>)?.get("reason") as? String
             reasonFromText(reason)?.let { return it }

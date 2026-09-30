@@ -7,6 +7,7 @@ import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.AuthGate
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.util.fcmTokenFlow
+import com.tribetails.auntieos.util.isExpectedAuthState
 import com.tribetails.auntieos.util.isFcmUnavailable
 import com.tribetails.auntieos.util.saveFcmToken
 import com.twilio.voice.RegistrationException
@@ -197,6 +198,14 @@ object VoiceTokenManager {
     private var scope: CoroutineScope? = null
 
     /**
+     * Whether an admin is signed in right now (#1066). Consulted before every
+     * mint, so a retry that wakes after a sign-out, or a trigger that fires on
+     * a cold start whose persisted session has just been dropped, does not ask
+     * the callable a question [AuthGate.ensureAuthenticated] will refuse.
+     */
+    private var isSignedIn: () -> Boolean = { true }
+
+    /**
      * The backoff wait, behind a seam. A test that really slept forty seconds to
      * prove a retry works is a test nobody runs, so this defaults to [delay] and
      * a test hands in a recorder that returns immediately and keeps the durations.
@@ -246,6 +255,7 @@ object VoiceTokenManager {
             fcmTokenProvider = { resolveFcmToken(appContext) },
             now = System::currentTimeMillis,
             scope = scope,
+            isSignedIn = { repository.authGate.isSignedIn() },
         )
     }
 
@@ -482,6 +492,15 @@ object VoiceTokenManager {
             )
             return@withLock null
         }
+        if (!isSignedIn()) {
+            // #1066: nobody to mint for. Not a failure and not worth a retry:
+            // the coordinator calls [onAdminSignedIn] when someone signs in.
+            // Idle, the same true statement [onSignedOut] makes.
+            AuntieLog.d("Voice token mint skipped: no admin is signed in")
+            registeredWithVoiceSdk = false
+            _state.value = VoiceTokenState.Idle
+            return@withLock null
+        }
         // NOTE: no `Working` here. This runs under a bare token read as well as
         // under the registering entry points, and only those can settle the flow
         // afterwards, so setting it here is what stranded the UI on a spinner.
@@ -497,7 +516,13 @@ object VoiceTokenManager {
             val error = result.exceptionOrNull()
                 ?: IllegalStateException("mintVoiceAccessToken failed without an error")
             _state.value = classifyTokenFailure(error)
-            AuntieLog.e("Twilio Voice token mint failed", error)
+            if (isExpectedAuthState(error)) {
+                // #1066: signed out, or a credential that must be re-entered.
+                // The sign-in screen handles it; it is not a defect to report.
+                AuntieLog.i("Twilio Voice token mint refused: sign-in required (${error.javaClass.simpleName})")
+            } else {
+                AuntieLog.e("Twilio Voice token mint failed", error)
+            }
             return@withLock null
         }
         cachedToken = minted.token
@@ -589,6 +614,7 @@ object VoiceTokenManager {
         now: () -> Long,
         scope: CoroutineScope,
         backoff: suspend (Long) -> Unit = { delay(it) },
+        isSignedIn: () -> Boolean = { true },
     ) {
         refreshJob?.cancel()
         refreshJob = null
@@ -598,6 +624,7 @@ object VoiceTokenManager {
         this.now = now
         this.scope = scope
         this.backoff = backoff
+        this.isSignedIn = isSignedIn
         cachedToken = null
         cachedIdentity = ""
         cachedExpiresAtMillis = 0L
@@ -619,6 +646,7 @@ object VoiceTokenManager {
         now = System::currentTimeMillis
         scope = null
         backoff = { delay(it) }
+        isSignedIn = { true }
         cachedToken = null
         cachedIdentity = ""
         cachedExpiresAtMillis = 0L
@@ -645,7 +673,12 @@ internal fun classifyTokenFailure(error: Throwable): VoiceTokenState {
     // `VoiceRegistrationCoordinator` is already watching for. Classifying it as
     // `Failed` would instead spend the whole retry budget re-asking a question
     // whose answer cannot change until then (#433).
-    if (error.message == AuthGate.SIGN_IN_REQUIRED) {
+    //
+    // #1066 widened this to the whole cause chain and to a credential Firebase
+    // says is no longer valid (`FirebaseAuthInvalidUserException` inside the
+    // callable SDK's `ExecutionException`): signing in again is the only fix
+    // for that too, and treating it as `Failed` was AUNTIEOS-ADMIN-1V's retry.
+    if (isExpectedAuthState(error)) {
         return VoiceTokenState.NotAuthorized(AuthGate.SIGN_IN_REQUIRED)
     }
     if (error is FirebaseFunctionsException) {

@@ -70,7 +70,10 @@ object AuntieLog {
     internal fun dispositionFor(throwable: Throwable?): Disposition = when {
         throwable == null -> Disposition.MESSAGE
         isCoroutineCancellation(throwable) -> Disposition.DROP
-        isTransportFailure(throwable) || isFcmUnavailable(throwable) -> Disposition.BREADCRUMB
+        // #1066: signed out, or a credential that must be re-entered. The
+        // sign-in screen handles it; see isExpectedAuthState.
+        isTransportFailure(throwable) || isFcmUnavailable(throwable) ||
+            isExpectedAuthState(throwable) -> Disposition.BREADCRUMB
         else -> Disposition.EXCEPTION
     }
 

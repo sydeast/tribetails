@@ -1,12 +1,22 @@
 package com.tribetails.auntieos.voice
 
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseAuthInvalidUserException
+import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.functions.FirebaseFunctionsException
 import android.content.Context
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.AuthGate
+import com.tribetails.auntieos.data.repository.SignInRequiredException
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkStatic
+import io.mockk.unmockkStatic
+import io.mockk.verify
+import io.sentry.Sentry
+import io.sentry.SentryLevel
+import java.util.concurrent.ExecutionException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -75,6 +85,9 @@ class VoiceTokenManagerTest {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         backoffs.clear()
         VoiceTokenManager.resetForTests()
+        // Unstubbed static mocks call through (Sentry is a no-op uninitialised);
+        // this is only here so a test can count what reached Sentry.
+        mockkStatic(Sentry::class)
     }
 
     @After
@@ -83,6 +96,12 @@ class VoiceTokenManagerTest {
         // otherwise outlive the test that started it.
         scope.cancel()
         VoiceTokenManager.resetForTests()
+        unmockkStatic(Sentry::class)
+    }
+
+    private fun assertNothingReportedToSentry() {
+        verify(exactly = 0) { Sentry.captureException(any<Throwable>()) }
+        verify(exactly = 0) { Sentry.captureMessage(any<String>(), any<SentryLevel>()) }
     }
 
     private fun token(
@@ -96,13 +115,16 @@ class VoiceTokenManagerTest {
         registrar: VoiceRegistrar = RecordingRegistrar(),
         fcmToken: String = "fcm-abc",
         now: () -> Long = { 0L },
+        isSignedIn: () -> Boolean = { true },
+        backoff: suspend (Long) -> Unit = { backoffs += it },
     ) = VoiceTokenManager.configure(
         mint = mint,
         registrar = registrar,
         fcmTokenProvider = { fcmToken },
         now = now,
         scope = scope,
-        backoff = { backoffs += it },
+        backoff = backoff,
+        isSignedIn = isSignedIn,
     )
 
     @Test
@@ -689,6 +711,9 @@ class VoiceTokenManagerTest {
         val context = mockk<Context>(relaxed = true)
         every { context.applicationContext } returns context
         val repository = mockk<AuntieRepository>()
+        val auth = mockk<FirebaseAuth>()
+        every { auth.currentUser } returns mockk<FirebaseUser>()
+        every { repository.authGate } returns AuthGate { auth }
         var mints = 0
         coEvery { repository.mintVoiceAccessToken() } coAnswers {
             mints++
@@ -700,5 +725,106 @@ class VoiceTokenManagerTest {
         // Configured, though: the sign-in that follows has everything it needs.
         VoiceTokenManager.onAdminSignedIn()
         assertEquals(1, mints)
+    }
+
+    // ── #1066: AUNTIEOS-ADMIN-1W / 1Y / 1V, one cold-start session ──────────
+    //
+    // A persisted session whose token Firebase would no longer refresh: the
+    // first mint failed inside the callable SDK with an invalid-user credential,
+    // was classified Failed, retried with a Sentry warning (1V), and the retry
+    // hit the sign-in gate (1Y) once Firebase had dropped the user. Every one
+    // of those is the operator needing to sign in, which is not a defect.
+
+    @Test
+    fun `a mint while signed out does not call the callable, retry, or report`() = runBlocking {
+        var mints = 0
+        configure(
+            mint = { mints++; Result.success(token()) },
+            isSignedIn = { false },
+        )
+        VoiceTokenManager.mintAndRegister(forceRemint = true)
+        assertEquals(0, mints)
+        assertTrue("expected no backoff, got $backoffs", backoffs.isEmpty())
+        // Idle: a signed-out app has not attempted a registration.
+        assertEquals(VoiceTokenState.Idle, VoiceTokenManager.state.value)
+        assertNothingReportedToSentry()
+    }
+
+    @Test
+    fun `a sign-out during the backoff stops the retry instead of minting against the gate`() =
+        runBlocking {
+            var signedIn = true
+            var mints = 0
+            configure(
+                mint = { mints++; Result.failure(RuntimeException("unavailable: mintVoiceAccessToken")) },
+                isSignedIn = { signedIn },
+                backoff = { backoffs += it; signedIn = false },
+            )
+            VoiceTokenManager.mintAndRegister(forceRemint = true)
+            assertEquals(1, mints)
+            assertEquals(listOf(2_000L), backoffs)
+            assertEquals(VoiceTokenState.Idle, VoiceTokenManager.state.value)
+        }
+
+    @Test
+    fun `a sign-in-required refusal spends no retries and reports nothing`() = runBlocking {
+        var mints = 0
+        configure(mint = { mints++; Result.failure(SignInRequiredException()) })
+        VoiceTokenManager.mintAndRegister()
+        assertEquals(1, mints)
+        assertTrue(backoffs.isEmpty())
+        assertTrue(VoiceTokenManager.state.value is VoiceTokenState.NotAuthorized)
+        assertNothingReportedToSentry()
+    }
+
+    @Test
+    fun `an invalid credential wrapped in the SDK's combined task spends no retries and reports nothing`() =
+        runBlocking {
+            val invalid = ExecutionException(
+                "1 out of 2 underlying tasks failed",
+                FirebaseAuthInvalidUserException(
+                    "ERROR_USER_TOKEN_EXPIRED",
+                    "The user's credential is no longer valid. The user must sign in again.",
+                ),
+            )
+            var mints = 0
+            configure(mint = { mints++; Result.failure(invalid) })
+            VoiceTokenManager.mintAndRegister()
+            assertEquals(1, mints)
+            assertTrue("expected no backoff, got $backoffs", backoffs.isEmpty())
+            val state = VoiceTokenManager.state.value
+            assertTrue("expected NotAuthorized, got $state", state is VoiceTokenState.NotAuthorized)
+            assertNothingReportedToSentry()
+        }
+
+    @Test
+    fun `a transient failure still retries, and still reports its warning`() = runBlocking {
+        var mints = 0
+        configure(mint = {
+            mints++
+            if (mints < 2) Result.failure(RuntimeException("unavailable: mintVoiceAccessToken"))
+            else Result.success(token())
+        })
+        VoiceTokenManager.mintAndRegister()
+        assertEquals(2, mints)
+        assertEquals(listOf(2_000L), backoffs)
+        assertTrue(VoiceTokenManager.state.value is VoiceTokenState.Registered)
+        verify(exactly = 1) { Sentry.captureMessage(any<String>(), SentryLevel.WARNING) }
+    }
+
+    @Test
+    fun `initialize wires the sign-in check to the repository's AuthGate`() {
+        val context = mockk<Context>(relaxed = true)
+        every { context.applicationContext } returns context
+        val repository = mockk<AuntieRepository>()
+        val auth = mockk<FirebaseAuth>()
+        every { auth.currentUser } returns null
+        every { repository.authGate } returns AuthGate { auth }
+        var mints = 0
+        coEvery { repository.mintVoiceAccessToken() } coAnswers { mints++; Result.success(token()) }
+        VoiceTokenManager.initialize(context, repository, scope)
+        VoiceTokenManager.onAdminSignedIn()
+        assertEquals(0, mints)
+        assertEquals(VoiceTokenState.Idle, VoiceTokenManager.state.value)
     }
 }

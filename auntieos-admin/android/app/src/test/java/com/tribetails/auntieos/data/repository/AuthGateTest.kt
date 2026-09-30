@@ -69,9 +69,19 @@ class AuthGateTest {
     }
 
     @Test
+    fun `a signed-out call throws the dedicated type, so it can be told apart from a defect`() {
+        // #1066 (AUNTIEOS-ADMIN-1Y): AuntieLog and VoiceTokenManager recognise
+        // this by type rather than by matching the sentence.
+        signedOut()
+        assertThrows(SignInRequiredException::class.java) { gate().ensureAuthenticated() }
+        assertFalse(gate().isSignedIn())
+    }
+
+    @Test
     fun `a signed-in call passes the gate`() {
         signedIn()
         gate().ensureAuthenticated()
+        assertTrue(gate().isSignedIn())
     }
 
     @Test

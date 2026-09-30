@@ -58,10 +58,16 @@ class AuthGate(
      * That sentence is user-facing and now has exactly one definition.
      */
     fun ensureAuthenticated() {
-        if (auth.currentUser == null) {
-            throw IllegalStateException(SIGN_IN_REQUIRED)
+        if (!isSignedIn()) {
+            throw SignInRequiredException()
         }
     }
+
+    /**
+     * Whether an admin is signed in right now, without throwing. For a caller
+     * that should WAIT for sign-in rather than fail (`VoiceTokenManager`, #1066).
+     */
+    fun isSignedIn(): Boolean = auth.currentUser != null
 
     /**
      * Reads the `testTribeId` custom claim from the current user's ID token and
@@ -127,3 +133,15 @@ class AuthGate(
         val shared: AuthGate = AuthGate()
     }
 }
+
+/**
+ * What [AuthGate.ensureAuthenticated] throws: a call was made while nobody is
+ * signed in (#1066, AUNTIEOS-ADMIN-1Y).
+ *
+ * An expected state, not a defect. The sign-in screen already owns it, so
+ * `AuntieLog` keeps it out of Sentry (see `isExpectedAuthState`) and
+ * `VoiceTokenManager` classifies it as not worth a retry. Still an
+ * [IllegalStateException] carrying [AuthGate.SIGN_IN_REQUIRED], so every caller
+ * that already shows the message or catches the supertype is unchanged.
+ */
+class SignInRequiredException : IllegalStateException(AuthGate.SIGN_IN_REQUIRED)
