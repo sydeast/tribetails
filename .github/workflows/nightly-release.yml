@@ -250,7 +250,14 @@ jobs:
         id: newness
         if: steps.decide.outputs.mode != 'off'
         run: |
-          last_tag="$(git tag --list 'release/*' --sort=-creatordate | head -1)"
+          # Releases are tagged vX.Y.Z from v0.3.0 (#1061). The newest by
+          # version, not by date; a major of four digits (v2026.07.31, a
+          # revert baseline) is a date, not a release. Before the first v tag,
+          # the last release/<date>-<sha> tag still counts.
+          last_tag="$(git tag --list 'v*' --sort=-v:refname | { grep -E '^v[0-9]{1,3}\.[0-9]+\.[0-9]+$' || true; } | head -1)"
+          if [ -z "$last_tag" ]; then
+            last_tag="$(git tag --list 'release/*' --sort=-creatordate | head -1)"
+          fi
           if [ -z "$last_tag" ]; then
             echo "new=true" >> "$GITHUB_OUTPUT"
             echo "No release tag found; treating as new."

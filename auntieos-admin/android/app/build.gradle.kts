@@ -25,8 +25,20 @@ fun gitOutput(vararg args: String, fallback: String): String =
 /** Monotonic across a linear history, which is what Android requires of versionCode. */
 fun gitCommitCount(): Int = gitOutput("git", "rev-list", "--count", "HEAD", fallback = "0").toIntOrNull() ?: 0
 
-/** Short SHA, so a tester's screenshot maps to an exact commit. */
-fun gitShortSha(): String = gitOutput("git", "rev-parse", "--short", "HEAD", fallback = "nogit")
+/**
+ * The release number (#1061, D-2026-09-30-RELEASE-VERSIONS): RELEASE_VERSION
+ * when scripts/release.sh builds (step 0 chose it and exports it without the
+ * v), otherwise the last vX.Y.Z tag plus "-dev", so a local build never looks
+ * like a release. No commit SHA: the operator ruled it out of the name.
+ */
+fun appVersionName(): String =
+    System.getenv("RELEASE_VERSION")?.trim()?.takeIf { it.isNotEmpty() }
+        ?: (gitOutput(
+            "git", "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*",
+            // v2026.07.31 is a date-named revert baseline, not a release.
+            "--exclude", "v[0-9][0-9][0-9][0-9].*",
+            fallback = "v0.0.0",
+        ).removePrefix("v") + "-dev")
 
 plugins {
     alias(libs.plugins.android.application)
@@ -75,15 +87,11 @@ android {
         //
         // versionCode must be monotonically increasing for Android to accept an
         // upgrade, which `git rev-list --count` guarantees on a linear history.
-        // versionName carries the short SHA so a tester's screenshot is
-        // traceable to an exact commit.
-        //
-        // versionName used to repeat the commit count as well ("0.2.0.292-8d59807").
-        // App Distribution already prints versionCode beside the name, so that
-        // segment said the same thing twice and pushed the identifying SHA off
-        // the end of the label testers actually read.
+        // versionName is the release number (#1061), the same vX.Y.Z the
+        // release tags, so a screenshot maps to a release; the tag maps to
+        // the commit. It carried the short SHA until 2026-09-30 ("0.2.0-8d59807").
         versionCode = gitCommitCount()
-        versionName = "0.2.0-${gitShortSha()}"
+        versionName = appVersionName()
 
         // GOOGLE_CALENDAR_ID + GOOGLE_SERVICE_ACCOUNT_EMAIL are now SERVER-ONLY
         // config (slice 8). The Google Calendar busy sync runs in the

@@ -488,5 +488,65 @@ else
 fi
 
 echo
+echo "--- 'nothing merged since the last release' reads the release numbers (#1061)"
+# The step's own body, run in a throwaway repo. Releases are tagged vX.Y.Z from
+# v0.3.0; older ones are release/<date>-<sha>, and v2026.07.31 is a date-named
+# revert baseline that is not a release at all.
+NEWNESS="$(step_run_body 'Skip when nothing has merged since the last release')"
+# newness <tags...>: a repo with commits A and B (HEAD); each argument is
+# <tag>@<A|B>. Prints the new= value the step wrote.
+#
+# The setup is checked, not trusted: a first version tagged commit A with an
+# invalid ref name, the silenced chain stopped before commit B existed, and
+# three cases passed without reaching the lookup they were written for. So a
+# repo without exactly two commits, or a tag that did not land, prints
+# "setup-failed" and the case fails.
+newness() {
+  local repo out t a_sha want
+  repo="$(mktemp -d)"; out="$repo/.gh-output"
+  ( cd "$repo" && git init -q -b main . && git config user.email t@t.test &&
+    git config user.name Test && git config commit.gpgsign false &&
+    git commit -q --allow-empty -m A &&
+    git commit -q --allow-empty -m B ) >/dev/null 2>&1
+  a_sha="$(git -C "$repo" rev-parse -q --verify HEAD~1 2>/dev/null)"
+  if [ "$(git -C "$repo" rev-list --count HEAD 2>/dev/null)" != "2" ] || [ -z "$a_sha" ]; then
+    echo "setup-failed"; rm -rf "$repo"; return
+  fi
+  for t in "$@"; do
+    if [ "${t#*@}" = A ]; then want="$a_sha"; else want="$(git -C "$repo" rev-parse HEAD)"; fi
+    git -C "$repo" tag -a -m x "${t%@*}" "$want" >/dev/null 2>&1
+    if [ "$(git -C "$repo" rev-list -n1 "${t%@*}" 2>/dev/null)" != "$want" ]; then
+      echo "setup-failed"; rm -rf "$repo"; return
+    fi
+  done
+  ( cd "$repo" && GITHUB_OUTPUT="$out" bash -c "$NEWNESS" ) >/dev/null 2>&1
+  sed -n 's/^new=//p' "$out"
+  rm -rf "$repo"
+}
+if [ -n "$NEWNESS" ]; then
+  ok "extracted the newness step's script"
+else
+  bad "could not extract 'Skip when nothing has merged since the last release'"
+fi
+[ "$(newness v0.3.0@B)" = "false" ] &&
+  ok "a v0.3.0 tag on HEAD means nothing to ship" ||
+  bad "a v0.3.0 tag on HEAD did not stop the run"
+[ "$(newness v0.3.0@A)" = "true" ] &&
+  ok "a v0.3.0 tag behind HEAD means there is something to ship" ||
+  bad "a v0.3.0 tag behind HEAD was read as nothing to ship"
+[ "$(newness 'release/2026.09.29-abc@A' v0.3.0@B)" = "false" ] &&
+  ok "a v tag wins over an older release/* tag" ||
+  bad "the release/* tag was read instead of the newer v0.3.0"
+[ "$(newness 'release/2026.09.29-abc@B')" = "false" ] &&
+  ok "with no v tag yet, the last release/* tag still counts" ||
+  bad "the release/* fallback did not see the last release on HEAD"
+[ "$(newness v0.3.0@A v2026.07.31@B)" = "true" ] &&
+  ok "the date-named v2026.07.31 is not taken for the last release" ||
+  bad "v2026.07.31 was read as the last release"
+[ "$(newness v0.3.9@A v0.3.10@B)" = "false" ] &&
+  ok "v0.3.10 sorts after v0.3.9" ||
+  bad "v0.3.9 was taken as newer than v0.3.10"
+
+echo
 echo "nightly release tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

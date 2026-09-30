@@ -93,7 +93,11 @@
 #                                       HEAD (indexes, rules, storage rules,
 #                                       fleet-verified mytribe functions, admin
 #                                       codebases) and says so.
-#   RELEASE_YES=1                      do not prompt (CI). Preconditions still
+#   RELEASE_BUMP=patch|minor|major      which part of the release number goes
+#                                       up (default patch). Step 0 picks the
+#                                       number; a rerun of a stopped release
+#                                       keeps the one it announced (#1061).
+#   RELEASE_YES=1                     do not prompt (CI). Preconditions still
 #                                       apply; nothing is bypassed.
 #   RELEASE_SKIP_CLIENT_SECRETS=1       skip step 0c and build both web apps
 #                                       from whatever their own .env files hold.
@@ -301,6 +305,8 @@ progress_report_stop() {
       # A deploy whose verify did not pass is not "completed and live" on this
       # file's evidence, so it gets its own heading rather than a line under it.
       case "$key" in
+        # The number step 0 chose (#1061) is a record, not a deploy.
+        version=*) ;;
         *-unverified)
           unverified_list="$unverified_list
     - $(progress_label "$key")" ;;
@@ -1119,6 +1125,109 @@ fi  # end of the tree/branch/sync guards skipped under RELEASE_PREFLIGHT_ONLY
 # has just compared HEAD with RELEASE_SHA itself (above, as LOCAL), so the first
 # banner that checks is 0a's.
 RELEASE_HEAD_GUARD=1
+
+# THE RELEASE NUMBER, CHOSEN HERE AND NOWHERE LATER (#1061,
+# D-2026-09-30-RELEASE-VERSIONS). Releases are vMAJOR.MINOR.PATCH from v0.3.0,
+# with no commit SHA in the name. The number is fixed before anything deploys,
+# so a bad RELEASE_BUMP or an unreadable tag list refuses while refusing is
+# free, and the operator reads the number before saying yes.
+#
+# A STOPPED RELEASE KEEPS ITS NUMBER. The number goes into .release-progress
+# as "version=vX.Y.Z" against RELEASE_SHA, and a rerun of the same commit reads
+# it back instead of bumping again, whatever RELEASE_BUMP says this time. A
+# failed run therefore does not use a number up. If that tag has meanwhile
+# appeared anywhere (a release from another machine took it), the run refuses:
+# tagging two commits with one number is the one thing this must never do.
+STEP="choosing the release number"
+RELEASE_BUMP="${RELEASE_BUMP:-patch}"
+case "$RELEASE_BUMP" in
+  patch|minor|major) ;;
+  *)
+    red "REFUSED: RELEASE_BUMP=$RELEASE_BUMP. It takes patch (the default), minor or major."
+    exit 1
+    ;;
+esac
+
+# release_version_tags: every vX.Y.Z tag this checkout or origin holds, one per
+# line. Origin is asked the same way step 0's sync check asks it: git first,
+# then gh over HTTPS when the SSH agent is down. Nothing printed and a non-zero
+# return means neither could answer.
+release_version_tags() {
+  local remote slug
+  if remote="$(git ls-remote --tags --refs origin 'v*' 2>/dev/null)"; then
+    :
+  else
+    slug="$(git remote get-url origin | sed -E 's#^.*github\.com[:/]##; s#\.git$##')"
+    remote="$(gh api "repos/$slug/git/matching-refs/tags/v" --jq '.[].ref' 2>/dev/null)" || return 1
+  fi
+  # A MAJOR OF FOUR DIGITS IS A DATE, NOT A RELEASE. The repo holds
+  # v2026.07.31, a hand-made revert baseline from 2026-07-31; read as
+  # MAJOR.MINOR.PATCH it would make the next release v2026.7.32. So a
+  # release number's major is one to three digits.
+  #
+  # `|| true`: no v* tag at all is the first release, not a failure, and grep
+  # finding nothing would otherwise end the run under pipefail.
+  { git tag -l 'v*'; printf '%s\n' "$remote" | sed 's#.*refs/tags/##'; } |
+    { grep -E '^v[0-9]{1,3}\.[0-9]+\.[0-9]+$' || true; } | sort -u
+}
+
+# next_release_version <bump>: reads tags on stdin, prints the next vX.Y.Z.
+# v0.3.0 when there is none: the operator's starting number.
+next_release_version() {
+  sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1 |
+    awk -F. -v bump="$1" '
+      END {
+        if (NR == 0 || $0 == "") { print "v0.3.0"; exit }
+        if (bump == "major") { $1++; $2 = 0; $3 = 0 }
+        else if (bump == "minor") { $2++; $3 = 0 }
+        else { $3++ }
+        printf "v%d.%d.%d\n", $1, $2, $3
+      }'
+}
+
+if ! VERSION_TAGS="$(release_version_tags)"; then
+  red "REFUSED: could not read the release tags from origin, over git or gh."
+  red "  The next number is one above the highest tag anywhere, so it cannot be"
+  red "  chosen from this checkout alone. Fix the connection and run again."
+  exit 1
+fi
+ANNOUNCED=""
+if [ -n "$RELEASE_SHA" ] && [ -f "$PROGRESS_FILE" ]; then
+  ANNOUNCED="$(awk -v s="$RELEASE_SHA" '$1 == s && $2 ~ /^version=v/ { sub(/^version=/, "", $2); print $2; exit }' "$PROGRESS_FILE" 2>/dev/null || true)"
+fi
+if [ -n "$ANNOUNCED" ]; then
+  RELEASE_TAG="$ANNOUNCED"
+  if printf '%s\n' "$VERSION_TAGS" | grep -qxF "$RELEASE_TAG"; then
+    # WHICH COMMIT HAS IT. The scheduled release can ship this same commit
+    # while a Mac run of it is stopped; then the number is not taken, the work
+    # is done, and deleting .release-progress would re-release an identical
+    # commit under a second number. A tag only origin holds is fetched to
+    # find out; if that fails, the refusal below stands.
+    git rev-parse -q --verify "refs/tags/$RELEASE_TAG" >/dev/null 2>&1 ||
+      git fetch -q origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG" 2>/dev/null || true
+    if [ "$(git rev-list -n1 "refs/tags/$RELEASE_TAG" 2>/dev/null || true)" = "$RELEASE_SHA" ]; then
+      grn "$RELEASE_SHORT is already released as $RELEASE_TAG, by another run. Nothing to do."
+      ylw "  git show $RELEASE_TAG says what that release shipped. This run's"
+      ylw "  .release-progress is cleared, since that release is the record now."
+      rm -f "$PROGRESS_FILE"
+      exit 0
+    fi
+    red "REFUSED: an earlier run of $RELEASE_SHORT announced $RELEASE_TAG, and that tag"
+    red "  already exists. Another release took the number while this one was"
+    red "  stopped. Delete .release-progress to give this commit the next number"
+    red "  (every step then runs again), after checking what $RELEASE_TAG shipped."
+    exit 1
+  fi
+  grn "version: $RELEASE_TAG, kept from the earlier run of $RELEASE_SHORT (RELEASE_BUMP is ignored on a rerun)"
+else
+  RELEASE_TAG="$(printf '%s\n' "$VERSION_TAGS" | { grep . || true; } | next_release_version "$RELEASE_BUMP")"
+fi
+# Without the v, for the Android versionName. Exported: step 1c's gradlew reads it.
+export RELEASE_VERSION="${RELEASE_TAG#v}"
+cyan "This release will be $RELEASE_TAG ($RELEASE_BUMP)."
+if [ "$PREFLIGHT_ONLY" != "1" ]; then
+  progress_mark "version=$RELEASE_TAG"
+fi
 
 # ---------------------------------------------------------------------------
 # 0a. Dependency drift: is node_modules what each lockfile says it should be?
@@ -2833,7 +2942,8 @@ if [ "$DRY_RUN" = "1" ]; then
   ylw "DRY_RUN=1: skipping the release tag. Nothing shipped in this run, so"
   ylw "  there is nothing to tag or push."
 else
-  TAG="release/$(date +%Y.%m.%d)-$RELEASE_SHORT"
+  # Chosen at step 0 (#1061). release/<date>-<sha> tags before v0.3.0 stay as history.
+  TAG="$RELEASE_TAG"
 
   # Named honestly from the same state the run already tracked, not a
   # blanket "shipped everything": a skipped or failed piece says so here too.

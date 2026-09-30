@@ -137,7 +137,7 @@ What it does, in order. It stops at the first failure and names the step:
 | 6b | Both APKs go to App Distribution |
 | 7 | Fetches both live sites and checks they serve the bundle just built |
 | 8 | Prunes old Cloud Run revisions, keeping 3 per service |
-| 9 | Tags `release/YYYY.MM.DD-<sha>`, pushes the tag, prunes merged branches |
+| 9 | Tags the release number step 0 chose (`v0.3.1`), pushes the tag, prunes merged branches |
 
 Why each step is where it is: `docs/runbooks/release-internals.md`.
 
@@ -282,8 +282,9 @@ Notifications. Before you do, read `docs/runbooks/household-notifications.md`.
 - **Web:** Firebase console, Hosting, release history, roll back. Instant.
 - **Functions, rules, indexes:** these do not roll back with hosting.
   `git revert` the change on `main` and run a normal release.
-- List past releases with `git tag -l 'release/*' | sort`.
-  `git show <tag>` says what that release shipped.
+- List past releases with `git tag -l 'v*' --sort=v:refname`. Releases before
+  v0.3.0 are `git tag -l 'release/*'`. `git show <tag>` says what that release
+  shipped.
 
 ---
 
@@ -320,6 +321,7 @@ Knobs. Most are off by default; the ones with a default say so:
 | `RELEASE_PRUNE_BRANCHES=0` | Skip deleting merged remote branches after the tag |
 | `BRANCH_PRUNE_MIN_AGE_DAYS=N` | How long a merged branch stays quiet before the prune takes it (default 1) |
 | `RELEASE_YES=1` | Do not prompt (CI). Preconditions still apply |
+| `RELEASE_BUMP=minor` or `major` | Which part of the release number goes up (default `patch`: v0.3.1 to v0.3.2). Ignored when rerunning a stopped release, which keeps the number it announced. See "Release numbers" in `docs/runbooks/release-internals.md` |
 | `RELEASE_FORCE_FUNCTIONS=1` | Deploy functions even when unchanged |
 | `RELEASE_SKIP_ANDROID=1` | Ship the web without **either** Android client. Off by default; shipping them together is the point of steps 1c and 6b |
 | `RELEASE_SKIP_ANDROID_AUNTIEOS=1` | Drop just the operator app. The portal app still builds and ships |

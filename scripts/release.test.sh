@@ -200,6 +200,8 @@ if [ "${GRADLE_FAIL:-}" = "$1" ]; then
 fi
 mkdir -p "$(dirname "$out")"
 printf 'apk built by %s\n' "$1" > "$out"
+# The versionName the build would stamp (#1061), so a case can read it back.
+printf 'version=%s\n' "${RELEASE_VERSION:-unset}" >> "$out"
 echo "STUB gradlew $*"
 STUB
     chmod +x "$gw"
@@ -1275,7 +1277,7 @@ else
   bad "an APK was uploaded under the other app's id"
   printf '%s' "$CALLS" | grep appdistribution
 fi
-TAGMSG="$(cd "$D15/repo" && git tag -l 'release/*' --format='%(contents)')"
+TAGMSG="$(cd "$D15/repo" && git tag -l 'v*' --format='%(contents)')"
 if printf '%s' "$TAGMSG" | grep -q "android (auntieos): distributed" &&
    printf '%s' "$TAGMSG" | grep -q "android (mytribe): distributed"; then
   ok "the tag reports each Android app separately"
@@ -1296,7 +1298,7 @@ fixture_all_green "$D16/fixtures/$HEAD16"
 RC="$(run_release "$D16" RELEASE_YES=1 RELEASE_ANDROID_TESTERS=a@b.test \
       RELEASE_SKIP_ANDROID_MYTRIBE=1 FIREBASE_CALL_LOG="$D16/calls")"
 CALLS="$(cat "$D16/calls" 2>/dev/null || true)"
-TAGMSG="$(cd "$D16/repo" && git tag -l 'release/*' --format='%(contents)')"
+TAGMSG="$(cd "$D16/repo" && git tag -l 'v*' --format='%(contents)')"
 if [ "$RC" -eq 0 ] &&
    printf '%s' "$CALLS" | grep -q "appdistribution:distribute.*$AUNTIEOS_APP_ID" &&
    ! printf '%s' "$CALLS" | grep -q "$MYTRIBE_APP_ID"; then
@@ -2896,7 +2898,7 @@ if [ ! -e "$DSR/repo/.release-progress" ] &&
 else
   bad "a completed release did not record itself correctly"; cat "$DSR/repo/.release-progress" 2>/dev/null
 fi
-TAGMSG_SR="$(cd "$DSR/repo" && git tag -l 'release/*' --format='%(contents)')"
+TAGMSG_SR="$(cd "$DSR/repo" && git tag -l 'v*' --format='%(contents)')"
 if printf '%s' "$TAGMSG_SR" | grep -q "storage: rules (mytribe)"; then
   ok "the tag names storage rules as shipped, alongside firestore"
 else
@@ -2958,6 +2960,173 @@ if [ "$RCGB" != "0" ] && grep -q "working tree has uncommitted changes" "$DGB/ou
 else
   bad "an unignored gha-creds file did not refuse at step 0 (rc=$RCGB)"
   stripped "$DGB/out" | tail -15
+fi
+
+# ---------------------------------------------------------------------------
+# RELEASE VERSIONS (#1061). Operator ruling 2026-09-30: releases are
+# vMAJOR.MINOR.PATCH from v0.3.0, with no commit SHA in the name. The number
+# is chosen at step 0, before anything deploys, and a rerun of a stopped
+# release keeps the number it announced.
+# ---------------------------------------------------------------------------
+VER_ENV=(RELEASE_YES=1 RELEASE_ANDROID_TESTERS=a@b.test RELEASE_FUNCTIONS_SETTLE=0)
+
+# origin_tags <dir>: the tags origin holds, one per line, sorted.
+origin_tags() { git -C "$1/origin.git" tag -l | sort; }
+
+# tag_origin <dir> <tag>: put <tag> on origin only, at the repo's first
+# commit, the way a release made on another machine would look from here.
+tag_origin() {
+  local first
+  first="$(git -C "$1/repo" rev-list --max-parents=0 HEAD)"
+  git -C "$1/origin.git" tag "$2" "$first" >/dev/null 2>&1
+}
+
+# next_release <dir> [VAR=VAL ...]: land a commit, green CI, release.
+next_release() {
+  local dir="$1"; shift
+  commit_change "$dir" note.txt "release $(date +%s%N)"
+  arm_ci "$dir"
+  run_release "$dir" "${VER_ENV[@]}" "$@"
+}
+
+# V1. The first release under the new scheme is v0.3.0, even with an old
+#     release/* tag present, and the number is announced before step 0a.
+DV1="$(make_repo)"; write_stubs "$DV1"; arm_ci "$DV1"
+tag_origin "$DV1" "release/2026.09.29-d4b2ee3"
+RCV1="$(run_release "$DV1" "${VER_ENV[@]}")"
+if [ "$RCV1" = "0" ] && origin_tags "$DV1" | grep -qx 'v0.3.0'; then
+  ok "the first versioned release is tagged v0.3.0 on origin"
+else
+  bad "the first versioned release was not tagged v0.3.0 (rc=$RCV1)"; origin_tags "$DV1"; stripped "$DV1/out" | tail -15
+fi
+if stripped "$DV1/out" | awk '/This release will be v0\.3\.0/ { seen = 1 } /0a\. Dependency drift/ { exit !seen }'; then
+  ok "the version is announced at step 0, before step 0a"
+else
+  bad "'This release will be v0.3.0' was not printed before step 0a"
+fi
+if ! origin_tags "$DV1" | grep -q '^release/2026\.09\.30'; then
+  ok "no new release/<date>-<sha> tag is made"
+else
+  bad "a release/<date>-<sha> tag was still made"; origin_tags "$DV1"
+fi
+TAGMSG_V1="$(git -C "$DV1/repo" tag -l 'v0.3.0' --format='%(contents)')"
+if printf '%s' "$TAGMSG_V1" | grep -q '^Shipped:' &&
+   [ "$(git -C "$DV1/repo" cat-file -t v0.3.0 2>/dev/null)" = "tag" ]; then
+  ok "v0.3.0 is an annotated tag whose message lists what shipped"
+else
+  bad "v0.3.0 is not annotated or lacks the Shipped list"; printf '%s\n' "$TAGMSG_V1"
+fi
+if grep -q '^version=0\.3\.0$' "$DV1/repo/auntieos-admin/android/app/build/outputs/apk/release/app-release.apk" 2>/dev/null &&
+   grep -q '^version=0\.3\.0$' "$DV1/repo/mytribe/build/outputs/apk/release/kinfolk-portal-release.apk" 2>/dev/null; then
+  ok "both Android builds are given RELEASE_VERSION=0.3.0"
+else
+  bad "the Android builds were not given RELEASE_VERSION=0.3.0"
+  cat "$DV1/repo/auntieos-admin/android/app/build/outputs/apk/release/app-release.apk" 2>/dev/null
+fi
+
+# V2. Each later release bumps from the highest v* tag: patch by default,
+#     minor and major on request.
+RCV2A="$(next_release "$DV1")"
+RCV2B="$(next_release "$DV1" RELEASE_BUMP=minor)"
+RCV2C="$(next_release "$DV1" RELEASE_BUMP=major)"
+if [ "$RCV2A$RCV2B$RCV2C" = "000" ] &&
+   [ "$(origin_tags "$DV1" | grep '^v' | tr '\n' ' ')" = "v0.3.0 v0.3.1 v0.4.0 v1.0.0 " ]; then
+  ok "patch, then minor, then major: v0.3.1, v0.4.0, v1.0.0"
+else
+  bad "bumps gave the wrong tags (rc $RCV2A $RCV2B $RCV2C)"; origin_tags "$DV1"
+fi
+
+# V3. Numbers sort as numbers, and a tag only origin holds still counts.
+DV3="$(make_repo)"; write_stubs "$DV3"; arm_ci "$DV3"
+tag_origin "$DV3" v0.3.9
+tag_origin "$DV3" v0.3.10
+RCV3="$(run_release "$DV3" "${VER_ENV[@]}")"
+if [ "$RCV3" = "0" ] && origin_tags "$DV3" | grep -qx 'v0.3.11'; then
+  ok "after v0.3.10 (held only by origin) comes v0.3.11, not v0.3.10 again"
+else
+  bad "v0.3.9 and v0.3.10 on origin did not lead to v0.3.11 (rc=$RCV3)"; origin_tags "$DV3"
+fi
+
+# V4. An unknown RELEASE_BUMP refuses at step 0, before any deploy.
+DV4="$(make_repo)"; write_stubs "$DV4"; arm_ci "$DV4"
+RCV4="$(run_release "$DV4" "${VER_ENV[@]}" RELEASE_BUMP=huge FIREBASE_CALL_LOG="$DV4/calls")"
+if [ "$RCV4" != "0" ] && grep -q "RELEASE_BUMP" "$DV4/out" && [ ! -s "$DV4/calls" ] &&
+   ! stripped "$DV4/out" | grep -q "0a\. Dependency drift"; then
+  ok "RELEASE_BUMP=huge refuses at step 0 and deploys nothing"
+else
+  bad "RELEASE_BUMP=huge did not refuse at step 0 (rc=$RCV4)"; stripped "$DV4/out" | tail -10
+fi
+
+# V5. A stopped release keeps its number on the rerun, even when the rerun
+#     asks for a different bump: the number was announced, and a failed run
+#     must not use one up.
+DV5="$(make_repo)"; write_stubs "$DV5"; arm_ci "$DV5"
+tag_origin "$DV5" v0.3.0
+RCV5A="$(run_release "$DV5" "${VER_ENV[@]}" RELEASE_SKIP_ANDROID=1 \
+  RELEASE_FUNCTIONS_BATCH=6 RELEASE_RETRY_KEEP=0 FIREBASE_QUOTA_MAX=0)"
+RCV5B="$(run_release "$DV5" "${VER_ENV[@]}" RELEASE_SKIP_ANDROID=1 RELEASE_BUMP=minor)"
+if [ "$RCV5A" != "0" ] && [ "$RCV5B" = "0" ] &&
+   origin_tags "$DV5" | grep -qx 'v0.3.1' && ! origin_tags "$DV5" | grep -qx 'v0.4.0'; then
+  ok "a rerun of a stopped release keeps the v0.3.1 it announced"
+else
+  bad "the rerun did not keep v0.3.1 (rc $RCV5A then $RCV5B)"; origin_tags "$DV5"
+fi
+
+# V6. A version whose tag already exists on origin at another commit refuses
+#     before any deploy. It happens when the announced number was taken by a
+#     release from somewhere else while this one was stopped.
+DV6="$(make_repo)"; write_stubs "$DV6"; arm_ci "$DV6"
+RCV6A="$(run_release "$DV6" "${VER_ENV[@]}" RELEASE_SKIP_ANDROID=1 \
+  RELEASE_FUNCTIONS_BATCH=6 RELEASE_RETRY_KEEP=0 FIREBASE_QUOTA_MAX=0)"
+tag_origin "$DV6" v0.3.0
+: > "$DV6/calls"
+RCV6B="$(run_release "$DV6" "${VER_ENV[@]}" RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$DV6/calls")"
+if [ "$RCV6A" != "0" ] && [ "$RCV6B" != "0" ] && grep -q "v0.3.0" "$DV6/out" &&
+   grep -qi "already" "$DV6/out" && [ ! -s "$DV6/calls" ]; then
+  ok "an announced version whose tag now exists elsewhere refuses before any deploy"
+else
+  bad "a taken version did not refuse before deploying (rc $RCV6A then $RCV6B)"; stripped "$DV6/out" | tail -10
+fi
+
+# V8. A date-named tag is not a release number. The real repo holds
+#     v2026.07.31, a hand-made revert baseline; read as MAJOR.MINOR.PATCH it
+#     would make the next release v2026.7.32.
+DV8="$(make_repo)"; write_stubs "$DV8"; arm_ci "$DV8"
+tag_origin "$DV8" v2026.07.31
+RCV8="$(run_release "$DV8" "${VER_ENV[@]}" RELEASE_SKIP_ANDROID=1)"
+if [ "$RCV8" = "0" ] && origin_tags "$DV8" | grep -qx 'v0.3.0' && ! origin_tags "$DV8" | grep -q '^v2026\.7'; then
+  ok "v2026.07.31 is ignored: the first release is still v0.3.0"
+else
+  bad "the date tag v2026.07.31 was read as a version (rc=$RCV8)"; origin_tags "$DV8"
+fi
+
+# V9. The announced number was taken by a release of THIS commit (the
+#     scheduled release shipped it while the Mac run was stopped). That is
+#     done, not a conflict: the rerun says so and deploys and tags nothing.
+#     Telling the operator to delete .release-progress would re-release an
+#     identical commit under a second number.
+DV9="$(make_repo)"; write_stubs "$DV9"; arm_ci "$DV9"
+RCV9A="$(run_release "$DV9" "${VER_ENV[@]}" RELEASE_SKIP_ANDROID=1 \
+  RELEASE_FUNCTIONS_BATCH=6 RELEASE_RETRY_KEEP=0 FIREBASE_QUOTA_MAX=0)"
+git -C "$DV9/origin.git" tag v0.3.0 "$(git -C "$DV9/repo" rev-parse HEAD)" >/dev/null 2>&1
+: > "$DV9/calls"
+RCV9B="$(run_release "$DV9" "${VER_ENV[@]}" RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$DV9/calls")"
+if [ "$RCV9A" != "0" ] && [ "$RCV9B" = "0" ] && grep -q "already released as v0.3.0" "$DV9/out" &&
+   [ ! -s "$DV9/calls" ] && [ "$(origin_tags "$DV9" | grep -c '^v')" = "1" ] &&
+   [ ! -e "$DV9/repo/.release-progress" ]; then
+  ok "a number taken by a release of the same commit ends the rerun as already released"
+else
+  bad "a same-commit release of the announced number was not treated as done (rc $RCV9A then $RCV9B)"
+  stripped "$DV9/out" | tail -8; origin_tags "$DV9"
+fi
+
+# V7. A dry run announces the number and tags nothing.
+DV7="$(make_repo)"; write_stubs "$DV7"; arm_ci "$DV7"
+RCV7="$(run_release "$DV7" "${VER_ENV[@]}" DRY_RUN=1)"
+if [ "$RCV7" = "0" ] && grep -q "v0.3.0" "$DV7/out" && [ -z "$(origin_tags "$DV7")" ]; then
+  ok "a dry run names v0.3.0 and tags nothing"
+else
+  bad "the dry run did not name the version, or tagged (rc=$RCV7)"; origin_tags "$DV7"
 fi
 
 echo
