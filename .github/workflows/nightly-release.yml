@@ -1,19 +1,24 @@
 name: Nightly release
 
-# ONE RELEASE A NIGHT, CARRYING EVERYTHING MERGED THAT DAY.
+# ONE RELEASE EVERY THREE OR FOUR DAYS, CARRYING EVERYTHING MERGED SINCE.
+#
+# It ran nightly until 2026-09-30 (#1062). The operator is the only tester and
+# releases by hand as needed, so Monday and Thursday is enough to keep
+# production from falling far behind main. The file keeps its name, so the
+# NIGHTLY_* variables and every link to it still hold.
 #
 # The problem this closes: merging deployed nothing. `ci.yml` runs tests,
 # `main-channel.yml` publishes main's HEAD to a hosting channel, and production
 # moved only when someone ran `scripts/release.sh` by hand. On 2026-08-29 the
 # live sites were fifteen merges and seventeen hours behind main.
 #
-# WHY NIGHTLY AND NOT ON MERGE. A release deploys ~280 functions in batches of
+# WHY A SCHEDULE AND NOT ON MERGE. A release deploys ~280 functions in batches of
 # 25 with a 30 second settle between them, because of the Cloud Run quota wall
 # this project has already hit. That is roughly an hour before hosting and
 # Android are touched. Eleven merges in a day, as happened on 2026-08-29, would
 # be eleven hours of deploys stacked end to end. And the obvious fix is worse
 # than the problem: cancelling a superseded release mid-flight leaves production
-# running half the new functions. So this batches a day's merges into one run
+# running half the new functions. So this batches the merges into one run
 # and never cancels itself. See `concurrency` below.
 #
 # NOTHING HERE BYPASSES A GUARD. `release.sh` still refuses on a red or missing
@@ -28,9 +33,15 @@ on:
     # was stopped on 2026-09-11; the job runs on a GitHub-hosted ubuntu runner
     # now. An evening release still lands while someone is awake to read it.
     #
+    # Monday and Thursday (#1062): Sunday and Wednesday evening in Chicago,
+    # and the gaps are exactly 3 and 4 days. `*/3` in the day-of-month field
+    # was the other candidate; it resets on the 1st, so a month end gives a
+    # 1 or 2 day gap. A run after a hand release finds nothing merged and
+    # stops.
+    #
     # GitHub's scheduler is best-effort and drifts under load, which is fine
-    # for a nightly.
-    - cron: '0 1 * * *'
+    # at this interval.
+    - cron: '0 1 * * 1,4'
   workflow_dispatch:
     inputs:
       mode:
@@ -577,11 +588,10 @@ jobs:
             echo "| Commit | \`$(git rev-parse --short HEAD)\` |"
             echo
             if [ "${MODE:-off}" = "off" ]; then
-              echo "Nothing ran. The nightly release is off (operator ruling 2026-09-14)."
-              echo "Before it can run, this runner needs the Google Cloud setup and the"
-              echo "signing secrets described in the runbook: [#851](https://github.com/${GITHUB_REPOSITORY}/issues/851)."
-              echo "See [the RUNBOOK](https://github.com/${GITHUB_REPOSITORY}/blob/main/docs/RUNBOOK.md#the-nightly-release-stays-off-until-it-can-authenticate)"
-              echo "for what it needs. Leave \`NIGHTLY_RELEASE\` off until then."
+              echo "Nothing ran. The scheduled release is off (\`NIGHTLY_RELEASE=off\`)."
+              echo "The Google Cloud setup and signing secrets exist ([#851](https://github.com/${GITHUB_REPOSITORY}/issues/851));"
+              echo "set the variable to \`preflight\` or \`on\` to run. See"
+              echo "[the RUNBOOK](https://github.com/${GITHUB_REPOSITORY}/blob/main/docs/RUNBOOK.md#the-scheduled-release)."
             elif [ "${NEW:-}" = "false" ]; then
               echo "Nothing has merged since the last release tag, so nothing shipped."
             fi

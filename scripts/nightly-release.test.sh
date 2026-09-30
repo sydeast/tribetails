@@ -457,16 +457,34 @@ fi
 
 echo
 echo "--- the RUNBOOK anchor the workflow links to still exists"
-if grep -qx '### The nightly release stays off until it can authenticate' "$RUNBOOK" &&
-   grep -q 'RUNBOOK.md#the-nightly-release-stays-off-until-it-can-authenticate' "$WF"; then
+if grep -qx '### The scheduled release' "$RUNBOOK" &&
+   grep -q 'RUNBOOK.md#the-scheduled-release' "$WF"; then
   ok "RUNBOOK.md keeps the heading the workflow's summary links to"
 else
   bad "the RUNBOOK heading or the workflow's link to it changed"
 fi
-if grep -A20 -x '### The nightly release stays off until it can authenticate' "$RUNBOOK" | grep -q 'Hosted nightly release'; then
+if grep -A25 -x '### The scheduled release' "$RUNBOOK" | grep -q 'Hosted nightly release'; then
   ok "that RUNBOOK section points at 'Hosted nightly release'"
 else
   bad "the RUNBOOK section does not point at the 'Hosted nightly release' setup"
+fi
+
+echo
+echo "--- the schedule is Monday and Thursday (#1062)"
+# Operator ruling 2026-09-30: every 3 to 4 days, not nightly. Exactly one
+# cron line, so a second schedule cannot slip back in beside it.
+CRONS="$(grep -E "^[[:space:]]*- cron:" "$WF")"
+if [ "$(printf '%s\n' "$CRONS" | grep -c .)" = "1" ] &&
+   printf '%s' "$CRONS" | grep -q "cron: '0 1 \* \* 1,4'"; then
+  ok "one schedule, 01:00 UTC Monday and Thursday"
+else
+  bad "the schedule is not the single '0 1 * * 1,4' cron:"
+  printf '    %s\n' "$CRONS"
+fi
+if grep -A25 -x '### The scheduled release' "$RUNBOOK" | grep -q 'Monday and Thursday'; then
+  ok "the RUNBOOK names the same days"
+else
+  bad "the RUNBOOK section does not say Monday and Thursday"
 fi
 
 echo
