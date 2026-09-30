@@ -1198,6 +1198,20 @@ fi
 if [ -n "$ANNOUNCED" ]; then
   RELEASE_TAG="$ANNOUNCED"
   if printf '%s\n' "$VERSION_TAGS" | grep -qxF "$RELEASE_TAG"; then
+    # WHICH COMMIT HAS IT. The scheduled release can ship this same commit
+    # while a Mac run of it is stopped; then the number is not taken, the work
+    # is done, and deleting .release-progress would re-release an identical
+    # commit under a second number. A tag only origin holds is fetched to
+    # find out; if that fails, the refusal below stands.
+    git rev-parse -q --verify "refs/tags/$RELEASE_TAG" >/dev/null 2>&1 ||
+      git fetch -q origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG" 2>/dev/null || true
+    if [ "$(git rev-list -n1 "refs/tags/$RELEASE_TAG" 2>/dev/null || true)" = "$RELEASE_SHA" ]; then
+      grn "$RELEASE_SHORT is already released as $RELEASE_TAG, by another run. Nothing to do."
+      ylw "  git show $RELEASE_TAG says what that release shipped. This run's"
+      ylw "  .release-progress is cleared, since that release is the record now."
+      rm -f "$PROGRESS_FILE"
+      exit 0
+    fi
     red "REFUSED: an earlier run of $RELEASE_SHORT announced $RELEASE_TAG, and that tag"
     red "  already exists. Another release took the number while this one was"
     red "  stopped. Delete .release-progress to give this commit the next number"

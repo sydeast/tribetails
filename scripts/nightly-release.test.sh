@@ -495,15 +495,29 @@ echo "--- 'nothing merged since the last release' reads the release numbers (#10
 NEWNESS="$(step_run_body 'Skip when nothing has merged since the last release')"
 # newness <tags...>: a repo with commits A and B (HEAD); each argument is
 # <tag>@<A|B>. Prints the new= value the step wrote.
+#
+# The setup is checked, not trusted: a first version tagged commit A with an
+# invalid ref name, the silenced chain stopped before commit B existed, and
+# three cases passed without reaching the lookup they were written for. So a
+# repo without exactly two commits, or a tag that did not land, prints
+# "setup-failed" and the case fails.
 newness() {
-  local repo out t
+  local repo out t a_sha want
   repo="$(mktemp -d)"; out="$repo/.gh-output"
   ( cd "$repo" && git init -q -b main . && git config user.email t@t.test &&
     git config user.name Test && git config commit.gpgsign false &&
-    git commit -q --allow-empty -m A && git tag -a -m x .A &&
+    git commit -q --allow-empty -m A &&
     git commit -q --allow-empty -m B ) >/dev/null 2>&1
+  a_sha="$(git -C "$repo" rev-parse -q --verify HEAD~1 2>/dev/null)"
+  if [ "$(git -C "$repo" rev-list --count HEAD 2>/dev/null)" != "2" ] || [ -z "$a_sha" ]; then
+    echo "setup-failed"; rm -rf "$repo"; return
+  fi
   for t in "$@"; do
-    git -C "$repo" tag -a -m x "${t%@*}" "$( [ "${t#*@}" = A ] && echo .A || echo HEAD )" >/dev/null 2>&1
+    if [ "${t#*@}" = A ]; then want="$a_sha"; else want="$(git -C "$repo" rev-parse HEAD)"; fi
+    git -C "$repo" tag -a -m x "${t%@*}" "$want" >/dev/null 2>&1
+    if [ "$(git -C "$repo" rev-list -n1 "${t%@*}" 2>/dev/null)" != "$want" ]; then
+      echo "setup-failed"; rm -rf "$repo"; return
+    fi
   done
   ( cd "$repo" && GITHUB_OUTPUT="$out" bash -c "$NEWNESS" ) >/dev/null 2>&1
   sed -n 's/^new=//p' "$out"

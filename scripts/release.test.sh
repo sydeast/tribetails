@@ -3100,6 +3100,26 @@ else
   bad "the date tag v2026.07.31 was read as a version (rc=$RCV8)"; origin_tags "$DV8"
 fi
 
+# V9. The announced number was taken by a release of THIS commit (the
+#     scheduled release shipped it while the Mac run was stopped). That is
+#     done, not a conflict: the rerun says so and deploys and tags nothing.
+#     Telling the operator to delete .release-progress would re-release an
+#     identical commit under a second number.
+DV9="$(make_repo)"; write_stubs "$DV9"; arm_ci "$DV9"
+RCV9A="$(run_release "$DV9" "${VER_ENV[@]}" RELEASE_SKIP_ANDROID=1 \
+  RELEASE_FUNCTIONS_BATCH=6 RELEASE_RETRY_KEEP=0 FIREBASE_QUOTA_MAX=0)"
+git -C "$DV9/origin.git" tag v0.3.0 "$(git -C "$DV9/repo" rev-parse HEAD)" >/dev/null 2>&1
+: > "$DV9/calls"
+RCV9B="$(run_release "$DV9" "${VER_ENV[@]}" RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$DV9/calls")"
+if [ "$RCV9A" != "0" ] && [ "$RCV9B" = "0" ] && grep -q "already released as v0.3.0" "$DV9/out" &&
+   [ ! -s "$DV9/calls" ] && [ "$(origin_tags "$DV9" | grep -c '^v')" = "1" ] &&
+   [ ! -e "$DV9/repo/.release-progress" ]; then
+  ok "a number taken by a release of the same commit ends the rerun as already released"
+else
+  bad "a same-commit release of the announced number was not treated as done (rc $RCV9A then $RCV9B)"
+  stripped "$DV9/out" | tail -8; origin_tags "$DV9"
+fi
+
 # V7. A dry run announces the number and tags nothing.
 DV7="$(make_repo)"; write_stubs "$DV7"; arm_ci "$DV7"
 RCV7="$(run_release "$DV7" "${VER_ENV[@]}" DRY_RUN=1)"
