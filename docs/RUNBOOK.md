@@ -170,25 +170,27 @@ Find the refusal text under [When something breaks](#when-something-breaks).
 was stopped, delete `.release-progress` before rerunning, so the release
 does not skip work your hand deploy replaced.
 
-### The nightly release stays off until it can authenticate
+### The scheduled release
 
-`.github/workflows/nightly-release.yml` is off (`NIGHTLY_RELEASE=off`,
-operator ruling 2026-09-14), and releases run by hand from the operator Mac.
-The workflow itself is built (#851): it signs in to Google Cloud through
-Workload Identity, uses the job's own `GH_TOKEN` for step 0b, and restores the
-Android signing material from repository secrets. What it still needs is the
-one-time setup only the operator can do: the `github-release` service account,
-the Workload Identity pool and provider, two repository variables and the
-Android secrets. The exact commands are in
+`.github/workflows/nightly-release.yml` runs `scripts/release.sh` on a
+GitHub-hosted runner every **Monday and Thursday at 01:00 UTC** (Sunday and
+Wednesday evening in Chicago), operator ruling 2026-09-30 (#1062). It kept
+its "nightly" file and variable names. A run finds nothing to do and stops
+when nothing has merged since the last release, so a hand release in between
+costs nothing.
+
+The `NIGHTLY_RELEASE` repository variable picks what a scheduled run does:
+`off` (nothing), `preflight` (sign in, check secrets and CI, open the
+keystores, deploy nothing) or `on` (a full release). Releases by hand from the
+Mac work the same with any setting.
+
+The one-time Google Cloud setup and the signing secrets exist (#851, done
+2026-09-30); a manual preflight passed that day. The commands, if it ever has
+to be redone, are in
 [Hosted nightly release](runbooks/release-internals.md#hosted-nightly-release).
-
-Until that setup exists, any mode but `off` stops at "Check the release
-variables are set" or "Check the runner can authenticate" and names what is
-missing. That is expected, not something to fix by re-creating secrets: on
-2026-09-12, 13 and 14 a preflight with no credentials reported existing secrets
-as missing and a green commit as having no CI run (#850). Once the setup
-exists, run one `preflight` by hand, then set `preflight` for a few nights
-before `on`.
+If a run stops at "Check the release variables are set" or "Check the runner
+can authenticate", that setup is what it names as missing; do not re-create
+secrets on a guess (#850).
 
 ---
 

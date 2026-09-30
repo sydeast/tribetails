@@ -148,6 +148,7 @@ so the ID resolves.
 | D-2026-09-12-PORTAL-DIRECT-READS | 2026-09-12 | The portal reads Firestore directly | Platform and clients |
 | D-FULL-RELEASE-INCLUDES-ADMIN-FUNCTIONS | 2026-08-04 | A full release ships every codebase | Release and ops |
 | D-PREDEPLOY-KEEP-ZERO |  | Skip the pre-deploy prune | Release and ops |
+| D-2026-09-30-RELEASE-SCHEDULE | 2026-09-30 | The scheduled release runs Monday and Thursday | Release and ops |
 | D-2026-09-14-NIGHTLY-OFF | 2026-09-14 | The nightly release stays off | Release and ops |
 | D-2026-08-29-NO-STAGING | 2026-08-29 | One Firebase project, no staging | Release and ops |
 | D-2026-08-29-MAIN-CHANNEL | 2026-08-29 | Main publishes to a fixed hosting channel | Release and ops |
@@ -780,6 +781,13 @@ so the ID resolves.
 - Date: 2026-09-14. Source: #850, #851
 - Ruling: `NIGHTLY_RELEASE=off`. Releases run by hand from the operator Mac until the hosted runner can authenticate (#851), then `preflight` for a few nights before `on`.
 - Enforced in: `.github/workflows/nightly-release.yml`, `docs/RUNBOOK.md`
+- Superseded by: D-2026-09-30-RELEASE-SCHEDULE for the schedule. The hosted runner authenticates since 2026-09-30 (#851); the mode is still the operator's to set.
+
+### D-2026-09-30-RELEASE-SCHEDULE: The scheduled release runs Monday and Thursday
+- Date: 2026-09-30. Source: #1062
+- Ruling: "lets change from nightly to every 3-4 days as I will most likely releasing as needed anyway." The cron is 01:00 UTC Monday and Thursday. The operator is the only tester. `NIGHTLY_RELEASE` still picks `off`, `preflight` or `on`.
+- Supersedes: the nightly schedule in D-2026-09-14-NIGHTLY-OFF
+- Enforced in: `.github/workflows/nightly-release.yml`, `scripts/nightly-release.test.sh`, `docs/RUNBOOK.md`
 
 ### D-2026-08-29-NO-STAGING: One Firebase project, no staging
 - Date: 2026-08-29

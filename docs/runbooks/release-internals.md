@@ -941,9 +941,10 @@ and `mytribe/.firebaserc` (`kinfolk_portal`, `mytribe_beta`). There is no root
 ## Hosted nightly release
 
 `.github/workflows/nightly-release.yml` runs `scripts/release.sh` on a
-GitHub-hosted ubuntu runner (#851). It is built and merged, and it stays off
-(`NIGHTLY_RELEASE=off`, ruling D-2026-09-14-NIGHTLY-OFF) until the setup below
-exists. After that, the only step left is a manual `preflight` run.
+GitHub-hosted ubuntu runner (#851) every Monday and Thursday at 01:00 UTC
+(D-2026-09-30-RELEASE-SCHEDULE, #1062). The setup below was done on
+2026-09-30 and a manual `preflight` passed. `NIGHTLY_RELEASE` (`off`,
+`preflight` or `on`) picks what a scheduled run does.
 
 ### What the workflow does
 
@@ -977,7 +978,7 @@ In order, and only when the mode is `preflight` or `on`:
    1b compares the declared secrets for real).
 10. Deletes everything step 7 wrote, in an `always()` step.
 
-**Cost of a full run.** The runner starts empty every night, so it has no
+**Cost of a full run.** The runner starts empty every run, so it has no
 `.release-state` and deploys the whole functions fleet (about an hour), on top
 of `npm run check` and two cold Gradle builds. The job is capped at 180
 minutes.
@@ -1158,7 +1159,7 @@ Compare the two fingerprints in its summary with the Mac's before going on.
 If the run says "Nothing merged since the last release", it stopped after the
 credential check and proved none of the rest; run it again after the next merge.
 
-**11. Then the switch.** A few nights of `preflight`, then `on`:
+**11. Then the switch.** A few scheduled runs of `preflight`, then `on`:
 
 ```bash
 gh variable set NIGHTLY_RELEASE --repo sydeast/tribetails --body preflight
