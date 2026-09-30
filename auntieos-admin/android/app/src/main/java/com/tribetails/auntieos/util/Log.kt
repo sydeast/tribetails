@@ -39,13 +39,39 @@ object AuntieLog {
     }
 
     fun w(message: String, throwable: Throwable? = null) {
+        if (isCoroutineCancellation(throwable)) return cancelled(message, throwable)
         Log.w(TAG, message, throwable)
         report(message, throwable, SentryLevel.WARNING)
     }
 
     fun e(message: String, throwable: Throwable? = null) {
+        if (isCoroutineCancellation(throwable)) return cancelled(message, throwable)
         Log.e(TAG, message, throwable)
         report(message, throwable, SentryLevel.ERROR)
+    }
+
+    /**
+     * #1067 / AUNTIEOS-ADMIN-1X / AUNTIEOS-ADMIN-1Z: a coroutine that was
+     * cancelled (a `LaunchedEffect` or `rememberCoroutineScope` leaving the
+     * composition, a ViewModel cleared) did not fail. It is logged at debug so
+     * it is still visible in logcat, and never reported to Sentry, not even as
+     * a breadcrumb: it happens on every navigation and would drown the trail.
+     */
+    private fun cancelled(message: String, throwable: Throwable?) {
+        Log.d(TAG, "$message (cancelled: ${throwable?.javaClass?.simpleName})")
+    }
+
+    /**
+     * What [w]/[e] do with a throwable, as a pure decision so it is unit
+     * testable without the Android logger or a live Sentry hub.
+     */
+    internal enum class Disposition { DROP, BREADCRUMB, MESSAGE, EXCEPTION }
+
+    internal fun dispositionFor(throwable: Throwable?): Disposition = when {
+        throwable == null -> Disposition.MESSAGE
+        isCoroutineCancellation(throwable) -> Disposition.DROP
+        isTransportFailure(throwable) || isFcmUnavailable(throwable) -> Disposition.BREADCRUMB
+        else -> Disposition.EXCEPTION
     }
 
     /**
@@ -58,14 +84,13 @@ object AuntieLog {
      * *real* error reported moments later from the same session.
      */
     private fun report(message: String, throwable: Throwable?, level: SentryLevel) {
-        when {
-            throwable == null -> Sentry.captureMessage(message, level)
-            isTransportFailure(throwable) || isFcmUnavailable(throwable) -> {
-                Sentry.addBreadcrumb(
-                    "$message (${throwable.javaClass.simpleName}: ${throwable.message})"
-                )
-            }
-            else -> Sentry.captureException(throwable)
+        when (dispositionFor(throwable)) {
+            Disposition.DROP -> Unit
+            Disposition.MESSAGE -> Sentry.captureMessage(message, level)
+            Disposition.BREADCRUMB -> Sentry.addBreadcrumb(
+                "$message (${throwable?.javaClass?.simpleName}: ${throwable?.message})"
+            )
+            Disposition.EXCEPTION -> Sentry.captureException(throwable!!)
         }
     }
 }

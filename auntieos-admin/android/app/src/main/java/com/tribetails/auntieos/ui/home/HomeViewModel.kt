@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlin.coroutines.cancellation.CancellationException
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -381,6 +382,8 @@ class HomeViewModel(
                     // Auntie could read it. It stays until she dismisses it.
                     arrivalCheckNotice = _uiState.value.arrivalCheckNotice,
                 )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 AuntieLog.e("Failed to load dashboard data", e)
                 _uiState.value = _uiState.value.copy(
@@ -603,6 +606,8 @@ class HomeViewModel(
             _uiState.value = _uiState.value.copy(pendingActionSessionId = sessionId)
             try {
                 block(card)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 AuntieLog.e("Visit action failed for $sessionId", e)
             } finally {

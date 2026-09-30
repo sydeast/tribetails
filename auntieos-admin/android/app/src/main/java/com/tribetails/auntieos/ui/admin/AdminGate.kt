@@ -28,6 +28,7 @@ import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.ui.components.LoadingScreen
 
 import com.tribetails.auntieos.ui.theme.BrandCream
+import com.tribetails.auntieos.util.rethrowCancellation
 
 @Composable
 fun AdminGate(
@@ -38,7 +39,8 @@ fun AdminGate(
     var status by remember { mutableStateOf<AdminGateStatus>(AdminGateStatus.Checking) }
 
     LaunchedEffect(Unit) {
-        status = repository.isCurrentUserAdmin().fold(
+        // #1067: leaving the composition mid-check is not an admin-check error.
+        status = repository.isCurrentUserAdmin().rethrowCancellation().fold(
             onSuccess = { if (it) AdminGateStatus.Allowed else AdminGateStatus.Denied },
             onFailure = { AdminGateStatus.Error(it.message ?: "Unknown error") }
         )

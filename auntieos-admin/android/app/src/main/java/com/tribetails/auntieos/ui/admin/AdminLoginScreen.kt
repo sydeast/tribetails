@@ -53,6 +53,7 @@ import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import com.tribetails.auntieos.ui.theme.BrandCream
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.util.rethrowCancellation
 
 /**
  * The copy on this screen is the mock's (`ui-ideas/auntieos-sign-in-2026-05-27.html`),
@@ -113,7 +114,10 @@ fun AdminLoginScreen(
         resetSent = false
         loading = true
         scope.launch {
+            // #1067: a successful sign-in swaps this screen out, which cancels
+            // this scope mid-call. That is not a sign-in failure to show.
             repository.signInAdmin(email, password)
+                .rethrowCancellation()
                 .onSuccess { onLoginSuccess() }
                 .onFailure { error = it.message ?: "Sign-in failed." }
             loading = false
@@ -134,6 +138,7 @@ fun AdminLoginScreen(
         resetting = true
         scope.launch {
             repository.sendPasswordReset(email)
+                .rethrowCancellation()
                 .onSuccess { resetSent = true }
                 .onFailure { error = it.message ?: "Couldn't send reset email." }
             resetting = false

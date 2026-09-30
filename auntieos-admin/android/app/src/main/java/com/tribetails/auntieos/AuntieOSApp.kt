@@ -19,6 +19,7 @@ import com.tribetails.auntieos.media.MediaUploadManager
 import com.tribetails.auntieos.notifications.VisitNotifier
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.util.baseUrlFlow
+import com.tribetails.auntieos.util.dropCancellationEvent
 import com.tribetails.auntieos.util.saveBaseUrl
 import com.tribetails.auntieos.session.SessionHealthMonitor
 import com.tribetails.auntieos.voice.VoiceRegistrationCoordinator
@@ -166,7 +167,12 @@ class AuntieOSApp : Application() {
             try {
                 SentryAndroid.init(this) { options ->
                     options.dsn = sentryDsn
-                    options.setBeforeSend { event, _ -> event }
+                    // #1067 / AUNTIEOS-ADMIN-1X / 1Z: coroutine cancellation
+                    // (Compose tearing down a LaunchedEffect or a
+                    // rememberCoroutineScope) is never an error event, however
+                    // it reached Sentry. AuntieLog already drops it; this
+                    // catches a direct Sentry.captureException elsewhere.
+                    options.setBeforeSend { event, _ -> dropCancellationEvent(event) }
                 }
                 if (priorCrashReport != null) {
                     io.sentry.Sentry.captureMessage(

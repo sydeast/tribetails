@@ -78,6 +78,7 @@ import com.tribetails.auntieos.voice.VoiceRegistrationNotice
 import com.tribetails.auntieos.voice.VoiceTokenManager
 import com.tribetails.auntieos.voice.voiceRegistrationNotice
 import com.tribetails.auntieos.util.fcmTokenFlow
+import com.tribetails.auntieos.util.rethrowCancellation
 import kotlinx.coroutines.launch
 
 sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
@@ -363,7 +364,9 @@ fun AuntieNavHost(
     LaunchedEffect(authUser?.uid) {
         adminVerified = when (authUser) {
             null -> null
-            else -> app.repository.isCurrentUserAdmin().getOrDefault(false)
+            // #1067: a sign-in redirect restarts this effect mid-check; the
+            // cancelled check must not land as "not an admin".
+            else -> app.repository.isCurrentUserAdmin().rethrowCancellation().getOrDefault(false)
         }
     }
     LaunchedEffect(adminVerified, cachedFcmToken) {
