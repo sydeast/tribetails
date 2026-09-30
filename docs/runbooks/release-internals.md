@@ -99,7 +99,7 @@ and prints `resumed:` instead of refusing. It uses the same rule as the release
 | 6b | Android | Uploads both APKs from step 1c to App Distribution, each to its own Firebase app, in the same run as the web. |
 | 7 | Verify | Fetches both live sites and compares the hashed bundle they reference against the one just built. |
 | 8 | Prune revisions | Deletes old Cloud Run revisions, keeping the newest 3 per service and every serving one. Runs after verification, because those revisions are rollback targets. Was 10, which floored the sweep above every inventory level that has ever caused trouble; see below. |
-| 9 | Tag the release | Annotates `release/YYYY.MM.DD-<sha>`, naming what actually shipped, and pushes just that tag to origin. Runs after step 7, so nothing gets tagged unless it was verified live. |
+| 9 | Tag the release | Annotates the release number step 0 chose (`v0.3.1`), naming what actually shipped, and pushes just that tag to origin. Runs after step 7, so nothing gets tagged unless it was verified live. |
 
 **Why step 5 is conditional.** Redeploying the codebase mints a new Cloud Run
 revision for every one of its ~285 functions even when nothing changed, and a
@@ -739,8 +739,8 @@ test`.
 
 ### Every release is tagged
 
-Step 9 names what just went live: an annotated tag `release/YYYY.MM.DD-<sha>`,
-pushed to `origin` and nothing else. Its message lists what actually shipped
+Step 9 names what just went live: an annotated tag holding the release number
+(`v0.3.1`, see "Release numbers" below), pushed to `origin` and nothing else. Its message lists what actually shipped
 that run (hosting, functions or the reason it was skipped, Android distributed
 or not), so `git show <tag>` answers "what was live" without reconstructing it
 from the deploy log.
@@ -749,6 +749,32 @@ from the deploy log.
 or push failure does not fail the release: by step 9 the web is already live
 and verified, so the run reports the problem and leaves it for you to tag by
 hand rather than call a good deploy broken.
+
+### Release numbers
+
+Operator ruling 2026-09-30 (D-2026-09-30-RELEASE-VERSIONS, #1061): releases
+are `vMAJOR.MINOR.PATCH`, starting at `v0.3.0`, with no commit SHA in the name.
+Releases before that are tagged `release/YYYY.MM.DD-<sha>` and stay as history.
+
+- **Chosen at step 0**, before anything deploys, and printed as "This release
+  will be v0.3.1". It is one above the highest `vX.Y.Z` tag in the checkout or
+  on origin (read over git, or gh when the SSH agent is down; neither
+  answering refuses).
+- **`RELEASE_BUMP`** picks the part: `patch` (default), `minor` or `major`.
+  Anything else refuses at step 0. The scheduled release always bumps the
+  patch.
+- **A stopped release keeps its number.** Step 0 records `version=v0.3.1` in
+  `.release-progress` against the commit, and a rerun of that commit reads it
+  back whatever `RELEASE_BUMP` says, so a failed run does not use a number up.
+  If that tag has appeared in the meantime (another release took it), the
+  rerun refuses before deploying; delete `.release-progress` to give the
+  commit the next number, and every step runs again.
+- **A four-digit major is a date, not a release.** `v2026.07.31` is a revert
+  baseline tagged by hand on 2026-07-31. Step 0, the scheduled release's
+  "anything new" check and the Android `-dev` name all skip it.
+- **Android `versionName`** is the number without the `v` (`0.3.1`): step 0
+  exports `RELEASE_VERSION` and both Gradle builds read it. A build outside a
+  release reads `<last release>-dev`. `versionCode` stays the commit count.
 
 ### Merged branches are deleted after the tag
 
@@ -782,7 +808,8 @@ a prune that prints only its deletions reads as "everything mergeable is gone".
 
 `RELEASE_PRUNE_BRANCHES=0` skips the step.
 
-List releases oldest-first with `git tag -l 'release/*' | sort`. To revert:
+List releases oldest-first with `git tag -l 'v*' --sort=v:refname` (and
+`git tag -l 'release/*'` for those before v0.3.0). To revert:
 hosting rolls back instantly from the Firebase console. Functions
 and rules (Firestore and Storage) do not, and `release.sh` itself only runs
 from `main`, so it cannot redeploy a tag directly. Either check the tag out
@@ -860,9 +887,8 @@ and "release signing" are not the same claim.
 
 **Both apps derive their version from git.** `versionCode` is the commit count
 (`git rev-list --count HEAD`), which only grows on a linear history, so Android
-accepts each build as an upgrade. `versionName` carries the short SHA
-(`0.2.0-<sha>` for the portal app in `mytribe/build.gradle.kts`), so two builds
-are always told apart.
+accepts each build as an upgrade. `versionName` is the release number
+(`0.3.1`; see "Release numbers"), the same in both apps.
 
 A distribution failure at 6b is loud but not fatal: the web has already landed
 by then, the signed APK is on disk, and the run prints the retry command with
@@ -887,9 +913,9 @@ refusal prints the command that adds a tester. One audience covers both apps:
 App Distribution's roster is per project, and a second per-app list would only
 be a first list to forget to update.
 
-The operator app's `versionName` embeds the short SHA (its `build.gradle.kts`
-builds it from `gitShortSha`), so a tester's screenshot names the commit it came
-from without anyone checking the console. The portal app's does the same.
+Both apps' `versionName` is the release number, so a tester's screenshot names
+the release; `git show v0.3.1` names the commit. Until 2026-09-30 it carried
+the short SHA instead (`0.2.0-<sha>`).
 
 The AuntieOS functions codebases are **skipped by default** and the run says so
 rather than omitting them quietly. They live in the second tree
@@ -957,7 +983,8 @@ In order, and only when the mode is `preflight` or `on`:
 3. Sets up `gcloud`, then runs the credential check from #850. `GH_TOKEN` is
    the job's own token, set on the job so that check can see it, and
    `gh auth status --hostname github.com` must pass.
-4. Stops if nothing has merged since the last `release/*` tag.
+4. Stops if nothing has merged since the last release tag (`vX.Y.Z`, or
+   `release/*` before the first one).
 5. Installs what the Mac already has: Node 22, `npm ci` in all three roots
    step 0a checks, `firebase-tools` 15.18.0, Python 3.13 and the `reconcile`
    venv, JDK 17 and 21, Gradle with its home pinned to

@@ -148,6 +148,7 @@ so the ID resolves.
 | D-2026-09-12-PORTAL-DIRECT-READS | 2026-09-12 | The portal reads Firestore directly | Platform and clients |
 | D-FULL-RELEASE-INCLUDES-ADMIN-FUNCTIONS | 2026-08-04 | A full release ships every codebase | Release and ops |
 | D-PREDEPLOY-KEEP-ZERO |  | Skip the pre-deploy prune | Release and ops |
+| D-2026-09-30-RELEASE-VERSIONS | 2026-09-30 | Releases are numbered vMAJOR.MINOR.PATCH from v0.3.0 | Release and ops |
 | D-2026-09-30-RELEASE-SCHEDULE | 2026-09-30 | The scheduled release runs Monday and Thursday | Release and ops |
 | D-2026-09-14-NIGHTLY-OFF | 2026-09-14 | The nightly release stays off | Release and ops |
 | D-2026-08-29-NO-STAGING | 2026-08-29 | One Firebase project, no staging | Release and ops |
@@ -782,6 +783,11 @@ so the ID resolves.
 - Ruling: `NIGHTLY_RELEASE=off`. Releases run by hand from the operator Mac until the hosted runner can authenticate (#851), then `preflight` for a few nights before `on`.
 - Enforced in: `.github/workflows/nightly-release.yml`, `docs/RUNBOOK.md`
 - Superseded by: D-2026-09-30-RELEASE-SCHEDULE for the schedule. The hosted runner authenticates since 2026-09-30 (#851); the mode is still the operator's to set.
+
+### D-2026-09-30-RELEASE-VERSIONS: Releases are numbered vMAJOR.MINOR.PATCH
+- Date: 2026-09-30. Source: #1061
+- Ruling: "follow the v##.##.## format for Major.Minor.Patch. and remove the dumbass commit number part". Start at `v0.3.0`. Each release bumps the patch unless `RELEASE_BUMP=minor` or `major` says otherwise; the scheduled release always bumps the patch. Android `versionName` is the same number without the `v`. `versionCode` stays the commit count. The `release/YYYY.MM.DD-<sha>` tags before v0.3.0 stay as history, and the date-named `v2026.07.31` baseline is not a release number.
+- Enforced in: `scripts/release.sh`, `scripts/release.test.sh`, `.github/workflows/nightly-release.yml`, `scripts/nightly-release.test.sh`, `auntieos-admin/android/app/build.gradle.kts`, `mytribe/build.gradle.kts`
 
 ### D-2026-09-30-RELEASE-SCHEDULE: The scheduled release runs Monday and Thursday
 - Date: 2026-09-30. Source: #1062

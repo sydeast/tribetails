@@ -53,8 +53,20 @@ fun gitOutput(vararg args: String, fallback: String): String =
 /** Monotonic across a linear history, which is what Android requires of versionCode. */
 fun gitCommitCount(): Int = gitOutput("git", "rev-list", "--count", "HEAD", fallback = "0").toIntOrNull() ?: 0
 
-/** Short SHA, so a tester's screenshot maps to an exact commit. */
-fun gitShortSha(): String = gitOutput("git", "rev-parse", "--short", "HEAD", fallback = "nogit")
+/**
+ * The release number (#1061, D-2026-09-30-RELEASE-VERSIONS): RELEASE_VERSION
+ * when scripts/release.sh builds (step 0 chose it and exports it without the
+ * v), otherwise the last vX.Y.Z tag plus "-dev", so a local build never looks
+ * like a release. No commit SHA: the operator ruled it out of the name.
+ */
+fun appVersionName(): String =
+    System.getenv("RELEASE_VERSION")?.trim()?.takeIf { it.isNotEmpty() }
+        ?: (gitOutput(
+            "git", "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*",
+            // v2026.07.31 is a date-named revert baseline, not a release.
+            "--exclude", "v[0-9][0-9][0-9][0-9].*",
+            fallback = "v0.0.0",
+        ).removePrefix("v") + "-dev")
 
 // Mirrors auntieos-admin/android/app/build.gradle.kts:41. local.properties is
 // gitignored and holds sdk.dir plus whatever a machine's own credentials are.
@@ -291,11 +303,11 @@ android {
         // auntieos-admin/android so both APKs read the same way in App
         // Distribution. versionCode is the commit count, which is monotonic on a
         // linear history and is what Android requires to accept an upgrade;
-        // versionName carries the short SHA so a tester's screenshot maps to an
-        // exact commit. The count is NOT repeated in the name, because App
-        // Distribution already prints versionCode beside it.
+        // versionName is the release number (#1061), the same vX.Y.Z the
+        // release tags; the tag maps to the commit. The count is NOT repeated in
+        // the name, because App Distribution already prints versionCode beside it.
         versionCode = gitCommitCount()
-        versionName = "0.2.0-${gitShortSha()}"
+        versionName = appVersionName()
 
         // The Maps SDK authenticates its OWN tile requests on the device, so a
         // public token has to reach the APK; there is no server-proxy option for
