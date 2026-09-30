@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.util
 
+import io.mockk.every
+import io.mockk.mockk
 import io.sentry.SentryEvent
 import io.sentry.protocol.SentryException
 import java.net.UnknownHostException
@@ -180,5 +182,25 @@ class CancellationFilterTest {
         assertEquals(ok, ok.rethrowCancellation())
         val bad = Result.failure<Int>(IllegalStateException("real"))
         assertEquals(bad, bad.rethrowCancellation())
+    }
+
+    // ── test doubles reaching AuntieLog (PR #1068 CI) ───────────────────
+
+    @Test
+    fun `a strict double with no cause stubbed is not cancellation, and does not throw`() {
+        // A repository test hands AuntieLog a strict mock whose `cause` was never
+        // stubbed; reading it throws MockKException. The logger must shrug that off.
+        val strict = mockk<IllegalStateException>()
+        every { strict.message } returns "strict"
+        assertFalse(isCoroutineCancellation(strict))
+    }
+
+    @Test
+    fun `a relaxed double whose cause chain never ends terminates`() {
+        // A relaxed mock returns a fresh mock for every `cause`, so the chain is
+        // endless and never repeats; an unbounded walk ran the suite out of memory.
+        val relaxed = mockk<IllegalStateException>(relaxed = true)
+        assertFalse(isCoroutineCancellation(relaxed))
+        assertEquals(AuntieLog.Disposition.EXCEPTION, AuntieLog.dispositionFor(relaxed))
     }
 }

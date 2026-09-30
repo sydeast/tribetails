@@ -23,19 +23,26 @@ import kotlin.coroutines.cancellation.CancellationException
  * though it extends [CancellationException]: a `withTimeout` that expired is a
  * real failure the caller asked to hear about, not a teardown.
  *
- * Walks the chain with a cycle guard: a throwable whose cause points back at
- * itself (or loops) would otherwise spin forever.
+ * Walks at most [MAX_CAUSE_DEPTH] links, which also bounds a cyclic chain (a
+ * throwable whose cause points back at itself would otherwise spin forever).
  */
 fun isCoroutineCancellation(error: Throwable?): Boolean {
     var current = error
-    val seen = HashSet<Throwable>()
-    while (current != null && seen.add(current)) {
+    var depth = 0
+    while (current != null && depth < MAX_CAUSE_DEPTH) {
         if (current is TimeoutCancellationException) return false
         if (current is CancellationException) return true
-        current = current.cause
+        // Guarded and bounded because this runs inside AuntieLog for EVERY
+        // reported throwable, and a logger must never throw or spin: a strict
+        // test double has no `cause` to hand back, and a relaxed one hands back
+        // a fresh double every time, so the chain never ends or repeats.
+        current = runCatching { current?.cause }.getOrNull()
+        depth++
     }
     return false
 }
+
+private const val MAX_CAUSE_DEPTH = 8
 
 /**
  * Sentry `beforeSend` filter: returns null (drop) for an event carrying a
