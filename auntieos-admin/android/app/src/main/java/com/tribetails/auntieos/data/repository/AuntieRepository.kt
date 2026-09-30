@@ -2743,14 +2743,36 @@ class AuntieRepository(
         authGate.ensureAuthenticated()
         val uid = auth.currentUser?.uid
             ?: throw IllegalStateException("getNotifications called without auth uid")
-        firestore.collection("notifications")
+        val docs = firestore.collection("notifications")
             .whereEqualTo("recipientUid", uid)
             .get().await()
-            .toObjects(com.tribetails.auntieos.data.admin.NotificationEntry::class.java)
-            // Step 4: archived notifications are hidden from the default inbox. The
-            // dispatcher writes no archivedAt, so absence => active. Filtered client
-            // side (a where-clause would require a composite index for the common case).
-            .filter { it.archivedAt.isNullOrBlank() }
+            .documents
+        // #1065 / AUNTIEOS-ADMIN-1N: decoded by hand, not toObjects. The writers
+        // stamp createdAt/readAt/archivedAt as server Timestamps, and reflection
+        // into the String fields failed the whole inbox. One bad doc now degrades
+        // (or, if it cannot be decoded at all, is skipped) and is reported once
+        // per load, by doc id and field type only.
+        val degraded = mutableListOf<String>()
+        val skipped = mutableListOf<String>()
+        val entries = docs.mapNotNull { doc ->
+            val decoded = runCatching { decodeNotificationEntry(doc.id, doc.data.orEmpty()) }
+                .getOrElse { e ->
+                    skipped += "${doc.id}(${e.javaClass.simpleName})"
+                    return@mapNotNull null
+                }
+            if (decoded.problems.isNotEmpty()) degraded += "${doc.id}[${decoded.problems.joinToString(",")}]"
+            decoded.entry
+        }
+        if (degraded.isNotEmpty() || skipped.isNotEmpty()) {
+            AuntieLog.w(
+                "getNotifications: ${docs.size} docs, degraded=${degraded.size} $degraded, " +
+                    "skipped=${skipped.size} $skipped"
+            )
+        }
+        // Step 4: archived notifications are hidden from the default inbox. The
+        // dispatcher writes no archivedAt, so absence => active. Filtered client
+        // side (a where-clause would require a composite index for the common case).
+        entries.filter { it.archivedAt.isNullOrBlank() }
     }.onFailure { AuntieLog.e("Failed to get notifications", it) }
 
     // --- KinTale Templates ---

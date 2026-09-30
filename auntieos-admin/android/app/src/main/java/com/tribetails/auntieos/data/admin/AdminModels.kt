@@ -152,7 +152,10 @@ data class NotificationEntry(
     // lives for most notifications; see notificationKinfolkId in
     // ui/admin/NotificationsScreen.kt for how it is read safely.
     var data: Map<String, Any?> = emptyMap(),
-    var createdAt: String = "",        // ISO-8601 derived from server timestamp
+    // ISO-8601 UTC. The wire value is a server Timestamp; AuntieRepository
+    // decodes it via decodeNotificationEntry (never toObjects, #1065), which
+    // also normalises readAt and archivedAt below.
+    var createdAt: String = "",
     // Per-recipient read marker written by bulkMarkNotificationsRead /
     // markNotificationRead (server timestamp). Non-null/non-blank => already read.
     var readAt: String? = null,
