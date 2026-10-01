@@ -126,6 +126,19 @@ describe('notificationsByDay', () => {
     expect(groups[1]![1].map((r) => r._id)).toEqual(['c']);
   });
 
+  it('#1065: mixed createdAt shapes group by day and a malformed one goes to Undated', () => {
+    const rows = [
+      entry({ _id: 'ts', createdAt: ts('2026-07-16T12:10:00Z') }),
+      entry({ _id: 'iso', createdAt: '2026-07-16T12:05:00Z' }),
+      entry({ _id: 'ms', createdAt: Date.parse('2026-07-16T12:00:00Z') }),
+      entry({ _id: 'bad', createdAt: 'garbage' }),
+    ];
+    const groups = notificationsByDay(rows);
+    expect(groups).toHaveLength(2);
+    expect(groups[0]![1].map((r) => r._id)).toEqual(['ts', 'iso', 'ms']);
+    expect(groups[1]).toEqual(['Undated', [rows[3]]]);
+  });
+
   it('groups rows with no usable timestamp under one Undated separator', () => {
     const groups = notificationsByDay([entry({ _id: 'a', createdAt: null })]);
     expect(groups.map(([day]) => day)).toEqual(['Undated']);

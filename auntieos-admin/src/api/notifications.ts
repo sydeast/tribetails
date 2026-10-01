@@ -1,6 +1,6 @@
 import { call } from '../lib/fns';
 import { type CollectionSpec } from '../lib/firestore';
-import type { Timestamp } from 'firebase/firestore';
+import type { FsTimeLike } from '../lib/time';
 
 /**
  * One `notifications` row (mirrors the wasm `NotificationEntry` in
@@ -15,7 +15,10 @@ import type { Timestamp } from 'firebase/firestore';
  * the plain Firebase JS SDK used here hands back a real Firestore `Timestamp`
  * (or `null` while a serverTimestamp() write is still pending locally), so
  * this type says so rather than pretending it is already a string. Format via
- * `formatWhen` below, never `String(ts)`.
+ * `formatWhen` below, never `String(ts)`. The type is the wider `FsTimeLike`
+ * because a stored row is not bound by what the writer intends: a hand-seeded
+ * or imported row can hold an ISO string or epoch millis, and the formatters
+ * read all of them (#1065).
  *
  * `readAt` is cleared with `FieldValue.delete()` on unread (not blanked to
  * `''` as the wasm model's string field is), so on the wire it is simply
@@ -99,8 +102,8 @@ export interface NotificationEntry {
    * no line rather than a blank one.
    */
   detail?: NotificationDetail;
-  createdAt?: Timestamp | null | undefined;
-  readAt?: Timestamp;
+  createdAt?: FsTimeLike;
+  readAt?: FsTimeLike;
   targetType?: string | undefined; // '' | 'booking' | 'invoice' | 'kintale' | 'kinfolk'
   targetId?: string | undefined;
   /**
@@ -126,7 +129,7 @@ export interface NotificationEntry {
    * together. A `=== undefined` test would hide every restored row forever with
    * no error to notice.
    */
-  archivedAt?: Timestamp | null;
+  archivedAt?: FsTimeLike;
 }
 
 /** True once the recipient (or an admin) has marked this notification read. */

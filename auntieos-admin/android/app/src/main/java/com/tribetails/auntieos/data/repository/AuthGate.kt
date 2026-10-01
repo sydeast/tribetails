@@ -83,7 +83,12 @@ class AuthGate(
         AuntieLog.d("getTestMode uid=${auth.currentUser?.uid} active=${mode.active} tribe=${mode.testTribeId}")
         cachedTestMode = mode
         mode
-    }.onFailure { AuntieLog.e("Failed to read testTribeId claim", it) }
+    }.onFailure {
+        logFailureUnlessSignedOut("Failed to read testTribeId claim", it)
+        // #1066: a dead cached credential ends the session here and now, so the
+        // operator lands on the sign-in screen with a sentence saying why.
+        RevokedSessionGuard.shared.react(it)
+    }
 
     /**
      * Resolve the active TestMode for an in-flight scoped read. Throws, rather

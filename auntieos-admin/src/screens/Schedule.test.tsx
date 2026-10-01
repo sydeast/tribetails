@@ -825,11 +825,27 @@ describe('Schedule screen', () => {
  * hour written here in any zone and on either side of a DST boundary.
  */
 describe('Schedule month grid', () => {
-  const todayIsoReal = localDateIso(new Date());
-  const monthDays = monthGridDays(todayIsoReal);
+  // COMPUTED IN beforeAll, NOT IN THIS BODY (#1074). A describe body runs at
+  // collection, before the file-level beforeAll above switches TZ to Chicago,
+  // so a today read here is the MACHINE's (UTC on CI) while the rendered
+  // screen reads Chicago's. From 19:00 Chicago on a month's last day they are
+  // in different months, and every cell lookup below found nothing. This
+  // beforeAll runs after the file-level one, in the zone the screen renders in.
+  let todayIsoReal = '';
   /** Two days in the visible month grid, far enough apart to be separate weeks. */
-  const dayA = monthDays[8] as string;
-  const dayB = monthDays[16] as string;
+  let dayA = '';
+  let dayB = '';
+  beforeAll(() => {
+    todayIsoReal = localDateIso(new Date());
+    const monthDays = monthGridDays(todayIsoReal);
+    dayA = monthDays[8] as string;
+    dayB = monthDays[16] as string;
+  });
+
+  it('computes its days in the zone the screen renders in', () => {
+    expect(process.env.TZ).toBe('America/Chicago');
+    expect(todayIsoReal).toBe(localDateIso(new Date()));
+  });
 
   /** An ISO instant for a LOCAL wall-clock hour on a `YYYY-MM-DD` day. */
   function at(dayIso: string, hour: number, minute = 0): string {

@@ -29,7 +29,7 @@ describe('sendTemplatedEmail (smtp2go)', () => {
     fetchMock.mockResolvedValueOnce(okResponse('id-42'));
     const { sendTemplatedEmail } = await import('../src/lib/email');
     const id = await sendTemplatedEmail({
-      to: 'kin@example.com',
+      to: 'kin@tribetails.com',
       subjectTemplate: 'Welcome to {{tribeName}}',
       bodyTemplate: 'Hi {{name}}, claim: {{claimUrl}}',
       data: { tribeName: 'The Parkers', name: 'Dee', claimUrl: 'https://x/claim?i=1' },
@@ -40,7 +40,7 @@ describe('sendTemplatedEmail (smtp2go)', () => {
     expect(init.headers['X-Smtp2go-Api-Key']).toBe('api-test-key');
     const body = JSON.parse(init.body);
     expect(body.sender).toBe('auntie@tribetails.com');
-    expect(body.to).toEqual(['kin@example.com']);
+    expect(body.to).toEqual(['kin@tribetails.com']);
     expect(body.subject).toBe('Welcome to The Parkers');
     expect(body.text_body).toBe('Hi Dee, claim: https://x/claim?i=1');
     expect(body.html_body).toBeUndefined();
@@ -50,7 +50,7 @@ describe('sendTemplatedEmail (smtp2go)', () => {
     fetchMock.mockResolvedValueOnce(okResponse());
     const { sendTemplatedEmail } = await import('../src/lib/email');
     await sendTemplatedEmail({
-      to: 'kin@example.com',
+      to: 'kin@tribetails.com',
       subjectTemplate: 's',
       bodyTemplate: 'b',
       htmlTemplate: '<b>{{name}}</b>',
@@ -64,7 +64,7 @@ describe('sendTemplatedEmail (smtp2go)', () => {
     fetchMock.mockResolvedValueOnce(okResponse());
     const { sendTemplatedEmail } = await import('../src/lib/email');
     await sendTemplatedEmail({
-      to: 'kin@example.com',
+      to: 'kin@tribetails.com',
       subjectTemplate: 's',
       bodyTemplate: 'b',
       data: {},

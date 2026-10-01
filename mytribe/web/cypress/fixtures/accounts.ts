@@ -20,7 +20,7 @@
  * every spec to a dead-end screen that renders perfectly.
  */
 export const KINFOLK = {
-  email: 'e2e-kinfolk@mytribe.test',
+  email: 'catch@hanasamku.com',
   password: 'e2e-emulator-kinfolk-pw',
   kinfolkId: 'e2e-portal-kf-1',
   displayName: 'The Wren Household',
@@ -36,12 +36,12 @@ export const KINFOLK = {
  * in to the portal: its reset link continues to the admin site.
  */
 export const RESET_KINFOLK = {
-  email: 'e2e-reset-kinfolk@mytribe.test',
+  email: 'pawsome@hanasamku.com',
   password: 'e2e-emulator-reset-kinfolk-pw',
   kinfolkId: 'e2e-portal-kf-1',
 } as const;
 
 export const STAFF = {
-  email: 'e2e-staff@mytribe.test',
+  email: 'e2e-admin@tribetails.com',
   password: 'e2e-emulator-staff-pw',
 } as const;

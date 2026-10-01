@@ -331,13 +331,13 @@ export default async function seed(): Promise<void> {
   await put('kinfolk', 'e2e-kf-1', {
     firstName: 'Wanda',
     lastName: 'Thorne',
-    email: 'wanda@example.test',
+    email: 'catch@hanasamku.com',
     createdAt: new Date('2026-01-04T09:00:00Z'),
   });
   await put('kinfolk', 'e2e-kf-2', {
     firstName: 'Nora',
     lastName: 'Halbrook',
-    email: 'nora@example.test',
+    email: 'pawsome@hanasamku.com',
     createdAt: new Date('2026-01-05T09:00:00Z'),
   });
 

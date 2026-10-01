@@ -64,6 +64,29 @@ internal data class SignInRequest(
 internal fun encodeSignInRequestBody(email: String, password: String): String =
     authRestJson.encodeToString(SignInRequest(email.trim(), password))
 
+/**
+ * #1066: why securetoken refused a refresh, when the reason is that the
+ * credential is dead and no retry will revive it. `null` for anything else (a
+ * 5xx, a proxy page, a project misconfiguration), which stays a reported error.
+ *
+ * Desktop parity with the Android admin, where Firebase throws
+ * `FirebaseAuthInvalidUserException` for the same four codes. Matched on the
+ * error code securetoken returns, which is a fixed identifier, never on prose.
+ */
+internal fun refreshRejectionReason(body: String): SessionEndedReason? {
+    val message = runCatching {
+        authRestJson.parseToJsonElement(body).jsonObject["error"]?.jsonObject
+            ?.get("message")?.jsonPrimitive?.contentOrNull
+    }.getOrNull() ?: return null
+    return when {
+        message.startsWith("USER_DISABLED") -> SessionEndedReason.Disabled
+        message.startsWith("TOKEN_EXPIRED") ||
+            message.startsWith("INVALID_REFRESH_TOKEN") ||
+            message.startsWith("USER_NOT_FOUND") -> SessionEndedReason.Revoked
+        else -> null
+    }
+}
+
 /** Parsed securetoken refresh response. */
 internal data class RefreshedToken(val idToken: String, val refreshToken: String?, val expiresInSecs: Long)
 
@@ -126,7 +149,7 @@ internal fun secureTokenUrl(emulatorHost: String?): String =
     if (emulatorHost != null) "http://$emulatorHost/securetoken.googleapis.com/v1/token"
     else "https://securetoken.googleapis.com/v1/token"
 
-private object FirebaseRestAuth {
+internal object FirebaseRestAuth {
     private const val API_KEY = "AIzaSyBnR7D4gORVehTr_-WB42_NyFeNO7acDTo"
 
     /**
@@ -193,6 +216,24 @@ private object FirebaseRestAuth {
         SignInResult.Ok(user)
     }
 
+    /**
+     * #1066: end the session when a refresh was refused because the credential
+     * is dead, and leave the sign-in screen a sentence saying why. Returns the
+     * reason, or `null` (session untouched) for any other refusal. Takes the
+     * lock; [freshIdToken], which already holds it, calls [endIfDeadLocked].
+     */
+    suspend fun endSessionIfCredentialDead(body: String): SessionEndedReason? =
+        mutex.withLock { endIfDeadLocked(body) }
+
+    private fun endIfDeadLocked(body: String): SessionEndedReason? {
+        val reason = refreshRejectionReason(body) ?: return null
+        idToken = null; refreshToken = null; localId = null; email = null; expiresAtMillis = 0L
+        SessionEndedNotice.record(reason)
+        // authState is what App.kt gates on, so null lands on the sign-in screen.
+        authState.value = null
+        return reason
+    }
+
     suspend fun signOut() = mutex.withLock {
         idToken = null; refreshToken = null; localId = null; email = null; expiresAtMillis = 0L
         authState.value = null
@@ -219,7 +260,12 @@ private object FirebaseRestAuth {
                 return@withLock null
             }
             if (!refreshed.status.isSuccess()) {
-                System.err.println("[AuntieOS][auth] token refresh rejected: ${refreshed.status} ${refreshed.bodyAsText()}")
+                val rejection = refreshed.bodyAsText()
+                System.err.println("[AuntieOS][auth] token refresh rejected: ${refreshed.status} $rejection")
+                // #1066: a dead credential (revoked, expired, user deleted or
+                // disabled) is an expected auth state, not a defect. Sign out
+                // and say why; do not report it.
+                if (endIfDeadLocked(rejection) != null) return@withLock null
                 com.tribetails.auntieos.web.observability.reportMessage(
                     "auth token refresh rejected: ${refreshed.status}", fatal = false,
                 )

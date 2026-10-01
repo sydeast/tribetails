@@ -308,7 +308,7 @@ export async function seedDenseRows(put: Put, now: number): Promise<void> {
   await put('emails', 'vis-email-1', {
     kinfolkId: 'e2e-kf-2',
     kinfolkName: 'Nora Halbrook',
-    fromAddress: 'nora@example.test',
+    fromAddress: 'pawsome@hanasamku.com',
     subject: 'Thyroid tablet timing for the week of the fourteenth',
     body: 'Could we move the tablet to breakfast rather than the evening while I am away?',
     direction: 'inbound',
