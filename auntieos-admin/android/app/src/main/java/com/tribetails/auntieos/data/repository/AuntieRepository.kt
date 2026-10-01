@@ -2757,10 +2757,17 @@ class AuntieRepository(
         authGate.ensureAuthenticated()
         val uid = auth.currentUser?.uid
             ?: throw IllegalStateException("getNotifications called without auth uid")
-        firestore.collection("notifications")
+        val docs = firestore.collection("notifications")
             .whereEqualTo("recipientUid", uid)
             .get().await()
-            .toObjects(com.tribetails.auntieos.data.admin.NotificationEntry::class.java)
+            .documents
+        // #1065: decoded by hand, not toObjects(). createdAt/readAt/archivedAt are
+        // server Timestamps on the String model, and toObjects() threw on the first
+        // doc, failing the whole inbox (AUNTIEOS-ADMIN-1N). One bad doc now drops
+        // or degrades only itself.
+        com.tribetails.auntieos.data.admin.decodeNotificationDocs(
+            docs.map { it.id to it.data },
+        ) { id, cause -> AuntieLog.w("Dropped notification $id", cause) }
             // Step 4: archived notifications are hidden from the default inbox. The
             // dispatcher writes no archivedAt, so absence => active. Filtered client
             // side (a where-clause would require a composite index for the common case).

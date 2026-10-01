@@ -51,6 +51,26 @@ class NotificationTimestampDecodeTest {
         assertTrue(entry.isArchived, "archivedAt object should decode to a non-blank ISO string")
     }
 
+    // #1065: a bare number used to pass through as its raw digits, which the UI
+    // then sliced as if it were ISO. Epoch millis now become the same ISO string.
+    @Test
+    fun epoch_millis_number_createdAt_becomes_iso() {
+        val iso = "2026-06-27T17:07:24.579Z"
+        val ms = Instant.parse(iso).toEpochMilliseconds()
+        assertEquals(iso, json.decodeFromString<NotificationEntry>("""{"_id":"n5","createdAt":$ms}""").createdAt)
+        assertEquals(iso, json.decodeFromString<NotificationEntry>("""{"_id":"n6","createdAt":$ms.0}""").createdAt)
+    }
+
+    @Test
+    fun malformed_timestamps_decode_blank_without_dropping_the_row() {
+        for (bad in listOf("true", """{"seconds":"x"}""", "[1,2]", "\"\"", "1e400")) {
+            val entry = json.decodeFromString<NotificationEntry>("""{"_id":"n7","key":"k","createdAt":$bad,"readAt":$bad}""")
+            assertEquals("", entry.createdAt, "createdAt=$bad")
+            assertEquals("", entry.readAt, "readAt=$bad")
+            assertEquals("k", entry.key)
+        }
+    }
+
     @Test
     fun missing_timestamps_default_to_blank() {
         val raw = """{"_id":"n4","key":"x"}"""
