@@ -3,6 +3,7 @@ import { sendTemplatedEmail } from './email';
 import { sendPartsFor } from './emailFrame';
 import { loadEmailFrame } from './emailFrameStore';
 import type { EmailFrame } from './emailFrameConfig';
+import { assertNotHardBounced } from './suppressions';
 
 /**
  * Whether a `notificationTemplateBindings` doc is live, given its `active`
@@ -108,17 +109,33 @@ export async function loadEmailTemplate(key: string): Promise<EmailTemplateDoc |
   return snap.data() as EmailTemplateDoc;
 }
 
+export interface SendFromTemplateOptions {
+  /**
+   * #1077: the person this mail goes to asked for it just now (the invite
+   * verification mail from the claim screen). Sent past a hard-bounce
+   * suppression, because refusing it would lock them out with no way back.
+   */
+  personRequested?: boolean;
+}
 /**
  * `frame` (#957): the operator's email frame, when the caller already read it
  * for this invocation (`inviteEmails.ts` sends up to three emails and reads it
  * once). Left out, it is read here, once for this send.
+ *
+ * #1077: refuses an address smtp2go reported as a HARD BOUNCE, before any
+ * provider call, by throwing failed-precondition `recipient_hard_bounced`. A
+ * throw here fails the caller exactly where a provider failure already would,
+ * so every caller's existing error handling covers it. Marketing opt-outs are
+ * not consulted: nothing sent through here is marketing.
  */
 export async function sendFromTemplate(
   key: string,
   to: string,
   data: Record<string, unknown>,
   frame?: EmailFrame,
+  options: SendFromTemplateOptions = {},
 ): Promise<string> {
+  if (!options.personRequested) await assertNotHardBounced(to);
   const tpl = await loadEmailTemplate(key);
   if (!tpl) throw new Error(`email template missing: resolved from ${key}`);
   const resolvedFrame = frame ?? (await loadEmailFrame('sendFromTemplate'));

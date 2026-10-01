@@ -471,6 +471,9 @@ describe('acceptInviteHandler: email verification', () => {
     expect(to).toBe('a@b');
     expect(data['verifyUrl']).toBe('https://verify.example/abc');
     expect(String(data['claimUrl'])).toContain('invite=i1');
+    // #1077: the invitee asked for this mail from the claim screen, so it is
+    // sent past a hard-bounce suppression rather than locking them out.
+    expect(sendTpl.mock.calls[0]![4]).toEqual({ personRequested: true });
   });
 
   it('still refuses actionably when the verification mail cannot be sent', async () => {

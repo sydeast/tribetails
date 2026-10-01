@@ -44,6 +44,24 @@ export function s2gEventToCounter(event: string | undefined | null): EngagementC
   }
 }
 
+/**
+ * #1077: classify a smtp2go bounce event. smtp2go sends `event: 'bounce'` with a
+ * `bounce` field of `'hard'` or `'soft'` ("depending on how we classify the
+ * bounce type", developers.smtp2go.com/docs/webhooks-overview). Only a hard
+ * bounce (no such user or domain, permanently rejected) suppresses the address.
+ *
+ * Returns null for everything else, including:
+ *   - a bounce with no or an unknown classification (never guessed as hard);
+ *   - `reject`, which smtp2go fires for an address already on ITS suppression
+ *     list, an unverified sender or a sandboxed key, so it is not a verdict on
+ *     the address;
+ *   - `spam`, a complaint rather than a bounce.
+ */
+export function s2gBounceKind(ev: { event?: unknown; bounce?: unknown }): 'hard' | 'soft' | null {
+  if (typeof ev.event !== 'string' || ev.event.trim().toLowerCase() !== 'bounce') return null;
+  const kind = typeof ev.bounce === 'string' ? ev.bounce.trim().toLowerCase() : '';
+  return kind === 'hard' || kind === 'soft' ? kind : null;
+}
 /** Map a Twilio message status to a counter field, or null to ignore the status. */
 export function twilioStatusToCounter(status: string | undefined | null): EngagementCounter | null {
   switch ((status ?? '').toLowerCase()) {

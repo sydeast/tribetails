@@ -62,11 +62,16 @@ async function sendInviteVerificationEmail(
     // read further up the handler happens to have done that already today,
     // but that is statement order, not a guarantee.
     const verifyUrl = await getAdmin().auth().generateEmailVerificationLink(invitedEmail);
-    await sendFromTemplate('invite.verify-email', invitedEmail, {
+    await sendFromTemplate(
+      'invite.verify-email',
       invitedEmail,
-      verifyUrl,
-      claimUrl: `${claimBaseUrl}?invite=${inviteId}`,
-    });
+      { invitedEmail, verifyUrl, claimUrl: `${claimBaseUrl}?invite=${inviteId}` },
+      undefined,
+      // #1077: the invitee asked for this mail from the claim screen, so it
+      // goes out past a hard-bounce suppression rather than locking them out.
+      // Rate limited above, so at worst a few more bounces.
+      { personRequested: true },
+    );
     logEvent({
       severity: 'info',
       function: 'acceptInvite',

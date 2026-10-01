@@ -4,6 +4,7 @@ import { sendTemplatedEmail } from '../../lib/email';
 import { sendPartsFor } from '../../lib/emailFrame';
 import { loadEmailFrame } from '../../lib/emailFrameStore';
 import { logEvent } from '../../lib/logger';
+import { isEmailHardBounced } from '../../lib/suppressions';
 import { fallbackEmail } from '../fallbackTemplate';
 import type { ChannelSendArgs, ChannelSendResult } from './index';
 
@@ -30,6 +31,7 @@ import type { ChannelSendArgs, ChannelSendResult } from './index';
  *     unfixable case (e.g. MYTRIBE-FUNCTIONS-8: invoice.reminder to a kinfolk
  *     with no email). The fan-out handler records status 'skipped' + a warning
  *     so it is visible, never silently swallowed.
+ *   - the address is suppressed as a hard bounce (#1077), equally permanent.
  * Outer trigger wrap captures genuine throws to Sentry per fail-loud policy.
  */
 export async function sendEmailChannel(args: ChannelSendArgs): Promise<ChannelSendResult> {
@@ -43,6 +45,14 @@ export async function sendEmailChannel(args: ChannelSendArgs): Promise<ChannelSe
   if (!email) {
     // Fail-soft: undeliverable, not an error. Do NOT throw (no Sentry, no retry).
     return { skipped: true, skipReason: 'recipient_no_email' };
+  }
+  // #1077: smtp2go reported this address as a hard bounce. Mailing it again
+  // only bounces again and hurts the sender rating, and it is just as
+  // permanent as having no address, so it soft-skips the same way. A marketing
+  // opt-out is NOT consulted here: household notifications are governed by
+  // notification preferences, not by a one-off message's unsubscribe.
+  if (await isEmailHardBounced(email)) {
+    return { skipped: true, skipReason: 'recipient_hard_bounced' };
   }
 
   const renderData = { ...data, recipientUid, notificationKey: def.key };

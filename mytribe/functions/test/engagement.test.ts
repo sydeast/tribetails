@@ -5,6 +5,7 @@ import {
   twilioStatusToCounter,
   s2gEventDedupeId,
   zeroCounters,
+  s2gBounceKind,
 } from '../src/lib/engagement';
 
 describe('engagement helpers', () => {
@@ -54,5 +55,22 @@ describe('engagement helpers', () => {
 
   it('zeroCounters has all five counters at 0', () => {
     expect(zeroCounters()).toEqual({ delivered: 0, opened: 0, clicked: 0, bounced: 0, failed: 0 });
+  });
+
+  // #1077: smtp2go marks a bounce event with `bounce: 'hard' | 'soft'`
+  // (developers.smtp2go.com/docs/webhooks-overview). Only a hard bounce
+  // suppresses the address; reject and spam are not bounce classifications.
+  it('classifies smtp2go bounce events as hard or soft from the `bounce` field', () => {
+    expect(s2gBounceKind({ event: 'bounce', bounce: 'hard' })).toBe('hard');
+    expect(s2gBounceKind({ event: 'Bounce', bounce: 'HARD' })).toBe('hard');
+    expect(s2gBounceKind({ event: 'bounce', bounce: 'soft' })).toBe('soft');
+    // A bounce with no classification is not treated as hard.
+    expect(s2gBounceKind({ event: 'bounce' })).toBeNull();
+    expect(s2gBounceKind({ event: 'bounce', bounce: 'weird' })).toBeNull();
+    // reject fires for smtp2go's own suppression list, an unverified sender or
+    // a sandboxed key, so it says nothing certain about the address.
+    expect(s2gBounceKind({ event: 'reject', bounce: 'hard' })).toBeNull();
+    expect(s2gBounceKind({ event: 'spam' })).toBeNull();
+    expect(s2gBounceKind({ event: 'delivered' })).toBeNull();
   });
 });

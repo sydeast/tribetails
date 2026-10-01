@@ -10,8 +10,10 @@ import {
   s2gEventToCounter,
   twilioStatusToCounter,
   s2gEventDedupeId,
+  s2gBounceKind,
   type EngagementCounter,
 } from '../lib/engagement';
+import { recordHardBounce, redactRecipient, normalizeRecipient } from '../lib/suppressions';
 import { FULL_CPU } from '../lib/runtimeOptions';
 
 /**
@@ -32,6 +34,9 @@ import { FULL_CPU } from '../lib/runtimeOptions';
  *     configured the receiver FAILS CLOSED: every request is rejected 403 and a
  *     critical `s2g.verify.unconfigured` log is emitted (WARNING-24/38) so forged
  *     events cannot be accepted pre-activation.
+ *   - HARD BOUNCES (#1077): a `bounce` event with `bounce: 'hard'` also writes
+ *     its `rcpt` to `message_suppressions` (reason `hard_bounce`), whether or not
+ *     the send is a 1:1 one in `external_messages`. See lib/suppressions.ts.
  *   - Twilio: set TWILIO_STATUS_CALLBACK_URL (env) to twilioStatusCallback's URL so
  *     sends carry a statusCallback. Verification uses the existing TWILIO_AUTH_TOKEN.
  */
@@ -150,6 +155,53 @@ async function s2gVerify(req: Request): Promise<{ ok: boolean; reason: string }>
   return { ok, reason: ok ? 'verified' : 'bad-secret' };
 }
 
+function str(v: unknown): string | null {
+  return typeof v === 'string' && v.trim() ? v.trim() : null;
+}
+/**
+ * #1077: write a hard-bounced `rcpt` to `message_suppressions`. Idempotent (see
+ * recordHardBounce), so a replayed event writes nothing. Never throws: a failed
+ * suppression write is logged loud and the event's counter still applies.
+ * Returns true only when this event added the suppression.
+ */
+async function applyHardBounce(ev: Record<string, unknown>): Promise<boolean> {
+  const rcpt = str(ev.rcpt);
+  const eventId = str(ev.id);
+  if (!rcpt) {
+    logEvent({
+      severity: 'warn',
+      function: 'smtp2goEventWebhook',
+      event: 's2g.hardBounce.no-rcpt',
+      extra: { eventId },
+    });
+    return false;
+  }
+  const recipientRedacted = redactRecipient('email', normalizeRecipient('email', rcpt));
+  try {
+    const outcome = await recordHardBounce({
+      rcpt,
+      eventId,
+      emailId: str(ev.email_id),
+      eventTime: str(ev.time),
+      host: str(ev.host),
+    });
+    logEvent({
+      severity: outcome === 'invalid' ? 'warn' : 'info',
+      function: 'smtp2goEventWebhook',
+      event: `s2g.hardBounce.${outcome}`,
+      extra: { eventId, recipientRedacted },
+    });
+    return outcome === 'created' || outcome === 'merged';
+  } catch (err) {
+    logEvent({
+      severity: 'error',
+      function: 'smtp2goEventWebhook',
+      event: 's2g.hardBounce.fail',
+      extra: { eventId, recipientRedacted, err: (err as Error)?.message },
+    });
+    return false;
+  }
+}
 export async function smtp2goEventWebhookHandler(req: Request, res: Response): Promise<void> {
   if (req.method !== 'POST') {
     res.status(405).end();
@@ -196,8 +248,15 @@ export async function smtp2goEventWebhookHandler(req: Request, res: Response): P
     return;
   }
   let applied = 0;
+  let suppressed = 0;
   for (const ev of events) {
     if (!ev || typeof ev !== 'object') continue;
+    // #1077: a HARD bounce suppresses the address. This runs before, and
+    // independently of, the counter match below: that match only finds 1:1
+    // Communicate sends (`external_messages`), while dispatcher, broadcast and
+    // invite mail bounce too and is never in that ledger. Soft bounces fall
+    // through to the counter only.
+    if (s2gBounceKind(ev) === 'hard' && (await applyHardBounce(ev))) suppressed++;
     const counter = s2gEventToCounter(ev.event as string | undefined);
     const providerId = s2gProviderIdFromEvent(ev.email_id as string | undefined);
     const dedupe = s2gEventDedupeId(ev as { id?: string; email_id?: string; event?: string });
@@ -219,9 +278,9 @@ export async function smtp2goEventWebhookHandler(req: Request, res: Response): P
     severity: 'info',
     function: 'smtp2goEventWebhook',
     event: 's2g.batch',
-    extra: { received: events.length, applied, verify: v.reason },
+    extra: { received: events.length, applied, suppressed, verify: v.reason },
   });
-  res.status(200).json({ ok: true, applied });
+  res.status(200).json({ ok: true, applied, suppressed });
 }
 
 async function twilioVerify(req: Request): Promise<boolean> {
