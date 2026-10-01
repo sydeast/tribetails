@@ -21,6 +21,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import com.tribetails.auntieos.util.runCatchingCancellable
 
 class BookingRepository(
     private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance(),
@@ -42,7 +43,7 @@ class BookingRepository(
      * `CompanyHolidayConflict.kt`), unconditionally -- no override parameter
      * for that one; see its header for why.
      */
-    suspend fun createBooking(booking: EnhancedBooking, overrideBusyConflict: Boolean = false): Result<String> = runCatching {
+    suspend fun createBooking(booking: EnhancedBooking, overrideBusyConflict: Boolean = false): Result<String> = runCatchingCancellable {
         AuntieLog.i("Creating enhanced booking for kinfolk: ${booking.kinfolkId}")
         if (!overrideBusyConflict) {
             assertNoBookingBusyConflict(firestore, booking.startDateTime, booking.endDateTime)
@@ -127,7 +128,7 @@ class BookingRepository(
          * nothing, and no retry is attempted.
          */
         idempotencyKey: String? = null,
-    ): Result<MultiDateBookingResult> = runCatching {
+    ): Result<MultiDateBookingResult> = runCatchingCancellable {
         require(visits.isNotEmpty()) { "At least one visit is required." }
         val args = CreateMultiDateBookingRequestArgs(
             kinfolkId = kinfolkId,
@@ -219,7 +220,7 @@ class BookingRepository(
         endDate: String? = null,
         kinfolkId: String? = null,
         status: BookingStatus? = null
-    ): Result<List<EnhancedBooking>> = runCatching {
+    ): Result<List<EnhancedBooking>> = runCatchingCancellable {
         AuntieLog.d("Fetching bookings with filters - kinfolkId: $kinfolkId, status: $status")
         var query: Query = firestore.collection("enhanced_bookings")
 
@@ -235,7 +236,7 @@ class BookingRepository(
         }
     }.onFailure { AuntieLog.e("Error fetching enhanced bookings", it) }
 
-    suspend fun getBookingById(bookingId: String): Result<EnhancedBooking?> = runCatching {
+    suspend fun getBookingById(bookingId: String): Result<EnhancedBooking?> = runCatchingCancellable {
         AuntieLog.d("Fetching booking by ID: $bookingId")
         val document = firestore.collection("enhanced_bookings").document(bookingId).get().await()
         document.toObject(EnhancedBooking::class.java).also {
@@ -243,7 +244,7 @@ class BookingRepository(
         }
     }.onFailure { AuntieLog.e("Error fetching booking $bookingId", it) }
 
-    suspend fun updateBooking(booking: EnhancedBooking): Result<Unit> = runCatching {
+    suspend fun updateBooking(booking: EnhancedBooking): Result<Unit> = runCatchingCancellable {
         AuntieLog.i("Updating enhanced booking: ${booking.id}")
         val now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
         val bookingWithTimestamp = booking.copy(updatedAt = now)
@@ -278,7 +279,7 @@ class BookingRepository(
         bookingId: String,
         startDateTime: String,
         endDateTime: String,
-    ): Result<Unit> = runCatching {
+    ): Result<Unit> = runCatchingCancellable {
         require(bookingId.isNotBlank()) { "updateBookingTimes needs an enhanced_bookings document id" }
         require(startDateTime.isNotBlank() && endDateTime.isNotBlank()) {
             "updateBookingTimes needs both a start and an end"
@@ -294,7 +295,7 @@ class BookingRepository(
         Unit
     }.onFailure { AuntieLog.e("Error moving booking $bookingId", it) }
 
-    suspend fun deleteBooking(bookingId: String): Result<Unit> = runCatching {
+    suspend fun deleteBooking(bookingId: String): Result<Unit> = runCatchingCancellable {
         AuntieLog.w("Deleting enhanced booking: $bookingId")
         firestore.collection("enhanced_bookings").document(bookingId).delete().await()
         AuntieLog.i("Enhanced booking $bookingId deleted")
@@ -304,7 +305,7 @@ class BookingRepository(
     // Archive (reversible). Mirrors AuntieRepository.archiveKinfolk semantics:
     // status flip + archivedAt/archivedReason stamp, document remains in
     // Firestore. Default lists filter archivedAt != "" out.
-    suspend fun archiveBooking(bookingId: String, reason: String, archivedBy: String = "admin"): Result<Unit> = runCatching {
+    suspend fun archiveBooking(bookingId: String, reason: String, archivedBy: String = "admin"): Result<Unit> = runCatchingCancellable {
         AuntieLog.i("Archiving booking: $bookingId (reason: $reason)")
         firestore.collection("enhanced_bookings").document(bookingId).update(
             mapOf(
@@ -316,7 +317,7 @@ class BookingRepository(
         Unit
     }.onFailure { AuntieLog.e("Error archiving booking $bookingId", it) }
 
-    suspend fun unarchiveBooking(bookingId: String): Result<Unit> = runCatching {
+    suspend fun unarchiveBooking(bookingId: String): Result<Unit> = runCatchingCancellable {
         AuntieLog.i("Unarchiving booking: $bookingId")
         firestore.collection("enhanced_bookings").document(bookingId).update(
             mapOf(
@@ -396,7 +397,7 @@ class BookingRepository(
         startDateTime: String,
         endDateTime: String,
         excludeBookingId: String? = null
-    ): Result<List<EnhancedBooking>> = runCatching {
+    ): Result<List<EnhancedBooking>> = runCatchingCancellable {
         AuntieLog.d("Checking conflicts for $startDateTime to $endDateTime")
         val availability = evaluateAvailability(
             BookingAvailabilityRequest(
@@ -411,7 +412,7 @@ class BookingRepository(
         }
     }.onFailure { AuntieLog.e("Error checking booking conflicts", it) }
 
-    suspend fun evaluateAvailability(request: BookingAvailabilityRequest): Result<BookingAvailabilityResult> = runCatching {
+    suspend fun evaluateAvailability(request: BookingAvailabilityRequest): Result<BookingAvailabilityResult> = runCatchingCancellable {
         AuntieLog.d("Evaluating availability for ${request.startDateTime}")
         val requestedStart = LocalDateTime.parse(request.startDateTime, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
         val requestedEnd = LocalDateTime.parse(request.endDateTime, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
@@ -434,7 +435,7 @@ class BookingRepository(
         }
         if (conflictingBookings.isNotEmpty()) {
             AuntieLog.d("Found ${conflictingBookings.size} conflicting bookings")
-            return@runCatching BookingAvailabilityResult(
+            return@runCatchingCancellable BookingAvailabilityResult(
                 isAvailable = false,
                 reason = UnavailabilityReasonType.CONFLICTING_BOOKING,
                 message = "Unavailable: conflicts with an accepted or pending booking.",
@@ -451,7 +452,7 @@ class BookingRepository(
         }
         if (conflictingBlocks.isNotEmpty()) {
             AuntieLog.d("Found ${conflictingBlocks.size} conflicting manual blocks")
-            return@runCatching BookingAvailabilityResult(
+            return@runCatchingCancellable BookingAvailabilityResult(
                 isAvailable = false,
                 reason = UnavailabilityReasonType.BLOCKED_SLOT,
                 message = "Unavailable: this time is blocked.",
@@ -497,7 +498,7 @@ class BookingRepository(
 
             if (neededMinutes > remainingMinutes) {
                 AuntieLog.d("Time block fully booked. Remaining: $remainingMinutes, Needed: $neededMinutes")
-                return@runCatching BookingAvailabilityResult(
+                return@runCatchingCancellable BookingAvailabilityResult(
                     isAvailable = false,
                     reason = UnavailabilityReasonType.TIME_BLOCK_FULLY_BOOKED,
                     message = "Time block is fully booked.",
@@ -523,7 +524,7 @@ class BookingRepository(
      * propagates verbatim through the failed Result so the ViewModel can surface
      * it to the operator. No client-side calendar read, no key in the bundle.
      */
-    suspend fun syncGoogleBusyEventsViaServer(lookAheadDays: Int = 30): Result<Int> = runCatching {
+    suspend fun syncGoogleBusyEventsViaServer(lookAheadDays: Int = 30): Result<Int> = runCatchingCancellable {
         AuntieLog.i("Requesting server-side Google Calendar busy sync for next $lookAheadDays days")
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("syncGoogleCalendarBusyEvents")
@@ -557,7 +558,7 @@ class BookingRepository(
      * sees directly, so the caller must POLL [getGoogleCalendarConnection]
      * afterward rather than assume success from a return here.
      */
-    suspend fun startGoogleCalendarConnect(): Result<GoogleCalendarConnectStart> = runCatching {
+    suspend fun startGoogleCalendarConnect(): Result<GoogleCalendarConnectStart> = runCatchingCancellable {
         AuntieLog.i("Starting Google Calendar OAuth connect flow")
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("startGoogleCalendarConnect")
@@ -574,7 +575,7 @@ class BookingRepository(
     }.onFailure { AuntieLog.e("Error starting Google Calendar connect", it) }
 
     /** The poll target after the consent window opens; see [startGoogleCalendarConnect]. */
-    suspend fun getGoogleCalendarConnection(): Result<GoogleCalendarConnectionState> = runCatching {
+    suspend fun getGoogleCalendarConnection(): Result<GoogleCalendarConnectionState> = runCatchingCancellable {
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("getGoogleCalendarConnection")
             .call(emptyMap<String, Any?>())
@@ -594,7 +595,7 @@ class BookingRepository(
      * event, so a calendar missing from the list always means "the connection
      * is broken", never "it was there but you cannot write to it".
      */
-    suspend fun listGoogleCalendars(): Result<GoogleCalendarListResult> = runCatching {
+    suspend fun listGoogleCalendars(): Result<GoogleCalendarListResult> = runCatchingCancellable {
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listGoogleCalendars")
             .call(emptyMap<String, Any?>())
@@ -629,7 +630,7 @@ class BookingRepository(
     suspend fun setGoogleCalendarTargets(
         writeCalendarId: String,
         enabledCalendarIds: List<String>,
-    ): Result<GoogleCalendarConnection> = runCatching {
+    ): Result<GoogleCalendarConnection> = runCatchingCancellable {
         AuntieLog.i("Saving Google Calendar write target")
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("setGoogleCalendarTargets")
@@ -648,7 +649,7 @@ class BookingRepository(
      * operator's Google account. Events already written to Google are NOT
      * removed by this call; the server holds no delete-on-disconnect step.
      */
-    suspend fun disconnectGoogleCalendar(): Result<GoogleCalendarDisconnectResult> = runCatching {
+    suspend fun disconnectGoogleCalendar(): Result<GoogleCalendarDisconnectResult> = runCatchingCancellable {
         AuntieLog.i("Disconnecting Google Calendar")
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("disconnectGoogleCalendar")
@@ -669,7 +670,7 @@ class BookingRepository(
      * server-side from the saved connection, so a client can never aim a
      * household's visits at someone else's calendar.
      */
-    suspend fun pushVisitsToGoogleCalendar(lookAheadDays: Int = 30): Result<GoogleCalendarPushResult> = runCatching {
+    suspend fun pushVisitsToGoogleCalendar(lookAheadDays: Int = 30): Result<GoogleCalendarPushResult> = runCatchingCancellable {
         AuntieLog.i("Pushing visits to Google Calendar for next $lookAheadDays days")
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("pushVisitsToGoogleCalendar")
@@ -706,7 +707,7 @@ class BookingRepository(
      * calendar or put a second copy of one on it. It is also what makes a
      * second press safe: pressing Retry twice produces one event, not two.
      */
-    suspend fun syncVisitToGoogleCalendar(sessionId: String): Result<GoogleCalendarVisitSyncResult> = runCatching {
+    suspend fun syncVisitToGoogleCalendar(sessionId: String): Result<GoogleCalendarVisitSyncResult> = runCatchingCancellable {
         AuntieLog.i("Syncing visit $sessionId to Google Calendar")
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("syncVisitToGoogleCalendar")
@@ -858,7 +859,7 @@ class BookingRepository(
         startTimeMs: Long,
         endTimeMs: Long,
         overrideVisitConflict: Boolean = false,
-    ): Result<String> = runCatching {
+    ): Result<String> = runCatchingCancellable {
         require(date.isNotBlank()) { "createBlockedTimeSlot needs a YYYY-MM-DD date" }
         AuntieLog.d("Blocking $date $startTime-$endTime via createBlockedTimeSlot")
         val payload = buildMap<String, Any?> {
@@ -902,7 +903,7 @@ class BookingRepository(
      * drawing Unblock on those rows, so this is the belt to that braces. The
      * refusal carries `details.code = 'imported_busy_slot'`.
      */
-    suspend fun deleteBlockedTimeSlot(timeSlotId: String): Result<Unit> = runCatching {
+    suspend fun deleteBlockedTimeSlot(timeSlotId: String): Result<Unit> = runCatchingCancellable {
         require(timeSlotId.isNotBlank()) { "deleteBlockedTimeSlot needs a booking_time_slots document id" }
         AuntieLog.w("Unblocking time slot: $timeSlotId")
         val raw = try {
@@ -926,7 +927,7 @@ class BookingRepository(
         startDate: String,
         endDate: String,
         includeUnavailable: Boolean = false
-    ): Result<List<BookingTimeSlot>> = runCatching {
+    ): Result<List<BookingTimeSlot>> = runCatchingCancellable {
         AuntieLog.d("Fetching time slots from $startDate to $endDate")
         var query: Query = firestore.collection("booking_time_slots")
             .whereGreaterThanOrEqualTo("date", startDate)
@@ -992,7 +993,7 @@ class BookingRepository(
     suspend fun updateTimeSlotFields(
         timeSlotId: String,
         changes: Map<String, Any?>,
-    ): Result<Unit> = runCatching {
+    ): Result<Unit> = runCatchingCancellable {
         require(timeSlotId.isNotBlank()) { "updateTimeSlotFields needs a booking_time_slots document id" }
         require(changes.isNotEmpty()) { "updateTimeSlotFields called with no changed fields" }
         AuntieLog.d("Updating time slot: $timeSlotId (${changes.keys.joinToString()})")
@@ -1013,7 +1014,7 @@ class BookingRepository(
     suspend fun getBookingStats(
         startDate: String,
         endDate: String
-    ): Result<BookingStats> = runCatching {
+    ): Result<BookingStats> = runCatchingCancellable {
         AuntieLog.d("Calculating booking stats from $startDate to $endDate")
         val snapshot = firestore.collection("enhanced_bookings")
             .whereGreaterThanOrEqualTo("startDateTime", normalizeDateStart(startDate))
@@ -1060,7 +1061,7 @@ class BookingRepository(
         kinfolkId: String,
         promoCode: String? = null,
         serviceRepo: ServiceRepository = ServiceRepository(),
-    ): Result<BookingPriceCalculation> = runCatching {
+    ): Result<BookingPriceCalculation> = runCatchingCancellable {
         AuntieLog.d("Calculating booking price for kinfolk=$kinfolkId base=$baseServiceId supp=${supplementalServiceIds.size} promo=$promoCode")
 
         val baseService = serviceRepo.getBaseServiceById(baseServiceId).getOrNull()

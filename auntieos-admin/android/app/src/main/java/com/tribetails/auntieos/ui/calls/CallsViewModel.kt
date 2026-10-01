@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
 import java.time.Instant
+import com.tribetails.auntieos.util.runCatchingCancellable
 
 data class CallsUiState(
     val events: List<CallEvent>          = emptyList(),
@@ -220,7 +221,7 @@ class CallsViewModel(
             _isActing.value = true
             CallInviteManager.reject(appContext)
 
-            val outcome = runCatching {
+            val outcome = runCatchingCancellable {
                 functions
                     .getHttpsCallable(SCREEN_CALL_ACTION)
                     .call(mapOf("callSid" to callSid, "action" to ACTION_REJECT))

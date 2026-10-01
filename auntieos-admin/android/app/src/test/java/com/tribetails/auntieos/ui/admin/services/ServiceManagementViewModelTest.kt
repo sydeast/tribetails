@@ -84,6 +84,21 @@ class ServiceManagementViewModelTest {
         assertFalse(vm.state.value.isLoading)
     }
 
+    /**
+     * #1067: a load cancelled because its scope went away is not a failure.
+     * The catch-all must rethrow it rather than paint an error banner (or
+     * report it) for a screen the user already left.
+     */
+    @Test
+    fun `loadAllData rethrows cancellation instead of showing an error`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getBaseServices(any()) } throws kotlinx.coroutines.CancellationException("scope left")
+
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        assertNull(vm.state.value.errorMessage)
+    }
+
     @Test
     fun `selectTab updates selectedTab`() = runTest(testDispatcher) {
         val vm = buildViewModel()

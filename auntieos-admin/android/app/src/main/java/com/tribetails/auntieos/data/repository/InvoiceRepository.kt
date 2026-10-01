@@ -58,6 +58,7 @@ import com.tribetails.auntieos.data.model.Payment
 import com.tribetails.auntieos.domain.scopedKinfolkId
 import com.tribetails.auntieos.util.AuntieLog
 import kotlinx.coroutines.tasks.await
+import com.tribetails.auntieos.util.runCatchingCancellable
 
 /**
  * The INVOICE domain repo (W4-1): invoices, quotes, and the payment ledger that
@@ -115,12 +116,12 @@ class InvoiceRepository(
 
     // --- Invoices ---
 
-    suspend fun getInvoices(): Result<List<Invoice>> = runCatching {
+    suspend fun getInvoices(): Result<List<Invoice>> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         scoped.scopedQuery("invoices").toObjects(Invoice::class.java)
     }.onFailure { AuntieLog.e("Failed to get invoices", it) }
 
-    suspend fun getInvoicesForKinfolk(kinfolkId: String): Result<List<Invoice>> = runCatching {
+    suspend fun getInvoicesForKinfolk(kinfolkId: String): Result<List<Invoice>> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val snapshot = firestore.collection("invoices")
             .whereEqualTo("kinfolkId", kinfolkId)
@@ -129,7 +130,7 @@ class InvoiceRepository(
         snapshot.toObjects(Invoice::class.java)
     }.onFailure { AuntieLog.e("Failed to get invoices for $kinfolkId", it) }
 
-    suspend fun getInvoiceById(invoiceId: String): Result<Invoice> = runCatching {
+    suspend fun getInvoiceById(invoiceId: String): Result<Invoice> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val doc = firestore.collection("invoices").document(invoiceId).get().await()
         doc.toObject(Invoice::class.java)
@@ -162,7 +163,7 @@ class InvoiceRepository(
         lineItems: List<CreateInvoiceArgsLineItem>? = null,
         invoiceDiscountCents: Long? = null,
         idempotencyKey: String? = null,
-    ): Result<String> = runCatching {
+    ): Result<String> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val mode = authGate.requireTestMode()
         // In test mode force the invoice's household to the sandbox kinfolk so the
@@ -207,7 +208,7 @@ class InvoiceRepository(
         lineItems: List<CreateQuoteArgsLineItem>? = null,
         invoiceDiscountCents: Long? = null,
         idempotencyKey: String? = null,
-    ): Result<String> = runCatching {
+    ): Result<String> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val mode = authGate.requireTestMode()
         val args = createQuoteArgs(
@@ -255,7 +256,7 @@ class InvoiceRepository(
         kinfolkId: String,
         from: String? = null,
         to: String? = null,
-    ): Result<ListUninvoicedSessionsResult> = runCatching {
+    ): Result<ListUninvoicedSessionsResult> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(kinfolkId.isNotBlank()) { "listUninvoicedSessions requires a household" }
         require((from == null) == (to == null)) {
@@ -294,7 +295,7 @@ class InvoiceRepository(
         sessionIds: List<String>,
         doNotInvoice: Boolean,
         reason: String = "",
-    ): Result<SetSessionDoNotInvoiceResult> = runCatching {
+    ): Result<SetSessionDoNotInvoiceResult> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(sessionIds.isNotEmpty()) { "setSessionDoNotInvoice requires at least one visit" }
         @Suppress("UNCHECKED_CAST")
@@ -317,7 +318,7 @@ class InvoiceRepository(
      * nothing to open without a URL, so a blank one is reported rather than
      * launched.
      */
-    suspend fun generateInvoicePdf(invoiceId: String): Result<String> = runCatching {
+    suspend fun generateInvoicePdf(invoiceId: String): Result<String> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("generateInvoicePdf")
@@ -344,7 +345,7 @@ class InvoiceRepository(
      * surfaced verbatim, because it is the part that tells the operator what to
      * do next.
      */
-    suspend fun archiveInvoice(invoiceId: String, force: Boolean = false): Result<Unit> = runCatching {
+    suspend fun archiveInvoice(invoiceId: String, force: Boolean = false): Result<Unit> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(invoiceId.isNotBlank()) { "archiveInvoice requires an invoice id" }
         functions.getHttpsCallable("archiveInvoice").call(archiveInvoiceArgs(invoiceId, force).toPayload()).awaitCallable()
@@ -359,7 +360,7 @@ class InvoiceRepository(
      * legacy invoice. `invoiceIsArchived` reads null as "not archived" for that
      * reason.
      */
-    suspend fun unarchiveInvoice(invoiceId: String): Result<Unit> = runCatching {
+    suspend fun unarchiveInvoice(invoiceId: String): Result<Unit> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(invoiceId.isNotBlank()) { "unarchiveInvoice requires an invoice id" }
         functions.getHttpsCallable("unarchiveInvoice")
@@ -417,7 +418,7 @@ class InvoiceRepository(
         method: String,
         reference: String,
         idempotencyKey: String? = null,
-    ): Result<MarkInvoicePaidResult> = runCatching {
+    ): Result<MarkInvoicePaidResult> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("markInvoicePaid")
@@ -427,7 +428,7 @@ class InvoiceRepository(
     }.onFailure { AuntieLog.e("markInvoicePaid failed for $invoiceId", it) }
 
     /** Slice 2: marks an invoice receipted via the generateReceipt callable. */
-    suspend fun generateReceipt(invoiceId: String): Result<Unit> = runCatching {
+    suspend fun generateReceipt(invoiceId: String): Result<Unit> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         functions.getHttpsCallable("generateReceipt")
             .call(GenerateReceiptArgs(invoiceId = invoiceId).toPayload())
@@ -448,7 +449,7 @@ class InvoiceRepository(
     suspend fun sendInvoiceReminder(
         invoiceId: String,
         nowMs: Long = System.currentTimeMillis(),
-    ): Result<ReminderOutcome> = runCatching {
+    ): Result<ReminderOutcome> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("sendInvoiceReminder")
@@ -475,7 +476,7 @@ class InvoiceRepository(
      * other than `sent`, the `paymentAppliedNotice*` stamps) with a message
      * naming markInvoicePaid / recordPayment / updateInvoice instead.
      */
-    suspend fun reviewAndSendDraftInvoice(invoiceId: String, familyId: String): Result<Unit> = runCatching {
+    suspend fun reviewAndSendDraftInvoice(invoiceId: String, familyId: String): Result<Unit> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val mode = authGate.requireTestMode()
         val args = PostInvoiceEventArgs(
@@ -508,7 +509,7 @@ class InvoiceRepository(
      *
      * Returns the stamped state the resend left behind, which is 'quote'.
      */
-    suspend fun resendQuote(invoiceId: String): Result<String> = runCatching {
+    suspend fun resendQuote(invoiceId: String): Result<String> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(invoiceId.isNotBlank()) { "resendQuote requires an invoice id" }
         @Suppress("UNCHECKED_CAST")
@@ -538,7 +539,7 @@ class InvoiceRepository(
      * with the missing ids, sandbox permission-denied) surface verbatim, and
      * on any failure NOTHING was written anywhere - the transaction is atomic.
      */
-    suspend fun linkInvoiceSessions(invoiceId: String, sessionIds: List<String>): Result<LinkInvoiceSessionsResult> = runCatching {
+    suspend fun linkInvoiceSessions(invoiceId: String, sessionIds: List<String>): Result<LinkInvoiceSessionsResult> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(invoiceId.isNotBlank()) { "linkInvoiceSessions requires an invoice id" }
         @Suppress("UNCHECKED_CAST")
@@ -581,7 +582,7 @@ class InvoiceRepository(
      * Falling back would silently restore the 100x defect on exactly the days
      * the callable is unhealthy.
      */
-    suspend fun getInvoiceLedger(invoiceId: String): Result<GetInvoiceLedgerResult> = runCatching {
+    suspend fun getInvoiceLedger(invoiceId: String): Result<GetInvoiceLedgerResult> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(invoiceId.isNotBlank()) { "getInvoiceLedger requires an invoice id" }
         @Suppress("UNCHECKED_CAST")
@@ -618,7 +619,7 @@ class InvoiceRepository(
     suspend fun listPayments(
         limit: Int? = null,
         startAfterId: String? = null,
-    ): Result<ListPaymentsResult> = runCatching {
+    ): Result<ListPaymentsResult> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(limit == null || limit > 0) { "listPayments limit must be positive" }
         require(startAfterId == null || startAfterId.isNotBlank()) {
@@ -653,7 +654,7 @@ class InvoiceRepository(
      * remove it and is not the reason it is safe; it is safe because nothing
      * renders it. Anything that needs this list calls [listPayments].
      */
-    suspend fun getPayments(): Result<List<Payment>> = runCatching {
+    suspend fun getPayments(): Result<List<Payment>> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         scoped.scopedQuery("payments").toObjects(Payment::class.java)
     }.onFailure { AuntieLog.e("Failed to get payments", it) }
@@ -703,7 +704,7 @@ class InvoiceRepository(
          * this id, so no later payment linked to the invoice can claim it.
          */
         settledByInvoicePaymentId: String? = null,
-    ): Result<RecordPaymentResult> = runCatching {
+    ): Result<RecordPaymentResult> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("recordPayment")
@@ -725,7 +726,7 @@ class InvoiceRepository(
         amountCents: Long,
         reason: String,
         idempotencyKey: String,
-    ): Result<GiveAccountCreditResult> = runCatching {
+    ): Result<GiveAccountCreditResult> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("giveAccountCredit")
@@ -737,7 +738,7 @@ class InvoiceRepository(
         result
     }.onFailure { AuntieLog.e("Failed to give account credit", it) }
     /** Q6: a household's credit, each credit's dates and reason, and every use of credit. */
-    suspend fun getAccountCreditHistory(kinfolkId: String): Result<GetAccountCreditHistoryResult> = runCatching {
+    suspend fun getAccountCreditHistory(kinfolkId: String): Result<GetAccountCreditHistoryResult> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("getAccountCreditHistory")
@@ -752,7 +753,7 @@ class InvoiceRepository(
      * their invoice (newest first), and the open invoices a decision may apply
      * one to. Owner only: Auntie gets permission-denied.
      */
-    suspend fun listUnappliedPayments(kinfolkId: String): Result<ListUnappliedPaymentsResult> = runCatching {
+    suspend fun listUnappliedPayments(kinfolkId: String): Result<ListUnappliedPaymentsResult> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listUnappliedPayments")
@@ -778,7 +779,7 @@ class InvoiceRepository(
         applyInvoiceId: String,
         applyCents: Long,
         idempotencyKey: String,
-    ): Result<ResolveUnappliedPaymentResult> = runCatching {
+    ): Result<ResolveUnappliedPaymentResult> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("resolveUnappliedPayment")

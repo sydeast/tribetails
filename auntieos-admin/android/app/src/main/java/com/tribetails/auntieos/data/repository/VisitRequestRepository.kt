@@ -14,6 +14,7 @@ import com.tribetails.auntieos.data.contracts.decodeListRescheduleRequestsResult
 import com.tribetails.auntieos.data.contracts.decodeResolveBookingCancellationRequestResult
 import com.tribetails.auntieos.data.contracts.decodeResolveBookingRescheduleRequestResult
 import com.tribetails.auntieos.util.AuntieLog
+import com.tribetails.auntieos.util.runCatchingCancellable
 
 /**
  * The office's end of the two things a household can ask for on a visit: a new
@@ -48,7 +49,7 @@ class VisitRequestRepository(
 
     /** Every visit with a proposed new time still waiting on a decision, oldest first. */
     suspend fun listRescheduleRequests(limit: Long? = null): Result<List<RescheduleRequestDto>> =
-        runCatching {
+        runCatchingCancellable {
             val raw = functions.getHttpsCallable("listRescheduleRequests")
                 .call(ListRescheduleRequestsArgs(limit = limit).toPayload())
                 .awaitCallable().data
@@ -58,7 +59,7 @@ class VisitRequestRepository(
 
     /** Every visit with a cancellation ask still waiting on a decision, oldest first. */
     suspend fun listCancelRequests(limit: Long? = null): Result<List<CancelRequestDto>> =
-        runCatching {
+        runCatchingCancellable {
             val raw = functions.getHttpsCallable("listCancelRequests")
                 .call(ListCancelRequestsArgs(limit = limit).toPayload())
                 .awaitCallable().data
@@ -78,7 +79,7 @@ class VisitRequestRepository(
         visitId: String,
         decision: String,
         note: String? = null,
-    ): Result<ResolveBookingRescheduleRequestResult> = runCatching {
+    ): Result<ResolveBookingRescheduleRequestResult> = runCatchingCancellable {
         val raw = functions.getHttpsCallable("resolveBookingRescheduleRequest")
             .call(
                 ResolveBookingRescheduleRequestArgs(
@@ -104,7 +105,7 @@ class VisitRequestRepository(
         visitId: String,
         decision: String,
         note: String? = null,
-    ): Result<ResolveBookingCancellationRequestResult> = runCatching {
+    ): Result<ResolveBookingCancellationRequestResult> = runCatchingCancellable {
         val raw = functions.getHttpsCallable("resolveBookingCancellationRequest")
             .call(
                 ResolveBookingCancellationRequestArgs(

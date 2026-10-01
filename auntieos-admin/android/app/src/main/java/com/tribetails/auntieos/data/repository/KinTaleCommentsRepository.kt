@@ -7,6 +7,7 @@ import com.tribetails.auntieos.util.AuntieLog
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import com.tribetails.auntieos.util.runCatchingCancellable
 
 /**
  * Admin-side wrapper for the KinTale comment thread (spec 11 item 6.2).
@@ -95,7 +96,7 @@ class KinTaleCommentsRepository(
         kinfolkId: String,
         body: String,
         parentCommentId: String? = null,
-    ): Result<String> = runCatching {
+    ): Result<String> = runCatchingCancellable {
         require(taleId.isNotBlank()) { "taleId cannot be blank." }
         require(kinfolkId.isNotBlank()) { "kinfolkId cannot be blank." }
         require(body.isNotBlank()) { "Comment body cannot be blank." }

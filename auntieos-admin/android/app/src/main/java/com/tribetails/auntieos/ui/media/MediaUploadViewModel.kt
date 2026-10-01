@@ -9,6 +9,7 @@ import com.tribetails.auntieos.data.model.MediaFile
 import com.tribetails.auntieos.media.BatchMediaUploadResult
 import com.tribetails.auntieos.media.MediaUploadManager
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.util.rethrowIfCancellation
 
 class MediaUploadViewModel(
     private val mediaUploadManager: MediaUploadManager = AuntieOSApp.instance.mediaUploadManager
@@ -72,6 +73,7 @@ class MediaUploadViewModel(
                 onComplete(Result.success(BatchMediaUploadResult(succeeded = succeeded, failed = failed)))
 
             } catch (e: Exception) {
+                e.rethrowIfCancellation()
                 onComplete(Result.failure(e))
             }
         }

@@ -7,6 +7,7 @@ import com.tribetails.auntieos.util.AuntieLog
 import kotlinx.coroutines.tasks.await
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import com.tribetails.auntieos.util.runCatchingCancellable
 
 class ServiceRepository(
     /**
@@ -36,7 +37,7 @@ class ServiceRepository(
      * `AuntieRepository.saveHouseholdData`: the non-blank id now fails loud
      * rather than quietly re-opening the path `BaseServiceDiff.kt` closed.
      */
-    suspend fun createBaseService(service: BaseService): Result<String> = runCatching {
+    suspend fun createBaseService(service: BaseService): Result<String> = runCatchingCancellable {
         require(service.id.isBlank()) {
             "createBaseService creates; edit ${service.id} through updateBaseServiceFields"
         }
@@ -54,7 +55,7 @@ class ServiceRepository(
         docRef.id
     }.onFailure { AuntieLog.e("Error creating base service", it) }
 
-    suspend fun getBaseServices(includeInactive: Boolean = false): Result<List<BaseService>> = runCatching {
+    suspend fun getBaseServices(includeInactive: Boolean = false): Result<List<BaseService>> = runCatchingCancellable {
         AuntieLog.d("Fetching base services (includeInactive: $includeInactive)")
         var query: Query = firestore.collection("base_services")
 
@@ -68,7 +69,7 @@ class ServiceRepository(
         }
     }.onFailure { AuntieLog.e("Error fetching base services", it) }
 
-    suspend fun getBaseServiceById(serviceId: String): Result<BaseService?> = runCatching {
+    suspend fun getBaseServiceById(serviceId: String): Result<BaseService?> = runCatchingCancellable {
         AuntieLog.d("Fetching base service by ID: $serviceId")
         val document = firestore.collection("base_services").document(serviceId).get().await()
         document.toObject(BaseService::class.java).also {
@@ -105,7 +106,7 @@ class ServiceRepository(
     suspend fun updateBaseServiceFields(
         documentId: String,
         changes: Map<String, Any?>,
-    ): Result<Unit> = runCatching {
+    ): Result<Unit> = runCatchingCancellable {
         require(documentId.isNotBlank()) { "updateBaseServiceFields needs a base_services document id" }
         require(changes.isNotEmpty()) { "updateBaseServiceFields called with no changed fields" }
         AuntieLog.i("Updating base service $documentId: ${changes.keys.joinToString()}")
@@ -117,7 +118,7 @@ class ServiceRepository(
         Unit
     }.onFailure { AuntieLog.e("Error updating base service $documentId", it) }
 
-    suspend fun deleteBaseService(serviceId: String): Result<Unit> = runCatching {
+    suspend fun deleteBaseService(serviceId: String): Result<Unit> = runCatchingCancellable {
         AuntieLog.w("Soft deleting base service: $serviceId")
         val updates = mapOf(
             "isActive" to false,
@@ -147,7 +148,7 @@ class ServiceRepository(
      * here can only be a mistake, and the honest answer is to say so rather than
      * to quietly become the update path nobody designed.
      */
-    suspend fun createSupplementalService(service: SupplementalService): Result<String> = runCatching {
+    suspend fun createSupplementalService(service: SupplementalService): Result<String> = runCatchingCancellable {
         require(service.id.isBlank()) {
             "createSupplementalService creates; android has no supplemental-service edit path, " +
                 "so it must not replace supplemental_services/${service.id}"
@@ -166,7 +167,7 @@ class ServiceRepository(
         docRef.id
     }.onFailure { AuntieLog.e("Error creating supplemental service", it) }
 
-    suspend fun getSupplementalServices(includeInactive: Boolean = false): Result<List<SupplementalService>> = runCatching {
+    suspend fun getSupplementalServices(includeInactive: Boolean = false): Result<List<SupplementalService>> = runCatchingCancellable {
         AuntieLog.d("Fetching supplemental services (includeInactive: $includeInactive)")
         var query: Query = firestore.collection("supplemental_services")
 
@@ -180,7 +181,7 @@ class ServiceRepository(
         }
     }.onFailure { AuntieLog.e("Error fetching supplemental services", it) }
 
-    suspend fun getSupplementalServicesForBaseService(baseServiceId: String): Result<List<SupplementalService>> = runCatching {
+    suspend fun getSupplementalServicesForBaseService(baseServiceId: String): Result<List<SupplementalService>> = runCatchingCancellable {
         AuntieLog.d("Fetching supplemental services for base service $baseServiceId")
         val snapshot = firestore.collection("supplemental_services")
             .whereEqualTo("isActive", true)
@@ -200,7 +201,7 @@ class ServiceRepository(
      * id used to fall into a whole-document bare `.set()` here instead - see
      * [createSupplementalService] for the shape and the precedent.
      */
-    suspend fun createSurcharge(surcharge: Surcharge): Result<String> = runCatching {
+    suspend fun createSurcharge(surcharge: Surcharge): Result<String> = runCatchingCancellable {
         require(surcharge.id.isBlank()) {
             "createSurcharge creates; edit ${surcharge.id} through updateSurcharge"
         }
@@ -217,7 +218,7 @@ class ServiceRepository(
         docRef.id
     }.onFailure { AuntieLog.e("Error creating surcharge", it) }
 
-    suspend fun getSurcharges(includeInactive: Boolean = false): Result<List<Surcharge>> = runCatching {
+    suspend fun getSurcharges(includeInactive: Boolean = false): Result<List<Surcharge>> = runCatchingCancellable {
         AuntieLog.d("Fetching surcharges")
         var query: Query = firestore.collection("surcharges")
         if (!includeInactive) query = query.whereEqualTo("isActive", true)
@@ -228,7 +229,7 @@ class ServiceRepository(
 
     /** Edit an existing surcharge (rules allow `write: if isAuntie()`). Full set of
      *  the pre-filled record preserves createdAt; only updatedAt is refreshed. */
-    suspend fun updateSurcharge(surcharge: Surcharge): Result<Unit> = runCatching {
+    suspend fun updateSurcharge(surcharge: Surcharge): Result<Unit> = runCatchingCancellable {
         AuntieLog.i("Updating surcharge: ${surcharge.id}")
         val now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
         firestore.collection("surcharges").document(surcharge.id)
@@ -239,7 +240,7 @@ class ServiceRepository(
     // === Discounts ===
 
     /** CREATES a discount; editing one goes through [updateDiscount]. See [createSurcharge]. */
-    suspend fun createDiscount(discount: Discount): Result<String> = runCatching {
+    suspend fun createDiscount(discount: Discount): Result<String> = runCatchingCancellable {
         require(discount.id.isBlank()) {
             "createDiscount creates; edit ${discount.id} through updateDiscount"
         }
@@ -256,7 +257,7 @@ class ServiceRepository(
         docRef.id
     }.onFailure { AuntieLog.e("Error creating discount", it) }
 
-    suspend fun getDiscounts(includeInactive: Boolean = false): Result<List<Discount>> = runCatching {
+    suspend fun getDiscounts(includeInactive: Boolean = false): Result<List<Discount>> = runCatchingCancellable {
         AuntieLog.d("Fetching discounts")
         var query: Query = firestore.collection("discounts")
         if (!includeInactive) query = query.whereEqualTo("isActive", true)
@@ -266,7 +267,7 @@ class ServiceRepository(
     }.onFailure { AuntieLog.e("Error fetching discounts", it) }
 
     /** Edit an existing discount (rules allow `write: if isAuntie()`). */
-    suspend fun updateDiscount(discount: Discount): Result<Unit> = runCatching {
+    suspend fun updateDiscount(discount: Discount): Result<Unit> = runCatchingCancellable {
         AuntieLog.i("Updating discount: ${discount.id}")
         val now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
         firestore.collection("discounts").document(discount.id)
@@ -285,7 +286,7 @@ class ServiceRepository(
      * fields, it would reset how many times the code has been redeemed to
      * whatever the client happened to be holding.
      */
-    suspend fun createPromoCode(promoCode: PromoCode): Result<String> = runCatching {
+    suspend fun createPromoCode(promoCode: PromoCode): Result<String> = runCatchingCancellable {
         require(promoCode.id.isBlank()) {
             "createPromoCode creates; edit ${promoCode.id} through updatePromoCode"
         }
@@ -303,7 +304,7 @@ class ServiceRepository(
     }.onFailure { AuntieLog.e("Error creating promo code", it) }
 
     /** Edit an existing promo code (rules allow `write: if isAuntie()`). */
-    suspend fun updatePromoCode(promoCode: PromoCode): Result<Unit> = runCatching {
+    suspend fun updatePromoCode(promoCode: PromoCode): Result<Unit> = runCatchingCancellable {
         AuntieLog.i("Updating promo code: ${promoCode.id}")
         val now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
         firestore.collection("promo_codes").document(promoCode.id)
@@ -311,7 +312,7 @@ class ServiceRepository(
         Unit
     }.onFailure { AuntieLog.e("Error updating promo code ${promoCode.id}", it) }
 
-    suspend fun getPromoCodeByCode(code: String): Result<PromoCode?> = runCatching {
+    suspend fun getPromoCodeByCode(code: String): Result<PromoCode?> = runCatchingCancellable {
         AuntieLog.d("Fetching promo code: $code")
         val snapshot = firestore.collection("promo_codes")
             .whereEqualTo("code", code)
@@ -322,7 +323,7 @@ class ServiceRepository(
         snapshot.documents.firstOrNull()?.toObject(PromoCode::class.java)
     }.onFailure { AuntieLog.e("Error fetching promo code $code", it) }
 
-    suspend fun getPromoCodes(includeInactive: Boolean = false): Result<List<PromoCode>> = runCatching {
+    suspend fun getPromoCodes(includeInactive: Boolean = false): Result<List<PromoCode>> = runCatchingCancellable {
         AuntieLog.d("Fetching all promo codes")
         var query: Query = firestore.collection("promo_codes")
         if (!includeInactive) query = query.whereEqualTo("isActive", true)
@@ -333,7 +334,7 @@ class ServiceRepository(
 
     // === Business Hours & Settings ===
 
-    suspend fun getBusinessHours(): Result<List<BusinessHours>> = runCatching {
+    suspend fun getBusinessHours(): Result<List<BusinessHours>> = runCatchingCancellable {
         AuntieLog.d("Fetching business hours")
         val snapshot = firestore.collection("business_hours")
             .orderBy("dayOfWeek")
@@ -358,7 +359,7 @@ class ServiceRepository(
         }
     }.onFailure { AuntieLog.e("Error fetching business hours", it) }
 
-    suspend fun updateBusinessHours(businessHours: List<BusinessHours>): Result<Unit> = runCatching {
+    suspend fun updateBusinessHours(businessHours: List<BusinessHours>): Result<Unit> = runCatchingCancellable {
         AuntieLog.i("Updating business hours")
         businessHours.forEach { hours ->
             if (hours.id.isBlank()) {

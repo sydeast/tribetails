@@ -25,6 +25,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import com.google.firebase.messaging.FirebaseMessaging
+import com.tribetails.auntieos.util.runCatchingCancellable
 
 data class AdminSettingsUiState(
     val businessSettings: BusinessSettings = BusinessSettings(),
@@ -705,7 +706,7 @@ class AdminSettingsViewModel(
             val firestoreState = firestoreHealthFromProbe(repository.getBusinessSettings().isSuccess)
 
             // This device's FCM registration token.
-            val fcmHasToken = runCatching {
+            val fcmHasToken = runCatchingCancellable {
                 FirebaseMessaging.getInstance().token.await().isNotBlank()
             }.getOrDefault(false)
             val fcmState = fcmHealthFromTokenPresence(fcmHasToken)

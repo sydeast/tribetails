@@ -7,6 +7,7 @@ import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.ServiceRepository
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.util.rethrowIfCancellation
 
 data class ServiceManagementState(
     val baseServices: List<BaseService> = emptyList(),
@@ -77,6 +78,7 @@ class ServiceManagementViewModel(
                     isLoading = false
                 )
             } catch (e: Exception) {
+                e.rethrowIfCancellation()
                 _state.value = _state.value.copy(
                     isLoading = false,
                     errorMessage = "Failed to load data: ${e.message}"
