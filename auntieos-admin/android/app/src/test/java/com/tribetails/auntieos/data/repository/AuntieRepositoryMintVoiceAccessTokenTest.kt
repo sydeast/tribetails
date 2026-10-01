@@ -119,6 +119,8 @@ class AuntieRepositoryMintVoiceAccessTokenTest {
         // would leave the banner with nothing specific to say.
         val functions = mockk<FirebaseFunctions>()
         val refusal = mockk<FirebaseFunctionsException>()
+        // The auth classifier walks the cause chain; a strict mock must end it.
+        every { refusal.cause } returns null
         every { refusal.code } returns FirebaseFunctionsException.Code.FAILED_PRECONDITION
         every { refusal.details } returns mapOf("code" to "missing_secret", "secret" to "TWIML_APP_SID")
         every { refusal.message } returns "the TWIML_APP_SID secret is not set"

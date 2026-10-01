@@ -273,6 +273,13 @@ class AuntieRepository(
      */
     private fun endSession() = endLocalSession(auth, authGate)
 
+    /**
+     * Whether an admin is signed in right now, by the same test [AuthGate]
+     * applies. `VoiceTokenManager` asks this before every mint attempt so a
+     * signed-out app waits for auth instead of minting into a refusal (#1066).
+     */
+    fun isSignedIn(): Boolean = runCatching { authGate.ensureAuthenticated() }.isSuccess
+
     suspend fun currentAdminIdToken(forceRefresh: Boolean = false): Result<String> = runCatching {
         authGate.ensureAuthenticated()
         val user = auth.currentUser ?: error("Admin sign-in required before requesting an ID token.")
@@ -289,7 +296,14 @@ class AuntieRepository(
         val isAdmin = token?.claims?.get("admin") == true
         AuntieLog.d("isCurrentUserAdmin uid=${auth.currentUser?.uid} → $isAdmin")
         isAdmin
-    }.onFailure { AuntieLog.e("Failed to read admin claim", it) }
+    }.onFailure {
+        logFailureUnlessSignedOut("Failed to read admin claim", it)
+        // #1066: `AuntieNavHost` runs this first on a cold start, against the
+        // cached user. A credential Firebase will no longer refresh ends the
+        // session here, so the operator lands on the sign-in screen with a
+        // notice rather than on "Admin access required".
+        RevokedSessionGuard.shared.react(it)
+    }
 
     /** Defense-in-depth: forces an ID-token refresh and throws if the admin
      *  claim is missing. Use before any destructive admin action so that
@@ -2437,7 +2451,7 @@ class AuntieRepository(
         val expiresInSeconds = (data["expiresInSeconds"] as? Number)?.toLong()
             ?: throw IllegalStateException("mintVoiceAccessToken returned no expiresInSeconds")
         VoiceAccessToken(token = token, identity = identity, expiresInSeconds = expiresInSeconds)
-    }.onFailure { AuntieLog.e("Failed to mint a Twilio Voice access token", it) }
+    }.onFailure { logFailureUnlessSignedOut("Failed to mint a Twilio Voice access token", it) }
 
     // --- Firestore streams for comms history (survives app restart) ---
 
