@@ -360,7 +360,7 @@ describe('account', () => {
     it('refuses a wrong current password on the login-email form', () => {
       cy.signIn();
       cy.visit('/account');
-      cy.get('#security-new-email').type(`rotated-${STAMP}@auntieos.test`);
+      cy.get('#security-new-email').type('pawsome@hanasamku.com');
       cy.get('#security-email-password').type('not-the-password', { log: false });
       cy.contains('button', 'Send verification link').click();
       cy.contains('.security__section [role="alert"]', 'Current password is incorrect.', {
