@@ -305,7 +305,8 @@ export function buildWeeklyVisits(params: BuildWeeklyVisitsParams): RequestBooki
     if (weeklyDays.has(d.getDay())) {
       for (const slot of ordered) {
         if (out.length >= MAX_RECURRING_VISITS) break;
-        const visit = slotVisitOn(d, slot, services, timing);
+        const built = slotVisitOn(d, slot, services, timing);
+        const visit = built === null ? null : anchorOpenBlockVisit(built, timing.blocks, nowMs);
         if (visit !== null && visit.startTimeMs > nowMs) out.push(visit);
       }
     }
@@ -337,6 +338,70 @@ export function buildVisits(
     }
   }
   return out.sort((a, b) => a.startTimeMs - b.startTimeMs || a.serviceId.localeCompare(b.serviceId));
+}
+
+/**
+ * How far ahead of "now" a visit joining an already-open block is placed, so
+ * the office has some notice and the request still reads as future when it
+ * reaches `requestBooking` a little later. Mirrors `OPEN_BLOCK_LEAD_MINUTES`.
+ */
+export const OPEN_BLOCK_LEAD_MINUTES = 15;
+
+/** Anchored starts land on a 5-minute boundary, so the plan does not shift on every recompute. */
+const OPEN_BLOCK_STEP_MS = 5 * 60_000;
+
+/** The instant `block` closes on the local calendar day of `dayMs`, or null when its end is unreadable. '24:00' is next midnight. */
+function blockEndMs(dayMs: number, block: TimeBlockDto): number | null {
+  const d = new Date(dayMs);
+  const end = block.endTime.trim() === '24:00' ? { hour: 24, minute: 0 } : parseHourMinute(block.endTime);
+  if (end === null) return null;
+  // `new Date(y, m, d, 24, 0)` rolls to the next midnight, which is what '24:00' means.
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), end.hour, end.minute).getTime();
+}
+
+/**
+ * A block-mode visit whose window has ALREADY OPENED but not yet closed starts
+ * a little after `nowMs` instead of at the window's first minute.
+ *
+ * A window offers no clock, so its visit is sent at the block's first minute
+ * (`slotStartHHmm`). On today's date that minute is in the past from the moment
+ * the window opens, and `requestBooking` refuses a past start, which used to
+ * leave a household unable to book Midday at 12:30 even though the Auntie
+ * still has hours of Midday left. The window is what the household chose; the
+ * start is only the instant it is carried on, and `requestBooking` accepts any
+ * start inside the window (`visitMatchesBlock`), so moving it later inside the
+ * same window changes nothing the office reads.
+ *
+ * Touches only visits that have already started, so a plan whose anchored
+ * start is still ahead stays identical when this runs again at submit (the
+ * #644 idempotency key is keyed on the payload). A window too close to closing
+ * to fit `OPEN_BLOCK_LEAD_MINUTES` is left alone, and `pastPlannedVisits`
+ * still flags it. Mirrors `anchorOpenBlockVisit` in RecurringBooking.kt.
+ */
+export function anchorOpenBlockVisit(
+  visit: RequestBookingArgsVisit,
+  blocks: readonly TimeBlockDto[],
+  nowMs: number,
+): RequestBookingArgsVisit {
+  if (visit.startTimeMs > nowMs) return visit;
+  const block = findTimeBlock(blocks, visit.timeBlockId ?? null);
+  if (block === null) return visit;
+  const endMs = blockEndMs(visit.startTimeMs, block);
+  if (endMs === null) return visit;
+  const earliest = nowMs + OPEN_BLOCK_LEAD_MINUTES * 60_000;
+  const anchored = Math.ceil(earliest / OPEN_BLOCK_STEP_MS) * OPEN_BLOCK_STEP_MS;
+  return anchored < endMs ? { ...visit, startTimeMs: anchored } : visit;
+}
+
+/** `anchorOpenBlockVisit` over a whole plan, re-sorted by start. */
+export function anchorOpenBlockVisits(
+  visits: readonly RequestBookingArgsVisit[],
+  blocks: readonly TimeBlockDto[],
+  nowMs: number,
+): RequestBookingArgsVisit[] {
+  return visits
+    .map((v) => anchorOpenBlockVisit(v, blocks, nowMs))
+    .sort((a, b) => a.startTimeMs - b.startTimeMs || a.serviceId.localeCompare(b.serviceId));
 }
 
 /**
