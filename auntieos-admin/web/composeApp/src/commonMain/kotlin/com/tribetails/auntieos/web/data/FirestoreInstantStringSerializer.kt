@@ -10,7 +10,7 @@ import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
@@ -30,7 +30,11 @@ import kotlin.time.Instant
  * This serializer normalizes either shape to an ISO-8601 string:
  *  - `{seconds,nanoseconds}` object -> `Instant.toString()` (e.g. 2026-06-27T17:07:24.579Z)
  *  - an already-ISO string          -> passed through unchanged
+ *  - a bare number                  -> read as epoch millis, then ISO (#1065)
  *  - null / missing / unparseable   -> "" (matches the model defaults)
+ *
+ * It never throws on a value's shape, so a malformed timestamp blanks that one
+ * field and the document still loads.
  */
 @OptIn(ExperimentalTime::class)
 object FirestoreInstantStringSerializer : KSerializer<String> {
@@ -42,8 +46,8 @@ object FirestoreInstantStringSerializer : KSerializer<String> {
             ?: return runCatching { decoder.decodeString() }.getOrDefault("")
         return when (val el = jsonDecoder.decodeJsonElement()) {
             is JsonObject -> {
-                val seconds = el["seconds"]?.jsonPrimitive?.longOrNull
-                val nanos = el["nanoseconds"]?.jsonPrimitive?.longOrNull ?: 0L
+                val seconds = (el["seconds"] as? JsonPrimitive)?.longOrNull
+                val nanos = (el["nanoseconds"] as? JsonPrimitive)?.longOrNull ?: 0L
                 if (seconds == null) {
                     ""
                 } else {
@@ -52,9 +56,18 @@ object FirestoreInstantStringSerializer : KSerializer<String> {
                 }
             }
             is JsonNull -> ""
-            is JsonPrimitive -> el.content
+            is JsonPrimitive -> primitiveToIso(el)
             else -> ""
         }
+    }
+
+    /** A string passes through; a number is epoch millis; anything else is blank. */
+    private fun primitiveToIso(el: JsonPrimitive): String {
+        if (el.isString) return el.content
+        val millis = el.longOrNull
+            ?: el.doubleOrNull?.takeIf { it.isFinite() }?.toLong()
+            ?: return ""
+        return runCatching { Instant.fromEpochMilliseconds(millis).toString() }.getOrDefault("")
     }
 
     override fun serialize(encoder: Encoder, value: String) {
