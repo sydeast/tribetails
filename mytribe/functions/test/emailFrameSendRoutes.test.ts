@@ -67,12 +67,12 @@ afterEach(() => vi.unstubAllEnvs());
 describe('the stored frame reaches every send route', () => {
   it('sendFromTemplate (invites, recovery)', async () => {
     setup({ 'emailTemplates/k': VISUAL, [FRAME_PATH]: STORED_FRAME });
-    await sendFromTemplate('k', 'pat@x.test', {});
+    await sendFromTemplate('k', 'pat@tribetails.com', {});
     expectStoredFrame(sentHtml());
   });
 
   it('the notification email channel', async () => {
-    setup({ 'emailTemplates/k': VISUAL, 'clients/u1': { email: 'pat@x.test' }, [FRAME_PATH]: STORED_FRAME });
+    setup({ 'emailTemplates/k': VISUAL, 'clients/u1': { email: 'pat@tribetails.com' }, [FRAME_PATH]: STORED_FRAME });
     await sendEmailChannel({ def: def(), recipientUid: 'u1', data: {} });
     expectStoredFrame(sentHtml());
   });
@@ -87,15 +87,15 @@ describe('the stored frame reaches every send route', () => {
     });
     await sendPrimaryInviteEmails({
       inviteId: 'inv1',
-      invitedEmail: 'sec@x.test',
+      invitedEmail: 'sec@tribetails.com',
       claimBaseUrl: 'https://kinfolk.tribetails.com/claim',
       authorName: 'Pat',
       secondaryLabel: 'Partner',
       tribeName: 'Doe',
       expiresInDays: 7,
       proposedPermissions: {},
-      auntieNotify: { email: 'owner@x.test', reviewBaseUrl: 'https://admin.tribetails.com' },
-      primaryEmail: 'pat@x.test',
+      auntieNotify: { email: 'owner@tribetails.com', reviewBaseUrl: 'https://admin.tribetails.com' },
+      primaryEmail: 'pat@tribetails.com',
     } as never);
     expect(mocks.fetch).toHaveBeenCalledTimes(3);
     for (const i of [0, 1, 2]) expectStoredFrame(sentHtml(i));
@@ -120,7 +120,7 @@ describe('the stored frame reaches every send route', () => {
         path === FRAME_PATH ? { get: async () => { throw new Error('UNAVAILABLE'); } } : base.doc(path),
       collection: base.collection,
     });
-    await sendFromTemplate('k', 'pat@x.test', {});
+    await sendFromTemplate('k', 'pat@tribetails.com', {});
     const html = sentHtml();
     expect(html).toContain('border-top: 8px solid #df8431');
     expect(html).toContain("<div class=\"footer\">Tribe Tails Pet Care. Your Kin's Favorite Auntie.</div>");

@@ -76,13 +76,19 @@ export async function sendEmailChannel(args: ChannelSendArgs): Promise<ChannelSe
       subjectTemplate: generic.subject,
       bodyTemplate: generic.body,
       data: renderData,
+      templateKey: def.key,
     });
     return { providerMessageId, usedFallback: true, fallbackReason: `emailTemplates/${templateId}` };
   }
 
   // #957: the operator's frame, read once for this send. Never throws.
   const frame = await loadEmailFrame('emailChannel');
-  const providerMessageId = await sendTemplatedEmail({ to: email, data: renderData, ...sendPartsFor(tpl, frame) });
+  const providerMessageId = await sendTemplatedEmail({
+    to: email,
+    data: renderData,
+    templateKey: def.key,
+    ...sendPartsFor(tpl, frame),
+  });
   return { providerMessageId };
 }
 

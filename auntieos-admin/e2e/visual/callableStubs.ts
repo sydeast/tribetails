@@ -244,7 +244,7 @@ const ADMIN_INVITES = [
     inviteId: 'vis-invite-pending-01',
     tribeId: 'e2e-kf-1',
     householdName: 'the Thornes',
-    invitedEmail: 'rowan.thorne@example.test',
+    invitedEmail: 'catch@hanasamku.com',
     secondaryLabel: 'Rowan (son)',
     proposedRole: 'SECONDARY',
     proposedPermissions: {
@@ -268,7 +268,7 @@ const ADMIN_INVITES = [
     inviteId: 'vis-invite-pending-02',
     tribeId: 'e2e-kf-2',
     householdName: 'the Halbrooks',
-    invitedEmail: 'delia.halbrook@example.test',
+    invitedEmail: 'pawsome@hanasamku.com',
     secondaryLabel: null,
     proposedRole: 'SECONDARY',
     proposedPermissions: {
@@ -295,7 +295,7 @@ const ADMIN_INVITES = [
     inviteId: 'vis-invite-expired-01',
     tribeId: 'e2e-kf-1',
     householdName: 'the Thornes',
-    invitedEmail: 'marla.finch@example.test',
+    invitedEmail: 'catch@hanasamku.com',
     secondaryLabel: 'Marla (neighbour)',
     proposedRole: 'SECONDARY',
     proposedPermissions: {
@@ -319,7 +319,7 @@ const ADMIN_INVITES = [
     inviteId: 'vis-invite-accepted-01',
     tribeId: 'e2e-kf-2',
     householdName: 'the Halbrooks',
-    invitedEmail: 'nora@example.test',
+    invitedEmail: 'pawsome@hanasamku.com',
     secondaryLabel: null,
     proposedRole: 'PRIMARY',
     proposedPermissions: {
@@ -345,7 +345,7 @@ const ADMIN_INVITES = [
     inviteId: 'vis-invite-revoked-01',
     tribeId: 'e2e-kf-1',
     householdName: 'the Thornes',
-    invitedEmail: 'old.address@example.test',
+    invitedEmail: 'catch@hanasamku.com',
     secondaryLabel: 'Wrong address',
     proposedRole: 'SECONDARY',
     proposedPermissions: {

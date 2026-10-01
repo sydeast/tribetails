@@ -262,8 +262,10 @@ npm run e2e:cy                            # both, from the repo root
 
 Each wraps `firebase emulators:exec` the same way `npm run e2e` does, boots its
 own vite dev server with `VITE_E2E_EMULATOR` set, and type-checks its specs
-first (`tsc -p cypress`). `e2e:cy:open` is the interactive form. No extra
-install step: the browser bundle comes down with `npm ci`.
+first (`tsc -p cypress`). `e2e:cy:open` is the interactive form, and it opens
+in Chrome (#1069): Cypress 16 deprecates Electron as a test browser, and the
+operator watches specs in Chrome. The headless runs keep `cypress run`'s
+default. No extra install step: the browser bundle comes down with `npm ci`.
 
 **The admin suite** (`auntieos-admin/cypress/`) reuses this harness's emulators,
 `e2e.firebase.json` and `e2e/seed.ts` rather than forking any of them.

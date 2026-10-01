@@ -32,6 +32,7 @@ describe('sendFromTemplate', () => {
       bodyTemplate: 'Body {{name}}',
       data: { name: 'Alice' },
       htmlTemplate: undefined,
+      templateKey: 'invite.primary',
     });
   });
 

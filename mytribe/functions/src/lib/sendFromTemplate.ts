@@ -139,5 +139,5 @@ export async function sendFromTemplate(
   const tpl = await loadEmailTemplate(key);
   if (!tpl) throw new Error(`email template missing: resolved from ${key}`);
   const resolvedFrame = frame ?? (await loadEmailFrame('sendFromTemplate'));
-  return sendTemplatedEmail({ to, data, ...sendPartsFor(tpl, resolvedFrame) });
+  return sendTemplatedEmail({ to, data, templateKey: key, ...sendPartsFor(tpl, resolvedFrame) });
 }

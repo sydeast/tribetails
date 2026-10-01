@@ -273,6 +273,13 @@ class AuntieRepository(
      */
     private fun endSession() = endLocalSession(auth, authGate)
 
+    /**
+     * Whether an admin is signed in right now, by the same test [AuthGate]
+     * applies. `VoiceTokenManager` asks this before every mint attempt so a
+     * signed-out app waits for auth instead of minting into a refusal (#1066).
+     */
+    fun isSignedIn(): Boolean = runCatching { authGate.ensureAuthenticated() }.isSuccess
+
     suspend fun currentAdminIdToken(forceRefresh: Boolean = false): Result<String> = runCatching {
         authGate.ensureAuthenticated()
         val user = auth.currentUser ?: error("Admin sign-in required before requesting an ID token.")
@@ -289,7 +296,14 @@ class AuntieRepository(
         val isAdmin = token?.claims?.get("admin") == true
         AuntieLog.d("isCurrentUserAdmin uid=${auth.currentUser?.uid} → $isAdmin")
         isAdmin
-    }.onFailure { AuntieLog.e("Failed to read admin claim", it) }
+    }.onFailure {
+        logFailureUnlessSignedOut("Failed to read admin claim", it)
+        // #1066: `AuntieNavHost` runs this first on a cold start, against the
+        // cached user. A credential Firebase will no longer refresh ends the
+        // session here, so the operator lands on the sign-in screen with a
+        // notice rather than on "Admin access required".
+        RevokedSessionGuard.shared.react(it)
+    }
 
     /** Defense-in-depth: forces an ID-token refresh and throws if the admin
      *  claim is missing. Use before any destructive admin action so that
@@ -2437,7 +2451,7 @@ class AuntieRepository(
         val expiresInSeconds = (data["expiresInSeconds"] as? Number)?.toLong()
             ?: throw IllegalStateException("mintVoiceAccessToken returned no expiresInSeconds")
         VoiceAccessToken(token = token, identity = identity, expiresInSeconds = expiresInSeconds)
-    }.onFailure { AuntieLog.e("Failed to mint a Twilio Voice access token", it) }
+    }.onFailure { logFailureUnlessSignedOut("Failed to mint a Twilio Voice access token", it) }
 
     // --- Firestore streams for comms history (survives app restart) ---
 
@@ -2743,10 +2757,17 @@ class AuntieRepository(
         authGate.ensureAuthenticated()
         val uid = auth.currentUser?.uid
             ?: throw IllegalStateException("getNotifications called without auth uid")
-        firestore.collection("notifications")
+        val docs = firestore.collection("notifications")
             .whereEqualTo("recipientUid", uid)
             .get().await()
-            .toObjects(com.tribetails.auntieos.data.admin.NotificationEntry::class.java)
+            .documents
+        // #1065: decoded by hand, not toObjects(). createdAt/readAt/archivedAt are
+        // server Timestamps on the String model, and toObjects() threw on the first
+        // doc, failing the whole inbox (AUNTIEOS-ADMIN-1N). One bad doc now drops
+        // or degrades only itself.
+        com.tribetails.auntieos.data.admin.decodeNotificationDocs(
+            docs.map { it.id to it.data },
+        ) { id, cause -> AuntieLog.w("Dropped notification $id", cause) }
             // Step 4: archived notifications are hidden from the default inbox. The
             // dispatcher writes no archivedAt, so absence => active. Filtered client
             // side (a where-clause would require a composite index for the common case).
