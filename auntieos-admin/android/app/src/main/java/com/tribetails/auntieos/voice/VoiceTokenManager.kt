@@ -5,6 +5,10 @@ import com.google.firebase.functions.FirebaseFunctionsException
 import com.google.firebase.messaging.FirebaseMessaging
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.AuthGate
+import com.tribetails.auntieos.data.repository.isExpectedSignedOutFailure
+import com.tribetails.auntieos.data.repository.logFailureUnlessSignedOut
+import com.tribetails.auntieos.data.repository.sessionEndedMessage
+import com.tribetails.auntieos.data.repository.sessionEndedReason
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.util.fcmTokenFlow
 import com.tribetails.auntieos.util.isFcmUnavailable
@@ -203,6 +207,18 @@ object VoiceTokenManager {
      */
     private var backoff: suspend (Long) -> Unit = { delay(it) }
 
+    /**
+     * Whether an admin is signed in, asked before every mint attempt (#1066).
+     *
+     * [VoiceRegistrationCoordinator] only calls [onAdminSignedIn] for a signed-in
+     * UID, but on a cold start that UID is the CACHED user, and Firebase drops it
+     * the moment it finds the credential dead. A mint that starts after that, or
+     * a retry scheduled before it, would only be refused by the callable's own
+     * auth gate. Checking first means a signed-out app waits for the next
+     * sign-in instead.
+     */
+    private var isSignedIn: () -> Boolean = { true }
+
     /** Serialises minting so two concurrent callers cannot burn two tokens. */
     private val mintMutex = Mutex()
 
@@ -246,6 +262,7 @@ object VoiceTokenManager {
             fcmTokenProvider = { resolveFcmToken(appContext) },
             now = System::currentTimeMillis,
             scope = scope,
+            isSignedIn = { repository.isSignedIn() },
         )
     }
 
@@ -452,6 +469,16 @@ object VoiceTokenManager {
     private suspend fun mintWithRetry(forceRemint: Boolean): String? {
         var attempt = 1
         while (true) {
+            if (!isSignedIn()) {
+                // #1066: nobody to mint for. Not a failure, and not worth a
+                // retry: the next sign-in calls [onAdminSignedIn] with a fresh
+                // budget. Idle is the true statement for a signed-out app, the
+                // same one [onSignedOut] makes.
+                AuntieLog.d("Voice token mint skipped: no admin is signed in")
+                registeredWithVoiceSdk = false
+                _state.value = VoiceTokenState.Idle
+                return null
+            }
             _state.value = VoiceTokenState.Working
             val token = ensureToken(forceRemint)
             if (token != null) return token
@@ -497,7 +524,9 @@ object VoiceTokenManager {
             val error = result.exceptionOrNull()
                 ?: IllegalStateException("mintVoiceAccessToken failed without an error")
             _state.value = classifyTokenFailure(error)
-            AuntieLog.e("Twilio Voice token mint failed", error)
+            // #1066: signed out, or a credential Firebase will no longer refresh,
+            // is an expected auth state and goes to a breadcrumb, not to Sentry.
+            logFailureUnlessSignedOut("Twilio Voice token mint failed", error)
             return@withLock null
         }
         cachedToken = minted.token
@@ -589,9 +618,11 @@ object VoiceTokenManager {
         now: () -> Long,
         scope: CoroutineScope,
         backoff: suspend (Long) -> Unit = { delay(it) },
+        isSignedIn: () -> Boolean = { true },
     ) {
         refreshJob?.cancel()
         refreshJob = null
+        this.isSignedIn = isSignedIn
         this.mint = mint
         this.registrar = registrar
         this.fcmTokenProvider = fcmTokenProvider
@@ -619,6 +650,7 @@ object VoiceTokenManager {
         now = System::currentTimeMillis
         scope = null
         backoff = { delay(it) }
+        isSignedIn = { true }
         cachedToken = null
         cachedIdentity = ""
         cachedExpiresAtMillis = 0L
@@ -646,6 +678,15 @@ internal fun classifyTokenFailure(error: Throwable): VoiceTokenState {
     // `Failed` would instead spend the whole retry budget re-asking a question
     // whose answer cannot change until then (#433).
     if (error.message == AuthGate.SIGN_IN_REQUIRED) {
+        return VoiceTokenState.NotAuthorized(AuthGate.SIGN_IN_REQUIRED)
+    }
+    // #1066: the cached credential is dead (revoked, expired, or the account
+    // disabled), usually wrapped in the Functions SDK's `ExecutionException`.
+    // The session is over and `awaitCallable` has already signed out, so this
+    // is NotAuthorized, which spends no retries, carrying the same sentence the
+    // sign-in screen shows.
+    sessionEndedReason(error)?.let { return VoiceTokenState.NotAuthorized(sessionEndedMessage(it)) }
+    if (isExpectedSignedOutFailure(error)) {
         return VoiceTokenState.NotAuthorized(AuthGate.SIGN_IN_REQUIRED)
     }
     if (error is FirebaseFunctionsException) {

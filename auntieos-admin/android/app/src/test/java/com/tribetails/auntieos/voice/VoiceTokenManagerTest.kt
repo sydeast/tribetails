@@ -7,6 +7,13 @@ import com.tribetails.auntieos.data.repository.AuthGate
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.unmockkObject
+import io.mockk.verify
+import com.google.firebase.auth.FirebaseAuthInvalidUserException
+import com.tribetails.auntieos.util.AuntieLog
+import java.net.UnknownHostException
+import java.util.concurrent.ExecutionException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -96,6 +103,7 @@ class VoiceTokenManagerTest {
         registrar: VoiceRegistrar = RecordingRegistrar(),
         fcmToken: String = "fcm-abc",
         now: () -> Long = { 0L },
+        isSignedIn: () -> Boolean = { true },
     ) = VoiceTokenManager.configure(
         mint = mint,
         registrar = registrar,
@@ -103,6 +111,7 @@ class VoiceTokenManagerTest {
         now = now,
         scope = scope,
         backoff = { backoffs += it },
+        isSignedIn = isSignedIn,
     )
 
     @Test
@@ -130,6 +139,8 @@ class VoiceTokenManagerTest {
             // is unset. The secret NAME is the whole point: it is what turns an
             // unusable phone into a one-line instruction for the operator.
             val refusal = mockk<FirebaseFunctionsException>()
+            // The auth classifier walks the cause chain; a strict mock must end it.
+            every { refusal.cause } returns null
             every { refusal.code } returns FirebaseFunctionsException.Code.FAILED_PRECONDITION
             every { refusal.details } returns
                 mapOf("code" to "missing_secret", "secret" to "TWIML_APP_SID")
@@ -154,6 +165,8 @@ class VoiceTokenManagerTest {
     fun `a malformed secret is surfaced the same way, carrying its own detail code`() =
         runBlocking {
             val refusal = mockk<FirebaseFunctionsException>()
+            // The auth classifier walks the cause chain; a strict mock must end it.
+            every { refusal.cause } returns null
             every { refusal.code } returns FirebaseFunctionsException.Code.FAILED_PRECONDITION
             every { refusal.details } returns
                 mapOf("code" to "malformed_secret", "secret" to "TWILIO_API_KEY_SID")
@@ -192,6 +205,8 @@ class VoiceTokenManagerTest {
             // Twilio secret when the real problem is a missing admin claim sends
             // them at the wrong thing.
             val refusal = mockk<FirebaseFunctionsException>()
+            // The auth classifier walks the cause chain; a strict mock must end it.
+            every { refusal.cause } returns null
             every { refusal.code } returns FirebaseFunctionsException.Code.PERMISSION_DENIED
             every { refusal.details } returns null
             every { refusal.message } returns "Admin claim required."
@@ -498,6 +513,8 @@ class VoiceTokenManagerTest {
         // Total, never throwing on a shape it did not expect: a failed-precondition
         // from anywhere else must not be reported as a named misconfiguration.
         val refusal = mockk<FirebaseFunctionsException>()
+        // The auth classifier walks the cause chain; a strict mock must end it.
+        every { refusal.cause } returns null
         every { refusal.code } returns FirebaseFunctionsException.Code.FAILED_PRECONDITION
         every { refusal.details } returns "not a map"
         every { refusal.message } returns "something else went wrong"
@@ -605,6 +622,8 @@ class VoiceTokenManagerTest {
     fun `a missing Twilio secret spends no retries either, because it will still be missing`() =
         runBlocking {
             val refusal = mockk<FirebaseFunctionsException>()
+            // The auth classifier walks the cause chain; a strict mock must end it.
+            every { refusal.cause } returns null
             every { refusal.code } returns FirebaseFunctionsException.Code.FAILED_PRECONDITION
             every { refusal.details } returns
                 mapOf("code" to "missing_secret", "secret" to "TWIML_APP_SID")
@@ -689,6 +708,7 @@ class VoiceTokenManagerTest {
         val context = mockk<Context>(relaxed = true)
         every { context.applicationContext } returns context
         val repository = mockk<AuntieRepository>()
+        every { repository.isSignedIn() } returns true
         var mints = 0
         coEvery { repository.mintVoiceAccessToken() } coAnswers {
             mints++
@@ -700,5 +720,112 @@ class VoiceTokenManagerTest {
         // Configured, though: the sign-in that follows has everything it needs.
         VoiceTokenManager.onAdminSignedIn()
         assertEquals(1, mints)
+    }
+
+    // ── #1066: an expired credential at cold start ──────────────────────────
+    //
+    // The cached Firebase user's credential was revoked or expired. The first
+    // mint failed inside the Functions SDK with `FirebaseAuthInvalidUserException`
+    // wrapped in an `ExecutionException`, was classified as the retryable Failed
+    // bucket, and so was retried with a Sentry warning per attempt; every refusal
+    // after that was the sign-in-required throw, reported as an error. None of it
+    // is a defect: it is a session that is over.
+    private fun expiredCredential() = ExecutionException(
+        "1 out of 2 underlying tasks failed",
+        FirebaseAuthInvalidUserException(
+            "ERROR_USER_TOKEN_EXPIRED",
+            "The user's credential is no longer valid. The user must sign in again.",
+        ),
+    )
+
+    private fun <T> withLogSpy(block: () -> T): T {
+        mockkObject(AuntieLog)
+        try {
+            return block()
+        } finally {
+            unmockkObject(AuntieLog)
+        }
+    }
+
+    @Test
+    fun `a mint while signed out never calls the callable, never retries, and reports nothing`() =
+        withLogSpy {
+            runBlocking {
+                var mints = 0
+                configure(
+                    mint = { mints++; Result.success(token()) },
+                    isSignedIn = { false },
+                )
+                VoiceTokenManager.mintAndRegister(forceRemint = true)
+                assertEquals(0, mints)
+                assertTrue("expected no backoff, got $backoffs", backoffs.isEmpty())
+                // Waiting for auth is Idle: nothing attempted, nothing failed.
+                assertEquals(VoiceTokenState.Idle, VoiceTokenManager.state.value)
+                verify(exactly = 0) { AuntieLog.e(any(), any()) }
+                verify(exactly = 0) { AuntieLog.w(any(), any()) }
+            }
+        }
+
+    @Test
+    fun `a sign-in-required refusal is not retried and not reported to Sentry`() = withLogSpy {
+        runBlocking {
+            var mints = 0
+            configure(mint = {
+                mints++
+                Result.failure(IllegalStateException(AuthGate.SIGN_IN_REQUIRED))
+            })
+            VoiceTokenManager.mintAndRegister()
+            assertEquals(1, mints)
+            assertTrue(backoffs.isEmpty())
+            verify(exactly = 0) { AuntieLog.e(any(), any()) }
+            verify(exactly = 0) { AuntieLog.w(any(), any()) }
+        }
+    }
+
+    @Test
+    fun `an expired credential is not retried, reads as NotAuthorized, and reports nothing`() =
+        withLogSpy {
+            runBlocking {
+                var mints = 0
+                configure(mint = { mints++; Result.failure(expiredCredential()) })
+                VoiceTokenManager.mintAndRegister()
+                assertEquals(1, mints)
+                assertTrue("expected no backoff, got $backoffs", backoffs.isEmpty())
+                val state = VoiceTokenManager.state.value
+                assertTrue("expected NotAuthorized, got $state", state is VoiceTokenState.NotAuthorized)
+                verify(exactly = 0) { AuntieLog.e(any(), any()) }
+                verify(exactly = 0) { AuntieLog.w(any(), any()) }
+            }
+        }
+
+    @Test
+    fun `a sign-out between retries stops the retry instead of minting signed out`() = runBlocking {
+        var mints = 0
+        var signedIn = true
+        configure(
+            mint = {
+                mints++
+                // The transient failure that would normally be retried, after
+                // which Firebase drops the user.
+                signedIn = false
+                Result.failure(RuntimeException("unavailable: mintVoiceAccessToken"))
+            },
+            isSignedIn = { signedIn },
+        )
+        VoiceTokenManager.mintAndRegister()
+        assertEquals(1, mints)
+    }
+
+    @Test
+    fun `a transient network failure under the same wrapper still retries`() = runBlocking {
+        var mints = 0
+        configure(mint = {
+            mints++
+            Result.failure(ExecutionException("1 out of 2 underlying tasks failed", UnknownHostException("offline")))
+        })
+        VoiceTokenManager.mintAndRegister()
+        assertEquals(4, mints)
+        assertEquals(listOf(2_000L, 10_000L, 30_000L), backoffs)
+        assertTrue(VoiceTokenManager.state.value is VoiceTokenState.Failed)
     }
 }

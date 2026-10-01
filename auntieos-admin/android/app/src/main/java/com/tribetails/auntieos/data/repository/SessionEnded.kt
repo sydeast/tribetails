@@ -2,6 +2,8 @@ package com.tribetails.auntieos.data.repository
 
 import com.google.android.gms.tasks.Task
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
+import com.google.firebase.auth.FirebaseAuthInvalidUserException
 import com.google.firebase.functions.FirebaseFunctionsException
 import com.google.firebase.functions.HttpsCallableResult
 import com.tribetails.auntieos.util.AuntieLog
@@ -75,11 +77,30 @@ private fun reasonFromText(text: String?): SessionEndedReason? = when {
  *
  * Walks the cause chain, because everything on the way here wraps the original
  * at least once (`runCatching`, coroutine dispatch, the Tasks bridge).
+ *
+ * #1066: the client can learn the same thing without the server saying it.
+ * When Firebase cannot refresh a cached user's token because the credential was
+ * revoked, has expired, or the account was disabled, it throws
+ * [FirebaseAuthInvalidUserException] or [FirebaseAuthInvalidCredentialsException],
+ * and a callable delivers that wrapped in an `ExecutionException` (the Functions
+ * SDK waits on the auth and App Check tokens together). That is case 4 above,
+ * reached from the device side, and it ends the session the same way. Sign-in
+ * with a wrong password also throws [FirebaseAuthInvalidCredentialsException],
+ * but that path never reaches this function: only [awaitCallable] and the token
+ * reads in [AuthGate.testMode] and `AuntieRepository.isCurrentUserAdmin` ask it.
  */
 fun sessionEndedReason(t: Throwable?): SessionEndedReason? {
     var cursor = t
     var depth = 0
     while (cursor != null && depth < 8) {
+        if (cursor is FirebaseAuthInvalidUserException) {
+            return if (cursor.errorCode == USER_DISABLED_AUTH_CODE) {
+                SessionEndedReason.Disabled
+            } else {
+                SessionEndedReason.Revoked
+            }
+        }
+        if (cursor is FirebaseAuthInvalidCredentialsException) return SessionEndedReason.Revoked
         if (cursor is FirebaseFunctionsException) {
             val reason = (cursor.details as? Map<*, *>)?.get("reason") as? String
             reasonFromText(reason)?.let { return it }
@@ -89,6 +110,46 @@ fun sessionEndedReason(t: Throwable?): SessionEndedReason? {
         depth++
     }
     return null
+}
+
+/** The Firebase Auth error code for a disabled account. */
+private const val USER_DISABLED_AUTH_CODE = "ERROR_USER_DISABLED"
+
+/**
+ * Whether [t] is an expected auth state rather than a defect: nobody is signed
+ * in ([AuthGate.SIGN_IN_REQUIRED]), or the session is over ([sessionEndedReason]).
+ *
+ * #1066: both were reaching Sentry as errors on a cold start with a dead cached
+ * credential. Neither is something to fix in code; the sign-in screen is the
+ * answer to both. Callers use [logFailureUnlessSignedOut] so the decision is the
+ * same at every site that meets them.
+ */
+fun isExpectedSignedOutFailure(t: Throwable?): Boolean {
+    if (sessionEndedReason(t) != null) return true
+    var cursor = t
+    var depth = 0
+    while (cursor != null && depth < 8) {
+        if (cursor.message == AuthGate.SIGN_IN_REQUIRED) return true
+        cursor = cursor.cause
+        depth++
+    }
+    return false
+}
+
+/**
+ * Log a failure, reporting it to Sentry only when it is a real defect.
+ *
+ * An expected auth state ([isExpectedSignedOutFailure]) gets a breadcrumb through
+ * [AuntieLog.i], carrying the exception class, so it still shows on the timeline
+ * of any real error later in the session. Everything else goes to [AuntieLog.e]
+ * exactly as before.
+ */
+fun logFailureUnlessSignedOut(message: String, t: Throwable) {
+    if (isExpectedSignedOutFailure(t)) {
+        AuntieLog.i("$message: signed out or session over (${t.javaClass.simpleName})")
+    } else {
+        AuntieLog.e(message, t)
+    }
 }
 
 /** What the sign-in screen says after an involuntary sign-out. */
