@@ -166,7 +166,10 @@ class AuntieOSApp : Application() {
             try {
                 SentryAndroid.init(this) { options ->
                     options.dsn = sentryDsn
-                    options.setBeforeSend { event, _ -> event }
+                    // #1067: a coroutine cancellation is never an error event.
+                    options.setBeforeSend { event, _ ->
+                        com.tribetails.auntieos.util.filterCancellationEvent(event)
+                    }
                 }
                 if (priorCrashReport != null) {
                     io.sentry.Sentry.captureMessage(

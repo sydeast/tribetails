@@ -56,10 +56,17 @@ object AuntieLog {
      * long as the device stays offline. It still gets a breadcrumb, carrying the
      * exception's own class and message, so it is visible on the timeline of a
      * *real* error reported moments later from the same session.
+     *
+     * #1067 (AUNTIEOS-ADMIN-1X, AUNTIEOS-ADMIN-1Z): a coroutine cancellation,
+     * bare or chained under a wrapper, is a scope being torn down (Compose
+     * leaving composition, a ViewModel clearing), not an error. It is dropped
+     * entirely, not even a breadcrumb: it fires on every navigation away from
+     * a screen with a load in flight and would only crowd the timeline.
      */
     private fun report(message: String, throwable: Throwable?, level: SentryLevel) {
         when {
             throwable == null -> Sentry.captureMessage(message, level)
+            isCancellation(throwable) -> Unit
             isTransportFailure(throwable) || isFcmUnavailable(throwable) -> {
                 Sentry.addBreadcrumb(
                     "$message (${throwable.javaClass.simpleName}: ${throwable.message})"
