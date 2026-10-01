@@ -176,6 +176,22 @@ describe('broadcastMessage suppression', () => {
     expect(res.perChannel.email).toEqual({ sent: 0, skipped: 1, failed: 0 });
     expect(mocks.sendTemplatedEmail).not.toHaveBeenCalled();
   });
+
+  // #1077: the smtp2go webhook writes hard bounces into the same collection,
+  // so a broadcast skips a hard-bounced address exactly like an opt-out.
+  it('skips a hard-bounced email recipient', async () => {
+    const id = encodeURIComponent('a@x.com');
+    const ctx = buildDbMock({ writeThrough: true,
+      docs: { [`message_suppressions/${id}`]: { channel: 'email', reason: 'hard_bounce', source: 'smtp2go' } },
+      queryDocs: {
+        kinfolk: [{ id: 'k1', data: { status: 'active', email: 'A@X.com', phoneNumber: '', uid: '' } }],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['email'], subject: 'S', body: 'B' }));
+    expect(res.perChannel.email).toEqual({ sent: 0, skipped: 1, failed: 0 });
+    expect(mocks.sendTemplatedEmail).not.toHaveBeenCalled();
+  });
 });
 
 /**

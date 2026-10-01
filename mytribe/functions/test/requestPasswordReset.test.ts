@@ -123,6 +123,19 @@ describe('sending', () => {
     expect(ctx.writes.some((w: { path: string }) => w.path.startsWith('notification'))).toBe(false);
   });
 
+  // #1077 decision: a reset the person asked for is sent even to an address
+  // the smtp2go webhook suppressed as a hard bounce. Refusing it would lock
+  // them out with no way back (there is no admin surface to clear a
+  // suppression yet), and the request is already rate-limited, so at worst one
+  // more bounce.
+  it('sends a requested reset even when the address is suppressed as a hard bounce', async () => {
+    setup({
+      [`message_suppressions/${encodeURIComponent(KIN_EMAIL)}`]: { channel: 'email', reason: 'hard_bounce' },
+    });
+    await processPasswordResetRequest({ email: KIN_EMAIL, networkKey: NET });
+    expect(mocks.sendTemplatedEmail).toHaveBeenCalledTimes(1);
+  });
+
   it('sends nothing for an address that is not an account', async () => {
     await processPasswordResetRequest({ email: GHOST_EMAIL, networkKey: NET });
     expect(mocks.generatePasswordResetLink).not.toHaveBeenCalled();

@@ -10,7 +10,14 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { sendTemplatedEmail } from '../lib/email';
 import { getTwilio, getTwilioFromNumber } from '../lib/twilio';
-import { normalizeE164, isValidPhone } from '../lib/phoneNormalize';
+import { isValidPhone } from '../lib/phoneNormalize';
+import {
+  isHardBounced,
+  normalizeRecipient,
+  redactRecipient,
+  suppressionDocId,
+  RECIPIENT_HARD_BOUNCED,
+} from '../lib/suppressions';
 import { zeroCounters } from '../lib/engagement';
 import {
   MIRROR_SKIPPED,
@@ -36,6 +43,9 @@ import {
  *   - Before sending we check `message_suppressions/{normalizedRecipient}` for an
  *     opt-out. If present we throw failed-precondition 'recipient_opted_out' and
  *     send nothing (CAN-SPAM / CASL honor-the-opt-out).
+ *   - An email address smtp2go reported as a HARD BOUNCE (#1077, reason
+ *     `hard_bounce`) is refused with 'recipient_hard_bounced', even for a
+ *     transactional reply. See lib/suppressions.ts.
  *   - Every email body gets an unsubscribe footer appended.
  *   - Every send is recorded in `external_messages` AND writeAuditEntry
  *     EXTERNAL_MESSAGE_SENT, with the recipient REDACTED (masked local-part /
@@ -106,54 +116,11 @@ export const Args = z
 
 type ParsedArgs = z.infer<typeof Args>;
 
-/**
- * Canonical id / suppression key for a recipient. Email lowercased+trimmed;
- * phone normalized to E.164. Used both as the suppression doc id and the
- * external_messages target. Throws (caller maps to invalid-argument) if a phone
- * cannot be normalized; that should not happen post-validation but we stay
- * fail-loud rather than writing a malformed key.
- */
-export function normalizeRecipient(channel: 'email' | 'sms', to: string): string {
-  const trimmed = to.trim();
-  if (channel === 'email') return trimmed.toLowerCase();
-  const e164 = normalizeE164(trimmed);
-  if (!e164) throw new Error(`sendExternalMessage: could not normalize phone '${trimmed}'`);
-  return e164;
-}
-
-/**
- * Firestore doc ids cannot contain '/'. Recipient keys (email/E.164) never
- * contain '/', but encode defensively so an unexpected value cannot escape the
- * collection path.
- */
-export function suppressionDocId(normalized: string): string {
-  return encodeURIComponent(normalized);
-}
-
-/**
- * Mask a recipient for audit storage. Email: keep first char of local-part +
- * full domain (`j***@example.com`). Phone: keep country/last-4, mask middle
- * (`+1******7890`). Never store the plaintext contact in activity_log.
- */
-export function redactRecipient(channel: 'email' | 'sms', normalized: string): string {
-  if (channel === 'email') {
-    const at = normalized.indexOf('@');
-    if (at <= 0) return '***';
-    const local = normalized.slice(0, at);
-    const domain = normalized.slice(at); // includes '@'
-    const head = local.slice(0, 1);
-    return `${head}***${domain}`;
-  }
-  // phone (E.164): + then digits
-  const plus = normalized.startsWith('+') ? '+' : '';
-  const digits = normalized.replace(/[^\d]/g, '');
-  if (digits.length <= 4) return `${plus}${'*'.repeat(digits.length)}`;
-  const cc = digits.slice(0, 1);
-  const last4 = digits.slice(-4);
-  const masked = '*'.repeat(Math.max(0, digits.length - 5));
-  return `${plus}${cc}${masked}${last4}`;
-}
-
+// The recipient key helpers moved to lib/suppressions.ts (#1077) so the smtp2go
+// webhook can key a hard bounce exactly as the send paths read it without
+// importing this module's callable registrations. Re-exported for existing
+// importers.
+export { normalizeRecipient, suppressionDocId, redactRecipient };
 export async function sendExternalMessageHandler(req: CallableRequest<unknown>): Promise<{
   ok: true;
   channel: 'email' | 'sms';
@@ -190,10 +157,16 @@ export async function sendExternalMessageHandler(req: CallableRequest<unknown>):
   // transactional 1:1 reply (Inbox/Messaging): the recipient is an active
   // conversation, not marketing outreach, so the marketing opt-out does not
   // apply. Twilio still enforces a hard carrier-level STOP regardless.
-  if (!args.transactional) {
-    const suppressionRef = db().collection('message_suppressions').doc(suppressionDocId(normalized));
-    const suppressionSnap = await suppressionRef.get();
-    if (suppressionSnap.exists) {
+  //
+  // #1077: a HARD BOUNCE is refused even for a transactional reply. It is not a
+  // preference the recipient expressed; the address does not exist, and every
+  // further send bounces again and costs sender reputation.
+  const suppressionSnap = await db().collection('message_suppressions').doc(suppressionDocId(normalized)).get();
+  if (suppressionSnap.exists) {
+    if (args.channel === 'email' && isHardBounced(suppressionSnap.data())) {
+      throw new HttpsError('failed-precondition', RECIPIENT_HARD_BOUNCED);
+    }
+    if (!args.transactional) {
       throw new HttpsError('failed-precondition', 'recipient_opted_out');
     }
   }

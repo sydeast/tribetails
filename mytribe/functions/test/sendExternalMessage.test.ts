@@ -300,3 +300,54 @@ describe('sendExternalMessage transactional flag (1:1 inbox reply)', () => {
     expect(sgArgs.bodyTemplate.includes(UNSUBSCRIBE_FOOTER)).toBe(false);
   });
 });
+
+/**
+ * #1077: a hard bounce is not a marketing opt-out. Mailing the address again
+ * only bounces again and costs sender reputation, so it is refused even for a
+ * transactional 1:1 reply, and the refusal says why.
+ */
+describe('sendExternalMessage hard-bounce suppression (#1077)', () => {
+  const id = encodeURIComponent('gone@example.com');
+
+  it('refuses a hard-bounced address with recipient_hard_bounced (not the opt-out wording)', async () => {
+    const ctx = buildDbMock({ docs: { [`message_suppressions/${id}`]: { channel: 'email', reason: 'hard_bounce' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      sendExternalMessageHandler(req({ channel: 'email', to: 'Gone@Example.com', subject: 's', body: 'b' })),
+    ).rejects.toMatchObject({ code: 'failed-precondition', message: expect.stringMatching(/^recipient_hard_bounced/) });
+    expect(mocks.sendTemplatedEmail).not.toHaveBeenCalled();
+  });
+
+  it('refuses a hard-bounced address even when transactional=true', async () => {
+    const ctx = buildDbMock({ docs: { [`message_suppressions/${id}`]: { channel: 'email', reason: 'hard_bounce' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      sendExternalMessageHandler(
+        req({ channel: 'email', to: 'gone@example.com', subject: 's', body: 'b', transactional: true }),
+      ),
+    ).rejects.toMatchObject({ code: 'failed-precondition', message: expect.stringMatching(/^recipient_hard_bounced/) });
+    expect(mocks.sendTemplatedEmail).not.toHaveBeenCalled();
+  });
+
+  it('refuses a transactional reply to an opt-out that later hard-bounced', async () => {
+    const ctx = buildDbMock({
+      docs: { [`message_suppressions/${id}`]: { channel: 'email', actorUid: 'admin1', hardBounce: { eventId: 'e' } } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      sendExternalMessageHandler(
+        req({ channel: 'email', to: 'gone@example.com', subject: 's', body: 'b', transactional: true }),
+      ),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(mocks.sendTemplatedEmail).not.toHaveBeenCalled();
+  });
+
+  it('a transactional reply to a plain opt-out still sends (unchanged)', async () => {
+    const ctx = buildDbMock({ docs: { [`message_suppressions/${id}`]: { channel: 'email', actorUid: 'admin1' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await sendExternalMessageHandler(
+      req({ channel: 'email', to: 'gone@example.com', subject: 's', body: 'b', transactional: true }),
+    );
+    expect(res.providerMessageId).toBe('sg-msg-1');
+  });
+});
