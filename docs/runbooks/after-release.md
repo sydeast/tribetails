@@ -312,7 +312,10 @@ the domain.
    a trigger brought back: deleting a `clients` record makes `onClientsWrite`
    write `uid: ''` onto its household, which can recreate a household it just
    deleted.
-4. Re-run step 2. It lists nothing.
+4. Re-run step 2. It lists nothing. A trigger that lands after the settle wait
+   can still leave a `kinfolk/<id>` holding only `uid: ''` and no address, which
+   step 2 cannot find. Open each household id step 2 listed in the Firebase
+   console and delete any such stub by hand.
 
 `--allow-prod` says WHERE and `--apply` says WHETHER TO DELETE. Without
 `--apply` nothing is written, `--dry-run` forces the read-only run in either flag

@@ -22,6 +22,7 @@ function plan(over: Partial<Plan> = {}): Plan {
     users: [],
     danglingClients: [],
     triggerSideEffects: [],
+    triggerConflicts: [],
     sendGate: { line: 'Household send gate (business_settings/business_settings.householdNotificationsLive): OFF (field not set): household notifications are NOT sent', raw: undefined, source: 'business_settings/business_settings' },
     ...over,
   };
@@ -149,6 +150,13 @@ describe('planFingerprint', () => {
     expect(planFingerprint(a)).not.toBe(planFingerprint(c));
     const lines = planLines(a);
     expect(lines[lines.length - 1]).toBe(`Plan fingerprint: ${planFingerprint(a)}  (2 document(s), 1 Auth user(s))`);
+  });
+});
+describe('trigger conflicts', () => {
+  it('refuse the run', () => {
+    const p = plan({ triggerConflicts: ['deleting clients/u makes onClientsWrite clear kinfolk/h.uid, which holds another account (r), not u'] });
+    expect(planProblems(p)).toEqual(['TRIGGER: deleting clients/u makes onClientsWrite clear kinfolk/h.uid, which holds another account (r), not u']);
+    expect(() => assertPlanSafe(p)).toThrow(/REFUSED/);
   });
 });
 describe('deleteOrder', () => {

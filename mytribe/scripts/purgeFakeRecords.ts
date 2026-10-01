@@ -138,7 +138,9 @@
  * runs no functions) and re-reads every planned path, deleting again any that
  * came back, with its own audit row. Only planned paths are ever re-deleted. A
  * fake client whose kinfolkIds[0] is a REAL household makes the trigger write
- * `uid: ''` there; the plan lists those under "trigger side effects".
+ * `uid: ''` there; the plan lists those under "trigger side effects", and when
+ * that household's `uid` names a different account the run refuses, because the
+ * trigger never checks whose uid it clears.
  * Deleting a kin_care_sessions doc makes onKinCareSessionCalendarSync remove its
  * Google Calendar event when a calendar is connected, which is wanted.
  *
@@ -353,6 +355,12 @@ export interface Plan {
   danglingClients: Array<{ path: string; kinfolkIds: string[] }>;
   /** Writes onClientsWrite will make outside the plan when a planned clients doc is deleted. */
   triggerSideEffects: string[];
+  /**
+   * Those writes that would clear a REAL back-link: onClientsWrite sets
+   * kinfolk/{kinfolkIds[0]}.uid = '' without checking whose uid it held. Each one
+   * refuses the run.
+   */
+  triggerConflicts: string[];
   sendGate: { line: string; raw: unknown; source: string };
 }
 
@@ -596,11 +604,21 @@ export async function buildPlan(db: Firestore, auth: Auth): Promise<Plan> {
   const householdSet = new Set(households);
   const danglingClients: Plan['danglingClients'] = [];
   const triggerSideEffects: string[] = [];
+  const triggerConflicts: string[] = [];
   for (const [path, ids] of Object.entries(clientKinfolkIds)) {
     const planned = Boolean(b.docs[path]);
     if (!planned && ids.some((id) => householdSet.has(id))) danglingClients.push({ path, kinfolkIds: ids.filter((id) => householdSet.has(id)) });
     if (planned && ids[0] && !householdSet.has(ids[0])) {
-      triggerSideEffects.push(`deleting ${path} makes onClientsWrite set kinfolk/${ids[0]}.uid = '' (a household this run does not delete)`);
+      const uid = path.slice('clients/'.length);
+      const target = await db.doc(`kinfolk/${ids[0]}`).get();
+      const stored = target.exists ? (target.data() as Record<string, unknown>)['uid'] : undefined;
+      if (typeof stored === 'string' && stored !== '' && stored !== uid) {
+        triggerConflicts.push(
+          `deleting ${path} makes onClientsWrite clear kinfolk/${ids[0]}.uid, which holds another account (${stored}), not ${uid}`,
+        );
+      } else {
+        triggerSideEffects.push(`deleting ${path} makes onClientsWrite set kinfolk/${ids[0]}.uid = '' (a household this run does not delete; its uid is ${stored ? 'this one' : 'empty'})`);
+      }
     }
   }
 
@@ -611,6 +629,7 @@ export async function buildPlan(db: Firestore, auth: Auth): Promise<Plan> {
     users: Object.values(users).sort((a, z) => a.uid.localeCompare(z.uid)),
     danglingClients: danglingClients.sort((a, z) => a.path.localeCompare(z.path)),
     triggerSideEffects: triggerSideEffects.sort(),
+    triggerConflicts: triggerConflicts.sort(),
     sendGate: await readSendGate(db),
   };
 }
@@ -635,6 +654,7 @@ export function planProblems(plan: Plan): string[] {
   };
   for (const d of plan.docs) for (const c of d.contacts) check(d.path, c.field, c.address);
   for (const u of plan.users) if (u.email) check(`auth/${u.uid}`, 'email', u.email);
+  for (const t of plan.triggerConflicts) problems.push(`TRIGGER: ${t}`);
   return problems;
 }
 

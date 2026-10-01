@@ -242,6 +242,22 @@ describe.runIf(BOTH)('purgeFakeRecords against the Firestore and Auth emulators 
     expect(await authUids(auth)).toEqual(usersBefore);
   }, T);
 
+  it('refuses a fake client whose first household is real and linked to someone else', async () => {
+    // Clear the previous case so this one is refused for its own reason only.
+    for (const p of ['families/fake-mixed/members/real-person', 'families/fake-mixed/members/real-admin', 'families/fake-mixed', 'kinfolk/fake-mixed']) await db.doc(p).delete();
+    await db.doc('kinfolk/e2e-kf-1').set({ uid: CATCH_UID }, { merge: true });
+    await auth.createUser({ uid: 'fake-linked', email: 'linked@tribetails.test' });
+    await db.doc('clients/fake-linked').set({ email: 'linked@tribetails.test', kinfolkIds: ['e2e-kf-1'] });
+    const before = await dumpAll(db);
+    const usersBefore = await authUids(auth);
+    const plan = await buildPlan(db, auth);
+    expect(plan.triggerConflicts).toEqual([
+      `deleting clients/fake-linked makes onClientsWrite clear kinfolk/e2e-kf-1.uid, which holds another account (${CATCH_UID}), not fake-linked`,
+    ]);
+    await expect(applyPlan(db, auth, plan, { settleMs: 0, confirm: planFingerprint(plan), log: () => undefined })).rejects.toThrow(/TRIGGER: deleting clients\/fake-linked/);
+    expect(await dumpAll(db)).toEqual(before);
+    expect(await authUids(auth)).toEqual(usersBefore);
+  }, T);
   it('prints the send gate for true and for a string that only looks like true', async () => {
     await db.doc('business_settings/business_settings').set({ householdNotificationsLive: true }, { merge: true });
     expect((await readSendGate(db)).line).toBe(
