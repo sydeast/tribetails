@@ -10,7 +10,7 @@
  */
 
 export const ADMIN = {
-  email: 'e2e-admin@auntieos.test',
+  email: 'e2e-admin@tribetails.com',
   password: 'e2e-emulator-admin-pw',
 } as const;
 
@@ -21,7 +21,7 @@ export const ADMIN = {
  * every kinfolk who mistypes the admin URL.
  */
 export const KINFOLK = {
-  email: 'e2e-kinfolk@auntieos.test',
+  email: 'catch@hanasamku.com',
   password: 'e2e-emulator-kinfolk-pw',
 } as const;
 
