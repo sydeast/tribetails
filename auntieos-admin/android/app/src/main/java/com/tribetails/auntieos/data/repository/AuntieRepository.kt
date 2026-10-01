@@ -2754,7 +2754,7 @@ class AuntieRepository(
      * rules scope reads to recipientUid == auth.uid; this helper filters
      * server-side so we don't pull other admins' dispatches.
      */
-    suspend fun getNotifications(): Result<List<com.tribetails.auntieos.data.admin.NotificationEntry>> = runCatching {
+    suspend fun getNotifications(): Result<List<com.tribetails.auntieos.data.admin.NotificationEntry>> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val uid = auth.currentUser?.uid
             ?: throw IllegalStateException("getNotifications called without auth uid")
