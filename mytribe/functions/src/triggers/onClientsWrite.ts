@@ -30,12 +30,24 @@ export const onClientsWrite = onDocumentWritten(
       } catch (e) {
         logEvent({ severity: 'warn', function: 'onClientsWrite', event: 'claim.clear.failed', extra: { uid, err: String(e) } });
       }
-      // Clear uid backwrite on the previously linked kinfolk doc (best-effort)
+      // Clear the household back-link, but ONLY where it is this account's
+      // (#1085). This used to merge `{ uid: '' }` into kinfolkIds[0] blind:
+      // a deleted test account whose first household belonged to a real
+      // primary wiped the real link, and a household already deleted came back
+      // as a stub. Each listed household is read in a transaction and cleared
+      // only if it exists and its uid is the deleted one. Best-effort.
       try {
-        const prevIds = (event.data?.before.data()?.kinfolkIds ?? []) as string[];
-        const prevId = prevIds[0] ?? null;
-        if (prevId) {
-          await db().collection('kinfolk').doc(prevId).set({ uid: '' }, { merge: true });
+        const prevIds = ((event.data?.before.data()?.kinfolkIds ?? []) as unknown[]).filter(
+          (id): id is string => typeof id === 'string' && id.length > 0,
+        );
+        for (const kinfolkId of prevIds) {
+          const ref = db().collection('kinfolk').doc(kinfolkId);
+          await db().runTransaction(async (tx) => {
+            const snap = await tx.get(ref);
+            if (snap.exists && snap.data()?.uid === uid) {
+              tx.set(ref, { uid: '' }, { merge: true });
+            }
+          });
         }
       } catch (e) {
         logEvent({ severity: 'warn', function: 'onClientsWrite', event: 'kinfolk.uid.backwrite.failed', extra: { uid, err: String(e) } });

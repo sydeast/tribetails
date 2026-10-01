@@ -292,6 +292,11 @@ the domain.
    Writes nothing. The first line is the target: check it says `PRODUCTION`,
    `auntieos-ttpc` and `READ ONLY (writes nothing)`. The next line is the
    household send gate (`householdNotificationsLive`), ON or OFF in plain words.
+   The line after it names the deployed `onClientsWrite`, read from the commit
+   in `.release-state`. Until a release containing #1085 has shipped it says
+   the trigger "predates #1085", and the run refuses any fake client whose
+   household is linked to another account (`TRIGGER:` lines), because that
+   trigger would wipe the real link. Release first, then run step 2 again.
    Then the fake households, every Auth user and every document it would delete
    with counts per collection, the real `clients` records that name a fake
    household (left alone), and any `WOULD REFUSE` lines. The last line is

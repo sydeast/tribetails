@@ -9,6 +9,8 @@ import {
   planFingerprint,
   planProblems,
   resolveTarget,
+  deployedTriggerModel,
+  OWNER_CHECK_MARKER,
   type Plan,
 } from '../purgeFakeRecords';
 
@@ -23,6 +25,7 @@ function plan(over: Partial<Plan> = {}): Plan {
     danglingClients: [],
     triggerSideEffects: [],
     triggerConflicts: [],
+    trigger: { model: 'blind', line: 'Deployed onClientsWrite: not checked' },
     sendGate: { line: 'Household send gate (business_settings/business_settings.householdNotificationsLive): OFF (field not set): household notifications are NOT sent', raw: undefined, source: 'business_settings/business_settings' },
     ...over,
   };
@@ -172,5 +175,39 @@ describe('planLines', () => {
     const lines = planLines(plan({ docs: [{ path: 'payments/p', reason: 'r', contacts: [{ field: 'email', address: 'a@yahoo.com' }] }] }));
     expect(lines[0]).toMatch(/^Household send gate \(business_settings\/business_settings\.householdNotificationsLive\): OFF/);
     expect(lines.join('\n')).toMatch(/WOULD REFUSE: 1 target/);
+  });
+});
+describe('deployedTriggerModel (#1085)', () => {
+  const SHA = '0123456789abcdef0123456789abcdef01234567';
+  it('assumes the blind trigger when there is no .release-state', () => {
+    const r = deployedTriggerModel({ readReleaseState: () => null, showFileAt: () => OWNER_CHECK_MARKER });
+    expect(r.model).toBe('blind');
+    expect(r.line).toContain('no .release-state');
+  });
+  it('assumes the blind trigger when the released source cannot be read', () => {
+    const r = deployedTriggerModel({ readReleaseState: () => `${SHA}\n`, showFileAt: () => null });
+    expect(r.model).toBe('blind');
+    expect(r.line).toContain('0123456');
+  });
+  it('reads the released commit, not the checkout: a release before the fix stays blind', () => {
+    const r = deployedTriggerModel({ readReleaseState: () => SHA, showFileAt: () => "set({ uid: '' }, { merge: true })" });
+    expect(r.model).toBe('blind');
+    expect(r.line).toContain('predates #1085');
+  });
+  it('trusts the owner check once the released commit carries it', () => {
+    let asked = '';
+    const r = deployedTriggerModel({
+      readReleaseState: () => `${SHA}\n`,
+      showFileAt: (sha) => {
+        asked = sha;
+        return `if (snap.exists && ${OWNER_CHECK_MARKER}) {}`;
+      },
+    });
+    expect(asked).toBe(SHA);
+    expect(r.model).toBe('checks-owner');
+  });
+  it('prints the trigger line under the send gate', () => {
+    const lines = planLines(plan({ trigger: { model: 'checks-owner', line: 'Deployed onClientsWrite: X' } }));
+    expect(lines[1]).toBe('Deployed onClientsWrite: X');
   });
 });
