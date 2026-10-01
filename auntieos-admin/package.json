@@ -20,7 +20,7 @@
     "e2e:cy": "npm run e2e:cy:tsc && firebase emulators:exec --project auntieos-ttpc --only auth,firestore --config e2e.firebase.json \"npm run e2e:cy:run\"",
     "e2e:cy:tsc": "tsc -p cypress",
     "e2e:cy:run": "start-server-and-test e2e:cy:server http://127.0.0.1:5174 \"cypress run\"",
-    "e2e:cy:open": "npm run e2e:cy:tsc && firebase emulators:exec --project auntieos-ttpc --only auth,firestore --config e2e.firebase.json \"start-server-and-test e2e:cy:server http://127.0.0.1:5174 'cypress open --e2e --browser electron'\"",
+    "e2e:cy:open": "npm run e2e:cy:tsc && firebase emulators:exec --project auntieos-ttpc --only auth,firestore --config e2e.firebase.json \"start-server-and-test e2e:cy:server http://127.0.0.1:5174 'cypress open --e2e --browser chrome'\"",
     "e2e:cy:server": "VITE_E2E_EMULATOR=127.0.0.1 vite --port 5174 --strictPort --host 127.0.0.1"
   },
   "dependencies": {
