@@ -112,7 +112,7 @@ describe('email suppression (lib/email.ts)', () => {
     fetchMock.mockResolvedValue(okEmailResponse('real-email-id'));
     const { sendTemplatedEmail } = await import('../src/lib/email');
     const id = await sendTemplatedEmail({
-      to: 'client@example.com',
+      to: 'client@tribetails.com',
       subjectTemplate: 'Hi {{name}}',
       bodyTemplate: 'Body {{name}}',
       data: { name: 'Sam' },
@@ -125,7 +125,7 @@ describe('email suppression (lib/email.ts)', () => {
     process.env.SEND_SUPPRESS = '1';
     const { sendTemplatedEmail } = await import('../src/lib/email');
     const id = await sendTemplatedEmail({
-      to: 'client@example.com',
+      to: 'client@tribetails.com',
       subjectTemplate: 'Hi {{name}}',
       bodyTemplate: 'Body {{name}}',
       data: { name: 'Sam' },
