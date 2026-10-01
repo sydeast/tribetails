@@ -5,6 +5,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Cross-platform crash/error reporting seam (0H). Android has its own Sentry setup; this
@@ -51,7 +52,9 @@ internal var errorSink: (Throwable, String?) -> Unit = ::reportError
  * already unwraps `message` + `stackTraceToString()`; it just was never called.
  */
 fun reportingExceptionHandler(context: String? = null): CoroutineExceptionHandler =
-    CoroutineExceptionHandler { _, throwable -> errorSink(throwable, context) }
+    CoroutineExceptionHandler { _, throwable ->
+        if (!isCancellation(throwable)) errorSink(throwable, context)
+    }
 
 /**
  * Drop-in replacement for `rememberCoroutineScope()` that additionally reports
@@ -64,3 +67,31 @@ fun rememberReportingScope(context: String? = null): CoroutineScope {
     val handler = remember(context) { reportingExceptionHandler(context) }
     return rememberCoroutineScope { handler }
 }
+
+/**
+ * #1067 (AUNTIEOS-ADMIN-1X, AUNTIEOS-ADMIN-1Z): true when [error] is a coroutine
+ * [CancellationException] or carries one anywhere in its cause chain. Compose
+ * cancels a `LaunchedEffect`/`rememberCoroutineScope` scope the moment it leaves
+ * composition (LeftCompositionCancellationException, ForgottenCoroutineScopeException,
+ * both CancellationException subclasses): a scope being torn down, never an error,
+ * so nothing here reports one. Bounded so a looping cause chain cannot hang, and a
+ * `cause` getter that throws ends the walk instead of escaping the reporter.
+ */
+fun isCancellation(error: Throwable?): Boolean {
+    var current = error
+    var depth = 0
+    while (current != null && depth < MAX_CAUSE_DEPTH) {
+        if (current is CancellationException) return true
+        val next = try {
+            current.cause
+        } catch (_: Exception) {
+            return false
+        }
+        if (next === current) return false
+        current = next
+        depth++
+    }
+    return false
+}
+
+private const val MAX_CAUSE_DEPTH = 16

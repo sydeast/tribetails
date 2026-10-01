@@ -46,6 +46,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.util.runCatchingCancellable
+import com.tribetails.auntieos.util.rethrowIfCancellation
 
 // ── Tag filtering (#713) ─────────────────────────────────────────────────────
 //
@@ -860,7 +862,7 @@ class DirectoryViewModel(
                 // Custom KINFOLK form_schemas so saved dynamic-field values render on the
                 // profile (read-only). Fail-loud via schemaError. Mirrors loadKinfolkForEdit.
                 launch {
-                    val schemas = runCatching {
+                    val schemas = runCatchingCancellable {
                         val summaries = repository.listFormSchemas().getOrThrow()
                         appliesToSchemaIds(summaries, "KINFOLK").mapNotNull { repository.getFormSchema(it).getOrThrow() }
                     }
@@ -870,6 +872,7 @@ class DirectoryViewModel(
                     )
                 }
             } catch (e: Exception) {
+                e.rethrowIfCancellation()
                 AuntieLog.e("Failed to load full profile for $kinfolkId", e)
                 _profileState.value = ProfileUiState(isLoading = false, error = "Failed to load full profile.")
             }
@@ -1390,7 +1393,7 @@ class DirectoryViewModel(
         // Phase 14: fetch the KINFOLK-placed form_schemas. A load failure surfaces as
         // schemaError (fail-loud), never a silent-empty panel. Mirrors loadKinForEdit.
         viewModelScope.launch {
-            val schemas = runCatching {
+            val schemas = runCatchingCancellable {
                 val summaries = repository.listFormSchemas().getOrThrow()
                 appliesToSchemaIds(summaries, "KINFOLK").mapNotNull { repository.getFormSchema(it).getOrThrow() }
             }
@@ -1859,7 +1862,7 @@ class DirectoryViewModel(
                 )
                 // Fetch the KIN-placed form_schemas for the precare checklist. A load
                 // failure surfaces as schemaError (fail-loud), never a silent-empty panel.
-                val schemas = runCatching {
+                val schemas = runCatchingCancellable {
                     val summaries = repository.listFormSchemas().getOrThrow()
                     kinSchemaIds(summaries).mapNotNull { repository.getFormSchema(it).getOrThrow() }
                 }

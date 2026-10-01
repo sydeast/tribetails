@@ -11,6 +11,7 @@ import com.tribetails.auntieos.util.AuntieLog
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import com.tribetails.auntieos.util.runCatchingCancellable
 
 /**
  * Admin-side callable wrapper for booking notes living on the MyTribe-canonical
@@ -39,7 +40,7 @@ class BookingNotesRepository(
         kinfolkId: String,
         bookingId: String,
         body: String,
-    ): Result<String> = runCatching {
+    ): Result<String> = runCatchingCancellable {
         require(body.isNotBlank()) { "Note body cannot be blank." }
         AuntieLog.i("BookingNotesRepository: addBookingNote kinfolk=$kinfolkId booking=$bookingId")
         val args = AddBookingNoteArgs(kinfolkId = kinfolkId, bookingId = bookingId, body = body)
@@ -53,7 +54,7 @@ class BookingNotesRepository(
         kinfolkId: String,
         bookingId: String,
         body: String,
-    ): Result<String> = runCatching {
+    ): Result<String> = runCatchingCancellable {
         require(body.isNotBlank()) { "Internal note body cannot be blank." }
         AuntieLog.i("BookingNotesRepository: addInternalBookingNote kinfolk=$kinfolkId booking=$bookingId")
         val args = AddInternalBookingNoteArgs(kinfolkId = kinfolkId, bookingId = bookingId, body = body)

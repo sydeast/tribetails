@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.util.runCatchingCancellable
 
 data class KinTaleUiState(
     val isLoading: Boolean = true,
@@ -308,7 +309,7 @@ class KinTaleReportViewModel(
             } else emptyList()
 
             // Phase 14: load KINTALE-placed form_schemas. Fail-loud via schemaError.
-            val schemas = runCatching {
+            val schemas = runCatchingCancellable {
                 val summaries = repository.listFormSchemas().getOrThrow()
                 appliesToSchemaIds(summaries, "KINTALE").mapNotNull { repository.getFormSchema(it).getOrThrow() }
             }
@@ -634,10 +635,10 @@ class KinTaleReportViewModel(
             // soft: a photo that cannot be located is still worth uploading, so
             // an unreadable setting or an empty trail stamps nothing rather than
             // refusing the attachment.
-            val photoLocation = runCatching {
-                val settings = repository.getBusinessSettings().getOrNull() ?: return@runCatching null
+            val photoLocation = runCatchingCancellable {
+                val settings = repository.getBusinessSettings().getOrNull() ?: return@runCatchingCancellable null
                 if (!settings.enableGPSTrackingForAllVisits || !settings.enablePhotoLocationTagging) {
-                    return@runCatching null
+                    return@runCatchingCancellable null
                 }
                 val crumbs = kinCareRepository.getBreadcrumbs(sessionId).getOrNull().orEmpty()
                 PhotoLocationTagging.locationFor(settings, PhotoLocationTagging.latestPing(crumbs))

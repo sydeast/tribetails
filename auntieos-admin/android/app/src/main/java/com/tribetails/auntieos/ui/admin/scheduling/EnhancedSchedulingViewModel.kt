@@ -27,6 +27,8 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import com.tribetails.auntieos.util.runCatchingCancellable
+import com.tribetails.auntieos.util.rethrowIfCancellation
 
 data class SchedulingState(
     val bookings: List<EnhancedBooking> = emptyList(),
@@ -745,7 +747,7 @@ class EnhancedSchedulingViewModel(
 
                 // Phase 14: load BOOKING-placed form_schemas for the new-booking dialog.
                 // Fail-loud via bookingSchemaError; never a silent-empty panel.
-                val schemas = runCatching {
+                val schemas = runCatchingCancellable {
                     val summaries = auntieRepository.listFormSchemas().getOrThrow()
                     appliesToSchemaIds(summaries, "BOOKING").mapNotNull { auntieRepository.getFormSchema(it).getOrThrow() }
                 }
@@ -758,6 +760,7 @@ class EnhancedSchedulingViewModel(
                 loadBookingsForDateRange()
 
             } catch (e: Exception) {
+                e.rethrowIfCancellation()
                 _state.value = _state.value.copy(
                     isLoading = false,
                     errorMessage = "Failed to load data: ${e.message}"
@@ -787,6 +790,7 @@ class EnhancedSchedulingViewModel(
                 )
 
             } catch (e: Exception) {
+                e.rethrowIfCancellation()
                 _state.value = _state.value.copy(
                     isLoading = false,
                     errorMessage = "Failed to load bookings: ${e.message}"

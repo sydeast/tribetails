@@ -31,6 +31,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.ZoneId
+import com.tribetails.auntieos.util.runCatchingCancellable
+import com.tribetails.auntieos.util.rethrowIfCancellation
 
 data class TodayVisitCard(
     val session: KinCareSession,
@@ -310,7 +312,7 @@ class HomeViewModel(
                 // Non-critical + isolated from the dashboard's core data: a failure
                 // (e.g. no auth) degrades to the default layout rather than blanking
                 // the screen. A later save still fail-louds if the profile is missing.
-                val profile = runCatching {
+                val profile = runCatchingCancellable {
                     FirebaseAuth.getInstance().currentUser?.uid?.let { uid ->
                         repo.observeUserProfile(uid).first()
                     }
@@ -382,6 +384,7 @@ class HomeViewModel(
                     arrivalCheckNotice = _uiState.value.arrivalCheckNotice,
                 )
             } catch (e: Exception) {
+                e.rethrowIfCancellation()
                 AuntieLog.e("Failed to load dashboard data", e)
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
@@ -604,6 +607,7 @@ class HomeViewModel(
             try {
                 block(card)
             } catch (e: Exception) {
+                e.rethrowIfCancellation()
                 AuntieLog.e("Visit action failed for $sessionId", e)
             } finally {
                 _uiState.value = _uiState.value.copy(pendingActionSessionId = null)

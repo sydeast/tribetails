@@ -2,6 +2,7 @@ package com.tribetails.auntieos.data.repository
 
 import com.google.firebase.functions.FirebaseFunctions
 import com.tribetails.auntieos.util.AuntieLog
+import com.tribetails.auntieos.util.runCatchingCancellable
 
 /**
  * Admin-side wrapper for email-template + binding callables.
@@ -106,7 +107,7 @@ class TemplateRepository(
         val resolvedTemplateId: String,
     )
 
-    suspend fun listTemplates(): Result<List<EmailTemplate>> = runCatching {
+    suspend fun listTemplates(): Result<List<EmailTemplate>> = runCatchingCancellable {
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listTemplates").call(emptyMap<String, Any>()).awaitCallable().data as? Map<String, Any?>
             ?: error("listTemplates: non-map payload")
@@ -133,14 +134,14 @@ class TemplateRepository(
      * Server-deduped category list (hybrid: managed `template_categories` ∪ distinct
      * categories already on templates). Mirrors web `TemplateService.listCategories`.
      */
-    suspend fun listCategories(): Result<List<String>> = runCatching {
+    suspend fun listCategories(): Result<List<String>> = runCatchingCancellable {
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listCategories").call(emptyMap<String, Any>()).awaitCallable().data as? Map<String, Any?>
             ?: error("listCategories: non-map payload")
         (raw["categories"] as? List<*>).orEmpty().mapNotNull { it as? String }
     }.onFailure { AuntieLog.e("TemplateRepository.listCategories failed", it) }
 
-    suspend fun listBindings(): Result<List<TemplateBinding>> = runCatching {
+    suspend fun listBindings(): Result<List<TemplateBinding>> = runCatchingCancellable {
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listTemplateBindings").call(emptyMap<String, Any>()).awaitCallable().data as? Map<String, Any?>
             ?: error("listTemplateBindings: non-map payload")
@@ -168,7 +169,7 @@ class TemplateRepository(
     suspend fun saveTemplate(
         template: EmailTemplate,
         expectNew: Boolean = false,
-    ): Result<String> = runCatching {
+    ): Result<String> = runCatchingCancellable {
         val payload = saveTemplatePayload(template, expectNew)
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("saveTemplate").call(payload).awaitCallable().data as? Map<String, Any?>
@@ -187,7 +188,7 @@ class TemplateRepository(
         headline: String,
         content: String,
         catalogKey: String?,
-    ): Result<EmailPreview> = runCatching {
+    ): Result<EmailPreview> = runCatchingCancellable {
         val payload = buildMap<String, Any> {
             put("subject", subject)
             put("headline", headline)
@@ -214,7 +215,7 @@ class TemplateRepository(
         audience: String? = null,
         triggerKey: String? = null,
         active: Boolean = true,
-    ): Result<Unit> = runCatching {
+    ): Result<Unit> = runCatchingCancellable {
         val payload = buildMap<String, Any> {
             put("catalogKey", catalogKey)
             put("templateId", templateId)
@@ -235,7 +236,7 @@ class TemplateRepository(
      * returns that flag so the UI can distinguish "unassigned" from "was already
      * unassigned".
      */
-    suspend fun unassignTemplate(catalogKey: String): Result<Boolean> = runCatching {
+    suspend fun unassignTemplate(catalogKey: String): Result<Boolean> = runCatchingCancellable {
         val payload = mapOf("catalogKey" to catalogKey)
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("unassignTemplate").call(payload).awaitCallable().data as? Map<String, Any?>
@@ -254,7 +255,7 @@ class TemplateRepository(
      *
      * Optional case-insensitive substring filter on key or label.
      */
-    suspend fun listCatalogKeys(filter: String? = null): Result<List<CatalogKey>> = runCatching {
+    suspend fun listCatalogKeys(filter: String? = null): Result<List<CatalogKey>> = runCatchingCancellable {
         val payload = buildMap<String, Any> {
             filter?.takeIf { it.isNotBlank() }?.let { put("filter", it) }
         }
@@ -297,7 +298,7 @@ class TemplateRepository(
         dryRun: Boolean = true,
         overwriteIds: List<String> = emptyList(),
         onlyIds: List<String> = emptyList(),
-    ): Result<ImportReport> = runCatching {
+    ): Result<ImportReport> = runCatchingCancellable {
         val payload = buildMap<String, Any> {
             put("dryRun", dryRun)
             if (overwriteIds.isNotEmpty()) put("overwriteIds", overwriteIds)

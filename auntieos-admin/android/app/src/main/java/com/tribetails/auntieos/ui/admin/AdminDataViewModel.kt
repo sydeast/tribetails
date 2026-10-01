@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.util.runCatchingCancellable
 
 /** UI state for the Activity Log hash-chain verification action. */
 sealed interface ChainVerifyUiState {
@@ -517,7 +518,7 @@ class AdminDataViewModel(
             // §A.8: load time blocks from unified business_settings (best-effort;
             // absence/no-Firebase just means no block labels). Wrapped so a missing
             // FirebaseApp in tests can't crash.
-            runCatching { repository.getBusinessSettings().onSuccess { _timeBlocks.value = it.timeBlocks } }
+            runCatchingCancellable { repository.getBusinessSettings().onSuccess { _timeBlocks.value = it.timeBlocks } }
 
             _isLoading.value = false
         }

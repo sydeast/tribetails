@@ -2,6 +2,7 @@ package com.tribetails.auntieos.data.repository
 
 import com.google.firebase.functions.FirebaseFunctions
 import com.tribetails.auntieos.util.AuntieLog
+import com.tribetails.auntieos.util.runCatchingCancellable
 
 /**
  * Household members and invites. (B1)
@@ -182,7 +183,7 @@ class MembersRepository(
 
     // ── reads ───────────────────────────────────────────────────────────────
 
-    suspend fun listMembers(kinfolkId: String): Result<List<Member>> = runCatching {
+    suspend fun listMembers(kinfolkId: String): Result<List<Member>> = runCatchingCancellable {
         require(kinfolkId.isNotBlank()) { "listMembers requires a household id" }
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
@@ -192,7 +193,7 @@ class MembersRepository(
         decodeMembers(raw)
     }.onFailure { AuntieLog.e("MembersRepository.listMembers failed", it) }
 
-    suspend fun listInvites(familyId: String): Result<List<Invite>> = runCatching {
+    suspend fun listInvites(familyId: String): Result<List<Invite>> = runCatchingCancellable {
         require(familyId.isNotBlank()) { "listInvites requires a household id" }
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
@@ -215,7 +216,7 @@ class MembersRepository(
      * household-scoped; the PRIMARY invites the secondary from MyTribe. There
      * is no admin-wide write to pair with this and there must never be one.
      */
-    suspend fun listAllInvites(): Result<List<AdminInvite>> = runCatching {
+    suspend fun listAllInvites(): Result<List<AdminInvite>> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listAllInvites")
@@ -242,7 +243,7 @@ class MembersRepository(
     suspend fun mintInvite(
         familyId: String,
         invitedEmail: String,
-    ): Result<String> = runCatching {
+    ): Result<String> = runCatchingCancellable {
         require(familyId.isNotBlank()) { "mintInvite requires a household id" }
         val email = invitedEmail.trim()
         require(email.isNotBlank()) { "An email address is required to send an invite." }
@@ -275,7 +276,7 @@ class MembersRepository(
      * than flattened into a boolean; [portalInviteMessage] turns it into the one
      * sentence both screens say.
      */
-    suspend fun inviteKinfolkToPortal(kinfolkId: String): Result<String> = runCatching {
+    suspend fun inviteKinfolkToPortal(kinfolkId: String): Result<String> = runCatchingCancellable {
         require(kinfolkId.isNotBlank()) { "inviteKinfolkToPortal requires a household id" }
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
@@ -285,7 +286,7 @@ class MembersRepository(
         raw["status"] as? String ?: error("inviteKinfolkToPortal: missing status")
     }.onFailure { AuntieLog.e("MembersRepository.inviteKinfolkToPortal failed", it) }
 
-    suspend fun revokeInvite(inviteId: String): Result<Unit> = runCatching {
+    suspend fun revokeInvite(inviteId: String): Result<Unit> = runCatchingCancellable {
         require(inviteId.isNotBlank()) { "revokeInvite requires an invite id" }
         authGate.ensureAuthenticated()
         functions.getHttpsCallable("revokeInvite").call(mapOf("inviteId" to inviteId)).awaitCallable()
@@ -314,7 +315,7 @@ class MembersRepository(
         targetUid: String,
         key: PermissionKey,
         value: Boolean,
-    ): Result<Unit> = runCatching {
+    ): Result<Unit> = runCatchingCancellable {
         require(familyId.isNotBlank()) { "setMemberPermissions requires a household id" }
         require(targetUid.isNotBlank()) { "setMemberPermissions requires a member uid" }
         authGate.ensureAuthenticated()
@@ -333,7 +334,7 @@ class MembersRepository(
      * refresh tokens are revoked. The row stays in the roster afterwards,
      * marked Suspended, so no caller may claim the member is gone.
      */
-    suspend fun removeMember(familyId: String, targetUid: String): Result<Unit> = runCatching {
+    suspend fun removeMember(familyId: String, targetUid: String): Result<Unit> = runCatchingCancellable {
         require(familyId.isNotBlank()) { "removeMember requires a household id" }
         require(targetUid.isNotBlank()) { "removeMember requires a member uid" }
         authGate.ensureAuthenticated()
@@ -347,7 +348,7 @@ class MembersRepository(
      * Every secondary kinfolk person on this household, by name. A missing
      * `people` array is an error, never "nobody".
      */
-    suspend fun listSecondaryKinfolk(kinfolkId: String): Result<List<SecondaryPerson>> = runCatching {
+    suspend fun listSecondaryKinfolk(kinfolkId: String): Result<List<SecondaryPerson>> = runCatchingCancellable {
         require(kinfolkId.isNotBlank()) { "listSecondaryKinfolk requires a household id" }
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
@@ -363,7 +364,7 @@ class MembersRepository(
      * id on an edit. `access`, `memberUid` and provenance are the server's and
      * are never sent, so an edit cannot grant or revoke anything.
      */
-    suspend fun saveSecondaryKinfolk(kinfolkId: String, draft: SecondaryPersonDraft): Result<SecondaryPerson> = runCatching {
+    suspend fun saveSecondaryKinfolk(kinfolkId: String, draft: SecondaryPersonDraft): Result<SecondaryPerson> = runCatchingCancellable {
         require(kinfolkId.isNotBlank()) { "saveSecondaryKinfolk requires a household id" }
         val name = draft.name.trim()
         require(name.isNotBlank()) { SECONDARY_KINFOLK_NAME_REQUIRED }
@@ -382,7 +383,7 @@ class MembersRepository(
         decodeSecondaryPerson(person) ?: error("saveSecondaryKinfolk: response carried no personId")
     }.onFailure { AuntieLog.e("MembersRepository.saveSecondaryKinfolk failed", it) }
     /** Deletes one secondary kinfolk. The server refuses one with portal access. */
-    suspend fun removeSecondaryKinfolk(kinfolkId: String, personId: String): Result<Unit> = runCatching {
+    suspend fun removeSecondaryKinfolk(kinfolkId: String, personId: String): Result<Unit> = runCatchingCancellable {
         require(kinfolkId.isNotBlank()) { "removeSecondaryKinfolk requires a household id" }
         require(personId.isNotBlank()) { "removeSecondaryKinfolk requires a person id" }
         authGate.ensureAuthenticated()

@@ -20,6 +20,7 @@ import org.json.JSONObject
 import java.io.File
 import java.util.*
 import android.webkit.MimeTypeMap
+import com.tribetails.auntieos.util.rethrowIfCancellation
 
 data class UploadProgress(
     val fileName: String,
@@ -147,6 +148,7 @@ class MediaUploadManager(
             )
 
         } catch (e: Exception) {
+            e.rethrowIfCancellation()
             Result.failure(e)
         } finally {
             localFile?.file?.delete()

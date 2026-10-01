@@ -2,6 +2,7 @@ package com.tribetails.auntieos.data.repository
 
 import com.google.firebase.functions.FirebaseFunctions
 import com.tribetails.auntieos.util.AuntieLog
+import com.tribetails.auntieos.util.runCatchingCancellable
 
 /**
  * #957: the shared email frame (colors, header line, logo, footer line) through
@@ -23,7 +24,7 @@ class EmailFrameRepository(
 
     data class FramePreview(val subject: String, val html: String, val text: String)
 
-    suspend fun getEmailFrame(): Result<EmailFrameState> = runCatching {
+    suspend fun getEmailFrame(): Result<EmailFrameState> = runCatchingCancellable {
         decodeState(invoke("getEmailFrame", emptyMap<String, Any>()), "getEmailFrame")
     }.onFailure { log("getEmailFrame", it) }
 
@@ -32,18 +33,18 @@ class EmailFrameRepository(
      * and a field left out is untouched on the server. The caller builds
      * [changes] as a diff against what it loaded, never a rebuilt whole.
      */
-    suspend fun saveEmailFrame(changes: Map<String, String?>): Result<EmailFrameState> = runCatching {
+    suspend fun saveEmailFrame(changes: Map<String, String?>): Result<EmailFrameState> = runCatchingCancellable {
         require(changes.isNotEmpty()) { "Nothing to save." }
         decodeState(invoke("saveEmailFrame", mapOf("changes" to changes)), "saveEmailFrame")
     }.onFailure { log("saveEmailFrame", it) }
 
     /** Every frame field back to its default. */
-    suspend fun resetEmailFrame(): Result<EmailFrameState> = runCatching {
+    suspend fun resetEmailFrame(): Result<EmailFrameState> = runCatchingCancellable {
         decodeState(invoke("saveEmailFrame", mapOf("resetAll" to true)), "saveEmailFrame")
     }.onFailure { log("resetEmailFrame", it) }
 
     /** The server's render of a sample email in [frame] (the draft's set fields). */
-    suspend fun previewEmailFrame(frame: Map<String, String>): Result<FramePreview> = runCatching {
+    suspend fun previewEmailFrame(frame: Map<String, String>): Result<FramePreview> = runCatchingCancellable {
         val raw = invoke("previewEmailFrame", mapOf("frame" to frame))
         FramePreview(
             subject = raw["subject"] as? String ?: "",

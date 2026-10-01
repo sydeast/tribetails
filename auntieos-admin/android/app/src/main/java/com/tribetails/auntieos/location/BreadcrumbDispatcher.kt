@@ -8,6 +8,7 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicLong
+import com.tribetails.auntieos.util.runCatchingCancellable
 
 /**
  * Single-consumer dispatcher for GPS breadcrumb writes. Buffers (sessionId, point)
@@ -48,7 +49,7 @@ class BreadcrumbDispatcher(
     init {
         scope.launch {
             for ((sessionId, point) in channel) {
-                runCatching { repository.addBreadcrumb(sessionId, point) }
+                runCatchingCancellable { repository.addBreadcrumb(sessionId, point) }
                     .onFailure { AuntieLog.w("Breadcrumb write failed for session $sessionId", it) }
             }
         }

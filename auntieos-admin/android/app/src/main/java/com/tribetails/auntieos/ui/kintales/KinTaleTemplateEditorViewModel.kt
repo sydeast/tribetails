@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.UUID
+import com.tribetails.auntieos.util.rethrowIfCancellation
 
 data class TemplateEditorUiState(
     val isLoading: Boolean = true,
@@ -288,6 +289,7 @@ class KinTaleTemplateEditorViewModel(
                     )
                 }
             } catch (e: Exception) {
+                e.rethrowIfCancellation()
                 AuntieLog.e("Template persist crashed", e)
                 _uiState.value = _uiState.value.copy(isSaving = false, saveStatus = SaveStatus.ERROR)
             }

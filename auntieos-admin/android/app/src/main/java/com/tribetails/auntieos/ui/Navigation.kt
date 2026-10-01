@@ -79,6 +79,7 @@ import com.tribetails.auntieos.voice.VoiceTokenManager
 import com.tribetails.auntieos.voice.voiceRegistrationNotice
 import com.tribetails.auntieos.util.fcmTokenFlow
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.util.runCatchingCancellable
 
 sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
     object Home           : Screen("home",           "Home",        Lucide.House)
@@ -661,7 +662,7 @@ private fun AuthenticatedNavHost(
     val navConfig by produceState(initialValue = emptyList<String>()) {
         val uid = runCatching { FirebaseAuth.getInstance().currentUser?.uid }.getOrNull()
         if (uid != null) {
-            runCatching {
+            runCatchingCancellable {
                 app.repository.observeUserProfile(uid).collect { value = it?.navConfig ?: emptyList() }
             }
         }

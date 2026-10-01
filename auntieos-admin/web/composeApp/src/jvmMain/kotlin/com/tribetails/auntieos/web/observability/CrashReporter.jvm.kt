@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.web.observability
 
 import io.sentry.Sentry
+import io.sentry.SentryEvent
 import io.sentry.SentryLevel
 
 /** DSN: env override (SENTRY_DSN) else the baked public auntieos-admin DSN. */
@@ -17,12 +18,14 @@ actual fun initCrashReporting() {
             options.environment = "desktop"
             options.release = "auntieos-desktop"
             options.setTag("client", "auntieos-desktop") // distinguishes desktop in the shared project
+            // #1067: a coroutine cancellation is never an error event.
+            options.setBeforeSend { event, _ -> filterCancellationEvent(event) }
         }
         // Backstop: route otherwise-silent uncaught exceptions to Sentry, then chain to the
         // prior handler so default crash behavior is preserved.
         val prev = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
-            runCatching { Sentry.captureException(e) }
+            if (!isCancellation(e)) runCatching { Sentry.captureException(e) }
             prev?.uncaughtException(t, e)
         }
         started = true
@@ -30,7 +33,7 @@ actual fun initCrashReporting() {
 }
 
 actual fun reportError(throwable: Throwable, context: String?) {
-    if (!started) return
+    if (!started || isCancellation(throwable)) return
     if (context != null) Sentry.configureScope { it.setTag("context", context) }
     Sentry.captureException(throwable)
 }
@@ -39,3 +42,10 @@ actual fun reportMessage(message: String, fatal: Boolean) {
     if (!started) return
     Sentry.captureMessage(message, if (fatal) SentryLevel.FATAL else SentryLevel.INFO)
 }
+
+/**
+ * #1067: Sentry `beforeSend` guard. Drops (returns null for) an event whose
+ * throwable is or chains a coroutine cancellation; keeps every other event.
+ */
+fun filterCancellationEvent(event: SentryEvent): SentryEvent? =
+    if (isCancellation(event.throwable)) null else event

@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.util.rethrowIfCancellation
 
 /** Blog/social are recipient-less (spec 19 item 2); everything else needs a recipient. Pure; tested. */
 internal fun needsRecipient(commType: String): Boolean =
@@ -343,6 +344,7 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                     profileLoading = false
                 )
             } catch (e: Exception) {
+                e.rethrowIfCancellation()
                 AuntieLog.e("Failed to load related profiles", e)
                 _uiState.value = _uiState.value.copy(profileLoading = false, error = "Failed to load profiles")
             }
@@ -463,6 +465,7 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                             ),
                         ).exceptionOrNull()
                     } catch (t: Throwable) {
+                        t.rethrowIfCancellation()
                         t
                     }
                     if (auditFailure != null) {

@@ -11,6 +11,7 @@ import com.tribetails.auntieos.util.AuntieLog
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeout
+import com.tribetails.auntieos.util.rethrowIfCancellation
 
 /**
  * ISSUE #582: one location fix, taken at the moment "Arrived" is pressed.
@@ -94,6 +95,7 @@ class FusedArrivalFixProvider(private val context: Context) : ArrivalFixProvider
             AuntieLog.i("Arrival check: location permission withdrawn, arrival stays unverified")
             null
         } catch (e: Exception) {
+            e.rethrowIfCancellation()
             AuntieLog.e("Arrival check: could not take a location fix", e)
             null
         }

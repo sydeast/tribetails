@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.time.Instant
+import com.tribetails.auntieos.util.runCatchingCancellable
 
 /**
  * What the Kin (pet) detail screen holds.
@@ -141,7 +142,7 @@ class KinDetailViewModel(
             // The KIN form_schemas behind the structured care checklist. Loaded
             // after the page is already drawable, and fail-loud via schemaError
             // rather than a silently empty section.
-            val schemas = runCatching {
+            val schemas = runCatchingCancellable {
                 val summaries = repository.listFormSchemas().getOrThrow()
                 kinSchemaIds(summaries).mapNotNull { repository.getFormSchema(it).getOrThrow() }
             }

@@ -7,6 +7,7 @@ import com.tribetails.auntieos.ui.admin.IntegrationStatus
 import com.tribetails.auntieos.ui.admin.IntegrationsHealth
 import com.tribetails.auntieos.ui.admin.ServerIntegration
 import com.tribetails.auntieos.util.AuntieLog
+import com.tribetails.auntieos.util.runCatchingCancellable
 
 /**
  * Settings > Integrations, the read half.
@@ -47,7 +48,7 @@ class IntegrationsRepository(
 ) {
     private val functions by lazy(functionsProvider)
 
-    suspend fun getIntegrationsHealth(): Result<IntegrationsHealth> = runCatching {
+    suspend fun getIntegrationsHealth(): Result<IntegrationsHealth> = runCatchingCancellable {
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("getIntegrationsHealth")
             .call(emptyMap<String, Any?>())

@@ -22,6 +22,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
+import com.tribetails.auntieos.util.runCatchingCancellable
 
 /**
  * A3: the four operator transitions the `transitionBookingStatus` callable
@@ -106,18 +107,18 @@ class KinCareRepository(
 
     // --- Kin Care Sessions ---
 
-    suspend fun getKinCareSessions(): Result<List<KinCareSession>> = runCatching {
+    suspend fun getKinCareSessions(): Result<List<KinCareSession>> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         scoped.scopedQuery("kin_care_sessions").toObjects(KinCareSession::class.java)
     }.onFailure { AuntieLog.e("Failed to get kin care sessions", it) }
 
-    suspend fun getKinCareSession(sessionId: String): Result<KinCareSession?> = runCatching {
+    suspend fun getKinCareSession(sessionId: String): Result<KinCareSession?> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val snapshot = firestore.collection("kin_care_sessions").document(sessionId).get().await()
         snapshot.toObject(KinCareSession::class.java)
     }.onFailure { AuntieLog.e("Failed to get kin care session $sessionId", it) }
 
-    suspend fun getKinCareSessionsForKinfolk(kinfolkId: String): Result<List<KinCareSession>> = runCatching {
+    suspend fun getKinCareSessionsForKinfolk(kinfolkId: String): Result<List<KinCareSession>> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val snapshot = firestore.collection("kin_care_sessions")
             .whereEqualTo("kinfolkId", kinfolkId)
@@ -126,7 +127,7 @@ class KinCareRepository(
         snapshot.toObjects(KinCareSession::class.java)
     }.onFailure { AuntieLog.e("Failed to get kin care sessions for $kinfolkId", it) }
 
-    suspend fun getKinCareSessionsBySourceBookingId(sourceBookingId: String): Result<List<KinCareSession>> = runCatching {
+    suspend fun getKinCareSessionsBySourceBookingId(sourceBookingId: String): Result<List<KinCareSession>> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val snapshot = firestore.collection("kin_care_sessions")
             .whereEqualTo("sourceBookingId", sourceBookingId)
@@ -148,7 +149,7 @@ class KinCareRepository(
      * C1: [assertNoCompanyHolidayConflict] runs the same way, for the same
      * reason -- see `CompanyHolidayConflict.kt`.
      */
-    suspend fun createKinCareSession(session: KinCareSession): Result<String> = runCatching {
+    suspend fun createKinCareSession(session: KinCareSession): Result<String> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         assertNoBookingBusyConflict(firestore, session.startTime, session.endTime)
         assertNoCompanyHolidayConflict(firestore, session.startTime, session.endTime)
@@ -197,7 +198,7 @@ class KinCareRepository(
      * visit_logs. [KinCareSession] declares none of them, so a bare set() erases
      * the only record of why those documents exist.
      */
-    suspend fun updateKinCareSession(session: KinCareSession): Result<Unit> = runCatching {
+    suspend fun updateKinCareSession(session: KinCareSession): Result<Unit> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         firestore.collection("kin_care_sessions").document(session.id)
             .set(
@@ -208,7 +209,7 @@ class KinCareRepository(
         Unit
     }.onFailure { AuntieLog.e("Failed to update kin care session ${session.id}", it) }
 
-    suspend fun getKinCareSessionsForDay(dayStartIso: String, dayEndIso: String): Result<List<KinCareSession>> = runCatching {
+    suspend fun getKinCareSessionsForDay(dayStartIso: String, dayEndIso: String): Result<List<KinCareSession>> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val snapshot = scoped.scopedQuery("kin_care_sessions") {
             whereGreaterThanOrEqualTo("startTime", dayStartIso)
@@ -223,14 +224,14 @@ class KinCareRepository(
      * Time row buttons to flip status + drop the matching lifecycle timestamp
      * in one round-trip. Pass empty-string to clear a field (e.g. Undo Arrived).
      */
-    suspend fun patchKinCareSession(id: String, patch: Map<String, Any>): Result<Unit> = runCatching {
+    suspend fun patchKinCareSession(id: String, patch: Map<String, Any>): Result<Unit> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         firestore.collection("kin_care_sessions").document(id).update(patch).await()
         Unit
     }.onFailure { AuntieLog.e("Failed to patch KinCareSession $id", it) }
 
     // ---- Session GPS summary (parity w/ AuntieOS web) ----
-    suspend fun saveSessionGpsSummary(sessionId: String, summary: GpsSummary): Result<Unit> = runCatching {
+    suspend fun saveSessionGpsSummary(sessionId: String, summary: GpsSummary): Result<Unit> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(sessionId.isNotBlank()) { "sessionId required" }
         firestore.collection("kin_care_sessions").document(sessionId)
@@ -241,7 +242,7 @@ class KinCareRepository(
 
     // --- Visit lifecycle transitions ---
 
-    private suspend fun patchSession(sessionId: String, updates: Map<String, Any>): Result<Unit> = runCatching {
+    private suspend fun patchSession(sessionId: String, updates: Map<String, Any>): Result<Unit> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val patched = updates.toMutableMap().apply { put("updatedAt", getCurrentTimestamp()) }
         firestore.collection("kin_care_sessions").document(sessionId)
@@ -341,7 +342,7 @@ class KinCareRepository(
         lat: Double,
         lng: Double,
         accuracyMeters: Double?,
-    ): Result<ArrivalCheckOutcome> = runCatching {
+    ): Result<ArrivalCheckOutcome> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(sessionId.isNotBlank()) { "sessionId required" }
         val payload = buildMap<String, Any> {
@@ -405,7 +406,7 @@ class KinCareRepository(
         endTime: String,
         serviceDurationMinutes: Int = 0,
         notes: String = "",
-    ): Result<String> = runCatching {
+    ): Result<String> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val mode = authGate.requireTestMode()
         val kinfolkId = mode.scopedKinfolkId(kinfolkId)
@@ -439,7 +440,7 @@ class KinCareRepository(
         action: BookingTransitionAction,
         completedAt: String = "",
         reason: String = "",
-    ): Result<Unit> = runCatching {
+    ): Result<Unit> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(sessionId.isNotBlank()) { "sessionId required" }
         val payload = buildMap<String, Any> {
@@ -486,7 +487,7 @@ class KinCareRepository(
         endTime: String,
         overrideBusyConflict: Boolean = false,
         overrideVisitConflict: Boolean = false,
-    ): Result<Unit> = runCatching {
+    ): Result<Unit> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(sessionId.isNotBlank()) { "rescheduleBooking needs a kin_care_sessions document id" }
         val args = RescheduleBookingArgs(
@@ -530,7 +531,7 @@ class KinCareRepository(
     // `kin_care_sessions/{sessionId}/breadcrumbs/{autoId}` - NOT as an array on
     // the parent doc.
 
-    suspend fun addBreadcrumb(sessionId: String, point: LocationPoint): Result<String> = runCatching {
+    suspend fun addBreadcrumb(sessionId: String, point: LocationPoint): Result<String> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(sessionId.isNotBlank()) { "sessionId required" }
         // LocationPoint stamps `timestamp = System.currentTimeMillis()` at construction by default;
@@ -544,7 +545,7 @@ class KinCareRepository(
         docRef.id
     }.onFailure { AuntieLog.e("Failed to add breadcrumb for session $sessionId", it) }
 
-    suspend fun getBreadcrumbs(sessionId: String): Result<List<LocationPoint>> = runCatching {
+    suspend fun getBreadcrumbs(sessionId: String): Result<List<LocationPoint>> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(sessionId.isNotBlank()) { "sessionId required" }
         val snapshot = firestore.collection("kin_care_sessions")
@@ -598,7 +599,7 @@ class KinCareRepository(
         batchId: String,
         visitId: String,
         patch: Map<String, Any?>,
-    ): Result<Unit> = runCatching {
+    ): Result<Unit> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(familyId.isNotBlank() && batchId.isNotBlank() && visitId.isNotBlank()) {
             "patchKinCareDoc requires familyId, batchId, visitId"
@@ -620,7 +621,7 @@ class KinCareRepository(
         familyId: String,
         batchId: String,
         visitId: String,
-    ): Result<com.tribetails.auntieos.data.model.KinCareAssignment> = runCatching {
+    ): Result<com.tribetails.auntieos.data.model.KinCareAssignment> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(familyId.isNotBlank() && batchId.isNotBlank() && visitId.isNotBlank()) {
             "getKinCareAssignment requires familyId, batchId, visitId"
@@ -646,7 +647,7 @@ class KinCareRepository(
         batchId: String,
         visitId: String,
         auntieUid: String?,
-    ): Result<Unit> = runCatching {
+    ): Result<Unit> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         functions.getHttpsCallable("assignAuntie")
             .call(assignAuntiePayload(kinfolkId, batchId, visitId, auntieUid))
@@ -659,7 +660,7 @@ class KinCareRepository(
      * callable, for the Assigned Auntie picker. The server sorts by displayName;
      * [decodeListStaff] re-sorts defensively so the picker reads stably either way.
      */
-    suspend fun listStaff(): Result<List<StaffMember>> = runCatching {
+    suspend fun listStaff(): Result<List<StaffMember>> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val raw = functions.getHttpsCallable("listStaff")
             .call(emptyMap<String, Any?>())
@@ -670,7 +671,7 @@ class KinCareRepository(
 
     // --- Kin Care Reports (KinTales) ---
 
-    suspend fun createKinCareReport(report: KinCareReport): Result<String> = runCatching {
+    suspend fun createKinCareReport(report: KinCareReport): Result<String> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         // Write stamp, not a query: scopedKinfolkId forces the sandbox scope in
         // test mode and passes the caller's kinfolkId through otherwise.
@@ -748,7 +749,7 @@ class KinCareRepository(
     suspend fun updateKinCareReportFields(
         reportId: String,
         changes: Map<String, Any?>,
-    ): Result<Unit> = runCatching {
+    ): Result<Unit> = runCatchingCancellable {
         require(reportId.isNotBlank()) { "updateKinCareReportFields called with no report id" }
         require(changes.isNotEmpty()) { "updateKinCareReportFields called with no changed fields" }
         authGate.ensureAuthenticated()
@@ -788,7 +789,7 @@ class KinCareRepository(
      * reach here for the same reason [updateKinCareReportFields] documents at
      * length. A batched `set()` would not be equivalent, and is not what this does.
      */
-    suspend fun markReportSent(reportId: String, sessionId: String, sentVia: String, deliveryReceiptId: String): Result<Unit> = runCatching {
+    suspend fun markReportSent(reportId: String, sessionId: String, sentVia: String, deliveryReceiptId: String): Result<Unit> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val timestamp = getCurrentTimestamp()
         val batch = firestore.batch()
@@ -815,13 +816,13 @@ class KinCareRepository(
         Unit
     }.onFailure { AuntieLog.e("Failed to mark report sent $reportId", it) }
 
-    suspend fun getKinCareReport(reportId: String): Result<KinCareReport?> = runCatching {
+    suspend fun getKinCareReport(reportId: String): Result<KinCareReport?> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val snapshot = firestore.collection("kin_care_reports").document(reportId).get().await()
         snapshot.toObject(KinCareReport::class.java)
     }.onFailure { AuntieLog.e("Failed to get kin care report $reportId", it) }
 
-    suspend fun getReportsForSession(sessionId: String): Result<List<KinCareReport>> = runCatching {
+    suspend fun getReportsForSession(sessionId: String): Result<List<KinCareReport>> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val snapshot = firestore.collection("kin_care_reports")
             .whereEqualTo("sessionId", sessionId)
@@ -836,7 +837,7 @@ class KinCareRepository(
      * today; carried over rather than deleted, on the same reading as
      * [updateKinCareSession] - see this repo's KDoc on the git-era caveat.
      */
-    suspend fun getDraftReports(): Result<List<KinCareReport>> = runCatching {
+    suspend fun getDraftReports(): Result<List<KinCareReport>> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val snapshot = scoped.scopedQuery("kin_care_reports") {
             whereEqualTo("status", ReportStatus.DRAFT.name)
@@ -845,7 +846,7 @@ class KinCareRepository(
         snapshot.toObjects(KinCareReport::class.java)
     }.onFailure { AuntieLog.e("Failed to get draft reports", it) }
 
-    suspend fun getAllKinCareReports(): Result<List<KinCareReport>> = runCatching {
+    suspend fun getAllKinCareReports(): Result<List<KinCareReport>> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         scoped.scopedQuery("kin_care_reports").toObjects(KinCareReport::class.java)
     }.onFailure { AuntieLog.e("Failed to get all kin care reports", it) }
@@ -878,7 +879,7 @@ class KinCareRepository(
         reportId: String,
         kinfolkId: String,
         kinfolkName: String,
-    ): Result<Unit> = runCatching {
+    ): Result<Unit> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(reportId.isNotBlank()) { "reportId required" }
         require(kinfolkId.isNotBlank()) { "kinfolkId required" }
@@ -896,7 +897,7 @@ class KinCareRepository(
     suspend fun markOrphanReportAsDuplicate(
         reportId: String,
         duplicateOfReportId: String,
-    ): Result<Unit> = runCatching {
+    ): Result<Unit> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(reportId.isNotBlank()) { "reportId required" }
         require(duplicateOfReportId.isNotBlank()) { "duplicateOfReportId required" }
@@ -914,7 +915,7 @@ class KinCareRepository(
     suspend fun archiveOrphanReportAsBadData(
         reportId: String,
         reason: String,
-    ): Result<Unit> = runCatching {
+    ): Result<Unit> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(reportId.isNotBlank()) { "reportId required" }
         require(reason.length >= 5) { "Archive reason must be at least 5 characters" }
@@ -967,7 +968,7 @@ class KinCareRepository(
         reportId: String,
         familyId: String,
         includePhotos: Boolean = true,
-    ): Result<ShareLinkResult> = runCatching {
+    ): Result<ShareLinkResult> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(reportId.isNotBlank()) { "createShareLink: reportId required" }
         require(familyId.isNotBlank()) { "createShareLink: familyId required" }
@@ -998,7 +999,7 @@ class KinCareRepository(
      * than reached back through a facade; when the Directory repo is carved this
      * becomes a call into it.
      */
-    private suspend fun kinForKinfolk(kinfolkId: String): Result<List<Kin>> = runCatching {
+    private suspend fun kinForKinfolk(kinfolkId: String): Result<List<Kin>> = runCatchingCancellable {
         AuntieLog.d("Fetching kin for kinfolk: $kinfolkId")
         authGate.ensureAuthenticated()
         val snapshot = firestore.collection("kin")

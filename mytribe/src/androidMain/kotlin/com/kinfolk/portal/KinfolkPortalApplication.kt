@@ -55,6 +55,10 @@ class KinfolkPortalApplication : Application() {
                     options.environment = "production"
                     options.release = "com.kinfolk.portal@0.2.0+2"
                     options.isEnableAutoSessionTracking = true
+                    // #1067: a coroutine cancellation is never an error event.
+                    options.setBeforeSend { event, _ ->
+                        if (com.kinfolk.portal.error.isCancellation(event.throwable)) null else event
+                    }
                 }
                 if (priorCrashReport != null) {
                     io.sentry.Sentry.captureMessage(
