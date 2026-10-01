@@ -59,7 +59,7 @@ describe('visual templates on every route', () => {
   for (const [name, doc] of [['visual', VISUAL], ['old', OLD]] as const) {
     it(`sendFromTemplate sends a ${name} template`, async () => {
       mocks.dbFn.mockReturnValue(buildDbMock({ writeThrough: true, docs: { 'emailTemplates/k': doc } }).db);
-      await sendFromTemplate('k', 'pat@x.test', { link: LINK, displayName: 'Pat' });
+      await sendFromTemplate('k', 'pat@tribetails.com', { link: LINK, displayName: 'Pat' });
       const b = sentBody();
       expect(b.text_body).toContain(LINK);
       if (name === 'visual') expect(b.html_body).toContain('<div class="header"><h2>Reset</h2></div>');
@@ -68,7 +68,7 @@ describe('visual templates on every route', () => {
 
     it(`the notification email channel sends a ${name} template`, async () => {
       mocks.dbFn.mockReturnValue(
-        buildDbMock({ writeThrough: true, docs: { 'emailTemplates/k': doc, 'clients/u1': { email: 'pat@x.test' } } }).db,
+        buildDbMock({ writeThrough: true, docs: { 'emailTemplates/k': doc, 'clients/u1': { email: 'pat@tribetails.com' } } }).db,
       );
       await sendEmailChannel({ def: def(), recipientUid: 'u1', data: { link: LINK, displayName: 'Pat' } });
       expect(sentBody().text_body).toContain(LINK);

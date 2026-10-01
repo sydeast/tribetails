@@ -1,6 +1,7 @@
 import Handlebars from 'handlebars';
 import { stripUnresolvedTokens } from '../notifications/templateParsers';
 import { sendsAreSuppressed, suppressedId, logSuppressedSend } from './sendGuard';
+import { isReservedEmailDomain, logRefusedSend, refusedId } from './reservedEmailDomains';
 
 /**
  * Email transport: smtp2go HTTP API (replaced SendGrid 2026-06-10 when the
@@ -22,6 +23,8 @@ export interface SendArgs {
   data: Record<string, unknown>;
   htmlTemplate?: string;
   replyTo?: string;
+  /** The template catalog key, when there is one. Only used to log a refused send (#1076). */
+  templateKey?: string;
 }
 
 interface Smtp2goResponse {
@@ -106,6 +109,13 @@ export async function sendTemplatedEmail(args: SendArgs): Promise<string> {
   if (sendsAreSuppressed()) {
     logSuppressedSend('email', args.to, args.subjectTemplate);
     return suppressedId('email');
+  }
+  // #1076: a reserved or invented domain can only bounce, and bounces cost the
+  // sender reputation. Refused before the secret reads and before any fetch;
+  // resolves with a marked id so no caller throws or retries.
+  if (isReservedEmailDomain(args.to)) {
+    logRefusedSend(args.to, args.templateKey, args.subjectTemplate);
+    return refusedId();
   }
   const key = process.env.SMTP2GO_API_KEY;
   if (!key) throw new Error('SMTP2GO_API_KEY environment variable is required');
