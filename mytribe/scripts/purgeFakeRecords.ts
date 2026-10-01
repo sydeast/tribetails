@@ -164,6 +164,9 @@ import {
   type QueryDocumentSnapshot,
 } from './lib/firebaseAdmin';
 import { createHash } from 'crypto';
+import { execFileSync } from 'child_process';
+import { existsSync, readFileSync } from 'fs';
+import { resolve } from 'path';
 import { emailDomain, isProtectedEmail, isReservedEmail } from './lib/reservedEmailDomain';
 import { HOUSEHOLD_SEND_GATE_FIELD, resolveHouseholdSendGate } from '../functions/src/notifications/householdSendGate';
 import { BUSINESS_SETTINGS_DOC, BUSINESS_SETTINGS_DOC_LEGACY } from '../functions/src/lib/businessHours';
@@ -361,7 +364,63 @@ export interface Plan {
    * refuses the run.
    */
   triggerConflicts: string[];
+  /** Which onClientsWrite the plan assumes is deployed, and how that was decided. */
+  trigger: { model: TriggerModel; line: string };
   sendGate: { line: string; raw: unknown; source: string };
+}
+
+/**
+ * WHICH onClientsWrite IS DEPLOYED (#1085). Before #1085 the trigger cleared
+ * `kinfolk/{kinfolkIds[0]}.uid` blind, so a fake client whose first household is
+ * linked to a real account would wipe that link: the plan refuses. After #1085 it
+ * reads each listed household and clears only a uid equal to the deleted one, so
+ * that conflict cannot happen. Merging the fix does not deploy it, so the model
+ * is read from what was RELEASED: `.release-state` names the commit the last
+ * release shipped, and that commit's trigger source is checked for the owner
+ * check. Anything unreadable falls back to 'blind', which only ever refuses more.
+ */
+export type TriggerModel = 'blind' | 'checks-owner';
+
+/** The line in the fixed trigger that makes it check whose uid it clears. */
+export const OWNER_CHECK_MARKER = "snap.data()?.uid === uid";
+
+export function deployedTriggerModel(io: {
+  readReleaseState: () => string | null;
+  showFileAt: (sha: string) => string | null;
+}): { model: TriggerModel; line: string } {
+  const sha = io.readReleaseState()?.trim() || null;
+  if (!sha) {
+    return { model: 'blind', line: 'Deployed onClientsWrite: unknown (no .release-state), assuming the pre-#1085 trigger that clears links blind' };
+  }
+  const short = sha.slice(0, 7);
+  const src = io.showFileAt(sha);
+  if (src === null) {
+    return { model: 'blind', line: `Deployed onClientsWrite: unreadable at released commit ${short}, assuming the pre-#1085 trigger that clears links blind` };
+  }
+  if (src.includes(OWNER_CHECK_MARKER)) {
+    return { model: 'checks-owner', line: `Deployed onClientsWrite: released commit ${short} has the #1085 owner check (clears only the deleted account's own link)` };
+  }
+  return { model: 'blind', line: `Deployed onClientsWrite: released commit ${short} predates #1085 (clears kinfolkIds[0].uid blind)` };
+}
+
+/** `deployedTriggerModel` against this checkout's `.release-state` and git. */
+export function deployedTriggerModelFromRepo(root: string): { model: TriggerModel; line: string } {
+  return deployedTriggerModel({
+    readReleaseState: () => {
+      const f = resolve(root, '.release-state');
+      return existsSync(f) ? readFileSync(f, 'utf8') : null;
+    },
+    showFileAt: (sha) => {
+      try {
+        return execFileSync('git', ['-C', root, 'show', `${sha}:mytribe/functions/src/triggers/onClientsWrite.ts`], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        });
+      } catch {
+        return null;
+      }
+    },
+  });
 }
 
 class PlanBuilder {
@@ -442,7 +501,14 @@ export async function readSendGate(db: Firestore): Promise<Plan['sendGate']> {
 }
 
 /** READS ONLY. Everything the apply run would delete. */
-export async function buildPlan(db: Firestore, auth: Auth): Promise<Plan> {
+export async function buildPlan(
+  db: Firestore,
+  auth: Auth,
+  trigger: { model: TriggerModel; line: string } = {
+    model: 'blind',
+    line: 'Deployed onClientsWrite: not checked, assuming the pre-#1085 trigger that clears links blind',
+  },
+): Promise<Plan> {
   const b = new PlanBuilder(db);
   const uids: Record<string, string> = {};
   const users: Record<string, PlannedUser> = {};
@@ -608,7 +674,19 @@ export async function buildPlan(db: Firestore, auth: Auth): Promise<Plan> {
   for (const [path, ids] of Object.entries(clientKinfolkIds)) {
     const planned = Boolean(b.docs[path]);
     if (!planned && ids.some((id) => householdSet.has(id))) danglingClients.push({ path, kinfolkIds: ids.filter((id) => householdSet.has(id)) });
-    if (planned && ids[0] && !householdSet.has(ids[0])) {
+    if (planned && trigger.model === 'checks-owner') {
+      // #1085 trigger: every listed household is read and only this account's
+      // own link is cleared, and a missing household is never recreated.
+      const uid = path.slice('clients/'.length);
+      for (const id of ids) {
+        if (!id || householdSet.has(id)) continue;
+        const target = await db.doc(`kinfolk/${id}`).get();
+        const stored = target.exists ? (target.data() as Record<string, unknown>)['uid'] : undefined;
+        if (stored === uid) {
+          triggerSideEffects.push(`deleting ${path} makes onClientsWrite set kinfolk/${id}.uid = '' (this account's own link, on a household this run does not delete)`);
+        }
+      }
+    } else if (planned && ids[0] && !householdSet.has(ids[0])) {
       const uid = path.slice('clients/'.length);
       const target = await db.doc(`kinfolk/${ids[0]}`).get();
       const stored = target.exists ? (target.data() as Record<string, unknown>)['uid'] : undefined;
@@ -630,6 +708,7 @@ export async function buildPlan(db: Firestore, auth: Auth): Promise<Plan> {
     danglingClients: danglingClients.sort((a, z) => a.path.localeCompare(z.path)),
     triggerSideEffects: triggerSideEffects.sort(),
     triggerConflicts: triggerConflicts.sort(),
+    trigger,
     sendGate: await readSendGate(db),
   };
 }
@@ -779,6 +858,7 @@ export async function applyPlan(
 export function planLines(plan: Plan): string[] {
   const lines: string[] = [];
   lines.push(plan.sendGate.line);
+  lines.push(plan.trigger.line);
   lines.push('');
   lines.push(`Fake households (kinfolk address on a reserved domain): ${plan.households.length}`);
   for (const h of plan.households) lines.push(`  ${h}`);
@@ -823,7 +903,11 @@ async function main(): Promise<void> {
   if (getApps().length === 0) initializeApp(target.projectId ? { projectId: target.projectId } : {});
   const db = getFirestore();
   const auth = getAuth();
-  const plan = await buildPlan(db, auth);
+  // A local emulator runs no functions, so no trigger fires there.
+  const trigger = target.kind === 'emulator'
+    ? { model: 'checks-owner' as TriggerModel, line: 'Deployed onClientsWrite: none (emulator runs no functions)' }
+    : deployedTriggerModelFromRepo(resolve(__dirname, '..', '..'));
+  const plan = await buildPlan(db, auth, trigger);
   for (const line of planLines(plan)) console.log(line);
   if (!args.apply) {
     console.log('');

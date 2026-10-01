@@ -258,6 +258,16 @@ describe.runIf(BOTH)('purgeFakeRecords against the Firestore and Auth emulators 
     expect(await dumpAll(db)).toEqual(before);
     expect(await authUids(auth)).toEqual(usersBefore);
   }, T);
+  it('with the #1085 trigger deployed, the same fake client is no conflict and deletes', async () => {
+    // State from the previous case: clients/fake-linked names e2e-kf-1, which is linked to CATCH_UID.
+    const plan = await buildPlan(db, auth, { model: 'checks-owner', line: 'Deployed onClientsWrite: test' });
+    expect(plan.triggerConflicts).toEqual([]);
+    expect(plan.triggerSideEffects).toEqual([]);
+    expect(plan.docs.map((d) => d.path)).toContain('clients/fake-linked');
+    await applyPlan(db, auth, plan, { settleMs: 0, confirm: planFingerprint(plan), log: () => undefined });
+    expect((await db.doc('clients/fake-linked').get()).exists).toBe(false);
+    expect((await db.doc('kinfolk/e2e-kf-1').get()).data()?.uid).toBe(CATCH_UID);
+  }, T);
   it('prints the send gate for true and for a string that only looks like true', async () => {
     await db.doc('business_settings/business_settings').set({ householdNotificationsLive: true }, { merge: true });
     expect((await readSendGate(db)).line).toBe(
