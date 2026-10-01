@@ -266,6 +266,62 @@ For `repair:duplicate-vet-clinic-id`:
 `updatedAt` is not bumped and no repair stamp is written, so a repaired household
 keeps the times it already had.
 
+### Deleting the fake-address test records (#1082)
+
+Operator ruling 2026-09-30. Test records with invented addresses
+(`@tribetails.test` and the like) make every send to them bounce, and the
+bounces hurt the sender rating. `purge:fake-records` finds every Auth user and
+contact record whose address is on a reserved domain (`.test`, `.example`,
+`.invalid`, `.localhost`, `.local`, `example.com`, `example.net`, `example.org`),
+plus the records tied to those households and accounts, and deletes them only
+when asked. It finds them by address, not from a list of ids.
+
+It never touches `e2e-admin@tribetails.com`, `catch@hanasamku.com`,
+`pawsome@hanasamku.com` or any `@tribetails.com` address. If anything it would
+delete carries one of those, or any address that is not on a reserved domain,
+the delete run stops before the first delete and names the record, the field and
+the domain.
+
+1. `npm run test:scripts:emulator` (from `mytribe/functions`) and read the pass count.
+2. Read only:
+
+   ```
+   npm --prefix mytribe/functions run purge:fake-records -- --project auntieos-ttpc --allow-prod
+   ```
+
+   Writes nothing. The first line is the target: check it says `PRODUCTION`,
+   `auntieos-ttpc` and `READ ONLY (writes nothing)`. The next line is the
+   household send gate (`householdNotificationsLive`), ON or OFF in plain words.
+   Then the fake households, every Auth user and every document it would delete
+   with counts per collection, the real `clients` records that name a fake
+   household (left alone), and any `WOULD REFUSE` lines. The last line is
+   `Plan fingerprint: <12 characters>`. Paste the whole output into the docket
+   before step 3.
+3. Delete, with the fingerprint from step 2 in place of `<fingerprint>`:
+
+   ```
+   npm --prefix mytribe/functions run purge:fake-records -- --project auntieos-ttpc --allow-prod --apply --confirm <fingerprint>
+   ```
+
+   Scans again and prints the same list. If anything changed since step 2, the
+   fingerprint no longer matches and it stops before the first delete; go back
+   to step 2. Otherwise it deletes exactly that list, Auth users last. Each
+   deletion prints a `DELETED` line and writes one `activity_log` row
+   (`PURGE_FAKE_RECORD`, actor `system:purgeFakeRecords`). It then waits 10
+   seconds (`--settle-seconds` changes it) and deletes again any listed record
+   a trigger brought back: deleting a `clients` record makes `onClientsWrite`
+   write `uid: ''` onto its household, which can recreate a household it just
+   deleted.
+4. Re-run step 2. It lists nothing. A trigger that lands after the settle wait
+   can still leave a `kinfolk/<id>` holding only `uid: ''` and no address, which
+   step 2 cannot find. Open each household id step 2 listed in the Firebase
+   console and delete any such stub by hand.
+
+`--allow-prod` says WHERE and `--apply` says WHETHER TO DELETE. Without
+`--apply` nothing is written, `--dry-run` forces the read-only run in either flag
+order, and `--allow-prod` is refused while either emulator host is set. Needs
+credentials that can read and delete in Firestore and Firebase Auth.
+
 ### Read-only reports to run after a release
 
 These write nothing. Run each once after the first release that contains it and
