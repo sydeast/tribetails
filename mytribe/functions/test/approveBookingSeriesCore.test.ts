@@ -381,6 +381,17 @@ describe('approveBookingSeriesCore: visits awaiting a start time (#1098)', () =>
     expect(r.sessionsCreated).toBe(1);
   });
 
+  it('with NO zone in settings, reads the night in the default America/Chicago, not UTC (#1109)', async () => {
+    const ctx = seed({ settings: { timeZone: undefined } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { approveBookingSeriesCore } = await import('../src/admin/approveBookingSeriesCore');
+    // 7:30 PM CDT on the 9th is 00:30 UTC on the 10th: UTC would call it the wrong night.
+    const sevenThirtyCentral = Date.parse('2026-10-10T00:30:00.000Z');
+    const r = await approveBookingSeriesCore({
+      kinfolkId: '3', batchId: 'b1', actorUid: 'admin', actorRole: 'AUNTIE', startTimes: { v1: sevenThirtyCentral },
+    });
+    expect(r.sessionsCreated).toBe(1);
+  });
   it('REFUSES when the KinCare has no known length, naming it', async () => {
     const ctx = seed({
       visits: [pendingVisit({ serviceId: 'Sleepover', serviceName: 'Sleepover', serviceType: 'Sleepover' })],

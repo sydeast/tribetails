@@ -58,8 +58,10 @@
  *
  * STATUS (docs/runbooks/after-release.md, "Scripts and the data re-upload"): still applies.
  * Run again after the reload regardless of whether `business_settings`
- * survives the wipe: a recreated document falls back to
- * `America/New_York` (DEFAULT_BUSINESS_SETTINGS), the wrong zone.
+ * survives the wipe. Since #1109 a recreated document with no zone resolves to
+ * `America/Chicago` on the server and both admin apps and the settings screen
+ * flags it "Set your business time zone", so the New York default this script
+ * was written against is gone; running it still writes the value down.
  */
 import { getApps, initializeApp, getFirestore, type Firestore } from './lib/firebaseAdmin';
 

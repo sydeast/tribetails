@@ -1,4 +1,4 @@
-import { zonedNow } from './businessHours';
+import { FALLBACK_BUSINESS_TIME_ZONE, zonedNow } from './businessHours';
 
 /**
  * TIME-BLOCK BOOKING: the availability half of `business_settings`.
@@ -426,12 +426,31 @@ export function visitMatchesBlock(
   return minutes >= start && minutes < end ? 'inside' : 'outside';
 }
 
-/** `business_settings.timeZone`, trimmed, or '' when the field is missing or not a string. */
+/**
+ * `business_settings.timeZone`, trimmed, when it names a zone `Intl` can read;
+ * otherwise the ruled `America/Chicago` (#1109).
+ *
+ * It used to return '' for a missing field, and the callers then fell back to
+ * UTC while both admin clients assumed New York, so one overnight start time
+ * could be read as three different nights. Resolving here means every server
+ * reader (`requestBooking`, the series approval, the holiday guard) agrees with
+ * every client, which carry the same default. Use `businessTimeZoneIsSet` to
+ * ask whether the operator actually chose one.
+ */
 export function businessTimeZone(settings: unknown): string {
+  const stored = storedBusinessTimeZone(settings);
+  return stored !== '' && zonedNow(0, stored) !== null ? stored : FALLBACK_BUSINESS_TIME_ZONE;
+}
+/** The raw stored value, trimmed, or '' when the field is missing or not a string. */
+function storedBusinessTimeZone(settings: unknown): string {
   const data = (settings && typeof settings === 'object' ? settings : {}) as Record<string, unknown>;
   return typeof data['timeZone'] === 'string' ? (data['timeZone'] as string).trim() : '';
 }
-
+/** Did the operator set a zone `Intl` can read? False means `businessTimeZone` is returning the default. */
+export function businessTimeZoneIsSet(settings: unknown): boolean {
+  const stored = storedBusinessTimeZone(settings);
+  return stored !== '' && zonedNow(0, stored) !== null;
+}
 /**
  * The BUSINESS's own calendar date (`YYYY-MM-DD`) for an instant.
  *
@@ -442,22 +461,26 @@ export function businessTimeZone(settings: unknown): string {
  * same block on the same BUSINESS day must still collide while different days
  * must not, and only the business's day boundary answers that.
  *
- * WHEN THE ZONE IS UNUSABLE we fall back to the UTC calendar date rather than
- * refusing to key at all, for three reasons:
+ * WHEN THE ZONE IS UNUSABLE we key by the ruled `America/Chicago` (#1109), the
+ * zone `businessTimeZone` resolves a missing setting to, so a caller handing in
+ * a raw blank still agrees with every client's default. Only when Chicago is
+ * itself unreadable by `Intl` do we fall back to the UTC calendar date, and
+ * that is kept for the three reasons #597 chose it:
  *   - it is deterministic and total, so the duplicate rule keeps running rather
  *     than quietly switching itself off — which is the failure mode #596 is
  *     about, and repeating it here would be worse than a slightly wrong day;
  *   - the refusal it must never lose is the SAME KinCare at the SAME instant,
- *     and identical `startTimeMs` values always produce the identical UTC date,
+ *     and identical `startTimeMs` values always produce the identical date,
  *     whatever the zone is. That case is preserved exactly;
  *   - the case it could get wrong is two visits the business considers
- *     different days landing on one UTC date, which needs them under 24h apart;
+ *     different days landing on one date, which needs them under 24h apart;
  *     block-mode visits on different dates are a whole day apart by
  *     construction, since both clients build them from the same block start.
- * A blank zone is also loud at the call site — see `containmentIsInert`.
+ * UTC was the cheapest total fallback, not a decision against the ruled zone:
+ * a fixed zone is just as deterministic and is also the right day.
  */
 export function businessCalendarDate(startTimeMs: number, timeZone: string): string {
-  const local = zonedNow(startTimeMs, timeZone);
+  const local = zonedNow(startTimeMs, timeZone) ?? zonedNow(startTimeMs, FALLBACK_BUSINESS_TIME_ZONE);
   if (local !== null) return local.dateIso;
   if (!Number.isFinite(startTimeMs)) return 'unknown-date';
   return new Date(startTimeMs).toISOString().slice(0, 10);
@@ -467,7 +490,8 @@ export function businessCalendarDate(startTimeMs: number, timeZone: string): str
  * Is time-block CONTAINMENT switched off by a timezone this server cannot read?
  *
  * `visitMatchesBlock` fails open on an unusable zone, on purpose, and that
- * decision stands. What must not stand is it happening SILENTLY: with a blank
+ * decision stands. Since #1109 the zone the server hands it is already resolved
+ * (`businessTimeZone`), so this fires only if the ruled default is unreadable too. What must not stand is it happening SILENTLY: with a blank
  * or invalid `business_settings.timeZone` the containment check returns
  * `zone-unusable` for every block, so rule 4 of `assertVisitBookingMode` — a
  * client cannot send an arbitrary time under a block's name — is not running at

@@ -212,6 +212,15 @@ export interface ZonedNow {
 }
 
 /**
+ * OPERATOR RULING 2026-08-11: the business runs on `America/Chicago`. This is
+ * THE default for a missing or unreadable `business_settings.timeZone`, and the
+ * one place it is spelled: the server resolves through it, and the admin web,
+ * Android and desktop clients carry the same literal (#1109) so a settings
+ * document with no zone reads the same everywhere. The stored value always
+ * wins, so a relocation is a settings change and not a deploy.
+ */
+export const FALLBACK_BUSINESS_TIME_ZONE = 'America/Chicago';
+/**
  * The business's own wall clock for an instant, or null when the zone is
  * unusable.
  *

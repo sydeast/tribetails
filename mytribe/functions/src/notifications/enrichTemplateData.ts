@@ -1,5 +1,6 @@
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
+import { businessTimeZone } from '../lib/bookingTimeBlocks';
 import { isInactiveKinStatus } from '../lib/kinStatus';
 import { getNotificationDef } from './catalog';
 import {
@@ -471,8 +472,7 @@ export async function enrichTemplateData(
     tzLoaded = true;
     try {
       const snap = await firestore.doc('business_settings/business_settings').get();
-      const v = str((snap.data() as Doc)?.timeZone);
-      if (v) timeZone = v;
+      timeZone = businessTimeZone(snap.data());
     } catch {
       // keep default
     }

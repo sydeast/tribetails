@@ -337,11 +337,12 @@ describe('requestBookingHandler — time-block booking', () => {
   });
 
   /**
-   * #596, the wider half. Fail-open on an unreadable zone is deliberate and
-   * stays — but it must not be silent, because it means rule 4 is not running
-   * for ANY block in the business.
+   * #596 / #1109. A blank zone used to switch rule 4 (containment) off for every
+   * block, silently, while both admin apps assumed New York. It now resolves to
+   * the ruled America/Chicago, so containment keeps running, and the missing
+   * setting gets its own named line.
    */
-  it('logs a named line when a blank timezone leaves containment inert', async () => {
+  it('logs a named warning when the timezone is blank, and does not call containment inert', async () => {
     const ctx = buildDbMock({
       docs: {
         'clients/u1': { kinfolkIds: ['3'] },
@@ -350,12 +351,12 @@ describe('requestBookingHandler — time-block booking', () => {
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     const { requestBookingHandler } = await import('../src/portal/requestBooking');
-    await requestBookingHandler(multi([visit({ startTimeMs: atUtc(3) })]));
-    expect(loggedEvents()).toContain('timeblock.containment.inert');
-    expect(mocks.logEventFn.mock.calls.map((c) => c[0]).find((f: any) => f.event === 'timeblock.containment.inert'))
-      .toMatchObject({ severity: 'error' });
+    await requestBookingHandler(multi([visit({ startTimeMs: atUtc(18, 30) })]));
+    expect(loggedEvents()).toContain('business.timezone.missing');
+    expect(loggedEvents()).not.toContain('timeblock.containment.inert');
+    expect(mocks.logEventFn.mock.calls.map((c) => c[0]).find((f: any) => f.event === 'business.timezone.missing'))
+      .toMatchObject({ severity: 'warn', extra: { timeZone: 'America/Chicago' } });
   });
-
   it('says nothing about inert containment when the timezone is usable', async () => {
     mocks.dbFn.mockReturnValue(ctxWith(BLOCK_ONLY).db);
     const { requestBookingHandler } = await import('../src/portal/requestBooking');
@@ -363,23 +364,27 @@ describe('requestBookingHandler — time-block booking', () => {
     expect(loggedEvents()).not.toContain('timeblock.containment.inert');
   });
 
-  it('skips the window check, but not the block check, when the stored timezone is unusable', async () => {
-    const ctx = buildDbMock({
-      docs: {
-        'clients/u1': { kinfolkIds: ['3'] },
-        'business_settings/business_settings': { serviceRates: SERVICE_RATES, timeZone: '', ...BLOCK_ONLY },
-      },
+  for (const stored of ['', 'Mars/Olympus_Mons']) {
+    it(`checks the window in America/Chicago when the stored timezone is ${stored === '' ? 'blank' : 'unusable'} (#1109)`, async () => {
+      const ctx = buildDbMock({
+        docs: {
+          'clients/u1': { kinfolkIds: ['3'] },
+          'business_settings/business_settings': { serviceRates: SERVICE_RATES, timeZone: stored, ...BLOCK_ONLY },
+        },
+      });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const { requestBookingHandler } = await import('../src/portal/requestBooking');
+      // 18:30Z is 12:30 CDT or 11:30 CST: inside Midday (11:00-15:00) either way.
+      const res: any = await requestBookingHandler(multi([visit({ startTimeMs: atUtc(18, 30) })]));
+      expect(visitsOf(ctx, res.batchId)).toHaveLength(1);
+      // 03:00Z is the evening before in Chicago, nowhere near the window.
+      await expect(requestBookingHandler(multi([visit({ startTimeMs: atUtc(3) })])))
+        .rejects.toMatchObject({ code: 'invalid-argument' });
+      // The id is still checked.
+      await expect(requestBookingHandler(multi([visit({ timeBlockId: 'brunch' })])))
+        .rejects.toMatchObject({ code: 'invalid-argument' });
     });
-    mocks.dbFn.mockReturnValue(ctx.db);
-    const { requestBookingHandler } = await import('../src/portal/requestBooking');
-    // A time nowhere near the window is let through: we cannot tell, and a
-    // wrong refusal costs a household a booking it was entitled to make.
-    const res: any = await requestBookingHandler(multi([visit({ startTimeMs: atUtc(3) })]));
-    expect(visitsOf(ctx, res.batchId)).toHaveLength(1);
-    // The id is still checked, because that we can always answer.
-    await expect(requestBookingHandler(multi([visit({ timeBlockId: 'brunch' })])))
-      .rejects.toMatchObject({ code: 'invalid-argument' });
-  });
+  }
 });
 
 /**

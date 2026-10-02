@@ -8,20 +8,14 @@
  * unit test.
  */
 import type { Firestore } from 'firebase-admin/firestore';
-import { loadBusinessHoursSettings, zonedNow } from './businessHours';
+import { FALLBACK_BUSINESS_TIME_ZONE, loadBusinessHoursSettings, zonedNow } from './businessHours';
+
+export { FALLBACK_BUSINESS_TIME_ZONE };
 
 /** What a household said about a quote. Stored on the invoice as `quoteDecision`. */
 export type QuoteDecision = 'accepted' | 'denied';
 
 export const QUOTE_DECISIONS = ['accepted', 'denied'] as const;
-
-/**
- * OPERATOR RULING 2026-08-11 (see `businessHours.ts`): the business runs on
- * `America/Chicago`. Used only when the settings doc carries no usable zone —
- * the stored value still wins, so a relocation is a settings change and not a
- * deploy.
- */
-export const FALLBACK_BUSINESS_TIME_ZONE = 'America/Chicago';
 
 /** The stored decision, or null when the field is absent or is not one of the two. */
 export function quoteDecisionOf(raw: unknown): QuoteDecision | null {

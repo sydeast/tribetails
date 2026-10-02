@@ -204,10 +204,11 @@ describe('businessDatesForVisit', () => {
     ).toEqual(['2031-03-08', '2031-03-09', '2031-03-10']);
   });
 
-  it('a blank or unknown zone falls back to the UTC date(s)', () => {
+  it('a blank or unknown zone falls back to the ruled Chicago date(s), not UTC (#1109)', () => {
+    // 05:00Z on the 15th is 23:00 on the 14th in Chicago.
     const v = { startTimeMs: Date.parse('2031-01-15T05:00:00.000Z') };
-    expect(businessDatesForVisit(v, '')).toEqual(['2031-01-15']);
-    expect(businessDatesForVisit(v, 'Not/AZone')).toEqual(['2031-01-15']);
+    expect(businessDatesForVisit(v, '')).toEqual(['2031-01-14']);
+    expect(businessDatesForVisit(v, 'Not/AZone')).toEqual(['2031-01-14']);
   });
 
   it('a bare night is checked as given and an unresolvable start yields nothing', () => {
@@ -273,6 +274,15 @@ describe('guardCompanyHolidayConflict', () => {
     ).rejects.toMatchObject({ code: 'failed-precondition', message: expect.stringContaining('2031-01-14') });
   });
 
+  it('#1109: with NO zone in settings, checks the Chicago business date rather than the UTC one', async () => {
+    const ctx = buildDbMock({
+      docs: { 'business_settings/business_settings': { companyHolidays: ['2031-01-14|Closed'] } },
+    });
+    // 03:00Z on the 15th is 9 PM on the 14th in Chicago; the UTC date would miss the closure.
+    await expect(
+      guardCompanyHolidayConflict({ firestore: ctx.db as any, visits: [{ startTimeMs: Date.parse('2031-01-15T03:00:00.000Z') }] }),
+    ).rejects.toMatchObject({ code: 'failed-precondition', message: expect.stringContaining('2031-01-14') });
+  });
   it('names EVERY conflicting visit in a multi-visit batch, not just the first', async () => {
     const ctx = buildDbMock({
       docs: { 'business_settings/business_settings': { companyHolidays: ['2026-12-25|Christmas', '2027-01-01|New Year'] } },
