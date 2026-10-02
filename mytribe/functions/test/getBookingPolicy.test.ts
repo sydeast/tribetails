@@ -61,7 +61,30 @@ describe('getBookingPolicy', () => {
       timeBlocks: [
         { id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', durationMinutes: 240 },
       ],
+      startTimeServiceIds: [],
     });
+  });
+  it('#1092: names the KinCares booked at a start time, and nothing else about them', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        docs: {
+          'business_settings/business_settings': {
+            allowTimeBlockBooking: true,
+            allowSpecificTimeBooking: false,
+            defaultBookingMode: 'TIME_BLOCK',
+            timeBlocks: [{ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', active: true }],
+            serviceRates: { '30Minute': '25', Overnight: '120' },
+            serviceDurations: { Overnight: '720' },
+            serviceStartTimeBooking: { Overnight: true, '30Minute': false, Stray: 'yes' },
+          },
+        },
+      }).db,
+    );
+    const res = await getBookingPolicyHandler(req());
+    expect(res.startTimeServiceIds).toEqual(['Overnight']);
+    // The flag crosses; the length and price behind it do not.
+    expect(JSON.stringify(res)).not.toContain('720');
+    expect(JSON.stringify(res)).not.toContain('120');
   });
 
   /**
@@ -97,6 +120,7 @@ describe('getBookingPolicy', () => {
       'allowSpecificTimeBooking',
       'allowTimeBlockBooking',
       'defaultBookingMode',
+      'startTimeServiceIds',
       'timeBlocks',
     ]);
     expect(Object.keys(res.timeBlocks[0]).sort()).toEqual([
@@ -146,6 +170,7 @@ describe('getBookingPolicy', () => {
       allowSpecificTimeBooking: true,
       defaultBookingMode: 'SPECIFIC_TIME',
       timeBlocks: [],
+      startTimeServiceIds: [],
     });
   });
 });

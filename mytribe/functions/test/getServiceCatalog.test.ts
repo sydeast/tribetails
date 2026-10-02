@@ -170,6 +170,15 @@ describe('serviceRates pure mappers', () => {
     ]);
   });
 
+  it('#1092: mapServiceRates takes a typed length over the name, and the name when none was typed', async () => {
+    const { mapServiceRates } = await import('../src/portal/getServiceCatalog');
+    const out = mapServiceRates({ Overnight: '120', '2Hrs': '80' }, { Overnight: '720', '2Hrs': '' });
+    expect(out.map((s) => [s.id, s.durationMinutes])).toEqual([
+      ['2Hrs', 120],
+      ['Overnight', 720],
+    ]);
+  });
+
   it('mapServiceRates returns [] for missing / non-map inputs', async () => {
     const { mapServiceRates } = await import('../src/portal/getServiceCatalog');
     expect(mapServiceRates(undefined)).toEqual([]);
