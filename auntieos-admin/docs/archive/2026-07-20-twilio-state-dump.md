@@ -6,7 +6,7 @@ project `auntieos-ttpc`). Nothing here is inferred from an older doc. Where this
 contradicts `HANDOFF_2026-07-20.md`, this file wins and the handoff has been
 corrected.
 
-Account: `ACebdf660ad2bfc42ba39891047c06166f`, "TribeTails", active, Full type.
+Account: the SID in Secret Manager `TWILIO_ACCOUNT_SID` (removed from this file, secret scanning alert #3), "TribeTails", active, Full type.
 One account, zero subaccounts. Balance $17.43 USD.
 
 ## The headline: the configured sender is the business's carrier number
