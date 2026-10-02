@@ -276,7 +276,7 @@ async function resolvePendingStartTimes(opts: {
  * the same one `requestBooking` uses) fills it in; with no readable length the
  * end stays '' as before. `readServiceDurations` is called only when needed.
  */
-async function storedVisitEndIso(
+export async function storedVisitEndIso(
   startIso: string,
   data: Record<string, unknown>,
   readServiceDurations: () => Promise<unknown>,
@@ -291,7 +291,7 @@ async function storedVisitEndIso(
 }
 
 /** One `business_settings.serviceDurations` read per approval, made on first use. */
-function serviceDurationsReader(): () => Promise<unknown> {
+export function serviceDurationsReader(): () => Promise<unknown> {
   let read: Promise<unknown> | null = null;
   return () =>
     (read ??= db()

@@ -11,6 +11,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardVisitOverlapConflict } from '../lib/visitOverlapConflict';
+import { serviceDurationsReader, storedVisitEndIso } from './approveBookingSeriesCore';
 import { validateResponse } from '../lib/callableResponse';
 
 /**
@@ -103,6 +104,8 @@ export async function resolveBookingRescheduleRequestHandler(
     rescheduleRequestedStartTime?: Timestamp | null;
     rescheduleRequestedEndTime?: Timestamp | null;
     startTime?: Timestamp | null;
+    endTime?: Timestamp | null;
+    serviceId?: string | null;
     sessionId?: string | null;
     startTimePending?: unknown;
   };
@@ -152,8 +155,12 @@ export async function resolveBookingRescheduleRequestHandler(
       'This request carries no proposed start time, so there is nothing to move the visit to.',
     );
   }
-  const newEnd = data.rescheduleRequestedEndTime ?? null;
-
+  // #1118: a household that sent no end still gets the visit's real length,
+  // so the guards below check the whole window and the stored visit has an end.
+  // The KinCare's length from the new start (the #1093 rule, shared with
+  // approval) wins; failing that, the visit's current duration; failing that,
+  // nothing, and the guards see the start alone as they always did.
+  const newEnd = data.rescheduleRequestedEndTime ?? (await derivedEnd(data, newStart));
   const candidate = [
     { startTimeMs: newStart.toMillis(), endTimeMs: newEnd ? newEnd.toMillis() : newStart.toMillis() },
   ];
@@ -242,6 +249,25 @@ export async function resolveBookingRescheduleRequestHandler(
   });
 }
 
+async function derivedEnd(
+  data: { startTime?: Timestamp | null; endTime?: Timestamp | null; serviceId?: string | null },
+  newStart: Timestamp,
+): Promise<Timestamp | null> {
+  // storedVisitEndIso returns the visit's own end when it has one, which is the
+  // OLD end here, so hand it the service id alone to get the length from the new start.
+  const iso = await storedVisitEndIso(
+    newStart.toDate().toISOString(),
+    { serviceId: data.serviceId },
+    serviceDurationsReader(),
+  );
+  if (iso) return Timestamp.fromMillis(Date.parse(iso));
+  const oldStart = millisOf(data.startTime);
+  const oldEnd = millisOf(data.endTime);
+  if (oldStart != null && oldEnd != null && oldEnd > oldStart) {
+    return Timestamp.fromMillis(newStart.toMillis() + (oldEnd - oldStart));
+  }
+  return null;
+}
 async function recordDecision(
   uid: string,
   args: z.infer<typeof Args>,
