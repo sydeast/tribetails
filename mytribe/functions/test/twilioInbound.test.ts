@@ -211,12 +211,15 @@ async function loadHandler(name: string) {
 // 0. Although events are fired in order, they are made as separate HTTP
 // requests, and there is no guarantee they will arrive in the same order."
 // So neither arrival order can be assumed, and both are exercised below.
+// Built at runtime: a literal `AC` + 32 hex reads as a real Twilio account SID
+// to GitHub secret scanning (alert #6). No assertion depends on its value.
+const ACCOUNT_SID = 'AC' + '0'.repeat(32);
 const CALL_SID = 'CA5987df4d600665d67f53e1bd4cec76d6';
 const REC_URL = 'https://api.twilio.com/2010-04-01/Accounts/AC18d5/Recordings/REb719';
 const CALLER = '+12015550123';
 
 const RECORDING_STATUS_CALLBACK: Record<string, string> = {
-  AccountSid: 'AC18d5c6f2003e8710de63b2f9c412b145',
+  AccountSid: ACCOUNT_SID,
   CallSid: CALL_SID,
   RecordingSid: 'REb719a56ceca43b2d06967983570e658a',
   RecordingUrl: REC_URL,
@@ -230,7 +233,7 @@ const RECORDING_STATUS_CALLBACK: Record<string, string> = {
 };
 
 const RINGING_STATUS_CALLBACK: Record<string, string> = {
-  AccountSid: 'AC18d5c6f2003e8710de63b2f9c412b145',
+  AccountSid: ACCOUNT_SID,
   ApiVersion: '2010-04-01',
   CallSid: CALL_SID,
   CallStatus: 'ringing',
@@ -301,7 +304,7 @@ const VM_CALLER = '+12015550188';
 const VM_TRANSCRIPT = 'Hi Auntie, it is Ada. Could we move Tuesday to Thursday please?';
 
 const VOICEMAIL_RECORDING_CALLBACK: Record<string, string> = {
-  AccountSid: 'AC18d5c6f2003e8710de63b2f9c412b145',
+  AccountSid: ACCOUNT_SID,
   CallSid: VM_CALL_SID,
   RecordingSid: VM_REC_SID,
   RecordingUrl: VM_REC_URL,
@@ -322,7 +325,7 @@ const VOICEMAIL_TRANSCRIPTION_CALLBACK: Record<string, string> = {
   RecordingSid: VM_REC_SID,
   RecordingUrl: VM_REC_URL,
   CallSid: VM_CALL_SID,
-  AccountSid: 'AC18d5c6f2003e8710de63b2f9c412b145',
+  AccountSid: ACCOUNT_SID,
   From: VM_CALLER,
   To: '+12015550199',
   CallStatus: 'completed',
@@ -356,7 +359,7 @@ const INBOUND_SMS_CALLBACK: Record<string, string> = {
   MessageSid: SMS_SID,
   SmsSid: SMS_SID,
   SmsMessageSid: SMS_SID,
-  AccountSid: 'AC18d5c6f2003e8710de63b2f9c412b145',
+  AccountSid: ACCOUNT_SID,
   MessagingServiceSid: 'MG9752274e9e519418a7406176694466fa',
   From: SMS_FROM,
   To: '+12015550199',
