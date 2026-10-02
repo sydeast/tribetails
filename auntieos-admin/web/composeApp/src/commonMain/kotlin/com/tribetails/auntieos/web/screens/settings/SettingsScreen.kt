@@ -140,6 +140,8 @@ import com.tribetails.auntieos.web.ui.components.AuntieSaveBar
 import com.tribetails.auntieos.web.ui.components.AuntieSettingRow
 import com.tribetails.auntieos.web.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
+import androidx.compose.ui.text.input.KeyboardType
+import com.tribetails.auntieos.web.ui.components.AuntieInfoTip
 import com.tribetails.auntieos.web.ui.components.AuntieToggle
 import com.tribetails.auntieos.web.ui.components.BottomBorderField
 import com.tribetails.auntieos.web.ui.components.DenPanel
@@ -1757,11 +1759,17 @@ private fun NotifCell(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Phase 15, web KinCare-types editor. Edits BusinessSettings.serviceRates (the
- * service-type -> rate map that Schedule + the new-visit dialog read when booking).
- * Self-contained: edits a local copy, saves the whole BusinessSettings via the VM.
- * (Android manages services via its richer ServiceManagementScreen; the web booking
- * flow consumes this simpler serviceRates map, so this is the web-side editor.)
+ * Phase 15, web KinCare-types editor. Edits the three KinCare maps on
+ * BusinessSettings: `serviceRates` (the service-type -> rate map Schedule + the
+ * new-visit dialog read when booking), `serviceDurations` (type -> minutes, a
+ * blank length writes no key) and `serviceStartTimeBooking` (type -> true for the
+ * types the operator sets the start time of, issue #1092). Issue #1095: until
+ * this edited all three, the fallback console could not type a length or flag an
+ * overnight. The folding rules are the pure functions in KinCareTypeRows.kt, the
+ * same as admin web and Android.
+ *
+ * Self-contained: edits a local copy, saves the whole BusinessSettings via the VM;
+ * the platform save diffs it and writes each changed map whole.
  */
 @Composable
 private fun KinCareTypesPanel(
@@ -1772,18 +1780,16 @@ private fun KinCareTypesPanel(
     saveError: String?,
 ) {
     val c = AuntieTheme.colors
-    var rows by remember(settingsData) {
-        mutableStateOf<List<Pair<String, String>>>(settingsData?.serviceRates?.map { it.key to it.value } ?: emptyList())
-    }
+    fun baseRows() = settingsData?.let { kinCareRows(it.serviceRates, it.serviceDurations, it.serviceStartTimeBooking) } ?: emptyList()
+    var rows by remember(settingsData) { mutableStateOf(baseRows()) }
     var newType by remember(settingsData) { mutableStateOf("") }
+    var newLength by remember(settingsData) { mutableStateOf("") }
     var newRate by remember(settingsData) { mutableStateOf("") }
     var saving by remember { mutableStateOf(false) }
-
-    val base = settingsData?.serviceRates ?: emptyMap()
-    // Last row wins on duplicate type names; blank types dropped.
-    val edited = rows.filter { it.first.isNotBlank() }.associate { it.first.trim() to it.second.trim() }
-    val dirty = settingsLoaded && edited != base
-
+    // The "needs a length" refusal. Set by Save, cleared by the next edit.
+    var refusal by remember(settingsData) { mutableStateOf<String?>(null) }
+    val dirty = settingsLoaded && settingsData != null && kinCareRowsDirty(settingsData, rows)
+    fun edit(next: List<KinCareTypeRow>) { rows = next; refusal = null }
     DenPanel(
         title = "KinCare types",
         subtitle = "The service types and rates kinfolk pick when booking. Used by Schedule and the new-visit dialog.",
@@ -1796,28 +1802,45 @@ private fun KinCareTypesPanel(
                     Text("No KinCare types yet. Add one below.", style = AuntieTheme.typography.bodySmall, color = c.textDim)
                 }
                 rows.forEachIndexed { i, row ->
-                    Row(
-                        verticalAlignment = Alignment.Bottom,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        BottomBorderField(
-                            value = row.first,
-                            onValueChange = { v -> rows = rows.toMutableList().also { it[i] = v to it[i].second } },
-                            label = "Type",
-                            modifier = Modifier.weight(2f),
-                        )
-                        BottomBorderField(
-                            value = row.second,
-                            onValueChange = { v -> rows = rows.toMutableList().also { it[i] = it[i].first to v } },
-                            label = "Rate",
-                            placeholder = "0.00",
-                            modifier = Modifier.weight(1f),
-                        )
-                        GhostButton(label = "Remove", onClick = { rows = rows.toMutableList().also { it.removeAt(i) } })
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            verticalAlignment = Alignment.Bottom,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            BottomBorderField(
+                                value = row.type,
+                                onValueChange = { v -> edit(rows.toMutableList().also { it[i] = row.copy(type = v) }) },
+                                label = "Type",
+                                modifier = Modifier.weight(2f),
+                            )
+                            BottomBorderField(
+                                value = row.duration,
+                                onValueChange = { v -> edit(rows.toMutableList().also { it[i] = row.copy(duration = v) }) },
+                                label = "Length (minutes)",
+                                placeholder = kinCareDurationPlaceholder(row),
+                                keyboardType = KeyboardType.Number,
+                                modifier = Modifier.weight(1f),
+                            )
+                            BottomBorderField(
+                                value = row.rate,
+                                onValueChange = { v -> edit(rows.toMutableList().also { it[i] = row.copy(rate = v) }) },
+                                label = "Rate",
+                                placeholder = "0.00",
+                                modifier = Modifier.weight(1f),
+                            )
+                            GhostButton(label = "Remove", onClick = { edit(rows.toMutableList().also { it.removeAt(i) }) })
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            AuntieToggle(
+                                checked = row.startTime,
+                                onCheckedChange = { on -> edit(rows.toMutableList().also { it[i] = row.copy(startTime = on) }) },
+                            )
+                            Text(KIN_CARE_START_TIME_LABEL, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                            AuntieInfoTip(KIN_CARE_START_TIME_TIP)
+                        }
                     }
                 }
-
                 // Add-row
                 Row(
                     verticalAlignment = Alignment.Bottom,
@@ -1825,32 +1848,44 @@ private fun KinCareTypesPanel(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     BottomBorderField(value = newType, onValueChange = { newType = it }, label = "New type", placeholder = "e.g. Drop-in visit", modifier = Modifier.weight(2f))
+                    BottomBorderField(value = newLength, onValueChange = { newLength = it }, label = "Length (minutes)", placeholder = "Not set", keyboardType = KeyboardType.Number, modifier = Modifier.weight(1f))
                     BottomBorderField(value = newRate, onValueChange = { newRate = it }, label = "Rate", placeholder = "0.00", modifier = Modifier.weight(1f))
                     PrimaryButton(
                         label = "Add",
                         enabled = newType.isNotBlank(),
                         onClick = {
-                            rows = rows + (newType.trim() to newRate.trim())
-                            newType = ""; newRate = ""
+                            edit(rows + KinCareTypeRow(type = newType.trim(), duration = newLength.trim(), rate = newRate.trim()))
+                            newType = ""; newLength = ""; newRate = ""
                         },
                     )
                 }
-
+                refusal?.let { msg ->
+                    AuntieBanner(tone = AuntieBannerTone.Error, title = "Not saved") {
+                        Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                    }
+                }
                 saveError?.let { msg ->
                     AuntieBanner(tone = AuntieBannerTone.Error, title = "Save failed") {
                         Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                     }
                 }
-
                 AuntieSaveBar(
                     dirty = dirty,
                     saveEnabled = dirty && !saving && settingsData != null,
-                    onCancel = { rows = settingsData?.serviceRates?.map { it.key to it.value } ?: emptyList() },
+                    onCancel = { rows = baseRows(); refusal = null },
                     onSave = {
                         settingsData?.let { b ->
+                            // Refused before anything is written: the server ends a
+                            // start-time visit by the type's length, and with none it
+                            // would book a visit with no end.
+                            val missing = kinCareStartTimeMissingLength(rows)
+                            if (missing != null) {
+                                refusal = kinCareNeedsLengthMessage(missing)
+                                return@let
+                            }
                             saving = true
                             scope.launch {
-                                vm.saveSettings(b.copy(serviceRates = edited))
+                                vm.saveSettings(kinCareRowsApplied(b, rows))
                                 saving = false
                             }
                         }
@@ -1862,7 +1897,6 @@ private fun KinCareTypesPanel(
         }
     }
 }
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Tags (2026-07-19): the two tag vocabularies that label kinfolk and kin
 // ─────────────────────────────────────────────────────────────────────────────
