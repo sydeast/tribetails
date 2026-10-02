@@ -126,7 +126,7 @@ describe('TemplateImport: overwriting is a per-template choice', () => {
     await userEvent.click(
       await screen.findByLabelText('Replace the stored copy of kincare.reschedule.requested'),
     );
-    await userEvent.click(screen.getByRole('button', { name: /Import 2 documents/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Import 3 documents/ }));
 
     expect(importSeedTemplates).toHaveBeenCalledWith({
       dryRun: false,
@@ -273,5 +273,120 @@ describe('TemplateImport: after a successful run', () => {
       expect(onImported).toHaveBeenCalledWith('Imported 3 template documents from the repo.'),
     );
     expect(await screen.findByText('Wrote 3 documents.')).toBeInTheDocument();
+  });
+});
+describe('TemplateImport: tick all (#1060)', () => {
+  const differingRow = (templateId: string) => ({
+    templateId,
+    aliasOf: null,
+    channels: [
+      channel('email', 'skipped', [
+        'The stored email copy differs from the repo copy. Your stored copy stays as it is. Tick this template to replace it with the repo wording.',
+      ]),
+      channel('sms', 'create'),
+      channel('push', 'unchanged'),
+    ],
+    differsFromRepo: true,
+    blocked: false,
+  });
+  const mixed = report({
+    counts: { create: 0, overwrite: 0, skipped: 2, unchanged: 3, blocked: 3 },
+    rows: [
+      differingRow('invoice.new'),
+      differingRow('visit.reminder'),
+      {
+        templateId: 'kincare.booking.confirm',
+        aliasOf: null,
+        channels: [
+          channel('email', 'blocked', ['Triple braces are not allowed.']),
+          channel('sms', 'blocked'),
+          channel('push', 'blocked'),
+        ],
+        // A refused row can still differ from the repo. It must never be ticked.
+        differsFromRepo: true,
+        blocked: true,
+      },
+      {
+        templateId: 'invoice.paid',
+        aliasOf: null,
+        channels: [channel('email', 'unchanged'), channel('sms', 'unchanged'), channel('push', 'unchanged')],
+        differsFromRepo: false,
+        blocked: false,
+      },
+    ],
+    needsOverwriteChoice: ['invoice.new', 'visit.reminder'],
+  });
+  it('counts only the rows that can be ticked, and starts at none', async () => {
+    planSeedTemplateImport.mockResolvedValue(mixed);
+    render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
+    expect(await screen.findByTestId('tick-count')).toHaveTextContent('0 of 2 ticked');
+  });
+  it('ticks every tickable row, skips refused and matching rows, and does not press Import', async () => {
+    planSeedTemplateImport.mockResolvedValue(mixed);
+    render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Tick all' }));
+    expect(screen.getByTestId('tick-count')).toHaveTextContent('2 of 2 ticked');
+    expect(screen.getByLabelText('Replace the stored copy of invoice.new')).toBeChecked();
+    expect(screen.getByLabelText('Replace the stored copy of visit.reminder')).toBeChecked();
+    expect(screen.queryByLabelText('Replace the stored copy of kincare.booking.confirm')).not.toBeInTheDocument();
+    expect(importSeedTemplates).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Untick all' })).toBeInTheDocument();
+  });
+  it('sends exactly the tickable ids after Tick all', async () => {
+    planSeedTemplateImport.mockResolvedValue(mixed);
+    importSeedTemplates.mockResolvedValue({ ...mixed, dryRun: false, written: 0 });
+    render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Tick all' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Import/ }));
+    expect(importSeedTemplates).toHaveBeenCalledWith({
+      dryRun: false,
+      overwriteIds: ['invoice.new', 'visit.reminder'],
+    });
+  });
+  it('Untick all clears every tick, and a partial tick offers Tick all', async () => {
+    planSeedTemplateImport.mockResolvedValue(mixed);
+    render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
+    await userEvent.click(await screen.findByLabelText('Replace the stored copy of invoice.new'));
+    expect(screen.getByTestId('tick-count')).toHaveTextContent('1 of 2 ticked');
+    expect(screen.getByRole('button', { name: 'Tick all' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Tick all' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Untick all' }));
+    expect(screen.getByTestId('tick-count')).toHaveTextContent('0 of 2 ticked');
+    expect(screen.getByLabelText('Replace the stored copy of invoice.new')).not.toBeChecked();
+  });
+  it('shows no tick-all control when no row can be ticked', async () => {
+    planSeedTemplateImport.mockResolvedValue(report());
+    render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
+    await screen.findByTestId('import-headline');
+    expect(screen.queryByRole('button', { name: 'Tick all' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('tick-count')).not.toBeInTheDocument();
+  });
+  it('a ticked row stops saying its stored copy stays as it is', async () => {
+    planSeedTemplateImport.mockResolvedValue(mixed);
+    render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
+    expect(await screen.findAllByText(/Your stored copy stays as it is/)).toHaveLength(2);
+    await userEvent.click(screen.getByRole('button', { name: 'Tick all' }));
+    expect(screen.queryByText(/Your stored copy stays as it is/)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/Importing replaces your stored copy with the repo wording/)).toHaveLength(2);
+    expect(screen.getByTestId('summary-invoice.new')).toHaveTextContent('Differs, selected for overwrite');
+  });
+
+  it('Import counts the ticked rows, so Tick all turns Import on when nothing else was to write', async () => {
+    const allSkipped = report({
+      counts: { create: 0, overwrite: 0, skipped: 2, unchanged: 4, blocked: 0 },
+      rows: [
+        { ...differingRow('invoice.new'), channels: [differingRow('x').channels[0]!, channel('sms', 'unchanged'), channel('push', 'unchanged')] },
+        { ...differingRow('visit.reminder'), channels: [differingRow('x').channels[0]!, channel('sms', 'unchanged'), channel('push', 'unchanged')] },
+      ],
+      needsOverwriteChoice: ['invoice.new', 'visit.reminder'],
+    });
+    planSeedTemplateImport.mockResolvedValue(allSkipped);
+    importSeedTemplates.mockResolvedValue({ ...allSkipped, dryRun: false, written: 2 });
+    render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
+    expect(await screen.findByRole('button', { name: 'Import 0 documents' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Tick all' }));
+    expect(screen.getByRole('button', { name: 'Import 2 documents' })).toBeEnabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Untick all' }));
+    expect(screen.getByRole('button', { name: 'Import 0 documents' })).toBeDisabled();
   });
 });

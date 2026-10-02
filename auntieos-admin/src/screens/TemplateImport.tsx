@@ -4,7 +4,9 @@ import {
   planSeedTemplateImport,
   importPlanHeadline,
   importRowSummary,
-  plannedWriteCount,
+  plannedWriteCountWithTicks,
+  tickableTemplateIds,
+  channelNoteText,
   type TemplateImportReport,
   type TemplateImportRow,
 } from '../api/templateImport';
@@ -70,6 +72,13 @@ export function TemplateImport({ onClose, onImported }: TemplateImportProps) {
     });
   }
 
+  // Tick all and Untick all only move the boxes. Import stays a separate press.
+  const tickable = report ? tickableTemplateIds(report) : [];
+  const tickedCount = tickable.filter((id) => overwrite.has(id)).length;
+  const allTicked = tickable.length > 0 && tickedCount === tickable.length;
+  function toggleAll() {
+    setOverwrite(allTicked ? new Set() : new Set(tickable));
+  }
   async function runImport() {
     if (importing || !report) return;
     setImporting(true);
@@ -96,7 +105,7 @@ export function TemplateImport({ onClose, onImported }: TemplateImportProps) {
     }
   }
 
-  const writeCount = report ? plannedWriteCount(report) : 0;
+  const writeCount = report ? plannedWriteCountWithTicks(report, overwrite) : 0;
   // Re-planning after a write is what makes the second visit honest, so the
   // button is only live while there is something to do.
   const canImport = !!report && !importing && !loading && writeCount > 0;
@@ -160,6 +169,14 @@ export function TemplateImport({ onClose, onImported }: TemplateImportProps) {
               </Banner>
             )}
 
+            {tickable.length > 0 && (
+              <div className="template-import__tick-all">
+                <GhostButton label={allTicked ? 'Untick all' : 'Tick all'} onClick={toggleAll} />
+                <span data-testid="tick-count">
+                  {tickedCount} of {tickable.length} ticked
+                </span>
+              </div>
+            )}
             <ul className="template-import__rows">
               {report.rows.map((row) => (
                 <ImportRow
@@ -203,7 +220,7 @@ function ImportRow({
       <div className="template-import__row-head">
         <code className="template-import__key">{row.templateId}</code>
         <span className="template-import__summary" data-testid={`summary-${row.templateId}`}>
-          {importRowSummary(row)}
+          {importRowSummary(row, checked)}
         </span>
       </div>
 
@@ -229,7 +246,7 @@ function ImportRow({
               {c.outcome}
             </span>
             {c.notes.length > 0 && (
-              <span className="template-import__notes">{c.notes.join(' ')}</span>
+              <span className="template-import__notes">{channelNoteText(c, checked)}</span>
             )}
           </li>
         ))}

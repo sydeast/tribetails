@@ -70,13 +70,48 @@ internal fun plannedWriteCount(report: TemplateRepository.ImportReport): Int =
         row.channels.count { it.outcome == "create" || it.outcome == "overwrite" }
     }
 
+/**
+ * The same count once the operator's ticks are counted in. The plan was made
+ * before any box was ticked, so a ticked row's skipped channels are still
+ * "skipped" in it though the import will now write them (#1060). A refused row
+ * never counts. Pure; mirrors the web helper.
+ */
+internal fun plannedWriteCountWithTicks(
+    report: TemplateRepository.ImportReport,
+    ticked: Collection<String>,
+): Int = report.rows.sumOf { row ->
+    val ticks = row.templateId in ticked && !row.blocked
+    row.channels.count { it.outcome == "create" || it.outcome == "overwrite" || (ticks && it.outcome == "skipped") }
+}
+/** The ids a tick can apply to: differing and not refused. Same rule as [offersOverwriteChoice]. */
+internal fun tickableTemplateIds(report: TemplateRepository.ImportReport): List<String> =
+    report.rows.filter { offersOverwriteChoice(it) }.map { it.templateId }
+/** Tick all, unless every tickable row is already ticked, in which case clear. Pure. */
+internal fun toggleAllTicks(ticked: Collection<String>, tickable: List<String>): List<String> =
+    if (tickable.isNotEmpty() && tickable.all { it in ticked }) emptyList() else tickable
+/** "12 of 43 ticked". Counts only rows that can be ticked. Pure. */
+internal fun tickCountLabel(ticked: Collection<String>, tickable: List<String>): String =
+    "${tickable.count { it in ticked }} of ${tickable.size} ticked"
+/**
+ * What a channel line says. The server's skipped line says the stored copy
+ * stays as it is, which stops being true once the row is ticked. Pure; mirrors
+ * the web helper.
+ */
+internal fun importChannelNote(channel: TemplateRepository.ImportChannel, ticked: Boolean): String =
+    if (ticked && channel.outcome == "skipped") {
+        "The stored ${channel.channel} copy differs from the repo copy. " +
+            "Importing replaces your stored copy with the repo wording."
+    } else {
+        channel.notes.joinToString(" ")
+    }
 /** One line summarising a template for the report list. Pure; mirrors the web copy. */
-internal fun importRowSummary(row: TemplateRepository.ImportRow): String {
+internal fun importRowSummary(row: TemplateRepository.ImportRow, ticked: Boolean = false): String {
     if (row.blocked) return "Refused"
     val outcomes = row.channels.map { it.outcome }
     return when {
         outcomes.isNotEmpty() && outcomes.all { it == "unchanged" } -> "Already matches the repo"
-        outcomes.contains("skipped") -> "Differs, not selected for overwrite"
+        outcomes.contains("skipped") ->
+            if (ticked) "Differs, selected for overwrite" else "Differs, not selected for overwrite"
         outcomes.contains("overwrite") -> "Will replace the stored copy"
         else -> "New"
     }
@@ -161,7 +196,8 @@ fun TemplateImportBody(
     }
 
     val current = report
-    val writeCount = current?.let { plannedWriteCount(it) } ?: 0
+    val writeCount = current?.let { plannedWriteCountWithTicks(it, overwrite) } ?: 0
+    val tickable = current?.let { tickableTemplateIds(it) } ?: emptyList()
 
     LazyColumn(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -256,6 +292,31 @@ fun TemplateImportBody(
                 }
             }
 
+            if (tickable.isNotEmpty()) {
+                item {
+                    // Moves the boxes only. Import stays a separate press.
+                    val allTicked = tickable.all { it in overwrite }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        GhostButton(
+                            label = if (allTicked) "Untick all" else "Tick all",
+                            onClick = {
+                                val next = toggleAllTicks(overwrite.toList(), tickable)
+                                overwrite.clear()
+                                overwrite.addAll(next)
+                            },
+                        )
+                        Text(
+                            tickCountLabel(overwrite.toList(), tickable),
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textDim,
+                        )
+                    }
+                }
+            }
             items(current.rows, key = { it.templateId }) { row ->
                 ImportRowCard(
                     row = row,
@@ -308,7 +369,7 @@ private fun ImportRowCard(
         ) {
             Text(row.templateId, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
             Text(
-                importRowSummary(row),
+                importRowSummary(row, checked),
                 style = AuntieTheme.typography.bodySmall,
                 color = if (row.blocked) c.error else c.textDim,
             )
@@ -335,7 +396,7 @@ private fun ImportRowCard(
                     append(channel.outcome)
                     if (channel.notes.isNotEmpty()) {
                         append(". ")
-                        append(channel.notes.joinToString(" "))
+                        append(importChannelNote(channel, checked))
                     }
                 },
                 style = AuntieTheme.typography.bodySmall,

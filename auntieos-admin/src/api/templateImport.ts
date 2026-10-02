@@ -92,12 +92,57 @@ export function plannedWriteCount(report: TemplateImportReport): number {
   );
 }
 
+/**
+ * The same count once the operator's ticks are counted in. The plan was made
+ * before any box was ticked, so a ticked row's skipped channels are still
+ * `skipped` in it even though the import will now write them (#1060). Refused
+ * rows never count: a tick on one is ignored by the server.
+ */
+export function plannedWriteCountWithTicks(
+  report: TemplateImportReport,
+  ticked: ReadonlySet<string>,
+): number {
+  return report.rows.reduce((total, row) => {
+    const ticks = ticked.has(row.templateId) && !row.blocked;
+    return (
+      total +
+      row.channels.filter(
+        (c) => c.outcome === 'create' || c.outcome === 'overwrite' || (ticks && c.outcome === 'skipped'),
+      ).length
+    );
+  }, 0);
+}
+/**
+ * The template ids a tick can apply to: differing and not refused. The same rule
+ * as the per-row box, so Tick all can never select a row that has no box (#1060).
+ */
+export function tickableTemplateIds(report: TemplateImportReport): string[] {
+  return report.rows.filter((r) => r.differsFromRepo && !r.blocked).map((r) => r.templateId);
+}
+
+/**
+ * What a channel line says. The plan was made before the box was ticked, so a
+ * skipped channel still carries "stays as it is"; once ticked, the line says
+ * what the import will now do instead (#1060).
+ */
+export function channelNoteText(channel: TemplateImportChannelRow, ticked: boolean): string {
+  if (ticked && channel.outcome === 'skipped') {
+    return (
+      `The stored ${channel.channel} copy differs from the repo copy. ` +
+      'Importing replaces your stored copy with the repo wording.'
+    );
+  }
+  return channel.notes.join(' ');
+}
+
 /** One line summarising a template for the report list. */
-export function importRowSummary(row: TemplateImportRow): string {
+export function importRowSummary(row: TemplateImportRow, ticked = false): string {
   if (row.blocked) return 'Refused';
   const outcomes = row.channels.map((c) => c.outcome);
   if (outcomes.every((o) => o === 'unchanged')) return 'Already matches the repo';
-  if (outcomes.includes('skipped')) return 'Differs, not selected for overwrite';
+  if (outcomes.includes('skipped')) {
+    return ticked ? 'Differs, selected for overwrite' : 'Differs, not selected for overwrite';
+  }
   if (outcomes.includes('overwrite')) return 'Will replace the stored copy';
   return 'New';
 }
