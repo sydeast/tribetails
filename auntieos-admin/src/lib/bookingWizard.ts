@@ -1,5 +1,6 @@
 import { expandWeekly, sortedDays, visitMsFromDays, type BookingMode, type ServiceOption } from './newBooking';
-import { localDateIso } from './invoiceFormat';
+import { businessWallClock } from './businessZoneTime';
+import { DEFAULT_BUSINESS_TIME_ZONE } from './businessOperations';
 import { shortDayLabel } from './bookingAvailability';
 import type {
   CreateMultiDateBookingRequestArgs,
@@ -35,8 +36,11 @@ import type {
  * to concrete dates that all carry the template, which is what
  * `lib/newBooking.ts#expandWeekly` has always produced.
  *
- * EVERY TIME IS LOCAL (AO-18), by way of `visitMsFromDays`/`expandWeekly`. This
- * file adds no date arithmetic of its own for exactly that reason.
+ * EVERY TIME IS THE BUSINESS'S CLOCK (#1150), by way of `visitMsFromDays`/
+ * `expandWeekly` going out and `businessWallClock` coming back, both in
+ * `state.businessTimeZone`. The server reads the instants in that zone, so a
+ * travelling operator's 9:00 is the business's 9:00. This file adds no date
+ * arithmetic of its own.
  */
 
 // ── one visit ────────────────────────────────────────────────────────────────
@@ -53,7 +57,7 @@ import type {
 export interface VisitSlot {
   /** Stable across edits, so a React key never re-keys a row the operator is typing in. */
   id: string;
-  /** `HH:mm`, local wall clock. */
+  /** `HH:mm`, the business's wall clock. */
   time: string;
   serviceName: string;
   /** Catalog id when the service came from one; null for a typed-in name. */
@@ -117,6 +121,12 @@ export interface WizardState {
   communication: CommunicationChoice;
   /** Private notes, from the Review step. Sent as the booking's `notes`. */
   notes: string;
+  /**
+   * `business_settings.timeZone` as stored (#1150). Every visit time is built in
+   * it and read back in it; blank or unusable means America/Chicago, the same
+   * default the server uses. Never sent: the callable takes instants.
+   */
+  businessTimeZone: string;
 }
 
 /** Ids only have to be unique within one dialog, and `crypto.randomUUID` is not in jsdom by default. */
@@ -153,6 +163,7 @@ export function initialWizardState(): WizardState {
     billing: { mode: 'new-invoice' },
     communication: { emailConfirmation: false, timeVisibility: false },
     notes: '',
+    businessTimeZone: DEFAULT_BUSINESS_TIME_ZONE,
   };
 }
 
@@ -380,13 +391,14 @@ export function buildVisits(state: WizardState): WizardVisit[] {
         time: slot.time,
         weeklyDays: state.weeklyDays,
         weeks: state.weeks,
+        businessZone: state.businessTimeZone,
       });
       for (const ms of times) rows.push({ ms, slot });
     }
   } else {
     for (const plan of state.plans) {
       for (const slot of plan.visits) {
-        const [ms] = visitMsFromDays([plan.dayIso], slot.time);
+        const [ms] = visitMsFromDays([plan.dayIso], slot.time, state.businessTimeZone);
         if (ms !== undefined) rows.push({ ms, slot });
       }
     }
@@ -412,7 +424,7 @@ export function plannedDayCount(state: WizardState): number {
 }
 
 /**
- * EVERY local day this request will land on, ascending, weekly recurrences
+ * EVERY business day this request will land on, ascending, weekly recurrences
  * EXPANDED.
  *
  * This used to answer `[startDateIso]` in weekly mode, which made every caller
@@ -427,7 +439,7 @@ export function plannedDayCount(state: WizardState): number {
  */
 export function plannedDayIsos(state: WizardState): string[] {
   if (state.mode === 'weekly') {
-    return sortedDays(new Set(buildVisits(state).map((v) => localDateIso(new Date(v.startTimeMs)))));
+    return sortedDays(new Set(buildVisits(state).map((v) => businessWallClock(v.startTimeMs, state.businessTimeZone).dateIso)));
   }
   return sortedDays(state.plans.map((p) => p.dayIso));
 }
@@ -435,7 +447,7 @@ export function plannedDayIsos(state: WizardState): string[] {
 /** One concrete (day, wall-clock time) the request will contain. */
 export interface PlannedVisitTime {
   dayIso: string;
-  /** `HH:mm`, local. */
+  /** `HH:mm`, the business's clock. */
   time: string;
 }
 
@@ -451,14 +463,16 @@ export interface PlannedVisitTime {
  *
  * De-duplicated, so two visits at the same minute on the same day still say
  * their one thing once.
+ *
+ * Read back in `state.businessTimeZone`, the zone the visits were built in, so
+ * the pairs are the clock the operator typed and the warnings compare it with
+ * the business's own hours and blocks (#1150).
  */
 export function plannedVisitTimes(state: WizardState): PlannedVisitTime[] {
   const seen = new Set<string>();
   const out: PlannedVisitTime[] = [];
   for (const visit of buildVisits(state)) {
-    const at = new Date(visit.startTimeMs);
-    const dayIso = localDateIso(at);
-    const time = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+    const { dateIso: dayIso, hhmm: time } = businessWallClock(visit.startTimeMs, state.businessTimeZone);
     const key = `${dayIso}T${time}`;
     if (seen.has(key)) continue;
     seen.add(key);

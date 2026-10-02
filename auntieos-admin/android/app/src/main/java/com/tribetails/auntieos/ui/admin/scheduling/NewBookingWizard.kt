@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -125,6 +126,11 @@ fun NewBookingWizard(
     /** Stated lengths, sparse; a type absent here falls back to the parse of its name. */
     serviceDurations: Map<String, String> = emptyMap(),
     availability: BookingAvailability,
+    /**
+     * #1150: `businessZone(business_settings.timeZone)`. Visit times are built in it
+     * and read back in it, never in the phone's zone.
+     */
+    businessZone: java.time.ZoneId,
     inFlight: Boolean,
     error: String?,
     busyOverridable: Boolean,
@@ -133,7 +139,10 @@ fun NewBookingWizard(
     onCreate: (BookingWizardSubmission) -> Unit,
 ) {
     val c = AuntieTheme.colors
-    var state by remember { mutableStateOf(BookingWizardState()) }
+    var state by remember { mutableStateOf(BookingWizardState(zone = businessZone)) }
+    // Settings can land after the wizard opens. The plan holds wall clocks, so
+    // swapping the zone rebuilds every visit in it without touching what was typed.
+    LaunchedEffect(businessZone) { if (state.zone != businessZone) state = state.copy(zone = businessZone) }
     var step by remember { mutableStateOf(BookingWizardStep.CLIENT) }
     // The furthest step reached, so the progress rail can offer a jump back to a
     // step already satisfied without offering a jump forward past a hole.
@@ -619,6 +628,7 @@ private fun LazyListScope.datesStep(
                     isSelected = { it == state.startDate },
                     onPick = { onState(state.copy(startDate = it)) },
                     anchor = state.startDate,
+                    today = LocalDate.now(state.zone),
                 )
                 Spacer(Modifier.height(14.dp))
                 AuntieFieldLabel("Repeat on", required = true)
@@ -654,7 +664,8 @@ private fun LazyListScope.datesStep(
                     availability = availability,
                     isSelected = { date -> state.plans.any { it.date == date } },
                     onPick = { onState(state.toggleDate(it)) },
-                    anchor = state.plans.firstOrNull()?.date ?: LocalDate.now(),
+                    anchor = state.plans.firstOrNull()?.date ?: LocalDate.now(state.zone),
+                    today = LocalDate.now(state.zone),
                 )
             }
         }
@@ -720,7 +731,7 @@ private fun LazyListScope.datesStep(
         )
     }
 
-    val warnings = bookingSelectionWarnings(visits, availability)
+    val warnings = bookingSelectionWarnings(visits, availability, state.zone)
     if (warnings.isNotEmpty()) {
         item("dates-warnings") {
             AuntieBanner(tone = AuntieBannerTone.Warning, title = "Check these visits") {
@@ -857,8 +868,9 @@ private fun LazyListScope.reviewStep(
                     HintText("No visits planned.")
                 } else {
                     visits.take(REVIEW_VISIT_PREVIEW).forEach { visit ->
+                        // The business's clock, the zone the visit was built in (#1150).
                         val at = java.time.Instant.ofEpochMilli(visit.startTimeMs)
-                            .atZone(java.time.ZoneId.systemDefault())
+                            .atZone(state.zone)
                         Text(
                             buildString {
                                 append(formatDayAndDate(at.toLocalDate()))
@@ -1111,12 +1123,13 @@ private fun MonthCalendar(
     isSelected: (LocalDate) -> Boolean,
     onPick: (LocalDate) -> Unit,
     anchor: LocalDate,
+    /** The business's today (#1150), so "past" is the day the server calls past. */
+    today: LocalDate,
 ) {
     val c = AuntieTheme.colors
     // Not keyed on [anchor]: it moves as dates are picked, and a grid that jumped
     // back to another month mid-selection would lose the operator's place.
     var month by remember { mutableStateOf(YearMonth.from(anchor)) }
-    val today = LocalDate.now()
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { KIN_ROSTER_MAX, type Kin, type Kinfolk } from '../api/directory';
@@ -813,7 +813,7 @@ describe('NewBookingDialog availability (carried over intact)', () => {
     ).toBeInTheDocument();
   });
 
-  it('discloses a business timezone the device is not in, rather than converting silently', async () => {
+  it('says which zone the times are in when the device is somewhere else (#1150)', async () => {
     const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     getBusinessSettings.mockResolvedValue({
       serviceRates: {},
@@ -822,9 +822,47 @@ describe('NewBookingDialog availability (carried over intact)', () => {
     });
     render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
     await toDates();
-    const note = await screen.findByText(/Settings has this business in/);
-    expect(note.textContent).toContain('Pacific/Auckland');
-    expect(note.textContent).toContain(deviceZone);
+    const note = await screen.findByText(/Visit times are in the business.s zone, Pacific\/Auckland/);
+    expect(note.textContent).toContain(`Your device is in ${deviceZone}`);
+  });
+
+  describe('with the device in Los Angeles and the business in Chicago (#1150)', () => {
+    let deviceTz: string | undefined;
+    beforeEach(() => {
+      deviceTz = process.env.TZ;
+      process.env.TZ = 'America/Los_Angeles';
+      getBusinessSettings.mockResolvedValue({
+        serviceRates: {},
+        businessHours: { Monday: '08:00-17:00' },
+        timeZone: 'America/Chicago',
+      });
+    });
+    afterEach(() => {
+      process.env.TZ = deviceTz;
+    });
+
+    it('picking 9:00 sends the epoch of 9:00 Chicago', async () => {
+      render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+      await toDates();
+      await waitFor(() => expect(getBusinessSettings).toHaveBeenCalled());
+      await pickDay(/Mon, Aug 23/);
+      await toReview();
+      await userEvent.click(screen.getByRole('button', { name: /create 1 visit/i }));
+      await waitFor(() => expect(createMultiDateBookingRequest).toHaveBeenCalledTimes(1));
+      const [visit] = createMultiDateBookingRequest.mock.calls[0]![0].visits;
+      expect(visit.startTimeMs).toBe(Date.UTC(2027, 7, 23, 14, 0)); // 9:00 CDT
+      expect(visit.startTimeMs).not.toBe(Date.UTC(2027, 7, 23, 16, 0)); // 9:00 PDT
+    });
+
+    it('checks the typed 9:00 against the business hours, so a 9:00 visit raises no hours warning', async () => {
+      render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+      await toDates();
+      await waitFor(() => expect(getBusinessSettings).toHaveBeenCalled());
+      await pickDay(/Mon, Aug 23/);
+      // Read back in Los Angeles the visit would be 07:00, before the 08:00 open.
+      expect(screen.queryByText(/outside business hours/)).not.toBeInTheDocument();
+      expect(screen.getByText(/Visit times are in the business.s zone, America\/Chicago/)).toBeInTheDocument();
+    });
   });
 
   it('says nothing about zones when the business is set to the device zone', async () => {
@@ -836,7 +874,7 @@ describe('NewBookingDialog availability (carried over intact)', () => {
     render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
     await toDates();
     await waitFor(() => expect(getBusinessSettings).toHaveBeenCalled());
-    expect(screen.queryByText(/Settings has this business in/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Visit times are in the business/)).not.toBeInTheDocument();
   });
 });
 

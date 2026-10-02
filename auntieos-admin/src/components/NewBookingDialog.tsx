@@ -47,7 +47,8 @@ import {
   type StepKey,
   type WizardState,
 } from '../lib/bookingWizard';
-import { groupBlockedSlotsByDate, sessionsByLocalDay, localDateIso } from '../lib/scheduleFormat';
+import { groupBlockedSlotsByDate } from '../lib/scheduleFormat';
+import { businessTodayIso, sessionsByBusinessDay } from '../lib/businessZoneTime';
 import { AuntieDatePicker } from './AuntieDatePicker';
 import {
   ClientStep,
@@ -126,9 +127,12 @@ interface NewBookingDialogProps {
  *
  * ── TIMEZONE ────────────────────────────────────────────────────────────────
  *
- * Unchanged: everything is the OPERATOR'S DEVICE ZONE (AO-18), and when
- * `business_settings.timeZone` names a different one, the mismatch is disclosed
- * above the calendar rather than silently converted through.
+ * #1150: every visit time is the BUSINESS's wall clock. The server reads the
+ * instants in `business_settings.timeZone` (America/Chicago when unset or
+ * unusable, #1109) for dates, blocks, closures and conflicts, so picking 9:00
+ * sends 9:00 in that zone whatever zone this browser is in. Today, the day
+ * badges and the warnings read the same zone back. When the device is in a
+ * different zone, a hint above the calendar says which zone the times are in.
  *
  * Writes via `createMultiDateBookingRequest`, which stores the ENVELOPE model
  * as `envelopeStatus:'requested'`: the request enters the Incoming-requests
@@ -183,7 +187,6 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
   // from the services state because the two degrade differently: no services is
   // a legitimate fresh install, no hours is only ever "we could not tell".
   const [businessHours, setBusinessHours] = useState<Record<string, string> | null>(null);
-  const [businessTimeZone, setBusinessTimeZone] = useState('');
   const [hoursError, setHoursError] = useState<string | null>(null);
   // C1: decoded `companyHolidays`, the same read as businessHours/timeZone
   // above (same doc, same one-shot fetch) so a closure appears on the
@@ -199,7 +202,10 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
         if (!live) return;
         setServiceOptions(serviceOptionsFromRates(s.serviceRates, s.serviceDurations));
         setBusinessHours(s.businessHours);
-        setBusinessTimeZone(resolveBusinessTimeZone(s.timeZone));
+        // Straight onto the state, not through `update()`: the zone is not an
+        // operator edit and must not drop a held idempotency key. The plan keeps
+        // wall clocks, so visits picked before this lands are rebuilt in it.
+        setState((prev) => ({ ...prev, businessTimeZone: resolveBusinessTimeZone(s.timeZone) }));
         setClosureEntries((s.companyHolidays ?? []).map(parseClosureEntry));
       })
       .catch((err: unknown) => {
@@ -214,7 +220,9 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
     };
   }, []);
 
-  const todayIso = useMemo(() => localDateIso(new Date()), []);
+  const businessTimeZone = resolveBusinessTimeZone(state.businessTimeZone);
+  // The business's today, so "past" on the calendar is the day the server calls past.
+  const todayIso = useMemo(() => businessTodayIso(businessTimeZone), [businessTimeZone]);
 
   const householdOptions = useMemo(() => {
     if (households.status !== 'ready') return [];
@@ -264,8 +272,8 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
     [busySlots],
   );
   const sessionsByDay = useMemo(
-    () => (scheduled.status === 'ready' ? sessionsByLocalDay(scheduled.data) : new Map()),
-    [scheduled],
+    () => (scheduled.status === 'ready' ? sessionsByBusinessDay(scheduled.data, businessTimeZone) : new Map()),
+    [scheduled, businessTimeZone],
   );
 
   const availabilityFor = useCallback(
@@ -318,8 +326,7 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
       return '';
     }
   }, []);
-  const zoneMismatch =
-    businessTimeZone !== '' && deviceZone !== '' && businessTimeZone !== deviceZone;
+  const zoneMismatch = deviceZone !== '' && businessTimeZone !== deviceZone;
 
   // ── step movement ─────────────────────────────────────────────────────────
 
@@ -544,8 +551,8 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
 
                 {zoneMismatch && (
                   <span className="new-booking__hint">
-                    Visits are saved in your device&rsquo;s zone ({deviceZone}). Settings has this
-                    business in {businessTimeZone}.
+                    Visit times are in the business&rsquo;s zone, {businessTimeZone}. Your device is
+                    in {deviceZone}.
                   </span>
                 )}
 

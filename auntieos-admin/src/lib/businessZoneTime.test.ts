@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { nightLabel, startTimeOnNight, wallClockInZoneToMs } from './businessZoneTime';
+import {
+  businessTodayIso,
+  businessWallClock,
+  businessWallClockToMs,
+  nightLabel,
+  sessionsByBusinessDay,
+  startTimeOnNight,
+  wallClockInZoneToMs,
+} from './businessZoneTime';
 
 describe('wallClockInZoneToMs (#1098)', () => {
   it('reads a wall clock in the named zone, not the runtime zone', () => {
@@ -26,6 +34,48 @@ describe('wallClockInZoneToMs (#1098)', () => {
     expect(wallClockInZoneToMs('2026-13-09', '19:30', 'America/Chicago')).toBeNull();
     expect(wallClockInZoneToMs('2026-10-09', '25:00', 'America/Chicago')).toBeNull();
     expect(wallClockInZoneToMs('2026-10-09', '', 'America/Chicago')).toBeNull();
+  });
+});
+
+describe('businessWallClock (#1150)', () => {
+  it('reads an instant on the business clock, the inverse of businessWallClockToMs', () => {
+    const ms = businessWallClockToMs('2026-08-03', '09:00', 'America/Chicago');
+    expect(ms).toBe(Date.UTC(2026, 7, 3, 14, 0));
+    expect(businessWallClock(ms!, 'America/Chicago')).toEqual({ dateIso: '2026-08-03', hhmm: '09:00' });
+  });
+
+  it('puts a late instant on the business day, not the UTC one', () => {
+    // 01:30 UTC on Aug 4 is 20:30 on Aug 3 in Chicago.
+    expect(businessWallClock(Date.UTC(2026, 7, 4, 1, 30), 'America/Chicago')).toEqual({
+      dateIso: '2026-08-03',
+      hhmm: '20:30',
+    });
+  });
+
+  it('reads a blank or unusable zone as America/Chicago (#1109)', () => {
+    const ms = Date.UTC(2026, 7, 3, 14, 0);
+    expect(businessWallClock(ms, '').hhmm).toBe('09:00');
+    expect(businessWallClock(ms, 'Mars/Olympus_Mons').hhmm).toBe('09:00');
+  });
+
+  it('gives today on the business calendar', () => {
+    // 03:00 UTC Aug 4 is still Aug 3 in Chicago.
+    expect(businessTodayIso('America/Chicago', Date.UTC(2026, 7, 4, 3, 0))).toBe('2026-08-03');
+  });
+});
+
+describe('sessionsByBusinessDay (#1150)', () => {
+  it('groups an instant by the business day and a bare wall clock by its own date', () => {
+    const rows = [
+      { id: 'a', startTime: '2026-08-04T01:30:00.000Z' }, // Aug 3, 20:30 Chicago
+      { id: 'b', startTime: '2026-08-04T09:00:00' }, // bare: the business's Aug 4
+      { id: 'c', startTime: 'not a time' },
+      { id: 'd' },
+    ];
+    const byDay = sessionsByBusinessDay(rows, 'America/Chicago');
+    expect([...byDay.keys()].sort()).toEqual(['2026-08-03', '2026-08-04']);
+    expect(byDay.get('2026-08-03')!.map((r) => r.id)).toEqual(['a']);
+    expect(byDay.get('2026-08-04')!.map((r) => r.id)).toEqual(['b']);
   });
 });
 

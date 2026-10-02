@@ -263,7 +263,7 @@ class BookingWizardTest {
         assertEquals(
             17,
             java.time.Instant.ofEpochMilli(visits[1].startTimeMs)
-                .atZone(ZoneId.systemDefault()).hour,
+                .atZone(state.zone).hour,
         )
     }
 

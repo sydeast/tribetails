@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.web.screens.booking
 
 import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -11,6 +12,8 @@ import kotlin.test.assertTrue
  * zone-independent (counts, weekday convention, ordering), not exact epoch ms.
  */
 class NewBookingMathTest {
+
+    private val chicago = TimeZone.of("America/Chicago")
 
     @Test
     fun jsWeekday_maps_monday_to_1_and_sunday_to_0() {
@@ -26,6 +29,7 @@ class NewBookingMathTest {
             hour = 9, minute = 0,
             weekdays = setOf(1, 3), // Mon + Wed
             weeks = 2,
+            zone = chicago,
         )
         assertEquals(4, ms.size)
         assertEquals(ms.sorted(), ms)
@@ -33,14 +37,14 @@ class NewBookingMathTest {
 
     @Test
     fun expandWeekly_empty_on_no_weekday_or_nonpositive_weeks() {
-        assertTrue(NewBookingMath.expandWeekly(LocalDate(2027, 8, 2), 9, 0, emptySet(), 2).isEmpty())
-        assertTrue(NewBookingMath.expandWeekly(LocalDate(2027, 8, 2), 9, 0, setOf(1), 0).isEmpty())
+        assertTrue(NewBookingMath.expandWeekly(LocalDate(2027, 8, 2), 9, 0, emptySet(), 2, chicago).isEmpty())
+        assertTrue(NewBookingMath.expandWeekly(LocalDate(2027, 8, 2), 9, 0, setOf(1), 0, chicago).isEmpty())
     }
 
     @Test
     fun visitMs_drops_nulls_dedupes_sorts() {
-        val a = NewBookingMath.localMs(LocalDate(2027, 8, 3), 9, 0)
-        val b = NewBookingMath.localMs(LocalDate(2027, 8, 10), 9, 0)
+        val a = NewBookingMath.localMs(LocalDate(2027, 8, 3), 9, 0, chicago)
+        val b = NewBookingMath.localMs(LocalDate(2027, 8, 10), 9, 0, chicago)
         val ms = NewBookingMath.visitMs(listOf(b, null, a, a))
         assertEquals(2, ms.size)
         assertTrue(ms[0] < ms[1])

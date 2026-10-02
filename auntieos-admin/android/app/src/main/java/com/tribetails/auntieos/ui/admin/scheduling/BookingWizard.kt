@@ -2,8 +2,10 @@ package com.tribetails.auntieos.ui.admin.scheduling
 
 import com.tribetails.auntieos.data.contracts.CreateMultiDateBookingRequestArgsBilling
 import com.tribetails.auntieos.data.contracts.CreateMultiDateBookingRequestArgsCommunication
+import com.tribetails.auntieos.data.model.businessZone
 import com.tribetails.auntieos.data.repository.NewBookingVisit
 import java.time.LocalDate
+import java.time.ZoneId
 
 /**
  * D1: the pure state machine behind the Android five-step New-booking-request
@@ -125,8 +127,16 @@ data class BookingWizardState(
     val template: List<VisitSlot> = listOf(VisitSlot(id = 1L)),
     /** Step 3, individual mode -> `visits[]`. */
     val plans: List<DayPlan> = emptyList(),
+    /**
+     * #1150: the business's zone, `businessZone(business_settings.timeZone)`.
+     * Every visit's wall clock is turned into an instant in it ([buildVisits])
+     * and read back in it (the warnings, the review list), because the server
+     * reads the instants there. Never the phone's zone. Not sent: the callable
+     * takes instants.
+     */
+    val zone: ZoneId = businessZone(null),
     /** Step 3, weekly mode: the day the recurrence walks forward from. */
-    val startDate: LocalDate = LocalDate.now().plusDays(1),
+    val startDate: LocalDate = LocalDate.now(zone).plusDays(1),
     /** Step 3, weekly mode -> `weeklyDays` (0 = Sunday). */
     val weeklyDays: Set<Int> = emptySet(),
     /** Step 3, weekly mode: how many weeks the recurrence covers. */
@@ -321,12 +331,12 @@ fun buildVisits(state: BookingWizardState): List<NewBookingVisit> {
     when (state.mode) {
         BookingWizardMode.WEEKLY -> state.template.forEach { slot ->
             NewBookingMath
-                .expandWeekly(state.startDate, slot.hour, slot.minute, state.weeklyDays, state.weeks)
+                .expandWeekly(state.startDate, slot.hour, slot.minute, state.weeklyDays, state.weeks, state.zone)
                 .forEach { ms -> out += slot.toVisit(ms) }
         }
         BookingWizardMode.DATES -> state.plans.forEach { plan ->
             plan.visits.forEach { slot ->
-                out += slot.toVisit(NewBookingMath.localMs(plan.date, slot.hour, slot.minute))
+                out += slot.toVisit(NewBookingMath.localMs(plan.date, slot.hour, slot.minute, state.zone))
             }
         }
     }

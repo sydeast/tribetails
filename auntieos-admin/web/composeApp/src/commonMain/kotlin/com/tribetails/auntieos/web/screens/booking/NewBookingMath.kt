@@ -2,6 +2,8 @@
 
 package com.tribetails.auntieos.web.screens.booking
 
+import com.tribetails.auntieos.web.data.DEFAULT_BUSINESS_TIME_ZONE
+import com.tribetails.auntieos.web.screens.settings.resolveBusinessTimeZone
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
@@ -17,21 +19,39 @@ import kotlinx.datetime.toInstant
  *
  * Weekdays use the JS/backend convention (0 = Sunday … 6 = Saturday), the same
  * `weeklyDays` the createMultiDateBookingRequest callable stores, so the UI
- * selection is sent through unchanged. All times are LOCAL (the operator's zone).
+ * selection is sent through unchanged.
  * kotlinx.datetime only (no java.time), so it compiles on wasm and jvm alike.
+ *
+ * #1150: every visit time is the BUSINESS's wall clock, built in [businessTimeZone]
+ * (America/Chicago when `business_settings.timeZone` is unset or unusable, #1109).
+ * The server reads the instants in that zone for dates, blocks, closures and
+ * conflicts, so an operator whose machine is in another zone still books the
+ * business's 9:00. The web and Android wizards do the same.
  */
 object NewBookingMath {
 
-    /** Epoch ms in the system (local) zone for a wall-clock date + time. */
-    fun localMs(date: LocalDate, hour: Int, minute: Int): Long =
-        date.atTime(hour, minute).toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds()
+    /** Epoch ms for a wall-clock date + time read in [zone], the business's zone (#1150). */
+    fun localMs(date: LocalDate, hour: Int, minute: Int, zone: TimeZone): Long =
+        date.atTime(hour, minute).toInstant(zone).toEpochMilliseconds()
+
+    /**
+     * `business_settings.timeZone` as a zone: the stored one when this runtime
+     * can read it, else America/Chicago, the server's own default (#1109).
+     * Never the machine's zone.
+     */
+    fun businessTimeZone(stored: String?): TimeZone =
+        try {
+            TimeZone.of(resolveBusinessTimeZone(stored))
+        } catch (e: IllegalArgumentException) {
+            TimeZone.of(DEFAULT_BUSINESS_TIME_ZONE)
+        }
 
     /** kotlinx weekday (Mon=1..Sun=7) mapped to the JS convention (Sun=0..Sat=6). */
     fun jsWeekday(date: LocalDate): Int = date.dayOfWeek.isoDayNumber % 7
 
     /**
      * Weekly recurrence: walk [weeks] * 7 days from [startDate], include any day
-     * whose (JS) weekday is in [weekdays], at [hour]:[minute]. Ascending, de-duped
+     * whose (JS) weekday is in [weekdays], at [hour]:[minute] in [zone]. Ascending, de-duped
      * epoch ms. Empty when no weekday is selected or [weeks] < 1.
      */
     fun expandWeekly(
@@ -40,12 +60,13 @@ object NewBookingMath {
         minute: Int,
         weekdays: Set<Int>,
         weeks: Int,
+        zone: TimeZone,
     ): List<Long> {
         if (weekdays.isEmpty() || weeks < 1) return emptyList()
         val out = mutableListOf<Long>()
         for (i in 0 until weeks * 7) {
             val d = startDate.plus(i, DateTimeUnit.DAY)
-            if (jsWeekday(d) in weekdays) out.add(localMs(d, hour, minute))
+            if (jsWeekday(d) in weekdays) out.add(localMs(d, hour, minute, zone))
         }
         return out.distinct().sorted()
     }

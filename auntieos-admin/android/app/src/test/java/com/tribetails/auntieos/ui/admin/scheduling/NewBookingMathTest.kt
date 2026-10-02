@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
+import java.time.ZoneId
 import java.util.TimeZone
 
 /**
@@ -12,6 +13,8 @@ import java.util.TimeZone
  * TZ-independent (counts, weekday convention, ordering), not exact epoch ms.
  */
 class NewBookingMathTest {
+
+    private val chicago = ZoneId.of("America/Chicago")
 
     @Test
     fun `jsWeekday maps Monday to 1 and Sunday to 0`() {
@@ -28,6 +31,7 @@ class NewBookingMathTest {
             hour = 9, minute = 0,
             weekdays = setOf(1, 3),
             weeks = 2,
+            zone = chicago,
         )
         assertEquals(4, ms.size)
         // ascending
@@ -36,14 +40,14 @@ class NewBookingMathTest {
 
     @Test
     fun `expandWeekly is empty with no weekday or non-positive weeks`() {
-        assertTrue(NewBookingMath.expandWeekly(LocalDate.of(2027, 8, 2), 9, 0, emptySet(), 2).isEmpty())
-        assertTrue(NewBookingMath.expandWeekly(LocalDate.of(2027, 8, 2), 9, 0, setOf(1), 0).isEmpty())
+        assertTrue(NewBookingMath.expandWeekly(LocalDate.of(2027, 8, 2), 9, 0, emptySet(), 2, chicago).isEmpty())
+        assertTrue(NewBookingMath.expandWeekly(LocalDate.of(2027, 8, 2), 9, 0, setOf(1), 0, chicago).isEmpty())
     }
 
     @Test
     fun `visitMs drops nulls, de-dupes, and sorts`() {
-        val a = NewBookingMath.localMs(LocalDate.of(2027, 8, 3), 9, 0)
-        val b = NewBookingMath.localMs(LocalDate.of(2027, 8, 10), 9, 0)
+        val a = NewBookingMath.localMs(LocalDate.of(2027, 8, 3), 9, 0, chicago)
+        val b = NewBookingMath.localMs(LocalDate.of(2027, 8, 10), 9, 0, chicago)
         val ms = NewBookingMath.visitMs(listOf(b, null, a, a))
         assertEquals(2, ms.size)
         assertTrue(ms[0] < ms[1])

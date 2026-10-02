@@ -27,6 +27,7 @@ import {
   type WizardState,
 } from '../lib/bookingWizard';
 import { shortDayLabel } from '../lib/bookingAvailability';
+import { businessWallClock } from '../lib/businessZoneTime';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { Banner } from './Banner';
 import { GhostButton } from './Buttons';
@@ -773,7 +774,7 @@ export function ReviewStep({
             <span className="nbw__review-sub">
               {firstMs === undefined
                 ? 'No dates picked'
-                : `${localDayLabel(firstMs)} to ${localDayLabel(lastMs ?? firstMs)}`}
+                : `${businessDayLabel(firstMs, state.businessTimeZone)} to ${businessDayLabel(lastMs ?? firstMs, state.businessTimeZone)}`}
             </span>
           </div>
           <GhostButton label="Edit dates" onClick={() => onEditStep('dates')} />
@@ -872,8 +873,8 @@ export function ReviewStep({
   );
 }
 
-/** "Apr 6, 2026" from an epoch ms, in the operator's LOCAL zone (AO-18). */
-function localDayLabel(ms: number): string {
-  const d = new Date(ms);
-  return `${shortDayLabel(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)}, ${d.getFullYear()}`;
+/** "Apr 6, 2026" from an epoch ms, on the business's calendar (#1150), the zone the visits were built in. */
+function businessDayLabel(ms: number, businessZone: string): string {
+  const { dateIso } = businessWallClock(ms, businessZone);
+  return `${shortDayLabel(dateIso)}, ${dateIso.slice(0, 4)}`;
 }

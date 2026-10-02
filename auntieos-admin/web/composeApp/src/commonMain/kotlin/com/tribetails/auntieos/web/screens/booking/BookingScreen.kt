@@ -883,25 +883,29 @@ private fun parseHourMinute(time: String): Pair<Int, Int> {
     return h to m
 }
 
-/** Build the visit start times (epoch ms, LOCAL) for the chosen repeat mode. */
-private fun buildStartTimesMs(
+/**
+ * Build the visit start times (epoch ms) for the chosen repeat mode, on the
+ * business's clock in [zone] (#1150). Internal so a test can drive it.
+ */
+internal fun buildStartTimesMs(
     mode: BookingRepeat,
     startDateIso: String,
     extraDatesIso: List<String>,
     time: String,
     weekdays: Set<Int>,
     weeks: Int,
+    zone: TimeZone,
 ): List<Long> {
     val (h, m) = parseHourMinute(time)
     val start = runCatchingCancellable { kotlinx.datetime.LocalDate.parse(startDateIso) }.getOrNull() ?: return emptyList()
     return when (mode) {
-        BookingRepeat.SINGLE -> listOf(NewBookingMath.localMs(start, h, m))
+        BookingRepeat.SINGLE -> listOf(NewBookingMath.localMs(start, h, m, zone))
         BookingRepeat.MULTI -> {
             val all = (listOf(startDateIso) + extraDatesIso)
                 .mapNotNull { runCatchingCancellable { kotlinx.datetime.LocalDate.parse(it) }.getOrNull() }
-            NewBookingMath.visitMs(all.map { NewBookingMath.localMs(it, h, m) })
+            NewBookingMath.visitMs(all.map { NewBookingMath.localMs(it, h, m, zone) })
         }
-        BookingRepeat.WEEKLY -> NewBookingMath.expandWeekly(start, h, m, weekdays, weeks)
+        BookingRepeat.WEEKLY -> NewBookingMath.expandWeekly(start, h, m, weekdays, weeks, zone)
     }
 }
 
@@ -928,7 +932,11 @@ internal fun BookingCreateScreen(
     var startDate       by remember { mutableStateOf("") }
     var startTime       by remember { mutableStateOf("") }
     var showDatePicker  by remember { mutableStateOf(false) }
-    val today = remember { Clock.System.todayIn(TimeZone.currentSystemDefault()) }
+    // #1150: MULTI/WEEKLY visit instants are built in the business's zone, and
+    // "today" on the pickers is the business's today. SINGLE sends a bare
+    // "dateTtime" string, which the server already reads in that zone.
+    val businessZone = NewBookingMath.businessTimeZone((settingsResult as? FirestoreResult.Data)?.value?.timeZone)
+    val today = remember(businessZone) { Clock.System.todayIn(businessZone) }
     var kinfolkAdditionalInfo by remember { mutableStateOf("") }
     var adminInternalNotes    by remember { mutableStateOf("") }
     var saving          by remember { mutableStateOf(false) }
@@ -1206,7 +1214,7 @@ internal fun BookingCreateScreen(
                 )
             }
             if (repeatMode != BookingRepeat.SINGLE) {
-                val previewCount = buildStartTimesMs(repeatMode, startDate, extraDates, startTime, weekdays, weeks).size
+                val previewCount = buildStartTimesMs(repeatMode, startDate, extraDates, startTime, weekdays, weeks, businessZone).size
                 Spacer(Modifier.height(6.dp))
                 Text(
                     if (previewCount > 0) "$previewCount visit(s) will be requested for approval." else "Pick date(s) to request.",
@@ -1268,7 +1276,7 @@ internal fun BookingCreateScreen(
             // AO-25: in MULTI/WEEKLY the request also needs at least one resolved visit
             // (e.g. Weekly with no weekday selected yields none).
             val requestVisits = if (repeatMode == BookingRepeat.SINGLE) emptyList()
-                else buildStartTimesMs(repeatMode, startDate, extraDates, startTime, weekdays, weeks)
+                else buildStartTimesMs(repeatMode, startDate, extraDates, startTime, weekdays, weeks, businessZone)
             val canSubmit   = hasKinfolk && hasDate && (repeatMode == BookingRepeat.SINGLE || requestVisits.isNotEmpty())
 
             Row(

@@ -1,13 +1,17 @@
+import { businessWallClockToMs } from './businessZoneTime';
+
 /**
  * Pure helpers for the admin "New booking request" surface (AO-25). Kept out of
  * the dialog so the date math is unit-testable (TZ-pinned) without rendering.
  *
- * Everything here is LOCAL-time (AO-18): a `<input type="datetime-local">` /
- * `type="date"` value is a wall-clock string with no zone, and `new Date(...)`
- * of that string is interpreted in the runtime's local zone, which is exactly
- * what the operator meant when they picked "the 3rd at 9am". The epoch ms we
- * send is therefore the correct instant for the operator's zone, never a UTC
- * reinterpretation.
+ * #1150: the wizard's visit times are the BUSINESS's wall clock. The server
+ * reads every visit instant in `business_settings.timeZone` (dates, blocks,
+ * closures, conflicts), so "the 3rd at 9am" means 9am where the business is,
+ * whatever zone the browser is in. `expandWeekly` and `visitMsFromDays` take
+ * that zone and build through `businessWallClockToMs`.
+ *
+ * `localDayTimeToMs` is still the DEVICE zone (AO-18). Its one caller left is
+ * the Block time dialog, which this fix does not touch.
  */
 
 export type BookingMode = 'dates' | 'weekly';
@@ -41,7 +45,8 @@ export function localDayTimeToMs(dayIso: string, timeHHmm: string): number | nul
 }
 
 /**
- * Expands a weekly recurrence into concrete visit start times (epoch ms, LOCAL).
+ * Expands a weekly recurrence into concrete visit start times (epoch ms, on the
+ * business's clock).
  *
  * Walks `weeks * 7` days forward from `startDateIso` (a "YYYY-MM-DD" wall-clock
  * date) and includes any day whose weekday is in `weeklyDays`, at `time`
@@ -53,8 +58,10 @@ export function expandWeekly(opts: {
   time: string;
   weeklyDays: number[];
   weeks: number;
+  /** `business_settings.timeZone`; blank or unusable reads as America/Chicago. */
+  businessZone: string;
 }): number[] {
-  const { startDateIso, time, weeklyDays, weeks } = opts;
+  const { startDateIso, time, weeklyDays, weeks, businessZone } = opts;
   if (startDateIso.trim() === '' || time.trim() === '' || weeklyDays.length === 0 || weeks < 1) {
     return [];
   }
@@ -66,15 +73,18 @@ export function expandWeekly(opts: {
   const out: number[] = [];
   const totalDays = weeks * 7;
   for (let i = 0; i < totalDays; i += 1) {
-    // Local-time construction; month is 0-based. Day math rolls over correctly.
-    const day = new Date(y!, m! - 1, d! + i, hh!, mm!, 0, 0);
-    if (days.has(day.getDay())) out.push(day.getTime());
+    // Calendar-day walk in UTC, where no day is 23 or 25 hours long; a date's
+    // weekday does not depend on any zone. Month is 0-based.
+    const day = new Date(Date.UTC(y!, m! - 1, d! + i));
+    if (!days.has(day.getUTCDay())) continue;
+    const ms = businessWallClockToMs(day.toISOString().slice(0, 10), time.trim(), businessZone);
+    if (ms !== null) out.push(ms);
   }
   return [...new Set(out)].sort((a, b) => a - b);
 }
 
 /**
- * Turns the picked SET of local days plus one shared time into ascending,
+ * Turns the picked SET of days plus one shared time (the business's clock) into ascending,
  * de-duplicated visit start times. Unparseable days are dropped (the form
  * validates emptiness separately).
  *
@@ -82,9 +92,10 @@ export function expandWeekly(opts: {
  * straight in: a set is the model the calendar actually has, and converting it
  * to an array only to re-de-dupe here would be theatre.
  */
-export function visitMsFromDays(days: Iterable<string>, timeHHmm: string): number[] {
+export function visitMsFromDays(days: Iterable<string>, timeHHmm: string, businessZone: string): number[] {
+  const time = timeHHmm.trim();
   const ms = [...days]
-    .map((day) => localDayTimeToMs(day, timeHHmm))
+    .map((day) => (day.trim() === '' || time === '' ? null : businessWallClockToMs(day.trim(), time, businessZone)))
     .filter((v): v is number => v !== null);
   return [...new Set(ms)].sort((a, b) => a - b);
 }
