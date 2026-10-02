@@ -87,6 +87,24 @@ vi.mock('../components/emailEditor/EmailContentEditor', () => ({
   ),
 }));
 
+// The header menu opens the assignment manager and the importer, and each
+// loads itself from callables on mount. Their own suites own that behaviour;
+// here they only have to settle. Unmocked they posted to production (#1138).
+const { listTemplateBindings, listCatalogKeys, planSeedTemplateImport } = vi.hoisted(() => ({
+  listTemplateBindings: vi.fn(),
+  listCatalogKeys: vi.fn(),
+  planSeedTemplateImport: vi.fn(),
+}));
+vi.mock('../api/templateBindings', async (orig) => ({
+  ...(await orig<typeof import('../api/templateBindings')>()),
+  listTemplateBindings,
+  listCatalogKeys,
+}));
+vi.mock('../api/templateImport', async (orig) => ({
+  ...(await orig<typeof import('../api/templateImport')>()),
+  planSeedTemplateImport,
+  importSeedTemplates: vi.fn(),
+}));
 import { Templates } from './Templates';
 import { TEMPLATE_BANK_EMPTY_COPY } from '../lib/templateFormat';
 
@@ -129,6 +147,16 @@ beforeEach(() => {
   listTemplateCategories.mockReset();
   listTemplateCategories.mockResolvedValue([]);
   saveTemplate.mockReset();
+  listTemplateBindings.mockReset().mockResolvedValue([]);
+  listCatalogKeys.mockReset().mockResolvedValue([]);
+  planSeedTemplateImport.mockReset().mockResolvedValue({
+    dryRun: true,
+    written: 0,
+    counts: {},
+    rows: [],
+    needsOverwriteChoice: [],
+    refused: [],
+  });
 });
 
 describe('Templates screen', () => {
@@ -604,6 +632,7 @@ describe('Templates screen: one primary header action, the rest behind a menu', 
 
     expect(await screen.findByRole('button', { name: /back to template bank/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/Template\s*Routing/);
+    expect(listTemplateBindings).toHaveBeenCalled();
   });
 
   it('Import from repo opens the importer', async () => {
@@ -615,6 +644,8 @@ describe('Templates screen: one primary header action, the rest behind a menu', 
 
     expect(await screen.findByRole('button', { name: /back to template bank/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/Import\s*templates\./);
+    // It opens on the dry-run plan, never a write.
+    expect(planSeedTemplateImport).toHaveBeenCalled();
   });
 
   it('Escape closes the menu and hands focus back to the trigger', async () => {

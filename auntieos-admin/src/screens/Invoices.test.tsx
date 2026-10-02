@@ -71,6 +71,7 @@ const {
   markInvoicePaid,
   generateReceipt,
   recordPayment,
+  getInvoiceLedger,
   listUninvoicedSessions,
   setSessionDoNotInvoice,
 } = vi.hoisted(() => ({
@@ -80,6 +81,9 @@ const {
   markInvoicePaid: vi.fn(),
   generateReceipt: vi.fn(),
   recordPayment: vi.fn(),
+  // The open detail sheet reads its invoice's ledger on mount. Unmocked, every
+  // row this file opened posted to production (#1138).
+  getInvoiceLedger: vi.fn(),
   // The composer reads the household's un-invoiced work the moment one is
   // chosen (#408), so this screen's tests answer that read too.
   listUninvoicedSessions: vi.fn(),
@@ -93,6 +97,7 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   markInvoicePaid,
   generateReceipt,
   recordPayment,
+  getInvoiceLedger,
   listUninvoicedSessions,
   setSessionDoNotInvoice,
 }));
@@ -185,6 +190,22 @@ beforeEach(() => {
   // hook's settled "nothing to resolve" answer (see lib/firestore.ts), NOT a
   // miss: the screen only reads it when an id was actually passed.
   useDocById.mockReset().mockReturnValue({ status: 'ready', data: null });
+  // Nothing recorded against the opened invoice: these cases are about the list
+  // opening the detail, not about its money, so the ledger only has to settle.
+  getInvoiceLedger.mockReset().mockImplementation(async (invoiceId: string) => ({
+    invoiceId,
+    payments: [],
+    paidCents: 0,
+    totalCents: 0,
+    amountDueCents: 0,
+    ledgerPayments: [],
+    unlinkedKinfolkPayments: [],
+    unresolvedAmountCount: 0,
+    sessions: [],
+    missingSessionIds: [],
+    orphanSessionIds: [],
+    truncated: false,
+  }));
   createInvoice.mockReset();
   createQuote.mockReset();
   listUninvoicedSessions.mockReset().mockResolvedValue({
@@ -342,6 +363,8 @@ describe('Invoices screen', () => {
     expect(await screen.findByRole('heading', { name: /invoice #1042/i })).toBeInTheDocument();
     // Scoped: "The Whitfields" also appears in the row underneath the dialog.
     expect(within(screen.getByRole('dialog')).getByText('The Whitfields')).toBeInTheDocument();
+    // The sheet reads the ledger of THAT invoice, not another row's.
+    expect(getInvoiceLedger).toHaveBeenCalledWith('inv-42');
   });
 
   /**

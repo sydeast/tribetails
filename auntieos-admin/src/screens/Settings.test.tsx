@@ -87,6 +87,13 @@ vi.mock('../api/integrations', async (orig) => ({
 // that one and take the merged Calendar panel's connect flow down with it,
 // which is exactly what happened during the #158-era rebase of this file.
 
+// Time off reads the visit calendar live (closure impact). An empty calendar,
+// as TimeOffEditor.test.tsx uses; unmocked, it streamed production Firestore
+// (#1138).
+vi.mock('../lib/firestore', async (orig) => ({
+  ...(await orig<typeof import('../lib/firestore')>()),
+  useCollection: () => ({ status: 'ready', data: [] }),
+}));
 import { Settings } from './Settings';
 /**
  * The Business profile TAB holds three panels since #519 (the text fields, the

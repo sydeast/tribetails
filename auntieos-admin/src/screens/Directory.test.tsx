@@ -60,6 +60,31 @@ vi.mock('./KinView', () => ({
     </p>
   ),
 }));
+// The in-screen KinfolkProfile and the Add kin dialog read callables and
+// Firestore of their own, each covered by its own suite. Unmocked here they
+// went to production (#1138), so each is answered at its api seam, the way
+// KinfolkProfile.test.tsx and AddKinDialog.test.tsx answer them.
+vi.mock('../api/accountCredit', () => ({
+  getAccountCreditHistory: vi.fn().mockResolvedValue({ ok: true, kinfolkId: 'kf1', accountBalanceCents: 0, credits: [], uses: [] }),
+  giveAccountCredit: vi.fn(),
+}));
+vi.mock('../api/unappliedPayments', () => ({
+  listUnappliedPayments: vi.fn().mockResolvedValue({ ok: true, kinfolkId: 'kf1', payments: [], openInvoices: [] }),
+  resolveUnappliedPayment: vi.fn(),
+}));
+vi.mock('../api/breeds', async (orig) => {
+  const real = await orig<typeof import('../api/breeds')>();
+  return { ...real, useBreedBanks: () => ({ banks: real.EMPTY_BREED_BANKS, loading: false, failed: false }) };
+});
+vi.mock('../api/recipientContext', async (orig) => ({
+  ...(await orig<typeof import('../api/recipientContext')>()),
+  getKin411: vi.fn().mockResolvedValue(null),
+  getDossier: vi.fn().mockResolvedValue(null),
+}));
+vi.mock('../api/householdData', async (orig) => ({
+  ...(await orig<typeof import('../api/householdData')>()),
+  getHouseholdData: vi.fn().mockResolvedValue(null),
+}));
 import { Directory } from './Directory';
 
 function fakeTs(iso: string): Timestamp {

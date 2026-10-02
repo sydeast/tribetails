@@ -20,6 +20,9 @@ const mocks = vi.hoisted(() => ({
   getMyKin: vi.fn(),
   getMyKinTales: vi.fn(),
   getMyInvoices: vi.fn(),
+  // The Invoices screen also reads the household's account credit (Q6).
+  // Unmocked, it posted to production (#1138).
+  getAccountCreditHistory: vi.fn(),
 }));
 
 vi.mock('@tanstack/react-router', () => ({
@@ -40,7 +43,11 @@ vi.mock('../api/portal', () => ({
 }));
 vi.mock('../api/invoicesApi', async () => {
   const actual = await vi.importActual<typeof import('../api/invoicesApi')>('../api/invoicesApi');
-  return { ...actual, getMyInvoices: (...a: unknown[]) => mocks.getMyInvoices(...a) };
+  return {
+    ...actual,
+    getMyInvoices: (...a: unknown[]) => mocks.getMyInvoices(...a),
+    getAccountCreditHistory: (...a: unknown[]) => mocks.getAccountCreditHistory(...a),
+  };
 });
 vi.mock('../lib/activeTribe', () => ({
   getActiveKinfolkId: () => 'fam1',
@@ -140,6 +147,7 @@ describe('Invoices and InvoiceDetail, reached directly by a member without billi
   it('Invoices goes back to Home with no error', async () => {
     mocks.getMyHome.mockResolvedValue({ ...HOME_BASE, billingAccess: false });
     mocks.getMyInvoices.mockRejectedValue(new FirebaseError('functions/permission-denied', 'Billing access is required'));
+    mocks.getAccountCreditHistory.mockRejectedValue(new FirebaseError('functions/permission-denied', 'Billing access is required'));
     const { Invoices } = await import('./Invoices');
     wrap(<Invoices />);
     await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith({ to: '/home', replace: true }));
@@ -159,6 +167,7 @@ describe('Invoices and InvoiceDetail, reached directly by a member without billi
   it('any other failure still reports itself, and does not navigate', async () => {
     mocks.getMyHome.mockResolvedValue({ ...HOME_BASE, billingAccess: true });
     mocks.getMyInvoices.mockRejectedValue(new FirebaseError('functions/internal', 'boom'));
+    mocks.getAccountCreditHistory.mockResolvedValue({ ok: true, kinfolkId: 'fam1', accountBalanceCents: 0, credits: [], uses: [] });
     const { Invoices } = await import('./Invoices');
     wrap(<Invoices />);
     await waitFor(() => expect(mocks.getMyInvoices).toHaveBeenCalled());

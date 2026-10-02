@@ -103,6 +103,14 @@ vi.mock('../lib/firestore', async (orig) => ({
   ...(await orig<typeof import('../lib/firestore')>()),
   useCollection: (spec: unknown) => useCollection(spec) ?? { status: 'loading' },
 }));
+// The vet panels' household record is a one-shot Firestore read. Held pending by
+// default for the same reason as the feeds above; the vet spec resolves it.
+// Unmocked, it went to production Firestore (#1138).
+const { getHouseholdData } = vi.hoisted(() => ({ getHouseholdData: vi.fn() }));
+vi.mock('../api/householdData', async (orig) => ({
+  ...(await orig<typeof import('../api/householdData')>()),
+  getHouseholdData,
+}));
 import { KinfolkProfile } from './KinfolkProfile';
 import { mergeKinfolkProfile } from '../api/kinfolkProfile';
 
@@ -127,6 +135,8 @@ beforeEach(() => {
   getDossier.mockResolvedValue(null);
   useCollection.mockReset();
   useCollection.mockReturnValue({ status: 'loading' });
+  getHouseholdData.mockReset();
+  getHouseholdData.mockReturnValue(new Promise(() => {}));
   routerHistory.canGoBack.mockReset();
   routerHistory.canGoBack.mockReturnValue(false);
   routerHistory.back.mockReset();
@@ -160,8 +170,16 @@ describe('KinfolkProfile', () => {
 
   it('omits the empty Vet panel, but still shows Emergency Contacts, flagged (#829)', async () => {
     getKinfolkProfile.mockResolvedValue(profile());
+    // No household record and an empty clinic catalog: a household with no vet.
+    getHouseholdData.mockResolvedValue(null);
+    useCollection.mockImplementation((spec: { path?: string }) =>
+      spec.path === 'vet_clinics' ? { status: 'ready', data: [] } : { status: 'loading' },
+    );
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
     await screen.findByText('512-555-1000');
+    await waitFor(() => expect(getHouseholdData).toHaveBeenCalledWith('k1'));
+    // Settled, so the omission below is the empty record and not a pending read.
+    await waitFor(() => expect(screen.queryByText(/Loading the household.s vet/)).toBeNull());
     // #829: the Emergency Contacts panel is never omitted. A household with
     // none still needs it, it is where the flag saying so lives.
     expect(screen.getByRole('heading', { name: 'Emergency Contacts' })).toBeInTheDocument();
