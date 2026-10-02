@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { type BookingEntry } from '../api/bookings';
 import {
   bulkRescheduleSummary,
@@ -10,6 +10,19 @@ import {
   type RescheduleDraft,
   type RescheduleTarget,
 } from './bookingReschedule';
+
+// #1155: the DEVICE is America/Los_Angeles and the BUSINESS is America/Chicago,
+// so any reading or building that leaks the device zone lands two hours off.
+const BIZ = 'America/Chicago';
+let originalTz: string | undefined;
+beforeAll(() => {
+  originalTz = process.env.TZ;
+  process.env.TZ = 'America/Los_Angeles';
+});
+afterAll(() => {
+  if (originalTz === undefined) delete process.env.TZ;
+  else process.env.TZ = originalTz;
+});
 
 /**
  * The bulk reschedule's decisions (#397 M16), at the layer that makes them.
@@ -25,8 +38,8 @@ function entry(over: Partial<BookingEntry>): BookingEntry {
     kinfolkId: 'kf1',
     kinfolkName: 'The Wrens',
     status: 'SCHEDULED',
-    startTime: '2026-07-16T09:00:00',
-    endTime: '2026-07-16T10:00:00',
+    startTime: '2026-07-16T14:00:00.000Z',
+    endTime: '2026-07-16T15:00:00.000Z',
     ...over,
   } as BookingEntry;
 }
@@ -38,7 +51,7 @@ function target(over: Partial<RescheduleTarget> = {}): RescheduleTarget {
     date: '2026-07-16',
     time: '09:00',
     durationMinutes: 60,
-    currentStart: '2026-07-16T09:00:00',
+    currentStart: '2026-07-16T14:00:00.000Z',
     ...over,
   };
 }
@@ -58,8 +71,8 @@ describe('rescheduleApplies', () => {
 
 describe('planBulkReschedule', () => {
   it('prefills an eligible visit from the window it holds now', () => {
-    const rows = [entry({ _id: 'ses1', startTime: '2026-07-16T09:00:00' })];
-    const plan = planBulkReschedule(rows, new Set(['ses1']));
+    const rows = [entry({ _id: 'ses1', startTime: '2026-07-16T14:00:00.000Z' })];
+    const plan = planBulkReschedule(rows, new Set(['ses1']), BIZ);
 
     expect(plan.skipped).toEqual([]);
     expect(plan.eligible).toHaveLength(1);
@@ -67,7 +80,8 @@ describe('planBulkReschedule', () => {
     expect(only.name).toBe('The Wrens');
     expect(only.date).toBe('2026-07-16');
     expect(only.time).toBe('09:00');
-    // 09:00 to 10:00 on the doc, so the move keeps an hour.
+    // 14:00Z is 09:00 in Chicago (07:00 on the LA device), so the prefill is the business clock.
+    // 14:00Z to 15:00Z on the doc, so the move keeps an hour.
     expect(only.durationMinutes).toBe(60);
   });
 
@@ -76,7 +90,7 @@ describe('planBulkReschedule', () => {
       entry({ _id: 'ses1' }),
       entry({ _id: 'ses2', kinfolkName: 'The Devlins', status: 'PENDING' }),
     ];
-    const plan = planBulkReschedule(rows, new Set(['ses1', 'ses2']));
+    const plan = planBulkReschedule(rows, new Set(['ses1', 'ses2']), BIZ);
 
     expect(plan.eligible.map((t) => t.id)).toEqual(['ses1']);
     expect(plan.skipped).toHaveLength(1);
@@ -85,13 +99,13 @@ describe('planBulkReschedule', () => {
   });
 
   it('names a selected id that has left the list', () => {
-    const plan = planBulkReschedule([], new Set(['gone']));
+    const plan = planBulkReschedule([], new Set(['gone']), BIZ);
     expect(plan.eligible).toEqual([]);
     expect(plan.skipped[0]!.reason).toContain('no longer in the list');
   });
 
   it('leaves the prefill blank when the stored start does not parse', () => {
-    const plan = planBulkReschedule([entry({ startTime: 'sometime Tuesday' })], new Set(['ses1']));
+    const plan = planBulkReschedule([entry({ startTime: 'sometime Tuesday' })], new Set(['ses1']), BIZ);
     expect(plan.eligible[0]!.date).toBe('');
     expect(plan.eligible[0]!.time).toBe('');
   });
@@ -107,6 +121,7 @@ describe('planRescheduleWrites', () => {
         ses1: { date: '2026-07-17', time: '11:30' },
         ses2: { date: '2026-07-16', time: '09:00' },
       }),
+      BIZ,
     );
 
     expect(planned.writes).toHaveLength(1);
@@ -115,8 +130,8 @@ describe('planRescheduleWrites', () => {
     const start = new Date(planned.writes[0]!.times.startTime);
     const end = new Date(planned.writes[0]!.times.endTime);
     expect(end.getTime() - start.getTime()).toBe(60 * 60_000);
-    expect(start.getHours()).toBe(11);
-    expect(start.getMinutes()).toBe(30);
+    // 11:30 on the BUSINESS clock (Chicago, CDT) is 16:30Z. The LA device would give 18:30Z.
+    expect(planned.writes[0]!.times.startTime).toBe('2026-07-17T16:30:00.000Z');
 
     expect(planned.skipped).toHaveLength(1);
     expect(planned.skipped[0]!.name).toBe('The Sparrows');
@@ -132,6 +147,7 @@ describe('planRescheduleWrites', () => {
         ses1: { date: '', time: '' },
         ses2: { date: '2026-02-30', time: '09:15' },
       }),
+      BIZ,
     );
 
     expect(planned.writes).toEqual([]);
@@ -151,6 +167,7 @@ describe('mergeRescheduleResults', () => {
         ses1: { date: '2026-07-17', time: '09:00' },
         ses2: { date: '2026-07-17', time: '13:00' },
       }),
+      BIZ,
     );
 
     const outcome = mergeRescheduleResults(
@@ -171,6 +188,7 @@ describe('mergeRescheduleResults', () => {
     const planned = planRescheduleWrites(
       [target()],
       drafts({ ses1: { date: '2026-07-17', time: '09:00' } }),
+      BIZ,
     );
     const outcome = mergeRescheduleResults(planned.writes, new Map(), []);
     expect(bulkRescheduleSummary(outcome)).toBe('Moved 1 of 1 selected visit.');

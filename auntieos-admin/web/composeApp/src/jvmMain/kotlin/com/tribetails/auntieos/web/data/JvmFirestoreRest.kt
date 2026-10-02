@@ -189,13 +189,14 @@ internal object JvmFirestoreRest {
      * Pure: the `timestampValue` to send for [raw], or null when it is not a
      * date-time. An RFC 3339 string (Z or an offset) goes as written, so its
      * fractional digits survive. A zone-less date-time is what the desktop's
-     * `nowIso()` stamps (local wall time), so it is read in the system zone. A
+     * `nowIso()` stamps and what an operator types: the BUSINESS's wall clock
+     * (#1155), so it is read in the business zone, never the machine's. A
      * bare date (`joinDate` as the web editor writes it) is not a timestamp.
      */
     internal fun timestampValueOf(raw: String): String? {
         runCatchingCancellable { java.time.OffsetDateTime.parse(raw) }.getOrNull()?.let { return raw }
         return runCatchingCancellable {
-            java.time.LocalDateTime.parse(raw).atZone(java.time.ZoneId.systemDefault()).toInstant().toString()
+            java.time.LocalDateTime.parse(raw).atZone(businessZoneId()).toInstant().toString()
         }.getOrNull()
     }
     /** Convert one Firestore typed value envelope to flat JSON. */

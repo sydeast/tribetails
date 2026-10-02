@@ -326,6 +326,18 @@ internal actual fun platformBookingTimeSlotsStream(): Flow<FirestoreResult<List<
  */
 @Volatile
 private var lastLoadedBusinessSettings: BusinessSettings? = null
+/**
+ * #1155: the business's zone as a `java.time.ZoneId`, from the last
+ * `business_settings` this console loaded (or the test fixture), else
+ * America/Chicago, the server's own default (#1109). Never the machine's zone:
+ * a zone-less date-time on this console's wire means the business's wall clock,
+ * which is how the server reads it.
+ */
+internal fun businessZoneId(): java.time.ZoneId = java.time.ZoneId.of(
+    com.tribetails.auntieos.web.screens.booking.NewBookingMath
+        .businessTimeZone((JvmFirestoreFixtures.businessSettings ?: lastLoadedBusinessSettings)?.timeZone)
+        .id,
+)
 internal actual fun platformBusinessSettingsStream(): Flow<FirestoreResult<BusinessSettings>> =
     JvmFirestoreFixtures.businessSettings?.let { flowOf(FirestoreResult.Data(it)) }
         ?: JvmFirestoreRest.pollingScalar {

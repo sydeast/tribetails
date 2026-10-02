@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -13,6 +13,16 @@ vi.mock('../api/scheduleWrite', async () => {
 });
 
 import { BlockTimeDialog } from './BlockTimeDialog';
+// #1155: device America/Los_Angeles, business America/Chicago.
+let originalTz: string | undefined;
+beforeAll(() => {
+  originalTz = process.env.TZ;
+  process.env.TZ = 'America/Los_Angeles';
+});
+afterAll(() => {
+  if (originalTz === undefined) delete process.env.TZ;
+  else process.env.TZ = originalTz;
+});
 
 const onClose = vi.fn();
 const onBlocked = vi.fn();
@@ -25,7 +35,7 @@ beforeEach(() => {
 });
 
 function open(initialDate = '2026-07-16') {
-  render(<BlockTimeDialog initialDate={initialDate} onClose={onClose} onBlocked={onBlocked} />);
+  render(<BlockTimeDialog initialDate={initialDate} businessZone="America/Chicago" onClose={onClose} onBlocked={onBlocked} />);
 }
 
 /** A callable rejection shaped the way `lib/fns.call` re-throws a FirebaseError. */
@@ -46,10 +56,10 @@ describe('BlockTimeDialog', () => {
       endTime: '12:00',
       notes: '',
     });
-    // The twin is the SAME window, resolved in the operator's own zone. Built
-    // here the same way, so this holds in any runner timezone.
-    expect(args.startTimeMs).toBe(new Date(2026, 6, 16, 9, 0, 0, 0).getTime());
-    expect(args.endTimeMs).toBe(new Date(2026, 6, 16, 12, 0, 0, 0).getTime());
+    // The twin is the SAME window, read on the BUSINESS clock (#1155): 09:00
+    // Chicago (CDT) is 14:00Z. The LA device would give 16:00Z.
+    expect(args.startTimeMs).toBe(Date.UTC(2026, 6, 16, 14, 0));
+    expect(args.endTimeMs).toBe(Date.UTC(2026, 6, 16, 17, 0));
     // No override on a first attempt: the key is absent, not `false`.
     expect(args).not.toHaveProperty('overrideVisitConflict');
     expect(onBlocked).toHaveBeenCalledTimes(1);

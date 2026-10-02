@@ -1149,6 +1149,30 @@ describe('Schedule write surfaces', () => {
     await waitFor(() => expect(createBlockedTimeSlot).toHaveBeenCalledTimes(1));
     expect(createBlockedTimeSlot.mock.calls[0]![0].date).toBe(localDateIso(new Date()));
   });
+  it('"Block time" reads the window on the business clock from business_settings, not the device zone (#1155)', async () => {
+    // Device is America/Chicago (pinned above); the business is in Tokyo.
+    getBusinessSettings.mockResolvedValue({
+      serviceDurations: {},
+      serviceRates: {},
+      snapRescheduleTo15Min: false,
+      timeZone: 'Asia/Tokyo',
+    });
+    mockCollections({ sessions: { status: 'ready', data: [gridSession()] } });
+    render(<Schedule />);
+    await act(async () => {});
+    await user.click(
+      within(document.querySelector('.schedule__actions') as HTMLElement).getByRole('button', {
+        name: 'Block time',
+      }),
+    );
+    const dialog = screen.getByRole('dialog', { name: 'Block time' });
+    await user.click(within(dialog).getByRole('button', { name: 'Block time' }));
+    await waitFor(() => expect(createBlockedTimeSlot).toHaveBeenCalledTimes(1));
+    const args = createBlockedTimeSlot.mock.calls[0]![0];
+    // 09:00 and 12:00 in Tokyo (UTC+9) on the selected day are 00:00Z and 03:00Z.
+    expect(args.startTimeMs).toBe(Date.parse(`${args.date}T00:00:00.000Z`));
+    expect(args.endTimeMs).toBe(Date.parse(`${args.date}T03:00:00.000Z`));
+  });
   it('"New visit" opens the dialog over the operator’s real catalog', async () => {
     getBusinessSettings.mockResolvedValue({
       serviceDurations: {},

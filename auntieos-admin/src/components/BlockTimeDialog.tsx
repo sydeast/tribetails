@@ -4,7 +4,7 @@ import {
   overridableScheduleRefusal,
   overrideHint,
 } from '../api/scheduleWrite';
-import { localDayTimeToMs } from '../lib/newBooking';
+import { businessWallClockToMs } from '../lib/businessZoneTime';
 import { isValidHHmm } from '../lib/scheduleFormat';
 import { Dialog } from './Dialog';
 import { Banner } from './Banner';
@@ -14,6 +14,8 @@ import './BlockTimeDialog.css';
 interface BlockTimeDialogProps {
   /** `YYYY-MM-DD` the Schedule screen currently has selected; the operator can change it. */
   initialDate: string;
+  /** `business_settings.timeZone`: the window is typed on this clock (#1155). */
+  businessZone: string;
   onClose: () => void;
   /** Fired once a slot is really written. `booking_time_slots` is a live stream, so the caller only has to close. */
   onBlocked: () => void;
@@ -33,8 +35,11 @@ interface BlockTimeDialogProps {
  * IT SENDS ONE MORE THING THAN THE DESKTOP DOES, and that is the point of the
  * server change behind this: the window a SECOND time, as epoch ms. The stored
  * document is zoneless wall clock, so the server could never tell whether a
- * block landed on a visit; the browser can, because it is the one place the
- * operator's zone is known. See `api/scheduleWrite.ts#BlockTimeArgs`.
+ * block landed on a visit; the browser can, because it has the business
+ * zone (`business_settings.timeZone`, #1155). The window is read on THAT clock,
+ * not the device's: the visits it is checked against are real instants the
+ * business reads in that zone, and an operator on a laptop in another zone must
+ * block 9:00 where the business reads 9:00. See `api/scheduleWrite.ts#BlockTimeArgs`.
  *
  * WHAT THE OPERATOR SEES WHEN A VISIT IS IN THE WAY: the server's own sentence,
  * naming the window, plus a "Block anyway" button — because that clash is a
@@ -43,7 +48,7 @@ interface BlockTimeDialogProps {
  * not happen. A company closure is refused with no such offer, and that
  * asymmetry is deliberate; see `overridableScheduleRefusal`.
  */
-export function BlockTimeDialog({ initialDate, onClose, onBlocked }: BlockTimeDialogProps) {
+export function BlockTimeDialog({ initialDate, businessZone, onClose, onBlocked }: BlockTimeDialogProps) {
   const [date, setDate] = useState(initialDate);
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('12:00');
@@ -73,8 +78,8 @@ export function BlockTimeDialog({ initialDate, onClose, onBlocked }: BlockTimeDi
 
   async function submit(overrideVisitConflict: boolean) {
     if (!canSave) return;
-    const startTimeMs = localDayTimeToMs(date.trim(), startTime.trim());
-    const endTimeMs = localDayTimeToMs(date.trim(), endTime.trim());
+    const startTimeMs = businessWallClockToMs(date.trim(), startTime.trim(), businessZone);
+    const endTimeMs = businessWallClockToMs(date.trim(), endTime.trim(), businessZone);
     if (startTimeMs === null || endTimeMs === null) {
       // Reachable only for a date the regex accepts but the calendar does not
       // (2026-02-30). Fail loud rather than send a window nobody meant.

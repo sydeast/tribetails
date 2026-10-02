@@ -25,6 +25,8 @@ interface BulkRescheduleDialogProps {
   targets: readonly RescheduleTarget[];
   /** Selected rows that were never offered a field, with the reason. */
   skipped: readonly BulkSkip[];
+  /** `business_settings.timeZone`: the clock the dates and times here are read and written in (#1155). */
+  businessZone: string;
   /**
    * Closing hands back what happened, or null when the operator backed out
    * before confirming. The list screen uses it to keep the visits that did not
@@ -61,7 +63,7 @@ interface BulkRescheduleDialogProps {
  * `alreadyOverridden`, so a second refusal offers nothing. A company closure
  * has no override on the server and therefore never grows one here.
  */
-export function BulkRescheduleDialog({ targets, skipped, onClose }: BulkRescheduleDialogProps) {
+export function BulkRescheduleDialog({ targets, skipped, businessZone, onClose }: BulkRescheduleDialogProps) {
   const [drafts, setDrafts] = useState<ReadonlyMap<string, RescheduleDraft>>(
     () => new Map(targets.map((t) => [t.id, { date: t.date, time: t.time }])),
   );
@@ -97,7 +99,7 @@ export function BulkRescheduleDialog({ targets, skipped, onClose }: BulkReschedu
    */
   async function run() {
     if (running) return;
-    const planned = planRescheduleWrites(targets, drafts);
+    const planned = planRescheduleWrites(targets, drafts, businessZone);
     setRunning(true);
 
     const collected = new Map<string, { reason: string; override: RescheduleOverride | null }>();
@@ -200,7 +202,7 @@ export function BulkRescheduleDialog({ targets, skipped, onClose }: BulkReschedu
             <ul className="bulk-reschedule__result">
               {outcome.applied.map((a) => (
                 <li key={a.id}>
-                  <strong>{a.name}</strong>: now {bookingWhenLabel(a.startTime)}
+                  <strong>{a.name}</strong>: now {bookingWhenLabel(a.startTime, businessZone)}
                 </li>
               ))}
             </ul>
@@ -287,7 +289,7 @@ export function BulkRescheduleDialog({ targets, skipped, onClose }: BulkReschedu
                 <div className="bulk-reschedule__row-head">
                   <strong>{target.name}</strong>
                   <span className="bulk-reschedule__hint">
-                    Now {bookingWhenLabel(target.currentStart)} · keeps its length:{' '}
+                    Now {bookingWhenLabel(target.currentStart, businessZone)} · keeps its length:{' '}
                     {durationLabel(target.durationMinutes)}
                   </span>
                 </div>

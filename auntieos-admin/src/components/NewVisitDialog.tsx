@@ -25,6 +25,8 @@ interface NewVisitDialogProps {
   serviceDurations: Record<string, string>;
   /** `YYYY-MM-DD` the Schedule screen currently has selected. */
   initialDate: string;
+  /** `business_settings.timeZone`: the visit's date and time are typed on this clock (#1155). */
+  businessZone: string;
   onClose: () => void;
   /** Fired once the visit is really written. `kin_care_sessions` is a live stream, so the caller only has to close. */
   onCreated: (sessionId: string) => void;
@@ -68,6 +70,7 @@ export function NewVisitDialog({
   serviceRates,
   serviceDurations,
   initialDate,
+  businessZone,
   onClose,
   onCreated,
 }: NewVisitDialogProps) {
@@ -106,7 +109,7 @@ export function NewVisitDialog({
 
   async function submit(override: 'visit' | 'busy' | null) {
     if (!canSave) return;
-    const times = buildRescheduleTimes(date.trim(), time.trim(), durationMinutes);
+    const times = buildRescheduleTimes(date.trim(), time.trim(), durationMinutes, businessZone);
     if (times === null) {
       setError('Enter a real date and a time of day before scheduling.');
       return;

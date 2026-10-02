@@ -84,8 +84,9 @@ export interface BlockTimeArgs {
    * The stored document has no timezone field anywhere, so the server cannot
    * turn `date`+`HH:mm` into an instant without inventing a zone — which is why
    * it never checked a block against the visits underneath it. The BROWSER
-   * knows the operator's zone, so it sends the window a second time as epoch ms
-   * and the server does the overlap check against that. Both halves describe
+   * knows the business zone (#1155), so it sends the window a second time, read on
+   * the business clock, as epoch ms and the server does the overlap check
+   * against that. Both halves describe
    * one window; only the wall-clock half is persisted.
    */
   startTimeMs: number;

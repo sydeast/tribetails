@@ -1,4 +1,5 @@
 import type { RescheduleBookingArgs } from '../contracts/bookingContracts.generated';
+import { businessWallClock, businessWallClockToMs } from './businessZoneTime';
 
 /**
  * Pure display + arithmetic helpers for the Schedule booking detail sheet
@@ -13,8 +14,14 @@ import type { RescheduleBookingArgs } from '../contracts/bookingContracts.genera
  * reschedule fields by SLICING those characters (`iso.substring(0, 10)`,
  * `iso.substring(11, 16)`), which shows an operator in Chicago the UTC hour:
  * a 20:00 local visit prefills as "01:00" on the following day. Every helper
- * below parses to a real instant first and reads it back through the LOCAL
- * getters, so what the operator sees and edits is their own wall clock.
+ * below parses to a real instant first and reads it back on a wall clock.
+ *
+ * #1155: the clock the operator edits is the BUSINESS's (`business_settings.
+ * timeZone`), not the device's. The server reads a visit's hour in that zone, so
+ * an operator on a laptop in another zone who typed 9:00 and read back 9:00
+ * would otherwise be moving the visit to 9:00 on a clock the business never
+ * uses. The prefills and `buildRescheduleTimes` take the zone and use it both
+ * ways, so what is shown, what is typed and what is written agree.
  */
 
 /**
@@ -74,20 +81,18 @@ export function noteLockReason(): string {
   return 'Notes are locked: this visit starts in under 3 hours.';
 }
 
-/** LOCAL `YYYY-MM-DD` for an `<input type="date">` prefill, or '' when unknown. */
-export function localDateInput(iso: string): string {
+/** Business-zone `YYYY-MM-DD` for an `<input type="date">` prefill, or '' when unknown. */
+export function businessDateInput(iso: string, businessZone: string): string {
   const d = parseInstant(iso);
   if (d === null) return '';
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  return businessWallClock(d.getTime(), businessZone).dateIso;
 }
-
-/** LOCAL `HH:mm` for an `<input type="time">` prefill, or '' when unknown. */
-export function localTimeInput(iso: string): string {
+/** Business-zone `HH:mm` for an `<input type="time">` prefill, or '' when unknown. */
+export function businessTimeInput(iso: string, businessZone: string): string {
   const d = parseInstant(iso);
   if (d === null) return '';
-  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  return businessWallClock(d.getTime(), businessZone).hhmm;
 }
-
 /** The subset of a session doc the duration is derived from. */
 export interface DurationSource {
   serviceDurationMinutes?: number | undefined;
@@ -136,7 +141,8 @@ export type RescheduleTimes = Pick<RescheduleBookingArgs, 'startTime' | 'endTime
 
 /**
  * Build the `{startTime, endTime}` pair `rescheduleBooking` writes, from a
- * LOCAL date + time the operator typed and the visit's own duration.
+ * date + time the operator typed on the BUSINESS's clock (#1155) and the
+ * visit's own duration.
  *
  * Emits UTC-suffixed ISO, matching what `approveBookingSeriesCore.ts` already
  * writes to this collection, so a rescheduled session sorts and re-parses
@@ -152,39 +158,40 @@ export function buildRescheduleTimes(
   date: string,
   time: string,
   durationMinutes: number,
+  businessZone: string,
 ): RescheduleTimes | null {
   if (!ISO_DATE.test(date) || !ISO_TIME.test(time)) return null;
-  const [y, m, d] = date.split('-').map(Number) as [number, number, number];
-  const [hh, mm] = time.split(':').map(Number) as [number, number];
-  if (hh > 23 || mm > 59) return null;
-
-  const start = new Date(y, m - 1, d, hh, mm, 0, 0);
-  // Round-trip guard: JS silently rolls 2026-02-30 forward into March.
-  if (
-    start.getFullYear() !== y ||
-    start.getMonth() !== m - 1 ||
-    start.getDate() !== d ||
-    start.getHours() !== hh ||
-    start.getMinutes() !== mm
-  ) {
-    return null;
-  }
-
+  const startMs = businessWallClockToMs(date, time, businessZone);
+  if (startMs === null) return null;
   const minutes =
     Number.isFinite(durationMinutes) && durationMinutes > 0
       ? Math.round(durationMinutes)
       : DEFAULT_VISIT_MINUTES;
-  const end = new Date(start.getTime() + minutes * 60_000);
-  return { startTime: start.toISOString(), endTime: end.toISOString() };
+  return {
+    startTime: new Date(startMs).toISOString(),
+    endTime: new Date(startMs + minutes * 60_000).toISOString(),
+  };
 }
-
-/** "Thu, Jul 16 at 2:00 PM", in the operator's LOCAL zone. `Not set` when the
- *  field is blank or unparseable: never a fabricated date. */
-export function bookingWhenLabel(iso: string): string {
+/**
+ * "Thu, Jul 16 at 2:00 PM". `Not set` when the field is blank or unparseable:
+ * never a fabricated date. In the BUSINESS zone when `businessZone` is given
+ * (#1155, beside the reschedule fields that read the same clock), else the
+ * viewer's own.
+ */
+export function bookingWhenLabel(iso: string, businessZone?: string): string {
   const d = parseInstant(iso);
   if (d === null) return 'Not set';
-  const hour24 = d.getHours();
+  if (businessZone !== undefined) {
+    const { dateIso, hhmm } = businessWallClock(d.getTime(), businessZone);
+    const [y, mo, day] = dateIso.split('-').map(Number) as [number, number, number];
+    const [h, m] = hhmm.split(':').map(Number) as [number, number];
+    const weekday = new Date(Date.UTC(y, mo - 1, day)).getUTCDay();
+    return formatWhen(weekday, mo - 1, day, h, m);
+  }
+  return formatWhen(d.getDay(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes());
+}
+function formatWhen(weekday: number, month: number, day: number, hour24: number, minute: number): string {
   const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
   const meridiem = hour24 >= 12 ? 'PM' : 'AM';
-  return `${WEEKDAYS[d.getDay()]}, ${MONTHS[d.getMonth()]} ${d.getDate()} at ${hour12}:${pad2(d.getMinutes())} ${meridiem}`;
+  return `${WEEKDAYS[weekday]}, ${MONTHS[month]} ${day} at ${hour12}:${pad2(minute)} ${meridiem}`;
 }
