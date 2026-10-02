@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/react';
+import { dropRecaptchaNoise } from './sentryFilter';
 
 /**
  * Crash/error reporting for the AuntieOS admin (React) surface at
@@ -43,6 +44,9 @@ export function initSentry(): void {
       // This app handles client PII (kinfolk names, contacts, invoices). Do NOT
       // let Sentry attach request bodies / IPs / user context by default.
       sendDefaultPii: false,
+      // Google's reCAPTCHA script throws on its own for some visitors (#1140).
+      // Drop events with no first-party frame; keep everything else.
+      beforeSend: dropRecaptchaNoise,
       // Only set release when a build-time var is present; omit otherwise so we
       // never send an empty string (exactOptionalPropertyTypes is on).
       ...(release ? { release } : {}),

@@ -1,6 +1,7 @@
 import * as Sentry from '@sentry/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { initSentry, reportError } from './sentry';
+import { dropRecaptchaNoise } from './sentryFilter';
 
 // The transport is never real in tests; assert on how we call the SDK, not on
 // any network behaviour.
@@ -37,6 +38,7 @@ describe('initSentry', () => {
         dsn: 'https://public@o1.ingest.us.sentry.io/2',
         sendDefaultPii: false,
         tracesSampleRate: 0.1,
+        beforeSend: dropRecaptchaNoise,
       }),
     );
   });
