@@ -714,6 +714,31 @@ class AdminDataViewModelTest {
         assertTrue(vm.bulkReadMessage.value!!.contains("already_cancelled"))
     }
 
+    @Test
+    fun `quickBookingAction shows the server's refusal for an Overnight with no start time (#1098)`() = runTest(testDispatcher) {
+        coEvery { mockRepo.batchUpdateBookings(listOf("bk-1"), "APPROVE") } returns
+            Result.success(
+                com.tribetails.auntieos.data.repository.BatchBookingResult(
+                    "APPROVE", 0,
+                    listOf(
+                        com.tribetails.auntieos.data.repository.BatchBookingFailure(
+                            "bk-1", "Set the start time before approving this Overnight.",
+                        ),
+                    ),
+                ),
+            )
+        coEvery { mockRepo.getNotifications() } returns Result.success(emptyList())
+
+        val vm = buildViewModel()
+        vm.quickBookingAction("bk-1", "APPROVE")
+        advanceUntilIdle()
+
+        assertEquals(
+            "Couldn't approve: Set the start time before approving this Overnight.",
+            vm.bulkReadMessage.value,
+        )
+    }
+
     // ─── generateReceipt (slice 2) ────────────────────────────────────────────
 
     @Test

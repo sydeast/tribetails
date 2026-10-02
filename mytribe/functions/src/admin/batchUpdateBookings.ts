@@ -121,12 +121,19 @@ export async function batchUpdateBookingsHandler(
   // approve/deny). Skipped entirely once every id already resolved in phase
   // 1, so an all-android batch never pays for the collection-group scan.
   const remaining = requestedIds.filter((id) => !enhancedById.has(id));
-  const kinCareById = new Map<string, { ref: FirebaseFirestore.DocumentReference; status: string }>();
+  const kinCareById = new Map<
+    string,
+    { ref: FirebaseFirestore.DocumentReference; status: string; startTimePending: boolean }
+  >();
   if (remaining.length > 0) {
     const cgSnap = await db().collectionGroup('kinCares').get();
     for (const d of cgSnap.docs) {
-      const data = d.data() as { status?: string };
-      kinCareById.set(d.id, { ref: d.ref, status: data.status ?? 'requested' });
+      const data = d.data() as { status?: string; startTimePending?: unknown };
+      kinCareById.set(d.id, {
+        ref: d.ref,
+        status: data.status ?? 'requested',
+        startTimePending: data.startTimePending === true,
+      });
     }
   }
 
@@ -170,6 +177,13 @@ export async function batchUpdateBookingsHandler(
       continue;
     }
     kinCareResolved += 1;
+    // #1098: a night awaiting its start time is approved only through
+    // `manageBookingSeries` APPROVE, which is where the operator sets that
+    // time. Confirming it here would book a visit with no time at all.
+    if (args.action === 'APPROVE' && hit.startTimePending) {
+      failed.push({ id, error: 'Set the start time before approving this Overnight.' });
+      continue;
+    }
     try {
       if (hit.status !== kinCareWanted) {
         await hit.ref.set(

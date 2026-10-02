@@ -84,6 +84,8 @@ function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBo
     rescheduleRequestedEndTimeMs: null,
     rescheduleRequestReason: null,
     rescheduleResponseNote: null,
+    startTimePending: false,
+    requestedDate: null,
     ...overrides,
   };
 }
@@ -484,5 +486,40 @@ describe('BookingDetail: reschedule request', () => {
     renderScreen();
     await screen.findByRole('heading', { name: 'Drop-in Visit' });
     expect(screen.queryByRole('button', { name: /reschedule visit/i })).toBeNull();
+  });
+});
+
+/**
+ * #1098: the overnight's start time is the Auntie's to set, and
+ * `requestBookingReschedule` refuses a visit that has none yet. So the
+ * household is not offered a control that can only fail; cancelling stays.
+ */
+describe('BookingDetail: a visit whose start time the Auntie sets (#1098)', () => {
+  const pending = () =>
+    booking({ serviceType: 'Overnight', startTimeMs: null, startTimePending: true, requestedDate: '2026-10-09', status: 'requested' });
+  it('shows the night and who sets the start, never "Time to be confirmed"', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [pending()] }));
+    renderScreen();
+    await screen.findByRole('heading', { name: 'Overnight' });
+    expect(screen.getAllByText('Fri night · Start time set by your Auntie').length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Time to be confirmed|TBD|Invalid Date|12:00 AM/)).toBeNull();
+    expect(screen.getByText('Oct')).toBeInTheDocument();
+    expect(screen.getByText('09')).toBeInTheDocument();
+  });
+  it('hides Reschedule with the reason, and keeps cancellation', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [pending()] }));
+    renderScreen();
+    await screen.findByRole('heading', { name: 'Overnight' });
+    expect(screen.queryByRole('button', { name: /reschedule visit/i })).toBeNull();
+    expect(screen.getByText('Your Auntie has not set the start time yet.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Request cancellation/i })).toBeEnabled();
+  });
+  it('offers Reschedule again once the start time is set', async () => {
+    mocks.getMyBookings.mockResolvedValue(
+      bookingsResult({ upcoming: [booking({ startTimePending: false, requestedDate: '2026-10-09' })] }),
+    );
+    renderScreen();
+    expect(await screen.findByRole('button', { name: /reschedule visit/i })).toBeEnabled();
+    expect(screen.queryByText('Your Auntie has not set the start time yet.')).toBeNull();
   });
 });

@@ -16,10 +16,12 @@ import {
   BOOKING_TIMELINE_STEPS,
   bookingStatusChip,
   bookingTimelineIndex,
-  calTile,
+  bookingSubtitle,
   findBookingById,
+  isStartTimePending,
   speciesEmoji,
-  visitSubtitle,
+  visitTile,
+  visitWhenLine,
   weekdayTime,
 } from '../lib/portalFormat';
 import '../styles/bookingdetail.css';
@@ -188,8 +190,14 @@ export function BookingDetail() {
   // Same window as a cancellation ask, and for the same reason: a visit that is
   // under way or finished is not moved by asking. A pending ask is handled
   // above this flag, by the branch that renders the waiting state instead.
+  //
+  // #1098: a night still waiting for its start time cannot be moved yet: the
+  // Auntie sets that time, and `requestBookingReschedule` refuses until she
+  // has. The control is held back with the reason rather than offered to fail.
+  const awaitingStartTime = isStartTimePending(found) && (found.status === 'requested' || found.status === 'confirmed');
   const canRequestReschedule =
     canAct &&
+    !awaitingStartTime &&
     found.rescheduleRequestStatus !== 'pending' &&
     (found.status === 'requested' || found.status === 'confirmed');
   const proposedLabel =
@@ -269,7 +277,7 @@ export function BookingDetail() {
                     <div className="lab">KinCare Duration</div>
                     <div className="val">
                       {found.serviceType ?? 'Visit'}
-                      <small>{found.startTimeMs !== null ? weekdayTime(found.startTimeMs) : 'Time to be confirmed'}</small>
+                      <small>{visitWhenLine(found)}</small>
                     </div>
                   </div>
                 </div>
@@ -360,12 +368,12 @@ export function BookingDetail() {
               <div className="sectlabel">When and where</div>
               <div className="visit v1" style={{ cursor: 'default' }}>
                 <div className="cal">
-                  <div className="m">{found.startTimeMs !== null ? calTile(found.startTimeMs).month : '—'}</div>
-                  <div className="d">{found.startTimeMs !== null ? calTile(found.startTimeMs).day : '—'}</div>
+                  <div className="m">{visitTile(found).month}</div>
+                  <div className="d">{visitTile(found).day}</div>
                 </div>
                 <div className="info">
                   <b>{found.title ?? found.serviceType ?? 'Visit'}</b>
-                  <small>{visitSubtitle(found.startTimeMs, found.auntieDisplayName)}</small>
+                  <small>{bookingSubtitle(found)}</small>
                 </div>
                 <div className="pet">{speciesEmoji(null)}</div>
               </div>
@@ -397,6 +405,11 @@ export function BookingDetail() {
                         <span className="dot" />
                         {`Tribe Tails could not take ${proposedLabel || 'that time'}. ${found.rescheduleResponseNote ?? ''}`.trim()}
                       </div>
+                    )}
+                    {awaitingStartTime && (
+                      <p className="sub" style={{ margin: 0 }} data-testid="reschedule-awaiting-start">
+                        Your Auntie has not set the start time yet.
+                      </p>
                     )}
                     {canRequestReschedule &&
                       (proposingReschedule ? (

@@ -60,6 +60,7 @@ import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.formatUsd
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlinx.coroutines.launch
@@ -148,6 +149,8 @@ fun BookingWizardScreen(
             val catalogRes = portalApi.getServiceCatalog(kinfolkId)
             services = catalogRes.services
             pricesVisible = catalogRes.pricesVisible
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             loadError = t.message ?: "Could not load wizard"
         }
@@ -157,6 +160,8 @@ fun BookingWizardScreen(
             closedDates = portalApi
                 .getBusinessClosures(bookingDateKey(today), bookingDateKey(horizonEnd))
                 .associate { it.date to it.name }
+        } catch (c: CancellationException) {
+            throw c
         } catch (_: Throwable) {
             closedDates = emptyMap()
         }
@@ -164,6 +169,8 @@ fun BookingWizardScreen(
         // losing it leaves the wizard on clock times rather than dead.
         try {
             policy = portalApi.getBookingPolicy()
+        } catch (c: CancellationException) {
+            throw c
         } catch (_: Throwable) {
             policy = BookingPolicy.CLOCK_ONLY
         }
@@ -257,9 +264,8 @@ fun BookingWizardScreen(
         } else if (pattern == BookingPattern.Individual) {
             selectedDates.map { bookingDateKey(it) }.filter { closedDates.containsKey(it) }
         } else {
-            val tz = TimeZone.currentSystemDefault()
             plannedVisits
-                .map { bookingDateKey(Instant.fromEpochMilliseconds(it.startTimeMs).toLocalDateTime(tz).date) }
+                .map { plannedVisitDayKey(it) }
                 .filter { closedDates.containsKey(it) }
                 .distinct()
         }
@@ -322,9 +328,9 @@ fun BookingWizardScreen(
                         // In block mode a fresh KinCare lands in the FIRST
                         // window rather than on "choose one": a picker whose
                         // every row starts unset is a blocker dressed as a
-                        // control, and it moves in one tap. A start-time
-                        // KinCare (#1092) takes the clock default above and no window.
-                        timeBlockId = if (slotMode(id, timing) == BookingMode.TimeBlock) policy.timeBlocks.firstOrNull()?.id else null,
+                        // control, and it moves in one tap. A night-only
+                        // KinCare (#1098) uses neither field.
+                        timeBlockId = if (slotMode(id, timing) == SlotMode.TimeBlock) policy.timeBlocks.firstOrNull()?.id else null,
                     )
                 },
                 onRemove = { slotId -> slots = slots.filterNot { it.slotId == slotId } },
@@ -446,6 +452,8 @@ fun BookingWizardScreen(
                                     )
                                     submissionKey = null
                                     onComplete()
+                                } catch (c: CancellationException) {
+                                    throw c
                                 } catch (t: Throwable) {
                                     submitError = t.message ?: "Could not create booking"
                                 } finally {
@@ -816,7 +824,7 @@ private fun Step3ScheduleDates(
         // differ here — by the clock in specific-time mode, by the window in
         // block mode.
         Text(if (mode == BookingMode.TimeBlock) "Time Blocks" else "Visit Times", style = type.sansLabel)
-        if (mode == BookingMode.TimeBlock) {
+        if (mode == BookingMode.TimeBlock && (slots.isEmpty() || slots.any { slotMode(it, timing) == SlotMode.TimeBlock })) {
             Text(
                 "Your Auntie arrives at some point during the block you pick. That leaves her room to get between homes without rushing anyone.",
                 style = type.sansMeta,
@@ -827,8 +835,13 @@ private fun Step3ScheduleDates(
         } else {
             slots.forEachIndexed { idx, slot ->
                 val name = services.firstOrNull { it.id == slot.serviceId }?.name ?: slot.serviceId
-                // #1092: a start-time KinCare takes a clock even in a block plan.
-                if (slotMode(slot, timing) == BookingMode.TimeBlock) {
+                val kind = slotMode(slot, timing)
+                if (kind == SlotMode.NightOnly) {
+                    // #1098: the household asks for the night only. The Auntie
+                    // sets the start when she approves it, so there is nothing to pick.
+                    Text("${idx + 1}. $name", style = type.sansBody)
+                    Text("Your Auntie sets the start time", style = type.sansMeta)
+                } else if (kind == SlotMode.TimeBlock) {
                     Text("${idx + 1}. $name", style = type.sansBody)
                     Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
                         timeBlocks.forEach { block ->
@@ -843,11 +856,7 @@ private fun Step3ScheduleDates(
                     KinField(
                         value = slot.time,
                         onValueChange = { onSlotTimeChange(slot.slotId, it) },
-                        label = if (mode == BookingMode.TimeBlock) {
-                            "${idx + 1}. $name start time (HH:MM)"
-                        } else {
-                            "${idx + 1}. $name time (HH:MM)"
-                        },
+                        label = "${idx + 1}. $name time (HH:MM)",
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }

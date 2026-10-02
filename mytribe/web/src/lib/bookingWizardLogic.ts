@@ -86,10 +86,9 @@ export interface KinCareSlot {
    * BOTH fields live on the slot at once, deliberately: switching the plan's
    * mode must not discard what was already typed on the other control. What
    * the server receives is decided by {@link slotMode}, never by which field
-   * happens to be set. That mode is the plan's, EXCEPT for a KinCare the
-   * business books at a start time (#1092): an overnight is twelve hours that
-   * can start at any hour, so it takes a clock time inside a block-mode plan
-   * while every other KinCare in that plan keeps its block.
+   * happens to be set. That mode is the plan's, EXCEPT for a night-only
+   * KinCare (#1098): the household asks for the night and the operator sets
+   * its start time, so neither field is read or sent for it.
    */
   timeBlockId: string | null;
 }
@@ -103,8 +102,9 @@ export interface KinCareSlot {
  * a household may want the 30-minute one in the Midday block and the 60-minute
  * one in the Evening block, or two different KinCares in the same block.
  *
- * The one mixture is #1092's: a KinCare in `startTimeServiceIds` books on the
- * clock in either mode, because twelve hours starting at 21:00 fit no window.
+ * The one mixture is #1098's: a KinCare in `startTimeServiceIds` is asked for
+ * by night only, in either mode. The operator sets its start time when she
+ * approves it, because she may have evening visits to finish first.
  * {@link slotMode} is where that is decided.
  */
 export interface BookingTiming {
@@ -112,8 +112,8 @@ export interface BookingTiming {
   /** The windows on offer. Empty in SPECIFIC_TIME mode, and never empty in TIME_BLOCK mode. */
   blocks: readonly TimeBlockDto[];
   /**
-   * #1092: catalog ids of KinCares booked at a start time whatever `mode` says.
-   * Absent reads as none, which is every booking before #1092.
+   * #1098: catalog ids of KinCares the household asks for by night only,
+   * whatever `mode` says. Absent reads as none.
    */
   startTimeServiceIds?: readonly string[];
 }
@@ -137,17 +137,24 @@ export function initialBookingMode(policy: Pick<GetBookingPolicyResult, 'allowTi
   return policy.defaultBookingMode;
 }
 
-/** #1092: whether `serviceId` is a KinCare the business books at a start time, whatever the plan's mode. */
-export function serviceBooksAtStartTime(serviceId: string, timing: BookingTiming): boolean {
+/** #1098: whether `serviceId` is a KinCare the household asks for by night only, whatever the plan's mode. */
+export function serviceIsNightOnly(serviceId: string, timing: BookingTiming): boolean {
   return (timing.startTimeServiceIds ?? []).includes(serviceId);
 }
+
 /**
- * The mode ONE slot books in: SPECIFIC_TIME for a start-time KinCare, the
- * plan's mode for every other. Every function below that asks "block or clock"
- * asks this, so the visit sent, the blocker and the control drawn agree.
+ * How ONE slot books: by window, by clock, or (#1098) by night only, where the
+ * operator sets the start time on approval.
  */
-export function slotMode(slot: Pick<KinCareSlot, 'serviceId'>, timing: BookingTiming): BookingMode {
-  return serviceBooksAtStartTime(slot.serviceId, timing) ? 'SPECIFIC_TIME' : timing.mode;
+export type SlotMode = BookingMode | 'NIGHT_ONLY';
+
+/**
+ * The single decision point for a slot: NIGHT_ONLY for a flagged KinCare, the
+ * plan's mode for every other. Every function below that asks "block, clock or
+ * night" asks this, so the visit sent, the blocker and the control drawn agree.
+ */
+export function slotMode(slot: Pick<KinCareSlot, 'serviceId'>, timing: BookingTiming): SlotMode {
+  return serviceIsNightOnly(slot.serviceId, timing) ? 'NIGHT_ONLY' : timing.mode;
 }
 /** The window with this id, or null. */
 export function findTimeBlock(blocks: readonly TimeBlockDto[], id: string | null): TimeBlockDto | null {
@@ -171,14 +178,23 @@ export function timeBlockLabel(block: TimeBlockDto): string {
  * the office reads the household's answer rather than inferring it.
  */
 function slotStartHHmm(slot: KinCareSlot, timing: BookingTiming): string | null {
-  if (slotMode(slot, timing) === 'TIME_BLOCK') {
+  const kind = slotMode(slot, timing);
+  if (kind === 'NIGHT_ONLY') return null;
+  if (kind === 'TIME_BLOCK') {
     return findTimeBlock(timing.blocks, slot.timeBlockId)?.startTime ?? null;
   }
   return parseHourMinute(slot.time) === null ? null : slot.time;
 }
 
-/** Chronological, so the plan a household reads runs down the day. Ties broken by service for determinism. */
+/**
+ * Chronological, so the plan a household reads runs down the day, with a night
+ * (#1098) after every timed visit since it has no start yet. Ties broken by
+ * service for determinism.
+ */
 function compareSlots(a: KinCareSlot, b: KinCareSlot, timing: BookingTiming): number {
+  const an = slotMode(a, timing) === 'NIGHT_ONLY' ? 1 : 0;
+  const bn = slotMode(b, timing) === 'NIGHT_ONLY' ? 1 : 0;
+  if (an !== bn) return an - bn;
   const at = slotStartHHmm(a, timing) ?? '';
   const bt = slotStartHHmm(b, timing) ?? '';
   if (at !== bt) return at < bt ? -1 : 1;
@@ -196,8 +212,16 @@ function compareSlots(a: KinCareSlot, b: KinCareSlot, timing: BookingTiming): nu
  */
 export function slotsBlocker(slots: readonly KinCareSlot[], timing: BookingTiming = SPECIFIC_TIME_ONLY): string | null {
   if (slots.length === 0) return 'Add at least one KinCare Duration.';
-  // #1092: a start-time KinCare inside a block-mode plan is judged on the
-  // clock rules below, and every other slot on the block rules.
+  // #1098: a night-only KinCare needs nothing chosen, only no twin. Every
+  // date in the plan gets every slot, so two of one night-only KinCare are the
+  // same KinCare on the same night, which `requestBooking` refuses too.
+  const seenNights = new Set<string>();
+  for (const s of slots) {
+    if (slotMode(s, timing) !== 'NIGHT_ONLY') continue;
+    const key = `${s.serviceId}@night`;
+    if (seenNights.has(key)) return 'That KinCare is on the plan twice for the same night. Remove one.';
+    seenNights.add(key);
+  }
   const blockSlots = slots.filter((s) => slotMode(s, timing) === 'TIME_BLOCK');
   const clockSlots = slots.filter((s) => slotMode(s, timing) === 'SPECIFIC_TIME');
   if (blockSlots.length > 0) {
@@ -269,6 +293,16 @@ function slotVisitOn(
 ): RequestBookingArgsVisit | null {
   const service = services.find((s) => s.id === slot.serviceId);
   if (!service) return null;
+  // `?? null`: a member without billing access gets no price keys at all
+  // (#1037), and the request schema takes null, not undefined.
+  const priceCents = service.priceCents ?? service.priceMinCents ?? null;
+  const kind = slotMode(slot, timing);
+  if (kind === 'NIGHT_ONLY') {
+    // #1098: the night as the household tapped it on their own calendar. No
+    // start time and no block: the operator sets the start on approval, and
+    // the server computes the end from it.
+    return { date: dateKey(d), endTimeMs: null, serviceId: service.id, serviceName: service.name, priceCents, timeBlockId: null };
+  }
   const hhmm = slotStartHHmm(slot, timing);
   if (hhmm === null) return null;
   const t = parseHourMinute(hhmm);
@@ -279,12 +313,55 @@ function slotVisitOn(
     endTimeMs: null,
     serviceId: service.id,
     serviceName: service.name,
-    // `?? null`: a member without billing access gets no price keys at all
-    // (#1037), and the request schema takes null, not undefined.
-    priceCents: service.priceCents ?? service.priceMinCents ?? null,
-    // A start-time KinCare (#1092) sends no block, even in a block-mode plan.
-    timeBlockId: slotMode(slot, timing) === 'TIME_BLOCK' ? slot.timeBlockId : null,
+    priceCents,
+    timeBlockId: kind === 'TIME_BLOCK' ? slot.timeBlockId : null,
   };
+}
+
+/**
+ * #1098: the 'YYYY-MM-DD' a planned visit falls on, local to the household:
+ * its night for a night-only visit, its start's calendar day for the rest.
+ */
+export function plannedVisitDayKey(v: RequestBookingArgsVisit): string {
+  if (v.startTimeMs === undefined) return v.date ?? '';
+  return dateKey(new Date(v.startTimeMs));
+}
+
+/**
+ * Local midnight of a 'YYYY-MM-DD', or null when it is not one. Split by hand:
+ * `new Date('2026-10-09')` is UTC midnight, which is Oct 8 west of Greenwich.
+ */
+export function parseDateKey(key: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key);
+  if (m === null) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return dateKey(d) === key ? d : null;
+}
+
+/**
+ * The instant a planned visit sorts at: its start, or for a night (#1098) the
+ * last millisecond of that day, so it follows every timed visit on its own day
+ * and precedes the next day's.
+ */
+function plannedVisitSortMs(v: RequestBookingArgsVisit): number {
+  if (v.startTimeMs !== undefined) return v.startTimeMs;
+  const d = parseDateKey(v.date ?? '');
+  return d === null ? Number.MAX_SAFE_INTEGER : new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime() - 1;
+}
+
+/** Chronological, nights last within their day, ties broken by service. */
+function comparePlannedVisits(a: RequestBookingArgsVisit, b: RequestBookingArgsVisit): number {
+  return plannedVisitSortMs(a) - plannedVisitSortMs(b) || a.serviceId.localeCompare(b.serviceId);
+}
+
+/**
+ * Whether a planned visit is already in the past: a timed one once its start
+ * has passed, a night (#1098) only once its date is before today, local.
+ * Tonight is still bookable; the server agrees.
+ */
+function isPastPlannedVisit(v: RequestBookingArgsVisit, nowMs: number): boolean {
+  if (v.startTimeMs === undefined) return (v.date ?? '') < dateKey(new Date(nowMs));
+  return v.startTimeMs <= nowMs;
 }
 
 export interface BuildWeeklyVisitsParams {
@@ -333,7 +410,7 @@ export function buildWeeklyVisits(params: BuildWeeklyVisitsParams): RequestBooki
         if (out.length >= MAX_RECURRING_VISITS) break;
         const built = slotVisitOn(d, slot, services, timing);
         const visit = built === null ? null : anchorOpenBlockVisit(built, timing.blocks, nowMs);
-        if (visit !== null && visit.startTimeMs > nowMs) out.push(visit);
+        if (visit !== null && !isPastPlannedVisit(visit, nowMs)) out.push(visit);
       }
     }
     offset++;
@@ -363,7 +440,7 @@ export function buildVisits(
       if (visit !== null) out.push(visit);
     }
   }
-  return out.sort((a, b) => a.startTimeMs - b.startTimeMs || a.serviceId.localeCompare(b.serviceId));
+  return out.sort(comparePlannedVisits);
 }
 
 /**
@@ -409,9 +486,9 @@ export function anchorOpenBlockVisit(
   blocks: readonly TimeBlockDto[],
   nowMs: number,
 ): RequestBookingArgsVisit {
-  if (visit.startTimeMs > nowMs) return visit;
-  // A clock visit, including a start-time KinCare in a block plan (#1092),
-  // carries no block, so its start is what the household typed: never moved.
+  // A night (#1098) has no start to move.
+  if (visit.startTimeMs === undefined || visit.startTimeMs > nowMs) return visit;
+  // A clock visit carries no block, so its start is what the household typed: never moved.
   const block = findTimeBlock(blocks, visit.timeBlockId ?? null);
   if (block === null) return visit;
   const endMs = blockEndMs(visit.startTimeMs, block);
@@ -429,7 +506,7 @@ export function anchorOpenBlockVisits(
 ): RequestBookingArgsVisit[] {
   return visits
     .map((v) => anchorOpenBlockVisit(v, blocks, nowMs))
-    .sort((a, b) => a.startTimeMs - b.startTimeMs || a.serviceId.localeCompare(b.serviceId));
+    .sort(comparePlannedVisits);
 }
 
 /**
@@ -450,7 +527,7 @@ export function pastPlannedVisits(
   visits: readonly RequestBookingArgsVisit[],
   nowMs: number,
 ): RequestBookingArgsVisit[] {
-  return visits.filter((v) => v.startTimeMs <= nowMs);
+  return visits.filter((v) => isPastPlannedVisit(v, nowMs));
 }
 
 /**
@@ -535,6 +612,11 @@ export interface RenderedPlannedVisit {
    * "11:00 AM" back at them would be reporting a precision they never gave.
    */
   timeBlockLabel: string | null;
+  /**
+   * #1098: true for a night-only visit. Its `time` is empty and
+   * {@link plannedVisitLine} says the Auntie sets the start instead.
+   */
+  startTimeSetByAuntie: boolean;
   serviceName: string;
   /** Stable list key: two KinCares of the same duration on one day differ by time or by block. */
   key: string;
@@ -564,22 +646,24 @@ export function renderPlannedVisits(
   const weekdayFmt = new Intl.DateTimeFormat('en-US', { weekday: 'short' });
   const dateFmt = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
   const timeFmt = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' });
-  return [...visits]
-    .sort((a, b) => a.startTimeMs - b.startTimeMs)
-    .map((v) => {
-      const d = new Date(v.startTimeMs);
-      const block = findTimeBlock(blocks, v.timeBlockId);
-      return {
-        weekday: weekdayFmt.format(d),
-        date: dateFmt.format(d),
-        time: timeFmt.format(d),
-        timeBlockLabel: block === null ? null : timeBlockLabel(block),
-        serviceName: v.serviceName,
-        // Two KinCares of one duration in one day are told apart by the time in
-        // clock mode and by the block in block mode, where every start is equal.
-        key: `${v.startTimeMs}-${v.serviceId}-${v.timeBlockId ?? ''}`,
-      };
-    });
+  return [...visits].sort(comparePlannedVisits).map((v) => {
+    const night = v.startTimeMs === undefined;
+    // A night is drawn from the calendar day it was tapped on, never from an instant.
+    const d = night ? (parseDateKey(v.date ?? '') ?? new Date(NaN)) : new Date(v.startTimeMs!);
+    const valid = !Number.isNaN(d.getTime());
+    const block = findTimeBlock(blocks, v.timeBlockId);
+    return {
+      weekday: valid ? weekdayFmt.format(d) : '',
+      date: valid ? dateFmt.format(d) : (v.date ?? ''),
+      time: night || !valid ? '' : timeFmt.format(d),
+      timeBlockLabel: block === null ? null : timeBlockLabel(block),
+      startTimeSetByAuntie: night,
+      serviceName: v.serviceName,
+      // Two KinCares of one duration in one day are told apart by the time in
+      // clock mode and by the block in block mode, where every start is equal.
+      key: `${night ? `night:${v.date}` : v.startTimeMs}-${v.serviceId}-${v.timeBlockId ?? ''}`,
+    };
+  });
 }
 
 /**
@@ -589,6 +673,8 @@ export function renderPlannedVisits(
  * is about WHICH DAYS, and a block does not make a day any less specific.
  */
 export function plannedVisitLine(v: RenderedPlannedVisit): string {
+  // #1098: the night is what the household chose; the start is the Auntie's.
+  if (v.startTimeSetByAuntie) return `${v.weekday}, ${v.date}, start time set by your Auntie`;
   if (v.timeBlockLabel !== null) return `${v.weekday}, ${v.date}, ${v.timeBlockLabel}`;
   return `${v.weekday}, ${v.date} at ${v.time}`;
 }

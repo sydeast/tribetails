@@ -326,3 +326,39 @@ describe('batchUpdateBookings validation + auth', () => {
     await expect(batchUpdateBookingsHandler(req({ ids: ['v1'], action: 'APPROVE' }, null))).rejects.toMatchObject({ code: 'unauthenticated' });
   });
 });
+
+/**
+ * #1098: a night awaiting its start time cannot be approved one visit at a time.
+ * This path confirms without the start-time step, so it refuses that id with the
+ * reason, through the same per-id `failed` list every other refusal uses, and
+ * still does the rest of the batch.
+ */
+describe('batchUpdateBookings: a visit awaiting a start time (#1098)', () => {
+  function seedPending() {
+    return buildDbMock({
+      collectionGroupDocs: {
+        kinCares: [
+          { id: 'v1', path: 'families/kf1/bookings/b1/kinCares/v1', data: { status: 'requested', startTimePending: true, startTime: null } },
+          { id: 'v2', path: 'families/kf1/bookings/b1/kinCares/v2', data: { status: 'requested', startTimePending: false } },
+        ],
+      },
+    });
+  }
+
+  it('APPROVE refuses the pending id and approves the other', async () => {
+    const ctx = seedPending();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await batchUpdateBookingsHandler(req({ ids: ['v1', 'v2'], action: 'APPROVE' }));
+    expect(res.updated).toBe(1);
+    expect(res.failed).toEqual([{ id: 'v1', error: 'Set the start time before approving this Overnight.' }]);
+    expect(ctx.writes.find((w) => w.path === 'families/kf1/bookings/b1/kinCares/v1')).toBeUndefined();
+    expect(ctx.writes.find((w) => w.path === 'families/kf1/bookings/b1/kinCares/v2')?.data.status).toBe('confirmed');
+  });
+
+  it('CANCEL of a pending visit still goes through: only approving needs a time', async () => {
+    const ctx = seedPending();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await batchUpdateBookingsHandler(req({ ids: ['v1'], action: 'CANCEL' }));
+    expect(res).toMatchObject({ updated: 1, failed: [] });
+  });
+});

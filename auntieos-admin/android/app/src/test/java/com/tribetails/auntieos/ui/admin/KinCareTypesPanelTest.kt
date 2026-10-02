@@ -88,7 +88,7 @@ class KinCareTypesPanelTest {
         assertNull(saved)
     }
 
-    // ── Book at a start time (#1092) ──
+    // ── You set the start time (#1092, #1098) ──
     @Test
     fun `switching a type to start-time booking saves the flag and keeps every other field`() {
         var saved: BusinessSettings? = null
@@ -99,7 +99,7 @@ class KinCareTypesPanelTest {
             businessName = "Tribe Tails",
         )
         setContent(loaded, onSave = { saved = it })
-        composeRule.onNodeWithContentDescription("Book Overnight at a start time").performScrollTo().performClick()
+        composeRule.onNodeWithContentDescription("You set the start time for Overnight").performScrollTo().performClick()
         composeRule.onNodeWithText("Unsaved changes".uppercase()).assertExists()
         composeRule.onNodeWithText("Save KinCare types").performScrollTo().performClick()
         assertEquals(mapOf("Overnight" to true), saved?.serviceStartTimeBooking)
@@ -121,7 +121,7 @@ class KinCareTypesPanelTest {
             onSave = { saved = it },
         )
         composeRule.onNodeWithText("Unsaved changes".uppercase()).assertDoesNotExist()
-        composeRule.onNodeWithContentDescription("Book Overnight at a start time").performScrollTo().performClick()
+        composeRule.onNodeWithContentDescription("You set the start time for Overnight").performScrollTo().performClick()
         composeRule.onNodeWithText("Save KinCare types").performScrollTo().performClick()
         assertEquals(emptyMap<String, Boolean>(), saved?.serviceStartTimeBooking)
     }
@@ -129,9 +129,9 @@ class KinCareTypesPanelTest {
     fun `a flagged type with no length is refused at Save, by name`() {
         var saved: BusinessSettings? = null
         setContent(BusinessSettings(serviceRates = mapOf("Overnight" to "80.00")), onSave = { saved = it })
-        composeRule.onNodeWithContentDescription("Book Overnight at a start time").performScrollTo().performClick()
+        composeRule.onNodeWithContentDescription("You set the start time for Overnight").performScrollTo().performClick()
         composeRule.onNodeWithText("Save KinCare types").performScrollTo().performClick()
-        composeRule.onNodeWithText("\"Overnight\" books at a start time, so it needs a length.").assertExists()
+        composeRule.onNodeWithText("\"Overnight\" needs a length so its end time can be worked out.").assertExists()
         assertNull(saved)
     }
 }

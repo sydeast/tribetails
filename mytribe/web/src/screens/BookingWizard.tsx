@@ -30,6 +30,7 @@ import {
   MAX_RECURRING_VISITS,
   anchorOpenBlockVisits,
   pastPlannedVisits,
+  plannedVisitDayKey,
   plannedVisitLine,
   priceLabel,
   renderPlannedVisits,
@@ -295,7 +296,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
         // In block mode a fresh KinCare lands in the FIRST window rather than
         // on "choose one": a picker whose every row starts unset is a blocker
         // dressed as a control, and the household can move it in one tap. A
-        // start-time KinCare (#1092) takes the clock default above and no block.
+        // night-only KinCare (#1098) uses neither field.
         timeBlockId: slotMode({ serviceId }, timing) === 'TIME_BLOCK' ? (timeBlocks[0]?.id ?? null) : null,
       },
     ]);
@@ -349,7 +350,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
     }
     const seen = new Set<string>();
     for (const v of plannedVisits) {
-      const k = dateKey(new Date(v.startTimeMs));
+      const k = plannedVisitDayKey(v);
       if (closedDates.has(k)) seen.add(k);
     }
     return [...seen];
@@ -378,7 +379,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
   const dayCount =
     pattern === 'individual'
       ? selectedDates.size
-      : new Set(plannedVisits.map((v) => dateKey(new Date(v.startTimeMs)))).size;
+      : new Set(plannedVisits.map(plannedVisitDayKey)).size;
 
   /**
    * #644: the id THIS submission will be stored under, held across attempts.
@@ -1059,7 +1060,7 @@ function Step3ScheduleDates(props: {
         block mode.
       */}
       <h4 style={{ marginTop: 18 }}>{mode === 'TIME_BLOCK' ? 'Time Blocks' : 'Visit Times'}</h4>
-      {mode === 'TIME_BLOCK' && (
+      {mode === 'TIME_BLOCK' && (slots.length === 0 || slots.some((s) => slotMode(s, timing) === 'TIME_BLOCK')) && (
         <p className="sub">
           Your Auntie arrives at some point during the block you pick. That leaves her room to get between homes without rushing anyone.
         </p>
@@ -1071,15 +1072,27 @@ function Step3ScheduleDates(props: {
           {slots.map((slot, idx) => {
             const name = props.services.find((s) => s.id === slot.serviceId)?.name ?? slot.serviceId;
             const inputId = `booking-time-${slot.slotId}`;
-            const inBlock = slotMode(slot, timing) === 'TIME_BLOCK';
-            // #1092: a start-time KinCare takes a clock even in a block plan,
-            // and says so, since every row around it is a window.
-            const startTimeInBlockPlan = mode === 'TIME_BLOCK' && !inBlock;
+            const kind = slotMode(slot, timing);
+            if (kind === 'NIGHT_ONLY') {
+              // #1098: the household asks for the night only. The Auntie sets
+              // the start when she approves it, so there is nothing to pick.
+              const labelId = `${inputId}-label`;
+              return (
+                <div className="field" key={slot.slotId} style={{ maxWidth: 260 }} role="group" aria-labelledby={labelId}>
+                  <label id={labelId}>
+                    {idx + 1}. {name}
+                  </label>
+                  <p className="sub" style={{ margin: 0 }}>
+                    Your Auntie sets the start time
+                  </p>
+                </div>
+              );
+            }
+            const inBlock = kind === 'TIME_BLOCK';
             return (
               <div className="field" key={slot.slotId} style={{ maxWidth: 260 }}>
                 <label htmlFor={inputId}>
                   {idx + 1}. {name}
-                  {startTimeInBlockPlan ? ', start time' : ''}
                 </label>
                 {inBlock ? (
                   <select

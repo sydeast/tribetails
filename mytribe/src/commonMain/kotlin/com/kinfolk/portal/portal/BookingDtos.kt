@@ -57,6 +57,14 @@ data class Booking(
     val rescheduleRequestReason: String? = null,
     /** What the office said when it accepted or declined. */
     val rescheduleResponseNote: String? = null,
+    /**
+     * #1098: a night-only visit (the overnight) waiting for the Auntie to set
+     * its start time. [startTimeMs] is null until she does, and [requestedDate]
+     * carries the night. An older server sends neither field: false and null.
+     */
+    val startTimePending: Boolean = false,
+    /** #1098: the night asked for, `YYYY-MM-DD`, or null. */
+    val requestedDate: String? = null,
 )
 
 /**
@@ -116,7 +124,15 @@ fun Booking.canRequestCancellation(): Boolean = isAwaitingVisit() && !cancelRequ
 fun Booking.canRequestReschedule(): Boolean =
     isAwaitingVisit() &&
         batchId != null &&
+        !startTimePending &&
         rescheduleRequestStatus != RescheduleRequestStatus.Pending
+/**
+ * #1098: an upcoming night still waiting for the Auntie to set its start. It
+ * cannot be rescheduled yet (`requestBookingReschedule` refuses it), so the
+ * household is told why instead of offered a control that can only fail.
+ * Cancelling it stays open.
+ */
+fun Booking.awaitingStartTime(): Boolean = isAwaitingVisit() && startTimePending
 
 /**
  * The Booking envelope: a parent grouping over 1+ KinCares that share a

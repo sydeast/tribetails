@@ -39,6 +39,8 @@ vi.mock('../api/bookingRequests', () => ({
   approveBookingRequest,
   declineBookingRequest,
 }));
+const { getBusinessSettings } = vi.hoisted(() => ({ getBusinessSettings: vi.fn() }));
+vi.mock('../api/settings', () => ({ getBusinessSettings }));
 
 import { VisitRequestsSection, mergeQueues, requestKey, whenLabel } from './VisitRequestsSection';
 
@@ -111,6 +113,7 @@ function newBooking(
     firstStartTimeMs: CURRENT_MS,
     lastStartTimeMs: CURRENT_MS + 3 * 24 * 60 * 60 * 1000,
     startTimeMsList: [CURRENT_MS, CURRENT_MS + 24 * 60 * 60 * 1000],
+    visits: [],
     requestedAtMs: CURRENT_MS - 5000,
     ...overrides,
   };
@@ -126,6 +129,8 @@ beforeEach(() => {
   listRescheduleRequests.mockResolvedValue({ requests: [] });
   listCancelRequests.mockResolvedValue({ requests: [] });
   listPendingBookingRequests.mockResolvedValue({ requests: [] });
+  getBusinessSettings.mockReset();
+  getBusinessSettings.mockResolvedValue({ timeZone: 'America/Chicago' });
 });
 
 describe('VisitRequestsSection', () => {
@@ -679,5 +684,248 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
 describe('requestKey: envelope rows (#533)', () => {
   it('keys a new request by its batch, since it has no visit id', () => {
     expect(requestKey({ kind: 'newBooking', request: newBooking() })).toBe('newBooking/fam-3/b3');
+  });
+
+  /**
+   * #1098: an Overnight arrives as a NIGHT. The household asks for the date and
+   * the operator sets the start time when approving, because there may be
+   * evening visits to finish first.
+   */
+  describe('an Overnight awaiting its start time (#1098)', () => {
+    function overnightRequest(
+      overrides: Partial<ListPendingBookingRequestsResultRequest> = {},
+    ): ListPendingBookingRequestsResultRequest {
+      return newBooking({
+        serviceType: 'Overnight',
+        visitCount: 1,
+        firstStartTimeMs: null,
+        lastStartTimeMs: null,
+        startTimeMsList: [],
+        visits: [
+          {
+            visitId: 'night-1',
+            serviceId: 'Overnight',
+            serviceType: 'Overnight',
+            startTimeMs: null,
+            startTimePending: true,
+            requestedDate: '2026-10-09',
+            timeBlockLabel: null,
+            lengthMinutes: 720,
+          },
+        ],
+        ...overrides,
+      });
+    }
+
+    const APPROVED = { affectedVisits: 1, failedVisits: 0, newlyConfirmed: 1, householdNotified: true };
+    // 7:30 PM on Fri Oct 9 in the business zone (America/Chicago, CDT) is
+    // 00:30 UTC on Oct 10, whatever zone the test runner is in.
+    const START_MS = Date.UTC(2026, 9, 10, 0, 30);
+
+    function refusal(message: string, code?: string): Error {
+      return Object.assign(new Error(message), {
+        code: 'functions/failed-precondition',
+        ...(code !== undefined && { details: { code } }),
+      });
+    }
+
+    async function openBookDialog() {
+      render(<VisitRequestsSection />);
+      await openQueue();
+      await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
+    }
+
+    it('shows the night on the row instead of "Not set"', async () => {
+      listPendingBookingRequests.mockResolvedValue({ requests: [overnightRequest()] });
+      render(<VisitRequestsSection />);
+      await openQueue();
+      expect(await screen.findByText(/Night of Fri, Oct 9/)).toBeInTheDocument();
+      expect(screen.queryByText('Not set')).toBeNull();
+    });
+
+    it('asks for the start time on the night, and will not book until it is set', async () => {
+      listPendingBookingRequests.mockResolvedValue({ requests: [overnightRequest()] });
+      await openBookDialog();
+      const input = await screen.findByLabelText('Start time for Overnight on Fri, Oct 9');
+      expect(input).toHaveAttribute('type', 'time');
+      expect(screen.getByText('Start time')).toBeInTheDocument();
+      const book = screen.getByRole('button', { name: 'Set the start time first' });
+      expect(book).toBeDisabled();
+      expect(approveBookingRequest).not.toHaveBeenCalled();
+    });
+
+    it('sends the start time as an instant in the business zone', async () => {
+      listPendingBookingRequests.mockResolvedValue({ requests: [overnightRequest()] });
+      approveBookingRequest.mockResolvedValue(APPROVED);
+      await openBookDialog();
+      const input = await screen.findByLabelText('Start time for Overnight on Fri, Oct 9');
+      await userEvent.type(input, '19:30');
+      const book = await screen.findByRole('button', { name: 'Book it' });
+      await waitFor(() => expect(book).toBeEnabled());
+      await userEvent.click(book);
+      await waitFor(() =>
+        expect(approveBookingRequest).toHaveBeenCalledWith('fam-3', 'b3', {
+          startTimes: { 'night-1': START_MS },
+        }),
+      );
+      expect(await screen.findByText(/The visit is on the schedule/)).toBeInTheDocument();
+    });
+
+    it('needs every night set when a request asks for more than one', async () => {
+      listPendingBookingRequests.mockResolvedValue({
+        requests: [
+          overnightRequest({
+            visitCount: 2,
+            visits: [
+              overnightRequest().visits[0]!,
+              { ...overnightRequest().visits[0]!, visitId: 'night-2', requestedDate: '2026-10-10' },
+            ],
+          }),
+        ],
+      });
+      approveBookingRequest.mockResolvedValue({ ...APPROVED, affectedVisits: 2, newlyConfirmed: 2 });
+      await openBookDialog();
+      await userEvent.type(await screen.findByLabelText('Start time for Overnight on Fri, Oct 9'), '19:30');
+      expect(screen.getByRole('button', { name: 'Set the start times first' })).toBeDisabled();
+      await userEvent.type(screen.getByLabelText('Start time for Overnight on Sat, Oct 10'), '20:00');
+      await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
+      await waitFor(() =>
+        expect(approveBookingRequest).toHaveBeenCalledWith('fam-3', 'b3', {
+          startTimes: { 'night-1': START_MS, 'night-2': Date.UTC(2026, 9, 11, 1, 0) },
+        }),
+      );
+    });
+
+    it('on a busy clash shows the server message and "Approve anyway" resends with the busy override', async () => {
+      listPendingBookingRequests.mockResolvedValue({ requests: [overnightRequest()] });
+      approveBookingRequest
+        .mockRejectedValueOnce(
+          refusal('That time clashes with a Google Calendar busy block.', 'booking_busy_conflict'),
+        )
+        .mockResolvedValueOnce(APPROVED);
+      await openBookDialog();
+      await userEvent.type(await screen.findByLabelText('Start time for Overnight on Fri, Oct 9'), '19:30');
+      await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
+      expect(
+        await screen.findByText('That time clashes with a Google Calendar busy block.'),
+      ).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'Approve anyway' }));
+      await waitFor(() =>
+        expect(approveBookingRequest).toHaveBeenLastCalledWith('fam-3', 'b3', {
+          startTimes: { 'night-1': START_MS },
+          overrideBusyConflict: true,
+        }),
+      );
+      expect(await screen.findByText(/The visit is on the schedule/)).toBeInTheDocument();
+    });
+
+    it('a visit clash after a busy override resends with both overrides', async () => {
+      listPendingBookingRequests.mockResolvedValue({ requests: [overnightRequest()] });
+      approveBookingRequest
+        .mockRejectedValueOnce(refusal('Busy block.', 'booking_busy_conflict'))
+        .mockRejectedValueOnce(refusal('Another visit is booked then.', 'visit_overlap_conflict'))
+        .mockResolvedValueOnce(APPROVED);
+      await openBookDialog();
+      await userEvent.type(await screen.findByLabelText('Start time for Overnight on Fri, Oct 9'), '19:30');
+      await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
+      await userEvent.click(await screen.findByRole('button', { name: 'Approve anyway' }));
+      expect(await screen.findByText('Another visit is booked then.')).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'Approve anyway' }));
+      await waitFor(() =>
+        expect(approveBookingRequest).toHaveBeenLastCalledWith('fam-3', 'b3', {
+          startTimes: { 'night-1': START_MS },
+          overrideBusyConflict: true,
+          overrideVisitConflict: true,
+        }),
+      );
+    });
+
+    it('an override granted for one time is dropped when the operator changes the time', async () => {
+      listPendingBookingRequests.mockResolvedValue({ requests: [overnightRequest()] });
+      approveBookingRequest
+        .mockRejectedValueOnce(refusal('Busy block.', 'booking_busy_conflict'))
+        .mockRejectedValueOnce(refusal('Another visit is booked then.', 'visit_overlap_conflict'))
+        .mockResolvedValueOnce(APPROVED);
+      await openBookDialog();
+
+      const input = await screen.findByLabelText('Start time for Overnight on Fri, Oct 9');
+      await userEvent.type(input, '19:30');
+      await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
+      await userEvent.click(await screen.findByRole('button', { name: 'Approve anyway' }));
+      expect(await screen.findByText('Another visit is booked then.')).toBeInTheDocument();
+
+      await userEvent.clear(input);
+      await userEvent.type(input, '21:00');
+      await userEvent.click(screen.getByRole('button', { name: 'Book it' }));
+
+      await waitFor(() =>
+        expect(approveBookingRequest).toHaveBeenLastCalledWith('fam-3', 'b3', {
+          startTimes: { 'night-1': Date.UTC(2026, 9, 10, 2, 0) },
+        }),
+      );
+    });
+
+    it('names the night bare in the dialog, and joins several nights with "and" on the row', async () => {
+      listPendingBookingRequests.mockResolvedValue({
+        requests: [
+          overnightRequest({
+            visitCount: 2,
+            visits: [
+              overnightRequest().visits[0]!,
+              { ...overnightRequest().visits[0]!, visitId: 'night-2', requestedDate: '2026-10-10' },
+            ],
+          }),
+        ],
+      });
+      render(<VisitRequestsSection />);
+      await openQueue();
+      expect(
+        await screen.findByText('Nights of Fri, Oct 9 and Sat, Oct 10, start times not set'),
+      ).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'Accept' }));
+      expect(
+        await screen.findByText(
+          "The nights of Fri, Oct 9 and Sat, Oct 10 will go on the schedule and on the household's portal.",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it('a refusal with no override shows the message and offers no "Approve anyway"', async () => {
+      listPendingBookingRequests.mockResolvedValue({ requests: [overnightRequest()] });
+      approveBookingRequest.mockRejectedValue(
+        Object.assign(
+          new Error('The start time for the Overnight has to be on Fri, Oct 9, the night the household asked for.'),
+          { code: 'functions/invalid-argument' },
+        ),
+      );
+      await openBookDialog();
+      await userEvent.type(await screen.findByLabelText('Start time for Overnight on Fri, Oct 9'), '19:30');
+      await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
+      expect(await screen.findByText(/has to be on Fri, Oct 9/)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Approve anyway' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Book it' })).toBeEnabled();
+    });
+
+    it('a start_time_required refusal is shown inline with no override', async () => {
+      listPendingBookingRequests.mockResolvedValue({ requests: [overnightRequest()] });
+      approveBookingRequest.mockRejectedValue(
+        refusal('Set a start time for the Overnight on Fri, Oct 9 before approving.', 'start_time_required'),
+      );
+      await openBookDialog();
+      await userEvent.type(await screen.findByLabelText('Start time for Overnight on Fri, Oct 9'), '19:30');
+      await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
+      expect(await screen.findByText(/Set a start time for the Overnight/)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Approve anyway' })).toBeNull();
+    });
+
+    it('a request with no night awaiting a time never reads the business zone', async () => {
+      listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+      approveBookingRequest.mockResolvedValue({ ...APPROVED, affectedVisits: 4, newlyConfirmed: 4 });
+      await openBookDialog();
+      expect(screen.queryByLabelText(/Start time for/)).toBeNull();
+      await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
+      await waitFor(() => expect(approveBookingRequest).toHaveBeenCalledWith('fam-3', 'b3'));
+      expect(getBusinessSettings).not.toHaveBeenCalled();
+    });
   });
 });

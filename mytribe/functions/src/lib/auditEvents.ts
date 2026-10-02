@@ -392,6 +392,9 @@ export const AUDIT_EVENTS = {
   // blocked at the source.
   EXTERNAL_MESSAGE_SENT: 'EXTERNAL_MESSAGE_SENT',
   EXTERNAL_SUPPRESSION_ADDED: 'EXTERNAL_SUPPRESSION_ADDED',
+  // #1083: an admin cleared a hard bounce on an address in `message_suppressions`. An
+  // opt-out is never cleared. actorUid is who cleared it; the address is redacted.
+  EXTERNAL_SUPPRESSION_CLEARED: 'EXTERNAL_SUPPRESSION_CLEARED',
 
   // Stage 2 step 6 (Communicate broadcast): admin saves a reusable audience
   // segment (a saved kinfolk filter) and sends a multichannel broadcast

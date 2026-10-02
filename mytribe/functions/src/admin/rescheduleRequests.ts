@@ -91,6 +91,7 @@ export async function resolveBookingRescheduleRequestHandler(
     rescheduleRequestedEndTime?: Timestamp | null;
     startTime?: Timestamp | null;
     sessionId?: string | null;
+    startTimePending?: unknown;
   };
 
   if (data.rescheduleRequestStatus !== 'pending') {
@@ -118,6 +119,17 @@ export async function resolveBookingRescheduleRequestHandler(
       startTimeMs: millisOf(data.startTime),
       sessionUpdated: false,
     });
+  }
+
+  // #1098 backstop: the portal now refuses this ask on a night awaiting its
+  // start time, but one written before that can still be in the queue.
+  // Accepting it would give the visit a time while it still says it is
+  // awaiting one. The start is set by approving the request instead.
+  if (data.startTimePending === true) {
+    throw new HttpsError(
+      'failed-precondition',
+      "This overnight's start time has not been set yet. Set it by approving the request, or decline this ask.",
+    );
   }
 
   const newStart = data.rescheduleRequestedStartTime ?? null;

@@ -18,6 +18,7 @@ import androidx.compose.ui.test.runComposeUiTest
 import com.kinfolk.portal.firebase.FakeFunctionsClient
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.screens.setThemedContent
+import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant
@@ -347,14 +348,14 @@ class BookingWizardTimeBlockTest {
     }
 
     /**
-     * #1092: an overnight is twelve hours that can start at any time, so no
-     * window holds it. Flagged to book at a start time, it asks for a clock
-     * time in a block-only business while the other KinCare keeps its window.
-     * The web mirror is "BookingWizard: a start-time KinCare in a block-only
-     * business (#1092)" in mytribe/web/src/screens/BookingWizard.test.tsx.
+     * #1098: an overnight flagged in `startTimeServiceIds` is asked for by night
+     * only. The Auntie sets its start time when she approves it, so the wizard
+     * shows no clock and no window for it, while the other KinCare keeps its
+     * window. The web mirror is "BookingWizard: a night-only KinCare (#1098)"
+     * in mytribe/web/src/screens/BookingWizard.test.tsx.
      */
     @Test
-    fun blockOnly_aStartTimeKinCareSendsItsClockAndNoWindow() = runComposeUiTest {
+    fun blockOnly_aNightOnlyKinCareSendsItsNightAndNoStart() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         stubKinAndServices(fake)
         stubPolicy(fake, allowBlocks = true, allowSpecific = false, default = "TIME_BLOCK", startTimeServiceIds = listOf("s2"))
@@ -368,15 +369,15 @@ class BookingWizardTimeBlockTest {
         onNodeWithText("Overnight Stays").performScrollTo().performClick()
         clickFooter("Next")
         pickTenthOfNextMonth()
-        // One window row (Auntie's In) and one start-time field (the overnight).
+        // One window row (Auntie's In), and the overnight with no control at all.
         onAllNodesWithText("Midday (11:00-15:00)").assertCountEquals(1)
-        onNodeWithText("2. Overnight Stays start time (HH:MM)").assertExists()
-        // The field itself, holding the clock default a new KinCare starts on.
-        onNode(hasSetTextAction() and hasText("09:00")).performScrollTo().performTextReplacement("21:00")
-        waitForIdle()
+        onNodeWithText("2. Overnight Stays").assertExists()
+        onNodeWithText("Your Auntie sets the start time").assertExists()
+        onAllNodes(hasSetTextAction()).assertCountEquals(0)
         onNodeWithText("Next").assertIsEnabled()
         clickFooter("Next")
         clickFooter("Next")
+        onNodeWithText("start time set by your Auntie", substring = true).assertExists()
         clickFooter("Create Booking")
         val visits = fake.calls.last { it.first == "requestBooking" }.second!!["visits"]!!.jsonArray
         assertEquals(2, visits.size)
@@ -388,8 +389,10 @@ class BookingWizardTimeBlockTest {
         assertEquals("midday", midday["timeBlockId"]!!.jsonPrimitive.content)
         assertEquals(at(11), midday["startTimeMs"]!!.jsonPrimitive.long)
         val overnight = byService.getValue("s2").jsonObject
-        // A null block is omitted from the wire, so the server sees no timeBlockId at all.
+        // The night, and no start key at all: absent, not null.
+        assertEquals(LocalDate(nextMonth.year, nextMonth.month, 10).toString(), overnight["date"]!!.jsonPrimitive.content)
+        assertTrue("startTimeMs" !in overnight, "a night-only visit must not carry startTimeMs: $overnight")
         assertEquals(null, overnight["timeBlockId"])
-        assertEquals(at(21), overnight["startTimeMs"]!!.jsonPrimitive.long)
+        assertEquals(null, overnight["endTimeMs"])
     }
 }

@@ -58,8 +58,10 @@ import { collectDeclaredSecrets, loadDeclaredSecrets } from '../src/lib/declared
  * structure and length, so it proves the same thing. Do not "make it realistic".
  */
 const FAKE = {
-  STRIPE_SECRET_KEY: 'sk_test_51FAKEfakeFAKEfakeFAKEfakeFAKEfake',
-  STRIPE_WEBHOOK_SECRET: 'whsec_FAKEfakeFAKEfakeFAKEfake',
+  // Joined at runtime so GitHub secret scanning stops reading the literal as a
+  // key (alerts #7 and #8). The strings the test sees are unchanged.
+  STRIPE_SECRET_KEY: ['sk', 'test', '51' + 'FAKEfake'.repeat(4)].join('_'),
+  STRIPE_WEBHOOK_SECRET: ['whsec', 'FAKEfake'.repeat(3)].join('_'),
   TWILIO_ACCOUNT_SID: 'ACfakefakefakefakefakefakefakefake',
   TWILIO_AUTH_TOKEN: 'fakefakefakefakefakefakefakefake',
   TWILIO_FROM_NUMBER: '+15550000000',

@@ -145,6 +145,8 @@ export interface GhostButtonProps {
    * on an ordinary button, which is not a toggle and must not claim to be one.
    */
   pressed?: boolean;
+  /** Names the control when its visible label alone is ambiguous (one "Clear" per list row). */
+  ariaLabel?: string;
   leading?: ReactNode;
   className?: string;
 }
@@ -155,6 +157,7 @@ export function GhostButton({
   onClick,
   disabled = false,
   pressed,
+  ariaLabel,
   leading,
   className,
 }: GhostButtonProps) {
@@ -166,6 +169,7 @@ export function GhostButton({
       busy={false}
       pressed={pressed}
       className={className}
+      ariaLabel={ariaLabel}
     >
       {leading ? (
         <span className="auntie-btn__leading" aria-hidden="true">

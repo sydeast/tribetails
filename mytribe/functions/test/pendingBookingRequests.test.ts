@@ -171,3 +171,84 @@ describe('listPendingBookingRequests', () => {
     expect(out.requests[0]!.visitCount).toBe(2);
   });
 });
+
+/**
+ * #1098: the operator sets an Overnight's start time in this queue, so each row
+ * carries its visits: which ones still await a time, for which night, and how
+ * long each runs. A night with no time must still be counted and listed.
+ */
+describe('listPendingBookingRequests: per-visit detail (#1098)', () => {
+  const HOUR = 3_600_000;
+  function dbWith(visits: Array<{ path: string; data: Record<string, unknown> }>) {
+    return buildDbMock({
+      docs: {
+        'families/fam1': { displayName: 'The Rivera Home' },
+        'families/fam1/bookings/req_1': { createdAt: ts(1000) },
+        'business_settings/business_settings': { serviceDurations: { Overnight: '720' } },
+      },
+      collectionGroupDocs: {
+        kinCares: visits.map((v) => ({ id: v.path.split('/').pop()!, path: v.path, data: v.data })),
+      },
+    });
+  }
+
+  it('lists a night awaiting its time next to a timed visit, and keeps the instant lists to the timed one', async () => {
+    const ctx = dbWith([
+      {
+        path: visitPath('fam1', 'req_1', 'v2'),
+        data: {
+          status: 'requested', startTime: null, endTime: null, startTimePending: true, requestedDate: '2026-09-05',
+          serviceId: 'Overnight', serviceType: 'Overnight', timeBlockLabel: null,
+        },
+      },
+      {
+        path: visitPath('fam1', 'req_1', 'v1'),
+        data: {
+          status: 'requested', startTime: ts(SEP4), endTime: ts(SEP4 + HOUR / 2), startTimePending: false, requestedDate: null,
+          serviceId: '30Minute', serviceType: '30 Minute', timeBlockLabel: 'Midday',
+        },
+      },
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const [row] = (await listPendingBookingRequestsHandler(req({}))).requests;
+    expect(row!.visitCount).toBe(2);
+    expect(row!.startTimeMsList).toEqual([SEP4]);
+    expect(row!.firstStartTimeMs).toBe(SEP4);
+    expect(row!.lastStartTimeMs).toBe(SEP4);
+    expect(row!.visits).toEqual([
+      {
+        visitId: 'v1', serviceId: '30Minute', serviceType: '30 Minute', startTimeMs: SEP4,
+        startTimePending: false, requestedDate: null, timeBlockLabel: 'Midday', lengthMinutes: 30,
+      },
+      {
+        visitId: 'v2', serviceId: 'Overnight', serviceType: 'Overnight', startTimeMs: null,
+        startTimePending: true, requestedDate: '2026-09-05', timeBlockLabel: null, lengthMinutes: 720,
+      },
+    ]);
+  });
+
+  it('an all-night request has null instants, not a dropped row', async () => {
+    const ctx = dbWith([
+      {
+        path: visitPath('fam1', 'req_1', 'v1'),
+        data: { status: 'requested', startTime: null, startTimePending: true, requestedDate: '2026-09-05', serviceId: 'Overnight', serviceType: 'Overnight' },
+      },
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const [row] = (await listPendingBookingRequestsHandler(req({}))).requests;
+    expect(row).toMatchObject({ visitCount: 1, firstStartTimeMs: null, lastStartTimeMs: null, startTimeMsList: [] });
+    expect(row!.visits[0]).toMatchObject({ startTimePending: true, requestedDate: '2026-09-05', lengthMinutes: 720 });
+  });
+
+  it('a visit written before #1098 reads as not pending, with no requested date', async () => {
+    const ctx = dbWith([
+      { path: visitPath('fam1', 'req_1', 'v1'), data: { status: 'requested', startTime: ts(SEP4), serviceType: 'Dog Walk' } },
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const [row] = (await listPendingBookingRequestsHandler(req({}))).requests;
+    expect(row!.visits[0]).toEqual({
+      visitId: 'v1', serviceId: null, serviceType: 'Dog Walk', startTimeMs: SEP4,
+      startTimePending: false, requestedDate: null, timeBlockLabel: null, lengthMinutes: null,
+    });
+  });
+});

@@ -191,6 +191,8 @@ export interface GetMyBookingsResultLiveVisit {
   title: string | null;
   startTimeMs: number | null;
   endTimeMs: number | null;
+  startTimePending: boolean;
+  requestedDate: string | null;
   kinIds: string[];
   kinNames: string[];
   auntieDisplayName: string | null;
@@ -252,6 +254,9 @@ export interface ManageBookingSeriesArgs {
   kinfolkId: string;
   batchId: string;
   note?: string;
+  startTimes?: Record<string, number>;
+  overrideBusyConflict?: boolean;
+  overrideVisitConflict?: boolean;
 }
 
 /**
@@ -274,7 +279,8 @@ export interface ManageBookingSeriesResult {
  * Nested in the `requestBooking` contract.
  */
 export interface RequestBookingArgsVisit {
-  startTimeMs: number;
+  startTimeMs?: number;
+  date?: string;
   endTimeMs: number | null;
   serviceId: string;
   serviceName: string;
@@ -484,6 +490,20 @@ export interface ListPendingBookingRequestsArgs {
 /**
  * Nested in the `listPendingBookingRequests` contract.
  */
+export interface ListPendingBookingRequestsResultRequestVisit {
+  visitId: string;
+  serviceId: string | null;
+  serviceType: string | null;
+  startTimeMs: number | null;
+  startTimePending: boolean;
+  requestedDate: string | null;
+  timeBlockLabel: string | null;
+  lengthMinutes: number | null;
+}
+
+/**
+ * Nested in the `listPendingBookingRequests` contract.
+ */
 export interface ListPendingBookingRequestsResultRequest {
   kinfolkId: string;
   batchId: string;
@@ -495,6 +515,7 @@ export interface ListPendingBookingRequestsResultRequest {
   firstStartTimeMs: number | null;
   lastStartTimeMs: number | null;
   startTimeMsList: number[];
+  visits: ListPendingBookingRequestsResultRequestVisit[];
   requestedAtMs: number | null;
 }
 

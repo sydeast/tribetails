@@ -45,7 +45,11 @@ data class VetClinic(
 enum class BookingPattern { Individual, Weekly }
 
 data class BookingVisit(
-    val startTimeMs: Long,
+    /**
+     * The visit's start, or null for a night-only KinCare (#1098): the household
+     * asks for the night in [date] and the operator sets the start on approval.
+     */
+    val startTimeMs: Long?,
     val endTimeMs: Long?,
     val serviceId: String,
     val serviceName: String,
@@ -57,6 +61,11 @@ data class BookingVisit(
      * exist, is not active, or does not contain the instant sent with it.
      */
     val timeBlockId: String? = null,
+    /**
+     * #1098: the night asked for, `YYYY-MM-DD` as the household tapped it, for a
+     * night-only KinCare. Null for every other visit.
+     */
+    val date: String? = null,
 )
 
 /**

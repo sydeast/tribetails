@@ -114,3 +114,41 @@ describe('Home, online and genuinely empty', () => {
     expect(screen.queryByText(/We can.t reach Tribe Tails/)).not.toBeInTheDocument();
   });
 });
+
+/** #1098: a night-only visit waiting on the Auntie's start time. */
+function pendingOvernight() {
+  return {
+    id: 'v-night',
+    batchId: 'b1',
+    kinfolkId: 'fam1',
+    status: 'requested',
+    serviceType: 'Overnight',
+    title: null,
+    startTimeMs: null,
+    endTimeMs: null,
+    startTimePending: true,
+    requestedDate: '2026-10-09',
+    kinIds: [],
+    kinNames: [],
+    auntieDisplayName: null,
+    sessionId: null,
+  };
+}
+
+describe('Home, a visit whose start time the Auntie sets (#1098)', () => {
+  it('lists it on its night with who sets the start, never a made-up time', async () => {
+    mocks.getMyHome.mockResolvedValue({ displayName: 'Wren', businessName: 'Tribe Tails Pet Care', portal: { home: [] } });
+    mocks.getMyBookings.mockResolvedValue({ liveVisit: null, upcoming: [pendingOvernight()], recent: [] });
+    mocks.getMyKinTales.mockResolvedValue({ tales: [] });
+    mocks.getMyKin.mockResolvedValue({ kin: [] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <Home />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('Fri night · Start time set by your Auntie')).toBeInTheDocument();
+    expect(screen.getByText('Oct')).toBeInTheDocument();
+    expect(screen.queryByText(/Time to be confirmed|Invalid Date|12:00 AM/)).toBeNull();
+  });
+});

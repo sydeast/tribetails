@@ -48,7 +48,7 @@ class KinCareTypesEditorTest {
         assertEquals(mapOf("Walk" to "45"), foldKinCareDurations(rows))
     }
 
-    // ── Book at a start time (#1092) ──
+    // ── You set the start time (#1092, #1098) ──
     @Test
     fun `a stored true flag seeds its row, and anything else reads as off`() {
         val rows = kinCareRows(
@@ -76,6 +76,16 @@ class KinCareTypesEditorTest {
         assertEquals(emptyMap<String, Boolean>(), foldKinCareStartTime(rows))
     }
     @Test
+    fun `the switch says the operator sets the time, and the tip says when (#1098)`() {
+        assertEquals("You set the start time", KIN_CARE_START_TIME_LABEL)
+        assertEquals("You set the start time for Overnight", kinCareStartTimeSwitchName(" Overnight "))
+        assertEquals("You set the start time", kinCareStartTimeSwitchName(""))
+        assertEquals(
+            "Kinfolk ask for the night. You set the start time when you approve the request. Use it for overnights.",
+            KIN_CARE_START_TIME_TIP,
+        )
+    }
+    @Test
     fun `a flagged row needs a length typed or in its name`() {
         assertEquals(
             "Overnight",
@@ -86,7 +96,7 @@ class KinCareTypesEditorTest {
         // An unflagged row with no length is the ordinary case and is fine.
         assertNull(kinCareStartTimeMissingLength(listOf(KinCareTypeRow("Consultation", "", ""))))
         assertEquals(
-            "\"Overnight\" books at a start time, so it needs a length.",
+            "\"Overnight\" needs a length so its end time can be worked out.",
             kinCareNeedsLengthMessage("Overnight"),
         )
     }

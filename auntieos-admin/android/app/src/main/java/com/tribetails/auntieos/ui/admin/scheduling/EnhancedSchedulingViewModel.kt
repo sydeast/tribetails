@@ -19,6 +19,7 @@ import com.tribetails.auntieos.data.repository.GoogleCalendarPushSkip
 import com.tribetails.auntieos.data.repository.GoogleCalendarSummary
 import com.tribetails.auntieos.data.repository.ScheduleOverrideKind
 import com.tribetails.auntieos.data.repository.ServiceRepository
+import com.tribetails.auntieos.data.repository.VISIT_OVERLAP_CONFLICT_CODE
 import com.tribetails.auntieos.data.repository.overridableScheduleRefusal
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
@@ -118,6 +119,18 @@ data class SchedulingState(
     val incomingError: String? = null,
     val seriesActionBatchId: String? = null, // batchId currently being approved/cancelled
     val seriesActionMessage: String? = null,
+    /**
+     * #1098: the start time the operator has picked for each night awaiting
+     * one, keyed by [seriesNightKey]. Approve stays off until every night in a
+     * series has one ([seriesReadyToApprove]).
+     */
+    val seriesStartTimes: Map<String, LocalTime> = emptyMap(),
+    /**
+     * #1098: the override the last approval refusal offers ("Approve anyway"),
+     * or null. Its own slot, not [scheduleWriteOverride], which belongs to
+     * block and move writes.
+     */
+    val incomingOverride: ScheduleOverrideKind? = null,
     // 1025: [approveBooking]/[cancelBooking] below (the single native
     // enhanced_bookings row, not a whole incoming series) used to report
     // nothing on success -- the row just moved sections on the next load,
@@ -496,7 +509,72 @@ class EnhancedSchedulingViewModel(
     /** Approve a whole incoming series: flips every visit confirmed + creates the
      *  linked sessions server-side (manageBookingSeries). The stream then drops the
      *  series (no longer 'requested'). */
-    fun approveSeries(series: IncomingSeries) = runSeriesAction(series, "APPROVE")
+    fun approveSeries(series: IncomingSeries) {
+        if (series.pendingNights.isEmpty()) {
+            runSeriesAction(series, "APPROVE")
+            return
+        }
+        // #1098: an Overnight asked for as a night is approved by setting its
+        // start time, read in the business zone the server checks it in.
+        val zone = businessZoneOf(_state.value.businessSettings.timeZone)
+        val startTimes = seriesStartTimesMs(series, _state.value.seriesStartTimes, zone)
+        if (startTimes == null) {
+            _state.value = _state.value.copy(
+                incomingError = "Set the start time for each night before approving.",
+                incomingOverride = null,
+            )
+            return
+        }
+        runSeriesAction(series, "APPROVE", startTimes, SeriesOverrides())
+    }
+
+    /**
+     * #1098: the operator's start time for one night of [series]. A new time is
+     * a new question for the server, so an "Approve anyway" offered for the old
+     * one is withdrawn with it.
+     */
+    fun setSeriesStartTime(series: IncomingSeries, visitId: String, time: LocalTime) {
+        pendingIncomingRetry = null
+        _state.value = _state.value.copy(
+            seriesStartTimes = _state.value.seriesStartTimes + (seriesNightKey(series, visitId) to time),
+            incomingOverride = null,
+        )
+    }
+
+    /** The overrides already granted for one approval, carried into every retry of it. */
+    private data class SeriesOverrides(val busy: Boolean = false, val visit: Boolean = false)
+
+    /** The approval an "Approve anyway" press re-sends. */
+    private data class PendingIncomingRetry(
+        val series: IncomingSeries,
+        val startTimes: Map<String, Long>,
+        val granted: SeriesOverrides,
+    )
+
+    private var pendingIncomingRetry: PendingIncomingRetry? = null
+
+    /**
+     * Re-send the last refused approval with the override it offered, keeping
+     * any override already granted, so a busy override is not lost when the
+     * retry meets a visit clash. A no-op when nothing is offered.
+     */
+    fun retryIncomingWithOverride() {
+        val kind = _state.value.incomingOverride ?: return
+        val pending = pendingIncomingRetry ?: return
+        val granted = when (kind) {
+            ScheduleOverrideKind.BUSY -> pending.granted.copy(busy = true)
+            ScheduleOverrideKind.VISIT -> pending.granted.copy(visit = true)
+        }
+        runSeriesAction(pending.series, "APPROVE", pending.startTimes, granted)
+    }
+
+    /** Which override this refusal offers, never one already granted. Null for every other refusal. */
+    private fun approveOverrideFor(e: Throwable, granted: SeriesOverrides): ScheduleOverrideKind? =
+        when ((e as? BookingRequestRefusedException)?.code) {
+            BOOKING_BUSY_CONFLICT_CODE -> ScheduleOverrideKind.BUSY.takeIf { !granted.busy }
+            VISIT_OVERLAP_CONFLICT_CODE -> ScheduleOverrideKind.VISIT.takeIf { !granted.visit }
+            else -> null
+        }
 
     /** Cancel a whole incoming series. */
     fun cancelSeries(series: IncomingSeries) = runSeriesAction(series, "CANCEL")
@@ -536,11 +614,32 @@ class EnhancedSchedulingViewModel(
             "The message to the household did not go out, so tell them another way."
     }
 
-    private fun runSeriesAction(series: IncomingSeries, action: String) {
+    private fun runSeriesAction(
+        series: IncomingSeries,
+        action: String,
+        startTimes: Map<String, Long>? = null,
+        granted: SeriesOverrides = SeriesOverrides(),
+    ) {
         if (_state.value.seriesActionBatchId != null) return
-        _state.value = _state.value.copy(seriesActionBatchId = series.batchId, seriesActionMessage = null, incomingError = null)
+        pendingIncomingRetry = null
+        _state.value = _state.value.copy(
+            seriesActionBatchId = series.batchId,
+            seriesActionMessage = null,
+            incomingError = null,
+            incomingOverride = null,
+        )
         viewModelScope.launch {
-            auntieRepository.manageBookingSeries(action, series.kinfolkId, series.batchId)
+            val result = if (startTimes == null) {
+                auntieRepository.manageBookingSeries(action, series.kinfolkId, series.batchId)
+            } else {
+                auntieRepository.manageBookingSeries(
+                    action, series.kinfolkId, series.batchId,
+                    startTimes = startTimes,
+                    overrideBusyConflict = granted.busy,
+                    overrideVisitConflict = granted.visit,
+                )
+            }
+            result
                 .onSuccess { res ->
                     val verb = if (action == "APPROVE") "Approved" else "Cancelled"
                     val who = series.kinfolkName.ifBlank { "request" }
@@ -566,16 +665,29 @@ class EnhancedSchedulingViewModel(
                     }
                 }
                 .onFailure { e ->
+                    // #1098: a busy or visit clash on a night's chosen time can
+                    // be knowingly overridden; a closed day, a missing time or a
+                    // time off the night cannot, and offers nothing.
+                    val offer = if (startTimes != null) approveOverrideFor(e, granted) else null
+                    pendingIncomingRetry = if (offer != null && startTimes != null) {
+                        PendingIncomingRetry(series, startTimes, granted)
+                    } else {
+                        null
+                    }
                     _state.value = _state.value.copy(
                         seriesActionBatchId = null,
                         incomingError = "Couldn't $action series: ${e.message}",
+                        incomingOverride = offer,
                     )
                 }
         }
     }
 
     fun clearSeriesActionMessage() { _state.value = _state.value.copy(seriesActionMessage = null) }
-    fun clearIncomingError() { _state.value = _state.value.copy(incomingError = null) }
+    fun clearIncomingError() {
+        pendingIncomingRetry = null
+        _state.value = _state.value.copy(incomingError = null, incomingOverride = null)
+    }
 
     /**
      * The household's change requests on existing visits (#399 item 2, #438).

@@ -66,7 +66,7 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  *
  * Every row is a two-line card on a phone, the mock's own narrow layout: name
  * and remove on the first line, duration and rate on the second, and the
- * "Book at a start time" switch (#1092) on the third.
+ * "You set the start time" switch (#1092, #1098) on the third.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -192,9 +192,7 @@ internal fun KinCareTypesPanel(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(dims.space2),
                         ) {
-                            val switchLabel = row.type.trim().let {
-                                if (it.isEmpty()) KIN_CARE_START_TIME_LABEL else "Book $it at a start time"
-                            }
+                            val switchLabel = kinCareStartTimeSwitchName(row.type)
                             AuntieToggle(
                                 checked = row.startTime,
                                 onCheckedChange = { next -> updateRow(index) { it.copy(startTime = next) } },

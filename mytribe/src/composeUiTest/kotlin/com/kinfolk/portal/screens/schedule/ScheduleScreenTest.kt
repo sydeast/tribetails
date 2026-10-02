@@ -86,6 +86,36 @@ class ScheduleScreenTest {
         kotlin.test.assertEquals("b1", openedVisit)
     }
 
+    /**
+     * #1098: an overnight waiting on the Auntie's start time has no startTimeMs.
+     * The row shows its requested night, on the calendar tile and in words,
+     * and never a blank, a midnight or "Invalid Date". The web mirror is
+     * "Schedule, a visit whose start time the Auntie sets (#1098)".
+     */
+    @Test
+    fun nightAwaitingItsStartTime_showsItsNightAndWhoSetsTheStart() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyBookings", buildJsonObject {
+            put("liveVisit", JsonNull)
+            put("upcoming", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "b1")
+                    put("status", "requested")
+                    put("serviceType", "Overnight")
+                    put("startTimeMs", JsonNull)
+                    put("startTimePending", true)
+                    put("requestedDate", "2026-10-09")
+                })
+            })
+            put("recent", buildJsonArray {})
+        })
+        setThemedContent { ScheduleScreen("The Foster", "3", PortalApi(fake), com.kinfolk.portal.firebase.FakeFirestoreClient()) }
+        waitForIdle()
+        onNodeWithText("Fri night · Start time set by your Auntie").assertIsDisplayed()
+        onNodeWithText("OCT").assertIsDisplayed()
+        onNodeWithText("09").assertIsDisplayed()
+        onNodeWithText("12:00 AM", substring = true).assertDoesNotExist()
+    }
     @Test
     fun bookings_renderAuntieAndKinNames() = runComposeUiTest {
         val fake = FakeFunctionsClient()

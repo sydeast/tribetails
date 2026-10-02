@@ -17,10 +17,11 @@ import {
   monthPickerDays,
   parseHourMinute,
   pastPlannedVisits,
+  plannedVisitDayKey,
   plannedVisitLine,
   priceLabel,
   renderPlannedVisits,
-  serviceBooksAtStartTime,
+  serviceIsNightOnly,
   shiftMonth,
   slotMode,
   slotsBlocker,
@@ -154,11 +155,11 @@ describe('buildWeeklyVisits', () => {
     });
     // Wed Jul15, Mon Jul20, Wed Jul22, Mon Jul27 = 4 visits.
     expect(visits).toHaveLength(4);
-    expect(visits.every((v) => v.startTimeMs > NOW)).toBe(true);
+    expect(visits.every((v) => v.startTimeMs! > NOW)).toBe(true);
     expect(visits.every((v) => v.serviceId === 's1' && v.serviceName === "Auntie's In")).toBe(true);
     // Strictly increasing (walk order == chronological order).
     for (let i = 1; i < visits.length; i++) {
-      expect(visits[i]!.startTimeMs).toBeGreaterThan(visits[i - 1]!.startTimeMs);
+      expect(visits[i]!.startTimeMs!).toBeGreaterThan(visits[i - 1]!.startTimeMs!);
     }
   });
 
@@ -177,7 +178,7 @@ describe('buildWeeklyVisits', () => {
     // slots were handed over the other way round.
     expect(visits.slice(0, 2).map((v) => v.serviceId)).toEqual(['30Minute', '60Minute']);
     for (let i = 1; i < visits.length; i++) {
-      expect(visits[i]!.startTimeMs).toBeGreaterThan(visits[i - 1]!.startTimeMs);
+      expect(visits[i]!.startTimeMs!).toBeGreaterThan(visits[i - 1]!.startTimeMs!);
     }
   });
 
@@ -263,7 +264,7 @@ describe('buildWeeklyVisits', () => {
     expect(visits).toHaveLength(MAX_RECURRING_VISITS);
     expect(weeklyPotentialCount(weeklyDays, 10, slots.length)).toBe(140);
     for (let i = 1; i < visits.length; i++) {
-      expect(visits[i]!.startTimeMs).toBeGreaterThan(visits[i - 1]!.startTimeMs);
+      expect(visits[i]!.startTimeMs!).toBeGreaterThan(visits[i - 1]!.startTimeMs!);
     }
   });
 
@@ -277,8 +278,8 @@ describe('buildVisits (individual pattern)', () => {
     const dates = [new Date(2026, 6, 20), new Date(2026, 6, 22)];
     const visits = buildVisits(dates, [slot('s1', '10:30')], CATALOG);
     expect(visits).toHaveLength(2);
-    expect(new Date(visits[0]!.startTimeMs).getHours()).toBe(10);
-    expect(new Date(visits[0]!.startTimeMs).getMinutes()).toBe(30);
+    expect(new Date(visits[0]!.startTimeMs!).getHours()).toBe(10);
+    expect(new Date(visits[0]!.startTimeMs!).getMinutes()).toBe(30);
     expect(visits[0]!.priceCents).toBe(1500);
   });
 
@@ -297,15 +298,15 @@ describe('buildVisits (individual pattern)', () => {
   it('emits two visits on one day for the same duration at two times', () => {
     const visits = buildVisits([new Date(2026, 6, 20)], [slot('30Minute', '09:00'), slot('30Minute', '17:00', 2)], CATALOG);
     expect(visits).toHaveLength(2);
-    expect(visits.map((v) => new Date(v.startTimeMs).getHours())).toEqual([9, 17]);
-    expect(new Set(visits.map((v) => dateKey(new Date(v.startTimeMs)))).size).toBe(1);
+    expect(visits.map((v) => new Date(v.startTimeMs!).getHours())).toEqual([9, 17]);
+    expect(new Set(visits.map((v) => dateKey(new Date(v.startTimeMs!)))).size).toBe(1);
   });
 
   it('returns visits sorted by start time whatever order the dates and KinCares arrive in', () => {
     const dates = [new Date(2026, 6, 22), new Date(2026, 6, 20)];
     const visits = buildVisits(dates, [slot('60Minute', '17:00'), slot('30Minute', '09:00')], CATALOG);
     for (let i = 1; i < visits.length; i++) {
-      expect(visits[i]!.startTimeMs).toBeGreaterThan(visits[i - 1]!.startTimeMs);
+      expect(visits[i]!.startTimeMs!).toBeGreaterThan(visits[i - 1]!.startTimeMs!);
     }
   });
 
@@ -604,8 +605,8 @@ describe('buildVisits in block mode', () => {
   it('starts each visit at its window and stamps the block id on it', () => {
     const visits = buildVisits([new Date(2026, 8, 4)], [blockSlot('30Minute', 'midday')], CATALOG, BLOCK_TIMING);
     expect(visits).toHaveLength(1);
-    expect(new Date(visits[0]!.startTimeMs).getHours()).toBe(11);
-    expect(new Date(visits[0]!.startTimeMs).getMinutes()).toBe(0);
+    expect(new Date(visits[0]!.startTimeMs!).getHours()).toBe(11);
+    expect(new Date(visits[0]!.startTimeMs!).getMinutes()).toBe(0);
     expect(visits[0]!.timeBlockId).toBe('midday');
   });
 
@@ -652,8 +653,8 @@ describe('buildVisits in block mode', () => {
     expect(visits.every((v) => v.timeBlockId === 'midday')).toBe(true);
     // Three distinct instants, one per date, all on the window's first minute.
     expect(new Set(visits.map((v) => v.startTimeMs)).size).toBe(3);
-    expect(visits.map((v) => new Date(v.startTimeMs).getDate())).toEqual([4, 5, 6]);
-    expect(visits.every((v) => new Date(v.startTimeMs).getHours() === 11)).toBe(true);
+    expect(visits.map((v) => new Date(v.startTimeMs!).getDate())).toEqual([4, 5, 6]);
+    expect(visits.every((v) => new Date(v.startTimeMs!).getHours() === 11)).toBe(true);
   });
 
   it('leaves timeBlockId null on every clock-booked visit', () => {
@@ -676,7 +677,7 @@ describe('buildWeeklyVisits in block mode', () => {
     });
     expect(visits).toHaveLength(2);
     expect(visits.every((v) => v.timeBlockId === 'midday')).toBe(true);
-    expect(visits.every((v) => new Date(v.startTimeMs).getHours() === 11)).toBe(true);
+    expect(visits.every((v) => new Date(v.startTimeMs!).getHours() === 11)).toBe(true);
   });
 
   it('keeps today\'s occurrence while its window is still open, starting it from now', () => {
@@ -693,7 +694,7 @@ describe('buildWeeklyVisits in block mode', () => {
     expect(visits).toHaveLength(2);
     expect(visits[0]!.startTimeMs).toBe(new Date(2026, 8, 4, 14, 15).getTime());
     expect(visits[0]!.timeBlockId).toBe('midday');
-    expect(dateKey(new Date(visits[1]!.startTimeMs))).toBe('2026-09-11');
+    expect(dateKey(new Date(visits[1]!.startTimeMs!))).toBe('2026-09-11');
   });
 
   it('drops today\'s occurrence once its window is too close to closing', () => {
@@ -708,7 +709,7 @@ describe('buildWeeklyVisits in block mode', () => {
       timing: BLOCK_TIMING,
     });
     expect(visits).toHaveLength(1);
-    expect(dateKey(new Date(visits[0]!.startTimeMs))).toBe('2026-09-11');
+    expect(dateKey(new Date(visits[0]!.startTimeMs!))).toBe('2026-09-11');
   });
 });
 
@@ -807,38 +808,46 @@ describe('renderPlannedVisits with blocks', () => {
 });
 
 /**
- * #1092: an overnight is twelve hours that can start at any time of day, so no
- * block can hold it. A KinCare in `startTimeServiceIds` books on the clock even
- * in a block-mode plan, and every other KinCare in that plan keeps its block.
+ * #1098 (replacing #1092's start-time picker): a KinCare in
+ * `startTimeServiceIds` is asked for by NIGHT only. The operator sets its start
+ * time when approving, because she may have evening visits to finish first. So
+ * the slot has no clock and no block in either plan mode, and the visit goes
+ * out as `{ date, ... }` with no `startTimeMs`.
  */
-describe('start-time KinCares in a block-mode plan (#1092)', () => {
+describe('night-only KinCares (#1098)', () => {
   const OVERNIGHT: WizardService = { id: 'Overnight', name: 'Overnight', priceCents: 15000, priceMinCents: null };
   const CATALOG_WITH_OVERNIGHT: WizardService[] = [...CATALOG, OVERNIGHT];
   const TIMING: BookingTiming = { ...BLOCK_TIMING, startTimeServiceIds: ['Overnight'] };
+  const CLOCK_TIMING: BookingTiming = { mode: 'SPECIFIC_TIME', blocks: [], startTimeServiceIds: ['Overnight'] };
   /**
    * An overnight slot carrying BOTH a real block id and a clock time, so a
-   * mistake that reads the block, or sends it, cannot pass by accident.
+   * mistake that reads either, or sends either, cannot pass by accident.
    */
-  function overnightSlot(time: string, n = 1): KinCareSlot {
-    return { slotId: `Overnight-${n}`, serviceId: 'Overnight', time, timeBlockId: 'midday' };
+  function overnightSlot(n = 1): KinCareSlot {
+    return { slotId: `Overnight-${n}`, serviceId: 'Overnight', time: '21:00', timeBlockId: 'midday' };
   }
-  it('decides the mode per slot: start-time KinCares on the clock, the rest on the plan mode', () => {
-    expect(serviceBooksAtStartTime('Overnight', TIMING)).toBe(true);
-    expect(serviceBooksAtStartTime('30Minute', TIMING)).toBe(false);
-    expect(slotMode(overnightSlot('21:00'), TIMING)).toBe('SPECIFIC_TIME');
+
+  it('decides the kind per slot: night-only for a flagged KinCare in either plan mode, the plan mode for the rest', () => {
+    expect(serviceIsNightOnly('Overnight', TIMING)).toBe(true);
+    expect(serviceIsNightOnly('30Minute', TIMING)).toBe(false);
+    expect(slotMode(overnightSlot(), TIMING)).toBe('NIGHT_ONLY');
+    expect(slotMode(overnightSlot(), CLOCK_TIMING)).toBe('NIGHT_ONLY');
     expect(slotMode(blockSlot('30Minute', 'midday'), TIMING)).toBe('TIME_BLOCK');
+    expect(slotMode(slot('30Minute', '09:00'), CLOCK_TIMING)).toBe('SPECIFIC_TIME');
   });
-  it('a timing without the field (an older server) treats nothing as start-time', () => {
-    expect(serviceBooksAtStartTime('Overnight', BLOCK_TIMING)).toBe(false);
-    expect(slotMode(overnightSlot('21:00'), BLOCK_TIMING)).toBe('TIME_BLOCK');
-    const [visit] = buildVisits([new Date(2026, 8, 4)], [overnightSlot('21:00')], CATALOG_WITH_OVERNIGHT, BLOCK_TIMING);
+
+  it('a timing without the field (an older server) treats nothing as night-only', () => {
+    expect(serviceIsNightOnly('Overnight', BLOCK_TIMING)).toBe(false);
+    expect(slotMode(overnightSlot(), BLOCK_TIMING)).toBe('TIME_BLOCK');
+    const [visit] = buildVisits([new Date(2026, 8, 4)], [overnightSlot()], CATALOG_WITH_OVERNIGHT, BLOCK_TIMING);
     expect(visit!.timeBlockId).toBe('midday');
-    expect(new Date(visit!.startTimeMs).getHours()).toBe(11);
+    expect(new Date(visit!.startTimeMs!).getHours()).toBe(11);
   });
-  it('sends a start-time visit at its clock time with no block, beside a block visit that keeps its block', () => {
+
+  it('sends the night as a date with no start time and no block, beside a block visit that keeps its block', () => {
     const visits = buildVisits(
       [new Date(2026, 8, 4)],
-      [blockSlot('30Minute', 'midday'), overnightSlot('21:00')],
+      [overnightSlot(), blockSlot('30Minute', 'midday')],
       CATALOG_WITH_OVERNIGHT,
       TIMING,
     );
@@ -847,60 +856,119 @@ describe('start-time KinCares in a block-mode plan (#1092)', () => {
     expect(midday!.serviceId).toBe('30Minute');
     expect(midday!.timeBlockId).toBe('midday');
     expect(midday!.startTimeMs).toBe(new Date(2026, 8, 4, 11, 0).getTime());
-    expect(overnight!.serviceId).toBe('Overnight');
-    expect(overnight!.timeBlockId).toBeNull();
-    expect(overnight!.startTimeMs).toBe(new Date(2026, 8, 4, 21, 0).getTime());
-    // The server computes the twelve-hour end itself.
-    expect(overnight!.endTimeMs).toBeNull();
+    // Exactly the generated RequestBookingArgsVisit, nothing about a clock in it.
+    expect(overnight).toEqual({
+      date: '2026-09-04',
+      endTimeMs: null,
+      serviceId: 'Overnight',
+      serviceName: 'Overnight',
+      priceCents: 15000,
+      timeBlockId: null,
+    });
+    expect('startTimeMs' in overnight!).toBe(false);
   });
-  it('expands a weekly rule with the start-time KinCare on the clock and the other in its window', () => {
-    const nowMs = new Date(2026, 8, 4, 8, 0).getTime(); // a Friday
+
+  it('sends a date in a specific-time plan too', () => {
+    const visits = buildVisits(
+      [new Date(2026, 8, 4)],
+      [slot('30Minute', '22:00'), overnightSlot()],
+      CATALOG_WITH_OVERNIGHT,
+      CLOCK_TIMING,
+    );
+    expect(visits.map((v) => [v.serviceId, v.startTimeMs ?? null, v.date ?? null])).toEqual([
+      ['30Minute', new Date(2026, 8, 4, 22, 0).getTime(), null],
+      ['Overnight', null, '2026-09-04'],
+    ]);
+  });
+
+  it('sorts a night after every timed visit on its own day, and before the next day', () => {
+    const visits = buildVisits(
+      [new Date(2026, 8, 5), new Date(2026, 8, 4)],
+      [overnightSlot(), slot('30Minute', '23:30')],
+      CATALOG_WITH_OVERNIGHT,
+      CLOCK_TIMING,
+    );
+    expect(visits.map((v) => [v.serviceId, plannedVisitDayKey(v)])).toEqual([
+      ['30Minute', '2026-09-04'],
+      ['Overnight', '2026-09-04'],
+      ['30Minute', '2026-09-05'],
+      ['Overnight', '2026-09-05'],
+    ]);
+  });
+
+  it('expands a weekly rule with one night per chosen day, including tonight, after the timed visit', () => {
+    const nowMs = new Date(2026, 8, 4, 22, 0).getTime(); // a Friday, late
     const visits = buildWeeklyVisits({
       nowMs,
       weeklyDays: new Set([5]),
       weeks: 2,
-      slots: [overnightSlot('21:00'), blockSlot('30Minute', 'evening')],
+      slots: [overnightSlot(), blockSlot('30Minute', 'evening')],
       services: CATALOG_WITH_OVERNIGHT,
       timing: TIMING,
     });
-    expect(visits).toHaveLength(4);
-    // Ordered down each day: Evening at 17:00, then the overnight at 21:00.
-    expect(visits.map((v) => [v.serviceId, v.timeBlockId, new Date(v.startTimeMs).getHours()])).toEqual([
-      ['30Minute', 'evening', 17],
-      ['Overnight', null, 21],
-      ['30Minute', 'evening', 17],
-      ['Overnight', null, 21],
+    // Tonight's Evening block has closed, so only next Friday's is sent; both nights are.
+    expect(visits.map((v) => [v.serviceId, v.timeBlockId, v.date ?? null])).toEqual([
+      ['Overnight', null, '2026-09-04'],
+      ['30Minute', 'evening', null],
+      ['Overnight', null, '2026-09-11'],
     ]);
+    expect(visits.every((v) => v.serviceId !== 'Overnight' || !('startTimeMs' in v))).toBe(true);
   });
-  it('does not ask a start-time KinCare for a block, but does ask it for a valid time', () => {
-    const noBlock: KinCareSlot = { slotId: 'o', serviceId: 'Overnight', time: '21:00', timeBlockId: null };
+
+  it('asks a night-only KinCare for nothing, and still asks the others for theirs', () => {
+    const noBlock: KinCareSlot = { slotId: 'o', serviceId: 'Overnight', time: '', timeBlockId: null };
     expect(slotsBlocker([noBlock, blockSlot('30Minute', 'midday')], TIMING)).toBeNull();
-    expect(slotsBlocker([{ ...noBlock, time: '' }, blockSlot('30Minute', 'midday')], TIMING)).toBe(
-      'Enter every KinCare time as HH:MM.',
-    );
-  });
-  it('still asks the other KinCares in the plan for a block', () => {
+    expect(slotsBlocker([noBlock], CLOCK_TIMING)).toBeNull();
     const unset: KinCareSlot = { slotId: 'a', serviceId: '30Minute', time: '09:00', timeBlockId: null };
-    expect(slotsBlocker([overnightSlot('21:00'), unset], TIMING)).toBe('Choose a time block for every KinCare.');
+    expect(slotsBlocker([overnightSlot(), unset], TIMING)).toBe('Choose a time block for every KinCare.');
+    expect(slotsBlocker([overnightSlot(), slot('30Minute', '')], CLOCK_TIMING)).toBe('Enter every KinCare time as HH:MM.');
+    expect(weeklyVisitsBlocker(new Set([5]), 2, [noBlock], TIMING)).toBeNull();
   });
-  it('keys a start-time duplicate on the clock, not on the stale block id', () => {
-    // Same block id on both, different times: two overnights, not a duplicate.
-    expect(slotsBlocker([overnightSlot('07:00'), overnightSlot('21:00', 2)], TIMING)).toBeNull();
-    expect(slotsBlocker([overnightSlot('21:00'), overnightSlot('21:00', 2)], TIMING)).toBe(
-      'Two KinCares have the same duration at the same time. Change one of the times.',
-    );
+
+  it('refuses the same night-only KinCare twice in one plan, whatever its stale time or block says', () => {
+    const a = overnightSlot(1);
+    const b = { ...overnightSlot(2), time: '07:00', timeBlockId: 'evening' };
+    expect(slotsBlocker([a, b], TIMING)).toBe('That KinCare is on the plan twice for the same night. Remove one.');
+    expect(slotsBlocker([a, b], CLOCK_TIMING)).toBe('That KinCare is on the plan twice for the same night. Remove one.');
   });
-  it('anchorOpenBlockVisit leaves a start-time visit alone, even one already started', () => {
-    const [overnight] = buildVisits([new Date(2026, 8, 4)], [overnightSlot('11:30')], CATALOG_WITH_OVERNIGHT, TIMING);
-    // 12:00, inside Midday: a Midday visit would be moved; this one carries no block.
+
+  it('anchorOpenBlockVisit and anchorOpenBlockVisits leave a night alone', () => {
+    const [overnight] = buildVisits([new Date(2026, 8, 4)], [overnightSlot()], CATALOG_WITH_OVERNIGHT, TIMING);
     const nowMs = new Date(2026, 8, 4, 12, 0).getTime();
     expect(anchorOpenBlockVisit(overnight!, TIMING.blocks, nowMs)).toBe(overnight);
-    expect(pastPlannedVisits([overnight!], nowMs)).toHaveLength(1);
+    expect(anchorOpenBlockVisits([overnight!], TIMING.blocks, nowMs)).toEqual([overnight]);
   });
-  it('renders a start-time visit by its clock time on Review', () => {
-    const visits = buildVisits([new Date(2026, 8, 4)], [overnightSlot('21:00')], CATALOG_WITH_OVERNIGHT, TIMING);
+
+  it('a night is past only once its date is before today, local', () => {
+    const [overnight] = buildVisits([new Date(2026, 8, 4)], [overnightSlot()], CATALOG_WITH_OVERNIGHT, TIMING);
+    expect(pastPlannedVisits([overnight!], new Date(2026, 8, 4, 23, 59).getTime())).toHaveLength(0);
+    expect(pastPlannedVisits([overnight!], new Date(2026, 8, 5, 0, 1).getTime())).toHaveLength(1);
+  });
+
+  it('renders a night on Review with its own day and no clock', () => {
+    const visits = buildVisits(
+      [new Date(2026, 9, 9)],
+      [overnightSlot(), blockSlot('30Minute', 'midday')],
+      CATALOG_WITH_OVERNIGHT,
+      TIMING,
+    );
     const rendered = renderPlannedVisits(visits, [MIDDAY, EVENING]);
-    expect(rendered[0]!.timeBlockLabel).toBeNull();
-    expect(plannedVisitLine(rendered[0]!)).toBe('Fri, Sep 4 at 9:00 PM');
+    expect(rendered.map(plannedVisitLine)).toEqual([
+      'Fri, Oct 9, Midday (11:00-15:00)',
+      'Fri, Oct 9, start time set by your Auntie',
+    ]);
+    expect(rendered[1]!.serviceName).toBe('Overnight');
+    expect(new Set(rendered.map((v) => v.key)).size).toBe(2);
+  });
+
+  it('prices a night like any other visit', () => {
+    const visits = buildVisits([new Date(2026, 8, 4), new Date(2026, 8, 5)], [overnightSlot()], CATALOG_WITH_OVERNIGHT, TIMING);
+    expect(estimateBookingTotal(visits, CATALOG_WITH_OVERNIGHT).totalCents).toBe(30000);
+  });
+
+  it('builds the same plan twice over, so the #644 idempotency key holds across retries', () => {
+    const build = () =>
+      JSON.stringify(buildVisits([new Date(2026, 8, 4)], [overnightSlot()], CATALOG_WITH_OVERNIGHT, TIMING));
+    expect(build()).toBe(build());
   });
 });

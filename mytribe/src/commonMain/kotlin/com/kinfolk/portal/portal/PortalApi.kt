@@ -240,7 +240,10 @@ class PortalApi(private val fns: FunctionsClient) {
             put("visits", buildJsonArray {
                 visits.forEach { v ->
                     add(buildJsonObject {
-                        put("startTimeMs", v.startTimeMs)
+                        // #1098: a night-only visit sends its night and no
+                        // start; the key is left out, never sent as null.
+                        v.startTimeMs?.let { put("startTimeMs", it) }
+                        v.date?.let { put("date", it) }
                         v.endTimeMs?.let { put("endTimeMs", it) }
                         put("serviceId", v.serviceId)
                         put("serviceName", v.serviceName)
@@ -1758,6 +1761,9 @@ class PortalApi(private val fns: FunctionsClient) {
         rescheduleRequestedEndTimeMs = o["rescheduleRequestedEndTimeMs"]?.jsonPrimitive?.longOrNull,
         rescheduleRequestReason = o["rescheduleRequestReason"]?.jsonPrimitive?.contentOrNull,
         rescheduleResponseNote = o["rescheduleResponseNote"]?.jsonPrimitive?.contentOrNull,
+        // #1098: absent on an older server, which reads as a timed visit.
+        startTimePending = o["startTimePending"]?.jsonPrimitive?.booleanOrNull ?: false,
+        requestedDate = o["requestedDate"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
     )
 
     /**

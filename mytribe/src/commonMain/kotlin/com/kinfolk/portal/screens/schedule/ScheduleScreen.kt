@@ -54,8 +54,9 @@ import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
-import com.kinfolk.portal.util.calendarBadge
-import com.kinfolk.portal.util.relativeTime
+import com.kinfolk.portal.util.bookingCalendarBadge
+import com.kinfolk.portal.util.bookingSortMs
+import com.kinfolk.portal.util.bookingWhenLabel
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 import kotlin.time.Clock
@@ -363,14 +364,14 @@ private fun VisitRow(b: Booking, index: Int, onClick: (() -> Unit)? = null) {
         horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.m),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        KinCalendarBadge(calendarBadge(b.startTimeMs), accent = VisitAccents[index % VisitAccents.size])
+        KinCalendarBadge(bookingCalendarBadge(b), accent = VisitAccents[index % VisitAccents.size])
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             val title = b.title ?: b.serviceType ?: "Booking"
             if (b.serviceType != null && b.title != null) {
                 Text("SERVICE TYPE · ${b.serviceType.uppercase()}", style = type.sansMeta.copy(fontSize = 10.sp))
             }
             Text(title, style = type.sansBody.copy(fontWeight = FontWeight.SemiBold))
-            Text(relativeTime(b.startTimeMs), style = type.sansLabel)
+            Text(bookingWhenLabel(b), style = type.sansLabel)
             val parts = listOfNotNull(
                 b.auntieDisplayName,
                 b.kinNames.takeIf { it.isNotEmpty() }?.joinToString(", "),
@@ -404,7 +405,8 @@ private fun EnvelopeRow(kinCares: List<Booking>, index: Int, onClick: () -> Unit
     val type = LocalKinfolkTypography.current
     val head = kinCares.firstOrNull()
     val count = kinCares.size
-    val nextStart = kinCares.mapNotNull { it.startTimeMs }.minOrNull()
+    // #1098: a night still waiting on its start counts, on its own night.
+    val next = kinCares.filter { bookingSortMs(it) != null }.minByOrNull { bookingSortMs(it)!! }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -414,11 +416,11 @@ private fun EnvelopeRow(kinCares: List<Booking>, index: Int, onClick: () -> Unit
         horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.m),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        KinCalendarBadge(calendarBadge(nextStart), accent = VisitAccents[index % VisitAccents.size])
+        KinCalendarBadge(next?.let { bookingCalendarBadge(it) }, accent = VisitAccents[index % VisitAccents.size])
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(head?.serviceType ?: head?.title ?: "Booking", style = type.sansBody.copy(fontWeight = FontWeight.SemiBold))
             Text("$count visits", style = type.sansLabel.copy(color = KinfolkBrand.KinTeal))
-            Text("Next ${relativeTime(nextStart)}", style = type.sansMeta)
+            Text("Next ${next?.let { bookingWhenLabel(it) }.orEmpty()}", style = type.sansMeta)
         }
         KinTintPill("ENVELOPE", KinfolkBrand.KinTeal)
     }

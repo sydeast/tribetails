@@ -146,6 +146,61 @@ class TemplateImportStatesTest {
         )
     }
 
+    /** #1060: Tick all reaches exactly the rows that have a box. */
+    @Test
+    fun `tick all covers differing rows and never a refused or matching one`() {
+        val differing = row(templateId = "a", outcomes = listOf("skipped", "create", "create"), differs = true)
+        val refused = row(templateId = "b", outcomes = listOf("blocked", "blocked", "blocked"), differs = true, blocked = true)
+        val matching = row(templateId = "c", outcomes = listOf("unchanged", "unchanged", "unchanged"))
+        val other = row(templateId = "d", outcomes = listOf("skipped", "unchanged", "unchanged"), differs = true)
+        val r = report(listOf(differing, refused, matching, other), mapOf("skipped" to 2))
+        assertEquals(listOf("a", "d"), tickableTemplateIds(r))
+    }
+    @Test
+    fun `tick all ticks everything when some or none are ticked, and clears when all are`() {
+        val tickable = listOf("a", "d")
+        assertEquals(listOf("a", "d"), toggleAllTicks(emptyList(), tickable))
+        assertEquals(listOf("a", "d"), toggleAllTicks(listOf("a"), tickable))
+        assertEquals(emptyList<String>(), toggleAllTicks(listOf("a", "d"), tickable))
+        assertEquals(emptyList<String>(), toggleAllTicks(emptyList(), emptyList()))
+    }
+    @Test
+    fun `the tick count reads N of M ticked and only counts rows that can be ticked`() {
+        val tickable = listOf("a", "d")
+        assertEquals("0 of 2 ticked", tickCountLabel(emptyList(), tickable))
+        assertEquals("1 of 2 ticked", tickCountLabel(listOf("a", "zzz"), tickable))
+        assertEquals("2 of 2 ticked", tickCountLabel(listOf("a", "d"), tickable))
+    }
+    @Test
+    fun `a ticked skipped row says importing replaces it, an unticked one keeps the server line`() {
+        val server = "The stored email copy differs from the repo copy. Your stored copy stays as it is. " +
+            "Tick this template to replace it with the repo wording."
+        val c = channel("email", "skipped", listOf(server))
+        assertEquals(server, importChannelNote(c, ticked = false))
+        assertEquals(
+            "The stored email copy differs from the repo copy. Importing replaces your stored copy with the repo wording.",
+            importChannelNote(c, ticked = true),
+        )
+        // Only a skipped line changes. A created channel keeps what the server said.
+        assertEquals("x", importChannelNote(channel("sms", "create", listOf("x")), ticked = true))
+        assertEquals(
+            "Differs, selected for overwrite",
+            importRowSummary(row(outcomes = listOf("skipped", "create", "create"), differs = true), ticked = true),
+        )
+    }
+    /** #1060: Tick all must turn Import on even when nothing else was to write. */
+    @Test
+    fun `ticking a skipped row counts its skipped channels as writes, a refused row never`() {
+        val a = row(templateId = "a", outcomes = listOf("skipped", "unchanged", "unchanged"), differs = true)
+        val b = row(templateId = "b", outcomes = listOf("skipped", "skipped", "unchanged"), differs = true)
+        val refused = row(templateId = "c", outcomes = listOf("blocked", "blocked", "blocked"), differs = true, blocked = true)
+        val r = report(listOf(a, b, refused), mapOf("skipped" to 3))
+        assertEquals(0, plannedWriteCountWithTicks(r, emptyList()))
+        assertEquals(1, plannedWriteCountWithTicks(r, listOf("a")))
+        assertEquals(3, plannedWriteCountWithTicks(r, listOf("a", "b", "c")))
+        // The server's own meaning is untouched.
+        assertEquals(0, plannedWriteCount(r))
+    }
     @Test
     fun `only a differing row offers the overwrite tick`() {
         assertFalse(offersOverwriteChoice(row()))

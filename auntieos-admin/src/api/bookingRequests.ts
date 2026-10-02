@@ -59,12 +59,31 @@ export function listPendingBookingRequests(
 export function approveBookingRequest(
   kinfolkId: string,
   batchId: string,
+  options: ApproveOptions = {},
 ): Promise<ManageBookingSeriesResult> {
   return call<ManageBookingSeriesArgs, ManageBookingSeriesResult>('manageBookingSeries', {
     action: 'APPROVE',
     kinfolkId,
     batchId,
+    ...(options.startTimes !== undefined && { startTimes: options.startTimes }),
+    ...(options.overrideBusyConflict === true && { overrideBusyConflict: true }),
+    ...(options.overrideVisitConflict === true && { overrideVisitConflict: true }),
   });
+}
+
+/**
+ * #1098: what an approval of a request with an Overnight in it carries.
+ *
+ * `startTimes` is the operator's chosen start for each visit awaiting one
+ * (`startTimePending`), keyed by visit id, as epoch ms. The two overrides are
+ * the ones `rescheduleBooking` takes, sent only on an explicit "Approve anyway"
+ * after the matching refusal. Every field is omitted when unset, so a request
+ * with no Overnight sends exactly the payload it always has.
+ */
+export interface ApproveOptions {
+  startTimes?: Record<string, number>;
+  overrideBusyConflict?: boolean;
+  overrideVisitConflict?: boolean;
 }
 
 /**

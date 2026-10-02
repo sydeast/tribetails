@@ -57,8 +57,8 @@ class RecurringBookingTest {
         // All 7 weekdays, one week, all at 09:00 > midnight -> 7 future visits.
         assertEquals(7, visits.size)
         // strictly ascending by start time
-        assertTrue(visits.zipWithNext().all { (a, b) -> a.startTimeMs < b.startTimeMs })
-        assertTrue(visits.all { it.startTimeMs > now && it.serviceId == "s1" && it.priceCents == 1000L })
+        assertTrue(visits.zipWithNext().all { (a, b) -> a.startTimeMs!! < b.startTimeMs!! })
+        assertTrue(visits.all { it.startTimeMs!! > now && it.serviceId == "s1" && it.priceCents == 1000L })
     }
 
     @Test
@@ -84,7 +84,7 @@ class RecurringBookingTest {
         )
         assertEquals(8, visits.size)
         assertEquals(listOf("30Minute", "60Minute"), visits.take(2).map { it.serviceId })
-        assertTrue(visits.zipWithNext().all { (a, b) -> a.startTimeMs < b.startTimeMs })
+        assertTrue(visits.zipWithNext().all { (a, b) -> a.startTimeMs!! < b.startTimeMs!! })
     }
 
     @Test
@@ -112,7 +112,7 @@ class RecurringBookingTest {
         val visits = buildWeeklyVisits(now, (0..6).toSet(), 8, slots, catalog, utc)
         assertEquals(MAX_RECURRING_VISITS, visits.size)
         assertEquals(112, weeklyPotentialCount((0..6).toSet(), 8, slots.size))
-        assertTrue(visits.zipWithNext().all { (a, b) -> a.startTimeMs < b.startTimeMs })
+        assertTrue(visits.zipWithNext().all { (a, b) -> a.startTimeMs!! < b.startTimeMs!! })
     }
 
     @Test
@@ -169,7 +169,7 @@ class RecurringBookingTest {
         val dates = listOf(LocalDate(2026, 9, 6), LocalDate(2026, 9, 4))
         val visits = buildVisits(dates, listOf(slot("60Minute", "17:00"), slot("30Minute", "09:00")), catalog, utc)
         assertEquals(4, visits.size)
-        assertTrue(visits.zipWithNext().all { (a, b) -> a.startTimeMs < b.startTimeMs })
+        assertTrue(visits.zipWithNext().all { (a, b) -> a.startTimeMs!! < b.startTimeMs!! })
         assertEquals(listOf("30 Minute", "60 Minute", "30 Minute", "60 Minute"), visits.map { it.serviceName })
     }
 

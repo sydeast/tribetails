@@ -3733,6 +3733,14 @@ data class BusinessSettings(
     val businessAddress: String = "",
     val timeZone: String = "America/New_York",
     val serviceRates: Map<String, String> = emptyMap(),
+    // KinCare name -> visit length in minutes, as the string the operator typed.
+    // SPARSE: a type with no typed length has no key, and every reader then falls
+    // back to the length its name states ("45Minute"). Written as a whole map.
+    val serviceDurations: Map<String, String> = emptyMap(),
+    // KinCare name -> true for the types the operator sets the start time of
+    // (#1092, overnights). Only true entries are stored; the server honours
+    // nothing else. Written as a whole map so a cleared flag removes its key.
+    val serviceStartTimeBooking: Map<String, Boolean> = emptyMap(),
     // Business hours: day → "HH:MM-HH:MM" or "" (closed)
     val businessHours: Map<String, String> = emptyMap(),
 

@@ -182,3 +182,41 @@
   font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
 }
+
+/* ── nights awaiting a start time (#1098) ─────────────────────────────────── */
+
+.visit-requests__nights {
+  list-style: none;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.visit-requests__night {
+  display: flex;
+  flex-direction: column;
+}
+
+.visit-requests__night-name {
+  font-size: var(--type-body-md-size);
+  line-height: var(--type-body-md-line);
+  color: var(--color-text-primary);
+  margin-bottom: var(--space-2);
+}
+
+.visit-requests__night-time {
+  font: inherit;
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+  max-width: 12rem;
+}
+.visit-requests__night-time:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}

@@ -5,6 +5,7 @@
  */
 import type { PortalHomeSection } from '../api/types';
 import type { GetMyBookingsResult, GetMyBookingsResultLiveVisit } from '../contracts/bookingContracts.generated';
+import { parseDateKey } from './bookingWizardLogic';
 
 /**
  * An alias for readability, not a declaration: writing the six-state status
@@ -39,6 +40,45 @@ export function visitSubtitle(startTimeMs: number | null, auntieDisplayName: str
   return auntieDisplayName ? `${base} with Auntie ${auntieDisplayName}` : base;
 }
 
+/** The fields that say WHEN a booked visit happens. */
+type VisitWhen = Pick<GetMyBookingsResultLiveVisit, 'startTimeMs' | 'startTimePending' | 'requestedDate'>;
+/** #1098: what a night-only visit says in place of a clock time until the Auntie sets one. */
+export const AUNTIE_SETS_START_TIME = 'Start time set by your Auntie';
+/**
+ * #1098: whether this visit is a night still waiting for the Auntie to set its
+ * start. An older server sends no such field, which reads as no.
+ */
+export function isStartTimePending(b: Pick<VisitWhen, 'startTimePending'>): boolean {
+  return b.startTimePending === true;
+}
+/** The requested night as a LOCAL date, or null. Never `new Date('YYYY-MM-DD')`, which is UTC. */
+function requestedNight(b: VisitWhen): Date | null {
+  return isStartTimePending(b) && b.requestedDate ? parseDateKey(b.requestedDate) : null;
+}
+/** The `.cal` tile for a booked visit: its start, or its requested night (#1098), or dashes. */
+export function visitTile(b: VisitWhen): { month: string; day: string } {
+  if (b.startTimeMs !== null && !isStartTimePending(b)) return calTile(b.startTimeMs);
+  const night = requestedNight(b);
+  if (night !== null) return calTile(night.getTime());
+  return b.startTimeMs !== null ? calTile(b.startTimeMs) : { month: '—', day: '—' };
+}
+/**
+ * When a booked visit happens, without the Auntie: "Mon, 8:00 AM", or for a
+ * night still waiting on its start (#1098) "Fri night · Start time set by your
+ * Auntie", or "Time to be confirmed".
+ */
+export function visitWhenLine(b: VisitWhen): string {
+  if (isStartTimePending(b)) {
+    const night = requestedNight(b);
+    return night === null ? AUNTIE_SETS_START_TIME : `${WEEKDAYS[night.getDay()]} night · ${AUNTIE_SETS_START_TIME}`;
+  }
+  return b.startTimeMs !== null ? weekdayTime(b.startTimeMs) : 'Time to be confirmed';
+}
+/** {@link visitSubtitle} for a whole booking, so a night waiting on its start (#1098) says so. */
+export function bookingSubtitle(b: VisitWhen & Pick<GetMyBookingsResultLiveVisit, 'auntieDisplayName'>): string {
+  if (isStartTimePending(b)) return visitWhenLine(b);
+  return visitSubtitle(b.startTimeMs, b.auntieDisplayName);
+}
 /** "Today" / "Yesterday" / "3 days ago" / falls back to a short date past a week out. */
 export function relativeDay(ms: number, now: number = Date.now()): string {
   const startOfDay = (t: number) => {
