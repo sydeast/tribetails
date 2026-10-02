@@ -46,6 +46,7 @@ import com.composables.icons.lucide.CircleCheckBig
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.tribetails.auntieos.web.data.AuntieDataSource
+import com.tribetails.auntieos.web.data.BatchBookingResult
 import com.tribetails.auntieos.web.data.CloudFormSchemaRepository
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
@@ -162,9 +163,11 @@ private fun BookingListScreen(
     // Bulk multi-select: a select-mode toggle + the chosen visit ids. The bulk
     // action targets the batchUpdateBookings callable, which resolves ids via
     // collectionGroup('kinCares'); the originating kinCare visit id is carried on
-    // KinCareSession.sourceBookingId (fall back to _id for direct sessions).
+    // KinCareSession.kinCareVisitId, then sourceBookingId (see [bulkVisitId]).
     var selecting by remember { mutableStateOf(false) }
     val selectedIds = remember { mutableStateMapOf<String, Boolean>() }
+    // Display name per selected id, so a refused id is reported by kinfolk name.
+    val selectedNames = remember { mutableStateMapOf<String, String>() }
     var bulkBusy by remember { mutableStateOf(false) }
     var bulkNotice by remember { mutableStateOf<String?>(null) }
     // 1025: a landed single approve/reject used to report nothing -- the card
@@ -179,12 +182,13 @@ private fun BookingListScreen(
     // three sections; rendered only when a real client is injected (not in fakes).
     var selectedBooking by remember { mutableStateOf<KinCareSession?>(null) }
 
-    fun batchVisitId(b: KinCareSession): String = b.sourceBookingId.ifBlank { b._id }
+    fun batchVisitId(b: KinCareSession): String = bulkVisitId(b)
     fun toggleSelect(b: KinCareSession) {
         val id = batchVisitId(b)
-        if (selectedIds[id] == true) selectedIds.remove(id) else selectedIds[id] = true
+        if (selectedIds[id] == true) { selectedIds.remove(id); selectedNames.remove(id) }
+        else { selectedIds[id] = true; selectedNames[id] = b.kinfolkName.ifBlank { b.kinfolkId } }
     }
-    fun clearSelection() = selectedIds.clear()
+    fun clearSelection() { selectedIds.clear(); selectedNames.clear() }
 
     // 1025: the single-row confirmations. Each awaits the ViewModel write (which
     // owns errorMessage) and only sets actionNotice when nothing failed, so a
@@ -218,7 +222,7 @@ private fun BookingListScreen(
                 is WriteResult.Ok  -> {
                     vm.setError(if (r.value.failedCount > 0)
                         "Bulk $action: ${r.value.failedCount} of ${ids.size} could not be updated. " +
-                            com.tribetails.auntieos.web.data.batchFailureText(r.value).orEmpty()
+                            bulkFailureText(r.value, selectedNames.toMap())
                     else null)
                     bulkNotice = "$action applied: ${com.tribetails.auntieos.web.data.summarizeBatchResult(r.value)}."
                     clearSelection()
@@ -599,6 +603,29 @@ internal fun bookingActionNotice(outcome: BookingActionOutcome, booking: KinCare
     }
 }
 
+/**
+ * The id `batchUpdateBookings` resolves for a row: the kinCares visit id the
+ * session was booked from (`kinCareVisitId`, what admin web's `bookingBulk.ts`
+ * and Android send), then the legacy `sourceBookingId` back-reference, and only
+ * for a direct session with neither, its own row id. #1122: the row id of a
+ * `kin_care_sessions` doc is not an `enhanced_bookings` or `kinCares` id.
+ */
+internal fun bulkVisitId(b: KinCareSession): String =
+    b.kinCareVisitId.orEmpty().trim().ifBlank { b.sourceBookingId.trim() }.ifBlank { b._id }
+/**
+ * Per-id refusals in plain words, each naming the booking it belongs to.
+ * [names] maps the id that was sent to the kinfolk name shown on that row.
+ */
+internal fun bulkFailureText(result: BatchBookingResult, names: Map<String, String>): String =
+    result.failed.joinToString(" ") { f ->
+        val who = names[f.id]?.takeIf { it.isNotBlank() } ?: "A booking"
+        val why = when (val e = f.error.trim()) {
+            "", "write-failed" -> "The change could not be saved."
+            "not-found" -> "That booking was not found."
+            else -> e
+        }
+        "$who: ${why.trimEnd()}"
+    }
 /** Most-recent rows shown per History subsection before "Show more". */
 private const val HISTORY_PAGE = 6
 
