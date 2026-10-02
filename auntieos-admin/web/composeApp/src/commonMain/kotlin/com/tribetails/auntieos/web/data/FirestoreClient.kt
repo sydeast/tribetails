@@ -357,6 +357,26 @@ class FirestoreClient {
         }
     }
 
+    /** #1102: one page of the do-not-send list, through `listMessageSuppressions`. [reason] is all, hard_bounce or opt_out. */
+    suspend fun listMessageSuppressions(reason: String, cursor: String? = null): WriteResult<SuppressionPage> {
+        val payload = listMessageSuppressionsPayload(reason, cursor)
+        return when (val r = platformInvokeCallable("listMessageSuppressions", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeSuppressionPage(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+
+    /** #1102: clears a hard bounce through `clearMessageSuppression`. Never removes an opt-out; the server audits who did it. */
+    suspend fun clearMessageSuppression(recipient: String): WriteResult<ClearSuppressionResult> {
+        val payload = clearMessageSuppressionPayload(recipient)
+        return when (val r = platformInvokeCallable("clearMessageSuppression", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeClearSuppressionResult(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+
     /**
      * On-demand profile synthesis ("Refresh intelligence"): triggers a reconcile
      * synthesis pass for one kinfolk via the admin-gated synthesize_kinfolk_profile

@@ -707,6 +707,8 @@ private fun SectionPanel(
             // channels each notification offers. The old global pause + coarse
             // Email/SMS/Push boxes were removed; this panel persists each change itself.
             NotificationMatrixPanel()
+            // #1102: self-loading; the addresses the app will not mail or text.
+            DoNotSendPanel()
         }
         SettingsSection.Integrations -> IntegrationsPanel(settingsResult = uiState.settingsResult)
         SettingsSection.KinCareTypes -> Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {

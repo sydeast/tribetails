@@ -123,4 +123,14 @@ class ExternalSendTest {
     @Test fun nonOptOutErrorPassesThroughVerbatim() {
         assertEquals("SendGrid send failed: 401", externalSendErrorText("SendGrid send failed: 401"))
     }
+
+    @Test fun hardBouncedErrorDetectedAndRephrased() {
+        assertTrue(isHardBouncedError("recipient_hard_bounced"))
+        assertTrue(isHardBouncedError("FAILED_PRECONDITION: recipient_hard_bounced: jane@example.com"))
+        assertFalse(isHardBouncedError("recipient_opted_out"))
+        assertEquals(
+            "This address bounced and is on the do-not-send list. Nothing was sent. Clear it in Settings under Notifications, then send again.",
+            externalSendErrorText("FAILED_PRECONDITION: recipient_hard_bounced"),
+        )
+    }
 }
