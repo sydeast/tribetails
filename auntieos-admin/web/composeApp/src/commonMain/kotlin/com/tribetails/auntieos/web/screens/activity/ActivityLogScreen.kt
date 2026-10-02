@@ -36,6 +36,7 @@ import com.tribetails.auntieos.web.data.ChainVerifyResult
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.WriteResult
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import kotlinx.coroutines.launch
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
@@ -675,8 +676,8 @@ private fun humanizeAction(actionType: String): String =
     actionType.lowercase().replace('_', ' ').replaceFirstChar { it.uppercaseChar() }
 
 /** True when [iso] looks like a parseable ISO-8601 date-time (at least yyyy-MM-dd). */
-private fun isParseableTimestamp(iso: String): Boolean = runCatching {
-    if (iso.length < 10) return@runCatching false
+private fun isParseableTimestamp(iso: String): Boolean = runCatchingCancellable {
+    if (iso.length < 10) return@runCatchingCancellable false
     iso.substring(0, 4).toInt()
     iso.substring(5, 7).toInt() in 1..12
     iso.substring(8, 10).toInt() in 1..31
@@ -693,15 +694,15 @@ private fun relativeDayLabel(dateIso: String, todayKey: String, yesterdayKey: St
     }
 }
 
-private fun prettyDate(iso: String): String = runCatching {
-    if (iso.length < 10) return@runCatching iso.ifBlank { "Undated" }
+private fun prettyDate(iso: String): String = runCatchingCancellable {
+    if (iso.length < 10) return@runCatchingCancellable iso.ifBlank { "Undated" }
     val month = MONTHS[iso.substring(5, 7).toInt() - 1]
     val day = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
     "$month $day"
 }.getOrDefault(iso.ifBlank { "Undated" })
 
 private fun shortTime(iso: String): String =
-    runCatching { if (iso.length >= 16) iso.substring(11, 16) else iso.ifBlank { "--:--" } }
+    runCatchingCancellable { if (iso.length >= 16) iso.substring(11, 16) else iso.ifBlank { "--:--" } }
         .getOrDefault(iso.ifBlank { "--:--" })
 
 /**
@@ -709,8 +710,8 @@ private fun shortTime(iso: String): String =
  * Returns a non-matching sentinel if [todayKey] is not a parseable date, so we
  * simply never label anything "Yesterday" rather than mislabel.
  */
-private fun isoDateMinusOneDay(todayKey: String): String = runCatching {
-    if (todayKey.length < 10) return@runCatching ""
+private fun isoDateMinusOneDay(todayKey: String): String = runCatchingCancellable {
+    if (todayKey.length < 10) return@runCatchingCancellable ""
     var year = todayKey.substring(0, 4).toInt()
     var month = todayKey.substring(5, 7).toInt()
     var day = todayKey.substring(8, 10).toInt() - 1

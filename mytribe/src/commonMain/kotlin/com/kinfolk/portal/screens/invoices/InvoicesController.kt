@@ -16,6 +16,7 @@ import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.mintCheckoutIdempotencyKey
 import com.kinfolk.portal.util.formatUsd
 import com.kinfolk.portal.util.openExternalUrl
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 
 /**
@@ -127,6 +128,8 @@ class InvoicesController internal constructor(
         try {
             data = portalApi.getMyInvoices(kinfolkId)
             error = null
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             error = t.message ?: "Could not load invoices"
         }
@@ -136,6 +139,8 @@ class InvoicesController internal constructor(
         try {
             val home = portalApi.getMyHome(kinfolkId)
             if (home.payMethods.isNotEmpty()) payMethods = home.payMethods
+        } catch (c: CancellationException) {
+            throw c
         } catch (_: Throwable) {
             // Fallback already in place; nothing to surface here. The
             // Stripe-only list IS the shipped behavior on this path, not a
@@ -144,6 +149,8 @@ class InvoicesController internal constructor(
         creditHistory = creditHistoryStateOf(
             try {
                 Result.success(portalApi.getAccountCreditHistory(kinfolkId))
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 Result.failure(t)
             },
@@ -158,6 +165,8 @@ class InvoicesController internal constructor(
             try {
                 val url = portalApi.getMyInvoicePdf(invoiceId = invoice.id, kinfolkId = kinfolkId)
                 if (url.isNotBlank()) openUrl(url)
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 error = t.message ?: "Could not open the invoice PDF"
             } finally {
@@ -236,6 +245,8 @@ class InvoicesController internal constructor(
                 // still holds: the body would differ and Stripe would refuse it.
                 checkoutKeys.remove(invoice.id)
                 if (res.checkoutUrl.isNotBlank()) openUrl(res.checkoutUrl)
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 error = t.message ?: "Could not start payment"
             } finally {
@@ -295,6 +306,8 @@ class InvoicesController internal constructor(
                     statusBanner = "Quote declined. Your Auntie has been told."
                 }
                 reload()
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 quoteError = t.message ?: "Could not send your answer"
                 quoteErrorInvoiceId = invoice.id
@@ -319,6 +332,8 @@ class InvoicesController internal constructor(
                     CreditTarget.OriginalPaymentMethod -> "Refunded ${formatCents(res.redeemedAmountCents)} to your original card."
                 }
                 reload()
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 statusBanner = "Couldn't redeem: ${t.message ?: t}"
             } finally {

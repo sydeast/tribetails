@@ -20,6 +20,7 @@ import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.DEFAULT_TAG_COLOR
 import com.tribetails.auntieos.web.data.addTag
 import com.tribetails.auntieos.web.observability.rememberReportingScope
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import kotlinx.coroutines.launch
 
@@ -162,7 +163,7 @@ fun ProfileTagsState.vocabLoadFailed(message: String?): ProfileTagsState =
  * write is now owed.
  */
 fun ProfileTagsState.beginPromoteVocab(name: String): ProfileTagsState {
-    val next = runCatching { addTag(vocab, TagDef(name = name, color = DEFAULT_TAG_COLOR, icon = "")) }
+    val next = runCatchingCancellable { addTag(vocab, TagDef(name = name, color = DEFAULT_TAG_COLOR, icon = "")) }
         .getOrNull() ?: return this
     return copy(vocab = next, revertVocab = vocab)
 }

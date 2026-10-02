@@ -48,6 +48,7 @@ import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 
 /**
@@ -156,6 +157,8 @@ fun NotificationSettingsScreen(
             loaded = true
             prefsLoaded = true
             error = null
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             error = t.message ?: "Could not load preferences"
             loaded = true
@@ -246,6 +249,8 @@ fun NotificationSettingsScreen(
                             marketingOptIn = marketingOptIn.toMap(),
                         )
                         status = "Preferences saved."
+                    } catch (c: CancellationException) {
+                        throw c
                     } catch (t: Throwable) {
                         status = "Save failed: ${t.message ?: t}"
                     } finally {

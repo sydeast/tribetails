@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.data
 
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.java.Java
 import io.ktor.client.request.forms.MultiPartFormDataContent
@@ -15,6 +16,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.content.PartData
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
@@ -97,7 +99,7 @@ internal object JvmMediaUpload {
             }
             val cloudText = cloudResp.bodyAsText()
             if (!cloudResp.status.isSuccess()) {
-                val msg = runCatching {
+                val msg = runCatchingCancellable {
                     codec.parseToJsonElement(cloudText).jsonObject["error"]?.jsonObject
                         ?.get("message")?.jsonPrimitive?.content
                 }.getOrNull() ?: "Cloudinary upload failed (${cloudResp.status.value})"
@@ -139,6 +141,8 @@ internal object JvmMediaUpload {
             val scoped = record.withSandboxScope(platformTestTribeId(forceRefresh = false))
             val id = JvmFirestoreRest.addDoc("media_files", encodeMediaFileForWrite(scoped))
             WriteResult.Ok(scoped.copy(_id = id))
+        } catch (c: CancellationException) {
+            throw c
         } catch (e: Exception) {
             WriteResult.Err(e.message ?: "upload failed")
         }

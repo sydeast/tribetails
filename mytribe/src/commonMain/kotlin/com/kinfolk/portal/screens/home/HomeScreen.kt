@@ -57,6 +57,7 @@ import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.relativeTime
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Home. Wide (>= 880dp, same breakpoint as the shell chrome): two columns
@@ -110,6 +111,8 @@ fun HomeScreen(
         try {
             data = portalApi.getMyBookings(kinfolkId)
             error = null
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             error = t.message ?: "Could not load home"
         }
@@ -120,6 +123,8 @@ fun HomeScreen(
         try {
             roster = portalApi.getMyKin(kinfolkId).kin
             rosterFailed = false
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             rosterFailed = true
         }
@@ -128,6 +133,8 @@ fun HomeScreen(
         try {
             tales = portalApi.getMyKinTales(kinfolkId, limit = talesLimit).tales
             talesFailed = false
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             talesFailed = true
         }

@@ -2,6 +2,7 @@ package com.kinfolk.portal.firebase
 
 import dev.gitlive.firebase.Firebase
 import dev.gitlive.firebase.functions.functions
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -35,6 +36,8 @@ class GitliveFunctionsClient : FunctionsClient {
             val data = mapToJsonObject(dataMap)
             println("[Fns] call() name=$name OK keys=${data.keys}")
             data
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             println("[Fns] call() name=$name THREW ${t::class.simpleName}: ${t.message}")
             throw t

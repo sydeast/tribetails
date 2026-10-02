@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.data
 
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -121,7 +122,7 @@ class CloudFormSchemaRepository(
     override suspend fun listSchemas(): WriteResult<List<FormSchemaSummary>> {
         return when (val r = invoke("listFormSchemas", "{}")) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok  -> runCatching {
+            is WriteResult.Ok  -> runCatchingCancellable {
                 val obj = json.parseToJsonElement(r.value).jsonObject
                 val arr = obj["schemas"] as? JsonArray ?: JsonArray(emptyList())
                 WriteResult.Ok(arr.map { decodeSummary(it.jsonObject) })
@@ -134,7 +135,7 @@ class CloudFormSchemaRepository(
         val payload = buildJsonObject { put("schemaId", JsonPrimitive(id)) }
         return when (val r = invoke("getFormSchema", json.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok  -> runCatching {
+            is WriteResult.Ok  -> runCatchingCancellable {
                 val obj = json.parseToJsonElement(r.value).jsonObject
                 val schemaObj = (obj["schema"] as? JsonObject) ?: obj
                 WriteResult.Ok(decodeSchema(schemaObj))
@@ -148,7 +149,7 @@ class CloudFormSchemaRepository(
         }
         return when (val r = invoke("saveFormSchema", json.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok  -> runCatching {
+            is WriteResult.Ok  -> runCatchingCancellable {
                 val obj = json.parseToJsonElement(r.value).jsonObject
                 val id = obj["id"]?.jsonPrimitive?.contentOrNull.orEmpty()
                 val version = obj["version"]?.jsonPrimitive?.intOrNull ?: schema.version

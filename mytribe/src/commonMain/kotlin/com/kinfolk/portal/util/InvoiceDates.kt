@@ -1,5 +1,6 @@
 package com.kinfolk.portal.util
 
+import com.kinfolk.portal.error.runCatchingCancellable
 import kotlinx.datetime.LocalDate
 
 /**
@@ -35,7 +36,7 @@ fun invoiceDayLabel(raw: String?): String {
     // The date half of an ISO-8601 value, which is all a day label needs. A
     // bare `YYYY-MM-DD` is the same string.
     val day = text.take(10)
-    val date = runCatching { LocalDate.parse(day) }.getOrNull() ?: return text
+    val date = runCatchingCancellable { LocalDate.parse(day) }.getOrNull() ?: return text
     return "${MONTH_ABBREV[date.month.ordinal]} ${date.day.toString().padStart(2, '0')}, ${date.year}"
 }
 

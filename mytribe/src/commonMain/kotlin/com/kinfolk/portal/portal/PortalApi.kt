@@ -1,6 +1,7 @@
 package com.kinfolk.portal.portal
 
 import com.kinfolk.portal.firebase.FunctionsClient
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -163,6 +164,8 @@ class PortalApi(private val fns: FunctionsClient) {
                 try {
                     val home = getMyHome(id)
                     TribeSummary(id = id, displayName = home.displayName)
+                } catch (c: CancellationException) {
+                    throw c
                 } catch (_: Throwable) {
                     TribeSummary(id = id, displayName = "Tribe $id")
                 }

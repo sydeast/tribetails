@@ -8,6 +8,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import com.kinfolk.portal.portal.ConversationMessage
 import com.kinfolk.portal.portal.PortalApi
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -55,6 +56,8 @@ class MessageAuntieController internal constructor(
         try {
             messages = portalApi.getMyConversation(kinfolkId).messages
             loadError = null
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             loadError = t.message ?: "Could not load your messages"
         }
@@ -76,6 +79,8 @@ class MessageAuntieController internal constructor(
                 portalApi.sendKinfolkMessage(body = trimmed, kinfolkId = kinfolkId)
                 onSent()
                 reload()
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 sendError = t.message ?: "Your message didn't send."
             } finally {
@@ -119,6 +124,8 @@ class MessageAuntieController internal constructor(
         scope.launch {
             try {
                 onResult(call())
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 assistError = "The writing helper isn't available right now. Please try again in a moment."
             } finally {

@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.settings
 
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import java.time.ZoneId
 
 /**
@@ -12,7 +13,7 @@ import java.time.ZoneId
  * the picker from offering a zone the phone line cannot answer in.
  */
 internal actual fun platformTimeZoneIds(): List<String> =
-    runCatching { ZoneId.getAvailableZoneIds().toList() }.getOrDefault(emptyList())
+    runCatchingCancellable { ZoneId.getAvailableZoneIds().toList() }.getOrDefault(emptyList())
 
 internal actual fun platformTimeZoneUsable(zone: String): Boolean =
-    zone.isNotBlank() && runCatching { ZoneId.of(zone.trim()) }.isSuccess
+    zone.isNotBlank() && runCatchingCancellable { ZoneId.of(zone.trim()) }.isSuccess

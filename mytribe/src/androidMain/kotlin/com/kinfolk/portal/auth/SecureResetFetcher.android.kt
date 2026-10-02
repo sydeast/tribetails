@@ -1,5 +1,6 @@
 package com.kinfolk.portal.auth
 
+import com.kinfolk.portal.error.runCatchingCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -47,7 +48,7 @@ private class AndroidSecureResetFetcher(private val base: String) : SecureResetF
             } catch (e: IOException) {
                 throw SecureResetException(UNREACHABLE)
             }
-            val responseText = runCatching {
+            val responseText = runCatchingCancellable {
                 (if (statusCode in 200..299) conn.inputStream else conn.errorStream)
                     ?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
             }.getOrDefault("")

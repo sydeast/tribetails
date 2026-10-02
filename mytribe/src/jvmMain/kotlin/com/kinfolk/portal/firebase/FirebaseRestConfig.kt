@@ -1,6 +1,7 @@
 package com.kinfolk.portal.firebase
 
 import java.net.URI
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Emulator-aware endpoint config for every Firebase REST client on the JVM
@@ -47,6 +48,8 @@ internal open class RestEndpoints(
         val rejected = HostCheck(null, true)
         val uri = try {
             URI("http://$raw")
+        } catch (c: CancellationException) {
+            throw c
         } catch (_: Exception) {
             null
         } ?: return warnRejected(varName, raw).let { rejected }

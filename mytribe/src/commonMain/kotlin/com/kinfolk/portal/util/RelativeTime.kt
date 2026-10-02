@@ -1,5 +1,6 @@
 package com.kinfolk.portal.util
 
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlinx.datetime.LocalDateTime
@@ -46,6 +47,8 @@ fun clockTime(iso: String?): String? {
     if (iso.isNullOrBlank()) return null
     val instant = try {
         Instant.parse(iso)
+    } catch (c: CancellationException) {
+        throw c
     } catch (_: Exception) {
         return null
     }

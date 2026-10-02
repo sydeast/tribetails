@@ -61,6 +61,8 @@ class RevocationAwareFunctionsClient(
             // The caller's scope went away. Not a statement about the session,
             // and swallowing it here would break every timeout above us.
             throw c
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             val reason = sessionEndedReason(t)
             if (reason != null) {
@@ -74,6 +76,8 @@ class RevocationAwareFunctionsClient(
                         SessionEndedNotice.record(reason)
                         try {
                             endSession()
+                        } catch (c: CancellationException) {
+                            throw c
                         } catch (c: CancellationException) {
                             throw c
                         } catch (inner: Throwable) {

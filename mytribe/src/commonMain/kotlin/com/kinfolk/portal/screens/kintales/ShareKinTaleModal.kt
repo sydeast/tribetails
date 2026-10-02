@@ -56,6 +56,7 @@ import com.kinfolk.portal.theme.KinfolkGradients
 import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.KinfolkTheme
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 
 /**
@@ -133,6 +134,8 @@ fun ShareKinTaleModal(
                                     )
                                     created = res
                                     onShared(res)
+                                } catch (c: CancellationException) {
+                                    throw c
                                 } catch (t: Throwable) {
                                     error = t.message ?: "Could not create share link."
                                 } finally {
@@ -168,6 +171,8 @@ fun ShareKinTaleModal(
                                     portalApi.revokeShareLink(created!!.shareId)
                                     revoked = true
                                     confirmingRevoke = false
+                                } catch (c: CancellationException) {
+                                    throw c
                                 } catch (t: Throwable) {
                                     revokeError = t.message ?: "Could not revoke the link."
                                 } finally {

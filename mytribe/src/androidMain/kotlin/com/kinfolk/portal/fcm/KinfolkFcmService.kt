@@ -14,6 +14,7 @@ import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import com.kinfolk.portal.MainActivity
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * MyTribe (kinfolk) Android FCM service.
@@ -77,6 +78,8 @@ class KinfolkFcmService : FirebaseMessagingService() {
             )
             FirebaseFunctions.getInstance().getHttpsCallable("registerFcmToken").call(data)
                 .addOnFailureListener { Log.w(TAG, "registerFcmToken failed", it) }
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             Log.w(TAG, "registerFcmToken threw", t)
         }

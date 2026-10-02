@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.data
 
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -54,7 +55,7 @@ class TemplateService {
         return when (r) {
             is WriteResult.Err -> WriteResult.Err(r.message)
             is WriteResult.Ok -> {
-                runCatching {
+                runCatchingCancellable {
                     val obj = json.parseToJsonElement(r.value).jsonObject
                     val arr = obj["templates"] as? JsonArray ?: JsonArray(emptyList())
                     val list = arr.map { decodeTemplate(it.jsonObject) }
@@ -74,7 +75,7 @@ class TemplateService {
         return when (r) {
             is WriteResult.Err -> WriteResult.Err(r.message)
             is WriteResult.Ok -> {
-                runCatching {
+                runCatchingCancellable {
                     val obj = json.parseToJsonElement(r.value).jsonObject
                     val arr = obj["categories"] as? JsonArray ?: JsonArray(emptyList())
                     WriteResult.Ok(arr.mapNotNull { it.jsonPrimitive.contentOrNull })
@@ -88,7 +89,7 @@ class TemplateService {
         return when (r) {
             is WriteResult.Err -> WriteResult.Err(r.message)
             is WriteResult.Ok -> {
-                runCatching {
+                runCatchingCancellable {
                     val obj = json.parseToJsonElement(r.value).jsonObject
                     val arr = obj["bindings"] as? JsonArray ?: JsonArray(emptyList())
                     val list = arr.map { decodeBinding(it.jsonObject) }
@@ -112,7 +113,7 @@ class TemplateService {
         return when (r) {
             is WriteResult.Err -> WriteResult.Err(r.message)
             is WriteResult.Ok -> {
-                runCatching {
+                runCatchingCancellable {
                     val obj = json.parseToJsonElement(r.value).jsonObject
                     val arr = obj["keys"] as? JsonArray ?: JsonArray(emptyList())
                     WriteResult.Ok(arr.mapNotNull { it.jsonPrimitive.contentOrNull })
@@ -136,7 +137,7 @@ class TemplateService {
         return when (r) {
             is WriteResult.Err -> WriteResult.Err(r.message)
             is WriteResult.Ok -> {
-                runCatching {
+                runCatchingCancellable {
                     val obj = json.parseToJsonElement(r.value).jsonObject
                     WriteResult.Ok(obj["templateId"]?.jsonPrimitive?.contentOrNull.orEmpty())
                 }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
@@ -179,7 +180,7 @@ class TemplateService {
         return when (r) {
             is WriteResult.Err -> WriteResult.Err(r.message)
             is WriteResult.Ok -> {
-                runCatching {
+                runCatchingCancellable {
                     val obj = json.parseToJsonElement(r.value).jsonObject
                     WriteResult.Ok(obj["removed"]?.jsonPrimitive?.booleanOrNull ?: false)
                 }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }

@@ -1,6 +1,7 @@
 package com.kinfolk.portal.push
 
 import com.kinfolk.portal.portal.PortalApi
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Cross-platform FCM token registration lifecycle.
@@ -39,6 +40,8 @@ class PushRegistrationCoordinator(
     suspend fun onSignedIn() {
         val token = try {
             tokenProvider()
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             log("obtainPushToken threw: ${t.message}")
             null
@@ -57,6 +60,8 @@ class PushRegistrationCoordinator(
         registeredToken = null
         try {
             portalApi.unregisterFcmToken(token)
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             log("unregisterFcmToken failed: ${t.message}")
         }
@@ -67,6 +72,8 @@ class PushRegistrationCoordinator(
         try {
             portalApi.registerFcmToken(token, platform, appVersion)
             registeredToken = token
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             log("registerFcmToken failed: ${t.message}")
         }

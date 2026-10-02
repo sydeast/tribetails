@@ -65,6 +65,7 @@ import com.tribetails.auntieos.web.data.KinTaleTemplate
 import com.tribetails.auntieos.web.data.MediaFile
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.responseKey
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import com.tribetails.auntieos.web.screens.sessions.RouteMap
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
@@ -98,6 +99,7 @@ import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
 import com.tribetails.auntieos.web.util.nowIso
 import com.tribetails.auntieos.web.util.openUrl
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 
@@ -365,6 +367,8 @@ private fun KinTaleComposerBody(
                     showToast("Auntie drafted a tale. Edit away.", ToastKind.Success)
                     persistDraft(updated)
                 }
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 showToast("Generate failed: ${t.message ?: "unknown error"}", ToastKind.Error)
             } finally {
@@ -1220,8 +1224,8 @@ private fun sessionWindow(s: KinCareSession): String {
 }
 
 private fun shortIso(iso: String): String =
-    runCatching {
-        if (iso.length < 16) return@runCatching iso
+    runCatchingCancellable {
+        if (iso.length < 16) return@runCatchingCancellable iso
         val month = MONTHS[iso.substring(5, 7).toInt() - 1]
         val day   = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
         val time  = iso.substring(11, 16)
@@ -1229,7 +1233,7 @@ private fun shortIso(iso: String): String =
     }.getOrDefault(iso)
 
 private fun shortIsoTimeOnly(iso: String): String =
-    runCatching { if (iso.length >= 16) iso.substring(11, 16) else iso }
+    runCatchingCancellable { if (iso.length >= 16) iso.substring(11, 16) else iso }
         .getOrDefault(iso)
 
 private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")

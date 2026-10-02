@@ -1,10 +1,11 @@
 package com.tribetails.auntieos.web.platform
 
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import java.awt.Desktop
 import java.net.URI
 
 actual fun launchUri(uri: String) {
-    runCatching {
+    runCatchingCancellable {
         if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
             Desktop.getDesktop().browse(URI(uri))
         } else {

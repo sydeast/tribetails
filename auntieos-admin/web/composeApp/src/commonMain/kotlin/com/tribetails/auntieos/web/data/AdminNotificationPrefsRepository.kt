@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.data
 
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -128,7 +129,7 @@ class CloudAdminNotificationPrefsRepository(
     override suspend fun get(): WriteResult<AdminNotificationPrefs> =
         when (val r = invoke("getMyAdminNotificationPrefs", "{}")) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(decodePrefsEnvelope(json.parseToJsonElement(r.value).jsonObject))
             }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }

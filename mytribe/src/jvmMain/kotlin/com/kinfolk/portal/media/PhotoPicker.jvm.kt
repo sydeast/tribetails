@@ -2,6 +2,7 @@ package com.kinfolk.portal.media
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import com.kinfolk.portal.error.runCatchingCancellable
 import java.awt.FileDialog
 import java.awt.Frame
 import java.io.File
@@ -26,13 +27,13 @@ actual fun rememberPhotoPicker(onPicked: (PickedImage?) -> Unit): () -> Unit {
     return remember(onPicked) {
         {
             thread(name = "kin-photo-picker", isDaemon = true) {
-                val picked = runCatching {
+                val picked = runCatchingCancellable {
                     val dialog = FileDialog(null as Frame?, "Choose a photo", FileDialog.LOAD)
                     dialog.setFilenameFilter { _, fileName ->
                         fileName.substringAfterLast('.', "").lowercase() in IMAGE_EXTENSIONS
                     }
                     dialog.isVisible = true // blocks until the user picks or cancels
-                    val fileName = dialog.file ?: return@runCatching null // cancelled
+                    val fileName = dialog.file ?: return@runCatchingCancellable null // cancelled
                     val file = File(dialog.directory ?: ".", fileName)
                     val mime = IMAGE_EXTENSIONS[file.extension.lowercase()]
                         ?: "application/octet-stream" // KinPhotoPolicy rejects with a clear message
