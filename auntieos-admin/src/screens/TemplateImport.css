@@ -108,6 +108,14 @@
   color: var(--color-text-primary);
 }
 
+.template-import__tick-all {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  color: var(--color-text-dim);
+}
+
 .template-import__actions {
   display: flex;
   gap: var(--space-3);

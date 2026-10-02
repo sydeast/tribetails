@@ -202,21 +202,27 @@ export function planImport(input: PlanInput): ImportPlan {
       }
 
       differsFromRepo = true;
-      const note =
-        `The stored ${channel} copy differs from the repo copy. ` +
-        `Importing replaces it with the repo wording.`;
+      const differs = `The stored ${channel} copy differs from the repo copy.`;
       if (overwrite.has(entry.key)) {
-        channels.push({ channel, collection, outcome: 'overwrite', content, notes: [note] });
+        channels.push({
+          channel,
+          collection,
+          outcome: 'overwrite',
+          content,
+          notes: [`${differs} Importing replaces your stored copy with the repo wording.`],
+        });
       } else {
         channels.push({
           channel,
           collection,
           outcome: 'skipped',
-          notes: [`${note} Tick this template to overwrite it.`],
+          notes: [
+            `${differs} Your stored copy stays as it is. ` +
+              `Tick this template to replace it with the repo wording.`,
+          ],
         });
       }
     }
-
     const blocked = channels.some((c) => c.outcome === 'blocked');
     // One bad channel holds the whole template back. A template whose email
     // imported and whose sms did not is a half-loaded notification, which is
