@@ -109,7 +109,7 @@
   font-size: var(--type-mono-size);
 }
 
-/* The per-row "Book at a start time" switch (#1092). Its own full-width line
+/* The per-row "You set the start time" switch (#1092, #1098). Its own full-width line
    under the fields at every width, so it never pushes the grid columns. */
 .kinCareRates__startTime {
   grid-column: 1 / -1;

@@ -2,6 +2,7 @@ package com.tribetails.auntieos.data.repository
 
 import com.google.android.gms.tasks.Tasks
 import com.google.firebase.functions.FirebaseFunctions
+import com.google.firebase.functions.FirebaseFunctionsException
 import com.google.firebase.functions.HttpsCallableReference
 import com.google.firebase.functions.HttpsCallableResult
 import com.tribetails.auntieos.data.api.N8nApi
@@ -162,5 +163,68 @@ class AuntieRepositoryManageBookingSeriesTest {
         val result = repoWith(functions).manageBookingSeries("APPROVE", "kf1", "batch1")
 
         assertTrue(result.isFailure)
+    }
+
+    // ── #1098: approving a request with an Overnight in it sets its start time ──
+
+    @Test
+    fun `carries startTimes and the two overrides on the APPROVE payload`() = runBlocking {
+        val functions = mockk<FirebaseFunctions>()
+        val captured = stub(
+            functions,
+            mapOf("ok" to true, "action" to "APPROVE", "batchId" to "batch1", "affectedVisits" to 1, "sessionsCreated" to 1, "failedVisits" to 0),
+        )
+
+        repoWith(functions).manageBookingSeries(
+            "APPROVE", "kf1", "batch1",
+            startTimes = mapOf("night-1" to 1_791_592_200_000L),
+            overrideBusyConflict = true,
+            overrideVisitConflict = true,
+        )
+
+        assertEquals(
+            mapOf(
+                "action" to "APPROVE", "kinfolkId" to "kf1", "batchId" to "batch1",
+                "startTimes" to mapOf("night-1" to 1_791_592_200_000L),
+                "overrideBusyConflict" to true,
+                "overrideVisitConflict" to true,
+            ),
+            captured.payload.captured,
+        )
+    }
+
+    @Test
+    fun `omits an override that was not granted rather than sending false`() = runBlocking {
+        val functions = mockk<FirebaseFunctions>()
+        val captured = stub(
+            functions,
+            mapOf("ok" to true, "action" to "APPROVE", "batchId" to "batch1", "affectedVisits" to 1, "sessionsCreated" to 1, "failedVisits" to 0),
+        )
+
+        repoWith(functions).manageBookingSeries("APPROVE", "kf1", "batch1", startTimes = mapOf("night-1" to 1L))
+
+        assertEquals(
+            mapOf("action" to "APPROVE", "kinfolkId" to "kf1", "batchId" to "batch1", "startTimes" to mapOf("night-1" to 1L)),
+            captured.payload.captured,
+        )
+    }
+
+    @Test
+    fun `a coded refusal surfaces as BookingRequestRefusedException with the server's code and sentence`() = runBlocking {
+        val functions = mockk<FirebaseFunctions>()
+        val ref = mockk<HttpsCallableReference>()
+        val err = mockk<FirebaseFunctionsException>()
+        every { err.details } returns mapOf("code" to BOOKING_BUSY_CONFLICT_CODE)
+        every { err.message } returns "That time clashes with a Google Calendar busy block."
+        every { ref.call(any<Map<String, Any?>>()) } throws err
+        every { functions.getHttpsCallable("manageBookingSeries") } returns ref
+
+        val result = repoWith(functions).manageBookingSeries(
+            "APPROVE", "kf1", "batch1", startTimes = mapOf("night-1" to 1L),
+        )
+
+        val refused = result.exceptionOrNull() as BookingRequestRefusedException
+        assertEquals(BOOKING_BUSY_CONFLICT_CODE, refused.code)
+        assertEquals("That time clashes with a Google Calendar busy block.", refused.message)
     }
 }

@@ -73,12 +73,15 @@ interface RateRow {
   type: string;
   duration: string;
   rate: string;
-  /** Kinfolk book this type at a start time instead of in a time block (#1092). */
+  /**
+   * Kinfolk ask for a night and the operator sets the start time on approval,
+   * instead of booking a time block (#1092, #1098).
+   */
   startTime: boolean;
 }
 /** The toggle's tooltip. A tooltip, not a subtitle: the 2026-09-11 ruling. */
 const START_TIME_TIP =
-  'Kinfolk pick a start time for this KinCare instead of a time block. Use it for overnights.';
+  'Kinfolk ask for the night. You set the start time when you approve the request. Use it for overnights.';
 
 /** How the table is ordered on screen. Never how it is stored. */
 type SortKey = 'stored' | 'name' | 'rate' | 'duration';
@@ -272,7 +275,7 @@ export function KinCareRatesEditor({ data, onSave }: KinCareRatesEditorProps) {
     // by the type's length, and with none it would book a visit with no end.
     const missing = startTimeRowMissingLength(rows);
     if (missing !== null) {
-      setError({ title: 'Not saved', message: `"${missing}" books at a start time, so it needs a length.` });
+      setError({ title: 'Not saved', message: `"${missing}" needs a length so its end time can be worked out.` });
       return;
     }
     setBusy(true);
@@ -396,13 +399,17 @@ export function KinCareRatesEditor({ data, onSave }: KinCareRatesEditorProps) {
                         never a line of copy. */}
                     <span className="kinCareRates__startTime">
                       <Toggle
-                        label={row.type.trim() === '' ? 'Book at a start time' : `Book ${row.type.trim()} at a start time`}
+                        label={
+                          row.type.trim() === ''
+                            ? 'You set the start time'
+                            : `You set the start time for ${row.type.trim()}`
+                        }
                         checked={row.startTime}
                         disabled={busy}
                         onChange={(next) => updateRow(index, { startTime: next })}
                       />
                       <span className="kinCareRates__startTimeLabel" aria-hidden="true">
-                        Book at a start time
+                        You set the start time
                       </span>
                       <InfoTip text={START_TIME_TIP} />
                     </span>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   listRescheduleRequests,
   resolveBookingRescheduleRequest,
@@ -13,9 +13,14 @@ import {
   listPendingBookingRequests,
   approveBookingRequest,
   declineBookingRequest,
+  type ApproveOptions,
   type PendingBookingRequestDto,
 } from '../api/bookingRequests';
+import { getBusinessSettings } from '../api/settings';
+import type { ListPendingBookingRequestsResultRequestVisit } from '../contracts/bookingContracts.generated';
 import { bookingWhenLabel } from '../lib/bookingDetailFormat';
+import { BOOKING_BUSY_CONFLICT_CODE, callableConflictCode } from '../lib/bookingWizard';
+import { nightLabel, startTimeOnNight } from '../lib/businessZoneTime';
 import { useOneShot } from '../lib/useOneShot';
 import { useToast } from './Toast';
 import { Dialog } from './Dialog';
@@ -282,14 +287,81 @@ export function VisitRequestsSection() {
  * dates, matching the wording the household's own confirmation uses (#532), so
  * the operator and the household are looking at the same phrase.
  */
-export function rowWhen(row: VisitRequest): string {
+export function rowWhen(row: VisitRequest, nightsAwaitTime = true): string {
   if (row.kind === 'newBooking') {
     const { visitCount, firstStartTimeMs, lastStartTimeMs } = row.request;
-    if (visitCount <= 1) return whenLabel(firstStartTimeMs);
-    return `${String(visitCount)} visits, ${whenLabel(firstStartTimeMs)} to ${whenLabel(lastStartTimeMs)}`;
+    // #1098: a night awaiting its start time has no instant, and the first and
+    // last times leave it out, so it is named by its date on its own.
+    const waiting = pendingVisits(row.request);
+    const nights = nightsLabel(waiting, nightsAwaitTime);
+    const timedCount = visitCount - waiting.length;
+    if (nights !== null && timedCount <= 0) return nights;
+    const timed =
+      timedCount <= 1
+        ? whenLabel(firstStartTimeMs)
+        : `${String(timedCount)} visits, ${whenLabel(firstStartTimeMs)} to ${whenLabel(lastStartTimeMs)}`;
+    return nights === null ? timed : `${timed}. ${nights}`;
   }
   if (row.kind === 'cancel') return whenLabel(row.request.startTimeMs);
   return `${whenLabel(row.request.currentStartTimeMs)} → ${whenLabel(row.request.proposedStartTimeMs)}`;
+}
+
+/**
+ * #1098: the visits of a request still waiting for the operator to set their
+ * start time. `visits` is absent on a payload from a server older than #1098,
+ * so it is read defensively.
+ */
+export function pendingVisits(
+  request: PendingBookingRequestDto,
+): ListPendingBookingRequestsResultRequestVisit[] {
+  return (request.visits ?? []).filter((v) => v.startTimePending);
+}
+
+/**
+ * "Night of Fri, Oct 9, start time not set", or null when no night is waiting.
+ * The dates are joined with "and" because each one already has a comma in it.
+ * The dialog where the time is being set drops the "not set" part.
+ */
+function nightsLabel(
+  visits: ListPendingBookingRequestsResultRequestVisit[],
+  awaitingTime: boolean,
+): string | null {
+  if (visits.length === 0) return null;
+  const dates = visits.map((v) => (v.requestedDate ? nightLabel(v.requestedDate) : 'a night'));
+  if (visits.length === 1) {
+    return awaitingTime ? `Night of ${dates[0]!}, start time not set` : `The night of ${dates[0]!}`;
+  }
+  const list = `${dates.slice(0, -1).join(', ')} and ${dates[dates.length - 1]!}`;
+  return awaitingTime ? `Nights of ${list}, start times not set` : `The nights of ${list}`;
+}
+
+/** What the time field calls one night: its KinCare and its date. */
+function nightFieldName(
+  visit: ListPendingBookingRequestsResultRequestVisit,
+  request: PendingBookingRequestDto,
+): string {
+  const kinCare = visit.serviceType ?? request.serviceType ?? 'KinCare';
+  return visit.requestedDate ? `${kinCare} on ${nightLabel(visit.requestedDate)}` : kinCare;
+}
+
+/**
+ * The `details.code` of the visit-overlap refusal. Mirrors
+ * `VISIT_OVERLAP_CONFLICT_CODE` in `api/scheduleWrite.ts`, kept here so this
+ * component does not pull another callables module in for one string.
+ */
+const VISIT_OVERLAP_CODE = 'visit_overlap_conflict';
+
+/**
+ * Which override this refusal can be retried with, or null. A busy block and a
+ * visit already on the books are overridable (the same two `rescheduleBooking`
+ * offers); a closed day, a missing time and a time off the night are not. A
+ * kind already overridden is never offered twice.
+ */
+function overridableApproveRefusal(err: unknown, granted: ApproveOptions): 'busy' | 'visit' | null {
+  const code = callableConflictCode(err);
+  if (code === BOOKING_BUSY_CONFLICT_CODE && granted.overrideBusyConflict !== true) return 'busy';
+  if (code === VISIT_OVERLAP_CODE && granted.overrideVisitConflict !== true) return 'visit';
+  return null;
 }
 
 function reasonOfRow(row: VisitRequest): string | null {
@@ -335,12 +407,47 @@ function DecisionDialog({ row, decision, onClose, onResolved }: DecisionDialogPr
   const isNewRequest = row.kind === 'newBooking';
   const { kinfolkId, batchId } = row.request;
 
-  async function submit() {
+  // #1098: the nights in this request waiting for the operator's start time.
+  // Only an approval sets them; a decline books nothing and needs none.
+  const nights = row.kind === 'newBooking' && !declining ? pendingVisits(row.request) : [];
+  const [times, setTimes] = useState<Record<string, string>>({});
+  const zone = useBusinessZone(nights.length > 0);
+  // The overrides already granted with "Approve anyway", carried into every
+  // retry so a busy override is not lost when the next attempt meets a visit
+  // clash.
+  const [granted, setGranted] = useState<ApproveOptions>({});
+  const [retryKind, setRetryKind] = useState<'busy' | 'visit' | null>(null);
+  const unset = nights.filter((v) => (times[v.visitId] ?? '') === '').length;
+  const waitingOnZone = nights.length > 0 && zone.status === 'loading';
+
+  function startTimesFor(): Record<string, number> | null {
+    const out: Record<string, number> = {};
+    const businessZone = zone.status === 'ready' ? zone.zone : '';
+    for (const v of nights) {
+      const ms = startTimeOnNight(v.requestedDate ?? '', times[v.visitId] ?? '', businessZone);
+      if (ms === null) return null;
+      out[v.visitId] = ms;
+    }
+    return out;
+  }
+
+  async function submit(overrides: ApproveOptions = granted) {
     setBusy(true);
     setError(null);
+    setRetryKind(null);
+    let options: ApproveOptions | undefined;
+    if (nights.length > 0) {
+      const startTimes = startTimesFor();
+      if (startTimes === null) {
+        setBusy(false);
+        setError('One of those start times could not be read. Set it again.');
+        return;
+      }
+      options = { startTimes, ...overrides };
+    }
     try {
       const message = isNewRequest
-        ? await submitNewRequest(kinfolkId, batchId, decision, note)
+        ? await submitNewRequest(kinfolkId, batchId, decision, note, options)
         : cancelling
           ? await submitCancel(kinfolkId, batchId, row.request.visitId, decision, note)
           : await submitReschedule(kinfolkId, batchId, row.request.visitId, decision, note);
@@ -349,7 +456,26 @@ function DecisionDialog({ row, decision, onClose, onResolved }: DecisionDialogPr
     } catch (err) {
       setBusy(false);
       setError(err instanceof Error ? err.message : 'That did not go through. Try again.');
+      if (nights.length > 0) {
+        setGranted(overrides);
+        setRetryKind(overridableApproveRefusal(err, overrides));
+      }
     }
+  }
+
+  function approveAnyway() {
+    if (retryKind === null) return;
+    const next: ApproveOptions =
+      retryKind === 'busy'
+        ? { ...granted, overrideBusyConflict: true }
+        : { ...granted, overrideVisitConflict: true };
+    void submit(next);
+  }
+
+  function confirmText(): string {
+    if (busy) return 'Working…';
+    if (unset > 0) return nights.length === 1 ? 'Set the start time first' : 'Set the start times first';
+    return confirmLabel(row.kind, decision);
   }
 
   return (
@@ -360,14 +486,51 @@ function DecisionDialog({ row, decision, onClose, onResolved }: DecisionDialogPr
         <>
           <GhostButton label="Cancel" onClick={onClose} disabled={busy} />
           <PrimaryButton
-            label={busy ? 'Working…' : confirmLabel(row.kind, decision)}
+            label={confirmText()}
             onClick={() => void submit()}
-            disabled={busy}
+            disabled={busy || unset > 0 || waitingOnZone}
           />
         </>
       }
     >
       <p className="visit-requests__dialog-line">{dialogLine(row, decision)}</p>
+      {nights.length > 0 && row.kind === 'newBooking' && (
+        <ul className="visit-requests__nights">
+          {nights.map((v) => {
+            const name = nightFieldName(v, row.request);
+            const id = `visit-request-start-${v.visitId}`;
+            return (
+              <li key={v.visitId} className="visit-requests__night">
+                <span className="visit-requests__night-name">{name}</span>
+                <label className="visit-requests__dialog-label" htmlFor={id}>
+                  Start time
+                </label>
+                <input
+                  id={id}
+                  type="time"
+                  className="visit-requests__night-time"
+                  aria-label={`Start time for ${name}`}
+                  value={times[v.visitId] ?? ''}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setTimes((t) => ({ ...t, [v.visitId]: value }));
+                    // A new time is a new question for the server: an override
+                    // granted for the old one must not ride along with it.
+                    setRetryKind(null);
+                    setGranted({});
+                  }}
+                  disabled={busy}
+                />
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {nights.length > 0 && zone.status === 'error' && (
+        <Banner tone="warning" title="Using this device's time zone">
+          {`Your business time zone did not load (${zone.message}), so these times are read in this device's zone.`}
+        </Banner>
+      )}
       <label className="visit-requests__dialog-label" htmlFor="visit-request-note">
         {declining ? 'Anything to add for the household (optional)' : 'Note for the household (optional)'}
       </label>
@@ -379,12 +542,50 @@ function DecisionDialog({ row, decision, onClose, onResolved }: DecisionDialogPr
         disabled={busy}
       />
       {error !== null && (
-        <Banner tone="error" title="Not done">
+        <Banner
+          tone="error"
+          title="Not done"
+          trailing={
+            retryKind !== null && (
+              <GhostButton label="Approve anyway" onClick={approveAnyway} disabled={busy} />
+            )
+          }
+        >
           {error}
         </Banner>
       )}
     </Dialog>
   );
+}
+
+type ZoneLoad =
+  | { status: 'idle' | 'loading' }
+  | { status: 'ready'; zone: string }
+  | { status: 'error'; message: string };
+
+/**
+ * #1098: `business_settings.timeZone`, read once and only when the dialog has
+ * a night to set, so an ordinary approval makes no extra read. The server
+ * checks the chosen time against the night in this zone, so it is the zone the
+ * wall clock is read in.
+ */
+function useBusinessZone(needed: boolean): ZoneLoad {
+  const [load, setLoad] = useState<ZoneLoad>({ status: needed ? 'loading' : 'idle' });
+  useEffect(() => {
+    if (!needed) return undefined;
+    let live = true;
+    getBusinessSettings()
+      .then((s) => {
+        if (live) setLoad({ status: 'ready', zone: (s.timeZone ?? '').trim() });
+      })
+      .catch((err: unknown) => {
+        if (live) setLoad({ status: 'error', message: err instanceof Error ? err.message : 'read failed' });
+      });
+    return () => {
+      live = false;
+    };
+  }, [needed]);
+  return load;
 }
 
 /**
@@ -411,6 +612,7 @@ async function submitNewRequest(
   batchId: string,
   decision: 'accept' | 'decline',
   note: string,
+  options?: ApproveOptions,
 ): Promise<string> {
   if (decision === 'decline') {
     // READ what the server did rather than asserting it, the way the approve
@@ -426,7 +628,12 @@ async function submitNewRequest(
       ? 'Declined. Nothing was booked and the household has your answer.'
       : 'Declined. Nothing was booked, but the message to the household did not go out, so tell them another way.';
   }
-  const res = await approveBookingRequest(kinfolkId, batchId);
+  // `options` only when a night needed its start time (#1098), so every other
+  // request is approved with exactly the call it always made.
+  const res =
+    options === undefined
+      ? await approveBookingRequest(kinfolkId, batchId)
+      : await approveBookingRequest(kinfolkId, batchId, options);
   if (res.failedVisits > 0) {
     return `Approved ${String(res.affectedVisits)} of ${String(res.affectedVisits + res.failedVisits)} visits. The rest did not go through and the household has not been told, so try again.`;
   }
@@ -488,7 +695,8 @@ function confirmLabel(kind: VisitRequest['kind'], decision: 'accept' | 'decline'
 
 function dialogLine(row: VisitRequest, decision: 'accept' | 'decline'): string {
   if (row.kind === 'newBooking') {
-    const when = rowWhen(row);
+    // The dialog is where a night's time is set, so it names the night bare.
+    const when = rowWhen(row, false);
     return decision === 'decline'
       ? `${when} will not be booked. The household will be told.`
       : `${when} will go on the schedule and on the household's portal.`;

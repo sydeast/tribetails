@@ -6,6 +6,12 @@ import com.tribetails.auntieos.data.contracts.ResolveBookingCancellationRequestR
 import com.tribetails.auntieos.data.contracts.ResolveBookingRescheduleRequestResult
 import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.BOOKING_BUSY_CONFLICT_CODE
+import com.tribetails.auntieos.data.repository.BookingRequestRefusedException
+import com.tribetails.auntieos.data.repository.IncomingKinCare
+import com.tribetails.auntieos.data.repository.ManageSeriesResult
+import com.tribetails.auntieos.data.repository.ScheduleOverrideKind
+import com.tribetails.auntieos.data.repository.VISIT_OVERLAP_CONFLICT_CODE
 import com.tribetails.auntieos.data.repository.BookingRepository
 import com.tribetails.auntieos.data.repository.GoogleCalendarConnectionState
 import com.tribetails.auntieos.data.repository.KinCareRepository
@@ -30,6 +36,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import java.time.Instant
+import java.time.LocalTime
 import org.junit.Test
 
 /**
@@ -327,4 +335,143 @@ class EnhancedSchedulingViewModelVisitRequestsTest {
             assertTrue(vm.state.value.visitRequestsError!!.contains("no cancellation request"))
             assertNull(vm.state.value.visitRequestKey)
         }
+
+    // ── #1098: an incoming Overnight waits for the operator's start time ──────
+
+    private val nightOf9th = IncomingKinCare(
+        familyId = "kf1", batchId = "b1", visitId = "night-1", kinfolkId = "kf1",
+        kinfolkName = "Jane Doe", serviceType = "Overnight", serviceId = "Overnight",
+        status = "requested", startTimePending = true, requestedDate = "2026-10-09",
+    )
+
+    /** 7:30 PM on Oct 9 in the business zone (America/Chicago, CDT) is 00:30 UTC on Oct 10. */
+    private val startMs = Instant.parse("2026-10-10T00:30:00Z").toEpochMilli()
+
+    private fun seedOvernight() {
+        every { bookingRepo.incomingKinCareRequestsStream() } returns flowOf(Result.success(listOf(nightOf9th)))
+        coEvery { auntieRepo.getBusinessSettings() } returns
+            Result.success(BusinessSettings().apply { timeZone = "America/Chicago" })
+    }
+
+    @Test
+    fun `an Overnight with no start time is not approved, and the call is never made`() = runTest(testDispatcher) {
+        seedOvernight()
+        coEvery { auntieRepo.manageBookingSeries(any(), any(), any(), any(), any(), any()) } returns
+            Result.success(ManageSeriesResult(affectedVisits = 1))
+        val vm = buildViewModel()
+        val series = vm.state.value.incomingSeries.single()
+
+        assertFalse(seriesReadyToApprove(series, vm.state.value.seriesStartTimes))
+        vm.approveSeries(series)
+
+        coVerify(exactly = 0) { auntieRepo.manageBookingSeries(any(), any(), any(), any(), any(), any()) }
+        assertEquals("Set the start time for each night before approving.", vm.state.value.incomingError)
+    }
+
+    @Test
+    fun `approving sends the start time as an instant in the business zone`() = runTest(testDispatcher) {
+        seedOvernight()
+        coEvery { auntieRepo.manageBookingSeries(any(), any(), any(), any(), any(), any()) } returns
+            Result.success(ManageSeriesResult(affectedVisits = 1, newlyConfirmed = 1, householdNotified = true))
+        val vm = buildViewModel()
+        val series = vm.state.value.incomingSeries.single()
+
+        vm.setSeriesStartTime(series, "night-1", LocalTime.of(19, 30))
+        assertTrue(seriesReadyToApprove(series, vm.state.value.seriesStartTimes))
+        vm.approveSeries(series)
+
+        coVerify(exactly = 1) {
+            auntieRepo.manageBookingSeries("APPROVE", "kf1", "b1", mapOf("night-1" to startMs), false, false)
+        }
+        assertNull(vm.state.value.incomingError)
+        assertTrue(vm.state.value.seriesActionMessage!!.startsWith("Approved"))
+    }
+
+    @Test
+    fun `a busy clash offers the override, and Approve anyway resends with it`() = runTest(testDispatcher) {
+        seedOvernight()
+        coEvery { auntieRepo.manageBookingSeries("APPROVE", "kf1", "b1", any(), false, false) } returns
+            Result.failure(BookingRequestRefusedException(BOOKING_BUSY_CONFLICT_CODE, "Busy block then."))
+        coEvery { auntieRepo.manageBookingSeries("APPROVE", "kf1", "b1", any(), true, false) } returns
+            Result.success(ManageSeriesResult(affectedVisits = 1, newlyConfirmed = 1, householdNotified = true))
+        val vm = buildViewModel()
+        val series = vm.state.value.incomingSeries.single()
+        vm.setSeriesStartTime(series, "night-1", LocalTime.of(19, 30))
+
+        vm.approveSeries(series)
+        assertEquals(ScheduleOverrideKind.BUSY, vm.state.value.incomingOverride)
+        assertTrue(vm.state.value.incomingError!!.contains("Busy block then."))
+
+        vm.retryIncomingWithOverride()
+
+        coVerify(exactly = 1) {
+            auntieRepo.manageBookingSeries("APPROVE", "kf1", "b1", mapOf("night-1" to startMs), true, false)
+        }
+        assertNull(vm.state.value.incomingOverride)
+        assertTrue(vm.state.value.seriesActionMessage!!.startsWith("Approved"))
+    }
+
+    @Test
+    fun `a visit clash after a busy override resends with both`() = runTest(testDispatcher) {
+        seedOvernight()
+        coEvery { auntieRepo.manageBookingSeries("APPROVE", "kf1", "b1", any(), false, false) } returns
+            Result.failure(BookingRequestRefusedException(BOOKING_BUSY_CONFLICT_CODE, "Busy block then."))
+        coEvery { auntieRepo.manageBookingSeries("APPROVE", "kf1", "b1", any(), true, false) } returns
+            Result.failure(BookingRequestRefusedException(VISIT_OVERLAP_CONFLICT_CODE, "Another visit then."))
+        coEvery { auntieRepo.manageBookingSeries("APPROVE", "kf1", "b1", any(), true, true) } returns
+            Result.success(ManageSeriesResult(affectedVisits = 1, newlyConfirmed = 1, householdNotified = true))
+        val vm = buildViewModel()
+        val series = vm.state.value.incomingSeries.single()
+        vm.setSeriesStartTime(series, "night-1", LocalTime.of(19, 30))
+
+        vm.approveSeries(series)
+        vm.retryIncomingWithOverride()
+        assertEquals(ScheduleOverrideKind.VISIT, vm.state.value.incomingOverride)
+        vm.retryIncomingWithOverride()
+
+        coVerify(exactly = 1) {
+            auntieRepo.manageBookingSeries("APPROVE", "kf1", "b1", mapOf("night-1" to startMs), true, true)
+        }
+    }
+
+    @Test
+    fun `a refusal with no override offers none`() = runTest(testDispatcher) {
+        seedOvernight()
+        coEvery { auntieRepo.manageBookingSeries(any(), any(), any(), any(), any(), any()) } returns
+            Result.failure(BookingRequestRefusedException(null, "The start time has to be on Fri, Oct 9."))
+        val vm = buildViewModel()
+        val series = vm.state.value.incomingSeries.single()
+        vm.setSeriesStartTime(series, "night-1", LocalTime.of(19, 30))
+
+        vm.approveSeries(series)
+
+        assertNull(vm.state.value.incomingOverride)
+        assertTrue(vm.state.value.incomingError!!.contains("has to be on Fri, Oct 9"))
+    }
+
+    @Test
+    fun `changing the time drops an override granted for the old one`() = runTest(testDispatcher) {
+        seedOvernight()
+        coEvery { auntieRepo.manageBookingSeries("APPROVE", "kf1", "b1", any(), false, false) } returns
+            Result.failure(BookingRequestRefusedException(BOOKING_BUSY_CONFLICT_CODE, "Busy block then."))
+        coEvery { auntieRepo.manageBookingSeries("APPROVE", "kf1", "b1", any(), true, false) } returns
+            Result.failure(BookingRequestRefusedException(VISIT_OVERLAP_CONFLICT_CODE, "Another visit then."))
+        val vm = buildViewModel()
+        val series = vm.state.value.incomingSeries.single()
+        vm.setSeriesStartTime(series, "night-1", LocalTime.of(19, 30))
+        vm.approveSeries(series)
+        vm.retryIncomingWithOverride()
+
+        vm.setSeriesStartTime(series, "night-1", LocalTime.of(21, 0))
+        assertNull(vm.state.value.incomingOverride)
+        vm.approveSeries(series)
+
+        coVerify(exactly = 1) {
+            auntieRepo.manageBookingSeries(
+                "APPROVE", "kf1", "b1",
+                mapOf("night-1" to Instant.parse("2026-10-10T02:00:00Z").toEpochMilli()),
+                false, false,
+            )
+        }
+    }
 }

@@ -186,7 +186,7 @@ describe('KinCareRatesEditor', () => {
       render(
         <KinCareRatesEditor data={{ serviceRates: { Walk: '10.00' }, serviceDurations: {} }} onSave={vi.fn()} />,
       );
-      // Two panel tips plus one per row for "Book at a start time" (#1092).
+      // Two panel tips plus one per row for "You set the start time" (#1092, #1098).
       const tips = screen.getAllByRole('tooltip', { hidden: true });
       expect(tips).toHaveLength(3);
       expect(tips.every((t) => t.hidden)).toBe(true);
@@ -326,7 +326,7 @@ describe('KinCareRatesEditor', () => {
    * start time instead. The flag lives in the row and folds to
    * `serviceStartTimeBooking`, keyed by the type name, `true` entries only.
    */
-  describe('book at a start time', () => {
+  describe('you set the start time', () => {
     const overnight = {
       serviceRates: { Overnight: '80.00', Walk: '15.00' },
       serviceDurations: { Overnight: '720' },
@@ -337,7 +337,7 @@ describe('KinCareRatesEditor', () => {
     it('switching it on saves the type in serviceStartTimeBooking, and nothing else', async () => {
       const onSave = vi.fn().mockResolvedValue(undefined);
       render(<KinCareRatesEditor data={overnight} onSave={onSave} />);
-      const toggle = screen.getByRole('switch', { name: 'Book Overnight at a start time' });
+      const toggle = screen.getByRole('switch', { name: 'You set the start time for Overnight' });
       expect(toggle).toHaveAttribute('aria-checked', 'false');
       await userEvent.click(toggle);
       expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
@@ -353,7 +353,7 @@ describe('KinCareRatesEditor', () => {
       render(
         <KinCareRatesEditor data={{ ...overnight, serviceStartTimeBooking: { Overnight: true } }} onSave={onSave} />,
       );
-      const toggle = screen.getByRole('switch', { name: 'Book Overnight at a start time' });
+      const toggle = screen.getByRole('switch', { name: 'You set the start time for Overnight' });
       expect(toggle).toHaveAttribute('aria-checked', 'true');
       expect(screen.getByRole('button', SAVE)).toBeDisabled();
       await userEvent.click(toggle);
@@ -402,10 +402,10 @@ describe('KinCareRatesEditor', () => {
       render(
         <KinCareRatesEditor data={{ serviceRates: { Overnight: '80.00' }, serviceDurations: {} }} onSave={onSave} />,
       );
-      await userEvent.click(screen.getByRole('switch', { name: 'Book Overnight at a start time' }));
+      await userEvent.click(screen.getByRole('switch', { name: 'You set the start time for Overnight' }));
       await userEvent.click(screen.getByRole('button', SAVE));
       expect(onSave).not.toHaveBeenCalled();
-      expect(screen.getByText('"Overnight" books at a start time, so it needs a length.')).toBeInTheDocument();
+      expect(screen.getByText('"Overnight" needs a length so its end time can be worked out.')).toBeInTheDocument();
       // Typing a length clears the way.
       await userEvent.type(screen.getByLabelText('Duration (min)'), '720');
       await userEvent.click(screen.getByRole('button', SAVE));
@@ -417,16 +417,19 @@ describe('KinCareRatesEditor', () => {
       render(
         <KinCareRatesEditor data={{ serviceRates: { 'Overnight 12Hrs': '80.00' }, serviceDurations: {} }} onSave={onSave} />,
       );
-      await userEvent.click(screen.getByRole('switch', { name: 'Book Overnight 12Hrs at a start time' }));
+      await userEvent.click(screen.getByRole('switch', { name: 'You set the start time for Overnight 12Hrs' }));
       await userEvent.click(screen.getByRole('button', SAVE));
       expect(savedPatch(onSave).serviceStartTimeBooking).toEqual({ 'Overnight 12Hrs': true });
     });
     it('explains itself in a tooltip on the row, not a line of copy', () => {
       render(<KinCareRatesEditor data={overnight} onSave={vi.fn()} />);
-      const toggle = screen.getByRole('switch', { name: 'Book Overnight at a start time' });
+      // #1098: the operator sets the time, so the visible label says so.
+      expect(screen.getAllByText('You set the start time').length).toBeGreaterThan(0);
+      expect(screen.queryByText('Book at a start time')).not.toBeInTheDocument();
+      const toggle = screen.getByRole('switch', { name: 'You set the start time for Overnight' });
       const row = toggle.closest('.kinCareRates__startTime') as HTMLElement;
       expect(within(row).getByRole('tooltip', { hidden: true })).toHaveTextContent(
-        'Kinfolk pick a start time for this KinCare instead of a time block. Use it for overnights.',
+        'Kinfolk ask for the night. You set the start time when you approve the request. Use it for overnights.',
       );
     });
   });

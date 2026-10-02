@@ -3602,10 +3602,44 @@ class AuntieRepository(
      * without it, so a client-side throw on that one field bought nothing a
      * write that already committed needed.
      */
-    suspend fun manageBookingSeries(action: String, kinfolkId: String, batchId: String): Result<ManageSeriesResult> = runCatchingCancellable {
+    suspend fun manageBookingSeries(
+        action: String,
+        kinfolkId: String,
+        batchId: String,
+        /**
+         * #1098: the operator's start for each visit awaiting one (an Overnight
+         * requested as a night), by visit id, epoch ms. Null for every request
+         * with no such visit, which keeps the payload exactly what it was.
+         */
+        startTimes: Map<String, Long>? = null,
+        /** #1098: the knowing "Approve anyway" after a `booking_busy_conflict` refusal. */
+        overrideBusyConflict: Boolean = false,
+        /** #1098: the knowing "Approve anyway" after a `visit_overlap_conflict` refusal. */
+        overrideVisitConflict: Boolean = false,
+    ): Result<ManageSeriesResult> = runCatchingCancellable {
         authGate.ensureAuthenticated()
-        val args = ManageBookingSeriesArgs(action = action, kinfolkId = kinfolkId, batchId = batchId)
-        val raw = functions.getHttpsCallable("manageBookingSeries").call(args.toPayload()).awaitCallable().data
+        val args = ManageBookingSeriesArgs(
+            action = action,
+            kinfolkId = kinfolkId,
+            batchId = batchId,
+            startTimes = startTimes,
+            // Omitted rather than sent as `false`, as `rescheduleBooking` does:
+            // the server audits each override it is given.
+            overrideBusyConflict = overrideBusyConflict.takeIf { it },
+            overrideVisitConflict = overrideVisitConflict.takeIf { it },
+        )
+        val raw = try {
+            functions.getHttpsCallable("manageBookingSeries").call(args.toPayload()).awaitCallable().data
+        } catch (e: FirebaseFunctionsException) {
+            // Translated at the boundary, outside the `awaitCallable` seam, the
+            // way `KinCareRepository.rescheduleBooking` does it: the screen
+            // branches on `details.code` (a busy or visit clash it may override,
+            // a missing start time it may not), never on the sentence.
+            throw BookingRequestRefusedException(
+                code = conflictCodeFrom(e.details),
+                message = e.message ?: "That request could not be answered.",
+            )
+        }
         @Suppress("UNCHECKED_CAST")
         val result = decodeManageBookingSeriesResult(raw as? Map<String, Any?>)
         check(result.ok) { "manageBookingSeries did not confirm the $action (ok=false) for series $batchId" }
