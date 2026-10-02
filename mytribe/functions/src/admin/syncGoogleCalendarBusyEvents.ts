@@ -8,7 +8,12 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { calendarIdProblem, CALENDAR_ID_INVALID_CODE } from '../lib/calendarSyncId';
-import { busyIntervalToSlots, type BusyInterval } from '../lib/googleBusySlot';
+import {
+  busyIntervalToSlots,
+  legacyUtcWindow,
+  storedInstants,
+  type BusyInterval,
+} from '../lib/googleBusySlot';
 import { businessTimeZone } from '../lib/bookingTimeBlocks';
 
 /**
@@ -188,6 +193,123 @@ export function calendarSyncStamp(
   };
 }
 
+/**
+ * #1162: removing the rows of busy events that were moved or deleted in Google.
+ *
+ * The sync upserts one row per busy interval (one per business day since
+ * #1160) keyed by the interval's instants, so a moved event gets NEW keys and
+ * a deleted one gets none. Without this its old rows stay, and they are not
+ * only drawn: the server busy guard and admin Android's busy check both refuse
+ * bookings over them.
+ *
+ * DELETED, not marked inactive. These rows are a mirror of Google, rebuilt by
+ * the next sync whenever the event is still there; nothing references a row by
+ * id and `deleteBlockedTimeSlot` already tells the operator they are not
+ * theirs to keep. An inactive flag would have to be honoured by every reader
+ * on four surfaces (server guard, admin web, admin Android, desktop console),
+ * and one missed reader would keep refusing bookings. The count and the
+ * removed keys go to the audit entry and the log instead.
+ *
+ * Only a row that passes EVERY test below is removed:
+ *   - `source` is `GOOGLE_BUSY_IMPORT` and `externalCalendarId` is the calendar
+ *     this run fetched. Operator blocks and other calendars are never touched.
+ *   - its key is not one this run fetched.
+ *   - the whole event (all its `_dN` day rows together) decodes to instants
+ *     that lie inside the window this run asked Google about. Freebusy says
+ *     nothing about time outside it, so a row past the look-ahead, or one that
+ *     began before this run's start, is kept. A row that does not decode is kept.
+ *   - it was not written by a run that started after this one
+ *     (`createdAt` is rewritten on every upsert), so two overlapping syncs do
+ *     not delete each other's fresh rows.
+ * And the cleanup runs at all only when the fetch was complete; see
+ * `fetchIncompleteReason`.
+ */
+export interface StaleCandidateRow {
+  id: string;
+  data: Record<string, unknown>;
+}
+
+export interface BusyCleanupWindow {
+  /** Epoch ms the freebusy query started at (its `timeMin`). */
+  startMs: number;
+  /** Epoch ms the freebusy query ended at (its `timeMax`). */
+  endMs: number;
+}
+
+const GOOGLE_BUSY_SOURCE = 'GOOGLE_BUSY_IMPORT';
+
+/** A day row's event key: its own key with any `_dN` day suffix taken off. */
+export function busyEventKeyOf(externalEventId: string): string {
+  return externalEventId.replace(/_d\d+$/, '');
+}
+
+/**
+ * Pure: which of `rows` are stale imports of `calendarId` this run may delete.
+ * See the note above for each test.
+ */
+export function staleBusyRowIds(
+  rows: readonly StaleCandidateRow[],
+  calendarId: string,
+  fetchedKeys: ReadonlySet<string>,
+  window: BusyCleanupWindow,
+  runStartedAtIso: string,
+): string[] {
+  const groups = new Map<string, Array<{ id: string; startMs: number; endMs: number } | null>>();
+  for (const row of rows) {
+    const d = row.data;
+    if (d['source'] !== GOOGLE_BUSY_SOURCE) continue;
+    if (d['externalCalendarId'] !== calendarId) continue;
+    const key = d['externalEventId'];
+    if (typeof key !== 'string' || key.length === 0) continue;
+    const eventKey = busyEventKeyOf(key);
+    const list = groups.get(eventKey) ?? [];
+    groups.set(eventKey, list);
+    // Any day row the run fetched, or that a newer run wrote, keeps its whole event.
+    const createdAt = d['createdAt'];
+    const newer = typeof createdAt === 'string' && createdAt >= runStartedAtIso;
+    if (fetchedKeys.has(key) || newer) {
+      list.push(null);
+      continue;
+    }
+    const instants = storedInstants(d) ?? legacyUtcWindow(d['date'], d['startTime'], d['endTime']);
+    list.push(instants ? { id: row.id, ...instants } : null);
+  }
+
+  const out: string[] = [];
+  for (const list of groups.values()) {
+    if (list.some((r) => r === null)) continue;
+    const pieces = list as Array<{ id: string; startMs: number; endMs: number }>;
+    const startMs = Math.min(...pieces.map((p) => p.startMs));
+    const endMs = Math.max(...pieces.map((p) => p.endMs));
+    if (startMs < window.startMs || endMs > window.endMs) continue;
+    for (const p of pieces) out.push(p.id);
+  }
+  return out;
+}
+
+/**
+ * Why this run's answer from Google cannot be trusted as the whole picture,
+ * or null when it can. Any reason here skips the cleanup (the import itself
+ * still runs as before): a missing calendar block or `busy` list would
+ * otherwise read as "nothing is busy" and delete every row in the window.
+ */
+export function fetchIncompleteReason(calBlock: { busy?: unknown } | undefined): string | null {
+  if (!calBlock) return 'calendar_missing_from_response';
+  if (!Array.isArray(calBlock.busy)) return 'busy_list_missing';
+  for (const b of calBlock.busy as Array<{ start?: unknown; end?: unknown } | null | undefined>) {
+    if (!b || typeof b.start !== 'string' || !b.start || typeof b.end !== 'string' || !b.end) {
+      return 'busy_interval_unreadable';
+    }
+  }
+  return null;
+}
+
+/** Firestore's hard cap on writes per WriteBatch. */
+const DELETE_BATCH_LIMIT = 500;
+
+/** How many removed keys the log line carries, so one bad run cannot flood it. */
+const LOGGED_KEYS_CAP = 50;
+
 export interface SyncResult {
   imported: number;
   scanned: number;
@@ -256,8 +378,12 @@ async function runSync(
   }
 
   const now = new Date();
-  const timeMin = now.toISOString();
-  const timeMax = new Date(now.getTime() + lookAheadDays * 24 * 60 * 60 * 1000).toISOString();
+  const window: BusyCleanupWindow = {
+    startMs: now.getTime(),
+    endMs: now.getTime() + lookAheadDays * 24 * 60 * 60 * 1000,
+  };
+  const timeMin = new Date(window.startMs).toISOString();
+  const timeMax = new Date(window.endMs).toISOString();
 
   // Loaded here rather than at file scope, and the one-API package rather than
   // the `googleapis` bundle. At file scope the bundle's 109MiB was charged to
@@ -279,6 +405,8 @@ async function runSync(
   const calendar = calendarApi({ version: 'v3', auth });
 
   let busy: BusyInterval[];
+  // #1162: set when the answer cannot be trusted as complete; the cleanup then does not run.
+  let incomplete: string | null;
   try {
     const resp = await calendar.freebusy.query({
       requestBody: {
@@ -307,6 +435,7 @@ async function runSync(
       });
       throw new HttpsError('permission-denied', calendarFreebusyErrorMessage(calId, reasons));
     }
+    incomplete = fetchIncompleteReason(calBlock);
     busy = (calBlock?.busy ?? [])
       .filter((b): b is { start: string; end: string } => !!b.start && !!b.end)
       .map((b) => ({ start: b.start, end: b.end }));
@@ -340,9 +469,14 @@ async function runSync(
   // Counts busy EVENTS, not rows: an event that crosses business midnight is
   // stored as one row per day, and the receipt says how many events landed.
   let imported = 0;
+  const fetchedKeys = new Set<string>();
   for (const interval of busy) {
     const slots = busyIntervalToSlots(interval, calId, nowIso, timeZone);
+    // An interval that maps to no rows has no key in the fetched set, so its
+    // old rows would look stale: the answer is not complete enough to clean by.
+    if (slots.length === 0) incomplete ??= 'busy_interval_unreadable';
     for (const slot of slots) {
+      fetchedKeys.add(slot.externalEventId);
       // The first day's key is the interval's own key, unchanged from before
       // #1160, so this finds a legacy UTC row and rewrites it in place.
       const existing = await db()
@@ -358,6 +492,21 @@ async function runSync(
     if (slots.length > 0) imported += 1;
   }
 
+  // #1162. Runs only after every upsert above succeeded (any failure there has
+  // already thrown), and only on a complete answer from Google.
+  let removed = 0;
+  if (incomplete === null) {
+    removed = await removeStaleBusyRows(calId, fetchedKeys, window, timeMin, uid);
+  } else {
+    logEvent({
+      severity: 'warn',
+      function: 'syncGoogleCalendarBusyEvents',
+      event: 'gcal.sync.cleanup_skipped',
+      uid,
+      extra: { calendarId: calId, reason: incomplete },
+    });
+  }
+
   await writeAuditEntry({
     status: 'SUCCESS',
     event: AUDIT_EVENTS.INTEGRATION_CALENDAR_SYNC,
@@ -365,8 +514,14 @@ async function runSync(
     actorRole: 'AUNTIE',
     actorUid: uid,
     targetCollection: 'booking_time_slots',
-    description: `Imported ${imported} Google busy blocks`,
-    payload: { count: imported, lookAheadDays, calendarId: calId },
+    description: `Imported ${imported} Google busy blocks, removed ${removed} stale`,
+    payload: {
+      count: imported,
+      removed,
+      cleanupSkipped: incomplete ?? '',
+      lookAheadDays,
+      calendarId: calId,
+    },
   });
 
   const stamp = calendarSyncStamp({ status: 'ok', imported }, new Date().toISOString());
@@ -377,10 +532,65 @@ async function runSync(
     function: 'syncGoogleCalendarBusyEvents',
     event: 'gcal.sync.complete',
     uid,
-    extra: { imported, scanned: busy.length, lookAheadDays },
+    extra: { imported, removed, cleanupSkipped: incomplete ?? '', scanned: busy.length, lookAheadDays },
   });
 
   return { imported, scanned: busy.length, ranAt: stamp.calendarSyncLastRunAt };
+}
+
+/**
+ * Deletes this calendar's stale import rows (see `staleBusyRowIds`) in
+ * batches of at most 500. A failed commit throws, so the run is stamped as an
+ * error and the operator sees it; a stale row left behind keeps refusing
+ * bookings, which is not something to swallow.
+ */
+async function removeStaleBusyRows(
+  calId: string,
+  fetchedKeys: ReadonlySet<string>,
+  window: BusyCleanupWindow,
+  runStartedAtIso: string,
+  uid: string,
+): Promise<number> {
+  // One range on `date`, the rest in memory: the same rule `loadGoogleBusySlots`
+  // follows for this collection, so no composite index is needed, and the read
+  // stays the size of the window rather than the calendar's whole history.
+  // Padded two days each side: `date` is the business day (or the UTC day on a
+  // legacy row), never more than a day from the UTC day of the instants, and an
+  // event that runs past the window keeps a visible day row just outside it,
+  // which is what keeps its whole group.
+  const PAD_MS = 2 * 24 * 60 * 60 * 1000;
+  const snap = await db()
+    .collection('booking_time_slots')
+    .where('date', '>=', new Date(window.startMs - PAD_MS).toISOString().slice(0, 10))
+    .where('date', '<=', new Date(window.endMs + PAD_MS).toISOString().slice(0, 10))
+    .get();
+  const rows: StaleCandidateRow[] = snap.docs.map((d) => ({
+    id: d.id,
+    data: (d.data() ?? {}) as Record<string, unknown>,
+  }));
+  const ids = staleBusyRowIds(rows, calId, fetchedKeys, window, runStartedAtIso);
+  for (let i = 0; i < ids.length; i += DELETE_BATCH_LIMIT) {
+    const batch = db().batch();
+    for (const id of ids.slice(i, i + DELETE_BATCH_LIMIT)) {
+      batch.delete(db().collection('booking_time_slots').doc(id));
+    }
+    await batch.commit();
+  }
+  if (ids.length > 0) {
+    const keyById = new Map(rows.map((r) => [r.id, r.data['externalEventId']]));
+    logEvent({
+      severity: 'info',
+      function: 'syncGoogleCalendarBusyEvents',
+      event: 'gcal.sync.stale_removed',
+      uid,
+      extra: {
+        calendarId: calId,
+        removed: ids.length,
+        keys: ids.slice(0, LOGGED_KEYS_CAP).map((id) => keyById.get(id)),
+      },
+    });
+  }
+  return ids.length;
 }
 
 /**

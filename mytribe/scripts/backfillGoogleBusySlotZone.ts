@@ -19,8 +19,8 @@
  * key is unchanged. But it only sees intervals still on the calendar between
  * now and its look-ahead. It never reaches:
  *   - rows for busy time that is already past, which draw wrong on past weeks;
- *   - rows whose Google event was moved or deleted, which the sync never
- *     removes (they draw wrong AND still block bookings);
+ *   - rows whose Google event was moved or deleted, once they fall outside the
+ *     window a sync fetches (its #1162 cleanup removes only stale rows inside it);
  *   - rows past the current look-ahead, left by an earlier, longer sync.
  *
  * ── WHAT IT WRITES ────────────────────────────────────────────────────────
