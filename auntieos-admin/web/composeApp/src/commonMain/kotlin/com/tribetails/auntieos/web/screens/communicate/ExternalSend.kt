@@ -142,13 +142,23 @@ fun isOptedOutError(message: String): Boolean =
     message.contains("recipient_opted_out", ignoreCase = true)
 
 /**
- * Map a raw callable error message to operator-facing text. The opt-out gate is
- * surfaced clearly and distinctly; everything else is passed through verbatim so
- * we never hide a provider/validation failure (fail loud, never fake).
+ * The server refuses an email to a hard-bounced address with `failed-precondition`
+ * and a message that starts `recipient_hard_bounced` (#1077). Same substring rule.
  */
-fun externalSendErrorText(message: String): String =
-    if (isOptedOutError(message)) {
+fun isHardBouncedError(message: String): Boolean =
+    message.contains("recipient_hard_bounced", ignoreCase = true)
+
+/**
+ * Map a raw callable error message to operator-facing text. The opt-out and
+ * hard-bounce gates are surfaced clearly and distinctly (the words match admin web
+ * `lib/externalSend.ts` and Android `ExternalSendCopy.kt`); everything else is
+ * passed through verbatim so we never hide a provider/validation failure (fail
+ * loud, never fake).
+ */
+fun externalSendErrorText(message: String): String = when {
+    isOptedOutError(message) ->
         "This recipient has opted out. Nothing was sent. Remove their suppression before sending again."
-    } else {
-        message
-    }
+    isHardBouncedError(message) ->
+        "This address bounced and is on the do-not-send list. Nothing was sent. Clear it in Settings under Notifications, then send again."
+    else -> message
+}
