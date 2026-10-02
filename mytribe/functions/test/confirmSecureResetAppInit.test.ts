@@ -30,6 +30,12 @@ beforeAll(() => {
   process.env.GCLOUD_PROJECT = 'demo-892-appinit';
   process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:9'; // closed port: nothing answers
   process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9';
+  // Even in emulator mode the Firestore client (google-gax) resolves a universe
+  // domain through google-auth-library, which, with no local credentials file,
+  // probes the GCE metadata server at 169.254.169.254. On a CI runner that is a
+  // request off the machine (#1138). 'none' tells gcp-metadata there is no
+  // metadata server, without asking the network.
+  process.env.METADATA_SERVER_DETECTION = 'none';
   process.env.WEB_API_KEY = 'test-api-key';
   vi.stubGlobal(
     'fetch',
