@@ -48,19 +48,21 @@ vi.mock('../api/kinfolkProfile', async (orig) => ({
 
 import { BookingDetailModal } from './BookingDetailModal';
 
-// UTC-5 in July, so a stored "...Z" instant must be re-read as a LOCAL clock
-// time everywhere below (the AO-18 convention).
+// #1155: the DEVICE is America/Los_Angeles (UTC-7 in July) and the BUSINESS is
+// America/Chicago (UTC-5), so a stored "...Z" instant must be re-read on the
+// business clock everywhere below, and a typed time built on it.
 let originalTz: string | undefined;
 beforeAll(() => {
   originalTz = process.env.TZ;
-  process.env.TZ = 'America/Chicago';
+  process.env.TZ = 'America/Los_Angeles';
 });
 afterAll(() => {
   if (originalTz === undefined) delete process.env.TZ;
   else process.env.TZ = originalTz;
 });
 
-const START = '2026-07-16T19:00:00.000Z'; // 14:00 local
+const BIZ = 'America/Chicago';
+const START = '2026-07-16T19:00:00.000Z'; // 14:00 business clock, 12:00 on the device
 const WELL_BEFORE = Date.parse(START) - 24 * 60 * 60 * 1000;
 const INSIDE_CUTOFF = Date.parse(START) - 60 * 60 * 1000;
 
@@ -113,6 +115,7 @@ function open(over: Partial<ScheduleSessionEntry> = {}, props: Record<string, un
   return render(
     <BookingDetailModal
       entry={entry(over)}
+      businessZone={BIZ}
       onClose={vi.fn()}
       nowMs={() => WELL_BEFORE}
       {...props}
@@ -267,7 +270,7 @@ describe('BookingDetailModal notes', () => {
 });
 
 describe('BookingDetailModal reschedule', () => {
-  it('prefills the LOCAL date and time of the current start', () => {
+  it('prefills the BUSINESS date and time of the current start, not the device one', () => {
     open();
     expect(screen.getByLabelText('New date')).toHaveValue('2026-07-16');
     expect(screen.getByLabelText('New time')).toHaveValue('14:00');
@@ -281,7 +284,7 @@ describe('BookingDetailModal reschedule', () => {
     // lands. The component reads the change event either way.
     fireEvent.change(screen.getByLabelText('New time'), { target: { value: '09:30' } });
     await user.click(screen.getByRole('button', { name: 'Reschedule visit' }));
-    // 09:30 local on 2026-07-16 is 14:30Z; +90 minutes of service duration is 16:00Z.
+    // 09:30 business clock (Chicago) on 2026-07-16 is 14:30Z; +90 minutes of service duration is 16:00Z.
     await waitFor(() =>
       expect(rescheduleBooking).toHaveBeenCalledWith(
         'vis_v1',

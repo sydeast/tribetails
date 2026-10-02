@@ -32,8 +32,11 @@ private val HHMM = Regex("^([01]\\d|2[0-3]):[0-5]\\d$")
  * The wall-clock trio is what gets persisted (the stored document has no
  * timezone field anywhere). The epoch-ms twin is what the server checks against
  * the visits already on the books: it cannot turn `date`+`HH:mm` into an
- * instant without inventing a zone, and the phone is the one place the
- * operator's zone is known. See `functions/src/admin/createBlockedTimeSlot.ts`
+ * instant without inventing a zone. #1155: the instants are read in the
+ * BUSINESS zone (`businessZone(business_settings.timeZone)`), not the phone's,
+ * because the visits they are checked against are read in that zone and an
+ * operator travelling outside it must still block 9:00 where the business reads
+ * 9:00. See `functions/src/admin/createBlockedTimeSlot.ts`
  * (`BlockTimeArgs.startTimeMs`) and the web twin in `api/scheduleWrite.ts`.
  */
 data class BlockWindow(
@@ -62,8 +65,9 @@ sealed interface BlockWindowResult {
  * never parsed and never compared, so "17:00" to "09:00" was writable, and so
  * was "9am". Nothing was checked at all before the write went out.
  *
- * Pure and zone-injectable so the whole set is unit-testable; the screen passes
- * nothing and gets the device zone.
+ * Pure and zone-injected so the whole set is unit-testable. [zone] has NO
+ * default on purpose (#1155): it used to default to the phone's, which is the
+ * bug. The caller passes the business zone.
  */
 fun resolveBlockWindow(
     dateText: String,
@@ -71,7 +75,7 @@ fun resolveBlockWindow(
     endText: String,
     notes: String,
     mode: BlockMode,
-    zone: ZoneId = ZoneId.systemDefault(),
+    zone: ZoneId,
 ): BlockWindowResult {
     val date = runCatching { LocalDate.parse(dateText.trim()) }.getOrNull()
         ?: return BlockWindowResult.Problem(

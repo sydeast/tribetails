@@ -4,22 +4,22 @@ import {
   DEFAULT_VISIT_MINUTES,
   notesLocked,
   noteLockReason,
-  localDateInput,
-  localTimeInput,
+  businessDateInput,
+  businessTimeInput,
   visitDurationMinutes,
   durationLabel,
   buildRescheduleTimes,
   bookingWhenLabel,
 } from './bookingDetailFormat';
 
-// Pinned west of UTC so every "the stored instant is UTC, the operator reads
-// local" assertion below is meaningful on any CI runner (the
-// sessionFormat.test.ts / Schedule.test.tsx convention). America/Chicago is
-// UTC-5 in July.
+// #1155: the DEVICE is pinned to America/Los_Angeles (UTC-7 in July) and the
+// BUSINESS is America/Chicago (UTC-5), so every assertion below that reads or
+// writes the business clock fails if the device zone leaks in.
+const BIZ = 'America/Chicago';
 let originalTz: string | undefined;
 beforeAll(() => {
   originalTz = process.env.TZ;
-  process.env.TZ = 'America/Chicago';
+  process.env.TZ = 'America/Los_Angeles';
 });
 afterAll(() => {
   if (originalTz === undefined) delete process.env.TZ;
@@ -67,23 +67,23 @@ describe('noteLockReason', () => {
   });
 });
 
-describe('localDateInput / localTimeInput', () => {
-  it('converts a stored UTC instant to the operator LOCAL date and time', () => {
+describe('businessDateInput / businessTimeInput', () => {
+  it('converts a stored UTC instant to the BUSINESS date and time, not the device one', () => {
     // 01:00Z on the 17th is 20:00 on the 16th in Chicago.
-    expect(localDateInput('2026-07-17T01:00:00.000Z')).toBe('2026-07-16');
-    expect(localTimeInput('2026-07-17T01:00:00.000Z')).toBe('20:00');
+    expect(businessDateInput('2026-07-17T01:00:00.000Z', BIZ)).toBe('2026-07-16');
+    expect(businessTimeInput('2026-07-17T01:00:00.000Z', BIZ)).toBe('20:00');
   });
 
   it('pads single-digit local components', () => {
-    expect(localDateInput('2026-01-05T15:07:00.000Z')).toBe('2026-01-05');
-    expect(localTimeInput('2026-01-05T15:07:00.000Z')).toBe('09:07');
+    expect(businessDateInput('2026-01-05T15:07:00.000Z', BIZ)).toBe('2026-01-05');
+    expect(businessTimeInput('2026-01-05T15:07:00.000Z', BIZ)).toBe('09:07');
   });
 
   it('returns blank for an absent or unparseable start, never a fabricated date', () => {
-    expect(localDateInput('')).toBe('');
-    expect(localTimeInput('')).toBe('');
-    expect(localDateInput('soon')).toBe('');
-    expect(localTimeInput('soon')).toBe('');
+    expect(businessDateInput('', BIZ)).toBe('');
+    expect(businessTimeInput('', BIZ)).toBe('');
+    expect(businessDateInput('soon', BIZ)).toBe('');
+    expect(businessTimeInput('soon', BIZ)).toBe('');
   });
 });
 
@@ -135,23 +135,23 @@ describe('durationLabel', () => {
 });
 
 describe('buildRescheduleTimes', () => {
-  it('reads the date and time as LOCAL and recomputes the end from the duration', () => {
-    // 14:00 in Chicago on 2026-07-16 is 19:00Z; +90m is 20:30Z.
-    expect(buildRescheduleTimes('2026-07-16', '14:00', 90)).toEqual({
+  it('reads the date and time on the BUSINESS clock, not the device one, and recomputes the end from the duration', () => {
+    // 14:00 in Chicago (device is LA, which would give 21:00Z) on 2026-07-16 is 19:00Z; +90m is 20:30Z.
+    expect(buildRescheduleTimes('2026-07-16', '14:00', 90, BIZ)).toEqual({
       startTime: '2026-07-16T19:00:00.000Z',
       endTime: '2026-07-16T20:30:00.000Z',
     });
   });
 
   it('rolls the end past midnight without corrupting the date', () => {
-    expect(buildRescheduleTimes('2026-07-16', '23:30', 60)).toEqual({
+    expect(buildRescheduleTimes('2026-07-16', '23:30', 60, BIZ)).toEqual({
       startTime: '2026-07-17T04:30:00.000Z',
       endTime: '2026-07-17T05:30:00.000Z',
     });
   });
 
   it('falls back to the default duration rather than writing a zero-length visit', () => {
-    const built = buildRescheduleTimes('2026-07-16', '14:00', 0);
+    const built = buildRescheduleTimes('2026-07-16', '14:00', 0, BIZ);
     expect(built).not.toBeNull();
     expect(Date.parse(built!.endTime) - Date.parse(built!.startTime)).toBe(
       DEFAULT_VISIT_MINUTES * 60_000,
@@ -159,20 +159,24 @@ describe('buildRescheduleTimes', () => {
   });
 
   it('returns null on a malformed date or time so the caller fails loud', () => {
-    expect(buildRescheduleTimes('16-07-2026', '14:00', 60)).toBeNull();
-    expect(buildRescheduleTimes('2026-07-16', '2pm', 60)).toBeNull();
-    expect(buildRescheduleTimes('', '', 60)).toBeNull();
+    expect(buildRescheduleTimes('16-07-2026', '14:00', 60, BIZ)).toBeNull();
+    expect(buildRescheduleTimes('2026-07-16', '2pm', 60, BIZ)).toBeNull();
+    expect(buildRescheduleTimes('', '', 60, BIZ)).toBeNull();
   });
 
   it('returns null on a calendar date that does not exist', () => {
-    expect(buildRescheduleTimes('2026-02-30', '14:00', 60)).toBeNull();
-    expect(buildRescheduleTimes('2026-07-16', '25:00', 60)).toBeNull();
+    expect(buildRescheduleTimes('2026-02-30', '14:00', 60, BIZ)).toBeNull();
+    expect(buildRescheduleTimes('2026-07-16', '25:00', 60, BIZ)).toBeNull();
   });
 });
 
 describe('bookingWhenLabel', () => {
-  it('renders the LOCAL day and clock time, not the stored UTC hour', () => {
-    expect(bookingWhenLabel('2026-07-17T01:00:00.000Z')).toBe('Thu, Jul 16 at 8:00 PM');
+  it('renders the viewer clock, not the stored UTC hour, when no business zone is given', () => {
+    // 01:00Z on the 17th is 6:00 PM on the 16th on the LA device.
+    expect(bookingWhenLabel('2026-07-17T01:00:00.000Z')).toBe('Thu, Jul 16 at 6:00 PM');
+  });
+  it('renders the business clock when the zone is given, whatever the device zone', () => {
+    expect(bookingWhenLabel('2026-07-17T01:00:00.000Z', BIZ)).toBe('Thu, Jul 16 at 8:00 PM');
   });
 
   it('says the time is not set rather than inventing one', () => {

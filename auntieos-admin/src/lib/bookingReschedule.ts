@@ -1,8 +1,8 @@
 import { type BookingEntry } from '../api/bookings';
 import {
   buildRescheduleTimes,
-  localDateInput,
-  localTimeInput,
+  businessDateInput,
+  businessTimeInput,
   visitDurationMinutes,
   type RescheduleTimes,
 } from './bookingDetailFormat';
@@ -54,9 +54,9 @@ export interface RescheduleTarget {
   id: string;
   /** Household name for the sheet and the result copy. Never an id. */
   name: string;
-  /** LOCAL `YYYY-MM-DD` prefill, `''` when the stored start does not parse. */
+  /** BUSINESS-zone `YYYY-MM-DD` prefill (#1155), `''` when the stored start does not parse. */
   date: string;
-  /** LOCAL `HH:mm` prefill, `''` when the stored start does not parse. */
+  /** BUSINESS-zone `HH:mm` prefill (#1155), `''` when the stored start does not parse. */
   time: string;
   /**
    * Minutes the visit runs, which is what the new end is computed from. A move
@@ -159,6 +159,7 @@ function rescheduleSkipReason(state: BookingState): string {
 export function planBulkReschedule(
   rows: readonly BookingEntry[],
   selectedIds: ReadonlySet<string>,
+  businessZone: string,
 ): { eligible: RescheduleTarget[]; skipped: BulkSkip[] } {
   const eligible: RescheduleTarget[] = [];
   const skipped: BulkSkip[] = [];
@@ -180,8 +181,8 @@ export function planBulkReschedule(
     eligible.push({
       id,
       name,
-      date: localDateInput(startTime),
-      time: localTimeInput(startTime),
+      date: businessDateInput(startTime, businessZone),
+      time: businessTimeInput(startTime, businessZone),
       durationMinutes: visitDurationMinutes(row),
       currentStart: startTime,
     });
@@ -209,6 +210,7 @@ export function planBulkReschedule(
 export function planRescheduleWrites(
   targets: readonly RescheduleTarget[],
   drafts: ReadonlyMap<string, RescheduleDraft>,
+  businessZone: string,
 ): { writes: RescheduleWrite[]; skipped: BulkSkip[] } {
   const writes: RescheduleWrite[] = [];
   const skipped: BulkSkip[] = [];
@@ -234,7 +236,7 @@ export function planRescheduleWrites(
       });
       continue;
     }
-    const times = buildRescheduleTimes(date, time, target.durationMinutes);
+    const times = buildRescheduleTimes(date, time, target.durationMinutes, businessZone);
     if (times === null) {
       skipped.push({
         id: target.id,

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -19,6 +19,17 @@ import { type BulkRescheduleOutcome } from '../lib/bookingReschedule';
  * the same split BlockTimeDialog.test.tsx keeps.
  */
 
+// #1155: device America/Los_Angeles, business America/Chicago.
+const BIZ = 'America/Chicago';
+let originalTz: string | undefined;
+beforeAll(() => {
+  originalTz = process.env.TZ;
+  process.env.TZ = 'America/Los_Angeles';
+});
+afterAll(() => {
+  if (originalTz === undefined) delete process.env.TZ;
+  else process.env.TZ = originalTz;
+});
 const onClose = vi.fn();
 const user = userEvent.setup();
 
@@ -42,7 +53,7 @@ function target(over: Partial<RescheduleTarget> = {}): RescheduleTarget {
     date: '2026-07-16',
     time: '09:00',
     durationMinutes: 60,
-    currentStart: '2026-07-16T09:00:00',
+    currentStart: '2026-07-16T14:00:00.000Z',
     ...over,
   };
 }
@@ -53,11 +64,11 @@ const DEVLIN = target({
   name: 'The Devlins',
   date: '2026-07-16',
   time: '14:00',
-  currentStart: '2026-07-16T14:00:00',
+  currentStart: '2026-07-16T19:00:00.000Z',
 });
 
 function open(targets: RescheduleTarget[], skipped: { id: string; name: string; reason: string }[] = []) {
-  render(<BulkRescheduleDialog targets={targets} skipped={skipped} onClose={onClose} />);
+  render(<BulkRescheduleDialog targets={targets} skipped={skipped} businessZone={BIZ} onClose={onClose} />);
 }
 
 /** The outcome the sheet handed back when Done was pressed. */
@@ -95,11 +106,11 @@ describe('BulkRescheduleDialog', () => {
     // shared delta could never express.
     const [firstId, firstStart, firstEnd] = rescheduleBooking.mock.calls[0]!;
     expect(firstId).toBe('ses1');
-    expect(firstStart).toBe(new Date(2026, 6, 17, 11, 30).toISOString());
-    expect(firstEnd).toBe(new Date(2026, 6, 17, 12, 30).toISOString());
+    expect(firstStart).toBe('2026-07-17T16:30:00.000Z');
+    expect(firstEnd).toBe('2026-07-17T17:30:00.000Z');
     const [secondId, secondStart] = rescheduleBooking.mock.calls[1]!;
     expect(secondId).toBe('ses2');
-    expect(secondStart).toBe(new Date(2026, 6, 16, 16, 45).toISOString());
+    expect(secondStart).toBe('2026-07-16T21:45:00.000Z');
 
     await user.click(screen.getByRole('button', { name: 'Done' }));
     expect(closedWith().applied.map((a) => a.name)).toEqual(['The Wrens', 'The Devlins']);

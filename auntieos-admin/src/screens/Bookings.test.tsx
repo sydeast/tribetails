@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 import { render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement, ReactNode } from 'react';
@@ -1085,9 +1085,22 @@ describe('Bookings deep link', () => {
  * `lib/bookingReschedule.test.ts`.
  */
 describe('Bookings bulk reschedule', () => {
+  // #1155: the DEVICE is America/Los_Angeles and the business (no timeZone in
+  // TEST_SETTINGS) is the default America/Chicago, so the prefill below has to
+  // come out on the business clock whatever zone the runner is in.
+  let originalTz: string | undefined;
+  beforeAll(() => {
+    originalTz = process.env.TZ;
+    process.env.TZ = 'America/Los_Angeles';
+  });
+  afterAll(() => {
+    if (originalTz === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTz;
+  });
   const scheduledPair = [
-    entry({ _id: 's1', kinfolkName: 'Household One', status: 'SCHEDULED', startTime: '2026-07-16T09:00:00', endTime: '2026-07-16T10:00:00' }),
-    entry({ _id: 's2', kinfolkName: 'Household Two', status: 'SCHEDULED', startTime: '2026-07-16T14:00:00', endTime: '2026-07-16T15:00:00' }),
+    // 14:00Z and 19:00Z are 09:00 and 14:00 in Chicago (CDT).
+    entry({ _id: 's1', kinfolkName: 'Household One', status: 'SCHEDULED', startTime: '2026-07-16T14:00:00.000Z', endTime: '2026-07-16T15:00:00.000Z' }),
+    entry({ _id: 's2', kinfolkName: 'Household Two', status: 'SCHEDULED', startTime: '2026-07-16T19:00:00.000Z', endTime: '2026-07-16T20:00:00.000Z' }),
   ];
   it('opens a field per selected visit, and names a selected row it cannot move', async () => {
     useCollection.mockReturnValue({

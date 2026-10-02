@@ -56,6 +56,19 @@ export const MIN_BLOCK_MINUTES = 20;
 export const SNAP_MINUTES_ON = 15;
 export const SNAP_MINUTES_OFF = 1;
 
+/**
+ * The zone the week grid is DRAWN in: the viewer's own (`localMinutesOfDay`,
+ * and the day columns, read the device clock).
+ *
+ * #1155: a drop must be written in the zone the grid was drawn in, or the visit
+ * lands on a different hour than the row it was dropped on. So the drag stays
+ * on the device clock until the grid itself is drawn in the business zone
+ * (a separate change: day grouping, minute-of-day and today all move together).
+ * Every other operator-typed time in the admin web is on the business clock.
+ */
+export function deviceTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
 /** Minute-of-day for an ISO instant, in the VIEWER's local zone, or null when it does not parse. */
 export function localMinutesOfDay(iso: string | undefined): number | null {
   if (typeof iso !== 'string' || iso.trim() === '') return null;
@@ -197,10 +210,11 @@ export function rescheduleTimesForDrop(
   targetDayIso: string,
   dropMinuteOfDay: number,
   snapMinutes: number,
+  gridZone: string = deviceTimeZone(),
 ): RescheduleTimes | null {
   if (visit._id.trim() === '') return null;
   const snapped = snapMinuteOfDay(clampDropMinute(dropMinuteOfDay), snapMinutes);
-  return buildRescheduleTimes(targetDayIso, hhmmFromMinutes(snapped), visitDurationMinutes(visit));
+  return buildRescheduleTimes(targetDayIso, hhmmFromMinutes(snapped), visitDurationMinutes(visit), gridZone);
 }
 
 /**

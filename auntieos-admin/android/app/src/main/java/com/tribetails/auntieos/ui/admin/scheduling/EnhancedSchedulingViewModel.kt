@@ -1973,7 +1973,9 @@ class EnhancedSchedulingViewModel(
         reason: String,
         mode: BlockMode = BlockMode.TIME_BLOCK,
     ) {
-        when (val resolved = resolveBlockWindow(dateText, startTime, endTime, reason, mode)) {
+        // #1155: the window is read on the business clock, not the phone's.
+        val zone = businessZoneOf(_state.value.businessSettings.timeZone)
+        when (val resolved = resolveBlockWindow(dateText, startTime, endTime, reason, mode, zone)) {
             is BlockWindowResult.Problem -> failScheduleWrite(resolved.message)
             is BlockWindowResult.Ok -> submitBlock(resolved.window, overrideVisitConflict = false)
         }

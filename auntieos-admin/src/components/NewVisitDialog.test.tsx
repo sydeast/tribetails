@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -10,6 +10,16 @@ vi.mock('../api/scheduleWrite', async () => {
 });
 
 import { NewVisitDialog } from './NewVisitDialog';
+// #1155: device America/Los_Angeles, business America/Chicago.
+let originalTz: string | undefined;
+beforeAll(() => {
+  originalTz = process.env.TZ;
+  process.env.TZ = 'America/Los_Angeles';
+});
+afterAll(() => {
+  if (originalTz === undefined) delete process.env.TZ;
+  else process.env.TZ = originalTz;
+});
 
 const onClose = vi.fn();
 const onCreated = vi.fn();
@@ -34,6 +44,7 @@ function open(over: Partial<Parameters<typeof NewVisitDialog>[0]> = {}) {
       serviceRates={SERVICE_RATES}
       serviceDurations={{}}
       initialDate="2026-07-16"
+      businessZone="America/Chicago"
       onClose={onClose}
       onCreated={onCreated}
       {...over}
@@ -104,8 +115,9 @@ describe('NewVisitDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Schedule visit' }));
 
     const args = createKinCareSession.mock.calls[0]![0];
-    expect(args.startTime).toBe(new Date(2026, 6, 16, 9, 0, 0, 0).toISOString());
-    expect(args.endTime).toBe(new Date(2026, 6, 16, 15, 0, 0, 0).toISOString());
+    // 09:00 on the BUSINESS clock (Chicago, CDT) is 14:00Z; the LA device would give 16:00Z.
+    expect(args.startTime).toBe('2026-07-16T14:00:00.000Z');
+    expect(args.endTime).toBe('2026-07-16T20:00:00.000Z');
     expect(args.serviceDurationMinutes).toBe(360);
     expect(onCreated).toHaveBeenCalledWith('sess-9');
   });

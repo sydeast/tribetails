@@ -52,6 +52,7 @@ import {
 } from '../lib/bookingReschedule';
 import { BulkRescheduleDialog } from '../components/BulkRescheduleDialog';
 import { bookingWhenLabel } from '../lib/bookingDetailFormat';
+import { DEFAULT_BUSINESS_TIME_ZONE, resolveBusinessTimeZone } from '../lib/businessOperations';
 import './Bookings.css';
 
 /**
@@ -372,11 +373,18 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
    * (BOOKINGS_QUERY) still surfaces its own failure through AsyncRegion.
    */
   const [catalog, setCatalog] = useState<BookingCatalog>(EMPTY_BOOKING_CATALOG);
+  /**
+   * `business_settings.timeZone`: the clock the detail sheet's Reschedule and
+   * the bulk Reschedule sheet read and write (#1155). America/Chicago, the
+   * server's own default, until the read lands or if it fails.
+   */
+  const [businessZone, setBusinessZone] = useState<string>(DEFAULT_BUSINESS_TIME_ZONE);
   useEffect(() => {
     let live = true;
     getBusinessSettings()
       .then((settings) => {
         if (!live) return;
+        setBusinessZone(resolveBusinessTimeZone(settings.timeZone));
         setCatalog({
           serviceRates: settings.serviceRates,
           serviceDurations: settings.serviceDurations,
@@ -436,7 +444,7 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
     setOutcome(null);
     setRescheduleOutcome(null);
     setConfirmAction(null);
-    setReschedulePlan(planBulkReschedule(rows.data, selectedIds));
+    setReschedulePlan(planBulkReschedule(rows.data, selectedIds, businessZone));
   }
 
   /**
@@ -660,6 +668,7 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
       {rescheduleOutcome !== null && (
         <BulkRescheduleBanner
           outcome={rescheduleOutcome}
+          businessZone={businessZone}
           onDismiss={() => setRescheduleOutcome(null)}
         />
       )}
@@ -732,6 +741,7 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
         <BulkRescheduleDialog
           targets={reschedulePlan.eligible}
           skipped={reschedulePlan.skipped}
+          businessZone={businessZone}
           onClose={closeReschedule}
         />
       )}
@@ -788,6 +798,7 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
         ) : (
           <BookingDetailModal
             entry={detailEntry}
+            businessZone={businessZone}
             onClose={closeDetail}
             actions={
               <BookingStatusActions
@@ -1069,9 +1080,11 @@ function BulkOutcomeBanner({ outcome, onDismiss }: { outcome: BulkOutcome; onDis
  */
 function BulkRescheduleBanner({
   outcome,
+  businessZone,
   onDismiss,
 }: {
   outcome: BulkRescheduleOutcome;
+  businessZone: string;
   onDismiss: () => void;
 }) {
   const clean = outcome.failures.length === 0 && outcome.skipped.length === 0;
@@ -1087,7 +1100,7 @@ function BulkRescheduleBanner({
           <ul className="bookings__bulk-result">
             {outcome.applied.map((a) => (
               <li key={a.id}>
-                <strong>{a.name}</strong>: now {bookingWhenLabel(a.startTime)}
+                <strong>{a.name}</strong>: now {bookingWhenLabel(a.startTime, businessZone)}
               </li>
             ))}
           </ul>

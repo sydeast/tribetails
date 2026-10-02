@@ -34,6 +34,7 @@ import {
   hhmmFromMinutes,
 } from '../lib/scheduleGrid';
 import { getBusinessSettings } from '../api/settings';
+import { DEFAULT_BUSINESS_TIME_ZONE, resolveBusinessTimeZone } from '../lib/businessOperations';
 import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
 import { rescheduleBooking } from '../api/bookingsWrite';
 import {
@@ -231,6 +232,13 @@ export function Schedule({ onSelect }: ScheduleProps) {
    * desktop admin's `if (snapRescheduleTo15Min) 15 else 1`.
    */
   const [snapMinutes, setSnapMinutes] = useState<number>(SNAP_MINUTES_OFF);
+  /**
+   * `business_settings.timeZone`, the clock Block time, New visit and the detail
+   * sheet's Reschedule are typed and read on (#1155). The server's own default
+   * until the read lands, and if it fails: an unusable zone is the same
+   * America/Chicago the server falls back to (#1109), never the device's.
+   */
+  const [businessZone, setBusinessZone] = useState<string>(DEFAULT_BUSINESS_TIME_ZONE);
   useEffect(() => {
     let live = true;
     getBusinessSettings()
@@ -238,6 +246,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
         if (!live) return;
         setServiceDurations(settings.serviceDurations);
         setServiceRates(settings.serviceRates);
+        setBusinessZone(resolveBusinessTimeZone(settings.timeZone));
         setSnapMinutes(settings.snapRescheduleTo15Min ? SNAP_MINUTES_ON : SNAP_MINUTES_OFF);
       })
       .catch(() => {
@@ -583,6 +592,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
               {openSession !== undefined && (
                 <BookingDetailModal
                   entry={openSession}
+                  businessZone={businessZone}
                   onClose={() => setOpenSessionId(null)}
                   onOpenKinfolk={(kinfolkId) =>
                     void navigate({ to: '/directory/$kinfolkId', params: { kinfolkId } })
@@ -607,6 +617,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
       {blockTimeOpen && (
         <BlockTimeDialog
           initialDate={selected}
+          businessZone={businessZone}
           onClose={() => setBlockTimeOpen(false)}
           onBlocked={() => setBlockTimeOpen(false)}
         />
@@ -618,6 +629,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
           serviceRates={serviceRates}
           serviceDurations={serviceDurations}
           initialDate={selected}
+          businessZone={businessZone}
           onClose={() => setNewVisitOpen(false)}
           onCreated={() => setNewVisitOpen(false)}
         />

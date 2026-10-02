@@ -5,8 +5,14 @@ import com.tribetails.auntieos.web.observability.runCatchingCancellable
 actual fun openInMaps(address: String): Unit = throw UnsupportedOperationException("JVM stub")
 // Real impl: render paths (e.g. the Auntie Time day-of filter) call nowIso() during
 // composition, so it must return a usable ISO-8601 timestamp, not throw. Seconds precision.
+//
+// #1155: zone-less, so a reader takes it as the BUSINESS's wall clock (the zone
+// `JvmFirestoreRest.timestampValueOf` reads it in, and the one the server reads
+// every zone-less time in). So it is stamped on that clock too, not the
+// machine's: on a machine in another zone, "now" would otherwise be sent as an
+// instant hours off.
 actual fun nowIso(): String =
-    java.time.LocalDateTime.now().withNano(0).toString()
+    java.time.LocalDateTime.now(com.tribetails.auntieos.web.data.businessZoneId()).withNano(0).toString()
 // Desktop (JVM): open the URL in the system browser via AWT Desktop (mirrors
 // platform/Launcher.jvm.kt). Fail-loud to stderr; headless/test JVMs without a
 // Desktop log rather than crash, since this is a user-initiated convenience.

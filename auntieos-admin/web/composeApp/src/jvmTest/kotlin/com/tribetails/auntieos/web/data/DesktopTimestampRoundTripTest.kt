@@ -156,14 +156,45 @@ class DesktopTimestampRoundTripTest {
         assertEquals(str("2024-07-24"), fields["joinDate"])
         assertEquals(str(""), fields["updatedAt"])
     }
-    /** The desktop's nowIso() stamps zone-less local time; at a Timestamp path it is read in the system zone. */
+    /**
+     * #1155: a zone-less stamp at a Timestamp path is the BUSINESS's wall clock. The
+     * machine is in Los Angeles and the business in Chicago: 10:11:12 on the
+     * business clock (CDT) is 15:11:12Z, where the machine's zone would say 17:11:12Z.
+     */
     @Test
-    fun aZonelessStampAtATimestampPathIsSentAsThatLocalInstant() = runBlocking {
-        seed("kinfolk/kf2", buildJsonObject { put("updatedAt", ts("2024-01-01T00:00:00Z")) })
-        JvmFirestoreRest.getDocPlain("kinfolk", "kf2")
-        JvmFirestoreRest.patchFields("kinfolk", "kf2", mapOf("updatedAt" to JsonPrimitive("2026-09-27T10:11:12")))
-        val expected = java.time.LocalDateTime.parse("2026-09-27T10:11:12").atZone(java.time.ZoneId.systemDefault()).toInstant().toString()
-        assertEquals(ts(expected), onlyWriteFields()["updatedAt"])
+    fun aZonelessStampAtATimestampPathIsSentAsThatBusinessInstant() = runBlocking {
+        val originalZone = java.util.TimeZone.getDefault()
+        java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/Los_Angeles"))
+        val originalSettings = JvmFirestoreFixtures.businessSettings
+        JvmFirestoreFixtures.businessSettings = BusinessSettings(timeZone = "America/Chicago")
+        try {
+            seed("kinfolk/kf2", buildJsonObject { put("updatedAt", ts("2024-01-01T00:00:00Z")) })
+            JvmFirestoreRest.getDocPlain("kinfolk", "kf2")
+            JvmFirestoreRest.patchFields("kinfolk", "kf2", mapOf("updatedAt" to JsonPrimitive("2026-09-27T10:11:12")))
+            assertEquals(ts("2026-09-27T15:11:12Z"), onlyWriteFields()["updatedAt"])
+            assertEquals("2026-09-27T15:11:12Z", JvmFirestoreRest.timestampValueOf("2026-09-27T10:11:12"))
+        } finally {
+            JvmFirestoreFixtures.businessSettings = originalSettings
+            java.util.TimeZone.setDefault(originalZone)
+        }
+    }
+    /** #1155: `nowIso()` is on the same business clock, so a stamp round-trips to the real "now". */
+    @Test
+    fun nowIsoRoundTripsToTheCurrentInstantOnAMachineInAnotherZone() {
+        val originalZone = java.util.TimeZone.getDefault()
+        java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/Los_Angeles"))
+        val originalSettings = JvmFirestoreFixtures.businessSettings
+        JvmFirestoreFixtures.businessSettings = BusinessSettings(timeZone = "America/Chicago")
+        try {
+            val before = System.currentTimeMillis() - 2_000
+            val sent = JvmFirestoreRest.timestampValueOf(com.tribetails.auntieos.web.util.nowIso())
+            val after = System.currentTimeMillis() + 2_000
+            val ms = java.time.Instant.parse(sent!!).toEpochMilli()
+            assertTrue(ms in before..after, "nowIso sent as $sent, which is not now")
+        } finally {
+            JvmFirestoreFixtures.businessSettings = originalSettings
+            java.util.TimeZone.setDefault(originalZone)
+        }
     }
     @Test
     fun timestampValueOfAcceptsDateTimesOnly() {

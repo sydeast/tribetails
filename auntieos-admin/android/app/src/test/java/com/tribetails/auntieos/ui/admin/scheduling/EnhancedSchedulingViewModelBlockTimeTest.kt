@@ -136,14 +136,41 @@ class EnhancedSchedulingViewModelBlockTimeTest {
                 bookingRepo.createBlockedTimeSlot(
                     "2026-08-24", "09:00", "12:00", "Vet",
                     // The epoch-ms twin is what arms the server's overlap check;
-                    // its exact value depends on the device zone and is pinned by
-                    // BlockTimeFormTest against a fixed one.
+                    // its exact value is pinned by BlockTimeFormTest and by the
+                    // business-clock test below.
                     more(0L), more(0L), false,
                 )
             }
             assertNull(vm.state.value.scheduleWriteError)
         }
 
+    /**
+     * #1155: the phone is in Los Angeles and the business is in Chicago. 09:00 to
+     * 12:00 must reach the callable as 09:00 to 12:00 CHICAGO (14:00Z to 17:00Z in
+     * August), not as the phone's 16:00Z to 19:00Z.
+     */
+    @Test
+    fun `a window is read on the business clock, not the phone's`() =
+        runTest(testDispatcher) {
+            val original = java.util.TimeZone.getDefault()
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/Los_Angeles"))
+            try {
+                coEvery { auntieRepo.getBusinessSettings() } returns
+                    Result.success(BusinessSettings(timeZone = "America/Chicago"))
+                val vm = buildViewModel()
+                vm.blockTimeSlot("2026-08-24", "09:00", "12:00", "Vet", BlockMode.TIME_BLOCK)
+                coVerify(exactly = 1) {
+                    bookingRepo.createBlockedTimeSlot(
+                        "2026-08-24", "09:00", "12:00", "Vet",
+                        java.time.Instant.parse("2026-08-24T14:00:00Z").toEpochMilli(),
+                        java.time.Instant.parse("2026-08-24T17:00:00Z").toEpochMilli(),
+                        false,
+                    )
+                }
+            } finally {
+                java.util.TimeZone.setDefault(original)
+            }
+        }
     @Test
     fun `a blank reason still names the block rather than writing an empty one`() =
         runTest(testDispatcher) {

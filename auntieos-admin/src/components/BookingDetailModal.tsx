@@ -22,8 +22,8 @@ import {
   bookingWhenLabel,
   buildRescheduleTimes,
   durationLabel,
-  localDateInput,
-  localTimeInput,
+  businessDateInput,
+  businessTimeInput,
   noteLockReason,
   notesLocked,
   visitDurationMinutes,
@@ -60,6 +60,8 @@ export interface BookingDetailModalProps {
    * needing a manual refetch here.
    */
   entry: ScheduleSessionEntry;
+  /** `business_settings.timeZone`: the clock the visit is shown and rescheduled on (#1155). */
+  businessZone: string;
   onClose: () => void;
   /**
    * Route to the household record. Omit and the kinfolk name renders as static
@@ -127,6 +129,7 @@ export interface BookingDetailModalProps {
  */
 export function BookingDetailModal({
   entry,
+  businessZone,
   onClose,
   onOpenKinfolk,
   onOpenKinTale,
@@ -183,7 +186,7 @@ export function BookingDetailModal({
               <ServicePill serviceType={str(entry.serviceType)} />
             </Fact>
             <Fact label="Duration">{durationLabel(durationMinutes)}</Fact>
-            <Fact label="When">{bookingWhenLabel(startTime)}</Fact>
+            <Fact label="When">{bookingWhenLabel(startTime, businessZone)}</Fact>
             <Fact label="Status">
               <span className={`schedule__chip schedule__chip--${stateInfo.cssClass}`}>
                 {stateInfo.chipLabel}
@@ -224,7 +227,12 @@ export function BookingDetailModal({
           )}
         </DenPanel>
 
-        <ReschedulePanel entry={entry} durationMinutes={durationMinutes} onDone={handleRescheduled} />
+        <ReschedulePanel
+          entry={entry}
+          durationMinutes={durationMinutes}
+          businessZone={businessZone}
+          onDone={handleRescheduled}
+        />
 
         {isEnvelopeVisit ? (
           <>
@@ -473,13 +481,14 @@ function AssignedAuntiePanel({ kinfolkId, batchId, visitId, enabled }: AssignedA
 interface ReschedulePanelProps {
   entry: ScheduleSessionEntry;
   durationMinutes: number;
+  businessZone: string;
   onDone: () => void;
 }
 
-function ReschedulePanel({ entry, durationMinutes, onDone }: ReschedulePanelProps) {
+function ReschedulePanel({ entry, durationMinutes, businessZone, onDone }: ReschedulePanelProps) {
   const startTime = str(entry.startTime);
-  const [date, setDate] = useState(() => localDateInput(startTime));
-  const [time, setTime] = useState(() => localTimeInput(startTime));
+  const [date, setDate] = useState(() => businessDateInput(startTime, businessZone));
+  const [time, setTime] = useState(() => businessTimeInput(startTime, businessZone));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -501,7 +510,7 @@ function ReschedulePanel({ entry, durationMinutes, onDone }: ReschedulePanelProp
 
   async function submit() {
     if (busy) return;
-    const times = buildRescheduleTimes(date, time, durationMinutes);
+    const times = buildRescheduleTimes(date, time, durationMinutes, businessZone);
     if (times === null) {
       setError('Enter a real date and a time of day before rescheduling.');
       return;
