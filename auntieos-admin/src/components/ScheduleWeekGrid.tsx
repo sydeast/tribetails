@@ -9,11 +9,12 @@ import {
   HOUR_HEIGHT_PX,
   MIN_BLOCK_MINUTES,
   busyPlacement,
+  businessMinutesNow,
+  businessMinutesOfDay,
   clampDropMinute,
   gridPlacement,
   hhmmFromMinutes,
   hourLabel,
-  localMinutesOfDay,
   minuteFromOffsetPx,
   snapMinuteOfDay,
 } from '../lib/scheduleGrid';
@@ -46,12 +47,6 @@ const DRAG_THRESHOLD_PX = 5;
  * navigated away from is not still ticking.
  */
 const NOW_TICK_MS = 60_000;
-
-/** Minute-of-day right now, in the viewer's own zone (the same clock every block is placed against). */
-function minutesOfDayNow(): number {
-  const now = new Date();
-  return now.getHours() * 60 + now.getMinutes();
-}
 
 /** One in-flight drag. Null whenever the pointer is not down on a block. */
 interface DragState {
@@ -89,8 +84,13 @@ export interface ScheduleDrop {
 }
 
 interface ScheduleWeekGridProps {
-  /** The seven `YYYY-MM-DD` days on screen, Monday first. */
+  /** The seven `YYYY-MM-DD` days on screen, Monday first, on the business's calendar. */
   days: string[];
+  /**
+   * `business_settings.timeZone` (#1158). Every block, the now line and the
+   * drop are on this one clock, so a drop lands on the row it is drawn on.
+   */
+  businessZone: string;
   today: string;
   selected: string;
   byDay: Map<string, ScheduleSessionEntry[]>;
@@ -150,6 +150,7 @@ interface ScheduleWeekGridProps {
  */
 export function ScheduleWeekGrid({
   days,
+  businessZone,
   today,
   selected,
   byDay,
@@ -175,11 +176,12 @@ export function ScheduleWeekGrid({
    * component that only re-renders on data would draw the line where it was
    * when the screen opened and leave it there all afternoon.
    */
-  const [nowMinute, setNowMinute] = useState<number>(minutesOfDayNow);
+  const [nowMinute, setNowMinute] = useState<number>(() => businessMinutesNow(businessZone));
   useEffect(() => {
-    const id = setInterval(() => setNowMinute(minutesOfDayNow()), NOW_TICK_MS);
+    setNowMinute(businessMinutesNow(businessZone));
+    const id = setInterval(() => setNowMinute(businessMinutesNow(businessZone)), NOW_TICK_MS);
     return () => clearInterval(id);
-  }, []);
+  }, [businessZone]);
   // Only when today is one of the seven columns AND the clock is inside the
   // drawn window. Outside it there is no honest place to put the line, and
   // pinning it to the top or bottom edge would claim a time that is not now.
@@ -279,7 +281,7 @@ export function ScheduleWeekGrid({
     return (
       sum +
       rows.filter((r) => {
-        const minute = localMinutesOfDay(r.startTime);
+        const minute = businessMinutesOfDay(r.startTime, businessZone);
         return minute !== null && gridPlacement(minute, MIN_BLOCK_MINUTES) === null;
       }).length
     );
@@ -360,7 +362,7 @@ export function ScheduleWeekGrid({
             })}
 
             {(byDay.get(day) ?? []).map((entry) => {
-              const startMinute = localMinutesOfDay(entry.startTime);
+              const startMinute = businessMinutesOfDay(entry.startTime, businessZone);
               if (startMinute === null) return null;
               const place = gridPlacement(startMinute, visitDurationMinutes(entry));
               if (place === null) return null;

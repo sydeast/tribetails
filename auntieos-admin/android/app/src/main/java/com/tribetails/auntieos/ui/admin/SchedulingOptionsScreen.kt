@@ -48,11 +48,12 @@ import com.tribetails.auntieos.ui.admin.scheduling.calendarIdProblem
 import com.tribetails.auntieos.ui.admin.scheduling.calendarSyncRunLabel
 import com.tribetails.auntieos.ui.admin.scheduling.googleCalendarPushLabel
 import com.tribetails.auntieos.ui.admin.scheduling.writeCalendarProblem
+import com.tribetails.auntieos.ui.admin.scheduling.businessToday
+import com.tribetails.auntieos.data.model.businessZone
 import com.tribetails.auntieos.ui.admin.services.ServiceManagementViewModel
 import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 
-import java.time.LocalDate
 import androidx.compose.ui.unit.dp
 
 @Composable
@@ -65,7 +66,11 @@ fun SchedulingOptionsScreen(
     val schedulingState by schedulingViewModel.state.collectAsStateWithLifecycle()
     val serviceState by serviceManagementViewModel.state.collectAsStateWithLifecycle()
 
-    var selectedDate by remember { mutableStateOf(LocalDate.now().toString()) }
+    // #1158: the date the form opens on is the business's today, not the phone's.
+    val bizTimeZone = schedulingState.businessSettings.timeZone
+    var selectedDate by remember(bizTimeZone) {
+        mutableStateOf(businessToday(businessZone(bizTimeZone)).toString())
+    }
     var startTime by remember { mutableStateOf("09:00") }
     var endTime by remember { mutableStateOf("17:00") }
     var blockReason by remember { mutableStateOf("Blocked") }

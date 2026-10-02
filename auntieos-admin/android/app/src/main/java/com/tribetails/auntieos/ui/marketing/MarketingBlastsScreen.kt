@@ -321,7 +321,7 @@ fun MarketingBlastsScreen(viewModel: MarketingBlastsViewModel) {
                     )
                     state.fireAtMs?.let { ms ->
                         Text(
-                            text = "Fires ${fireLabel(ms)}, your local time.",
+                            text = "Fires ${fireLabel(ms, state.zone)}, ${state.zone.id} time.",
                             style = AuntieTheme.typography.bodySmall,
                             color = c.textDim,
                         )
@@ -396,6 +396,7 @@ fun MarketingBlastsScreen(viewModel: MarketingBlastsViewModel) {
                                 state.sending.forEach { blast ->
                                     BlastRow(
                                         blast = blast,
+                                        zone = state.zone,
                                         cancelling = state.cancellingId == blast.id,
                                         // Stoppable MID fan-out: the un-queued
                                         // remainder is real. A campaign already
@@ -423,6 +424,7 @@ fun MarketingBlastsScreen(viewModel: MarketingBlastsViewModel) {
                                 state.scheduled.forEach { blast ->
                                     BlastRow(
                                         blast = blast,
+                                        zone = state.zone,
                                         cancelling = state.cancellingId == blast.id,
                                         cancelEnabled = state.cancellingId == null,
                                         onCancel = { viewModel.cancel(blast.id) },
@@ -435,7 +437,7 @@ fun MarketingBlastsScreen(viewModel: MarketingBlastsViewModel) {
                                 EmptyHint("Nothing sent yet.")
                             } else {
                                 state.history.forEach { blast ->
-                                    BlastRow(blast = blast, cancelling = false, cancelEnabled = false, onCancel = {})
+                                    BlastRow(blast = blast, zone = state.zone, cancelling = false, cancelEnabled = false, onCancel = {})
                                 }
                             }
                         }
@@ -478,6 +480,7 @@ private fun SendingSyncOffer(attempt: Int, onSync: () -> Unit) {
 @Composable
 private fun BlastRow(
     blast: MarketingBlastRow,
+    zone: ZoneId,
     cancelling: Boolean,
     cancelEnabled: Boolean,
     onCancel: () -> Unit,
@@ -492,7 +495,7 @@ private fun BlastRow(
         Column(Modifier.weight(1f)) {
             Text(blast.displayName, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
             Text(
-                text = blastMeta(blast),
+                text = blastMeta(blast, zone),
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
@@ -526,8 +529,8 @@ private fun BlastRow(
 }
 
 /** The second line of a campaign row. Pure; unit-tested. */
-internal fun blastMeta(blast: MarketingBlastRow): String {
-    val head = "${blast.key} ${blast.audienceDescription} ${fireLabel(blast.fireAtMs)}".trim()
+internal fun blastMeta(blast: MarketingBlastRow, zone: ZoneId): String {
+    val head = "${blast.key} ${blast.audienceDescription} ${fireLabel(blast.fireAtMs, zone)}".trim()
     return when (blast.status) {
         BlastStatus.Scheduled -> head
         // #823: the mock's "256 of 410 dispatched". A stalled fan-out says it
@@ -590,6 +593,6 @@ internal fun confirmLine(state: MarketingBlastsUiState): String {
             state.segments.firstOrNull { it.id == state.selectedSegmentId }?.description ?: "a saved segment"
         AudienceMode.Criteria -> state.criteria.kind.label
     }
-    val when_ = state.fireAtMs?.let { fireLabel(it) } ?: "no time yet"
+    val when_ = state.fireAtMs?.let { fireLabel(it, state.zone) } ?: "no time yet"
     return "${state.campaignKey.label} to $who, firing $when_."
 }

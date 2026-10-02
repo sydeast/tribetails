@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
   GRID_END_MINUTE,
   GRID_START_MINUTE,
@@ -12,34 +12,72 @@ import {
   hhmmFromMinutes,
   hourLabel,
   isNoOpDrop,
-  localMinutesOfDay,
+  businessDayOf,
+  businessMinutesNow,
+  businessMinutesOfDay,
+  businessWindowLabel,
   minuteFromOffsetPx,
   minutesFromHHmm,
   dropMinuteFromOffsetPx,
   rescheduleTimesForDrop,
   snapMinuteOfDay,
 } from './scheduleGrid';
+import { businessWallClockToMs } from './businessZoneTime';
 
 /**
  * The drop math for #397 M13, stated outright rather than inferred from a
- * pointer gesture. Expected instants are built with the LOCAL `Date` constructor
- * and round-tripped through `toISOString()`, exactly as `buildRescheduleTimes`
- * does, so every assertion holds in any runner timezone while still pinning the
- * real arithmetic (the snap, and the duration the end is derived from).
+ * pointer gesture.
+ *
+ * #1158: the DEVICE is pinned to America/Los_Angeles and the BUSINESS is
+ * America/Chicago, two hours apart, so a grid drawn or a drop built on the
+ * device clock fails here. Expected instants are the business wall clock.
  */
-const localIso = (y: number, m: number, d: number, hh: number, mm: number) =>
-  new Date(y, m - 1, d, hh, mm, 0, 0).toISOString();
+const BIZ = 'America/Chicago';
+let originalTz: string | undefined;
+beforeAll(() => {
+  originalTz = process.env.TZ;
+  process.env.TZ = 'America/Los_Angeles';
+});
+afterAll(() => {
+  if (originalTz === undefined) delete process.env.TZ;
+  else process.env.TZ = originalTz;
+});
+const pad = (n: number) => String(n).padStart(2, '0');
+const bizIso = (y: number, m: number, d: number, hh: number, mm: number) =>
+  new Date(businessWallClockToMs(`${y}-${pad(m)}-${pad(d)}`, `${pad(hh)}:${pad(mm)}`, BIZ)!).toISOString();
 
 describe('clock helpers', () => {
-  it('reads a minute-of-day off an ISO instant in the local zone', () => {
-    const iso = new Date(2026, 6, 16, 9, 15, 0, 0).toISOString();
-    expect(localMinutesOfDay(iso)).toBe(9 * 60 + 15);
+  it('reads a minute-of-day off an instant on the business clock, not the device', () => {
+    // 19:00Z is 14:00 in Chicago (CDT) and 12:00 on the LA device.
+    expect(businessMinutesOfDay('2026-10-05T19:00:00.000Z', BIZ)).toBe(14 * 60);
+  });
+
+  it('reads a zone-less start as the business wall clock it already is', () => {
+    expect(businessMinutesOfDay('2026-10-05T14:00:00', BIZ)).toBe(14 * 60);
+  });
+
+  it('puts a visit on its business day, even when the device is still on the day before', () => {
+    // 05:30Z on Oct 6 is 00:30 Oct 6 in Chicago and 22:30 Oct 5 in LA.
+    expect(businessDayOf('2026-10-06T05:30:00.000Z', BIZ)).toBe('2026-10-06');
+    expect(businessDayOf('2026-10-05T23:30:00', BIZ)).toBe('2026-10-05');
+    expect(businessDayOf('whenever', BIZ)).toBeNull();
+  });
+
+  it('reads now on the business clock', () => {
+    expect(businessMinutesNow(BIZ, Date.UTC(2026, 9, 5, 16, 18))).toBe(11 * 60 + 18);
+  });
+
+  it('labels the agenda window on the business clock', () => {
+    expect(businessWindowLabel('2026-10-05T19:00:00.000Z', '2026-10-05T20:30:00.000Z', BIZ)).toBe('14:00 to 15:30');
+    expect(businessWindowLabel('2026-10-05T19:00:00.000Z', '', BIZ)).toBe('14:00');
+    expect(businessWindowLabel('', '2026-10-05T20:30:00.000Z', BIZ)).toBe('15:30');
+    expect(businessWindowLabel('', '', BIZ)).toBe('Time TBD');
   });
 
   it('is null rather than zero for anything unreadable', () => {
-    expect(localMinutesOfDay('')).toBeNull();
-    expect(localMinutesOfDay('sometime tuesday')).toBeNull();
-    expect(localMinutesOfDay(undefined)).toBeNull();
+    expect(businessMinutesOfDay('', BIZ)).toBeNull();
+    expect(businessMinutesOfDay('sometime tuesday', BIZ)).toBeNull();
+    expect(businessMinutesOfDay(undefined, BIZ)).toBeNull();
   });
 
   it('parses the plain HH:mm a busy row stores, and refuses anything else', () => {
@@ -132,16 +170,16 @@ describe('drop math', () => {
 describe('rescheduleTimesForDrop', () => {
   const visit = {
     _id: 'sess-1',
-    startTime: localIso(2026, 7, 16, 9, 0),
-    endTime: localIso(2026, 7, 16, 10, 30),
+    startTime: bizIso(2026, 7, 16, 9, 0),
+    endTime: bizIso(2026, 7, 16, 10, 30),
   };
 
   it('starts where the pointer dropped, snapped, and ENDS from the stored span', () => {
-    const times = rescheduleTimesForDrop(visit, '2026-07-17', 13 * 60 + 7, SNAP_MINUTES_ON);
+    const times = rescheduleTimesForDrop(visit, '2026-07-17', 13 * 60 + 7, SNAP_MINUTES_ON, BIZ);
     expect(times).toEqual({
-      startTime: localIso(2026, 7, 17, 13, 0),
+      startTime: bizIso(2026, 7, 17, 13, 0),
       // 90 minutes: the visit's own 9:00-10:30 span, NOT anything about the drop.
-      endTime: localIso(2026, 7, 17, 14, 30),
+      endTime: bizIso(2026, 7, 17, 14, 30),
     });
   });
 
@@ -151,47 +189,54 @@ describe('rescheduleTimesForDrop', () => {
       '2026-07-16',
       11 * 60,
       SNAP_MINUTES_ON,
+      BIZ,
     );
     expect(times).toEqual({
-      startTime: localIso(2026, 7, 16, 11, 0),
-      endTime: localIso(2026, 7, 16, 11, 45),
+      startTime: bizIso(2026, 7, 16, 11, 0),
+      endTime: bizIso(2026, 7, 16, 11, 45),
     });
   });
 
   it('falls back to 30 minutes when the row states no length at all', () => {
-    const times = rescheduleTimesForDrop({ _id: 'sess-2' }, '2026-07-16', 11 * 60, SNAP_MINUTES_ON);
+    const times = rescheduleTimesForDrop({ _id: 'sess-2' }, '2026-07-16', 11 * 60, SNAP_MINUTES_ON, BIZ);
     expect(times).toEqual({
-      startTime: localIso(2026, 7, 16, 11, 0),
-      endTime: localIso(2026, 7, 16, 11, 30),
+      startTime: bizIso(2026, 7, 16, 11, 0),
+      endTime: bizIso(2026, 7, 16, 11, 30),
     });
   });
 
   it('moving to another DAY keeps the visit exactly as long', () => {
-    const times = rescheduleTimesForDrop(visit, '2026-07-20', 8 * 60, SNAP_MINUTES_ON);
+    const times = rescheduleTimesForDrop(visit, '2026-07-20', 8 * 60, SNAP_MINUTES_ON, BIZ);
     expect(times).toEqual({
-      startTime: localIso(2026, 7, 20, 8, 0),
-      endTime: localIso(2026, 7, 20, 9, 30),
+      startTime: bizIso(2026, 7, 20, 8, 0),
+      endTime: bizIso(2026, 7, 20, 9, 30),
     });
   });
 
+  it('a drop on the 15:00 row sends 15:00 on the business clock, not the device (#1158)', () => {
+    const times = rescheduleTimesForDrop({ _id: 'sess-3', serviceDurationMinutes: 60 }, '2026-10-05', 15 * 60, 1, BIZ);
+    // 15:00 in Chicago (CDT) is 20:00Z. Built on the LA device it would be 22:00Z.
+    expect(times).toEqual({ startTime: '2026-10-05T20:00:00.000Z', endTime: '2026-10-05T21:00:00.000Z' });
+  });
+
   it('is null, never a guessed window, for a blank id or an impossible day', () => {
-    expect(rescheduleTimesForDrop({ ...visit, _id: '  ' }, '2026-07-16', 600, 15)).toBeNull();
-    expect(rescheduleTimesForDrop(visit, '2026-02-30', 600, 15)).toBeNull();
+    expect(rescheduleTimesForDrop({ ...visit, _id: '  ' }, '2026-07-16', 600, 15, BIZ)).toBeNull();
+    expect(rescheduleTimesForDrop(visit, '2026-02-30', 600, 15, BIZ)).toBeNull();
   });
 });
 
 describe('isNoOpDrop', () => {
-  const visit = { _id: 'sess-1', startTime: new Date(2026, 6, 16, 9, 0, 0, 0).toISOString() };
+  const visit = { _id: 'sess-1', startTime: bizIso(2026, 7, 16, 9, 0) };
 
   it('a drop back onto the visit\'s own snapped start writes nothing', () => {
-    expect(isNoOpDrop(visit, '2026-07-16', '2026-07-16', 9 * 60, SNAP_MINUTES_ON)).toBe(true);
+    expect(isNoOpDrop(visit, '2026-07-16', '2026-07-16', 9 * 60, SNAP_MINUTES_ON, BIZ)).toBe(true);
   });
 
   it('a drop a quarter-hour away is a real move', () => {
-    expect(isNoOpDrop(visit, '2026-07-16', '2026-07-16', 9 * 60 + 15, SNAP_MINUTES_ON)).toBe(false);
+    expect(isNoOpDrop(visit, '2026-07-16', '2026-07-16', 9 * 60 + 15, SNAP_MINUTES_ON, BIZ)).toBe(false);
   });
 
   it('the same clock time on a different day is a real move', () => {
-    expect(isNoOpDrop(visit, '2026-07-16', '2026-07-17', 9 * 60, SNAP_MINUTES_ON)).toBe(false);
+    expect(isNoOpDrop(visit, '2026-07-16', '2026-07-17', 9 * 60, SNAP_MINUTES_ON, BIZ)).toBe(false);
   });
 });

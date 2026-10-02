@@ -17,6 +17,7 @@ import {
   blastBlocker,
   cancelNotice,
   fireAtMsFrom,
+  fireLabelInZone,
   mergeFieldsToData,
   parseUidList,
   scheduleNotice,
@@ -25,7 +26,9 @@ import {
 } from '../lib/marketingBlastEdit';
 import { mintBlastIdempotencyKey } from '../lib/sendIdempotency';
 import { sendTimeOf } from '../lib/communicateFormat';
-import { formatWhenFull, machineWhen } from '../lib/time';
+import { machineWhen } from '../lib/time';
+import { getBusinessSettings } from '../api/settings';
+import { DEFAULT_BUSINESS_TIME_ZONE, resolveBusinessTimeZone } from '../lib/businessOperations';
 import { DenScreenHeading, DenPanel, StatusPill, EmptyHint, ErrorHint } from '../components/DenScreenKit';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Banner } from '../components/Banner';
@@ -145,11 +148,14 @@ const STATUS_LABEL: Record<MarketingBlast['status'], string> = {
  */
 function CampaignRow({
   blast,
+  businessZone,
   detail,
   action,
   progress,
 }: {
   blast: MarketingBlast;
+  /** #1158: send times read on the business's clock, the one they were typed on. */
+  businessZone: string;
   detail?: ReactNode;
   action?: ReactNode;
   /** 0..1 while the fan-out is walking the roster, or null for a campaign at rest. */
@@ -161,7 +167,7 @@ function CampaignRow({
         <span className="blasts__row-name">{blast.title === '' ? blast.key : blast.title}</span>
         <span className="blasts__row-meta">
           <code className="blasts__code">{blast.key}</code> {blast.audienceDescription} &middot;{' '}
-          <time dateTime={machineWhen(sendTimeOf(blast.fireAtMs))}>{fireLabel(blast.fireAtMs)}</time>
+          <time dateTime={machineWhen(sendTimeOf(blast.fireAtMs))}>{fireLabelInZone(blast.fireAtMs, businessZone)}</time>
           {detail}
         </span>
         {progress !== null && progress !== undefined && (
@@ -178,10 +184,6 @@ function CampaignRow({
       </div>
     </li>
   );
-}
-
-function fireLabel(ms: number): string {
-  return formatWhenFull(sendTimeOf(ms)) ?? 'no send time';
 }
 
 function errText(err: unknown, fallback: string): string {
@@ -209,6 +211,27 @@ export function MarketingBlasts() {
 
   const [sendDate, setSendDate] = useState('');
   const [sendTime, setSendTime] = useState('');
+  /**
+   * #1158: `business_settings.timeZone`, the clock the send time is typed and
+   * read on. The server's own default until the read lands, and if it fails:
+   * America/Chicago (#1109), never the device's zone.
+   */
+  const [businessZone, setBusinessZone] = useState<string>(DEFAULT_BUSINESS_TIME_ZONE);
+  useEffect(() => {
+    let live = true;
+    getBusinessSettings()
+      .then((settings) => {
+        if (live) setBusinessZone(resolveBusinessTimeZone(settings.timeZone));
+      })
+      .catch(() => {
+        // The default above is the server's own fallback, so a failed read
+        // still builds the send time on the clock the server will use.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+  const fireLabel = (ms: number) => fireLabelInZone(ms, businessZone);
 
   const [reach, setReach] = useState<BlastReach | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -235,7 +258,7 @@ export function MarketingBlasts() {
   const adhocCriteria = buildBlastCriteria(criteriaKind, statusesRaw, tagsRaw, tagMatch);
   const explicitUids = parseUidList(uidsRaw);
   const audience = blastAudienceArgs(selectedSegmentId, adhocCriteria, explicitUids, mode);
-  const fireAtMs = fireAtMsFrom(sendDate, sendTime);
+  const fireAtMs = fireAtMsFrom(sendDate, sendTime, businessZone);
   const blocker = blastBlocker(audience, fireAtMs, Date.now(), reach?.reachable);
   const busy = scheduling || previewing;
 
@@ -678,7 +701,7 @@ export function MarketingBlasts() {
                     />
                   </label>
                 </div>
-                {fireAtMs !== null && <p className="blasts__hint">Fires {fireLabel(fireAtMs)}, your local time.</p>}
+                {fireAtMs !== null && <p className="blasts__hint">Fires {fireLabel(fireAtMs)}, {businessZone} time.</p>}
               </fieldset>
 
               <div className="blasts__actions">
@@ -743,6 +766,7 @@ export function MarketingBlasts() {
                         <CampaignRow
                           key={b.id}
                           blast={b}
+                          businessZone={businessZone}
                           progress={b.audienceSize > 0 ? b.queued / b.audienceSize : 0}
                           detail={
                             <>
@@ -801,6 +825,7 @@ export function MarketingBlasts() {
                       <CampaignRow
                         key={b.id}
                         blast={b}
+                        businessZone={businessZone}
                         action={
                           <GhostButton
                             label={cancellingId === b.id ? 'Cancelling...' : 'Cancel'}
@@ -822,6 +847,7 @@ export function MarketingBlasts() {
                       <CampaignRow
                         key={b.id}
                         blast={b}
+                        businessZone={businessZone}
                         detail={
                           b.status === 'failed' && b.dispatched === 0 ? (
                             // Not a count: a campaign whose fan-out never armed

@@ -10,8 +10,9 @@ import { businessWallClockToMs } from './businessZoneTime';
  * whatever zone the browser is in. `expandWeekly` and `visitMsFromDays` take
  * that zone and build through `businessWallClockToMs`.
  *
- * `localDayTimeToMs` is still the DEVICE zone (AO-18). Its one caller left is
- * the Block time dialog, which this fix does not touch.
+ * #1158: `localDayTimeToMs` takes the business zone too. It has no caller in the
+ * app today and is kept working rather than deleted (unreachable code stays as
+ * a fallback); anything that reaches for it builds on the business clock.
  */
 
 export type BookingMode = 'dates' | 'weekly';
@@ -23,25 +24,20 @@ export const WEEKDAY_LABELS: readonly string[] = ['Sun', 'Mon', 'Tue', 'Wed', 'T
 export const WEEKS_OPTIONS: readonly number[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
 /**
- * Combines a calendar DAY with the shared start TIME into epoch ms, LOCAL.
- * Null when either half is blank or unparseable.
+ * Combines a calendar DAY with the shared start TIME into epoch ms, on the
+ * BUSINESS's clock (#1158). Null when either half is blank or unparseable.
  *
  * The specific-dates mode used to be N `<input type="datetime-local">` rows, so
  * each row carried its own time and this was a single `new Date(string)` parse.
  * The calendar picker separates the two: the operator chooses a SET of days and
  * one time that applies to all of them, which is also what the Android twin and
- * the archive both do. Building the date from numeric parts rather than from a
- * concatenated string keeps the AO-18 guarantee explicit: `new Date(y, m-1, d,
- * hh, mm)` is unambiguously the local constructor, where a string form depends
- * on the engine's parsing rules.
+ * the archive both do. It was the DEVICE's clock (AO-18's local constructor);
+ * the server reads every visit time on the business's, so it builds through
+ * `businessWallClockToMs` like the rest of this file.
  */
-export function localDayTimeToMs(dayIso: string, timeHHmm: string): number | null {
+export function localDayTimeToMs(dayIso: string, timeHHmm: string, businessZone: string): number | null {
   if (dayIso.trim() === '' || timeHHmm.trim() === '') return null;
-  const [y, m, d] = dayIso.split('-').map((n) => Number.parseInt(n, 10));
-  const [hh, mm] = timeHHmm.split(':').map((n) => Number.parseInt(n, 10));
-  if ([y, m, d, hh, mm].some((n) => !Number.isFinite(n))) return null;
-  const ms = new Date(y!, m! - 1, d!, hh!, mm!, 0, 0).getTime();
-  return Number.isNaN(ms) ? null : ms;
+  return businessWallClockToMs(dayIso.trim(), timeHHmm.trim(), businessZone);
 }
 
 /**

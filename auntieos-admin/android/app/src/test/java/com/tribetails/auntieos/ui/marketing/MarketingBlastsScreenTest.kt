@@ -7,6 +7,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.ui.theme.AuntieOSTheme
+import com.tribetails.auntieos.data.model.BusinessSettings
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -49,6 +50,7 @@ class MarketingBlastsScreenTest {
         repo = mockk()
         coEvery { repo.listAudienceSegments() } returns Result.success(emptyList())
         coEvery { repo.listMarketingBlasts() } returns Result.success(emptyList())
+        coEvery { repo.getBusinessSettings() } returns Result.success(BusinessSettings(timeZone = "America/Chicago"))
     }
 
     @After

@@ -101,6 +101,21 @@ class MarketingBlastTest {
     }
 
     @Test
+    fun `a 9_00 send fires at 9_00 Chicago, not 9_00 on the phone (#1158)`() {
+        val original = java.util.TimeZone.getDefault()
+        java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/Los_Angeles"))
+        try {
+            val chicago = com.tribetails.auntieos.data.model.businessZone("America/Chicago")
+            val ms = fireAtMsFrom("2026-06-03", "09:00", chicago)
+            // 9:00 Chicago (CDT) is 14:00Z; the LA phone's 9:00 would be 16:00Z.
+            assertEquals(java.time.Instant.parse("2026-06-03T14:00:00Z").toEpochMilli(), ms)
+            assertEquals("2026-06-03 09:00", fireLabel(ms!!, chicago))
+        } finally {
+            java.util.TimeZone.setDefault(original)
+        }
+    }
+
+    @Test
     fun `fireAtMsFrom is null when either half is missing, rather than defaulting to today`() {
         assertNull(fireAtMsFrom("", "09:00", utc))
         assertNull(fireAtMsFrom("2026-06-03", "", utc))
@@ -393,8 +408,8 @@ class MarketingBlastTest {
             suppressed = 0,
             failed = 0,
         )
-        assertTrue(blastMeta(row).contains("All active kinfolk"))
-        assertTrue(!blastMeta(row).contains("sent"))
+        assertTrue(blastMeta(row, utc).contains("All active kinfolk"))
+        assertTrue(!blastMeta(row, utc).contains("sent"))
     }
 
     @Test
@@ -412,7 +427,7 @@ class MarketingBlastTest {
             suppressed = 1,
             failed = 0,
         )
-        assertTrue(blastMeta(row).contains("3 sent, 1 suppressed"))
+        assertTrue(blastMeta(row, utc).contains("3 sent, 1 suppressed"))
     }
 
     @Test
@@ -435,10 +450,10 @@ class MarketingBlastTest {
             suppressed = 0,
             failed = 0,
         )
-        assertTrue(blastMeta(base).contains("never queued"))
+        assertTrue(blastMeta(base, utc).contains("never queued"))
 
         val stranded = base.copy(id = "b4", dispatched = 61, suppressed = 4)
-        val meta = blastMeta(stranded)
+        val meta = blastMeta(stranded, utc)
         assertTrue(meta.contains("61 sent, 4 suppressed, stopped part-way"))
         assertTrue(!meta.contains("never queued"))
     }

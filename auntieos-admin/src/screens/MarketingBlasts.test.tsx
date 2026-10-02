@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -20,18 +20,33 @@ vi.mock('../api/marketingBlasts', async (orig) => ({
 const { listAudienceSegments } = vi.hoisted(() => ({ listAudienceSegments: vi.fn() }));
 vi.mock('../api/audienceSegments', () => ({ listAudienceSegments }));
 
+// #1158: the send time is built on the business's clock, read from here.
+const { getBusinessSettings } = vi.hoisted(() => ({ getBusinessSettings: vi.fn() }));
+vi.mock('../api/settings', () => ({ getBusinessSettings }));
+
 import { MarketingBlasts, buildBlastCriteria } from './MarketingBlasts';
+import { businessTodayIso, businessWallClockToMs } from '../lib/businessZoneTime';
 
 const HOUR = 60 * 60 * 1000;
 
-/** A date/time pair comfortably in the future, in the local zone the form reads. */
+/**
+ * #1158: the DEVICE is America/Los_Angeles and the BUSINESS America/Chicago, so
+ * a send time built on the device clock lands two hours late.
+ */
+const BIZ = 'America/Chicago';
+let originalTz: string | undefined;
+beforeAll(() => {
+  originalTz = process.env.TZ;
+  process.env.TZ = 'America/Los_Angeles';
+});
+afterAll(() => {
+  if (originalTz === undefined) delete process.env.TZ;
+  else process.env.TZ = originalTz;
+});
+
+/** A date/time pair comfortably in the future, on the business calendar the form reads. */
 function futureDateTime(): { date: string; time: string } {
-  const d = new Date(Date.now() + 48 * HOUR);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return {
-    date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
-    time: '09:00',
-  };
+  return { date: businessTodayIso(BIZ, Date.now() + 48 * HOUR), time: '09:00' };
 }
 
 beforeEach(() => {
@@ -40,6 +55,7 @@ beforeEach(() => {
   listMarketingBlasts.mockReset().mockResolvedValue([]);
   cancelMarketingBlast.mockReset();
   listAudienceSegments.mockReset().mockResolvedValue([]);
+  getBusinessSettings.mockReset().mockResolvedValue({ timeZone: BIZ });
 });
 
 // ── pure helper ─────────────────────────────────────────────────────────────
@@ -186,7 +202,8 @@ describe('MarketingBlasts', () => {
     expect(args.audience).toEqual({ criteria: { kind: 'all' } });
     expect(args.data).toEqual({ headline: 'A little news' });
     expect(args.title).toBe('June newsletter');
-    expect(new Date(args.fireAtMs).getHours()).toBe(9);
+    // 9:00 on the business clock (Chicago), not 9:00 on the LA device.
+    expect(args.fireAtMs).toBe(businessWallClockToMs(when.date, '09:00', BIZ));
 
     expect(await screen.findByText(/9 queued, 0 suppressed/)).toBeInTheDocument();
     // The list is reloaded so the new campaign appears without a page refresh.

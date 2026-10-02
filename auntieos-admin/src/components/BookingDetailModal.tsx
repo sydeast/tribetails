@@ -148,7 +148,7 @@ export function BookingDetailModal({
   const household = sessionHousehold(str(entry.kinfolkName));
   const stateInfo = sessionStateInfo(sessionState(str(entry.status)));
   const durationMinutes = visitDurationMinutes(entry);
-  const locked = notesLocked(startTime, nowMs());
+  const locked = notesLocked(startTime, nowMs(), businessZone);
   const reportIds = arr<string>(entry.reportIds).filter((id) => typeof id === 'string' && id !== '');
 
   // The sheet closes the instant a reschedule lands (see ReschedulePanel's own

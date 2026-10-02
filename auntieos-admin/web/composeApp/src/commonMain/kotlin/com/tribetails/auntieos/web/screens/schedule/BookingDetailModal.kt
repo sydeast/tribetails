@@ -76,11 +76,17 @@ fun BookingDetailModal(
     session: KinCareSession,
     onDismiss: () -> Unit,
     client: FirestoreClient,
+    /**
+     * #1158: the business's zone (`NewBookingMath.businessTimeZone`), never the
+     * machine's. The "When" line, the reschedule prefill and build, and the note
+     * lock all read it, the same clock the Schedule grid is drawn on.
+     */
+    zone: TimeZone,
     nowMs: () -> Long = { Clock.System.now().toEpochMilliseconds() },
 ) {
     val c = AuntieTheme.colors
     val scope = rememberReportingScope()
-    val localZone = remember { TimeZone.currentSystemDefault() }
+    val localZone = zone
     val bookingId = session.sourceBookingId.ifBlank { session._id }
     // 1025: a landed reschedule used to call onDismiss() with nothing
     // confirming it, closing this modal in the same breath (the same gap
@@ -104,8 +110,8 @@ fun BookingDetailModal(
 
     // Reschedule (wires the Stage-1 rescheduleBooking callable, §A.9). Prefilled from
     // the current start; end is recomputed from the service duration. Real write.
-    var reschedDate by remember(session._id) { mutableStateOf(isoDatePart(session.startTime)) }
-    var reschedTime by remember(session._id) { mutableStateOf(isoTimePart(session.startTime)) }
+    var reschedDate by remember(session._id) { mutableStateOf(businessDatePart(session.startTime, zone)) }
+    var reschedTime by remember(session._id) { mutableStateOf(businessTimePart(session.startTime, zone)) }
     var rescheduling by remember { mutableStateOf(false) }
     var reschedError by remember { mutableStateOf<String?>(null) }
     // #1154: the refused move and the override its refusal offers; null offer means the message stands alone.
@@ -611,8 +617,8 @@ private fun pad2(n: Int): String = n.toString().padStart(2, '0')
 
 /**
  * Parse a stored ISO timestamp to epoch millis. Prefers a true instant parse
- * (UTC "...Z" or offset). Falls back to interpreting a timezone-less local string
- * in the auntie's local zone.
+ * (UTC "...Z" or offset). Falls back to interpreting a timezone-less string as
+ * the business's wall clock in [zone] (#1158).
  */
 @OptIn(ExperimentalTime::class)
 private fun parseIsoToMs(iso: String, zone: TimeZone): Long? {

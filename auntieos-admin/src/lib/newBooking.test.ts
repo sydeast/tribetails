@@ -24,25 +24,24 @@ afterAll(() => {
 });
 
 describe('localDayTimeToMs', () => {
-  it('combines a calendar day and a wall-clock time as LOCAL, never UTC', () => {
-    const ms = localDayTimeToMs('2026-08-03', '09:00');
-    expect(ms).not.toBeNull();
-    const d = new Date(ms!);
-    expect(d.getFullYear()).toBe(2026);
-    expect(d.getMonth()).toBe(7); // August, 0-based
-    expect(d.getDate()).toBe(3);
-    expect(d.getHours()).toBe(9);
-    // The zone is pinned to America/Chicago above, so the local reading and the
-    // UTC reading must actually differ. Without this the test would pass just as
-    // well against a UTC-parsing implementation, which is the AO-18 bug.
-    expect(new Date(ms!).getUTCHours()).not.toBe(9);
+  // #1158: the device moves to Los Angeles; the business stays in Chicago.
+  beforeEach(() => {
+    process.env.TZ = 'America/Los_Angeles';
+  });
+  afterEach(() => {
+    process.env.TZ = 'America/Chicago';
+  });
+
+  it('combines a calendar day and a wall-clock time on the BUSINESS clock, never the device or UTC', () => {
+    // 9:00 in Chicago (CDT) is 14:00Z. The LA device would give 16:00Z, UTC 09:00Z.
+    expect(localDayTimeToMs('2026-08-03', '09:00', CHICAGO)).toBe(Date.UTC(2026, 7, 3, 14, 0));
   });
   it('returns null for a blank or garbage half', () => {
-    expect(localDayTimeToMs('', '09:00')).toBeNull();
-    expect(localDayTimeToMs('2026-08-03', '')).toBeNull();
-    expect(localDayTimeToMs('   ', '   ')).toBeNull();
-    expect(localDayTimeToMs('not-a-date', '09:00')).toBeNull();
-    expect(localDayTimeToMs('2026-08-03', 'noon')).toBeNull();
+    expect(localDayTimeToMs('', '09:00', CHICAGO)).toBeNull();
+    expect(localDayTimeToMs('2026-08-03', '', CHICAGO)).toBeNull();
+    expect(localDayTimeToMs('   ', '   ', CHICAGO)).toBeNull();
+    expect(localDayTimeToMs('not-a-date', '09:00', CHICAGO)).toBeNull();
+    expect(localDayTimeToMs('2026-08-03', 'noon', CHICAGO)).toBeNull();
   });
 });
 

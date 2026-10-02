@@ -533,6 +533,7 @@ private fun BookingListScreen(
                     session = booking,
                     onDismiss = { selectedBooking = null },
                     client = client,
+                    zone = NewBookingMath.businessTimeZone((settingsState as? FirestoreResult.Data)?.value?.timeZone),
                 )
             }
         }

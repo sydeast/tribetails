@@ -1,4 +1,5 @@
 import { buildRescheduleTimes, visitDurationMinutes, type DurationSource, type RescheduleTimes } from './bookingDetailFormat';
+import { businessInstantMs, businessWallClock } from './businessZoneTime';
 
 /**
  * The week time-grid arithmetic behind the Schedule screen's calendar, and the
@@ -57,25 +58,52 @@ export const SNAP_MINUTES_ON = 15;
 export const SNAP_MINUTES_OFF = 1;
 
 /**
- * The zone the week grid is DRAWN in: the viewer's own (`localMinutesOfDay`,
- * and the day columns, read the device clock).
+ * THE GRID IS DRAWN ON THE BUSINESS'S CLOCK (#1158), `business_settings.timeZone`.
  *
- * #1155: a drop must be written in the zone the grid was drawn in, or the visit
- * lands on a different hour than the row it was dropped on. So the drag stays
- * on the device clock until the grid itself is drawn in the business zone
- * (a separate change: day grouping, minute-of-day and today all move together).
- * Every other operator-typed time in the admin web is on the business clock.
- */
-export function deviceTimeZone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+ * Rows, day columns, "today", the now line and the drop all read that one zone,
+ * so a visit at 14:00 in the business sits on the 14:00 row whatever zone the
+ * operator's device is in, and a drop on the 15:00 row writes 15:00 there. The
+ * busy overlay's `HH:mm` is already that wall clock (Block time types it on the
+ * business clock, #1155), so it lines up with the visits it sits beside.
+ *
+ * Minute-of-day for a stored visit time on the BUSINESS's clock, or null when it does not parse. */
+export function businessMinutesOfDay(iso: string | undefined, businessZone: string): number | null {
+  if (typeof iso !== 'string') return null;
+  const ms = businessInstantMs(iso, businessZone);
+  if (ms === null) return null;
+  const [h, m] = businessWallClock(ms, businessZone).hhmm.split(':').map(Number) as [number, number];
+  return h * 60 + m;
 }
-/** Minute-of-day for an ISO instant, in the VIEWER's local zone, or null when it does not parse. */
-export function localMinutesOfDay(iso: string | undefined): number | null {
-  if (typeof iso !== 'string' || iso.trim() === '') return null;
-  const d = new Date(iso);
-  const ms = d.getTime();
-  if (Number.isNaN(ms)) return null;
-  return d.getHours() * 60 + d.getMinutes();
+
+/** The business day (`YYYY-MM-DD`) a stored visit time falls on, or null when it does not parse. */
+export function businessDayOf(iso: string | undefined, businessZone: string): string | null {
+  if (typeof iso !== 'string') return null;
+  const ms = businessInstantMs(iso, businessZone);
+  return ms === null ? null : businessWallClock(ms, businessZone).dateIso;
+}
+
+/** Minute-of-day right now on the business's clock, for the grid's now line. */
+export function businessMinutesNow(businessZone: string, nowMs: number = Date.now()): number {
+  const [h, m] = businessWallClock(nowMs, businessZone).hhmm.split(':').map(Number) as [number, number];
+  return h * 60 + m;
+}
+
+/**
+ * "09:00 to 17:00" on the business's clock, the agenda row's window, so the row
+ * under the grid shows the same hour as the block above it. Same fallbacks as
+ * `sessionWindow`: a known start alone, a known end alone, else "Time TBD".
+ */
+export function businessWindowLabel(startIso: string, endIso: string, businessZone: string): string {
+  const clock = (iso: string): string | null => {
+    const ms = businessInstantMs(iso, businessZone);
+    return ms === null ? null : businessWallClock(ms, businessZone).hhmm;
+  };
+  const start = clock(startIso);
+  const end = clock(endIso);
+  if (start === null && end === null) return 'Time TBD';
+  if (end === null) return start!;
+  if (start === null) return end;
+  return `${start} to ${end}`;
 }
 
 /** Minute-of-day for a plain `HH:mm` wall clock, or null. Used by the busy overlay, whose rows store no zone. */
@@ -210,11 +238,12 @@ export function rescheduleTimesForDrop(
   targetDayIso: string,
   dropMinuteOfDay: number,
   snapMinutes: number,
-  gridZone: string = deviceTimeZone(),
+  businessZone: string,
 ): RescheduleTimes | null {
   if (visit._id.trim() === '') return null;
   const snapped = snapMinuteOfDay(clampDropMinute(dropMinuteOfDay), snapMinutes);
-  return buildRescheduleTimes(targetDayIso, hhmmFromMinutes(snapped), visitDurationMinutes(visit), gridZone);
+  // Built on the clock the grid is drawn on, so the visit lands on the row it was dropped on.
+  return buildRescheduleTimes(targetDayIso, hhmmFromMinutes(snapped), visitDurationMinutes(visit), businessZone);
 }
 
 /**
@@ -228,9 +257,10 @@ export function isNoOpDrop(
   targetDayIso: string,
   dropMinuteOfDay: number,
   snapMinutes: number,
+  businessZone: string,
 ): boolean {
   if (fromDayIso !== targetDayIso) return false;
-  const current = localMinutesOfDay(visit.startTime);
+  const current = businessMinutesOfDay(visit.startTime, businessZone);
   if (current === null) return false;
   return snapMinuteOfDay(clampDropMinute(dropMinuteOfDay), snapMinutes) === current;
 }

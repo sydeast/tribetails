@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { ScheduleWeekGrid } from './ScheduleWeekGrid';
 import { HOUR_HEIGHT_PX, SNAP_MINUTES_ON, rescheduleTimesForDrop } from '../lib/scheduleGrid';
 import type { ScheduleSessionEntry, BusySlotEntry } from '../api/schedule';
+import { businessWallClockToMs } from '../lib/businessZoneTime';
 
 /**
  * The pointer half of #397 M13. The ARITHMETIC is pinned next door in
@@ -19,6 +20,27 @@ import type { ScheduleSessionEntry, BusySlotEntry } from '../api/schedule';
  * per-test so a cross-day drag is a real assertion rather than a coincidence.
  */
 
+/**
+ * #1158: the DEVICE is America/Los_Angeles and the BUSINESS is America/Chicago,
+ * two hours apart. The grid is drawn on the business clock, so every time below
+ * is a Chicago wall clock, and a block that leaked the device zone would sit two
+ * rows higher than the one asserted.
+ */
+const BIZ = 'America/Chicago';
+let originalTz: string | undefined;
+beforeAll(() => {
+  originalTz = process.env.TZ;
+  process.env.TZ = 'America/Los_Angeles';
+});
+afterAll(() => {
+  if (originalTz === undefined) delete process.env.TZ;
+  else process.env.TZ = originalTz;
+});
+const pad = (n: number) => String(n).padStart(2, '0');
+/** A Chicago wall clock on 2026-07-16 (or `day`), as the UTC instant a session stores. */
+const bizIso = (hh: number, mm: number, day = '2026-07-16') =>
+  new Date(businessWallClockToMs(day, `${pad(hh)}:${pad(mm)}`, BIZ)!).toISOString();
+
 const DAYS = ['2026-07-13', '2026-07-14', '2026-07-15', '2026-07-16', '2026-07-17', '2026-07-18', '2026-07-19'];
 /** Width of one day column once jsdom is told what a column is (see stubColumnWidth). */
 const COLUMN_WIDTH = 100;
@@ -30,10 +52,10 @@ function session(over: Partial<ScheduleSessionEntry> = {}): ScheduleSessionEntry
     kinfolkName: 'The Whitfields',
     kinIds: [],
     serviceType: 'Dog Walk',
-    // 9:00 to 10:30 LOCAL, so the block lands inside the 8a-6p window in any zone.
-    startTime: new Date(2026, 6, 16, 9, 0, 0, 0).toISOString(),
+    // 9:00 to 10:30 on the BUSINESS clock (14:00Z to 15:30Z).
+    startTime: bizIso(9, 0),
     arrivedAt: '',
-    endTime: new Date(2026, 6, 16, 10, 30, 0, 0).toISOString(),
+    endTime: bizIso(10, 30),
     status: 'SCHEDULED',
     completedAt: '',
     notes: '',
@@ -59,6 +81,7 @@ function renderGrid(rows: ScheduleSessionEntry[], busy: BusySlotEntry[] = []) {
   return render(
     <ScheduleWeekGrid
       days={DAYS}
+      businessZone={BIZ}
       today="2026-07-16"
       selected="2026-07-16"
       byDay={byDay}
@@ -92,7 +115,7 @@ function drag(el: HTMLElement, dx: number, dy: number) {
 }
 
 describe('ScheduleWeekGrid', () => {
-  it('draws a visit at its local start, with the height its duration earns', () => {
+  it('draws a visit at its business start, with the height its duration earns', () => {
     renderGrid([session()]);
     const el = block();
     // 9:00 is one hour into an 8a grid; 90 minutes is one and a half rows.
@@ -130,11 +153,38 @@ describe('ScheduleWeekGrid', () => {
     stubColumnWidth();
     drag(block(), 0, HOUR_HEIGHT_PX);
     const drop = onDrop.mock.calls[0]![0];
-    const times = rescheduleTimesForDrop(drop.session, drop.targetDayIso, drop.dropMinuteOfDay, SNAP_MINUTES_ON);
+    const times = rescheduleTimesForDrop(drop.session, drop.targetDayIso, drop.dropMinuteOfDay, SNAP_MINUTES_ON, BIZ);
     expect(times).toEqual({
-      startTime: new Date(2026, 6, 16, 10, 0, 0, 0).toISOString(),
-      endTime: new Date(2026, 6, 16, 11, 30, 0, 0).toISOString(),
+      startTime: bizIso(10, 0),
+      endTime: bizIso(11, 30),
     });
+  });
+
+  it('a visit at 14:00 Chicago draws on the 14:00 row, and a drop on the 15:00 row sends 15:00 Chicago (#1158)', () => {
+    // 19:00Z is 14:00 in Chicago and 12:00 on the LA device.
+    renderGrid([session({ startTime: '2026-07-16T19:00:00.000Z', endTime: '2026-07-16T20:00:00.000Z' })]);
+    stubColumnWidth();
+    const el = block();
+    expect(el.dataset['startMinute']).toBe(String(14 * 60));
+    expect(el.style.top).toBe(`${HOUR_HEIGHT_PX * 6}px`);
+    expect(el).toHaveTextContent('14:00');
+    drag(el, 0, HOUR_HEIGHT_PX);
+    const drop = onDrop.mock.calls[0]![0];
+    expect(drop.dropMinuteOfDay).toBe(15 * 60);
+    const times = rescheduleTimesForDrop(drop.session, drop.targetDayIso, drop.dropMinuteOfDay, SNAP_MINUTES_ON, BIZ);
+    // 15:00 Chicago (CDT) is 20:00Z. Built on the LA device it would be 22:00Z.
+    expect(times).toEqual({ startTime: '2026-07-16T20:00:00.000Z', endTime: '2026-07-16T21:00:00.000Z' });
+  });
+
+  it('a busy block and a visit at the same business hour sit on the same row (#1158)', () => {
+    // The operator blocked 14:00 to 15:00 on the business clock (#1155), and a
+    // visit starts at 14:00 Chicago. On the LA device the visit used to draw at 12:00.
+    renderGrid(
+      [session({ startTime: '2026-07-16T19:00:00.000Z', endTime: '2026-07-16T20:00:00.000Z' })],
+      [{ _id: 'slot-1', date: '2026-07-16', startTime: '14:00', endTime: '15:00', slotType: 'BLOCKED', source: 'INTERNAL_MANUAL' }],
+    );
+    const busy = document.querySelector('.schedule-grid__busy') as HTMLElement;
+    expect(busy.style.top).toBe(block().style.top);
   });
 
   it('a sideways drag moves the visit to another day at the same hour', () => {
@@ -209,6 +259,7 @@ describe('ScheduleWeekGrid', () => {
     render(
       <ScheduleWeekGrid
         days={DAYS}
+        businessZone={BIZ}
         today="2026-07-16"
         selected="2026-07-16"
         byDay={byDay}
@@ -224,7 +275,7 @@ describe('ScheduleWeekGrid', () => {
   });
 
   it('a visit outside the drawn hours is counted and named, never silently dropped', () => {
-    renderGrid([session({ _id: 'early', startTime: new Date(2026, 6, 16, 6, 0, 0, 0).toISOString(), endTime: new Date(2026, 6, 16, 7, 0, 0, 0).toISOString() })]);
+    renderGrid([session({ _id: 'early', startTime: bizIso(6, 0), endTime: bizIso(7, 0) })]);
     expect(screen.getByText(/1 visit outside the 8a to 6p window/)).toBeInTheDocument();
   });
 
@@ -253,10 +304,11 @@ describe('ScheduleWeekGrid now line', () => {
     return document.querySelector('.schedule-grid__day--today .schedule-grid__now');
   }
 
-  function atLocalTime(hour: number, minute: number, run: () => void): void {
+  /** Pins the clock to a BUSINESS wall clock on 2026-07-16, the grid's today. */
+  function atBusinessTime(hour: number, minute: number, run: () => void): void {
     vi.useFakeTimers();
     try {
-      vi.setSystemTime(new Date(2026, 6, 16, hour, minute, 0, 0));
+      vi.setSystemTime(new Date(Date.parse(bizIso(hour, minute))));
       run();
     } finally {
       vi.useRealTimers();
@@ -264,7 +316,7 @@ describe('ScheduleWeekGrid now line', () => {
   }
 
   it('draws the line at the current minute, in today’s column, with the clock beside it', () => {
-    atLocalTime(11, 18, () => {
+    atBusinessTime(11, 18, () => {
       renderGrid([session()]);
       const line = nowLine();
       expect(line).not.toBeNull();
@@ -277,7 +329,7 @@ describe('ScheduleWeekGrid now line', () => {
   it('draws no line at all when the clock is outside the drawn hours', () => {
     // 7pm, an hour past the bottom edge. Pinning the line to that edge would
     // claim 6pm is now, which is the silent-lie shape this codebase forbids.
-    atLocalTime(19, 0, () => {
+    atBusinessTime(19, 0, () => {
       renderGrid([session()]);
       expect(nowLine()).toBeNull();
       expect(document.querySelector('.schedule-grid__now')).toBeNull();
@@ -285,7 +337,7 @@ describe('ScheduleWeekGrid now line', () => {
   });
 
   it('never marks a day that is not today', () => {
-    atLocalTime(11, 18, () => {
+    atBusinessTime(11, 18, () => {
       renderGrid([session()]);
       // One line on the whole grid, and it is inside the today column.
       expect(document.querySelectorAll('.schedule-grid__now')).toHaveLength(1);
@@ -295,7 +347,7 @@ describe('ScheduleWeekGrid now line', () => {
   });
 
   it('keeps ticking: an hour of wall clock moves the line down an hour', () => {
-    atLocalTime(11, 18, () => {
+    atBusinessTime(11, 18, () => {
       renderGrid([session()]);
       const before = nowLine()?.style.top;
       act(() => {

@@ -156,6 +156,28 @@ export function businessTodayIso(businessZone: string, nowMs: number = Date.now(
 const BARE_LOCAL_RE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?)?$/;
 
 /**
+ * A stored visit time as epoch ms, or null when it does not parse (#1158).
+ *
+ * A string with a zone (`...Z`, `+05:00`) is an instant. One without is the
+ * BUSINESS's wall clock, which is how the server reads it, so it is anchored to
+ * the business zone and never to the device: a date alone is the business's
+ * midnight, and seconds are kept. The same reading `sessionsByBusinessDay` groups by.
+ */
+export function businessInstantMs(raw: string, businessZone: string): number | null {
+  const s = (raw ?? '').trim();
+  if (s === '') return null;
+  const bare = BARE_LOCAL_RE.exec(s);
+  if (bare) {
+    const base = businessWallClockToMs(s.slice(0, 10), bare[1] ? s.slice(11, 16) : '00:00', businessZone);
+    if (base === null) return null;
+    const secs = bare[2] ? Number(bare[2].slice(1)) : 0;
+    return Number.isFinite(secs) ? base + Math.round(secs * 1000) : base;
+  }
+  const ms = Date.parse(s);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
  * Booked sessions grouped by the BUSINESS day they start on (#1150), for the
  * New booking calendar's per-day count.
  *

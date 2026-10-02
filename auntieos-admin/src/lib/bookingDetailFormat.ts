@@ -1,5 +1,6 @@
 import type { RescheduleBookingArgs } from '../contracts/bookingContracts.generated';
-import { businessWallClock, businessWallClockToMs } from './businessZoneTime';
+import { businessInstantMs, businessWallClock, businessWallClockToMs } from './businessZoneTime';
+import { DEFAULT_BUSINESS_TIME_ZONE } from './businessOperations';
 
 /**
  * Pure display + arithmetic helpers for the Schedule booking detail sheet
@@ -54,12 +55,16 @@ function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
-/** A real `Date` for a free-text ISO field, or null. Never throws, never guesses. */
-function parseInstant(iso: string): Date | null {
-  const trimmed = (iso ?? '').trim();
-  if (trimmed === '') return null;
-  const d = new Date(trimmed);
-  return Number.isNaN(d.getTime()) ? null : d;
+/**
+ * A real `Date` for a free-text ISO field, or null. Never throws, never guesses.
+ *
+ * #1158: a zone-less value is the BUSINESS's wall clock, the same reading
+ * `sessionsByBusinessDay` and the server use, never the device's. Without a
+ * zone given, that is the server's own default (America/Chicago, #1109).
+ */
+function parseInstant(iso: string, businessZone: string = DEFAULT_BUSINESS_TIME_ZONE): Date | null {
+  const ms = businessInstantMs(iso, businessZone);
+  return ms === null ? null : new Date(ms);
 }
 
 /**
@@ -69,8 +74,8 @@ function parseInstant(iso: string): Date | null {
  * kinfolk-facing side either way, so guessing "locked" would block a note the
  * backend would have accepted.
  */
-export function notesLocked(startIso: string, nowMs: number): boolean {
-  const start = parseInstant(startIso);
+export function notesLocked(startIso: string, nowMs: number, businessZone: string): boolean {
+  const start = parseInstant(startIso, businessZone);
   if (start === null) return false;
   return nowMs >= start.getTime() - NOTE_CUTOFF_MS;
 }
@@ -83,13 +88,13 @@ export function noteLockReason(): string {
 
 /** Business-zone `YYYY-MM-DD` for an `<input type="date">` prefill, or '' when unknown. */
 export function businessDateInput(iso: string, businessZone: string): string {
-  const d = parseInstant(iso);
+  const d = parseInstant(iso, businessZone);
   if (d === null) return '';
   return businessWallClock(d.getTime(), businessZone).dateIso;
 }
 /** Business-zone `HH:mm` for an `<input type="time">` prefill, or '' when unknown. */
 export function businessTimeInput(iso: string, businessZone: string): string {
-  const d = parseInstant(iso);
+  const d = parseInstant(iso, businessZone);
   if (d === null) return '';
   return businessWallClock(d.getTime(), businessZone).hhmm;
 }
@@ -179,7 +184,7 @@ export function buildRescheduleTimes(
  * viewer's own.
  */
 export function bookingWhenLabel(iso: string, businessZone?: string): string {
-  const d = parseInstant(iso);
+  const d = parseInstant(iso, businessZone);
   if (d === null) return 'Not set';
   if (businessZone !== undefined) {
     const { dateIso, hhmm } = businessWallClock(d.getTime(), businessZone);

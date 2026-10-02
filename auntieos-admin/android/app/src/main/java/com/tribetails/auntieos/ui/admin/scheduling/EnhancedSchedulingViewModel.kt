@@ -42,7 +42,8 @@ data class SchedulingState(
     val supplementalServices: List<SupplementalService> = emptyList(),
     val allKinfolk: List<Kinfolk> = emptyList(),
     val businessHours: List<BusinessHours> = emptyList(),
-    val selectedDate: LocalDate = LocalDate.now(),
+    // #1158: the business's today (America/Chicago until settings load), never the phone's.
+    val selectedDate: LocalDate = businessToday(businessZone(null)),
     val viewMode: CalendarViewMode = CalendarViewMode.WEEK,
     val bookingMode: BookingMode = BookingMode.SPECIFIC_TIME,
     val conflictingBookings: List<EnhancedBooking> = emptyList(),
@@ -919,6 +920,11 @@ class EnhancedSchedulingViewModel(
                     // chose. `defaultCalendarView` had been decoded and defaulted
                     // by three clients and read by none of them.
                     viewMode = CalendarViewMode.fromWire(businessSettings.defaultCalendarView),
+                    // #1158: a calendar still on the default zone's today moves to the
+                    // business's today once its zone is known; a day the operator picked stays.
+                    selectedDate = _state.value.selectedDate.let { current ->
+                        if (current == businessToday(businessZone(null))) businessToday(businessZone(businessSettings.timeZone)) else current
+                    },
                 )
 
                 // Phase 14: load BOOKING-placed form_schemas for the new-booking dialog.

@@ -7,6 +7,7 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.google.firebase.firestore.FirebaseFirestoreException
+import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.GpsSummary
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.repository.AuntieRepository
@@ -69,6 +70,7 @@ class KinCareDetailScreenTest {
         coEvery { repo.getKinfolk() } returns Result.success(emptyList())
         coEvery { repo.getKinByIds(any()) } returns Result.success(emptyMap())
         coEvery { repo.get411ByKinIds(any()) } returns Result.success(emptyMap())
+        coEvery { repo.getBusinessSettings() } returns Result.success(BusinessSettings(timeZone = "America/Chicago"))
         coEvery { kinCareRepo.getReportsForSession(any()) } returns Result.success(emptyList())
         // #760's route panel reads the breadcrumb subcollection, so this joins
         // the list above for the reason stated above rather than as

@@ -11,6 +11,7 @@ import com.tribetails.auntieos.web.data.KinCareAssignment
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.theme.AuntieAppTheme
 import com.tribetails.auntieos.web.theme.ThemeMode
+import kotlinx.datetime.TimeZone
 import kotlin.test.AfterTest
 import kotlin.test.Test
 
@@ -39,7 +40,7 @@ class BookingDetailModalAssignmentRenderTest {
     fun aFailedAssignmentReadShowsCouldntCheckNotUnassigned() = runDesktopComposeUiTest {
         setContent {
             AuntieAppTheme(themeMode = ThemeMode.DARK) {
-                BookingDetailModal(session = session, onDismiss = {}, client = FirestoreClient())
+                BookingDetailModal(session = session, onDismiss = {}, client = FirestoreClient(), zone = TimeZone.of("America/Chicago"))
             }
         }
         waitUntil(timeoutMillis = 10_000) {
