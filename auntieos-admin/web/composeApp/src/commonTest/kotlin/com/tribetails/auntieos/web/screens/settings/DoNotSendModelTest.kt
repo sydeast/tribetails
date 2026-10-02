@@ -17,6 +17,7 @@ import kotlin.test.assertTrue
  * admin web DoNotSendSection tests and the Android DoNotSendViewModel tests.
  */
 class DoNotSendModelTest {
+
     private fun row(
         recipient: String,
         reason: String = "hard_bounce",
@@ -46,6 +47,7 @@ class DoNotSendModelTest {
             listError?.let { return WriteResult.Err(it) }
             return WriteResult.Ok(pages["$reason/${cursor.orEmpty()}"] ?: SuppressionPage(emptyList(), null))
         }
+
         override suspend fun clear(recipient: String): WriteResult<ClearSuppressionResult> {
             clearCalls += recipient
             return clearResult
@@ -174,6 +176,7 @@ class DoNotSendModelTest {
     }
 
     // ---- copy, word for word with web and Android ----
+
     @Test fun `filter and row labels match the other clients`() {
         assertEquals(listOf("All", "Hard bounces", "Opt-outs"), DO_NOT_SEND_FILTERS.map { doNotSendFilterLabel(it) })
         assertEquals("Hard bounce", doNotSendReasonLabel(row("a@example.com")))

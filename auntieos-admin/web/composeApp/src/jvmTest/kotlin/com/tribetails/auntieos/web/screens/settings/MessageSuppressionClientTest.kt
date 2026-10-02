@@ -21,6 +21,7 @@ import kotlin.test.assertTrue
  * the decode.
  */
 class MessageSuppressionClientTest {
+
     @AfterTest
     fun tearDown() {
         JvmFirestoreFixtures.clear()

@@ -25,6 +25,7 @@ import kotlin.time.Instant
  * list as an opt-out once its bounce is cleared; an opt-out only row is not
  * clearable.
  */
+
 /** The two callables, so the model is testable without the network. */
 interface MessageSuppressionSource {
     suspend fun list(reason: String, cursor: String?): WriteResult<SuppressionPage>
@@ -97,6 +98,7 @@ fun doNotSendConfirmText(row: Suppression): String {
 class DoNotSendModel(private val source: MessageSuppressionSource = FirestoreMessageSuppressionSource()) {
     private val _state = MutableStateFlow(DoNotSendUiState())
     val state: StateFlow<DoNotSendUiState> = _state.asStateFlow()
+
     suspend fun load() {
         val filter = _state.value.filter
         _state.value = _state.value.copy(load = DoNotSendLoad.Loading)
@@ -117,6 +119,7 @@ class DoNotSendModel(private val source: MessageSuppressionSource = FirestoreMes
         _state.value = _state.value.copy(filter = filter, error = null, note = null)
         return true
     }
+
     suspend fun loadMore() {
         val s = _state.value
         val ready = s.load as? DoNotSendLoad.Ready ?: return
@@ -151,6 +154,7 @@ class DoNotSendModel(private val source: MessageSuppressionSource = FirestoreMes
         if (_state.value.clearing) return
         _state.value = _state.value.copy(pending = null)
     }
+
     suspend fun confirmClear() {
         val s = _state.value
         val row = s.pending ?: return

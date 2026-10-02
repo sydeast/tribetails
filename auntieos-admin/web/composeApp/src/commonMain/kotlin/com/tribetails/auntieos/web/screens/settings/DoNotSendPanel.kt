@@ -41,8 +41,10 @@ internal fun DoNotSendPanel() {
     val scope = rememberReportingScope()
     val model = remember { DoNotSendModel() }
     val s by model.state.collectAsState()
+
     // Reloads on first show and whenever the filter changes.
     LaunchedEffect(s.filter) { model.load() }
+
     DenPanel(title = "Do-not-send list") {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             AuntieChipGroup(
@@ -52,6 +54,7 @@ internal fun DoNotSendPanel() {
                 label = { doNotSendFilterLabel(it) },
                 singleSelect = true,
             )
+
             s.note?.let { msg ->
                 AuntieBanner(tone = AuntieBannerTone.Success, title = "Cleared", onDismiss = { model.dismissMessages() }) {
                     Text(msg, style = t.bodySmall, color = c.textDim)
@@ -62,9 +65,11 @@ internal fun DoNotSendPanel() {
                     Text(msg, style = t.bodySmall, color = c.textDim)
                 }
             }
+
             when (val load = s.load) {
                 DoNotSendLoad.Loading ->
                     Text("Loading the do-not-send list…", style = t.bodySmall, color = c.textDim)
+
                 is DoNotSendLoad.Failed -> AuntieBanner(
                     tone = AuntieBannerTone.Error,
                     title = "Do-not-send list unavailable",
@@ -72,6 +77,7 @@ internal fun DoNotSendPanel() {
                 ) {
                     Text(load.message, style = t.bodySmall, color = c.textDim)
                 }
+
                 is DoNotSendLoad.Ready -> {
                     if (load.items.isEmpty()) {
                         Text("No addresses on the list.", style = t.bodyMedium, color = c.textDim)
@@ -109,6 +115,7 @@ internal fun DoNotSendPanel() {
             }
         }
     }
+
     val pending = s.pending
     AuntieDialog(
         visible = pending != null,
