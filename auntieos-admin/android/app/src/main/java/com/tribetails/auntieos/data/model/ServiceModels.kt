@@ -142,6 +142,14 @@ data class BookingTimeSlot(
     var date: String = "", // YYYY-MM-DD format
     var startTime: String = "", // HH:mm format
     var endTime: String = "", // HH:mm format
+    /**
+     * Real instants of the window, epoch ms. Written by the Google busy import
+     * since #1160, whose `date`/`startTime`/`endTime` are then the business's
+     * wall clock. Null on operator blocks and on legacy imports, whose wall
+     * clock is UTC. See [com.tribetails.auntieos.data.repository.decodeGoogleBusySlot].
+     */
+    var startMs: Long? = null,
+    var endMs: Long? = null,
     var isAvailable: Boolean = true,
     var slotType: TimeSlotType = TimeSlotType.AVAILABLE,
     var notes: String = "",

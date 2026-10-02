@@ -38,16 +38,18 @@ import java.time.format.DateTimeParseException
  * text with NO timezone conversion, an approximation accepted there because it
  * backs an ADVISORY warning that never blocks a submit. This module is a hard
  * write gate, not a hint, so it earns the cost of doing the conversion for
- * real: `syncGoogleCalendarBusyEvents.ts`'s `busyIntervalToSlot` always
- * derives those three fields from `.toISOString()`, so for a
- * `GOOGLE_BUSY_IMPORT` row, and only that source, they are UTC by
- * construction. A visit's own `startDateTime`/`endDateTime`
+ * real. Since #1160 a `GOOGLE_BUSY_IMPORT` row carries its real instants
+ * (`startMs`/`endMs`) and its wall clock is the business's
+ * (`lib/googleBusySlot.ts`), so the instants are read. A row written before
+ * #1160 has no `startMs`, and its wall clock is UTC by construction (the
+ * importer used `.toISOString()`), so it is still read as UTC. A visit's own `startDateTime`/`endDateTime`
  * ([EnhancedBooking]) or `startTime`/`endTime` ([KinCareSession]) is the
  * operator's wall clock with no zone suffix, so it is anchored to the
  * business zone ([businessZone], the same reading the closed-day guard uses)
- * before comparing, never to the phone's own zone. One caveat inherited from the
- * schema, not introduced here: a slot carries a single `date` for the whole
- * block, so a `GOOGLE_BUSY_IMPORT` row spanning more than 24h decodes short.
+ * before comparing, never to the phone's own zone. One caveat for legacy rows
+ * only: a slot carries a single `date` for the whole block, so a pre-#1160 row
+ * spanning more than 24h decodes short. Rows since #1160 are split per
+ * business day and carry their own instants.
  */
 
 private val DAY: Duration = Duration.ofDays(1)
@@ -120,12 +122,23 @@ internal fun resolveVisitWindow(
 /**
  * Decodes ONE `booking_time_slots` row into real UTC instants, or null when it
  * is not a `GOOGLE_BUSY_IMPORT` row, or its `date`/`startTime`/`endTime` do not
- * parse as the documented shapes. Rolls the end to the next UTC day when
+ * parse as the documented shapes.
+ *
+ * Prefers `startMs`/`endMs` (#1160); such a row's wall clock is the business's
+ * and is never read as UTC. Only a row without usable instants is a legacy
+ * row, read from its strings as UTC: rolls the end to the next UTC day when
  * `endTime <= startTime`, so a block spanning UTC midnight decodes to the real
  * window rather than a negative or zero-length one.
  */
 internal fun decodeGoogleBusySlot(slot: BookingTimeSlot): DecodedBusySlot? {
     if (slot.source != TimeSlotSource.GOOGLE_BUSY_IMPORT) return null
+    val startMs = slot.startMs
+    val endMs = slot.endMs
+    if (startMs != null && endMs != null && endMs > startMs) {
+        val start = Instant.ofEpochMilli(startMs)
+        val end = Instant.ofEpochMilli(endMs)
+        return DecodedBusySlot(slot.id, start, end, "${formatUtc(start)} to ${formatUtc(end)}")
+    }
     if (!DATE_RE.matches(slot.date) || !TIME_RE.matches(slot.startTime) || !TIME_RE.matches(slot.endTime)) return null
     val startInstant = runCatching { Instant.parse("${slot.date}T${slot.startTime}:00Z") }.getOrNull() ?: return null
     val sameDayEnd = runCatching { Instant.parse("${slot.date}T${slot.endTime}:00Z") }.getOrNull() ?: return null

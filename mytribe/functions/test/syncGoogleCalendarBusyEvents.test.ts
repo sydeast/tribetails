@@ -27,7 +27,7 @@ vi.mock('@googleapis/calendar', () => ({
 
 import {
   syncGoogleCalendarBusyEventsHandler,
-  busyIntervalToSlot,
+  busyIntervalToSlots,
   calendarSyncStamp,
   clampLookAheadDays,
   pickCalendarIdFromDocs,
@@ -71,38 +71,43 @@ describe('clampLookAheadDays', () => {
   });
 });
 
-describe('busyIntervalToSlot', () => {
+describe('busyIntervalToSlots', () => {
   it('maps a busy interval to the BLOCKED slot schema', () => {
-    const slot = busyIntervalToSlot(
+    const [slot] = busyIntervalToSlots(
       { start: '2026-06-10T14:00:00.000Z', end: '2026-06-10T15:30:00.000Z' },
       'cal-x',
       '2026-06-04T00:00:00.000Z',
+      'UTC',
     );
-    expect(slot.date).toBe('2026-06-10');
-    expect(slot.startTime).toBe('14:00');
-    expect(slot.endTime).toBe('15:30');
-    expect(slot.isAvailable).toBe(false);
-    expect(slot.slotType).toBe('BLOCKED');
-    expect(slot.source).toBe('GOOGLE_BUSY_IMPORT');
-    expect(slot.hideDetailsFromKinfolk).toBe(true);
-    expect(slot.syncState).toBe('SYNCED');
+    expect(slot!.date).toBe('2026-06-10');
+    expect(slot!.startTime).toBe('14:00');
+    expect(slot!.endTime).toBe('15:30');
+    expect(slot!.isAvailable).toBe(false);
+    expect(slot!.slotType).toBe('BLOCKED');
+    expect(slot!.source).toBe('GOOGLE_BUSY_IMPORT');
+    expect(slot!.hideDetailsFromKinfolk).toBe(true);
+    expect(slot!.syncState).toBe('SYNCED');
   });
   it('derives a stable externalEventId from calendar + epoch bounds', () => {
-    const a = busyIntervalToSlot(
+    const [a] = busyIntervalToSlots(
       { start: '2026-06-10T14:00:00.000Z', end: '2026-06-10T15:00:00.000Z' },
       'cal-x',
       'now',
+      'America/Chicago',
     );
-    const b = busyIntervalToSlot(
+    const [b] = busyIntervalToSlots(
       { start: '2026-06-10T14:00:00.000Z', end: '2026-06-10T15:00:00.000Z' },
       'cal-x',
       'later',
+      'America/Chicago',
     );
-    expect(a.externalEventId).toBe(b.externalEventId);
-    expect(a.externalEventId.startsWith('busy_cal-x_')).toBe(true);
+    expect(a!.externalEventId).toBe(b!.externalEventId);
+    // The key is the one a pre-#1160 sync wrote, so the next sync finds a legacy row.
+    expect(a!.externalEventId).toBe(
+      `busy_cal-x_${Date.parse('2026-06-10T14:00:00.000Z')}_${Date.parse('2026-06-10T15:00:00.000Z')}`,
+    );
   });
 });
-
 describe('calendarFreebusyErrorMessage', () => {
   it('notFound: names the SA + calId and flags the typo / wrong-address case', () => {
     const msg = calendarFreebusyErrorMessage('typo-cal@group.calendar.google.com', ['notFound']);
@@ -314,6 +319,94 @@ describe('syncGoogleCalendarBusyEvents handler', () => {
     expect(slotWrites[0].path).toBe('booking_time_slots/existing-slot-1');
   });
 
+  it('#1160: writes a 14:00 to 15:00 Chicago busy event on the 14:00 business row, with its instants', async () => {
+    const ctx = buildDbMock({
+      queryDocs: {
+        business_settings: [
+          {
+            id: 'business_settings',
+            data: { calendarSyncId: 'team-cal@group.calendar.google.com', timeZone: 'America/Chicago' },
+          },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.freebusyQuery.mockResolvedValue({
+      data: {
+        calendars: {
+          'team-cal@group.calendar.google.com': {
+            // 14:00 to 15:00 CDT
+            busy: [{ start: '2026-10-05T19:00:00Z', end: '2026-10-05T20:00:00Z' }],
+          },
+        },
+      },
+    });
+    const res = await syncGoogleCalendarBusyEventsHandler(req());
+    expect(res.imported).toBe(1);
+    const slotWrites = ctx.writes.filter((w) => w.path.startsWith('booking_time_slots/'));
+    expect(slotWrites).toHaveLength(1);
+    expect(slotWrites[0].data).toMatchObject({
+      date: '2026-10-05',
+      startTime: '14:00',
+      endTime: '15:00',
+      startMs: Date.parse('2026-10-05T19:00:00Z'),
+      endMs: Date.parse('2026-10-05T20:00:00Z'),
+      timeZone: 'America/Chicago',
+    });
+  });
+  it('#1160: a business with no zone set is written on America/Chicago', async () => {
+    const ctx = buildDbMock({
+      queryDocs: {
+        business_settings: [
+          { id: 'business_settings', data: { calendarSyncId: 'team-cal@group.calendar.google.com' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.freebusyQuery.mockResolvedValue({
+      data: {
+        calendars: {
+          'team-cal@group.calendar.google.com': {
+            busy: [{ start: '2026-10-05T19:00:00Z', end: '2026-10-05T20:00:00Z' }],
+          },
+        },
+      },
+    });
+    await syncGoogleCalendarBusyEventsHandler(req());
+    const slotWrites = ctx.writes.filter((w) => w.path.startsWith('booking_time_slots/'));
+    expect(slotWrites[0].data).toMatchObject({ startTime: '14:00', timeZone: 'America/Chicago' });
+  });
+  it('#1160: an event crossing business midnight is one row per business day, imported once', async () => {
+    const ctx = buildDbMock({
+      queryDocs: {
+        business_settings: [
+          {
+            id: 'business_settings',
+            data: { calendarSyncId: 'team-cal@group.calendar.google.com', timeZone: 'America/Chicago' },
+          },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.freebusyQuery.mockResolvedValue({
+      data: {
+        calendars: {
+          'team-cal@group.calendar.google.com': {
+            // 22:00 CDT to 02:00 CDT the next day
+            busy: [{ start: '2026-10-06T03:00:00Z', end: '2026-10-06T07:00:00Z' }],
+          },
+        },
+      },
+    });
+    const res = await syncGoogleCalendarBusyEventsHandler(req());
+    expect(res).toMatchObject({ imported: 1, scanned: 1 });
+    const slotWrites = ctx.writes.filter((w) => w.path.startsWith('booking_time_slots/'));
+    expect(slotWrites.map((w) => [w.data.date, w.data.startTime, w.data.endTime])).toEqual([
+      ['2026-10-05', '22:00', '23:59'],
+      ['2026-10-06', '00:00', '02:00'],
+    ]);
+    expect(slotWrites[0].path).not.toBe(slotWrites[1].path);
+  });
   it('UI VALUE: queries the calendarSyncId from the business_settings doc', async () => {
     const ctx = buildDbMock({
       queryDocs: {

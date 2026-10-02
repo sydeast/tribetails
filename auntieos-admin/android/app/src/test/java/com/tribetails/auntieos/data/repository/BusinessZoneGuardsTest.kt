@@ -92,4 +92,42 @@ class BusinessZoneGuardsTest {
         // Read as UTC the visit would be 23:30Z Jul 4 and miss the 04:00Z block.
         assertTrue(result.exceptionOrNull()?.message ?: "wrote through", result.exceptionOrNull()!!.message!!.contains("Google Calendar busy block"))
     }
+    // #1160: a 14:00 to 15:00 CDT Google busy event as the sync writes it now:
+    // business wall clock plus real instants. A bare 14:30 visit lands in it.
+    private val busyBusinessClock = BookingTimeSlot(
+        id = "gbi-new", date = "2026-10-05", startTime = "14:00", endTime = "15:00",
+        startMs = java.time.Instant.parse("2026-10-05T19:00:00Z").toEpochMilli(),
+        endMs = java.time.Instant.parse("2026-10-05T20:00:00Z").toEpochMilli(),
+        source = TimeSlotSource.GOOGLE_BUSY_IMPORT,
+    )
+    // The same hour as a pre-#1160 row: UTC wall clock, no instants.
+    private val busyLegacyUtc = BookingTimeSlot(
+        id = "gbi-legacy", date = "2026-10-05", startTime = "19:00", endTime = "20:00",
+        source = TimeSlotSource.GOOGLE_BUSY_IMPORT,
+    )
+    @Test
+    fun `#1160 a business-clock busy row refuses a 14-30 Chicago visit`() = runBlocking {
+        val firestore = mockk<FirebaseFirestore>()
+        mockSlots(firestore, listOf(busyBusinessClock))
+        mockSettings(firestore, null, "America/Chicago")
+        val result = repo(firestore).createBooking(booking("2026-10-05T14:30:00", "2026-10-05T15:30:00"))
+        assertTrue(result.exceptionOrNull()?.message ?: "wrote through", result.exceptionOrNull()!!.message!!.contains("Google Calendar busy block"))
+    }
+    @Test
+    fun `#1160 a business-clock busy row is not read as UTC`() = runBlocking {
+        val firestore = mockk<FirebaseFirestore>()
+        mockSlots(firestore, listOf(busyBusinessClock))
+        mockSettings(firestore, null, "America/Chicago")
+        // 09:30 CDT is 14:30Z, where the row would sit if its 14:00 were read as UTC.
+        val result = repo(firestore).createBooking(booking("2026-10-05T09:30:00", "2026-10-05T10:00:00"))
+        assertTrue(result.exceptionOrNull()?.message ?: "", result.exceptionOrNull()?.message?.contains("Google Calendar busy block") != true)
+    }
+    @Test
+    fun `#1160 a legacy UTC busy row still refuses a 14-30 Chicago visit`() = runBlocking {
+        val firestore = mockk<FirebaseFirestore>()
+        mockSlots(firestore, listOf(busyLegacyUtc))
+        mockSettings(firestore, null, "America/Chicago")
+        val result = repo(firestore).createBooking(booking("2026-10-05T14:30:00", "2026-10-05T15:30:00"))
+        assertTrue(result.exceptionOrNull()?.message ?: "wrote through", result.exceptionOrNull()!!.message!!.contains("Google Calendar busy block"))
+    }
 }

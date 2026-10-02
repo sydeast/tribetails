@@ -5,6 +5,7 @@ import { ScheduleWeekGrid } from './ScheduleWeekGrid';
 import { HOUR_HEIGHT_PX, SNAP_MINUTES_ON, rescheduleTimesForDrop } from '../lib/scheduleGrid';
 import type { ScheduleSessionEntry, BusySlotEntry } from '../api/schedule';
 import { businessWallClockToMs } from '../lib/businessZoneTime';
+import { groupBlockedSlotsByDate } from '../lib/scheduleFormat';
 
 /**
  * The pointer half of #397 M13. The ARITHMETIC is pinned next door in
@@ -187,6 +188,30 @@ describe('ScheduleWeekGrid', () => {
     expect(busy.style.top).toBe(block().style.top);
   });
 
+  it('a Google busy import of 14:00 to 15:00 Chicago draws on the 14:00 row beside a 14:00 visit (#1160)', () => {
+    // The row exactly as busyIntervalToSlots writes it for 19:00Z to 20:00Z
+    // (mytribe/functions/test/googleBusySlot.test.ts). Before #1160 it stored
+    // 19:00 to 20:00 and drew five hours late.
+    const google: BusySlotEntry = {
+      _id: 'gbi-1',
+      date: '2026-07-16',
+      startTime: '14:00',
+      endTime: '15:00',
+      startMs: Date.parse('2026-07-16T19:00:00Z'),
+      endMs: Date.parse('2026-07-16T20:00:00Z'),
+      slotType: 'BLOCKED',
+      source: 'GOOGLE_BUSY_IMPORT',
+    };
+    const grouped = groupBlockedSlotsByDate([google]);
+    renderGrid(
+      [session({ startTime: '2026-07-16T19:00:00.000Z', endTime: '2026-07-16T20:00:00.000Z' })],
+      grouped.get('2026-07-16') ?? [],
+    );
+    const busy = document.querySelector('.schedule-grid__busy') as HTMLElement;
+    expect(busy).not.toBeNull();
+    expect(busy.style.top).toBe(block().style.top);
+    expect(busy.style.top).toBe(`${6 * HOUR_HEIGHT_PX}px`);
+  });
   it('a sideways drag moves the visit to another day at the same hour', () => {
     renderGrid([session()]);
     stubColumnWidth();

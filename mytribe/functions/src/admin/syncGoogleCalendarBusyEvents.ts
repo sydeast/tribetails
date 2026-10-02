@@ -8,6 +8,8 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { calendarIdProblem, CALENDAR_ID_INVALID_CODE } from '../lib/calendarSyncId';
+import { busyIntervalToSlots, type BusyInterval } from '../lib/googleBusySlot';
+import { businessTimeZone } from '../lib/bookingTimeBlocks';
 
 /**
  * Slice 8 / spec 29 item 9 (scheduling). Server-side Google Calendar busy
@@ -65,28 +67,14 @@ export const Args = z.object({
   lookAheadDays: z.number().int().optional(),
 });
 
-export interface BusyInterval {
-  start: string; // RFC3339
-  end: string; // RFC3339
-}
-
-export interface BookingTimeSlotDoc {
-  date: string; // YYYY-MM-DD
-  startTime: string; // HH:mm
-  endTime: string; // HH:mm
-  isAvailable: false;
-  slotType: 'BLOCKED';
-  notes: string;
-  source: 'GOOGLE_BUSY_IMPORT';
-  externalEventId: string;
-  externalCalendarId: string;
-  hideDetailsFromKinfolk: true;
-  isEditableByAdmin: true;
-  isRemovableByAdmin: true;
-  syncState: 'SYNCED';
-  createdAt: string; // ISO-8601
-}
-
+export type { BusyInterval, BookingTimeSlotDoc } from '../lib/googleBusySlot';
+export { busyIntervalToSlots } from '../lib/googleBusySlot';
+/**
+ * The unified settings doc that carries `timeZone`. Read by its fixed id, not
+ * through the `calendarSyncId` scan below: that scan returns whichever doc
+ * holds the calendar id, which is not guaranteed to be the one with the zone.
+ */
+const BUSINESS_SETTINGS_DOC = 'business_settings/business_settings';
 /** Clamp the look-ahead window to a sane 1..90 day range (default 30). */
 export function clampLookAheadDays(raw: number | undefined): number {
   if (raw == null || !Number.isFinite(raw)) return 30;
@@ -198,48 +186,6 @@ export function calendarSyncStamp(
     calendarSyncLastImported: outcome.status === 'ok' ? outcome.imported : 0,
     calendarSyncLastError: outcome.status === 'ok' ? '' : outcome.error,
   };
-}
-
-/**
- * Pure mapping from a Google freebusy Busy interval to the exact
- * `booking_time_slots` doc shape both Android (ServiceModels.kt) and the web
- * read. Time-zone: we format in UTC so the server write is deterministic and
- * test-stable; the slot is a coarse BLOCKED marker, not an exact-minute claim.
- */
-export function busyIntervalToSlot(
-  interval: BusyInterval,
-  calendarId: string,
-  nowIso: string,
-): BookingTimeSlotDoc {
-  const start = new Date(interval.start);
-  const end = new Date(interval.end);
-  const startMs = start.getTime();
-  const endMs = end.getTime();
-  const externalEventId = `busy_${calendarId}_${startMs}_${endMs}`;
-  return {
-    date: isoDate(start),
-    startTime: isoTime(start),
-    endTime: isoTime(end),
-    isAvailable: false,
-    slotType: 'BLOCKED',
-    notes: 'Imported busy event',
-    source: 'GOOGLE_BUSY_IMPORT',
-    externalEventId,
-    externalCalendarId: calendarId,
-    hideDetailsFromKinfolk: true,
-    isEditableByAdmin: true,
-    isRemovableByAdmin: true,
-    syncState: 'SYNCED',
-    createdAt: nowIso,
-  };
-}
-
-function isoDate(d: Date): string {
-  return d.toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
-}
-
-function isoTime(d: Date): string {
-  return d.toISOString().slice(11, 16); // HH:mm (UTC)
 }
 
 export interface SyncResult {
@@ -387,20 +333,29 @@ async function runSync(
     throw new HttpsError('unavailable', `gcal_${status ?? 'error'}`);
   }
 
+  // #1160: rows are written on the business's clock, the clock every client
+  // draws `booking_time_slots` on, with the real instants alongside.
+  const timeZone = businessTimeZone((await db().doc(BUSINESS_SETTINGS_DOC).get()).data());
   const nowIso = new Date().toISOString();
+  // Counts busy EVENTS, not rows: an event that crosses business midnight is
+  // stored as one row per day, and the receipt says how many events landed.
   let imported = 0;
   for (const interval of busy) {
-    const slot = busyIntervalToSlot(interval, calId, nowIso);
-    const existing = await db()
-      .collection('booking_time_slots')
-      .where('externalEventId', '==', slot.externalEventId)
-      .limit(1)
-      .get();
-    const ref = existing.docs.length === 0
-      ? db().collection('booking_time_slots').doc()
-      : db().collection('booking_time_slots').doc(existing.docs[0].id);
-    await ref.set(slot, { merge: true });
-    imported += 1;
+    const slots = busyIntervalToSlots(interval, calId, nowIso, timeZone);
+    for (const slot of slots) {
+      // The first day's key is the interval's own key, unchanged from before
+      // #1160, so this finds a legacy UTC row and rewrites it in place.
+      const existing = await db()
+        .collection('booking_time_slots')
+        .where('externalEventId', '==', slot.externalEventId)
+        .limit(1)
+        .get();
+      const ref = existing.docs.length === 0
+        ? db().collection('booking_time_slots').doc()
+        : db().collection('booking_time_slots').doc(existing.docs[0].id);
+      await ref.set(slot, { merge: true });
+    }
+    if (slots.length > 0) imported += 1;
   }
 
   await writeAuditEntry({

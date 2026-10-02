@@ -234,24 +234,20 @@ export interface BusySlotLike {
 /**
  * IMPORTANT ASYMMETRY vs. `kin_care_sessions`: `date`/`startTime`/`endTime`
  * here are NOT a parseable ISO instant, they are a bare `YYYY-MM-DD` plus two
- * `HH:mm` strings with NO timezone marker at all. Worse, the two writers do
- * not agree on whose clock those strings are in:
- *  - `syncGoogleCalendarBusyEvents.ts` stamps them from `Date#toISOString()`
- *    in UTC ("we format in UTC so the server write is deterministic and
- *    test-stable", per that file's own comment on `isoDate`/`isoTime`).
- *  - `createBlockedTimeSlot.ts` stores whatever `date`/`startTime`/`endTime`
- *    the admin's own "Block time" form submits verbatim, with no conversion,
- *    i.e. the admin's LOCAL wall-clock entry.
- * A doc from the first writer and a doc from the second can therefore encode
- * the "same" wall-clock afternoon under different clocks, and nothing on the
- * doc says which. This is a pre-existing backend inconsistency, not something
- * introduced here or fixable from a read-only client (there is no offset to
- * convert FROM). The wasm reference does not attempt a conversion either
- * (`blockedSlotsByDate` groups by the raw `date` field, `busyPlacement` parses
- * the raw `HH:mm` directly): this port matches that exactly, displaying the
- * fields as-is rather than fabricating a timezone they don't carry. Flagged
- * for operator/backend follow-up in the port report, not silently "fixed"
- * here with a guess.
+ * `HH:mm` strings with NO timezone marker. Both writers put the business's
+ * wall clock there, the clock the Schedule grid is drawn on (#1158):
+ *  - `createBlockedTimeSlot.ts` stores what the operator's Block time form
+ *    submits, typed on the business clock (#1155).
+ *  - `syncGoogleCalendarBusyEvents.ts` converts each busy interval to the
+ *    business clock and splits it at business midnight (#1160,
+ *    `lib/googleBusySlot.ts`), and also stores the real instants as
+ *    `startMs`/`endMs`.
+ * A Google row imported BEFORE #1160 is the exception: its three strings are
+ * UTC (it was written from `Date#toISOString()`) and it has no `startMs`. It
+ * draws hours off until the next sync rewrites it (same dedupe key) or the
+ * operator runs `mytribe/scripts/backfillGoogleBusySlotZone.ts`. This helper
+ * groups by the raw `date` and does not guess at that: the stored row is what
+ * gets fixed.
  */
 export function groupBlockedSlotsByDate<T extends BusySlotLike>(slots: T[]): Map<string, T[]> {
   const map = new Map<string, T[]>();

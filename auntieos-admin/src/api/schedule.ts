@@ -69,6 +69,13 @@ export interface BusySlotEntry {
   startTime?: string | undefined;
   /** Same zone caveat as `date`. */
   endTime?: string | undefined;
+  /**
+   * Real instants of the window, epoch ms, on Google imports since #1160
+   * (whose `date`/`startTime`/`endTime` are then the business's wall clock).
+   * Not read for drawing: the grid places a block by its wall clock.
+   */
+  startMs?: number | undefined;
+  endMs?: number | undefined;
   /** Free-text; only `'BLOCKED'` is written by any real writer today, see `lib/scheduleFormat.ts#busySlotKind`. */
   slotType?: string | undefined;
   /**

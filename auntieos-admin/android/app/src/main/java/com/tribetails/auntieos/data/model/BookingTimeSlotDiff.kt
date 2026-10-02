@@ -86,6 +86,9 @@ internal val BOOKING_TIME_SLOT_DIFF_FIELDS: Map<String, (BookingTimeSlot) -> Any
  *                         it and the next sync CREATES A DUPLICATE busy block
  *                         instead of updating this one.
  * - `externalCalendarId`  the calendar that interval came from, same provenance.
+ * - `startMs`/`endMs`     the import's real instants (#1160), which the busy
+ *                         guards read before the wall clock. Only the importer
+ *                         writes them.
  *
  * The `external*` pair is nullable on this model and null on every
  * manually-blocked slot, which is exactly why it must be named here rather than
@@ -98,6 +101,8 @@ internal val BOOKING_TIME_SLOT_SERVER_OWNED = setOf(
     "source",
     "externalEventId",
     "externalCalendarId",
+    "startMs",
+    "endMs",
 )
 
 /**

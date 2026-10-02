@@ -15,6 +15,7 @@ import {
   BOOKING_BUSY_CONFLICT_CODE,
   type DecodedBusySlot,
 } from '../src/lib/bookingBusyConflict';
+import { busyIntervalToSlots } from '../src/lib/googleBusySlot';
 
 beforeEach(() => {
   mocks.writeAuditEntryFn.mockReset();
@@ -47,6 +48,25 @@ describe('decodeGoogleBusySlot', () => {
     expect(d!.endMs - d!.startMs).toBe(24 * 60 * 60 * 1000);
   });
 
+  it('#1160: prefers startMs/endMs and never reads a business wall clock as UTC', () => {
+    // 14:00 to 15:00 CDT, as the sync writes it since #1160.
+    const d = decodeGoogleBusySlot('s1', {
+      date: '2026-10-05',
+      startTime: '14:00',
+      endTime: '15:00',
+      startMs: Date.parse('2026-10-05T19:00:00Z'),
+      endMs: Date.parse('2026-10-05T20:00:00Z'),
+      source: 'GOOGLE_BUSY_IMPORT',
+    });
+    expect(d!.startMs).toBe(Date.parse('2026-10-05T19:00:00Z'));
+    expect(d!.endMs).toBe(Date.parse('2026-10-05T20:00:00Z'));
+  });
+  it('#1160: falls back to the legacy UTC strings when the instants are missing or unusable', () => {
+    for (const bad of [{}, { startMs: 'x', endMs: 'y' }, { startMs: 200, endMs: 100 }]) {
+      const d = decodeGoogleBusySlot('s1', { date: '2026-10-05', startTime: '19:00', endTime: '20:00', ...bad });
+      expect(d!.startMs).toBe(Date.parse('2026-10-05T19:00:00Z'));
+    }
+  });
   it('returns null for a malformed date/time triple rather than throwing', () => {
     expect(decodeGoogleBusySlot('s1', { date: 'not-a-date', startTime: '09:00', endTime: '10:00' })).toBeNull();
     expect(decodeGoogleBusySlot('s1', { date: '2026-08-07', startTime: 'xx', endTime: '10:00' })).toBeNull();
@@ -314,6 +334,54 @@ describe('guardBookingBusyConflict', () => {
     expect(mocks.writeAuditEntryFn).not.toHaveBeenCalled();
   });
 
+  // #1160: the 14:30 visit is 19:30 UTC in October (CDT).
+  const visit1430Chicago = {
+    startTimeMs: Date.parse('2026-10-05T19:30:00Z'),
+    endTimeMs: Date.parse('2026-10-05T20:30:00Z'),
+  };
+  it('#1160: refuses a 14:30 Chicago visit over a 14:00 to 15:00 Chicago busy row written by the sync', async () => {
+    const [row] = busyIntervalToSlots(
+      { start: '2026-10-05T19:00:00Z', end: '2026-10-05T20:00:00Z' },
+      'cal-x',
+      'now',
+      'America/Chicago',
+    );
+    expect(row).toMatchObject({ date: '2026-10-05', startTime: '14:00', endTime: '15:00' });
+    const ctx = buildDbMock({ queryDocs: { booking_time_slots: [{ id: 'gbi-new', data: { ...row } }] } });
+    await expect(
+      guardBookingBusyConflict({ firestore: ctx.db as any, visits: [visit1430Chicago], actorUid: 'u1', actorRole: 'PRIMARY' }),
+    ).rejects.toMatchObject({ code: 'failed-precondition', details: { code: BOOKING_BUSY_CONFLICT_CODE } });
+  });
+  it('#1160: does not refuse a 09:30 Chicago visit over that same row (its wall clock is not UTC)', async () => {
+    const [row] = busyIntervalToSlots(
+      { start: '2026-10-05T19:00:00Z', end: '2026-10-05T20:00:00Z' },
+      'cal-x',
+      'now',
+      'America/Chicago',
+    );
+    const ctx = buildDbMock({ queryDocs: { booking_time_slots: [{ id: 'gbi-new', data: { ...row } }] } });
+    await expect(
+      guardBookingBusyConflict({
+        firestore: ctx.db as any,
+        // 14:30 UTC, which is where the row would sit if its 14:00 were read as UTC.
+        visits: [{ startTimeMs: Date.parse('2026-10-05T14:30:00Z'), endTimeMs: Date.parse('2026-10-05T15:00:00Z') }],
+        actorUid: 'u1',
+        actorRole: 'PRIMARY',
+      }),
+    ).resolves.toBeUndefined();
+  });
+  it('#1160: a legacy UTC row (no startMs) still refuses the 14:30 Chicago visit', async () => {
+    const ctx = buildDbMock({
+      queryDocs: {
+        booking_time_slots: [
+          { id: 'gbi-legacy', data: { date: '2026-10-05', startTime: '19:00', endTime: '20:00', source: 'GOOGLE_BUSY_IMPORT' } },
+        ],
+      },
+    });
+    await expect(
+      guardBookingBusyConflict({ firestore: ctx.db as any, visits: [visit1430Chicago], actorUid: 'u1', actorRole: 'PRIMARY' }),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+  });
   it('names EVERY conflicting visit, not just the first', async () => {
     const ctx = buildDbMock({
       queryDocs: {

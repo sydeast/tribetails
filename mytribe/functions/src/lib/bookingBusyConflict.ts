@@ -4,6 +4,7 @@ import { writeAuditEntry } from './writeAuditEntry';
 import { AUDIT_EVENTS } from './auditEvents';
 import { logEvent } from './logger';
 import type { ActorRole } from './schema';
+import { legacyUtcWindow, storedInstants } from './googleBusySlot';
 
 /**
  * The one check every visit-creating write path shares: does this candidate
@@ -30,17 +31,16 @@ import type { ActorRole } from './schema';
  * and are not what this task closed; folding them in is a separate, later
  * decision.
  *
- * THE TIMEZONE TRAP (see `bookingAvailability.ts`'s header for the full
- * asymmetry): `booking_time_slots.date`/`startTime`/`endTime` are three plain
- * strings with NO timezone field, and the two writers disagree about whose
- * clock they hold. `INTERNAL_MANUAL` stores the operator's local wall clock
- * verbatim. `GOOGLE_BUSY_IMPORT` is different: `busyIntervalToSlot`
- * (`syncGoogleCalendarBusyEvents.ts`) always derives those three fields from
- * `.toISOString()`, so for THIS source, and only this source, they are UTC by
- * construction. Restricting the loader to that one source is what makes a
- * real epoch-ms reconstruction possible at all; comparing `INTERNAL_MANUAL`
- * rows the same way would silently misread a block by whatever the
- * operator's UTC offset happens to be.
+ * THE TIMEZONE TRAP: `booking_time_slots.date`/`startTime`/`endTime` are three
+ * plain strings with NO timezone field. Since #1160 a `GOOGLE_BUSY_IMPORT` row
+ * also carries `startMs`/`endMs`, its real instants, and its wall clock is the
+ * business's (`lib/googleBusySlot.ts`); this guard reads the instants. A row
+ * written before #1160 has no `startMs`, and its wall clock is UTC by
+ * construction (the importer used `.toISOString()`), so that row is still
+ * reconstructed from its strings as UTC. Restricting the loader to this one
+ * source is what makes that legacy reconstruction possible at all; comparing
+ * `INTERNAL_MANUAL` rows the same way would silently misread a block by
+ * whatever the operator's UTC offset happens to be.
  *
  * This is deliberately MORE precise than the advisory UI it backs up. The
  * picker compares wall-clock text with no conversion (documented there as an
@@ -48,13 +48,10 @@ import type { ActorRole } from './schema';
  * is an acceptable trade for a warning that never blocks anything. A write
  * gate is not a warning: it is the last chance to refuse a real double-booking,
  * so it earns the extra precision of reconstructing the real instant. The
- * one caveat inherited from the schema itself (not introduced here): a slot
- * carries a single `date` for the whole block, so a GOOGLE_BUSY_IMPORT row
- * that genuinely spans more than 24 hours (a multi-day "away" block) decodes
- * short. Realistic personal-calendar busy blocks are hours long; this is
- * documented rather than silently wrong, and closing it for good would mean
- * changing what `syncGoogleCalendarBusyEvents` stores, a bigger change than
- * this task.
+ * one caveat applies to legacy rows only: a slot carries a single `date` for
+ * the whole block, so a pre-#1160 row that spans more than 24 hours decodes
+ * short. Rows written since #1160 are split per business day and carry their
+ * own instants, so they decode exactly.
  */
 
 /** Machine-readable `details.code` on the rejection, so a client can branch on it rather than the message. */
@@ -178,7 +175,12 @@ function windowLabel(v: CandidateVisit, w: ResolvedWindow): string {
  * (see the file header); nothing here re-checks that, so `loadGoogleBusySlots`
  * is the one place this may be called from.
  *
- * Rolls the end to the next UTC day when `endTime <= startTime`, so a block
+ * Prefers `startMs`/`endMs` (#1160), the instants every row written since then
+ * carries; its `date`/`startTime`/`endTime` are the business's wall clock and
+ * are never read as UTC. Only a row without usable instants is a legacy row,
+ * decoded from its strings as UTC below.
+ *
+ * Legacy rows: rolls the end to the next UTC day when `endTime <= startTime`, so a block
  * spanning UTC midnight (22:00 to 02:00) decodes to the real ~4h window
  * instead of a negative or zero-length one. Returns null for anything that
  * does not parse as a `date`/`startTime`/`endTime` triple, so a malformed
@@ -186,24 +188,15 @@ function windowLabel(v: CandidateVisit, w: ResolvedWindow): string {
  * guard unusable for every other visit being checked.
  */
 export function decodeGoogleBusySlot(docId: string, data: Record<string, unknown>): DecodedBusySlot | null {
-  const date = typeof data.date === 'string' ? data.date : '';
-  const startTime = typeof data.startTime === 'string' ? data.startTime : '';
-  const endTime = typeof data.endTime === 'string' ? data.endTime : '';
-  if (
-    !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
-    !/^\d{2}:\d{2}$/.test(startTime) ||
-    !/^\d{2}:\d{2}$/.test(endTime)
-  ) {
-    return null;
-  }
-  const startMs = Date.parse(`${date}T${startTime}:00.000Z`);
-  const sameDayEndMs = Date.parse(`${date}T${endTime}:00.000Z`);
-  if (!Number.isFinite(startMs) || !Number.isFinite(sameDayEndMs)) return null;
-  const endMs = endTime <= startTime ? sameDayEndMs + DAY_MS : sameDayEndMs;
-  if (endMs <= startMs) return null;
-  return { docId, startMs, endMs, label: `${formatUtcInstant(startMs)} to ${formatUtcInstant(endMs)}` };
+  const window = storedInstants(data) ?? legacyUtcWindow(data.date, data.startTime, data.endTime);
+  if (!window) return null;
+  return {
+    docId,
+    startMs: window.startMs,
+    endMs: window.endMs,
+    label: `${formatUtcInstant(window.startMs)} to ${formatUtcInstant(window.endMs)}`,
+  };
 }
-
 /**
  * Pure overlap check: half-open intervals, `[startMs, endMs)`, so a visit
  * ending exactly when a busy block starts (or starting exactly when one ends)
@@ -242,8 +235,10 @@ export function formatBookingBusyConflictMessage(conflicts: readonly BookingBusy
  * side. Null when no visit has a resolvable window at all.
  *
  * The pad absorbs two imprecisions rather than trying to eliminate them: a
- * busy slot's `date` is its START day, so a block that begins the evening
- * before a padded-out visit is still found; and the query below is a single
+ * busy slot's `date` is its START day, and since #1160 that is the business's
+ * day rather than the UTC one (a day apart at most, for any real zone), so a
+ * block that begins the evening before a padded-out visit is still found; and
+ * the query below is a single
  * range on `date`, not a precise instant, so a slot recorded a day off from
  * where a visit's own UTC day falls (near a day boundary) is still read. The
  * PURE overlap check above is what actually decides conflict or not; this
