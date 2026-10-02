@@ -121,7 +121,11 @@ internal val BOOKING_TIME_SLOT_SERVER_OWNED = setOf(
  *                key. Deliberately NOT modelled: a field this client cannot read
  *                is a field it cannot round-trip a stale copy of.
  *
- * Declaring either would be the wrong fix, the same way declaring `deleted`
+ * - `timeZone`  the zone the Google importer wrote the `startTime`/`endTime`
+ *                wall clock in (`lib/googleBusySlot.ts`). Not modelled for the
+ *                same reason: this client cannot round-trip a copy it cannot read.
+ *
+ * Declaring any would be the wrong fix, the same way declaring `deleted`
  * would have been on `kintale_templates`. This app has no author for `createdBy`
  * - it never blocks a window server-side - so it could only ever write its own
  * empty string over the server's uid, which is the erasure spelled out in the
@@ -130,7 +134,7 @@ internal val BOOKING_TIME_SLOT_SERVER_OWNED = setOf(
  * cannot name. `BookingTimeSlotDiffTest` and `BookingTimeSlotMergeTest` pin both
  * halves.
  */
-internal val BOOKING_TIME_SLOT_SIBLING_WRITTEN = setOf("createdBy", "updatedAt")
+internal val BOOKING_TIME_SLOT_SIBLING_WRITTEN = setOf("createdBy", "updatedAt", "timeZone")
 
 /**
  * The fields [edited] changes relative to [loaded], keyed by Firestore field
