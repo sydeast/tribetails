@@ -4,6 +4,8 @@ import { writeAuditEntry } from './writeAuditEntry';
 import { AUDIT_EVENTS } from './auditEvents';
 import { normalizeBookingStatus } from './bookingTransitions';
 import type { ActorRole } from './schema';
+import { businessTimeZone } from './bookingTimeBlocks';
+import { formatBusyWindow } from './visitWindowLabel';
 
 /**
  * The check no write path had: does this candidate window land on a visit that
@@ -70,6 +72,9 @@ export const VISIT_OVERLAP_CONFLICT_CODE = 'visit_overlap_conflict';
 
 const SESSIONS_COLLECTION = 'kin_care_sessions';
 
+/** The unified settings doc every client writes; its `timeZone` is the clock a refusal is worded in. */
+const BUSINESS_SETTINGS_DOC = 'business_settings/business_settings';
+
 /**
  * Cap on how many `kin_care_sessions` rows one guard call reads. Matches the
  * 500-row bound `bookingBusyConflict.ts` uses on its own collection and the
@@ -116,8 +121,6 @@ export interface OccupiedVisit {
   sessionId: string;
   startMs: number;
   endMs: number;
-  /** "2026-08-07 22:00 UTC to 2026-08-08 02:00 UTC", for the fail-loud message. */
-  label: string;
   /** The household this visit belongs to, when the row carries one. Named in the audit payload, never in the refusal message. */
   kinfolkId: string | null;
 }
@@ -126,14 +129,18 @@ export interface OccupiedVisit {
 export interface VisitOverlapConflict {
   /** 0-based position in the caller's `visits` array, so a message can name "visit 2" rather than only the first. */
   visitIndex: number;
-  visitLabel: string;
+  /** The candidate window as instants; worded in the business zone only when the message is built. */
+  visitWindow: { startMs: number; endMs: number | null };
   occupied: OccupiedVisit;
 }
 
-/** "2026-08-07 22:00 UTC" */
-function formatUtcInstant(ms: number): string {
-  const iso = new Date(ms).toISOString();
-  return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+/**
+ * The window a stored visit occupies, worded in the business zone ("Aug 7,
+ * 2:00-3:00 PM"), the clock the operator reads on the schedule (#1168). It used
+ * to be UTC, so a 2:00 PM visit read as 19:00.
+ */
+export function occupiedVisitLabel(o: OccupiedVisit, timeZone: string): string {
+  return formatBusyWindow(o.startMs, o.endMs, timeZone);
 }
 
 /**
@@ -147,12 +154,6 @@ function resolveWindow(v: CandidateVisit): ResolvedWindow | null {
   const startMs = v.startTimeMs;
   const endMs = v.endTimeMs != null && Number.isFinite(v.endTimeMs) ? v.endTimeMs : startMs + 1;
   return endMs > startMs ? { startMs, endMs } : { startMs, endMs: startMs + 1 };
-}
-
-function windowLabel(v: CandidateVisit, w: ResolvedWindow): string {
-  return v.endTimeMs != null
-    ? `${formatUtcInstant(w.startMs)} to ${formatUtcInstant(w.endMs)}`
-    : formatUtcInstant(w.startMs);
 }
 
 /** A string field read off a document nothing validates on write. */
@@ -200,7 +201,6 @@ export function decodeOccupiedVisit(
     sessionId,
     startMs,
     endMs,
-    label: `${formatUtcInstant(startMs)} to ${formatUtcInstant(endMs)}`,
     kinfolkId: kinfolkId === '' ? null : kinfolkId,
   };
 }
@@ -229,7 +229,11 @@ export function findVisitOverlapConflicts(
     for (const other of occupied) {
       if (excludeSessionId != null && other.sessionId === excludeSessionId) continue;
       if (window.startMs < other.endMs && window.endMs > other.startMs) {
-        conflicts.push({ visitIndex, visitLabel: windowLabel(visit, window), occupied: other });
+        conflicts.push({
+          visitIndex,
+          visitWindow: { startMs: window.startMs, endMs: visit.endTimeMs != null ? window.endMs : null },
+          occupied: other,
+        });
       }
     }
   });
@@ -239,9 +243,11 @@ export function findVisitOverlapConflicts(
 /** One human-readable, fail-loud message naming every colliding window, never just the first. */
 export function formatVisitOverlapConflictMessage(
   conflicts: readonly VisitOverlapConflict[],
+  timeZone: string,
 ): string {
   const parts = conflicts.map(
-    (c) => `visit ${c.visitIndex + 1} (${c.visitLabel}) overlaps a visit already booked (${c.occupied.label})`,
+    (c) =>
+      `visit ${c.visitIndex + 1} (${formatBusyWindow(c.visitWindow.startMs, c.visitWindow.endMs, timeZone)}) overlaps a visit already booked (${occupiedVisitLabel(c.occupied, timeZone)})`,
   );
   return `That time is already taken: ${parts.join('; ')}.`;
 }
@@ -358,14 +364,17 @@ export async function guardVisitOverlapConflict(
   const conflicts = findVisitOverlapConflicts(opts.visits, occupied, opts.excludeSessionId);
   if (conflicts.length === 0) return;
 
+  // Read only once a conflict is real, so a clean write path pays no extra read. The zone words the refusal (#1168).
+  const settings = (await opts.firestore.doc(BUSINESS_SETTINGS_DOC).get()).data();
+  const timeZone = businessTimeZone(settings);
   if (!opts.override) {
-    throw new HttpsError('failed-precondition', formatVisitOverlapConflictMessage(conflicts), {
+    throw new HttpsError('failed-precondition', formatVisitOverlapConflictMessage(conflicts, timeZone), {
       code: VISIT_OVERLAP_CONFLICT_CODE,
       attempt: opts.attempt,
       conflicts: conflicts.map((c) => ({
         visitIndex: c.visitIndex,
         sessionId: c.occupied.sessionId,
-        window: c.occupied.label,
+        window: occupiedVisitLabel(c.occupied, timeZone),
       })),
     });
   }
@@ -376,7 +385,7 @@ export async function guardVisitOverlapConflict(
     severity: 'warn',
     actorRole: opts.actorRole,
     actorUid: opts.actorUid,
-    description: formatVisitOverlapConflictMessage(conflicts),
+    description: formatVisitOverlapConflictMessage(conflicts, timeZone),
     payload: {
       ...opts.auditContext,
       attempt: opts.attempt,
