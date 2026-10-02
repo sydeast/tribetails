@@ -33,7 +33,6 @@ class BookingBusyConflictTest {
         val d = decodeGoogleBusySlot(slot("s1", "2026-08-07", "14:00", "15:30"))
         assertEquals(Instant.parse("2026-08-07T14:00:00Z"), d!!.startInstant)
         assertEquals(Instant.parse("2026-08-07T15:30:00Z"), d.endInstant)
-        assertTrue(d.label.contains("2026-08-07 14:00 UTC"))
     }
 
     @Test
@@ -85,7 +84,7 @@ class BookingBusyConflictTest {
 
     private val busyStart = Instant.ofEpochMilli(1_800_000_000_000)
     private val busyEnd = Instant.ofEpochMilli(1_800_003_600_000) // 1h window
-    private fun busy() = DecodedBusySlot("b1", busyStart, busyEnd, "busy")
+    private fun busy() = DecodedBusySlot("b1", busyStart, busyEnd)
 
     @Test
     fun `exact edges do not conflict (half-open interval)`() {
@@ -151,7 +150,7 @@ class BookingBusyConflictTest {
         val farEnd = Instant.ofEpochMilli(4_102_448_400_001)
         val r = findBusyConflicts(
             BusyConflictWindow(Instant.ofEpochMilli(4_102_446_000_000), Instant.ofEpochMilli(4_102_447_000_000)),
-            listOf(DecodedBusySlot("far", farStart, farEnd, "far")),
+            listOf(DecodedBusySlot("far", farStart, farEnd)),
         )
         assertEquals(1, r.size)
     }
@@ -195,5 +194,59 @@ class BookingBusyConflictTest {
         )
         assertEquals("2026-08-06", from)
         assertEquals("2026-08-08", to)
+    }
+
+    // ── #1164: the refusal is worded in the business zone ───────────────────
+    private val chicago = ZoneId.of("America/Chicago")
+    // October: Chicago is CDT (UTC-5), so 19:00Z is 2:00 PM on the schedule.
+    private fun at(iso: String) = Instant.parse(iso)
+    @Test
+    fun `#1164 words a same-day same-meridiem window in the business zone`() {
+        assertEquals("Oct 5, 2:00-3:00 PM", formatBusyWindow(at("2026-10-05T19:00:00Z"), at("2026-10-05T20:00:00Z"), chicago))
+    }
+    @Test
+    fun `#1164 keeps both meridiems when the window crosses noon`() {
+        assertEquals("Oct 5, 11:00 AM-1:30 PM", formatBusyWindow(at("2026-10-05T16:00:00Z"), at("2026-10-05T18:30:00Z"), chicago))
+    }
+    @Test
+    fun `#1164 names both days when the window crosses business midnight`() {
+        // 03:00Z Oct 6 is 10:00 PM Oct 5 in Chicago.
+        assertEquals(
+            "Oct 5, 10:00 PM to Oct 6, 2:00 AM",
+            formatBusyWindow(at("2026-10-06T03:00:00Z"), at("2026-10-06T07:00:00Z"), chicago),
+        )
+    }
+    @Test
+    fun `#1164 follows the zone it is given`() {
+        assertEquals(
+            "Oct 5, 3:00-4:00 PM",
+            formatBusyWindow(at("2026-10-05T19:00:00Z"), at("2026-10-05T20:00:00Z"), ZoneId.of("America/New_York")),
+        )
+    }
+    @Test
+    fun `#1164 refusal text names the busy block at its business-zone clock, never UTC or a dash character`() {
+        val d = decodeGoogleBusySlot(
+            BookingTimeSlot(
+                id = "gbi-1",
+                date = "2026-10-05",
+                startTime = "14:00",
+                endTime = "15:00",
+                source = TimeSlotSource.GOOGLE_BUSY_IMPORT,
+                startMs = at("2026-10-05T19:00:00Z").toEpochMilli(),
+                endMs = at("2026-10-05T20:00:00Z").toEpochMilli(),
+            ),
+        )!!
+        val msg = busyConflictMessage(listOf(d), chicago)
+        assertEquals("This time is not available: conflicts with a Google Calendar busy block (Oct 5, 2:00-3:00 PM).", msg)
+        assertTrue(!msg.contains("UTC") && !msg.contains('\u2014') && !msg.contains('\u2013'))
+    }
+    @Test
+    fun `#1164 joins every conflicting window`() {
+        val a = DecodedBusySlot("a", at("2026-10-05T19:00:00Z"), at("2026-10-05T20:00:00Z"))
+        val b = DecodedBusySlot("b", at("2026-10-06T14:00:00Z"), at("2026-10-06T15:30:00Z"))
+        assertEquals(
+            "This time is not available: conflicts with a Google Calendar busy block (Oct 5, 2:00-3:00 PM; Oct 6, 9:00-10:30 AM).",
+            busyConflictMessage(listOf(a, b), chicago),
+        )
     }
 }
