@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
 import {
   utcDatesForVisit,
+  businessDatesForVisit,
   findCompanyHolidayConflicts,
   formatCompanyHolidayConflictMessage,
   loadCompanyHolidayEntries,
@@ -170,6 +171,51 @@ describe('loadCompanyHolidayEntries', () => {
   });
 });
 
+// ── businessDatesForVisit (#1093, pure) ─────────────────────────────────────
+
+describe('businessDatesForVisit', () => {
+  const LA = 'America/Los_Angeles';
+
+  it('an evening visit in a US zone is on its business date, not the next UTC day', () => {
+    expect(
+      businessDatesForVisit(
+        { startTimeMs: Date.parse('2031-01-14T21:00:00.000-08:00'), endTimeMs: Date.parse('2031-01-14T22:00:00.000-08:00') },
+        LA,
+      ),
+    ).toEqual(['2031-01-14']);
+  });
+
+  it('a visit crossing the business midnight covers both business dates', () => {
+    expect(
+      businessDatesForVisit(
+        { startTimeMs: Date.parse('2031-01-14T21:00:00.000-08:00'), endTimeMs: Date.parse('2031-01-15T09:00:00.000-08:00') },
+        LA,
+      ),
+    ).toEqual(['2031-01-14', '2031-01-15']);
+  });
+
+  it('a window over several days covers every business date in it, across a DST change', () => {
+    // US spring-forward is 2031-03-09, a 23-hour day.
+    expect(
+      businessDatesForVisit(
+        { startTimeMs: Date.parse('2031-03-08T23:30:00.000-08:00'), endTimeMs: Date.parse('2031-03-10T00:30:00.000-07:00') },
+        LA,
+      ),
+    ).toEqual(['2031-03-08', '2031-03-09', '2031-03-10']);
+  });
+
+  it('a blank or unknown zone falls back to the UTC date(s)', () => {
+    const v = { startTimeMs: Date.parse('2031-01-15T05:00:00.000Z') };
+    expect(businessDatesForVisit(v, '')).toEqual(['2031-01-15']);
+    expect(businessDatesForVisit(v, 'Not/AZone')).toEqual(['2031-01-15']);
+  });
+
+  it('a bare night is checked as given and an unresolvable start yields nothing', () => {
+    expect(businessDatesForVisit({ dateIso: '2031-01-14' }, LA)).toEqual(['2031-01-14']);
+    expect(businessDatesForVisit({ startTimeMs: Number.NaN }, LA)).toEqual([]);
+  });
+});
+
 // ── guardCompanyHolidayConflict (the one call every write path makes) ───────
 
 describe('guardCompanyHolidayConflict', () => {
@@ -216,6 +262,15 @@ describe('guardCompanyHolidayConflict', () => {
     await expect(
       guardCompanyHolidayConflict({ firestore: ctx.db as any, visits: [{ startTimeMs: Date.parse('2031-12-25T15:00:00.000Z') }] }),
     ).rejects.toMatchObject({ code: 'failed-precondition' });
+  });
+
+  it('#1093: reads business_settings.timeZone and checks the business date', async () => {
+    const ctx = buildDbMock({
+      docs: { 'business_settings/business_settings': { timeZone: 'America/Los_Angeles', companyHolidays: ['2031-01-14|Closed'] } },
+    });
+    await expect(
+      guardCompanyHolidayConflict({ firestore: ctx.db as any, visits: [{ startTimeMs: Date.parse('2031-01-15T05:00:00.000Z') }] }),
+    ).rejects.toMatchObject({ code: 'failed-precondition', message: expect.stringContaining('2031-01-14') });
   });
 
   it('names EVERY conflicting visit in a multi-visit batch, not just the first', async () => {
