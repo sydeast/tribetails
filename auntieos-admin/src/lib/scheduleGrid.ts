@@ -168,10 +168,14 @@ export function busyPlacement(
   const start = minutesFromHHmm(startHHmm);
   if (start === null) return null;
   const end = minutesFromHHmm(endHHmm);
-  const minutes = end !== null && end > start ? end - start : MIN_BLOCK_MINUTES;
-  return gridPlacement(start, minutes);
+  const realEnd = end !== null && end > start ? end : start + MIN_BLOCK_MINUTES;
+  // Wholly above or below the window there is no honest place to draw it.
+  if (realEnd <= GRID_START_MINUTE || start >= GRID_END_MINUTE) return null;
+  // A block that straddles an edge is clamped into view: it still refuses bookings,
+  // so it has to be seen. The label and title carry the real times.
+  const top = Math.max(start, GRID_START_MINUTE);
+  return gridPlacement(top, Math.min(realEnd, GRID_END_MINUTE) - top);
 }
-
 /** Minute-of-day for a vertical offset inside a day column, un-snapped and un-clamped. */
 export function minuteFromOffsetPx(offsetPx: number): number {
   return GRID_START_MINUTE + Math.round((offsetPx / HOUR_HEIGHT_PX) * 60);

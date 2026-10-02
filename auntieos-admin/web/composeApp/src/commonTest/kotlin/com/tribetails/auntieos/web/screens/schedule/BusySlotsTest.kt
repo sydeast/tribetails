@@ -81,6 +81,26 @@ class BusySlotsTest {
     }
 
     @Test
+    fun blockStartingBeforeTheWindowIsClampedToItsTop() {
+        // 07:00 to 10:00 draws 08:00 to 10:00: top of the grid, two hours tall.
+        val p = busyPlacement("07:00", "10:00")
+        assertNotNull(p)
+        assertEquals(0, p!!.topMinutes)
+        assertEquals(120, p.heightMinutes)
+    }
+    @Test
+    fun blockEndingAfterTheWindowIsClampedToItsBottom() {
+        // 17:00 to 20:00 draws 17:00 to 18:00.
+        val p = busyPlacement("17:00", "20:00")
+        assertNotNull(p)
+        assertEquals(540, p!!.topMinutes)
+        assertEquals(60, p.heightMinutes)
+    }
+    @Test
+    fun blockEndingExactlyAtTheWindowTopStaysOut() {
+        assertNull(busyPlacement("07:00", "08:00"))
+    }
+    @Test
     fun unparseableTimesDropOut() {
         assertNull(busyPlacement("", ""))
         assertNull(busyPlacement("nope", "nope"))
@@ -101,5 +121,13 @@ class BusySlotsTest {
         val p = busyPlacement("17:50", "19:00")
         assertNotNull(p)
         assertTrue(p.heightMinutes <= 10, "expected <=10 got ${p.heightMinutes}")
+    }
+
+    @Test
+    fun clampedBlockLabelKeepsTheRealTimes() {
+        assertEquals("07:00 to 10:00", busyRangeLabel("07:00", "10:00"))
+        assertEquals("17:00 to 20:00", busyRangeLabel("17:00", "20:00"))
+        assertEquals("09:00", busyRangeLabel("09:00", ""))
+        assertEquals("", busyRangeLabel("", ""))
     }
 }

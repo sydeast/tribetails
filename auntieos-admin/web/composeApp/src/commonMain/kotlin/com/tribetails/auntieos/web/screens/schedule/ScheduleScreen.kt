@@ -875,8 +875,8 @@ private fun EventBlock(
  * import or any other unavailable window). Drawn as a muted hatched band in the day
  * column. Deliberately shows NO event detail: the slot has hideDetailsFromKinfolk
  * set and carries no title, so only a generic "Busy" label is shown. Not clickable;
- * off-window or unparseable slots drop out (no fabricated edge position), matching
- * how [EventBlock] handles off-window visits.
+ * a block that straddles the 8a-6p edge is clamped into view and its label carries
+ * the real times; a block wholly outside the window or an unparseable one drops out.
  */
 @Composable
 private fun BusyBlock(slot: BookingTimeSlot) {
@@ -902,7 +902,23 @@ private fun BusyBlock(slot: BookingTimeSlot) {
             color = c.textDim,
             maxLines = 1,
         )
+        val range = busyRangeLabel(slot.startTime, slot.endTime)
+        if (range.isNotBlank()) {
+            Text(
+                text = range,
+                style = AuntieTheme.typography.mono,
+                color = c.textDim,
+                maxLines = 1,
+            )
+        }
     }
+}
+/** The block's real window for its label, "07:00 to 10:00", even when the grid clamps the drawn band. */
+internal fun busyRangeLabel(start: String, end: String): String {
+    val s = start.take(5)
+    if (s.isBlank()) return ""
+    val e = end.take(5)
+    return if (e.isNotBlank() && e != s) "$s to $e" else s
 }
 
 @Composable
@@ -1089,23 +1105,27 @@ internal data class BusyPlacement(val topMinutes: Int, val heightMinutes: Int)
 
 /**
  * Pure helper: resolve where a busy block sits in the 8a to 6p week-grid window
- * from its "HH:mm" start/end. Returns null when the start is unparseable or falls
- * outside the window (no fabricated edge position). A missing/zero-length end is
- * given a small visible minimum, clamped so the block never overruns the window
- * bottom. Mirrors [EventBlock]'s off-window/min-height handling.
+ * from its "HH:mm" start/end. Returns null when the start is unparseable or the block
+ * lies wholly outside the window. A block that starts before 8a or ends after 6p is
+ * clamped into view. A missing/zero-length end is given a small visible minimum,
+ * clamped so the block never overruns the window bottom.
  */
 internal fun busyPlacement(startHHmm: String, endHHmm: String): BusyPlacement? {
     val windowStart = GRID_START_HOUR * 60
     val windowEnd = GRID_END_HOUR * 60
     val startMin = hhmmToMinutes(startHHmm) ?: return null
-    if (startMin < windowStart || startMin >= windowEnd) return null
-
-    val roomToBottom = windowEnd - startMin
-    val minVisible = minOf(20, roomToBottom)
     val endMin = hhmmToMinutes(endHHmm)
-    val rawDuration = if (endMin != null && endMin > startMin) endMin - startMin else minVisible
-    val duration = rawDuration.coerceIn(minVisible, roomToBottom)
-    return BusyPlacement(topMinutes = startMin - windowStart, heightMinutes = duration)
+    // A missing or backwards end gets the small visible minimum, as before.
+    val realEnd = if (endMin != null && endMin > startMin) endMin else startMin + 20
+    // A block wholly above or below the window has no honest place to draw.
+    if (realEnd <= windowStart || startMin >= windowEnd) return null
+    // A block that straddles an edge is clamped into view (admin web draws it the same way)
+    // rather than dropped: it still refuses bookings, so it has to be seen.
+    val top = maxOf(startMin, windowStart)
+    val roomToBottom = windowEnd - top
+    val minVisible = minOf(20, roomToBottom)
+    val duration = (minOf(realEnd, windowEnd) - top).coerceIn(minVisible, roomToBottom)
+    return BusyPlacement(topMinutes = top - windowStart, heightMinutes = duration)
 }
 
 /** "HH:mm" to minutes-from-midnight, or null if unparseable. */

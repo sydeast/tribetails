@@ -135,6 +135,18 @@ describe('gridPlacement', () => {
     });
     expect(busyPlacement('nope', '10:00')).toBeNull();
   });
+  it('clamps a busy block that starts before or ends after the window into view', () => {
+    // 07:00 to 10:00 shows as 08:00 to 10:00.
+    expect(busyPlacement('07:00', '10:00')).toEqual({ topPx: 0, heightPx: 2 * HOUR_HEIGHT_PX });
+    // 17:00 to 20:00 shows as 17:00 to 18:00.
+    expect(busyPlacement('17:00', '20:00')).toEqual({
+      topPx: 9 * HOUR_HEIGHT_PX,
+      heightPx: HOUR_HEIGHT_PX,
+    });
+    // Wholly outside still has nowhere to go.
+    expect(busyPlacement('05:00', '07:00')).toBeNull();
+    expect(busyPlacement('18:00', '19:00')).toBeNull();
+  });
 });
 
 describe('drop math', () => {
