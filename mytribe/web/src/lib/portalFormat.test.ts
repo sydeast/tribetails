@@ -14,8 +14,11 @@ import {
   relativeDay,
   resolveHomeLayout,
   speciesEmoji,
+  bookingSubtitle,
   visitSubtitle,
+  visitTile,
   visitVariant,
+  visitWhenLine,
   weekdayTime,
 } from './portalFormat';
 import type { GetMyBookingsResult, GetMyBookingsResultLiveVisit } from '../contracts/bookingContracts.generated';
@@ -208,6 +211,8 @@ function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBo
     rescheduleRequestedEndTimeMs: null,
     rescheduleRequestReason: null,
     rescheduleResponseNote: null,
+    startTimePending: false,
+    requestedDate: null,
     ...overrides,
   };
 }
@@ -282,5 +287,38 @@ describe('bookingTimelineIndex', () => {
       expect(index).not.toBeNull();
       expect(BOOKING_TIMELINE_STEPS[index as number]).toBeDefined();
     }
+  });
+});
+
+/**
+ * #1098: a night-only visit (the overnight) has no start time until the Auntie
+ * sets one on approval. It is shown on the night the household asked for, read
+ * as a LOCAL date, and never as midnight, "Invalid Date" or "Time to be
+ * confirmed".
+ */
+describe('a visit whose start time the Auntie sets (#1098)', () => {
+  const pending = booking({ startTimeMs: null, startTimePending: true, requestedDate: '2026-10-09' });
+  it('tiles on the requested night, read as a local calendar date', () => {
+    expect(visitTile(pending)).toEqual({ month: 'Oct', day: '09' });
+  });
+  it('says the Auntie sets the start time, on its own night', () => {
+    expect(visitWhenLine(pending)).toBe('Fri night · Start time set by your Auntie');
+    expect(bookingSubtitle(pending)).toBe('Fri night · Start time set by your Auntie');
+    expect(bookingSubtitle({ ...pending, auntieDisplayName: 'Maya' })).toBe('Fri night · Start time set by your Auntie');
+  });
+  it('still says who sets it when the night cannot be read', () => {
+    const noDate = booking({ startTimeMs: null, startTimePending: true, requestedDate: null });
+    expect(bookingSubtitle(noDate)).toBe('Start time set by your Auntie');
+    expect(visitTile(noDate)).toEqual({ month: '—', day: '—' });
+    expect(bookingSubtitle({ ...noDate, requestedDate: 'not-a-date' })).toBe('Start time set by your Auntie');
+  });
+  it('leaves a timed visit, and a visit from an older server, as they were', () => {
+    const timed = booking({ startTimeMs: new Date(2026, 5, 1, 8, 0).getTime(), auntieDisplayName: 'Maya' });
+    expect(bookingSubtitle(timed)).toBe('Mon, 8:00 AM with Auntie Maya');
+    expect(visitWhenLine(timed)).toBe('Mon, 8:00 AM');
+    expect(visitTile(timed)).toEqual({ month: 'Jun', day: '01' });
+    const older = { ...booking(), startTimePending: undefined, requestedDate: undefined } as unknown as GetMyBookingsResultLiveVisit;
+    expect(bookingSubtitle(older)).toBe('Time to be confirmed');
+    expect(visitWhenLine(older)).toBe('Time to be confirmed');
   });
 });

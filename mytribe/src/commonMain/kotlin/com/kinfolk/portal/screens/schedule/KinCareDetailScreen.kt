@@ -43,6 +43,7 @@ import com.kinfolk.portal.portal.CancelRequestStatus
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.RescheduleRequestStatus
 import com.kinfolk.portal.portal.canRequestCancellation
+import com.kinfolk.portal.portal.awaitingStartTime
 import com.kinfolk.portal.portal.canRequestReschedule
 import com.kinfolk.portal.portal.isAwaitingVisit
 import com.kinfolk.portal.screens.schedule.util.RESCHEDULE_REASON_MAX
@@ -52,7 +53,7 @@ import com.kinfolk.portal.screens.schedule.util.rescheduleProblem
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
-import com.kinfolk.portal.util.relativeTime
+import com.kinfolk.portal.util.bookingWhenLabel
 import com.kinfolk.portal.util.weekdayTime
 import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalDate
@@ -275,7 +276,7 @@ private fun KinCareDetailBody(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
                 Text(kinCare.title ?: kinCare.serviceType ?: "Booking", style = type.heritageTitle)
-                Text(start?.let { relativeTime(it) } ?: "TBD", style = type.sansLabel)
+                Text(bookingWhenLabel(kinCare).ifEmpty { "TBD" }, style = type.sansLabel)
                 ReviewRow("KinCare Duration", kinCare.serviceType ?: "TBD")
                 ReviewRow("Auntie", kinCare.auntieDisplayName ?: "Pending")
                 ReviewRow(
@@ -340,7 +341,9 @@ private fun KinCareDetailBody(
         // Reschedule ask. The card also carries the office's answer, so an
         // accepted or declined ask stays readable after the window to make a
         // new one has closed.
-        if (kinCare.rescheduleRequestStatus != null || kinCare.canRequestReschedule()) {
+        // #1098: a night waiting on its start gets the card too, to say why it
+        // cannot be moved yet.
+        if (kinCare.rescheduleRequestStatus != null || kinCare.canRequestReschedule() || kinCare.awaitingStartTime()) {
             RescheduleRequestSection(
                 kinCare = kinCare,
                 pendingLocal = reschedulePendingLocal,
@@ -429,6 +432,15 @@ private fun RescheduleRequestSection(
                 )
             }
 
+            if (kinCare.awaitingStartTime() && !pending) {
+                // #1098: the Auntie sets this night's start, and until she has
+                // there is no time to move. Cancelling stays open below.
+                Text(
+                    "Your Auntie has not set the start time yet.",
+                    style = type.sansMeta,
+                    color = KinfolkBrand.NavyMuted,
+                )
+            }
             if (kinCare.canRequestReschedule() && !pending) {
                 RescheduleProposalForm(
                     sending = sending,

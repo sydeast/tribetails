@@ -56,6 +56,7 @@ import com.kinfolk.portal.theme.KinfolkGradients
 import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
+import com.kinfolk.portal.util.bookingWhenLabel
 import com.kinfolk.portal.util.relativeTime
 
 /**
@@ -359,7 +360,7 @@ private fun UpcomingRow(b: Booking) {
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(b.title ?: b.serviceType ?: "Booking", style = type.heritageTitle)
-            Text(relativeTime(b.startTimeMs), style = type.sansLabel)
+            Text(bookingWhenLabel(b), style = type.sansLabel)
             val withText = (listOf(b.auntieDisplayName).filterNotNull() + b.kinNames).joinToString(" • ").ifBlank { null }
             if (withText != null) Text(withText, style = type.sansMeta)
         }

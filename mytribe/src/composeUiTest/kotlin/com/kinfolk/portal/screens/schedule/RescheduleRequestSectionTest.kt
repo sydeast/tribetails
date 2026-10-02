@@ -3,6 +3,8 @@
 package com.kinfolk.portal.screens.schedule
 
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -41,6 +43,8 @@ class RescheduleRequestSectionTest {
         rescheduleStatus: String? = null,
         proposedStartMs: Long? = null,
         responseNote: String? = null,
+        /** #1098: a night waiting on the Auntie's start time, with no startTimeMs at all. */
+        requestedNight: String? = null,
     ) {
         fake.stub("getMyBookings", buildJsonObject {
             put("liveVisit", JsonNull)
@@ -51,7 +55,12 @@ class RescheduleRequestSectionTest {
                     put("status", status)
                     put("title", "Park Adventure")
                     put("serviceType", "Drop-in Visit")
-                    put("startTimeMs", fixedNow + tenHoursMs)
+                    if (requestedNight != null) {
+                        put("startTimePending", true)
+                        put("requestedDate", requestedNight)
+                    } else {
+                        put("startTimeMs", fixedNow + tenHoursMs)
+                    }
                     batchId?.let { put("batchId", it) }
                     rescheduleStatus?.let { put("rescheduleRequestStatus", it) }
                     proposedStartMs?.let { put("rescheduleRequestedStartTimeMs", it) }
@@ -85,6 +94,26 @@ class RescheduleRequestSectionTest {
         onNodeWithText("Reschedule visit").assertExists()
     }
 
+    /**
+     * #1098: the Auntie sets an overnight's start time, and the server refuses
+     * to reschedule a night that has none yet. So the ask is held back with the
+     * reason, the night shows instead of a time, and cancelling stays open.
+     */
+    @Test
+    fun nightAwaitingItsStartTime_saysWhyAndKeepsCancel() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        // 2026-08-21 is a Friday.
+        stubVisit(fake, status = "requested", requestedNight = "2026-08-21")
+        setThemedContent { Screen(fake) }
+        waitForIdle()
+        onNodeWithText("Fri night · Start time set by your Auntie").assertExists()
+        // The time line used to read "TBD" for a visit with no start. (The Kin
+        // row still says "TBD" here only because this stub names no kin.)
+        onAllNodesWithText("TBD").assertCountEquals(1)
+        onNodeWithText("Your Auntie has not set the start time yet.").assertExists()
+        onNodeWithText("Reschedule visit").assertDoesNotExist()
+        onNodeWithText("Request cancellation", substring = true).performScrollTo().assertExists()
+    }
     @Test
     fun visitWithNoBookingEnvelope_hidesTheAskRatherThanFailingOnTap() = runComposeUiTest {
         val fake = FakeFunctionsClient()

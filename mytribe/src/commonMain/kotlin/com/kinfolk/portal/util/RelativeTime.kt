@@ -1,9 +1,15 @@
 package com.kinfolk.portal.util
 
+import com.kinfolk.portal.portal.Booking
 import kotlin.time.Clock
 import kotlin.time.Instant
+import kotlinx.datetime.DateTimeUnit
+import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.LocalTime
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.plus
+import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 import kotlin.math.abs
 
@@ -112,4 +118,33 @@ fun relativeDay(
         days < 7L -> "$days days ago"
         else -> "${MONTH_ABBREV[then.month.ordinal]} ${then.day}"
     }
+}
+/** #1098: what a night-only visit says in place of a clock time until the Auntie sets one. */
+const val AUNTIE_SETS_START_TIME = "Start time set by your Auntie"
+private val NightWeekdays = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+/**
+ * #1098: the night a booked visit is waiting on, as a calendar date, or null
+ * when it has a start or carries no readable night. Parsed as a plain date:
+ * never through an instant, which would land on the day before west of UTC.
+ */
+fun Booking.requestedNight(): LocalDate? =
+    if (!startTimePending) null else requestedDate?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+/**
+ * When a booked visit happens, for a list row: [relativeTime] of its start, or
+ * for a night still waiting on its start (#1098) "Fri night · Start time set
+ * by your Auntie". Mirrors `visitWhenLine` in mytribe/web/src/lib/portalFormat.ts.
+ */
+fun bookingWhenLabel(b: Booking, nowMillis: Long = Clock.System.now().toEpochMilliseconds()): String {
+    if (!b.startTimePending) return relativeTime(b.startTimeMs, nowMillis)
+    val night = b.requestedNight() ?: return AUNTIE_SETS_START_TIME
+    return "${NightWeekdays[night.dayOfWeek.ordinal]} night · $AUNTIE_SETS_START_TIME"
+}
+/**
+ * The instant a booked visit sorts at: its start, or for a night still waiting
+ * on its start (#1098) the last millisecond of that night's day, or null.
+ */
+fun bookingSortMs(b: Booking, tz: TimeZone = TimeZone.currentSystemDefault()): Long? {
+    if (!b.startTimePending) return b.startTimeMs
+    val night = b.requestedNight() ?: return b.startTimeMs
+    return LocalDateTime(night.plus(1, DateTimeUnit.DAY), LocalTime(0, 0)).toInstant(tz).toEpochMilliseconds() - 1
 }

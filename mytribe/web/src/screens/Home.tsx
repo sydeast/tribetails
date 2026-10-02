@@ -13,14 +13,14 @@ import { viewOfQuery } from '../lib/queryState';
 import { billingAccessOf } from '../lib/billingAccess';
 import {
   bookingChip,
-  calTile,
+  bookingSubtitle,
   elapsedMinutes,
   greetingKick,
   kinVariant,
   relativeDay,
   resolveHomeLayout,
   speciesEmoji,
-  visitSubtitle,
+  visitTile,
   visitVariant,
 } from '../lib/portalFormat';
 
@@ -188,7 +188,7 @@ export function Home() {
                 </LoadingLine>
               ) : (
                 upcoming.map((b, i) => {
-                  const tile = b.startTimeMs !== null ? calTile(b.startTimeMs) : { month: '—', day: '—' };
+                  const tile = visitTile(b);
                   const chip = bookingChip(b.status);
                   return (
                     <div className={`visit ${visitVariant(i)}`} key={b.id}>
@@ -198,7 +198,7 @@ export function Home() {
                       </div>
                       <div className="info">
                         <b>{b.title ?? b.serviceType ?? 'Visit'}</b>
-                        <small>{visitSubtitle(b.startTimeMs, b.auntieDisplayName)}</small>
+                        <small>{bookingSubtitle(b)}</small>
                       </div>
                       <div className="pet">{speciesEmoji(null)}</div>
                       <span className={`chip ${chip.tone}`}>{chip.label}</span>
