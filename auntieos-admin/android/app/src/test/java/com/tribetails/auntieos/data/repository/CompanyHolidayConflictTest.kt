@@ -57,15 +57,16 @@ class CompanyHolidayConflictTest {
         assertEquals(listOf("2026-10-31", "2026-11-01", "2026-11-02"), businessDatesForVisit(w, ny))
     }
     @Test
-    fun `a blank zone falls back to UTC dates, like the server`() {
+    fun `a blank zone falls back to America-Chicago dates, the one default (#1109)`() {
+        // 01:00Z Jul 5 is 20:00 CDT Jul 4.
         val w = BusyConflictWindow(Instant.parse("2026-07-05T01:00:00Z"), Instant.parse("2026-07-05T02:00:00Z"))
-        assertEquals(listOf("2026-07-05"), businessDatesForVisit(w, ""))
-        assertEquals(listOf("2026-07-05"), businessDatesForVisit(w, "   "))
+        assertEquals(listOf("2026-07-04"), businessDatesForVisit(w, ""))
+        assertEquals(listOf("2026-07-04"), businessDatesForVisit(w, "   "))
     }
     @Test
-    fun `an unusable zone falls back to UTC dates, like the server`() {
+    fun `an unusable zone falls back to America-Chicago dates, not UTC`() {
         val w = BusyConflictWindow(Instant.parse("2026-07-05T01:00:00Z"), Instant.parse("2026-07-05T02:00:00Z"))
-        assertEquals(listOf("2026-07-05"), businessDatesForVisit(w, "Not/AZone"))
+        assertEquals(listOf("2026-07-04"), businessDatesForVisit(w, "Not/AZone"))
     }
     @Test
     fun `a window crossing UTC midnight in a UTC business yields both days`() {
@@ -116,6 +117,6 @@ class CompanyHolidayConflictTest {
 
     @Test
     fun `an unparseable start resolves to no window at all, via resolveVisitWindow`() {
-        assertTrue(resolveVisitWindow("not-a-date", "2026-09-14T15:00:00Z") == null)
+        assertTrue(resolveVisitWindow("not-a-date", "2026-09-14T15:00:00Z", java.time.ZoneOffset.UTC) == null)
     }
 }

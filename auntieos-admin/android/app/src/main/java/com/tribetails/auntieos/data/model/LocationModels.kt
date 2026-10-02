@@ -388,3 +388,9 @@ fun resolveBusinessTimeZone(stored: String?): String {
     val trimmed = stored?.trim().orEmpty()
     return if (trimmed.isNotEmpty() && runCatching { java.time.ZoneId.of(trimmed) }.isSuccess) trimmed else DEFAULT_BUSINESS_TIME_ZONE
 }
+/**
+ * [resolveBusinessTimeZone] as a [java.time.ZoneId]. The ONE place the app turns a stored
+ * `business_settings.timeZone` into a zone, so every read of a bare wall-clock visit time
+ * (the closed-day guard, the busy-import guard, the incoming-night screens) agrees on it.
+ */
+fun businessZone(stored: String?): java.time.ZoneId = java.time.ZoneId.of(resolveBusinessTimeZone(stored))

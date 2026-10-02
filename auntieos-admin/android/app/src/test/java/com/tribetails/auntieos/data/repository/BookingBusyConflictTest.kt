@@ -136,7 +136,7 @@ class BookingBusyConflictTest {
         assertEquals(1, r.size)
     }
 
-    // ── resolveVisitWindow (device wall-clock anchoring) ─────────────────────
+    // ── resolveVisitWindow (business wall-clock anchoring) ─────────────────────
 
     @Test
     fun `resolves a bare ISO_LOCAL_DATE_TIME visit anchored to the given zone`() {
@@ -162,8 +162,8 @@ class BookingBusyConflictTest {
 
     @Test
     fun `an unparseable start resolves to null rather than throwing`() {
-        assertNull(resolveVisitWindow("not-a-date", "2026-08-07T15:00:00Z"))
-        assertNull(resolveVisitWindow("", ""))
+        assertNull(resolveVisitWindow("not-a-date", "2026-08-07T15:00:00Z", ZoneOffset.UTC))
+        assertNull(resolveVisitWindow("", "", ZoneOffset.UTC))
     }
 
     // ── utcDateRangeFor ───────────────────────────────────────────────────────

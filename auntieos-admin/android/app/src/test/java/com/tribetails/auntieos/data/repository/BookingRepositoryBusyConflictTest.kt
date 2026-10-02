@@ -73,10 +73,9 @@ class BookingRepositoryBusyConflictTest {
     // Real zoned instants (a "Z" suffix), not the bare ISO_LOCAL_DATE_TIME a
     // picker actually writes, so this test is deterministic regardless of the
     // JVM's default timezone: `parseVisitInstant` tries `Instant.parse` first
-    // and only falls back to anchoring a bare local string to the system zone
+    // and only falls back to anchoring a bare local string to the business zone
     // (that fallback path has its own fixed-zone coverage in
-    // BookingBusyConflictTest). Anchoring THIS test to the runner's default
-    // zone would make it pass or fail depending on where it runs.
+    // BookingBusyConflictTest and BusinessZoneGuardsTest).
     private fun booking(start: String, end: String) =
         EnhancedBooking(id = "", kinfolkId = "kf1", startDateTime = start, endDateTime = end)
 
@@ -87,6 +86,7 @@ class BookingRepositoryBusyConflictTest {
     fun `rejects a booking landing on a GOOGLE_BUSY_IMPORT slot, naming it, and writes nothing`() = runBlocking {
         val firestore = mockk<FirebaseFirestore>()
         mockBusySlotsQuery(firestore, listOf(busySlot("2026-08-07", "14:00", "15:00")))
+        mockNoCompanyHolidays(firestore)
         val repo = BookingRepository(firestore = firestore, functions = mockk<FirebaseFunctions>(relaxed = true))
 
         val result = repo.createBooking(booking("2026-08-07T14:15:00Z", "2026-08-07T14:45:00Z"))

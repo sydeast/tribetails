@@ -45,10 +45,12 @@ class BookingRepository(
      */
     suspend fun createBooking(booking: EnhancedBooking, overrideBusyConflict: Boolean = false): Result<String> = runCatchingCancellable {
         AuntieLog.i("Creating enhanced booking for kinfolk: ${booking.kinfolkId}")
+        // One read of business settings serves both guards: closures and the zone a bare wall-clock start is read in.
+        val settings = loadCompanyHolidaySettings(firestore)
         if (!overrideBusyConflict) {
-            assertNoBookingBusyConflict(firestore, booking.startDateTime, booking.endDateTime)
+            assertNoBookingBusyConflict(firestore, booking.startDateTime, booking.endDateTime, settings.timeZone)
         }
-        assertNoCompanyHolidayConflict(firestore, booking.startDateTime, booking.endDateTime)
+        assertNoCompanyHolidayConflict(settings, booking.startDateTime, booking.endDateTime)
         val now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
         val bookingWithTimestamp = booking.copy(
             createdAt = now,

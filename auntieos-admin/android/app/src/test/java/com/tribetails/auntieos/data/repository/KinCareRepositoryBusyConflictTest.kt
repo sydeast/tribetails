@@ -91,6 +91,7 @@ class KinCareRepositoryBusyConflictTest {
     fun `rejects a session landing on a GOOGLE_BUSY_IMPORT slot, naming it, and writes nothing`() = runBlocking {
         val firestore = mockk<FirebaseFirestore>()
         mockBusySlotsQuery(firestore, listOf(busySlot("2026-08-07", "14:00", "15:00")))
+        mockNoCompanyHolidays(firestore)
         val repo = KinCareRepository(authGate = passingAuthGate(), firestoreProvider = { firestore })
 
         val session = KinCareSession(

@@ -3,6 +3,7 @@ package com.tribetails.auntieos.data.repository
 import com.google.firebase.firestore.FirebaseFirestore
 import com.tribetails.auntieos.data.model.BookingTimeSlot
 import com.tribetails.auntieos.data.model.TimeSlotSource
+import com.tribetails.auntieos.data.model.businessZone
 import kotlinx.coroutines.tasks.await
 import java.time.Duration
 import java.time.Instant
@@ -42,8 +43,9 @@ import java.time.format.DateTimeParseException
  * `GOOGLE_BUSY_IMPORT` row, and only that source, they are UTC by
  * construction. A visit's own `startDateTime`/`endDateTime`
  * ([EnhancedBooking]) or `startTime`/`endTime` ([KinCareSession]) is the
- * operator's device wall clock with no zone suffix, so it is anchored to the
- * device's own [ZoneId] before comparing. One caveat inherited from the
+ * operator's wall clock with no zone suffix, so it is anchored to the
+ * business zone ([businessZone], the same reading the closed-day guard uses)
+ * before comparing, never to the phone's own zone. One caveat inherited from the
  * schema, not introduced here: a slot carries a single `date` for the whole
  * block, so a `GOOGLE_BUSY_IMPORT` row spanning more than 24h decodes short.
  */
@@ -78,14 +80,13 @@ private fun formatUtc(instant: Instant): String =
  * zoned/UTC instant string (`Instant.parse`, e.g. anything ending `Z`) first;
  * falls back to a bare `ISO_LOCAL_DATE_TIME` (no zone) anchored to [zone],
  * which is the shape [EnhancedBooking.startDateTime] /
- * [KinCareSession.startTime] actually carry today (the device's own wall
- * clock at the moment it was picked; see `NewBookingRequestDialog.kt` and
- * `bookingAvailability.ts`'s header for the cross-client confirmation of that
- * contract). Returns null, never throws, for anything neither shape parses:
+ * [KinCareSession.startTime] actually carry today. Callers pass the business
+ * zone, so the busy-import guard and the closed-day guard read one visit the
+ * same way on any phone (#1127). Returns null, never throws, for anything neither shape parses:
  * this task is not the place to newly enforce a stricter format on a field
  * that has never validated one.
  */
-internal fun parseVisitInstant(raw: String, zone: ZoneId = ZoneId.systemDefault()): Instant? {
+internal fun parseVisitInstant(raw: String, zone: ZoneId): Instant? {
     if (raw.isBlank()) return null
     return try {
         Instant.parse(raw)
@@ -108,7 +109,7 @@ internal fun parseVisitInstant(raw: String, zone: ZoneId = ZoneId.systemDefault(
 internal fun resolveVisitWindow(
     startRaw: String,
     endRaw: String,
-    zone: ZoneId = ZoneId.systemDefault(),
+    zone: ZoneId,
 ): BusyConflictWindow? {
     val start = parseVisitInstant(startRaw, zone) ?: return null
     val parsedEnd = endRaw.takeIf { it.isNotBlank() }?.let { parseVisitInstant(it, zone) }
@@ -170,6 +171,7 @@ internal suspend fun loadGoogleBusySlots(firestore: FirebaseFirestore, window: B
 /**
  * The one call [BookingRepository.createBooking] and
  * [KinCareRepository.createKinCareSession] each make before their write.
+ * [timeZone] is `business_settings.timeZone`, resolved by [businessZone].
  * Throws [BookingBusyConflictException] naming the conflicting window(s) when
  * the visit lands on a Google Calendar busy import; returns silently
  * otherwise, including when [startRaw] cannot be parsed at all (see
@@ -179,9 +181,10 @@ internal suspend fun assertNoBookingBusyConflict(
     firestore: FirebaseFirestore,
     startRaw: String,
     endRaw: String,
-    zone: ZoneId = ZoneId.systemDefault(),
+    timeZone: String,
 ) {
-    val window = resolveVisitWindow(startRaw, endRaw, zone) ?: return
+    // A bare wall-clock start is the business's own clock (the same reading the closed-day guard uses), never this phone's.
+    val window = resolveVisitWindow(startRaw, endRaw, businessZone(timeZone)) ?: return
     val rawSlots = loadGoogleBusySlots(firestore, window)
     val decoded = rawSlots.mapNotNull(::decodeGoogleBusySlot)
     val conflicts = findBusyConflicts(window, decoded)

@@ -130,6 +130,10 @@ private const val MAX_LISTED_WARNINGS = 6
 fun bookingSelectionWarnings(
     visits: List<NewBookingVisit>,
     availability: BookingAvailability,
+    // The wizard builds each visit's epoch ms from the operator's wall clock in the PHONE's zone
+    // ([NewBookingMath.localMs]), the same contract as the web wizard, so reading it back in the
+    // same zone recovers the clock the operator typed. That typed clock is compared with the
+    // business's own dates and hours here. Do not read it in the business zone.
     zone: ZoneId = ZoneId.systemDefault(),
 ): List<String> {
     val lines = LinkedHashSet<String>()
