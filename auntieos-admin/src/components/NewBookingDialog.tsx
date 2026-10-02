@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createMultiDateBookingRequest } from '../api/bookingsWrite';
 import { mintBookingIdempotencyKey } from '../lib/bookingIdempotency';
+import { resolveBusinessTimeZone } from '../lib/businessOperations';
 import type { CreateMultiDateBookingRequestResult } from '../contracts/bookingContracts.generated';
 import {
   KINFOLK_QUERY,
@@ -198,7 +199,7 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
         if (!live) return;
         setServiceOptions(serviceOptionsFromRates(s.serviceRates, s.serviceDurations));
         setBusinessHours(s.businessHours);
-        setBusinessTimeZone((s.timeZone ?? '').trim());
+        setBusinessTimeZone(resolveBusinessTimeZone(s.timeZone));
         setClosureEntries((s.companyHolidays ?? []).map(parseClosureEntry));
       })
       .catch((err: unknown) => {

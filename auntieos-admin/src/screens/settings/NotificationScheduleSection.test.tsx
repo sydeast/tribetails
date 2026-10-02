@@ -256,6 +256,11 @@ describe('the panel', () => {
     expect(screen.getByText('Times are in America/Chicago')).toBeInTheDocument();
   });
 
+  it('names America/Chicago, the zone the cron reads, when no zone is saved (#1109)', () => {
+    render(<NotificationScheduleSection data={settings({ timeZone: '' })} onSave={onSave} />);
+    expect(screen.getByText('Times are in America/Chicago')).toBeInTheDocument();
+  });
+
   /**
    * Visit reminders go out relative to the visit and obey neither hour, so the
    * panel says so rather than implying it governs every notification.

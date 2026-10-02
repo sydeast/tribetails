@@ -19,7 +19,7 @@ beforeEach(() => {
 });
 
 function settings(over: Partial<BusinessSettings> = {}): BusinessSettings {
-  return { ...DEFAULT_BUSINESS_SETTINGS, ...over };
+  return { ...DEFAULT_BUSINESS_SETTINGS, timeZone: 'America/New_York', ...over };
 }
 
 describe('BusinessProfileSection', () => {
@@ -100,5 +100,36 @@ describe('BusinessProfileSection', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByText('permission-denied')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+  });
+
+  describe('a business with no time zone saved (#1109)', () => {
+    const unset = () => settings({ timeZone: '' });
+    it('says so as something to fix, naming the zone everything reads meanwhile', () => {
+      render(<BusinessProfileSection data={unset()} onSave={onSave} />);
+      expect(screen.getByText('Set your business time zone')).toBeInTheDocument();
+      expect(screen.getByText(/read in America\/Chicago until you pick one/)).toBeInTheDocument();
+      expect(screen.getByLabelText('Business time zone')).toHaveValue('');
+      // Not the "unusable zone" warning: nothing is wrong with a zone nobody chose.
+      expect(screen.queryByText('This zone will not work')).toBeNull();
+    });
+    it('does not show the warning once a zone is saved', () => {
+      render(<BusinessProfileSection data={settings()} onSave={onSave} />);
+      expect(screen.queryByText('Set your business time zone')).toBeNull();
+    });
+    it('still saves another field, without writing a blank zone over the document', async () => {
+      const user = userEvent.setup();
+      render(<BusinessProfileSection data={unset()} onSave={onSave} />);
+      await user.type(screen.getByLabelText('Business name'), 'X');
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      expect(onSave).toHaveBeenCalledTimes(1);
+      expect(onSave.mock.calls[0]![0]).not.toHaveProperty('timeZone');
+    });
+    it('saves the zone once one is picked', async () => {
+      const user = userEvent.setup();
+      render(<BusinessProfileSection data={unset()} onSave={onSave} />);
+      await user.selectOptions(screen.getByLabelText('Business time zone'), 'America/Chicago');
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ timeZone: 'America/Chicago' }));
+    });
   });
 });

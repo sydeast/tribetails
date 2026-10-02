@@ -37,7 +37,8 @@ describe('mergeBusinessSettings', () => {
     const result = mergeBusinessSettings({ businessEmail: 'auntie@tribetails.com' });
     expect(result.businessEmail).toBe('auntie@tribetails.com');
     expect(result.businessName).toBe('');
-    expect(result.timeZone).toBe('America/New_York');
+    // #1109: unset stays unset; readers resolve it to America/Chicago.
+    expect(result.timeZone).toBe('');
     expect(result.businessHours).toEqual({});
     expect(result.serviceRates).toEqual({});
     expect(result.observedUsHolidays).toEqual([]);

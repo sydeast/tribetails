@@ -847,6 +847,24 @@ describe('requestKey: envelope rows (#533)', () => {
       expect(await screen.findByText(/The visit is on the schedule/)).toBeInTheDocument();
     });
 
+    it.each([
+      ['has no time zone saved', {}],
+      ['saved a zone this device cannot read', { timeZone: 'Mars/Olympus_Mons' }],
+    ])('reads the start time in America/Chicago when the business %s (#1109)', async (_label, stored) => {
+      getBusinessSettings.mockResolvedValue(stored);
+      listPendingBookingRequests.mockResolvedValue({ requests: [overnightRequest()] });
+      approveBookingRequest.mockResolvedValue(APPROVED);
+      await openBookDialog();
+      await userEvent.type(await screen.findByLabelText('Start time for Overnight on Fri, Oct 9'), '19:30');
+      const book = await screen.findByRole('button', { name: 'Book it' });
+      await waitFor(() => expect(book).toBeEnabled());
+      await userEvent.click(book);
+      await waitFor(() =>
+        expect(approveBookingRequest).toHaveBeenCalledWith('fam-3', 'b3', {
+          startTimes: { 'night-1': START_MS },
+        }),
+      );
+    });
     it('needs every night set when a request asks for more than one', async () => {
       listPendingBookingRequests.mockResolvedValue({
         requests: [

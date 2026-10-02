@@ -36,8 +36,10 @@ describe('startTimeOnNight', () => {
     );
   });
 
-  it('falls back to the device zone when the business zone is unusable', () => {
-    expect(startTimeOnNight('2026-10-09', '19:30', '')).toBe(new Date(2026, 9, 9, 19, 30).getTime());
+  it('falls back to the server default, America/Chicago, when the business zone is missing or unusable (#1109)', () => {
+    const chicago = Date.UTC(2026, 9, 10, 0, 30);
+    expect(startTimeOnNight('2026-10-09', '19:30', '')).toBe(chicago);
+    expect(startTimeOnNight('2026-10-09', '19:30', 'Mars/Olympus_Mons')).toBe(chicago);
   });
 });
 

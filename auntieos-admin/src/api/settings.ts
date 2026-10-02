@@ -556,7 +556,10 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   businessEmail: '',
   businessPhone: '',
   businessAddress: '',
-  timeZone: 'America/New_York',
+  // Blank, not a zone: a document with no `timeZone` is a settings problem the
+  // Business profile panel flags (#1109), and every reader resolves it through
+  // `resolveBusinessTimeZone`, the same America/Chicago the server uses.
+  timeZone: '',
   serviceRates: {},
   serviceDurations: {},
   serviceStartTimeBooking: {},
@@ -658,7 +661,7 @@ type RawSettings = Record<string, unknown>;
 /**
  * The three type-checked readers the merge uses in place of `as X`. Each takes
  * the SHIPPED default rather than a bare `''`/`[]`, so a doc missing (or
- * mistyping) `timeZone` still reads 'America/New_York' and `etaMinuteOptions`
+ * mistyping) `timeZone` still reads '' (unset, see #1109) and `etaMinuteOptions`
  * still reads the seven-option list, exactly as before. `lib/coerce.ts`'s
  * `str`/`arr` are the same idea for the always-empty case; these carry a
  * default because several settings fields genuinely ship with one.
