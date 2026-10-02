@@ -26,6 +26,7 @@ import { kinCareLengthMinutes, mapServiceRates } from './getServiceCatalog';
 import {
   businessCalendarDate,
   businessTimeZone,
+  businessTimeZoneIsSet,
   containmentIsInert,
   findTimeBlock,
   resolveBookingPolicy,
@@ -580,6 +581,19 @@ export async function loadBookingPolicy(): Promise<{
   }
   const policy = resolveBookingPolicy(raw).policy;
   const timeZone = businessTimeZone(raw);
+
+  // #1109: a missing zone is no longer a silent UTC. It resolves to the ruled
+  // America/Chicago, the same default both admin apps carry, and says so here
+  // so a log search finds a business that has never picked one.
+  if (!businessTimeZoneIsSet(raw)) {
+    logEvent({
+      severity: 'warn',
+      function: 'requestBooking',
+      event: 'business.timezone.missing',
+      errorMessage: `business_settings.timeZone is blank or not a usable IANA zone, so ${timeZone} is being used.`,
+      extra: { timeZone },
+    });
+  }
 
   // #596, the wider half: `visitMatchesBlock` fails open on a zone it cannot
   // read, which is deliberate and stays — but a business taking block bookings

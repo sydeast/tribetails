@@ -15,6 +15,8 @@ import {
   slugifyBlockId,
   timeBlockDraft,
   timeZoneOptions,
+  DEFAULT_BUSINESS_TIME_ZONE,
+  resolveBusinessTimeZone,
   validateTimeBlocks,
   firstActiveOverlap,
   compareBlocksByStart,
@@ -254,7 +256,7 @@ describe('defaultBlockEnd', () => {
 
 describe('timeZoneOptions', () => {
   it('always contains the shipped default', () => {
-    expect(timeZoneOptions('')).toContain('America/New_York');
+    expect(timeZoneOptions('')).toContain(DEFAULT_BUSINESS_TIME_ZONE);
   });
 
   it('keeps a stored zone this runtime does not know, rather than dropping it', () => {
@@ -333,5 +335,21 @@ describe('resolveTimeBlock', () => {
 
   it('skips a half-written row instead of reading it as an open-ended window', () => {
     expect(resolveTimeBlock(600, [{ id: 'half', label: 'Half', active: true }])).toBeNull();
+  });
+});
+
+describe('resolveBusinessTimeZone (#1109)', () => {
+  it('is America/Chicago, the zone the server resolves a missing setting to', () => {
+    expect(DEFAULT_BUSINESS_TIME_ZONE).toBe('America/Chicago');
+  });
+  it('keeps a stored zone this runtime can read, trimmed', () => {
+    expect(resolveBusinessTimeZone(' America/Los_Angeles ')).toBe('America/Los_Angeles');
+  });
+  it('resolves a missing, blank or unreadable zone to the default', () => {
+    expect(resolveBusinessTimeZone(undefined)).toBe('America/Chicago');
+    expect(resolveBusinessTimeZone(null)).toBe('America/Chicago');
+    expect(resolveBusinessTimeZone('')).toBe('America/Chicago');
+    expect(resolveBusinessTimeZone('   ')).toBe('America/Chicago');
+    expect(resolveBusinessTimeZone('Mars/Olympus_Mons')).toBe('America/Chicago');
   });
 });

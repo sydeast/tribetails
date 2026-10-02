@@ -4,6 +4,7 @@ import { DenPanel } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { PrimaryButton, GhostButton } from '../../components/Buttons';
 import { Toggle } from '../../components/Toggle';
+import { resolveBusinessTimeZone } from '../../lib/businessOperations';
 import '../SettingsEdit.css';
 
 /**
@@ -165,7 +166,7 @@ export function NotificationScheduleSection({ data, onSave }: NotificationSchedu
     <DenPanel
       title="Notification schedule"
       subtitle="Whether automatic notices reach households at all, and what time of day the daily jobs run."
-      detail={`Times are in ${data.timeZone}`}
+      detail={`Times are in ${resolveBusinessTimeZone(data.timeZone)}`}
     >
       {error ? (
         <Banner tone="error" title="Save failed" className="settingsEdit__sectionBanner">

@@ -3,7 +3,12 @@ import type { BusinessSettings } from '../../api/settings';
 import { DenPanel } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { PrimaryButton, GhostButton } from '../../components/Buttons';
-import { deviceTimeZone, isUsableTimeZone, timeZoneOptions } from '../../lib/businessOperations';
+import {
+  DEFAULT_BUSINESS_TIME_ZONE,
+  deviceTimeZone,
+  isUsableTimeZone,
+  timeZoneOptions,
+} from '../../lib/businessOperations';
 import { BUSINESS_PROFILE_FIELDS, type StringFieldKey } from './sections';
 import '../SettingsEdit.css';
 
@@ -50,7 +55,11 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
 
   const zoneOptions = timeZoneOptions(data.timeZone);
   const device = deviceTimeZone();
-  const usable = isUsableTimeZone(draft.timeZone);
+  // #1109: a document with no zone is not an unusable one. Nothing is assumed:
+  // the server and both apps read America/Chicago until the operator picks, and
+  // this panel says so rather than showing a zone nobody chose.
+  const unset = draft.timeZone.trim() === '';
+  const usable = unset || isUsableTimeZone(draft.timeZone);
 
   const fieldsDirty = BUSINESS_PROFILE_FIELDS.some((f) => (draft.values[f.key] ?? '') !== data[f.key]);
   const zoneDirty = draft.timeZone !== data.timeZone;
@@ -72,7 +81,7 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
     setError(null);
     const textPatch: Partial<Pick<BusinessSettings, StringFieldKey>> = {};
     for (const f of BUSINESS_PROFILE_FIELDS) textPatch[f.key] = (draft.values[f.key] ?? '').trim();
-    const patch: Partial<BusinessSettings> = { ...textPatch, timeZone: draft.timeZone };
+    const patch: Partial<BusinessSettings> = unset ? textPatch : { ...textPatch, timeZone: draft.timeZone };
     try {
       await onSave(patch);
       setJustSaved(true);
@@ -135,6 +144,7 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
             aria-describedby="timeZone-hint"
             onChange={(e) => updateZone(e.target.value)}
           >
+            {unset ? <option value="">Choose a time zone</option> : null}
             {zoneOptions.map((option) => (
               <option key={option} value={option}>
                 {option}
@@ -147,6 +157,12 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
             ? `This computer is on ${device}. Times you type into the booking dialog stay on this computer's clock; the zone above is what the phone line and outgoing messages read.`
             : 'Times you type into the booking dialog use this computer’s clock. The zone above is what the phone line and outgoing messages read.'}
         </span>
+        {unset ? (
+          <Banner tone="warning" title="Set your business time zone" className="settingsEdit__sectionBanner">
+            No zone is saved, so the phone line, quote expiry and visit dates are read in {DEFAULT_BUSINESS_TIME_ZONE}{' '}
+            until you pick one.
+          </Banner>
+        ) : null}
         {!usable ? (
           <Banner tone="warning" title="This zone will not work" className="settingsEdit__sectionBanner">
             Nothing on this computer can read a time in &ldquo;{draft.timeZone}&rdquo;. Saved as it is,

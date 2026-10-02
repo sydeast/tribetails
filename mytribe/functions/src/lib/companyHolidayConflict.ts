@@ -38,8 +38,8 @@ import { businessCalendarDate, businessTimeZone } from './bookingTimeBlocks';
  * visit's window covers in `business_settings.timeZone` (`businessCalendarDate`,
  * the same reader `requestBooking` keys a visit's day with) and checks THOSE.
  * It used to check the UTC date, which put a 21:00 visit in a US zone on the
- * next day's closure and off its own. A blank or unusable zone falls back to
- * the UTC date, `businessCalendarDate`'s own rule.
+ * next day's closure and off its own. A blank or unusable zone resolves to the
+ * ruled `America/Chicago` (#1109), the default every client shares.
  */
 
 /** Machine-readable `details.code` on the rejection, so a client can branch on it rather than the message. */

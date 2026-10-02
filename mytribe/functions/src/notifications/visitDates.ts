@@ -1,4 +1,6 @@
 import { db } from '../lib/firestoreAdmin';
+import { FALLBACK_BUSINESS_TIME_ZONE } from '../lib/businessHours';
+import { businessTimeZone } from '../lib/bookingTimeBlocks';
 
 /**
  * ONE rule for every message that names visit dates.
@@ -43,9 +45,11 @@ import { db } from '../lib/firestoreAdmin';
 
 /**
  * Display timezone fallback, shared with `enrichTemplateData`. The operator's
- * real value lives in `business_settings/business_settings.timeZone`.
+ * real value lives in `business_settings/business_settings.timeZone`. It was
+ * `America/New_York` until #1109, which contradicted the 2026-08-11 ruling
+ * that the business runs on `America/Chicago`.
  */
-export const DEFAULT_TIME_ZONE = 'America/New_York';
+export const DEFAULT_TIME_ZONE = FALLBACK_BUSINESS_TIME_ZONE;
 
 /** Where SMS and push send a HOUSEHOLD who cannot be given the whole list. */
 export const PORTAL_URL = 'https://kinfolk.tribetails.com';
@@ -266,14 +270,12 @@ export function buildVisitDateData(
 export async function loadBusinessTimeZone(): Promise<string> {
   try {
     const snap = await db().collection('business_settings').doc('business_settings').get();
-    const tz = (snap.data() as Record<string, unknown> | undefined)?.['timeZone'];
-    if (typeof tz === 'string' && tz.trim().length > 0) return tz;
+    return businessTimeZone(snap.data());
   } catch {
     // keep the default
   }
   return DEFAULT_TIME_ZONE;
 }
-
 /** Statuses that are not part of "the visits this booking covers". */
 const NOT_HAPPENING = new Set(['cancelled', 'unavailable']);
 

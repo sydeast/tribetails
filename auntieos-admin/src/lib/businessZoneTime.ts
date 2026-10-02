@@ -1,3 +1,5 @@
+import { resolveBusinessTimeZone } from './businessOperations';
+
 /**
  * #1098: turning the operator's chosen start time for an Overnight into an
  * instant, on the night the household asked for, in the BUSINESS zone.
@@ -9,7 +11,8 @@
  * `functions/src/lib/bookingTimeBlocks.ts`). An operator travelling outside the
  * business zone would otherwise send a time the server reads as a different
  * night and refuses. So the wall clock is read in the business zone, and only
- * an unusable zone falls back to the device.
+ * an unusable zone falls back to the server's own default, America/Chicago
+ * (#1109), not to the device.
  *
  * No zone library is in the bundle, so this does the conversion with `Intl`:
  * guess the instant as if the wall clock were UTC, measure the zone's offset at
@@ -87,11 +90,12 @@ export function wallClockInZoneToMs(dateIso: string, hhmm: string, zone: string)
 
 /**
  * The instant to send for an Overnight's start: the business zone when it is
- * usable, else the device zone (the zone every other admin booking write uses).
+ * usable, else the same America/Chicago the server falls back to.
  * Null only when the date or time itself is unreadable.
  */
 export function startTimeOnNight(dateIso: string, hhmm: string, businessZone: string): number | null {
-  const inZone = wallClockInZoneToMs(dateIso, hhmm, businessZone);
+  // #1109: an unusable zone resolves to the server's default, not the device's.
+  const inZone = wallClockInZoneToMs(dateIso, hhmm, resolveBusinessTimeZone(businessZone));
   if (inZone !== null) return inZone;
   const wc = parseWallClock(dateIso, hhmm);
   if (wc === null) return null;

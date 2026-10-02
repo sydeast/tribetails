@@ -121,7 +121,7 @@ internal fun NotificationSchedulePanel(
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
-                "Times are in ${s?.timeZone.orEmpty().ifBlank { "the business time zone" }}",
+                "Times are in ${s?.let { resolveBusinessTimeZone(it.timeZone) } ?: "the business time zone"}",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )

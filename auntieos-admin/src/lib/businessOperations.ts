@@ -359,6 +359,19 @@ const FALLBACK_TIME_ZONES: readonly string[] = [
 ];
 
 /**
+ * Operator ruling 2026-08-11: the business runs on America/Chicago. This is the
+ * zone a missing or unreadable `business_settings.timeZone` means, and it is the
+ * same literal the server resolves to (`FALLBACK_BUSINESS_TIME_ZONE` in
+ * `mytribe/functions/src/lib/businessHours.ts`) and both Kotlin admin clients
+ * carry (#1109). Do not change one without the others.
+ */
+export const DEFAULT_BUSINESS_TIME_ZONE = 'America/Chicago';
+/** The zone the server reads times in: the stored one when this runtime can read it, else the default. */
+export function resolveBusinessTimeZone(stored: string | null | undefined): string {
+  const trimmed = (stored ?? '').trim();
+  return isUsableTimeZone(trimmed) ? trimmed : DEFAULT_BUSINESS_TIME_ZONE;
+}
+/**
  * Every IANA zone id this runtime knows, with `current` and the shipped default
  * guaranteed present and the whole list sorted.
  *
@@ -374,7 +387,7 @@ export function timeZoneOptions(current: string): string[] {
       ? (Intl.supportedValuesOf('timeZone') as string[])
       : [...FALLBACK_TIME_ZONES];
   const all = new Set(supported.length > 0 ? supported : FALLBACK_TIME_ZONES);
-  all.add('America/New_York');
+  all.add(DEFAULT_BUSINESS_TIME_ZONE);
   const trimmed = current.trim();
   if (trimmed !== '') all.add(trimmed);
   return [...all].sort((a, b) => a.localeCompare(b));

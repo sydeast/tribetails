@@ -11,6 +11,7 @@ import {
   resolveBookingPolicy,
   visitMatchesBlock,
   businessTimeZone,
+  businessTimeZoneIsSet,
 } from '../src/lib/bookingTimeBlocks';
 
 /**
@@ -400,10 +401,13 @@ describe('businessCalendarDate', () => {
     expect(businessCalendarDate(lateEvening, 'UTC')).toBe('2026-09-05');
   });
 
-  it('falls back to the UTC date when the zone is unusable, rather than giving up on keying', () => {
+  it('falls back to the ruled Chicago date when the zone is unusable, rather than giving up on keying (#1109)', () => {
+    // 02:00Z on the 5th is 21:00 on the 4th in Chicago: UTC would say the 5th.
+    const lateEvening = Date.parse('2026-09-05T02:00:00.000Z');
+    expect(businessCalendarDate(lateEvening, '')).toBe('2026-09-04');
+    expect(businessCalendarDate(lateEvening, 'Mars/Olympus_Mons')).toBe('2026-09-04');
     const t = Date.parse('2026-09-04T16:00:00.000Z');
     expect(businessCalendarDate(t, '')).toBe('2026-09-04');
-    expect(businessCalendarDate(t, 'Mars/Olympus_Mons')).toBe('2026-09-04');
     // The refusal that must survive any fallback: the same instant always keys
     // the same, whatever the zone is.
     expect(businessCalendarDate(t, '')).toBe(businessCalendarDate(t, ''));
@@ -447,8 +451,20 @@ describe('containmentIsInert', () => {
 describe('businessTimeZone', () => {
   it('reads and trims the field, and never throws on a document without one', () => {
     expect(businessTimeZone({ timeZone: ' America/Chicago ' })).toBe('America/Chicago');
-    expect(businessTimeZone({})).toBe('');
-    expect(businessTimeZone(null)).toBe('');
-    expect(businessTimeZone({ timeZone: 42 })).toBe('');
+  });
+  it('resolves a missing, blank, non-string or unreadable zone to America/Chicago (#1109)', () => {
+    expect(businessTimeZone({})).toBe('America/Chicago');
+    expect(businessTimeZone(null)).toBe('America/Chicago');
+    expect(businessTimeZone({ timeZone: '   ' })).toBe('America/Chicago');
+    expect(businessTimeZone({ timeZone: 42 })).toBe('America/Chicago');
+    expect(businessTimeZone({ timeZone: 'Mars/Olympus_Mons' })).toBe('America/Chicago');
+    // The stored value still wins, so a relocation is a settings change.
+    expect(businessTimeZone({ timeZone: 'America/Los_Angeles' })).toBe('America/Los_Angeles');
+  });
+  it('says whether the operator actually set a zone', () => {
+    expect(businessTimeZoneIsSet({ timeZone: 'America/Chicago' })).toBe(true);
+    expect(businessTimeZoneIsSet({})).toBe(false);
+    expect(businessTimeZoneIsSet({ timeZone: '' })).toBe(false);
+    expect(businessTimeZoneIsSet({ timeZone: 'Mars/Olympus_Mons' })).toBe(false);
   });
 });

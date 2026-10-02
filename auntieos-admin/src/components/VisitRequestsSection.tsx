@@ -21,6 +21,7 @@ import type { ListPendingBookingRequestsResultRequestVisit } from '../contracts/
 import { bookingWhenLabel } from '../lib/bookingDetailFormat';
 import { BOOKING_BUSY_CONFLICT_CODE, callableConflictCode } from '../lib/bookingWizard';
 import { nightLabel, startTimeOnNight } from '../lib/businessZoneTime';
+import { DEFAULT_BUSINESS_TIME_ZONE, resolveBusinessTimeZone } from '../lib/businessOperations';
 import { useOneShot } from '../lib/useOneShot';
 import { useToast } from './Toast';
 import { Dialog } from './Dialog';
@@ -425,7 +426,9 @@ function DecisionDialog({ row, decision, onClose, onResolved }: DecisionDialogPr
 
   function startTimesFor(): Record<string, number> | null {
     const out: Record<string, number> = {};
-    const businessZone = zone.status === 'ready' ? zone.zone : '';
+    // A failed read still resolves to the default, the zone the server uses
+    // for a business with none saved, rather than to this device's clock.
+    const businessZone = zone.status === 'ready' ? zone.zone : DEFAULT_BUSINESS_TIME_ZONE;
     for (const v of nights) {
       const ms = startTimeOnNight(v.requestedDate ?? '', times[v.visitId] ?? '', businessZone);
       if (ms === null) return null;
@@ -530,8 +533,8 @@ function DecisionDialog({ row, decision, onClose, onResolved }: DecisionDialogPr
         </ul>
       )}
       {nights.length > 0 && zone.status === 'error' && (
-        <Banner tone="warning" title="Using this device's time zone">
-          {`Your business time zone did not load (${zone.message}), so these times are read in this device's zone.`}
+        <Banner tone="warning" title={`Using ${DEFAULT_BUSINESS_TIME_ZONE}`}>
+          {`Your business time zone did not load (${zone.message}), so these times are read in ${DEFAULT_BUSINESS_TIME_ZONE}. If your business is set to another zone, reload before approving.`}
         </Banner>
       )}
       <label className="visit-requests__dialog-label" htmlFor="visit-request-note">
@@ -583,7 +586,7 @@ function useBusinessZone(needed: boolean): ZoneLoad {
     let live = true;
     getBusinessSettings()
       .then((s) => {
-        if (live) setLoad({ status: 'ready', zone: (s.timeZone ?? '').trim() });
+        if (live) setLoad({ status: 'ready', zone: resolveBusinessTimeZone(s.timeZone) });
       })
       .catch((err: unknown) => {
         if (live) setLoad({ status: 'error', message: err instanceof Error ? err.message : 'read failed' });

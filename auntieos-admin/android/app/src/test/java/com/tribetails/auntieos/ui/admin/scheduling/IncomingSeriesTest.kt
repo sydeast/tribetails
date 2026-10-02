@@ -181,10 +181,28 @@ class IncomingSeriesTest {
     }
 
     @Test
-    fun theBusinessZoneFallsBackToTheDeviceOnlyWhenUnusable() {
+    fun theBusinessZoneFallsBackToTheServerDefaultNeverTheDevice() {
         assertEquals(ZoneId.of("America/Chicago"), businessZoneOf(" America/Chicago "))
-        assertEquals(ZoneId.systemDefault(), businessZoneOf(""))
-        assertEquals(ZoneId.systemDefault(), businessZoneOf("Not/AZone"))
+        assertEquals(ZoneId.of("America/Los_Angeles"), businessZoneOf("America/Los_Angeles"))
+        // #1109: a missing or unreadable zone is the same America/Chicago the server resolves to.
+        assertEquals(ZoneId.of("America/Chicago"), businessZoneOf(""))
+        assertEquals(ZoneId.of("America/Chicago"), businessZoneOf("   "))
+        assertEquals(ZoneId.of("America/Chicago"), businessZoneOf("Not/AZone"))
+    }
+    @Test
+    fun aNightWithNoStoredZoneIsReadInChicagoRegardlessOfTheDevice() {
+        val series = groupIncomingBySeries(listOf(night("n1", "2026-10-09"))).single()
+        val picks = mapOf(seriesNightKey(series, "n1") to LocalTime.of(19, 30))
+        val saved = java.util.TimeZone.getDefault()
+        try {
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Asia/Tokyo"))
+            assertEquals(
+                mapOf("n1" to Instant.parse("2026-10-10T00:30:00Z").toEpochMilli()),
+                seriesStartTimesMs(series, picks, businessZoneOf("")),
+            )
+        } finally {
+            java.util.TimeZone.setDefault(saved)
+        }
     }
 
     @Test
