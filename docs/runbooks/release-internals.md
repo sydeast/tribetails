@@ -994,6 +994,7 @@ In order, and only when the mode is `preflight` or `on`:
    release with no tag is shipped again the next night.
 7. Restores the signing material from repository secrets: the operator app's
    release keystore (into `$RUNNER_TEMP`), both `local.properties` files,
+   the operator app's `sentry.properties`,
    `~/.android/debug.keystore` and `gradle.properties` in the pinned Gradle
    home. This step and the cleanup step refuse to run anywhere but a GitHub
    Actions runner, so pasting either one into a shell on the Mac changes
@@ -1151,7 +1152,16 @@ prop KEY_PASSWORD "$LP" | gh secret set AUNTIEOS_KEY_PASSWORD --repo sydeast/tri
 prop SENTRY_DSN "$LP" | gh secret set AUNTIEOS_ANDROID_SENTRY_DSN --repo sydeast/tribetails
 prop MAPBOX_PUBLIC_TOKEN "$GP" | gh secret set ANDROID_MAPBOX_PUBLIC_TOKEN --repo sydeast/tribetails
 base64 < "$HOME/.android/debug.keystore" | tr -d '\n' | gh secret set MYTRIBE_DEBUG_KEYSTORE_B64 --repo sydeast/tribetails
+prop auth.token auntieos-admin/android/sentry.properties | gh secret set SENTRY_AUTH_TOKEN --repo sydeast/tribetails
 ```
+
+`SENTRY_AUTH_TOKEN` was missing from the first setup. The operator app's release
+build uploads its ProGuard mapping to Sentry (`autoUploadProguardMapping` in
+`auntieos-admin/android/app/build.gradle.kts`), and that upload fails the build
+without a token. On the Mac the token sits in the gitignored
+`auntieos-admin/android/sentry.properties`; the runner writes the same file.
+The first full hosted release (run 36921264166, 2026-10-01) stopped at step 1c
+on exactly this, before deploying anything.
 
 `MAPBOX_DOWNLOADS_TOKEN` is already a repository secret: CI's Android jobs use
 it. Leave it unless those jobs warn that it is missing or Mapbox answers 401,

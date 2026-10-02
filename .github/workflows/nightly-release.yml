@@ -383,8 +383,14 @@ jobs:
       #   ANDROID_MAPBOX_PUBLIC_TOKEN  MAPBOX_PUBLIC_TOKEN in gradle.properties.
       #                                Compiled into both APKs; without it the
       #                                maps render blank.
+      #   SENTRY_AUTH_TOKEN            auth.token in the operator app's
+      #                                sentry.properties, as on the Mac. The
+      #                                release build uploads its ProGuard
+      #                                mapping to Sentry and FAILS without it
+      #                                (the first full hosted run, 2026-10-01,
+      #                                stopped at step 1c on this).
       #
-      # A missing one REFUSES, in preflight too. The last two would not break
+      # A missing one REFUSES, in preflight too. The Mapbox two would not break
       # the build: the APK would build, ship, and do less than the Mac's does,
       # which is the failure step 0c refuses for the web bundles.
       # ------------------------------------------------------------------
@@ -399,6 +405,7 @@ jobs:
           MYTRIBE_DEBUG_KEYSTORE_B64: ${{ secrets.MYTRIBE_DEBUG_KEYSTORE_B64 }}
           MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
           ANDROID_MAPBOX_PUBLIC_TOKEN: ${{ secrets.ANDROID_MAPBOX_PUBLIC_TOKEN }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
         run: |
           set -euo pipefail
           # ONLY ON A RUNNER. This step writes into $HOME and the Gradle home.
@@ -419,7 +426,7 @@ jobs:
           missing=""
           for name in AUNTIEOS_KEYSTORE_B64 AUNTIEOS_KEYSTORE_PASSWORD AUNTIEOS_KEY_ALIAS \
                       AUNTIEOS_KEY_PASSWORD AUNTIEOS_ANDROID_SENTRY_DSN MYTRIBE_DEBUG_KEYSTORE_B64 \
-                      MAPBOX_DOWNLOADS_TOKEN ANDROID_MAPBOX_PUBLIC_TOKEN; do
+                      MAPBOX_DOWNLOADS_TOKEN ANDROID_MAPBOX_PUBLIC_TOKEN SENTRY_AUTH_TOKEN; do
             [ -n "$(printenv "$name" || true)" ] || missing="$missing $name"
           done
           if [ -n "$missing" ]; then
@@ -445,6 +452,7 @@ jobs:
             echo "SENTRY_DSN=$AUNTIEOS_ANDROID_SENTRY_DSN"
           } > auntieos-admin/android/local.properties
           echo "sdk.dir=$ANDROID_HOME" > mytribe/local.properties
+          echo "auth.token=$SENTRY_AUTH_TOKEN" > auntieos-admin/android/sentry.properties
 
           mkdir -p "$HOME/.android"
           printf '%s' "$MYTRIBE_DEBUG_KEYSTORE_B64" | base64 -d > "$HOME/.android/debug.keystore"
@@ -569,6 +577,7 @@ jobs:
           fi
           rm -f "$RUNNER_TEMP/auntieos-release.keystore" \
                 auntieos-admin/android/local.properties \
+                auntieos-admin/android/sentry.properties \
                 mytribe/local.properties \
                 "$HOME/.android/debug.keystore"
           # Only the Gradle home this run pinned. Unset (mode off, or a run
@@ -577,7 +586,7 @@ jobs:
             "$RUNNER_TEMP"/*) rm -f "$GRADLE_USER_HOME/gradle.properties" ;;
           esac
           rm -f gha-creds-*.json
-          echo "Removed the restored keystores, local.properties, gradle.properties and credentials files."
+          echo "Removed the restored keystores, local.properties, sentry.properties, gradle.properties and credentials files."
 
       - name: Summary
         if: always()
