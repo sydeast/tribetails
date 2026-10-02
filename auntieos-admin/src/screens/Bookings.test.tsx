@@ -641,14 +641,56 @@ describe('Bookings bulk actions', () => {
     expect(rejectBooking).not.toHaveBeenCalled();
     expect(within(screen.getByRole('group', { name: 'Bulk actions' })).getByText('2')).toBeInTheDocument();
   });
-  it('writes the flat session row for every picked booking, one call per id', async () => {
+  it('REJECT writes the flat session row for every picked booking, one call per id', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
+    render(<Bookings />);
+    await pick('Household One', 'Household Two');
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    await userEvent.click(screen.getByRole('button', { name: /Yes, reject 2/ }));
+    await waitFor(() => expect(rejectBooking).toHaveBeenCalledTimes(2));
+    expect(rejectBooking.mock.calls.map((c) => c[0]).sort()).toEqual(['s1', 's2']);
+  });
+  it('#1117: APPROVE of envelope visits writes no flat session; the callable owns it', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
     render(<Bookings />);
     await pick('Household One', 'Household Two');
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
     await userEvent.click(screen.getByRole('button', { name: /Yes, approve 2/ }));
-    await waitFor(() => expect(approveBooking).toHaveBeenCalledTimes(2));
-    expect(approveBooking.mock.calls.map((c) => c[0]).sort()).toEqual(['s1', 's2']);
+    expect(await screen.findByText('Approved 2 of 2 selected bookings.')).toBeInTheDocument();
+    expect(approveBooking).not.toHaveBeenCalled();
+  });
+  it('#1117: a refused id leaves no approved session and is not counted approved', async () => {
+    batchUpdateBookings.mockResolvedValue({
+      ok: true,
+      action: 'APPROVE',
+      updated: 1,
+      failed: [{ id: 'v2', error: 'That time overlaps a busy block on your Google Calendar.' }],
+    });
+    useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
+    render(<Bookings />);
+    await pick('Household One', 'Household Two');
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await userEvent.click(screen.getByRole('button', { name: /Yes, approve 2/ }));
+    expect(await screen.findByText('Approved 1 of 2 selected bookings.')).toBeInTheDocument();
+    // Neither id was written flat: the confirmed one is booked by the callable,
+    // the refused one must not be approved anywhere.
+    expect(approveBooking).not.toHaveBeenCalled();
+    const failure = screen.getByText('Household Two', { selector: 'li strong' }).closest('li');
+    expect(failure?.textContent).toMatch(/overlaps a busy block/);
+    expect(failure?.textContent).not.toMatch(/updated here/i);
+    // The refused row stays picked for a retry.
+    expect(screen.getByRole('checkbox', { name: /Select Household Two/ })).toBeChecked();
+  });
+  it('#1117: a callable that throws approves nothing and says so per household', async () => {
+    batchUpdateBookings.mockRejectedValue(new Error('unauthenticated'));
+    useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
+    render(<Bookings />);
+    await pick('Household One', 'Household Two');
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await userEvent.click(screen.getByRole('button', { name: /Yes, approve 2/ }));
+    expect(await screen.findByText('Approved 0 of 2 selected bookings.')).toBeInTheDocument();
+    expect(approveBooking).not.toHaveBeenCalled();
+    expect(screen.getByText(/Nothing was changed for them/)).toBeInTheDocument();
   });
   it('calls batchUpdateBookings with the ENVELOPE visit ids, never the session doc ids', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
@@ -690,15 +732,15 @@ describe('Bookings bulk actions', () => {
     expect(batchUpdateBookings).toHaveBeenCalledWith(['v9'], 'CANCEL');
   });
   it('reports the outcome per booking, naming each household, never one generic error', async () => {
-    approveBooking.mockImplementation((id: string) =>
+    rejectBooking.mockImplementation((id: string) =>
       id === 's2' ? Promise.reject(new Error('permission-denied')) : Promise.resolve(undefined),
     );
     useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
     render(<Bookings />);
     await pick('Household One', 'Household Two');
-    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
-    await userEvent.click(screen.getByRole('button', { name: /Yes, approve 2/ }));
-    expect(await screen.findByText('Approved 1 of 2 selected bookings.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    await userEvent.click(screen.getByRole('button', { name: /Yes, reject 2/ }));
+    expect(await screen.findByText('Rejected 1 of 2 selected bookings.')).toBeInTheDocument();
     const failure = screen.getByText('Household Two', { selector: 'li strong' }).closest('li');
     expect(failure).not.toBeNull();
     expect(failure?.textContent).toMatch(/permission-denied/);
@@ -719,15 +761,15 @@ describe('Bookings bulk actions', () => {
     await userEvent.click(screen.getByRole('button', { name: /Yes, approve 2/ }));
     expect(await screen.findByText('Approved 1 of 2 selected bookings.')).toBeInTheDocument();
     const failure = screen.getByText('Household Two', { selector: 'li strong' }).closest('li');
-    expect(failure?.textContent).toMatch(/the household's copy of it was not \(That booking was not found\.\)/i);
+    expect(failure?.textContent).toMatch(/That booking was not found\./);
   });
   it('says so, separately, when the whole callable throws rather than reporting per-id failures', async () => {
     batchUpdateBookings.mockRejectedValue(new Error('unauthenticated'));
     useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
     render(<Bookings />);
     await pick('Household One', 'Household Two');
-    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
-    await userEvent.click(screen.getByRole('button', { name: /Yes, approve 2/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    await userEvent.click(screen.getByRole('button', { name: /Yes, reject 2/ }));
     expect(await screen.findByText(/unauthenticated/)).toBeInTheDocument();
     expect(screen.getByText(/could not be updated/i)).toBeInTheDocument();
   });
@@ -752,32 +794,32 @@ describe('Bookings bulk actions', () => {
     expect(approveBooking).toHaveBeenCalledWith('s1');
   });
   it('keeps the rows that did not land selected, so a retry is one press', async () => {
-    approveBooking.mockImplementation((id: string) =>
+    rejectBooking.mockImplementation((id: string) =>
       id === 's2' ? Promise.reject(new Error('permission-denied')) : Promise.resolve(undefined),
     );
     useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
     render(<Bookings />);
     await pick('Household One', 'Household Two');
-    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
-    await userEvent.click(screen.getByRole('button', { name: /Yes, approve 2/ }));
-    expect(await screen.findByText('Approved 1 of 2 selected bookings.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    await userEvent.click(screen.getByRole('button', { name: /Yes, reject 2/ }));
+    expect(await screen.findByText('Rejected 1 of 2 selected bookings.')).toBeInTheDocument();
     expect(within(screen.getByRole('group', { name: 'Bulk actions' })).getByText('1')).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: /Select Household Two/ })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: /Select Household One/ })).not.toBeChecked();
   });
   it('does not send the envelope leg for a row whose flat write just failed', async () => {
-    approveBooking.mockImplementation((id: string) =>
+    rejectBooking.mockImplementation((id: string) =>
       id === 's2' ? Promise.reject(new Error('permission-denied')) : Promise.resolve(undefined),
     );
     useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
     render(<Bookings />);
     await pick('Household One', 'Household Two');
-    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
-    await userEvent.click(screen.getByRole('button', { name: /Yes, approve 2/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    await userEvent.click(screen.getByRole('button', { name: /Yes, reject 2/ }));
     // Confirming 'v2' in the household's copy while the admin's own list still
     // shows it pending is the exact divergence this bar exists to avoid.
     await waitFor(() => expect(batchUpdateBookings).toHaveBeenCalledTimes(1));
-    expect(batchUpdateBookings).toHaveBeenCalledWith(['v1'], 'APPROVE');
+    expect(batchUpdateBookings).toHaveBeenCalledWith(['v1'], 'REJECT');
   });
   it('a clean run says every selected booking was updated, with no failure list', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: pendingPair });

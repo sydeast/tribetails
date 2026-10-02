@@ -207,6 +207,12 @@ describe('mergeBulkResults', () => {
     expect(out.failures[0]?.name).toBe('Household A');
     expect(out.failures[0]?.reason).toContain('That time overlaps a busy block on your Google Calendar.');
   });
+  it('#1117: a refused APPROVE is a plain failure, never "updated here"', () => {
+    const out = mergeBulkResults('APPROVE', plan, new Map(), [
+      envelopeResult({ failed: [{ id: 'va', error: 'That day is closed.' }] }),
+    ]);
+    expect(out.failures).toEqual([{ id: 'a', name: 'Household A', reason: 'That day is closed.' }]);
+  });
   it('calls a half-landed booking a FAILURE, because the admin list and the household now disagree', () => {
     const out = mergeBulkResults('CANCEL', plan, new Map(), [
       envelopeResult({ action: 'CANCEL', failed: [{ id: 'va', error: 'not-found' }] }),

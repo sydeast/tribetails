@@ -206,7 +206,8 @@ export interface BulkOutcome {
  * id they cannot act on.
  *
  * A row whose flat write landed but whose envelope leg failed is a FAILURE, not
- * a success with a footnote: the admin list and the household's portal now
+ * a success with a footnote (REJECT and CANCEL; an APPROVE asks the envelope
+ * first and writes nothing flat for an envelope visit, #1117): the admin list and the household's portal now
  * disagree about that visit, and the operator is the only one who can notice.
  */
 /**
@@ -243,6 +244,12 @@ export function mergeBulkResults(
     }
     const envelopeError =
       target.envelopeVisitId === null ? undefined : envelopeFailure.get(target.envelopeVisitId);
+    if (envelopeError !== undefined && action === 'APPROVE') {
+      // #1117: an approval asks the server before anything is written here, so a
+      // refusal left both copies untouched. Nothing disagrees; say only why.
+      failures.push({ id: target.id, name: target.name, reason: envelopeError });
+      continue;
+    }
     if (envelopeError !== undefined) {
       failures.push({
         id: target.id,
