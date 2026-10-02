@@ -7,6 +7,7 @@ import {
   externalSendBlocker,
   externalSuppressBlocker,
   isOptedOutError,
+  isHardBouncedError,
   externalSendErrorText,
 } from './externalSend';
 
@@ -159,11 +160,31 @@ describe('isOptedOutError', () => {
   });
 });
 
+describe('isHardBouncedError', () => {
+  it('recognises the sentinel inside the code prefix, case-insensitively', () => {
+    expect(isHardBouncedError('FAILED_PRECONDITION: Recipient_Hard_Bounced: x')).toBe(true);
+  });
+
+  it('does not fire on the opt-out sentinel', () => {
+    expect(isHardBouncedError('recipient_opted_out')).toBe(false);
+  });
+});
+
 describe('externalSendErrorText', () => {
   it('replaces the sentinel with copy that says what happened and what to do', () => {
     expect(externalSendErrorText('FAILED_PRECONDITION: recipient_opted_out')).toBe(
       'This recipient has opted out. Nothing was sent. Remove their suppression before sending again.',
     );
+  });
+
+  it('replaces the hard-bounce sentinel with copy that says where to clear it', () => {
+    const text = externalSendErrorText(
+      'FAILED_PRECONDITION: recipient_hard_bounced: this address hard-bounced and is suppressed, so nothing was sent',
+    );
+    expect(text).toBe(
+      'This address bounced and is on the do-not-send list. Nothing was sent. Clear it in Settings under Notifications, then send again.',
+    );
+    expect(text).not.toMatch(/recipient_hard_bounced/);
   });
 
   it('passes every other failure through verbatim, so a provider error is never hidden', () => {

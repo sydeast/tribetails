@@ -507,6 +507,7 @@ export { pushVisitsToGoogleCalendar } from './admin/googleCalendar/pushVisitsToG
 // in the triggers block below.
 export { syncVisitToGoogleCalendar } from './admin/googleCalendar/syncVisitToGoogleCalendar';
 export { sendExternalMessage, suppressExternalRecipient } from './admin/sendExternalMessage';
+export { listMessageSuppressions, clearMessageSuppression } from './admin/messageSuppressions';
 export { smtp2goEventWebhook, twilioStatusCallback } from './admin/engagementWebhooks';
 export { listRecentSends } from './admin/listRecentSends';
 export {
