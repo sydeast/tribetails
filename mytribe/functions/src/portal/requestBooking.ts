@@ -22,7 +22,7 @@ import {
   lookupIdempotentEnvelope,
   readEnvelopeVisitIds,
 } from '../lib/bookingIdempotency';
-import { kinCareLengthMinutes, mapServiceRates } from './getServiceCatalog';
+import { mapServiceRates } from './getServiceCatalog';
 import {
   businessCalendarDate,
   businessTimeZone,
@@ -44,7 +44,13 @@ import {
  * Fail-safe: any failure (setting read, repeat check, or approve) leaves the
  * series 'requested' so it falls back to the manual queue. Never throws.
  */
-async function maybeAutoConfirm(kinfolkId: string, batchId: string, uid: string): Promise<void> {
+async function maybeAutoConfirm(
+  kinfolkId: string,
+  batchId: string,
+  uid: string,
+  /** #1098: how many visits in this request are nights awaiting the operator's start time. */
+  startTimePendingCount = 0,
+): Promise<void> {
   try {
     const settingsSnap = await db().collection('business_settings').doc('business_settings').get();
     const autoConfirm = settingsSnap.data()?.autoConfirmRepeatKinfolk === true;
@@ -54,6 +60,18 @@ async function maybeAutoConfirm(kinfolkId: string, batchId: string, uid: string)
     const priorSnap = await db().collection(`families/${kinfolkId}/bookings`).limit(2).get();
     const isRepeat = priorSnap.docs.some((d) => d.id !== batchId);
     if (!isRepeat) return;
+
+    // #1098: approving a night IS the operator setting its start time, which
+    // nothing automatic can do. The whole request stays `requested` in the
+    // manual queue (half-confirming it would tell the household some of it is
+    // booked), and the skip is named so it is findable rather than inferred.
+    if (startTimePendingCount > 0) {
+      logEvent({
+        severity: 'info', function: 'requestBooking', event: 'booking.autoConfirm.skipped.startTimePending',
+        uid, extra: { kinfolkId, batchId, startTimePendingCount },
+      });
+      return;
+    }
 
     const r = await approveBookingSeriesCore({ kinfolkId, batchId, actorUid: uid, actorRole: 'SYSTEM' });
     logEvent({
@@ -95,8 +113,24 @@ const LegacyArgs = z.object({
  * safe to deploy ahead of the clients: a cached wizard that still sends
  * `location` has the key stripped by zod rather than being refused.
  */
+/**
+ * #1098: the night asked for, as a business-local calendar date. Shape only;
+ * whether it is a real date, and not already past, is checked in the handler.
+ */
+const RequestedDateArg = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
 const VisitArgs = z.object({
-  startTimeMs: z.number().int().positive(),
+  /**
+   * #1098: OPTIONAL. Required for every KinCare except one the operator set to
+   * "book at a start time" (an Overnight): that one is requested as a NIGHT
+   * (`date`), and the operator sets its start when approving. A stale client
+   * that still sends a time for it has the time discarded and its business
+   * date kept. Enforced per visit in the handler, not here, because which rule
+   * applies depends on the business's settings.
+   */
+  startTimeMs: z.number().int().positive().optional(),
+  /** #1098: the requested night for a "book at a start time" KinCare. Ignored on every other KinCare. */
+  date: RequestedDateArg.optional(),
   endTimeMs: z.number().int().positive().nullable().optional(),
   serviceId: z.string().min(1),
   serviceName: z.string().min(1).max(120),
@@ -218,7 +252,16 @@ const MultiArgs = z.object({
  */
 const ExportedVisitArgs = z
   .object({
-    startTimeMs: z.number().int().positive(),
+    /**
+     * #1098: omitted for a KinCare the operator set to "book at a start time"
+     * (send `date` instead); required for every other KinCare.
+     */
+    startTimeMs: z.number().int().positive().optional(),
+    /**
+     * #1098: the requested night (`YYYY-MM-DD`, business-local) for a "book at
+     * a start time" KinCare. Omitted for every other KinCare.
+     */
+    date: RequestedDateArg.optional(),
     endTimeMs: z.number().int().positive().nullable(),
     serviceId: z.string().min(1),
     serviceName: z.string().min(1).max(120),
@@ -290,8 +333,16 @@ export const Result = z
 
 /** Normalized per-visit input the envelope writer consumes. */
 export interface NormalizedVisit {
-  startTimeMs: number;
+  /** Null only on a visit awaiting its start time (#1098); see `requestedDate`. */
+  startTimeMs: number | null;
   endTimeMs: number | null;
+  /**
+   * #1098: the night asked for, business-local `YYYY-MM-DD`, on a visit whose
+   * start the operator sets on approval. Present (non-null) exactly when
+   * `startTimeMs` is null. Optional here for the same reason as `timeBlockId`:
+   * `admin/createMultiDateBookingRequest.ts` builds timed visits only.
+   */
+  requestedDate?: string | null;
   serviceId: string | null;
   serviceName: string | null;
   priceCents: number | null;
@@ -429,12 +480,28 @@ export async function resolveService(
  * cannot be wrong.
  */
 export function duplicateVisitKey(
-  visits: ReadonlyArray<{ startTimeMs: number; serviceId: string; timeBlockId?: string | null | undefined }>,
+  visits: ReadonlyArray<{
+    startTimeMs: number | null;
+    serviceId: string;
+    timeBlockId?: string | null | undefined;
+    /** #1098: set on a visit awaiting its start time, and then the whole of its WHEN. */
+    requestedDate?: string | null | undefined;
+  }>,
   /** `business_settings.timeZone`. Required, never defaulted: keying block dates in a silently-assumed zone is the bug. */
   timeZone: string,
 ): string | null {
   const seen = new Set<string>();
   for (const v of visits) {
+    // #1098: a night awaiting its start time has no instant and no block. Its
+    // identity is (KinCare, night): the same Overnight twice on one night is
+    // one visit asked for twice, and two nights are two visits.
+    if (typeof v.requestedDate === 'string' && v.requestedDate.length > 0) {
+      const key = `${v.serviceId}@date:${v.requestedDate}`;
+      if (seen.has(key)) return key;
+      seen.add(key);
+      continue;
+    }
+    if (v.startTimeMs == null) continue;
     // Time-block booking: in block mode EVERY visit in a block starts at that
     // block's first minute, so keying on the instant would refuse "a 30 minute
     // and a 60 minute, both in the Midday block" — which is exactly the
@@ -469,6 +536,9 @@ export function duplicateVisitKey(
 
 /** Which duplicate rule tripped, so the refusal can name a control the household actually has. */
 function duplicateVisitMessage(key: string): string {
+  if (key.includes('@date:')) {
+    return 'The same KinCare is in this request twice for the same night. Remove one, or move it to another night.';
+  }
   return key.includes('@block:')
     ? 'Two KinCares in this request are the same duration in the same time block on the same day. Remove one, or move it to another block.'
     : 'Two KinCares in this request have the same duration at the same time. Change one of the times.';
@@ -491,8 +561,6 @@ function duplicateVisitMessage(key: string): string {
 export async function loadBookingPolicy(): Promise<{
   policy: BookingPolicy;
   timeZone: string;
-  /** #1092: minutes for each "book at a start time" KinCare whose length is known. */
-  startTimeLengths: Map<string, number>;
 }> {
   let raw: unknown = {};
   try {
@@ -529,29 +597,73 @@ export async function loadBookingPolicy(): Promise<{
     });
   }
 
-  const durations = (raw as Record<string, unknown>)['serviceDurations'];
-  const startTimeLengths = new Map<string, number>();
-  for (const id of policy.startTimeServiceIds) {
-    const minutes = kinCareLengthMinutes(id, durations);
-    if (minutes != null) startTimeLengths.set(id, minutes);
-  }
+  return { policy, timeZone };
+}
 
-  return { policy, timeZone, startTimeLengths };
+/** One multi-visit request entry, as `VisitArgs` parsed it. */
+type ParsedVisit = z.infer<typeof VisitArgs>;
+
+/**
+ * #1098: what the server decided a visit's WHEN is, before anything else runs.
+ *
+ *   timed    the household picked the start (every KinCare but a flagged one).
+ *   pending  a KinCare the operator set to "book at a start time" (an
+ *            Overnight): the household asked for a NIGHT, and the operator
+ *            sets the start when approving, because they finish the evening's
+ *            other visits first.
+ */
+export type PlannedVisit =
+  | (ParsedVisit & { kind: 'timed'; startTimeMs: number })
+  | (ParsedVisit & { kind: 'pending'; requestedDate: string });
+
+/** `YYYY-MM-DD` that is a real calendar date (`2026-02-31` is not). */
+function isRealCalendarDate(dateIso: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateIso);
+  if (!m) return false;
+  const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return new Date(ms).toISOString().slice(0, 10) === dateIso;
 }
 
 /**
- * #1092: give a "book at a start time" visit its real end when the client sent
- * none, so the busy and holiday guards check every hour of an overnight and the
- * stored visit (and the session approval copies from it) carries its length.
- * A visit whose KinCare is not flagged, or already has an end, is left alone.
+ * #1098: sorts one visit into timed or pending, and refuses what is neither.
+ *
+ * A FLAGGED KinCare (`policy.startTimeServiceIds`) is always pending. Its night
+ * is `date` when sent. A client built before #1098 sends a clock time instead;
+ * that time is the household picking the start, which is exactly what this
+ * change takes away, so it is DISCARDED and only its business-zone date kept.
+ * Neither means there is no night to ask for, and it is refused. A night
+ * already past in the business zone is refused; tonight is fine.
+ *
+ * Every OTHER KinCare needs `startTimeMs` exactly as before, and a `date` sent
+ * with it is ignored.
  */
-export function withStartTimeVisitEnd<V extends { startTimeMs: number; endTimeMs?: number | null; serviceId: string }>(
-  visit: V,
-  startTimeLengths: Map<string, number>,
-): V {
-  if (visit.endTimeMs != null) return visit;
-  const minutes = startTimeLengths.get(visit.serviceId);
-  return minutes == null ? visit : { ...visit, endTimeMs: visit.startTimeMs + minutes * 60_000 };
+export function planVisit(
+  visit: ParsedVisit,
+  policy: BookingPolicy,
+  timeZone: string,
+  nowMs: number,
+): PlannedVisit {
+  if (policy.startTimeServiceIds.includes(visit.serviceId)) {
+    const requestedDate =
+      visit.date ?? (visit.startTimeMs != null ? businessCalendarDate(visit.startTimeMs, timeZone) : null);
+    if (requestedDate === null) {
+      throw new HttpsError(
+        'invalid-argument',
+        `Choose a night for the ${visit.serviceName}. Tribe Tails sets its start time when your request is approved.`,
+      );
+    }
+    if (!isRealCalendarDate(requestedDate)) {
+      throw new HttpsError('invalid-argument', `${requestedDate} is not a date. Choose the night again.`);
+    }
+    if (requestedDate < businessCalendarDate(nowMs, timeZone)) {
+      throw new HttpsError('invalid-argument', `The night for the ${visit.serviceName} has already passed. Choose tonight or a later night.`);
+    }
+    return { ...visit, kind: 'pending', requestedDate, startTimeMs: undefined, endTimeMs: null, timeBlockId: undefined };
+  }
+  if (visit.startTimeMs == null) {
+    throw new HttpsError('invalid-argument', `Choose a time for the ${visit.serviceName}.`);
+  }
+  return { ...visit, kind: 'timed', startTimeMs: visit.startTimeMs };
 }
 
 /** What the server decided one visit's WHEN actually is. Persisted on the visit. */
@@ -699,10 +811,13 @@ export async function writeEnvelope(opts: {
   const firestore = db();
   const parentRef = firestore.doc(`families/${kinfolkId}/bookings/${batchId}`);
 
-  // Roll envelope fields from the visits.
-  const startMsList = visits.map((v) => v.startTimeMs);
-  const firstStartMs = Math.min(...startMsList);
-  const lastStartMs = Math.max(...startMsList);
+  // Roll envelope fields from the visits. #1098: only from visits that HAVE a
+  // start instant. A night awaiting its start time has none, and an envelope of
+  // nights alone carries null here until the approval sets their times (which
+  // rolls these again; see `approveBookingSeriesCore`).
+  const startMsList = visits.map((v) => v.startTimeMs).filter((ms): ms is number => ms != null);
+  const firstStartMs = startMsList.length > 0 ? Math.min(...startMsList) : null;
+  const lastStartMs = startMsList.length > 0 ? Math.max(...startMsList) : null;
   const serviceIds = new Set(visits.map((v) => v.serviceId ?? null));
   const serviceNames = new Set(visits.map((v) => v.serviceName ?? null));
   const homogeneousServiceId = serviceIds.size === 1 ? [...serviceIds][0] : null;
@@ -774,8 +889,8 @@ export async function writeEnvelope(opts: {
       confirmedCount: 0,
       completedCount: 0,
       cancelledCount: 0,
-      firstStartTime: Timestamp.fromMillis(firstStartMs),
-      lastStartTime: Timestamp.fromMillis(lastStartMs),
+      firstStartTime: firstStartMs != null ? Timestamp.fromMillis(firstStartMs) : null,
+      lastStartTime: lastStartMs != null ? Timestamp.fromMillis(lastStartMs) : null,
       targetType: 'KIN',
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
@@ -808,8 +923,17 @@ export async function writeEnvelope(opts: {
         // (`optimizeRoute.ts`, the address chips, `BookingDetailModal.tsx`).
         // Operator ruling, 2026-08-04.
         title: v.title ?? v.serviceName,
-        startTime: Timestamp.fromMillis(v.startTimeMs),
-        endTime: v.endTimeMs != null ? Timestamp.fromMillis(v.endTimeMs) : null,
+        startTime: v.startTimeMs != null ? Timestamp.fromMillis(v.startTimeMs) : null,
+        endTime: v.startTimeMs != null && v.endTimeMs != null ? Timestamp.fromMillis(v.endTimeMs) : null,
+        // #1098: a night awaiting its start time. `startTime` / `endTime` stay
+        // null and `requestedDate` holds the night (business-local
+        // `YYYY-MM-DD`) until the operator sets the start on approval, which
+        // flips this to false. ALWAYS WRITTEN, like `timeBlockId`: a timed visit
+        // carries `false` and `requestedDate: null`, so no reader has to tell
+        // "predates #1098" from "has a time". (A doc written before #1098 has
+        // neither field, and every reader treats absent as false / null.)
+        startTimePending: v.startTimeMs == null,
+        requestedDate: v.startTimeMs == null ? (v.requestedDate ?? null) : null,
         kinIds: kinIdUnion,
         kinNames,
         // Default-assignee (2026-07-02): new visits start on the admin's plate;
@@ -904,7 +1028,18 @@ export async function requestBookingHandler(
         `A booking request can carry at most ${MAX_VISITS_PER_REQUEST} visits. Send fewer dates or fewer KinCares per day.`,
       );
     }
-    args.visits.forEach((v) => {
+
+    // Time-block booking: resolved BEFORE the duplicate check, because in block
+    // mode the duplicate rule keys on the block rather than the instant, and
+    // before the busy/holiday guards, because a refusal a household can act on
+    // ("pick a block") should not be reached through one it cannot.
+    //
+    // #1098: read first of all now, because it also decides which visits are
+    // nights awaiting the operator's start time (see `planVisit`).
+    const { policy, timeZone } = await loadBookingPolicy();
+    const visits = args.visits.map((v) => planVisit(v, policy, timeZone, now));
+    visits.forEach((v) => {
+      if (v.kind !== 'timed') return;
       if (v.startTimeMs < now - 60_000) {
         throw new HttpsError('invalid-argument', 'Visit startTime must be in the future.');
       }
@@ -912,26 +1047,40 @@ export async function requestBookingHandler(
         throw new HttpsError('invalid-argument', 'endTime must be after startTime.');
       }
     });
-    // Time-block booking: resolved BEFORE the duplicate check, because in block
-    // mode the duplicate rule keys on the block rather than the instant, and
-    // before the busy/holiday guards, because a refusal a household can act on
-    // ("pick a block") should not be reached through one it cannot.
-    const { policy, timeZone, startTimeLengths } = await loadBookingPolicy();
-    // #1092: from here on, a "book at a start time" visit carries its real end.
-    const visits = args.visits.map((v) => withStartTimeVisitEnd(v, startTimeLengths));
-    const resolvedBlocks = visits.map((v) => assertVisitBookingMode(v, policy, timeZone));
+
+    // A night has no WHEN to check against a block yet: it is stored with no
+    // block, whatever a client sent, and the operator sets its start.
+    const resolvedBlocks: ResolvedVisitBlock[] = visits.map((v) =>
+      v.kind === 'timed' ? assertVisitBookingMode(v, policy, timeZone) : { timeBlockId: null, timeBlockLabel: null },
+    );
 
     // #543: several KinCares in one day are fine; the SAME one twice is not.
     // #597: "one day" is the BUSINESS's day, which is why the zone goes in.
-    const dupKey = duplicateVisitKey(visits, timeZone);
+    // #1098: a night is keyed by its date; see `duplicateVisitKey`.
+    const dupKey = duplicateVisitKey(
+      visits.map((v) =>
+        v.kind === 'timed'
+          ? v
+          : { serviceId: v.serviceId, startTimeMs: null, timeBlockId: null, requestedDate: v.requestedDate },
+      ),
+      timeZone,
+    );
     if (dupKey !== null) {
       throw new HttpsError('invalid-argument', duplicateVisitMessage(dupKey));
     }
     // Kinfolk have no override: a busy-import conflict always refuses the request.
-    await guardBookingBusyConflict({ firestore, visits, actorUid: uid, actorRole: 'PRIMARY' });
+    // #1098: run on the timed visits only. A night has no time to check until
+    // the operator sets one, and the approve core runs this guard then.
+    const timedVisits = visits.filter((v): v is Extract<PlannedVisit, { kind: 'timed' }> => v.kind === 'timed');
+    await guardBookingBusyConflict({ firestore, visits: timedVisits, actorUid: uid, actorRole: 'PRIMARY' });
     // A closed day always refuses the request too -- no override, for anyone.
     // See companyHolidayConflict.ts's header for why this guard has none.
-    await guardCompanyHolidayConflict({ firestore, visits });
+    // #1098: a night is checked by its requested DATE, so a closed day still
+    // refuses it even though it has no time yet.
+    await guardCompanyHolidayConflict({
+      firestore,
+      visits: visits.map((v) => (v.kind === 'timed' ? v : { dateIso: v.requestedDate })),
+    });
 
     // #644: the caller's key IS the envelope id when it sent one. Without one
     // this is the same server-minted id it has always been, and the dedupe read
@@ -955,8 +1104,9 @@ export async function requestBookingHandler(
         const resolved = await resolveService(v.serviceId, v.serviceName, priceBook);
         const block = resolvedBlocks[idx] ?? { timeBlockId: null, timeBlockLabel: null };
         return {
-          startTimeMs: v.startTimeMs,
-          endTimeMs: v.endTimeMs ?? null,
+          startTimeMs: v.kind === 'timed' ? v.startTimeMs : null,
+          endTimeMs: v.kind === 'timed' ? (v.endTimeMs ?? null) : null,
+          requestedDate: v.kind === 'pending' ? v.requestedDate : null,
           serviceId: v.serviceId,
           serviceName: resolved.serviceName,
           priceCents: resolved.priceCents,
@@ -1005,6 +1155,7 @@ export async function requestBookingHandler(
         count: normalized.length,
         pattern,
         blockVisits: normalized.filter((v) => v.timeBlockId !== null).length,
+        startTimePendingVisits: normalized.filter((v) => v.startTimeMs == null).length,
       },
     });
     await writeAuditEntry({
@@ -1023,7 +1174,7 @@ export async function requestBookingHandler(
         uid, errorMessage: (err as Error)?.message,
       });
     });
-    await maybeAutoConfirm(kinfolkId, batchId, uid);
+    await maybeAutoConfirm(kinfolkId, batchId, uid, normalized.filter((v) => v.startTimeMs == null).length);
     return validateResponse('requestBooking', Result, { batchId, bookingIds: [batchId], bookingId: batchId });
   }
 

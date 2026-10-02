@@ -81,3 +81,57 @@ describe('requestBooking auto-confirm (#9)', () => {
     expect(res.batchId).toBeTypeOf('string'); // resolved despite auto-confirm error
   });
 });
+
+/**
+ * #1098: a night awaiting its start time cannot be confirmed by anybody but the
+ * operator, because confirming it IS setting that time. Auto-confirm leaves the
+ * whole request in the manual queue, says so in a named log line, and still
+ * confirms a repeat household's request that has no such night.
+ */
+describe('requestBooking auto-confirm with a night awaiting a start time (#1098)', () => {
+  const tomorrow = () => new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+  function repeatHouseholdDb() {
+    return buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'business_settings/business_settings': {
+          autoConfirmRepeatKinfolk: true,
+          timeZone: 'UTC',
+          serviceRates: { '30Minute': '25', Overnight: '120' },
+          serviceDurations: { Overnight: '720' },
+          serviceStartTimeBooking: { Overnight: true },
+        },
+      },
+      queryDocs: { 'families/3/bookings': [{ id: 'old_batch', data: {} }] },
+    });
+  }
+
+  const multi = (visits: unknown[]) =>
+    ({ data: { kinfolkId: '3', kinIds: ['k1'], visits }, auth: { uid: 'u1' } }) as any;
+  it('skips auto-confirm and logs why when any visit awaits a start time', async () => {
+    const ctx = repeatHouseholdDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { logEvent } = await import('../src/lib/logger');
+    (logEvent as any).mockClear();
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const res: any = await requestBookingHandler(
+      multi([
+        { startTimeMs: futureTs(), serviceId: '30Minute', serviceName: '30 Minute' },
+        { date: tomorrow(), serviceId: 'Overnight', serviceName: 'Overnight' },
+      ]),
+    );
+    expect(mocks.approveCore).not.toHaveBeenCalled();
+    const events = (logEvent as any).mock.calls.map((c: any[]) => c[0].event);
+    expect(events).toContain('booking.autoConfirm.skipped.startTimePending');
+    const envelope = ctx.writes.find((w) => w.path === `families/3/bookings/${res.batchId}`);
+    expect(envelope?.data.envelopeStatus).toBe('requested');
+  });
+
+  it('still auto-confirms the same household when no visit awaits a time', async () => {
+    const ctx = repeatHouseholdDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    await requestBookingHandler(multi([{ startTimeMs: futureTs(), serviceId: '30Minute', serviceName: '30 Minute' }]));
+    expect(mocks.approveCore).toHaveBeenCalledTimes(1);
+  });
+});

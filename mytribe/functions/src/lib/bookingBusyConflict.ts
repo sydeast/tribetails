@@ -308,10 +308,11 @@ export interface GuardBookingBusyConflictOptions {
    * True only when the caller is an admin-facing callable AND the operator
    * explicitly asked to book over a known conflict. Never set by
    * `requestBooking` (kinfolk have no override precedent anywhere in this
-   * codebase; see the override note in `CALLABLE_CONTRACT.md`) and never set
-   * by `approveBookingSeriesCore` (it isolates a conflict as an ordinary
-   * per-visit failure, matching its existing convention for an unusable
-   * visit, rather than adding a second override surface).
+   * codebase; see the override note in `CALLABLE_CONTRACT.md`). Never set by
+   * `approveBookingSeriesCore` for a visit that already had its time (it
+   * isolates that conflict as an ordinary per-visit failure); set by it only
+   * for a night whose start the operator is setting in that same approval
+   * (#1098), with `manageBookingSeries`'s `overrideBusyConflict`.
    */
   override?: boolean;
   /** Extra fields folded into the override audit entry's payload, e.g. `{ kinfolkId }`. */

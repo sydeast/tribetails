@@ -1,4 +1,5 @@
-import { FieldValue } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { HttpsError } from 'firebase-functions/v2/https';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
@@ -6,6 +7,9 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { materializeKinRoster } from '../lib/kinRoster';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
+import { guardVisitOverlapConflict } from '../lib/visitOverlapConflict';
+import { businessCalendarDate, businessTimeZone } from '../lib/bookingTimeBlocks';
+import { kinCareLengthMinutes } from '../portal/getServiceCatalog';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import {
@@ -13,6 +17,8 @@ import {
   buildVisitDateData,
   formatBookingDate,
   formatBookingTime,
+  formatRequestedDate,
+  isNotHappeningStatus,
   loadBusinessTimeZone,
   loadEnvelopeVisits,
 } from '../notifications/visitDates';
@@ -111,11 +117,170 @@ export interface ApproveBookingSeriesResult {
   householdNotified: boolean;
 }
 
+/** A visit awaiting its start (#1098), with the window the operator just gave it. */
+interface ResolvedStartTime {
+  startMs: number;
+  endMs: number;
+}
+
+/**
+ * #1098: a night awaiting its start time that nobody wants any more (the
+ * household cancelled it, or the office marked it unavailable). It needs no
+ * time and gets no session, so it must not block the rest of the request.
+ *
+ * The approve loop has no status filter of its own for visits that already
+ * have a time (that pre-existing behaviour is unchanged), so the rule matched
+ * here is the one the confirmation message already applies
+ * (`visitDates.loadEnvelopeVisits`): `cancelled` and `unavailable` are not
+ * happening.
+ */
+function isDroppedNight(data: Record<string, unknown>): boolean {
+  return data['startTimePending'] === true && isNotHappeningStatus(data['status']);
+}
+
+/** What to call a visit in a refusal: its KinCare's name, as the household saw it. */
+function kinCareNameOf(data: Record<string, unknown>): string {
+  for (const key of ['serviceName', 'serviceType', 'serviceId', 'title']) {
+    const v = data[key];
+    if (typeof v === 'string' && v.trim().length > 0) return v.trim();
+  }
+  return 'visit';
+}
+
+/**
+ * #1098: THE START-TIME STEP, run before anything is written.
+ *
+ * An Overnight is requested as a NIGHT (`startTimePending: true`, a
+ * `requestedDate`, no `startTime`), because the operator decides when it starts
+ * after finishing the evening's other visits. Approving it IS setting that
+ * time, so every visit awaiting one needs a time from `startTimes`, on its own
+ * night in the business zone, and then gets the checks a timed request gets at
+ * request time: the closed-day guard (no override), the Google busy guard and
+ * the visit-overlap guard (both overridable, the same two flags
+ * `rescheduleBooking` takes).
+ *
+ * EVERY REFUSAL HERE THROWS, deliberately unlike the per-visit isolation below.
+ * A missing time must not half-approve a request (the timed visits next to the
+ * night would otherwise be booked and the household told), and a busy or
+ * overlap conflict has to reach the operator as the coded refusal their client
+ * offers the override on, not as `failedVisits: 1`.
+ *
+ * Returns the window for each visit awaiting a time, keyed by visit id. Empty,
+ * with no settings read, when no visit is awaiting one: every request written
+ * before #1098 and every request with no Overnight in it.
+ */
+async function resolvePendingStartTimes(opts: {
+  docs: FirebaseFirestore.QueryDocumentSnapshot[];
+  startTimes: Record<string, number> | undefined;
+  actorUid: string;
+  actorRole: 'AUNTIE' | 'SYSTEM';
+  kinfolkId: string;
+  batchId: string;
+  overrideBusyConflict?: boolean;
+  overrideVisitConflict?: boolean;
+}): Promise<Map<string, ResolvedStartTime>> {
+  const resolved = new Map<string, ResolvedStartTime>();
+  const pending = opts.docs.filter((d) => {
+    const data = d.data() as Record<string, unknown>;
+    return data['startTimePending'] === true && !isDroppedNight(data);
+  });
+  if (pending.length === 0) return resolved;
+
+  // Refuse the whole approval, naming every night still without a time.
+  const missing = pending.filter((d) => {
+    const ms = opts.startTimes?.[d.id];
+    return typeof ms !== 'number' || !Number.isFinite(ms);
+  });
+  if (missing.length > 0) {
+    const named = missing.map((d) => {
+      const data = d.data() as Record<string, unknown>;
+      const night = formatRequestedDate(data['requestedDate']);
+      return night ? `the ${kinCareNameOf(data)} on ${night}` : `the ${kinCareNameOf(data)}`;
+    });
+    throw new HttpsError(
+      'failed-precondition',
+      `Set a start time for ${named.join(' and ')} before approving.`,
+      { code: 'start_time_required', visitIds: missing.map((d) => d.id) },
+    );
+  }
+
+  // The SAME zone reader `requestBooking` derived the night with, over the same
+  // settings document, so the night and the check against it cannot disagree.
+  const settingsSnap = await db().collection('business_settings').doc('business_settings').get();
+  const settings = (settingsSnap.data() ?? {}) as Record<string, unknown>;
+  const timeZone = businessTimeZone(settings);
+
+  const windows: Array<{ visitId: string; startTimeMs: number; endTimeMs: number }> = [];
+  for (const d of pending) {
+    const data = d.data() as Record<string, unknown>;
+    const name = kinCareNameOf(data);
+    const startMs = opts.startTimes![d.id]!;
+    const night = typeof data['requestedDate'] === 'string' ? (data['requestedDate'] as string) : null;
+    if (night !== null && businessCalendarDate(startMs, timeZone) !== night) {
+      throw new HttpsError(
+        'invalid-argument',
+        `The start time for the ${name} has to be on ${formatRequestedDate(night) ?? night}, the night the household asked for.`,
+      );
+    }
+
+    const serviceId = typeof data['serviceId'] === 'string' ? (data['serviceId'] as string) : '';
+    const minutes = serviceId ? kinCareLengthMinutes(serviceId, settings['serviceDurations']) : null;
+    if (minutes == null) {
+      throw new HttpsError(
+        'invalid-argument',
+        `The ${name} has no length set, so its end time cannot be worked out. Set its length in Settings, then approve again.`,
+      );
+    }
+
+    const endMs = startMs + minutes * 60_000;
+    resolved.set(d.id, { startMs, endMs });
+    windows.push({ visitId: d.id, startTimeMs: startMs, endTimeMs: endMs });
+  }
+
+  const visits = windows.map((w) => ({ startTimeMs: w.startTimeMs, endTimeMs: w.endTimeMs }));
+  const auditContext = {
+    kinfolkId: opts.kinfolkId,
+    batchId: opts.batchId,
+    visitIds: windows.map((w) => w.visitId),
+    attempt: 'approve_start_time',
+  };
+
+  // A closed day refuses for everybody, with no override; see companyHolidayConflict.ts.
+  await guardCompanyHolidayConflict({ firestore: db(), visits });
+  await guardBookingBusyConflict({
+    firestore: db(),
+    visits,
+    actorUid: opts.actorUid,
+    actorRole: opts.actorRole,
+    override: opts.overrideBusyConflict,
+    auditContext,
+  });
+  await guardVisitOverlapConflict({
+    firestore: db(),
+    visits,
+    actorUid: opts.actorUid,
+    actorRole: opts.actorRole,
+    override: opts.overrideVisitConflict,
+    attempt: 'approve_start_time',
+    auditContext: { kinfolkId: opts.kinfolkId, batchId: opts.batchId, visitIds: auditContext.visitIds },
+  });
+  return resolved;
+}
+
 export async function approveBookingSeriesCore(opts: {
   kinfolkId: string;
   batchId: string;
   actorUid: string;
   actorRole: 'AUNTIE' | 'SYSTEM';
+  /**
+   * #1098: the operator's chosen start for each visit awaiting one, by visit id,
+   * epoch ms. Required for every such visit; see {@link resolvePendingStartTimes}.
+   */
+  startTimes?: Record<string, number>;
+  /** #1098: same meaning as on `rescheduleBooking`, applied to the visits whose start is set here. */
+  overrideBusyConflict?: boolean;
+  /** #1098: same meaning as on `rescheduleBooking`, applied to the visits whose start is set here. */
+  overrideVisitConflict?: boolean;
 }): Promise<ApproveBookingSeriesResult> {
   const { kinfolkId, batchId, actorUid, actorRole } = opts;
   const parentRef = db().doc(`families/${kinfolkId}/bookings/${batchId}`);
@@ -142,12 +307,26 @@ export async function approveBookingSeriesCore(opts: {
 
   const childSnap = await parentRef.collection('kinCares').get();
   const childIds = childSnap.docs.map((d) => d.id);
+
+  // #1098: throws, before any write, unless every visit awaiting a start time
+  // has a usable one. Visits that already have a time are not touched by it.
+  const startTimeSet = await resolvePendingStartTimes({
+    docs: childSnap.docs,
+    startTimes: opts.startTimes,
+    actorUid,
+    actorRole,
+    kinfolkId,
+    batchId,
+    overrideBusyConflict: opts.overrideBusyConflict,
+    overrideVisitConflict: opts.overrideVisitConflict,
+  });
   // Counted from the PRE-FLIP snapshot, for the same reason `wasAlreadyConfirmed`
   // is read before the loop: afterwards every child says `confirmed` and the
   // question "did this approval change anything" can no longer be answered.
-  const newlyConfirmed = childSnap.docs.filter(
-    (d) => (d.data() as Record<string, unknown>)['status'] !== 'confirmed',
-  ).length;
+  const newlyConfirmed = childSnap.docs.filter((d) => {
+    const data = d.data() as Record<string, unknown>;
+    return data['status'] !== 'confirmed' && !isDroppedNight(data);
+  }).length;
 
   // Household display name for the created sessions (read once; sessions render it
   // on Auntie Time / Home). Best-effort: fall back to the id if absent.
@@ -162,14 +341,35 @@ export async function approveBookingSeriesCore(opts: {
 
   let sessionsCreated = 0;
   let failedVisits = 0;
+  // #1098: cancelled nights left alone; neither approved nor failed.
+  let droppedNights = 0;
 
   for (const doc of childSnap.docs) {
     const id = doc.id;
-    const data = doc.data() as Record<string, unknown>;
+    let data = doc.data() as Record<string, unknown>;
     const childRef = parentRef.collection('kinCares').doc(id);
     const sessionRef = db().collection('kin_care_sessions').doc(`vis_${id}`);
+    const setNow = startTimeSet.get(id);
+    if (isDroppedNight(data)) {
+      droppedNights += 1;
+      continue;
+    }
 
     try {
+      if (setNow) {
+        // #1098: THE HOUSEHOLD'S COPY GETS ITS TIME FIRST, the order
+        // `rescheduleBooking` uses: if the session write below fails, the visit
+        // already says when it is and a retry sees a timed visit. Written while
+        // the status is still `requested`, so `onBookingsWrite` sends nothing
+        // for it, and the confirmation below reads these live times.
+        const startTime = Timestamp.fromMillis(setNow.startMs);
+        const endTime = Timestamp.fromMillis(setNow.endMs);
+        await childRef.set(
+          { startTime, endTime, startTimePending: false, updatedAt: FieldValue.serverTimestamp() },
+          { merge: true },
+        );
+        data = { ...data, startTime, endTime, startTimePending: false };
+      }
       const existing = await sessionRef.get();
       if (!existing.exists) {
         const startIso = toIso(data.startTime);
@@ -193,18 +393,26 @@ export async function approveBookingSeriesCore(opts: {
         // request was submitted, and a new Google busy import can have landed
         // in between. A conflict throws into the catch below like any other
         // unusable visit (isolated per-visit; no override surface here).
-        await guardBookingBusyConflict({
-          firestore: db(),
-          visits: [{ startTimeMs: Date.parse(startIso), endTimeMs: endIso ? Date.parse(endIso) : null }],
-          actorUid,
-          actorRole,
-        });
-        // Same re-check, no override: a closure added after the request was
-        // submitted must still stop the session from being created.
-        await guardCompanyHolidayConflict({
-          firestore: db(),
-          visits: [{ startTimeMs: Date.parse(startIso), endTimeMs: endIso ? Date.parse(endIso) : null }],
-        });
+        //
+        // #1098: NOT for a visit whose start this approval set. It was checked
+        // moments ago in `resolvePendingStartTimes`, where the operator CAN
+        // override, and re-running the busy guard here without that override
+        // would fail the very visit they chose to book over.
+        if (!setNow) {
+          await guardBookingBusyConflict({
+            firestore: db(),
+            visits: [{ startTimeMs: Date.parse(startIso), endTimeMs: endIso ? Date.parse(endIso) : null }],
+            actorUid,
+            actorRole,
+          });
+
+          // Same re-check, no override: a closure added after the request was
+          // submitted must still stop the session from being created.
+          await guardCompanyHolidayConflict({
+            firestore: db(),
+            visits: [{ startTimeMs: Date.parse(startIso), endTimeMs: endIso ? Date.parse(endIso) : null }],
+          });
+        }
         const statedKinIds = Array.isArray(data.kinIds)
           ? (data.kinIds as unknown[]).filter((k): k is string => typeof k === 'string')
           : [];
@@ -275,13 +483,17 @@ export async function approveBookingSeriesCore(opts: {
     }
   }
 
-  const succeeded = childIds.length - failedVisits;
+  const succeeded = childIds.length - failedVisits - droppedNights;
   const envelopeStatus: 'confirmed' | 'requested' = failedVisits === 0 ? 'confirmed' : 'requested';
   await parentRef.set(
     {
       // Only mark the whole envelope confirmed when every visit succeeded; a partial
       // failure leaves it 'requested' so the admin retries (no false 'done').
       envelopeStatus,
+      // #1098: `writeEnvelope` rolled these up from the visits that HAD an
+      // instant, so a request of nights alone carries null. This approval has
+      // just set times, so roll them again over every visit's start.
+      ...(startTimeSet.size > 0 ? envelopeStartRollup(childSnap.docs, startTimeSet) : {}),
       confirmedCount: succeeded,
       cancelledCount: 0,
       updatedAt: FieldValue.serverTimestamp(),
@@ -323,6 +535,35 @@ export async function approveBookingSeriesCore(opts: {
     found: true,
     newlyConfirmed,
     householdNotified,
+  };
+}
+
+/**
+ * #1098: the envelope's `firstStartTime` / `lastStartTime` over every visit
+ * that now has a start: the ones this approval set and the ones that already had
+ * one. A visit whose start will not read is left out, as `writeEnvelope` leaves
+ * it out.
+ */
+function envelopeStartRollup(
+  docs: FirebaseFirestore.QueryDocumentSnapshot[],
+  setNow: Map<string, ResolvedStartTime>,
+): { firstStartTime?: Timestamp; lastStartTime?: Timestamp } {
+  const starts: number[] = [];
+  for (const d of docs) {
+    const set = setNow.get(d.id);
+    if (set) {
+      starts.push(set.startMs);
+      continue;
+    }
+
+    const iso = toIso((d.data() as Record<string, unknown>)['startTime']);
+    const ms = iso ? Date.parse(iso) : NaN;
+    if (Number.isFinite(ms)) starts.push(ms);
+  }
+  if (starts.length === 0) return {};
+  return {
+    firstStartTime: Timestamp.fromMillis(Math.min(...starts)),
+    lastStartTime: Timestamp.fromMillis(Math.max(...starts)),
   };
 }
 

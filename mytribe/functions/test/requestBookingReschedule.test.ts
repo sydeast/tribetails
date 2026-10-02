@@ -225,3 +225,28 @@ describe('requestBookingRescheduleHandler', () => {
     });
   });
 });
+
+/**
+ * #1098: a night awaiting its start time has no time to move. The household
+ * picks a night, Tribe Tails picks the start, so a proposed clock time for it is
+ * refused rather than parked as an ask the office then has to untangle.
+ */
+describe('requestBookingRescheduleHandler: a night awaiting its start time (#1098)', () => {
+  it('refuses, with the plain reason, and writes nothing', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['f1'] },
+        [VISIT]: { status: 'requested', startTime: null, endTime: null, startTimePending: true, requestedDate: '2026-10-09' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingRescheduleHandler } = await import('../src/portal/requestBookingReschedule');
+    await expect(
+      requestBookingRescheduleHandler(callableRequest(args(), { uid: 'u1' })),
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: "Your Auntie has not set this overnight's start time yet. You can cancel it, or ask your Auntie to change the night.",
+    });
+    expect(ctx.writes).toHaveLength(0);
+  });
+});

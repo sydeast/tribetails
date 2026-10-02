@@ -113,6 +113,8 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'serviceName',
         'startTimeMs',
         'startTimeMsList',
+        // #1098: business-local nights of visits whose start time is not set yet.
+        'requestedDateList',
         'visitCount',
       ],
     },
@@ -238,6 +240,8 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'serviceName',
         'startTimeMs',
         'startTimeMsList',
+        // #1098: business-local nights of visits whose start time is not set yet.
+        'requestedDateList',
         'visitCount',
         'note',
       ],

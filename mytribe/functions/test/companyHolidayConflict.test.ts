@@ -55,6 +55,15 @@ describe('utcDatesForVisit', () => {
   it('an unresolvable start yields no dates, never throws', () => {
     expect(utcDatesForVisit({ startTimeMs: Number.NaN })).toEqual([]);
   });
+
+  // #1098: a night awaiting its start time is checked by its requested date.
+  it('a bare date (a night with no start yet) yields exactly that date, unconverted', () => {
+    expect(utcDatesForVisit({ dateIso: '2026-12-25' })).toEqual(['2026-12-25']);
+  });
+
+  it('a malformed bare date yields no dates, never throws', () => {
+    expect(utcDatesForVisit({ dateIso: 'Dec 25' })).toEqual([]);
+  });
 });
 
 // ── findCompanyHolidayConflicts (pure) ───────────────────────────────────────

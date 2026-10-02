@@ -208,3 +208,65 @@ describe('manageBookingSeries', () => {
     ).rejects.toThrow();
   });
 });
+
+/**
+ * #1098: the operator sets an Overnight's start when approving it. The callable
+ * carries the times (by visit id) and the same two override flags
+ * `rescheduleBooking` takes, and hands them to the approve core unchanged.
+ */
+describe('manageBookingSeries APPROVE with start times (#1098)', () => {
+  const AT_21 = Date.parse('2026-10-09T21:00:00.000Z');
+  function seedPending() {
+    return buildDbMock({
+      docs: {
+        'families/kf1/bookings/b1': { envelopeStatus: 'requested' },
+        'business_settings/business_settings': { timeZone: 'UTC', serviceDurations: { Overnight: '720' } },
+      },
+      queryDocs: {
+        'families/kf1/bookings/b1/kinCares': [
+          {
+            id: 'v1',
+            data: {
+              status: 'requested', startTime: null, endTime: null, startTimePending: true,
+              requestedDate: '2026-10-09', serviceId: 'Overnight', serviceName: 'Overnight', serviceType: 'Overnight',
+            },
+          },
+        ],
+        booking_time_slots: [
+          { id: 'gbi-late', data: { date: '2026-10-09', startTime: '23:00', endTime: '23:30', source: 'GOOGLE_BUSY_IMPORT' } },
+        ],
+      },
+    });
+  }
+
+  it('refuses an approval that leaves a night without a start time', async () => {
+    const ctx = seedPending();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      manageBookingSeriesHandler(req({ action: 'APPROVE', kinfolkId: 'kf1', batchId: 'b1' })),
+    ).rejects.toMatchObject({ code: 'failed-precondition', message: expect.stringContaining('Overnight on Fri, Oct 9') });
+    expect(ctx.writes.filter((w) => w.path.startsWith('kin_care_sessions/'))).toHaveLength(0);
+  });
+
+  it('passes the start times and the busy override through to the core', async () => {
+    const ctx = seedPending();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      manageBookingSeriesHandler(req({ action: 'APPROVE', kinfolkId: 'kf1', batchId: 'b1', startTimes: { v1: AT_21 } })),
+    ).rejects.toMatchObject({ code: 'failed-precondition', details: expect.objectContaining({ code: 'booking_busy_conflict' }) });
+    const ctx2 = seedPending();
+    mocks.dbFn.mockReturnValue(ctx2.db);
+    const res = await manageBookingSeriesHandler(
+      req({ action: 'APPROVE', kinfolkId: 'kf1', batchId: 'b1', startTimes: { v1: AT_21 }, overrideBusyConflict: true }),
+    );
+    expect(res).toMatchObject({ ok: true, sessionsCreated: 1, failedVisits: 0 });
+    expect(ctx2.writes.find((w) => w.path === 'kin_care_sessions/vis_v1')?.data.serviceDurationMinutes).toBe(720);
+  });
+
+  it('refuses a start time that is not a positive whole number of milliseconds', async () => {
+    mocks.dbFn.mockReturnValue(seedPending().db);
+    await expect(
+      manageBookingSeriesHandler(req({ action: 'APPROVE', kinfolkId: 'kf1', batchId: 'b1', startTimes: { v1: 'nine' } })),
+    ).rejects.toMatchObject({ code: 'invalid-argument' });
+  });
+});

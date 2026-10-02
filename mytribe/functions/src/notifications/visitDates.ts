@@ -181,6 +181,39 @@ export function formatBookingTime(ms: number, tz: string): string {
   }).format(new Date(ms));
 }
 
+/**
+ * #1098: what a message says in place of a clock time for a visit whose start
+ * the operator has not set yet (an Overnight is requested as a night, and the
+ * time is chosen on approval).
+ */
+export const START_TIME_TO_BE_SET = 'start time to be set';
+
+/**
+ * A business-local calendar date (`YYYY-MM-DD`) as an epoch instant that every
+ * formatter in this file renders as THAT date when asked for `timeZone: 'UTC'`:
+ * noon UTC. Midnight would be the trap here, since `Date.parse('2026-10-09')`
+ * is UTC midnight and reads as Oct 8 in any American zone. Null when the string
+ * is not a real date (`2026-02-31` round-trips to March, so it is refused).
+ */
+export function requestedDateNoonUtcMs(dateIso: unknown): number | null {
+  if (typeof dateIso !== 'string') return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateIso);
+  if (!m) return null;
+  const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12);
+  return new Date(ms).toISOString().slice(0, 10) === dateIso ? ms : null;
+}
+
+/**
+ * 'Fri, Oct 9' for a requested night, in the `formatBookingDate` spelling. The
+ * date is already the business's own, so it is formatted in UTC from noon UTC
+ * and never shifted by a zone. Null for anything that is not a real date, so a
+ * caller can never print "Invalid Date".
+ */
+export function formatRequestedDate(dateIso: unknown): string | null {
+  const ms = requestedDateNoonUtcMs(dateIso);
+  return ms == null ? null : formatBookingDate(ms, 'UTC');
+}
+
 /** One visit, fully formatted. */
 export function renderVisit(visit: EnvelopeVisit, tz: string): RenderedVisit {
   return {
@@ -243,6 +276,15 @@ export async function loadBusinessTimeZone(): Promise<string> {
 
 /** Statuses that are not part of "the visits this booking covers". */
 const NOT_HAPPENING = new Set(['cancelled', 'unavailable']);
+
+/**
+ * Is this visit status one of {@link NOT_HAPPENING}? Exported so the approve
+ * core can leave a cancelled night awaiting its start time alone (#1098) by
+ * the same rule its confirmation message uses to leave that night out.
+ */
+export function isNotHappeningStatus(status: unknown): boolean {
+  return typeof status === 'string' && NOT_HAPPENING.has(status);
+}
 
 /**
  * Every live visit of one envelope, oldest first, read at CALL time.

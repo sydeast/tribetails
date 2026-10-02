@@ -116,7 +116,18 @@ export async function requestBookingRescheduleHandler(
     rescheduleRequestStatus?: string;
     startTime?: { toMillis?: () => number } | null;
     endTime?: { toMillis?: () => number } | null;
+    startTimePending?: unknown;
   };
+
+  // #1098: an Overnight is requested as a night and Tribe Tails sets its start
+  // when approving it. Until then there is no time to move, and proposing one
+  // would be the household picking the start, which #1098 took away.
+  if (data.startTimePending === true) {
+    throw new HttpsError(
+      'failed-precondition',
+      "Your Auntie has not set this overnight's start time yet. You can cancel it, or ask your Auntie to change the night.",
+    );
+  }
 
   if (!RESCHEDULABLE.has(data.status ?? '')) {
     throw new HttpsError(

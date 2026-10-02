@@ -34,6 +34,17 @@ export const Args = z.object({
    * event and carries no note.
    */
   note: z.string().trim().max(500).optional(),
+  /**
+   * #1098, APPROVE only: the start the operator chose for each visit that is
+   * awaiting one (an Overnight requested as a night), keyed by kinCares visit
+   * id, as epoch milliseconds. Every such visit needs one or the approval is
+   * refused whole; a time for a visit that is not awaiting one is ignored.
+   */
+  startTimes: z.record(z.string().min(1), z.number().int().positive()).optional(),
+  /** APPROVE only. Same flag and meaning as on `rescheduleBooking`, for the visits whose start is set here. */
+  overrideBusyConflict: z.boolean().optional(),
+  /** APPROVE only. Same flag and meaning as on `rescheduleBooking`. See `lib/visitOverlapConflict.ts`. */
+  overrideVisitConflict: z.boolean().optional(),
 });
 
 export const Result = z
@@ -95,6 +106,9 @@ export async function manageBookingSeriesHandler(
       batchId: args.batchId,
       actorUid: uid,
       actorRole: 'AUNTIE',
+      startTimes: args.startTimes,
+      overrideBusyConflict: args.overrideBusyConflict,
+      overrideVisitConflict: args.overrideVisitConflict,
     });
     if (!r.found) {
       throw new HttpsError('not-found', `Booking series '${args.batchId}' not found.`);
@@ -133,6 +147,14 @@ export async function manageBookingSeriesHandler(
     .map((t) => t?.toMillis?.())
     .filter((ms): ms is number => typeof ms === 'number')
     .sort((a, b) => a - b);
+  // #1098: a night the operator never set a time for has no start instant, so
+  // the list above drops it. Its requested date is what the household asked
+  // for, and the decline names it.
+  const declinedPendingDates = childSnap.docs
+    .map((d) => d.data() as Record<string, unknown>)
+    .filter((d) => d['startTimePending'] === true && typeof d['requestedDate'] === 'string')
+    .map((d) => d['requestedDate'] as string)
+    .sort();
 
   let failedVisits = 0;
   // Each visit is isolated in try/catch so one bad visit can't abort the series
@@ -244,7 +266,8 @@ export async function manageBookingSeriesHandler(
           serviceName: envelope?.['serviceName'] ?? null,
           startTimeMs: declinedStartMs[0] ?? null,
           startTimeMsList: declinedStartMs,
-          visitCount: declinedStartMs.length,
+          requestedDateList: declinedPendingDates,
+          visitCount: declinedStartMs.length + declinedPendingDates.length,
           note: args.note ?? null,
         },
         targetType: 'booking',
