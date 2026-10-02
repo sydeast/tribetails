@@ -158,21 +158,26 @@ fun ScheduleScreen() {
     val optimistic = remember { mutableStateMapOf<String, Pair<String, String>>() }
     var rescheduleError by remember { mutableStateOf<String?>(null) }
 
-    fun onRescheduleDrop(args: RescheduleArgs) {
+    // #1154: the refused drop and the override its refusal offers, for "Move anyway" in the banner below.
+    var rescheduleRetry by remember { mutableStateOf<RescheduleAttempt?>(null) }
+    fun sendReschedule(attempt: RescheduleAttempt) {
         rescheduleError = null
-        val prev = optimistic[args.sessionId]
-        optimistic[args.sessionId] = args.startTime to args.endTime // optimistic move
+        rescheduleRetry = null
+        val prev = optimistic[attempt.sessionId]
+        optimistic[attempt.sessionId] = attempt.startTime to attempt.endTime // optimistic move
         scope.launch {
-            when (val r = client.rescheduleBooking(args.sessionId, args.startTime, args.endTime)) {
-                is WriteResult.Ok -> Unit // sessionsStream will confirm the new times
-                is WriteResult.Err -> {
-                    if (prev == null) optimistic.remove(args.sessionId) else optimistic[args.sessionId] = prev
-                    rescheduleError = r.message
+            when (val out = client.rescheduleOutcome(attempt)) {
+                is RescheduleOutcome.Done -> Unit // sessionsStream will confirm the new times
+                is RescheduleOutcome.Refused -> {
+                    if (prev == null) optimistic.remove(attempt.sessionId) else optimistic[attempt.sessionId] = prev
+                    rescheduleError = out.message
+                    rescheduleRetry = out.offer?.let { attempt.copy(override = it) }
                 }
             }
         }
     }
-
+    fun onRescheduleDrop(args: RescheduleArgs) =
+        sendReschedule(RescheduleAttempt(args.sessionId, args.startTime, args.endTime))
     ScreenScaffold {
         // Reframed as a calendar: the label follows the active view + visible range
         // (state/data-driven, not a fixed "this week's runs"). The mislabeled
@@ -343,6 +348,9 @@ fun ScheduleScreen() {
                     AuntieBanner(
                         tone = AuntieBannerTone.Error,
                         title = "Couldn't reschedule that visit",
+                        trailing = rescheduleRetry?.let { retry ->
+                            { GhostButton(label = "Move anyway", onClick = { sendReschedule(retry) }) }
+                        },
                     ) {
                         Text(
                             msg,

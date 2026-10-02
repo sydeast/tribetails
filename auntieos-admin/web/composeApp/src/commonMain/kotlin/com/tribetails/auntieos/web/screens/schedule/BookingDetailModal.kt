@@ -108,6 +108,8 @@ fun BookingDetailModal(
     var reschedTime by remember(session._id) { mutableStateOf(isoTimePart(session.startTime)) }
     var rescheduling by remember { mutableStateOf(false) }
     var reschedError by remember { mutableStateOf<String?>(null) }
+    // #1154: the refused move and the override its refusal offers; null offer means the message stands alone.
+    var reschedRetry by remember { mutableStateOf<RescheduleAttempt?>(null) }
 
     // Assigned Auntie (assignAuntie callable). Only envelope visits carry the
     // batch/visit ids the callable needs; legacy flat sessions hide the row.
@@ -376,15 +378,20 @@ fun BookingDetailModal(
                                         scope.launch {
                                             rescheduling = true
                                             reschedError = null
-                                            when (val r = client.rescheduleBooking(session._id, times.first, times.second)) {
-                                                is WriteResult.Ok -> {
+                                            reschedRetry = null
+                                            val attempt = RescheduleAttempt(session._id, times.first, times.second)
+                                            when (val out = client.rescheduleOutcome(attempt)) {
+                                                is RescheduleOutcome.Done -> {
                                                     routeToast.show(
                                                         "${session.kinfolkName.ifBlank { "Unnamed" }}'s visit is rescheduled.",
                                                         ToastKind.Success,
                                                     )
                                                     onDismiss()
                                                 }
-                                                is WriteResult.Err -> reschedError = r.message
+                                                is RescheduleOutcome.Refused -> {
+                                                    reschedError = out.message
+                                                    reschedRetry = out.offer?.let { attempt.copy(override = it) }
+                                                }
                                             }
                                             rescheduling = false
                                         }
@@ -393,7 +400,37 @@ fun BookingDetailModal(
                                 modifier = Modifier.fillMaxWidth(),
                             )
                             reschedError?.let { err ->
-                                AuntieBanner(tone = AuntieBannerTone.Error, title = "Couldn't reschedule") {
+                                AuntieBanner(
+                                    tone = AuntieBannerTone.Error,
+                                    title = "Couldn't reschedule",
+                                    trailing = reschedRetry?.let { retry ->
+                                        {
+                                            GhostButton(
+                                                label = "Move anyway",
+                                                enabled = !rescheduling,
+                                                onClick = {
+                                                    scope.launch {
+                                                        rescheduling = true
+                                                        reschedRetry = null
+                                                        when (val out = client.rescheduleOutcome(retry)) {
+                                                            is RescheduleOutcome.Done -> {
+                                                                reschedError = null
+                                                                routeToast.show(
+                                                                    "${session.kinfolkName.ifBlank { "Unnamed" }}'s visit is rescheduled.",
+                                                                    ToastKind.Success,
+                                                                )
+                                                                onDismiss()
+                                                            }
+                                                            // No second offer: the same override is not put to the operator twice.
+                                                            is RescheduleOutcome.Refused -> reschedError = out.message
+                                                        }
+                                                        rescheduling = false
+                                                    }
+                                                },
+                                            )
+                                        }
+                                    },
+                                ) {
                                     Text(err, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                                 }
                             }
