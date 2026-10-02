@@ -70,6 +70,12 @@ interface AuntieDataSource {
     // direct session. Real clients send it to the server; the status flip happens there, not here.
     suspend fun approveBooking(bookingId: String, visitId: String? = null): WriteResult<Unit>
     suspend fun rejectBooking(bookingId: String, visitId: String? = null): WriteResult<Unit>
+    /**
+     * #1145: approve a direct session over a refusal the operator has seen (a Google busy block or another
+     * visit). Real clients send the matching override flag; the default is for fakes that never refuse.
+     */
+    suspend fun approveBookingOverriding(bookingId: String, visitId: String?, override: ScheduleOverride): WriteResult<Unit> =
+        approveBooking(bookingId, visitId)
     /** Calls off an approved visit. Same server path as [rejectBooking] with the CANCEL action. */
     suspend fun cancelBooking(bookingId: String, visitId: String? = null): WriteResult<Unit> =
         rejectBooking(bookingId, visitId)

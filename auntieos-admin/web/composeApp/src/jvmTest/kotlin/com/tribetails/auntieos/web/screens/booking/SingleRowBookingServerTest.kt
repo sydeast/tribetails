@@ -2,6 +2,8 @@ package com.tribetails.auntieos.web.screens.booking
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.JvmFirestoreFixtures
 import com.tribetails.auntieos.web.data.KinCareSession
+import com.tribetails.auntieos.web.data.ScheduleOverride
+import com.tribetails.auntieos.web.data.overridableScheduleRefusal
 import com.tribetails.auntieos.web.data.WriteResult
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
@@ -88,6 +90,44 @@ class SingleRowBookingServerTest {
         JvmFirestoreFixtures.callableErrors = mapOf("transitionBookingStatus" to "Cannot approve a cancelled booking.")
         val r = FirestoreClient().approveBooking("s9", null)
         assertEquals("Cannot approve a cancelled booking.", (r as WriteResult.Err).message)
+    }
+    @Test
+    fun aDirectApprovalRefusedOnABusyBlockOrAVisitCarriesTheServersCode() = runBlocking {
+        JvmFirestoreFixtures.callableErrors = mapOf("transitionBookingStatus" to "That time is busy on your calendar.")
+        JvmFirestoreFixtures.callableErrorCodes = mapOf("transitionBookingStatus" to "booking_busy_conflict")
+        val r = FirestoreClient().approveBooking("s9", null)
+        assertEquals(WriteResult.Err("That time is busy on your calendar.", "booking_busy_conflict"), r)
+        assertEquals(ScheduleOverride.BUSY, overridableScheduleRefusal((r as WriteResult.Err).code))
+        assertEquals(ScheduleOverride.VISIT, overridableScheduleRefusal("visit_overlap_conflict"))
+        assertEquals(null, overridableScheduleRefusal("company_holiday_conflict"), "a closed day is never overridable")
+        assertEquals(null, overridableScheduleRefusal(null))
+    }
+    @Test
+    fun approveAnywaySendsTheMatchingOverrideFlagAndOnlyThat() = runBlocking {
+        JvmFirestoreFixtures.callableResponses = mapOf(
+            "transitionBookingStatus" to
+                """{"ok":true,"sessionId":"s9","action":"APPROVE","from":"DRAFT","status":"SCHEDULED","changed":true}""",
+        )
+        val busy = FirestoreClient().approveBooking("s9", null, ScheduleOverride.BUSY)
+        assertTrue(busy is WriteResult.Ok)
+        val busyBody = lastCall().third
+        assertEquals("true", busyBody["overrideBusyConflict"]!!.jsonPrimitive.content)
+        assertEquals(null, busyBody["overrideVisitConflict"])
+        FirestoreClient().approveBooking("s9", null, ScheduleOverride.VISIT)
+        val visitBody = lastCall().third
+        assertEquals("true", visitBody["overrideVisitConflict"]!!.jsonPrimitive.content)
+        assertEquals(null, visitBody["overrideBusyConflict"])
+    }
+    @Test
+    fun aFirstApprovalSendsNoOverrideFlag() = runBlocking {
+        JvmFirestoreFixtures.callableResponses = mapOf(
+            "transitionBookingStatus" to
+                """{"ok":true,"sessionId":"s9","action":"APPROVE","from":"DRAFT","status":"SCHEDULED","changed":true}""",
+        )
+        FirestoreClient().approveBooking("s9", null)
+        val body = lastCall().third
+        assertEquals(null, body["overrideBusyConflict"])
+        assertEquals(null, body["overrideVisitConflict"])
     }
     @Test
     fun singleVisitIdPrefersTheVisitThenTheSourceBookingAndIsNullForADirectRow() {

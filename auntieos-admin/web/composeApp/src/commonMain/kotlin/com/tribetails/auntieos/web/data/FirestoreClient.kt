@@ -1613,20 +1613,31 @@ class FirestoreClient {
     // from a kinCares visit uses batchUpdateBookings (busy and closed-day checks, the household's answer,
     // the Overnight start-time refusal). batchUpdateBookings does not resolve kin_care_sessions ids, so a
     // direct session (no visit id) uses transitionBookingStatus, the audited, transition-guarded callable.
-    suspend fun approveBooking(bookingId: String, visitId: String? = null): WriteResult<Unit> =
-        bookingTransition(bookingId, visitId, "APPROVE")
+    suspend fun approveBooking(bookingId: String, visitId: String? = null, override: ScheduleOverride? = null): WriteResult<Unit> =
+        bookingTransition(bookingId, visitId, "APPROVE", override)
     suspend fun rejectBooking(bookingId: String, visitId: String? = null): WriteResult<Unit> =
         bookingTransition(bookingId, visitId, "REJECT")
     suspend fun cancelBooking(bookingId: String, visitId: String? = null): WriteResult<Unit> =
         bookingTransition(bookingId, visitId, "CANCEL")
-    private suspend fun bookingTransition(bookingId: String, visitId: String?, action: String): WriteResult<Unit> {
+    private suspend fun bookingTransition(
+        bookingId: String,
+        visitId: String?,
+        action: String,
+        override: ScheduleOverride? = null,
+    ): WriteResult<Unit> {
         if (visitId.isNullOrBlank()) {
             val payload = buildJsonObject {
                 put("sessionId", JsonPrimitive(bookingId))
                 put("action", JsonPrimitive(action))
+                // #1145: APPROVE checks the visit's window. The flag goes only when the operator chose it.
+                when (override) {
+                    ScheduleOverride.BUSY -> put("overrideBusyConflict", JsonPrimitive(true))
+                    ScheduleOverride.VISIT -> put("overrideVisitConflict", JsonPrimitive(true))
+                    null -> Unit
+                }
             }
             return when (val r = platformInvokeCallable("transitionBookingStatus", callableJson.encodeToString(JsonObject.serializer(), payload))) {
-                is WriteResult.Err -> WriteResult.Err(r.message)
+                is WriteResult.Err -> WriteResult.Err(r.message, r.code)
                 is WriteResult.Ok -> WriteResult.Ok(Unit)
             }
         }
@@ -2343,7 +2354,21 @@ class FirestoreClient {
 /** Result of a single Firestore write - Ok carries the new doc id (for creates) or Unit. */
 sealed class WriteResult<out T> {
     data class Ok<T>(val value: T)        : WriteResult<T>()
-    data class Err(val message: String)   : WriteResult<Nothing>()
+    /**
+     * [code] is the callable's machine `details.code` when the server sent one (#1145), so a caller can tell a
+     * refusal the operator may go past from one they may not. Null for every other failure.
+     */
+    data class Err(val message: String, val code: String? = null) : WriteResult<Nothing>()
+}
+/** A schedule refusal an operator may knowingly approve over (#1145). A closed day is not one. */
+enum class ScheduleOverride { VISIT, BUSY }
+const val VISIT_OVERLAP_CONFLICT_CODE = "visit_overlap_conflict"
+const val BOOKING_BUSY_CONFLICT_CODE = "booking_busy_conflict"
+/** Which override, if any, a callable refusal's `details.code` offers. The closure code returns null on purpose. */
+fun overridableScheduleRefusal(code: String?): ScheduleOverride? = when (code) {
+    VISIT_OVERLAP_CONFLICT_CODE -> ScheduleOverride.VISIT
+    BOOKING_BUSY_CONFLICT_CODE -> ScheduleOverride.BUSY
+    else -> null
 }
 
 /**

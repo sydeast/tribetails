@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web
 
+import com.tribetails.auntieos.web.data.ActivityLogEntry
 import com.tribetails.auntieos.web.data.AuntieDataSource
 import com.tribetails.auntieos.web.data.BookingNote
 import com.tribetails.auntieos.web.data.BusinessSettings
@@ -14,6 +15,7 @@ import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.ManageSeriesResult
 import com.tribetails.auntieos.web.data.MediaFile
 import com.tribetails.auntieos.web.data.Payment
+import com.tribetails.auntieos.web.data.ScheduleOverride
 import com.tribetails.auntieos.web.data.TrainingDocument
 import com.tribetails.auntieos.web.data.VetClinic
 import com.tribetails.auntieos.web.data.WriteResult
@@ -48,6 +50,11 @@ class FakeAuntieDataSource(
     )
 
     private val approveErrors = mutableMapOf<String, String>()
+    private val approveErrorCodes = mutableMapOf<String, String>()
+    /** #1145: every override an approval was sent with, in order. */
+    val approveOverrides = mutableListOf<ScheduleOverride>()
+    /** #1145: every activity entry the view model logged. */
+    val loggedActivity = mutableListOf<ActivityLogEntry>()
     private val rejectErrors  = mutableMapOf<String, String>()
 
     fun emitInvoices(result: FirestoreResult<List<Invoice>>)         { _invoices.value          = result }
@@ -58,7 +65,12 @@ class FakeAuntieDataSource(
     fun emitPayments(result: FirestoreResult<List<Payment>>)         { _payments.value          = result }
     fun emitTrainingDocs(result: FirestoreResult<List<TrainingDocument>>) { _trainingDocs.value = result }
 
-    fun setApproveBookingError(bookingId: String, message: String) { approveErrors[bookingId] = message }
+    fun setApproveBookingError(bookingId: String, message: String, code: String? = null) {
+        approveErrors[bookingId] = message
+        if (code != null) approveErrorCodes[bookingId] = code
+    }
+    /** The server stops refusing, so the retry with an override can land. */
+    fun clearApproveBookingError(bookingId: String) { approveErrors.remove(bookingId); approveErrorCodes.remove(bookingId) }
     fun setRejectBookingError(bookingId: String, message: String)  { rejectErrors[bookingId]  = message }
 
     // 16.5: incoming-series queue + manageBookingSeries recording.
@@ -147,7 +159,7 @@ class FakeAuntieDataSource(
         }
 
     override suspend fun approveBooking(bookingId: String, visitId: String?): WriteResult<Unit> {
-        approveErrors[bookingId]?.let { return WriteResult.Err(it) }
+        approveErrors[bookingId]?.let { return WriteResult.Err(it, approveErrorCodes[bookingId]) }
         val current = _sessions.value
         if (current is FirestoreResult.Data) {
             val found = current.value.any { it._id == bookingId }
@@ -161,6 +173,16 @@ class FakeAuntieDataSource(
         return WriteResult.Ok(Unit)
     }
 
+    override suspend fun approveBookingOverriding(bookingId: String, visitId: String?, override: ScheduleOverride): WriteResult<Unit> {
+        approveOverrides += override
+        // An override is the operator going past the refusal, so it is the one call the refusal no longer applies to.
+        clearApproveBookingError(bookingId)
+        return approveBooking(bookingId, visitId)
+    }
+    override suspend fun logActivity(entry: ActivityLogEntry): WriteResult<String> {
+        loggedActivity += entry
+        return WriteResult.Ok("fake-activity")
+    }
     override suspend fun rejectBooking(bookingId: String, visitId: String?): WriteResult<Unit> {
         rejectErrors[bookingId]?.let { return WriteResult.Err(it) }
         val current = _sessions.value

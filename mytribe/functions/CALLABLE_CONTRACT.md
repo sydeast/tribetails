@@ -2396,11 +2396,17 @@ request shape, the action set, the target statuses and the refusal detail codes
 are all frozen by `test/callableContract.test.ts`.
 
 ### transitionBookingStatus
-- req `{ sessionId: string /* 1..120 */, action: 'APPROVE'|'REJECT'|'CANCEL'|'COMPLETE', completedAt?: string /* 1..40, COMPLETE only */, reason?: string /* 1..500, CANCEL and REJECT only */ }`
+- req `{ sessionId: string /* 1..120 */, action: 'APPROVE'|'REJECT'|'CANCEL'|'COMPLETE', completedAt?: string /* 1..40, COMPLETE only */, reason?: string /* 1..500, CANCEL and REJECT only */, overrideBusyConflict?: boolean, overrideVisitConflict?: boolean /* APPROVE only */ }`
 - res `{ ok: true, sessionId: string, action: string, from: string, status: string, changed: boolean }`
 - `changed: false` means the row was already in the target status: success, no write
 - `completedAt` is the CALLER's "now", matching what every reader of this
   collection already parses. Omitted, the server stamps its own ISO string
+- APPROVE (#1145) checks the session's own window (its end, else start plus the
+  KinCare length) like `rescheduleBooking` does: a closed day always refuses,
+  a Google busy block (`booking_busy_conflict`) and another visit
+  (`visit_overlap_conflict`) refuse unless the matching override flag is sent.
+  A session with no readable start is approved unchecked. Other actions are
+  unguarded
 - `reason` is appended to the session's own `notes` as
   `[Booking cancelled] <reason>`. The audit payload records only
   `reasonSupplied: true`, never the text

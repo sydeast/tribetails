@@ -9,10 +9,14 @@ import com.tribetails.auntieos.web.data.BookingSeriesAction
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.MultiDateBookingResult
 import com.tribetails.auntieos.web.data.NewBookingVisitInput
+import com.tribetails.auntieos.web.data.ScheduleOverride
+import com.tribetails.auntieos.web.data.overridableScheduleRefusal
 import com.tribetails.auntieos.web.data.mintBookingIdempotencyKey
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.observability.runCatchingCancellable
 
+/** #1145: an approval the server refused over a busy block or another visit, which the operator may approve over. */
+data class ApproveConflict(val bookingId: String, val visitId: String?, val override: ScheduleOverride)
 class BookingViewModel(
     private val dataSource: AuntieDataSource,
     private val actorId: String = "",
@@ -104,17 +108,45 @@ class BookingViewModel(
         seriesActionBatchId = null
     }
 
+    /**
+     * #1145: set when a direct session's approval was refused over a Google busy block or another visit, so the
+     * screen can offer "Approve anyway". Never set for a closed day (no override exists) or for a row booked from
+     * a visit (that path reports failures as plain sentences with no code).
+     */
+    var approveConflict: ApproveConflict? by mutableStateOf(null)
+        private set
     suspend fun approveBooking(bookingId: String, visitId: String? = null) {
+        approveConflict = null
         when (val r = dataSource.approveBooking(bookingId, visitId)) {
             is WriteResult.Ok  -> {
                 errorMessage = null
                 audit("APPROVE_BOOKING", "Approved booking $bookingId", bookingId)
             }
+            is WriteResult.Err -> {
+                errorMessage = "Approve failed: ${r.message}"
+                if (visitId.isNullOrBlank()) {
+                    overridableScheduleRefusal(r.code)?.let { approveConflict = ApproveConflict(bookingId, visitId, it) }
+                }
+            }
+        }
+    }
+    /** Sends the refused approval again with the override the operator has now seen the reason for. */
+    suspend fun approveAnyway() {
+        val conflict = approveConflict ?: return
+        approveConflict = null
+        when (val r = dataSource.approveBookingOverriding(conflict.bookingId, conflict.visitId, conflict.override)) {
+            is WriteResult.Ok  -> {
+                errorMessage = null
+                audit("APPROVE_BOOKING", "Approved booking ${conflict.bookingId} over a schedule conflict", conflict.bookingId)
+            }
+            // No second offer: the same losing move is not put to the operator twice.
             is WriteResult.Err -> errorMessage = "Approve failed: ${r.message}"
         }
     }
+    fun clearApproveConflict() { approveConflict = null }
 
     suspend fun rejectBooking(bookingId: String, visitId: String? = null) {
+        approveConflict = null
         when (val r = dataSource.rejectBooking(bookingId, visitId)) {
             is WriteResult.Ok  -> {
                 errorMessage = null
@@ -124,10 +156,13 @@ class BookingViewModel(
         }
     }
     suspend fun cancelBooking(bookingId: String, visitId: String? = null) {
+        approveConflict = null
         when (val r = dataSource.cancelBooking(bookingId, visitId)) {
             is WriteResult.Ok  -> {
                 errorMessage = null
-                audit("REJECT_BOOKING", "Cancelled booking $bookingId", bookingId)
+                // #1145: its own event. Cancel used to log as REJECT_BOOKING, which made calling off a promised
+                // visit read the same as turning down a request nobody had approved.
+                audit("CANCEL_BOOKING", "Cancelled booking $bookingId", bookingId)
             }
             is WriteResult.Err -> errorMessage = "Cancel failed: ${r.message}"
         }
@@ -221,7 +256,7 @@ class BookingViewModel(
         return minted
     }
 
-    fun clearError() { errorMessage = null }
+    fun clearError() { errorMessage = null; approveConflict = null }
 
     private suspend fun audit(actionType: String, description: String, targetId: String) {
         runCatchingCancellable {

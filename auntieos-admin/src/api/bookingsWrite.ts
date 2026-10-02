@@ -105,6 +105,9 @@ interface TransitionBookingStatusArgs {
   action: BookingTransitionAction;
   completedAt?: string;
   reason?: string;
+  /** APPROVE only (#1145): go past a Google busy block / another visit. */
+  overrideBusyConflict?: boolean;
+  overrideVisitConflict?: boolean;
 }
 
 /**
@@ -133,9 +136,24 @@ export async function transitionBookingStatus(
   );
 }
 
-/** Approves a DRAFT/PENDING request: the server moves it to SCHEDULED. */
-export async function approveBooking(bookingId: string): Promise<void> {
-  await transitionBookingStatus({ sessionId: bookingId, action: 'APPROVE' });
+/**
+ * Approves a DRAFT/PENDING request: the server moves it to SCHEDULED.
+ *
+ * #1145: the server checks the visit's window first, like `rescheduleBooking`.
+ * A busy block or another visit refuses (`failed-precondition` with a
+ * `details.code`) and can be approved over by an operator who has seen it, via
+ * `overrides`, omitted on a first attempt. A closed day cannot be overridden.
+ */
+export async function approveBooking(
+  bookingId: string,
+  overrides: { visit?: boolean; busy?: boolean } = {},
+): Promise<void> {
+  await transitionBookingStatus({
+    sessionId: bookingId,
+    action: 'APPROVE',
+    ...(overrides.visit === true && { overrideVisitConflict: true }),
+    ...(overrides.busy === true && { overrideBusyConflict: true }),
+  });
 }
 
 /**
