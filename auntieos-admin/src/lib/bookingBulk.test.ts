@@ -197,9 +197,16 @@ describe('mergeBulkResults', () => {
     ]);
     expect(out.failures).toHaveLength(1);
     expect(out.failures[0]?.name).toBe('Household C');
-    expect(out.failures[0]?.reason).toMatch(/not-found/);
+    expect(out.failures[0]?.reason).toMatch(/That booking was not found/);
   });
 
+  it('#1099: shows the server\'s own sentence for an approval it refused', () => {
+    const out = mergeBulkResults('APPROVE', plan, new Map(), [
+      envelopeResult({ failed: [{ id: 'va', error: 'That time overlaps a busy block on your Google Calendar.' }] }),
+    ]);
+    expect(out.failures[0]?.name).toBe('Household A');
+    expect(out.failures[0]?.reason).toContain('That time overlaps a busy block on your Google Calendar.');
+  });
   it('calls a half-landed booking a FAILURE, because the admin list and the household now disagree', () => {
     const out = mergeBulkResults('CANCEL', plan, new Map(), [
       envelopeResult({ action: 'CANCEL', failed: [{ id: 'va', error: 'not-found' }] }),

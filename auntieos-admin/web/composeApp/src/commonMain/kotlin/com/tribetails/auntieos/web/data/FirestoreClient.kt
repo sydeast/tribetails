@@ -2922,6 +2922,22 @@ fun summarizeBatchResult(result: BatchBookingResult): String =
     else "${result.updated} updated, ${result.failedCount} failed"
 
 /**
+ * #1099: the reasons a batch could not apply, in plain words, or null when
+ * nothing failed. An approval now books the visit for real, so a refusal (a
+ * busy Google Calendar block, a closed day) arrives as a sentence per id; the
+ * callable's two raw codes are put into words here. Distinct reasons only.
+ */
+fun batchFailureText(result: BatchBookingResult): String? {
+    if (result.failed.isEmpty()) return null
+    return result.failed.map { f ->
+        when (val e = f.error.trim()) {
+            "", "write-failed" -> "The change could not be saved."
+            "not-found" -> "That booking was not found."
+            else -> e
+        }
+    }.distinct().joinToString(" ")
+}
+/**
  * Verdict from the `verifyActivityLogChain` admin callable. [ok] true means the
  * SHA-256 chain validated end to end; [anomalyCode] (e.g. "seq_gap",
  * "prev_hash_mismatch", "entry_hash_mismatch", "head_mismatch") names the first

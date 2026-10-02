@@ -216,7 +216,8 @@ private fun BookingListScreen(
                 is WriteResult.Err -> { vm.setError("Bulk $action failed: ${r.message}"); bulkNotice = null }
                 is WriteResult.Ok  -> {
                     vm.setError(if (r.value.failedCount > 0)
-                        "Bulk $action: ${r.value.failedCount} of ${ids.size} could not be updated."
+                        "Bulk $action: ${r.value.failedCount} of ${ids.size} could not be updated. " +
+                            com.tribetails.auntieos.web.data.batchFailureText(r.value).orEmpty()
                     else null)
                     bulkNotice = "$action applied: ${com.tribetails.auntieos.web.data.summarizeBatchResult(r.value)}."
                     clearSelection()

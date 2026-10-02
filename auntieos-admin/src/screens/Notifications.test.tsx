@@ -821,6 +821,23 @@ describe('Notifications quick actions (issue #20)', () => {
     expect(screen.queryByText('Updating the booking failed.')).toBeNull();
   });
 
+  it('#1099: a quick approve the server refused for a busy block shows that sentence', async () => {
+    batchUpdateBookings.mockResolvedValue({
+      ok: true,
+      action: 'APPROVE',
+      updated: 0,
+      failed: [{ id: 'b1', error: 'That time overlaps a busy block on your Google Calendar.' }],
+    });
+    mockStreams({
+      status: 'ready',
+      data: [entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })],
+    });
+    render(<Notifications />);
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    expect(
+      await screen.findByText(/That time overlaps a busy block on your Google Calendar\./),
+    ).toBeInTheDocument();
+  });
   it('fails loud when the booking call rejects', async () => {
     batchUpdateBookings.mockRejectedValue(new Error('permission-denied'));
     mockStreams({
