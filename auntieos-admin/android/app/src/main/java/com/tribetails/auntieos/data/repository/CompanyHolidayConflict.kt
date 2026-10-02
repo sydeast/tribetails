@@ -1,12 +1,11 @@
 package com.tribetails.auntieos.data.repository
 
+import com.tribetails.auntieos.data.model.businessZone
 import com.google.firebase.firestore.FirebaseFirestore
 import com.tribetails.auntieos.ui.admin.ClosureEntry
 import com.tribetails.auntieos.ui.admin.closureOccurrencesInRange
 import com.tribetails.auntieos.ui.admin.parseClosureEntry
 import kotlinx.coroutines.tasks.await
-import java.time.ZoneId
-import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
 /**
@@ -43,24 +42,15 @@ internal class CompanyHolidayConflictException(message: String) : Exception(mess
 private const val BUSINESS_SETTINGS_PATH = "business_settings/business_settings"
 
 /**
- * The zone a business's calendar dates are read in: `business_settings.timeZone`,
- * or UTC when it is blank or not a zone this phone can read. This is the ONE
- * place the fallback lives, and it is the server's rule today
- * (`businessCalendarDate` in `bookingTimeBlocks.ts` falls back to the UTC date
- * for an unusable zone). #1109 is unifying that default; change it here.
- */
-internal fun businessZoneOrUtc(timeZone: String): ZoneId =
-    timeZone.trim().takeIf { it.isNotEmpty() }?.let { runCatching { ZoneId.of(it) }.getOrNull() } ?: ZoneOffset.UTC
-/**
  * The business calendar date(s) [window] covers in [timeZone]: the start's date
  * through the date its last millisecond is on, counted by calendar (never by
  * adding 24h of instants), so a daylight-saving day is neither skipped nor
  * doubled. A window ending exactly at midnight does not touch the next day.
  * Mirrors the TS `businessDatesForVisit` (#1093); a blank or unusable
- * [timeZone] falls back per [businessZoneOrUtc].
+ * [timeZone] falls back per [businessZone].
  */
 internal fun businessDatesForVisit(window: BusyConflictWindow, timeZone: String): List<String> {
-    val zone = businessZoneOrUtc(timeZone)
+    val zone = businessZone(timeZone)
     val start = window.startInstant
     val end = if (window.endInstant.isAfter(start)) window.endInstant else start.plusMillis(1)
     val first = start.atZone(zone).toLocalDate()
@@ -97,21 +87,23 @@ internal fun findCompanyHolidayConflict(dates: List<String>, entries: List<Closu
 
 /**
  * The one call [BookingRepository.createBooking] and
- * [KinCareRepository.createKinCareSession] each make before their write.
+ * [KinCareRepository.createKinCareSession] each make before their write, with
+ * the [settings] they already loaded via [loadCompanyHolidaySettings] (the same
+ * read hands the busy-import guard its zone).
  * Throws [CompanyHolidayConflictException] naming the closed date and holiday
  * when the visit lands on one; returns silently otherwise, including when
  * [startRaw] cannot be parsed at all (same "cannot tell" convention
  * [resolveVisitWindow] already uses for the busy-conflict guard).
  */
-internal suspend fun assertNoCompanyHolidayConflict(
-    firestore: FirebaseFirestore,
+internal fun assertNoCompanyHolidayConflict(
+    settings: CompanyHolidaySettings,
     startRaw: String,
     endRaw: String,
 ) {
-    val (entries, timeZone) = loadCompanyHolidaySettings(firestore)
+    val (entries, timeZone) = settings
     if (entries.isEmpty()) return
     // A bare wall-clock start is the business's own clock, so it is anchored to the business zone, not this phone's.
-    val window = resolveVisitWindow(startRaw, endRaw, businessZoneOrUtc(timeZone)) ?: return
+    val window = resolveVisitWindow(startRaw, endRaw, businessZone(timeZone)) ?: return
     val conflict = findCompanyHolidayConflict(businessDatesForVisit(window, timeZone), entries) ?: return
     val (date, holidayName) = conflict
     throw CompanyHolidayConflictException(

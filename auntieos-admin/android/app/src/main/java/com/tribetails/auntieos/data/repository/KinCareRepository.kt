@@ -151,8 +151,10 @@ class KinCareRepository(
      */
     suspend fun createKinCareSession(session: KinCareSession): Result<String> = runCatchingCancellable {
         authGate.ensureAuthenticated()
-        assertNoBookingBusyConflict(firestore, session.startTime, session.endTime)
-        assertNoCompanyHolidayConflict(firestore, session.startTime, session.endTime)
+        // One read of business settings serves both guards: closures and the zone a bare wall-clock start is read in.
+        val settings = loadCompanyHolidaySettings(firestore)
+        assertNoBookingBusyConflict(firestore, session.startTime, session.endTime, settings.timeZone)
+        assertNoCompanyHolidayConflict(settings, session.startTime, session.endTime)
         // Write stamp, not a query: scopedKinfolkId forces the sandbox scope in
         // test mode and passes the caller's kinfolkId through otherwise.
         val mode = authGate.requireTestMode()
