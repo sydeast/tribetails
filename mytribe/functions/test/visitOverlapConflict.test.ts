@@ -11,6 +11,7 @@ import {
   formatVisitOverlapConflictMessage,
   guardVisitOverlapConflict,
   loadOccupyingVisits,
+  occupiedVisitLabel,
   sessionDateRangeForVisits,
   VISIT_OVERLAP_CONFLICT_CODE,
 } from '../src/lib/visitOverlapConflict';
@@ -36,7 +37,8 @@ describe('decodeOccupiedVisit', () => {
       endMs: at('2026-08-24T16:00:00.000Z'),
       kinfolkId: 'kf1',
     });
-    expect(v?.label).toBe('2026-08-24 15:00 UTC to 2026-08-24 16:00 UTC');
+    // #1168: 15:00 UTC is 10:00 AM on the operator's Chicago schedule.
+    expect(occupiedVisitLabel(v!, 'America/Chicago')).toBe('Aug 24, 10:00-11:00 AM');
   });
 
   it.each([['CANCELLED'], ['CANCELED'], ['REJECTED'], ['cancelled']])(
@@ -88,7 +90,6 @@ describe('findVisitOverlapConflicts', () => {
       sessionId: 's1',
       startMs: at('2026-08-24T15:00:00.000Z'),
       endMs: at('2026-08-24T16:00:00.000Z'),
-      label: 'existing',
       kinfolkId: 'kf1',
     },
   ];
@@ -141,7 +142,6 @@ describe('findVisitOverlapConflicts', () => {
         sessionId: 's2',
         startMs: at('2026-08-24T15:45:00.000Z'),
         endMs: at('2026-08-24T17:00:00.000Z'),
-        label: 'second',
         kinfolkId: null,
       },
     ];
@@ -150,8 +150,9 @@ describe('findVisitOverlapConflicts', () => {
       two,
     );
     expect(found.map((c) => c.occupied.sessionId)).toEqual(['s1', 's2']);
-    expect(formatVisitOverlapConflictMessage(found)).toContain('existing');
-    expect(formatVisitOverlapConflictMessage(found)).toContain('second');
+    const message = formatVisitOverlapConflictMessage(found, 'America/Chicago');
+    expect(message).toContain('(Aug 24, 10:00-11:00 AM)');
+    expect(message).toContain('(Aug 24, 10:45 AM-12:00 PM)');
   });
 });
 
@@ -199,8 +200,9 @@ describe('loadOccupyingVisits', () => {
 });
 
 describe('guardVisitOverlapConflict', () => {
-  function ctxWith(startTime: string, endTime: string) {
+  function ctxWith(startTime: string, endTime: string, settings: Record<string, unknown> = { timeZone: 'America/Chicago' }) {
     return buildDbMock({
+      docs: { 'business_settings/business_settings': settings },
       queryDocs: {
         kin_care_sessions: [{ id: 'existing', data: { startTime, endTime, kinfolkId: 'kf9' } }],
       },
@@ -242,6 +244,34 @@ describe('guardVisitOverlapConflict', () => {
     expect(mocks.writeAuditEntryFn).not.toHaveBeenCalled();
   });
 
+  // #1168: the operator reads 10:00 AM on the schedule, so the refusal must not say 15:00.
+  it('words the refusal and details.window in the business zone, never UTC', async () => {
+    const ctx = ctxWith('2026-08-24T15:00:00.000Z', '2026-08-24T16:00:00.000Z');
+    const err = await guardVisitOverlapConflict({
+      firestore: ctx.db,
+      visits: [{ startTimeMs: at('2026-08-24T15:30:00.000Z'), endTimeMs: at('2026-08-24T16:30:00.000Z') }],
+      actorUid: 'admin1',
+      actorRole: 'AUNTIE',
+      attempt: 'block_time',
+    }).catch((e) => e);
+    expect(err.message).toBe(
+      'That time is already taken: visit 1 (Aug 24, 10:30-11:30 AM) overlaps a visit already booked (Aug 24, 10:00-11:00 AM).',
+    );
+    expect(err.details.conflicts[0].window).toBe('Aug 24, 10:00-11:00 AM');
+    expect(err.message).not.toMatch(/UTC|15:00/);
+  });
+
+  it('follows the zone the operator set, and falls back to the Chicago default when none is stored', async () => {
+    const la = ctxWith('2026-08-24T15:00:00.000Z', '2026-08-24T16:00:00.000Z', { timeZone: 'America/Los_Angeles' });
+    const visits = [{ startTimeMs: at('2026-08-24T15:30:00.000Z'), endTimeMs: at('2026-08-24T16:30:00.000Z') }];
+    const base = { visits, actorUid: 'admin1', actorRole: 'AUNTIE' as const, attempt: 'block_time' };
+    const laErr = await guardVisitOverlapConflict({ ...base, firestore: la.db }).catch((e) => e);
+    expect(laErr.details.conflicts[0].window).toBe('Aug 24, 8:00-9:00 AM');
+    const none = ctxWith('2026-08-24T15:00:00.000Z', '2026-08-24T16:00:00.000Z', {});
+    const noneErr = await guardVisitOverlapConflict({ ...base, firestore: none.db }).catch((e) => e);
+    expect(noneErr.details.conflicts[0].window).toBe('Aug 24, 10:00-11:00 AM');
+  });
+
   it('an explicit override writes it through, and audits exactly what was written over', async () => {
     const ctx = ctxWith('2026-08-24T15:00:00.000Z', '2026-08-24T16:00:00.000Z');
     await expect(
@@ -263,6 +293,11 @@ describe('guardVisitOverlapConflict', () => {
       actorUid: 'admin1',
       payload: { kinfolkId: 'kf1', attempt: 'create_visit', conflicts: [{ sessionId: 'existing' }] },
     });
+    // #1168: the audit sentence reads on the operator's clock too.
+    const description = mocks.writeAuditEntryFn.mock.calls[0][0].description as string;
+    expect(description).toContain('(Aug 24, 10:30-11:30 AM)');
+    expect(description).toContain('(Aug 24, 10:00-11:00 AM)');
+    expect(description).not.toContain('UTC');
   });
 
   it('a candidate an hour clear of the only visit on file is never even considered', async () => {
