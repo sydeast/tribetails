@@ -138,6 +138,31 @@ npx firebase hosting:channel:list --project auntieos-ttpc
 npx firebase hosting:channel:delete <id> --project auntieos-ttpc --force
 ```
 
+**A preview URL rejects sign-in with an unauthorized-domain error, and the deploy
+log shows `Unable to add channel domain to Firebase Auth`.** The deploy
+credential (`github-hosting-deploy@auntieos-ttpc.iam.gserviceaccount.com`) lacks
+`firebaseauth.configs.update`. `firebase hosting:channel:deploy` adds the
+channel's host to Auth authorized domains with one `UpdateConfig` call and
+syncs the list with a second; `hosting:channel:delete` removes it again, so the
+list does not grow with closed PRs once the permission exists. A denied call is
+only a warning in the CLI, so the deploy still goes green, but each one lands as
+a permission-denied ERROR in the production logs. Grant the narrow custom role
+(the operator runs this; the account holds `roles/firebasehosting.admin` and
+`roles/firebase.viewer` today):
+
+```bash
+gcloud iam roles create previewAuthDomains --project auntieos-ttpc \
+  --title "Preview auth domains" \
+  --permissions firebaseauth.configs.get,firebaseauth.configs.update
+gcloud projects add-iam-policy-binding auntieos-ttpc \
+  --member serviceAccount:github-hosting-deploy@auntieos-ttpc.iam.gserviceaccount.com \
+  --role projects/auntieos-ttpc/roles/previewAuthDomains
+```
+
+Do not use `roles/firebaseauth.admin` for this: it also lets the CI key create
+and delete users. Previews run against production data, so sign in to look and
+do not submit forms there.
+
 **A functions deploy is refused with `Pass the --force option to deploy
 functions that increase the minimum bill`.** Not a quota and not a rate limit,
 so retrying smaller and slower cannot help: every batch is refused identically
