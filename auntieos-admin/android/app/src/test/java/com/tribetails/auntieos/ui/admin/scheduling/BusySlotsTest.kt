@@ -104,4 +104,22 @@ class BusySlotsTest {
         assertNotNull(p)
         assertTrue("expected <=10 got ${p!!.heightMinutes}", p.heightMinutes <= 10)
     }
+    /**
+     * #1160: a 14:00 to 15:00 CDT Google busy event exactly as
+     * `busyIntervalToSlots` writes it (pinned in
+     * `mytribe/functions/test/googleBusySlot.test.ts`). It sits on the 14:00 row
+     * of Oct 5, not the 19:00 row the old UTC import stored.
+     */
+    @Test
+    fun googleBusyImportDrawsOnTheBusinessRow() {
+        val row = slot("gbi", "2026-10-05", start = "14:00", end = "15:00").copy(
+            startMs = 1_791_226_800_000L, // 2026-10-05T19:00:00Z
+            endMs = 1_791_230_400_000L,
+        )
+        val grouped = blockedSlotsByDate(listOf(row))
+        assertEquals(listOf("gbi"), grouped["2026-10-05"]!!.map { it.id })
+        val placement = busyPlacement(row.startTime, row.endTime)!!
+        assertEquals((14 - GRID_START_HOUR) * 60, placement.topMinutes)
+        assertEquals(60, placement.heightMinutes)
+    }
 }

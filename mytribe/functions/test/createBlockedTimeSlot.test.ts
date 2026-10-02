@@ -76,7 +76,7 @@ describe('createBlockedTimeSlotHandler', () => {
 
   /**
    * `createdAt` is a STRING on both client models, and the sibling importer
-   * writes it as one (`busyIntervalToSlot`'s `nowIso`). A `serverTimestamp()`
+   * writes it as one (`busyIntervalToSlots`' `nowIso`). A `serverTimestamp()`
    * here reaches Android as a `com.google.firebase.Timestamp` and fails the same
    * whole-snapshot decode: "Failed to convert value of type
    * com.google.firebase.Timestamp to String (found in field 'createdAt')".

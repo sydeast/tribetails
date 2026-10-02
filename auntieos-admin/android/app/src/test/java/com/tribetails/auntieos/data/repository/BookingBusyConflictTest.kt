@@ -50,6 +50,26 @@ class BookingBusyConflictTest {
     }
 
     @Test
+    fun `#1160 prefers startMs and endMs over a business wall clock`() {
+        val d = decodeGoogleBusySlot(
+            slot("s1", "2026-10-05", "14:00", "15:00").copy(
+                startMs = Instant.parse("2026-10-05T19:00:00Z").toEpochMilli(),
+                endMs = Instant.parse("2026-10-05T20:00:00Z").toEpochMilli(),
+            ),
+        )
+        assertEquals(Instant.parse("2026-10-05T19:00:00Z"), d!!.startInstant)
+        assertEquals(Instant.parse("2026-10-05T20:00:00Z"), d.endInstant)
+    }
+    @Test
+    fun `#1160 a row without usable instants is read as legacy UTC`() {
+        for (row in listOf(
+            slot("s1", "2026-10-05", "19:00", "20:00"),
+            slot("s1", "2026-10-05", "19:00", "20:00").copy(startMs = 200L, endMs = 100L),
+        )) {
+            assertEquals(Instant.parse("2026-10-05T19:00:00Z"), decodeGoogleBusySlot(row)!!.startInstant)
+        }
+    }
+    @Test
     fun `returns null for a non-GOOGLE_BUSY_IMPORT row`() {
         assertNull(decodeGoogleBusySlot(slot("s1", "2026-08-07", "09:00", "10:00", TimeSlotSource.INTERNAL_MANUAL)))
     }

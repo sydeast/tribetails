@@ -104,8 +104,12 @@ const ALLOWED_EAGER_PACKAGES = [
  * so that a structural change (a barrel that pulls in a whole directory, say)
  * is noticed. Raise it deliberately, and read the header of `src/index.ts`
  * before you do.
+ *
+ * 410 since #1160 (was 400, which main had reached exactly): that change adds
+ * `lib/googleBusySlot.ts`, one pure module whose only import is
+ * `lib/businessHours.ts`, already resident. Not a structural change.
  */
-const MAX_OWN_EAGER_MODULES = 400;
+const MAX_OWN_EAGER_MODULES = 410;
 
 interface Edge {
   spec: string;

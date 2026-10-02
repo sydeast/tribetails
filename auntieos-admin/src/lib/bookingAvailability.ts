@@ -26,11 +26,14 @@ import { closureOccurrencesInRange, type ClosureEntry } from './closureRecurrenc
  *     time means. It used to be the device zone on all of them, which booked a
  *     travelling operator's 9:00 at a different business hour with no warning.
  *
- *  2. `booking_time_slots.date`/`startTime`/`endTime` carry NO zone at all (the
- *     asymmetry `lib/scheduleFormat.ts#groupBlockedSlotsByDate` documents in
- *     full). There is no offset to convert FROM. This module compares them as
- *     wall clock, the same way the Schedule screen displays them, and the
- *     picker's copy calls them "blocked" rather than claiming an instant.
+ *  2. `booking_time_slots.date`/`startTime`/`endTime` carry NO zone field.
+ *     Both writers put the business's wall clock there: Block time types it on
+ *     that clock (#1155), and the Google import converts to it (#1160). This
+ *     module compares them as wall clock, the same way the Schedule screen
+ *     displays them, and the picker's copy calls them "blocked" rather than
+ *     claiming an instant. A Google row imported before #1160 is UTC and reads
+ *     hours off here until the next sync or the backfill rewrites it (see
+ *     `lib/scheduleFormat.ts#groupBlockedSlotsByDate`).
  *
  * `business_settings.businessHours` values are wall clock with no zone either,
  * and they are the business's own hours, so they compare directly with the

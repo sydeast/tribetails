@@ -24,9 +24,9 @@ export const BlockTimeArgs = z
      *
      * WHY IT EXISTS AND WHY IT IS OPTIONAL. The three fields above are plain
      * wall clock with no zone anywhere on this document — that is the stored
-     * shape, shared with the Google importer, and this task does not get to
-     * change it (`lib/scheduleFormat.ts` and `lib/bookingBusyConflict.ts` both
-     * carry the full write-up of that asymmetry). But `kin_care_sessions` holds
+     * shape, shared with the Google importer (which since #1160 also stores
+     * the instants, `lib/googleBusySlot.ts`; `lib/scheduleFormat.ts` and
+     * `lib/bookingBusyConflict.ts` carry the write-up). But `kin_care_sessions` holds
      * real instants, so comparing a zoneless wall clock against them on the
      * SERVER would misread the block by whatever the operator's UTC offset
      * happens to be — precisely the mistake `bookingBusyConflict.ts`
@@ -85,7 +85,7 @@ export interface CreateBlockedTimeSlotResult {
  *     the fix is here, not a sixth enum value.
  *  2. `createdAt: FieldValue.serverTimestamp()`. `createdAt` is a STRING on both
  *     client models, and the sibling importer writes it as an ISO string
- *     (`busyIntervalToSlot`'s `nowIso`). `updatedAt` is on neither model, so it
+ *     (`busyIntervalToSlots`' `nowIso`). `updatedAt` is on neither model, so it
  *     is ignored on decode today - it gets the same shape anyway because it is
  *     written in the same statement and every other model in this repo declares
  *     `updatedAt: String`.
@@ -171,7 +171,7 @@ export async function createBlockedTimeSlotHandler(
     syncState: 'LOCAL_ONLY',
     createdBy: uid,
     // ISO strings, not FieldValue.serverTimestamp(). Same reason. The sibling
-    // importer already writes `createdAt` this way (busyIntervalToSlot's nowIso),
+    // importer already writes `createdAt` this way (busyIntervalToSlots' nowIso),
     // so the collection now has ONE time format rather than two.
     createdAt: nowIso,
     updatedAt: nowIso,
