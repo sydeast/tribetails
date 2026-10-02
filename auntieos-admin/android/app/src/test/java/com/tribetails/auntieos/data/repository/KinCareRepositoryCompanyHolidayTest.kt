@@ -49,6 +49,7 @@ class KinCareRepositoryCompanyHolidayTest {
         every { firestore.document("business_settings/business_settings") } returns docRef
         every { docRef.get() } returns Tasks.forResult(snapshot)
         every { snapshot.get("companyHolidays") } returns entries
+        every { snapshot.get("timeZone") } returns null
     }
 
     private fun mockSessionWrite(firestore: FirebaseFirestore): DocumentReference {

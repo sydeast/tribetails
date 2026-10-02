@@ -43,12 +43,13 @@ class BookingRepositoryCompanyHolidayTest {
         every { snapshot.toObjects(BookingTimeSlot::class.java) } returns emptyList()
     }
 
-    private fun mockCompanyHolidays(firestore: FirebaseFirestore, entries: List<String>?) {
+    private fun mockCompanyHolidays(firestore: FirebaseFirestore, entries: List<String>?, timeZone: String? = null) {
         val docRef = mockk<DocumentReference>()
         val snapshot = mockk<DocumentSnapshot>()
         every { firestore.document("business_settings/business_settings") } returns docRef
         every { docRef.get() } returns Tasks.forResult(snapshot)
         every { snapshot.get("companyHolidays") } returns entries
+        every { snapshot.get("timeZone") } returns timeZone
     }
 
     private fun mockBookingWrite(firestore: FirebaseFirestore): DocumentReference {
@@ -78,6 +79,28 @@ class BookingRepositoryCompanyHolidayTest {
         verify(exactly = 0) { firestore.collection("enhanced_bookings") }
     }
 
+    @Test
+    fun `an evening visit in the business zone is checked against its business date (#1119)`() = runBlocking {
+        // 21:00 EDT on Jul 4 is 01:00Z on Jul 5. Jul 4 is closed; Jul 5 is not.
+        val firestore = mockk<FirebaseFirestore>()
+        mockNoBusySlots(firestore)
+        mockCompanyHolidays(firestore, listOf("2026-07-04|Independence Day"), timeZone = "America/New_York")
+        val repo = BookingRepository(firestore = firestore, functions = mockk<FirebaseFunctions>(relaxed = true))
+        val result = repo.createBooking(booking("2026-07-05T01:00:00Z", "2026-07-05T02:00:00Z"))
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()!!.message!!.contains("2026-07-04"))
+        verify(exactly = 0) { firestore.collection("enhanced_bookings") }
+    }
+    @Test
+    fun `a bare wall-clock evening start is the business date whatever this phone's zone is (#1119)`() = runBlocking {
+        val firestore = mockk<FirebaseFirestore>()
+        mockNoBusySlots(firestore)
+        mockCompanyHolidays(firestore, listOf("2026-07-04|Independence Day"), timeZone = "America/New_York")
+        val repo = BookingRepository(firestore = firestore, functions = mockk<FirebaseFunctions>(relaxed = true))
+        val result = repo.createBooking(booking("2026-07-04T21:00:00", "2026-07-04T22:00:00"))
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()!!.message!!.contains("Independence Day"))
+    }
     @Test
     fun `overrideBusyConflict true does NOT bypass the holiday guard`() = runBlocking {
         val firestore = mockk<FirebaseFirestore>()
