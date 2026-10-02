@@ -414,7 +414,7 @@ describe('requestBookingHandler — KinCares that book at a start time (#1092)',
     mocks.dbFn.mockReturnValue(ctx.db);
     const { requestBookingHandler } = await import('../src/portal/requestBooking');
     const res: any = await requestBookingHandler(multi([overnight()]));
-    const [written] = visitsOf(ctx, res.batchId).map((w) => w.data);
+    const [written]: any[] = visitsOf(ctx, res.batchId).map((w) => w.data);
     expect(written.endTime.toMillis()).toBe(atUtc(21) + 12 * HOUR);
   });
 
@@ -423,7 +423,7 @@ describe('requestBookingHandler — KinCares that book at a start time (#1092)',
     mocks.dbFn.mockReturnValue(ctx.db);
     const { requestBookingHandler } = await import('../src/portal/requestBooking');
     const res: any = await requestBookingHandler(multi([overnight({ startTimeMs: atUtc(7) })]));
-    const [written] = visitsOf(ctx, res.batchId).map((w) => w.data);
+    const [written]: any[] = visitsOf(ctx, res.batchId).map((w) => w.data);
     expect(written.endTime.toMillis()).toBe(atUtc(19));
   });
 
@@ -438,7 +438,7 @@ describe('requestBookingHandler — KinCares that book at a start time (#1092)',
     const res: any = await requestBookingHandler(
       multi([overnight({ serviceId: 'Overnight 12Hrs', serviceName: 'Overnight 12 Hrs' })]),
     );
-    const [written] = visitsOf(ctx, res.batchId).map((w) => w.data);
+    const [written]: any[] = visitsOf(ctx, res.batchId).map((w) => w.data);
     expect(written.endTime.toMillis()).toBe(atUtc(21) + 12 * HOUR);
   });
 
