@@ -36,6 +36,7 @@ import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.emergencyContactsOf
+import com.tribetails.auntieos.data.model.businessZone
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BookingNotesRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
@@ -43,15 +44,14 @@ import com.tribetails.auntieos.ui.admin.scheduling.assignUnavailableReason
 import com.tribetails.auntieos.ui.admin.scheduling.canAssignAuntie
 import com.tribetails.auntieos.ui.admin.scheduling.isNoteEditLocked
 import com.tribetails.auntieos.ui.admin.scheduling.noteCutoffWarning
+import com.tribetails.auntieos.ui.admin.scheduling.visitStartMs
 import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
-import java.time.LocalDateTime
 import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 /**
  * Operational detail for one Kin Care. Auntie taps into this from the Auntie
@@ -132,6 +132,13 @@ fun KinCareDetailScreen(
     // useDocById mirror in the doc comment above.
     var loadError  by remember(kinCareId) { mutableStateOf<String?>(null) }
     var retryNonce by remember(kinCareId) { mutableStateOf(0) }
+    // #1158: `business_settings.timeZone`, the clock the note lock reads a
+    // zone-less start on. Null until read, and on a failed read: [businessZone]
+    // then resolves to America/Chicago, the server's own default, never the phone's.
+    var businessTimeZone by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        repo.getBusinessSettings().onSuccess { businessTimeZone = it.timeZone }
+    }
 
     LaunchedEffect(kinCareId, retryNonce) {
         loading = true
@@ -369,6 +376,7 @@ fun KinCareDetailScreen(
                 BookingNotesSection(
                     session = s,
                     notesRepo = notesRepo,
+                    zone = businessZone(businessTimeZone),
                 )
             }
 
@@ -1024,6 +1032,7 @@ private fun isKinCarePermissionDenied(err: Throwable): Boolean =
 private fun BookingNotesSection(
     session: KinCareSession,
     notesRepo: BookingNotesRepository,
+    zone: ZoneId,
 ) {
     val scope = rememberCoroutineScope()
     val bookingId = session.sourceBookingId.ifBlank { session.id }
@@ -1041,14 +1050,9 @@ private fun BookingNotesSection(
     // Through the shared helper, not a re-implementation: this screen used to
     // carry its own private NOTE_CUTOFF_MS and its own inline comparison, which
     // could drift from the copy the Schedule dialog uses.
-    val locked = remember(session.startTime) {
-        val startMs = runCatching {
-            LocalDateTime.parse(session.startTime, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-                .atZone(ZoneId.systemDefault())
-                .toInstant()
-                .toEpochMilli()
-        }.getOrNull()
-        isNoteEditLocked(System.currentTimeMillis(), startMs)
+    // #1158: a zone-less start is the business's wall clock; an instant is read as written.
+    val locked = remember(session.startTime, zone) {
+        isNoteEditLocked(System.currentTimeMillis(), visitStartMs(session.startTime, zone))
     }
 
     var kinfolkInput by remember(bookingId) { mutableStateOf("") }

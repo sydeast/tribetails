@@ -4,6 +4,7 @@ import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.ui.communicate.AudienceSegment
 import com.tribetails.auntieos.ui.communicate.BroadcastCriteria
 import com.tribetails.auntieos.ui.communicate.SegmentKind
+import com.tribetails.auntieos.data.model.BusinessSettings
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -41,6 +42,7 @@ class MarketingBlastsViewModelTest {
         repo = mockk()
         coEvery { repo.listAudienceSegments() } returns Result.success(emptyList())
         coEvery { repo.listMarketingBlasts() } returns Result.success(emptyList())
+        coEvery { repo.getBusinessSettings() } returns Result.success(BusinessSettings(timeZone = "America/Chicago"))
     }
 
     @After

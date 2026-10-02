@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, beforeAll, afterAll, it, expect } from 'vitest';
 import {
   blastBlocker,
   cancelNotice,
   fireAtMsFrom,
+  fireLabelInZone,
   mergeFieldsToData,
   parseUidList,
   scheduleNotice,
@@ -24,23 +25,35 @@ describe('parseUidList', () => {
 });
 
 describe('fireAtMsFrom', () => {
-  it('reads the pair as LOCAL wall-clock time, not UTC', () => {
-    const ms = fireAtMsFrom('2026-06-03', '09:00');
-    expect(ms).not.toBeNull();
-    const d = new Date(ms as number);
-    // If this were parsed as UTC, the local hour would be offset by the zone.
-    expect(d.getHours()).toBe(9);
-    expect(d.getMinutes()).toBe(0);
-    expect(d.getDate()).toBe(3);
+  // #1158: the device is America/Los_Angeles, the business America/Chicago.
+  let originalTz: string | undefined;
+  beforeAll(() => {
+    originalTz = process.env.TZ;
+    process.env.TZ = 'America/Los_Angeles';
+  });
+  afterAll(() => {
+    if (originalTz === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTz;
+  });
+
+  it('reads the pair on the BUSINESS clock: a 9:00 send fires at 9:00 Chicago', () => {
+    // 9:00 Chicago (CDT) is 14:00Z. Read on the LA device it would be 16:00Z,
+    // and read as UTC it would be 09:00Z.
+    expect(fireAtMsFrom('2026-06-03', '09:00', 'America/Chicago')).toBe(Date.UTC(2026, 5, 3, 14, 0));
+  });
+
+  it('labels a send instant on the business clock', () => {
+    expect(fireLabelInZone(Date.UTC(2026, 5, 3, 14, 0), 'America/Chicago')).toBe('2026-06-03 09:00');
+    expect(fireLabelInZone(0, 'America/Chicago')).toBe('no send time');
   });
 
   it('is null when either half is missing, rather than defaulting to today', () => {
-    expect(fireAtMsFrom('', '09:00')).toBeNull();
-    expect(fireAtMsFrom('2026-06-03', '')).toBeNull();
+    expect(fireAtMsFrom('', '09:00', 'America/Chicago')).toBeNull();
+    expect(fireAtMsFrom('2026-06-03', '', 'America/Chicago')).toBeNull();
   });
 
   it('is null for an unparseable pair', () => {
-    expect(fireAtMsFrom('not-a-date', '09:00')).toBeNull();
+    expect(fireAtMsFrom('not-a-date', '09:00', 'America/Chicago')).toBeNull();
   });
 });
 

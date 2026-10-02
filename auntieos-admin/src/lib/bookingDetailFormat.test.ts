@@ -37,22 +37,29 @@ describe('notesLocked', () => {
   const startMs = Date.parse(start);
 
   it('is open more than three hours before the start', () => {
-    expect(notesLocked(start, startMs - NOTE_CUTOFF_MS - 1)).toBe(false);
+    expect(notesLocked(start, startMs - NOTE_CUTOFF_MS - 1, BIZ)).toBe(false);
   });
 
   it('locks exactly at the three hour mark', () => {
-    expect(notesLocked(start, startMs - NOTE_CUTOFF_MS)).toBe(true);
+    expect(notesLocked(start, startMs - NOTE_CUTOFF_MS, BIZ)).toBe(true);
   });
 
   it('stays locked after the visit has started', () => {
-    expect(notesLocked(start, startMs + 60_000)).toBe(true);
+    expect(notesLocked(start, startMs + 60_000, BIZ)).toBe(true);
   });
 
   it('leaves notes open when the start time is missing or unparseable', () => {
     // Degrade honestly: a session with no start has no cutoff to be inside of,
     // and the server is the real gate either way.
-    expect(notesLocked('', 1)).toBe(false);
-    expect(notesLocked('whenever', 1)).toBe(false);
+    expect(notesLocked('', 1, BIZ)).toBe(false);
+    expect(notesLocked('whenever', 1, BIZ)).toBe(false);
+  });
+
+  it('reads a zone-less start on the business clock, not the device (#1158)', () => {
+    // 14:00 in Chicago is 19:00Z. Read on the LA device it would be 21:00Z, two
+    // hours later, and the composer would stay open two hours too long.
+    expect(notesLocked('2026-07-16T14:00:00', startMs - NOTE_CUTOFF_MS, BIZ)).toBe(true);
+    expect(notesLocked('2026-07-16T14:00:00', startMs - NOTE_CUTOFF_MS - 1, BIZ)).toBe(false);
   });
 });
 
@@ -84,6 +91,11 @@ describe('businessDateInput / businessTimeInput', () => {
     expect(businessTimeInput('', BIZ)).toBe('');
     expect(businessDateInput('soon', BIZ)).toBe('');
     expect(businessTimeInput('soon', BIZ)).toBe('');
+  });
+
+  it('prefills a zone-less start as the business wall clock it already is (#1158)', () => {
+    expect(businessDateInput('2026-07-16T23:30:00', BIZ)).toBe('2026-07-16');
+    expect(businessTimeInput('2026-07-16T23:30:00', BIZ)).toBe('23:30');
   });
 });
 

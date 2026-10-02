@@ -59,6 +59,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.YearMonth
+import java.time.ZoneId
 import java.time.format.TextStyle
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -172,6 +173,22 @@ fun ScheduleViewScreen(
     viewModel: EnhancedSchedulingViewModel
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    // #1158: everything below reads the BUSINESS's clock: today, now, the note lock.
+    val zone = remember(state.businessSettings.timeZone) { businessZone(state.businessSettings.timeZone) }
+    CompositionLocalProvider(LocalBusinessZone provides zone) {
+        ScheduleViewScreenContent(onBack, onNavigateToCommunicate, onOpenSchedulingOptions, viewModel)
+    }
+}
+
+@Composable
+private fun ScheduleViewScreenContent(
+    onBack: () -> Unit,
+    onNavigateToCommunicate: () -> Unit,
+    onOpenSchedulingOptions: () -> Unit,
+    viewModel: EnhancedSchedulingViewModel
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val bizZone = LocalBusinessZone.current
 
     // Time-block descriptor for booking cards (spec 15 item 5). Resolver +
     // Business-Settings timeBlocks now exist (Stage 1 §A.8). Always on, same as
@@ -223,8 +240,8 @@ fun ScheduleViewScreen(
         selectedDayBlocked.mapNotNull { slot -> busyPlacement(slot.startTime, slot.endTime)?.let { slot to it } }
     }
 
-    val agendaLabel = remember(state.selectedDate) {
-        if (state.selectedDate == LocalDate.now()) "Today's agenda"
+    val agendaLabel = remember(state.selectedDate, bizZone) {
+        if (state.selectedDate == businessToday(bizZone)) "Today's agenda"
         else state.selectedDate.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.US) + ", " +
             state.selectedDate.format(DateTimeFormatter.ofPattern("MMM d", Locale.US))
     }
@@ -378,7 +395,7 @@ fun ScheduleViewScreen(
                         val delta = if (state.viewMode == CalendarViewMode.MONTH) state.selectedDate.plusMonths(1) else state.selectedDate.plusWeeks(1)
                         viewModel.selectDate(delta)
                     },
-                    onToday = { viewModel.selectDate(LocalDate.now()) },
+                    onToday = { viewModel.selectDate(businessToday(bizZone)) },
                 )
             }
 
@@ -1471,8 +1488,8 @@ private fun AdminBookingAgendaRow(
                     modifier = Modifier.weight(1f),
                 )
                 AuntieStatusPill(
-                    label = bookingStatusBadge(booking),
-                    tone = bookingStatusTone(booking),
+                    label = bookingStatusBadge(booking, LocalBusinessZone.current),
+                    tone = bookingStatusTone(booking, LocalBusinessZone.current),
                     showDot = true,
                 )
             }
@@ -1579,7 +1596,7 @@ private fun BookingSectionCard(
     onToggleSelect: (() -> Unit)? = null,
 ) {
     val c = AuntieTheme.colors
-    val tone = bookingStatusTone(booking)
+    val tone = bookingStatusTone(booking, LocalBusinessZone.current)
     val hasName = booking.kinfolkName.isNotBlank()
     // In select mode the whole card toggles selection instead of opening the detail.
     val cardClick = if (selecting && onToggleSelect != null) onToggleSelect else onClick
@@ -1626,7 +1643,7 @@ private fun BookingSectionCard(
                         color = c.textDim,
                     )
                     Spacer(Modifier.height(7.dp))
-                    AuntieStatusPill(label = bookingStatusBadge(booking), tone = tone, mono = true)
+                    AuntieStatusPill(label = bookingStatusBadge(booking, LocalBusinessZone.current), tone = tone, mono = true)
                     val notePreview = booking.specialInstructions.ifBlank { booking.notes }
                     if (notePreview.isNotBlank()) {
                         Spacer(Modifier.height(7.dp))
@@ -1736,9 +1753,9 @@ private fun bookingServiceTint(booking: EnhancedBooking): Color {
 }
 
 /** Den status tone for a booking, keyed to its lifecycle (active-now is its own tone). */
-private fun bookingStatusTone(booking: EnhancedBooking): AuntieStatusTone = when (booking.status) {
+private fun bookingStatusTone(booking: EnhancedBooking, zone: ZoneId): AuntieStatusTone = when (booking.status) {
     BookingStatus.COMPLETED -> AuntieStatusTone.Purple
-    BookingStatus.ACCEPTED  -> if (isBookingActiveNow(booking)) AuntieStatusTone.Success else AuntieStatusTone.Teal
+    BookingStatus.ACCEPTED  -> if (isBookingActiveNow(booking, zone)) AuntieStatusTone.Success else AuntieStatusTone.Teal
     BookingStatus.DRAFT     -> AuntieStatusTone.Orange
     BookingStatus.REJECTED  -> AuntieStatusTone.Muted
 }
@@ -1748,9 +1765,9 @@ private fun bookingStatusTone(booking: EnhancedBooking): AuntieStatusTone = when
  * reads SCHEDULED (#755): the mock's pill says Scheduled, `bookingStateInfo`
  * on web says SCHEDULED, and "CONFIRMED" was a third word for one state.
  */
-private fun bookingStatusBadge(booking: EnhancedBooking): String = when (booking.status) {
+private fun bookingStatusBadge(booking: EnhancedBooking, zone: ZoneId): String = when (booking.status) {
     BookingStatus.COMPLETED -> "COMPLETED"
-    BookingStatus.ACCEPTED  -> if (isBookingActiveNow(booking)) "ACTIVE" else "SCHEDULED"
+    BookingStatus.ACCEPTED  -> if (isBookingActiveNow(booking, zone)) "ACTIVE" else "SCHEDULED"
     BookingStatus.DRAFT     -> "PENDING"
     BookingStatus.REJECTED  -> "CANCELLED"
 }
@@ -1819,9 +1836,10 @@ private fun AndroidWeekStrip(
         modifier              = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        val today = businessToday(LocalBusinessZone.current)
         days.forEach { day ->
             val selected = day == selectedDate
-            val isToday  = day == LocalDate.now()
+            val isToday  = day == today
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -1886,8 +1904,8 @@ private fun ScreenshotBookingCard(
     booking: EnhancedBooking,
     onClick: () -> Unit,
 ) {
-    val accent = screenshotStatusAccent(booking)
-    val status = screenshotStatusLabel(booking)
+    val accent = screenshotStatusAccent(booking, LocalBusinessZone.current)
+    val status = screenshotStatusLabel(booking, LocalBusinessZone.current)
 
     AuntieCard(
         modifier       = Modifier.fillMaxWidth().clickable(onClick = onClick),
@@ -1932,26 +1950,28 @@ private fun androidWeekStripDays(selected: LocalDate): List<LocalDate> {
 }
 
 @Composable
-private fun screenshotStatusAccent(booking: EnhancedBooking): Color = when (booking.status) {
+private fun screenshotStatusAccent(booking: EnhancedBooking, zone: ZoneId): Color = when (booking.status) {
     BookingStatus.COMPLETED -> AuntieTheme.colors.secondary
-    BookingStatus.ACCEPTED  -> if (isBookingActiveNow(booking)) AuntieTheme.colors.secondary else AuntieTheme.colors.accent
+    BookingStatus.ACCEPTED  -> if (isBookingActiveNow(booking, zone)) AuntieTheme.colors.secondary else AuntieTheme.colors.accent
     BookingStatus.DRAFT     -> AuntieTheme.colors.warning
     BookingStatus.REJECTED  -> AuntieTheme.colors.textFaint
 }
 
-private fun screenshotStatusLabel(booking: EnhancedBooking): String = when (booking.status) {
+private fun screenshotStatusLabel(booking: EnhancedBooking, zone: ZoneId): String = when (booking.status) {
     BookingStatus.COMPLETED -> "COMPLETED"
-    BookingStatus.ACCEPTED  -> if (isBookingActiveNow(booking)) "ACTIVE" else "CONFIRMED"
+    BookingStatus.ACCEPTED  -> if (isBookingActiveNow(booking, zone)) "ACTIVE" else "CONFIRMED"
     BookingStatus.DRAFT     -> "PENDING"
     BookingStatus.REJECTED  -> "CANCELLED"
 }
 
-private fun isBookingActiveNow(booking: EnhancedBooking): Boolean {
+/** #1158: "now" is the business's wall clock, the same clock the zone-less window is on. */
+private fun isBookingActiveNow(booking: EnhancedBooking, zone: ZoneId): Boolean {
     if (booking.status != BookingStatus.ACCEPTED) return false
-    val now   = LocalDateTime.now()
-    val start = parseIsoDateTimeOrNull(booking.startDateTime) ?: return false
-    val end   = parseIsoDateTimeOrNull(booking.endDateTime)   ?: return false
-    return !now.isBefore(start) && now.isBefore(end)
+    return isActiveAt(
+        parseIsoDateTimeOrNull(booking.startDateTime),
+        parseIsoDateTimeOrNull(booking.endDateTime),
+        businessNow(zone),
+    )
 }
 
 private fun bookingSubtitle(booking: EnhancedBooking): String {
@@ -2141,7 +2161,7 @@ fun EnhancedDayCell(
     onTimeSlotClick: (BookingTimeSlot) -> Unit
 ) {
     val c = AuntieTheme.colors
-    val isToday        = date == LocalDate.now()
+    val isToday        = date == businessToday(LocalBusinessZone.current)
     val blockedSlots   = timeSlots.filter { !it.isAvailable }
     val hasBlockedSlots = blockedSlots.isNotEmpty()
 
@@ -2605,12 +2625,8 @@ fun BookingDetailsDialog(
         mutableStateOf(if (booking.startDateTime.length >= 16 && booking.startDateTime[10] == 'T') booking.startDateTime.substring(11, 16) else "")
     }
 
-    val startMs = runCatching {
-        java.time.LocalDateTime.parse(booking.startDateTime)
-            .atZone(java.time.ZoneId.systemDefault())
-            .toInstant()
-            .toEpochMilli()
-    }.getOrNull()
+    // #1158: the zone-less start is the business's wall clock, not the phone's.
+    val startMs = visitStartMs(booking.startDateTime, LocalBusinessZone.current)
     val locked = com.tribetails.auntieos.ui.admin.scheduling.isNoteEditLocked(
         nowMs   = System.currentTimeMillis(),
         startMs = startMs,
@@ -2897,7 +2913,7 @@ private fun VisitRequestRowCard(
         if (row.kinNames.isNotBlank()) {
             Text(text = row.kinNames, style = AuntieTheme.typography.bodySmall, color = c.textDim)
         }
-        Text(text = visitRequestWhen(row), style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
+        Text(text = visitRequestWhen(row, LocalBusinessZone.current), style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
         row.reason?.takeIf { it.isNotBlank() }?.let {
             Text(text = it, style = AuntieTheme.typography.bodySmall, color = c.textDim)
         }
@@ -2945,19 +2961,20 @@ private fun VisitRequestRowCard(
  * about the difference between them; a cancellation shows the visit that would
  * come off the books.
  */
-private fun visitRequestWhen(row: VisitRequestRow): String = when (row) {
-    is VisitRequestRow.Cancel -> visitRequestTime(row.dto.startTimeMs)
+private fun visitRequestWhen(row: VisitRequestRow, zone: ZoneId): String = when (row) {
+    is VisitRequestRow.Cancel -> visitRequestTime(row.dto.startTimeMs, zone)
     is VisitRequestRow.Reschedule ->
-        "${visitRequestTime(row.dto.currentStartTimeMs)} → ${visitRequestTime(row.dto.proposedStartTimeMs)}"
+        "${visitRequestTime(row.dto.currentStartTimeMs, zone)} → ${visitRequestTime(row.dto.proposedStartTimeMs, zone)}"
 }
 
 /** The minutes an Overnight's start can be set to, the New booking wizard's steps. */
 private val NIGHT_MINUTE_STEPS = listOf(0, 15, 30, 45)
 
 /** "Not set" rather than an epoch, when the record carries no time. */
-private fun visitRequestTime(ms: Long?): String {
+private fun visitRequestTime(ms: Long?, zone: ZoneId): String {
     if (ms == null) return "Not set"
-    val local = java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneId.systemDefault())
+    // #1158: on the business's clock, the same one the schedule reads.
+    val local = java.time.Instant.ofEpochMilli(ms).atZone(zone)
     return local.format(java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d 'at' h:mm a"))
 }
 

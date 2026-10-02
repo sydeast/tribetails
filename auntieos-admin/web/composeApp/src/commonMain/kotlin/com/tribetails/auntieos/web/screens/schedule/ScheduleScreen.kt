@@ -83,7 +83,6 @@ import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlinx.coroutines.launch
-import kotlinx.datetime.todayIn
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.datetime.plus
 import kotlinx.datetime.isoDayNumber
@@ -140,13 +139,23 @@ fun ScheduleScreen() {
     // minute precision (snap = 1). Default OFF preserves the prior minute-precision drop.
     val dragSnapMinutes = if (scheduleSettings?.snapRescheduleTo15Min == true) 15 else 1
 
-    val localZone = remember { TimeZone.currentSystemDefault() }
-    val today = remember { Clock.System.todayIn(localZone) }
-    val nowMinutes = remember {
-        val t = Clock.System.now().toLocalDateTime(localZone)
-        t.hour * 60 + t.minute
+    // #1158: the whole screen is on the BUSINESS's clock (`business_settings.timeZone`):
+    // grid rows, day columns, today, the now line, the agenda times and the detail
+    // sheet. Keyed on the stored zone, so it moves when the settings read lands
+    // rather than freezing on the default it started with.
+    val clock = remember(scheduleSettings?.timeZone) {
+        scheduleClockOf(scheduleSettings?.timeZone, Clock.System.now())
     }
+    val localZone = clock.zone
+    val today = clock.today
+    val nowMinutes = clock.nowMinutes
     var selected by remember { mutableStateOf<LocalDate?>(today) }
+    // A selection still on the old "today" follows it when the zone lands; a day the operator picked stays.
+    var shownToday by remember { mutableStateOf(today) }
+    if (shownToday != today) {
+        if (selected == shownToday) selected = today
+        shownToday = today
+    }
     var viewMode by remember { mutableStateOf(ScheduleView.Week) }
     var selectedSession by remember { mutableStateOf<KinCareSession?>(null) }
     var showBlockTime by remember { mutableStateOf(false) }
@@ -222,9 +231,9 @@ fun ScheduleScreen() {
                 val effectiveSessions = s.value.map { sess ->
                     optimistic[sess._id]?.let { (st, en) -> sess.copy(startTime = st, endTime = en) } ?: sess
                 }
-                // Group by the LOCAL calendar day of each session's start. Using the
-                // local day (not the raw ISO prefix) keeps a UTC-stored start such as
-                // "...19:00:00Z" on the correct local-day column.
+                // Group by the BUSINESS calendar day of each session's start (#1158).
+                // Converting (not slicing the raw ISO prefix) keeps a UTC-stored start
+                // such as "...19:00:00Z" on the business day it falls on.
                 val sessionsByDate = effectiveSessions.groupBy { localDateKey(it.startTime, localZone) }
                 val selectedKey = selected?.toString().orEmpty()
                 val selectedItems = sessionsByDate[selectedKey].orEmpty().sortedBy { it.startTime }
@@ -368,6 +377,7 @@ fun ScheduleScreen() {
             session = sess,
             onDismiss = { selectedSession = null },
             client = client,
+            zone = localZone,
         )
     }
 
@@ -1201,7 +1211,7 @@ private fun scheduleSubtitle(session: KinCareSession): String {
  * timezone-less local string still groups by its literal date).
  */
 @OptIn(ExperimentalTime::class)
-private fun localDateKey(iso: String, zone: TimeZone): String {
+internal fun localDateKey(iso: String, zone: TimeZone): String {
     val ldt = parseToLocal(iso, zone)
     if (ldt != null) return ldt.date.toString()
     return if (iso.length >= 10) iso.substring(0, 10) else iso
@@ -1209,7 +1219,7 @@ private fun localDateKey(iso: String, zone: TimeZone): String {
 
 /** Local minutes-from-midnight for an ISO instant, or null if unparseable. */
 @OptIn(ExperimentalTime::class)
-private fun localMinutesOfDay(iso: String, zone: TimeZone): Int? {
+internal fun localMinutesOfDay(iso: String, zone: TimeZone): Int? {
     val ldt = parseToLocal(iso, zone) ?: return positionalMinutes(iso)
     return ldt.hour * 60 + ldt.minute
 }

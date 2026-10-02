@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  businessInstantMs,
   businessTodayIso,
   businessWallClock,
   businessWallClockToMs,
@@ -76,6 +77,31 @@ describe('sessionsByBusinessDay (#1150)', () => {
     expect([...byDay.keys()].sort()).toEqual(['2026-08-03', '2026-08-04']);
     expect(byDay.get('2026-08-03')!.map((r) => r.id)).toEqual(['a']);
     expect(byDay.get('2026-08-04')!.map((r) => r.id)).toEqual(['b']);
+  });
+});
+
+describe('businessInstantMs (#1158)', () => {
+  const zone = 'America/Chicago';
+
+  it('reads a value with a zone as that instant', () => {
+    expect(businessInstantMs('2026-10-05T19:00:00.000Z', zone)).toBe(Date.UTC(2026, 9, 5, 19, 0));
+    expect(businessInstantMs('2026-10-05T14:00:00-05:00', zone)).toBe(Date.UTC(2026, 9, 5, 19, 0));
+  });
+
+  it('reads a zone-less value as the business wall clock, keeping seconds', () => {
+    expect(businessInstantMs('2026-10-05T14:00', zone)).toBe(Date.UTC(2026, 9, 5, 19, 0));
+    expect(businessInstantMs('2026-10-05T14:00:30', zone)).toBe(Date.UTC(2026, 9, 5, 19, 0, 30));
+    expect(businessInstantMs('2026-10-05T14:00:30.250', zone)).toBe(Date.UTC(2026, 9, 5, 19, 0, 30, 250));
+  });
+
+  it('reads a date alone as the business midnight', () => {
+    expect(businessInstantMs('2026-10-05', zone)).toBe(Date.UTC(2026, 9, 5, 5, 0));
+  });
+
+  it('returns null for a blank, unreadable or impossible value', () => {
+    expect(businessInstantMs('', zone)).toBeNull();
+    expect(businessInstantMs('sometime', zone)).toBeNull();
+    expect(businessInstantMs('2026-02-30T09:00', zone)).toBeNull();
   });
 });
 

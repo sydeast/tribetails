@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { SCHEDULE_SESSIONS_QUERY, SCHEDULE_BUSY_SLOTS_QUERY, type ScheduleSessionEntry, type BusySlotEntry } from '../api/schedule';
 import {
@@ -7,21 +7,17 @@ import {
   monthGridDays,
   rangeLabel,
   shiftRange,
-  sessionsByLocalDay,
   sessionCountForDay,
   groupBlockedSlotsByDate,
   busyWindowLabel,
   distinctServiceTypes,
-  localDateIso,
 } from '../lib/scheduleFormat';
 import {
   sessionState,
   type SessionState,
   sessionStateInfo,
   sessionHousehold,
-  sessionWindow,
   sessionDayLabel,
-  sessionDayKey,
 } from '../lib/sessionFormat';
 import { sortServiceTypesByDuration } from '../lib/newBooking';
 import {
@@ -29,12 +25,15 @@ import {
   SNAP_MINUTES_ON,
   rescheduleTimesForDrop,
   isNoOpDrop,
-  localMinutesOfDay,
+  businessDayOf,
+  businessMinutesOfDay,
+  businessWindowLabel,
   minutesFromHHmm,
   hhmmFromMinutes,
 } from '../lib/scheduleGrid';
 import { getBusinessSettings } from '../api/settings';
 import { DEFAULT_BUSINESS_TIME_ZONE, resolveBusinessTimeZone } from '../lib/businessOperations';
+import { businessInstantMs, businessTodayIso, sessionsByBusinessDay } from '../lib/businessZoneTime';
 import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
 import { rescheduleBooking } from '../api/bookingsWrite';
 import {
@@ -195,8 +194,6 @@ export function Schedule({ onSelect }: ScheduleProps) {
   const navigate = useNavigate();
 
   const [view, setView] = useState<ScheduleViewMode>('week');
-  const todayIso = useMemo(() => localDateIso(new Date()), []);
-  const [selected, setSelected] = useState<string>(todayIso);
   // The open detail sheet, held as an ID rather than the row object so the
   // sheet always re-reads from the live stream (a reschedule that lands while
   // it is open re-renders it with the new window instead of a stale copy).
@@ -239,6 +236,21 @@ export function Schedule({ onSelect }: ScheduleProps) {
    * America/Chicago the server falls back to (#1109), never the device's.
    */
   const [businessZone, setBusinessZone] = useState<string>(DEFAULT_BUSINESS_TIME_ZONE);
+  /**
+   * #1158: today, and every day column and row below, is on the BUSINESS's
+   * calendar, the same clock the drop writes on. Re-read when the stored zone
+   * lands; a selection still on the old "today" follows it, a day the operator
+   * picked is left alone.
+   */
+  const todayIso = useMemo(() => businessTodayIso(businessZone), [businessZone]);
+  const [selected, setSelected] = useState<string>(todayIso);
+  const shownToday = useRef(todayIso);
+  useEffect(() => {
+    const previous = shownToday.current;
+    shownToday.current = todayIso;
+    setSelected((cur) => (cur === previous ? todayIso : cur));
+  }, [todayIso]);
+
   useEffect(() => {
     let live = true;
     getBusinessSettings()
@@ -313,7 +325,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
   }
 
   async function commitDrop(drop: ScheduleDrop, override: 'visit' | 'busy' | null) {
-    const times = rescheduleTimesForDrop(drop.session, drop.targetDayIso, drop.dropMinuteOfDay, snapMinutes);
+    const times = rescheduleTimesForDrop(drop.session, drop.targetDayIso, drop.dropMinuteOfDay, snapMinutes, businessZone);
     if (times === null) {
       setDropError('That visit could not be moved: its record has no readable start time.');
       return;
@@ -340,8 +352,8 @@ export function Schedule({ onSelect }: ScheduleProps) {
   function handleDrop(drop: ScheduleDrop) {
     // A drop that lands back where the visit already was writes nothing: no
     // callable, no audit entry, no "rescheduled" event for a move nobody made.
-    const fromDay = sessionDayKey(str(drop.session.startTime));
-    if (isNoOpDrop(drop.session, fromDay, drop.targetDayIso, drop.dropMinuteOfDay, snapMinutes)) return;
+    const fromDay = businessDayOf(str(drop.session.startTime), businessZone) ?? '';
+    if (isNoOpDrop(drop.session, fromDay, drop.targetDayIso, drop.dropMinuteOfDay, snapMinutes, businessZone)) return;
     void commitDrop(drop, null);
   }
 
@@ -357,7 +369,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
   }, [view, selected]);
 
   const inViewCount = asyncScalar(sessionsState, (data) => {
-    const byDay = sessionsByLocalDay(data);
+    const byDay = sessionsByBusinessDay(data, businessZone);
     return daysInView.reduce((sum, day) => sum + sessionCountForDay(byDay, day), 0);
   });
 
@@ -467,7 +479,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
         empty={<EmptyHint>Nothing on the schedule yet.</EmptyHint>}
       >
         {(sessions) => {
-          const byDay = sessionsByLocalDay(sessions);
+          const byDay = sessionsByBusinessDay(sessions, businessZone);
           const busyByDate = busyState.status === 'ready' ? groupBlockedSlotsByDate(busyState.data) : new Map<string, BusySlotEntry[]>();
           // SCOPED to the days on screen (`daysInView`, the same set the "in
           // view" stat card counts from), never the whole bounded 300-session
@@ -477,7 +489,13 @@ export function Schedule({ onSelect }: ScheduleProps) {
           // scheduled yields an empty legend rather than a stale full list.
           const sessionsInView = daysInView.flatMap((day) => byDay.get(day) ?? []);
           const legend = sortServiceTypesByDuration(distinctServiceTypes(sessionsInView), serviceDurations);
-          const selectedSessions = (byDay.get(selected) ?? []).slice().sort((a, b) => str(a.startTime).localeCompare(str(b.startTime)));
+          const selectedSessions = (byDay.get(selected) ?? [])
+            .slice()
+            .sort(
+              (a, b) =>
+                (businessInstantMs(str(a.startTime), businessZone) ?? 0) -
+                (businessInstantMs(str(b.startTime), businessZone) ?? 0),
+            );
           const selectedBusy = busyByDate.get(selected) ?? [];
           // Re-resolved from the stream every render, so the sheet closes on
           // its own if the session leaves the page (deleted, or pushed out of
@@ -518,6 +536,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                       <AgendaRow
                         key={entry._id}
                         entry={entry}
+                        businessZone={businessZone}
                         onSelect={onSelect ?? setOpenSessionId}
                       />
                     ))}
@@ -563,6 +582,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
               {view === 'week' && (
                 <ScheduleWeekGrid
                   days={weekDays(selected)}
+                  businessZone={businessZone}
                   today={todayIso}
                   selected={selected}
                   byDay={byDay}
@@ -580,6 +600,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                 <MonthGrid
                   days={monthGridDays(selected)}
                   anchorMonth={selected.slice(0, 7)}
+                  businessZone={businessZone}
                   today={todayIso}
                   selected={selected}
                   byDay={byDay}
@@ -780,12 +801,13 @@ function byStartMinute(a: MonthCellItem, b: MonthCellItem): number {
 function monthCellContents(
   visits: ScheduleSessionEntry[],
   busy: BusySlotEntry[],
+  businessZone: string,
 ): MonthCellContents {
   const visitItems: MonthCellItem[] = visits
     .map((entry) => ({
       kind: 'visit' as const,
       key: entry._id,
-      minute: localMinutesOfDay(str(entry.startTime)),
+      minute: businessMinutesOfDay(str(entry.startTime), businessZone),
       entry,
     }))
     .sort(byStartMinute);
@@ -807,6 +829,8 @@ function monthCellContents(
 interface MonthGridProps {
   days: string[];
   anchorMonth: string;
+  /** #1158: blocks order by their start on the business's clock. */
+  businessZone: string;
   today: string;
   selected: string;
   byDay: Map<string, ScheduleSessionEntry[]>;
@@ -847,6 +871,7 @@ interface MonthGridProps {
 function MonthGrid({
   days,
   anchorMonth,
+  businessZone,
   today,
   selected,
   byDay,
@@ -857,7 +882,7 @@ function MonthGrid({
   return (
     <div className="schedule__month" role="group" aria-label="Month">
       {days.map((day) => {
-        const { drawn, folded } = monthCellContents(byDay.get(day) ?? [], busyByDate.get(day) ?? []);
+        const { drawn, folded } = monthCellContents(byDay.get(day) ?? [], busyByDate.get(day) ?? [], businessZone);
         const inMonth = day.slice(0, 7) === anchorMonth;
         return (
           <div
@@ -969,12 +994,14 @@ function dayCellClass(day: string, today: string, selected: string): string {
 
 interface AgendaRowProps {
   entry: ScheduleSessionEntry;
+  /** #1158: the window reads on the business's clock, the same hour the grid block shows. */
+  businessZone: string;
   /** Always wired now (the screen falls back to its own sheet opener), kept
    *  optional so the static branch below stays reachable if that ever changes. */
   onSelect?: ((sessionId: string) => void) | undefined;
 }
 
-function AgendaRow({ entry, onSelect }: AgendaRowProps) {
+function AgendaRow({ entry, businessZone, onSelect }: AgendaRowProps) {
   // str() on every field read: `ScheduleSessionEntry` is a cast over the raw
   // `kin_care_sessions` doc, and the absent-field fallbacks these helpers
   // already carry ('unknown', 'Unnamed Kinfolk', 'Time TBD', 'visit') only get
@@ -986,7 +1013,7 @@ function AgendaRow({ entry, onSelect }: AgendaRowProps) {
 
   const body = (
     <>
-      <span className="schedule__row-when">{sessionWindow(str(entry.startTime), str(entry.endTime))}</span>
+      <span className="schedule__row-when">{businessWindowLabel(str(entry.startTime), str(entry.endTime), businessZone)}</span>
       <span className="schedule__row-who">
         <span className="schedule__row-name">{household}</span>
         <ServicePill serviceType={str(entry.serviceType)} />

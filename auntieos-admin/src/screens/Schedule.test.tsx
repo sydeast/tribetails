@@ -68,6 +68,7 @@ vi.mock('../api/scheduleWrite', async () => {
 });
 import { Schedule } from './Schedule';
 import { HOUR_HEIGHT_PX } from '../lib/scheduleGrid';
+import { businessTodayIso, businessWallClockToMs } from '../lib/businessZoneTime';
 
 function sessionEntry(over: Partial<ScheduleSessionEntry>): ScheduleSessionEntry {
   return {
@@ -1343,5 +1344,70 @@ describe('Schedule on the glass ground (#755)', () => {
     expect(mirror).toHaveTextContent('From Google Calendar');
     expect(manual).toHaveTextContent('11:00');
     expect(manual).not.toHaveTextContent('From Google Calendar');
+  });
+});
+
+/**
+ * #1158: the whole schedule surface is on the BUSINESS's clock. The device is
+ * America/Los_Angeles and the business America/Chicago, two hours apart, so a
+ * grid, an agenda or a drop still on the device clock fails every line here.
+ */
+describe('Schedule on the business clock, device in another zone (#1158)', () => {
+  const BIZ = 'America/Chicago';
+  let outerTz: string | undefined;
+  beforeAll(() => {
+    outerTz = process.env.TZ;
+    process.env.TZ = 'America/Los_Angeles';
+  });
+  afterAll(() => {
+    if (outerTz === undefined) delete process.env.TZ;
+    else process.env.TZ = outerTz;
+  });
+
+  /** A Chicago wall clock on the business's today, as the UTC instant a session stores. */
+  const bizToday = (hhmm: string) =>
+    new Date(businessWallClockToMs(businessTodayIso(BIZ), hhmm, BIZ)!).toISOString();
+
+  function gridBlock(): HTMLElement {
+    return within(document.querySelector('.schedule-grid') as HTMLElement).getByRole('button', {
+      name: /The Whitfields/i,
+    });
+  }
+
+  it('draws a 14:00 Chicago visit on the 14:00 row and the agenda reads 14:00, on today', async () => {
+    getBusinessSettings.mockResolvedValue({ serviceDurations: {}, serviceRates: {}, snapRescheduleTo15Min: false, timeZone: BIZ });
+    mockCollections({
+      sessions: { status: 'ready', data: [sessionEntry({ startTime: bizToday('14:00'), endTime: bizToday('15:00') })] },
+      busy: { status: 'ready', data: [busySlot({ date: businessTodayIso(BIZ), startTime: '14:00', endTime: '15:00', source: 'INTERNAL_MANUAL' })] },
+    });
+    render(<Schedule />);
+    await act(async () => {});
+    expect(gridBlock().dataset['startMinute']).toBe(String(14 * 60));
+    expect(gridBlock().style.top).toBe(`${HOUR_HEIGHT_PX * 6}px`);
+    expect(within(agenda()).getByText('14:00 to 15:00')).toBeInTheDocument();
+    // The operator's own block at 14:00 sits on the same row as the visit.
+    const busy = document.querySelector('.schedule-grid__busy') as HTMLElement;
+    expect(busy.style.top).toBe(gridBlock().style.top);
+    // Today is the business's, so the visit's column is the one marked today.
+    const column = document.querySelector('.schedule-grid__day--today') as HTMLElement;
+    expect(column.dataset['day']).toBe(businessTodayIso(BIZ));
+  });
+
+  it('a drop on the 15:00 row sends 15:00 Chicago', async () => {
+    getBusinessSettings.mockResolvedValue({ serviceDurations: {}, serviceRates: {}, snapRescheduleTo15Min: false, timeZone: BIZ });
+    mockCollections({
+      sessions: {
+        status: 'ready',
+        data: [sessionEntry({ _id: 'sess-42', startTime: bizToday('14:00'), endTime: bizToday('15:00') })],
+      },
+    });
+    render(<Schedule />);
+    await act(async () => {});
+    const el = gridBlock();
+    fireEvent(el, new MouseEvent('pointerdown', { bubbles: true, clientX: 40, clientY: 40 }));
+    fireEvent(el, new MouseEvent('pointermove', { bubbles: true, clientX: 40, clientY: 40 + HOUR_HEIGHT_PX }));
+    fireEvent(el, new MouseEvent('pointerup', { bubbles: true, clientX: 40, clientY: 40 + HOUR_HEIGHT_PX }));
+    await waitFor(() => expect(rescheduleBooking).toHaveBeenCalledTimes(1));
+    expect(rescheduleBooking).toHaveBeenCalledWith('sess-42', bizToday('15:00'), bizToday('16:00'), {});
   });
 });

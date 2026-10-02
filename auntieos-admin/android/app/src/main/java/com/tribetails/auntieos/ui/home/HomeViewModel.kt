@@ -11,6 +11,9 @@ import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.VisitStatus
+import com.tribetails.auntieos.data.model.businessZone
+import com.tribetails.auntieos.ui.admin.scheduling.businessDayBoundsIso
+import com.tribetails.auntieos.ui.admin.scheduling.businessToday
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
@@ -29,8 +32,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.time.LocalDate
-import java.time.ZoneId
 import com.tribetails.auntieos.util.runCatchingCancellable
 import com.tribetails.auntieos.util.rethrowIfCancellation
 
@@ -224,7 +225,7 @@ class HomeViewModel(
     fun loadRoute() {
         if (_uiState.value.route?.isSuccess == true) return
         viewModelScope.launch {
-            val result = repo.optimizeRoute(LocalDate.now().toString())
+            val result = repo.optimizeRoute(businessTodayIso(_uiState.value.businessSettings.timeZone))
             _uiState.value = _uiState.value.copy(route = result)
         }
     }
@@ -238,8 +239,13 @@ class HomeViewModel(
                 val kinCount       = async { repo.getKinCount() }
                 val pendingDrafts  = async { repo.getPendingDraftCount() }
                 val recentDrafts   = async { repo.getRecentDrafts() }
-                val todaySessions  = async { kinCareRepo.getKinCareSessionsForDay(todayStartIso(), todayEndIso()) }
                 val settings       = async { repo.getBusinessSettings() }
+                // #1158: today is the BUSINESS's day, so the bounds wait on its zone.
+                // A failed settings read falls back to America/Chicago, the server's default.
+                val todaySessions  = async {
+                    val (start, end) = todayBoundsIso(settings.await().getOrNull()?.timeZone)
+                    kinCareRepo.getKinCareSessionsForDay(start, end)
+                }
                 // Invoices feed the "This week $" revenue tile + Cash Flow widget. A
                 // read failure degrades those tiles (logged), never blanks the dashboard.
                 val invoicesDef    = async { invoiceRepo.getInvoices() }
@@ -286,8 +292,8 @@ class HomeViewModel(
                 }
                 val weekRevenue = com.tribetails.auntieos.domain.weeklyRevenue(
                     invoices = invoices,
-                    weekStartIso = localWeekStartIso(),
-                    nowIso = LocalDate.now().toString(),
+                    weekStartIso = localWeekStartIso(bs.timeZone),
+                    nowIso = businessTodayIso(bs.timeZone),
                 )
                 // Cash Flow: invoices still owed (amountDue > 0 per the model).
                 val outstanding = invoices.filter { it.amountDue > 0.0 }
@@ -300,7 +306,7 @@ class HomeViewModel(
                 }
                 val visitGaps = com.tribetails.auntieos.domain.householdVisitGaps(
                     sessions = allSessions,
-                    todayIso = LocalDate.now().toString(),
+                    todayIso = businessTodayIso(bs.timeZone),
                     limit = 5,
                 )
                 val allKin = allKinDef.await().getOrElse { e ->
@@ -346,7 +352,8 @@ class HomeViewModel(
                             )
                         }
                     }
-                    sessions = kinCareRepo.getKinCareSessionsForDay(todayStartIso(), todayEndIso()).getOrElse { e ->
+                    val (start, end) = todayBoundsIso(bs.timeZone)
+                    sessions = kinCareRepo.getKinCareSessionsForDay(start, end).getOrElse { e ->
                         throw IllegalStateException("Auto-complete succeeded but session reload failed", e)
                     }
                     cards = hydrateCards(sessions)
@@ -640,15 +647,17 @@ class HomeViewModel(
         }
     }
 
-    private fun todayStartIso(): String =
-        LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant().toString()
+    /** #1158: the business day's `[start, end)` as UTC instants, for today's sessions query. */
+    private fun todayBoundsIso(timeZone: String?): Pair<String, String> =
+        businessDayBoundsIso(businessZone(timeZone))
 
-    private fun todayEndIso(): String =
-        LocalDate.now().plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toString()
+    /** Today on the business's calendar, `YYYY-MM-DD`. */
+    private fun businessTodayIso(timeZone: String?): String =
+        businessToday(businessZone(timeZone)).toString()
 
-    /** Monday of the current local week as YYYY-MM-DD (week window lower bound). */
-    private fun localWeekStartIso(): String {
-        val today = LocalDate.now()
+    /** Monday of the business's current week as YYYY-MM-DD (week window lower bound). */
+    private fun localWeekStartIso(timeZone: String?): String {
+        val today = businessToday(businessZone(timeZone))
         val mondayOffset = today.dayOfWeek.value - 1 // Mon=1 -> 0, Sun=7 -> 6
         return today.minusDays(mondayOffset.toLong()).toString()
     }

@@ -1,4 +1,5 @@
 import type { BlastAudience } from '../api/marketingBlasts';
+import { businessWallClock, businessWallClockToMs } from './businessZoneTime';
 
 /**
  * The Marketing blasts form's rules: when a blast can be scheduled, what the
@@ -41,14 +42,20 @@ export function parseUidList(raw: string): string[] {
  * Resolves the date + time pickers to epoch millis, or null when either is
  * blank or the pair is not a real instant.
  *
- * Parsed as LOCAL time (`new Date('2026-06-03T09:00')`, no trailing Z) because
- * the operator picked a wall-clock time in their own day, and a UTC read would
- * silently move a 9am send by however many hours their offset is.
+ * #1158: read on the BUSINESS's clock (`business_settings.timeZone`), the same
+ * clock every other operator-typed time is on. A 9:00 send means 9:00 where the
+ * business is, not wherever the operator's laptop happens to be, and never UTC.
  */
-export function fireAtMsFrom(date: string, time: string): number | null {
+export function fireAtMsFrom(date: string, time: string, businessZone: string): number | null {
   if (date.trim() === '' || time.trim() === '') return null;
-  const ms = new Date(`${date}T${time}`).getTime();
-  return Number.isFinite(ms) ? ms : null;
+  return businessWallClockToMs(date.trim(), time.trim(), businessZone);
+}
+
+/** "2026-06-03 09:00" for a send instant, on the business's clock. */
+export function fireLabelInZone(ms: number, businessZone: string): string {
+  if (!Number.isFinite(ms) || ms <= 0) return 'no send time';
+  const { dateIso, hhmm } = businessWallClock(ms, businessZone);
+  return `${dateIso} ${hhmm}`;
 }
 
 /**

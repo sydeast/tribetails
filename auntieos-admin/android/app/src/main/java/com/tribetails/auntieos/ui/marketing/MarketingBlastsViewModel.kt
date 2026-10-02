@@ -2,6 +2,7 @@ package com.tribetails.auntieos.ui.marketing
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.tribetails.auntieos.data.model.businessZone
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.mintBlastIdempotencyKey
 import com.tribetails.auntieos.ui.communicate.AudienceSegment
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.time.ZoneId
 
 /**
  * Marketing blasts (scheduled campaigns), AuntieOS Android.
@@ -50,6 +52,12 @@ data class MarketingBlastsUiState(
     // When
     val sendDate: String = "",
     val sendTime: String = "",
+    /**
+     * #1158: `business_settings.timeZone`. The send time is typed and read on the
+     * business's clock; blank until read (and on a failed read) resolves to
+     * America/Chicago, the server's default, never the phone's zone.
+     */
+    val businessTimeZone: String = "",
 
     // Preview
     val reach: BlastReach? = null,
@@ -72,7 +80,8 @@ data class MarketingBlastsUiState(
     val listRefreshes: Int = 0,
 ) {
     val explicitUids: List<String> get() = parseUidList(uidsText)
-    val fireAtMs: Long? get() = fireAtMsFrom(sendDate, sendTime)
+    val zone: ZoneId get() = businessZone(businessTimeZone)
+    val fireAtMs: Long? get() = fireAtMsFrom(sendDate, sendTime, zone)
     val audience: BlastAudience? get() = blastAudience(mode, selectedSegmentId, criteria, explicitUids)
 
     /**
@@ -127,6 +136,13 @@ class MarketingBlastsViewModel(private val repo: AuntieRepository) : ViewModel()
     init {
         loadSegments()
         loadBlasts()
+        loadBusinessZone()
+    }
+
+    private fun loadBusinessZone() {
+        viewModelScope.launch {
+            repo.getBusinessSettings().onSuccess { s -> update { it.copy(businessTimeZone = s.timeZone) } }
+        }
     }
 
     // ── audience form ────────────────────────────────────────────────────────
@@ -304,7 +320,7 @@ class MarketingBlastsViewModel(private val repo: AuntieRepository) : ViewModel()
                             scheduling = false,
                             confirmOpen = false,
                             reach = null,
-                            notice = scheduleNotice(result, fireLabel(fireAtMs)),
+                            notice = scheduleNotice(result, fireLabel(fireAtMs, state.zone)),
                         )
                     }
                     loadBlasts()

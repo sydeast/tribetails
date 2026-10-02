@@ -100,11 +100,12 @@ private val DATE_FMT: DateTimeFormatter = DateTimeFormatter.ISO_LOCAL_DATE
  * Resolves the `yyyy-MM-dd` + `HH:mm` pair to epoch millis, or null when either
  * is blank or the pair is not a real instant.
  *
- * Resolved in the DEVICE's zone, because the operator picked a wall-clock time
- * in their own day; reading it as UTC would silently move a 9am send by however
- * many hours their offset is. [zone] is a parameter so the test can pin one.
+ * #1158: resolved in the BUSINESS's zone (`businessZone(business_settings.timeZone)`),
+ * the clock every other operator-typed time is on. A 9:00 send fires at 9:00
+ * where the business is, not wherever the phone happens to be, and never UTC.
+ * No default: every caller names the zone.
  */
-fun fireAtMsFrom(date: String, time: String, zone: ZoneId = ZoneId.systemDefault()): Long? {
+fun fireAtMsFrom(date: String, time: String, zone: ZoneId): Long? {
     if (date.isBlank() || time.isBlank()) return null
     return runCatching {
         val d = LocalDate.parse(date.trim(), DATE_FMT)
@@ -440,8 +441,8 @@ fun blastErrorText(message: String): String = when {
     else -> message
 }
 
-/** Local `yyyy-MM-dd HH:mm` for a fire time, or a blank marker. Pure; zone-injectable for the test. */
-fun fireLabel(ms: Long, zone: ZoneId = ZoneId.systemDefault()): String {
+/** `yyyy-MM-dd HH:mm` for a fire time on the business's clock ([zone], #1158), or a blank marker. Pure. */
+fun fireLabel(ms: Long, zone: ZoneId): String {
     if (ms <= 0L) return "no send time"
     return runCatching {
         java.time.Instant.ofEpochMilli(ms).atZone(zone).toLocalDateTime()
