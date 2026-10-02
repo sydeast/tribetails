@@ -300,9 +300,8 @@ scripts/safe-deploy.sh mytribe -- firebase deploy --only firestore:indexes
 scripts/safe-deploy.sh mytribe -- firebase deploy --only storage
 ```
 
-`hosting:app` is the live admin. Never deploy `legacy-wasm`. `DRY_RUN=1`
-prints the command without running it. Then delete `.release-progress` before
-the next release.
+`hosting:app` is the live admin. `DRY_RUN=1` prints the command without
+running it. Then delete `.release-progress` before the next release.
 
 ---
 

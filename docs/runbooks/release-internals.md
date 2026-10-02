@@ -957,11 +957,9 @@ Storage rules (step 4b closes that gap), so a `storage.rules` change landed on
 
 Doing it this way puts the ordering above back in your head. Prefer the run.
 
-**Hosting target names lie.** `hosting:app` is the live admin. The target called
-`legacy-wasm`, whose site is literally named `auntieos-admin`, belonged to the
-wasm build deleted in #481; nothing builds it, so do not deploy it. The target
-lists are per tree: `auntieos-admin/.firebaserc` (`app`, `sotu`, `legacy-wasm`)
-and `mytribe/.firebaserc` (`kinfolk_portal`, `mytribe_beta`). There is no root
+**Hosting target names lie.** `hosting:app` is the live admin. The target
+lists are per tree: `auntieos-admin/.firebaserc` (`app`, `sotu`) and
+`mytribe/.firebaserc` (`kinfolk_portal`, `mytribe_beta`). There is no root
 `.firebaserc`.
 
 ## Hosted nightly release
