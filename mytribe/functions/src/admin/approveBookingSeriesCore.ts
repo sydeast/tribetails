@@ -267,6 +267,39 @@ async function resolvePendingStartTimes(opts: {
   return resolved;
 }
 
+/**
+ * #1093: a stored visit's end for the approval re-check and the session it
+ * creates. A visit requested before the server worked out ends carries none,
+ * so the guards saw only its first instant and the session got
+ * `serviceDurationMinutes: 0`. Its KinCare's length (`kinCareLengthMinutes`,
+ * the same one `requestBooking` uses) fills it in; with no readable length the
+ * end stays '' as before. `readServiceDurations` is called only when needed.
+ */
+async function storedVisitEndIso(
+  startIso: string,
+  data: Record<string, unknown>,
+  readServiceDurations: () => Promise<unknown>,
+): Promise<string> {
+  const endIso = toIso(data['endTime']);
+  if (endIso) return endIso;
+  const startMs = Date.parse(startIso);
+  const serviceId = typeof data['serviceId'] === 'string' ? (data['serviceId'] as string) : '';
+  if (!serviceId || !Number.isFinite(startMs)) return '';
+  const minutes = kinCareLengthMinutes(serviceId, await readServiceDurations());
+  return minutes == null ? '' : new Date(startMs + minutes * 60_000).toISOString();
+}
+
+/** One `business_settings.serviceDurations` read per approval, made on first use. */
+function serviceDurationsReader(): () => Promise<unknown> {
+  let read: Promise<unknown> | null = null;
+  return () =>
+    (read ??= db()
+      .collection('business_settings')
+      .doc('business_settings')
+      .get()
+      .then((s) => (s.data() as Record<string, unknown> | undefined)?.['serviceDurations']));
+}
+
 export async function approveBookingSeriesCore(opts: {
   kinfolkId: string;
   batchId: string;
@@ -343,6 +376,7 @@ export async function approveBookingSeriesCore(opts: {
   let failedVisits = 0;
   // #1098: cancelled nights left alone; neither approved nor failed.
   let droppedNights = 0;
+  const readServiceDurations = serviceDurationsReader();
 
   for (const doc of childSnap.docs) {
     const id = doc.id;
@@ -373,7 +407,7 @@ export async function approveBookingSeriesCore(opts: {
       const existing = await sessionRef.get();
       if (!existing.exists) {
         const startIso = toIso(data.startTime);
-        const endIso = toIso(data.endTime);
+        const endIso = await storedVisitEndIso(startIso, data, readServiceDurations);
         // A session with no usable startTime is UNBILLABLE and silently so.
         // `toIso` degrades anything it cannot read to '', and every window over
         // this collection is a lexical range on the ISO string, so '' sorts

@@ -22,7 +22,7 @@ import {
   lookupIdempotentEnvelope,
   readEnvelopeVisitIds,
 } from '../lib/bookingIdempotency';
-import { mapServiceRates } from './getServiceCatalog';
+import { kinCareLengthMinutes, mapServiceRates } from './getServiceCatalog';
 import {
   businessCalendarDate,
   businessTimeZone,
@@ -557,10 +557,14 @@ function duplicateVisitMessage(key: string): string {
  * A failed settings read falls back to the resolver's own defaults (specific
  * time allowed, no blocks), which is the pre-time-block behaviour exactly: a
  * Firestore blip must not start refusing every booking in the business.
+ *
+ * #1093: also hands back the raw `serviceDurations` map from the same read,
+ * for {@link kinCareEndTimeMs}. It is not part of the policy and judges nothing.
  */
 export async function loadBookingPolicy(): Promise<{
   policy: BookingPolicy;
   timeZone: string;
+  serviceDurations: unknown;
 }> {
   let raw: unknown = {};
   try {
@@ -597,7 +601,33 @@ export async function loadBookingPolicy(): Promise<{
     });
   }
 
-  return { policy, timeZone };
+  return { policy, timeZone, serviceDurations: (raw as Record<string, unknown>)['serviceDurations'] };
+}
+
+/**
+ * #1093: a timed visit's END, worked out on the server.
+ *
+ * The portal sends every visit with `endTimeMs: null`, and with no end the busy
+ * and holiday guards could only check a visit's first instant: a two-hour visit
+ * at 10:00 sailed past an 11:00 busy block. The KinCare's own length
+ * (`kinCareLengthMinutes`, the number the wizard shows) gives every visit its
+ * real window, and that window is what is guarded AND stored, so approval
+ * re-checks the same one and the session it creates has a real duration.
+ *
+ * The length wins over an end the client sent: a client-chosen end is a way to
+ * shrink the window under a busy block. A KinCare with no length the server can
+ * read keeps the client's end, or none (the guards then check its start, as
+ * before).
+ */
+export function kinCareEndTimeMs(
+  startTimeMs: number,
+  serviceId: string | null | undefined,
+  clientEndTimeMs: number | null | undefined,
+  serviceDurations: unknown,
+): number | null {
+  const minutes = serviceId ? kinCareLengthMinutes(serviceId, serviceDurations) : null;
+  if (minutes != null) return startTimeMs + minutes * 60_000;
+  return clientEndTimeMs ?? null;
 }
 
 /** One multi-visit request entry, as `VisitArgs` parsed it. */
@@ -1036,9 +1066,9 @@ export async function requestBookingHandler(
     //
     // #1098: read first of all now, because it also decides which visits are
     // nights awaiting the operator's start time (see `planVisit`).
-    const { policy, timeZone } = await loadBookingPolicy();
-    const visits = args.visits.map((v) => planVisit(v, policy, timeZone, now));
-    visits.forEach((v) => {
+    const { policy, timeZone, serviceDurations } = await loadBookingPolicy();
+    const planned = args.visits.map((v) => planVisit(v, policy, timeZone, now));
+    planned.forEach((v) => {
       if (v.kind !== 'timed') return;
       if (v.startTimeMs < now - 60_000) {
         throw new HttpsError('invalid-argument', 'Visit startTime must be in the future.');
@@ -1047,6 +1077,14 @@ export async function requestBookingHandler(
         throw new HttpsError('invalid-argument', 'endTime must be after startTime.');
       }
     });
+    // #1093: every timed visit gets its end from its KinCare's length, so the
+    // guards below see the whole visit and the stored visit carries it. A night
+    // awaiting its start (#1098) has neither and keeps neither.
+    const visits = planned.map((v): PlannedVisit =>
+      v.kind === 'timed'
+        ? { ...v, endTimeMs: kinCareEndTimeMs(v.startTimeMs, v.serviceId, v.endTimeMs, serviceDurations) }
+        : v,
+    );
 
     // A night has no WHEN to check against a block yet: it is stored with no
     // block, whatever a client sent, and the operator sets its start.
@@ -1213,17 +1251,25 @@ export async function requestBookingHandler(
   // two-branch handler is not a guard.
   const legacyPolicy = await loadBookingPolicy();
   assertVisitBookingMode({ startTimeMs: args.startTimeMs }, legacyPolicy.policy, legacyPolicy.timeZone);
+  // #1093: the legacy shape names its KinCare only by `serviceType`; when that
+  // is a catalog key with a length, it sets the end the same way.
+  const legacyEndTimeMs = kinCareEndTimeMs(
+    args.startTimeMs,
+    args.serviceType,
+    args.endTimeMs,
+    legacyPolicy.serviceDurations,
+  );
   // Kinfolk have no override: a busy-import conflict always refuses the request.
   await guardBookingBusyConflict({
     firestore,
-    visits: [{ startTimeMs: args.startTimeMs, endTimeMs: args.endTimeMs }],
+    visits: [{ startTimeMs: args.startTimeMs, endTimeMs: legacyEndTimeMs }],
     actorUid: uid,
     actorRole: 'PRIMARY',
   });
   // A closed day always refuses the request too -- no override, for anyone.
   await guardCompanyHolidayConflict({
     firestore,
-    visits: [{ startTimeMs: args.startTimeMs, endTimeMs: args.endTimeMs }],
+    visits: [{ startTimeMs: args.startTimeMs, endTimeMs: legacyEndTimeMs }],
   });
 
   const batchId = args.idempotencyKey ?? `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -1238,7 +1284,7 @@ export async function requestBookingHandler(
     visits: [
       {
         startTimeMs: args.startTimeMs,
-        endTimeMs: args.endTimeMs ?? null,
+        endTimeMs: legacyEndTimeMs,
         serviceId: null,
         serviceName: args.serviceType,
         priceCents: null,
