@@ -9,11 +9,11 @@ package com.tribetails.auntieos.ui.communicate
  * exactly this job for its own two sentinels. The web twin is
  * `auntieos-admin/src/lib/externalSend.ts`, and the two now say the same words.
  *
- * Exactly one thing is translated. Every other failure passes through verbatim,
- * because a provider's own words ("smtp2go rejected the sender domain") tell the
- * operator far more than any sentence we could substitute, and hiding them
- * behind "Something went wrong" turns a fixable configuration problem into an
- * unfixable one.
+ * Two things are translated, the opt-out and hard-bounce sentinels. Every other
+ * failure passes through verbatim, because a provider's own words ("smtp2go
+ * rejected the sender domain") tell the operator far more than any sentence we
+ * could substitute, and hiding them behind "Something went wrong" turns a
+ * fixable configuration problem into an unfixable one.
  */
 
 /**
@@ -24,9 +24,18 @@ package com.tribetails.auntieos.ui.communicate
 fun isOptedOutError(message: String?): Boolean =
     message?.contains("recipient_opted_out", ignoreCase = true) == true
 
+/**
+ * The server refuses an email to a hard-bounced address with `failed-precondition`
+ * and a message that starts `recipient_hard_bounced` (#1077). Same substring rule.
+ */
+fun isHardBouncedError(message: String?): Boolean =
+    message?.contains("recipient_hard_bounced", ignoreCase = true) == true
+
 fun externalSendErrorText(message: String?): String = when {
     isOptedOutError(message) ->
         "This recipient has opted out. Nothing was sent. Remove their suppression before sending again."
+    isHardBouncedError(message) ->
+        "This address bounced and is on the do-not-send list. Nothing was sent. Clear it in Settings under Notifications, then send again."
     message.isNullOrBlank() -> "The send failed."
     else -> message
 }

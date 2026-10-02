@@ -620,6 +620,8 @@ fun AdminSettingsScreen(
                                 onSettingsChange = { viewModel.updateBusinessSettings(it) },
                             )
                             NotificationMatrixPanel()
+                            // #1083: self-loading; the addresses the app will not mail or text.
+                            DoNotSendPanel()
                         }
 
                         // #957: self-loading, like Vet clinics: its own

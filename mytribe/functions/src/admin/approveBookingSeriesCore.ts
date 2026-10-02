@@ -91,8 +91,11 @@ export interface ApproveBookingSeriesResult {
   affectedVisits: number;
   sessionsCreated: number;
   failedVisits: number;
-  /** 'confirmed' when every visit succeeded; 'requested' on partial failure. */
-  envelopeStatus: 'confirmed' | 'requested';
+  /**
+   * 'confirmed' when every live visit succeeded; 'requested' on partial failure;
+   * 'cancelled' (#1101) when every visit was already cancelled, as CANCEL labels it.
+   */
+  envelopeStatus: 'confirmed' | 'requested' | 'cancelled';
   /** false when the parent envelope does not exist (nothing approved). */
   found: boolean;
   /**
@@ -124,20 +127,18 @@ interface ResolvedStartTime {
 }
 
 /**
- * #1098: a night awaiting its start time that nobody wants any more (the
- * household cancelled it, or the office marked it unavailable). It needs no
- * time and gets no session, so it must not block the rest of the request.
+ * #1098 / #1101: a visit nobody wants any more (the household cancelled it, or
+ * the office marked it unavailable). It gets no session, no flip to confirmed,
+ * no place in the confirmation and no count, and it must not block the rest of
+ * the request. A night awaiting a start time needs no time either.
  *
- * The approve loop has no status filter of its own for visits that already
- * have a time (that pre-existing behaviour is unchanged), so the rule matched
- * here is the one the confirmation message already applies
+ * The rule is the one the confirmation message already applies
  * (`visitDates.loadEnvelopeVisits`): `cancelled` and `unavailable` are not
- * happening.
+ * happening. It applies to every visit, timed or not.
  */
-function isDroppedNight(data: Record<string, unknown>): boolean {
-  return data['startTimePending'] === true && isNotHappeningStatus(data['status']);
+function isCalledOff(data: Record<string, unknown>): boolean {
+  return isNotHappeningStatus(data['status']);
 }
-
 /** What to call a visit in a refusal: its KinCare's name, as the household saw it. */
 function kinCareNameOf(data: Record<string, unknown>): string {
   for (const key of ['serviceName', 'serviceType', 'serviceId', 'title']) {
@@ -182,7 +183,7 @@ async function resolvePendingStartTimes(opts: {
   const resolved = new Map<string, ResolvedStartTime>();
   const pending = opts.docs.filter((d) => {
     const data = d.data() as Record<string, unknown>;
-    return data['startTimePending'] === true && !isDroppedNight(data);
+    return data['startTimePending'] === true && !isCalledOff(data);
   });
   if (pending.length === 0) return resolved;
 
@@ -358,7 +359,7 @@ export async function approveBookingSeriesCore(opts: {
   // question "did this approval change anything" can no longer be answered.
   const newlyConfirmed = childSnap.docs.filter((d) => {
     const data = d.data() as Record<string, unknown>;
-    return data['status'] !== 'confirmed' && !isDroppedNight(data);
+    return data['status'] !== 'confirmed' && !isCalledOff(data);
   }).length;
 
   // Household display name for the created sessions (read once; sessions render it
@@ -374,8 +375,8 @@ export async function approveBookingSeriesCore(opts: {
 
   let sessionsCreated = 0;
   let failedVisits = 0;
-  // #1098: cancelled nights left alone; neither approved nor failed.
-  let droppedNights = 0;
+  // #1098 / #1101: cancelled visits left alone; neither approved nor failed.
+  let calledOff = 0;
   const readServiceDurations = serviceDurationsReader();
 
   for (const doc of childSnap.docs) {
@@ -384,8 +385,8 @@ export async function approveBookingSeriesCore(opts: {
     const childRef = parentRef.collection('kinCares').doc(id);
     const sessionRef = db().collection('kin_care_sessions').doc(`vis_${id}`);
     const setNow = startTimeSet.get(id);
-    if (isDroppedNight(data)) {
-      droppedNights += 1;
+    if (isCalledOff(data)) {
+      calledOff += 1;
       continue;
     }
 
@@ -517,8 +518,11 @@ export async function approveBookingSeriesCore(opts: {
     }
   }
 
-  const succeeded = childIds.length - failedVisits - droppedNights;
-  const envelopeStatus: 'confirmed' | 'requested' = failedVisits === 0 ? 'confirmed' : 'requested';
+  const succeeded = childIds.length - failedVisits - calledOff;
+  // #1101: a request whose every visit was called off has nothing to confirm.
+  // Label it the way CANCEL labels a fully cancelled envelope.
+  const envelopeStatus: 'confirmed' | 'requested' | 'cancelled' =
+    failedVisits > 0 ? 'requested' : succeeded === 0 && calledOff > 0 ? 'cancelled' : 'confirmed';
   await parentRef.set(
     {
       // Only mark the whole envelope confirmed when every visit succeeded; a partial
@@ -529,7 +533,7 @@ export async function approveBookingSeriesCore(opts: {
       // just set times, so roll them again over every visit's start.
       ...(startTimeSet.size > 0 ? envelopeStartRollup(childSnap.docs, startTimeSet) : {}),
       confirmedCount: succeeded,
-      cancelledCount: 0,
+      cancelledCount: calledOff,
       updatedAt: FieldValue.serverTimestamp(),
       updatedBy: actorUid,
     },
@@ -557,7 +561,7 @@ export async function approveBookingSeriesCore(opts: {
   });
 
   const householdNotified =
-    failedVisits === 0 && !wasAlreadyConfirmed
+    failedVisits === 0 && !wasAlreadyConfirmed && succeeded > 0
       ? await dispatchSeriesConfirmation({ kinfolkId, batchId, parentRef, envelope, actorUid })
       : false;
 

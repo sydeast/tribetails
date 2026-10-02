@@ -44,6 +44,16 @@ class ExternalSendCopyTest {
     }
 
     @Test
+    fun `replaces the hard-bounce sentinel with copy saying where to clear it`() {
+        assertTrue(isHardBouncedError("FAILED_PRECONDITION: Recipient_Hard_Bounced: this address hard-bounced"))
+        assertFalse(isHardBouncedError("recipient_opted_out"))
+        assertEquals(
+            "This address bounced and is on the do-not-send list. Nothing was sent. Clear it in Settings under Notifications, then send again.",
+            externalSendErrorText("FAILED_PRECONDITION: recipient_hard_bounced: this address hard-bounced and is suppressed, so nothing was sent"),
+        )
+    }
+
+    @Test
     fun `passes a provider failure through verbatim, so it is never hidden`() {
         assertEquals(
             "smtp2go rejected the sender domain",
