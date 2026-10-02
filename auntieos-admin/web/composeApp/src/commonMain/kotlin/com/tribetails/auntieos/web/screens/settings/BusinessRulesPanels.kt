@@ -20,6 +20,7 @@ import com.composables.icons.lucide.Clock
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.MapPin
 import com.tribetails.auntieos.web.data.BusinessSettings
+import com.tribetails.auntieos.web.data.DEFAULT_BUSINESS_TIME_ZONE
 import com.tribetails.auntieos.web.data.TimeBlockDefinition
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
@@ -339,10 +340,17 @@ internal expect fun platformTimeZoneIds(): List<String>
 /** Can this runtime resolve the zone? A no means the phone line answers as open around the clock. */
 internal expect fun platformTimeZoneUsable(zone: String): Boolean
 
+/** The zone the server reads times in: [stored] when this runtime can read it, else the default (#1109). */
+internal fun resolveBusinessTimeZone(stored: String?): String {
+    val trimmed = stored?.trim().orEmpty()
+    return if (trimmed.isNotEmpty() && platformTimeZoneUsable(trimmed)) trimmed else DEFAULT_BUSINESS_TIME_ZONE
+}
+/** True when no zone is saved: the Time zone panel flags it as "Set your business time zone". */
+internal fun timeZoneIsUnset(stored: String?): Boolean = stored.isNullOrBlank()
 internal fun timeZoneOptions(current: String): List<String> {
     val all = sortedSetOf<String>()
     all += platformTimeZoneIds()
-    all += "America/New_York"
+    all += DEFAULT_BUSINESS_TIME_ZONE
     val trimmed = current.trim()
     if (trimmed.isNotEmpty()) all += trimmed
     return all.toList()
@@ -815,8 +823,11 @@ internal fun TimeZonePanel(
     val dims = AuntieTheme.dims
     val s = settingsData
 
-    var zone by remember(s) { mutableStateOf(s?.timeZone ?: "America/New_York") }
-    val usable = platformTimeZoneUsable(zone)
+    var zone by remember(s) { mutableStateOf(s?.timeZone.orEmpty()) }
+    // Nothing is assumed for a zone nobody chose (#1109): the banner below says
+    // what everything reads meanwhile, and Save waits for a pick.
+    val unset = zone.isBlank()
+    val usable = unset || platformTimeZoneUsable(zone)
 
     DenPanel(
         title = "Time zone",
@@ -828,10 +839,20 @@ internal fun TimeZonePanel(
                 options = timeZoneOptions(s?.timeZone.orEmpty()),
                 selected = zone,
                 onSelect = { zone = it },
-                optionLabel = { it },
+                optionLabel = { it.ifBlank { "Choose a time zone" } },
                 enabled = settingsLoaded,
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (settingsLoaded && timeZoneIsUnset(s?.timeZone)) {
+                AuntieBanner(tone = AuntieBannerTone.Warning, title = "Set your business time zone") {
+                    Text(
+                        "No zone is saved, so the phone line, quote expiry and visit dates are read in " +
+                            "$DEFAULT_BUSINESS_TIME_ZONE until you pick one.",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textPrimary,
+                    )
+                }
+            }
             if (!usable) {
                 AuntieBanner(tone = AuntieBannerTone.Warning, title = "This zone will not work") {
                     Text(
@@ -849,7 +870,7 @@ internal fun TimeZonePanel(
             Spacer(Modifier.height(2.dp))
             PrimaryButton(
                 label = if (settingsLoaded) "Save" else "Loading settings…",
-                enabled = settingsLoaded && usable,
+                enabled = settingsLoaded && usable && !unset,
                 onClick = {
                     val loaded = s ?: return@PrimaryButton
                     scope.launch { vm.saveSettings(loaded.copy(timeZone = zone.trim())) }

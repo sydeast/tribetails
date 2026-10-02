@@ -183,7 +183,8 @@ class DataModelDefaultsTest {
     fun businessSettings_unionDefaults_matchDesignDoc() {
         val s = BusinessSettings()
         // profile
-        assertEquals("America/New_York", s.timeZone)
+        // Blank is "never set" (#1109); readers resolve it to America/Chicago.
+        assertEquals("", s.timeZone)
         // notifications: the three coarse channel booleans were deleted from
         // this model by #519. Nothing ever read them; the real gate lives on
         // `businessSettings/notifications` via `resolveChannels`.

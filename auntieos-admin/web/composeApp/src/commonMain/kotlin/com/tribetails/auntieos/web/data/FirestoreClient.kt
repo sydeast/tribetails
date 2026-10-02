@@ -3727,6 +3727,13 @@ data class BookingTimeSlot(
 const val BUSINESS_SETTINGS_DOC_ID: String = "business_settings"
 
 /**
+ * Operator ruling 2026-08-11: the business runs on America/Chicago. The zone a
+ * missing or unreadable `business_settings.timeZone` means, matching
+ * `FALLBACK_BUSINESS_TIME_ZONE` on the server and the admin web and Android
+ * clients (#1109). Change all of them together or none.
+ */
+const val DEFAULT_BUSINESS_TIME_ZONE = "America/Chicago"
+/**
  * Firestore collection: business_settings - single document
  * (`business_settings/business_settings`) holding Auntie's full settings.
  *
@@ -3747,7 +3754,9 @@ data class BusinessSettings(
     val businessEmail: String = "",
     val businessPhone: String = "",
     val businessAddress: String = "",
-    val timeZone: String = "America/New_York",
+    // Blank means "never set" (#1109). Readers resolve it through
+    // `resolveBusinessTimeZone`, the same America/Chicago the server uses.
+    val timeZone: String = "",
     val serviceRates: Map<String, String> = emptyMap(),
     // KinCare name -> visit length in minutes, as the string the operator typed.
     // SPARSE: a type with no typed length has no key, and every reader then falls

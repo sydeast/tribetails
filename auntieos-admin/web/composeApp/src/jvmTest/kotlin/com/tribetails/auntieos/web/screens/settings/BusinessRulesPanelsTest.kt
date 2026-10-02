@@ -2,6 +2,7 @@ package com.tribetails.auntieos.web.screens.settings
 
 import com.tribetails.auntieos.web.data.BUSINESS_SETTINGS_SERVER_OWNED
 import com.tribetails.auntieos.web.data.BusinessSettings
+import com.tribetails.auntieos.web.data.DEFAULT_BUSINESS_TIME_ZONE
 import com.tribetails.auntieos.web.data.TimeBlockDefinition
 import com.tribetails.auntieos.web.data.businessSettingsChangedFields
 import kotlinx.serialization.json.Json
@@ -331,10 +332,26 @@ class BusinessRulesPanelsTest {
     @Test
     fun `the zone picker keeps a stored value this runtime does not know, and always the default`() {
         assertTrue(timeZoneOptions("Mars/Olympus").contains("Mars/Olympus"))
-        assertTrue(timeZoneOptions("").contains("America/New_York"))
         assertTrue(timeZoneOptions("").contains("America/Chicago"))
     }
 
+    @Test
+    fun `a missing, blank or unreadable zone resolves to America Chicago, a stored one wins (#1109)`() {
+        assertEquals("America/Chicago", DEFAULT_BUSINESS_TIME_ZONE)
+        assertEquals("America/Chicago", resolveBusinessTimeZone(null))
+        assertEquals("America/Chicago", resolveBusinessTimeZone(""))
+        assertEquals("America/Chicago", resolveBusinessTimeZone("   "))
+        assertEquals("America/Chicago", resolveBusinessTimeZone("Mars/Olympus"))
+        assertEquals("America/Los_Angeles", resolveBusinessTimeZone(" America/Los_Angeles "))
+    }
+    @Test
+    fun `a settings document with no zone is flagged as unset, a saved one is not (#1109)`() {
+        assertEquals("", BusinessSettings().timeZone)
+        assertTrue(timeZoneIsUnset(BusinessSettings().timeZone))
+        assertTrue(timeZoneIsUnset(null))
+        assertTrue(timeZoneIsUnset("  "))
+        assertFalse(timeZoneIsUnset("America/Chicago"))
+    }
     @Test
     fun `an unusable zone is caught before it is saved`() {
         assertTrue(platformTimeZoneUsable("America/Chicago"))
