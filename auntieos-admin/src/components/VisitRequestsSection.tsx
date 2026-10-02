@@ -405,6 +405,9 @@ function DecisionDialog({ row, decision, onClose, onResolved }: DecisionDialogPr
   const declining = decision === 'decline';
   const cancelling = row.kind === 'cancel';
   const isNewRequest = row.kind === 'newBooking';
+  // #1100: accepting a reschedule is guarded like a move, so a clash on the new
+  // time is overridable here exactly as it is on an Overnight's start time.
+  const acceptingReschedule = row.kind === 'reschedule' && !declining;
   const { kinfolkId, batchId } = row.request;
 
   // #1098: the nights in this request waiting for the operator's start time.
@@ -450,13 +453,13 @@ function DecisionDialog({ row, decision, onClose, onResolved }: DecisionDialogPr
         ? await submitNewRequest(kinfolkId, batchId, decision, note, options)
         : cancelling
           ? await submitCancel(kinfolkId, batchId, row.request.visitId, decision, note)
-          : await submitReschedule(kinfolkId, batchId, row.request.visitId, decision, note);
+          : await submitReschedule(kinfolkId, batchId, row.request.visitId, decision, note, overrides);
       setBusy(false);
       onResolved(row, message);
     } catch (err) {
       setBusy(false);
       setError(err instanceof Error ? err.message : 'That did not go through. Try again.');
-      if (nights.length > 0) {
+      if (nights.length > 0 || acceptingReschedule) {
         setGranted(overrides);
         setRetryKind(overridableApproveRefusal(err, overrides));
       }
@@ -547,7 +550,11 @@ function DecisionDialog({ row, decision, onClose, onResolved }: DecisionDialogPr
           title="Not done"
           trailing={
             retryKind !== null && (
-              <GhostButton label="Approve anyway" onClick={approveAnyway} disabled={busy} />
+              <GhostButton
+                label={acceptingReschedule ? 'Accept anyway' : 'Approve anyway'}
+                onClick={approveAnyway}
+                disabled={busy}
+              />
             )
           }
         >
@@ -653,8 +660,17 @@ async function submitReschedule(
   visitId: string,
   decision: 'accept' | 'decline',
   note: string,
+  overrides: ApproveOptions = {},
 ): Promise<string> {
-  const res = await resolveBookingRescheduleRequest(kinfolkId, batchId, visitId, decision, note);
+  // Overrides only once the operator has asked for one, so a first attempt is
+  // exactly the call it always was.
+  const res =
+    overrides.overrideBusyConflict === true || overrides.overrideVisitConflict === true
+      ? await resolveBookingRescheduleRequest(kinfolkId, batchId, visitId, decision, note, {
+          ...(overrides.overrideBusyConflict === true && { overrideBusyConflict: true }),
+          ...(overrides.overrideVisitConflict === true && { overrideVisitConflict: true }),
+        })
+      : await resolveBookingRescheduleRequest(kinfolkId, batchId, visitId, decision, note);
   if (decision === 'decline') return 'Declined. The household will see your answer on their booking.';
   return res.sessionUpdated
     ? 'Moved. The schedule and the household now show the new time.'

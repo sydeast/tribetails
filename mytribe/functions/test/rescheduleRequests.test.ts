@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   dbFn: vi.fn(),
   writeAuditEntryFn: vi.fn(),
   guardCompanyHolidayConflictFn: vi.fn(),
+  guardBookingBusyConflictFn: vi.fn(),
+  guardVisitOverlapConflictFn: vi.fn(),
 }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError: vi.fn() }));
@@ -28,6 +30,12 @@ vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: mocks.writeAuditEntryFn }));
 vi.mock('../src/lib/companyHolidayConflict', () => ({
   guardCompanyHolidayConflict: mocks.guardCompanyHolidayConflictFn,
+}));
+vi.mock('../src/lib/bookingBusyConflict', () => ({
+  guardBookingBusyConflict: mocks.guardBookingBusyConflictFn,
+}));
+vi.mock('../src/lib/visitOverlapConflict', () => ({
+  guardVisitOverlapConflict: mocks.guardVisitOverlapConflictFn,
 }));
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('firebase-admin/firestore');
@@ -40,6 +48,10 @@ beforeEach(() => {
   mocks.writeAuditEntryFn.mockResolvedValue('audit-id');
   mocks.guardCompanyHolidayConflictFn.mockReset();
   mocks.guardCompanyHolidayConflictFn.mockResolvedValue(undefined);
+  mocks.guardBookingBusyConflictFn.mockReset();
+  mocks.guardBookingBusyConflictFn.mockResolvedValue(undefined);
+  mocks.guardVisitOverlapConflictFn.mockReset();
+  mocks.guardVisitOverlapConflictFn.mockResolvedValue(undefined);
 });
 
 const VISIT = 'families/f1/bookings/b1/kinCares/v1';
@@ -287,5 +299,114 @@ describe('resolveBookingRescheduleRequestHandler: a night awaiting its start tim
       callableRequest({ ...acceptArgs, decision: 'decline' }, { uid: 'op-1', token: { admin: true } }),
     );
     expect(res).toMatchObject({ ok: true, decision: 'decline', startTimeMs: null });
+  });
+});
+
+/**
+ * #1100: accepting a household's new time is a fresh slot request on the NEW
+ * window, so it runs the same busy and overlap guards `rescheduleBooking` does,
+ * with the same two override flags. The visit being moved is excluded from its
+ * own overlap check, by the same session id the mirror write uses.
+ */
+describe('resolveBookingRescheduleRequestHandler: busy and overlap guards (#1100)', () => {
+  const op = { uid: 'op-1', token: { admin: true } };
+  const window = [{ startTimeMs: NEW_START_MS, endTimeMs: NEW_END_MS }];
+  it('runs both guards on the proposed window, excluding the visit own session', async () => {
+    const ctx = buildDbMock({
+      docs: { [VISIT]: pendingVisit({ sessionId: 'sess-abc' }), 'kin_care_sessions/sess-abc': { startTime: 'x' } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { resolveBookingRescheduleRequestHandler } = await import('../src/admin/rescheduleRequests');
+    await resolveBookingRescheduleRequestHandler(callableRequest(acceptArgs, op));
+    expect(mocks.guardBookingBusyConflictFn).toHaveBeenCalledWith(
+      expect.objectContaining({ visits: window, actorUid: 'op-1', actorRole: 'AUNTIE', override: undefined }),
+    );
+    expect(mocks.guardVisitOverlapConflictFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        visits: window,
+        actorUid: 'op-1',
+        actorRole: 'AUNTIE',
+        excludeSessionId: 'sess-abc',
+        override: undefined,
+      }),
+    );
+  });
+  it('excludes the derived vis_ session id when the visit carries none', async () => {
+    const ctx = buildDbMock({ docs: { [VISIT]: pendingVisit() } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { resolveBookingRescheduleRequestHandler } = await import('../src/admin/rescheduleRequests');
+    await resolveBookingRescheduleRequestHandler(callableRequest(acceptArgs, op));
+    expect(mocks.guardVisitOverlapConflictFn).toHaveBeenCalledWith(
+      expect.objectContaining({ excludeSessionId: 'vis_v1' }),
+    );
+  });
+  it('passes each override flag to its own guard and not the other', async () => {
+    const ctx = buildDbMock({ docs: { [VISIT]: pendingVisit() } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { resolveBookingRescheduleRequestHandler } = await import('../src/admin/rescheduleRequests');
+    await resolveBookingRescheduleRequestHandler(
+      callableRequest({ ...acceptArgs, overrideBusyConflict: true }, op),
+    );
+    expect(mocks.guardBookingBusyConflictFn).toHaveBeenLastCalledWith(expect.objectContaining({ override: true }));
+    expect(mocks.guardVisitOverlapConflictFn).toHaveBeenLastCalledWith(
+      expect.objectContaining({ override: undefined }),
+    );
+    await resolveBookingRescheduleRequestHandler(
+      callableRequest({ ...acceptArgs, overrideVisitConflict: true }, op),
+    );
+    expect(mocks.guardBookingBusyConflictFn).toHaveBeenLastCalledWith(
+      expect.objectContaining({ override: undefined }),
+    );
+    expect(mocks.guardVisitOverlapConflictFn).toHaveBeenLastCalledWith(expect.objectContaining({ override: true }));
+  });
+  it('a busy refusal passes through with its code and nothing is written', async () => {
+    mocks.guardBookingBusyConflictFn.mockRejectedValue(
+      Object.assign(new Error('Busy on Google Calendar.'), {
+        code: 'failed-precondition',
+        details: { code: 'booking_busy_conflict' },
+      }),
+    );
+    const ctx = buildDbMock({ docs: { [VISIT]: pendingVisit() } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { resolveBookingRescheduleRequestHandler } = await import('../src/admin/rescheduleRequests');
+    await expect(
+      resolveBookingRescheduleRequestHandler(callableRequest(acceptArgs, op)),
+    ).rejects.toMatchObject({ details: { code: 'booking_busy_conflict' } });
+    expect(ctx.writes).toHaveLength(0);
+  });
+  it('an overlap refusal passes through with its code and nothing is written', async () => {
+    mocks.guardVisitOverlapConflictFn.mockRejectedValue(
+      Object.assign(new Error('That time is already taken.'), {
+        code: 'failed-precondition',
+        details: { code: 'visit_overlap_conflict' },
+      }),
+    );
+    const ctx = buildDbMock({ docs: { [VISIT]: pendingVisit() } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { resolveBookingRescheduleRequestHandler } = await import('../src/admin/rescheduleRequests');
+    await expect(
+      resolveBookingRescheduleRequestHandler(callableRequest(acceptArgs, op)),
+    ).rejects.toMatchObject({ details: { code: 'visit_overlap_conflict' } });
+    expect(ctx.writes).toHaveLength(0);
+  });
+  it('a decline runs no guard, since nothing moves', async () => {
+    const ctx = buildDbMock({ docs: { [VISIT]: pendingVisit() } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { resolveBookingRescheduleRequestHandler } = await import('../src/admin/rescheduleRequests');
+    await resolveBookingRescheduleRequestHandler(callableRequest({ ...acceptArgs, decision: 'decline' }, op));
+    expect(mocks.guardBookingBusyConflictFn).not.toHaveBeenCalled();
+    expect(mocks.guardVisitOverlapConflictFn).not.toHaveBeenCalled();
+  });
+  it('a still-pending overnight is refused before any guard runs', async () => {
+    const ctx = buildDbMock({
+      docs: { [VISIT]: pendingVisit({ status: 'requested', startTime: null, startTimePending: true }) },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { resolveBookingRescheduleRequestHandler } = await import('../src/admin/rescheduleRequests');
+    await expect(resolveBookingRescheduleRequestHandler(callableRequest(acceptArgs, op))).rejects.toMatchObject({
+      code: 'failed-precondition',
+    });
+    expect(mocks.guardBookingBusyConflictFn).not.toHaveBeenCalled();
+    expect(mocks.guardVisitOverlapConflictFn).not.toHaveBeenCalled();
   });
 });

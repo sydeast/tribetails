@@ -43,6 +43,10 @@ export function listRescheduleRequests(limit?: number): Promise<ListRescheduleRe
  * household a reason; `note` is only the extra, custom text an operator can
  * choose to add on top of the decline. An empty note is withheld from the call
  * entirely rather than sent as `''`.
+ *
+ * #1100: accepting runs the same busy and visit-overlap guards `rescheduleBooking`
+ * does. `overrides` is the knowing "Accept anyway" retry after one of them
+ * refused, and is omitted from the payload unless a flag is true.
  */
 export function resolveBookingRescheduleRequest(
   kinfolkId: string,
@@ -50,6 +54,7 @@ export function resolveBookingRescheduleRequest(
   visitId: string,
   decision: 'accept' | 'decline',
   note?: string,
+  overrides: { overrideBusyConflict?: boolean; overrideVisitConflict?: boolean } = {},
 ): Promise<ResolveBookingRescheduleRequestResult> {
   const payload: ResolveBookingRescheduleRequestArgs = {
     kinfolkId,
@@ -57,6 +62,8 @@ export function resolveBookingRescheduleRequest(
     visitId,
     decision,
     ...(note && note.trim() ? { note: note.trim() } : {}),
+    ...(overrides.overrideBusyConflict === true && { overrideBusyConflict: true }),
+    ...(overrides.overrideVisitConflict === true && { overrideVisitConflict: true }),
   };
   return call<ResolveBookingRescheduleRequestArgs, ResolveBookingRescheduleRequestResult>(
     'resolveBookingRescheduleRequest',

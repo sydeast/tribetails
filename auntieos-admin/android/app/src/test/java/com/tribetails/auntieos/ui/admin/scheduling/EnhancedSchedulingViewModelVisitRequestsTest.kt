@@ -336,6 +336,96 @@ class EnhancedSchedulingViewModelVisitRequestsTest {
             assertNull(vm.state.value.visitRequestKey)
         }
 
+    // ── #1100: accepting a reschedule runs the busy and overlap guards ────────
+    private val movedResult = ResolveBookingRescheduleRequestResult(
+        ok = true,
+        visitId = "v2",
+        decision = "accept",
+        startTimeMs = 1_700_100_000_000L,
+        sessionUpdated = true,
+    )
+    private fun accept(vm: EnhancedSchedulingViewModel) =
+        vm.resolveVisitRequest(vm.state.value.visitRequests.single(), "accept")
+    @Test
+    fun `a busy clash on accepting keeps the row, offers the override, and Accept anyway resends with it`() =
+        runTest(testDispatcher) {
+            coEvery { visitRequestRepo.listRescheduleRequests(any()) } returns Result.success(listOf(rescheduleDto()))
+            coEvery { visitRequestRepo.resolveRescheduleRequest("fam-2", "b2", "v2", "accept", null, false, false) } returns
+                Result.failure(BookingRequestRefusedException(BOOKING_BUSY_CONFLICT_CODE, "Busy block then."))
+            coEvery { visitRequestRepo.resolveRescheduleRequest("fam-2", "b2", "v2", "accept", null, true, false) } returns
+                Result.success(movedResult)
+            val vm = buildViewModel()
+            accept(vm)
+            assertEquals(1, vm.state.value.visitRequests.size)
+            assertEquals(ScheduleOverrideKind.BUSY, vm.state.value.visitRequestOverride)
+            assertTrue(vm.state.value.visitRequestsError!!.contains("Busy block then."))
+            vm.retryVisitRequestWithOverride()
+            coVerify(exactly = 1) {
+                visitRequestRepo.resolveRescheduleRequest("fam-2", "b2", "v2", "accept", null, true, false)
+            }
+            assertTrue(vm.state.value.visitRequests.isEmpty())
+            assertNull(vm.state.value.visitRequestOverride)
+            assertNull(vm.state.value.visitRequestsError)
+            assertTrue(vm.state.value.visitRequestMessage!!.startsWith("Moved"))
+        }
+    @Test
+    fun `a visit clash after a busy override resends with both`() = runTest(testDispatcher) {
+        coEvery { visitRequestRepo.listRescheduleRequests(any()) } returns Result.success(listOf(rescheduleDto()))
+        coEvery { visitRequestRepo.resolveRescheduleRequest("fam-2", "b2", "v2", "accept", null, false, false) } returns
+            Result.failure(BookingRequestRefusedException(BOOKING_BUSY_CONFLICT_CODE, "Busy block then."))
+        coEvery { visitRequestRepo.resolveRescheduleRequest("fam-2", "b2", "v2", "accept", null, true, false) } returns
+            Result.failure(BookingRequestRefusedException(VISIT_OVERLAP_CONFLICT_CODE, "Another visit then."))
+        coEvery { visitRequestRepo.resolveRescheduleRequest("fam-2", "b2", "v2", "accept", null, true, true) } returns
+            Result.success(movedResult)
+        val vm = buildViewModel()
+        accept(vm)
+        vm.retryVisitRequestWithOverride()
+        assertEquals(ScheduleOverrideKind.VISIT, vm.state.value.visitRequestOverride)
+        vm.retryVisitRequestWithOverride()
+        coVerify(exactly = 1) {
+            visitRequestRepo.resolveRescheduleRequest("fam-2", "b2", "v2", "accept", null, true, true)
+        }
+        assertTrue(vm.state.value.visitRequests.isEmpty())
+    }
+    @Test
+    fun `a company closure on accepting offers no override`() = runTest(testDispatcher) {
+        coEvery { visitRequestRepo.listRescheduleRequests(any()) } returns Result.success(listOf(rescheduleDto()))
+        coEvery { visitRequestRepo.resolveRescheduleRequest(any(), any(), any(), any(), any(), any(), any()) } returns
+            Result.failure(BookingRequestRefusedException("company_holiday_conflict", "Tribe Tails is closed that day."))
+        val vm = buildViewModel()
+        accept(vm)
+        assertNull(vm.state.value.visitRequestOverride)
+        assertTrue(vm.state.value.visitRequestsError!!.contains("closed that day"))
+        assertEquals(1, vm.state.value.visitRequests.size)
+        // With nothing offered, a stray retry sends nothing.
+        vm.retryVisitRequestWithOverride()
+        coVerify(exactly = 1) {
+            visitRequestRepo.resolveRescheduleRequest(any(), any(), any(), any(), any(), any(), any())
+        }
+    }
+    @Test
+    fun `a declined reschedule never offers an override`() = runTest(testDispatcher) {
+        coEvery { visitRequestRepo.listRescheduleRequests(any()) } returns Result.success(listOf(rescheduleDto()))
+        coEvery { visitRequestRepo.resolveRescheduleRequest(any(), any(), any(), any(), any(), any(), any()) } returns
+            Result.failure(BookingRequestRefusedException(BOOKING_BUSY_CONFLICT_CODE, "Busy block then."))
+        val vm = buildViewModel()
+        vm.resolveVisitRequest(vm.state.value.visitRequests.single(), "decline")
+        assertNull(vm.state.value.visitRequestOverride)
+    }
+    @Test
+    fun `dismissing the error withdraws the offered override`() = runTest(testDispatcher) {
+        coEvery { visitRequestRepo.listRescheduleRequests(any()) } returns Result.success(listOf(rescheduleDto()))
+        coEvery { visitRequestRepo.resolveRescheduleRequest(any(), any(), any(), any(), any(), any(), any()) } returns
+            Result.failure(BookingRequestRefusedException(BOOKING_BUSY_CONFLICT_CODE, "Busy block then."))
+        val vm = buildViewModel()
+        accept(vm)
+        vm.clearVisitRequestsError()
+        vm.retryVisitRequestWithOverride()
+        assertNull(vm.state.value.visitRequestOverride)
+        coVerify(exactly = 1) {
+            visitRequestRepo.resolveRescheduleRequest(any(), any(), any(), any(), any(), any(), any())
+        }
+    }
     // ── #1098: an incoming Overnight waits for the operator's start time ──────
 
     private val nightOf9th = IncomingKinCare(
@@ -412,7 +502,7 @@ class EnhancedSchedulingViewModelVisitRequestsTest {
     }
 
     @Test
-    fun `a visit clash after a busy override resends with both`() = runTest(testDispatcher) {
+    fun `a visit clash after a busy override on a reschedule accept resends with both`() = runTest(testDispatcher) {
         seedOvernight()
         coEvery { auntieRepo.manageBookingSeries("APPROVE", "kf1", "b1", any(), false, false) } returns
             Result.failure(BookingRequestRefusedException(BOOKING_BUSY_CONFLICT_CODE, "Busy block then."))

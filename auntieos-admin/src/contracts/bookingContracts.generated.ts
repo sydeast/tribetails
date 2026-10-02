@@ -408,6 +408,8 @@ export interface ResolveBookingRescheduleRequestArgs {
   visitId: string;
   decision: 'accept' | 'decline';
   note?: string;
+  overrideBusyConflict?: boolean;
+  overrideVisitConflict?: boolean;
 }
 
 /**

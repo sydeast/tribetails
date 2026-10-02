@@ -9,6 +9,8 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
+import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
+import { guardVisitOverlapConflict } from '../lib/visitOverlapConflict';
 import { validateResponse } from '../lib/callableResponse';
 
 /**
@@ -31,6 +33,13 @@ import { validateResponse } from '../lib/callableResponse';
  * exactly as `admin/rescheduleBooking` guards its own. A proposal that lands on
  * a closure is refused with the guard's own message rather than accepted and
  * then discovered.
+ *
+ * #1100: ACCEPTING IS A FRESH SLOT REQUEST ON THE NEW WINDOW, so it runs the
+ * other two guards `rescheduleBooking` runs as well, with the same override
+ * flags and the same meaning: the Google busy-time guard and the visit-overlap
+ * guard, each refusing by default and each overridable by the operator who has
+ * been shown the clash. The visit being moved is excluded from its own overlap
+ * check by its session id, as a move there is. A closure still has no override.
  */
 
 const DECISION = z.enum(['accept', 'decline']);
@@ -47,6 +56,10 @@ export const Args = z.object({
    * sees.
    */
   note: z.string().trim().max(500).optional(),
+  /** Admin-only escape hatch for a Google Calendar busy import. Same flag and meaning as on `rescheduleBooking`. Ignored on a decline. */
+  overrideBusyConflict: z.boolean().optional(),
+  /** Admin-only escape hatch for a visit already on the books. Same flag and meaning as on `rescheduleBooking`. Ignored on a decline. */
+  overrideVisitConflict: z.boolean().optional(),
 });
 
 export const Result = z
@@ -141,11 +154,34 @@ export async function resolveBookingRescheduleRequestHandler(
   }
   const newEnd = data.rescheduleRequestedEndTime ?? null;
 
-  await guardCompanyHolidayConflict({
+  const candidate = [
+    { startTimeMs: newStart.toMillis(), endTimeMs: newEnd ? newEnd.toMillis() : newStart.toMillis() },
+  ];
+  // The flat session row this visit mirrors, by the id the mirror write below
+  // uses. Resolved here as well so the overlap guard never finds the visit
+  // conflicting with the window it is being moved out of.
+  const sessionId =
+    typeof data.sessionId === 'string' && data.sessionId ? data.sessionId : `vis_${args.visitId}`;
+  const auditContext = { kinfolkId: args.kinfolkId, visitId: args.visitId, attempt: 'reschedule_request' };
+  await guardCompanyHolidayConflict({ firestore: db(), visits: candidate });
+  await guardBookingBusyConflict({
     firestore: db(),
-    visits: [{ startTimeMs: newStart.toMillis(), endTimeMs: newEnd ? newEnd.toMillis() : newStart.toMillis() }],
+    visits: candidate,
+    actorUid: uid,
+    actorRole: 'AUNTIE',
+    override: args.overrideBusyConflict,
+    auditContext: { ...auditContext, sessionId },
   });
-
+  await guardVisitOverlapConflict({
+    firestore: db(),
+    visits: candidate,
+    actorUid: uid,
+    actorRole: 'AUNTIE',
+    excludeSessionId: sessionId,
+    override: args.overrideVisitConflict,
+    attempt: 'reschedule_request',
+    auditContext: { ...auditContext, sessionId },
+  });
   await visitRef.set(
     {
       ...resolution,
@@ -169,8 +205,6 @@ export async function resolveBookingRescheduleRequestHandler(
   // Timestamps (tsMillis). Writing either shape into the other silently breaks
   // both readers.
   let sessionUpdated = false;
-  const sessionId =
-    typeof data.sessionId === 'string' && data.sessionId ? data.sessionId : `vis_${args.visitId}`;
   const sessionRef = db().doc(`kin_care_sessions/${sessionId}`);
   const sessionSnap = await sessionRef.get();
   if (sessionSnap.exists) {

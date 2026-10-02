@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.data.repository
 
 import com.google.firebase.functions.FirebaseFunctions
+import com.google.firebase.functions.FirebaseFunctionsException
 import com.tribetails.auntieos.data.contracts.CancelRequestDto
 import com.tribetails.auntieos.data.contracts.ListCancelRequestsArgs
 import com.tribetails.auntieos.data.contracts.ListRescheduleRequestsArgs
@@ -72,6 +73,12 @@ class VisitRequestRepository(
      * server moves both the household's kinCares doc and the flat
      * `kin_care_sessions` row, which is what keeps this app's schedule and the
      * portal from disagreeing about when a visit is.
+     *
+     * #1100: accepting runs the same busy and visit-overlap guards
+     * `rescheduleBooking` does. A refusal arrives as [BookingRequestRefusedException]
+     * carrying `details.code`, so the screen offers "Accept anyway" on a code and
+     * never on a sentence; [overrideBusyConflict] and [overrideVisitConflict] are
+     * that knowing retry, omitted from the payload unless true.
      */
     suspend fun resolveRescheduleRequest(
         kinfolkId: String,
@@ -79,18 +86,31 @@ class VisitRequestRepository(
         visitId: String,
         decision: String,
         note: String? = null,
+        overrideBusyConflict: Boolean = false,
+        overrideVisitConflict: Boolean = false,
     ): Result<ResolveBookingRescheduleRequestResult> = runCatchingCancellable {
-        val raw = functions.getHttpsCallable("resolveBookingRescheduleRequest")
-            .call(
-                ResolveBookingRescheduleRequestArgs(
-                    kinfolkId = kinfolkId,
-                    batchId = batchId,
-                    visitId = visitId,
-                    decision = decision,
-                    note = note?.takeIf { it.isNotBlank() },
-                ).toPayload(),
+        val args = ResolveBookingRescheduleRequestArgs(
+            kinfolkId = kinfolkId,
+            batchId = batchId,
+            visitId = visitId,
+            decision = decision,
+            note = note?.takeIf { it.isNotBlank() },
+            overrideBusyConflict = overrideBusyConflict.takeIf { it },
+            overrideVisitConflict = overrideVisitConflict.takeIf { it },
+        )
+        val raw = try {
+            // Translated outside the `awaitCallable` seam, as the other guarded
+            // callables are, so the session-revoked check still sees the
+            // original FirebaseFunctionsException.
+            functions.getHttpsCallable("resolveBookingRescheduleRequest")
+                .call(args.toPayload())
+                .awaitCallable().data
+        } catch (e: FirebaseFunctionsException) {
+            throw BookingRequestRefusedException(
+                code = conflictCodeFrom(e.details),
+                message = e.message ?: "That request could not be answered.",
             )
-            .awaitCallable().data
+        }
         @Suppress("UNCHECKED_CAST")
         decodeResolveBookingRescheduleRequestResult(raw as? Map<String, Any?>)
     }.onFailure { AuntieLog.e("VisitRequestRepository.resolveRescheduleRequest failed", it) }
