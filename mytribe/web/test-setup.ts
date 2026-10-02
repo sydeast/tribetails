@@ -4,6 +4,8 @@
 // touch the DOM, since it only adds matchers rather than requiring one.
 import '@testing-library/jest-dom/vitest';
 import { afterEach } from 'vitest';
+// #1138: any request that would leave the machine fails the test that made it.
+import './test-network-guard';
 import { cleanup, configure, getConfig } from '@testing-library/react';
 // The SECOND deadline, and the one that hides (#492, following #455).
 //

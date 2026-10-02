@@ -1,6 +1,8 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, configure, getConfig } from '@testing-library/react';
 import { afterEach } from 'vitest';
+// #1138: any request that would leave the machine fails the test that made it.
+import './test-network-guard';
 
 // The SECOND deadline, and the one that hides. Raising vitest's `testTimeout`
 // alone does not make this suite trustworthy, because Testing Library keeps a

@@ -22,6 +22,8 @@ export default defineConfig({
       '../scripts/test/**/*.test.ts',
     ],
     exclude: ['node_modules/**', 'test/rules/**'],
+    // #1138: a spec that reaches past loopback fails, naming the host. See the file.
+    setupFiles: ['./test/_helpers/networkGuard.ts'],
     // firebase-admin must be required by Node, not processed by Vite.
     //
     // The scripts tests import `mytribe/scripts/*.ts`, which sits OUTSIDE this

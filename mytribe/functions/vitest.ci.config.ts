@@ -35,6 +35,8 @@ export default defineConfig({
       '../scripts/test/**/*.test.ts',
     ],
     exclude: ['node_modules/**', 'test/rules/**'],
+    // #1138: a spec that reaches past loopback fails, naming the host. See the file.
+    setupFiles: ['./test/_helpers/networkGuard.ts'],
     server: { deps: { external: [/firebase-admin/] } },
     testTimeout: 10000,
   },
