@@ -334,6 +334,62 @@ describe('BookingActions: Reschedule', () => {
     expect(await screen.findByText(/rescheduleBooking failed:.*not found/i)).toBeInTheDocument();
   });
 });
+/** #1154: the reschedule dialog's refusal over a busy block or another visit can be moved over. */
+describe('BookingActions: Move anyway (#1154)', () => {
+  function refusal(code: string, message: string) {
+    return Object.assign(new Error(message), { details: { code } });
+  }
+  async function pressSave() {
+    await userEvent.click(screen.getByRole('button', { name: 'Reschedule' }));
+    const inputs = document.querySelectorAll('input[type="datetime-local"]');
+    fireEvent.change(inputs[0] as HTMLInputElement, { target: { value: '2026-07-20T09:00' } });
+    fireEvent.change(inputs[1] as HTMLInputElement, { target: { value: '2026-07-20T10:00' } });
+    await userEvent.click(screen.getByRole('button', { name: /save new time/i }));
+  }
+  it('shows the server message and resends with the visit override', async () => {
+    rescheduleBooking.mockRejectedValueOnce(refusal('visit_overlap_conflict', 'That time overlaps the Ames visit.'));
+    rescheduleBooking.mockResolvedValueOnce({ ok: true, sessionId: 'ses-5' });
+    const onClose = vi.fn();
+    render(<BookingActions entry={entry({ _id: 'ses-5', status: 'SCHEDULED' })} onClose={onClose} />);
+    await pressSave();
+    expect(await screen.findByText(/That time overlaps the Ames visit/)).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Move anyway' }));
+    expect(rescheduleBooking).toHaveBeenLastCalledWith('ses-5', '2026-07-20T09:00', '2026-07-20T10:00', { visit: true });
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  });
+  it('offers the busy override for a Google busy block', async () => {
+    rescheduleBooking.mockRejectedValueOnce(refusal('booking_busy_conflict', 'That time is busy on your calendar.'));
+    rescheduleBooking.mockResolvedValueOnce({ ok: true, sessionId: 'ses-5' });
+    render(<BookingActions entry={entry({ _id: 'ses-5', status: 'SCHEDULED' })} onClose={vi.fn()} />);
+    await pressSave();
+    await userEvent.click(await screen.findByRole('button', { name: 'Move anyway' }));
+    expect(rescheduleBooking).toHaveBeenLastCalledWith('ses-5', '2026-07-20T09:00', '2026-07-20T10:00', { busy: true });
+  });
+  it('shows a closed day with no way past it', async () => {
+    rescheduleBooking.mockRejectedValueOnce(refusal('company_holiday_conflict', 'The office is closed that day.'));
+    render(<BookingActions entry={entry({ status: 'SCHEDULED' })} onClose={vi.fn()} />);
+    await pressSave();
+    expect(await screen.findByText(/The office is closed that day/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Move anyway' })).toBeNull();
+  });
+  it('does not offer the same override twice', async () => {
+    rescheduleBooking.mockRejectedValue(refusal('visit_overlap_conflict', 'Overlaps.'));
+    render(<BookingActions entry={entry({ status: 'SCHEDULED' })} onClose={vi.fn()} />);
+    await pressSave();
+    await userEvent.click(await screen.findByRole('button', { name: 'Move anyway' }));
+    await vi.waitFor(() => expect(rescheduleBooking).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/Overlaps/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Move anyway' })).toBeNull();
+  });
+  it('a plain failure offers no override', async () => {
+    rescheduleBooking.mockRejectedValueOnce(new Error('permission-denied'));
+    render(<BookingActions entry={entry({ status: 'SCHEDULED' })} onClose={vi.fn()} />);
+    await pressSave();
+    expect(await screen.findByText(/permission-denied/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Move anyway' })).toBeNull();
+  });
+});
 /**
  * `BookingStatusActions` is the same decision as the dialog above, rendered as
  * a panel so it can be composed into `BookingDetailModal` (Bookings.tsx does

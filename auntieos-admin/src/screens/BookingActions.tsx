@@ -182,6 +182,9 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
   const [error, setError] = useState<string | null>(null);
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
+  // #1154: the override a reschedule refusal offers, or null. Cleared once taken,
+  // so the same losing move is never offered twice.
+  const [retry, setRetry] = useState<'visit' | 'busy' | null>(null);
 
   if (!entry) {
     return (
@@ -229,6 +232,7 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
 
   function openReschedule() {
     setError(null);
+    setRetry(null);
     setStartTime(toDatetimeLocal(booking.startTime ?? ''));
     setEndTime('');
     setMode({ kind: 'reschedule' });
@@ -249,7 +253,7 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
     }
   }
 
-  async function submitReschedule() {
+  async function submitReschedule(override: 'visit' | 'busy' | null = null) {
     if (busy) return;
     if (startTime.trim() === '' || endTime.trim() === '') {
       setError('Pick both a start and end time.');
@@ -261,14 +265,17 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
     }
     setBusy(true);
     setError(null);
+    setRetry(null);
     try {
-      await rescheduleBooking(booking._id, startTime, endTime);
+      if (override === null) await rescheduleBooking(booking._id, startTime, endTime);
+      else await rescheduleBooking(booking._id, startTime, endTime, { [override]: true });
       setBusy(false);
       showToast(`${displayName}'s visit is rescheduled.`);
       onClose();
     } catch (err) {
       setBusy(false);
       setError(`rescheduleBooking failed: ${err instanceof Error ? err.message : 'Write failed'}`);
+      setRetry(overridableScheduleRefusal(err, override !== null));
     }
   }
 
@@ -308,6 +315,9 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
         footer={
           <>
             <GhostButton label="Back" onClick={backToDetail} disabled={busy} />
+            {retry !== null && (
+              <GhostButton label="Move anyway" onClick={() => void submitReschedule(retry)} disabled={busy} />
+            )}
             <PrimaryButton
               label={busy ? 'Saving…' : 'Save new time'}
               onClick={() => void submitReschedule()}
@@ -340,6 +350,7 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
             {error}
           </p>
         )}
+        {retry !== null && <p className="booking-actions__hint">{overrideHint(retry)}</p>}
       </Dialog>
     );
   }

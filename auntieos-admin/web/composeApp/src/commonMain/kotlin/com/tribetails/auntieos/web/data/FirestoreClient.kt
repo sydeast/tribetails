@@ -1642,7 +1642,7 @@ class FirestoreClient {
             }
         }
         return when (val r = batchUpdateBookings(listOf(visitId), action)) {
-            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
             is WriteResult.Ok -> singleBookingOutcome(r.value)
         }
     }
@@ -1743,14 +1743,25 @@ class FirestoreClient {
     }
 
     /** 1E §A.9: reschedule an existing session (Schedule drag / Bookings reschedule). */
-    suspend fun rescheduleBooking(sessionId: String, startTime: String, endTime: String): WriteResult<Unit> {
+    suspend fun rescheduleBooking(
+        sessionId: String,
+        startTime: String,
+        endTime: String,
+        override: ScheduleOverride? = null,
+    ): WriteResult<Unit> {
         val payload = buildJsonObject {
             put("sessionId", JsonPrimitive(sessionId))
             put("startTime", JsonPrimitive(startTime))
             put("endTime", JsonPrimitive(endTime))
+            // #1154: the flag goes only when the operator chose "Move anyway" after seeing the refusal.
+            when (override) {
+                ScheduleOverride.BUSY -> put("overrideBusyConflict", JsonPrimitive(true))
+                ScheduleOverride.VISIT -> put("overrideVisitConflict", JsonPrimitive(true))
+                null -> Unit
+            }
         }
         return when (val r = platformInvokeCallable("rescheduleBooking", callableJson.encodeToString(JsonObject.serializer(), payload))) {
-            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
             is WriteResult.Ok -> WriteResult.Ok(Unit)
         }
     }
