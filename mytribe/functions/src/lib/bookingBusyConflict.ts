@@ -4,6 +4,7 @@ import { writeAuditEntry } from './writeAuditEntry';
 import { AUDIT_EVENTS } from './auditEvents';
 import { logEvent } from './logger';
 import type { ActorRole } from './schema';
+import { businessTimeZone } from './bookingTimeBlocks';
 import { legacyUtcWindow, storedInstants } from './googleBusySlot';
 
 /**
@@ -127,24 +128,42 @@ export interface DecodedBusySlot {
   docId: string;
   startMs: number;
   endMs: number;
-  /** "2026-08-07 22:00 UTC to 2026-08-08 02:00 UTC", for the fail-loud message. */
-  label: string;
 }
 
 /** One candidate visit landing on one busy slot. */
 export interface BookingBusyConflict {
   /** 0-based position in the caller's `visits` array, so a message can name "visit 2" rather than only the first. */
   visitIndex: number;
-  visitLabel: string;
+  /** The visit's own window, as instants; worded in the business zone only when the message is built. */
+  visitStartMs: number;
+  /** Null when the caller gave no end (a point-in-time visit). */
+  visitEndMs: number | null;
   slot: DecodedBusySlot;
 }
 
-/** "2026-08-07 22:00 UTC" */
-function formatUtcInstant(ms: number): string {
-  const iso = new Date(ms).toISOString(); // 2026-08-07T22:00:00.000Z
-  return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+/**
+ * Words a window in the BUSINESS zone, the clock the operator reads on the
+ * schedule (#1164). It used to read "2026-08-07 19:00 UTC to 2026-08-07
+ * 20:00 UTC" for a block drawn at 2:00 PM, which nobody could match to the
+ * schedule. "Aug 7, 2:00-3:00 PM" when both ends share a day, "Aug 7, 10:00 PM
+ * to Aug 8, 2:00 AM" when they do not; no end gives just "Aug 7, 2:00 PM".
+ * Plain hyphens and "to", never a dash character.
+ */
+export function formatBusyWindow(startMs: number, endMs: number | null, timeZone: string): string {
+  const zone = businessTimeZone({ timeZone });
+  const day = new Intl.DateTimeFormat('en-US', { timeZone: zone, month: 'short', day: 'numeric' });
+  const clock = new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: 'numeric', minute: '2-digit', hour12: true });
+  const meridiem = (ms: number) => clock.formatToParts(ms).find((p) => p.type === 'dayPeriod')?.value ?? '';
+  // Intl may emit a narrow no-break space before AM/PM; keep the text plain.
+  const time = (ms: number) => clock.format(ms).replace(/\s/g, ' ');
+  const timeNoMeridiem = (ms: number) => time(ms).replace(/ ?[AP]M$/i, '');
+  const startDay = day.format(startMs);
+  if (endMs === null) return `${startDay}, ${time(startMs)}`;
+  const endDay = day.format(endMs);
+  if (startDay !== endDay) return `${startDay}, ${time(startMs)} to ${endDay}, ${time(endMs)}`;
+  if (meridiem(startMs) === meridiem(endMs)) return `${startDay}, ${timeNoMeridiem(startMs)}-${time(endMs)}`;
+  return `${startDay}, ${time(startMs)}-${time(endMs)}`;
 }
-
 /**
  * Resolves a candidate visit to a checkable window, or null when its start is
  * not a real number (a pre-existing looseness upstream, e.g.
@@ -163,10 +182,6 @@ function resolveWindow(v: CandidateVisit): ResolvedWindow | null {
   const startMs = v.startTimeMs;
   const endMs = v.endTimeMs != null && Number.isFinite(v.endTimeMs) ? v.endTimeMs : startMs + 1;
   return endMs > startMs ? { startMs, endMs } : { startMs, endMs: startMs + 1 };
-}
-
-function windowLabel(v: CandidateVisit, w: ResolvedWindow): string {
-  return v.endTimeMs != null ? `${formatUtcInstant(w.startMs)} to ${formatUtcInstant(w.endMs)}` : formatUtcInstant(w.startMs);
 }
 
 /**
@@ -190,12 +205,7 @@ function windowLabel(v: CandidateVisit, w: ResolvedWindow): string {
 export function decodeGoogleBusySlot(docId: string, data: Record<string, unknown>): DecodedBusySlot | null {
   const window = storedInstants(data) ?? legacyUtcWindow(data.date, data.startTime, data.endTime);
   if (!window) return null;
-  return {
-    docId,
-    startMs: window.startMs,
-    endMs: window.endMs,
-    label: `${formatUtcInstant(window.startMs)} to ${formatUtcInstant(window.endMs)}`,
-  };
+  return { docId, startMs: window.startMs, endMs: window.endMs };
 }
 /**
  * Pure overlap check: half-open intervals, `[startMs, endMs)`, so a visit
@@ -214,18 +224,32 @@ export function findBookingBusyConflicts(
     if (!window) return;
     for (const slot of busySlots) {
       if (window.startMs < slot.endMs && window.endMs > slot.startMs) {
-        conflicts.push({ visitIndex, visitLabel: windowLabel(visit, window), slot });
+        conflicts.push({
+          visitIndex,
+          visitStartMs: window.startMs,
+          visitEndMs: visit.endTimeMs != null ? window.endMs : null,
+          slot,
+        });
       }
     }
   });
   return conflicts;
 }
 
-/** One human-readable, fail-loud message naming every conflicting date/time window, never just the first. */
-export function formatBookingBusyConflictMessage(conflicts: readonly BookingBusyConflict[]): string {
+/** A busy block's window worded in `timeZone` (the business zone), for the refusal and its `details`. */
+export function busySlotLabel(slot: DecodedBusySlot, timeZone: string): string {
+  return formatBusyWindow(slot.startMs, slot.endMs, timeZone);
+}
+/**
+ * One human-readable, fail-loud message naming every conflicting date/time
+ * window, never just the first. `timeZone` is `business_settings.timeZone`
+ * (resolved by `businessTimeZone`), so the times read as the operator's
+ * schedule shows them.
+ */
+export function formatBookingBusyConflictMessage(conflicts: readonly BookingBusyConflict[], timeZone: string): string {
   const parts = conflicts.map(
     (c) =>
-      `visit ${c.visitIndex + 1} (${c.visitLabel}) conflicts with a Google Calendar busy block (${c.slot.label})`,
+      `visit ${c.visitIndex + 1} (${formatBusyWindow(c.visitStartMs, c.visitEndMs, timeZone)}) conflicts with a Google Calendar busy block (${busySlotLabel(c.slot, timeZone)})`,
   );
   return `This time is not available: ${parts.join('; ')}.`;
 }
@@ -339,7 +363,10 @@ export async function guardBookingBusyConflict(opts: GuardBookingBusyConflictOpt
   const conflicts = findBookingBusyConflicts(opts.visits, busySlots);
   if (conflicts.length === 0) return;
 
-  if (!(await isBusyConflictBlockingEnabled(opts.firestore))) {
+  // ONE settings read serves both the switch and the zone the refusal is worded in (#1164).
+  const settings = (await opts.firestore.doc(BUSINESS_SETTINGS_DOC).get()).data();
+  const timeZone = businessTimeZone(settings);
+  if (settings?.enableConflictDetection === false) {
     logEvent({
       severity: 'info',
       function: 'guardBookingBusyConflict',
@@ -354,12 +381,12 @@ export async function guardBookingBusyConflict(opts: GuardBookingBusyConflictOpt
   }
 
   if (!opts.override) {
-    throw new HttpsError('failed-precondition', formatBookingBusyConflictMessage(conflicts), {
+    throw new HttpsError('failed-precondition', formatBookingBusyConflictMessage(conflicts, timeZone), {
       code: BOOKING_BUSY_CONFLICT_CODE,
       conflicts: conflicts.map((c) => ({
         visitIndex: c.visitIndex,
         slotDocId: c.slot.docId,
-        window: c.slot.label,
+        window: busySlotLabel(c.slot, timeZone),
       })),
     });
   }
@@ -370,7 +397,7 @@ export async function guardBookingBusyConflict(opts: GuardBookingBusyConflictOpt
     severity: 'warn',
     actorRole: opts.actorRole,
     actorUid: opts.actorUid,
-    description: formatBookingBusyConflictMessage(conflicts),
+    description: formatBookingBusyConflictMessage(conflicts, timeZone),
     payload: {
       ...opts.auditContext,
       conflicts: conflicts.map((c) => ({ visitIndex: c.visitIndex, slotDocId: c.slot.docId })),

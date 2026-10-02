@@ -8,6 +8,7 @@ import {
   decodeGoogleBusySlot,
   findBookingBusyConflicts,
   formatBookingBusyConflictMessage,
+  formatBusyWindow,
   utcDateRangeForVisits,
   loadGoogleBusySlots,
   guardBookingBusyConflict,
@@ -23,7 +24,7 @@ beforeEach(() => {
 });
 
 function slot(over: Partial<DecodedBusySlot> & { docId: string; startMs: number; endMs: number }): DecodedBusySlot {
-  return { label: `${over.startMs} to ${over.endMs}`, ...over };
+  return { ...over };
 }
 
 // ── decodeGoogleBusySlot (pure) ──────────────────────────────────────────────
@@ -34,7 +35,6 @@ describe('decodeGoogleBusySlot', () => {
     expect(d).not.toBeNull();
     expect(d!.startMs).toBe(Date.parse('2026-08-07T14:00:00.000Z'));
     expect(d!.endMs).toBe(Date.parse('2026-08-07T15:30:00.000Z'));
-    expect(d!.label).toContain('2026-08-07 14:00 UTC');
   });
 
   it('rolls the end to the next UTC day when endTime <= startTime (spans midnight)', () => {
@@ -178,19 +178,58 @@ describe('findBookingBusyConflicts', () => {
   });
 });
 
-describe('formatBookingBusyConflictMessage', () => {
-  it('names every conflicting visit and its window, 1-indexed for the reader', () => {
-    const msg = formatBookingBusyConflictMessage([
-      { visitIndex: 0, visitLabel: 'X', slot: slot({ docId: 's1', startMs: 0, endMs: 1, label: '2026-08-07 14:00 UTC to 2026-08-07 15:00 UTC' }) },
-      { visitIndex: 2, visitLabel: 'Y', slot: slot({ docId: 's2', startMs: 0, endMs: 1, label: '2026-08-08 09:00 UTC to 2026-08-08 10:00 UTC' }) },
-    ]);
-    expect(msg).toContain('visit 1');
-    expect(msg).toContain('visit 3');
-    expect(msg).toContain('2026-08-07 14:00 UTC to 2026-08-07 15:00 UTC');
-    expect(msg).toContain('2026-08-08 09:00 UTC to 2026-08-08 10:00 UTC');
+describe('formatBusyWindow (#1164)', () => {
+  // October: Chicago is CDT, UTC-5. 19:00Z is 2:00 PM on the schedule.
+  const at = (iso: string) => Date.parse(iso);
+  it('words a same-day, same-meridiem window in the business zone', () => {
+    expect(formatBusyWindow(at('2026-10-05T19:00:00Z'), at('2026-10-05T20:00:00Z'), 'America/Chicago')).toBe('Oct 5, 2:00-3:00 PM');
+  });
+  it('keeps both meridiems when the window crosses noon', () => {
+    expect(formatBusyWindow(at('2026-10-05T16:00:00Z'), at('2026-10-05T18:30:00Z'), 'America/Chicago')).toBe('Oct 5, 11:00 AM-1:30 PM');
+  });
+  it('names both days when the window crosses business midnight, and uses the business day not the UTC day', () => {
+    // 03:00Z Oct 6 is 10:00 PM Oct 5 in Chicago; 07:00Z is 2:00 AM Oct 6.
+    expect(formatBusyWindow(at('2026-10-06T03:00:00Z'), at('2026-10-06T07:00:00Z'), 'America/Chicago')).toBe('Oct 5, 10:00 PM to Oct 6, 2:00 AM');
+  });
+  it('gives just the start for a point-in-time visit', () => {
+    expect(formatBusyWindow(at('2026-10-05T19:30:00Z'), null, 'America/Chicago')).toBe('Oct 5, 2:30 PM');
+  });
+  it('follows the stored zone, and falls back to the ruled America/Chicago when it is unusable', () => {
+    expect(formatBusyWindow(at('2026-10-05T19:00:00Z'), at('2026-10-05T20:00:00Z'), 'America/New_York')).toBe('Oct 5, 3:00-4:00 PM');
+    expect(formatBusyWindow(at('2026-10-05T19:00:00Z'), at('2026-10-05T20:00:00Z'), 'Not/AZone')).toBe('Oct 5, 2:00-3:00 PM');
+    expect(formatBusyWindow(at('2026-10-05T19:00:00Z'), at('2026-10-05T20:00:00Z'), '')).toBe('Oct 5, 2:00-3:00 PM');
+  });
+  it('never emits UTC wording, an em dash or an en dash', () => {
+    const out = formatBusyWindow(at('2026-10-05T19:00:00Z'), at('2026-10-05T20:00:00Z'), 'America/Chicago');
+    expect(out).not.toMatch(/UTC|\u2014|\u2013/);
   });
 });
-
+describe('formatBookingBusyConflictMessage', () => {
+  it('names every conflicting visit and its window in the business zone, 1-indexed for the reader', () => {
+    const msg = formatBookingBusyConflictMessage(
+      [
+        {
+          visitIndex: 0,
+          visitStartMs: Date.parse('2026-10-05T19:30:00Z'),
+          visitEndMs: Date.parse('2026-10-05T20:30:00Z'),
+          slot: slot({ docId: 's1', startMs: Date.parse('2026-10-05T19:00:00Z'), endMs: Date.parse('2026-10-05T20:00:00Z') }),
+        },
+        {
+          visitIndex: 2,
+          visitStartMs: Date.parse('2026-10-06T14:00:00Z'),
+          visitEndMs: null,
+          slot: slot({ docId: 's2', startMs: Date.parse('2026-10-06T14:00:00Z'), endMs: Date.parse('2026-10-06T15:00:00Z') }),
+        },
+      ],
+      'America/Chicago',
+    );
+    expect(msg).toBe(
+      'This time is not available: visit 1 (Oct 5, 2:30-3:30 PM) conflicts with a Google Calendar busy block (Oct 5, 2:00-3:00 PM); ' +
+        'visit 3 (Oct 6, 9:00 AM) conflicts with a Google Calendar busy block (Oct 6, 9:00-10:00 AM).',
+    );
+    expect(msg).not.toContain('UTC');
+  });
+});
 // ── utcDateRangeForVisits (pure) ─────────────────────────────────────────────
 
 describe('utcDateRangeForVisits', () => {
@@ -329,7 +368,10 @@ describe('guardBookingBusyConflict', () => {
     }
     expect(thrown).toBeTruthy();
     expect(thrown.code).toBe('failed-precondition');
-    expect(thrown.message).toContain('2026-08-07 14:00 UTC');
+    // 14:00Z is 9:00 AM in the ruled America/Chicago (no settings doc here), never "14:00 UTC".
+    expect(thrown.message).toContain('Aug 7, 9:00-10:00 AM');
+    expect(thrown.message).not.toContain('UTC');
+    expect(thrown.details.conflicts[0].window).toBe('Aug 7, 9:00-10:00 AM');
     expect(thrown.details).toMatchObject({ code: BOOKING_BUSY_CONFLICT_CODE });
     expect(mocks.writeAuditEntryFn).not.toHaveBeenCalled();
   });
@@ -339,6 +381,50 @@ describe('guardBookingBusyConflict', () => {
     startTimeMs: Date.parse('2026-10-05T19:30:00Z'),
     endTimeMs: Date.parse('2026-10-05T20:30:00Z'),
   };
+  it('#1164: words the refusal in the stored business zone: a block drawn at 2:00 PM reads 2:00 PM', async () => {
+    const [row] = busyIntervalToSlots(
+      { start: '2026-10-05T19:00:00Z', end: '2026-10-05T20:00:00Z' },
+      'cal-x',
+      'now',
+      'America/Chicago',
+    );
+    const ctx = buildDbMock({
+      docs: { 'business_settings/business_settings': { timeZone: 'America/Chicago' } },
+      queryDocs: { booking_time_slots: [{ id: 'gbi-new', data: { ...row } }] },
+    });
+    const thrown: any = await guardBookingBusyConflict({
+      firestore: ctx.db as any,
+      visits: [visit1430Chicago],
+      actorUid: 'u1',
+      actorRole: 'PRIMARY',
+    }).catch((e) => e);
+    expect(thrown.message).toBe(
+      'This time is not available: visit 1 (Oct 5, 2:30-3:30 PM) conflicts with a Google Calendar busy block (Oct 5, 2:00-3:00 PM).',
+    );
+    expect(thrown.details.conflicts[0].window).toBe('Oct 5, 2:00-3:00 PM');
+  });
+  it('#1164: the override audit description uses the same business-zone wording', async () => {
+    const [row] = busyIntervalToSlots(
+      { start: '2026-10-05T19:00:00Z', end: '2026-10-05T20:00:00Z' },
+      'cal-x',
+      'now',
+      'America/Chicago',
+    );
+    const ctx = buildDbMock({
+      docs: { 'business_settings/business_settings': { timeZone: 'America/Chicago' } },
+      queryDocs: { booking_time_slots: [{ id: 'gbi-new', data: { ...row } }] },
+    });
+    await guardBookingBusyConflict({
+      firestore: ctx.db as any,
+      visits: [visit1430Chicago],
+      actorUid: 'u1',
+      actorRole: 'AUNTIE',
+      override: true,
+    });
+    const description = mocks.writeAuditEntryFn.mock.calls[0][0].description as string;
+    expect(description).toContain('Oct 5, 2:00-3:00 PM');
+    expect(description).not.toContain('UTC');
+  });
   it('#1160: refuses a 14:30 Chicago visit over a 14:00 to 15:00 Chicago busy row written by the sync', async () => {
     const [row] = busyIntervalToSlots(
       { start: '2026-10-05T19:00:00Z', end: '2026-10-05T20:00:00Z' },

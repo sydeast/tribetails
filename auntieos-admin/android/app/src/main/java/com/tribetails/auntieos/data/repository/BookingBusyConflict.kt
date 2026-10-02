@@ -12,6 +12,7 @@ import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
+import java.util.Locale
 
 /**
  * The Kotlin twin of `mytribe/functions/src/lib/bookingBusyConflict.ts`, for
@@ -67,15 +68,37 @@ internal data class DecodedBusySlot(
     val docId: String,
     val startInstant: Instant,
     val endInstant: Instant,
-    /** "2026-08-07 22:00 UTC to 2026-08-08 02:00 UTC", for the fail-loud message. */
-    val label: String,
 )
 
 /** Thrown by [assertNoBookingBusyConflict]; its message is what the ViewModel surfaces to the operator. */
 internal class BookingBusyConflictException(message: String) : Exception(message)
 
-private fun formatUtc(instant: Instant): String =
-    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneOffset.UTC).format(instant) + " UTC"
+/**
+ * Words a window in the BUSINESS zone, the clock the operator reads on the
+ * schedule (#1164); the twin of `formatBusyWindow` in
+ * `lib/bookingBusyConflict.ts`. It used to read "2026-08-07 19:00 UTC to ..."
+ * for a block drawn at 2:00 PM. "Aug 7, 2:00-3:00 PM" when both ends share a
+ * day, "Aug 7, 10:00 PM to Aug 8, 2:00 AM" when they do not. Plain hyphens and
+ * "to", never a dash character.
+ */
+internal fun formatBusyWindow(start: Instant, end: Instant, zone: ZoneId): String {
+    val day = DateTimeFormatter.ofPattern("MMM d", Locale.US).withZone(zone)
+    val clock = DateTimeFormatter.ofPattern("h:mm", Locale.US).withZone(zone)
+    val meridiem = DateTimeFormatter.ofPattern("a", Locale.US).withZone(zone)
+    fun time(i: Instant) = "${clock.format(i)} ${meridiem.format(i)}"
+    val startDay = day.format(start)
+    val endDay = day.format(end)
+    return when {
+        startDay != endDay -> "$startDay, ${time(start)} to $endDay, ${time(end)}"
+        meridiem.format(start) == meridiem.format(end) -> "$startDay, ${clock.format(start)}-${time(end)}"
+        else -> "$startDay, ${time(start)}-${time(end)}"
+    }
+}
+/** The refusal text, with every busy window worded in [zone] (the business zone). */
+internal fun busyConflictMessage(conflicts: List<DecodedBusySlot>, zone: ZoneId): String {
+    val windows = conflicts.joinToString("; ") { formatBusyWindow(it.startInstant, it.endInstant, zone) }
+    return "This time is not available: conflicts with a Google Calendar busy block ($windows)."
+}
 
 /**
  * Parses a visit's own start/end field to a real instant. Accepts a genuine
@@ -137,14 +160,14 @@ internal fun decodeGoogleBusySlot(slot: BookingTimeSlot): DecodedBusySlot? {
     if (startMs != null && endMs != null && endMs > startMs) {
         val start = Instant.ofEpochMilli(startMs)
         val end = Instant.ofEpochMilli(endMs)
-        return DecodedBusySlot(slot.id, start, end, "${formatUtc(start)} to ${formatUtc(end)}")
+        return DecodedBusySlot(slot.id, start, end)
     }
     if (!DATE_RE.matches(slot.date) || !TIME_RE.matches(slot.startTime) || !TIME_RE.matches(slot.endTime)) return null
     val startInstant = runCatching { Instant.parse("${slot.date}T${slot.startTime}:00Z") }.getOrNull() ?: return null
     val sameDayEnd = runCatching { Instant.parse("${slot.date}T${slot.endTime}:00Z") }.getOrNull() ?: return null
     val endInstant = if (slot.endTime <= slot.startTime) sameDayEnd.plus(DAY) else sameDayEnd
     if (!endInstant.isAfter(startInstant)) return null
-    return DecodedBusySlot(slot.id, startInstant, endInstant, "${formatUtc(startInstant)} to ${formatUtc(endInstant)}")
+    return DecodedBusySlot(slot.id, startInstant, endInstant)
 }
 
 /**
@@ -197,13 +220,11 @@ internal suspend fun assertNoBookingBusyConflict(
     timeZone: String,
 ) {
     // A bare wall-clock start is the business's own clock (the same reading the closed-day guard uses), never this phone's.
-    val window = resolveVisitWindow(startRaw, endRaw, businessZone(timeZone)) ?: return
+    val zone = businessZone(timeZone)
+    val window = resolveVisitWindow(startRaw, endRaw, zone) ?: return
     val rawSlots = loadGoogleBusySlots(firestore, window)
     val decoded = rawSlots.mapNotNull(::decodeGoogleBusySlot)
     val conflicts = findBusyConflicts(window, decoded)
     if (conflicts.isEmpty()) return
-    val windows = conflicts.joinToString("; ") { it.label }
-    throw BookingBusyConflictException(
-        "This time is not available: conflicts with a Google Calendar busy block ($windows).",
-    )
+    throw BookingBusyConflictException(busyConflictMessage(conflicts, zone))
 }
