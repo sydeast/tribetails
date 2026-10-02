@@ -396,6 +396,12 @@ internal fun bulkRescheduleSummary(rows: List<BulkRescheduleRow>): String {
  * Human, fail-loud summary of a batch booking transition. Always names how many
  * succeeded AND how many failed, so a partial result is never read as a clean
  * success. Maps the SCREAMING action onto a past-tense verb. Pure; unit-tested.
+ *
+ * #1099: an approval now books the visit for real (session, busy and closed-day
+ * checks), so a refusal has a reason the operator has to read, such as a busy
+ * Google Calendar block. Each distinct reason follows the counts, in the
+ * server's own words; the two raw codes the callable still sends are put into
+ * plain words here.
  */
 internal fun batchBookingSummary(result: com.tribetails.auntieos.data.repository.BatchBookingResult): String {
     val verb = when (result.action.uppercase()) {
@@ -405,8 +411,15 @@ internal fun batchBookingSummary(result: com.tribetails.auntieos.data.repository
         else -> result.action
     }
     val failed = result.failedCount
-    return if (failed == 0) "$verb ${result.updated}."
-    else "$verb ${result.updated}, $failed failed."
+    if (failed == 0) return "$verb ${result.updated}."
+    val reasons = result.failed.map { batchFailureReason(it.error) }.distinct()
+    return "$verb ${result.updated}, $failed failed. ${reasons.joinToString(" ")}"
+}
+/** One refusal, as a sentence: the server's own words when it sent words, plain text for its two raw codes. */
+internal fun batchFailureReason(error: String): String = when (error.trim()) {
+    "", "write-failed" -> "The change could not be saved."
+    "not-found" -> "That booking was not found."
+    else -> error.trim().let { if (it.last() in ".!?") it else "$it." }
 }
 
 class EnhancedSchedulingViewModel(

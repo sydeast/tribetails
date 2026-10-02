@@ -209,6 +209,18 @@ export interface BulkOutcome {
  * a success with a footnote: the admin list and the household's portal now
  * disagree about that visit, and the operator is the only one who can notice.
  */
+/**
+ * #1099: one per-id refusal from `batchUpdateBookings`, in plain words. An
+ * approval now books the visit for real, so the callable sends the reason a
+ * visit could not be booked (a busy Google Calendar block, a closed day) as a
+ * sentence; only its two raw codes need translating.
+ */
+export function plainBatchError(error: string): string {
+  const e = error.trim();
+  if (e === '' || e === 'write-failed') return 'The change could not be saved.';
+  if (e === 'not-found') return 'That booking was not found.';
+  return e;
+}
 export function mergeBulkResults(
   action: BatchBookingAction,
   plan: BulkPlan,
@@ -217,7 +229,7 @@ export function mergeBulkResults(
 ): BulkOutcome {
   const envelopeFailure = new Map<string, string>();
   for (const result of envelopeResults) {
-    for (const f of result.failed) envelopeFailure.set(f.id, f.error);
+    for (const f of result.failed) envelopeFailure.set(f.id, plainBatchError(f.error));
   }
 
   const applied: BulkTarget[] = [];

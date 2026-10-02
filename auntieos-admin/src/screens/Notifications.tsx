@@ -15,6 +15,7 @@ import {
   bulkUnarchiveNotifications,
 } from '../api/notificationsWrite';
 import { batchUpdateBookings, type BatchBookingAction } from '../api/bookingsWrite';
+import { plainBatchError } from '../lib/bookingBulk';
 import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
 import { useCollection } from '../lib/firestore';
 import {
@@ -275,7 +276,7 @@ export function Notifications({ onNavigate }: NotificationsProps = {}) {
         const result = await batchUpdateBookings([bookingId], action);
         if (result.failed.length > 0) {
           return `Booking ${action === 'APPROVE' ? 'approval' : 'denial'} failed: ${result.failed
-            .map((f) => f.error)
+            .map((f) => plainBatchError(f.error))
             .join('; ')}`;
         }
         if (result.updated === 0) {
