@@ -3881,8 +3881,9 @@ private class FirestoreClientSettingsDataSource(
     override suspend fun recordPayment(payment: com.tribetails.auntieos.web.data.Payment) = client.recordPayment(payment)
     override fun businessSettingsStream() = client.businessSettingsStream()
     override suspend fun saveBusinessSettings(settings: BusinessSettings) = client.saveBusinessSettings(settings)
-    override suspend fun approveBooking(bookingId: String) = client.approveBooking(bookingId)
-    override suspend fun rejectBooking(bookingId: String)  = client.rejectBooking(bookingId)
+    override suspend fun approveBooking(bookingId: String, visitId: String?) = client.approveBooking(bookingId, visitId)
+    override suspend fun rejectBooking(bookingId: String, visitId: String?)  = client.rejectBooking(bookingId, visitId)
+    override suspend fun cancelBooking(bookingId: String, visitId: String?)  = client.cancelBooking(bookingId, visitId)
     override suspend fun createBooking(booking: com.tribetails.auntieos.web.data.KinCareSession) =
         client.createBookingRequest(booking)
     override fun mediaStream(entityId: String, entityType: String) = client.mediaStream(entityId, entityType)

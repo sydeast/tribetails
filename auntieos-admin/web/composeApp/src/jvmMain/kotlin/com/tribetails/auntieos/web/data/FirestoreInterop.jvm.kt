@@ -618,10 +618,6 @@ internal actual suspend fun platformSaveBusinessSettings(settings: BusinessSetti
         lastLoadedBusinessSettings = settings
         WriteResult.Ok(Unit)
     }
-internal actual suspend fun platformApproveBooking(bookingId: String): WriteResult<Unit> =
-    transportWrite("approve failed") { JvmFirestoreRest.patchFields("kin_care_sessions", bookingId, mapOf("status" to JsonPrimitive("SCHEDULED"))) }
-internal actual suspend fun platformRejectBooking(bookingId: String): WriteResult<Unit> =
-    transportWrite("reject failed") { JvmFirestoreRest.patchFields("kin_care_sessions", bookingId, mapOf("status" to JsonPrimitive("REJECTED"))) }
 internal actual suspend fun platformCreateBookingRequest(booking: KinCareSession): WriteResult<String> =
     transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("kin_care_sessions", jsonOut.encodeToString(booking))) }
 /**
