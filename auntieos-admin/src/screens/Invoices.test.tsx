@@ -490,6 +490,26 @@ describe('Invoices screen', () => {
     expect(useDocById).toHaveBeenCalledWith('invoices', 'inv-from-2019');
   });
 
+  // #1113: the list rows are a one-shot read, so an open sheet built from one
+  // never showed what the server wrote after it opened (the open payment links
+  // line). The sheet follows the live by-id read once it has arrived.
+  it('shows what the live read of the open invoice says over the stale list row', async () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ _id: 'inv1', status: 'paid', amountDue: 0 })]),
+    );
+    useDocById.mockReturnValue({
+      status: 'ready',
+      data: entry({
+        _id: 'inv1',
+        status: 'paid',
+        amountDue: 0,
+        checkoutSweep: { expiredIds: ['cs_a'], failed: [] },
+      }),
+    });
+    render(<Invoices initialInvoiceId="inv1" />);
+    const detail = await screen.findByRole('dialog');
+    expect(within(detail).getByText('Open payment links closed (1)')).toBeInTheDocument();
+  });
   it('says the invoice is gone when the by-id read finds nothing, instead of opening nothing', () => {
     usePagedCollection.mockReturnValue(paged([entry({ _id: 'someone-else' })]));
     useDocById.mockReturnValue({ status: 'ready', data: null });

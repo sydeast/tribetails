@@ -683,6 +683,8 @@ data class Invoice(
      * Invoice back, so no save can wipe it.
      */
     var checkoutSweep: Any? = null,
+    /** Raw, like [lineItems]; only read against [checkoutSweep] by `invoiceCheckoutClosureOrNull`. */
+    var closedCheckoutSessionIds: Any? = null,
 )
 
 /**

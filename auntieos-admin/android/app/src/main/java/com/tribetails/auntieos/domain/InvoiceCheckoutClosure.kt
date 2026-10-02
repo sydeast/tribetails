@@ -23,9 +23,12 @@ fun invoiceCheckoutClosureOrNull(invoice: Invoice): InvoiceCheckoutClosure? {
     val sweep = invoice.checkoutSweep as? Map<*, *> ?: return null
     val closed = (sweep["expiredIds"] as? List<*>)
         ?.count { it is String && it.isNotEmpty() } ?: 0
+    // A failure for a session the server has since closed is stale: two passes
+    // can run on one payment at once, and whichever records last wins `failed`.
+    val closedNow = (invoice.closedCheckoutSessionIds as? List<*>).orEmpty().filterIsInstance<String>().toSet()
     val failed = (sweep["failed"] as? List<*>).orEmpty().mapNotNull { entry ->
         val row = entry as? Map<*, *> ?: return@mapNotNull null
-        val id = (row["sessionId"] as? String)?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+        val id = (row["sessionId"] as? String)?.takeIf { it.isNotEmpty() && it !in closedNow } ?: return@mapNotNull null
         val reason = (row["reason"] as? String)?.trim()?.takeIf { it.isNotEmpty() } ?: FALLBACK_REASON
         InvoiceCheckoutFailure(id, reason)
     }

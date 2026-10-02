@@ -32,6 +32,18 @@ class InvoiceCheckoutClosureTest {
         assertEquals(listOf(InvoiceCheckoutFailure("cs_c", "No.")), c.failed)
     }
     @Test
+    fun `a failure for a session the server has since closed is not shown`() {
+        val inv = Invoice(
+            id = "inv1",
+            checkoutSweep = mapOf(
+                "expiredIds" to listOf("cs_a"),
+                "failed" to listOf(mapOf("sessionId" to "cs_c", "reason" to "No.")),
+            ),
+            closedCheckoutSessionIds = listOf("cs_a", "cs_c"),
+        )
+        assertEquals(InvoiceCheckoutClosure(1, emptyList()), invoiceCheckoutClosureOrNull(inv))
+    }
+    @Test
     fun `junk entries are dropped rather than trusted`() {
         val c = invoiceCheckoutClosureOrNull(
             invoice(

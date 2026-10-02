@@ -15,16 +15,20 @@ import { vendorConfigured } from '../support/e2e-real';
  * the real screen.
  *
  * WHAT IS PROVED, FROM THE UI ONLY (2026-09-01 ruling): the real callable
- * settled the invoice. The notice is the server's own verdict, and after a
- * reload the invoice is paid and offers no further collection action.
+ * settled the invoice (the notice is the server's own verdict), and after a
+ * reload the invoice is paid, offers no further collection action, and says its
+ * open Stripe payment link was closed (#1113). That line is written by the
+ * trigger from what Stripe answered, so it is the screen's proof that the
+ * session was really expired. If Stripe refused, the line would carry Stripe's
+ * reason instead and this assertion would fail on it.
  *
- * WHAT IS NOT ASSERTED: that Stripe expired the session. No admin screen shows
- * it, so there is nothing on screen to assert. The trigger does run for real,
- * and if it logs a structured error while the test is still running, the
- * harness condition in `support/e2e-real.ts` fails the test the same way a
- * `console.error` would. That is a harness signal, not this spec's claim.
- * TODO(#1113): once the invoice screen shows whether open Stripe payment links
- * were closed, assert the expiry here, after the reload.
+ * A PAID INVOICE STILL OFFERS ONE ACTION, Generate receipt (`invoiceActionsFor`),
+ * so the screen never prints "No collection actions" for it; that sentence is for
+ * quotes, cancelled and credit rows. Waiting on it timed out the first real run
+ * (#1089). The paid invoice's own button is the cue the document has loaded.
+ *
+ * The harness condition in `support/e2e-real.ts` still applies: a structured
+ * `severity: error` line our functions log while the test runs fails it.
  *
  * SKIPS, WITH THE REASON IN THE LOG, when the run has no Stripe test keys.
  * Absent keys are never a pass and never a red run.
@@ -34,7 +38,14 @@ const STAMP = Date.now().toString(36);
 const INVOICE_ID = `e2e-real-inv-${STAMP}`;
 const TOTAL = 42;
 
-const BUDGET_MS = { RENDER: 10_000, RECORD: 15_000 } as const;
+/**
+ * SWEEP is the trigger running after the write, not a screen render. The
+ * functions emulator works through its trigger queue in order and the seeded
+ * fixtures ahead of this invoice are on it (about 8 s in a local run), so this
+ * is wider than RENDER. A user would wait for the same event in production, in
+ * seconds. The assertion waits on the line itself, which is the cue.
+ */
+const BUDGET_MS = { RENDER: 10_000, RECORD: 15_000, SWEEP: 30_000 } as const;
 
 function today(): string {
   const d = new Date();
@@ -104,7 +115,12 @@ describe('invoice payment with an open Stripe checkout (real callable, Stripe te
 
     // Persistence, through a reload: paid, and nothing left to collect.
     cy.reload();
-    cy.contains('No collection actions for a paid invoice.', { timeout: BUDGET_MS.RENDER }).should('exist');
+    cy.contains('button', 'Generate receipt', { timeout: BUDGET_MS.RENDER }).should('exist');
     cy.contains('button', 'Record payment').should('not.exist');
+    // #1113: the open payment link Stripe was asked to expire. One link was
+    // minted above, so the count is 1. The line streams in when the trigger
+    // records its outcome, with no reload needed.
+    cy.contains('Open payment links closed (1)', { timeout: BUDGET_MS.SWEEP }).should('exist');
+    cy.contains('Could not close').should('not.exist');
   });
 });

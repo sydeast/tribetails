@@ -202,6 +202,8 @@ export interface InvoiceEntry {
    * an invoice that had no open link when it was paid. Read through
    * `invoiceCheckoutClosure`, never off the cast.
    */
+  /** Every session the server has dealt with; the idempotency list `checkoutSweep.failed` is read against. */
+  closedCheckoutSessionIds?: string[];
   checkoutSweep?: {
     expiredIds?: string[];
     failed?: Array<{ sessionId: string; reason: string }>;
@@ -915,7 +917,7 @@ export interface InvoiceCheckoutClosure {
  * is a cast over raw document data, so each element is checked.
  */
 export function invoiceCheckoutClosure(
-  row: Pick<InvoiceEntry, 'checkoutSweep'>,
+  row: Pick<InvoiceEntry, 'checkoutSweep' | 'closedCheckoutSessionIds'>,
 ): InvoiceCheckoutClosure | null {
   const sweep: unknown = row.checkoutSweep;
   if (typeof sweep !== 'object' || sweep === null) return null;
@@ -923,12 +925,18 @@ export function invoiceCheckoutClosure(
   const closedCount = Array.isArray(raw.expiredIds)
     ? raw.expiredIds.filter((id): id is string => typeof id === 'string' && id !== '').length
     : 0;
+  // A failure for a session the server has since closed is stale: two passes
+  // can run on one payment at once (markInvoicePaid and recordPayment both
+  // write the invoice), and whichever records last wins `failed`. The closed
+  // list is the truth, so a session on it is never shown as still open.
+  const closedNow: unknown = row.closedCheckoutSessionIds;
+  const closedSet = new Set(Array.isArray(closedNow) ? closedNow.filter((x) => typeof x === 'string') : []);
   const failed: InvoiceCheckoutClosure['failed'] = [];
   if (Array.isArray(raw.failed)) {
     for (const f of raw.failed as unknown[]) {
       if (typeof f !== 'object' || f === null) continue;
       const { sessionId, reason } = f as { sessionId?: unknown; reason?: unknown };
-      if (typeof sessionId !== 'string' || sessionId === '') continue;
+      if (typeof sessionId !== 'string' || sessionId === '' || closedSet.has(sessionId)) continue;
       failed.push({
         sessionId,
         reason:

@@ -685,6 +685,20 @@ describe('invoiceCheckoutClosure (#1113)', () => {
       }),
     ).toEqual({ closedCount: 2, failed: [{ sessionId: 'c', reason: 'No.' }] });
   });
+  it('does not show a failure for a session the server has since closed (two passes can race)', () => {
+    expect(
+      invoiceCheckoutClosure({
+        closedCheckoutSessionIds: ['c'],
+        checkoutSweep: { expiredIds: ['a'], failed: [{ sessionId: 'c', reason: 'No.' }] },
+      }),
+    ).toEqual({ closedCount: 1, failed: [] });
+    expect(
+      invoiceCheckoutClosure({
+        closedCheckoutSessionIds: ['c'],
+        checkoutSweep: { expiredIds: [], failed: [{ sessionId: 'c', reason: 'No.' }] },
+      }),
+    ).toBeNull();
+  });
   it('is a cast over raw data, so junk is dropped instead of trusted', () => {
     const junk = { checkoutSweep: { expiredIds: ['a', 7, null], failed: [{ sessionId: 3 }, 'x', { sessionId: 'c' }] } };
     expect(invoiceCheckoutClosure(junk as never)).toEqual({
