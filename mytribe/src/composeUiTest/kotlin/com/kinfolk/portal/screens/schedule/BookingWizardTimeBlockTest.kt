@@ -125,6 +125,39 @@ class BookingWizardTimeBlockTest {
         })
     }
 
+    /**
+     * #1094: the weekly line on step 3 judged a block plan by clock rules. Two
+     * of the same KinCare in DIFFERENT windows both carry the default clock
+     * time, so the line said they clashed while Next (which passes the block
+     * rules) was enabled.
+     */
+    @Test
+    fun blockOnly_weeklyLineJudgesTheWindowsNotTheClock() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubKinAndServices(fake)
+        stubPolicy(fake, allowBlocks = true, allowSpecific = false, default = "TIME_BLOCK")
+        setThemedContent {
+            BookingWizardScreen(kinfolkId = "3", portalApi = PortalApi(fake), onClose = {}, onComplete = {})
+        }
+        waitForIdle()
+        onNodeWithText("Next").performClick()
+        waitForIdle()
+        onNodeWithText("Auntie's In").performClick()
+        onNodeWithText("Auntie's In").performClick()
+        onNodeWithText("Next").performClick()
+        waitForIdle()
+        // The second Auntie's In moves to Evening; the first stays in Midday.
+        onAllNodesWithText("Evening (17:00-21:00)")[1].performScrollTo().performClick()
+        onNodeWithText("Repeating Schedule").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("Mon").performScrollTo().performClick()
+        waitForIdle()
+
+        onNodeWithText("Two KinCares have the same duration at the same time. Change one of the times.")
+            .assertDoesNotExist()
+        onNodeWithText("visit(s) over 4 weeks", substring = true).assertExists()
+    }
+
     @Test
     fun blockOnly_offersTheBusinessWindowsAndNoTimeField() = runComposeUiTest {
         val fake = FakeFunctionsClient()

@@ -854,7 +854,7 @@ private fun Step3ScheduleDates(
             }
         }
         if (pattern == BookingPattern.Weekly) {
-            val blocker = weeklyVisitsBlocker(weeklyDays, weekCount, slots)
+            val blocker = weeklyVisitsBlocker(weeklyDays, weekCount, slots, timing)
             Text(
                 blocker ?: "$weeklyEmitted visit(s) over $weekCount weeks. Your Auntie confirms each visit.",
                 style = type.sansMeta.copy(color = if (blocker == null) KinfolkBrand.KinTeal else KinfolkBrand.SnuggleCoral),
