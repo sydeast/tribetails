@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import {
   localDayTimeToMs,
   expandWeekly,
@@ -12,7 +12,9 @@ import {
   serviceChipLabel,
 } from './newBooking';
 
-// AO-18: this math is LOCAL-time; pin the zone so the assertions are stable.
+// Pinned so the assertions are stable. The wizard helpers take the business zone
+// (#1150); the suite below moves the device to Los Angeles to prove they ignore it.
+const CHICAGO = 'America/Chicago';
 const ORIG_TZ = process.env.TZ;
 beforeAll(() => {
   process.env.TZ = 'America/Chicago';
@@ -47,7 +49,7 @@ describe('localDayTimeToMs', () => {
 describe('expandWeekly', () => {
   it('produces one occurrence per selected weekday per week, each on the right weekday', () => {
     // 2026-08-03 is a Monday. Ask for Mon(1) + Wed(3), 2 weeks.
-    const ms = expandWeekly({ startDateIso: '2026-08-03', time: '09:00', weeklyDays: [1, 3], weeks: 2 });
+    const ms = expandWeekly({ startDateIso: '2026-08-03', time: '09:00', weeklyDays: [1, 3], weeks: 2, businessZone: CHICAGO });
     expect(ms).toHaveLength(4);
     for (const m of ms) {
       const d = new Date(m);
@@ -58,18 +60,18 @@ describe('expandWeekly', () => {
     expect([...ms].sort((a, b) => a - b)).toEqual(ms);
   });
   it('is empty when no weekday is selected or weeks < 1', () => {
-    expect(expandWeekly({ startDateIso: '2026-08-03', time: '09:00', weeklyDays: [], weeks: 2 })).toEqual([]);
-    expect(expandWeekly({ startDateIso: '2026-08-03', time: '09:00', weeklyDays: [1], weeks: 0 })).toEqual([]);
+    expect(expandWeekly({ startDateIso: '2026-08-03', time: '09:00', weeklyDays: [], weeks: 2, businessZone: CHICAGO })).toEqual([]);
+    expect(expandWeekly({ startDateIso: '2026-08-03', time: '09:00', weeklyDays: [1], weeks: 0, businessZone: CHICAGO })).toEqual([]);
   });
   it('is empty for a blank date or time', () => {
-    expect(expandWeekly({ startDateIso: '', time: '09:00', weeklyDays: [1], weeks: 1 })).toEqual([]);
-    expect(expandWeekly({ startDateIso: '2026-08-03', time: '', weeklyDays: [1], weeks: 1 })).toEqual([]);
+    expect(expandWeekly({ startDateIso: '', time: '09:00', weeklyDays: [1], weeks: 1, businessZone: CHICAGO })).toEqual([]);
+    expect(expandWeekly({ startDateIso: '2026-08-03', time: '', weeklyDays: [1], weeks: 1, businessZone: CHICAGO })).toEqual([]);
   });
 });
 
 describe('visitMsFromDays', () => {
   it('applies the one shared time to every picked day, ascending', () => {
-    const ms = visitMsFromDays(['2026-08-10', '2026-08-03'], '14:30');
+    const ms = visitMsFromDays(['2026-08-10', '2026-08-03'], '14:30', CHICAGO);
     expect(ms).toHaveLength(2);
     expect(ms[0]).toBeLessThan(ms[1]!);
     for (const m of ms) {
@@ -79,11 +81,43 @@ describe('visitMsFromDays', () => {
     }
   });
   it('takes a Set straight from the calendar and drops unparseable days', () => {
-    const ms = visitMsFromDays(new Set(['2026-08-10', '', 'not-a-day', '2026-08-03']), '09:00');
+    const ms = visitMsFromDays(new Set(['2026-08-10', '', 'not-a-day', '2026-08-03']), '09:00', CHICAGO);
     expect(ms).toHaveLength(2);
   });
   it('is empty when the time is blank, since no day has an instant without one', () => {
-    expect(visitMsFromDays(['2026-08-03'], '')).toEqual([]);
+    expect(visitMsFromDays(['2026-08-03'], '', CHICAGO)).toEqual([]);
+  });
+});
+
+describe('the business zone, not the device zone (#1150)', () => {
+  // The operator's browser is in Los Angeles; the business is in Chicago.
+  // Chicago is two hours ahead, so the two readings of "9:00" are 2h apart.
+  let deviceTz: string | undefined;
+  beforeEach(() => {
+    deviceTz = process.env.TZ;
+    process.env.TZ = 'America/Los_Angeles';
+  });
+  afterEach(() => {
+    process.env.TZ = deviceTz;
+  });
+
+  const NINE_CHICAGO = Date.UTC(2026, 7, 3, 14, 0); // 9:00 CDT (UTC-5)
+  const NINE_LA = Date.UTC(2026, 7, 3, 16, 0); // 9:00 PDT (UTC-7)
+
+  it('picking 9:00 on a day sends 9:00 Chicago', () => {
+    const [ms] = visitMsFromDays(['2026-08-03'], '09:00', CHICAGO);
+    expect(ms).toBe(NINE_CHICAGO);
+    expect(ms).not.toBe(NINE_LA);
+  });
+
+  it('a weekly recurrence lands every occurrence at 9:00 Chicago, across the DST change', () => {
+    // Mondays from Oct 26: Chicago leaves CDT on Nov 1, so Nov 2 is UTC-6.
+    const ms = expandWeekly({ startDateIso: '2026-10-26', time: '09:00', weeklyDays: [1], weeks: 2, businessZone: CHICAGO });
+    expect(ms).toEqual([Date.UTC(2026, 9, 26, 14, 0), Date.UTC(2026, 10, 2, 15, 0)]);
+  });
+
+  it('a blank business zone reads as America/Chicago, never the device (#1109)', () => {
+    expect(visitMsFromDays(['2026-08-03'], '09:00', '')).toEqual([NINE_CHICAGO]);
   });
 });
 

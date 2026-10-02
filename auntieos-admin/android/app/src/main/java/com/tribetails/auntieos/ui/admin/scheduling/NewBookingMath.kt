@@ -10,13 +10,19 @@ import java.time.ZoneId
  *
  * Weekdays use the JS/backend convention (0 = Sunday … 6 = Saturday), the same
  * `weeklyDays` the createMultiDateBookingRequest callable stores, so the UI
- * selection is sent through unchanged. All times are LOCAL (the operator's zone).
+ * selection is sent through unchanged.
+ *
+ * #1150: every visit time is the BUSINESS's wall clock, built in the zone
+ * `businessZone(business_settings.timeZone)` resolves (America/Chicago when unset
+ * or unusable, #1109). The server reads the instants in that zone for dates,
+ * blocks, closures and conflicts, so an operator whose phone is in another zone
+ * still books the business's 9:00. The web and desktop wizards do the same.
  */
 object NewBookingMath {
 
-    /** Epoch ms in the system (local) zone for a wall-clock date + time. */
-    fun localMs(date: LocalDate, hour: Int, minute: Int): Long =
-        date.atTime(hour, minute).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+    /** Epoch ms for a wall-clock date + time read in [zone], the business's zone (#1150). */
+    fun localMs(date: LocalDate, hour: Int, minute: Int, zone: ZoneId): Long =
+        date.atTime(hour, minute).atZone(zone).toInstant().toEpochMilli()
 
     /**
      * The zone Material3's `DatePickerState` speaks in, which is NOT the device's.
@@ -49,7 +55,7 @@ object NewBookingMath {
 
     /**
      * Weekly recurrence: walk [weeks] * 7 days from [startDate], include any day
-     * whose (JS) weekday is in [weekdays], at [hour]:[minute]. Ascending, de-duped
+     * whose (JS) weekday is in [weekdays], at [hour]:[minute] in [zone]. Ascending, de-duped
      * epoch ms. Empty when no weekday is selected or [weeks] < 1.
      */
     fun expandWeekly(
@@ -58,12 +64,13 @@ object NewBookingMath {
         minute: Int,
         weekdays: Set<Int>,
         weeks: Int,
+        zone: ZoneId,
     ): List<Long> {
         if (weekdays.isEmpty() || weeks < 1) return emptyList()
         val out = sortedSetOf<Long>()
         for (i in 0 until weeks * 7) {
             val d = startDate.plusDays(i.toLong())
-            if (jsWeekday(d) in weekdays) out.add(localMs(d, hour, minute))
+            if (jsWeekday(d) in weekdays) out.add(localMs(d, hour, minute, zone))
         }
         return out.toList()
     }

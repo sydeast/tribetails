@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import {
   initialWizardState,
   newSlot,
@@ -594,5 +594,78 @@ describe('step gating', () => {
     expect(stepBlocker(state, 'dates', NOW, () => 'Founders Day')).toBe(
       'Aug 3 is closed for Founders Day. The business will refuse that date, so pick another.',
     );
+  });
+});
+
+describe('visit times are the business zone, whatever the device zone (#1150)', () => {
+  // The operator's browser is in Los Angeles; the business is in Chicago, two
+  // hours ahead. The server reads every instant in the business zone.
+  let deviceTz: string | undefined;
+  beforeEach(() => {
+    deviceTz = process.env.TZ;
+    process.env.TZ = 'America/Los_Angeles';
+  });
+  afterEach(() => {
+    process.env.TZ = deviceTz;
+  });
+
+  const inChicago = (over: Partial<WizardState> = {}) =>
+    ready({ businessTimeZone: 'America/Chicago', ...over });
+
+  it('starts in America/Chicago before the settings read lands (#1109)', () => {
+    expect(initialWizardState().businessTimeZone).toBe('America/Chicago');
+  });
+
+  it('picking 9:00 sends the epoch of 9:00 Chicago, not 9:00 Los Angeles', () => {
+    const [visit] = buildVisits(toggleDay(inChicago(), '2026-08-03'));
+    expect(visit!.startTimeMs).toBe(Date.UTC(2026, 7, 3, 14, 0)); // 9:00 CDT
+    expect(visit!.startTimeMs).not.toBe(Date.UTC(2026, 7, 3, 16, 0)); // 9:00 PDT
+  });
+
+  it('a weekly recurrence sends 9:00 Chicago on every occurrence', () => {
+    const state = inChicago({ mode: 'weekly', startDateIso: '2026-08-03', weeklyDays: [1], weeks: 2 });
+    expect(buildVisits(state).map((v) => v.startTimeMs)).toEqual([
+      Date.UTC(2026, 7, 3, 14, 0),
+      Date.UTC(2026, 7, 10, 14, 0),
+    ]);
+  });
+
+  it('the warnings read back the clock the operator typed', () => {
+    let state = toggleDay(inChicago(), '2026-08-03');
+    state = addDayVisit(state, '2026-08-03');
+    const second = state.plans[0]!.visits[1]!;
+    state = updateDayVisit(state, '2026-08-03', second.id, { time: '19:00' });
+    // Read in the device zone these would be 07:00 and 17:00.
+    expect(plannedVisitTimes(state)).toEqual([
+      { dayIso: '2026-08-03', time: '09:00' },
+      { dayIso: '2026-08-03', time: '19:00' },
+    ]);
+  });
+
+  it('a just-after-midnight visit stays on the business day, so a closure on it still blocks', () => {
+    // 00:30 Aug 4 in Chicago is 22:30 Aug 3 in Los Angeles.
+    const state = inChicago({
+      mode: 'weekly',
+      startDateIso: '2026-08-04',
+      weeklyDays: [2],
+      weeks: 1,
+      template: [newSlot({ time: '00:30', serviceName: 'Dog Walk' })],
+    });
+    expect(plannedDayIsos(state)).toEqual(['2026-08-04']);
+    expect(plannedVisitTimes(state)).toEqual([{ dayIso: '2026-08-04', time: '00:30' }]);
+    const closedAug4 = (iso: string) => (iso === '2026-08-04' ? 'Founders Day' : null);
+    expect(stepBlocker(state, 'dates', PAST, closedAug4)).toBe(
+      'Aug 4 is closed for Founders Day. The business will refuse that date, so pick another.',
+    );
+  });
+
+  it('follows the business zone Settings names', () => {
+    const [visit] = buildVisits(toggleDay(inChicago({ businessTimeZone: 'America/New_York' }), '2026-08-03'));
+    expect(visit!.startTimeMs).toBe(Date.UTC(2026, 7, 3, 13, 0)); // 9:00 EDT
+  });
+
+  it('never puts the zone on the wire', () => {
+    const payload = bookingSubmission(toggleDay(inChicago(), '2026-08-03'), ROSTER);
+    expect(payload).not.toHaveProperty('businessTimeZone');
   });
 });

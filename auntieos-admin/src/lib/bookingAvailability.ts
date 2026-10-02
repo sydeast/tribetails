@@ -10,45 +10,31 @@ import { closureOccurrencesInRange, type ClosureEntry } from './closureRecurrenc
  *
  * ── THE TIMEZONE DECISION, stated once, here ─────────────────────────────────
  *
- * Every date and time in this module is the OPERATOR'S DEVICE WALL CLOCK. An
- * `iso` argument is a LOCAL `YYYY-MM-DD` (what `localDateIso(new Date())`
- * returns), and an `HH:mm` is a local wall-clock time. Nothing here converts
- * between zones, and that is a decision, not an omission:
+ * #1150: every date and time in this module is the BUSINESS's wall clock. An
+ * `iso` argument is a `YYYY-MM-DD` on the business's calendar (what
+ * `businessTodayIso` returns), and an `HH:mm` is the business's clock. Nothing
+ * here converts between zones; the New booking wizard does that once, at its
+ * edges, through `lib/businessZoneTime.ts`:
  *
- *  1. The wire contract is already local. `createMultiDateBookingRequest` takes
- *     `startTimeMs` epoch ms, and `lib/newBooking.ts` has built that from the
- *     operator's local wall clock since AO-18. The Android twin
- *     (`NewBookingRequestDialog.kt`) does the same through
- *     `ZoneId.systemDefault()`. Reinterpreting the picker in a different zone
- *     would silently desynchronise the two admin clients that write the same
- *     collection, which is exactly the "a visit somebody misses" failure.
+ *  1. The wire contract is an instant. `createMultiDateBookingRequest` takes
+ *     `startTimeMs` epoch ms, and the server reads it in
+ *     `business_settings.timeZone` (America/Chicago when unset or unusable,
+ *     #1109) for dates, blocks, closures and conflicts. So the wizard builds the
+ *     instant from the picked wall clock in that zone, and reads its own visits
+ *     back in that zone before they reach the rules here. The Android and
+ *     desktop wizards do the same, so the admin clients agree on what a booking
+ *     time means. It used to be the device zone on all of them, which booked a
+ *     travelling operator's 9:00 at a different business hour with no warning.
  *
- *  2. `business_settings.timeZone` is now a validated, editable setting
- *     (a field of `screens/settings/BusinessProfileSection.tsx` since issue
- *     #709, originally its own panel under issue #519) with five real
- *     consumers, all of them server-side: the phone line's open/closed answer,
- *     quote expiry, visit dates in notifications, notification template time
- *     tokens. NONE of them is a booking write. Converting the picker through it
- *     would still be wrong, and for reasons 1 and 3 rather than because nothing
- *     reads the field: the two admin clients would stop agreeing about what a
- *     booking time means, and the slot rows have no offset to convert from.
- *     So the DIALOG keeps disclosing the mismatch when the business zone
- *     disagrees with the device zone — the difference #519 made is that the
- *     operator now has somewhere to go and fix it, instead of being shown a
- *     conflict with no control behind it.
- *
- *  3. `booking_time_slots.date`/`startTime`/`endTime` carry NO zone at all, and
- *     their two writers disagree about whose clock they are in (the asymmetry
- *     `lib/scheduleFormat.ts#groupBlockedSlotsByDate` documents in full: the
- *     Google importer stamps UTC, the admin block-time form stores local wall
- *     clock verbatim). There is no offset to convert FROM. This module compares
- *     them as wall clock, the same way the Schedule screen displays them, and
- *     the picker's copy calls them "blocked" rather than claiming an instant.
+ *  2. `booking_time_slots.date`/`startTime`/`endTime` carry NO zone at all (the
+ *     asymmetry `lib/scheduleFormat.ts#groupBlockedSlotsByDate` documents in
+ *     full). There is no offset to convert FROM. This module compares them as
+ *     wall clock, the same way the Schedule screen displays them, and the
+ *     picker's copy calls them "blocked" rather than claiming an instant.
  *
  * `business_settings.businessHours` values are wall clock with no zone either,
- * and they are the business's own hours, so comparing them against a local
- * wall-clock time is right for an operator sitting in the business's zone and
- * approximate for one who is travelling. That is why an hours mismatch is a
+ * and they are the business's own hours, so they compare directly with the
+ * business-zone clock the wizard hands in. An hours mismatch is still a
  * WARNING the operator can overrule, never a block.
  */
 

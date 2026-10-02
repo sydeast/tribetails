@@ -888,6 +888,7 @@ fun ScheduleViewScreen(
                 serviceRates    = state.businessSettings.serviceRates,
                 serviceDurations = state.businessSettings.serviceDurations,
                 availability    = availability,
+                businessZone    = businessZone(state.businessSettings.timeZone),
                 inFlight        = state.newRequestInFlight,
                 error           = state.newRequestError,
                 busyOverridable = state.newRequestBusyOverridable,
