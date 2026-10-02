@@ -184,7 +184,11 @@ fun BookingWizardScreen(
         }
     }
     val timing = remember(mode, policy) {
-        BookingTiming(mode, if (mode == BookingMode.TimeBlock) policy.timeBlocks else emptyList())
+        BookingTiming(
+            mode,
+            if (mode == BookingMode.TimeBlock) policy.timeBlocks else emptyList(),
+            policy.startTimeServiceIds,
+        )
     }
     /** Both modes on offer: the only case where the household has a choice to make. */
     val canChooseMode = policy.allowTimeBlockBooking && policy.allowSpecificTimeBooking
@@ -318,8 +322,9 @@ fun BookingWizardScreen(
                         // In block mode a fresh KinCare lands in the FIRST
                         // window rather than on "choose one": a picker whose
                         // every row starts unset is a blocker dressed as a
-                        // control, and it moves in one tap.
-                        timeBlockId = if (mode == BookingMode.TimeBlock) policy.timeBlocks.firstOrNull()?.id else null,
+                        // control, and it moves in one tap. A start-time
+                        // KinCare (#1092) takes the clock default above and no window.
+                        timeBlockId = if (slotMode(id, timing) == BookingMode.TimeBlock) policy.timeBlocks.firstOrNull()?.id else null,
                     )
                 },
                 onRemove = { slotId -> slots = slots.filterNot { it.slotId == slotId } },
@@ -349,7 +354,9 @@ fun BookingWizardScreen(
                 canChooseMode = canChooseMode,
                 onModeChange = { modeChoice = it },
                 timeBlocks = policy.timeBlocks,
+                timing = timing,
                 pastVisitCount = pastVisits.size,
+                pastVisitsAllInBlocks = pastVisits.all { it.timeBlockId != null },
                 individualBlocker = individualBlocker,
                 visitCount = plannedVisits.size,
                 weeklyEmitted = plannedVisits.size,
@@ -704,8 +711,12 @@ private fun Step3ScheduleDates(
     canChooseMode: Boolean = false,
     onModeChange: (BookingMode) -> Unit = {},
     timeBlocks: List<TimeBlock> = emptyList(),
+    /** Decides, per KinCare, whether it books in a window or at a start time (#1092). */
+    timing: BookingTiming = BookingTiming(mode, timeBlocks),
     /** Visits the plan already puts in the past; the server refuses every one of them. */
     pastVisitCount: Int = 0,
+    /** True when every past visit is a window visit; a start-time one (#1092) has a clock to move instead. */
+    pastVisitsAllInBlocks: Boolean = true,
     /** First reason the Individual pattern is not sendable, or null. */
     individualBlocker: String? = null,
     /** Visits the whole plan currently expands to (dates x KinCares). */
@@ -816,7 +827,8 @@ private fun Step3ScheduleDates(
         } else {
             slots.forEachIndexed { idx, slot ->
                 val name = services.firstOrNull { it.id == slot.serviceId }?.name ?: slot.serviceId
-                if (mode == BookingMode.TimeBlock) {
+                // #1092: a start-time KinCare takes a clock even in a block plan.
+                if (slotMode(slot, timing) == BookingMode.TimeBlock) {
                     Text("${idx + 1}. $name", style = type.sansBody)
                     Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
                         timeBlocks.forEach { block ->
@@ -831,7 +843,11 @@ private fun Step3ScheduleDates(
                     KinField(
                         value = slot.time,
                         onValueChange = { onSlotTimeChange(slot.slotId, it) },
-                        label = "${idx + 1}. $name time (HH:MM)",
+                        label = if (mode == BookingMode.TimeBlock) {
+                            "${idx + 1}. $name start time (HH:MM)"
+                        } else {
+                            "${idx + 1}. $name time (HH:MM)"
+                        },
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -890,7 +906,7 @@ private fun Step3ScheduleDates(
             // In block mode an open window is booked from now (see
             // [anchorOpenBlockVisit]), so what is left here is a window that
             // has ended or closes too soon to fit.
-            val message = if (mode == BookingMode.TimeBlock) {
+            val message = if (mode == BookingMode.TimeBlock && pastVisitsAllInBlocks) {
                 if (pastVisitCount == 1) {
                     "1 visit in this plan is in a block that has ended or closes too soon to book today."
                 } else {

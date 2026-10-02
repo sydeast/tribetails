@@ -142,6 +142,13 @@ export interface GetBookingPolicyResult {
   allowSpecificTimeBooking: boolean;
   defaultBookingMode: BookingMode;
   timeBlocks: TimeBlockDto[];
+  /**
+   * #1092: catalog service ids (the `serviceId` a visit sends) booked at a
+   * start time whatever the mode switches say: an overnight is twelve hours
+   * that can start at any time, which no block can hold. Optional because an
+   * older server omits it; read it as [] then.
+   */
+  startTimeServiceIds?: string[];
 }
 
 /** What this business lets a household choose, and which windows it may pick from. */

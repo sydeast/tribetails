@@ -92,6 +92,13 @@ data class BookingPolicy(
     val allowSpecificTimeBooking: Boolean,
     val defaultBookingMode: BookingMode,
     val timeBlocks: List<TimeBlock>,
+    /**
+     * #1092: catalog service ids (the `serviceId` a visit sends) booked at a
+     * start time whatever the mode switches say: an overnight is twelve hours
+     * that can start at any time, which no window can hold. Empty when an
+     * older server omits the field.
+     */
+    val startTimeServiceIds: Set<String> = emptySet(),
 ) {
     companion object {
         /**
@@ -105,6 +112,7 @@ data class BookingPolicy(
             allowSpecificTimeBooking = true,
             defaultBookingMode = BookingMode.SpecificTime,
             timeBlocks = emptyList(),
+            startTimeServiceIds = emptySet(),
         )
     }
 }

@@ -33,6 +33,7 @@ import {
   plannedVisitLine,
   priceLabel,
   renderPlannedVisits,
+  slotMode,
   slotsBlocker,
   summariseSlots,
   timeBlockLabel,
@@ -74,11 +75,14 @@ const DEFAULT_VISIT_TIME = '09:00';
  * behaviour, and the same shape the callable itself falls back to when its own
  * settings read fails, so a loading wizard and a degraded one behave alike.
  */
+/** Stable empty list, so a policy without `startTimeServiceIds` does not rebuild `timing` every render. */
+const EMPTY_IDS: readonly string[] = [];
 const CLOCK_ONLY_POLICY: GetBookingPolicyResult = {
   allowTimeBlockBooking: false,
   allowSpecificTimeBooking: true,
   defaultBookingMode: 'SPECIFIC_TIME',
   timeBlocks: [],
+  startTimeServiceIds: [],
 };
 const SERVICE_ICON_EMOJI: Record<string, string> = {
   sun: '\u{2600}\u{FE0F}',
@@ -267,9 +271,11 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
     return preferred;
   })();
   const timeBlocks = policy.timeBlocks;
+  // #1092: an older server omits the field; that means no start-time KinCares.
+  const startTimeServiceIds = policy.startTimeServiceIds ?? EMPTY_IDS;
   const timing: BookingTiming = useMemo(
-    () => ({ mode, blocks: mode === 'TIME_BLOCK' ? timeBlocks : [] }),
-    [mode, timeBlocks],
+    () => ({ mode, blocks: mode === 'TIME_BLOCK' ? timeBlocks : [], startTimeServiceIds }),
+    [mode, timeBlocks, startTimeServiceIds],
   );
   /** Both modes on offer: the only case where the household gets a choice to make. */
   const canChooseMode = policy.allowTimeBlockBooking && policy.allowSpecificTimeBooking;
@@ -288,8 +294,9 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
         time: DEFAULT_VISIT_TIME,
         // In block mode a fresh KinCare lands in the FIRST window rather than
         // on "choose one": a picker whose every row starts unset is a blocker
-        // dressed as a control, and the household can move it in one tap.
-        timeBlockId: mode === 'TIME_BLOCK' ? (timeBlocks[0]?.id ?? null) : null,
+        // dressed as a control, and the household can move it in one tap. A
+        // start-time KinCare (#1092) takes the clock default above and no block.
+        timeBlockId: slotMode({ serviceId }, timing) === 'TIME_BLOCK' ? (timeBlocks[0]?.id ?? null) : null,
       },
     ]);
   };
@@ -590,6 +597,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
                   canChooseMode={canChooseMode}
                   onModeChange={setModeChoice}
                   timeBlocks={timeBlocks}
+                  timing={timing}
                   weeklyEmitted={plannedVisits.length}
                   weeklyCapped={weeklyCapped}
                   weeklyBlocker={weeklyBlocker}
@@ -598,6 +606,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
                   closedDates={closedDates}
                   closedDatesInPlan={closedDatesInPlan}
                   pastVisitCount={pastVisits.length}
+                  pastVisitsAllInBlocks={pastVisits.every((v) => v.timeBlockId != null)}
                 />
               )}
               {step === 4 && <Step4ExtraLoveAndContext notes={notes} onNotesChange={setNotes} />}
@@ -922,6 +931,8 @@ function Step3ScheduleDates(props: {
   canChooseMode: boolean;
   onModeChange: (m: BookingMode) => void;
   timeBlocks: readonly TimeBlockDto[];
+  /** Decides, per KinCare, whether it books in a block or at a start time (#1092). */
+  timing: BookingTiming;
   weeklyEmitted: number;
   weeklyCapped: boolean;
   weeklyBlocker: string | null;
@@ -933,8 +944,10 @@ function Step3ScheduleDates(props: {
   closedDatesInPlan: readonly string[];
   /** Visits the plan already puts in the past; the server refuses every one of them. */
   pastVisitCount: number;
+  /** True when every past visit is a block visit; a start-time one (#1092) has a clock to move instead. */
+  pastVisitsAllInBlocks: boolean;
 }) {
-  const { pattern, weeklyDays, weekCount, slots, mode, canChooseMode, timeBlocks, weeklyEmitted, weeklyCapped, weeklyBlocker, individualBlocker, visitCount, closedDatesInPlan, pastVisitCount } =
+  const { pattern, weeklyDays, weekCount, slots, mode, canChooseMode, timeBlocks, timing, weeklyEmitted, weeklyCapped, weeklyBlocker, individualBlocker, visitCount, closedDatesInPlan, pastVisitCount, pastVisitsAllInBlocks } =
     props;
   return (
     <>
@@ -1058,12 +1071,17 @@ function Step3ScheduleDates(props: {
           {slots.map((slot, idx) => {
             const name = props.services.find((s) => s.id === slot.serviceId)?.name ?? slot.serviceId;
             const inputId = `booking-time-${slot.slotId}`;
+            const inBlock = slotMode(slot, timing) === 'TIME_BLOCK';
+            // #1092: a start-time KinCare takes a clock even in a block plan,
+            // and says so, since every row around it is a window.
+            const startTimeInBlockPlan = mode === 'TIME_BLOCK' && !inBlock;
             return (
               <div className="field" key={slot.slotId} style={{ maxWidth: 260 }}>
                 <label htmlFor={inputId}>
                   {idx + 1}. {name}
+                  {startTimeInBlockPlan ? ', start time' : ''}
                 </label>
-                {mode === 'TIME_BLOCK' ? (
+                {inBlock ? (
                   <select
                     id={inputId}
                     className="inp"
@@ -1124,7 +1142,7 @@ function Step3ScheduleDates(props: {
 
       {pastVisitCount > 0 && (
         <p className="wiz-warn">
-          {mode === 'TIME_BLOCK'
+          {mode === 'TIME_BLOCK' && pastVisitsAllInBlocks
             ? `${pastVisitCount === 1 ? '1 visit in this plan is in a block' : `${pastVisitCount} visits in this plan are in blocks`} that ${pastVisitCount === 1 ? 'has' : 'have'} ended or ${pastVisitCount === 1 ? 'closes' : 'close'} too soon to book today. Pick a later block, or drop today from the dates.`
             : `${pastVisitCount === 1 ? '1 visit in this plan has' : `${pastVisitCount} visits in this plan have`} already started. Pick a later time, or drop today from the dates.`}
         </p>
