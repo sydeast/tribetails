@@ -410,3 +410,97 @@ describe('resolveBookingRescheduleRequestHandler: busy and overlap guards (#1100
     expect(mocks.guardVisitOverlapConflictFn).not.toHaveBeenCalled();
   });
 });
+/**
+ * #1118: a household that sends no end still gets the visit's real length.
+ * Accepting used the requested start as the end, so the busy, holiday and
+ * overlap guards checked one instant and the stored visit kept no end. The end
+ * is now the new start plus the KinCare's length (the #1093 rule), else the
+ * visit's current duration, else nothing (today's behaviour).
+ */
+describe('resolveBookingRescheduleRequestHandler: no end sent (#1118)', () => {
+  const op = { uid: 'op-1', token: { admin: true } };
+  const HOUR = 60 * 60 * 1000;
+  const TEN = Date.UTC(2026, 8, 1, 10, 0, 0);
+  const SETTINGS = 'business_settings/business_settings';
+  const noEndVisit = (extra: Record<string, unknown> = {}) =>
+    pendingVisit({
+      serviceId: 'Sitter',
+      startTime: ts(Date.UTC(2026, 7, 20, 9, 0, 0)),
+      endTime: ts(Date.UTC(2026, 7, 20, 11, 0, 0)),
+      rescheduleRequestedStartTime: ts(TEN),
+      rescheduleRequestedEndTime: null,
+      ...extra,
+    });
+  it('guards the whole 2-hour window, so an 11:00 busy block refuses the move', async () => {
+    const ctx = buildDbMock({
+      docs: { [VISIT]: noEndVisit(), [SETTINGS]: { serviceDurations: { Sitter: '120' } } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    // The real guard refuses any window that reaches an 11:00 block.
+    mocks.guardBookingBusyConflictFn.mockImplementation(
+      async ({ visits }: { visits: { startTimeMs: number; endTimeMs: number }[] }) => {
+        if (visits.some((v) => v.startTimeMs <= TEN + HOUR && v.endTimeMs > TEN + HOUR)) {
+          throw Object.assign(new Error('busy'), { code: 'failed-precondition' });
+        }
+      },
+    );
+    const { resolveBookingRescheduleRequestHandler } = await import('../src/admin/rescheduleRequests');
+    await expect(resolveBookingRescheduleRequestHandler(callableRequest(acceptArgs, op))).rejects.toThrow('busy');
+    expect(mocks.guardBookingBusyConflictFn).toHaveBeenCalledWith(
+      expect.objectContaining({ visits: [{ startTimeMs: TEN, endTimeMs: TEN + 2 * HOUR }] }),
+    );
+    expect(ctx.writes).toHaveLength(0);
+  });
+  it('stores the 12:00 end on the visit and the session', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        [VISIT]: noEndVisit(),
+        'kin_care_sessions/vis_v1': { startTime: 'x' },
+        [SETTINGS]: { serviceDurations: { Sitter: '120' } },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { resolveBookingRescheduleRequestHandler } = await import('../src/admin/rescheduleRequests');
+    await resolveBookingRescheduleRequestHandler(callableRequest(acceptArgs, op));
+    const visitEnd = ctx.writes.find((w) => w.path === VISIT)?.data?.['endTime'] as { toMillis: () => number };
+    expect(visitEnd.toMillis()).toBe(TEN + 2 * HOUR);
+    const session = ctx.writes.find((w) => w.path === 'kin_care_sessions/vis_v1');
+    expect(session?.data?.['endTime']).toBe(new Date(TEN + 2 * HOUR).toISOString());
+  });
+  it('keeps the visit’s old duration when the KinCare length is unknown', async () => {
+    const ctx = buildDbMock({
+      docs: { [VISIT]: noEndVisit({ serviceId: 'Mystery' }), 'kin_care_sessions/vis_v1': { startTime: 'x' } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { resolveBookingRescheduleRequestHandler } = await import('../src/admin/rescheduleRequests');
+    await resolveBookingRescheduleRequestHandler(callableRequest(acceptArgs, op));
+    expect(mocks.guardBookingBusyConflictFn).toHaveBeenCalledWith(
+      expect.objectContaining({ visits: [{ startTimeMs: TEN, endTimeMs: TEN + 2 * HOUR }] }),
+    );
+    const visitEnd = ctx.writes.find((w) => w.path === VISIT)?.data?.['endTime'] as { toMillis: () => number };
+    expect(visitEnd.toMillis()).toBe(TEN + 2 * HOUR);
+  });
+  it('with no length and no old end, behaves as before: start only, no end stored', async () => {
+    const ctx = buildDbMock({
+      docs: { [VISIT]: noEndVisit({ serviceId: 'Mystery', endTime: null }) },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { resolveBookingRescheduleRequestHandler } = await import('../src/admin/rescheduleRequests');
+    await resolveBookingRescheduleRequestHandler(callableRequest(acceptArgs, op));
+    expect(mocks.guardBookingBusyConflictFn).toHaveBeenCalledWith(
+      expect.objectContaining({ visits: [{ startTimeMs: TEN, endTimeMs: TEN }] }),
+    );
+    expect(ctx.writes.find((w) => w.path === VISIT)?.data).not.toHaveProperty('endTime');
+  });
+  it('an end the household sent is still used as sent', async () => {
+    const ctx = buildDbMock({
+      docs: { [VISIT]: noEndVisit({ rescheduleRequestedEndTime: ts(TEN + HOUR) }), [SETTINGS]: { serviceDurations: { Sitter: '120' } } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { resolveBookingRescheduleRequestHandler } = await import('../src/admin/rescheduleRequests');
+    await resolveBookingRescheduleRequestHandler(callableRequest(acceptArgs, op));
+    expect(mocks.guardBookingBusyConflictFn).toHaveBeenCalledWith(
+      expect.objectContaining({ visits: [{ startTimeMs: TEN, endTimeMs: TEN + HOUR }] }),
+    );
+  });
+});
