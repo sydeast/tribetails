@@ -355,6 +355,18 @@ export interface BusinessSettings {
    * the parse can never do.
    */
   serviceDurations: Record<string, string>;
+  /**
+   * ISSUE #1092: the KinCare types booked at a START TIME instead of in a time
+   * block, keyed by the same name `serviceRates` and `serviceDurations` use.
+   * An overnight is twelve hours that can begin at 21:00 or at 07:00, which no
+   * block inside one day can hold.
+   *
+   * Only `true` entries exist: an unflagged type has no key, and the server
+   * (`readStartTimeServiceIds` in mytribe/functions) honours a flag only when
+   * it is exactly `true`. Written whole (`WHOLE_MAP_FIELDS`), so clearing a
+   * flag or renaming the type removes the old key.
+   */
+  serviceStartTimeBooking: Record<string, true>;
   businessHours: Record<string, string>;
   venmoHandle: string;
   paypalHandle: string;
@@ -547,6 +559,7 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   timeZone: 'America/New_York',
   serviceRates: {},
   serviceDurations: {},
+  serviceStartTimeBooking: {},
   businessHours: {},
   venmoHandle: '',
   paypalHandle: '',
@@ -686,6 +699,20 @@ function pickMap(raw: unknown, fallback: Record<string, string>): Record<string,
   return raw as Record<string, string>;
 }
 
+/**
+ * A name-to-flag map where only an exact `true` counts, which is the rule the
+ * server reads `serviceStartTimeBooking` by. A `false`, a string "true" or a
+ * malformed map reads as unflagged, so the editor can never show a type as
+ * booking at a start time when the booking callable would not treat it so.
+ */
+function pickTrueMap(raw: unknown): Record<string, true> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
+  const out: Record<string, true> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (value === true) out[key] = true;
+  }
+  return out;
+}
 function mergePortalChat(raw: unknown): PortalChat {
   const r = (raw ?? {}) as Partial<PortalChat>;
   return {
@@ -779,6 +806,7 @@ export function mergeBusinessSettings(raw: RawSettings | undefined): BusinessSet
     timeZone: pickString(r.timeZone, d.timeZone),
     serviceRates: pickMap(r.serviceRates, d.serviceRates),
     serviceDurations: pickMap(r.serviceDurations, d.serviceDurations),
+    serviceStartTimeBooking: pickTrueMap(r.serviceStartTimeBooking),
     businessHours: pickMap(r.businessHours, d.businessHours),
     venmoHandle: pickString(r.venmoHandle, d.venmoHandle),
     paypalHandle: pickString(r.paypalHandle, d.paypalHandle),

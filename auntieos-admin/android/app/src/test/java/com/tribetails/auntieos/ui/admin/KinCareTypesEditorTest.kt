@@ -48,6 +48,48 @@ class KinCareTypesEditorTest {
         assertEquals(mapOf("Walk" to "45"), foldKinCareDurations(rows))
     }
 
+    // ── Book at a start time (#1092) ──
+    @Test
+    fun `a stored true flag seeds its row, and anything else reads as off`() {
+        val rows = kinCareRows(
+            rates = linkedMapOf("Overnight" to "80.00", "Walk" to "10.00"),
+            durations = emptyMap(),
+            startTimes = mapOf("Overnight" to true, "Walk" to false),
+        )
+        assertEquals(listOf(true, false), rows.map { it.startTime })
+    }
+    @Test
+    fun `the start-time fold writes flagged rows only, trimmed, and follows a rename`() {
+        val rows = listOf(
+            KinCareTypeRow(" Overnight Stay ", "720", "80.00", startTime = true),
+            KinCareTypeRow("Walk", "", "10.00"),
+            KinCareTypeRow("", "30", "", startTime = true),
+        )
+        assertEquals(mapOf("Overnight Stay" to true), foldKinCareStartTime(rows))
+    }
+    @Test
+    fun `on a duplicate name the last row wins the flag, as it wins the rate`() {
+        val rows = listOf(
+            KinCareTypeRow("Overnight", "720", "80.00", startTime = true),
+            KinCareTypeRow("Overnight", "", "15.00"),
+        )
+        assertEquals(emptyMap<String, Boolean>(), foldKinCareStartTime(rows))
+    }
+    @Test
+    fun `a flagged row needs a length typed or in its name`() {
+        assertEquals(
+            "Overnight",
+            kinCareStartTimeMissingLength(listOf(KinCareTypeRow(" Overnight ", "", "80.00", startTime = true))),
+        )
+        assertNull(kinCareStartTimeMissingLength(listOf(KinCareTypeRow("Overnight", "720", "80.00", startTime = true))))
+        assertNull(kinCareStartTimeMissingLength(listOf(KinCareTypeRow("Overnight 12Hrs", "", "80.00", startTime = true))))
+        // An unflagged row with no length is the ordinary case and is fine.
+        assertNull(kinCareStartTimeMissingLength(listOf(KinCareTypeRow("Consultation", "", ""))))
+        assertEquals(
+            "\"Overnight\" books at a start time, so it needs a length.",
+            kinCareNeedsLengthMessage("Overnight"),
+        )
+    }
     @Test
     fun `an added blank row folds to nothing, so an abandoned add is not dirty`() {
         val rows = threeTypes + KinCareTypeRow.BLANK

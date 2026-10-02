@@ -381,3 +381,110 @@ describe('requestBookingHandler — time-block booking', () => {
       .rejects.toMatchObject({ code: 'invalid-argument' });
   });
 });
+
+/**
+ * #1092: a KinCare the operator set to "book at a start time". An overnight is
+ * twelve consecutive hours that can start at any time of day, which no time
+ * block can hold (a block is a window inside one day). So that one KinCare is
+ * booked by clock even when the business books everything else in blocks.
+ */
+describe('requestBookingHandler — KinCares that book at a start time (#1092)', () => {
+  const HOUR = 3_600_000;
+  const OVERNIGHT_SETTINGS = {
+    ...BLOCK_ONLY,
+    serviceRates: { ...SERVICE_RATES, Overnight: '120' },
+    serviceDurations: { Overnight: '720' },
+    serviceStartTimeBooking: { Overnight: true },
+  };
+  const overnight = (over: Record<string, unknown> = {}) =>
+    visit({ serviceId: 'Overnight', serviceName: 'Overnight', priceCents: 12000, timeBlockId: undefined, startTimeMs: atUtc(21), ...over });
+
+  it('accepts the flagged KinCare at a clock time while specific-time booking is off', async () => {
+    const ctx = ctxWith(OVERNIGHT_SETTINGS);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const res: any = await requestBookingHandler(multi([overnight()]));
+    const written = visitsOf(ctx, res.batchId).map((w) => w.data);
+    expect(written).toHaveLength(1);
+    expect(written[0].timeBlockId).toBeNull();
+  });
+
+  it('stores the real end, twelve hours later and past midnight, from the KinCare length', async () => {
+    const ctx = ctxWith(OVERNIGHT_SETTINGS);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const res: any = await requestBookingHandler(multi([overnight()]));
+    const [written]: any[] = visitsOf(ctx, res.batchId).map((w) => w.data);
+    expect(written.endTime.toMillis()).toBe(atUtc(21) + 12 * HOUR);
+  });
+
+  it('accepts a daytime start for the same KinCare', async () => {
+    const ctx = ctxWith(OVERNIGHT_SETTINGS);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const res: any = await requestBookingHandler(multi([overnight({ startTimeMs: atUtc(7) })]));
+    const [written]: any[] = visitsOf(ctx, res.batchId).map((w) => w.data);
+    expect(written.endTime.toMillis()).toBe(atUtc(19));
+  });
+
+  it('reads the length from the KinCare name when no length was typed', async () => {
+    const ctx = ctxWith({
+      ...BLOCK_ONLY,
+      serviceRates: { ...SERVICE_RATES, 'Overnight 12Hrs': '120' },
+      serviceStartTimeBooking: { 'Overnight 12Hrs': true },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const res: any = await requestBookingHandler(
+      multi([overnight({ serviceId: 'Overnight 12Hrs', serviceName: 'Overnight 12 Hrs' })]),
+    );
+    const [written]: any[] = visitsOf(ctx, res.batchId).map((w) => w.data);
+    expect(written.endTime.toMillis()).toBe(atUtc(21) + 12 * HOUR);
+  });
+
+  it('still REFUSES every other KinCare at a clock time in the same business', async () => {
+    const ctx = ctxWith(OVERNIGHT_SETTINGS);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    await expect(
+      requestBookingHandler(multi([overnight(), visit({ timeBlockId: undefined, startTimeMs: atUtc(9, 30) })])),
+    ).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('books the flagged KinCare next to block visits in one plan', async () => {
+    const ctx = ctxWith(OVERNIGHT_SETTINGS);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const res: any = await requestBookingHandler(multi([visit(), overnight()]));
+    const written = visitsOf(ctx, res.batchId).map((w) => w.data);
+    expect(written.map((v: any) => v.timeBlockId).sort()).toEqual(['midday', null].sort());
+  });
+
+  it('ignores a flag that is not exactly true', async () => {
+    const ctx = ctxWith({ ...OVERNIGHT_SETTINGS, serviceStartTimeBooking: { Overnight: 'yes' } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    await expect(requestBookingHandler(multi([overnight()]))).rejects.toMatchObject({ code: 'invalid-argument' });
+  });
+
+  it('REFUSES an overnight whose later hours land on a Google busy block, not just its first minute', async () => {
+    const start = atUtc(21);
+    const busyDay = new Date(start).toISOString().slice(0, 10);
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'business_settings/business_settings': { timeZone: 'UTC', ...OVERNIGHT_SETTINGS },
+      },
+      queryDocs: {
+        booking_time_slots: [
+          { id: 'gbi-late', data: { date: busyDay, startTime: '23:00', endTime: '23:30', source: 'GOOGLE_BUSY_IMPORT' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    await expect(requestBookingHandler(multi([overnight()]))).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(ctx.writes.filter((w) => w.path.includes('/kinCares/'))).toHaveLength(0);
+  });
+});

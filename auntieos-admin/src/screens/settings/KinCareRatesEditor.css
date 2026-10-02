@@ -109,6 +109,19 @@
   font-size: var(--type-mono-size);
 }
 
+/* The per-row "Book at a start time" switch (#1092). Its own full-width line
+   under the fields at every width, so it never pushes the grid columns. */
+.kinCareRates__startTime {
+  grid-column: 1 / -1;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  justify-self: start;
+}
+.kinCareRates__startTimeLabel {
+  font-size: var(--type-label-md-size);
+  color: var(--color-text-dim);
+}
 /* ── Add ──────────────────────────────────────────────────────────────────── */
 
 .kinCareRates__addRow {

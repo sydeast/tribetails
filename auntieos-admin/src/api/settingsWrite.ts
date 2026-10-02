@@ -64,6 +64,7 @@ export interface SaveStamp {
 export const WHOLE_MAP_FIELDS: ReadonlySet<keyof BusinessSettings> = new Set<keyof BusinessSettings>([
   'serviceRates',
   'serviceDurations',
+  'serviceStartTimeBooking',
 ]);
 
 function writesWholeMap(patch: Partial<BusinessSettings>): boolean {

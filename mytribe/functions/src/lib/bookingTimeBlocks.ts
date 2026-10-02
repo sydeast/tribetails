@@ -88,6 +88,29 @@ export interface BookingPolicy {
   defaultBookingMode: BookingMode;
   /** The active, readable windows, in start order. Empty iff `allowTimeBlockBooking` is false. */
   timeBlocks: BookableTimeBlock[];
+  /**
+   * #1092: the KinCares (catalog ids, which are the `serviceRates` keys) the
+   * operator set to "book at a start time". A household books these by clock
+   * even when `allowSpecificTimeBooking` is off, because an overnight is twelve
+   * consecutive hours that can start at any time of day and no block can hold
+   * it. Sorted, so two reads of the same settings compare equal.
+   */
+  startTimeServiceIds: string[];
+}
+
+/**
+ * The KinCares `business_settings.serviceStartTimeBooking` flags. Only a value
+ * of exactly `true` counts: the admin writers store nothing else, and anything
+ * else is a stray row that must not quietly open clock booking.
+ */
+export function readStartTimeServiceIds(settings: unknown): string[] {
+  const data = (settings && typeof settings === 'object' ? settings : {}) as Record<string, unknown>;
+  const raw = data['serviceStartTimeBooking'];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+  return Object.entries(raw as Record<string, unknown>)
+    .filter(([id, flag]) => flag === true && id.trim().length > 0)
+    .map(([id]) => id)
+    .sort();
 }
 
 /** Why `resolveBookingPolicy` had to override what the operator stored. Logged, never shown. */
@@ -329,6 +352,7 @@ export function resolveBookingPolicy(settings: unknown): ResolvedBookingPolicy {
       // Empty iff block booking is off, so a client never has to reconcile the
       // two: an allowed mode always has something to offer.
       timeBlocks: allowTimeBlockBooking ? timeBlocks : [],
+      startTimeServiceIds: readStartTimeServiceIds(data),
     },
     degrades,
   };

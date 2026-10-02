@@ -57,18 +57,20 @@ fun parseHourMinuteOrNull(s: String): LocalTime? = try {
 data class KinCareSlot(
     val slotId: String,
     val serviceId: String,
-    /** "HH:MM", local to the household. Read in [BookingMode.SpecificTime]. */
+    /** "HH:MM", local to the household. Read when the slot books by clock (see [slotMode]). */
     val time: String,
     /**
-     * Time-block booking: the named window this KinCare was asked for. Read in
-     * [BookingMode.TimeBlock]; null there means the household has not chosen
-     * one yet.
+     * Time-block booking: the named window this KinCare was asked for. Read
+     * when the slot books in a window; null there means the household has not
+     * chosen one yet.
      *
-     * BOTH fields live on the slot at once, deliberately. The MODE is a
-     * booking-level choice (see [BookingTiming]) — the operator asked for
-     * blocks instead of clocks, not for a per-KinCare mixture — so switching
+     * BOTH fields live on the slot at once, deliberately: switching the plan's
      * mode must not discard what was already typed on the other control. What
-     * is SENT is decided by the mode, never by which field happens to be set.
+     * is SENT is decided by [slotMode], never by which field happens to be
+     * set. That mode is the plan's, EXCEPT for a KinCare the business books at
+     * a start time (#1092): an overnight is twelve hours that can start at any
+     * hour, so it takes a clock time inside a block-mode plan while every other
+     * KinCare in that plan keeps its window.
      */
     val timeBlockId: String? = null,
 )
@@ -80,8 +82,11 @@ data class KinCareSlot(
  * The MODE is booking-level and the WINDOW is per-KinCare, which is the shape
  * the requirement actually has: a day may hold several KinCares (#541/#543), so
  * a household may want the 30-minute one in Midday and the 60-minute one in
- * Evening, or two different KinCares in the same window. What it never wants is
- * one KinCare on the clock and the next one in a window.
+ * Evening, or two different KinCares in the same window.
+ *
+ * The one mixture is #1092's: a KinCare in [startTimeServiceIds] books on the
+ * clock in either mode, because twelve hours starting at 21:00 fit no window.
+ * [slotMode] is where that is decided.
  *
  * The web mirror is `BookingTiming` in mytribe/web/src/lib/bookingWizardLogic.ts.
  */
@@ -89,6 +94,8 @@ data class BookingTiming(
     val mode: BookingMode,
     /** Empty in SpecificTime mode, and never empty in TimeBlock mode. */
     val blocks: List<TimeBlock> = emptyList(),
+    /** #1092: catalog ids of KinCares booked at a start time whatever [mode] says. */
+    val startTimeServiceIds: Set<String> = emptySet(),
 ) {
     companion object {
         /** The pre-time-block world: clock times, no windows. The default every existing caller gets. */
@@ -110,6 +117,18 @@ fun initialBookingMode(policy: BookingPolicy): BookingMode = when {
     else -> policy.defaultBookingMode
 }
 
+/** #1092: whether [serviceId] is a KinCare the business books at a start time, whatever the plan's mode. */
+fun serviceBooksAtStartTime(serviceId: String, timing: BookingTiming): Boolean =
+    serviceId in timing.startTimeServiceIds
+/**
+ * The mode ONE KinCare books in: SpecificTime for a start-time KinCare, the
+ * plan's mode for every other. Every function below that asks "window or
+ * clock" asks this, so the visit sent, the blocker and the control drawn agree.
+ */
+fun slotMode(serviceId: String, timing: BookingTiming): BookingMode =
+    if (serviceBooksAtStartTime(serviceId, timing)) BookingMode.SpecificTime else timing.mode
+/** [slotMode] for a slot. */
+fun slotMode(slot: KinCareSlot, timing: BookingTiming): BookingMode = slotMode(slot.serviceId, timing)
 /** The window with this id, or null. */
 fun findTimeBlock(blocks: List<TimeBlock>, id: String?): TimeBlock? =
     if (id == null) null else blocks.firstOrNull { it.id == id }
@@ -128,7 +147,7 @@ fun timeBlockLabel(block: TimeBlock): String = "${block.label} (${block.startTim
  * the office reads the household's answer rather than inferring it.
  */
 private fun slotStartHHmm(slot: KinCareSlot, timing: BookingTiming): String? =
-    if (timing.mode == BookingMode.TimeBlock) {
+    if (slotMode(slot, timing) == BookingMode.TimeBlock) {
         findTimeBlock(timing.blocks, slot.timeBlockId)?.startTime
     } else {
         if (parseHourMinuteOrNull(slot.time) == null) null else slot.time
@@ -151,12 +170,15 @@ fun slotsBlocker(
     timing: BookingTiming = BookingTiming.SpecificTimeOnly,
 ): String? {
     if (slots.isEmpty()) return "Add at least one KinCare Duration."
-    if (timing.mode == BookingMode.TimeBlock) {
-        if (slots.any { findTimeBlock(timing.blocks, it.timeBlockId) == null }) {
+    // #1092: a start-time KinCare inside a block-mode plan is judged on the
+    // clock rules below, and every other slot on the window rules.
+    val (blockSlots, clockSlots) = slots.partition { slotMode(it, timing) == BookingMode.TimeBlock }
+    if (blockSlots.isNotEmpty()) {
+        if (blockSlots.any { findTimeBlock(timing.blocks, it.timeBlockId) == null }) {
             return "Choose a time block for every KinCare."
         }
         val seenBlocks = HashSet<String>()
-        for (s in slots) {
+        for (s in blockSlots) {
             // The duplicate rule, in block words. In block mode every KinCare
             // in a window starts at the same instant, so "same duration at the
             // same time" would refuse the perfectly good "a 30 minute AND a 60
@@ -168,11 +190,10 @@ fun slotsBlocker(
                 return "Two KinCares are the same duration in the same time block. Remove one, or move it to another block."
             }
         }
-        return null
     }
-    if (slots.any { parseHourMinuteOrNull(it.time) == null }) return "Enter every KinCare time as HH:MM."
+    if (clockSlots.any { parseHourMinuteOrNull(it.time) == null }) return "Enter every KinCare time as HH:MM."
     val seen = HashSet<String>()
-    for (s in slots) {
+    for (s in clockSlots) {
         if (!seen.add("${s.serviceId}@${s.time}")) {
             return "Two KinCares have the same duration at the same time. Change one of the times."
         }
@@ -225,7 +246,8 @@ private fun slotVisitOn(
         serviceId = service.id,
         serviceName = service.name,
         priceCents = service.priceCents ?: service.priceMinCents,
-        timeBlockId = if (timing.mode == BookingMode.TimeBlock) slot.timeBlockId else null,
+        // A start-time KinCare (#1092) sends no window, even in a block-mode plan.
+        timeBlockId = if (slotMode(slot, timing) == BookingMode.TimeBlock) slot.timeBlockId else null,
     )
 }
 
@@ -334,6 +356,8 @@ private fun blockEndMs(d: LocalDate, block: TimeBlock, tz: TimeZone): Long? {
  */
 fun anchorOpenBlockVisit(visit: BookingVisit, blocks: List<TimeBlock>, nowMs: Long, tz: TimeZone): BookingVisit {
     if (visit.startTimeMs > nowMs) return visit
+    // A clock visit, including a start-time KinCare in a block plan (#1092),
+    // carries no window, so its start is what the household typed: never moved.
     val block = findTimeBlock(blocks, visit.timeBlockId) ?: return visit
     val day = Instant.fromEpochMilliseconds(visit.startTimeMs).toLocalDateTime(tz).date
     val endMs = blockEndMs(day, block, tz) ?: return visit

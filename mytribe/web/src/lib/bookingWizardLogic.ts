@@ -76,18 +76,20 @@ export type WizardService = Pick<ServiceDto, 'id' | 'name' | 'priceCents' | 'pri
 export interface KinCareSlot {
   slotId: string;
   serviceId: string;
-  /** 'HH:MM', local to the household. Read in SPECIFIC_TIME mode. */
+  /** 'HH:MM', local to the household. Read when the slot books by clock (see {@link slotMode}). */
   time: string;
   /**
-   * Time-block booking: the named window this KinCare was asked for. Read in
-   * TIME_BLOCK mode; null there means the household has not chosen one yet.
+   * Time-block booking: the named window this KinCare was asked for. Read when
+   * the slot books in a block; null there means the household has not chosen
+   * one yet.
    *
-   * BOTH fields live on the slot at once, deliberately. The MODE is a
-   * booking-level choice (see {@link BookingTiming}) — an operator asked for
-   * blocks instead of clocks, not for a per-KinCare mixture — so switching mode
-   * must not discard what was already typed on the other control. What the
-   * server receives is decided by the mode, never by which field happens to be
-   * set.
+   * BOTH fields live on the slot at once, deliberately: switching the plan's
+   * mode must not discard what was already typed on the other control. What
+   * the server receives is decided by {@link slotMode}, never by which field
+   * happens to be set. That mode is the plan's, EXCEPT for a KinCare the
+   * business books at a start time (#1092): an overnight is twelve hours that
+   * can start at any hour, so it takes a clock time inside a block-mode plan
+   * while every other KinCare in that plan keeps its block.
    */
   timeBlockId: string | null;
 }
@@ -99,13 +101,21 @@ export interface KinCareSlot {
  * The MODE is booking-level and the BLOCK is per-KinCare, which is the shape
  * the requirement actually has: a day may hold several KinCares (#541/#543), so
  * a household may want the 30-minute one in the Midday block and the 60-minute
- * one in the Evening block, or two different KinCares in the same block. What
- * it never wants is one KinCare on the clock and the next one in a window.
+ * one in the Evening block, or two different KinCares in the same block.
+ *
+ * The one mixture is #1092's: a KinCare in `startTimeServiceIds` books on the
+ * clock in either mode, because twelve hours starting at 21:00 fit no window.
+ * {@link slotMode} is where that is decided.
  */
 export interface BookingTiming {
   mode: BookingMode;
   /** The windows on offer. Empty in SPECIFIC_TIME mode, and never empty in TIME_BLOCK mode. */
   blocks: readonly TimeBlockDto[];
+  /**
+   * #1092: catalog ids of KinCares booked at a start time whatever `mode` says.
+   * Absent reads as none, which is every booking before #1092.
+   */
+  startTimeServiceIds?: readonly string[];
 }
 
 /** The pre-time-block world: clock times, no windows. The default every existing caller gets. */
@@ -127,6 +137,18 @@ export function initialBookingMode(policy: Pick<GetBookingPolicyResult, 'allowTi
   return policy.defaultBookingMode;
 }
 
+/** #1092: whether `serviceId` is a KinCare the business books at a start time, whatever the plan's mode. */
+export function serviceBooksAtStartTime(serviceId: string, timing: BookingTiming): boolean {
+  return (timing.startTimeServiceIds ?? []).includes(serviceId);
+}
+/**
+ * The mode ONE slot books in: SPECIFIC_TIME for a start-time KinCare, the
+ * plan's mode for every other. Every function below that asks "block or clock"
+ * asks this, so the visit sent, the blocker and the control drawn agree.
+ */
+export function slotMode(slot: Pick<KinCareSlot, 'serviceId'>, timing: BookingTiming): BookingMode {
+  return serviceBooksAtStartTime(slot.serviceId, timing) ? 'SPECIFIC_TIME' : timing.mode;
+}
 /** The window with this id, or null. */
 export function findTimeBlock(blocks: readonly TimeBlockDto[], id: string | null): TimeBlockDto | null {
   if (id === null) return null;
@@ -149,7 +171,7 @@ export function timeBlockLabel(block: TimeBlockDto): string {
  * the office reads the household's answer rather than inferring it.
  */
 function slotStartHHmm(slot: KinCareSlot, timing: BookingTiming): string | null {
-  if (timing.mode === 'TIME_BLOCK') {
+  if (slotMode(slot, timing) === 'TIME_BLOCK') {
     return findTimeBlock(timing.blocks, slot.timeBlockId)?.startTime ?? null;
   }
   return parseHourMinute(slot.time) === null ? null : slot.time;
@@ -174,12 +196,16 @@ function compareSlots(a: KinCareSlot, b: KinCareSlot, timing: BookingTiming): nu
  */
 export function slotsBlocker(slots: readonly KinCareSlot[], timing: BookingTiming = SPECIFIC_TIME_ONLY): string | null {
   if (slots.length === 0) return 'Add at least one KinCare Duration.';
-  if (timing.mode === 'TIME_BLOCK') {
-    if (slots.some((s) => findTimeBlock(timing.blocks, s.timeBlockId) === null)) {
+  // #1092: a start-time KinCare inside a block-mode plan is judged on the
+  // clock rules below, and every other slot on the block rules.
+  const blockSlots = slots.filter((s) => slotMode(s, timing) === 'TIME_BLOCK');
+  const clockSlots = slots.filter((s) => slotMode(s, timing) === 'SPECIFIC_TIME');
+  if (blockSlots.length > 0) {
+    if (blockSlots.some((s) => findTimeBlock(timing.blocks, s.timeBlockId) === null)) {
       return 'Choose a time block for every KinCare.';
     }
     const seenBlocks = new Set<string>();
-    for (const s of slots) {
+    for (const s of blockSlots) {
       // The duplicate rule, in block words. In block mode every KinCare in a
       // window starts at the same instant, so "same duration at the same time"
       // would refuse the perfectly good "a 30 minute AND a 60 minute, both in
@@ -193,11 +219,10 @@ export function slotsBlocker(slots: readonly KinCareSlot[], timing: BookingTimin
       }
       seenBlocks.add(key);
     }
-    return null;
   }
-  if (slots.some((s) => parseHourMinute(s.time) === null)) return 'Enter every KinCare time as HH:MM.';
+  if (clockSlots.some((s) => parseHourMinute(s.time) === null)) return 'Enter every KinCare time as HH:MM.';
   const seen = new Set<string>();
-  for (const s of slots) {
+  for (const s of clockSlots) {
     const key = `${s.serviceId}@${s.time}`;
     if (seen.has(key)) return 'Two KinCares have the same duration at the same time. Change one of the times.';
     seen.add(key);
@@ -257,7 +282,8 @@ function slotVisitOn(
     // `?? null`: a member without billing access gets no price keys at all
     // (#1037), and the request schema takes null, not undefined.
     priceCents: service.priceCents ?? service.priceMinCents ?? null,
-    timeBlockId: timing.mode === 'TIME_BLOCK' ? slot.timeBlockId : null,
+    // A start-time KinCare (#1092) sends no block, even in a block-mode plan.
+    timeBlockId: slotMode(slot, timing) === 'TIME_BLOCK' ? slot.timeBlockId : null,
   };
 }
 
@@ -384,6 +410,8 @@ export function anchorOpenBlockVisit(
   nowMs: number,
 ): RequestBookingArgsVisit {
   if (visit.startTimeMs > nowMs) return visit;
+  // A clock visit, including a start-time KinCare in a block plan (#1092),
+  // carries no block, so its start is what the household typed: never moved.
   const block = findTimeBlock(blocks, visit.timeBlockId ?? null);
   if (block === null) return visit;
   const endMs = blockEndMs(visit.startTimeMs, block);

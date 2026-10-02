@@ -72,6 +72,9 @@ internal val BUSINESS_SETTINGS_DIFF_FIELDS: Map<String, SettingsDiffField> = lin
     "timeZone" to SettingsDiffField({ it.timeZone }),
     "serviceRates" to SettingsDiffField({ it.serviceRates }),
     "serviceDurations" to SettingsDiffField({ it.serviceDurations }),
+    // True entries only, compared the same way, so a decoded `false` neither
+    // reads as an edit nor is ever written back (#1092).
+    "serviceStartTimeBooking" to SettingsDiffField({ settings -> settings.serviceStartTimeBooking.filterValues { it } }),
     "businessHours" to SettingsDiffField({ it.businessHours }),
     // --- GPS / tracking ---
     "enableGPSTrackingForAllVisits" to SettingsDiffField({ it.enableGPSTrackingForAllVisits }),
@@ -202,7 +205,7 @@ internal val BUSINESS_SETTINGS_SERVER_OWNED = setOf("id", "updatedAt", "updatedB
  * client writes a slice of, and the key-by-key merge is what keeps one save
  * from clobbering another's.
  */
-internal val BUSINESS_SETTINGS_WHOLE_MAP_FIELDS = setOf("serviceRates", "serviceDurations")
+internal val BUSINESS_SETTINGS_WHOLE_MAP_FIELDS = setOf("serviceRates", "serviceDurations", "serviceStartTimeBooking")
 
 /** True when [changes] names a field that must replace, not merge, the stored value. */
 internal fun businessSettingsReplacesWholeFields(changes: Map<String, Any?>): Boolean =

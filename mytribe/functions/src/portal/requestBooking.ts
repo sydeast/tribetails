@@ -22,7 +22,7 @@ import {
   lookupIdempotentEnvelope,
   readEnvelopeVisitIds,
 } from '../lib/bookingIdempotency';
-import { mapServiceRates } from './getServiceCatalog';
+import { kinCareLengthMinutes, mapServiceRates } from './getServiceCatalog';
 import {
   businessCalendarDate,
   businessTimeZone,
@@ -488,7 +488,12 @@ function duplicateVisitMessage(key: string): string {
  * time allowed, no blocks), which is the pre-time-block behaviour exactly: a
  * Firestore blip must not start refusing every booking in the business.
  */
-export async function loadBookingPolicy(): Promise<{ policy: BookingPolicy; timeZone: string }> {
+export async function loadBookingPolicy(): Promise<{
+  policy: BookingPolicy;
+  timeZone: string;
+  /** #1092: minutes for each "book at a start time" KinCare whose length is known. */
+  startTimeLengths: Map<string, number>;
+}> {
   let raw: unknown = {};
   try {
     const snap = await db().collection('business_settings').doc('business_settings').get();
@@ -524,7 +529,29 @@ export async function loadBookingPolicy(): Promise<{ policy: BookingPolicy; time
     });
   }
 
-  return { policy, timeZone };
+  const durations = (raw as Record<string, unknown>)['serviceDurations'];
+  const startTimeLengths = new Map<string, number>();
+  for (const id of policy.startTimeServiceIds) {
+    const minutes = kinCareLengthMinutes(id, durations);
+    if (minutes != null) startTimeLengths.set(id, minutes);
+  }
+
+  return { policy, timeZone, startTimeLengths };
+}
+
+/**
+ * #1092: give a "book at a start time" visit its real end when the client sent
+ * none, so the busy and holiday guards check every hour of an overnight and the
+ * stored visit (and the session approval copies from it) carries its length.
+ * A visit whose KinCare is not flagged, or already has an end, is left alone.
+ */
+export function withStartTimeVisitEnd<V extends { startTimeMs: number; endTimeMs?: number | null; serviceId: string }>(
+  visit: V,
+  startTimeLengths: Map<string, number>,
+): V {
+  if (visit.endTimeMs != null) return visit;
+  const minutes = startTimeLengths.get(visit.serviceId);
+  return minutes == null ? visit : { ...visit, endTimeMs: visit.startTimeMs + minutes * 60_000 };
 }
 
 /** What the server decided one visit's WHEN actually is. Persisted on the visit. */
@@ -562,14 +589,18 @@ export interface ResolvedVisitBlock {
  *     configuration, and it must never read as a "cannot tell".
  */
 export function assertVisitBookingMode(
-  visit: { startTimeMs: number; timeBlockId?: string | null | undefined },
+  visit: { startTimeMs: number; timeBlockId?: string | null | undefined; serviceId?: string | undefined },
   policy: BookingPolicy,
   timeZone: string,
 ): ResolvedVisitBlock {
   const namedId = typeof visit.timeBlockId === 'string' ? visit.timeBlockId.trim() : '';
 
   if (namedId.length === 0) {
-    if (!policy.allowSpecificTimeBooking) {
+    // #1092: a KinCare the operator set to "book at a start time" is the one
+    // exception to rule 1. The legacy single-visit shape carries no serviceId,
+    // so it never gets this exemption.
+    const booksAtStartTime = visit.serviceId !== undefined && policy.startTimeServiceIds.includes(visit.serviceId);
+    if (!policy.allowSpecificTimeBooking && !booksAtStartTime) {
       throw new HttpsError(
         'invalid-argument',
         'This business takes bookings inside its time blocks. Choose a time block for every KinCare.',
@@ -885,20 +916,22 @@ export async function requestBookingHandler(
     // mode the duplicate rule keys on the block rather than the instant, and
     // before the busy/holiday guards, because a refusal a household can act on
     // ("pick a block") should not be reached through one it cannot.
-    const { policy, timeZone } = await loadBookingPolicy();
-    const resolvedBlocks = args.visits.map((v) => assertVisitBookingMode(v, policy, timeZone));
+    const { policy, timeZone, startTimeLengths } = await loadBookingPolicy();
+    // #1092: from here on, a "book at a start time" visit carries its real end.
+    const visits = args.visits.map((v) => withStartTimeVisitEnd(v, startTimeLengths));
+    const resolvedBlocks = visits.map((v) => assertVisitBookingMode(v, policy, timeZone));
 
     // #543: several KinCares in one day are fine; the SAME one twice is not.
     // #597: "one day" is the BUSINESS's day, which is why the zone goes in.
-    const dupKey = duplicateVisitKey(args.visits, timeZone);
+    const dupKey = duplicateVisitKey(visits, timeZone);
     if (dupKey !== null) {
       throw new HttpsError('invalid-argument', duplicateVisitMessage(dupKey));
     }
     // Kinfolk have no override: a busy-import conflict always refuses the request.
-    await guardBookingBusyConflict({ firestore, visits: args.visits, actorUid: uid, actorRole: 'PRIMARY' });
+    await guardBookingBusyConflict({ firestore, visits, actorUid: uid, actorRole: 'PRIMARY' });
     // A closed day always refuses the request too -- no override, for anyone.
     // See companyHolidayConflict.ts's header for why this guard has none.
-    await guardCompanyHolidayConflict({ firestore, visits: args.visits });
+    await guardCompanyHolidayConflict({ firestore, visits });
 
     // #644: the caller's key IS the envelope id when it sent one. Without one
     // this is the same server-minted id it has always been, and the dedupe read
@@ -911,7 +944,7 @@ export async function requestBookingHandler(
     // KinCares (#541) and used to cost one catalog read per visit.
     const priceBook = await loadServicePriceBook();
     const normalized: NormalizedVisit[] = await Promise.all(
-      args.visits.map(async (v, idx) => {
+      visits.map(async (v, idx) => {
         // Time-block booking does NOT touch pricing. A block says WHEN; the
         // KinCare (`serviceId`) still says how long and how much, and it is
         // still resolved here through `resolveService` against the same

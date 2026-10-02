@@ -29,8 +29,13 @@ import { refuseAuntie } from '../lib/staffGate';
  *   allowSpecificTimeBooking  bool
  *   defaultBookingMode        'SPECIFIC_TIME' | 'TIME_BLOCK'
  *   timeBlocks[]              id, label, startTime, endTime, durationMinutes
+ *   startTimeServiceIds[]     catalog ids of KinCares booked at a start time
  *
- * and NOTHING else. Not `timeZone`, not `defaultTimeBlockDurationHours` (it is
+ * and NOTHING else. `startTimeServiceIds` was added for #1092 (2026-10-01): an
+ * overnight is twelve hours starting at any time of day, so the wizard must
+ * ask for a start time for that KinCare even in a block-only business. The ids
+ * are KinCare names a household already sees through `getServiceCatalog`, so
+ * nothing new about the business crosses the boundary. Not `timeZone`, not `defaultTimeBlockDurationHours` (it is
  * consumed server-side, as a fallback END for a legacy row, and folded into the
  * `endTime`/`durationMinutes` a client actually needs), not `businessHours`,
  * not `serviceRates` — the catalog has its own callable. This is a projection,
@@ -59,6 +64,8 @@ export interface GetBookingPolicyResult {
   allowSpecificTimeBooking: boolean;
   defaultBookingMode: BookingMode;
   timeBlocks: TimeBlockDto[];
+  /** #1092: KinCares a household books by start time whatever the mode switches say. */
+  startTimeServiceIds: string[];
 }
 
 /** The projection, spelled out field by field so an added `BookableTimeBlock` field cannot leak by spread. */
@@ -121,6 +128,7 @@ export async function getBookingPolicyHandler(
     allowSpecificTimeBooking: policy.allowSpecificTimeBooking,
     defaultBookingMode: policy.defaultBookingMode,
     timeBlocks: policy.timeBlocks.map(toDto),
+    startTimeServiceIds: [...policy.startTimeServiceIds],
   };
 }
 

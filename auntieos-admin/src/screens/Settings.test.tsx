@@ -112,6 +112,7 @@ const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   timeZone: 'America/New_York',
   serviceRates: {},
   serviceDurations: {},
+  serviceStartTimeBooking: {},
   businessHours: {},
   venmoHandle: '',
   paypalHandle: '',
@@ -733,7 +734,7 @@ describe('Settings — real editors wire through the shared persist', () => {
     await userEvent.click(within(panel).getByRole('button', { name: /^add kincare type$/i }));
     await userEvent.type(within(panel).getByLabelText('Name'), 'Walk');
     await userEvent.click(within(panel).getByRole('button', { name: /^save kincare types$/i }));
-    expect(saveBusinessSettings).toHaveBeenCalledWith({ serviceRates: { Walk: '' }, serviceDurations: {} });
+    expect(saveBusinessSettings).toHaveBeenCalledWith({ serviceRates: { Walk: '' }, serviceDurations: {}, serviceStartTimeBooking: {} });
   });
 
   it('KinCare Settings holds both the types/rates editor and Visits and tracking, each headed', async () => {

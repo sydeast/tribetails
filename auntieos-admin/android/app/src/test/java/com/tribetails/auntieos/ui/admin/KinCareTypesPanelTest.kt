@@ -87,4 +87,51 @@ class KinCareTypesPanelTest {
         composeRule.onNodeWithText("Unsaved changes".uppercase()).assertDoesNotExist()
         assertNull(saved)
     }
+
+    // ── Book at a start time (#1092) ──
+    @Test
+    fun `switching a type to start-time booking saves the flag and keeps every other field`() {
+        var saved: BusinessSettings? = null
+        val loaded = BusinessSettings(
+            serviceRates = mapOf("Overnight" to "80.00", "Walk" to "10.00"),
+            serviceDurations = mapOf("Overnight" to "720"),
+            venmoHandle = "@tribe",
+            businessName = "Tribe Tails",
+        )
+        setContent(loaded, onSave = { saved = it })
+        composeRule.onNodeWithContentDescription("Book Overnight at a start time").performScrollTo().performClick()
+        composeRule.onNodeWithText("Unsaved changes".uppercase()).assertExists()
+        composeRule.onNodeWithText("Save KinCare types").performScrollTo().performClick()
+        assertEquals(mapOf("Overnight" to true), saved?.serviceStartTimeBooking)
+        // The copy carries what this panel does not edit.
+        assertEquals(
+            loaded.copy(serviceStartTimeBooking = mapOf("Overnight" to true)),
+            saved,
+        )
+    }
+    @Test
+    fun `clearing a stored flag saves the map without the key`() {
+        var saved: BusinessSettings? = null
+        setContent(
+            BusinessSettings(
+                serviceRates = mapOf("Overnight" to "80.00"),
+                serviceDurations = mapOf("Overnight" to "720"),
+                serviceStartTimeBooking = mapOf("Overnight" to true),
+            ),
+            onSave = { saved = it },
+        )
+        composeRule.onNodeWithText("Unsaved changes".uppercase()).assertDoesNotExist()
+        composeRule.onNodeWithContentDescription("Book Overnight at a start time").performScrollTo().performClick()
+        composeRule.onNodeWithText("Save KinCare types").performScrollTo().performClick()
+        assertEquals(emptyMap<String, Boolean>(), saved?.serviceStartTimeBooking)
+    }
+    @Test
+    fun `a flagged type with no length is refused at Save, by name`() {
+        var saved: BusinessSettings? = null
+        setContent(BusinessSettings(serviceRates = mapOf("Overnight" to "80.00")), onSave = { saved = it })
+        composeRule.onNodeWithContentDescription("Book Overnight at a start time").performScrollTo().performClick()
+        composeRule.onNodeWithText("Save KinCare types").performScrollTo().performClick()
+        composeRule.onNodeWithText("\"Overnight\" books at a start time, so it needs a length.").assertExists()
+        assertNull(saved)
+    }
 }

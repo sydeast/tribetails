@@ -64,7 +64,7 @@ export async function getServiceCatalogHandler(
 
   const settingsSnap = await db().collection('business_settings').doc('business_settings').get();
   const serviceRates = settingsSnap.data()?.serviceRates;
-  let services = mapServiceRates(serviceRates);
+  let services = mapServiceRates(serviceRates, settingsSnap.data()?.serviceDurations);
   let source: 'serviceRates' | 'base_services' = 'serviceRates';
 
   if (services.length === 0) {
@@ -124,11 +124,29 @@ export function withoutPrices(s: ServiceDto): ServiceDto {
 }
 
 /**
+ * How long a KinCare runs, in minutes: the length the operator typed in
+ * `business_settings.serviceDurations` (name -> minutes-as-string) first, then
+ * whatever the name itself says ("2Hrs", "45Minute"), else null.
+ *
+ * #1092: the booking side needs this to give a "book at a start time" visit its
+ * real end, so the busy and holiday guards see all twelve hours of an overnight
+ * rather than its first minute.
+ */
+export function kinCareLengthMinutes(serviceId: string, serviceDurations: unknown): number | null {
+  if (serviceDurations && typeof serviceDurations === 'object' && !Array.isArray(serviceDurations)) {
+    const typed = numericOrNull((serviceDurations as Record<string, unknown>)[serviceId]);
+    if (typed != null && typed > 0) return Math.round(typed);
+  }
+  return durationFromRateKey(serviceId);
+}
+
+/**
  * Maps the `serviceRates` map (name -> dollars-as-string) into ServiceDtos.
  * Entries whose rate does not parse to a positive number are skipped.
  * Returns [] when the map is missing/empty so callers can fall back.
+ * `serviceDurations` supplies each length when the operator typed one.
  */
-export function mapServiceRates(raw: unknown): ServiceDto[] {
+export function mapServiceRates(raw: unknown, serviceDurations?: unknown): ServiceDto[] {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
   const services: ServiceDto[] = [];
   for (const [key, rate] of Object.entries(raw as Record<string, unknown>)) {
@@ -142,7 +160,7 @@ export function mapServiceRates(raw: unknown): ServiceDto[] {
       priceCents,
       priceMinCents: null,
       priceMaxCents: null,
-      durationMinutes: durationFromRateKey(key),
+      durationMinutes: kinCareLengthMinutes(key, serviceDurations),
       isOvernight: false,
       iconKey: null,
     });

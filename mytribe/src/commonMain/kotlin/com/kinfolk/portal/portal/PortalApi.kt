@@ -9,6 +9,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -373,7 +374,7 @@ class PortalApi(private val fns: FunctionsClient) {
      * Same seam and same reason as `getBusinessClosures` above:
      * `business_settings` (where `timeBlocks` and the three mode switches live)
      * is admin-only in firestore.rules, so this callable is the only way a
-     * household learns them. FOUR fields cross that boundary and nothing else
+     * household learns them. FIVE fields cross that boundary and nothing else
      * off the document does.
      *
      * The values arrive NORMALIZED — block booking comes back off when the
@@ -414,6 +415,11 @@ class PortalApi(private val fns: FunctionsClient) {
                 else -> BookingMode.SpecificTime
             },
             timeBlocks = blocks,
+            // #1092. An older server omits the list, which means none.
+            startTimeServiceIds = (raw["startTimeServiceIds"] as? JsonArray)
+                ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf { id -> id.isNotBlank() } }
+                ?.toSet()
+                .orEmpty(),
         )
     }
 

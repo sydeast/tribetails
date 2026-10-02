@@ -171,6 +171,12 @@ data class BusinessSettings(
     // duration parsed out of the name (see ServiceTypeSort.kt), which is where
     // every type's length came from before this field existed.
     var serviceDurations: Map<String, String> = emptyMap(),
+    // ISSUE #1092: the KinCare types kinfolk book at a START TIME instead of in
+    // a time block (an overnight can begin at 21:00 or 07:00), keyed by the
+    // same name. Only `true` means flagged: the server honours exactly `true`,
+    // the editor seeds a row from `== true`, and the diff writes true entries
+    // only, so a stray `false` decoded here never goes back out.
+    var serviceStartTimeBooking: Map<String, Boolean> = emptyMap(),
     var businessHours: Map<String, String> = emptyMap(), // day -> "HH:MM-HH:MM" or ""
     // --- GPS / tracking ---
     var enableGPSTrackingForAllVisits: Boolean = true, // Master GPS tracking switch

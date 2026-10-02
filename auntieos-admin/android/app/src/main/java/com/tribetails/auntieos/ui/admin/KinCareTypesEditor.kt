@@ -22,16 +22,29 @@ package com.tribetails.auntieos.ui.admin
  * so editing it in place needs an identity independent of the key that might
  * be mid-edit: the row's position in the list. Sorting is a VIEW over those
  * positions ([sortedKinCareView]) and never reorders what gets saved.
+ *
+ * BOOK AT A START TIME (issue #1092). [KinCareTypeRow.startTime] folds to
+ * `serviceStartTimeBooking`, true entries only, keyed by the same name, so a
+ * rename carries the flag. The server ends such a visit by the type's length,
+ * so a flagged row with no length anywhere is refused at Save
+ * ([kinCareStartTimeMissingLength]).
  */
 data class KinCareTypeRow(
     val type: String,
     val duration: String,
     val rate: String,
+    val startTime: Boolean = false,
 ) {
     companion object {
         val BLANK = KinCareTypeRow(type = "", duration = "", rate = "")
     }
 }
+/** The switch's label on every row, matching the web editor. */
+const val KIN_CARE_START_TIME_LABEL = "Book at a start time"
+/** The switch's tooltip text, matching the web editor's. */
+const val KIN_CARE_START_TIME_TIP =
+    "Kinfolk pick a start time for this KinCare instead of a time block. Use it for overnights."
+
 
 /** How the table is ordered on screen. Never how it is stored. */
 enum class KinCareSortKey(val label: String) {
@@ -45,9 +58,15 @@ enum class KinCareSortKey(val label: String) {
 fun kinCareRows(
     rates: Map<String, String>,
     durations: Map<String, String>,
+    startTimes: Map<String, Boolean> = emptyMap(),
 ): List<KinCareTypeRow> =
     rates.entries.map { (type, rate) ->
-        KinCareTypeRow(type = type, duration = durations[type].orEmpty(), rate = rate)
+        KinCareTypeRow(
+            type = type,
+            duration = durations[type].orEmpty(),
+            rate = rate,
+            startTime = startTimes[type] == true,
+        )
     }
 
 /**
@@ -81,6 +100,30 @@ fun foldKinCareDurations(rows: List<KinCareTypeRow>): Map<String, String> {
     return edited
 }
 
+/**
+ * Rows to the start-time map: flagged rows only, always `true`, on the same
+ * blank-name and last-row-wins rules, so an unflagged duplicate after a
+ * flagged one removes the key just as it would replace the rate.
+ */
+fun foldKinCareStartTime(rows: List<KinCareTypeRow>): Map<String, Boolean> {
+    val edited = LinkedHashMap<String, Boolean>()
+    for (row in rows) {
+        val type = row.type.trim()
+        if (type.isEmpty()) continue
+        if (row.startTime) edited[type] = true else edited.remove(type)
+    }
+    return edited
+}
+/**
+ * The name of the first flagged row the server could not give an end to (no
+ * length typed, none in the name), or null when every flagged row has one.
+ */
+fun kinCareStartTimeMissingLength(rows: List<KinCareTypeRow>): String? =
+    rows.firstOrNull { it.startTime && it.type.isNotBlank() && kinCareRowMinutes(it) == null }
+        ?.type?.trim()
+/** The refusal Save shows for [kinCareStartTimeMissingLength], word for word the web editor's. */
+fun kinCareNeedsLengthMessage(type: String): String =
+    "\"$type\" books at a start time, so it needs a length."
 /**
  * Rate as a number for sorting. Unset or unparseable sorts LAST. The blank
  * check is not redundant: without it a priceless row would sort as free.
