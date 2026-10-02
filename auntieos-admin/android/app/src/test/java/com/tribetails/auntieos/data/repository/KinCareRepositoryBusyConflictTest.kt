@@ -74,6 +74,7 @@ class KinCareRepositoryBusyConflictTest {
         every { firestore.document("business_settings/business_settings") } returns docRef
         every { docRef.get() } returns Tasks.forResult(snapshot)
         every { snapshot.get("companyHolidays") } returns null
+        every { snapshot.get("timeZone") } returns null
     }
 
     private fun passingAuthGate(): AuthGate {

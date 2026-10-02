@@ -5,7 +5,6 @@ import com.tribetails.auntieos.ui.admin.ClosureEntry
 import com.tribetails.auntieos.ui.admin.closureOccurrencesInRange
 import com.tribetails.auntieos.ui.admin.parseClosureEntry
 import kotlinx.coroutines.tasks.await
-import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -43,31 +42,47 @@ internal class CompanyHolidayConflictException(message: String) : Exception(mess
 
 private const val BUSINESS_SETTINGS_PATH = "business_settings/business_settings"
 
-/** "2026-08-07" for a real instant, UTC. */
-private fun utcDateIso(instant: Instant): String =
-    DateTimeFormatter.ISO_LOCAL_DATE.withZone(ZoneOffset.UTC).format(instant)
-
 /**
- * The UTC calendar date(s) [window] touches: just the start day for anything
- * under 24h, plus the end day too when the window crosses a UTC midnight.
- * Mirrors the TS `utcDatesForVisit`; see its doc for the same timezone
- * caveat (a closure entry is a bare calendar date with no zone, so this
- * decodes via UTC-by-construction the same way the busy-import guard does).
+ * The zone a business's calendar dates are read in: `business_settings.timeZone`,
+ * or UTC when it is blank or not a zone this phone can read. This is the ONE
+ * place the fallback lives, and it is the server's rule today
+ * (`businessCalendarDate` in `bookingTimeBlocks.ts` falls back to the UTC date
+ * for an unusable zone). #1109 is unifying that default; change it here.
  */
-internal fun utcDatesForVisit(window: BusyConflictWindow): List<String> {
-    val startIso = utcDateIso(window.startInstant)
-    val endIso = utcDateIso(window.endInstant.minusMillis(1)) // -1ms: a window ending exactly at UTC midnight does not touch the next day.
-    return if (startIso == endIso) listOf(startIso) else listOf(startIso, endIso)
+internal fun businessZoneOrUtc(timeZone: String): ZoneId =
+    timeZone.trim().takeIf { it.isNotEmpty() }?.let { runCatching { ZoneId.of(it) }.getOrNull() } ?: ZoneOffset.UTC
+/**
+ * The business calendar date(s) [window] covers in [timeZone]: the start's date
+ * through the date its last millisecond is on, counted by calendar (never by
+ * adding 24h of instants), so a daylight-saving day is neither skipped nor
+ * doubled. A window ending exactly at midnight does not touch the next day.
+ * Mirrors the TS `businessDatesForVisit` (#1093); a blank or unusable
+ * [timeZone] falls back per [businessZoneOrUtc].
+ */
+internal fun businessDatesForVisit(window: BusyConflictWindow, timeZone: String): List<String> {
+    val zone = businessZoneOrUtc(timeZone)
+    val start = window.startInstant
+    val end = if (window.endInstant.isAfter(start)) window.endInstant else start.plusMillis(1)
+    val first = start.atZone(zone).toLocalDate()
+    val last = end.minusMillis(1).atZone(zone).toLocalDate() // -1ms: a window ending exactly at midnight does not touch the next day.
+    val out = mutableListOf<String>()
+    var d = first
+    while (!d.isAfter(last)) {
+        out += d.format(DateTimeFormatter.ISO_LOCAL_DATE)
+        d = d.plusDays(1)
+    }
+    return out
 }
-
-/** Reads and decodes `business_settings.companyHolidays`. `parseClosureEntry` never throws; a corrupt row decodes to a harmless never-matching entry. */
-internal suspend fun loadCompanyHolidayEntries(firestore: FirebaseFirestore): List<ClosureEntry> {
+/** `business_settings.companyHolidays` decoded, plus the zone their dates are in. */
+internal data class CompanyHolidaySettings(val entries: List<ClosureEntry>, val timeZone: String)
+/** Reads and decodes `business_settings.companyHolidays` and `timeZone` in one read. `parseClosureEntry` never throws; a corrupt row decodes to a harmless never-matching entry. */
+internal suspend fun loadCompanyHolidaySettings(firestore: FirebaseFirestore): CompanyHolidaySettings {
     val snap = firestore.document(BUSINESS_SETTINGS_PATH).get().await()
     @Suppress("UNCHECKED_CAST")
-    val raw = snap.get("companyHolidays") as? List<Any?> ?: return emptyList()
-    return raw.filterIsInstance<String>().map(::parseClosureEntry)
+    val raw = snap.get("companyHolidays") as? List<Any?> ?: emptyList()
+    val entries = raw.filterIsInstance<String>().map(::parseClosureEntry)
+    return CompanyHolidaySettings(entries, (snap.get("timeZone") as? String).orEmpty().trim())
 }
-
 /** The first `(date, holidayName)` any of `dates` lands on, checking every entry, or null when none match. */
 internal fun findCompanyHolidayConflict(dates: List<String>, entries: List<ClosureEntry>): Pair<String, String>? {
     for (date in dates) {
@@ -92,12 +107,12 @@ internal suspend fun assertNoCompanyHolidayConflict(
     firestore: FirebaseFirestore,
     startRaw: String,
     endRaw: String,
-    zone: ZoneId = ZoneId.systemDefault(),
 ) {
-    val window = resolveVisitWindow(startRaw, endRaw, zone) ?: return
-    val entries = loadCompanyHolidayEntries(firestore)
+    val (entries, timeZone) = loadCompanyHolidaySettings(firestore)
     if (entries.isEmpty()) return
-    val conflict = findCompanyHolidayConflict(utcDatesForVisit(window), entries) ?: return
+    // A bare wall-clock start is the business's own clock, so it is anchored to the business zone, not this phone's.
+    val window = resolveVisitWindow(startRaw, endRaw, businessZoneOrUtc(timeZone)) ?: return
+    val conflict = findCompanyHolidayConflict(businessDatesForVisit(window, timeZone), entries) ?: return
     val (date, holidayName) = conflict
     throw CompanyHolidayConflictException(
         "This date is not available: $date falls on $holidayName. The business is closed.",

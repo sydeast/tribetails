@@ -67,6 +67,7 @@ class BookingRepositoryBusyConflictTest {
         every { firestore.document("business_settings/business_settings") } returns docRef
         every { docRef.get() } returns Tasks.forResult(snapshot)
         every { snapshot.get("companyHolidays") } returns null
+        every { snapshot.get("timeZone") } returns null
     }
 
     // Real zoned instants (a "Z" suffix), not the bare ISO_LOCAL_DATE_TIME a
