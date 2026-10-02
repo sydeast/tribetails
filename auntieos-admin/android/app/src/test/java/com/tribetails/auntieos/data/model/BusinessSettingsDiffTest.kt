@@ -431,6 +431,33 @@ class BusinessSettingsDiffTest {
         assertTrue(businessSettingsReplacesWholeFields(businessSettingsFieldChanges(loaded, edited)))
     }
 
+    /**
+     * ISSUE #1092. Clearing the flag on "Overnight" writes a map without it, and
+     * under a key-by-key merge the stored `Overnight: true` would survive, so
+     * the start-time flags are a whole-map write too.
+     */
+    @Test
+    fun `clearing a start-time flag is a whole-map write that drops the key`() {
+        val flagged = loaded.copy(serviceStartTimeBooking = mapOf("Overnight" to true))
+        val edited = flagged.copy(serviceStartTimeBooking = emptyMap())
+        val changes = businessSettingsFieldChanges(flagged, edited)
+        assertEquals(mapOf("serviceStartTimeBooking" to emptyMap<String, Boolean>()), changes)
+        assertTrue(businessSettingsReplacesWholeFields(changes))
+    }
+    /** The server honours exactly `true`; a decoded `false` is neither an edit nor ever written back. */
+    @Test
+    fun `start-time flags are written and compared as true entries only`() {
+        val withStrayFalse = loaded.copy(serviceStartTimeBooking = mapOf("Walk" to false))
+        assertEquals(
+            emptyMap<String, Any?>(),
+            businessSettingsFieldChanges(withStrayFalse, withStrayFalse.copy(serviceStartTimeBooking = emptyMap())),
+        )
+        val edited = withStrayFalse.copy(serviceStartTimeBooking = mapOf("Walk" to false, "Overnight" to true))
+        assertEquals(
+            mapOf("serviceStartTimeBooking" to mapOf("Overnight" to true)),
+            businessSettingsFieldChanges(withStrayFalse, edited),
+        )
+    }
     @Test
     fun `every other write keeps the key-by-key merge`() {
         val edited = loaded.copy(venmoHandle = "@new-venmo")

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { BusinessSettings } from '../../api/settings';
-import { DenPanel, EmptyHint } from '../../components/DenScreenKit';
+import { DenPanel, EmptyHint, InfoTip } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { PrimaryButton, GhostButton, IconButton } from '../../components/Buttons';
+import { Toggle } from '../../components/Toggle';
 import { serviceDurationMinutes, storedDurationMinutes } from '../../lib/newBooking';
 import '../SettingsEdit.css';
 // The preview panel draws the booking wizard's own service chip, so it loads
@@ -50,10 +51,21 @@ import './KinCareRatesEditor.css';
  * map key, so editing it in place needs a row identity independent of the key
  * that might be mid-edit. One combined Save/Cancel bar for the whole table, not
  * per-row, because a rename changes the map's whole key set.
+ *
+ * BOOK AT A START TIME (issue #1092). A third map, `serviceStartTimeBooking`,
+ * marks the types kinfolk book by clock rather than by time block: an
+ * overnight is twelve hours that can start at 21:00 or 07:00, which a block
+ * inside one day cannot hold. The flag lives IN the row, like the duration, so
+ * a rename carries it, and it is folded from the same rows in the same save.
+ * The server ends such a visit by the type's length, so a flagged type with no
+ * length anywhere is refused at Save, by name.
  */
 
 interface KinCareRatesEditorProps {
-  data: Pick<BusinessSettings, 'serviceRates' | 'serviceDurations'>;
+  // `serviceStartTimeBooking` optional: absent reads as "no type flagged",
+  // which is what every document written before #1092 means.
+  data: Pick<BusinessSettings, 'serviceRates' | 'serviceDurations'> &
+    Partial<Pick<BusinessSettings, 'serviceStartTimeBooking'>>;
   onSave: (patch: Partial<BusinessSettings>) => Promise<void>;
 }
 
@@ -61,7 +73,12 @@ interface RateRow {
   type: string;
   duration: string;
   rate: string;
+  /** Kinfolk book this type at a start time instead of in a time block (#1092). */
+  startTime: boolean;
 }
+/** The toggle's tooltip. A tooltip, not a subtitle: the 2026-09-11 ruling. */
+const START_TIME_TIP =
+  'Kinfolk pick a start time for this KinCare instead of a time block. Use it for overnights.';
 
 /** How the table is ordered on screen. Never how it is stored. */
 type SortKey = 'stored' | 'name' | 'rate' | 'duration';
@@ -76,11 +93,13 @@ const SORT_LABELS: ReadonlyArray<{ key: SortKey; label: string }> = [
 function toRows(
   rates: Record<string, string>,
   durations: Record<string, string>,
+  startTimes: Record<string, true>,
 ): RateRow[] {
   return Object.entries(rates).map(([type, rate]) => ({
     type,
     duration: typeof durations[type] === 'string' ? durations[type] : '',
     rate,
+    startTime: startTimes[type] === true,
   }));
 }
 
@@ -115,7 +134,35 @@ function foldDurations(rows: RateRow[]): Record<string, string> {
   return edited;
 }
 
-function sameMap(a: Record<string, string>, b: Record<string, string>): boolean {
+/**
+ * Folds rows to the start-time map: only flagged rows write a key, and the
+ * value is always `true`, the one value the server honours. Same blank-name
+ * and last-row-wins rules as the other two folds, so an unflagged duplicate
+ * after a flagged one REMOVES the key, as it would replace a rate.
+ */
+function foldStartTimeBooking(rows: RateRow[]): Record<string, true> {
+  const edited: Record<string, true> = {};
+  for (const row of rows) {
+    const type = row.type.trim();
+    if (type === '') continue;
+    if (row.startTime) edited[type] = true;
+    else delete edited[type];
+  }
+  return edited;
+}
+/**
+ * The first flagged row the server could not give an end to: no length typed
+ * and none in its name. Null when every flagged row has one.
+ */
+function startTimeRowMissingLength(rows: RateRow[]): string | null {
+  for (const row of rows) {
+    const type = row.type.trim();
+    if (type === '' || !row.startTime) continue;
+    if (rowMinutes(row) === null) return type;
+  }
+  return null;
+}
+function sameMap<T>(a: Record<string, T>, b: Record<string, T>): boolean {
   const aKeys = Object.keys(a);
   const bKeys = Object.keys(b);
   if (aKeys.length !== bKeys.length) return false;
@@ -167,10 +214,13 @@ function chipPrice(rate: string): string {
 
 export function KinCareRatesEditor({ data, onSave }: KinCareRatesEditorProps) {
   // Seeded ONCE from `data` at mount, the `TextFieldsSection` convention.
-  const [rows, setRows] = useState<RateRow[]>(() => toRows(data.serviceRates, data.serviceDurations));
+  const storedStartTimes = data.serviceStartTimeBooking ?? {};
+  const [rows, setRows] = useState<RateRow[]>(() =>
+    toRows(data.serviceRates, data.serviceDurations, storedStartTimes),
+  );
   const [sortKey, setSortKey] = useState<SortKey>('stored');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ title: string; message: string } | null>(null);
   const [justSaved, setJustSaved] = useState(false);
   // The stored index of a row "Add KinCare type" just appended, so its name
   // input takes focus once it exists. Cleared the moment it has been used.
@@ -185,8 +235,11 @@ export function KinCareRatesEditor({ data, onSave }: KinCareRatesEditorProps) {
 
   const editedRates = foldRates(rows);
   const editedDurations = foldDurations(rows);
+  const editedStartTimes = foldStartTimeBooking(rows);
   const dirty =
-    !sameMap(editedRates, data.serviceRates) || !sameMap(editedDurations, data.serviceDurations);
+    !sameMap(editedRates, data.serviceRates) ||
+    !sameMap(editedDurations, data.serviceDurations) ||
+    !sameMap(editedStartTimes, storedStartTimes);
 
   function markDirtyEdit() {
     setJustSaved(false);
@@ -209,26 +262,37 @@ export function KinCareRatesEditor({ data, onSave }: KinCareRatesEditorProps) {
    */
   function addRow() {
     setFocusIndex(rows.length);
-    setRows((r) => [...r, { type: '', duration: '', rate: '' }]);
+    setRows((r) => [...r, { type: '', duration: '', rate: '', startTime: false }]);
     markDirtyEdit();
   }
 
   async function handleSave() {
     if (!dirty || busy) return;
+    // Refused before anything is written: the server ends a start-time visit
+    // by the type's length, and with none it would book a visit with no end.
+    const missing = startTimeRowMissingLength(rows);
+    if (missing !== null) {
+      setError({ title: 'Not saved', message: `"${missing}" books at a start time, so it needs a length.` });
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      await onSave({ serviceRates: editedRates, serviceDurations: editedDurations });
+      await onSave({
+        serviceRates: editedRates,
+        serviceDurations: editedDurations,
+        serviceStartTimeBooking: editedStartTimes,
+      });
       setJustSaved(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed.');
+      setError({ title: 'Save failed', message: err instanceof Error ? err.message : 'Save failed.' });
     } finally {
       setBusy(false);
     }
   }
 
   function handleCancel() {
-    setRows(toRows(data.serviceRates, data.serviceDurations));
+    setRows(toRows(data.serviceRates, data.serviceDurations, storedStartTimes));
     setError(null);
     setJustSaved(false);
   }
@@ -244,8 +308,8 @@ export function KinCareRatesEditor({ data, onSave }: KinCareRatesEditorProps) {
         {...(rows.length > 0 ? { meta: typeCount } : {})}
       >
         {error ? (
-          <Banner tone="error" title="Save failed" className="settingsEdit__sectionBanner">
-            {error}
+          <Banner tone="error" title={error.title} className="settingsEdit__sectionBanner">
+            {error.message}
           </Banner>
         ) : null}
 
@@ -326,6 +390,22 @@ export function KinCareRatesEditor({ data, onSave }: KinCareRatesEditorProps) {
                       onClick={() => removeRow(index)}
                       disabled={busy}
                     />
+                    {/* Full width under the three fields, so the column line
+                        above stays aligned. The explanation is an InfoTip, which
+                        a tap opens on a phone (mobile web is the field backup),
+                        never a line of copy. */}
+                    <span className="kinCareRates__startTime">
+                      <Toggle
+                        label={row.type.trim() === '' ? 'Book at a start time' : `Book ${row.type.trim()} at a start time`}
+                        checked={row.startTime}
+                        disabled={busy}
+                        onChange={(next) => updateRow(index, { startTime: next })}
+                      />
+                      <span className="kinCareRates__startTimeLabel" aria-hidden="true">
+                        Book at a start time
+                      </span>
+                      <InfoTip text={START_TIME_TIP} />
+                    </span>
                   </li>
                 );
               })}

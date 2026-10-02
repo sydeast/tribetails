@@ -93,6 +93,18 @@ describe('saveBusinessSettings', () => {
     expect(opts).toEqual({ mergeFields: ['serviceRates', 'serviceDurations', 'updatedAt', 'updatedBy'] });
   });
 
+  /**
+   * ISSUE #1092: the start-time flags are a whole map too. Clearing the flag on
+   * "Overnight" sends a map without it, and under a key-by-key merge the stored
+   * `Overnight: true` would survive and the type would go on booking by clock.
+   */
+  it('replaces serviceStartTimeBooking wholesale so a cleared flag stays cleared', async () => {
+    setDoc.mockResolvedValue(undefined);
+    await saveBusinessSettings({ serviceStartTimeBooking: {} });
+    const [, body, opts] = setDoc.mock.calls[0]!;
+    expect(body).toMatchObject({ serviceStartTimeBooking: {} });
+    expect(opts).toEqual({ mergeFields: ['serviceStartTimeBooking', 'updatedAt', 'updatedBy'] });
+  });
   it('keeps the key-by-key merge for every other patch, which is what protects mytribePortal', async () => {
     setDoc.mockResolvedValue(undefined);
     await saveBusinessSettings({ mytribePortal: { themeId: 'den' } as never });

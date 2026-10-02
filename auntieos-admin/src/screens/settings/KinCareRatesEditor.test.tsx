@@ -78,7 +78,7 @@ describe('KinCareRatesEditor', () => {
 
     expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', SAVE));
-    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Walk: '15.00' }, serviceDurations: {} });
+    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Walk: '15.00' }, serviceDurations: {}, serviceStartTimeBooking: {} });
     expect(await screen.findByText('Saved')).toBeInTheDocument();
     expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
   });
@@ -90,7 +90,7 @@ describe('KinCareRatesEditor', () => {
     await userEvent.clear(rateInput);
     await userEvent.type(rateInput, '20.00');
     await userEvent.click(screen.getByRole('button', SAVE));
-    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Walk: '20.00' }, serviceDurations: {} });
+    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Walk: '20.00' }, serviceDurations: {}, serviceStartTimeBooking: {} });
   });
 
   it('removes a row from its trash button and Save drops it from the map', async () => {
@@ -100,7 +100,7 @@ describe('KinCareRatesEditor', () => {
     );
     await userEvent.click(screen.getByRole('button', { name: 'Remove Walk' }));
     await userEvent.click(screen.getByRole('button', SAVE));
-    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Overnight: '80.00' }, serviceDurations: {} });
+    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Overnight: '80.00' }, serviceDurations: {}, serviceStartTimeBooking: {} });
   });
 
   it('drops a blank-type row on save (unsaveable, matches the wasm editor)', async () => {
@@ -109,7 +109,7 @@ describe('KinCareRatesEditor', () => {
     const typeInput = screen.getByDisplayValue('Walk');
     await userEvent.clear(typeInput);
     await userEvent.click(screen.getByRole('button', SAVE));
-    expect(onSave).toHaveBeenCalledWith({ serviceRates: {}, serviceDurations: {} });
+    expect(onSave).toHaveBeenCalledWith({ serviceRates: {}, serviceDurations: {}, serviceStartTimeBooking: {} });
   });
 
   it('Cancel reverts unsaved row edits', async () => {
@@ -186,10 +186,11 @@ describe('KinCareRatesEditor', () => {
       render(
         <KinCareRatesEditor data={{ serviceRates: { Walk: '10.00' }, serviceDurations: {} }} onSave={vi.fn()} />,
       );
+      // Two panel tips plus one per row for "Book at a start time" (#1092).
       const tips = screen.getAllByRole('tooltip', { hidden: true });
-      expect(tips).toHaveLength(2);
+      expect(tips).toHaveLength(3);
       expect(tips.every((t) => t.hidden)).toBe(true);
-      expect(tips[1]).toHaveTextContent(/first one shows selected/i);
+      expect(tips.some((t) => /first one shows selected/i.test(t.textContent ?? ''))).toBe(true);
     });
   });
 
@@ -210,6 +211,7 @@ describe('KinCareRatesEditor', () => {
       expect(onSave).toHaveBeenCalledWith({
         serviceRates: { Walk: '15.00' },
         serviceDurations: { Walk: '45' },
+        serviceStartTimeBooking: {},
       });
     });
     it('renders a stored duration in its own field, not folded into the name', () => {
@@ -251,7 +253,7 @@ describe('KinCareRatesEditor', () => {
       );
       await userEvent.clear(screen.getByDisplayValue('45'));
       await userEvent.click(screen.getByRole('button', SAVE));
-      expect(onSave).toHaveBeenCalledWith({ serviceRates: { Walk: '15.00' }, serviceDurations: {} });
+      expect(onSave).toHaveBeenCalledWith({ serviceRates: { Walk: '15.00' }, serviceDurations: {}, serviceStartTimeBooking: {} });
     });
     it('a duration-only edit is dirty, so the Save button is reachable', async () => {
       render(
@@ -314,7 +316,118 @@ describe('KinCareRatesEditor', () => {
       expect(onSave).toHaveBeenCalledWith({
         serviceRates: { Overnight: '90.00', '30Minute': '15.00', Consultation: '' },
         serviceDurations: { Overnight: '720' },
+        serviceStartTimeBooking: {},
       });
+    });
+  });
+  /**
+   * ISSUE #1092. An overnight is twelve hours that can start at any time of
+   * day, which no time block can hold, so a KinCare type can be booked at a
+   * start time instead. The flag lives in the row and folds to
+   * `serviceStartTimeBooking`, keyed by the type name, `true` entries only.
+   */
+  describe('book at a start time', () => {
+    const overnight = {
+      serviceRates: { Overnight: '80.00', Walk: '15.00' },
+      serviceDurations: { Overnight: '720' },
+    };
+    function savedPatch(onSave: ReturnType<typeof vi.fn>) {
+      return onSave.mock.calls[0]![0] as Partial<BusinessSettings>;
+    }
+    it('switching it on saves the type in serviceStartTimeBooking, and nothing else', async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(<KinCareRatesEditor data={overnight} onSave={onSave} />);
+      const toggle = screen.getByRole('switch', { name: 'Book Overnight at a start time' });
+      expect(toggle).toHaveAttribute('aria-checked', 'false');
+      await userEvent.click(toggle);
+      expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', SAVE));
+      expect(onSave).toHaveBeenCalledWith({
+        serviceRates: { Overnight: '80.00', Walk: '15.00' },
+        serviceDurations: { Overnight: '720' },
+        serviceStartTimeBooking: { Overnight: true },
+      });
+    });
+    it('shows a stored flag as on, and clearing it saves the map without the key', async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(
+        <KinCareRatesEditor data={{ ...overnight, serviceStartTimeBooking: { Overnight: true } }} onSave={onSave} />,
+      );
+      const toggle = screen.getByRole('switch', { name: 'Book Overnight at a start time' });
+      expect(toggle).toHaveAttribute('aria-checked', 'true');
+      expect(screen.getByRole('button', SAVE)).toBeDisabled();
+      await userEvent.click(toggle);
+      await userEvent.click(screen.getByRole('button', SAVE));
+      expect(savedPatch(onSave).serviceStartTimeBooking).toEqual({});
+    });
+    it('renaming a flagged type carries the flag to the new name and drops the old key', async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(
+        <KinCareRatesEditor data={{ ...overnight, serviceStartTimeBooking: { Overnight: true } }} onSave={onSave} />,
+      );
+      const name = screen.getByDisplayValue('Overnight');
+      await userEvent.clear(name);
+      await userEvent.type(name, 'Overnight Stay');
+      await userEvent.click(screen.getByRole('button', SAVE));
+      expect(savedPatch(onSave).serviceStartTimeBooking).toEqual({ 'Overnight Stay': true });
+      expect(savedPatch(onSave).serviceDurations).toEqual({ 'Overnight Stay': '720' });
+    });
+    it('removing a flagged type drops its key', async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(
+        <KinCareRatesEditor data={{ ...overnight, serviceStartTimeBooking: { Overnight: true } }} onSave={onSave} />,
+      );
+      await userEvent.click(screen.getByRole('button', { name: 'Remove Overnight' }));
+      await userEvent.click(screen.getByRole('button', SAVE));
+      expect(savedPatch(onSave).serviceStartTimeBooking).toEqual({});
+    });
+    it('on a duplicate name the last row wins, as it does for the rate', async () => {
+      // A flagged "Overnight" followed by an unflagged row renamed to the
+      // same name: the rate comes from the second row, so the flag must too.
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(
+        <KinCareRatesEditor data={{ ...overnight, serviceStartTimeBooking: { Overnight: true } }} onSave={onSave} />,
+      );
+      const walk = screen.getByDisplayValue('Walk');
+      await userEvent.clear(walk);
+      await userEvent.type(walk, 'Overnight');
+      await userEvent.click(screen.getByRole('button', SAVE));
+      expect(savedPatch(onSave).serviceRates).toEqual({ Overnight: '15.00' });
+      expect(savedPatch(onSave).serviceStartTimeBooking).toEqual({});
+    });
+    it('refuses to save a flagged type with no length, and names it', async () => {
+      // "Overnight" states no length in its name; with nothing typed either,
+      // the server would book the visit with no end.
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(
+        <KinCareRatesEditor data={{ serviceRates: { Overnight: '80.00' }, serviceDurations: {} }} onSave={onSave} />,
+      );
+      await userEvent.click(screen.getByRole('switch', { name: 'Book Overnight at a start time' }));
+      await userEvent.click(screen.getByRole('button', SAVE));
+      expect(onSave).not.toHaveBeenCalled();
+      expect(screen.getByText('"Overnight" books at a start time, so it needs a length.')).toBeInTheDocument();
+      // Typing a length clears the way.
+      await userEvent.type(screen.getByLabelText('Duration (min)'), '720');
+      await userEvent.click(screen.getByRole('button', SAVE));
+      expect(savedPatch(onSave).serviceStartTimeBooking).toEqual({ Overnight: true });
+      expect(screen.queryByText(/needs a length/)).not.toBeInTheDocument();
+    });
+    it('accepts a length stated in the name in place of a typed one', async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(
+        <KinCareRatesEditor data={{ serviceRates: { 'Overnight 12Hrs': '80.00' }, serviceDurations: {} }} onSave={onSave} />,
+      );
+      await userEvent.click(screen.getByRole('switch', { name: 'Book Overnight 12Hrs at a start time' }));
+      await userEvent.click(screen.getByRole('button', SAVE));
+      expect(savedPatch(onSave).serviceStartTimeBooking).toEqual({ 'Overnight 12Hrs': true });
+    });
+    it('explains itself in a tooltip on the row, not a line of copy', () => {
+      render(<KinCareRatesEditor data={overnight} onSave={vi.fn()} />);
+      const toggle = screen.getByRole('switch', { name: 'Book Overnight at a start time' });
+      const row = toggle.closest('.kinCareRates__startTime') as HTMLElement;
+      expect(within(row).getByRole('tooltip', { hidden: true })).toHaveTextContent(
+        'Kinfolk pick a start time for this KinCare instead of a time block. Use it for overnights.',
+      );
     });
   });
   it('shows a fail-loud error and keeps Save enabled when the write rejects', async () => {

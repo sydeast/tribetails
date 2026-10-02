@@ -27,17 +27,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Trash2
 import com.tribetails.auntieos.data.model.BusinessSettings
+import com.tribetails.auntieos.ui.components.AuntieBanner
+import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieChip
 import com.tribetails.auntieos.ui.components.AuntieDashedAddButton
 import com.tribetails.auntieos.ui.components.AuntieField
 import com.tribetails.auntieos.ui.components.AuntieIconButton
 import com.tribetails.auntieos.ui.components.AuntieSaveBar
+import com.tribetails.auntieos.ui.components.AuntieToggle
+import com.tribetails.auntieos.ui.components.DenInfoTip
 import com.tribetails.auntieos.ui.components.DenPanel
 import com.tribetails.auntieos.ui.components.EmptyHint
 import com.tribetails.auntieos.ui.components.SegmentedPicker
@@ -54,12 +60,13 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  * same three pieces in the same order.
  *
  * Saves through [onSettingsChange], which is the ViewModel's diff-and-save:
- * only `serviceRates` and `serviceDurations` reach Firestore, and they reach
- * it as whole maps ([businessSettingsReplacesWholeFields]) so a removed type
+ * only `serviceRates`, `serviceDurations` and `serviceStartTimeBooking`
+ * reach Firestore, and they reach it as whole maps ([businessSettingsReplacesWholeFields]) so a removed type
  * stays removed. The mock's grip glyph is not drawn: nothing here drags.
  *
  * Every row is a two-line card on a phone, the mock's own narrow layout: name
- * and remove on the first line, duration and rate on the second.
+ * and remove on the first line, duration and rate on the second, and the
+ * "Book at a start time" switch (#1092) on the third.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -70,8 +77,12 @@ internal fun KinCareTypesPanel(
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
-    val baseline = remember(settings) { kinCareRows(settings.serviceRates, settings.serviceDurations) }
+    val baseline = remember(settings) {
+        kinCareRows(settings.serviceRates, settings.serviceDurations, settings.serviceStartTimeBooking)
+    }
     var rows by remember(settings) { mutableStateOf(baseline) }
+    // The "needs a length" refusal. Set by Save, cleared by the next edit.
+    var blocked by remember(settings) { mutableStateOf<String?>(null) }
     var sortKey by remember { mutableStateOf(KinCareSortKey.STORED) }
     // The stored index of a row "Add KinCare type" just appended, so its name
     // field takes focus once it exists. Cleared the moment it has been used.
@@ -79,11 +90,15 @@ internal fun KinCareTypesPanel(
 
     val editedRates = foldKinCareRates(rows)
     val editedDurations = foldKinCareDurations(rows)
-    val dirty = editedRates != settings.serviceRates || editedDurations != settings.serviceDurations
+    val editedStartTimes = foldKinCareStartTime(rows)
+    val dirty = editedRates != settings.serviceRates ||
+        editedDurations != settings.serviceDurations ||
+        editedStartTimes != settings.serviceStartTimeBooking.filterValues { it }
     val view = sortedKinCareView(rows, sortKey)
 
     fun updateRow(index: Int, transform: (KinCareTypeRow) -> KinCareTypeRow) {
         rows = rows.mapIndexed { i, row -> if (i == index) transform(row) else row }
+        blocked = null
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(dims.space4)) {
@@ -173,6 +188,22 @@ internal fun KinCareTypesPanel(
                                 modifier = Modifier.weight(1f),
                             )
                         }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(dims.space2),
+                        ) {
+                            val switchLabel = row.type.trim().let {
+                                if (it.isEmpty()) KIN_CARE_START_TIME_LABEL else "Book $it at a start time"
+                            }
+                            AuntieToggle(
+                                checked = row.startTime,
+                                onCheckedChange = { next -> updateRow(index) { it.copy(startTime = next) } },
+                                enabled = !isLoading,
+                                modifier = Modifier.semantics { contentDescription = switchLabel },
+                            )
+                            Text(KIN_CARE_START_TIME_LABEL, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                            DenInfoTip(KIN_CARE_START_TIME_TIP)
+                        }
                     }
                 } }
 
@@ -219,14 +250,36 @@ internal fun KinCareTypesPanel(
             }
         }
 
+        blocked?.let { message ->
+            AuntieBanner(tone = AuntieBannerTone.Error, title = "Not saved") {
+                Text(message, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+            }
+        }
         AuntieSaveBar(
             dirty = dirty,
             saveEnabled = dirty && !isLoading,
-            onCancel = { rows = baseline },
+            onCancel = {
+                rows = baseline
+                blocked = null
+            },
             onSave = {
-                onSettingsChange(
-                    settings.copy(serviceRates = editedRates, serviceDurations = editedDurations),
-                )
+                // Refused before anything is written: the server ends a
+                // start-time visit by the type's length (#1092).
+                val missing = kinCareStartTimeMissingLength(rows)
+                if (missing != null) {
+                    blocked = kinCareNeedsLengthMessage(missing)
+                } else {
+                    blocked = null
+                    // `copy` of the loaded settings, never a rebuild: every
+                    // field this panel does not edit rides through untouched.
+                    onSettingsChange(
+                        settings.copy(
+                            serviceRates = editedRates,
+                            serviceDurations = editedDurations,
+                            serviceStartTimeBooking = editedStartTimes,
+                        ),
+                    )
+                }
             },
             saveLabel = "Save KinCare types",
             dirtyLabel = "Unsaved changes",

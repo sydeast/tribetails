@@ -43,6 +43,14 @@ describe('mergeBusinessSettings', () => {
     expect(result.observedUsHolidays).toEqual([]);
   });
 
+  it('keeps only exact-true serviceStartTimeBooking entries, the rule the server reads by (#1092)', () => {
+    const result = mergeBusinessSettings({
+      serviceStartTimeBooking: { Overnight: true, Walk: false, Drop: 'true', Nap: 1 },
+    });
+    expect(result.serviceStartTimeBooking).toEqual({ Overnight: true });
+    expect(mergeBusinessSettings({}).serviceStartTimeBooking).toEqual({});
+    expect(mergeBusinessSettings({ serviceStartTimeBooking: ['Overnight'] }).serviceStartTimeBooking).toEqual({});
+  });
   it('defaults every field when the doc is entirely undefined', () => {
     expect(mergeBusinessSettings(undefined)).toEqual(DEFAULT_BUSINESS_SETTINGS);
   });
