@@ -42,6 +42,7 @@ import {
   bulkOutcomeSummary,
   type BulkOutcome,
   type BulkSkip,
+  type BulkTarget,
 } from '../lib/bookingBulk';
 import {
   planBulkReschedule,
@@ -474,6 +475,11 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
    * reaches the household's own copy of the visit. Doing either alone leaves one
    * of the two audiences looking at a stale booking.
    *
+   * ORDER (#1117): an APPROVE of an envelope visit goes to the callable first
+   * and has NO client write, because the callable books the visit and can
+   * refuse it. REJECT, CANCEL and rows with no envelope visit write the flat
+   * row first.
+   *
    * There is no optimistic swap here. The screen's own live BOOKINGS_QUERY
    * listener carries every landed write back on its own, usually before this
    * function returns, so an optimistic row would be a second source of truth
@@ -488,7 +494,50 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
     setOutcome(null);
 
     const sessionFailures = new Map<string, string>();
+    const envelopeResults: BatchUpdateBookingsResult[] = [];
+    // #1117: an APPROVE of an envelope visit asks the server FIRST, and writes
+    // nothing here. The callable books the visit (it creates the
+    // kin_care_sessions doc itself) and refuses one it cannot book (a busy
+    // block, a closed day, an overnight still waiting for its start time). A
+    // flat write before that answer would show a refused visit approved in this
+    // list while the household's copy is not.
+    const approving = action === 'APPROVE';
+    const callableFirst = (t: BulkTarget) => approving && t.envelopeVisitId !== null;
+    async function runEnvelopeLeg(targets: BulkTarget[]) {
+      const ids = targets.map((t) => t.envelopeVisitId as string);
+      for (const chunk of chunkEnvelopeIds(ids)) {
+        try {
+          envelopeResults.push(await batchUpdateBookings(chunk, action));
+        } catch (err) {
+          // A THROWN callable is not a per-id failure, it is the whole chunk
+          // never running, so it gets its own line rather than being folded into
+          // the per-booking list where it would read as one unlucky booking.
+          const why = err instanceof Error ? err.message : 'the call failed';
+          const plural = chunk.length === 1 ? '' : 's';
+          if (approving) {
+            // Nothing was written anywhere for these, so they are plain failures.
+            for (const t of targets) {
+              if (t.envelopeVisitId !== null && chunk.includes(t.envelopeVisitId)) {
+                sessionFailures.set(t.id, `The booking could not be approved: ${why}.`);
+              }
+            }
+            setBulkError(`${chunk.length} visit${plural} could not be approved: ${why}. Nothing was changed for them.`);
+          } else {
+            setBulkError(
+              `The household's copy of ${chunk.length} visit${plural} could not be updated: ${why}. ` +
+                'The visits were still updated here, so the two now disagree.',
+            );
+          }
+        }
+      }
+    }
+    // Leg 1 (APPROVE only): the callable, for rows that have an envelope visit.
+    await runEnvelopeLeg(plan.eligible.filter(callableFirst));
+    // Leg 2: the flat write. APPROVE writes it only for rows with no envelope
+    // visit (the callable already owns the session of the others). REJECT and
+    // CANCEL have no guards to wait for and keep their order.
     for (const target of plan.eligible) {
+      if (callableFirst(target)) continue;
       try {
         if (action === 'APPROVE') await approveBooking(target.id);
         else if (action === 'REJECT') await rejectBooking(target.id);
@@ -497,29 +546,15 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
         sessionFailures.set(target.id, err instanceof Error ? err.message : 'Write failed');
       }
     }
-
-    // Only rows whose flat write landed AND that have an envelope counterpart.
-    // Sending an id whose local write just failed would confirm a visit in the
-    // household's copy that the admin's own list still shows as pending.
-    const envelopeIds = plan.eligible
-      .filter((t) => t.envelopeVisitId !== null && !sessionFailures.has(t.id))
-      .map((t) => t.envelopeVisitId as string);
-
-    const envelopeResults: BatchUpdateBookingsResult[] = [];
-    for (const chunk of chunkEnvelopeIds(envelopeIds)) {
-      try {
-        envelopeResults.push(await batchUpdateBookings(chunk, action));
-      } catch (err) {
-        // A THROWN callable is not a per-id failure, it is the whole chunk
-        // never running, so it gets its own line rather than being folded into
-        // the per-booking list where it would read as one unlucky booking.
-        setBulkError(
-          `The household's copy of ${chunk.length} visit${chunk.length === 1 ? '' : 's'} could not be updated: ` +
-            `${err instanceof Error ? err.message : 'the call failed'}. The visits were still updated here, so the two now disagree.`,
-        );
-      }
+    // Leg 3 (REJECT and CANCEL): only rows whose flat write landed AND that have
+    // an envelope counterpart. Sending an id whose local write just failed would
+    // change a visit in the household's copy that the admin's own list still
+    // shows as it was.
+    if (!approving) {
+      await runEnvelopeLeg(
+        plan.eligible.filter((t) => t.envelopeVisitId !== null && !sessionFailures.has(t.id)),
+      );
     }
-
     const result = mergeBulkResults(action, plan, sessionFailures, envelopeResults);
     setOutcome(result);
     setRunning(false);
