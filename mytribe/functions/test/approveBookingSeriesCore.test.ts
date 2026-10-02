@@ -513,3 +513,63 @@ describe('approveBookingSeriesCore: a cancelled night awaiting a start time (#10
     expect(env?.data.confirmedCount).toBe(1);
   });
 });
+describe('approveBookingSeriesCore: visits the household cancelled (#1101)', () => {
+  const live = { status: 'requested', startTime: '2026-07-01T10:00:00Z', endTime: '2026-07-01T11:00:00Z', kinIds: [], serviceType: 'walk' };
+  it('skips a cancelled timed visit next to a live one: no session, no flip, not counted', async () => {
+    const ctx = buildDbMock({
+      docs: { 'families/3/bookings/b1': { kinfolkName: 'Doe Household', envelopeStatus: 'requested' } },
+      queryDocs: {
+        'families/3/bookings/b1/kinCares': [
+          { id: 'live', data: live },
+          { id: 'gone', data: { ...live, status: 'cancelled', startTime: '2026-07-02T10:00:00Z', endTime: '2026-07-02T11:00:00Z' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { approveBookingSeriesCore } = await import('../src/admin/approveBookingSeriesCore');
+    const r = await approveBookingSeriesCore({ kinfolkId: '3', batchId: 'b1', actorUid: 'admin', actorRole: 'AUNTIE' });
+    expect(r).toMatchObject({ sessionsCreated: 1, failedVisits: 0, affectedVisits: 1, newlyConfirmed: 1, envelopeStatus: 'confirmed' });
+    expect(ctx.writes.find((w) => w.path === 'kin_care_sessions/vis_live')).toBeDefined();
+    expect(ctx.writes.find((w) => w.path === 'kin_care_sessions/vis_gone')).toBeUndefined();
+    expect(ctx.writes.find((w) => w.path === 'families/3/bookings/b1/kinCares/gone')).toBeUndefined();
+    const env = ctx.writes.find((w) => w.path === 'families/3/bookings/b1' && 'envelopeStatus' in w.data);
+    expect(env?.data).toMatchObject({ envelopeStatus: 'confirmed', confirmedCount: 1, cancelledCount: 1 });
+    expect(mocks.writeAuditEntryFn).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'SUCCESS', payload: expect.objectContaining({ affectedVisits: 1, sessionsCreated: 1 }) }),
+    );
+  });
+  it('treats an unavailable visit the same way', async () => {
+    const ctx = buildDbMock({
+      docs: { 'families/3/bookings/b1': { kinfolkName: 'Doe Household' } },
+      queryDocs: {
+        'families/3/bookings/b1/kinCares': [
+          { id: 'live', data: live },
+          { id: 'off', data: { ...live, status: 'unavailable' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { approveBookingSeriesCore } = await import('../src/admin/approveBookingSeriesCore');
+    const r = await approveBookingSeriesCore({ kinfolkId: '3', batchId: 'b1', actorUid: 'admin', actorRole: 'AUNTIE' });
+    expect(r.sessionsCreated).toBe(1);
+    expect(ctx.writes.find((w) => w.path === 'kin_care_sessions/vis_off')).toBeUndefined();
+  });
+  it('an envelope where every visit was cancelled ends cancelled, like CANCEL, with nothing booked or sent', async () => {
+    const ctx = buildDbMock({
+      docs: { 'families/3/bookings/b1': { kinfolkName: 'Doe Household', envelopeStatus: 'requested' } },
+      queryDocs: {
+        'families/3/bookings/b1/kinCares': [
+          { id: 'a', data: { ...live, status: 'cancelled' } },
+          { id: 'b', data: { ...live, status: 'cancelled', startTime: '2026-07-02T10:00:00Z', endTime: '2026-07-02T11:00:00Z' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { approveBookingSeriesCore } = await import('../src/admin/approveBookingSeriesCore');
+    const r = await approveBookingSeriesCore({ kinfolkId: '3', batchId: 'b1', actorUid: 'admin', actorRole: 'AUNTIE' });
+    expect(r).toMatchObject({ sessionsCreated: 0, failedVisits: 0, affectedVisits: 0, newlyConfirmed: 0, envelopeStatus: 'cancelled', householdNotified: false });
+    expect(ctx.writes.filter((w) => w.path.startsWith('kin_care_sessions/'))).toHaveLength(0);
+    const env = ctx.writes.find((w) => w.path === 'families/3/bookings/b1' && 'envelopeStatus' in w.data);
+    expect(env?.data).toMatchObject({ envelopeStatus: 'cancelled', confirmedCount: 0, cancelledCount: 2 });
+  });
+});
