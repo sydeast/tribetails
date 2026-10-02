@@ -428,8 +428,9 @@ from main and as a `workflow_call` from a release.
   `cypress/support/e2e-real.ts` is shorter than the PR-time one: a refused or
   `internal` callable is a real function failing here, not the dead-port pin.
 - Any structured `severity: error` line our functions log during a test fails
-  it. The emulator output is teed to `cypress/.real/emulators.log`, and that is
-  how a trigger that fails after the screen has its answer still fails the run.
+  it. This is a harness condition, the server-side twin of the `console.error`
+  signal both suites already use, not a spec's assertion. The emulator output
+  is teed to `cypress/.real/emulators.log` for it.
 - Never press Google Calendar Disconnect. It revokes the grant at Google, and
   the test calendar shares the account and OAuth client with production. The
   preflight refuses a spec that names it, and the support file fails any test
@@ -444,11 +445,12 @@ from main and as a `workflow_call` from a release.
 | Spec | What it proves |
 |---|---|
 | `settings-tags.cy.ts` | `removeBusinessTag` really cascades: the server's count on screen, and after a reload the tag is gone from the Tags list and from the Directory filter |
-| `invoice-paid-stripe.cy.ts` | Record payment settles an invoice through `markInvoicePaid`, and the trigger that follows really expires a Stripe test checkout left open on it. Skips without Stripe keys |
+| `invoice-paid-stripe.cy.ts` | Record payment settles an invoice through `markInvoicePaid` while a real Stripe test checkout is open on it, and the invoice reads paid after a reload. Skips without Stripe keys |
 
 Every other spec stays on the PR-time harness until it is rewritten for this
-one. The Stripe spec reads one line of the emulator log (the checkout sweep's
-`expired` outcome), because no admin screen shows that a session was closed.
+one. The Stripe spec does not assert that Stripe expired the session: no admin
+screen shows it yet. #1113 adds that to the invoice screen, and the assertion
+moves into the spec then.
 
 ### The verdict (D3-e)
 

@@ -14,11 +14,14 @@ import './commands';
  *    and OAuth client with production (D3-d), so one call would cut the
  *    production connection. The preflight refuses a spec that names it; this is
  *    the runtime half, for a click that reaches it some other way.
- * 3. OUR FUNCTIONS' ERRORS FAIL THE TEST. Every structured `severity: error`
- *    line our functions log during a test fails it after the console check.
- *    A trigger that runs after the screen has its answer (the Stripe checkout
- *    sweep is one) cannot show a failure on screen at all, and the D3-e rule
- *    is that our integration breaking stops the release.
+ * 3. OUR FUNCTIONS' ERRORS ARE A SIGNAL TOO. Both suites already treat
+ *    `console.error` as a test signal (docs/runbooks/e2e.md): a screen that
+ *    logs an error fails the test that visited it, whatever its assertions
+ *    said. This is the same HARNESS CONDITION on the server side: a structured
+ *    `severity: error` line our functions log while a test runs fails that
+ *    test. It is not a spec's assertion and no spec relies on it to make its
+ *    claim; specs still assert from the UI only (2026-09-01 ruling). It exists
+ *    because a callable or trigger can fail behind a screen that still renders.
  */
 
 let consoleErrors: string[] = [];
@@ -60,18 +63,13 @@ afterEach(() => {
   consoleErrors = [];
   expect(unexpected, 'unexpected console.error lines').to.deep.equal([]);
   cy.task<string[]>('serverErrorsSince', { since: serverLogStart }).then((lines) => {
-    expect(lines, 'error lines our functions logged during this test').to.deep.equal([]);
+    expect(lines, 'error lines our functions logged during this test (harness condition)').to.deep.equal([]);
   });
 });
 
 before(() => {
   cy.task('seedOnce');
 });
-
-/** The emulator log offset this test started at, for `serverLogWaitFor`. */
-export function serverLogStartOffset(): number {
-  return serverLogStart;
-}
 
 /**
  * True when every credential [vendor] needs was provided to this run.

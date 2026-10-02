@@ -17,9 +17,9 @@ import seed, { upsert, remove } from './e2e/seed';
  * other's files.
  *
  * TESTS STILL DRIVE AND ASSERT FROM THE UI (2026-09-01 ruling, restated for
- * this run in D3-c). The tasks below set up fixtures and read the emulator log
- * so a vendor refusal fails the test that caused it; none of them is an
- * assertion about what the screen shows.
+ * this run in D3-c). The tasks below set up fixtures, and read the emulator log
+ * for the support file's harness condition (our functions' error lines), the
+ * server-side twin of the `console.error` signal. No spec asserts on the log.
  */
 
 const PORT = 5174;
@@ -118,23 +118,6 @@ export default defineConfig({
         /** Our functions' structured error lines since [since]. */
         serverErrorsSince({ since }: { since: number }) {
           return structuredErrors(serverLogSince(since));
-        },
-        /**
-         * Waits until a line matching [pattern] appears after [since], and
-         * returns it. For a trigger the screen cannot show finishing (it runs
-         * after the callable has answered): the test waits for it to finish so
-         * the error check after it is not read too early. Throws on timeout.
-         */
-        async serverLogWaitFor({ since, pattern, timeoutMs }: { since: number; pattern: string; timeoutMs: number }) {
-          if (SERVER_LOG === '') throw new Error('E2E_SERVER_LOG is not set; start this run with npm run e2e:real');
-          const re = new RegExp(pattern);
-          const deadline = Date.now() + timeoutMs;
-          for (;;) {
-            const hit = serverLogSince(since).split('\n').find((line) => re.test(line));
-            if (hit !== undefined) return hit;
-            if (Date.now() > deadline) throw new Error(`no emulator log line matched /${pattern}/ within ${timeoutMs}ms`);
-            await new Promise((r) => setTimeout(r, 250));
-          }
         },
         /**
          * Mints a Stripe TEST-MODE Checkout Session for an invoice, the way
