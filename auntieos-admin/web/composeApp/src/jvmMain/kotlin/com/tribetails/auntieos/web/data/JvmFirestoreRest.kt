@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.data
 
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.delete
@@ -16,6 +17,7 @@ import io.ktor.http.contentType
 import io.ktor.http.encodeURLParameter
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -191,8 +193,8 @@ internal object JvmFirestoreRest {
      * bare date (`joinDate` as the web editor writes it) is not a timestamp.
      */
     internal fun timestampValueOf(raw: String): String? {
-        runCatching { java.time.OffsetDateTime.parse(raw) }.getOrNull()?.let { return raw }
-        return runCatching {
+        runCatchingCancellable { java.time.OffsetDateTime.parse(raw) }.getOrNull()?.let { return raw }
+        return runCatchingCancellable {
             java.time.LocalDateTime.parse(raw).atZone(java.time.ZoneId.systemDefault()).toInstant().toString()
         }.getOrNull()
     }
@@ -260,7 +262,7 @@ internal object JvmFirestoreRest {
         // WARNING-42: surface dropped docs so malformed records are not silently swallowed.
         val raw = runQueryWhereEq(collection, field, value)
         val decoded = raw.mapNotNull { doc ->
-            runCatching { codec.decodeFromJsonElement<T>(doc) }
+            runCatchingCancellable { codec.decodeFromJsonElement<T>(doc) }
                 .onFailure { e ->
                     val docId = doc["_id"]?.jsonPrimitive?.contentOrNull ?: "<unknown>"
                     val msg = "listWhereEq($collection,$field=$value): dropped doc $docId — ${e.message}"
@@ -317,7 +319,7 @@ internal object JvmFirestoreRest {
         // WARNING-42: surface dropped docs so malformed records are not silently swallowed.
         val raw = runCollectionGroupQueryWhereEq(groupId, field, value)
         val decoded = raw.mapNotNull { doc ->
-            runCatching { codec.decodeFromJsonElement<T>(doc) }
+            runCatchingCancellable { codec.decodeFromJsonElement<T>(doc) }
                 .onFailure { e ->
                     val docId = doc["_id"]?.jsonPrimitive?.contentOrNull ?: "<unknown>"
                     val msg = "listCollectionGroupWhereEq($groupId,$field=$value): dropped doc $docId — ${e.message}"
@@ -343,7 +345,7 @@ internal object JvmFirestoreRest {
         // WARNING-42: surface dropped docs so malformed records are not silently swallowed.
         val raw = rawCollectionSuspend(collection).filter { predicate(it) }
         val decoded = raw.mapNotNull { doc ->
-            runCatching { codec.decodeFromJsonElement<T>(doc) }
+            runCatchingCancellable { codec.decodeFromJsonElement<T>(doc) }
                 .onFailure { e ->
                     val docId = doc["_id"]?.jsonPrimitive?.contentOrNull ?: "<unknown>"
                     val msg = "list($collection): dropped doc $docId — ${e.message}"
@@ -387,7 +389,7 @@ internal object JvmFirestoreRest {
      */
     suspend inline fun <reified T> getDoc(collection: String, id: String): T? =
         getDocPlain(collection, id)?.let { doc ->
-            runCatching { codec.decodeFromJsonElement<T>(doc) }
+            runCatchingCancellable { codec.decodeFromJsonElement<T>(doc) }
                 .onFailure { e ->
                     val docId = doc["_id"]?.jsonPrimitive?.contentOrNull ?: id
                     val msg = "getDoc($collection/$id): undecodable doc $docId — ${e.message}"
@@ -401,7 +403,7 @@ internal object JvmFirestoreRest {
 
     fun <T> pollingStream(fetch: suspend () -> List<T>): Flow<FirestoreResult<List<T>>> = flow {
         while (true) {
-            val r = runCatching { fetch() }
+            val r = runCatchingCancellable { fetch() }
             emit(r.fold({ FirestoreResult.Data(it) }, { FirestoreResult.Error(it.transportMessage("Firestore read failed")) }))
             delay(POLL_MS)
         }
@@ -409,7 +411,7 @@ internal object JvmFirestoreRest {
 
     fun <T> pollingScalar(fetch: suspend () -> T): Flow<FirestoreResult<T>> = flow {
         while (true) {
-            val r = runCatching { fetch() }
+            val r = runCatchingCancellable { fetch() }
             emit(r.fold({ FirestoreResult.Data(it) }, { FirestoreResult.Error(it.transportMessage("Firestore read failed")) }))
             delay(POLL_MS)
         }
@@ -719,15 +721,17 @@ internal object JvmFirestoreRest {
             }
             val text = resp.bodyAsText()
             if (!resp.status.isSuccess()) {
-                val error = runCatching { codec.parseToJsonElement(text).jsonObject["error"]?.jsonObject }.getOrNull()
-                val msg = runCatching { error?.get("message")?.jsonPrimitive?.content }.getOrNull()
+                val error = runCatchingCancellable { codec.parseToJsonElement(text).jsonObject["error"]?.jsonObject }.getOrNull()
+                val msg = runCatchingCancellable { error?.get("message")?.jsonPrimitive?.content }.getOrNull()
                     ?: "callable ${resp.status.value}"
-                val status = runCatching { error?.get("status")?.jsonPrimitive?.content }.getOrNull()
+                val status = runCatchingCancellable { error?.get("status")?.jsonPrimitive?.content }.getOrNull()
                 CallableReply.Refused(status, msg)
             } else {
                 val result = codec.parseToJsonElement(text).jsonObject["result"]
                 CallableReply.Ok(result?.toString() ?: "{}")
             }
+        } catch (c: CancellationException) {
+            throw c
         } catch (e: Exception) {
             CallableReply.NotSent(e.transportMessage("callable failed"))
         }

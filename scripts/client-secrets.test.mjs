@@ -1240,8 +1240,14 @@ test('every VITE_ variable either app reads is declared here', () => {
   const declared = new Set(CLIENT_VARS.map((v) => v.variable));
   // Build-tooling flags, not build CONFIG: neither is a value anyone stores,
   // and both are set by the command that wants them (package.json's dev:record,
-  // the e2e config), so they have no source to resolve from.
-  const toolingFlags = new Set(['VITE_ISSUE_RECORDER', 'VITE_E2E_EMULATOR']);
+  // the e2e config), so they have no source to resolve from. The two #1089
+  // ones are set only by the admin's `e2e:real:server` script.
+  const toolingFlags = new Set([
+    'VITE_ISSUE_RECORDER',
+    'VITE_E2E_EMULATOR',
+    'VITE_E2E_PROJECT_ID',
+    'VITE_E2E_FUNCTIONS_PORT',
+  ]);
 
   const missing = [];
   for (const [app, dir] of Object.entries(APP_DIRS)) {

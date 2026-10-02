@@ -1,0 +1,27 @@
+{
+  "_comment": "Emulator config for the REAL-SERVICES Cypress run ONLY (#1089, npm run e2e:real, scripts/e2e-real/run.sh). The PR-time suites keep e2e.firebase.json, which serves no functions and pins callables at the dead port 5399; nothing here changes that. This run adds the functions emulator serving mytribe/functions on 5398, a port of its own, so 5399 stays unserved for the other suites. Auth and Firestore reuse 9399 and 8385, so the two runs cannot overlap on one machine: the second one fails on a taken port, which is loud. Always started with --project demo-auntieos-e2e (run.sh does this): a demo- id names no real project, so a secret the emulator cannot find in mytribe/functions/.secret.local has no production Secret Manager to fall back to. Same rules mirror as e2e.firebase.json, for the same reason.",
+  "firestore": {
+    "rules": "web/firestore.rules"
+  },
+  "functions": [
+    {
+      "source": "../mytribe/functions",
+      "codebase": "mytribe"
+    }
+  ],
+  "emulators": {
+    "auth": {
+      "port": 9399
+    },
+    "firestore": {
+      "port": 8385
+    },
+    "functions": {
+      "port": 5398
+    },
+    "ui": {
+      "enabled": false
+    },
+    "singleProjectMode": true
+  }
+}

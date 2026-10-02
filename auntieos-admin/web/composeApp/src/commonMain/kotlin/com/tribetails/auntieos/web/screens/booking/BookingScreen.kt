@@ -34,6 +34,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
@@ -216,7 +217,8 @@ private fun BookingListScreen(
                 is WriteResult.Err -> { vm.setError("Bulk $action failed: ${r.message}"); bulkNotice = null }
                 is WriteResult.Ok  -> {
                     vm.setError(if (r.value.failedCount > 0)
-                        "Bulk $action: ${r.value.failedCount} of ${ids.size} could not be updated."
+                        "Bulk $action: ${r.value.failedCount} of ${ids.size} could not be updated. " +
+                            com.tribetails.auntieos.web.data.batchFailureText(r.value).orEmpty()
                     else null)
                     bulkNotice = "$action applied: ${com.tribetails.auntieos.web.data.summarizeBatchResult(r.value)}."
                     clearSelection()
@@ -846,12 +848,12 @@ private fun buildStartTimesMs(
     weeks: Int,
 ): List<Long> {
     val (h, m) = parseHourMinute(time)
-    val start = runCatching { kotlinx.datetime.LocalDate.parse(startDateIso) }.getOrNull() ?: return emptyList()
+    val start = runCatchingCancellable { kotlinx.datetime.LocalDate.parse(startDateIso) }.getOrNull() ?: return emptyList()
     return when (mode) {
         BookingRepeat.SINGLE -> listOf(NewBookingMath.localMs(start, h, m))
         BookingRepeat.MULTI -> {
             val all = (listOf(startDateIso) + extraDatesIso)
-                .mapNotNull { runCatching { kotlinx.datetime.LocalDate.parse(it) }.getOrNull() }
+                .mapNotNull { runCatchingCancellable { kotlinx.datetime.LocalDate.parse(it) }.getOrNull() }
             NewBookingMath.visitMs(all.map { NewBookingMath.localMs(it, h, m) })
         }
         BookingRepeat.WEEKLY -> NewBookingMath.expandWeekly(start, h, m, weekdays, weeks)
@@ -1078,7 +1080,7 @@ internal fun BookingCreateScreen(
             AuntieDatePickerDialog(
                 visible = showDatePicker,
                 selectedDate = startDate.takeIf { it.isNotBlank() }
-                    ?.let { runCatching { kotlinx.datetime.LocalDate.parse(it) }.getOrNull() },
+                    ?.let { runCatchingCancellable { kotlinx.datetime.LocalDate.parse(it) }.getOrNull() },
                 today = today,
                 onPick = { picked ->
                     startDate = picked.toString()

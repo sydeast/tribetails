@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.data
 
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.descriptors.PrimitiveKind
 import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
@@ -43,7 +44,7 @@ object FirestoreInstantStringSerializer : KSerializer<String> {
 
     override fun deserialize(decoder: Decoder): String {
         val jsonDecoder = decoder as? JsonDecoder
-            ?: return runCatching { decoder.decodeString() }.getOrDefault("")
+            ?: return runCatchingCancellable { decoder.decodeString() }.getOrDefault("")
         return when (val el = jsonDecoder.decodeJsonElement()) {
             is JsonObject -> {
                 val seconds = (el["seconds"] as? JsonPrimitive)?.longOrNull
@@ -51,7 +52,7 @@ object FirestoreInstantStringSerializer : KSerializer<String> {
                 if (seconds == null) {
                     ""
                 } else {
-                    runCatching { Instant.fromEpochSeconds(seconds, nanos).toString() }
+                    runCatchingCancellable { Instant.fromEpochSeconds(seconds, nanos).toString() }
                         .getOrDefault("")
                 }
             }
@@ -67,7 +68,7 @@ object FirestoreInstantStringSerializer : KSerializer<String> {
         val millis = el.longOrNull
             ?: el.doubleOrNull?.takeIf { it.isFinite() }?.toLong()
             ?: return ""
-        return runCatching { Instant.fromEpochMilliseconds(millis).toString() }.getOrDefault("")
+        return runCatchingCancellable { Instant.fromEpochMilliseconds(millis).toString() }.getOrDefault("")
     }
 
     override fun serialize(encoder: Encoder, value: String) {

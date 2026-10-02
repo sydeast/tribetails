@@ -45,6 +45,7 @@ import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.relativeTime
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * The Tribe tab as a family-base HUB (per smoke-test): Kin profile cards, a
@@ -72,13 +73,13 @@ fun TribeHubScreen(
     var profile by remember { mutableStateOf<TribeProfileResult?>(null) }
 
     LaunchedEffect(kinfolkId) {
-        try { kin = portalApi.getMyKin(kinfolkId).kin; kinFailed = false } catch (_: Throwable) { kinFailed = true }
+        try { kin = portalApi.getMyKin(kinfolkId).kin; kinFailed = false } catch (c: CancellationException) { throw c } catch (_: Throwable) { kinFailed = true }
     }
     LaunchedEffect(kinfolkId) {
-        try { tales = portalApi.getMyKinTales(kinfolkId, limit = 4).tales; talesFailed = false } catch (_: Throwable) { talesFailed = true }
+        try { tales = portalApi.getMyKinTales(kinfolkId, limit = 4).tales; talesFailed = false } catch (c: CancellationException) { throw c } catch (_: Throwable) { talesFailed = true }
     }
     LaunchedEffect(kinfolkId) {
-        try { profile = portalApi.getMyTribeProfile(kinfolkId) } catch (_: Throwable) { /* home info card hides */ }
+        try { profile = portalApi.getMyTribeProfile(kinfolkId) } catch (c: CancellationException) { throw c } catch (_: Throwable) { /* home info card hides */ }
     }
 
     Column(

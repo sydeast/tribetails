@@ -12,12 +12,25 @@ vi.mock('firebase-admin/firestore', async () => {
   return { ...actual, FieldValue: { serverTimestamp: () => '__TS__' } };
 });
 
+const core = vi.hoisted(() => ({ approve: vi.fn() }));
+vi.mock('../src/admin/approveBookingSeriesCore', async () => {
+  const actual = await vi.importActual<any>('../src/admin/approveBookingSeriesCore');
+  return { ...actual, approveBookingSeriesCore: core.approve };
+});
+const guards = vi.hoisted(() => ({ busy: vi.fn(), holiday: vi.fn() }));
+vi.mock('../src/lib/bookingBusyConflict', () => ({ guardBookingBusyConflict: guards.busy }));
+vi.mock('../src/lib/companyHolidayConflict', () => ({ guardCompanyHolidayConflict: guards.holiday }));
+import { HttpsError } from 'firebase-functions/v2/https';
 import { batchUpdateBookingsHandler } from '../src/admin/batchUpdateBookings';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
 
 beforeEach(() => {
   mocks.dbFn.mockReset();
   (writeAuditEntry as any).mockClear();
+  core.approve.mockReset();
+  core.approve.mockResolvedValue({ found: true, affectedVisits: 1, sessionsCreated: 1, failedVisits: 0, envelopeStatus: 'confirmed', newlyConfirmed: 1, householdNotified: true });
+  guards.busy.mockReset().mockResolvedValue(undefined);
+  guards.holiday.mockReset().mockResolvedValue(undefined);
 });
 
 function req(data: unknown, uid: string | null = 'admin1'): CallableRequest<unknown> {
@@ -28,8 +41,14 @@ function req(data: unknown, uid: string | null = 'admin1'): CallableRequest<unkn
   } as unknown as CallableRequest<unknown>;
 }
 
+// `docs` holds each envelope visit as the series core leaves it (confirmed): the
+// core is mocked, and the callable reads every id back after it runs.
 function seed() {
   return buildDbMock({
+    docs: {
+      'families/kf1/bookings/b1/kinCares/v1': { status: 'confirmed' },
+      'families/kf1/bookings/b1/kinCares/v2': { status: 'confirmed' },
+    },
     collectionGroupDocs: {
       kinCares: [
         { id: 'v1', path: 'families/kf1/bookings/b1/kinCares/v1', data: { status: 'requested' } },
@@ -70,6 +89,7 @@ function seedMixed() {
   return buildDbMock({
     docs: {
       'enhanced_bookings/eb1': { status: 'DRAFT' },
+      'families/kf1/bookings/b1/kinCares/v1': { status: 'confirmed' },
     },
     collectionGroupDocs: {
       kinCares: [
@@ -80,17 +100,19 @@ function seedMixed() {
 }
 
 describe('batchUpdateBookings happy path', () => {
-  it('APPROVE flips each requested visit to confirmed and counts updated', async () => {
+  it('APPROVE sends each envelope visit through the series core and counts it once it reads confirmed (#1099)', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await batchUpdateBookingsHandler(req({ ids: ['v1', 'v2'], action: 'APPROVE' }));
     expect(res.ok).toBe(true);
     expect(res.updated).toBe(2);
     expect(res.failed).toEqual([]);
-    expect(ctx.writes.find((w) => w.path === 'families/kf1/bookings/b1/kinCares/v1')?.data.status).toBe('confirmed');
-    expect(ctx.writes.find((w) => w.path === 'families/kf1/bookings/b1/kinCares/v2')?.data.status).toBe('confirmed');
+    // Two visits of ONE request: one core call, not one per visit.
+    expect(core.approve).toHaveBeenCalledTimes(1);
+    expect(core.approve).toHaveBeenCalledWith({ kinfolkId: 'kf1', batchId: 'b1', actorUid: 'admin1', actorRole: 'AUNTIE' });
+    // The callable no longer flips status itself: the core owns that write.
+    expect(ctx.writes.find((w) => w.path === 'families/kf1/bookings/b1/kinCares/v1')).toBeUndefined();
   });
-
   it('REJECT and CANCEL both terminate the visit to cancelled', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -104,8 +126,11 @@ describe('batchUpdateBookings happy path', () => {
     expect(ctx2.writes.find((w) => w.path === 'families/kf1/bookings/b1/kinCares/v2')?.data.status).toBe('cancelled');
   });
 
-  it('is idempotent: a visit already in the target status counts as updated without a write', async () => {
-    const ctx = seed();
+  it('is idempotent: a visit already confirmed WITH its session counts as updated without a write', async () => {
+    const ctx = buildDbMock({
+      docs: { 'kin_care_sessions/vis_v3': { status: 'SCHEDULED' } },
+      collectionGroupDocs: { kinCares: [{ id: 'v3', path: 'families/kf2/bookings/b2/kinCares/v3', data: { status: 'confirmed' } }] },
+    });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await batchUpdateBookingsHandler(req({ ids: ['v3'], action: 'APPROVE' }));
     expect(res.updated).toBe(1);
@@ -162,17 +187,13 @@ describe('batchUpdateBookings happy path', () => {
 });
 
 describe('batchUpdateBookings kinCares -> kin_care_sessions mirror', () => {
-  it('APPROVE mirrors onto the paired kin_care_sessions doc when one exists', async () => {
+  it('APPROVE of a confirmed visit that already has its session writes nothing (#1099)', async () => {
     const ctx = seedWithSessionMirror();
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await batchUpdateBookingsHandler(req({ ids: ['v1'], action: 'APPROVE' }));
     expect(res.updated).toBe(1);
-    // kinCares was already 'confirmed' (idempotent, no write), but the session
-    // mirror still gets synced to the uppercase vocabulary.
-    expect(ctx.writes.find((w) => w.path === 'families/kf1/bookings/b1/kinCares/v1')).toBeUndefined();
-    expect(ctx.writes.find((w) => w.path === 'kin_care_sessions/vis_v1')?.data.status).toBe('SCHEDULED');
+    expect(ctx.writes).toEqual([]);
   });
-
   it('CANCEL mirrors onto kin_care_sessions as CANCELLED', async () => {
     const ctx = seedWithSessionMirror();
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -254,7 +275,7 @@ describe('batchUpdateBookings mixed batch (both id spaces in one call)', () => {
     expect(res.updated).toBe(2);
     expect(res.failed).toEqual([]);
     expect(ctx.writes.find((w) => w.path === 'enhanced_bookings/eb1')?.data.status).toBe('ACCEPTED');
-    expect(ctx.writes.find((w) => w.path === 'families/kf1/bookings/b1/kinCares/v1')?.data.status).toBe('confirmed');
+    expect(core.approve).toHaveBeenCalledTimes(1);
   });
 
   it('one invalid id alongside one of each valid space fails only the invalid one', async () => {
@@ -289,7 +310,7 @@ describe('batchUpdateBookings mixed batch (both id spaces in one call)', () => {
     const res = await batchUpdateBookingsHandler(req({ ids: ['eb1', 'v1'], action: 'APPROVE' }));
     expect(res.updated).toBe(1);
     expect(res.failed).toEqual([{ id: 'eb1', error: 'boom' }]);
-    expect(ctx.writes.find((w) => w.path === 'families/kf1/bookings/b1/kinCares/v1')?.data.status).toBe('confirmed');
+    expect(core.approve).toHaveBeenCalledTimes(1);
   });
 
   it('reports a mixed audit targetCollection when both id spaces are present', async () => {
@@ -336,6 +357,7 @@ describe('batchUpdateBookings validation + auth', () => {
 describe('batchUpdateBookings: a visit awaiting a start time (#1098)', () => {
   function seedPending() {
     return buildDbMock({
+      docs: { 'families/kf1/bookings/b1/kinCares/v2': { status: 'confirmed' } },
       collectionGroupDocs: {
         kinCares: [
           { id: 'v1', path: 'families/kf1/bookings/b1/kinCares/v1', data: { status: 'requested', startTimePending: true, startTime: null } },
@@ -352,7 +374,7 @@ describe('batchUpdateBookings: a visit awaiting a start time (#1098)', () => {
     expect(res.updated).toBe(1);
     expect(res.failed).toEqual([{ id: 'v1', error: 'Set the start time before approving this Overnight.' }]);
     expect(ctx.writes.find((w) => w.path === 'families/kf1/bookings/b1/kinCares/v1')).toBeUndefined();
-    expect(ctx.writes.find((w) => w.path === 'families/kf1/bookings/b1/kinCares/v2')?.data.status).toBe('confirmed');
+    expect(core.approve).toHaveBeenCalledTimes(1);
   });
 
   it('CANCEL of a pending visit still goes through: only approving needs a time', async () => {
@@ -360,5 +382,105 @@ describe('batchUpdateBookings: a visit awaiting a start time (#1098)', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await batchUpdateBookingsHandler(req({ ids: ['v1'], action: 'CANCEL' }));
     expect(res).toMatchObject({ updated: 1, failed: [] });
+  });
+});
+
+/**
+ * #1099: quick approve used to flip an envelope visit's status and nothing else.
+ * The request now goes through `approveBookingSeriesCore`, and each id is
+ * reported by what its own visit ended up as.
+ */
+describe('batchUpdateBookings: APPROVE goes through the series core (#1099)', () => {
+  const V = (id: string, batch = 'b1', kf = 'kf1') => `families/${kf}/bookings/${batch}/kinCares/${id}`;
+  function seedTwoRequests(after: Record<string, Record<string, unknown>> = {}) {
+    return buildDbMock({
+      docs: { ...after },
+      collectionGroupDocs: {
+        kinCares: [
+          { id: 'v1', path: V('v1'), data: { status: 'requested' } },
+          { id: 'v2', path: V('v2', 'b2', 'kf2'), data: { status: 'requested' } },
+        ],
+      },
+    });
+  }
+  it('calls the core once per request, with the family and batch taken from the visit path', async () => {
+    const ctx = seedTwoRequests({ [V('v1')]: { status: 'confirmed' }, [V('v2', 'b2', 'kf2')]: { status: 'confirmed' } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await batchUpdateBookingsHandler(req({ ids: ['v1', 'v2'], action: 'APPROVE' }));
+    expect(res).toMatchObject({ updated: 2, failed: [] });
+    expect(core.approve).toHaveBeenCalledTimes(2);
+    expect(core.approve).toHaveBeenCalledWith(expect.objectContaining({ kinfolkId: 'kf1', batchId: 'b1' }));
+    expect(core.approve).toHaveBeenCalledWith(expect.objectContaining({ kinfolkId: 'kf2', batchId: 'b2' }));
+  });
+  it('reports a visit the core could not book as failed, in the busy guard words', async () => {
+    const ctx = seedTwoRequests({
+      [V('v1')]: { status: 'requested', startTime: '2026-10-05T16:00:00.000Z', endTime: '2026-10-05T17:00:00.000Z' },
+      [V('v2', 'b2', 'kf2')]: { status: 'confirmed' },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    guards.busy.mockRejectedValueOnce(new HttpsError('failed-precondition', 'That time overlaps a busy block on your Google Calendar.'));
+    const res = await batchUpdateBookingsHandler(req({ ids: ['v1', 'v2'], action: 'APPROVE' }));
+    expect(res.updated).toBe(1);
+    expect(res.failed).toEqual([{ id: 'v1', error: 'That time overlaps a busy block on your Google Calendar.' }]);
+  });
+  it('falls back to a plain line when the visit is unconfirmed for a reason the guards cannot name', async () => {
+    const ctx = seedTwoRequests({
+      [V('v1')]: { status: 'requested', startTime: '2026-10-05T16:00:00.000Z', endTime: '2026-10-05T17:00:00.000Z' },
+      [V('v2', 'b2', 'kf2')]: { status: 'confirmed' },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await batchUpdateBookingsHandler(req({ ids: ['v1'], action: 'APPROVE' }));
+    expect(res.failed).toEqual([{ id: 'v1', error: 'This visit could not be booked. Approve the whole request from Requests.' }]);
+  });
+  it('a refusal from the core (a sibling night with no start time) lands on every selected id of that request', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    core.approve.mockRejectedValueOnce(new HttpsError('failed-precondition', 'Set a start time for the Overnight before approving.'));
+    const res = await batchUpdateBookingsHandler(req({ ids: ['v1', 'v2'], action: 'APPROVE' }));
+    expect(res.updated).toBe(0);
+    expect(res.failed).toEqual([
+      { id: 'v1', error: 'Set a start time for the Overnight before approving.' },
+      { id: 'v2', error: 'Set a start time for the Overnight before approving.' },
+    ]);
+  });
+  it('a request the core cannot find fails its ids as not-found', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    core.approve.mockResolvedValueOnce({ found: false, affectedVisits: 0, sessionsCreated: 0, failedVisits: 0, envelopeStatus: 'requested', newlyConfirmed: 0, householdNotified: false });
+    const res = await batchUpdateBookingsHandler(req({ ids: ['v1'], action: 'APPROVE' }));
+    expect(res.failed).toEqual([{ id: 'v1', error: 'not-found' }]);
+  });
+  it('a visit confirmed by the old status flip, with no session, is repaired through the core', async () => {
+    const ctx = buildDbMock({
+      docs: { [V('v1')]: { status: 'confirmed' } },
+      collectionGroupDocs: { kinCares: [{ id: 'v1', path: V('v1'), data: { status: 'confirmed' } }] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await batchUpdateBookingsHandler(req({ ids: ['v1'], action: 'APPROVE' }));
+    expect(res.updated).toBe(1);
+    expect(core.approve).toHaveBeenCalledTimes(1);
+  });
+  it('a confirmed visit that already has its session is a no-op: the core is not called', async () => {
+    const ctx = seedWithSessionMirror();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await batchUpdateBookingsHandler(req({ ids: ['v1'], action: 'APPROVE' }));
+    expect(res.updated).toBe(1);
+    expect(core.approve).not.toHaveBeenCalled();
+  });
+  it('REJECT and CANCEL never touch the core', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await batchUpdateBookingsHandler(req({ ids: ['v1'], action: 'REJECT' }));
+    expect(core.approve).not.toHaveBeenCalled();
+  });
+  it('a kinCares doc outside an envelope keeps the old status flip', async () => {
+    const ctx = buildDbMock({
+      collectionGroupDocs: { kinCares: [{ id: 'old1', path: 'legacy/x/kinCares/old1', data: { status: 'requested' } }] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await batchUpdateBookingsHandler(req({ ids: ['old1'], action: 'APPROVE' }));
+    expect(res.updated).toBe(1);
+    expect(core.approve).not.toHaveBeenCalled();
+    expect(ctx.writes.find((w) => w.path === 'legacy/x/kinCares/old1')?.data.status).toBe('confirmed');
   });
 });

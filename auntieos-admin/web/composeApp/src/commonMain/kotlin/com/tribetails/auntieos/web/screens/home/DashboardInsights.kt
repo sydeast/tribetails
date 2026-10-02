@@ -6,6 +6,7 @@ import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.SupplyItem
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import com.tribetails.auntieos.web.screens.inbox.ConversationSummary
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
@@ -20,7 +21,7 @@ import kotlinx.datetime.plus
  */
 
 private fun parseDay(s: String): LocalDate? =
-    runCatching { LocalDate.parse(s.take(10)) }.getOrNull()
+    runCatchingCancellable { LocalDate.parse(s.take(10)) }.getOrNull()
 
 private fun LocalDate.mondayOfWeek(): LocalDate =
     plus(-(dayOfWeek.isoDayNumber - 1), DateTimeUnit.DAY)

@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.data
 
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -335,7 +336,7 @@ class CloudNotificationOverridesRepository(
     override suspend fun getMatrix(): WriteResult<NotificationMatrix> =
         when (val r = invoke("getBusinessNotificationOverrides", "{}")) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(decodeMatrix(json.parseToJsonElement(r.value).jsonObject))
             }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }

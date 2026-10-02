@@ -53,6 +53,7 @@ import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.LocalTestMode
 import com.tribetails.auntieos.web.data.TestMode
 import com.tribetails.auntieos.web.data.WriteResult
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import com.tribetails.auntieos.web.screens.RescheduleArgs
 import com.tribetails.auntieos.web.screens.rescheduleArgsForDrop
 import com.tribetails.auntieos.web.theme.AuntieTheme
@@ -1090,11 +1091,11 @@ internal fun busyPlacement(startHHmm: String, endHHmm: String): BusyPlacement? {
 }
 
 /** "HH:mm" to minutes-from-midnight, or null if unparseable. */
-internal fun hhmmToMinutes(hhmm: String): Int? = runCatching {
-    if (hhmm.length < 4 || hhmm[2] != ':') return@runCatching null
+internal fun hhmmToMinutes(hhmm: String): Int? = runCatchingCancellable {
+    if (hhmm.length < 4 || hhmm[2] != ':') return@runCatchingCancellable null
     val hour = hhmm.substring(0, 2).toInt()
     val minute = hhmm.substring(3, 5).toInt()
-    if (hour !in 0..23 || minute !in 0..59) return@runCatching null
+    if (hour !in 0..23 || minute !in 0..59) return@runCatchingCancellable null
     hour * 60 + minute
 }.getOrNull()
 
@@ -1207,7 +1208,7 @@ private fun localMinutesOfDay(iso: String, zone: TimeZone): Int? {
 
 /** Parse an ISO-8601 instant (with Z/offset) into a local-zone date-time, or null. */
 @OptIn(ExperimentalTime::class)
-private fun parseToLocal(iso: String, zone: TimeZone) = runCatching {
+private fun parseToLocal(iso: String, zone: TimeZone) = runCatchingCancellable {
     Instant.parse(iso).toLocalDateTime(zone)
 }.getOrNull()
 
@@ -1215,8 +1216,8 @@ private fun parseToLocal(iso: String, zone: TimeZone) = runCatching {
  * Fallback minutes-of-day for a timezone-less local ISO ("YYYY-MM-DDTHH:MM..."),
  * read positionally. Only used when [Instant.parse] fails (no Z/offset present).
  */
-private fun positionalMinutes(iso: String): Int? = runCatching {
-    if (iso.length < 16) return@runCatching null
+private fun positionalMinutes(iso: String): Int? = runCatchingCancellable {
+    if (iso.length < 16) return@runCatchingCancellable null
     val hour = iso.substring(11, 13).toInt()
     val minute = iso.substring(14, 16).toInt()
     hour * 60 + minute
@@ -1252,8 +1253,8 @@ private fun displayTime(iso: String, zone: TimeZone): String {
         val hour12 = when (ldt.hour % 12) { 0 -> 12; else -> ldt.hour % 12 }
         return "$hour12:${ldt.minute.toString().padStart(2, '0')} $ampm"
     }
-    return runCatching {
-        if (iso.length < 16) return@runCatching iso
+    return runCatchingCancellable {
+        if (iso.length < 16) return@runCatchingCancellable iso
         val hour = iso.substring(11, 13).toInt()
         val minute = iso.substring(14, 16)
         val ampm = if (hour >= 12) "PM" else "AM"

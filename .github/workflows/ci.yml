@@ -362,6 +362,8 @@ jobs:
               # timeout-minutes on every job. A change to that file alone,
               # touching nothing under scripts/**, must still run it.
               - '.github/workflows/ci-run-watch.yml'
+              # Same reason, for the real-services Cypress workflow (#1089).
+              - '.github/workflows/e2e-real.yml'
               # nightly-release.test.sh (deploy-guard) reads the nightly
               # workflow, the runbook section that sets up its secrets and
               # variables, the RUNBOOK heading the workflow links to, and the

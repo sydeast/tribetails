@@ -19,7 +19,19 @@ import { seedDenseRows } from './seed.rows';
  * only `e2e/firebase.json` opens.
  */
 
-const PROJECT = 'auntieos-ttpc';
+/**
+ * The emulators' project id. `auntieos-ttpc` for the PR-time suites, which run
+ * auth and Firestore only. The real-services run (#1089) starts all three
+ * emulators under a `demo-` id so the functions emulator cannot resolve a
+ * production secret, and names it in `E2E_PROJECT_ID`; anything else there is
+ * refused, because seeding wipes the project it is pointed at.
+ */
+const PROJECT = (() => {
+  const id = process.env.E2E_PROJECT_ID ?? '';
+  if (id === '') return 'auntieos-ttpc';
+  if (!id.startsWith('demo-')) throw new Error(`E2E_PROJECT_ID must be a demo- project id, got "${id}"`);
+  return id;
+})();
 const AUTH = 'http://127.0.0.1:9399';
 const FIRESTORE = 'http://127.0.0.1:8385';
 const OWNER = { Authorization: 'Bearer owner' };

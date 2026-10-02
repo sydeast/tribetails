@@ -9,6 +9,9 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
+import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
+import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
+import { approveBookingSeriesCore, toIso } from './approveBookingSeriesCore';
 
 /**
  * Stage 2 tail: apply ONE booking transition to many individual visits at once.
@@ -48,6 +51,17 @@ import { validateResponse } from '../lib/callableResponse';
  * already sent the right-shaped id and worked; the bulk screen's ids were the
  * broken path).
  *
+ * #1099: APPROVE of an envelope visit is NOT a status flip. A flip left a
+ * "confirmed" visit with no `kin_care_sessions` doc (so nothing on the
+ * schedule and nothing to bill), skipped the busy and closed-day checks, never
+ * moved the envelope to confirmed and never sent the household's answer. Those
+ * ids are grouped by envelope and approved through `approveBookingSeriesCore`,
+ * the one function the requests list's approval and the portal's auto-confirm
+ * also use. That core approves the WHOLE request it is given, so approving one
+ * visit of a multi-visit request books its siblings too; that is what
+ * "approve this request" means everywhere else. Each id is then reported by
+ * what its own visit ended up as, never by the group.
+ *
  * Idempotent per id: if a doc is already in the target status it is reported
  * as updated without a redundant write. Per-id failures (missing id, a write
  * that throws, etc.) are collected into `failed` rather than aborting the
@@ -82,6 +96,35 @@ function enhancedBookingTargetStatus(action: 'APPROVE' | 'REJECT' | 'CANCEL'): s
   return action === 'APPROVE' ? 'ACCEPTED' : 'REJECTED';
 }
 
+/** `families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}`, or null for any other place a kinCares doc lives. */
+function envelopeOf(path: string): { kinfolkId: string; batchId: string } | null {
+  const segs = path.split('/');
+  if (segs.length !== 6 || segs[0] !== 'families' || segs[2] !== 'bookings' || segs[4] !== 'kinCares') return null;
+  return { kinfolkId: segs[1], batchId: segs[3] };
+}
+const NOT_BOOKED = 'This visit could not be booked. Approve the whole request from Requests.';
+/**
+ * The core isolates each visit and only logs why one failed, so the reason is
+ * read back the way the core found it: the same busy and closed-day checks over
+ * this visit's own window. A refusal there is the reason, in the guard's own
+ * plain words; anything else gets the generic line.
+ */
+async function whyNotBooked(
+  data: Record<string, unknown>,
+  actorUid: string,
+): Promise<string> {
+  const startIso = toIso(data['startTime']);
+  if (!startIso) return 'This visit has no start time, so it cannot be booked.';
+  const endIso = toIso(data['endTime']);
+  const visits = [{ startTimeMs: Date.parse(startIso), endTimeMs: endIso ? Date.parse(endIso) : null }];
+  try {
+    await guardCompanyHolidayConflict({ firestore: db(), visits });
+    await guardBookingBusyConflict({ firestore: db(), visits, actorUid, actorRole: 'AUNTIE' });
+  } catch (err) {
+    if (err instanceof HttpsError && err.message) return err.message;
+  }
+  return NOT_BOOKED;
+}
 export async function batchUpdateBookingsHandler(
   req: CallableRequest<unknown>,
 ): Promise<z.infer<typeof Result>> {
@@ -149,6 +192,8 @@ export async function batchUpdateBookingsHandler(
   let enhancedResolved = 0;
   let kinCareResolved = 0;
   const failed: Array<{ id: string; error: string }> = [];
+  // #1099: envelope visits to approve, grouped by their request.
+  const approveGroups = new Map<string, { kinfolkId: string; batchId: string; ids: string[] }>();
 
   for (const id of requestedIds) {
     const enhancedHit = enhancedById.get(id);
@@ -184,6 +229,26 @@ export async function batchUpdateBookingsHandler(
       failed.push({ id, error: 'Set the start time before approving this Overnight.' });
       continue;
     }
+    if (args.action === 'APPROVE') {
+      const envelope = envelopeOf(hit.ref.path);
+      if (envelope) {
+        // Already confirmed WITH its session: nothing to do but keep the
+        // mirror honest. Confirmed with NO session is the damage the old flip
+        // left behind, and goes through the core, which creates it.
+        const sessionSnap = hit.status === kinCareWanted
+          ? await db().collection('kin_care_sessions').doc(`vis_${id}`).get()
+          : null;
+        if (sessionSnap?.exists) {
+          updated += 1;
+          continue;
+        }
+        const key = `${envelope.kinfolkId}/${envelope.batchId}`;
+        const group = approveGroups.get(key) ?? { ...envelope, ids: [] };
+        group.ids.push(id);
+        approveGroups.set(key, group);
+        continue;
+      }
+    }
     try {
       if (hit.status !== kinCareWanted) {
         await hit.ref.set(
@@ -208,7 +273,37 @@ export async function batchUpdateBookingsHandler(
       failed.push({ id, error: (err as Error)?.message ?? 'write-failed' });
     }
   }
-
+  // #1099: one core call per request. A refusal that applies to the whole
+  // request (a sibling night still without its start time, a closed day) lands
+  // on every selected id of it, in the core's own words.
+  for (const group of approveGroups.values()) {
+    try {
+      const r = await approveBookingSeriesCore({
+        kinfolkId: group.kinfolkId,
+        batchId: group.batchId,
+        actorUid: uid,
+        actorRole: 'AUNTIE',
+      });
+      if (!r.found) {
+        for (const id of group.ids) failed.push({ id, error: 'not-found' });
+        continue;
+      }
+      for (const id of group.ids) {
+        const snap = await db()
+          .doc(`families/${group.kinfolkId}/bookings/${group.batchId}/kinCares/${id}`)
+          .get();
+        const data = (snap.data() ?? {}) as Record<string, unknown>;
+        if (data['status'] === 'confirmed') {
+          updated += 1;
+        } else {
+          failed.push({ id, error: await whyNotBooked(data, uid) });
+        }
+      }
+    } catch (err) {
+      const message = err instanceof HttpsError && err.message ? err.message : NOT_BOOKED;
+      for (const id of group.ids) failed.push({ id, error: message });
+    }
+  }
   await writeAuditEntry({
     // Any per-id failure means this batch did not fully do what it was asked;
     // the enum has no PARTIAL, so a batch that didn't fully succeed is

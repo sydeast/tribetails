@@ -4,6 +4,7 @@ import com.tribetails.auntieos.web.data.BatchBookingResult
 import com.tribetails.auntieos.web.data.computeUnboundCatalogKeys
 import com.tribetails.auntieos.web.data.decodeBatchBookingResult
 import com.tribetails.auntieos.web.data.decodeCatalogKeys
+import com.tribetails.auntieos.web.data.batchFailureText
 import com.tribetails.auntieos.web.data.summarizeBatchResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -97,5 +98,24 @@ class Stage2TailDecodeTest {
             """{"ok":true,"action":"CANCEL","updated":1,"failed":[{"id":"a","error":"e"}]}""",
         )
         assertEquals("1 updated, 1 failed", summarizeBatchResult(r))
+    }
+
+    // ---- batchFailureText (#1099) ----
+    @Test
+    fun noFailureTextWhenNothingFailed() {
+        assertEquals(null, batchFailureText(BatchBookingResult("APPROVE", 2, emptyList())))
+    }
+    @Test
+    fun failureTextKeepsTheServersSentenceAndPutsRawCodesIntoWords() {
+        val r = decodeBatchBookingResult(
+            """{"ok":true,"action":"APPROVE","updated":0,"failed":[
+              {"id":"a","error":"That time overlaps a busy block on your Google Calendar."},
+              {"id":"b","error":"not-found"},
+              {"id":"c","error":"not-found"}]}""",
+        )
+        assertEquals(
+            "That time overlaps a busy block on your Google Calendar. That booking was not found.",
+            batchFailureText(r),
+        )
     }
 }

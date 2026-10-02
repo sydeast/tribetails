@@ -11,6 +11,7 @@ import com.tribetails.auntieos.web.data.MultiDateBookingResult
 import com.tribetails.auntieos.web.data.NewBookingVisitInput
 import com.tribetails.auntieos.web.data.mintBookingIdempotencyKey
 import com.tribetails.auntieos.web.data.WriteResult
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 
 class BookingViewModel(
     private val dataSource: AuntieDataSource,
@@ -214,7 +215,7 @@ class BookingViewModel(
     fun clearError() { errorMessage = null }
 
     private suspend fun audit(actionType: String, description: String, targetId: String) {
-        runCatching {
+        runCatchingCancellable {
             dataSource.logActivity(
                 ActivityLogEntry(
                     actionType       = actionType,

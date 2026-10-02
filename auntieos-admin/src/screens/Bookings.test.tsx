@@ -719,7 +719,7 @@ describe('Bookings bulk actions', () => {
     await userEvent.click(screen.getByRole('button', { name: /Yes, approve 2/ }));
     expect(await screen.findByText('Approved 1 of 2 selected bookings.')).toBeInTheDocument();
     const failure = screen.getByText('Household Two', { selector: 'li strong' }).closest('li');
-    expect(failure?.textContent).toMatch(/the household's copy of it was not \(not-found\)/i);
+    expect(failure?.textContent).toMatch(/the household's copy of it was not \(That booking was not found\.\)/i);
   });
   it('says so, separately, when the whole callable throws rather than reporting per-id failures', async () => {
     batchUpdateBookings.mockRejectedValue(new Error('unauthenticated'));

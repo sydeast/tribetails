@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import com.tribetails.auntieos.web.data.Breadcrumb
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import kotlinx.coroutines.delay
 import kotlin.math.PI
@@ -272,8 +273,8 @@ internal fun parseBreadcrumbMillis(raw: String): Long? {
  * form that [com.tribetails.auntieos.web.util.nowIso] emits. Returns null on
  * malformed input so callers degrade to "-" rather than crash.
  */
-private fun parseIsoMillis(iso: String): Long? = runCatching {
-    if (iso.length < 19) return@runCatching null
+private fun parseIsoMillis(iso: String): Long? = runCatchingCancellable {
+    if (iso.length < 19) return@runCatchingCancellable null
     val y = iso.substring(0, 4).toInt()
     val mo = iso.substring(5, 7).toInt()
     val d  = iso.substring(8, 10).toInt()

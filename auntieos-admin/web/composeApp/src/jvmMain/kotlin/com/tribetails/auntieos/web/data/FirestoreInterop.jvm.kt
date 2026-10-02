@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.web.data
 
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.serialization.encodeToString
@@ -159,6 +161,8 @@ internal suspend fun transportWrite(failure: String, block: suspend () -> Boolea
         if (block()) WriteResult.Ok(Unit) else WriteResult.Err(failure)
     } catch (c: kotlin.coroutines.cancellation.CancellationException) {
         throw c
+    } catch (c: CancellationException) {
+        throw c
     } catch (e: Exception) {
         WriteResult.Err(e.transportMessage(failure))
     }
@@ -167,13 +171,15 @@ internal suspend fun transportWrite(failure: String, block: suspend () -> Boolea
  * #867 review: [transportWrite] for an actual that builds its own result. A thrown
  * failure becomes `Err`, with a timeout read as [AUNTIE_TIMEOUT_MESSAGE] instead of
  * Ktor's text. It catches `Exception` only, so cancellation and
- * [NetworkBlockedError] still propagate (the `runCatching` these replaced caught
+ * [NetworkBlockedError] still propagate (the `runCatchingCancellable` these replaced caught
  * `Throwable` and turned a test network leak into a quiet Err).
  */
 internal suspend fun <T> transportResult(failure: String, block: suspend () -> WriteResult<T>): WriteResult<T> =
     try {
         block()
     } catch (c: kotlin.coroutines.cancellation.CancellationException) {
+        throw c
+    } catch (c: CancellationException) {
         throw c
     } catch (e: Exception) {
         WriteResult.Err(e.transportMessage(failure))
@@ -690,7 +696,7 @@ internal actual suspend fun platformGetKinCareAssignment(familyId: String, batch
 // KinTale comment thread. Desktop has no live Firestore listener, so it polls the
 // getKinTaleComments callable (which requires kinfolkId, per admin rules) and parses
 // the {comments:[...]} result. This is REAL, not stubbed: comments must work on desktop.
-// Errors propagate through pollingStream's runCatching -> FirestoreResult.Error (fail-loud).
+// Errors propagate through pollingStream's runCatchingCancellable -> FirestoreResult.Error (fail-loud).
 internal actual fun platformKinTaleCommentsStream(
     taleId: String,
     kinfolkId: String,
@@ -748,7 +754,7 @@ internal actual suspend fun platformAddKinTaleComment(
     val payloadJson = jsonOut.encodeToString(JsonObject.serializer(), payload)
     return when (val r = platformInvokeCallable("addKinTaleComment", payloadJson)) {
         is WriteResult.Ok -> {
-            val commentId = runCatching {
+            val commentId = runCatchingCancellable {
                 jsonOut.parseToJsonElement(r.value).jsonObject["commentId"]?.jsonPrimitive?.contentOrNull.orEmpty()
             }.getOrElse { "" }
             WriteResult.Ok(commentId)

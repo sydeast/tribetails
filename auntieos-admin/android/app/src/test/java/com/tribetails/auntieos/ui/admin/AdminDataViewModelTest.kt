@@ -715,6 +715,22 @@ class AdminDataViewModelTest {
     }
 
     @Test
+    fun `quickBookingAction shows the busy conflict that stopped the approval (#1099)`() = runTest(testDispatcher) {
+        val busy = "That time overlaps a busy block on your Google Calendar."
+        coEvery { mockRepo.batchUpdateBookings(listOf("bk-1"), "APPROVE") } returns
+            Result.success(
+                com.tribetails.auntieos.data.repository.BatchBookingResult(
+                    "APPROVE", 0,
+                    listOf(com.tribetails.auntieos.data.repository.BatchBookingFailure("bk-1", busy)),
+                ),
+            )
+        coEvery { mockRepo.getNotifications() } returns Result.success(emptyList())
+        val vm = buildViewModel()
+        vm.quickBookingAction("bk-1", "APPROVE")
+        advanceUntilIdle()
+        assertEquals("Couldn't approve: $busy", vm.bulkReadMessage.value)
+    }
+    @Test
     fun `quickBookingAction shows the server's refusal for an Overnight with no start time (#1098)`() = runTest(testDispatcher) {
         coEvery { mockRepo.batchUpdateBookings(listOf("bk-1"), "APPROVE") } returns
             Result.success(

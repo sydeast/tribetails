@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.data
 
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
@@ -37,7 +38,7 @@ private val reminderJson = Json { ignoreUnknownKeys = true; isLenient = true }
 
 /**
  * Decodes the callable body. Throws on a body that is not a JSON object, so the
- * caller's `runCatching` turns it into an Err.
+ * caller's `runCatchingCancellable` turns it into an Err.
  *
  * A body WITHOUT `sent` comes from a function deployed before #832, which only
  * ever answered after sending. Reading that as "not sent" would tell the admin

@@ -8,6 +8,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
+import com.kinfolk.portal.error.runCatchingCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -23,13 +24,13 @@ actual fun rememberPhotoPicker(onPicked: (PickedImage?) -> Unit): () -> Unit {
         }
         scope.launch {
             val picked = withContext(Dispatchers.IO) {
-                runCatching {
+                runCatchingCancellable {
                     val mime = context.contentResolver.getType(uri).orEmpty().ifBlank { "image/jpeg" }
                     val displayName = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
                         if (it.moveToFirst()) it.getString(0) else null
                     } ?: "avatar"
                     val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                        ?: return@runCatching null
+                        ?: return@runCatchingCancellable null
                     PickedImage(bytes = bytes, mimeType = mime, fileName = displayName)
                 }.getOrNull()
             }

@@ -155,8 +155,14 @@ fun NotificationsScreen(
             when (val r = client.batchUpdateBookings(listOf(entry.targetId), action)) {
                 is WriteResult.Err -> actionError = r.message
                 is WriteResult.Ok -> {
-                    actionError = null
-                    actionNotice = if (action == "APPROVE") "Booking approved." else "Booking denied."
+                    val refused = com.tribetails.auntieos.web.data.batchFailureText(r.value)
+                    if (refused != null) {
+                        actionNotice = null
+                        actionError = "Booking ${if (action == "APPROVE") "approval" else "denial"} failed: $refused"
+                    } else {
+                        actionError = null
+                        actionNotice = if (action == "APPROVE") "Booking approved." else "Booking denied."
+                    }
                 }
             }
         }

@@ -1,5 +1,6 @@
 package com.kinfolk.portal.components
 
+import com.kinfolk.portal.error.runCatchingCancellable
 import kotlinx.browser.window
 
 /**
@@ -8,5 +9,5 @@ import kotlinx.browser.window
  * preference expressed" rather than a thrown error.
  */
 actual fun animationsEnabled(): Boolean =
-    runCatching { !window.matchMedia("(prefers-reduced-motion: reduce)").matches }
+    runCatchingCancellable { !window.matchMedia("(prefers-reduced-motion: reduce)").matches }
         .getOrDefault(true)

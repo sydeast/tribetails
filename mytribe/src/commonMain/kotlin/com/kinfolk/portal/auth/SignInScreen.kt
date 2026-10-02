@@ -54,6 +54,7 @@ import com.kinfolk.portal.theme.KinfolkGradients
 import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.KinfolkTheme
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 
 /**
@@ -105,6 +106,8 @@ fun SignInScreen(
         error = null
         scope.launch {
             try { repo.signInWithEmailPassword(email, password) }
+            // #1079: leaving the screen mid sign-in is not a failed sign-in.
+            catch (c: CancellationException) { throw c }
             // #886: a locked account is told so, with the reset link named, not the opaque banner.
             catch (locked: AccountLockedException) { error = ErrorEnvelope.message(locked.message ?: ACCOUNT_LOCKED_MESSAGE) }
             // #886: a wrong password is the kinfolk's mistake, not a fault, so it gets
@@ -225,6 +228,8 @@ fun SignInScreen(
                                         // keeps the screen from asking for a link to " a@b.com".
                                         repo.sendPasswordReset(email.trim())
                                         resetSuccess = true
+                                    } catch (c: CancellationException) {
+                                        throw c
                                     } catch (t: Throwable) {
                                         // #905: the callable's per-IP limit says to wait.
                                         error = ErrorEnvelope.message(

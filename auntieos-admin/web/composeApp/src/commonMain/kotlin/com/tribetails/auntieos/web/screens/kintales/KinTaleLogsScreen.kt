@@ -53,6 +53,7 @@ import com.tribetails.auntieos.web.data.KinCareReport
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.isUntriagedOrphan
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
@@ -885,8 +886,8 @@ private fun visitTimestamp(r: KinCareReport): String {
 }
 
 private fun shortDateTime(iso: String): String =
-    runCatching {
-        if (iso.length < 16) return@runCatching iso
+    runCatchingCancellable {
+        if (iso.length < 16) return@runCatchingCancellable iso
         val month = MONTHS[iso.substring(5, 7).toInt() - 1]
         val day   = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
         val time  = iso.substring(11, 16)

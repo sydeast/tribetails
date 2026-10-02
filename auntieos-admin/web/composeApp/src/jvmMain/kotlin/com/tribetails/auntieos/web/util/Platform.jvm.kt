@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.web.util
 
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
+
 actual fun openInMaps(address: String): Unit = throw UnsupportedOperationException("JVM stub")
 // Real impl: render paths (e.g. the Auntie Time day-of filter) call nowIso() during
 // composition, so it must return a usable ISO-8601 timestamp, not throw. Seconds precision.
@@ -10,7 +12,7 @@ actual fun nowIso(): String =
 // Desktop log rather than crash, since this is a user-initiated convenience.
 actual fun openUrl(url: String) {
     if (url.isBlank()) return
-    runCatching {
+    runCatchingCancellable {
         val desktop = java.awt.Desktop.getDesktop()
         if (java.awt.Desktop.isDesktopSupported() && desktop.isSupported(java.awt.Desktop.Action.BROWSE)) {
             desktop.browse(java.net.URI(url))
@@ -25,7 +27,7 @@ actual fun copyToClipboard(text: String) {
     // Desktop (JVM): real AWT clipboard. Headless / test JVMs throw, which we
     // swallow because the share dialog still SHOWS the URL (clipboard is a
     // best-effort convenience, never the only way to read the link).
-    runCatching {
+    runCatchingCancellable {
         val clip = java.awt.Toolkit.getDefaultToolkit().systemClipboard
         clip.setContents(java.awt.datatransfer.StringSelection(text), null)
     }

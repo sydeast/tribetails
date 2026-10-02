@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.web.data
 
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
+
 /**
  * Conditional-checklist engine for KinTale templates. A [ChecklistItem] with no
  * conditions is always shown; with conditions, it is only shown for kin / visits
@@ -73,8 +75,8 @@ object KinTaleConditionEngine {
         kin: Kin?,
         kinfolk: Kinfolk?,
     ): Boolean {
-        val source = runCatching { ConditionSource.valueOf(condition.source) }.getOrNull() ?: return true
-        val op = runCatching { ConditionOp.valueOf(condition.op) }.getOrNull() ?: return true
+        val source = runCatchingCancellable { ConditionSource.valueOf(condition.source) }.getOrNull() ?: return true
+        val op = runCatchingCancellable { ConditionOp.valueOf(condition.op) }.getOrNull() ?: return true
 
         // KINFOLK_TAG compares against a LIST, not a single string, so it is
         // intercepted here rather than routed through [matches]. Sending it down
@@ -247,8 +249,8 @@ fun conditionUsesValueInput(opName: String): Boolean =
  * Falls back to a neutral label for forward-compatible unknown enum values.
  */
 fun conditionSummary(c: FieldCondition): String {
-    val source = runCatching { ConditionSource.valueOf(c.source) }.getOrNull()
-    val op = runCatching { ConditionOp.valueOf(c.op) }.getOrNull()
+    val source = runCatchingCancellable { ConditionSource.valueOf(c.source) }.getOrNull()
+    val op = runCatchingCancellable { ConditionOp.valueOf(c.op) }.getOrNull()
     if (source == null || op == null) return "Custom condition"
 
     val value = c.value.trim().ifBlank { "(blank)" }

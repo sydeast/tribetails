@@ -117,6 +117,8 @@ class AuthRepository(
     fun isCredentialFailure(t: Throwable): Boolean =
         try {
             backend.classifySignInFailure(t) == SignInFailureKind.Credentials
+        } catch (c: CancellationException) {
+            throw c
         } catch (_: Throwable) {
             false
         }
@@ -132,6 +134,8 @@ class AuthRepository(
             println("[Auth] refresh() resolved -> ${resolved::class.simpleName}" +
                 (if (resolved is AuthState.SignedIn) " uid=${resolved.uid}" else ""))
             _state.value = resolved
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             // #494: NOT SignedOut. Every backend answers SignedOut for a real
             // absence of a session — Firebase for a null currentUser, REST for a
@@ -174,6 +178,8 @@ class AuthRepository(
             // would have stamped a teardown onto the state a returning screen
             // reads back. Rethrow so the cancelling scope still completes.
             throw c
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             println("[Auth] observe() THREW ${t::class.simpleName}: ${t.message}")
             _state.value = AuthState.Unreachable(t.message)
@@ -193,9 +199,13 @@ class AuthRepository(
             withRecaptchaGuard { backend.signInWithEmailPassword(email, password) }
         } catch (c: CancellationException) {
             throw c
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             val kind = try {
                 backend.classifySignInFailure(t)
+            } catch (c: CancellationException) {
+                throw c
             } catch (_: Throwable) {
                 SignInFailureKind.Other
             }
@@ -217,10 +227,14 @@ class AuthRepository(
                     backend.reportFailedLogin(email)
                 } catch (c: CancellationException) {
                     throw c
+                } catch (c: CancellationException) {
+                    throw c
                 } catch (t: Throwable) {
                     println("[Auth] recordFailedLogin report failed: ${t::class.simpleName}: ${t.message}")
                 }
             }
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             println("[Auth] recordFailedLogin report could not start: ${t.message}")
         }
@@ -282,6 +296,8 @@ class AuthRepository(
         awaitRecaptchaReady()
         return try {
             block()
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             // GitLive wraps the js FirebaseError; the auth/internal-error code can
             // land in message OR only in toString(), so check both.

@@ -57,6 +57,7 @@ import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.bookingCalendarBadge
 import com.kinfolk.portal.util.bookingSortMs
 import com.kinfolk.portal.util.bookingWhenLabel
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 import kotlin.time.Clock
 
@@ -97,6 +98,8 @@ fun ScheduleScreen(
         try {
             data = portalApi.getMyBookings(kinfolkId)
             error = null
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             error = t.message ?: "Could not load schedule"
         }
@@ -104,6 +107,8 @@ fun ScheduleScreen(
         // best-effort — failures don't block the upcoming/recent bookings render.
         try {
             visits = portalApi.getMyVisits(kinfolkId, limit = 10)
+        } catch (c: CancellationException) {
+            throw c
         } catch (_: Throwable) { /* leave null; replay simply hides */ }
     }
 
@@ -252,6 +257,8 @@ fun ScheduleScreen(
                             notes = notes.takeIf { it.isNotBlank() },
                         )
                         reload()
+                    } catch (c: CancellationException) {
+                        throw c
                     } catch (t: Throwable) {
                         error = t.message ?: "Could not submit request"
                     }

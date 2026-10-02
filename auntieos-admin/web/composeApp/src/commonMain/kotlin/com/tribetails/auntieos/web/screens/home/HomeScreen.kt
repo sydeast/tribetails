@@ -26,6 +26,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -714,7 +715,7 @@ internal fun householdVisitGaps(
     todayIso: String,
     limit: Int = 5,
 ): List<HouseholdGap> {
-    val today = runCatching { kotlinx.datetime.LocalDate.parse(todayIso) }.getOrNull() ?: return emptyList()
+    val today = runCatchingCancellable { kotlinx.datetime.LocalDate.parse(todayIso) }.getOrNull() ?: return emptyList()
     return sessions
         .filter { it.status.uppercase() == "COMPLETED" }
         .groupBy { it.kinfolkId.ifBlank { it.kinfolkName } }
@@ -722,7 +723,7 @@ internal fun householdVisitGaps(
             val name = group.firstOrNull { it.kinfolkName.isNotBlank() }?.kinfolkName ?: return@mapNotNull null
             val lastDate = group
                 .mapNotNull { s ->
-                    runCatching { kotlinx.datetime.LocalDate.parse((s.completedAt.ifBlank { s.startTime }).take(10)) }.getOrNull()
+                    runCatchingCancellable { kotlinx.datetime.LocalDate.parse((s.completedAt.ifBlank { s.startTime }).take(10)) }.getOrNull()
                 }
                 .maxOrNull() ?: return@mapNotNull null
             val days = (today.toEpochDays() - lastDate.toEpochDays()).toInt()

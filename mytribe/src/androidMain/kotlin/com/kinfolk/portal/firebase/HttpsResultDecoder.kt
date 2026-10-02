@@ -1,6 +1,7 @@
 package com.kinfolk.portal.firebase
 
 import dev.gitlive.firebase.functions.HttpsCallableResult
+import kotlin.coroutines.cancellation.CancellationException
 
 @Suppress("UNCHECKED_CAST")
 actual fun decodeHttpsResult(result: HttpsCallableResult): Map<String, Any?> {
@@ -17,6 +18,8 @@ actual fun decodeHttpsResult(result: HttpsCallableResult): Map<String, Any?> {
     val raw = findUnderlyingResult(result) ?: return emptyMap()
     val rawData: Any? = try {
         raw.javaClass.getMethod("getData").invoke(raw)
+    } catch (c: CancellationException) {
+        throw c
     } catch (_: Exception) {
         null
     }
@@ -29,13 +32,15 @@ private fun findUnderlyingResult(wrapper: Any): Any? {
         val f = wrapper.javaClass.getDeclaredField("android").apply { isAccessible = true }
         val v = f.get(wrapper)
         if (v != null && v.javaClass.name.startsWith("com.google.firebase.functions")) return v
+    } catch (c: CancellationException) {
+        throw c
     } catch (_: Exception) {
         // fall through to broader scan
     }
     // Fallback: any declared field whose value is a Firebase platform result.
     for (f in wrapper.javaClass.declaredFields) {
         f.isAccessible = true
-        val v = try { f.get(wrapper) } catch (_: Exception) { null } ?: continue
+        val v = try { f.get(wrapper) } catch (c: CancellationException) { throw c } catch (_: Exception) { null } ?: continue
         if (v.javaClass.name.startsWith("com.google.firebase.functions")) return v
     }
     return null

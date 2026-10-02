@@ -12,6 +12,7 @@ import com.kinfolk.portal.portal.Kin
 import com.kinfolk.portal.portal.KinResult
 import com.kinfolk.portal.portal.KinPayload
 import com.kinfolk.portal.portal.PortalApi
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 
 /**
@@ -52,6 +53,8 @@ class KinController internal constructor(
         try {
             data = portalApi.getMyKin(kinfolkId)
             error = null
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             error = t.message ?: "Could not load Kin"
         }
@@ -61,6 +64,8 @@ class KinController internal constructor(
         // Best-effort schema load. Fall back silently to static fields if missing.
         try {
             schema = portalApi.getFormSchema("kinProfile")
+        } catch (c: CancellationException) {
+            throw c
         } catch (_: Throwable) { /* admin has not set up schema yet, keep static fields */ }
     }
 
@@ -69,6 +74,8 @@ class KinController internal constructor(
     suspend fun loadBreeds() {
         try {
             breeds = portalApi.getBreeds()
+        } catch (c: CancellationException) {
+            throw c
         } catch (_: Throwable) { /* keep empty; breed stays free text */ }
     }
 
@@ -87,6 +94,8 @@ class KinController internal constructor(
             reload()
             error = null
             null
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             t.message ?: "Could not add Kin"
         }
@@ -99,6 +108,8 @@ class KinController internal constructor(
             reload()
             error = null
             null
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             t.message ?: "Could not save Kin"
         }
@@ -115,6 +126,8 @@ class KinController internal constructor(
         try {
             portalApi.uploadKinPhotoSigned(kinfolkId = kinfolkId, kinId = kinId, image = photo)
             photoNotice = null
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             photoNotice = "Kin saved, but the photo didn't upload (${t.message ?: "network error"}). Try again from Edit."
         } finally {
@@ -128,6 +141,8 @@ class KinController internal constructor(
                 portalApi.archiveKin(kinfolkId = kinfolkId, kinId = kinId, restore = restore)
                 onDone()
                 reload()
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 error = t.message
             }

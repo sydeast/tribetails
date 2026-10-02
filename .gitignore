@@ -16,6 +16,15 @@
 # scripts/release-bg.sh. Machine-local by nature: they record what one operator's
 # machine did on one night, and the durable record of a release is its tag.
 .release-logs/
+# Functions-emulator secrets file, written by
+# auntieos-admin/scripts/e2e-real/preflight.mjs before the real-services Cypress
+# run (#1089) and deleted when it ends. It carries Stripe test keys and other
+# vendor credentials, so it must never be committed, even when a killed run
+# leaves it behind. Matched anywhere, since the emulator reads it from beside
+# each functions codebase.
+.secret.local
+# The real-services run's emulator log and vendor-availability file (run.sh).
+auntieos-admin/cypress/.real/
 # Firebase CLI and emulator debug logs, written into whatever directory the CLI
 # runs from and kept on a failure or with DEBUG set. mytribe/ and auntieos-admin/
 # already ignore them through *.log; the root did not, so a CLI call run from the

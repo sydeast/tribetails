@@ -22,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import kotlinx.coroutines.flow.Flow
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -933,8 +934,8 @@ private fun sessionWindow(s: KinCareSession): String {
 }
 
 private fun shortDateTime(iso: String): String =
-    runCatching {
-        if (iso.length < 16) return@runCatching iso
+    runCatchingCancellable {
+        if (iso.length < 16) return@runCatchingCancellable iso
         val month = MONTHS[iso.substring(5, 7).toInt() - 1]
         val day   = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
         val time  = iso.substring(11, 16)
@@ -942,7 +943,7 @@ private fun shortDateTime(iso: String): String =
     }.getOrDefault(iso)
 
 private fun shortTime(iso: String): String =
-    runCatching { if (iso.length >= 16) iso.substring(11, 16) else iso }
+    runCatchingCancellable { if (iso.length >= 16) iso.substring(11, 16) else iso }
         .getOrDefault(iso)
 
 private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
@@ -953,8 +954,8 @@ private fun dateAddDays(iso: String, days: Int): String = dateOffset(iso, days)
 /** Subtract [days] days from an ISO date string "YYYY-MM-DD". */
 private fun dateSubDays(iso: String, days: Int): String = dateOffset(iso, -days)
 
-private fun dateOffset(iso: String, offsetDays: Int): String = runCatching {
-    if (iso.length < 10) return@runCatching iso
+private fun dateOffset(iso: String, offsetDays: Int): String = runCatchingCancellable {
+    if (iso.length < 10) return@runCatchingCancellable iso
     var y = iso.substring(0, 4).toInt()
     var m = iso.substring(5, 7).toInt()
     var d = iso.substring(8, 10).toInt() + offsetDays

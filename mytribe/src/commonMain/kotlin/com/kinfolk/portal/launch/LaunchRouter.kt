@@ -12,6 +12,7 @@ import com.kinfolk.portal.auth.AuthRepository
 import com.kinfolk.portal.auth.AuthState
 import com.kinfolk.portal.portal.MyAccessResult
 import com.kinfolk.portal.portal.PortalApi
+import kotlin.coroutines.cancellation.CancellationException
 
 sealed interface LaunchDestination {
     data object SignIn : LaunchDestination
@@ -95,6 +96,8 @@ fun rememberLaunchDestination(
                 val result = portalApi.getMyAccess()
                 access = result
                 println("[Launch] getMyAccess OK kinfolkIds=${result.kinfolkIds.size} isOperator=${result.isOperator}")
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 val msg = t.message ?: "Could not load access. Tap retry or sign out."
                 error = msg

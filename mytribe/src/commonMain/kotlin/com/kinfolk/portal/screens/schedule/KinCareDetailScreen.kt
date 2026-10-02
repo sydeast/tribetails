@@ -55,6 +55,7 @@ import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.bookingWhenLabel
 import com.kinfolk.portal.util.weekdayTime
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
@@ -105,6 +106,8 @@ fun KinCareDetailScreen(
             kinCare = (all.upcoming + all.recent + fromEnvelopes).firstOrNull { it.id == kinCareId }
                 ?: all.liveVisit?.takeIf { it.id == kinCareId }
             loadError = if (kinCare == null) "Booking not found." else null
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             loadError = t.message ?: "Could not load booking."
         }
@@ -169,6 +172,8 @@ fun KinCareDetailScreen(
                                 )
                                 noteInput = ""
                                 reload()
+                            } catch (c: CancellationException) {
+                                throw c
                             } catch (t: Throwable) {
                                 saveError = t.message ?: "Could not save note."
                             } finally {
@@ -200,6 +205,8 @@ fun KinCareDetailScreen(
                                 )
                                 reschedulePendingLocal = true
                                 reload()
+                            } catch (c: CancellationException) {
+                                throw c
                             } catch (t: Throwable) {
                                 // The server writes these for a household to
                                 // read (a past time, a second ask while one is
@@ -229,6 +236,8 @@ fun KinCareDetailScreen(
                                 )
                                 cancelPendingLocal = true
                                 reload()
+                            } catch (c: CancellationException) {
+                                throw c
                             } catch (t: Throwable) {
                                 cancelError = t.message ?: "Could not send the request."
                             } finally {

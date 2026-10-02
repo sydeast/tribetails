@@ -9,6 +9,7 @@ import androidx.compose.runtime.setValue
 import com.kinfolk.portal.portal.KinPhoto
 import com.kinfolk.portal.portal.KinPortrait
 import com.kinfolk.portal.portal.PortalApi
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -82,6 +83,8 @@ class GalleryController internal constructor(
             loadError = null
             accessDenied = false
             moreError = null
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             photos = null
             portraits = emptyList()
@@ -120,6 +123,8 @@ class GalleryController internal constructor(
                 photos = photos.orEmpty() + page.photos.filterNot { seen.contains(it.id) }
                 hasMore = page.hasMore && page.nextBefore != null
                 nextBefore = page.nextBefore
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 moreError = t.message ?: "Could not load older photos."
             } finally {

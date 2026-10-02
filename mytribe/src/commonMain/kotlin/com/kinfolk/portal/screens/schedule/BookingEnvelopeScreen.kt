@@ -39,6 +39,7 @@ import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.bookingWhenLabel
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Envelope (Booking) detail. Resolves the [BookingEnvelope] from getMyBookings
@@ -63,6 +64,8 @@ fun BookingEnvelopeScreen(
             val all = portalApi.getMyBookings(kinfolkId)
             envelope = all.envelopes.firstOrNull { it.batchId == batchId }
             loadError = if (envelope == null) "Booking not found." else null
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             loadError = t.message ?: "Could not load booking."
         }

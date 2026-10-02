@@ -1,6 +1,7 @@
 package com.kinfolk.portal.firebase
 
 import com.google.firebase.functions.FirebaseFunctions
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.tasks.await
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -43,6 +44,8 @@ class NativeAndroidFunctionsClient : FunctionsClient {
         // visibility quirk and future library renames.
         val raw: Any? = try {
             result.javaClass.getMethod("getData").invoke(result)
+        } catch (c: CancellationException) {
+            throw c
         } catch (_: Exception) {
             null
         }

@@ -51,6 +51,7 @@ import com.kinfolk.portal.theme.KinfolkGradients
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.KinfolkTheme
 import com.kinfolk.portal.theme.LocalKinfolkTypography
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -99,6 +100,8 @@ fun ClaimInviteScreen(
                 invitedEmail = raw["invitedEmail"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                 tribeName = raw["tribeName"]?.jsonPrimitive?.contentOrNull.orEmpty(),
             )
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             previewError = claimErrorMessage(t.message, "Could not load this invite. Check your connection and try again.")
         }
@@ -132,6 +135,8 @@ fun ClaimInviteScreen(
             inFlight = true
             try {
                 accept()
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 actionError = t.message ?: "Could not accept invite"
                 acceptedForUid = null
@@ -181,6 +186,8 @@ fun ClaimInviteScreen(
                                             invitedEmail = raw["invitedEmail"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                                             tribeName = raw["tribeName"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                                         )
+                                    } catch (c: CancellationException) {
+                                        throw c
                                     } catch (t: Throwable) {
                                         previewError = claimErrorMessage(t.message, "Still couldn't load the invite.")
                                     }
@@ -245,6 +252,8 @@ fun ClaimInviteScreen(
                                             repo.signInWithCustomToken(token)
                                         }
                                         // AutoAccept LaunchedEffect fires on the new session.
+                                    } catch (c: CancellationException) {
+                                        throw c
                                     } catch (t: Throwable) {
                                         if (!signInMode && isEmailAlreadyInUse(t.message)) {
                                             signInMode = true
@@ -274,6 +283,8 @@ fun ClaimInviteScreen(
                                     try {
                                         repo.sendPasswordReset(step.invitedEmail)
                                         resetSent = true
+                                    } catch (c: CancellationException) {
+                                        throw c
                                     } catch (t: Throwable) {
                                         // #905: the reset callable's per-IP limit says to wait.
                                         actionError = if (isResetRateLimited(t)) {
@@ -323,6 +334,8 @@ fun ClaimInviteScreen(
                                         // reads it as a broken link.
                                         repo.refreshIdToken()
                                         accept()
+                                    } catch (c: CancellationException) {
+                                        throw c
                                     } catch (t: Throwable) {
                                         actionError = t.message ?: "Try again later"
                                     } finally {

@@ -43,6 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.util.nowIso
 
@@ -310,7 +311,7 @@ fun EmptyHint(text: String, error: Boolean = false) {
 // ── shared helpers ───────────────────────────────────────────────────────────
 
 /** Hour-of-day [0..23] from the platform clock, defaulting to 9 if unparsable. */
-fun denCurrentHour(): Int = runCatching { nowIso().substring(11, 13).toInt() }.getOrDefault(9)
+fun denCurrentHour(): Int = runCatchingCancellable { nowIso().substring(11, 13).toInt() }.getOrDefault(9)
 
 /** "Good morning/afternoon/evening" for an hour-of-day. */
 fun greetingForHour(hour: Int): String = when (hour) {
@@ -349,7 +350,7 @@ fun statusLabel(status: String): String = when (status.uppercase()) {
 }
 
 /** Formats an ISO timestamp to a compact "h:mma/p" local-ish time, or echoes input. */
-fun formatTime(iso: String): String = runCatching {
+fun formatTime(iso: String): String = runCatchingCancellable {
     if (iso.length < 16) return iso
     val hour = iso.substring(11, 13).toInt()
     val minute = iso.substring(14, 16)

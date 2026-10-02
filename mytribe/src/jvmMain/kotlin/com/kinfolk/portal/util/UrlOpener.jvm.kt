@@ -2,6 +2,7 @@ package com.kinfolk.portal.util
 
 import java.awt.Desktop
 import java.net.URI
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * True only inside `:jvmTest`, set by `mytribe/build.gradle.kts`, which puts
@@ -52,6 +53,8 @@ internal fun openExternalUrlOrRefuse(
     }
     try {
         browse(URI(url))
+    } catch (c: CancellationException) {
+        throw c
     } catch (_: Throwable) {
         // best-effort; nothing else to do on JVM desktop
     }

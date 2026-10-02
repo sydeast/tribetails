@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.data
 
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -28,7 +29,7 @@ internal fun decodeUploadedMedia(
     uploadedBy: String,
     tags: List<String> = emptyList(),
 ): WriteResult<List<MediaFile>> {
-    val envelope = runCatching { mediaEnvelopeJson.parseToJsonElement(envelopeJson) as JsonObject }
+    val envelope = runCatchingCancellable { mediaEnvelopeJson.parseToJsonElement(envelopeJson) as JsonObject }
         .getOrElse { return WriteResult.Err("invalid upload response") }
     val ok = envelope["ok"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() == true
     if (!ok) return WriteResult.Err(envelope["error"]?.jsonPrimitive?.contentOrNull ?: "upload failed")

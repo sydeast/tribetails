@@ -3,6 +3,7 @@ package com.kinfolk.portal.firebase
 import com.kinfolk.portal.auth.AuthBackend
 import com.kinfolk.portal.auth.AuthProviderId
 import com.kinfolk.portal.auth.AuthState
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -53,8 +54,12 @@ internal class RestAuthBackend(
                     JvmTokenStore.displayName = u.displayName
                     return AuthState.SignedIn(uid, u.email ?: email, u.displayName ?: displayName)
                 }
+            } catch (c: CancellationException) {
+                throw c
             } catch (_: Throwable) { /* fall through to cached */ }
             AuthState.SignedIn(uid, email, displayName)
+        } catch (c: CancellationException) {
+            throw c
         } catch (_: Throwable) {
             JvmTokenStore.clear()
             cachedIdToken = null

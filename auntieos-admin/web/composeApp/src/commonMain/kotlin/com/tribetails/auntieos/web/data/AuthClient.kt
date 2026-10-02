@@ -60,10 +60,14 @@ class AuthClient(
                     failedLoginReporter(email)
                 } catch (c: CancellationException) {
                     throw c
+                } catch (c: CancellationException) {
+                    throw c
                 } catch (t: Throwable) {
                     println("[AuntieOS][auth] recordFailedLogin report failed: ${t.message}")
                 }
             }
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             println("[AuntieOS][auth] recordFailedLogin report could not start: ${t.message}")
         }

@@ -68,6 +68,7 @@ import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.openExternalUrl
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -142,6 +143,8 @@ fun TribeScreen(
             afterHoursVetName = seededHome[AFTER_HOURS_VET_NAME_KEY].orEmpty()
             afterHoursVetPhone = seededHome[AFTER_HOURS_VET_PHONE_KEY].orEmpty()
             error = null
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             error = t.message ?: "Could not load Tribe profile"
         }
@@ -154,11 +157,15 @@ fun TribeScreen(
             seeded["displayName"] = displayName
             profileFields.forEach { seeded[it.key] = it.value }
             profileValues = seeded
+        } catch (c: CancellationException) {
+            throw c
         } catch (_: Throwable) { /* admin hasn't set up schema yet — keep static fields */ }
         // Load shared vet clinic catalog (best-effort) + seed current values
         // from existing customFields if previously set.
         try {
             vetClinics = portalApi.getVetClinics()
+        } catch (c: CancellationException) {
+            throw c
         } catch (_: Throwable) { /* catalog unreachable — fall back to manual entry */ }
         val seededVet = profileFields.associate { it.key to it.value }
         vetName    = seededVet[VET_CLINIC_NAME_KEY].orEmpty()
@@ -174,6 +181,8 @@ fun TribeScreen(
             seeded["wifiPassword"] = wifi
             accessFields.forEach { seeded[it.key] = it.value }
             homeValues = seeded
+        } catch (c: CancellationException) {
+            throw c
         } catch (_: Throwable) { /* same fallback */ }
     }
 
@@ -468,6 +477,8 @@ fun TribeScreen(
                                     removeCustomFieldKeys = profileEdit.removeKeys,
                                 )
                                 SaveHalf.Saved
+                            } catch (c: CancellationException) {
+                                throw c
                             } catch (t: Throwable) {
                                 SaveHalf.Failed(t)
                             }
@@ -511,9 +522,13 @@ fun TribeScreen(
                                     removeCustomFieldKeys = homeEdit.removeKeys,
                                 )
                                 SaveHalf.Saved
+                            } catch (c: CancellationException) {
+                                throw c
                             } catch (t: Throwable) {
                                 SaveHalf.Failed(t)
                             }
+                        } catch (c: CancellationException) {
+                            throw c
                         } catch (t: Throwable) {
                             // Neither callable reaches here: both are caught above. This is
                             // the row building around them, which used to sit under one
@@ -796,6 +811,8 @@ private fun VetClinicSection(
                             try {
                                 addressSuggestions = portalApi.mapboxSearch(v, sessionToken)
                                 addressLookupError = null
+                            } catch (c: CancellationException) {
+                                throw c
                             } catch (t: Throwable) {
                                 addressSuggestions = emptyList()
                                 addressLookupError = t.message ?: "Address lookup failed"
@@ -830,6 +847,8 @@ private fun VetClinicSection(
                                             }
                                             addressSuggestions = emptyList()
                                             sessionToken = newMapboxSessionToken()
+                                        } catch (c: CancellationException) {
+                                            throw c
                                         } catch (t: Throwable) {
                                             addressLookupError = t.message ?: "Retrieve failed"
                                         }
@@ -865,6 +884,8 @@ private fun VetClinicSection(
                                     } else {
                                         "Sent to Auntie for approval. It joins the shared list once approved."
                                     }
+                                } catch (c: CancellationException) {
+                                    throw c
                                 } catch (t: Throwable) {
                                     submitClinicMsg = "Couldn't submit: ${t.message ?: "unknown error"}"
                                 } finally {
@@ -1185,6 +1206,8 @@ private fun HouseholdMembersCard(kinfolkId: String, portalApi: PortalApi, reload
         try {
             members = portalApi.listMembers(kinfolkId)
             loadError = null
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             loadError = t.message ?: "Could not load household members"
         }
@@ -1308,6 +1331,8 @@ private fun MemberPermissionRow(
                         )
                         msg = "Saved."
                         onSaved()
+                    } catch (c: CancellationException) {
+                        throw c
                     } catch (t: Throwable) {
                         msg = "Save failed: ${t.message ?: t}"
                     } finally {
@@ -1427,6 +1452,8 @@ private fun SecondaryInviteCard(
                             canEditPets = false
                             canAccessHome = false
                             msg = "Invite sent to $sentTo."
+                        } catch (c: CancellationException) {
+                            throw c
                         } catch (t: Throwable) {
                             msg = "Invite failed: ${t.message ?: t}"
                         } finally {
@@ -1498,6 +1525,8 @@ private fun ContactAuntieCard(portalApi: PortalApi, openUrl: (String) -> Unit) {
     LaunchedEffect(Unit) {
         try {
             contact = portalApi.getBusinessContact()
+        } catch (c: CancellationException) {
+            throw c
         } catch (_: Throwable) { /* leave null; card hides */ }
     }
     val c = contact ?: return

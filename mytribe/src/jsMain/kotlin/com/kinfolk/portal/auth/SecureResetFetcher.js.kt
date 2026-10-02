@@ -1,5 +1,6 @@
 package com.kinfolk.portal.auth
 
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.browser.window
 import kotlinx.coroutines.await
 import org.w3c.fetch.RequestInit
@@ -23,11 +24,15 @@ private class JsSecureResetFetcher(private val base: String) : SecureResetFetche
 
         val resp = try {
             window.fetch("$base/confirmSecureReset", init).await()
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             throw SecureResetException("We couldn't reach Tribe Tails. Check your connection and try again.")
         }
         val text = try {
             resp.text().await()
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             ""
         }
