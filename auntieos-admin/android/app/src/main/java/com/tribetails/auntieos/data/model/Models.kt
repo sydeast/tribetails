@@ -671,6 +671,18 @@ data class Invoice(
      * `domain.invoiceDisputeReasonGloss`.
      */
     var disputeReason: String? = null,
+    /**
+     * HOW CLOSING THIS INVOICE'S OPEN STRIPE PAYMENT LINKS WENT (#1113), held RAW
+     * and decoded on read through `domain.invoiceCheckoutClosureOrNull`.
+     *
+     * Written by the server only (`onInvoicePaidExpireCheckouts` and
+     * `retryInvoiceCheckoutClose`), and absent on an invoice that had no open
+     * link when it was paid. Class A pattern, like [lineItems]: `firestore.rules`
+     * lets staff write the whole invoice, so a typed map here could throw under
+     * `toObject()` and blank the whole invoice query. No edit screen writes an
+     * Invoice back, so no save can wipe it.
+     */
+    var checkoutSweep: Any? = null,
 )
 
 /**

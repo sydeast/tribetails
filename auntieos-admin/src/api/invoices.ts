@@ -197,6 +197,17 @@ export interface InvoiceEntry {
    */
   disputeStatus?: string | null;
   /**
+   * How closing this invoice's open Stripe payment links went (#1113). Written
+   * by `onInvoicePaidExpireCheckouts` and `retryInvoiceCheckoutClose`; absent on
+   * an invoice that had no open link when it was paid. Read through
+   * `invoiceCheckoutClosure`, never off the cast.
+   */
+  checkoutSweep?: {
+    expiredIds?: string[];
+    failed?: Array<{ sessionId: string; reason: string }>;
+    ranAt?: Timestamp;
+  };
+  /**
    * WHETHER THE MONEY ACTUALLY MOVED. A different fact from the one above, and
    * it routinely disagrees: a dispute sits at `needs_response` for weeks with
    * the balance already debited, and a `won` dispute is not reinstated the
@@ -888,4 +899,43 @@ export function invoiceMatchesSearch(
   return [row.invoiceNumber ?? '', row.kinfolkName ?? '', row.client ?? '', money].some((field) =>
     field.toLowerCase().includes(needle),
   );
+}
+
+/** What the invoice screen says about the open payment links (#1113). */
+export interface InvoiceCheckoutClosure {
+  /** Open links the server expired after the invoice was paid. */
+  closedCount: number;
+  /** Links still open at Stripe, each with Stripe's own plain reason. */
+  failed: Array<{ sessionId: string; reason: string }>;
+}
+/**
+ * The closure line's facts, or null when there is nothing to say: no sweep
+ * record (the invoice had no open link) or one that expired nothing and failed
+ * nothing. Same runtime-verification contract as `invoiceStamp`: `InvoiceEntry`
+ * is a cast over raw document data, so each element is checked.
+ */
+export function invoiceCheckoutClosure(
+  row: Pick<InvoiceEntry, 'checkoutSweep'>,
+): InvoiceCheckoutClosure | null {
+  const sweep: unknown = row.checkoutSweep;
+  if (typeof sweep !== 'object' || sweep === null) return null;
+  const raw = sweep as { expiredIds?: unknown; failed?: unknown };
+  const closedCount = Array.isArray(raw.expiredIds)
+    ? raw.expiredIds.filter((id): id is string => typeof id === 'string' && id !== '').length
+    : 0;
+  const failed: InvoiceCheckoutClosure['failed'] = [];
+  if (Array.isArray(raw.failed)) {
+    for (const f of raw.failed as unknown[]) {
+      if (typeof f !== 'object' || f === null) continue;
+      const { sessionId, reason } = f as { sessionId?: unknown; reason?: unknown };
+      if (typeof sessionId !== 'string' || sessionId === '') continue;
+      failed.push({
+        sessionId,
+        reason:
+          typeof reason === 'string' && reason.trim() !== '' ? reason.trim() : 'Stripe refused the request.',
+      });
+    }
+  }
+  if (closedCount === 0 && failed.length === 0) return null;
+  return { closedCount, failed };
 }

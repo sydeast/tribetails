@@ -193,8 +193,56 @@ describe('onInvoicePaidExpireCheckoutsHandler', () => {
         },
       }),
     ).resolves.toBeUndefined();
-    expect(mocks.set).not.toHaveBeenCalled();
     expect(mocks.logEvent.mock.calls.some((c) => c[0]?.event === 'stripe.checkout.sweep.unavailable')).toBe(true);
+    // #1113: the operator is told, in plain words, instead of only the log.
+    const [data] = mocks.set.mock.calls[0]!;
+    expect(data.checkoutSweep.failed).toEqual(
+      ['cs_web', 'cs_android', 'cs_paid'].map((sessionId) => ({
+        sessionId,
+        reason: 'Stripe could not be reached from the server.',
+      })),
+    );
+    expect(data[CLOSED_CHECKOUT_SESSIONS_FIELD]).toBeUndefined();
+  });
+  it('#1113 records what it expired, with a count the invoice screen can show', async () => {
+    const { api } = fakeStripe({ cs_web: 'open', cs_android: 'open', cs_paid: 'complete' });
+    await onInvoicePaidExpireCheckoutsHandler(event(openBefore, paidAfter), { sessions: async () => api });
+    const [data] = mocks.set.mock.calls[0]!;
+    // cs_paid was already complete: it was not an open link, so it is not counted.
+    expect(data.checkoutSweep.expiredIds).toEqual(FieldValue.arrayUnion('cs_web', 'cs_android'));
+    expect(data.checkoutSweep.failed).toEqual([]);
+    expect(data.checkoutSweep.ranAt).toEqual(FieldValue.serverTimestamp());
+  });
+  it("#1113 records a failure with Stripe's own message", async () => {
+    const { api } = fakeStripe({ cs_web: 'open', cs_android: 'open', cs_paid: 'complete' }, { expireFails: ['cs_android'] });
+    (api.expire as any).mockImplementation(async (id: string) => {
+      if (id === 'cs_android') throw new Error('You cannot expire this Checkout Session.');
+      return {};
+    });
+    await onInvoicePaidExpireCheckoutsHandler(event(openBefore, paidAfter), { sessions: async () => api });
+    const [data] = mocks.set.mock.calls[0]!;
+    expect(data.checkoutSweep.failed).toEqual([
+      { sessionId: 'cs_android', reason: 'You cannot expire this Checkout Session.' },
+    ]);
+  });
+  it('#1113 writes nothing when the invoice had no open payment links', async () => {
+    const { api } = fakeStripe({});
+    await onInvoicePaidExpireCheckoutsHandler(
+      event({ status: 'open', amountDue: 40, total: 40 }, { status: 'paid', amountDue: 0, total: 40 }),
+      { sessions: async () => api },
+    );
+    expect(mocks.set).not.toHaveBeenCalled();
+  });
+  it("#1113 ignores its own record, so a failed pass does not record itself in a loop", async () => {
+    const { api } = fakeStripe({ cs_web: 'open' }, { expireFails: ['cs_web'] });
+    const stamp = (ms: number) => ({ toMillis: () => ms });
+    const stuck = { ...paidAfter, [OPEN_CHECKOUT_SESSIONS_FIELD]: ['cs_web'] };
+    await onInvoicePaidExpireCheckoutsHandler(
+      event(stuck, { ...stuck, checkoutSweep: { failed: [], ranAt: stamp(5) } }),
+      { sessions: async () => api },
+    );
+    expect(api.retrieve).not.toHaveBeenCalled();
+    expect(mocks.set).not.toHaveBeenCalled();
   });
 
   it('binds the Stripe key, which the other two invoice triggers do not hold', async () => {

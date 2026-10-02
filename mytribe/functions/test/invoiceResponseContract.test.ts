@@ -39,6 +39,7 @@ import { Result as RecordPaymentResult } from '../src/admin/recordPayment';
 import { Result as MarkInvoicePaidResult } from '../src/admin/markInvoicePaid';
 import { Result as ArchiveInvoiceResult } from '../src/admin/archiveInvoice';
 import { Result as UnarchiveInvoiceResult } from '../src/admin/unarchiveInvoice';
+import { Result as RetryInvoiceCheckoutCloseResult } from '../src/admin/retryInvoiceCheckoutClose';
 import { Result as PostInvoiceEventResult } from '../src/admin/postInvoiceEvent';
 import { Result as ReviewAndSendDraftInvoiceResult } from '../src/admin/reviewAndSendDraftInvoice';
 import { Result as SendInvoiceReminderResult } from '../src/admin/sendInvoiceReminder';
@@ -428,6 +429,12 @@ const CASES: Array<{
     schema: UnarchiveInvoiceResult,
     accepts: [['the restored id', { ok: true, invoiceId: 'inv1' }]],
     refuses: [['a missing invoiceId', { ok: true }]],
+  },
+  {
+    name: 'retryInvoiceCheckoutClose',
+    schema: RetryInvoiceCheckoutCloseResult,
+    accepts: [['one link closed', { ok: true, invoiceId: 'inv1', closedCount: 1, failedCount: 0 }]],
+    refuses: [['a missing count', { ok: true, invoiceId: 'inv1', closedCount: 1 }]],
   },
   {
     name: 'postInvoiceEvent',

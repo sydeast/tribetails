@@ -823,7 +823,17 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   since it is a decision to write off real money.
 - `failed-precondition` / `invoice_already_archived` rather than restamping.
 
-### unarchiveInvoice
+### retryInvoiceCheckoutClose (#1113)
+- req `{ invoiceId: string /* 1..200 */ }`
+- res `{ ok: true, invoiceId: string, closedCount: number, failedCount: number }`
+- "Try again" for a paid invoice whose open Stripe Checkout Sessions could not
+  be expired. Runs the same pass as `onInvoicePaidExpireCheckouts` on the ids
+  not yet in `closedCheckoutSessionIds` and records the outcome in
+  `invoices/{id}.checkoutSweep` (`expiredIds`, `failed[{sessionId, reason}]`,
+  `ranAt`). The invoice screens read that field; an invoice that never had an
+  open link has none. Owner-only (not on the Auntie list), audited as
+  `BILLING_CHECKOUT_CLOSE_RETRIED`. Moves no money.
+- `failed-precondition` / `invoice_not_paid` for an unpaid invoice.
 - req `{ invoiceId: string /* 1..200 */ }`
 - res `{ ok: true, invoiceId: string }`
 - Writes `archivedAt: null` rather than DELETING the field, so a restored invoice

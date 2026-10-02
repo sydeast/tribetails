@@ -358,6 +358,7 @@ export { listUnappliedPayments } from './admin/listUnappliedPayments';
 export { resolveUnappliedPayment } from './admin/resolveUnappliedPayment';
 export { archiveInvoice } from './admin/archiveInvoice';
 export { unarchiveInvoice } from './admin/unarchiveInvoice';
+export { retryInvoiceCheckoutClose } from './admin/retryInvoiceCheckoutClose';
 // Detection + repair for invoices wrecked by the pre-2026-07-25 partial-payment
 // write. `detect` mode reports and writes nothing; see the file header.
 export { repairInvoicePayments } from './admin/repairInvoicePayments';

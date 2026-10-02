@@ -19,6 +19,8 @@ import type {
   RecordPaymentResult,
   RepairInvoicePaymentsArgs,
   RepairInvoicePaymentsResult,
+  RetryInvoiceCheckoutCloseArgs,
+  RetryInvoiceCheckoutCloseResult,
   ResendQuoteArgs,
   ResendQuoteResult,
   ReviewAndSendDraftInvoiceArgs,
@@ -455,6 +457,19 @@ export async function unarchiveInvoice(invoiceId: string): Promise<void> {
   await call<UnarchiveInvoiceArgs, UnarchiveInvoiceResult>('unarchiveInvoice', { invoiceId });
 }
 
+/**
+ * retryInvoiceCheckoutClose (admin): "Try again" for a paid invoice whose open
+ * Stripe payment links could not be closed (#1113). Moves no money. The outcome
+ * lands on the invoice's `checkoutSweep`, which the open detail panel streams,
+ * so the line updates itself; the counts here are for the immediate message.
+ */
+export async function retryInvoiceCheckoutClose(
+  invoiceId: string,
+): Promise<RetryInvoiceCheckoutCloseResult> {
+  return call<RetryInvoiceCheckoutCloseArgs, RetryInvoiceCheckoutCloseResult>('retryInvoiceCheckoutClose', {
+    invoiceId,
+  });
+}
 /**
  * listUninvoicedSessions (admin): completed visits that no invoice has claimed
  * yet, priced from the rate card where that is possible. Reads only; writes

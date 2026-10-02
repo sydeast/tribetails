@@ -16,6 +16,7 @@ import {
   isArchivedInvoice,
   normalizeInvoice,
   type InvoiceEntry,
+  invoiceCheckoutClosure,
 } from './invoices';
 
 describe('INVOICES_QUERY', () => {
@@ -669,5 +670,26 @@ describe('invoiceDisputeReasonGloss', () => {
     for (const reason of ['fraudulent', 'product_not_received', 'general', 'unrecognized']) {
       expect(invoiceDisputeReasonGloss(reason)!).not.toMatch(/respond|deadline|evidence/i);
     }
+  });
+});
+
+describe('invoiceCheckoutClosure (#1113)', () => {
+  it('is null when the invoice holds no sweep record, or one with nothing to report', () => {
+    expect(invoiceCheckoutClosure({})).toBeNull();
+    expect(invoiceCheckoutClosure({ checkoutSweep: { expiredIds: [], failed: [] } })).toBeNull();
+  });
+  it('counts the expired ids and carries Stripe reasons', () => {
+    expect(
+      invoiceCheckoutClosure({
+        checkoutSweep: { expiredIds: ['a', 'b'], failed: [{ sessionId: 'c', reason: 'No.' }] },
+      }),
+    ).toEqual({ closedCount: 2, failed: [{ sessionId: 'c', reason: 'No.' }] });
+  });
+  it('is a cast over raw data, so junk is dropped instead of trusted', () => {
+    const junk = { checkoutSweep: { expiredIds: ['a', 7, null], failed: [{ sessionId: 3 }, 'x', { sessionId: 'c' }] } };
+    expect(invoiceCheckoutClosure(junk as never)).toEqual({
+      closedCount: 1,
+      failed: [{ sessionId: 'c', reason: 'Stripe refused the request.' }],
+    });
   });
 });

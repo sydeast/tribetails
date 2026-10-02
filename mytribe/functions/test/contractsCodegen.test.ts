@@ -291,7 +291,8 @@ describe('the committed Contracts module', () => {
     // un-invoiced work: setSessionDoNotInvoice. 28 since docket Q6
     // (2026-09-27): giveAccountCredit and getAccountCreditHistory. 30 since
     // #1003: listUnappliedPayments and resolveUnappliedPayment.
-    expect(model.callables).toHaveLength(30);
+    // #1113: retryInvoiceCheckoutClose.
+    expect(model.callables).toHaveLength(31);
     // getMyInvoices is the only one with no zod request schema; see the
     // registry header.
     const withoutArgs = model.callables.filter((c) => c.argsObject === null).map((c) => c.name);

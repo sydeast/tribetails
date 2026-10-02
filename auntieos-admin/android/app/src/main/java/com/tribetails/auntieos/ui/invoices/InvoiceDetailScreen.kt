@@ -61,6 +61,8 @@ import com.tribetails.auntieos.domain.PaymentSplit
 import com.tribetails.auntieos.domain.paymentSplit
 import com.tribetails.auntieos.domain.invoicePartPaid
 import com.tribetails.auntieos.domain.InvoiceDisputeDeadline
+import com.tribetails.auntieos.domain.checkoutClosureLine
+import com.tribetails.auntieos.domain.invoiceCheckoutClosureOrNull
 import com.tribetails.auntieos.domain.InvoiceDisputeFundsState
 import com.tribetails.auntieos.domain.InvoiceDisputeInfo
 import com.tribetails.auntieos.domain.formatDisputeDeadline
@@ -247,6 +249,7 @@ fun InvoiceDetailScreen(
                         generatingPdf     = uiState.generatingPdf,
                         businessSettings  = uiState.businessSettings,
                         archiving         = uiState.archiving,
+                        retryingCheckout  = uiState.retryingCheckout,
                         onOpenVisit       = onOpenVisit,
                         onOpenEdit        = { viewModel.openEditMode() },
                         onRecordPayment   = { viewModel.openRecordPayment() },
@@ -257,6 +260,7 @@ fun InvoiceDetailScreen(
                         onResendQuote     = { viewModel.resendQuote() },
                         onDownloadPdf     = { viewModel.downloadPdf() },
                         onArchive         = { viewModel.promptArchive() },
+                        onRetryCheckout   = { viewModel.retryCheckoutClose() },
                     )
                 }
             }
@@ -345,6 +349,7 @@ private fun invoiceDetailBody(
     generatingPdf: Boolean,
     businessSettings: com.tribetails.auntieos.data.model.BusinessSettings?,
     archiving: Boolean,
+    retryingCheckout: Boolean,
     onOpenEdit: () -> Unit,
     onRecordPayment: () -> Unit,
     onRetryPayments: () -> Unit,
@@ -354,6 +359,7 @@ private fun invoiceDetailBody(
     onResendQuote: () -> Unit,
     onDownloadPdf: () -> Unit,
     onArchive: () -> Unit,
+    onRetryCheckout: () -> Unit,
     onOpenVisit: (String) -> Unit,
 ) = with(scope) {
     val todayKey = runCatching { LocalDate.now().toString() }.getOrDefault("")
@@ -443,6 +449,34 @@ private fun invoiceDetailBody(
     val dispute = invoiceDisputeOrNull(invoice)
     if (dispute != null) {
         item { InvoiceDisputeBanner(dispute = dispute) }
+    }
+    // ── Open Stripe payment links (#1113) ──────────────────────────────────────
+    // One line, and nothing when the invoice had no open link. Stripe's reason
+    // is shown verbatim. Mirrors the web line in InvoiceDetail.tsx.
+    val checkoutClosure = invoiceCheckoutClosureOrNull(invoice)
+    if (checkoutClosure != null) {
+        item {
+            val failed = checkoutClosure.failed.isNotEmpty()
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = checkoutClosureLine(checkoutClosure),
+                    style = AuntieTheme.typography.bodySmall,
+                    color = if (failed) AuntieTheme.colors.error else AuntieTheme.colors.textDim,
+                    modifier = Modifier.weight(1f),
+                )
+                if (failed) {
+                    GhostButton(
+                        label = "Try again",
+                        onClick = onRetryCheckout,
+                        enabled = !retryingCheckout,
+                    )
+                }
+            }
+        }
     }
 
     // Header actions, gated by the shared action set. Generate receipt is a PAID-only
