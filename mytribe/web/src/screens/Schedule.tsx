@@ -11,7 +11,7 @@ import { OfflineNotice } from '../components/OfflineNotice';
 import { LoadingLine } from '../components/Loading';
 import { LaunchError } from './LaunchError';
 import { countLabel, countOfQuery, viewOfQuery } from '../lib/queryState';
-import { bookingChip, calTile, fullDateKick, isoTime, speciesEmoji, visitSubtitle, visitVariant } from '../lib/portalFormat';
+import { bookingChip, bookingSubtitle, fullDateKick, isoTime, speciesEmoji, visitTile, visitVariant } from '../lib/portalFormat';
 import type { GetMyBookingsResult, GetMyBookingsResultLiveVisit } from '../contracts/bookingContracts.generated';
 
 type Tab = 'upcoming' | 'past';
@@ -190,7 +190,7 @@ export function Schedule() {
                   </LoadingLine>
                 ) : (
                   upcomingView.data.upcoming.map((b, i) => {
-                    const tile = b.startTimeMs !== null ? calTile(b.startTimeMs) : { month: '—', day: '—' };
+                    const tile = visitTile(b);
                     const chip = bookingChip(b.status);
                     return (
                       <div key={b.id}>
@@ -202,7 +202,7 @@ export function Schedule() {
                           <div className="info">
                             <span className="svc">Service Type &middot; {b.serviceType ?? 'Visit'}</span>
                             <b>{b.title ?? b.serviceType ?? 'Visit'}</b>
-                            <small>{visitSubtitle(b.startTimeMs, b.auntieDisplayName)}</small>
+                            <small>{bookingSubtitle(b)}</small>
                           </div>
                           <div className="pet">{speciesEmoji(null)}</div>
                           <span className={`chip ${chip.tone}`}>{chip.label}</span>
@@ -230,7 +230,7 @@ export function Schedule() {
                   </LoadingLine>
                 ) : (
                   pastView.data.recent.map((b, i) => {
-                    const tile = b.startTimeMs !== null ? calTile(b.startTimeMs) : { month: '—', day: '—' };
+                    const tile = visitTile(b);
                     const chip = bookingChip(b.status);
                     const visit = b.sessionId ? visitsBySession.get(b.sessionId) : undefined;
                     const route = visit?.gpsSummary?.route ?? [];
@@ -245,7 +245,7 @@ export function Schedule() {
                           <div className="info">
                             <span className="svc">Service Type &middot; {b.serviceType ?? 'Visit'}</span>
                             <b>{b.title ?? b.serviceType ?? 'Visit'}</b>
-                            <small>{visitSubtitle(b.startTimeMs, b.auntieDisplayName)}</small>
+                            <small>{bookingSubtitle(b)}</small>
                           </div>
                           {route.length > 0 && (
                             <button

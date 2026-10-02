@@ -1,5 +1,6 @@
 package com.kinfolk.portal.screens.schedule
 import com.kinfolk.portal.portal.BookingMode
+import com.kinfolk.portal.portal.BookingVisit
 import com.kinfolk.portal.portal.Service
 import com.kinfolk.portal.portal.TimeBlock
 import kotlinx.datetime.LocalDate
@@ -13,13 +14,15 @@ import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 /**
- * #1092: an overnight is twelve hours that can start at any time of day, so no
- * window can hold it. A KinCare in `startTimeServiceIds` books on the clock even
- * in a block-mode plan, and every other KinCare in that plan keeps its window.
+ * #1098 (replacing #1092's start-time picker): a KinCare in
+ * `startTimeServiceIds` is asked for by NIGHT only. The operator sets its start
+ * time when approving, because she may have evening visits to finish first. So
+ * the slot has no clock and no window in either plan mode, and the visit goes
+ * out with a `date` and no `startTimeMs`.
  *
- * The web mirror is the "start-time KinCares in a block-mode plan (#1092)"
- * section of mytribe/web/src/lib/bookingWizardLogic.test.ts; both assert the
- * same facts about the same functions.
+ * The web mirror is the "night-only KinCares (#1098)" section of
+ * mytribe/web/src/lib/bookingWizardLogic.test.ts; both assert the same facts
+ * about the same functions.
  */
 class StartTimeServiceBookingTest {
     private val utc = TimeZone.UTC
@@ -41,37 +44,46 @@ class StartTimeServiceBookingTest {
     private val evening = TimeBlock("evening", "Evening", "17:00", "21:00", 240)
     private val blockTiming = BookingTiming(BookingMode.TimeBlock, listOf(midday, evening))
     private val timing = blockTiming.copy(startTimeServiceIds = setOf("Overnight"))
+    private val clockTiming = BookingTiming(BookingMode.SpecificTime, emptyList(), setOf("Overnight"))
     private val sep4 = LocalDate(2026, 9, 4) // a Friday
     private fun msAt(y: Int, m: Int, d: Int, hour: Int, minute: Int = 0): Long =
         LocalDateTime(y, m, d, hour, minute).toInstant(utc).toEpochMilliseconds()
     /** A KinCare in a named window. Its `time` is junk: a window slot must never read it. */
     private fun blockSlot(serviceId: String, blockId: String?, n: Int = 1) =
         KinCareSlot(slotId = "$serviceId-$blockId-$n", serviceId = serviceId, time = "nonsense", timeBlockId = blockId)
+    private fun clockSlot(serviceId: String, time: String, n: Int = 1) =
+        KinCareSlot(slotId = "$serviceId-$time-$n", serviceId = serviceId, time = time, timeBlockId = null)
     /**
      * An overnight carrying BOTH a real window id and a clock time, so a mistake
-     * that reads the window, or sends it, cannot pass by accident.
+     * that reads either, or sends either, cannot pass by accident.
      */
-    private fun overnightSlot(time: String, n: Int = 1) =
-        KinCareSlot(slotId = "Overnight-$n", serviceId = "Overnight", time = time, timeBlockId = "midday")
+    private fun overnightSlot(n: Int = 1) =
+        KinCareSlot(slotId = "Overnight-$n", serviceId = "Overnight", time = "21:00", timeBlockId = "midday")
+
     @Test
-    fun `decides the mode per slot`() {
-        assertTrue(serviceBooksAtStartTime("Overnight", timing))
-        assertFalse(serviceBooksAtStartTime("30Minute", timing))
-        assertEquals(BookingMode.SpecificTime, slotMode(overnightSlot("21:00"), timing))
-        assertEquals(BookingMode.TimeBlock, slotMode(blockSlot("30Minute", "midday"), timing))
+    fun `decides the kind per slot, night-only for a flagged KinCare in either plan mode`() {
+        assertTrue(serviceIsNightOnly("Overnight", timing))
+        assertFalse(serviceIsNightOnly("30Minute", timing))
+        assertEquals(SlotMode.NightOnly, slotMode(overnightSlot(), timing))
+        assertEquals(SlotMode.NightOnly, slotMode(overnightSlot(), clockTiming))
+        assertEquals(SlotMode.TimeBlock, slotMode(blockSlot("30Minute", "midday"), timing))
+        assertEquals(SlotMode.SpecificTime, slotMode(clockSlot("30Minute", "09:00"), clockTiming))
     }
+
     @Test
-    fun `a timing without the list (an older server) treats nothing as start-time`() {
-        assertFalse(serviceBooksAtStartTime("Overnight", blockTiming))
-        val v = buildVisits(listOf(sep4), listOf(overnightSlot("21:00")), catalog, utc, blockTiming).single()
+    fun `a timing without the list (an older server) treats nothing as night-only`() {
+        assertFalse(serviceIsNightOnly("Overnight", blockTiming))
+        val v = buildVisits(listOf(sep4), listOf(overnightSlot()), catalog, utc, blockTiming).single()
         assertEquals("midday", v.timeBlockId)
         assertEquals(msAt(2026, 9, 4, 11), v.startTimeMs)
+        assertNull(v.date)
     }
+
     @Test
-    fun `sends a start-time visit at its clock with no window, beside a window visit that keeps its window`() {
+    fun `sends the night as a date with no start and no window, beside a window visit that keeps its window`() {
         val visits = buildVisits(
             listOf(sep4),
-            listOf(blockSlot("30Minute", "midday"), overnightSlot("21:00")),
+            listOf(overnightSlot(), blockSlot("30Minute", "midday")),
             catalog,
             utc,
             timing,
@@ -81,70 +93,136 @@ class StartTimeServiceBookingTest {
         assertEquals("30Minute", mid.serviceId)
         assertEquals("midday", mid.timeBlockId)
         assertEquals(msAt(2026, 9, 4, 11), mid.startTimeMs)
-        assertEquals("Overnight", night.serviceId)
-        assertNull(night.timeBlockId)
-        assertEquals(msAt(2026, 9, 4, 21), night.startTimeMs)
-        // The server computes the twelve-hour end itself.
-        assertNull(night.endTimeMs)
+        assertEquals(
+            BookingVisit(
+                startTimeMs = null,
+                endTimeMs = null,
+                serviceId = "Overnight",
+                serviceName = "Overnight",
+                priceCents = 15000,
+                timeBlockId = null,
+                date = "2026-09-04",
+            ),
+            night,
+        )
     }
+
     @Test
-    fun `expands a weekly rule with the start-time KinCare on the clock and the other in its window`() {
+    fun `sends a date in a specific-time plan too`() {
+        val visits = buildVisits(listOf(sep4), listOf(clockSlot("30Minute", "22:00"), overnightSlot()), catalog, utc, clockTiming)
+        assertEquals(
+            listOf(
+                Triple("30Minute", msAt(2026, 9, 4, 22), null),
+                Triple("Overnight", null, "2026-09-04"),
+            ),
+            visits.map { Triple(it.serviceId, it.startTimeMs, it.date) },
+        )
+    }
+
+    @Test
+    fun `sorts a night after every timed visit on its own day and before the next day`() {
+        val visits = buildVisits(
+            listOf(LocalDate(2026, 9, 5), sep4),
+            listOf(overnightSlot(), clockSlot("30Minute", "23:30")),
+            catalog,
+            utc,
+            clockTiming,
+        )
+        assertEquals(
+            listOf(
+                "30Minute" to "2026-09-04",
+                "Overnight" to "2026-09-04",
+                "30Minute" to "2026-09-05",
+                "Overnight" to "2026-09-05",
+            ),
+            visits.map { it.serviceId to plannedVisitDayKey(it, utc) },
+        )
+    }
+
+    @Test
+    fun `expands a weekly rule with one night per chosen day, including tonight, after the timed visit`() {
         val visits = buildWeeklyVisits(
-            nowMs = msAt(2026, 9, 4, 8),
+            nowMs = msAt(2026, 9, 4, 22), // a Friday, late
             weeklyDays = setOf(5),
             weeks = 2,
-            slots = listOf(overnightSlot("21:00"), blockSlot("30Minute", "evening")),
+            slots = listOf(overnightSlot(), blockSlot("30Minute", "evening")),
             services = catalog,
             tz = utc,
             timing = timing,
         )
+        // Tonight's Evening window has closed, so only next Friday's is sent; both nights are.
         assertEquals(
             listOf(
-                Triple("30Minute", "evening", msAt(2026, 9, 4, 17)),
-                Triple("Overnight", null, msAt(2026, 9, 4, 21)),
-                Triple("30Minute", "evening", msAt(2026, 9, 11, 17)),
-                Triple("Overnight", null, msAt(2026, 9, 11, 21)),
+                Triple("Overnight", null, "2026-09-04"),
+                Triple("30Minute", "evening", null),
+                Triple("Overnight", null, "2026-09-11"),
             ),
-            visits.map { Triple(it.serviceId, it.timeBlockId, it.startTimeMs) },
+            visits.map { Triple(it.serviceId, it.timeBlockId, it.date) },
         )
+        assertTrue(visits.filter { it.serviceId == "Overnight" }.all { it.startTimeMs == null })
     }
+
     @Test
-    fun `does not ask a start-time KinCare for a window, but does ask it for a valid time`() {
-        val noWindow = KinCareSlot("o", "Overnight", "21:00", null)
-        assertNull(slotsBlocker(listOf(noWindow, blockSlot("30Minute", "midday")), timing))
-        assertEquals(
-            "Enter every KinCare time as HH:MM.",
-            slotsBlocker(listOf(noWindow.copy(time = ""), blockSlot("30Minute", "midday")), timing),
-        )
-    }
-    @Test
-    fun `still asks the other KinCares in the plan for a window`() {
+    fun `asks a night-only KinCare for nothing and still asks the others for theirs`() {
+        val bare = KinCareSlot("o", "Overnight", "", null)
+        assertNull(slotsBlocker(listOf(bare, blockSlot("30Minute", "midday")), timing))
+        assertNull(slotsBlocker(listOf(bare), clockTiming))
         assertEquals(
             "Choose a time block for every KinCare.",
-            slotsBlocker(listOf(overnightSlot("21:00"), blockSlot("30Minute", null)), timing),
+            slotsBlocker(listOf(overnightSlot(), blockSlot("30Minute", null)), timing),
         )
-    }
-    @Test
-    fun `keys a start-time duplicate on the clock, not on the stale window id`() {
-        assertNull(slotsBlocker(listOf(overnightSlot("07:00"), overnightSlot("21:00", 2)), timing))
         assertEquals(
-            "Two KinCares have the same duration at the same time. Change one of the times.",
-            slotsBlocker(listOf(overnightSlot("21:00"), overnightSlot("21:00", 2)), timing),
+            "Enter every KinCare time as HH:MM.",
+            slotsBlocker(listOf(overnightSlot(), clockSlot("30Minute", "")), clockTiming),
         )
+        assertNull(weeklyVisitsBlocker(setOf(5), 2, listOf(bare), timing))
     }
+
     @Test
-    fun `anchorOpenBlockVisit leaves a start-time visit alone, even one already started`() {
-        val v = buildVisits(listOf(sep4), listOf(overnightSlot("11:30")), catalog, utc, timing).single()
-        // 12:00, inside Midday: a Midday visit would be moved; this one carries no window.
+    fun `refuses the same night-only KinCare twice in one plan whatever its stale time or window says`() {
+        val a = overnightSlot(1)
+        val b = overnightSlot(2).copy(time = "07:00", timeBlockId = "evening")
+        val msg = "That KinCare is on the plan twice for the same night. Remove one."
+        assertEquals(msg, slotsBlocker(listOf(a, b), timing))
+        assertEquals(msg, slotsBlocker(listOf(a, b), clockTiming))
+    }
+
+    @Test
+    fun `anchorOpenBlockVisit leaves a night alone`() {
+        val v = buildVisits(listOf(sep4), listOf(overnightSlot()), catalog, utc, timing).single()
         val now = msAt(2026, 9, 4, 12)
         assertSame(v, anchorOpenBlockVisit(v, timing.blocks, now, utc))
-        assertEquals(1, pastPlannedVisits(listOf(v), now).size)
+        assertEquals(listOf(v), anchorOpenBlockVisits(listOf(v), timing.blocks, now, utc))
     }
+
     @Test
-    fun `renders a start-time visit by its clock time on Review`() {
-        val visits = buildVisits(listOf(sep4), listOf(overnightSlot("21:00")), catalog, utc, timing)
-        val rendered = renderPlannedVisits(visits, utc, listOf(midday, evening)).single()
-        assertNull(rendered.timeBlockLabel)
-        assertEquals("Fri, Sep 4 at 9:00 PM", plannedVisitLine(rendered))
+    fun `a night is past only once its date is before today`() {
+        val v = buildVisits(listOf(sep4), listOf(overnightSlot()), catalog, utc, timing).single()
+        assertTrue(pastPlannedVisits(listOf(v), msAt(2026, 9, 4, 23, 59), utc).isEmpty())
+        assertEquals(1, pastPlannedVisits(listOf(v), msAt(2026, 9, 5, 0, 1), utc).size)
+    }
+
+    @Test
+    fun `renders a night on Review with its own day and no clock`() {
+        val visits = buildVisits(
+            listOf(LocalDate(2026, 10, 9)),
+            listOf(overnightSlot(), blockSlot("30Minute", "midday")),
+            catalog,
+            utc,
+            timing,
+        )
+        val rendered = renderPlannedVisits(visits, utc, listOf(midday, evening))
+        assertEquals(
+            listOf("Fri, Oct 9, Midday (11:00-15:00)", "Fri, Oct 9, start time set by your Auntie"),
+            rendered.map { plannedVisitLine(it) },
+        )
+        assertEquals("Overnight", rendered[1].serviceName)
+        assertEquals(2, rendered.map { it.key }.toSet().size)
+    }
+
+    @Test
+    fun `prices a night like any other visit`() {
+        val visits = buildVisits(listOf(sep4, LocalDate(2026, 9, 5)), listOf(overnightSlot()), catalog, utc, timing)
+        assertEquals(30000L, estimateBookingTotal(visits, catalog).totalCents)
     }
 }

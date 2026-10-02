@@ -52,12 +52,26 @@ export const COMPANY_HOLIDAY_CONFLICT_CODE = 'company_holiday_conflict';
 
 const BUSINESS_SETTINGS_DOC = 'business_settings/business_settings';
 
-/** One visit's candidate window, in the same epoch-ms shape every write path already carries. */
-export interface CandidateHolidayVisit {
-  startTimeMs: number;
-  /** Null/undefined/unparseable is treated as a one-millisecond point in time, same convention as `bookingBusyConflict.ts`. */
-  endTimeMs?: number | null;
-}
+/**
+ * One visit's candidate window, in the same epoch-ms shape every write path
+ * already carries, OR (#1098) a bare calendar date for a visit that has no start
+ * instant yet.
+ */
+export type CandidateHolidayVisit =
+  | {
+      startTimeMs: number;
+      /** Null/undefined/unparseable is treated as a one-millisecond point in time, same convention as `bookingBusyConflict.ts`. */
+      endTimeMs?: number | null;
+    }
+  | {
+      /**
+       * #1098: an Overnight requested as a NIGHT has no start until the operator
+       * sets one on approval, but a closed day must still refuse the request.
+       * The date is the business's own (`requestBooking` keyed it in the
+       * business zone) and is checked as given, with no conversion.
+       */
+      dateIso: string;
+    };
 
 /** One candidate visit landing on one closure occurrence. */
 export interface CompanyHolidayConflict {
@@ -82,6 +96,7 @@ function utcDateIso(ms: number): string {
  * "cannot conflict", same as `bookingBusyConflict.ts#resolveWindow`.
  */
 export function utcDatesForVisit(v: CandidateHolidayVisit): string[] {
+  if ('dateIso' in v) return /^\d{4}-\d{2}-\d{2}$/.test(v.dateIso) ? [v.dateIso] : [];
   if (!Number.isFinite(v.startTimeMs)) return [];
   const startMs = v.startTimeMs;
   const endMs =

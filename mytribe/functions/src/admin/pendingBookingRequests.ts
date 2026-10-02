@@ -8,6 +8,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
+import { kinCareLengthMinutes } from '../portal/getServiceCatalog';
 
 /**
  * The office's queue of NEW booking requests (issue #533).
@@ -42,6 +43,33 @@ export const ListArgs = z.object({
   limit: z.number().int().min(1).max(100).optional(),
 });
 
+/**
+ * #1098: one visit of a pending request, so the office can set the start time
+ * of a night that is awaiting one before approving the request.
+ */
+export const PendingBookingVisitDto = z
+  .object({
+    /** The kinCares visit id; the key `manageBookingSeries`'s `startTimes` takes. */
+    visitId: z.string().min(1),
+    serviceId: z.string().nullable(),
+    serviceType: z.string().nullable(),
+    /** Null exactly when the visit is awaiting its start time. */
+    startTimeMs: z.number().int().nullable(),
+    /** True while the operator has not set this visit's start (an Overnight requested as a night). */
+    startTimePending: z.boolean(),
+    /** The night asked for, business-local `YYYY-MM-DD`, on a visit awaiting its start; null otherwise. */
+    requestedDate: z.string().nullable(),
+    /** The time block the household picked, as labelled when they booked; null when booked by clock or awaiting a time. */
+    timeBlockLabel: z.string().nullable(),
+    /**
+     * How long the visit runs: its stored end minus its start, or, when there is
+     * no end (a night awaiting its start), the KinCare's length from
+     * `business_settings.serviceDurations` or its name. Null when neither is known.
+     */
+    lengthMinutes: z.number().int().nullable(),
+  })
+  .strict();
+
 export const PendingBookingRequestDto = z
   .object({
     kinfolkId: z.string().min(1),
@@ -52,13 +80,20 @@ export const PendingBookingRequestDto = z
     kinNames: z.array(z.string()),
     /** The household's own words for the whole request, an envelope-level field. */
     notes: z.string().nullable(),
-    /** How many visits in this envelope are still `requested`. */
+    /** How many visits in this envelope are still `requested`, including any awaiting a start time. */
     visitCount: z.number().int(),
-    /** Oldest and newest requested visit, so the UI can name a span without the full list. */
+    /**
+     * Oldest and newest requested visit START, so the UI can name a span without
+     * the full list. #1098: visits awaiting a start time have none and are not
+     * in these three; null / empty when every visit is awaiting one. `visits`
+     * carries all of them.
+     */
     firstStartTimeMs: z.number().int().nullable(),
     lastStartTimeMs: z.number().int().nullable(),
     /** Every requested visit start, oldest first, so a short request can list its days. */
     startTimeMsList: z.array(z.number().int()),
+    /** #1098: every requested visit, timed ones by start and nights by date, oldest first. */
+    visits: z.array(PendingBookingVisitDto),
     /** When the household asked, from the envelope's createdAt. Drives the queue's sort. */
     requestedAtMs: z.number().int().nullable(),
   })
@@ -96,6 +131,8 @@ function stringOrNull(v: unknown): string | null {
   return typeof v === 'string' && v.length > 0 ? v : null;
 }
 
+type PendingBookingVisit = z.infer<typeof PendingBookingVisitDto>;
+
 /** One envelope's visits, accumulated as the flat scan walks them. */
 interface Group {
   kinfolkId: string;
@@ -103,6 +140,50 @@ interface Group {
   startTimeMsList: number[];
   serviceType: string | null;
   kinNames: string[];
+  /** #1098: every visit, sorted by start, a night by its date. */
+  visits: PendingBookingVisit[];
+}
+
+/**
+ * #1098: the sort key for one visit. A timed visit sorts by its own start; a
+ * night awaiting its start sorts by the END of its date in UTC, so it lands
+ * after that day's timed visits (an overnight starts in the evening). The
+ * handler reads no zone for this, so the placement is approximate on a day
+ * boundary; the order within a request is the only thing it decides.
+ */
+function visitSortKey(v: PendingBookingVisit): number {
+  if (v.startTimeMs != null) return v.startTimeMs;
+  const day = v.requestedDate ? Date.parse(`${v.requestedDate}T23:59:59.999Z`) : NaN;
+  return Number.isFinite(day) ? day : Number.MAX_SAFE_INTEGER;
+}
+
+/** One kinCares row as the queue shows it. */
+function visitOf(
+  visitId: string,
+  data: Record<string, unknown>,
+  serviceDurations: unknown,
+): PendingBookingVisit {
+  const startTimeMs = millisOf(data['startTime'] as Timestamp | null | undefined);
+  const endMs = millisOf(data['endTime'] as Timestamp | null | undefined);
+  const serviceId = stringOrNull(data['serviceId']);
+  const startTimePending = data['startTimePending'] === true;
+  const lengthMinutes =
+    startTimeMs != null && endMs != null && endMs > startTimeMs
+      ? Math.round((endMs - startTimeMs) / 60_000)
+      : serviceId != null
+        ? kinCareLengthMinutes(serviceId, serviceDurations)
+        : null;
+  return {
+    visitId,
+    serviceId,
+    serviceType:
+      stringOrNull(data['serviceType']) ?? stringOrNull(data['serviceName']) ?? stringOrNull(data['title']),
+    startTimeMs,
+    startTimePending,
+    requestedDate: startTimePending ? stringOrNull(data['requestedDate']) : null,
+    timeBlockLabel: stringOrNull(data['timeBlockLabel']),
+    lengthMinutes,
+  };
 }
 
 /**
@@ -113,6 +194,8 @@ interface Group {
  */
 export function groupByEnvelope(
   rows: Array<{ path: string; data: Record<string, unknown> }>,
+  /** `business_settings.serviceDurations`, for the length of a visit with no end (#1098). */
+  serviceDurations?: unknown,
 ): Group[] {
   const byKey = new Map<string, Group>();
   for (const row of rows) {
@@ -125,12 +208,15 @@ export function groupByEnvelope(
     const key = `${kinfolkId}/${batchId}`;
     let group = byKey.get(key);
     if (!group) {
-      group = { kinfolkId, batchId, startTimeMsList: [], serviceType: null, kinNames: [] };
+      group = { kinfolkId, batchId, startTimeMsList: [], serviceType: null, kinNames: [], visits: [] };
       byKey.set(key, group);
     }
 
-    const startMs = millisOf(row.data['startTime'] as Timestamp | null | undefined);
-    if (startMs != null) group.startTimeMsList.push(startMs);
+    // #1098: a night awaiting its start time has no instant, so it is not in
+    // `startTimeMsList`, but it IS a visit of this request and is listed.
+    const visit = visitOf(segments[5] ?? '', row.data, serviceDurations);
+    if (visit.visitId) group.visits.push(visit);
+    if (visit.startTimeMs != null) group.startTimeMsList.push(visit.startTimeMs);
 
     // The envelope's visits share a service and a kin roster today, so the
     // first visit that names either speaks for the request. A visit that names
@@ -147,7 +233,10 @@ export function groupByEnvelope(
     }
   }
 
-  for (const group of byKey.values()) group.startTimeMsList.sort((a, b) => a - b);
+  for (const group of byKey.values()) {
+    group.startTimeMsList.sort((a, b) => a - b);
+    group.visits.sort((a, b) => visitSortKey(a) - visitSortKey(b));
+  }
   return [...byKey.values()];
 }
 
@@ -184,8 +273,26 @@ export async function listPendingBookingRequestsHandler(
     .limit(SCAN_CAP)
     .get();
 
+  // #1098: the KinCare lengths, for a night awaiting its start time (it has no
+  // end to measure). One read for the whole queue; a failed read only costs
+  // those visits their `lengthMinutes`.
+  let serviceDurations: unknown;
+  try {
+    const settingsSnap = await db().doc('business_settings/business_settings').get();
+    serviceDurations = (settingsSnap.data() as Record<string, unknown> | undefined)?.['serviceDurations'];
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'listPendingBookingRequests',
+      event: 'admin.bookingRequests.settings.readFailed',
+      uid,
+      extra: { err: (err as Error)?.message },
+    });
+  }
+
   const groups = groupByEnvelope(
     snap.docs.map((doc) => ({ path: doc.ref.path, data: doc.data() as Record<string, unknown> })),
+    serviceDurations,
   );
 
   // One parent read per pending ENVELOPE, not per visit: the envelope carries
@@ -236,10 +343,13 @@ export async function listPendingBookingRequestsHandler(
                   )
                 : [],
           notes: stringOrNull(envelope?.['notes']),
-          visitCount: list.length,
+          // #1098: every visit, not every start: a night awaiting its start
+          // time is a visit of this request with no start yet.
+          visitCount: group.visits.length,
           firstStartTimeMs: list[0] ?? null,
           lastStartTimeMs: list.length > 0 ? list[list.length - 1]! : null,
           startTimeMsList: list,
+          visits: group.visits,
           requestedAtMs: millisOf(envelope?.['createdAt'] as Timestamp | null | undefined),
         };
       }),

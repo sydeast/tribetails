@@ -361,29 +361,7 @@ class BookingRepository(
                 return@addSnapshotListener
             }
             val items = snap?.documents.orEmpty().mapNotNull { d ->
-                // path: families/{fid}/bookings/{batchId}/kinCares/{visitId}
-                val segments = d.reference.path.split("/")
-                val familyId = segments.getOrNull(1).orEmpty()
-                val batchId = segments.getOrNull(3).orEmpty()
-                val visitId = d.id
-                if (familyId.isBlank() || batchId.isBlank()) return@mapNotNull null
-                IncomingKinCare(
-                    familyId = familyId,
-                    batchId = batchId,
-                    visitId = visitId,
-                    kinfolkId = d.getString("kinfolkId").orEmpty().ifBlank { familyId },
-                    kinfolkName = d.getString("kinfolkName").orEmpty(),
-                    serviceType = d.getString("serviceType").orEmpty(),
-                    // requestBooking writes start/end as Firestore Timestamps; read the
-                    // Timestamp and convert to ISO (fall back to a string read defensively).
-                    startTime = d.getTimestamp("startTime")?.toDate()?.toInstant()?.toString()
-                        ?: d.getString("startTime").orEmpty(),
-                    endTime = d.getTimestamp("endTime")?.toDate()?.toInstant()?.toString()
-                        ?: d.getString("endTime").orEmpty(),
-                    status = d.getString("status").orEmpty(),
-                    notes = d.getString("notes").orEmpty(),
-                    kinfolkNotes = d.getString("kinfolkNotes").orEmpty(),
-                )
+                incomingKinCareOf(d.reference.path, d.id, d.data.orEmpty())
             }
             AuntieLog.d("incomingKinCareRequestsStream: ${items.size} requested kinCares")
             trySend(Result.success(items))
@@ -1214,7 +1192,54 @@ data class IncomingKinCare(
     val status: String = "",
     val notes: String = "",
     val kinfolkNotes: String = "",
+    /** The KinCare type's id, as the visit doc carries it. Blank when absent. */
+    val serviceId: String = "",
+    /**
+     * #1098: an Overnight is requested as a NIGHT. The visit has no start time
+     * yet ([startTime] is blank) and approving it means the operator sets one.
+     * False on every visit written before #1098 and every timed visit.
+     */
+    val startTimePending: Boolean = false,
+    /** #1098: the night asked for, `YYYY-MM-DD` in the business zone. Blank when absent. */
+    val requestedDate: String = "",
 )
+
+/**
+ * One requested kinCare doc as an [IncomingKinCare], or null when its path is
+ * not `families/{fid}/bookings/{batchId}/kinCares/{visitId}`.
+ *
+ * Pure over the doc's path and data map so the decode is unit-tested without
+ * Firestore. Every field is read fail-soft: a missing or wrong-typed value is
+ * blank or false, never a throw, so one odd doc cannot empty the queue.
+ */
+internal fun incomingKinCareOf(path: String, visitId: String, data: Map<String, Any?>): IncomingKinCare? {
+    val segments = path.split("/")
+    val familyId = segments.getOrNull(1).orEmpty()
+    val batchId = segments.getOrNull(3).orEmpty()
+    if (familyId.isBlank() || batchId.isBlank()) return null
+    fun str(key: String): String = data[key] as? String ?: ""
+    // requestBooking writes start/end as Firestore Timestamps; read the
+    // Timestamp and convert to ISO (fall back to a string read defensively).
+    // A night awaiting its start time (#1098) stores null, which reads blank.
+    fun instant(key: String): String =
+        (data[key] as? com.google.firebase.Timestamp)?.toDate()?.toInstant()?.toString() ?: str(key)
+    return IncomingKinCare(
+        familyId = familyId,
+        batchId = batchId,
+        visitId = visitId,
+        kinfolkId = str("kinfolkId").ifBlank { familyId },
+        kinfolkName = str("kinfolkName"),
+        serviceType = str("serviceType"),
+        startTime = instant("startTime"),
+        endTime = instant("endTime"),
+        status = str("status"),
+        notes = str("notes"),
+        kinfolkNotes = str("kinfolkNotes"),
+        serviceId = str("serviceId"),
+        startTimePending = data["startTimePending"] == true,
+        requestedDate = str("requestedDate"),
+    )
+}
 
 /**
  * Outcome of a manageBookingSeries callable. [affectedVisits] = visits that

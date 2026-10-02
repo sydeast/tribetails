@@ -613,7 +613,7 @@ describe('BookingWizard: individual pattern', () => {
     await vi.waitFor(() => expect(requestBooking).toHaveBeenCalledTimes(1));
     const req = requestBooking.mock.calls[0]![0];
     expect(req.visits).toHaveLength(1);
-    expect(dateKey(new Date(req.visits![0]!.startTimeMs))).toBe(dateKey(nextMonth));
+    expect(dateKey(new Date(req.visits![0]!.startTimeMs!))).toBe(dateKey(nextMonth));
   });
 
   it('will not offer a date before today', async () => {
@@ -1053,12 +1053,13 @@ describe('BookingWizard: time-block booking', () => {
 });
 
 /**
- * #1092: an overnight is twelve consecutive hours that can start at any time,
- * so no block can hold it. In a block-only business the operator flags it to
- * book at a start time: it asks for a clock time, while every other KinCare in
- * the same plan keeps its block.
+ * #1098: a KinCare flagged in `startTimeServiceIds` (the overnight) is asked
+ * for by night only. The Auntie sets its start time when she approves it,
+ * because she may have evening visits to finish first, so the wizard offers no
+ * clock and no block for it, while every other KinCare in the plan keeps its
+ * own control.
  */
-describe('BookingWizard: a start-time KinCare in a block-only business (#1092)', () => {
+describe('BookingWizard: a night-only KinCare (#1098)', () => {
   const OVERNIGHT = {
     ...SERVICE_B,
     id: 'Overnight',
@@ -1080,7 +1081,7 @@ describe('BookingWizard: a start-time KinCare in a block-only business (#1092)',
   afterEach(() => {
     vi.useRealTimers();
   });
-  it('asks the flagged KinCare for a start time and the other for a block', async () => {
+  it('shows the flagged KinCare no time control and the other its block', async () => {
     const user = userEvent.setup();
     renderWizard();
     await goToStep2(user);
@@ -1089,9 +1090,12 @@ describe('BookingWizard: a start-time KinCare in a block-only business (#1092)',
     await user.click(screen.getByRole('button', { name: 'Next' }));
     await screen.findByRole('heading', { name: 'Schedule Dates' });
     expect(screen.getByLabelText('1. 60 Minute').tagName).toBe('SELECT');
-    expect(screen.getByLabelText('2. Overnight, start time')).toHaveAttribute('type', 'time');
+    const overnight = screen.getByRole('group', { name: '2. Overnight' });
+    expect(overnight).toHaveTextContent('Your Auntie sets the start time');
+    expect(overnight.querySelector('input, select')).toBeNull();
+    expect(document.querySelectorAll('input[type="time"]')).toHaveLength(0);
   });
-  it('books 21:00 with no block, beside a Midday visit that still sends its block', async () => {
+  it('asks for the night only, sending its date and no start time, beside a Midday visit that keeps its block', async () => {
     // Pinned to 08:00 today so TOMORROW is fixed; only Date is faked.
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate(), 8, 0));
@@ -1103,12 +1107,11 @@ describe('BookingWizard: a start-time KinCare in a block-only business (#1092)',
     await user.click(screen.getByRole('button', { name: 'Next' }));
     await screen.findByRole('heading', { name: 'Schedule Dates' });
     await pickDay(user, TOMORROW);
-    const time = screen.getByLabelText('2. Overnight, start time');
-    await user.clear(time);
-    await user.type(time, '21:00');
+    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
     await goToReview(user);
     expect(screen.getByText(/, Midday \(11:00-15:00\)/)).toBeInTheDocument();
-    expect(screen.getByText(/ at 9:00 PM/)).toBeInTheDocument();
+    expect(screen.getByText(/, start time set by your Auntie$/)).toBeInTheDocument();
+    expect(screen.queryByText(/ at \d/)).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Create Booking' }));
     await vi.waitFor(() => expect(requestBooking).toHaveBeenCalledTimes(1));
     const visits = requestBooking.mock.calls[0]![0].visits!;
@@ -1117,10 +1120,15 @@ describe('BookingWizard: a start-time KinCare in a block-only business (#1092)',
     const overnight = visits.find((v) => v.serviceId === 'Overnight')!;
     expect(midday.timeBlockId).toBe('midday');
     expect(midday.startTimeMs).toBe(visitMs(TOMORROW, 11, 0));
-    expect(overnight.timeBlockId).toBeNull();
-    expect(overnight.startTimeMs).toBe(visitMs(TOMORROW, 21, 0));
-    // The server computes the twelve-hour end.
-    expect(overnight.endTimeMs).toBeNull();
+    expect(overnight).toEqual({
+      date: dateKey(TOMORROW),
+      endTimeMs: null,
+      serviceId: 'Overnight',
+      serviceName: 'Overnight',
+      priceCents: OVERNIGHT.priceCents ?? OVERNIGHT.priceMinCents ?? null,
+      timeBlockId: null,
+    });
+    expect('startTimeMs' in overnight).toBe(false);
   });
   it('a policy without the field (an older server) keeps the flagged KinCare in a block', async () => {
     getBookingPolicy.mockResolvedValue(BLOCK_ONLY_POLICY);
@@ -1128,7 +1136,7 @@ describe('BookingWizard: a start-time KinCare in a block-only business (#1092)',
     renderWizard();
     await selectServiceAndGoToStep3(user, 'Overnight');
     expect((await screen.findByLabelText('1. Overnight')).tagName).toBe('SELECT');
-    expect(document.querySelectorAll('input[type="time"]')).toHaveLength(0);
+    expect(screen.queryByText('Your Auntie sets the start time')).toBeNull();
   });
 });
 /**

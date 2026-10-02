@@ -31,6 +31,16 @@ const BookingDtoSchema = z
     title: z.string().nullable(),
     startTimeMs: z.number().int().nullable(),
     endTimeMs: z.number().int().nullable(),
+    /**
+     * #1098: true while Tribe Tails has not set this visit's start time. An
+     * Overnight is requested as a night and the operator sets its start when
+     * approving, so until then `startTimeMs` / `endTimeMs` are null and
+     * `requestedDate` names the night. False on every other visit, and on any
+     * visit written before #1098.
+     */
+    startTimePending: z.boolean(),
+    /** #1098: the night asked for (business-local `YYYY-MM-DD`) while `startTimePending`; null otherwise. */
+    requestedDate: z.string().nullable(),
     kinIds: z.array(z.string()),
     kinNames: z.array(z.string()),
     auntieDisplayName: z.string().nullable(),
@@ -161,6 +171,8 @@ export async function getMyBookingsHandler(
       title: stringOrNull(data['title']),
       startTimeMs: tsMillis(data['startTime']),
       endTimeMs: tsMillis(data['endTime']),
+      startTimePending: data['startTimePending'] === true,
+      requestedDate: data['startTimePending'] === true ? stringOrNull(data['requestedDate']) : null,
       kinIds: Array.isArray(data['kinIds']) ? (data['kinIds'] as string[]) : [],
       kinNames: Array.isArray(data['kinNames']) ? (data['kinNames'] as string[]) : [],
       auntieDisplayName: stringOrNull(data['auntieDisplayName']),
@@ -193,12 +205,16 @@ export async function getMyBookingsHandler(
   // Bucket logic, IDENTICAL to the pre-envelope behaviour so the UI is
   // unchanged when the envelope flag is off.
   let liveVisit = all.find((b) => b.status === 'active' || b.status === 'enRoute') ?? null;
+  //
+  // #1098: a night awaiting its start time has no `startTimeMs`, and reading
+  // that as 0 dropped it from Upcoming entirely. It is upcoming while its night
+  // has not passed, and it sorts by that night (see `visitSortMs`).
   const upcoming = all
-    .filter((b) => (b.status === 'requested' || b.status === 'confirmed') && (b.startTimeMs ?? 0) >= nowMs - 60_000)
-    .sort((a, b) => (a.startTimeMs ?? 0) - (b.startTimeMs ?? 0));
+    .filter((b) => (b.status === 'requested' || b.status === 'confirmed') && isUpcoming(b, nowMs))
+    .sort((a, b) => visitSortMs(a) - visitSortMs(b));
   const recent = all
     .filter((b) => b.status === 'completed' || b.status === 'cancelled')
-    .sort((a, b) => (b.startTimeMs ?? 0) - (a.startTimeMs ?? 0))
+    .sort((a, b) => visitSortMs(b) - visitSortMs(a))
     .slice(0, 10);
 
   // Surface AuntieOS-scheduled visits that have NO booking envelope. A visit
@@ -232,6 +248,9 @@ export async function getMyBookingsHandler(
       title: stringOrNull(s['serviceType']),
       startTimeMs,
       endTimeMs: isoMillis(s['endTime']),
+      // A session always has its time; only a kinCares visit can await one.
+      startTimePending: false,
+      requestedDate: null,
       kinIds: Array.isArray(s['kinIds']) ? (s['kinIds'] as string[]) : [],
       kinNames: [],
       auntieDisplayName: null,
@@ -263,15 +282,13 @@ export async function getMyBookingsHandler(
       upcoming.push(dto);
     }
   }
-  upcoming.sort((a, b) => (a.startTimeMs ?? 0) - (b.startTimeMs ?? 0));
+  upcoming.sort((a, b) => visitSortMs(a) - visitSortMs(b));
 
   // Read the parent envelopes for envelope-level fields.
   const batchIds = [...byBatch.keys()];
   const envelopes: EnvelopeDto[] = [];
   for (const batchId of batchIds) {
-    const kinCares = (byBatch.get(batchId) ?? []).sort(
-      (a, b) => (a.startTimeMs ?? 0) - (b.startTimeMs ?? 0),
-    );
+    const kinCares = (byBatch.get(batchId) ?? []).sort((a, b) => visitSortMs(a) - visitSortMs(b));
     const parentSnap = await firestore
       .doc(`families/${kinfolkId}/bookings/${batchId}`)
       .get();
@@ -292,10 +309,52 @@ export async function getMyBookingsHandler(
       kinCares,
     });
   }
-  envelopes.sort((a, b) => (a.firstStartTimeMs ?? 0) - (b.firstStartTimeMs ?? 0));
+
+  // #1098: an envelope of nights alone has a null `firstStartTimeMs` until the
+  // operator sets their times; it sorts by its earliest visit instead of 1970.
+  envelopes.sort((a, b) => envelopeSortMs(a) - envelopeSortMs(b));
 
   logEvent({ severity: 'info', function: 'getMyBookings', event: 'portal.bookings.resolved', uid, extra: { kinfolkId, total: all.length, sessions: sessionSnap.size, envelopes: envelopes.length } });
   return validateResponse('getMyBookings', Result, { liveVisit, upcoming, recent, envelopes });
+}
+
+/**
+ * #1098: where a visit sits in time for ordering. Its start when it has one; a
+ * night awaiting its start time sorts at the END of its requested date in UTC,
+ * after that day's timed visits (an overnight starts in the evening). This
+ * callable reads no business zone, so the placement is approximate across a
+ * day boundary; it only decides order, never which bucket a visit is in beyond
+ * `isUpcoming` below. A visit with neither sorts as 0, as it always has.
+ */
+function visitSortMs(b: BookingDto): number {
+  if (b.startTimeMs != null) return b.startTimeMs;
+  if (b.requestedDate) {
+    const ms = Date.parse(`${b.requestedDate}T23:59:59.999Z`);
+    if (Number.isFinite(ms)) return ms;
+  }
+  return 0;
+}
+
+/**
+ * Still ahead of the household? A timed visit: its start is no more than a
+ * minute past (unchanged). A night awaiting its start time (#1098): its night
+ * is today or later, judged in UTC with a day of slack, since this callable
+ * reads no business zone. An American evening is already "tomorrow" in UTC,
+ * and tonight's overnight must not vanish from the list at 8 PM.
+ */
+function isUpcoming(b: BookingDto, nowMs: number): boolean {
+  if (b.startTimeMs == null && b.startTimePending && b.requestedDate) {
+    const yesterdayUtc = new Date(nowMs - 24 * 3600_000).toISOString().slice(0, 10);
+    return b.requestedDate >= yesterdayUtc;
+  }
+  return (b.startTimeMs ?? 0) >= nowMs - 60_000;
+}
+
+/** An envelope's order: its first start, or its earliest visit's sort time when it has none (#1098). */
+function envelopeSortMs(e: EnvelopeDto): number {
+  if (e.firstStartTimeMs != null) return e.firstStartTimeMs;
+  const keys = e.kinCares.map(visitSortMs).filter((ms) => ms > 0);
+  return keys.length > 0 ? Math.min(...keys) : 0;
 }
 
 /**

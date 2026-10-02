@@ -15,6 +15,10 @@ type EnvelopeDoc = {
 
 type VisitDoc = {
   startTime?: { toMillis?: () => number } | null;
+  /** #1098: true while the operator has not set this visit's start (an Overnight requested as a night). */
+  startTimePending?: boolean;
+  /** #1098: the night asked for, business-local `YYYY-MM-DD`, on a pending visit. */
+  requestedDate?: string | null;
   serviceName?: string;
   serviceType?: string;
   title?: string;
@@ -36,6 +40,21 @@ export function visitStartMillis(visits: VisitDoc[]): number[] {
     .map((v) => v.startTime?.toMillis?.() ?? null)
     .filter((ms): ms is number => typeof ms === 'number' && Number.isFinite(ms))
     .sort((a, b) => a - b);
+}
+
+/**
+ * #1098: the requested nights of the visits that have NO start time yet,
+ * oldest first. Such a visit has `startTime: null` until the operator sets it on
+ * approval, so `visitStartMillis` above drops it; without this list a request
+ * of one Overnight would reach the office with no date at all.
+ *
+ * Exported for unit tests.
+ */
+export function pendingVisitDates(visits: VisitDoc[]): string[] {
+  return visits
+    .filter((v) => v.startTimePending === true && typeof v.requestedDate === 'string' && v.requestedDate.length > 0)
+    .map((v) => v.requestedDate as string)
+    .sort();
 }
 
 /**
@@ -83,11 +102,13 @@ export const onBookingEnvelopeCreate = onDocumentCreated(
     const batchId = event.params.batchId as string;
 
     let startTimeMsList: number[] = [];
+    let requestedDateList: string[] = [];
     let firstVisit: VisitDoc | undefined;
     try {
       const visitsSnap = await event.data!.ref.collection('kinCares').get();
       const visits = visitsSnap.docs.map((d) => d.data() as VisitDoc);
       startTimeMsList = visitStartMillis(visits);
+      requestedDateList = pendingVisitDates(visits);
       firstVisit = visits[0];
     } catch (err) {
       // Fail-loud in the log, but still send. An office that hears "a request came
@@ -123,7 +144,10 @@ export const onBookingEnvelopeCreate = onDocumentCreated(
           // handling stays in the one place that already owns it.
           startTimeMs: startTimeMsList[0] ?? null,
           startTimeMsList,
-          visitCount: envelope.visitCount ?? startTimeMsList.length,
+          // #1098: nights awaiting a start time; the enricher names them with
+          // "start time to be set" in `{{bookingDates}}`.
+          requestedDateList,
+          visitCount: envelope.visitCount ?? startTimeMsList.length + requestedDateList.length,
         },
         targetType: 'booking',
         targetId: batchId,

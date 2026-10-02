@@ -38,7 +38,7 @@ import com.kinfolk.portal.screens.schedule.util.ReviewRow
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
-import com.kinfolk.portal.util.relativeTime
+import com.kinfolk.portal.util.bookingWhenLabel
 
 /**
  * Envelope (Booking) detail. Resolves the [BookingEnvelope] from getMyBookings
@@ -161,7 +161,7 @@ private fun KinCareRow(kc: Booking, onClick: () -> Unit) {
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(kc.title ?: kc.serviceType ?: "Visit", style = type.heritageTitle)
-            Text(relativeTime(kc.startTimeMs), style = type.sansLabel)
+            Text(bookingWhenLabel(kc), style = type.sansLabel)
             val parts = listOfNotNull(
                 kc.auntieDisplayName,
                 kc.kinNames.takeIf { it.isNotEmpty() }?.joinToString(", "),

@@ -4,8 +4,12 @@ import { isInactiveKinStatus } from '../lib/kinStatus';
 import { getNotificationDef } from './catalog';
 import {
   DEFAULT_TIME_ZONE,
+  START_TIME_TO_BE_SET,
   formatBookingDate,
   formatBookingTime,
+  formatDateIso,
+  formatRequestedDate,
+  requestedDateNoonUtcMs,
 } from './visitDates';
 import type { Audience } from './types';
 
@@ -516,8 +520,8 @@ export async function enrichTemplateData(
    * three commas into one phrase, and on a span the count and the range are the
    * information, not which day of the week each end lands on.
    *
-   * Assumes the list is sorted oldest-first, which `visitStartMillis` in
-   * onBookingEnvelopeCreate guarantees.
+   * Sorts by business date itself (#1098): the timed instants and the
+   * requested nights arrive as two lists, so neither caller can pre-sort them.
    */
   function formatSpanDate(ms: number, tz: string): string {
     return new Intl.DateTimeFormat('en-US', {
@@ -526,12 +530,32 @@ export async function enrichTemplateData(
       timeZone: tz,
     }).format(new Date(ms));
   }
-  function formatDateSpan(msList: number[], tz: string): string {
-    if (msList.length === 0) return '';
-    if (msList.length === 1) return formatDate(msList[0]!, tz);
-    const first = formatSpanDate(msList[0]!, tz);
-    const last = formatSpanDate(msList[msList.length - 1]!, tz);
-    return `${msList.length} visits, ${first} to ${last}`;
+
+  /**
+   * #1098: a visit with no start instant yet (an Overnight requested as a
+   * night; the operator sets the time on approval) is placed by its requested
+   * DATE, and the phrase says how many times are still to come. A requested
+   * date is already the business's own, so it is rendered from noon UTC in UTC
+   * (`requestedDateNoonUtcMs`), never shifted by `tz` onto the day before.
+   */
+  function formatDateSpan(msList: number[], tz: string, requestedDates: string[] = []): string {
+    const entries = [
+      ...msList.map((ms) => ({ dateIso: formatDateIso(ms, tz), ms, zone: tz })),
+      ...requestedDates.map((d) => ({ dateIso: d, ms: requestedDateNoonUtcMs(d)!, zone: 'UTC' })),
+    ].sort((a, b) => (a.dateIso === b.dateIso ? a.ms - b.ms : a.dateIso < b.dateIso ? -1 : 1));
+    if (entries.length === 0) return '';
+    const pending = requestedDates.length;
+    if (entries.length === 1) {
+      const only = entries[0]!;
+      const date = formatDate(only.ms, only.zone);
+      return pending === 1 ? `${date}, ${START_TIME_TO_BE_SET}` : date;
+    }
+
+    const first = entries[0]!;
+    const last = entries[entries.length - 1]!;
+    const span = `${entries.length} visits, ${formatSpanDate(first.ms, first.zone)} to ${formatSpanDate(last.ms, last.zone)}`;
+    if (pending === 0) return span;
+    return `${span}, ${pending} ${pending === 1 ? 'start time' : 'start times'} to be set`;
   }
   // Invoice-style date ("Jun 15, 2026") — matches the pre-formatted `date`
   // strings AuntieOS writes on invoice docs, unlike the weekday-led booking
@@ -564,11 +588,18 @@ export async function enrichTemplateData(
     const msList = raw
       .map((v) => num(v))
       .filter((ms): ms is number => ms != null);
-    if (msList.length === 0) {
+    // #1098: the nights of visits that have no start time yet. Anything that is
+    // not a real `YYYY-MM-DD` is dropped rather than printed.
+    const requestedDates = (Array.isArray(data.requestedDateList) ? data.requestedDateList : []).filter(
+      (d): d is string => requestedDateNoonUtcMs(d) != null,
+    );
+    if (msList.length === 0 && requestedDates.length === 0) {
       const single = num(data.startTimeMs);
       if (single != null) msList.push(single);
     }
-    if (msList.length > 0) fill('bookingDates', formatDateSpan(msList, await loadTimeZone()));
+    if (msList.length > 0 || requestedDates.length > 0) {
+      fill('bookingDates', formatDateSpan(msList, await loadTimeZone(), requestedDates));
+    }
   }
 
   if (want.has('bookingDate') || want.has('bookingTime')) {
@@ -578,6 +609,16 @@ export async function enrichTemplateData(
       const tz = await loadTimeZone();
       if (want.has('bookingDate')) fill('bookingDate', formatDate(ms, tz));
       if (want.has('bookingTime')) fill('bookingTime', formatTime(ms, tz));
+    } else {
+      // #1098: a night awaiting its start time (an Overnight the operator has
+      // not timed yet) has no instant to format. It still has its night, and
+      // the honest time is "start time to be set", never a blank or midnight.
+      const b = await loadBooking();
+      const night = b?.startTimePending === true ? formatRequestedDate(b.requestedDate) : null;
+      if (night) {
+        if (want.has('bookingDate')) fill('bookingDate', night);
+        if (want.has('bookingTime')) fill('bookingTime', START_TIME_TO_BE_SET);
+      }
     }
     // Invoice-origin keys (invoice.overdue) carry no timestamp; the service date
     // lives on the invoice doc as a pre-formatted string. Legacy invoice docs

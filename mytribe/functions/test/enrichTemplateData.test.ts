@@ -222,6 +222,65 @@ describe('enrichTemplateData: bookingDates spans a whole envelope (#532)', () =>
   });
 });
 
+/**
+ * #1098: an Overnight is requested as a NIGHT; the operator sets its start when
+ * approving. The request notification names that night and says the time is
+ * still to come, rather than going blank, saying "Invalid Date", or inventing
+ * midnight. `requestedDateList` carries the nights (business-local dates).
+ */
+describe('enrichTemplateData: bookingDates with nights awaiting a start time (#1098)', () => {
+  const noonUtc = (day: number) => Date.UTC(2026, 8, day, 16, 0);
+  async function requested(data: Record<string, unknown>) {
+    const ctx = buildDbMock({
+      docs: { 'families/fam1': { displayName: 'The Rivera Home', primaryUid: 'cli1' } },
+      queryDocs: { kin: [{ id: 'k1', data: { kinfolkId: 'fam1', name: 'Rex', status: 'active' } }] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    return enrichTemplateData('kincare.requested', 'admin1', { kinfolkId: 'fam1', ...data });
+  }
+
+  it('a lone night reads as its date and "start time to be set"', async () => {
+    const out = await requested({ startTimeMs: null, startTimeMsList: [], requestedDateList: ['2026-09-04'] });
+    expect(out.bookingDates).toBe('Fri, Sep 4, start time to be set');
+  });
+
+  it('never shifts the night a day earlier in an American zone, never midnight, never Invalid Date', async () => {
+    const out = await requested({ startTimeMsList: [], requestedDateList: ['2026-10-09'] });
+    expect(out.bookingDates).toBe('Fri, Oct 9, start time to be set');
+    expect(String(out.bookingDates)).not.toMatch(/Invalid|12:00/);
+  });
+
+  it('a night next to a timed visit is counted in the span, earliest first', async () => {
+    const out = await requested({ startTimeMsList: [noonUtc(7)], requestedDateList: ['2026-09-04'] });
+    expect(out.bookingDates).toBe('2 visits, Sep 4 to Sep 7, 1 start time to be set');
+  });
+
+  it('several nights say how many times are still to be set', async () => {
+    const out = await requested({ startTimeMsList: [], requestedDateList: ['2026-09-05', '2026-09-04'] });
+    expect(out.bookingDates).toBe('2 visits, Sep 4 to Sep 5, 2 start times to be set');
+  });
+
+  it('a per-visit message about a night with no time names the night, not a blank', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'families/fam1': { displayName: 'The Rivera Home', primaryUid: 'cli1' },
+        'families/fam1/bookings/b1/kinCares/v1': {
+          status: 'requested', startTime: null, startTimePending: true, requestedDate: '2026-10-09',
+        },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const out = await enrichTemplateData('kincare.cancel.requested', 'admin1', {
+      kinfolkId: 'fam1', batchId: 'b1', visitId: 'v1', startTimeMs: null,
+    });
+    expect(out.bookingDate).toBe('Fri, Oct 9');
+  });
+
+  it('ignores a malformed night rather than printing it', async () => {
+    const out = await requested({ startTimeMsList: [noonUtc(4)], requestedDateList: ['not-a-date', 7] });
+    expect(out.bookingDates).toBe('Fri, Sep 4');
+  });
+});
 describe('enrichTemplateData: pets + invoice variants', () => {
   it('pets.updated: kinName from families/{id}/kin/{kinId}.name (precise)', async () => {
     const ctx = buildDbMock({ docs: { 'families/fam1/kin/k9': { name: 'Mochi' } } });

@@ -269,3 +269,59 @@ describe('getMyBookingsHandler', () => {
     expect(res.upcoming).toEqual([]);
   });
 });
+
+/**
+ * #1098: an Overnight is requested as a NIGHT and the operator sets its start
+ * later, so until then the visit has no start instant. The household must still
+ * see it, under Upcoming, ordered by its night, and told the time is coming.
+ */
+describe('getMyBookingsHandler: visits awaiting a start time (#1098)', () => {
+  const DAY = 86_400_000;
+  const dateIn = (days: number) => new Date(Date.now() + days * DAY).toISOString().slice(0, 10);
+  it('returns startTimePending and requestedDate, and keeps the pending night in Upcoming in date order', async () => {
+    const inTwoDays = Date.now() + 2 * DAY;
+    const inFourDays = Date.now() + 4 * DAY;
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        // Every visit in this envelope awaits a time, so its instant rollups are null.
+        'families/3/bookings/env-n': { envelopeStatus: 'requested', pattern: 'individual', firstStartTime: null, lastStartTime: null },
+        'families/3/bookings/env-t': {
+          envelopeStatus: 'confirmed', pattern: 'individual',
+          firstStartTime: Timestamp.fromMillis(inTwoDays), lastStartTime: Timestamp.fromMillis(inFourDays),
+        },
+      },
+      collectionGroupDocs: {
+        kinCares: [
+          visit('env-t', 'late', { status: 'confirmed', startTime: Timestamp.fromMillis(inFourDays), startTimePending: false, requestedDate: null }),
+          visit('env-n', 'night', { status: 'requested', startTime: null, endTime: null, startTimePending: true, requestedDate: dateIn(3) }),
+          visit('env-t', 'early', { status: 'confirmed', startTime: Timestamp.fromMillis(inTwoDays) }),
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyBookingsHandler } = await import('../src/portal/getMyBookings');
+    const res = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    expect(res.upcoming.map((b) => b.id)).toEqual(['early', 'night', 'late']);
+    const night = res.upcoming.find((b) => b.id === 'night')!;
+    expect(night).toMatchObject({ startTimePending: true, requestedDate: dateIn(3), startTimeMs: null, endTimeMs: null });
+    const early = res.upcoming.find((b) => b.id === 'early')!;
+    // A visit written before #1098 has neither field: not pending, no date.
+    expect(early).toMatchObject({ startTimePending: false, requestedDate: null });
+    // The all-night envelope sorts by its night, not to 1970.
+    expect(res.envelopes.map((e) => e.batchId)).toEqual(['env-t', 'env-n']);
+  });
+
+  it('drops a pending night whose date has passed out of Upcoming, like any past visit', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['3'] } },
+      collectionGroupDocs: {
+        kinCares: [visit('env-n', 'old', { status: 'requested', startTime: null, startTimePending: true, requestedDate: dateIn(-3) })],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyBookingsHandler } = await import('../src/portal/getMyBookings');
+    const res = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    expect(res.upcoming).toEqual([]);
+  });
+});

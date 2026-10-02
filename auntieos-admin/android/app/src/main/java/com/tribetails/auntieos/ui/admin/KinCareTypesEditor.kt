@@ -39,11 +39,19 @@ data class KinCareTypeRow(
         val BLANK = KinCareTypeRow(type = "", duration = "", rate = "")
     }
 }
-/** The switch's label on every row, matching the web editor. */
-const val KIN_CARE_START_TIME_LABEL = "Book at a start time"
+/**
+ * The switch's label on every row, matching the web editor. #1098: kinfolk ask
+ * for the night and the operator sets the start time on approval, so the label
+ * says who sets it.
+ */
+const val KIN_CARE_START_TIME_LABEL = "You set the start time"
 /** The switch's tooltip text, matching the web editor's. */
 const val KIN_CARE_START_TIME_TIP =
-    "Kinfolk pick a start time for this KinCare instead of a time block. Use it for overnights."
+    "Kinfolk ask for the night. You set the start time when you approve the request. Use it for overnights."
+
+/** The switch's accessible name for one row: "You set the start time for Overnight". */
+fun kinCareStartTimeSwitchName(type: String): String =
+    type.trim().let { if (it.isEmpty()) KIN_CARE_START_TIME_LABEL else "$KIN_CARE_START_TIME_LABEL for $it" }
 
 
 /** How the table is ordered on screen. Never how it is stored. */
@@ -123,7 +131,7 @@ fun kinCareStartTimeMissingLength(rows: List<KinCareTypeRow>): String? =
         ?.type?.trim()
 /** The refusal Save shows for [kinCareStartTimeMissingLength], word for word the web editor's. */
 fun kinCareNeedsLengthMessage(type: String): String =
-    "\"$type\" books at a start time, so it needs a length."
+    "\"$type\" needs a length so its end time can be worked out."
 /**
  * Rate as a number for sorting. Unset or unparseable sorts LAST. The blank
  * check is not redundant: without it a priceless row would sort as free.

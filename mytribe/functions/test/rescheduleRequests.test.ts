@@ -258,3 +258,34 @@ describe('listRescheduleRequestsHandler', () => {
     expect(res.requests).toEqual([]);
   });
 });
+
+/**
+ * #1098 backstop: an ask that reached the queue on a night that is still
+ * awaiting its start time (written before the portal refused it) cannot be
+ * ACCEPTED, because accepting would give the visit a time while it still says
+ * it is awaiting one. Declining it is still allowed: that only answers the ask.
+ */
+describe('resolveBookingRescheduleRequestHandler: a night awaiting its start time (#1098)', () => {
+  const night = () =>
+    pendingVisit({ status: 'requested', startTime: null, startTimePending: true, requestedDate: '2026-10-09' });
+
+  it('refuses to accept, before any write', async () => {
+    const ctx = buildDbMock({ docs: { [VISIT]: night() } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { resolveBookingRescheduleRequestHandler } = await import('../src/admin/rescheduleRequests');
+    await expect(
+      resolveBookingRescheduleRequestHandler(callableRequest(acceptArgs, { uid: 'op-1', token: { admin: true } })),
+    ).rejects.toMatchObject({ code: 'failed-precondition', message: expect.stringContaining('start time') });
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('still lets the office decline the ask', async () => {
+    const ctx = buildDbMock({ docs: { [VISIT]: night() } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { resolveBookingRescheduleRequestHandler } = await import('../src/admin/rescheduleRequests');
+    const res = await resolveBookingRescheduleRequestHandler(
+      callableRequest({ ...acceptArgs, decision: 'decline' }, { uid: 'op-1', token: { admin: true } }),
+    );
+    expect(res).toMatchObject({ ok: true, decision: 'decline', startTimeMs: null });
+  });
+});

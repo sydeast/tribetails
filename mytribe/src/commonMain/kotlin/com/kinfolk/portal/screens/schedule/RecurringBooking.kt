@@ -67,10 +67,9 @@ data class KinCareSlot(
      * BOTH fields live on the slot at once, deliberately: switching the plan's
      * mode must not discard what was already typed on the other control. What
      * is SENT is decided by [slotMode], never by which field happens to be
-     * set. That mode is the plan's, EXCEPT for a KinCare the business books at
-     * a start time (#1092): an overnight is twelve hours that can start at any
-     * hour, so it takes a clock time inside a block-mode plan while every other
-     * KinCare in that plan keeps its window.
+     * set. That mode is the plan's, EXCEPT for a night-only KinCare (#1098):
+     * the household asks for the night and the operator sets its start time,
+     * so neither field is read or sent for it.
      */
     val timeBlockId: String? = null,
 )
@@ -84,8 +83,9 @@ data class KinCareSlot(
  * a household may want the 30-minute one in Midday and the 60-minute one in
  * Evening, or two different KinCares in the same window.
  *
- * The one mixture is #1092's: a KinCare in [startTimeServiceIds] books on the
- * clock in either mode, because twelve hours starting at 21:00 fit no window.
+ * The one mixture is #1098's: a KinCare in [startTimeServiceIds] is asked for
+ * by night only, in either mode. The operator sets its start time when she
+ * approves it, because she may have evening visits to finish first.
  * [slotMode] is where that is decided.
  *
  * The web mirror is `BookingTiming` in mytribe/web/src/lib/bookingWizardLogic.ts.
@@ -94,7 +94,7 @@ data class BookingTiming(
     val mode: BookingMode,
     /** Empty in SpecificTime mode, and never empty in TimeBlock mode. */
     val blocks: List<TimeBlock> = emptyList(),
-    /** #1092: catalog ids of KinCares booked at a start time whatever [mode] says. */
+    /** #1098: catalog ids of KinCares the household asks for by night only, whatever [mode] says. */
     val startTimeServiceIds: Set<String> = emptySet(),
 ) {
     companion object {
@@ -117,18 +117,29 @@ fun initialBookingMode(policy: BookingPolicy): BookingMode = when {
     else -> policy.defaultBookingMode
 }
 
-/** #1092: whether [serviceId] is a KinCare the business books at a start time, whatever the plan's mode. */
-fun serviceBooksAtStartTime(serviceId: String, timing: BookingTiming): Boolean =
+/** #1098: whether [serviceId] is a KinCare the household asks for by night only, whatever the plan's mode. */
+fun serviceIsNightOnly(serviceId: String, timing: BookingTiming): Boolean =
     serviceId in timing.startTimeServiceIds
+
 /**
- * The mode ONE KinCare books in: SpecificTime for a start-time KinCare, the
- * plan's mode for every other. Every function below that asks "window or
- * clock" asks this, so the visit sent, the blocker and the control drawn agree.
+ * How ONE KinCare books: by window, by clock, or (#1098) by night only, where
+ * the operator sets the start time on approval. The web mirror is `SlotMode`.
  */
-fun slotMode(serviceId: String, timing: BookingTiming): BookingMode =
-    if (serviceBooksAtStartTime(serviceId, timing)) BookingMode.SpecificTime else timing.mode
+enum class SlotMode { SpecificTime, TimeBlock, NightOnly }
+
+/**
+ * The single decision point for a KinCare: [SlotMode.NightOnly] for a flagged
+ * one, the plan's mode for every other. Every function below that asks
+ * "window, clock or night" asks this, so the visit sent, the blocker and the
+ * control drawn agree.
+ */
+fun slotMode(serviceId: String, timing: BookingTiming): SlotMode = when {
+    serviceIsNightOnly(serviceId, timing) -> SlotMode.NightOnly
+    timing.mode == BookingMode.TimeBlock -> SlotMode.TimeBlock
+    else -> SlotMode.SpecificTime
+}
 /** [slotMode] for a slot. */
-fun slotMode(slot: KinCareSlot, timing: BookingTiming): BookingMode = slotMode(slot.serviceId, timing)
+fun slotMode(slot: KinCareSlot, timing: BookingTiming): SlotMode = slotMode(slot.serviceId, timing)
 /** The window with this id, or null. */
 fun findTimeBlock(blocks: List<TimeBlock>, id: String?): TimeBlock? =
     if (id == null) null else blocks.firstOrNull { it.id == id }
@@ -146,16 +157,25 @@ fun timeBlockLabel(block: TimeBlock): String = "${block.label} (${block.startTim
  * resolver labels back as "Midday block", and the block id travels beside it so
  * the office reads the household's answer rather than inferring it.
  */
-private fun slotStartHHmm(slot: KinCareSlot, timing: BookingTiming): String? =
-    if (slotMode(slot, timing) == BookingMode.TimeBlock) {
-        findTimeBlock(timing.blocks, slot.timeBlockId)?.startTime
-    } else {
-        if (parseHourMinuteOrNull(slot.time) == null) null else slot.time
-    }
+private fun slotStartHHmm(slot: KinCareSlot, timing: BookingTiming): String? = when (slotMode(slot, timing)) {
+    SlotMode.NightOnly -> null
+    SlotMode.TimeBlock -> findTimeBlock(timing.blocks, slot.timeBlockId)?.startTime
+    SlotMode.SpecificTime -> if (parseHourMinuteOrNull(slot.time) == null) null else slot.time
+}
 
-/** Chronological, so the plan a household reads runs down the day. Ties broken by service for determinism. */
+/**
+ * Chronological, so the plan a household reads runs down the day, with a night
+ * (#1098) after every timed visit since it has no start yet. Ties broken by
+ * service for determinism.
+ */
 private fun slotOrder(slots: List<KinCareSlot>, timing: BookingTiming): List<KinCareSlot> =
-    slots.sortedWith(compareBy({ slotStartHHmm(it, timing) ?: "" }, { it.serviceId }))
+    slots.sortedWith(
+        compareBy(
+            { slotMode(it, timing) == SlotMode.NightOnly },
+            { slotStartHHmm(it, timing) ?: "" },
+            { it.serviceId },
+        ),
+    )
 
 /**
  * First blocking reason for the KinCare list, or null when it is sendable. Pure.
@@ -170,9 +190,18 @@ fun slotsBlocker(
     timing: BookingTiming = BookingTiming.SpecificTimeOnly,
 ): String? {
     if (slots.isEmpty()) return "Add at least one KinCare Duration."
-    // #1092: a start-time KinCare inside a block-mode plan is judged on the
-    // clock rules below, and every other slot on the window rules.
-    val (blockSlots, clockSlots) = slots.partition { slotMode(it, timing) == BookingMode.TimeBlock }
+    // #1098: a night-only KinCare needs nothing chosen, only no twin. Every
+    // date in the plan gets every slot, so two of one night-only KinCare are the
+    // same KinCare on the same night, which `requestBooking` refuses too.
+    val seenNights = HashSet<String>()
+    for (s in slots) {
+        if (slotMode(s, timing) != SlotMode.NightOnly) continue
+        if (!seenNights.add("${s.serviceId}@night")) {
+            return "That KinCare is on the plan twice for the same night. Remove one."
+        }
+    }
+    val blockSlots = slots.filter { slotMode(it, timing) == SlotMode.TimeBlock }
+    val clockSlots = slots.filter { slotMode(it, timing) == SlotMode.SpecificTime }
     if (blockSlots.isNotEmpty()) {
         if (blockSlots.any { findTimeBlock(timing.blocks, it.timeBlockId) == null }) {
             return "Choose a time block for every KinCare."
@@ -238,6 +267,21 @@ private fun slotVisitOn(
     timing: BookingTiming,
 ): BookingVisit? {
     val service = services.firstOrNull { it.id == slot.serviceId } ?: return null
+    val kind = slotMode(slot, timing)
+    if (kind == SlotMode.NightOnly) {
+        // #1098: the night as the household tapped it on their own calendar. No
+        // start time and no window: the operator sets the start on approval,
+        // and the server computes the end from it.
+        return BookingVisit(
+            startTimeMs = null,
+            endTimeMs = null,
+            serviceId = service.id,
+            serviceName = service.name,
+            priceCents = service.priceCents ?: service.priceMinCents,
+            timeBlockId = null,
+            date = d.toString(),
+        )
+    }
     val t = parseHourMinuteOrNull(slotStartHHmm(slot, timing) ?: return null) ?: return null
     val dt = LocalDateTime(d.year, d.month, d.dayOfMonth, t.hour, t.minute)
     return BookingVisit(
@@ -246,9 +290,48 @@ private fun slotVisitOn(
         serviceId = service.id,
         serviceName = service.name,
         priceCents = service.priceCents ?: service.priceMinCents,
-        // A start-time KinCare (#1092) sends no window, even in a block-mode plan.
-        timeBlockId = if (slotMode(slot, timing) == BookingMode.TimeBlock) slot.timeBlockId else null,
+        timeBlockId = if (kind == SlotMode.TimeBlock) slot.timeBlockId else null,
     )
+}
+
+/** A night's `YYYY-MM-DD` as a [LocalDate], or null when it is not one. */
+private fun nightOf(v: BookingVisit): LocalDate? =
+    v.date?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+
+/**
+ * #1098: the "YYYY-MM-DD" a planned visit falls on, in [tz]: its night for a
+ * night-only visit, its start's calendar day for the rest. The web mirror is
+ * `plannedVisitDayKey`.
+ */
+fun plannedVisitDayKey(v: BookingVisit, tz: TimeZone = TimeZone.currentSystemDefault()): String {
+    val start = v.startTimeMs ?: return v.date.orEmpty()
+    return Instant.fromEpochMilliseconds(start).toLocalDateTime(tz).date.toString()
+}
+
+/**
+ * The instant a planned visit sorts at: its start, or for a night (#1098) the
+ * last millisecond of that day, so it follows every timed visit on its own day
+ * and precedes the next day's.
+ */
+private fun plannedVisitSortMs(v: BookingVisit, tz: TimeZone): Long {
+    v.startTimeMs?.let { return it }
+    val night = nightOf(v) ?: return Long.MAX_VALUE
+    return LocalDateTime(night.plus(1, DateTimeUnit.DAY), LocalTime(0, 0)).toInstant(tz).toEpochMilliseconds() - 1
+}
+
+/** Chronological, nights last within their day, ties broken by service. */
+private fun plannedVisitOrder(tz: TimeZone): Comparator<BookingVisit> =
+    compareBy({ plannedVisitSortMs(it, tz) }, { it.serviceId })
+
+/**
+ * Whether a planned visit is already in the past: a timed one once its start
+ * has passed, a night (#1098) only once its date is before today in [tz].
+ * Tonight is still bookable; the server agrees.
+ */
+private fun isPastPlannedVisit(v: BookingVisit, nowMs: Long, tz: TimeZone): Boolean {
+    val start = v.startTimeMs
+        ?: return v.date.orEmpty() < Instant.fromEpochMilliseconds(nowMs).toLocalDateTime(tz).date.toString()
+    return start <= nowMs
 }
 
 /**
@@ -286,7 +369,7 @@ fun buildWeeklyVisits(
                 if (out.size >= MAX_RECURRING_VISITS) break
                 val visit = slotVisitOn(d, slot, services, tz, timing)
                     ?.let { anchorOpenBlockVisit(it, timing.blocks, nowMs, tz) }
-                if (visit != null && visit.startTimeMs > nowMs) out.add(visit)
+                if (visit != null && !isPastPlannedVisit(visit, nowMs, tz)) out.add(visit)
             }
         }
         offset++
@@ -313,7 +396,7 @@ fun buildVisits(
             slotVisitOn(d, slot, services, tz, timing)?.let { out.add(it) }
         }
     }
-    return out.sortedWith(compareBy({ it.startTimeMs }, { it.serviceId }))
+    return out.sortedWith(plannedVisitOrder(tz))
 }
 
 /**
@@ -355,11 +438,12 @@ private fun blockEndMs(d: LocalDate, block: TimeBlock, tz: TimeZone): Long? {
  * [pastPlannedVisits] still flags it. Pure ([nowMs] injected).
  */
 fun anchorOpenBlockVisit(visit: BookingVisit, blocks: List<TimeBlock>, nowMs: Long, tz: TimeZone): BookingVisit {
-    if (visit.startTimeMs > nowMs) return visit
-    // A clock visit, including a start-time KinCare in a block plan (#1092),
-    // carries no window, so its start is what the household typed: never moved.
+    // A night (#1098) has no start to move.
+    val start = visit.startTimeMs ?: return visit
+    if (start > nowMs) return visit
+    // A clock visit carries no window, so its start is what the household typed: never moved.
     val block = findTimeBlock(blocks, visit.timeBlockId) ?: return visit
-    val day = Instant.fromEpochMilliseconds(visit.startTimeMs).toLocalDateTime(tz).date
+    val day = Instant.fromEpochMilliseconds(start).toLocalDateTime(tz).date
     val endMs = blockEndMs(day, block, tz) ?: return visit
     val earliest = nowMs + OPEN_BLOCK_LEAD_MINUTES * 60_000L
     val anchored = ((earliest + OPEN_BLOCK_STEP_MS - 1) / OPEN_BLOCK_STEP_MS) * OPEN_BLOCK_STEP_MS
@@ -374,7 +458,7 @@ fun anchorOpenBlockVisits(
     tz: TimeZone = TimeZone.currentSystemDefault(),
 ): List<BookingVisit> =
     visits.map { anchorOpenBlockVisit(it, blocks, nowMs, tz) }
-        .sortedWith(compareBy({ it.startTimeMs }, { it.serviceId }))
+        .sortedWith(plannedVisitOrder(tz))
 
 /**
  * Visits in the plan whose start has ALREADY PASSED.
@@ -389,8 +473,11 @@ fun anchorOpenBlockVisits(
  * household has no control to nudge. So the plan says so while it can still be
  * fixed, in both modes. Pure ([nowMs] injected).
  */
-fun pastPlannedVisits(visits: List<BookingVisit>, nowMs: Long): List<BookingVisit> =
-    visits.filter { it.startTimeMs <= nowMs }
+fun pastPlannedVisits(
+    visits: List<BookingVisit>,
+    nowMs: Long,
+    tz: TimeZone = TimeZone.currentSystemDefault(),
+): List<BookingVisit> = visits.filter { isPastPlannedVisit(it, nowMs, tz) }
 
 /**
  * #546 / #547: what a booking is estimated to cost, computed from the ACTUAL
@@ -466,6 +553,11 @@ data class RenderedPlannedVisit(
      * "11:00 AM" back at them would be reporting a precision they never gave.
      */
     val timeBlockLabel: String? = null,
+    /**
+     * #1098: true for a night-only visit. Its [time] is empty and
+     * [plannedVisitLine] says the Auntie sets the start instead.
+     */
+    val startTimeSetByAuntie: Boolean = false,
 )
 
 /**
@@ -489,14 +581,28 @@ fun renderPlannedVisits(
     visits: List<BookingVisit>,
     tz: TimeZone = TimeZone.currentSystemDefault(),
     blocks: List<TimeBlock> = emptyList(),
-): List<RenderedPlannedVisit> = visits.sortedBy { it.startTimeMs }.map { v ->
-    val dt = Instant.fromEpochMilliseconds(v.startTimeMs).toLocalDateTime(tz)
+): List<RenderedPlannedVisit> = visits.sortedWith(plannedVisitOrder(tz)).map { v ->
+    val start = v.startTimeMs
+    val block = findTimeBlock(blocks, v.timeBlockId)
+    if (start == null) {
+        // #1098: a night is drawn from the calendar day it was tapped on, never from an instant.
+        val night = nightOf(v)
+        return@map RenderedPlannedVisit(
+            weekday = night?.let { WEEKDAY_ABBR[it.dayOfWeek.ordinal] }.orEmpty(),
+            date = night?.let { "${MONTH_ABBR[it.month.ordinal]} ${it.day}" } ?: v.date.orEmpty(),
+            time = "",
+            serviceName = v.serviceName,
+            key = "night:${v.date}-${v.serviceId}-${v.timeBlockId ?: ""}",
+            timeBlockLabel = block?.let { timeBlockLabel(it) },
+            startTimeSetByAuntie = true,
+        )
+    }
+    val dt = Instant.fromEpochMilliseconds(start).toLocalDateTime(tz)
     val hour12 = when (val h = dt.hour % 12) {
         0 -> 12
         else -> h
     }
     val minute = if (dt.minute < 10) "0${dt.minute}" else dt.minute.toString()
-    val block = findTimeBlock(blocks, v.timeBlockId)
     RenderedPlannedVisit(
         weekday = WEEKDAY_ABBR[dt.date.dayOfWeek.ordinal],
         date = "${MONTH_ABBR[dt.date.month.ordinal]} ${dt.date.day}",
@@ -504,7 +610,7 @@ fun renderPlannedVisits(
         serviceName = v.serviceName,
         // Two KinCares of one duration in one day are told apart by the time in
         // clock mode and by the window in block mode, where every start is equal.
-        key = "${v.startTimeMs}-${v.serviceId}-${v.timeBlockId ?: ""}",
+        key = "$start-${v.serviceId}-${v.timeBlockId ?: ""}",
         timeBlockLabel = block?.let { timeBlockLabel(it) },
     )
 }
@@ -516,7 +622,10 @@ fun renderPlannedVisits(
  * is about WHICH DAYS, and a block does not make a day any less specific.
  */
 fun plannedVisitLine(v: RenderedPlannedVisit): String =
-    if (v.timeBlockLabel != null) {
+    if (v.startTimeSetByAuntie) {
+        // #1098: the night is what the household chose; the start is the Auntie's.
+        "${v.weekday}, ${v.date}, start time set by your Auntie"
+    } else if (v.timeBlockLabel != null) {
         "${v.weekday}, ${v.date}, ${v.timeBlockLabel}"
     } else {
         "${v.weekday}, ${v.date} at ${v.time}"

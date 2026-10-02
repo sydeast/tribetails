@@ -1,6 +1,8 @@
 package com.kinfolk.portal.util
 
+import com.kinfolk.portal.portal.Booking
 import kotlin.time.Instant
+import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 
@@ -38,3 +40,12 @@ fun calendarBadgeFromLabel(label: String?): CalendarBadge? {
     val day = tokens.firstOrNull { t -> t.all { it.isDigit() } && t.length <= 2 } ?: return null
     return CalendarBadge(month.take(3).uppercase(), day.padStart(2, '0'))
 }
+/** Badge for a plain calendar date. */
+fun calendarBadge(date: LocalDate): CalendarBadge =
+    CalendarBadge(MonthAbbrev[date.month.ordinal], date.day.toString().padStart(2, '0'))
+/**
+ * Badge for a booked visit: its start, or for a night still waiting on its
+ * start (#1098) the night the household asked for. Never midnight of a guess.
+ */
+fun bookingCalendarBadge(b: Booking, timeZone: TimeZone = TimeZone.currentSystemDefault()): CalendarBadge? =
+    b.requestedNight()?.let { calendarBadge(it) } ?: calendarBadge(b.startTimeMs, timeZone)

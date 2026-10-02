@@ -144,6 +144,33 @@ describe('onBookingEnvelopeCreate — #532, ONE notification per request', () =>
   });
 });
 
+describe('onBookingEnvelopeCreate: nights awaiting a start time (#1098)', () => {
+  it('carries the requested night of a visit with no start time, so the message can name it', async () => {
+    await onBookingEnvelopeCreate.run(
+      envelopeEvent({ envelopeStatus: 'requested', visitCount: 2, serviceName: 'Overnight' }, [
+        { startTime: null, startTimePending: true, requestedDate: '2026-09-06' },
+        { startTime: ts(SEP4), startTimePending: false, requestedDate: null },
+      ]),
+    );
+    const arg = mocks.enqueue.mock.calls[0]![0];
+    expect(arg.data.startTimeMsList).toEqual([SEP4]);
+    expect(arg.data.requestedDateList).toEqual(['2026-09-06']);
+    expect(arg.data.visitCount).toBe(2);
+  });
+
+  it('a request of nights only still dispatches, with an empty instant list and every night', async () => {
+    await onBookingEnvelopeCreate.run(
+      envelopeEvent({ envelopeStatus: 'requested', visitCount: 2 }, [
+        { startTime: null, startTimePending: true, requestedDate: '2026-09-07' },
+        { startTime: null, startTimePending: true, requestedDate: '2026-09-05' },
+      ]),
+    );
+    const arg = mocks.enqueue.mock.calls[0]![0];
+    expect(arg.data.startTimeMs).toBeNull();
+    expect(arg.data.startTimeMsList).toEqual([]);
+    expect(arg.data.requestedDateList).toEqual(['2026-09-05', '2026-09-07']);
+  });
+});
 describe('onBookingsWrite — no longer emits kincare.requested (#532)', () => {
   it('a requested visit CREATE dispatches nothing at all', async () => {
     // This is the invariant that keeps the duplicate from coming back: the

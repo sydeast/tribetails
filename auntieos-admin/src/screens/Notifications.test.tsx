@@ -802,6 +802,25 @@ describe('Notifications quick actions (issue #20)', () => {
     expect(await screen.findByText(/not found/i)).toBeInTheDocument();
   });
 
+  it('#1098: a quick approve of an Overnight with no start time shows the server refusal, not a generic error', async () => {
+    batchUpdateBookings.mockResolvedValue({
+      ok: true,
+      action: 'APPROVE',
+      updated: 0,
+      failed: [{ id: 'b1', error: 'Set the start time before approving this Overnight.' }],
+    });
+    mockStreams({
+      status: 'ready',
+      data: [entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })],
+    });
+    render(<Notifications />);
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    expect(
+      await screen.findByText(/Set the start time before approving this Overnight\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Updating the booking failed.')).toBeNull();
+  });
+
   it('fails loud when the booking call rejects', async () => {
     batchUpdateBookings.mockRejectedValue(new Error('permission-denied'));
     mockStreams({

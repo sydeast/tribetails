@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.*
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
@@ -467,12 +468,27 @@ fun ScheduleViewScreen(
             // ── Stage 3 / 16.5: incoming MyTribe booking requests (per-envelope) ──
             state.incomingError?.let { msg ->
                 item {
-                    AuntieBanner(
-                        tone = AuntieBannerTone.Error,
-                        title = "Incoming requests",
-                        icon = Lucide.CircleAlert,
-                        onDismiss = { viewModel.clearIncomingError() },
-                    ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.error) }
+                    if (state.incomingOverride != null) {
+                        // #1098: a busy or visit clash on an Overnight's chosen
+                        // start time. Same banner and same override rule as a
+                        // refused move, with the approval's own button.
+                        ScheduleWriteBanner(
+                            message = msg,
+                            override = state.incomingOverride,
+                            busy = state.seriesActionBatchId != null,
+                            title = "Incoming requests",
+                            overrideLabel = "Approve anyway",
+                            onOverride = { viewModel.retryIncomingWithOverride() },
+                            onDismiss = { viewModel.clearIncomingError() },
+                        )
+                    } else {
+                        AuntieBanner(
+                            tone = AuntieBannerTone.Error,
+                            title = "Incoming requests",
+                            icon = Lucide.CircleAlert,
+                            onDismiss = { viewModel.clearIncomingError() },
+                        ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.error) }
+                    }
                 }
             }
             state.seriesActionMessage?.let { msg ->
@@ -497,6 +513,8 @@ fun ScheduleViewScreen(
                                     series = series,
                                     inFlight = state.seriesActionBatchId == series.batchId,
                                     actionsLocked = state.seriesActionBatchId != null,
+                                    startTimes = state.seriesStartTimes,
+                                    onSetStartTime = { visitId, time -> viewModel.setSeriesStartTime(series, visitId, time) },
                                     onApprove = { viewModel.approveSeries(series) },
                                     onCancel = { viewModel.cancelSeries(series) },
                                 )
@@ -2917,6 +2935,9 @@ private fun visitRequestWhen(row: VisitRequestRow): String = when (row) {
         "${visitRequestTime(row.dto.currentStartTimeMs)} → ${visitRequestTime(row.dto.proposedStartTimeMs)}"
 }
 
+/** The minutes an Overnight's start can be set to, the New booking wizard's steps. */
+private val NIGHT_MINUTE_STEPS = listOf(0, 15, 30, 45)
+
 /** "Not set" rather than an epoch, when the record carries no time. */
 private fun visitRequestTime(ms: Long?): String {
     if (ms == null) return "Not set"
@@ -2929,10 +2950,14 @@ private fun IncomingSeriesRow(
     series: IncomingSeries,
     inFlight: Boolean,
     actionsLocked: Boolean,
+    startTimes: Map<String, LocalTime>,
+    onSetStartTime: (visitId: String, time: LocalTime) -> Unit,
     onApprove: () -> Unit,
     onCancel: () -> Unit,
 ) {
     val c = AuntieTheme.colors
+    val nights = series.pendingNights
+    val ready = seriesReadyToApprove(series, startTimes)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
             text = series.kinfolkName.ifBlank { "Kinfolk request" },
@@ -2948,11 +2973,51 @@ private fun IncomingSeriesRow(
             style = AuntieTheme.typography.bodySmall,
             color = c.textDim,
         )
+        // #1098: an Overnight is asked for as a night. Its start time is the
+        // operator's to set, with the same hour and minute pickers the New
+        // booking wizard uses, and Approve waits until every night has one.
+        nights.forEach { night ->
+            val picked = startTimes[seriesNightKey(series, night.visitId)]
+            val name = night.serviceType.ifBlank { series.serviceType.ifBlank { "KinCare" } }
+            val title = if (night.requestedDate.isBlank()) name else "$name on ${nightLabel(night.requestedDate)}"
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(text = title, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    AuntieDropdownField(
+                        value = picked?.hour,
+                        options = (0..23).toList(),
+                        onSelect = { h -> onSetStartTime(night.visitId, LocalTime.of(h, picked?.minute ?: 0)) },
+                        displayText = { formatClock(it, 0).replace(":00", "") },
+                        label = "Start time",
+                        placeholder = "Hour",
+                        enabled = !actionsLocked,
+                        modifier = Modifier
+                            .fillMaxWidth(0.5f)
+                            .semantics { contentDescription = "Start time for $title" },
+                    )
+                    AuntieDropdownField(
+                        value = picked?.minute,
+                        options = NIGHT_MINUTE_STEPS,
+                        onSelect = { m -> picked?.let { onSetStartTime(night.visitId, LocalTime.of(it.hour, m)) } },
+                        displayText = { ":%02d".format(it) },
+                        label = "Minute",
+                        placeholder = ":00",
+                        enabled = !actionsLocked && picked != null,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             PrimaryButton(
-                label = if (inFlight) "Working…" else "Approve series",
+                label = when {
+                    inFlight -> "Working…"
+                    !ready && nights.size == 1 -> "Set the start time first"
+                    !ready -> "Set the start times first"
+                    else -> "Approve series"
+                },
                 onClick = onApprove,
-                enabled = !actionsLocked,
+                enabled = !actionsLocked && ready,
             )
             GhostButton(
                 label = "Cancel",

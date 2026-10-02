@@ -323,4 +323,12 @@ describe('duplicateVisitKey', () => {
     expect(duplicateVisitKey([at(t), at(t)], '')).toBe('30Minute@2026-09-04@block:midday');
     expect(duplicateVisitKey([at(t), at(t + 86_400_000)], '')).toBeNull();
   });
+
+  it('#1098: keys a night awaiting its start time on (KinCare, night)', async () => {
+    const { duplicateVisitKey } = await import('../src/portal/requestBooking');
+    const night = (date: string, serviceId = 'Overnight') => ({ startTimeMs: null, serviceId, requestedDate: date });
+    expect(duplicateVisitKey([night('2026-10-09'), night('2026-10-09')], TZ)).toBe('Overnight@date:2026-10-09');
+    expect(duplicateVisitKey([night('2026-10-09'), night('2026-10-10')], TZ)).toBeNull();
+    expect(duplicateVisitKey([night('2026-10-09'), night('2026-10-09', 'Overnight2')], TZ)).toBeNull();
+  });
 });

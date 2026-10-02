@@ -1,6 +1,11 @@
 package com.tribetails.auntieos.ui.admin.scheduling
 
 import com.tribetails.auntieos.data.repository.IncomingKinCare
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
  * Stage 3 / 16.5: a group of incoming (requested) kinCares that belong to ONE
@@ -19,7 +24,59 @@ data class IncomingSeries(
 ) {
     val visitCount: Int get() = visits.size
     val isSeries: Boolean get() = visits.size > 1
+
+    /**
+     * #1098: the visits asked for as a NIGHT (an Overnight), each waiting for
+     * the operator to set its start time before the request can be approved.
+     */
+    val pendingNights: List<IncomingKinCare> get() = visits.filter { it.startTimePending }
 }
+
+/**
+ * The key one night's chosen start time is held under. A visit id is unique
+ * only inside its household and request, so the key carries both.
+ */
+fun seriesNightKey(series: IncomingSeries, visitId: String): String =
+    "${series.familyId}/${series.batchId}/$visitId"
+
+/** Whether every night in [series] has a start time in [picks]. A series with no night is always ready. */
+fun seriesReadyToApprove(series: IncomingSeries, picks: Map<String, LocalTime>): Boolean =
+    series.pendingNights.all { picks[seriesNightKey(series, it.visitId)] != null }
+
+/**
+ * The `startTimes` payload for approving [series]: each night's chosen wall
+ * clock on its own requested date, read in [zone], as epoch ms by visit id.
+ * Null when a night has no time yet or no readable date.
+ */
+fun seriesStartTimesMs(
+    series: IncomingSeries,
+    picks: Map<String, LocalTime>,
+    zone: ZoneId,
+): Map<String, Long>? {
+    val out = LinkedHashMap<String, Long>()
+    for (night in series.pendingNights) {
+        val time = picks[seriesNightKey(series, night.visitId)] ?: return null
+        val date = runCatching { LocalDate.parse(night.requestedDate) }.getOrNull() ?: return null
+        out[night.visitId] = date.atTime(time).atZone(zone).toInstant().toEpochMilli()
+    }
+    return out
+}
+
+/**
+ * The zone a night's start time is read in: `business_settings.timeZone`,
+ * because that is the zone the server derived the night in and checks the
+ * time against. Only a blank or unknown zone falls back to the device's.
+ */
+fun businessZoneOf(timeZone: String): ZoneId =
+    timeZone.trim().takeIf { it.isNotEmpty() }
+        ?.let { runCatching { ZoneId.of(it) }.getOrNull() }
+        ?: ZoneId.systemDefault()
+
+private val NIGHT_FORMAT = DateTimeFormatter.ofPattern("EEE, MMM d", Locale.US)
+
+/** `2026-10-09` -> "Fri, Oct 9". A value that is not a date is shown as it came. */
+fun nightLabel(requestedDate: String): String =
+    runCatching { LocalDate.parse(requestedDate).format(NIGHT_FORMAT) }.getOrDefault(requestedDate)
 
 /**
  * Groups the flat incoming-requested queue into per-envelope series, newest
@@ -46,7 +103,9 @@ fun groupIncomingBySeries(
         .groupBy { it.familyId to it.batchId }
         .map { (key, visits) ->
             val (kinfolkId, batchId) = key
-            val sorted = visits.sortedBy { it.startTime }
+            // A night awaiting its start time (#1098) has a blank startTime, so
+            // it sorts by its requested date instead of jumping to the front.
+            val sorted = visits.sortedBy { it.startTime.ifBlank { it.requestedDate } }
             val head = sorted.first()
             IncomingSeries(
                 batchId = batchId,
@@ -57,4 +116,4 @@ fun groupIncomingBySeries(
                 visits = sorted,
             )
         }
-        .sortedBy { it.visits.firstOrNull()?.startTime ?: "" }
+        .sortedBy { series -> series.visits.firstOrNull()?.let { it.startTime.ifBlank { it.requestedDate } } ?: "" }
