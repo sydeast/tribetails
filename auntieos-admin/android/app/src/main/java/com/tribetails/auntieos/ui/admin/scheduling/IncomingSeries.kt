@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin.scheduling
 
+import com.tribetails.auntieos.data.model.resolveBusinessTimeZone
 import com.tribetails.auntieos.data.repository.IncomingKinCare
 import java.time.LocalDate
 import java.time.LocalTime
@@ -65,12 +66,10 @@ fun seriesStartTimesMs(
 /**
  * The zone a night's start time is read in: `business_settings.timeZone`,
  * because that is the zone the server derived the night in and checks the
- * time against. Only a blank or unknown zone falls back to the device's.
+ * time against. A blank or unknown zone resolves to the server's own default,
+ * America/Chicago (#1109), never to the device's zone.
  */
-fun businessZoneOf(timeZone: String): ZoneId =
-    timeZone.trim().takeIf { it.isNotEmpty() }
-        ?.let { runCatching { ZoneId.of(it) }.getOrNull() }
-        ?: ZoneId.systemDefault()
+fun businessZoneOf(timeZone: String): ZoneId = ZoneId.of(resolveBusinessTimeZone(timeZone))
 
 private val NIGHT_FORMAT = DateTimeFormatter.ofPattern("EEE, MMM d", Locale.US)
 

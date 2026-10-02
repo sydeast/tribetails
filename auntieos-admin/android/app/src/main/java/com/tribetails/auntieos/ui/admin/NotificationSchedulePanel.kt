@@ -14,6 +14,7 @@ import com.composables.icons.lucide.Bell
 import com.composables.icons.lucide.Clock
 import com.composables.icons.lucide.Lucide
 import com.tribetails.auntieos.data.model.BusinessSettings
+import com.tribetails.auntieos.data.model.resolveBusinessTimeZone
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieDropdownField
@@ -120,7 +121,7 @@ internal fun NotificationSchedulePanel(
     DenPanel(
         title = "Notification schedule",
         subtitle = "Whether automatic notices reach households at all, and what time of day the daily jobs run.",
-        detail = "Times are in ${settings.timeZone}",
+        detail = "Times are in ${resolveBusinessTimeZone(settings.timeZone)}",
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(dims.space3)) {
             if (note != null) {

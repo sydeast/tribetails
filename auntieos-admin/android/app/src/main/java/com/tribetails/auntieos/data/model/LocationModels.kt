@@ -164,7 +164,10 @@ data class BusinessSettings(
     var businessEmail: String = "",
     var businessPhone: String = "",
     var businessAddress: String = "",
-    var timeZone: String = "America/New_York",
+    // Blank means "never set" (#1109). Readers resolve it through
+    // [resolveBusinessTimeZone], the same America/Chicago the server uses, and the
+    // Booking rules panel flags it as something to fix.
+    var timeZone: String = "",
     var serviceRates: Map<String, String> = emptyMap(),
     // name -> minutes as a string. SPARSE: only the types whose length the
     // operator stated outright in Settings. Everything else falls back to the
@@ -373,4 +376,15 @@ data class LocationSharingPreferences(
     var notifyOnDeparture: Boolean = true,
     var updatedAt: String = ""
 )
-
+/**
+ * Operator ruling 2026-08-11: the business runs on America/Chicago. The zone a
+ * missing or unreadable `business_settings.timeZone` means, matching
+ * `FALLBACK_BUSINESS_TIME_ZONE` on the server and `DEFAULT_BUSINESS_TIME_ZONE`
+ * on the admin web (#1109). Change all of them together or none.
+ */
+const val DEFAULT_BUSINESS_TIME_ZONE = "America/Chicago"
+/** The zone the server reads times in: [stored] when this device can read it, else the default. */
+fun resolveBusinessTimeZone(stored: String?): String {
+    val trimmed = stored?.trim().orEmpty()
+    return if (trimmed.isNotEmpty() && runCatching { java.time.ZoneId.of(trimmed) }.isSuccess) trimmed else DEFAULT_BUSINESS_TIME_ZONE
+}

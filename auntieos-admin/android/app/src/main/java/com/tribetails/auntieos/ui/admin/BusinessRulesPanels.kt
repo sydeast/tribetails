@@ -24,6 +24,7 @@ import com.composables.icons.lucide.Clock
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.MapPin
 import com.tribetails.auntieos.data.model.BusinessSettings
+import com.tribetails.auntieos.data.model.DEFAULT_BUSINESS_TIME_ZONE
 import com.tribetails.auntieos.data.model.TimeBlockDefinition
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
@@ -324,7 +325,7 @@ internal fun List<TimeBlockRow>.toDefinitions(): List<TimeBlockDefinition> = sor
 internal fun timeZoneOptions(current: String): List<String> {
     val all = sortedSetOf<String>()
     all += runCatching { ZoneId.getAvailableZoneIds() }.getOrDefault(emptySet())
-    all += "America/New_York"
+    all += DEFAULT_BUSINESS_TIME_ZONE
     val trimmed = current.trim()
     if (trimmed.isNotEmpty()) all += trimmed
     return all.toList()
@@ -359,7 +360,8 @@ internal fun bookingRulesError(
     if (defaultBookingMode == "SPECIFIC_TIME" && !allowSpecificTimeBooking) {
         return "Specific times are turned off, so they cannot be the default. Pick the other mode."
     }
-    if (!isUsableTimeZone(timeZone)) {
+    // Blank is "not set yet" (#1109), flagged by its own banner, not a draft error.
+    if (timeZone.isNotBlank() && !isUsableTimeZone(timeZone)) {
         return "This phone cannot read a time in \"$timeZone\". Pick a zone from the list."
     }
     if (parseWholeNumber(blockDurationHours, 1, 24) == null) return "Default block length: enter 1 to 24 hours."
@@ -446,12 +448,22 @@ internal fun BookingRulesPanel(
                 }
             }
 
+            if (settings.timeZone.isBlank()) {
+                AuntieBanner(tone = AuntieBannerTone.Warning, title = "Set your business time zone") {
+                    Text(
+                        "No zone is saved, so the phone line, quote expiry and visit dates are read in " +
+                            "$DEFAULT_BUSINESS_TIME_ZONE until you pick one.",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textPrimary,
+                    )
+                }
+            }
             AuntieFieldLabel(text = "Time zone")
             AuntieDropdownField(
                 value = timeZone,
                 options = timeZoneOptions(settings.timeZone),
                 onSelect = { timeZone = it },
-                displayText = { it },
+                displayText = { it.ifBlank { "Choose a time zone" } },
                 label = "Business time zone",
                 modifier = Modifier.fillMaxWidth(),
             )

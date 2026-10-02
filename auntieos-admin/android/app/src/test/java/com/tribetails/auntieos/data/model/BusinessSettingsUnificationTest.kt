@@ -27,7 +27,8 @@ class BusinessSettingsUnificationTest {
         assertEquals("", s.businessEmail)
         assertEquals("", s.businessPhone)
         assertEquals("", s.businessAddress)
-        assertEquals("America/New_York", s.timeZone)
+        // Blank is "never set" (#1109); readers resolve it with resolveBusinessTimeZone.
+        assertEquals("", s.timeZone)
         assertTrue(s.serviceRates.isEmpty())
         assertTrue(s.businessHours.isEmpty())
 

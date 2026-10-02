@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.ui.admin
 
 import com.tribetails.auntieos.data.model.BusinessSettings
+import com.tribetails.auntieos.data.model.DEFAULT_BUSINESS_TIME_ZONE
 import com.tribetails.auntieos.data.model.TimeBlockDefinition
 import com.tribetails.auntieos.ui.admin.scheduling.CalendarViewMode
 import org.junit.Assert.assertEquals
@@ -21,7 +22,7 @@ class BusinessRulesPanelsTest {
 
     private val loaded = BusinessSettings(
         businessName = "Tribe Tails",
-        timeZone = "America/New_York",
+        timeZone = "America/Chicago",
         venmoHandle = "@tribetails",
         calendarSyncId = "cal@group.calendar.google.com",
     )
@@ -213,7 +214,7 @@ class BusinessRulesPanelsTest {
         hours: String = "4",
         buffer: String = "30",
         blocks: List<TimeBlockRow> = listOf(row()),
-        zone: String = "America/New_York",
+        zone: String = "America/Chicago",
     ) = bookingRulesError(mode, specific, block, hours, buffer, blocks, zone)
 
     @Test
@@ -250,9 +251,14 @@ class BusinessRulesPanelsTest {
     }
 
     @Test
+    fun `a blank zone is not a draft error, it is flagged on its own banner (#1109)`() {
+        assertNull(bookingError(zone = ""))
+        assertNull(bookingError(zone = "   "))
+    }
+    @Test
     fun `the zone picker keeps a stored value this phone does not know`() {
         assertTrue(timeZoneOptions("Mars/Olympus").contains("Mars/Olympus"))
-        assertTrue(timeZoneOptions("").contains("America/New_York"))
+        assertTrue(timeZoneOptions("").contains(DEFAULT_BUSINESS_TIME_ZONE))
     }
 
     @Test
