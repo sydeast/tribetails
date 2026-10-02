@@ -66,8 +66,13 @@ interface AuntieDataSource {
     suspend fun recordPayment(payment: Payment): WriteResult<String>
 
     // Booking write operations - sessions in DRAFT status are the "pending bookings" concept
-    suspend fun approveBooking(bookingId: String): WriteResult<Unit>
-    suspend fun rejectBooking(bookingId: String): WriteResult<Unit>
+    // #1129: visitId is the kinCares visit id the row was booked from (see bulkVisitId), null for a
+    // direct session. Real clients send it to the server; the status flip happens there, not here.
+    suspend fun approveBooking(bookingId: String, visitId: String? = null): WriteResult<Unit>
+    suspend fun rejectBooking(bookingId: String, visitId: String? = null): WriteResult<Unit>
+    /** Calls off an approved visit. Same server path as [rejectBooking] with the CANCEL action. */
+    suspend fun cancelBooking(bookingId: String, visitId: String? = null): WriteResult<Unit> =
+        rejectBooking(bookingId, visitId)
     suspend fun createBooking(booking: KinCareSession): WriteResult<String>
 
     /**

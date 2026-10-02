@@ -146,7 +146,7 @@ class FakeAuntieDataSource(
             WriteResult.Ok(Unit)
         }
 
-    override suspend fun approveBooking(bookingId: String): WriteResult<Unit> {
+    override suspend fun approveBooking(bookingId: String, visitId: String?): WriteResult<Unit> {
         approveErrors[bookingId]?.let { return WriteResult.Err(it) }
         val current = _sessions.value
         if (current is FirestoreResult.Data) {
@@ -161,7 +161,7 @@ class FakeAuntieDataSource(
         return WriteResult.Ok(Unit)
     }
 
-    override suspend fun rejectBooking(bookingId: String): WriteResult<Unit> {
+    override suspend fun rejectBooking(bookingId: String, visitId: String?): WriteResult<Unit> {
         rejectErrors[bookingId]?.let { return WriteResult.Err(it) }
         val current = _sessions.value
         if (current is FirestoreResult.Data) {

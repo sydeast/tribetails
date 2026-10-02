@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.web.data
 
 import com.tribetails.auntieos.web.observability.runCatchingCancellable
+import com.tribetails.auntieos.web.screens.booking.bulkFailureReason
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.KSerializer
@@ -1608,8 +1609,32 @@ class FirestoreClient {
             }
         else platformBookingRequestsStream()
     }
-    suspend fun approveBooking(bookingId: String): WriteResult<Unit> = platformApproveBooking(bookingId)
-    suspend fun rejectBooking(bookingId: String): WriteResult<Unit> = platformRejectBooking(bookingId)
+    // #1129: single-row Approve / Reject / Cancel go through the server, never a status PATCH. A row booked
+    // from a kinCares visit uses batchUpdateBookings (busy and closed-day checks, the household's answer,
+    // the Overnight start-time refusal). batchUpdateBookings does not resolve kin_care_sessions ids, so a
+    // direct session (no visit id) uses transitionBookingStatus, the audited, transition-guarded callable.
+    suspend fun approveBooking(bookingId: String, visitId: String? = null): WriteResult<Unit> =
+        bookingTransition(bookingId, visitId, "APPROVE")
+    suspend fun rejectBooking(bookingId: String, visitId: String? = null): WriteResult<Unit> =
+        bookingTransition(bookingId, visitId, "REJECT")
+    suspend fun cancelBooking(bookingId: String, visitId: String? = null): WriteResult<Unit> =
+        bookingTransition(bookingId, visitId, "CANCEL")
+    private suspend fun bookingTransition(bookingId: String, visitId: String?, action: String): WriteResult<Unit> {
+        if (visitId.isNullOrBlank()) {
+            val payload = buildJsonObject {
+                put("sessionId", JsonPrimitive(bookingId))
+                put("action", JsonPrimitive(action))
+            }
+            return when (val r = platformInvokeCallable("transitionBookingStatus", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+                is WriteResult.Err -> WriteResult.Err(r.message)
+                is WriteResult.Ok -> WriteResult.Ok(Unit)
+            }
+        }
+        return when (val r = batchUpdateBookings(listOf(visitId), action)) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> singleBookingOutcome(r.value)
+        }
+    }
     suspend fun createBookingRequest(booking: KinCareSession): WriteResult<String> =
         platformCreateBookingRequest(booking.copy(kinfolkId = enforceWriteKinfolkId(testMode, booking.kinfolkId)))
 
@@ -2477,8 +2502,6 @@ internal expect fun platformBusinessSettingsStream(): Flow<FirestoreResult<Busin
 internal expect suspend fun platformSaveBusinessSettings(settings: BusinessSettings): WriteResult<Unit>
 
 internal expect fun platformBookingRequestsStream(): Flow<FirestoreResult<List<KinCareSession>>>
-internal expect suspend fun platformApproveBooking(bookingId: String): WriteResult<Unit>
-internal expect suspend fun platformRejectBooking(bookingId: String): WriteResult<Unit>
 internal expect suspend fun platformCreateBookingRequest(booking: KinCareSession): WriteResult<String>
 
 // ── Booking-envelope ingestion + write-back (gated by mytribe.booking.envelope) ──
@@ -2658,6 +2681,16 @@ data class BatchBookingResult(
 }
 
 data class BatchBookingFailure(val id: String, val error: String)
+/**
+ * #1129: the outcome of a one-id batchUpdateBookings call. The server answers
+ * 200 with a per-id `failed` list, so a refusal (busy conflict, closed day,
+ * "Set the start time before approving this Overnight.") arrives as data, not
+ * as an error; it becomes an Err carrying the server's own words.
+ */
+internal fun singleBookingOutcome(result: BatchBookingResult): WriteResult<Unit> {
+    result.failed.firstOrNull()?.let { return WriteResult.Err(bulkFailureReason(it.error)) }
+    return if (result.updated > 0) WriteResult.Ok(Unit) else WriteResult.Err(bulkFailureReason(""))
+}
 
 /**
  * Pure decode of the batchUpdateBookings body

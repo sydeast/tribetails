@@ -195,19 +195,19 @@ private fun BookingListScreen(
     // refusal shows its own error banner instead of a false "Approved."
     fun runApprove(booking: KinCareSession) {
         scope.launch {
-            vm.approveBooking(booking._id)
+            vm.approveBooking(booking._id, singleVisitId(booking))
             if (vm.errorMessage == null) actionNotice = bookingActionNotice(BookingActionOutcome.APPROVED, booking)
         }
     }
     fun runReject(booking: KinCareSession) {
         scope.launch {
-            vm.rejectBooking(booking._id)
+            vm.rejectBooking(booking._id, singleVisitId(booking))
             if (vm.errorMessage == null) actionNotice = bookingActionNotice(BookingActionOutcome.REJECTED, booking)
         }
     }
     fun runCancel(booking: KinCareSession) {
         scope.launch {
-            vm.rejectBooking(booking._id)
+            vm.cancelBooking(booking._id, singleVisitId(booking))
             if (vm.errorMessage == null) actionNotice = bookingActionNotice(BookingActionOutcome.CANCELLED, booking)
         }
     }
@@ -613,18 +613,25 @@ internal fun bookingActionNotice(outcome: BookingActionOutcome, booking: KinCare
 internal fun bulkVisitId(b: KinCareSession): String =
     b.kinCareVisitId.orEmpty().trim().ifBlank { b.sourceBookingId.trim() }.ifBlank { b._id }
 /**
+ * #1129: the visit id a single-row Approve / Reject / Cancel sends to the server,
+ * or null for a direct session with no visit behind it (which takes the
+ * session-level callable instead).
+ */
+internal fun singleVisitId(b: KinCareSession): String? = bulkVisitId(b).takeIf { it != b._id }
+/** One refusal reason in plain words; shared by the bulk bar and the single-row actions. */
+internal fun bulkFailureReason(error: String): String = when (val e = error.trim()) {
+    "", "write-failed" -> "The change could not be saved."
+    "not-found" -> "That booking was not found."
+    else -> e
+}
+/**
  * Per-id refusals in plain words, each naming the booking it belongs to.
  * [names] maps the id that was sent to the kinfolk name shown on that row.
  */
 internal fun bulkFailureText(result: BatchBookingResult, names: Map<String, String>): String =
     result.failed.joinToString(" ") { f ->
         val who = names[f.id]?.takeIf { it.isNotBlank() } ?: "A booking"
-        val why = when (val e = f.error.trim()) {
-            "", "write-failed" -> "The change could not be saved."
-            "not-found" -> "That booking was not found."
-            else -> e
-        }
-        "$who: ${why.trimEnd()}"
+        "$who: ${bulkFailureReason(f.error).trimEnd()}"
     }
 /** Most-recent rows shown per History subsection before "Show more". */
 private const val HISTORY_PAGE = 6
@@ -1371,8 +1378,9 @@ private class FirestoreClientBookingDataSource(
     override suspend fun saveBusinessSettings(settings: com.tribetails.auntieos.web.data.BusinessSettings) =
         client.saveBusinessSettings(settings)
 
-    override suspend fun approveBooking(bookingId: String) = client.approveBooking(bookingId)
-    override suspend fun rejectBooking(bookingId: String)  = client.rejectBooking(bookingId)
+    override suspend fun approveBooking(bookingId: String, visitId: String?) = client.approveBooking(bookingId, visitId)
+    override suspend fun rejectBooking(bookingId: String, visitId: String?)  = client.rejectBooking(bookingId, visitId)
+    override suspend fun cancelBooking(bookingId: String, visitId: String?)  = client.cancelBooking(bookingId, visitId)
     override suspend fun createBooking(booking: KinCareSession): com.tribetails.auntieos.web.data.WriteResult<String> =
         client.createBookingRequest(booking)
     override fun incomingKinCaresStream() = client.incomingKinCaresStream()

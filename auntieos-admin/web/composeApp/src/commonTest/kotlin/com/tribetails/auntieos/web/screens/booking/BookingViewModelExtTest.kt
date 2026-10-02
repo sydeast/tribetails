@@ -198,8 +198,8 @@ class BookingViewModelExtTest {
             override fun businessSettingsStream() = _fake.businessSettingsStream()
             override suspend fun saveBusinessSettings(settings: com.tribetails.auntieos.web.data.BusinessSettings) =
                 com.tribetails.auntieos.web.data.WriteResult.Ok(Unit)
-            override suspend fun approveBooking(bookingId: String) = com.tribetails.auntieos.web.data.WriteResult.Ok(Unit)
-            override suspend fun rejectBooking(bookingId: String)  = com.tribetails.auntieos.web.data.WriteResult.Ok(Unit)
+            override suspend fun approveBooking(bookingId: String, visitId: String?) = com.tribetails.auntieos.web.data.WriteResult.Ok(Unit)
+            override suspend fun rejectBooking(bookingId: String, visitId: String?)  = com.tribetails.auntieos.web.data.WriteResult.Ok(Unit)
             override suspend fun createBooking(booking: com.tribetails.auntieos.web.data.KinCareSession) =
                 com.tribetails.auntieos.web.data.WriteResult.Err("quota exceeded")
             override fun mediaStream(entityId: String, entityType: String) = _fake.mediaStream(entityId, entityType)

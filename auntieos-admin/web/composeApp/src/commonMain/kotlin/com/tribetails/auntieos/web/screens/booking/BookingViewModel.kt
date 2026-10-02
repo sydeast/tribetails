@@ -104,8 +104,8 @@ class BookingViewModel(
         seriesActionBatchId = null
     }
 
-    suspend fun approveBooking(bookingId: String) {
-        when (val r = dataSource.approveBooking(bookingId)) {
+    suspend fun approveBooking(bookingId: String, visitId: String? = null) {
+        when (val r = dataSource.approveBooking(bookingId, visitId)) {
             is WriteResult.Ok  -> {
                 errorMessage = null
                 audit("APPROVE_BOOKING", "Approved booking $bookingId", bookingId)
@@ -114,13 +114,22 @@ class BookingViewModel(
         }
     }
 
-    suspend fun rejectBooking(bookingId: String) {
-        when (val r = dataSource.rejectBooking(bookingId)) {
+    suspend fun rejectBooking(bookingId: String, visitId: String? = null) {
+        when (val r = dataSource.rejectBooking(bookingId, visitId)) {
             is WriteResult.Ok  -> {
                 errorMessage = null
                 audit("REJECT_BOOKING", "Rejected booking $bookingId", bookingId)
             }
             is WriteResult.Err -> errorMessage = "Reject failed: ${r.message}"
+        }
+    }
+    suspend fun cancelBooking(bookingId: String, visitId: String? = null) {
+        when (val r = dataSource.cancelBooking(bookingId, visitId)) {
+            is WriteResult.Ok  -> {
+                errorMessage = null
+                audit("REJECT_BOOKING", "Cancelled booking $bookingId", bookingId)
+            }
+            is WriteResult.Err -> errorMessage = "Cancel failed: ${r.message}"
         }
     }
 
