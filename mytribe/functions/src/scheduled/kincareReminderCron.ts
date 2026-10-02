@@ -7,7 +7,7 @@ import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotificationDetailed } from '../notifications/dispatcher';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
 import { isAutoReminder24hEnabled } from '../lib/autoReminder';
-import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
+import { FULL_CPU_SERIAL, SCHEDULE_RETRY_PERIODIC } from '../lib/runtimeOptions';
 import { HOURLY_TICK } from '../lib/notificationSchedule';
 
 const WINDOW_LOWER_MS = 24 * 60 * 60 * 1000;
@@ -196,6 +196,7 @@ export const kincareReminderCron = onSchedule(
     ...HOURLY_TICK,
     secrets: ['SENTRY_DSN'],
     ...FULL_CPU_SERIAL,
+    ...SCHEDULE_RETRY_PERIODIC,
   },
   wrapScheduled('kincareReminderCron', async () => {
     await runKincareReminderScan(Date.now());

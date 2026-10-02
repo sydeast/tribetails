@@ -3,7 +3,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
 import { promoteQueuedNotification } from '../notifications/promoteQueued';
-import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
+import { FULL_CPU_SERIAL, SCHEDULE_RETRY_FREQUENT } from '../lib/runtimeOptions';
 
 /**
  * Drains `pendingNotifications/{uid}_{key}` docs whose fireAfterMs has elapsed.
@@ -37,6 +37,7 @@ export const notificationDebounceSweep = onSchedule(
     region: 'us-central1',
     secrets: ['SENTRY_DSN'],
     ...FULL_CPU_SERIAL,
+    ...SCHEDULE_RETRY_FREQUENT,
   },
   wrapScheduled('notificationDebounceSweep', async () => {
     const now = Date.now();

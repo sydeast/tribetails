@@ -8,7 +8,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
 import { readRetentionWindow } from '../lib/retentionWindow';
 import { stampToMillis } from '../lib/purgeTimestamps';
-import { SERIAL } from '../lib/runtimeOptions';
+import { SERIAL, SCHEDULE_RETRY_PERIODIC } from '../lib/runtimeOptions';
 
 /**
  * ISSUE #519: `business_settings.saveRoutesForDays` becomes real.
@@ -155,7 +155,13 @@ export const purgeOldVisitRoutes = onSchedule(
   // Sweeps and deletes overnight with nobody waiting, so it takes the
   // quarter-vCPU `SERIAL` shape every other purge cron takes. The 2-instance cap
   // absorbs a run that overlaps the next tick rather than piling copies up.
-  { schedule: 'every day 03:30', timeZone: 'America/New_York', secrets: ['SENTRY_DSN'], ...SERIAL },
+  {
+    schedule: 'every day 03:30',
+    timeZone: 'America/New_York',
+    secrets: ['SENTRY_DSN'],
+    ...SERIAL,
+    ...SCHEDULE_RETRY_PERIODIC,
+  },
   wrapScheduled('purgeOldVisitRoutes', async () => {
     await runVisitRoutePurge(Date.now());
   }),

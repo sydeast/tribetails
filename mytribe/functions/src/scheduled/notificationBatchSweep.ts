@@ -5,7 +5,7 @@ import { wrapScheduled } from '../lib/wrapScheduled';
 import { promoteQueuedNotification } from '../notifications/promoteQueued';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
 import { getNotificationDef, NOTIFICATION_CATALOG } from '../notifications/catalog';
-import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
+import { FULL_CPU_SERIAL, SCHEDULE_RETRY_FREQUENT } from '../lib/runtimeOptions';
 
 /**
  * Drains pending items from `notificationBatch/{uid}/{batchKey}/{itemId}` and
@@ -332,6 +332,7 @@ export const notificationBatchSweep = onSchedule(
     region: 'us-central1',
     secrets: ['SENTRY_DSN'],
     ...FULL_CPU_SERIAL,
+    ...SCHEDULE_RETRY_FREQUENT,
   },
   wrapScheduled('notificationBatchSweep', async () => {
     await runNotificationBatchSweep(Date.now());

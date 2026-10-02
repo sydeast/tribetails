@@ -2,7 +2,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { db } from '../lib/firestoreAdmin';
 import { sendFromTemplate } from '../lib/sendFromTemplate';
 import { wrapScheduled } from '../lib/wrapScheduled';
-import { SERIAL } from '../lib/runtimeOptions';
+import { SERIAL, SCHEDULE_RETRY_PERIODIC } from '../lib/runtimeOptions';
 
 const DAILY_DIGEST_PAGE_SIZE = 1000;
 
@@ -65,6 +65,7 @@ export const errorDailyDigest = onSchedule(
     timeZone: 'America/New_York',
     secrets: ['SMTP2GO_API_KEY', 'EMAIL_FROM', 'SENTRY_DSN'],
     ...SERIAL,
+    ...SCHEDULE_RETRY_PERIODIC,
   },
   wrapScheduled('errorDailyDigest', async () => {
     await errorDailyDigestCore(new Date());

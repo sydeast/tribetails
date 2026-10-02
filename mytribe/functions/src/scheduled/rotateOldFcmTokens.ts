@@ -3,7 +3,7 @@ import type { DocumentReference } from 'firebase-admin/firestore';
 import { db } from '../lib/firestoreAdmin';
 import { wrapScheduled } from '../lib/wrapScheduled';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
-import { SERIAL } from '../lib/runtimeOptions';
+import { SERIAL, SCHEDULE_RETRY_PERIODIC } from '../lib/runtimeOptions';
 
 const STALE_AFTER_DAYS = 60;
 const DELETE_BATCH_LIMIT = 500; // Firestore hard cap on writes per WriteBatch.
@@ -88,6 +88,7 @@ export const rotateOldFcmTokens = onSchedule(
     timeZone: 'America/New_York',
     secrets: ['SENTRY_DSN'],
     ...SERIAL,
+    ...SCHEDULE_RETRY_PERIODIC,
   },
   wrapScheduled('rotateOldFcmTokens', async () => {
     await runFcmTokenPruneScan();

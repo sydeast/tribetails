@@ -2,7 +2,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
-import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
+import { FULL_CPU_SERIAL, SCHEDULE_RETRY_FREQUENT } from '../lib/runtimeOptions';
 import {
   acquireFanoutLease,
   countOf,
@@ -288,6 +288,7 @@ export const outboundFanoutSweep = onSchedule(
       'TWILIO_FROM_NUMBER',
       'SENTRY_DSN',
     ],
+    ...SCHEDULE_RETRY_FREQUENT,
   },
   wrapScheduled('outboundFanoutSweep', () => outboundFanoutSweepCore()),
 );
