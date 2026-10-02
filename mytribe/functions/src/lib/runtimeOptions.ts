@@ -153,3 +153,39 @@ export const FULL_CPU_SERIAL = { cpu: 1, maxInstances: 2 } as const;
  * "serial" wanted anyway.
  */
 export const SERIAL = { cpu: 0.25, maxInstances: 2 } as const;
+/**
+ * #1142. How many times Cloud Scheduler re-sends a scheduled run that failed,
+ * after the first attempt. Before this no job set a retry count, so one 503, a
+ * DNS blip or a cold instance that failed its readiness check cost the whole
+ * tick, and a daily job cost the day.
+ *
+ * A retry is a plain second run of the same handler, so a job takes these only
+ * if running twice is safe. Every `onSchedule` job in this codebase is: each one
+ * either deletes by a predicate that no longer matches, stamps each record it
+ * handles, takes a per-recipient `create()`, or does its work in a transaction
+ * that re-reads. The per-job reasoning sits beside each job's options.
+ * `wrapScheduled` reads this same number to know which failure is the last.
+ */
+export const SCHEDULE_RETRY_COUNT = 3;
+/**
+ * Backoff for jobs that tick every minute or five. The three retries land at
+ * roughly 5, 10 and 20 seconds, inside the tick that failed, so a transient
+ * fault is mended before the next tick would have run anyway.
+ */
+export const SCHEDULE_RETRY_FREQUENT = {
+  retryCount: SCHEDULE_RETRY_COUNT,
+  minBackoffSeconds: 5,
+  maxBackoffSeconds: 30,
+  maxDoublings: 2,
+} as const;
+/**
+ * Backoff for hourly, quarter-hourly and daily jobs: roughly 30, 60 and 120
+ * seconds, so a short outage is ridden out and the last retry still lands well
+ * inside the hour.
+ */
+export const SCHEDULE_RETRY_PERIODIC = {
+  retryCount: SCHEDULE_RETRY_COUNT,
+  minBackoffSeconds: 30,
+  maxBackoffSeconds: 300,
+  maxDoublings: 3,
+} as const;

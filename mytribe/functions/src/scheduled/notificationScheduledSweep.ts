@@ -3,7 +3,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
 import { promoteQueuedNotification } from '../notifications/promoteQueued';
-import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
+import { FULL_CPU_SERIAL, SCHEDULE_RETRY_FREQUENT } from '../lib/runtimeOptions';
 import { sweepPendingCreditNotices } from '../lib/accountCredit';
 
 /**
@@ -30,6 +30,7 @@ export const notificationScheduledSweep = onSchedule(
     region: 'us-central1',
     secrets: ['SENTRY_DSN'],
     ...FULL_CPU_SERIAL,
+    ...SCHEDULE_RETRY_FREQUENT,
   },
   wrapScheduled('notificationScheduledSweep', async () => {
     const now = Date.now();

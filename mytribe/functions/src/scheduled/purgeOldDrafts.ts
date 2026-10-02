@@ -8,7 +8,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
 import { readRetentionWindow } from '../lib/retentionWindow';
 import { firstReadableStamp } from '../lib/purgeTimestamps';
-import { SERIAL } from '../lib/runtimeOptions';
+import { SERIAL, SCHEDULE_RETRY_PERIODIC } from '../lib/runtimeOptions';
 
 /**
  * ISSUE #519: `business_settings.draftRetentionDays` becomes real.
@@ -186,7 +186,13 @@ export async function runDraftPurge(now: number = Date.now()): Promise<DraftPurg
 export const purgeOldDrafts = onSchedule(
   // Same shape and the same reasoning as `purgeOldVisitRoutes`, half an hour
   // later so the two never contend for the same instance cap.
-  { schedule: 'every day 04:00', timeZone: 'America/New_York', secrets: ['SENTRY_DSN'], ...SERIAL },
+  {
+    schedule: 'every day 04:00',
+    timeZone: 'America/New_York',
+    secrets: ['SENTRY_DSN'],
+    ...SERIAL,
+    ...SCHEDULE_RETRY_PERIODIC,
+  },
   wrapScheduled('purgeOldDrafts', async () => {
     await runDraftPurge(Date.now());
   }),

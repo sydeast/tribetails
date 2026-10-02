@@ -7,7 +7,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { sanitizePlainText } from '../lib/richText';
 import { anthropicClient } from '../lib/aiCopy';
 import { AI_BATCHES_COLLECTION, TALES_COLLECTION } from '../admin/aiBackfillTaleTitles';
-import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
+import { FULL_CPU_SERIAL, SCHEDULE_RETRY_PERIODIC } from '../lib/runtimeOptions';
 
 /**
  * O-8 bulk-job collector: polls Anthropic message batches created by
@@ -173,6 +173,7 @@ export const aiBatchPollCron = onSchedule(
     // Drains Anthropic batches. Overlapping runs would double-apply results, so
     // cap at two and let a third tick shed.
     ...FULL_CPU_SERIAL,
+    ...SCHEDULE_RETRY_PERIODIC,
   },
   wrapScheduled('aiBatchPollCron', async () => {
     await runAiBatchPoll();

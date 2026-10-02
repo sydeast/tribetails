@@ -3,7 +3,7 @@ import { db } from '../lib/firestoreAdmin';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { wrapScheduled } from '../lib/wrapScheduled';
-import { SERIAL } from '../lib/runtimeOptions';
+import { SERIAL, SCHEDULE_RETRY_PERIODIC } from '../lib/runtimeOptions';
 
 /**
  * Sweep unrevoked share links past their `expiresAt`: revoke each and audit it.
@@ -33,7 +33,13 @@ export async function cleanupExpiredShareLinksCore(now: Date): Promise<{ revoked
 export const cleanupExpiredShareLinks = onSchedule(
   // Deletes expired rows overnight, nobody waiting, so it keeps the 0.25 vCPU
   // fleet default. The cap only stops overlapping runs piling up.
-  { schedule: 'every day 03:00', timeZone: 'America/New_York', secrets: ['SENTRY_DSN'], ...SERIAL },
+  {
+    schedule: 'every day 03:00',
+    timeZone: 'America/New_York',
+    secrets: ['SENTRY_DSN'],
+    ...SERIAL,
+    ...SCHEDULE_RETRY_PERIODIC,
+  },
   wrapScheduled('cleanupExpiredShareLinks', async () => {
     await cleanupExpiredShareLinksCore(new Date());
   }),

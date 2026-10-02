@@ -8,7 +8,7 @@ import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotificationDetailed } from '../notifications/dispatcher';
 import { INVOICE_REMINDER_RESEND_WINDOW_MS } from '../admin/sendInvoiceReminder';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
-import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
+import { FULL_CPU_SERIAL, SCHEDULE_RETRY_PERIODIC } from '../lib/runtimeOptions';
 import { businessTodayIso } from '../lib/quoteDecision';
 import { HOURLY_TICK, runHourlyTick } from '../lib/notificationSchedule';
 import { paidCentsFromPayments } from '../lib/invoiceMath';
@@ -252,6 +252,7 @@ export const invoiceRemindersCron = onSchedule(
     ...HOURLY_TICK,
     secrets: ['SENTRY_DSN'],
     ...FULL_CPU_SERIAL,
+    ...SCHEDULE_RETRY_PERIODIC,
   },
   wrapScheduled('invoiceRemindersCron', async () => {
     const now = Date.now();
@@ -438,6 +439,7 @@ export const invoiceOverdueCron = onSchedule(
     ...HOURLY_TICK,
     secrets: ['SENTRY_DSN'],
     ...FULL_CPU_SERIAL,
+    ...SCHEDULE_RETRY_PERIODIC,
   },
   wrapScheduled('invoiceOverdueCron', async () => {
     const now = Date.now();

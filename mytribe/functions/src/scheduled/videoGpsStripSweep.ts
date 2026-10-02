@@ -32,6 +32,7 @@ import { defineSecret } from 'firebase-functions/params';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
+import { SCHEDULE_RETRY_PERIODIC } from '../lib/runtimeOptions';
 import {
   GPS_STRIP_STATUS,
   MAX_STRIP_ATTEMPTS,
@@ -96,6 +97,7 @@ export const videoGpsStripSweep = onSchedule(
     memory: '1GiB',
     timeoutSeconds: 540,
     secrets: [CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET, 'SENTRY_DSN'],
+    ...SCHEDULE_RETRY_PERIODIC,
   },
   wrapScheduled('videoGpsStripSweep', videoGpsStripSweepHandler),
 );

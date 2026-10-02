@@ -5,7 +5,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { wrapScheduled } from '../lib/wrapScheduled';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { logEvent } from '../lib/logger';
-import { SERIAL } from '../lib/runtimeOptions';
+import { SERIAL, SCHEDULE_RETRY_PERIODIC } from '../lib/runtimeOptions';
 
 /**
  * Sweep PENDING/EMAIL_SENT invites past their `expiresAt`: mark EXPIRED, audit, and
@@ -50,7 +50,13 @@ export async function expireStaleInvitesCore(now: Date): Promise<{ expired: numb
 
 export const expireStaleInvites = onSchedule(
   // Marks lapsed invites overnight. Keeps the 0.25 vCPU fleet default.
-  { schedule: 'every day 02:00', timeZone: 'America/New_York', secrets: ['SENTRY_DSN'], ...SERIAL },
+  {
+    schedule: 'every day 02:00',
+    timeZone: 'America/New_York',
+    secrets: ['SENTRY_DSN'],
+    ...SERIAL,
+    ...SCHEDULE_RETRY_PERIODIC,
+  },
   wrapScheduled('expireStaleInvites', async () => {
     await expireStaleInvitesCore(new Date());
   }),

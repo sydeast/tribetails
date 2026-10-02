@@ -4,7 +4,7 @@ import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
 import { enqueueNotificationDetailed } from '../notifications/dispatcher';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
-import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
+import { FULL_CPU_SERIAL, SCHEDULE_RETRY_PERIODIC } from '../lib/runtimeOptions';
 import { HOURLY_TICK, runHourlyTick } from '../lib/notificationSchedule';
 
 const DIGEST_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -156,6 +156,7 @@ export const scheduleDigestCron = onSchedule(
     ...HOURLY_TICK,
     secrets: ['SENTRY_DSN'],
     ...FULL_CPU_SERIAL,
+    ...SCHEDULE_RETRY_PERIODIC,
   },
   wrapScheduled('scheduleDigestCron', async () => {
     const now = Date.now();
