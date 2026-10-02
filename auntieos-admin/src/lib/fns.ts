@@ -1,6 +1,6 @@
 import { FirebaseError } from 'firebase/app';
 import { httpsCallable } from 'firebase/functions';
-import { E2E_EMULATOR_HOST, E2E_FUNCTIONS_PORT, functions } from './firebase';
+import { E2E_EMULATOR_HOST, E2E_FUNCTIONS_PORT, E2E_FUNCTIONS_SERVED, functions } from './firebase';
 import { OfflineSessionError, isReadOnlySession } from './readOnlySession';
 import { LostSignalError, OfflineCallError, isConnected } from './offlineWrite';
 import { noteSessionAlive, reactToCallableError } from './revokedSession';
@@ -142,9 +142,12 @@ export async function call<TReq, TRes>(
       // `_errorForResponse` maps to `internal` (@firebase/functions
       // index.esm.js:546-577). In production that is ambiguous. In emulator mode
       // it is not: the URL is localhost, so a transport failure can only be the
-      // refused connection to the unserved functions port.
+      // refused connection to the unserved functions port. Except in the
+      // real-services run (#1089), where a functions emulator does answer and
+      // `internal` is a real function failing, which must read as one.
       if (
         E2E_EMULATOR_HOST !== '' &&
+        !E2E_FUNCTIONS_SERVED &&
         err instanceof FirebaseError &&
         err.code === 'functions/internal'
       ) {

@@ -345,6 +345,118 @@ suite's `cypress/support/e2e.ts`, one entry per HARNESS condition with the
 reason written next to it. An entry describing an app behaviour is a bug being
 allowlisted.
 
+## The real-services run (added 2026-10-02, #1089)
+
+Operator ruling D3 (2026-10-01): the admin Cypress suite also runs against the
+real `mytribe/functions` and the real outside services, on releases and not on
+pull requests. This is a SECOND harness beside the PR-time one. Nothing above
+changes: `npm run e2e:cy` still serves no functions and still pins callables at
+the dead port 5399.
+
+```bash
+npm ci                                   # repo root, once
+npm ci --prefix mytribe/functions        # once; the emulator serves its build
+cd auntieos-admin
+npm run e2e:real
+```
+
+`npm run e2e:real` runs `scripts/e2e-real/run.sh`, which:
+
+1. builds `mytribe/functions` (the emulator serves `lib/`, not `src/`);
+2. runs `scripts/e2e-real/preflight.mjs`, which writes
+   `mytribe/functions/.secret.local` and refuses to start if a Stripe value is
+   not a test-mode key (`sk_test_`, `rk_test_`, `pk_test_`, `whsec_`), if any
+   Twilio value names a number in the business line's or the private line's
+   area code, or if a spec under `cypress/e2e-real/` names Google Calendar
+   Disconnect;
+3. starts auth (9399), Firestore (8385) and functions (5398) under the project
+   id `demo-auntieos-e2e` (`e2e.real.firebase.json`), and runs
+   `cypress.real.config.ts` against a dev server pointed at all three;
+4. deletes `.secret.local` whatever happened. The file is in `.gitignore` too,
+   in case a killed run leaves it behind. The next run replaces a file it wrote
+   and refuses to replace one it did not.
+
+It cannot run at the same time as `npm run e2e:cy` or `npm run e2e`: they share
+the auth and Firestore ports, and the second one fails on a taken port.
+
+The seed's per-call deadline is raised to 60s for this run
+(`E2E_SEED_TIMEOUT_MS`): every seeded account now goes through the real
+`beforeSignIn` and `onAuthUserCreate`, and their cold starts took the first
+`signUp` past the 10s default on a loaded laptop.
+
+### Why two locks on secrets
+
+The functions emulator reads a function's secrets from `.secret.local`. A key
+that is missing or empty there, it fetches from Secret Manager under the
+emulator's project id (firebase-tools 15.18.0, `resolveSecretEnvs`). With the
+production id and a developer's ADC, that is a production secret handed to a
+test. So the project id is a `demo-` id that names no real project, and the
+preflight writes every secret the built functions declare (read from their
+`__endpoint` metadata, 22 on 2026-10-02) with a non-empty value, so no lookup
+happens at all. Either one is enough.
+
+Credentials are not hidden from the emulator, and on a developer machine it
+warns that it found them. Hiding them does not help: with no Application
+Default Credentials, firebase-tools hands the emulator the `firebase login`
+account instead. CI has neither.
+
+### Credentials, and what happens without them
+
+| Vendor | Variables | Without them |
+|---|---|---|
+| Stripe (test mode) | `STRIPE_TEST_SECRET_KEY`, `STRIPE_TEST_PUBLISHABLE_KEY` | Stripe specs skip |
+| Twilio (test credentials) | `TWILIO_TEST_ACCOUNT_SID`, `TWILIO_TEST_AUTH_TOKEN`, optional `TWILIO_TEST_FROM_NUMBER` (default: Twilio's test sender `+15005550006`) | Twilio specs skip |
+| Email (smtp2go) | `E2E_SMTP2GO_API_KEY`, `E2E_EMAIL_FROM` | Email specs skip |
+| Cloudinary | `E2E_CLOUDINARY_CLOUD_NAME`, `E2E_CLOUDINARY_API_KEY`, `E2E_CLOUDINARY_API_SECRET` | Cloudinary specs skip |
+| Google Calendar | `E2E_GOOGLE_OAUTH_CLIENT_ID`, `E2E_GOOGLE_OAUTH_CLIENT_SECRET`, `E2E_GOOGLE_CALENDAR_REFRESH_TOKEN`, `E2E_GOOGLE_CALENDAR_ID` | Calendar specs skip |
+
+To run a vendor's specs locally, export its variables in the shell before
+`npm run e2e:real`. A missing vendor is a skip with the variables named in the
+log, never a pass and never a red run. The preflight prints which vendors it
+found.
+
+In CI the same names are secrets in the GitHub environment `e2e-real`
+(deployment branch policy: `main` only), read by
+`.github/workflows/e2e-real.yml`. That workflow runs on `workflow_dispatch`
+from main and as a `workflow_call` from a release.
+
+### What the specs may and may not do
+
+- Drive and assert from the UI, as in the PR-time suite. Fixtures go in
+  through the `upsertDoc` task.
+- Any `console.error` fails the test. The allowlist in
+  `cypress/support/e2e-real.ts` is shorter than the PR-time one: a refused or
+  `internal` callable is a real function failing here, not the dead-port pin.
+- Any structured `severity: error` line our functions log during a test fails
+  it. The emulator output is teed to `cypress/.real/emulators.log`, and that is
+  how a trigger that fails after the screen has its answer still fails the run.
+- Never press Google Calendar Disconnect. It revokes the grant at Google, and
+  the test calendar shares the account and OAuth client with production. The
+  preflight refuses a spec that names it, and the support file fails any test
+  whose browser reaches the callable.
+- Twilio runs on the test credentials only. Nothing is sent, and no number in
+  the business or private line's area code may appear anywhere.
+- Cloudinary uploads go to an `e2e/` folder emptied after each run, and emails
+  go only to the three real test inboxes. Neither has a spec yet.
+
+### Specs today
+
+| Spec | What it proves |
+|---|---|
+| `settings-tags.cy.ts` | `removeBusinessTag` really cascades: the server's count on screen, and after a reload the tag is gone from the Tags list and from the Directory filter |
+| `invoice-paid-stripe.cy.ts` | Record payment settles an invoice through `markInvoicePaid`, and the trigger that follows really expires a Stripe test checkout left open on it. Skips without Stripe keys |
+
+Every other spec stays on the PR-time harness until it is rewritten for this
+one. The Stripe spec reads one line of the emulator log (the checkout sweep's
+`expired` outcome), because no admin screen shows that a session was closed.
+
+### The verdict (D3-e)
+
+A red run means our integration broke, and the release stops. A vendor outage
+(a 5xx or timeout while the vendor's status page shows an incident) should only
+warn. That classification is not automated yet, so a person reads a red run
+before a release is forced past it.
+
 ## Pointing a Cypress run at a deployed host (added 2026-08-30)
 
 `baseUrl` in `cypress.config.ts` is the emulator (`http://127.0.0.1:5174`) and
@@ -430,8 +542,8 @@ the suite is two navigation tests.
 
 ## Not covered yet
 
-**Callable behaviour, entirely.** No server-side callable logic runs in this
-harness. Nothing here exercises `createInvoice`, `markInvoicePaid`,
+**Callable behaviour, in this harness.** No server-side callable logic runs in
+this harness. The real-services run above (#1089) is where it does. Nothing here exercises `createInvoice`, `markInvoicePaid`,
 `transitionBookingStatus`, or any of the other ~280 functions `mytribe/functions`
 exports. `bookings.spec.ts` passes because `BOOKINGS_QUERY` reads Firestore
 directly through the client SDK, not because any callable works.

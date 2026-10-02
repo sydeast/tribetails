@@ -15,7 +15,9 @@ export default defineConfig({
     // `// @vitest-environment jsdom` comment, so plain-logic specs (token
     // parity, formatters, mappers) keep running under the cheaper environment.
     environment: 'node',
-    include: ['src/**/*.test.{ts,tsx}'],
+    // `scripts/e2e-real/` holds the real-services run's preflight (#1089),
+    // whose refusals are the safety property of that run and so are tested.
+    include: ['src/**/*.test.{ts,tsx}', 'scripts/e2e-real/**/*.test.mjs'],
     setupFiles: ['./test-setup.ts'],
     // #842: pinned explicitly rather than left to Vitest's own default so a
     // future major version can't silently flip it. This is what clears a

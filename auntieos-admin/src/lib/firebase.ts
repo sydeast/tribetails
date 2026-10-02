@@ -32,10 +32,32 @@ import { reportError } from './sentry';
  * above its config (still giving instructions to go register one) was left behind
  * after someone did exactly that.
  */
+
+/**
+ * The project id the REAL-SERVICES e2e run (#1089, `npm run e2e:real`) swaps
+ * in, or `''` everywhere else.
+ *
+ * That run serves `mytribe/functions` under the functions emulator, which
+ * answers callables at `/<projectId>/us-central1/<name>` and stamps `aud` on
+ * its tokens with the same id, so the client has to name the project the
+ * emulators were started with. It is a `demo-` id on purpose: Firebase treats
+ * `demo-*` as a project that does not exist, so nothing the emulator resolves
+ * under it (a `defineSecret` lookup above all) can reach production.
+ *
+ * Same fold as `VITE_E2E_EMULATOR` below: nothing in the deploy path sets it, so
+ * a hosting build substitutes `undefined` and keeps the literal production id.
+ * A value that is not a `demo-` id is refused rather than used, because the only
+ * reason to set it is to be somewhere production is not.
+ */
+const E2E_PROJECT_ID = (import.meta.env.VITE_E2E_PROJECT_ID as string | undefined) ?? '';
+if (E2E_PROJECT_ID !== '' && !E2E_PROJECT_ID.startsWith('demo-')) {
+  throw new Error(`VITE_E2E_PROJECT_ID must be a demo- project id, got "${E2E_PROJECT_ID}"`);
+}
+
 export const firebaseConfig = {
   apiKey: 'AIzaSyBnR7D4gORVehTr_-WB42_NyFeNO7acDTo',
   authDomain: 'auntieos-ttpc.firebaseapp.com',
-  projectId: 'auntieos-ttpc',
+  projectId: E2E_PROJECT_ID !== '' ? E2E_PROJECT_ID : 'auntieos-ttpc',
   storageBucket: 'auntieos-ttpc.firebasestorage.app',
   messagingSenderId: '153396971788',
   appId: '1:153396971788:web:c2631409219d44727f2129',
@@ -396,7 +418,30 @@ export const E2E_EMULATOR_HOST = (import.meta.env.VITE_E2E_EMULATOR as string | 
  * that needs a callable stub it deliberately (`page.route`) rather than inherit
  * one by accident.
  */
-export const E2E_FUNCTIONS_PORT = 5399;
+export const E2E_DEAD_FUNCTIONS_PORT = 5399;
+
+/**
+ * The port callables are dialled on in this e2e run, and whether anything
+ * answers there.
+ *
+ * `E2E_DEAD_FUNCTIONS_PORT` for every run but one. The real-services run
+ * (#1089, `npm run e2e:real`) serves `mytribe/functions` on a port of its own
+ * and names it in `VITE_E2E_FUNCTIONS_PORT`. 5399 itself is never handed to
+ * anything, so the PR-time suite's dead-port guarantee holds whatever the other
+ * run does. Both fold in a hosting build, where the variable is never set and
+ * the branch that reads them is dropped.
+ *
+ * `E2E_FUNCTIONS_SERVED` is what `lib/fns.ts` asks before it calls a
+ * `functions/internal` an unstubbed callable: with a real function on the other
+ * end, `internal` is that function failing, and it must read as one.
+ */
+// Compared as a string, not through `Number()`, so the build can fold it: a
+// `Number(undefined || 0) > 0` survives minification as a runtime expression and
+// leaves the dead port in the bundle (seen in `dist/` on 2026-10-02).
+const E2E_SERVED_FUNCTIONS_PORT = (import.meta.env.VITE_E2E_FUNCTIONS_PORT as string | undefined) ?? '';
+export const E2E_FUNCTIONS_SERVED = E2E_SERVED_FUNCTIONS_PORT !== '';
+export const E2E_FUNCTIONS_PORT =
+  E2E_SERVED_FUNCTIONS_PORT !== '' ? Number(E2E_SERVED_FUNCTIONS_PORT) : E2E_DEAD_FUNCTIONS_PORT;
 
 if (E2E_EMULATOR_HOST !== '') {
   // Loud, because a real session that somehow reached this branch would be
