@@ -20,6 +20,7 @@ import { BusinessHoursEditor } from './settings/BusinessHoursEditor';
 import { TimeOffEditor } from './settings/TimeOffEditor';
 import { KinCareRatesEditor } from './settings/KinCareRatesEditor';
 import { EmailFrameSection } from './settings/EmailFrameSection';
+import { DoNotSendSection } from './settings/DoNotSendSection';
 import { NotificationGate } from './NotificationGate';
 import { TagsEditor } from './TagsEditor';
 import './Settings.css';
@@ -392,6 +393,8 @@ function renderDataSection(
         <>
           <NotificationScheduleSection data={data} onSave={persist} />
           <NotificationGate />
+          {/* #1083: self-loading; the addresses the app will not mail or text. */}
+          <DoNotSendSection />
         </>
       );
     default:

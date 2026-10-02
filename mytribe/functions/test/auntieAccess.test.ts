@@ -142,7 +142,7 @@ describe('#944 wrapAdminCallable enforces the table', () => {
 
   it('REFUSES an Auntie the marketing and business-phone callables', async () => {
     const { wrapAdminCallable } = await import('../src/lib/wrapAdminCallable');
-    for (const name of ['broadcastMessage', 'scheduleMarketingBlast', 'sendExternalMessage', 'screenCallAction']) {
+    for (const name of ['broadcastMessage', 'scheduleMarketingBlast', 'sendExternalMessage', 'screenCallAction', 'listMessageSuppressions', 'clearMessageSuppression']) {
       const wrapped = wrapAdminCallable(name, async () => ({ ok: true }));
       await expect(wrapped({ auth: auntieAuth } as never)).rejects.toMatchObject({ code: 'permission-denied' });
     }

@@ -62,6 +62,9 @@ vi.mock('./NotificationGate', () => ({
     </div>
   ),
 }));
+vi.mock('./settings/DoNotSendSection', () => ({
+  DoNotSendSection: () => <div data-testid="do-not-send-stub">do not send</div>,
+}));
 vi.mock('./TagsEditor', () => ({
   TagsEditor: ({ onBack }: { onBack?: () => void }) => (
     <div data-testid="tags-editor-stub" data-hasback={onBack ? 'yes' : 'no'}>

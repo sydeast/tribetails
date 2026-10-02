@@ -108,9 +108,18 @@ export function isOptedOutError(message: string): boolean {
 }
 
 /**
+ * The server refuses an email to a hard-bounced address with `failed-precondition`
+ * and a message that starts `recipient_hard_bounced` (#1077). Same substring
+ * rule as the opt-out sentinel.
+ */
+export function isHardBouncedError(message: string): boolean {
+  return message.toLowerCase().includes('recipient_hard_bounced');
+}
+
+/**
  * Operator-readable text for a failed external send.
  *
- * Only the opt-out sentinel is translated. Everything else passes through
+ * Only the opt-out and hard-bounce sentinels are translated. Everything else passes through
  * verbatim: a provider's own words ("smtp2go rejected the sender domain") tell
  * the operator far more than any sentence we could substitute, and hiding them
  * behind "Something went wrong" is how a fixable configuration problem becomes
@@ -119,6 +128,9 @@ export function isOptedOutError(message: string): boolean {
 export function externalSendErrorText(message: string): string {
   if (isOptedOutError(message)) {
     return 'This recipient has opted out. Nothing was sent. Remove their suppression before sending again.';
+  }
+  if (isHardBouncedError(message)) {
+    return 'This address bounced and is on the do-not-send list. Nothing was sent. Clear it in Settings under Notifications, then send again.';
   }
   return message.trim() === '' ? 'The send failed.' : message;
 }

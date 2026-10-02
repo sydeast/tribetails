@@ -1,0 +1,57 @@
+/* #1083 do-not-send list. Every token referenced here is declared in
+   styles/tokens.css, with no literal fallback, per styles/tokenUsage.test.ts. */
+
+.doNotSend__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.doNotSend__filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.doNotSend__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.doNotSend__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.doNotSend__who {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.doNotSend__address {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.doNotSend__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  color: var(--color-text-dim);
+}
+
+.doNotSend__more {
+  margin-top: var(--space-4);
+}
