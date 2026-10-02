@@ -21,6 +21,7 @@ import { Args as AssignTemplateArgs } from '../src/admin/assignTemplate';
 import { Args as UpdateInvoiceArgs } from '../src/admin/updateInvoice';
 import { Args as ArchiveInvoiceArgs } from '../src/admin/archiveInvoice';
 import { Args as UnarchiveInvoiceArgs } from '../src/admin/unarchiveInvoice';
+import { Args as RetryInvoiceCheckoutCloseArgs } from '../src/admin/retryInvoiceCheckoutClose';
 // The partial-payment detection/repair pass (2026-07-25).
 import { Args as RepairInvoicePaymentsArgs } from '../src/admin/repairInvoicePayments';
 // W2-1 (ADR-0002): the callables that absorb Android's direct Firestore money
@@ -249,6 +250,7 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   },
   archiveInvoice: { schema: ArchiveInvoiceArgs, keys: ['force', 'invoiceId'] },
   unarchiveInvoice: { schema: UnarchiveInvoiceArgs, keys: ['invoiceId'] },
+  retryInvoiceCheckoutClose: { schema: RetryInvoiceCheckoutCloseArgs, keys: ['invoiceId'] },
   // W2-1 (ADR-0002 callable-only invoice writes). Both replace direct Android
   // Firestore writes, so the mirror Android builds in W2-2 is built FROM these
   // frozen shapes. `sessionIds` is an array of plain strings (like
@@ -966,6 +968,10 @@ const FROZEN_RESPONSE_SHAPES: Record<
   createQuote: { load: () => import('../src/admin/createQuote'), signature: ['invoiceId', 'ok'] },
   archiveInvoice: { load: () => import('../src/admin/archiveInvoice'), signature: ['invoiceId', 'ok'] },
   unarchiveInvoice: { load: () => import('../src/admin/unarchiveInvoice'), signature: ['invoiceId', 'ok'] },
+  retryInvoiceCheckoutClose: {
+    load: () => import('../src/admin/retryInvoiceCheckoutClose'),
+    signature: ['closedCount', 'failedCount', 'invoiceId', 'ok'],
+  },
   reviewAndSendDraftInvoice: {
     load: () => import('../src/admin/reviewAndSendDraftInvoice'),
     signature: ['invoiceId', 'ok'],

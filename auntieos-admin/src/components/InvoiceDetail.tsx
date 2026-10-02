@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  invoiceCheckoutClosure,
   invoiceDispute,
   invoiceDisputeDeadline,
   invoiceDisputeReasonGloss,
@@ -34,6 +35,7 @@ import {
   updateInvoice,
   archiveInvoice,
   unarchiveInvoice,
+  retryInvoiceCheckoutClose,
 } from '../api/invoicesWrite';
 import type {
   GetInvoiceLedgerResult,
@@ -754,6 +756,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   const storedLines = invoiceLineItems(invoice);
   const archived = isArchivedInvoice(invoice);
   const dispute = invoiceDispute(invoice);
+  const checkoutClosure = invoiceCheckoutClosure(invoice);
   // The household's answer to a quote (issue #385). Read through the accessor
   // rather than off the cast, same rule as the stamp and the dispute.
   const quoteDecision = invoiceQuoteDecision(invoice);
@@ -974,6 +977,34 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     }
   }
 
+  /**
+   * "Try again" on the open-payment-links line (#1113). Moves no money: it asks
+   * Stripe to expire the sessions it refused to expire the first time. The
+   * invoice is the live row, so the line rewrites itself when the server records
+   * the new outcome; a failure that persists is said here as well, because the
+   * reason on the line may not have changed.
+   */
+  async function retryCheckoutClose() {
+    if (busy) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      const result = await retryInvoiceCheckoutClose(invoice._id);
+      setBusy(false);
+      if (result.failedCount > 0) {
+        setNoticeIncomplete(true);
+        setNotice('The open payment links still could not be closed. The reason is on the line above.');
+      } else {
+        setNoticeIncomplete(false);
+        setNotice('Open payment links closed.');
+      }
+    } catch (caught) {
+      setBusy(false);
+      setActionError(
+        `retryInvoiceCheckoutClose failed: ${caught instanceof Error ? caught.message : 'Retry failed'}`,
+      );
+    }
+  }
   async function confirmResend() {
     if (busy) return;
     setBusy(true);
@@ -1268,6 +1299,29 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         {/* FIRST OF THE BANNERS, above the disagreement one, because money that
             has left the balance outranks two figures that disagree on screen. */}
         {dispute !== null && <InvoiceDisputeBanner dispute={dispute} nowMs={nowMs} />}
+        {/* WHETHER THE OPEN STRIPE PAYMENT LINKS WERE CLOSED (#1113). One line,
+            and nothing at all when the invoice had no open link. The reason is
+            Stripe's own sentence, kept verbatim. */}
+        {checkoutClosure !== null &&
+          (checkoutClosure.failed.length > 0 ? (
+            <p className="invoice-detail__checkout" data-checkout-links="failed" role="alert">
+              <span>
+                {checkoutClosure.failed.length === 1
+                  ? 'Could not close an open payment link'
+                  : `Could not close ${checkoutClosure.failed.length} open payment links`}
+                {`: ${checkoutClosure.failed[0]!.reason}`}
+              </span>
+              <GhostButton label="Try again" onClick={() => void retryCheckoutClose()} disabled={busy} />
+            </p>
+          ) : (
+            <p
+              className="invoice-detail__checkout"
+              data-checkout-links="closed"
+              title="Stripe payment links that were still open when this invoice was paid"
+            >
+              {`Open payment links closed (${checkoutClosure.closedCount})`}
+            </p>
+          ))}
         {/* WHAT THE HOUSEHOLD SAID ABOUT THIS QUOTE. Before issue #385 they had
             no way to say anything: `quote.accepted` and `quote.denied` were two
             switches on the notification gate with nothing behind them, and a

@@ -51,6 +51,9 @@ import com.tribetails.auntieos.data.contracts.decodeListUninvoicedSessionsResult
 import com.tribetails.auntieos.data.contracts.decodeMarkInvoicePaidResult
 import com.tribetails.auntieos.data.contracts.decodeRecordPaymentResult
 import com.tribetails.auntieos.data.contracts.decodeResendQuoteResult
+import com.tribetails.auntieos.data.contracts.decodeRetryInvoiceCheckoutCloseResult
+import com.tribetails.auntieos.data.contracts.RetryInvoiceCheckoutCloseArgs
+import com.tribetails.auntieos.data.contracts.RetryInvoiceCheckoutCloseResult
 import com.tribetails.auntieos.data.contracts.decodeSendInvoiceReminderResult
 import com.tribetails.auntieos.data.contracts.decodeSetSessionDoNotInvoiceResult
 import com.tribetails.auntieos.data.model.Invoice
@@ -369,6 +372,21 @@ class InvoiceRepository(
         Unit
     }.onFailure { AuntieLog.e("unarchiveInvoice failed for $invoiceId", it) }
 
+    /**
+     * #1113: "Try again" for a paid invoice whose open Stripe payment links could
+     * not be closed. Moves no money. The outcome lands on the invoice's
+     * `checkoutSweep`, so the caller re-reads the invoice to show it.
+     */
+    suspend fun retryInvoiceCheckoutClose(invoiceId: String): Result<RetryInvoiceCheckoutCloseResult> =
+        runCatchingCancellable {
+            authGate.ensureAuthenticated()
+            require(invoiceId.isNotBlank()) { "retryInvoiceCheckoutClose requires an invoice id" }
+            @Suppress("UNCHECKED_CAST")
+            val raw = functions.getHttpsCallable("retryInvoiceCheckoutClose")
+                .call(RetryInvoiceCheckoutCloseArgs(invoiceId = invoiceId).toPayload())
+                .awaitCallable().data as? Map<String, Any?>
+            decodeRetryInvoiceCheckoutCloseResult(raw)
+        }.onFailure { AuntieLog.e("retryInvoiceCheckoutClose failed for $invoiceId", it) }
     /**
      * Records a payment against an invoice via the `markInvoicePaid` callable,
      * and returns WHERE THE INVOICE STANDS AFTERWARDS.

@@ -103,6 +103,9 @@ export const AUDIT_EVENTS = {
   // chasing money, not a cosmetic filter.
   BILLING_INVOICE_ARCHIVED: 'BILLING_INVOICE_ARCHIVED',
   BILLING_INVOICE_UNARCHIVED: 'BILLING_INVOICE_UNARCHIVED',
+  // #1113: the operator retried closing the open Stripe payment links of a
+  // paid invoice after the automatic pass could not (retryInvoiceCheckoutClose).
+  BILLING_CHECKOUT_CLOSE_RETRIED: 'BILLING_CHECKOUT_CLOSE_RETRIED',
   // W2-1 (ADR-0002): the invoice<->session link was manually curated through
   // linkInvoiceSessions (both directions in one transaction). Logged because
   // the link decides which visits an invoice bills for, so moving it after a

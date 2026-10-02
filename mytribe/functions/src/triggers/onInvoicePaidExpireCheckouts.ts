@@ -1,14 +1,17 @@
 import { onDocumentWritten, FirestoreEvent, Change, DocumentSnapshot } from 'firebase-functions/v2/firestore';
-import { FieldValue } from 'firebase-admin/firestore';
-import { db } from '../lib/firestoreAdmin';
-import { getStripe } from '../lib/stripe';
 import { logEvent } from '../lib/logger';
 import { wrapTrigger } from '../lib/wrapTrigger';
+import { sessionsToClose, type SweepDoc } from '../lib/checkoutSessionSweep';
 import {
-  CLOSED_CHECKOUT_SESSIONS_FIELD,
-  sessionsToClose,
-  type SweepDoc,
-} from '../lib/checkoutSessionSweep';
+  closeCheckoutSession,
+  liveSessionsApi,
+  recordCheckoutSweep,
+  runCheckoutSweep,
+  sweepRanAtKey,
+  unreachableRun,
+  type CheckoutSessionsApi,
+  type SessionOutcome,
+} from '../lib/checkoutSweepRun';
 
 /**
  * WHEN AN INVOICE BECOMES PAID, CLOSE EVERY OPEN STRIPE CHECKOUT FOR IT
@@ -44,44 +47,7 @@ import {
 
 type InvoicesWriteEvent = FirestoreEvent<Change<DocumentSnapshot> | undefined, { invoiceId: string }>;
 
-/** The two Stripe calls this needs, typed on what is read so a test can stub them. */
-export interface CheckoutSessionsApi {
-  retrieve: (id: string) => Promise<unknown>;
-  expire: (id: string) => Promise<unknown>;
-}
-
-function statusOf(raw: unknown): string {
-  const s = (raw ?? {}) as { status?: unknown };
-  return typeof s.status === 'string' ? s.status : '';
-}
-
-function isNotFound(err: unknown): boolean {
-  const e = (err ?? {}) as { code?: unknown; statusCode?: unknown; raw?: { code?: unknown } };
-  return e.code === 'resource_missing' || e.raw?.code === 'resource_missing' || e.statusCode === 404;
-}
-
-export type SessionOutcome = 'expired' | 'already-closed' | 'not-found' | 'failed';
-
-export async function closeCheckoutSession(api: CheckoutSessionsApi, id: string): Promise<SessionOutcome> {
-  let session: unknown;
-  try {
-    session = await api.retrieve(id);
-  } catch (err) {
-    return isNotFound(err) ? 'not-found' : 'failed';
-  }
-  if (statusOf(session) !== 'open') return 'already-closed';
-  try {
-    await api.expire(id);
-    return 'expired';
-  } catch {
-    // Completed or expired between the two calls, or a real failure. Ask again.
-    try {
-      return statusOf(await api.retrieve(id)) === 'open' ? 'failed' : 'already-closed';
-    } catch (err) {
-      return isNotFound(err) ? 'not-found' : 'failed';
-    }
-  }
-}
+export { closeCheckoutSession, type CheckoutSessionsApi, type SessionOutcome };
 
 export async function onInvoicePaidExpireCheckoutsHandler(
   event: InvoicesWriteEvent,
@@ -89,18 +55,15 @@ export async function onInvoicePaidExpireCheckoutsHandler(
 ): Promise<void> {
   const before = event.data?.before.data() as SweepDoc | undefined;
   const after = event.data?.after.data() as SweepDoc | undefined;
+  // The sweep's own record (#1113) is not an invoice change: do not sweep on it.
+  if (sweepRanAtKey(after) !== sweepRanAtKey(before)) return;
   const ids = sessionsToClose(before, after);
   if (ids.length === 0) return;
-
   const invoiceId = event.params.invoiceId;
-  let api: CheckoutSessionsApi;
+  let run;
   try {
-    api = deps.sessions
-      ? await deps.sessions()
-      : await getStripe().then((s) => ({
-          retrieve: (id: string) => s.checkout.sessions.retrieve(id),
-          expire: (id: string) => s.checkout.sessions.expire(id),
-        }));
+    const api = await (deps.sessions ?? liveSessionsApi)();
+    run = await runCheckoutSweep(api, ids);
   } catch (err) {
     logEvent({
       severity: 'error',
@@ -108,50 +71,27 @@ export async function onInvoicePaidExpireCheckoutsHandler(
       event: 'stripe.checkout.sweep.unavailable',
       extra: { invoiceId, sessionIds: ids, err: (err as Error)?.message },
     });
-    return;
+    run = unreachableRun(ids);
   }
-
-  const closed: string[] = [];
-  const outcomes: Record<string, SessionOutcome> = {};
-  for (const id of ids) {
-    const outcome = await closeCheckoutSession(api, id);
-    outcomes[id] = outcome;
-    if (outcome !== 'failed') closed.push(id);
+  try {
+    await recordCheckoutSweep(invoiceId, run);
+  } catch (err) {
+    // The sessions are closed at Stripe either way; a re-run re-reads them
+    // as not open and records them then.
+    logEvent({
+      severity: 'warn',
+      function: 'onInvoicePaidExpireCheckouts',
+      event: 'stripe.checkout.sweep.stamp.failed',
+      extra: { invoiceId, closed: run.closed, err: (err as Error)?.message },
+    });
   }
-
-  if (closed.length > 0) {
-    try {
-      await db()
-        .collection('invoices')
-        .doc(invoiceId)
-        .set(
-          {
-            [CLOSED_CHECKOUT_SESSIONS_FIELD]: FieldValue.arrayUnion(...closed),
-            checkoutSessionsClosedAt: FieldValue.serverTimestamp(),
-          },
-          { merge: true },
-        );
-    } catch (err) {
-      // The sessions are closed at Stripe either way; a re-run re-reads them
-      // as not open and records them then.
-      logEvent({
-        severity: 'warn',
-        function: 'onInvoicePaidExpireCheckouts',
-        event: 'stripe.checkout.sweep.stamp.failed',
-        extra: { invoiceId, closed, err: (err as Error)?.message },
-      });
-    }
-  }
-
-  const failed = ids.filter((id) => outcomes[id] === 'failed');
   logEvent({
-    severity: failed.length > 0 ? 'error' : 'info',
+    severity: run.failed.length > 0 ? 'error' : 'info',
     function: 'onInvoicePaidExpireCheckouts',
-    event: failed.length > 0 ? 'stripe.checkout.sweep.partial' : 'stripe.checkout.sweep.done',
-    extra: { invoiceId, outcomes },
+    event: run.failed.length > 0 ? 'stripe.checkout.sweep.partial' : 'stripe.checkout.sweep.done',
+    extra: { invoiceId, outcomes: run.outcomes },
   });
 }
-
 export const onInvoicePaidExpireCheckouts = onDocumentWritten(
   {
     document: 'invoices/{invoiceId}',

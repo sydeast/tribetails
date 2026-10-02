@@ -212,6 +212,10 @@ invoice_already_paid`), `getMyInvoices` ships no pay methods for one, and the
 invoice PDF prints no "How to pay" once it is paid. When an invoice becomes paid,
 the `onInvoicePaidExpireCheckouts` trigger expires every Checkout Session still
 open for it (`openCheckoutSessionIds`, recorded in `closedCheckoutSessionIds`).
+The outcome is also written to the invoice's `checkoutSweep` (expired ids, failures
+with Stripe's message, time), and the admin invoice detail shows it as one line:
+"Open payment links closed (N)", or the reason with a Try again action that calls
+`retryInvoiceCheckoutClose` (#1113).
 If a checkout still completes on a paid invoice (the household paid in the
 seconds before the expire), the webhook records the charge as an **unapplied**
 root `payments/{eventId}` row (`appliedTo: 'unapplied'`, `needsAdminDecision:

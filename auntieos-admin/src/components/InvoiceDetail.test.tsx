@@ -57,6 +57,7 @@ const {
   updateInvoice,
   archiveInvoice,
   unarchiveInvoice,
+  retryInvoiceCheckoutClose,
 } = vi.hoisted(() => ({
   sendInvoiceReminder: vi.fn(),
   markInvoicePaid: vi.fn(),
@@ -68,6 +69,7 @@ const {
   updateInvoice: vi.fn(),
   archiveInvoice: vi.fn(),
   unarchiveInvoice: vi.fn(),
+  retryInvoiceCheckoutClose: vi.fn(),
 }));
 vi.mock('../api/invoicesWrite', async (orig) => ({
   ...(await orig<typeof import('../api/invoicesWrite')>()),
@@ -81,6 +83,7 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   updateInvoice,
   archiveInvoice,
   unarchiveInvoice,
+  retryInvoiceCheckoutClose,
 }));
 
 import { InvoiceDetail, paymentSplit } from './InvoiceDetail';
@@ -248,6 +251,7 @@ beforeEach(() => {
   });
   archiveInvoice.mockReset().mockResolvedValue(undefined);
   unarchiveInvoice.mockReset().mockResolvedValue(undefined);
+  retryInvoiceCheckoutClose.mockReset().mockResolvedValue({ ok: true, invoiceId: 'inv1', closedCount: 1, failedCount: 0 });
   getInvoiceLedger.mockReset().mockResolvedValue(ledgerResult());
   recordPayment.mockReset().mockResolvedValue({
     ok: true,
@@ -2578,5 +2582,77 @@ describe('#977 and #988 Mark paid, two-step, with and without a chosen credit', 
     expect(
       await screen.findByText(/\$62\.50 has been added to the household's account credit/i),
     ).toBeInTheDocument();
+  });
+});
+
+/**
+ * #1113: whether the open Stripe payment links were closed when the invoice was
+ * paid. The server writes `checkoutSweep`; before this the operator could not
+ * see whether a link was actually closed.
+ */
+describe('InvoiceDetail open payment links (#1113)', () => {
+  const paid = (over: Partial<InvoiceEntry> = {}) =>
+    entry({ status: 'paid', amountDue: 0, ...over });
+  const line = () => document.querySelector('[data-checkout-links]');
+  it('says the links were closed, with the count', () => {
+    render(
+      <InvoiceDetail
+        invoice={paid({ checkoutSweep: { expiredIds: ['cs_a', 'cs_b'], failed: [] } })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(line()).toHaveTextContent('Open payment links closed (2)');
+    expect(line()?.getAttribute('data-checkout-links')).toBe('closed');
+    expect(screen.queryByRole('button', { name: /try again/i })).toBeNull();
+  });
+  it('shows nothing when the invoice never had an open link', () => {
+    render(<InvoiceDetail invoice={paid()} onClose={vi.fn()} />);
+    expect(line()).toBeNull();
+    expect(screen.queryByText(/payment links/i)).toBeNull();
+  });
+  it('shows nothing when every link had already finished before the invoice was paid', () => {
+    render(
+      <InvoiceDetail invoice={paid({ checkoutSweep: { expiredIds: [], failed: [] } })} onClose={vi.fn()} />,
+    );
+    expect(line()).toBeNull();
+  });
+  it("states Stripe's reason in plain words, with a Try again action", () => {
+    render(
+      <InvoiceDetail
+        invoice={paid({
+          checkoutSweep: {
+            expiredIds: [],
+            failed: [{ sessionId: 'cs_b', reason: 'You cannot expire this Checkout Session.' }],
+          },
+        })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(line()?.getAttribute('data-checkout-links')).toBe('failed');
+    expect(line()).toHaveTextContent('Could not close an open payment link: You cannot expire this Checkout Session.');
+    expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
+  });
+  it('Try again calls the callable and reports a failure it returns', async () => {
+    retryInvoiceCheckoutClose.mockResolvedValue({ ok: true, invoiceId: 'inv1', closedCount: 0, failedCount: 1 });
+    render(
+      <InvoiceDetail
+        invoice={paid({ checkoutSweep: { failed: [{ sessionId: 'cs_b', reason: 'Stripe is down.' }] } })}
+        onClose={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /try again/i }));
+    expect(retryInvoiceCheckoutClose).toHaveBeenCalledWith('inv1');
+    expect(await screen.findByText(/still could not be closed/i)).toBeInTheDocument();
+  });
+  it('Try again surfaces a refused call verbatim', async () => {
+    retryInvoiceCheckoutClose.mockRejectedValue(new Error('Admin claim required.'));
+    render(
+      <InvoiceDetail
+        invoice={paid({ checkoutSweep: { failed: [{ sessionId: 'cs_b', reason: 'Stripe is down.' }] } })}
+        onClose={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /try again/i }));
+    expect(await screen.findByText(/Admin claim required/)).toBeInTheDocument();
   });
 });

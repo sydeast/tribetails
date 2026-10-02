@@ -1000,6 +1000,25 @@ export interface SendInvoiceReminderResult {
   nextReminderAllowedAtMs: number | null;
 }
 
+// ---------- retryInvoiceCheckoutClose ----------
+
+/**
+ * Request payload for the `retryInvoiceCheckoutClose` callable.
+ */
+export interface RetryInvoiceCheckoutCloseArgs {
+  invoiceId: string;
+}
+
+/**
+ * Response from the `retryInvoiceCheckoutClose` callable.
+ */
+export interface RetryInvoiceCheckoutCloseResult {
+  ok: true;
+  invoiceId: string;
+  closedCount: number;
+  failedCount: number;
+}
+
 // ---------- unarchiveInvoice ----------
 
 /**

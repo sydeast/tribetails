@@ -340,6 +340,12 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
         ? createdId
         : null;
   const deepLinked = useDocById<InvoiceEntry>('invoices', deepLinkId);
+  // THE OPEN SHEET IS LIVE (#1113). The list rows are a one-shot page read, so a
+  // sheet built from one would never show what the server writes after it
+  // opens: the open payment links line the paid trigger records seconds later,
+  // or the result of Try again. The selected invoice is therefore also read by
+  // id as a listener, and it wins over the row once it has arrived.
+  const liveSelected = useDocById<InvoiceEntry>('invoices', selectedId);
 
   // NORMALIZED, the same as the list rows. `rowViewsFor` normalizes what the
   // LIST reads, and this find used to hand the detail sheet the raw document,
@@ -360,7 +366,14 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
     deepLinkId !== null && deepLinked.status === 'ready' && deepLinked.data !== null
       ? deepLinked.data
       : undefined;
-  const selectedRaw = selectedRow ?? deepLinkedRow;
+  const liveRow =
+    selectedId !== null &&
+    liveSelected.status === 'ready' &&
+    liveSelected.data !== null &&
+    liveSelected.data._id === selectedId
+      ? liveSelected.data
+      : undefined;
+  const selectedRaw = liveRow ?? selectedRow ?? deepLinkedRow;
   const selected = selectedRaw === undefined ? undefined : normalizeInvoice(selectedRaw);
 
   // What the link RESOLVED TO, as one of three states the banner below renders.

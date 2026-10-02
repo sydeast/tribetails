@@ -95,6 +95,8 @@ describe('#944 the allowlist is a real list of real callables', () => {
       'giveAccountCredit', 'getAccountCreditHistory',
       // #1003: the admin's decision about an unapplied card payment.
       'listUnappliedPayments', 'resolveUnappliedPayment',
+      // #1113: retrying the close of a paid invoice's open payment links.
+      'retryInvoiceCheckoutClose',
     ];
     const leaked = money.filter((n) => AUNTIE_ALLOWED_CALLABLES.has(n));
     expect(leaked).toEqual([]);

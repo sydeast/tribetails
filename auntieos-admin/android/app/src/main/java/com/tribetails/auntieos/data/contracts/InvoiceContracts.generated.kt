@@ -2002,6 +2002,42 @@ internal fun decodeSendInvoiceReminderResult(raw: Map<String, Any?>?): SendInvoi
         nextReminderAllowedAtMs = (raw?.get("nextReminderAllowedAtMs") as? Number)?.toLong(),
     )
 
+// ---------- retryInvoiceCheckoutClose ----------
+
+/** Request payload for the `retryInvoiceCheckoutClose` callable. */
+data class RetryInvoiceCheckoutCloseArgs(
+    val invoiceId: String,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        put("invoiceId", invoiceId)
+    }
+}
+
+/** Response from the `retryInvoiceCheckoutClose` callable. */
+data class RetryInvoiceCheckoutCloseResult(
+    val ok: Boolean,
+    val invoiceId: String,
+    val closedCount: Long,
+    val failedCount: Long,
+)
+
+/**
+ * Fail-soft decode of `RetryInvoiceCheckoutCloseResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeRetryInvoiceCheckoutCloseResult(raw: Map<String, Any?>?): RetryInvoiceCheckoutCloseResult =
+    RetryInvoiceCheckoutCloseResult(
+        ok = raw?.get("ok") as? Boolean ?: false,
+        invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
+        closedCount = (raw?.get("closedCount") as? Number)?.toLong() ?: 0L,
+        failedCount = (raw?.get("failedCount") as? Number)?.toLong() ?: 0L,
+    )
+
 // ---------- unarchiveInvoice ----------
 
 /** Request payload for the `unarchiveInvoice` callable. */

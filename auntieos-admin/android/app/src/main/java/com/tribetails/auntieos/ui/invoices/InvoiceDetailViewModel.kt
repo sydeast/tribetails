@@ -104,6 +104,8 @@ data class InvoiceDetailUiState(
     val archivePrompt: Boolean = false,
     val archiveForceOffered: Boolean = false,
     val archiving: Boolean = false,
+    // #1113: the open-payment-links "Try again" is in flight.
+    val retryingCheckout: Boolean = false,
 )
 
 /**
@@ -750,6 +752,43 @@ class InvoiceDetailViewModel(
         }
     }
 
+    /**
+     * #1113: "Try again" on the open-payment-links line. Asks the server to
+     * expire the Checkout Sessions Stripe refused to expire the first time.
+     * Moves no money. The line is read off the invoice, so the invoice is
+     * re-read afterwards; a failure that persists is said in the toast as well,
+     * because the reason on the line may not have changed.
+     */
+    fun retryCheckoutClose() {
+        val invoice = _uiState.value.invoice ?: return
+        if (_uiState.value.retryingCheckout) return
+        _uiState.value = _uiState.value.copy(retryingCheckout = true)
+        viewModelScope.launch {
+            invoiceRepository.retryInvoiceCheckoutClose(invoice.id)
+                .onSuccess { result ->
+                    reloadInvoiceQuietly(invoice.id)
+                    val stillOpen = result.failedCount > 0
+                    _uiState.value = _uiState.value.copy(
+                        retryingCheckout = false,
+                        toastMessage = if (stillOpen) {
+                            "The open payment links still could not be closed. The reason is on the line above."
+                        } else {
+                            "Open payment links closed."
+                        },
+                        toastVisible = true,
+                        toastIsError = stillOpen,
+                    )
+                }
+                .onFailure { err ->
+                    _uiState.value = _uiState.value.copy(
+                        retryingCheckout = false,
+                        toastMessage = "Couldn't retry: ${err.message.orEmpty()}",
+                        toastVisible = true,
+                        toastIsError = true,
+                    )
+                }
+        }
+    }
     /**
      * Stage 2 tail: review and send a DRAFT invoice via the postInvoiceEvent callable
      * (status -> "sent"). Reloads the invoice on success so the draft affordance drops.

@@ -63,6 +63,7 @@ import {
 } from '../../src/portal/getAccountCreditHistory';
 import { Args as ReviewAndSendDraftInvoiceArgs, Result as ReviewAndSendDraftInvoiceResult } from '../../src/admin/reviewAndSendDraftInvoice';
 import { Args as SendInvoiceReminderArgs, Result as SendInvoiceReminderResult } from '../../src/admin/sendInvoiceReminder';
+import { Args as RetryInvoiceCheckoutCloseArgs, Result as RetryInvoiceCheckoutCloseResult } from '../../src/admin/retryInvoiceCheckoutClose';
 import { Args as UnarchiveInvoiceArgs, Result as UnarchiveInvoiceResult } from '../../src/admin/unarchiveInvoice';
 import { Args as UpdateInvoiceArgs, Result as UpdateInvoiceResult } from '../../src/admin/updateInvoice';
 import { Args as GetMyInvoicePdfArgs, Result as GetMyInvoicePdfResult } from '../../src/portal/getMyInvoicePdf';
@@ -177,6 +178,7 @@ export const INVOICE_CONTRACT_REGISTRY: ContractRegistry = {
     { name: 'resendQuote', args: ResendQuoteArgs, result: ResendQuoteResult },
     { name: 'reviewAndSendDraftInvoice', args: ReviewAndSendDraftInvoiceArgs, result: ReviewAndSendDraftInvoiceResult },
     { name: 'sendInvoiceReminder', args: SendInvoiceReminderArgs, result: SendInvoiceReminderResult },
+    { name: 'retryInvoiceCheckoutClose', args: RetryInvoiceCheckoutCloseArgs, result: RetryInvoiceCheckoutCloseResult },
     { name: 'unarchiveInvoice', args: UnarchiveInvoiceArgs, result: UnarchiveInvoiceResult },
     { name: 'updateInvoice', args: UpdateInvoiceArgs, result: UpdateInvoiceResult },
   ],

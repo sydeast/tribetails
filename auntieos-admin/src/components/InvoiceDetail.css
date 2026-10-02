@@ -200,3 +200,16 @@
 .invoice-detail__check input {
   flex: 0 0 auto;
 }
+
+.invoice-detail__checkout {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+}
+.invoice-detail__checkout[data-checkout-links='failed'] {
+  color: var(--color-error);
+}
