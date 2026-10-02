@@ -179,6 +179,8 @@ fun EmergencyContactsCard(
             drafts = toDrafts(r.contacts)
         } catch (c: CancellationException) {
             throw c
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             loadError = "Couldn't load your Emergency Contacts right now."
         }
@@ -328,6 +330,8 @@ fun EmergencyContactsCard(
                                         scope.launch {
                                             val stored = try {
                                                 portalApi.saveEmergencyContacts(sentFor, sent)
+                                            } catch (c: CancellationException) {
+                                                throw c
                                             } catch (c: CancellationException) {
                                                 throw c
                                             } catch (t: Throwable) {

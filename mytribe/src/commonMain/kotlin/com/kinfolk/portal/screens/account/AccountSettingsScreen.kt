@@ -45,6 +45,7 @@ import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.openExternalUrl
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 
 @Composable
@@ -113,6 +114,8 @@ fun AccountSettingsScreen(
             backupEmail = a.backupEmail.orEmpty()
             backupPhone = a.backupPhone.orEmpty()
             error = null
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             error = t.message ?: "Could not load account"
         }
@@ -130,6 +133,8 @@ fun AccountSettingsScreen(
                 "backupEmail" to backupEmail,
                 "backupPhone" to backupPhone,
             )
+        } catch (c: CancellationException) {
+            throw c
         } catch (_: Throwable) { /* admin has not set up schema yet, keep static fields */ }
         // Card on file. Best-effort: a member without billing access is refused
         // by the callable (cards take billing access, the PRIMARY or a
@@ -141,6 +146,8 @@ fun AccountSettingsScreen(
             loadingBilling = true
             try {
                 paymentMethod = portalApi.getMyPaymentMethod(kinfolkId)
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 billingError = t.message ?: "Could not read your billing details."
             } finally {
@@ -221,6 +228,8 @@ fun AccountSettingsScreen(
                             )
                             accountValues = accountValues + ("secondaryEmail" to "") + ("secondaryRole" to "")
                             status = "Invite sent to $sentTo."
+                        } catch (c: CancellationException) {
+                            throw c
                         } catch (t: Throwable) {
                             status = "Invite failed: ${t.message ?: t}"
                         } finally {
@@ -354,6 +363,8 @@ fun AccountSettingsScreen(
                                         } else {
                                             billingError = "Stripe did not return a link. Try again in a moment."
                                         }
+                                    } catch (c: CancellationException) {
+                                        throw c
                                     } catch (t: Throwable) {
                                         billingError = t.message ?: "Could not open Stripe. Try again in a moment."
                                     } finally {
@@ -380,6 +391,8 @@ fun AccountSettingsScreen(
                                         } else {
                                             "Stripe has no card for this tribe yet."
                                         }
+                                    } catch (c: CancellationException) {
+                                        throw c
                                     } catch (t: Throwable) {
                                         billingError = t.message ?: "Could not reach Stripe. Try again in a moment."
                                     } finally {
@@ -415,6 +428,8 @@ fun AccountSettingsScreen(
                                                     "Card removed."
                                                 }
                                                 confirmingCardRemoval = false
+                                            } catch (c: CancellationException) {
+                                                throw c
                                             } catch (t: Throwable) {
                                                 billingError = t.message ?: "Could not remove the card. Try again in a moment."
                                             } finally {
@@ -494,6 +509,8 @@ fun AccountSettingsScreen(
                             )
                         }
                         status = "Saved."
+                    } catch (c: CancellationException) {
+                        throw c
                     } catch (t: Throwable) {
                         status = "Save failed: ${t.message ?: t}"
                     } finally {
@@ -565,6 +582,8 @@ private fun AvatarPickerRow(
                     return@launch
                 }
                 onPhotoUrl(secureUrl)
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 onError("Upload failed: ${t.message ?: t}")
             } finally {
@@ -644,6 +663,8 @@ private fun SecuritySection(repo: AuthRepository) {
                             repo.changePassword(curPw, newPw)
                             curPw = ""; newPw = ""
                             pwMsg = "Password updated."
+                        } catch (c: CancellationException) {
+                            throw c
                         } catch (t: Throwable) {
                             pwMsg = "Couldn't update: ${t.message ?: t}"
                         } finally {
@@ -679,6 +700,8 @@ private fun SecuritySection(repo: AuthRepository) {
                             repo.changeEmail(emailPw, newEmail)
                             emailPw = ""
                             emailMsg = "Check your new inbox to confirm the change."
+                        } catch (c: CancellationException) {
+                            throw c
                         } catch (t: Throwable) {
                             emailMsg = "Couldn't update: ${t.message ?: t}"
                         } finally {

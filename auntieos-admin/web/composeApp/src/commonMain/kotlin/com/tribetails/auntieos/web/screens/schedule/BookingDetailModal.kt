@@ -40,6 +40,7 @@ import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.StaffMember
 import com.tribetails.auntieos.web.data.WriteResult
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
@@ -53,6 +54,7 @@ import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ServicePill
 import com.tribetails.auntieos.web.ui.components.ToastKind
 import com.tribetails.auntieos.web.ui.components.serviceTone
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
@@ -562,7 +564,7 @@ internal fun isoTimePart(iso: String): String =
 internal fun buildRescheduleTimes(date: String, time: String, durationMinutes: Int, zone: TimeZone): Pair<String, String>? {
     if (date.length != 10 || time.length != 5) return null
     val startIso = "${date}T${time}:00"
-    val startLdt = runCatching { LocalDateTime.parse(startIso) }.getOrNull() ?: return null
+    val startLdt = runCatchingCancellable { LocalDateTime.parse(startIso) }.getOrNull() ?: return null
     val dur = if (durationMinutes > 0) durationMinutes else 30
     val endLdt = startLdt.toInstant(zone).plus(dur.minutes).toLocalDateTime(zone)
     return startIso to "${endLdt.date}T${pad2(endLdt.hour)}:${pad2(endLdt.minute)}:00"
@@ -578,9 +580,11 @@ private fun pad2(n: Int): String = n.toString().padStart(2, '0')
 @OptIn(ExperimentalTime::class)
 private fun parseIsoToMs(iso: String, zone: TimeZone): Long? {
     if (iso.isBlank()) return null
-    runCatching { return Instant.parse(iso).toEpochMilliseconds() }
+    runCatchingCancellable { return Instant.parse(iso).toEpochMilliseconds() }
     return try {
         LocalDateTime.parse(iso).toInstant(zone).toEpochMilliseconds()
+    } catch (c: CancellationException) {
+        throw c
     } catch (_: Throwable) {
         null
     }
@@ -594,8 +598,8 @@ private fun parseIsoToMs(iso: String, zone: TimeZone): Long? {
 @OptIn(ExperimentalTime::class)
 private fun displayDateTime(iso: String, zone: TimeZone): String {
     if (iso.isBlank()) return "Not set"
-    val ldt = runCatching { Instant.parse(iso).toLocalDateTime(zone) }.getOrNull()
-        ?: runCatching { LocalDateTime.parse(iso) }.getOrNull()
+    val ldt = runCatchingCancellable { Instant.parse(iso).toLocalDateTime(zone) }.getOrNull()
+        ?: runCatchingCancellable { LocalDateTime.parse(iso) }.getOrNull()
         ?: return iso
     val dow = ldt.date.dayOfWeek.name.take(3).lowercase().replaceFirstChar(Char::titlecase)
     val month = ldt.date.month.name.take(3).lowercase().replaceFirstChar(Char::titlecase)

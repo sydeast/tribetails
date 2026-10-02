@@ -60,6 +60,7 @@ import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.formatUsd
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlinx.coroutines.launch
@@ -148,6 +149,8 @@ fun BookingWizardScreen(
             val catalogRes = portalApi.getServiceCatalog(kinfolkId)
             services = catalogRes.services
             pricesVisible = catalogRes.pricesVisible
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             loadError = t.message ?: "Could not load wizard"
         }
@@ -157,6 +160,8 @@ fun BookingWizardScreen(
             closedDates = portalApi
                 .getBusinessClosures(bookingDateKey(today), bookingDateKey(horizonEnd))
                 .associate { it.date to it.name }
+        } catch (c: CancellationException) {
+            throw c
         } catch (_: Throwable) {
             closedDates = emptyMap()
         }
@@ -164,6 +169,8 @@ fun BookingWizardScreen(
         // losing it leaves the wizard on clock times rather than dead.
         try {
             policy = portalApi.getBookingPolicy()
+        } catch (c: CancellationException) {
+            throw c
         } catch (_: Throwable) {
             policy = BookingPolicy.CLOCK_ONLY
         }
@@ -445,6 +452,8 @@ fun BookingWizardScreen(
                                     )
                                     submissionKey = null
                                     onComplete()
+                                } catch (c: CancellationException) {
+                                    throw c
                                 } catch (t: Throwable) {
                                     submitError = t.message ?: "Could not create booking"
                                 } finally {

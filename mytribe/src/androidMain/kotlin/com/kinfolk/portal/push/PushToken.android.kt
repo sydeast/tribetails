@@ -2,6 +2,7 @@ package com.kinfolk.portal.push
 
 import android.util.Log
 import com.google.firebase.messaging.FirebaseMessaging
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.tasks.await
 
 actual val pushPlatform: String = "android-mytribe"
@@ -21,6 +22,8 @@ actual val pushPlatform: String = "android-mytribe"
  */
 actual suspend fun obtainPushToken(): String? = try {
     FirebaseMessaging.getInstance().token.await()
+} catch (c: CancellationException) {
+    throw c
 } catch (t: Throwable) {
     Log.w("KinfolkPush", "FCM getToken failed", t)
     null

@@ -70,6 +70,7 @@ import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.clockTime
 import com.kinfolk.portal.util.relativeTime
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 
 /** Filter labels are user-facing; the enum constants stay the stable keys. */
@@ -103,6 +104,8 @@ fun KinTalesScreen(
             tales = res.tales
             hasMore = res.hasMore
             error = null
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             error = t.message ?: "Could not load KinTales"
         }
@@ -205,6 +208,8 @@ fun KinTalesScreen(
                                     val next = portalApi.getMyKinTales(kinfolkId = kinfolkId, before = cursor)
                                     tales = (tales.orEmpty()) + next.tales
                                     hasMore = next.hasMore
+                                } catch (c: CancellationException) {
+                                    throw c
                                 } catch (t: Throwable) {
                                     error = t.message ?: "Could not load more"
                                 } finally {
@@ -240,6 +245,8 @@ private fun KinTaleCard(
         try {
             mediaError = null
             media = portalApi.getMyKinTaleMedia(kinfolkId = kinfolkId, taleId = tale.id)
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             mediaError = t.message ?: "Could not load photos"
         }
@@ -421,6 +428,8 @@ private fun KinTaleReactionRow(
     LaunchedEffect(taleId, kinfolkId) {
         try {
             reaction = portalApi.getKinTaleReaction(kinfolkId = kinfolkId, taleId = taleId)
+        } catch (c: CancellationException) {
+            throw c
         } catch (_: Throwable) {
             // Best-effort — a missing reaction row is a minor cosmetic gap,
             // not worth a full error state the way a failed comment load is.
@@ -441,6 +450,8 @@ private fun KinTaleReactionRow(
                 scope.launch {
                     try {
                         reaction = portalApi.toggleKinTaleLove(kinfolkId = kinfolkId, taleId = taleId)
+                    } catch (c: CancellationException) {
+                        throw c
                     } catch (_: Throwable) {
                         reaction = before
                     } finally {
@@ -498,6 +509,8 @@ private fun KinTaleComments(
         try {
             loadError = null
             comments = portalApi.getMyKinTaleComments(kinfolkId = kinfolkId, taleId = taleId)
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             loadError = t.message ?: "Could not load comments."
         }
@@ -561,6 +574,8 @@ private fun KinTaleComments(
                                         replyInput = ""
                                         replyParentId = null
                                         reload()
+                                    } catch (c: CancellationException) {
+                                        throw c
                                     } catch (t: Throwable) {
                                         postError = t.message ?: "Could not post reply."
                                     } finally {
@@ -607,6 +622,8 @@ private fun KinTaleComments(
                     )
                     topInput = ""
                     reload()
+                } catch (c: CancellationException) {
+                    throw c
                 } catch (t: Throwable) {
                     postError = t.message ?: "Could not post comment."
                 } finally {

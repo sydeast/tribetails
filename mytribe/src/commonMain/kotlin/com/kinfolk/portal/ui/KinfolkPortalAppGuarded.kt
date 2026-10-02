@@ -31,6 +31,7 @@ import com.kinfolk.portal.nav.shellStartRoute
 import com.kinfolk.portal.portal.MyHomeResult
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.theme.KinfolkPortalTheme
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 import coil3.ImageLoader
 import coil3.compose.setSingletonImageLoaderFactory
@@ -85,6 +86,8 @@ fun KinfolkPortalAppGuarded() {
         try {
             home = portalApi.getMyHome(resolvedKinfolkId)
             homeError = null
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             home = MyHomeResult(kinfolkId = resolvedKinfolkId, displayName = "The $resolvedKinfolkId Tribe")
             homeError = t.message
@@ -99,6 +102,8 @@ fun KinfolkPortalAppGuarded() {
         if (resolvedKinfolkId != null) {
             try {
                 featureFlags = portalApi.getFeatureFlags()
+            } catch (c: CancellationException) {
+                throw c
             } catch (_: Throwable) {
                 // keep current featureFlags (defaults)
             }
@@ -153,6 +158,8 @@ fun KinfolkPortalAppGuarded() {
                                 scope.launch {
                                     try {
                                         portalApi.dismissBanner(bannerId)
+                                    } catch (c: CancellationException) {
+                                        throw c
                                     } catch (t: Throwable) {
                                         println("[Banner] perUser dismiss failed (ignored): ${'$'}{t.message}")
                                     }
@@ -178,6 +185,8 @@ fun KinfolkPortalAppGuarded() {
                                     try {
                                         portalApi.setActiveTribe(picked)
                                         repo.refreshIdToken()
+                                    } catch (c: CancellationException) {
+                                        throw c
                                     } catch (t: Throwable) {
                                         println("[TribePicker] setActiveTribe claim re-mint failed (ignored): ${t.message}")
                                     }

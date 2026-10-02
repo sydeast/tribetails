@@ -57,6 +57,7 @@ import com.tribetails.auntieos.web.data.NotificationEntry
 import com.tribetails.auntieos.web.data.SmsMessage
 import com.tribetails.auntieos.web.data.VoicemailLog
 import com.tribetails.auntieos.web.data.WriteResult
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
@@ -79,6 +80,7 @@ import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
 import com.tribetails.auntieos.web.util.nowIso
 import com.tribetails.auntieos.web.util.openUrl
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 
 // `internal`, not `private`: `VoicemailLog.toEntry()` below returns an
@@ -337,6 +339,8 @@ fun InboxScreen() {
                                                     }
                                                     replyBody = ""
                                                     showToast("Reply sent.", ToastKind.Success)
+                                                } catch (c: CancellationException) {
+                                                    throw c
                                                 } catch (t: Throwable) {
                                                     showToast("Reply failed: ${t.message ?: "unknown error"}", ToastKind.Error)
                                                 } finally {
@@ -1038,8 +1042,8 @@ private fun formatDuration(sec: Int): String =
     if (sec < 60) "${sec}s" else "${sec / 60}m ${sec % 60}s"
 
 private fun shortDateTime(iso: String): String =
-    runCatching {
-        if (iso.length < 16) return@runCatching iso
+    runCatchingCancellable {
+        if (iso.length < 16) return@runCatchingCancellable iso
         val month = MONTHS[iso.substring(5, 7).toInt() - 1]
         val day   = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
         val time  = iso.substring(11, 16)

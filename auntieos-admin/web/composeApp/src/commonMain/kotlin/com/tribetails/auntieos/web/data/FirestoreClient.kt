@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.data
 
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.KSerializer
@@ -138,7 +139,7 @@ class FirestoreClient {
         val r = platformInvokeCallable("getFeatureFlags", "{}")
         return when (r) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 val flagsObj = ffJson.parseToJsonElement(r.value).jsonObject["flags"]?.jsonObject
                 val map = flagsObj?.entries
                     ?.mapNotNull { (k, v) -> v.jsonPrimitive.booleanOrNull?.let { k to it } }
@@ -193,7 +194,7 @@ class FirestoreClient {
     suspend fun verifyActivityLogChain(): WriteResult<ChainVerifyResult> {
         return when (val r = platformInvokeCallable("verifyActivityLogChain", "{}")) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 val o = ffJson.parseToJsonElement(r.value).jsonObject
                 val an = o["anomaly"]?.jsonObject
                 WriteResult.Ok(
@@ -223,7 +224,7 @@ class FirestoreClient {
     suspend fun breeds(): WriteResult<BreedLists> =
         when (val r = platformInvokeCallable("getBreeds", "{}")) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok  -> runCatching { WriteResult.Ok(decodeBreedLists(r.value)) }
+            is WriteResult.Ok  -> runCatchingCancellable { WriteResult.Ok(decodeBreedLists(r.value)) }
                 .getOrElse { WriteResult.Err(it.message ?: "breeds decode failed") }
         }
 
@@ -235,7 +236,7 @@ class FirestoreClient {
     suspend fun listChecklistBank(): WriteResult<List<ChecklistBankItem>> =
         when (val r = platformInvokeCallable("listChecklistBank", "{}")) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok  -> runCatching { WriteResult.Ok(decodeChecklistBank(r.value)) }
+            is WriteResult.Ok  -> runCatchingCancellable { WriteResult.Ok(decodeChecklistBank(r.value)) }
                 .getOrElse { WriteResult.Err(it.message ?: "checklist bank decode failed") }
         }
 
@@ -284,7 +285,7 @@ class FirestoreClient {
     suspend fun getLocalWeather(): WriteResult<com.tribetails.auntieos.web.screens.home.LocalWeather> {
         return when (val r = platformInvokeCallable("getLocalWeather", "{}")) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(com.tribetails.auntieos.web.screens.home.decodeLocalWeather(r.value))
             }.getOrElse { WriteResult.Err(it.message ?: "weather decode failed") }
         }
@@ -313,7 +314,7 @@ class FirestoreClient {
             .externalSendPayloadJson(channel, to, subject, body, transactional)
         return when (val r = platformInvokeCallable("sendExternalMessage", payloadJson)) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(com.tribetails.auntieos.web.screens.communicate.decodeExternalSendResult(r.value))
             }.getOrElse { WriteResult.Err(it.message ?: "external send decode failed") }
         }
@@ -328,7 +329,7 @@ class FirestoreClient {
     suspend fun listRecentSends(): WriteResult<List<com.tribetails.auntieos.web.screens.communicate.RecentSend>> {
         return when (val r = platformInvokeCallable("listRecentSends", "{}")) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(com.tribetails.auntieos.web.screens.communicate.decodeRecentSends(r.value))
             }.getOrElse { WriteResult.Err(it.message ?: "recent sends decode failed") }
         }
@@ -350,7 +351,7 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("suppressExternalRecipient", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(com.tribetails.auntieos.web.screens.communicate.decodeSuppressResult(r.value))
             }.getOrElse { WriteResult.Err(it.message ?: "suppression decode failed") }
         }
@@ -369,7 +370,7 @@ class FirestoreClient {
         val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
         return when (val r = platformInvokeCallable("synthesize_kinfolk_profile", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 // Validate the server ack is well-formed JSON: a garbage body is a
                 // real failure, not a silent success.
                 callableJson.parseToJsonElement(r.value).jsonObject
@@ -394,7 +395,7 @@ class FirestoreClient {
         val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
         return when (val r = platformInvokeCallable("recap_recent_comms", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 val o = callableJson.parseToJsonElement(r.value).jsonObject
                 WriteResult.Ok(
                     CommsRecap(
@@ -415,7 +416,7 @@ class FirestoreClient {
         val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
         return when (val r = platformInvokeCallable("clear_dossier_household_notes", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 callableJson.parseToJsonElement(r.value).jsonObject
                 WriteResult.Ok(Unit)
             }.getOrElse { WriteResult.Err(it.message ?: "clear notes decode failed") }
@@ -440,7 +441,7 @@ class FirestoreClient {
         val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
         return when (val r = platformInvokeCallable("listEmergencyContacts", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 val o = callableJson.parseToJsonElement(r.value).jsonObject
                 val rows = o["contacts"] as? JsonArray ?: error("listEmergencyContacts: no contacts array in the answer")
                 WriteResult.Ok(
@@ -469,7 +470,7 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("saveEmergencyContacts", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 val rows = callableJson.parseToJsonElement(r.value).jsonObject["contacts"] as? JsonArray
                     ?: error("saveEmergencyContacts: no contacts array in the answer")
                 WriteResult.Ok(rows.mapNotNull { (it as? JsonObject)?.let(::contactFromJson) })
@@ -482,7 +483,7 @@ class FirestoreClient {
         val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
         return when (val r = platformInvokeCallable("listSecondaryKinfolk", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(secondaryPeopleFromJson(callableJson.parseToJsonElement(r.value).jsonObject))
             }.getOrElse { WriteResult.Err(it.message ?: "listSecondaryKinfolk decode failed") }
         }
@@ -504,7 +505,7 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("saveSecondaryKinfolk", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 val person = callableJson.parseToJsonElement(r.value).jsonObject["person"] as? JsonObject
                     ?: error("saveSecondaryKinfolk: no person in the answer")
                 WriteResult.Ok(secondaryPersonFromJson(person) ?: error("saveSecondaryKinfolk: no personId in the answer"))
@@ -524,7 +525,7 @@ class FirestoreClient {
     suspend fun listAudienceSegments(): WriteResult<List<com.tribetails.auntieos.web.screens.communicate.AudienceSegment>> {
         return when (val r = platformInvokeCallable("listAudienceSegments", "{}")) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(com.tribetails.auntieos.web.screens.communicate.decodeSegments(r.value))
             }.getOrElse { WriteResult.Err(it.message ?: "segments decode failed") }
         }
@@ -542,7 +543,7 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("saveAudienceSegment", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(callableJson.parseToJsonElement(r.value).jsonObject["id"]?.jsonPrimitive?.contentOrNull.orEmpty())
             }.getOrElse { WriteResult.Err(it.message ?: "segment save decode failed") }
         }
@@ -579,7 +580,7 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("broadcastMessage", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(com.tribetails.auntieos.web.screens.communicate.decodeBroadcastResult(r.value))
             }.getOrElse { WriteResult.Err(it.message ?: "broadcast decode failed") }
         }
@@ -609,7 +610,7 @@ class FirestoreClient {
         val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
         return when (val r = platformInvokeCallable("inviteKinfolkToPortal", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(callableJson.decodeFromString(InvitePortalResult.serializer(), r.value))
             }.getOrElse { WriteResult.Err(it.message ?: "invite decode failed") }
         }
@@ -626,7 +627,7 @@ class FirestoreClient {
     suspend fun listConversations(): WriteResult<List<com.tribetails.auntieos.web.screens.inbox.ConversationSummary>> {
         return when (val r = platformInvokeCallable("listConversations", "{}")) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(com.tribetails.auntieos.web.screens.inbox.decodeConversations(r.value))
             }.getOrElse { WriteResult.Err(it.message ?: "conversations decode failed") }
         }
@@ -636,7 +637,7 @@ class FirestoreClient {
         val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
         return when (val r = platformInvokeCallable("getConversationThread", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(com.tribetails.auntieos.web.screens.inbox.decodeThread(r.value))
             }.getOrElse { WriteResult.Err(it.message ?: "thread decode failed") }
         }
@@ -649,7 +650,7 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("replyToConversation", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(callableJson.parseToJsonElement(r.value).jsonObject["messageId"]?.jsonPrimitive?.contentOrNull.orEmpty())
             }.getOrElse { WriteResult.Err(it.message ?: "reply decode failed") }
         }
@@ -673,7 +674,7 @@ class FirestoreClient {
         val payload = buildJsonObject { put("invoiceId", JsonPrimitive(invoiceId)) }
         return when (val r = platformInvokeCallable("generateInvoicePdf", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 val url = callableJson.parseToJsonElement(r.value).jsonObject["pdfUrl"]?.jsonPrimitive?.contentOrNull.orEmpty()
                 if (url.isBlank()) WriteResult.Err("invoice PDF: server returned no URL")
                 else WriteResult.Ok(url)
@@ -700,7 +701,7 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("createKinfolk", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 val o = callableJson.parseToJsonElement(r.value).jsonObject
                 val id = (o["kinfolkId"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
                     ?: error("createKinfolk returned no household id")
@@ -1034,9 +1035,9 @@ class FirestoreClient {
      * (no channels) or on a malformed body, which the receipt row then omits
      * rather than faking.
      */
-    private fun firstDispatchId(dataJson: String): String = runCatching {
+    private fun firstDispatchId(dataJson: String): String = runCatchingCancellable {
         callableJson.parseToJsonElement(dataJson)
-            .let { it as? JsonObject ?: return@runCatching "" }["dispatchIds"]
+            .let { it as? JsonObject ?: return@runCatchingCancellable "" }["dispatchIds"]
             ?.let { it as? JsonArray }
             ?.firstOrNull()
             ?.let { (it as? JsonPrimitive)?.contentOrNull }
@@ -1213,7 +1214,7 @@ class FirestoreClient {
         val payload = recordPaymentPayload(entry, scopedKinfolkId, idempotencyKey)
         return when (val r = platformInvokeCallable("recordPayment", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching { WriteResult.Ok(decodeRecordPaymentOutcome(r.value)) }
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeRecordPaymentOutcome(r.value)) }
                 .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
     }
@@ -1231,7 +1232,7 @@ class FirestoreClient {
         val payload = giveAccountCreditPayload(entry, scopedKinfolkId, idempotencyKey)
         return when (val r = platformInvokeCallable("giveAccountCredit", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching { WriteResult.Ok(decodeGiveCreditOutcome(r.value)) }
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeGiveCreditOutcome(r.value)) }
                 .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
     }
@@ -1240,7 +1241,7 @@ class FirestoreClient {
         val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
         return when (val r = platformInvokeCallable("getAccountCreditHistory", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching { WriteResult.Ok(decodeAccountCreditHistory(r.value)) }
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeAccountCreditHistory(r.value)) }
                 .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
     }
@@ -1250,7 +1251,7 @@ class FirestoreClient {
         val payload = listUnappliedPaymentsPayload(kinfolkId)
         return when (val r = platformInvokeCallable("listUnappliedPayments", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching { WriteResult.Ok(decodeUnappliedPaymentsList(r.value)) }
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeUnappliedPaymentsList(r.value)) }
                 .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
     }
@@ -1267,7 +1268,7 @@ class FirestoreClient {
         val payload = resolveUnappliedPaymentPayload(decision, idempotencyKey)
         return when (val r = platformInvokeCallable("resolveUnappliedPayment", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching { WriteResult.Ok(decodeUnappliedDecisionOutcome(r.value)) }
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeUnappliedDecisionOutcome(r.value)) }
                 .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
     }
@@ -1321,7 +1322,7 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("createInvoice", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(callableJson.parseToJsonElement(r.value).jsonObject["invoiceId"]?.jsonPrimitive?.contentOrNull.orEmpty())
             }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
@@ -1354,7 +1355,7 @@ class FirestoreClient {
         val payload = buildJsonObject { put("invoiceId", JsonPrimitive(invoiceId)) }
         return when (val r = platformInvokeCallable("sendInvoiceReminder", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching { WriteResult.Ok(decodeReminderOutcome(r.value, nowMs)) }
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeReminderOutcome(r.value, nowMs)) }
                 .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
     }
@@ -1401,7 +1402,7 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("batchUpdateBookings", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(decodeBatchBookingResult(r.value))
             }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
@@ -1418,7 +1419,7 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("bulkMarkNotificationsRead", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(
                     callableJson.parseToJsonElement(r.value).jsonObject["marked"]?.jsonPrimitive?.intOrNull ?: 0
                 )
@@ -1461,7 +1462,7 @@ class FirestoreClient {
         val payload = buildJsonObject { put("id", JsonPrimitive(notificationId)) }
         return when (val r = platformInvokeCallable("archiveNotification", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(decodeArchivedCount(r.value))
             }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
@@ -1478,7 +1479,7 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("bulkArchiveNotifications", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(decodeArchivedCount(r.value))
             }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
@@ -1523,7 +1524,7 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("createQuote", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(callableJson.parseToJsonElement(r.value).jsonObject["invoiceId"]?.jsonPrimitive?.contentOrNull.orEmpty())
             }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
@@ -1540,7 +1541,7 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("listCatalogKeys", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(decodeCatalogKeys(r.value))
             }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
@@ -1616,7 +1617,7 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("createKinCareSession", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(callableJson.parseToJsonElement(r.value).jsonObject["sessionId"]?.jsonPrimitive?.contentOrNull.orEmpty())
             }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
@@ -1672,7 +1673,7 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("createMultiDateBookingRequest", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 val obj = callableJson.parseToJsonElement(r.value).jsonObject
                 WriteResult.Ok(
                     MultiDateBookingResult(
@@ -1728,10 +1729,10 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("manageBookingSeries", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 val obj = callableJson.parseToJsonElement(r.value).jsonObject
                 val affected = obj["affectedVisits"]?.jsonPrimitive?.intOrNull
-                    ?: return@runCatching WriteResult.Err("manageBookingSeries: server response missing affectedVisits")
+                    ?: return@runCatchingCancellable WriteResult.Err("manageBookingSeries: server response missing affectedVisits")
                 WriteResult.Ok(
                     ManageSeriesResult(
                         affectedVisits = affected,
@@ -1757,7 +1758,7 @@ class FirestoreClient {
         val payload = buildJsonObject { put("lookAheadDays", JsonPrimitive(lookAheadDays)) }
         return when (val r = platformInvokeCallable("syncGoogleCalendarBusyEvents", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(decodeImportedCount(r.value))
             }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
@@ -1830,7 +1831,7 @@ class FirestoreClient {
         decode: (String) -> T,
     ): WriteResult<T> = when (val r = platformInvokeCallable(name, payloadJson)) {
         is WriteResult.Err -> WriteResult.Err(r.message)
-        is WriteResult.Ok -> runCatching { WriteResult.Ok(decode(r.value)) }
+        is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decode(r.value)) }
             .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
     }
 
@@ -1896,7 +1897,7 @@ class FirestoreClient {
     suspend fun listStaff(): WriteResult<List<StaffMember>> =
         when (val r = platformInvokeCallable("listStaff", "{}")) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok  -> runCatching { WriteResult.Ok(decodeStaffList(r.value)) }
+            is WriteResult.Ok  -> runCatchingCancellable { WriteResult.Ok(decodeStaffList(r.value)) }
                 .getOrElse { WriteResult.Err(it.message ?: "staff decode failed") }
         }
 
@@ -1939,7 +1940,7 @@ class FirestoreClient {
         val payload = trainingDocPayload(title, content, notes, communicationType, targetType, targetKinfolkId, targetKinId, attachments)
         return when (val r = platformInvokeCallable("createTrainingDocument", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(callableJson.parseToJsonElement(r.value).jsonObject["docId"]?.jsonPrimitive?.contentOrNull.orEmpty())
             }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
@@ -2005,7 +2006,7 @@ class FirestoreClient {
         val payload = submitVetClinicPayload(clinic)
         return when (val r = platformInvokeCallable("submitVetClinic", payload.toString())) {
             is WriteResult.Ok -> {
-                val obj = runCatching { Json.parseToJsonElement(r.value).jsonObject }.getOrNull()
+                val obj = runCatchingCancellable { Json.parseToJsonElement(r.value).jsonObject }.getOrNull()
                 val status = obj?.get("status")?.jsonPrimitive?.contentOrNull
                 if (status == "needs_choice") {
                     WriteResult.Err(
@@ -2182,7 +2183,7 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("createShareLink", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 val url = callableJson.parseToJsonElement(r.value).jsonObject["shareUrl"]
                     ?.jsonPrimitive?.contentOrNull.orEmpty()
                 if (url.isBlank()) WriteResult.Err("createShareLink returned no shareUrl")
@@ -2204,7 +2205,7 @@ class FirestoreClient {
         val payload = buildJsonObject { put("date", JsonPrimitive(date)) }
         return when (val r = platformInvokeCallable("optimizeRoute", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching { WriteResult.Ok(decodeRouteResult(r.value)) }
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeRouteResult(r.value)) }
                 .getOrElse { WriteResult.Err(it.message ?: "route decode failed") }
         }
     }
@@ -2219,7 +2220,7 @@ class FirestoreClient {
         val payload = buildJsonObject { if (!sinceIso.isNullOrBlank()) put("sinceIso", JsonPrimitive(sinceIso)) }
         return when (val r = platformInvokeCallable("listExpenses", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching { WriteResult.Ok(decodeExpenseSummary(r.value)) }
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeExpenseSummary(r.value)) }
                 .getOrElse { WriteResult.Err(it.message ?: "expenses decode failed") }
         }
     }
@@ -2243,7 +2244,7 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("logExpense", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(callableJson.parseToJsonElement(r.value).jsonObject["id"]?.jsonPrimitive?.contentOrNull.orEmpty())
             }.getOrElse { WriteResult.Err(it.message ?: "log expense decode failed") }
         }
@@ -2257,7 +2258,7 @@ class FirestoreClient {
     suspend fun listSupplies(): WriteResult<SupplySummary> {
         return when (val r = platformInvokeCallable("listSupplies", "{}")) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching { WriteResult.Ok(decodeSupplySummary(r.value)) }
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeSupplySummary(r.value)) }
                 .getOrElse { WriteResult.Err(it.message ?: "supplies decode failed") }
         }
     }
@@ -2274,7 +2275,7 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("adjustSupply", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching {
+            is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(callableJson.parseToJsonElement(r.value).jsonObject["onHand"]?.jsonPrimitive?.intOrNull ?: 0)
             }.getOrElse { WriteResult.Err(it.message ?: "adjust supply decode failed") }
         }
@@ -2288,7 +2289,7 @@ class FirestoreClient {
     suspend fun listExpirations(): WriteResult<List<ExpirationItem>> {
         return when (val r = platformInvokeCallable("listExpirations", "{}")) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatching { WriteResult.Ok(decodeExpirations(r.value)) }
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeExpirations(r.value)) }
                 .getOrElse { WriteResult.Err(it.message ?: "expirations decode failed") }
         }
     }
@@ -2997,7 +2998,7 @@ object TolerantStringListSerializer : KSerializer<List<String>> {
 
     override fun deserialize(decoder: Decoder): List<String> {
         val jsonDecoder = decoder as? JsonDecoder
-            ?: return runCatching { delegate.deserialize(decoder) }.getOrDefault(emptyList())
+            ?: return runCatchingCancellable { delegate.deserialize(decoder) }.getOrDefault(emptyList())
         val array = jsonDecoder.decodeJsonElement() as? JsonArray ?: return emptyList()
         return array.mapNotNull { it.tagStringOrNull() }
     }
@@ -3025,7 +3026,7 @@ object TolerantTagDefListSerializer : KSerializer<List<TagDef>> {
 
     override fun deserialize(decoder: Decoder): List<TagDef> {
         val jsonDecoder = decoder as? JsonDecoder
-            ?: return runCatching { delegate.deserialize(decoder) }.getOrDefault(emptyList())
+            ?: return runCatchingCancellable { delegate.deserialize(decoder) }.getOrDefault(emptyList())
         val array = jsonDecoder.decodeJsonElement() as? JsonArray ?: return emptyList()
         return array.mapNotNull { row ->
             val obj = row as? JsonObject ?: return@mapNotNull null

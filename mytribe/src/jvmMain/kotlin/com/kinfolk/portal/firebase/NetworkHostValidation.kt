@@ -1,6 +1,7 @@
 package com.kinfolk.portal.firebase
 
 import java.net.InetAddress
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * True only for a host a local Firebase emulator can plausibly run on:
@@ -35,6 +36,8 @@ internal fun isLoopbackOrPrivateHost(
     val literalForm = ipv4LiteralOrNull(stripped) ?: ipv6LiteralOrNull(stripped) ?: return false
     val addr = try {
         resolve(literalForm)
+    } catch (c: CancellationException) {
+        throw c
     } catch (_: Exception) {
         return false
     }

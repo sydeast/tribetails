@@ -1,6 +1,7 @@
 package com.kinfolk.portal.config
 
 import com.mapbox.common.MapboxOptions
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * The portal Android app's Mapbox credential, and the record of what startup did
@@ -84,6 +85,8 @@ object MapboxPortalConfig {
             try {
                 accessTokenSink(token)
                 TokenApplication.Delivered(token)
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 TokenApplication.Delivered(token, deliveryError = t)
             }

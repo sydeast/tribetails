@@ -1,6 +1,7 @@
 package com.kinfolk.portal.notifications
 
 import com.kinfolk.portal.firebase.FunctionsClient
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,6 +46,8 @@ class NotificationCatalogRepository(private val fns: FunctionsClient) {
             val result = CatalogState.Success(categories = categories, schemaVersion = schemaVersion)
             _state.value = result
             result
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             val failure = CatalogState.Failure(
                 message = t.message ?: "Couldn't load notification preferences. Try again.",

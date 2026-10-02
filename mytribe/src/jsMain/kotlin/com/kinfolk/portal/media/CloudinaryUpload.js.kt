@@ -1,5 +1,6 @@
 package com.kinfolk.portal.media
 
+import com.kinfolk.portal.error.runCatchingCancellable
 import kotlinx.coroutines.await
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -49,7 +50,7 @@ actual suspend fun uploadImageToCloudinary(
         return null
     }
     val text = resp.text().await()
-    return runCatching {
+    return runCatchingCancellable {
         val obj = Json.parseToJsonElement(text).jsonObject
         obj["secure_url"]?.jsonPrimitive?.contentOrNull
     }.getOrNull()

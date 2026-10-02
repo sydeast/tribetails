@@ -1,6 +1,7 @@
 package com.kinfolk.portal.firebase
 
 import com.kinfolk.portal.components.RoutePoint
+import com.kinfolk.portal.error.runCatchingCancellable
 
 /**
  * Decoding for `kin_care_sessions/{id}/breadcrumbs`, the household's live GPS
@@ -72,8 +73,8 @@ fun decodeBreadcrumb(data: Map<String, Any?>): RoutePoint? {
 fun orderBreadcrumbs(points: List<RoutePoint>): List<RoutePoint> = points.sortedBy { it.t ?: 0L }
 
 /** Slim ISO-8601 -> epoch ms. Returns null on parse failure. */
-internal fun parseIsoMs(iso: String): Long? = runCatching {
-    if (iso.length < 19) return@runCatching null
+internal fun parseIsoMs(iso: String): Long? = runCatchingCancellable {
+    if (iso.length < 19) return@runCatchingCancellable null
     val y = iso.substring(0, 4).toInt()
     val mo = iso.substring(5, 7).toInt()
     val d = iso.substring(8, 10).toInt()

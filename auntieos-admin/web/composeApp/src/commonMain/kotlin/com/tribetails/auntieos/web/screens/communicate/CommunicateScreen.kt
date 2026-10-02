@@ -96,6 +96,7 @@ import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.SegmentedPicker
 import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -228,6 +229,8 @@ fun CommunicateScreen() {
                     result = resp
                     showToast("Draft ready for your review.", ToastKind.Success)
                 }
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 showToast("Generate failed: ${t.message ?: "unknown error"}", ToastKind.Error)
             } finally {
@@ -269,6 +272,8 @@ fun CommunicateScreen() {
                     targetCollection = "generated_drafts",
                 )
                 showToast("Draft #$draftId approved and queued for delivery.", ToastKind.Success)
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 showToast("Approve failed: ${t.message ?: "unknown error"}", ToastKind.Error)
             } finally {
@@ -1648,6 +1653,8 @@ private fun ExternalSendPanel(
                         onToast(externalSendErrorText(r.message), ToastKind.Error)
                     }
                 }
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 errorText = t.message ?: "unknown error"
                 onToast("Send failed: ${t.message ?: "unknown error"}", ToastKind.Error)
@@ -1679,6 +1686,8 @@ private fun ExternalSendPanel(
                         onToast("Opt-out failed: ${r.message}", ToastKind.Error)
                     }
                 }
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 errorText = t.message ?: "unknown error"
                 onToast("Opt-out failed: ${t.message ?: "unknown error"}", ToastKind.Error)

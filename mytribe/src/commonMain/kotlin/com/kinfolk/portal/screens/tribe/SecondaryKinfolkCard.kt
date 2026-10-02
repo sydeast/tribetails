@@ -31,6 +31,7 @@ import com.kinfolk.portal.portal.SecondaryKinfolkDto
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 
 /**
@@ -94,6 +95,8 @@ internal fun SecondaryKinfolkCard(
         try {
             people = portalApi.listSecondaryKinfolk(kinfolkId)
             loadError = null
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             loadError = t.message ?: "Could not load your secondary kinfolk."
         }
@@ -154,6 +157,8 @@ internal fun SecondaryKinfolkCard(
                                                 portalApi.removeSecondaryKinfolk(kinfolkId, p.personId)
                                                 confirmRemove = null
                                                 localReload += 1
+                                            } catch (c: CancellationException) {
+                                                throw c
                                             } catch (t: Throwable) {
                                                 rowError = t.message ?: "That did not remove. Try again."
                                             } finally {
@@ -223,6 +228,8 @@ internal fun SecondaryKinfolkCard(
                                             formOpen = false
                                             editingId = null
                                             localReload += 1
+                                        } catch (c: CancellationException) {
+                                            throw c
                                         } catch (t: Throwable) {
                                             formError = t.message ?: "That did not save. Try again."
                                         } finally {

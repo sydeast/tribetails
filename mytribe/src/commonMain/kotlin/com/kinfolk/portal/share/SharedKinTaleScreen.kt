@@ -33,11 +33,13 @@ import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinField
 import com.kinfolk.portal.components.KinfolkRemoteImage
+import com.kinfolk.portal.error.runCatchingCancellable
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkGradients
 import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.KinfolkTheme
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -96,6 +98,8 @@ fun SharedKinTaleScreen(
                     GetShareLinkResult.NotFound        -> stage = ViewerStage.Terminal("This share link doesn't exist.")
                     GetShareLinkResult.Expired         -> stage = ViewerStage.Terminal("This share link has expired.")
                 }
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 stage = ViewerStage.Terminal(t.message ?: "Could not load this share.")
             }
@@ -229,7 +233,7 @@ private fun SharedPayloadView(
     val type = KinfolkTheme.typography
     val authorDisplayName = payload["authorDisplayName"]?.jsonPrimitive?.contentOrNull?.ifBlank { null } ?: "Auntie"
     val body = payload["body"]?.jsonPrimitive?.contentOrNull.orEmpty()
-    val photos = runCatching {
+    val photos = runCatchingCancellable {
         payload["photos"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }
     }.getOrNull().orEmpty()
     val fileCountLabel = when (photos.size) {
@@ -358,6 +362,8 @@ private fun GuestCommentForm(shareToken: String, taleId: String, fetcher: ShareL
                                 parentCommentId = null,
                             )
                             sent = true
+                        } catch (c: CancellationException) {
+                            throw c
                         } catch (t: Throwable) {
                             error = t.message ?: "Couldn't send. Try again in a moment."
                         } finally {

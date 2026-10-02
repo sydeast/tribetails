@@ -45,6 +45,7 @@ import com.tribetails.auntieos.web.data.KinCareReport
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.emergencyContactsOf
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieKeyValueRow
@@ -826,8 +827,8 @@ private fun sessionWindowFor(s: KinCareSession): String {
 }
 
 private fun shortIso(iso: String): String =
-    runCatching {
-        if (iso.length < 16) return@runCatching iso
+    runCatchingCancellable {
+        if (iso.length < 16) return@runCatchingCancellable iso
         val month = MONTHS[iso.substring(5, 7).toInt() - 1]
         val day   = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
         val time  = iso.substring(11, 16)
@@ -835,7 +836,7 @@ private fun shortIso(iso: String): String =
     }.getOrDefault(iso)
 
 private fun shortIsoTimeOnly(iso: String): String =
-    runCatching { if (iso.length >= 16) iso.substring(11, 16) else iso }
+    runCatchingCancellable { if (iso.length >= 16) iso.substring(11, 16) else iso }
         .getOrDefault(iso)
 
 private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")

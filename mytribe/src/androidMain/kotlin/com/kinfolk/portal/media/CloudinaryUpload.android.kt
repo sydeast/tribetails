@@ -1,5 +1,6 @@
 package com.kinfolk.portal.media
 
+import com.kinfolk.portal.error.runCatchingCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -28,7 +29,7 @@ actual suspend fun uploadImageToCloudinary(
         setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
     }
 
-    runCatching {
+    runCatchingCancellable {
         DataOutputStream(conn.outputStream).use { out ->
             fun writeField(name: String, value: String) {
                 out.writeBytes("--$boundary\r\n")
@@ -61,7 +62,7 @@ actual suspend fun uploadImageToCloudinary(
             .bufferedReader().use { it.readText() }
         if (code !in 200..299) {
             android.util.Log.e("CloudinaryUpload", "Upload failed ($code): $body")
-            return@runCatching null
+            return@runCatchingCancellable null
         }
         JSONObject(body).optString("secure_url").takeIf { it.isNotBlank() }
     }.getOrElse {

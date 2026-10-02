@@ -6,6 +6,7 @@ import com.tribetails.auntieos.web.data.AuntieDataSource
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.MediaFile
 import com.tribetails.auntieos.web.data.WriteResult
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -60,6 +61,8 @@ class MediaGalleryViewModel(
                     is WriteResult.Ok  -> _uiState.update { it.copy(isUploading = false, error = null) }
                     is WriteResult.Err -> _uiState.update { it.copy(isUploading = false, error = result.message) }
                 }
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 _uiState.update { it.copy(isUploading = false, error = "Upload failed: ${t.message ?: "unexpected error"}") }
             }

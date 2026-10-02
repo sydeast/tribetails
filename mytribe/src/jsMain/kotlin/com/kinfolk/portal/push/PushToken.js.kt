@@ -1,5 +1,6 @@
 package com.kinfolk.portal.push
 
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.js.Promise
 import kotlinx.browser.window
 import kotlinx.coroutines.await
@@ -75,6 +76,8 @@ actual suspend fun obtainPushToken(): String? {
 
         installForegroundHandler(messaging, swReg)
         return token.takeIf { it.isNotBlank() }
+    } catch (c: CancellationException) {
+        throw c
     } catch (t: Throwable) {
         console.warn("[Push] obtainPushToken failed: ${t.message ?: t}")
         return null
@@ -106,6 +109,8 @@ private fun installForegroundHandler(messaging: dynamic, swReg: dynamic) {
             data.route = route
             options.data = data
             swReg.showNotification(title, options)
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             console.warn("[Push] foreground message handling failed: ${t.message ?: t}")
         }

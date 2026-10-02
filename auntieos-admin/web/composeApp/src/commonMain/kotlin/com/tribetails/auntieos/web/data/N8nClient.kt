@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.data
 
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -12,6 +13,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.URLProtocol
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.serialization.SerialName
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.Serializable
@@ -47,6 +49,8 @@ class N8nClient internal constructor(private val http: HttpClient) {
             block()
         } catch (c: kotlin.coroutines.cancellation.CancellationException) {
             throw c
+        } catch (c: CancellationException) {
+            throw c
         } catch (e: Exception) {
             val message = e.transportMessage(fallback)
             if (message == AUNTIE_TIMEOUT_MESSAGE) throw IllegalStateException(message, e) else throw e
@@ -80,7 +84,7 @@ class N8nClient internal constructor(private val http: HttpClient) {
             }
             r to r.bodyAsText()
         }
-        val parsed = runCatching { codec.decodeFromString<GenerateResponse>(rawBody) }.getOrNull()
+        val parsed = runCatchingCancellable { codec.decodeFromString<GenerateResponse>(rawBody) }.getOrNull()
         if (parsed != null) return parsed
         if (!response.status.isSuccess()) {
             throw IllegalStateException("generate failed (${response.status.value}): ${rawBody.take(220)}")
@@ -89,7 +93,7 @@ class N8nClient internal constructor(private val http: HttpClient) {
     }
 
     suspend fun pingProfileUpdate(draftId: String, kinfolkId: String?) {
-        runCatching {
+        runCatchingCancellable {
             http.post("/webhook/auntie-update-profiles") {
                 contentType(ContentType.Application.Json)
                 setBody(ProfileUpdateRequest(
@@ -112,7 +116,7 @@ class N8nClient internal constructor(private val http: HttpClient) {
             }
             r to r.bodyAsText()
         }
-        val parsed = runCatching { codec.decodeFromString<SendMessageResponse>(rawBody) }.getOrNull()
+        val parsed = runCatchingCancellable { codec.decodeFromString<SendMessageResponse>(rawBody) }.getOrNull()
         if (!response.status.isSuccess()) {
             val detail = parsed?.error ?: parsed?.message ?: rawBody.take(220)
             throw IllegalStateException("sendMessage failed (${response.status.value}): $detail")

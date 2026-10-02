@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.data
 
+import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.java.Java
@@ -13,6 +14,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -74,7 +76,7 @@ internal fun encodeSignInRequestBody(email: String, password: String): String =
  * error code securetoken returns, which is a fixed identifier, never on prose.
  */
 internal fun refreshRejectionReason(body: String): SessionEndedReason? {
-    val message = runCatching {
+    val message = runCatchingCancellable {
         authRestJson.parseToJsonElement(body).jsonObject["error"]?.jsonObject
             ?.get("message")?.jsonPrimitive?.contentOrNull
     }.getOrNull() ?: return null
@@ -91,7 +93,7 @@ internal fun refreshRejectionReason(body: String): SessionEndedReason? {
 internal data class RefreshedToken(val idToken: String, val refreshToken: String?, val expiresInSecs: Long)
 
 /** Parse a securetoken refresh body. Returns null when no id_token is present (e.g. an error body). */
-internal fun parseRefreshedToken(bodyText: String): RefreshedToken? = runCatching {
+internal fun parseRefreshedToken(bodyText: String): RefreshedToken? = runCatchingCancellable {
     val obj = authRestJson.parseToJsonElement(bodyText).jsonObject
     val id = obj["id_token"]?.jsonPrimitive?.content ?: return null
     RefreshedToken(
@@ -112,7 +114,7 @@ internal fun parseRefreshedToken(bodyText: String): RefreshedToken? = runCatchin
  * as "Couldn't sign you in: BLOCKING_FUNCTION_ERROR_RESPONSE : ((HTTP request...".
  */
 internal fun mapIdentityToolkitError(errBody: String): String {
-    val message = runCatching {
+    val message = runCatchingCancellable {
         authRestJson.parseToJsonElement(errBody).jsonObject["error"]?.jsonObject
             ?.get("message")?.jsonPrimitive?.content
     }.getOrNull() ?: ""
@@ -199,6 +201,8 @@ internal object FirebaseRestAuth {
                 contentType(ContentType.Application.Json)
                 setBody(SignInRequest(emailArg.trim(), password))
             }
+        } catch (c: CancellationException) {
+            throw c
         } catch (e: Exception) {
             return@withLock SignInResult.Failure("auth/network-request-failed")
         }
@@ -254,6 +258,8 @@ internal object FirebaseRestAuth {
                     // and fail (or mis-parse) the refresh (NOTE-62).
                     setBody("grant_type=refresh_token&refresh_token=${URLEncoder.encode(rt, "UTF-8")}")
                 }
+            } catch (c: CancellationException) {
+                throw c
             } catch (e: Exception) {
                 System.err.println("[AuntieOS][auth] token refresh request failed: ${e.message}")
                 com.tribetails.auntieos.web.observability.reportError(e, context = "auth.tokenRefresh")
@@ -298,7 +304,7 @@ internal object FirebaseRestAuth {
     }
 
     /** Decode the `admin` custom claim from a Firebase ID token (JWT) payload. */
-    private fun adminClaimOf(jwt: String): Boolean = runCatching {
+    private fun adminClaimOf(jwt: String): Boolean = runCatchingCancellable {
         val payload = jwt.split(".").getOrNull(1) ?: return false
         val decoded = Base64.getUrlDecoder().decode(payload.padEnd((payload.length + 3) / 4 * 4, '='))
         val claims: JsonObject = json.parseToJsonElement(decoded.decodeToString()).jsonObject
@@ -306,7 +312,7 @@ internal object FirebaseRestAuth {
     }.getOrDefault(false)
 
     /** Decode the `testTribeId` string custom claim from a Firebase ID token (JWT) payload. */
-    private fun testTribeIdClaimOf(jwt: String): String? = runCatching {
+    private fun testTribeIdClaimOf(jwt: String): String? = runCatchingCancellable {
         val payload = jwt.split(".").getOrNull(1) ?: return null
         val decoded = Base64.getUrlDecoder().decode(payload.padEnd((payload.length + 3) / 4 * 4, '='))
         val claims: JsonObject = json.parseToJsonElement(decoded.decodeToString()).jsonObject
@@ -331,6 +337,8 @@ internal object FirebaseRestAuth {
                 parameter("key", API_KEY); contentType(ContentType.Application.Json)
                 setBody(SignInRequest(em, currentPassword))
             }
+        } catch (c: CancellationException) {
+            throw c
         } catch (e: Exception) { return Result.failure(AuthOpException("auth/network-request-failed")) }
         if (!resp.status.isSuccess()) return Result.failure(AuthOpException(mapError(resp.bodyAsText())))
         return Result.success(resp.body<SignInResponse>().idToken)
@@ -343,10 +351,12 @@ internal object FirebaseRestAuth {
                 parameter("key", API_KEY); contentType(ContentType.Application.Json)
                 setBody(UpdatePasswordRequest(token, newPassword))
             }
+        } catch (c: CancellationException) {
+            throw c
         } catch (e: Exception) { return@withLock AuthOpResult.Failure("auth/network-request-failed") }
         if (!resp.status.isSuccess()) return@withLock AuthOpResult.Failure(mapError(resp.bodyAsText()))
         // accounts:update returns refreshed tokens; swap them in so the session stays valid.
-        runCatching { resp.body<SignInResponse>() }.getOrNull()?.let { updated ->
+        runCatchingCancellable { resp.body<SignInResponse>() }.getOrNull()?.let { updated ->
             if (updated.idToken.isNotBlank()) {
                 idToken = updated.idToken
                 if (updated.refreshToken.isNotBlank()) refreshToken = updated.refreshToken
@@ -366,6 +376,8 @@ internal object FirebaseRestAuth {
                 parameter("key", API_KEY); contentType(ContentType.Application.Json)
                 setBody(ChangeEmailOobRequest("VERIFY_AND_CHANGE_EMAIL", token, em, newEmail.trim()))
             }
+        } catch (c: CancellationException) {
+            throw c
         } catch (e: Exception) { return@withLock AuthOpResult.Failure("auth/network-request-failed") }
         if (!resp.status.isSuccess()) return@withLock AuthOpResult.Failure(mapError(resp.bodyAsText()))
         AuthOpResult.Ok

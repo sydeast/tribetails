@@ -61,6 +61,8 @@ suspend fun tearDownSession(
         signOut()
     } catch (c: CancellationException) {
         throw c
+    } catch (c: CancellationException) {
+        throw c
     } catch (t: Throwable) {
         println("[Auth] signOut THREW ${t::class.simpleName}: ${t.message}")
         onFailure(t)

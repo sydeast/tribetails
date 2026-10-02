@@ -132,6 +132,8 @@ class SecureResetController(
             throw c
         } catch (_: EmailActionUnsupportedException) {
             ActionPhase.NotOnThisDevice
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             ActionPhase.Problem(problemOf(t) ?: CodeProblem.Unreachable)
         }
@@ -182,6 +184,8 @@ class SecureResetController(
                 throw c
             } catch (e: SecureResetException) {
                 serverError = e.message
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 val codeProblem = problemOf(t)
                 when {
@@ -207,6 +211,8 @@ class SecureResetController(
             try {
                 auth.applyActionCode(link.oobCode)
                 phase = ActionPhase.EmailDone(ready.email)
+            } catch (c: CancellationException) {
+                throw c
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {
@@ -245,6 +251,8 @@ class SecureResetController(
                 SendState.Sent
             } catch (c: CancellationException) {
                 throw c
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 if (isResetRateLimited(t)) SendState.RateLimited else SendState.Failed
             }
@@ -268,6 +276,8 @@ class SecureResetController(
             recoveryReset = try {
                 auth.sendPasswordReset(email)
                 SendState.Sent
+            } catch (c: CancellationException) {
+                throw c
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {
