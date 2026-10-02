@@ -551,11 +551,18 @@ async function removeStaleBusyRows(
   runStartedAtIso: string,
   uid: string,
 ): Promise<number> {
-  // One equality filter, the rest in memory: the same rule `loadGoogleBusySlots`
-  // follows for this collection, so no composite index is needed.
+  // One range on `date`, the rest in memory: the same rule `loadGoogleBusySlots`
+  // follows for this collection, so no composite index is needed, and the read
+  // stays the size of the window rather than the calendar's whole history.
+  // Padded two days each side: `date` is the business day (or the UTC day on a
+  // legacy row), never more than a day from the UTC day of the instants, and an
+  // event that runs past the window keeps a visible day row just outside it,
+  // which is what keeps its whole group.
+  const PAD_MS = 2 * 24 * 60 * 60 * 1000;
   const snap = await db()
     .collection('booking_time_slots')
-    .where('externalCalendarId', '==', calId)
+    .where('date', '>=', new Date(window.startMs - PAD_MS).toISOString().slice(0, 10))
+    .where('date', '<=', new Date(window.endMs + PAD_MS).toISOString().slice(0, 10))
     .get();
   const rows: StaleCandidateRow[] = snap.docs.map((d) => ({
     id: d.id,

@@ -165,6 +165,19 @@ describe('#1162 stale Google busy rows', () => {
     ]);
   });
 
+  it("finds a stale row dated the business day before the run's UTC day", async () => {
+    // 21:00 CDT on the 3rd is already the 4th in UTC. The event's first row is
+    // dated the 3rd, a day before the UTC date the window starts on.
+    vi.setSystemTime(new Date('2026-06-04T02:00:00.000Z'));
+    const ctx = store(importedRows('eve', '2026-06-04T03:00:00.000Z', '2026-06-04T07:00:00.000Z'));
+    expect((await slotRows(ctx))['eve-0']!['date']).toBe('2026-06-03');
+    googleSays([]);
+
+    await syncGoogleCalendarBusyEventsHandler(req());
+
+    expect(await slotRows(ctx)).toEqual({});
+  });
+
   it('an unchanged event keeps its rows, split ones included', async () => {
     const rows = importedRows('kept', '2026-06-11T03:00:00.000Z', '2026-06-11T07:00:00.000Z');
     const ctx = store(rows);
@@ -274,6 +287,9 @@ describe('#1162 stale Google busy rows', () => {
       ...importedRows('straddle', '2026-06-04T11:00:00.000Z', '2026-06-04T13:00:00.000Z'),
       // Already past.
       ...importedRows('past', '2026-06-01T14:00:00.000Z', '2026-06-01T15:00:00.000Z'),
+      // Starts inside the window and runs days past its end; its first day row
+      // alone would look stale, the event as a whole is not inside the window.
+      ...importedRows('long', '2026-07-03T15:00:00.000Z', '2026-07-08T15:00:00.000Z'),
     });
     googleSays([]);
 
@@ -282,6 +298,12 @@ describe('#1162 stale Google busy rows', () => {
     expect(ctx.deletes).toEqual([]);
     expect(Object.keys(await slotRows(ctx)).sort()).toEqual([
       'beyond-0',
+      'long-0',
+      'long-1',
+      'long-2',
+      'long-3',
+      'long-4',
+      'long-5',
       'no-source',
       'operator',
       'operator-tagged',
