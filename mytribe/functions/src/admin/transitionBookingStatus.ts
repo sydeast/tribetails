@@ -19,6 +19,10 @@ import { classifyArrivalDistance } from '../lib/geo';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
+import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
+import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
+import { guardVisitOverlapConflict } from '../lib/visitOverlapConflict';
+import { serviceDurationsReader, storedVisitEndIso, toIso } from './approveBookingSeriesCore';
 import {
   BOOKING_ACTIONS,
   BOOKING_STATUS_UNKNOWN_CODE,
@@ -81,6 +85,13 @@ export const Args = z.object({
    * is length-capped rather than parsed.
    */
   reason: z.string().min(1).max(500).optional(),
+  /**
+   * Only meaningful for APPROVE (#1145). Admin-only escape hatch for a Google
+   * Calendar busy import. Same flag and same meaning as on `rescheduleBooking`.
+   */
+  overrideBusyConflict: z.boolean().optional(),
+  /** Only meaningful for APPROVE. A visit already on the books; see `lib/visitOverlapConflict.ts`. */
+  overrideVisitConflict: z.boolean().optional(),
 });
 
 export const Result = z
@@ -135,6 +146,52 @@ async function auditRefusal(args: {
   });
 }
 
+/**
+ * The window an approval is checked on: the session's own start and end, or the
+ * start plus its KinCare's length when the end is missing (the #1093 rule, the
+ * same helper approval and accepted reschedules use), else a recorded duration,
+ * else the start alone.
+ */
+async function guardApprovalWindow(opts: {
+  uid: string;
+  sessionId: string;
+  session: { startTime?: unknown; endTime?: unknown; serviceId?: unknown; serviceDurationMinutes?: unknown };
+  args: z.infer<typeof Args>;
+}): Promise<void> {
+  const startIso = toIso(opts.session.startTime);
+  const startMs = Date.parse(startIso);
+  if (!Number.isFinite(startMs)) return;
+  let endMs: number | null = null;
+  const endIso = await storedVisitEndIso(
+    startIso,
+    { endTime: opts.session.endTime, serviceId: opts.session.serviceId },
+    serviceDurationsReader(),
+  );
+  if (endIso && Number.isFinite(Date.parse(endIso))) endMs = Date.parse(endIso);
+  const minutes = opts.session.serviceDurationMinutes;
+  if (endMs == null && typeof minutes === 'number' && minutes > 0) endMs = startMs + minutes * 60_000;
+  const visits = [{ startTimeMs: startMs, endTimeMs: endMs ?? startMs }];
+  await guardCompanyHolidayConflict({ firestore: db(), visits });
+  await guardBookingBusyConflict({
+    firestore: db(),
+    visits,
+    actorUid: opts.uid,
+    actorRole: 'AUNTIE',
+    override: opts.args.overrideBusyConflict,
+    auditContext: { sessionId: opts.sessionId, attempt: 'approve' },
+  });
+  await guardVisitOverlapConflict({
+    firestore: db(),
+    visits,
+    actorUid: opts.uid,
+    actorRole: 'AUNTIE',
+    // The visit being approved must not collide with itself.
+    excludeSessionId: opts.sessionId,
+    override: opts.args.overrideVisitConflict,
+    attempt: 'approve',
+    auditContext: { sessionId: opts.sessionId },
+  });
+}
 export async function transitionBookingStatusHandler(
   req: CallableRequest<unknown>,
 ): Promise<TransitionBookingStatusResult> {
@@ -177,6 +234,11 @@ export async function transitionBookingStatusHandler(
         // #582: the distance `verifyVisitArrival` measured, if it ever ran.
         arrivalDistanceMeters?: unknown;
         arrivalAccuracyMeters?: unknown;
+        // #1145: what the approval guards read.
+        startTime?: unknown;
+        endTime?: unknown;
+        serviceId?: unknown;
+        serviceDurationMinutes?: unknown;
       }
     | undefined;
   const decision = evaluateTransition({ currentStatus: prev?.status, action: args.action });
@@ -331,6 +393,31 @@ export async function transitionBookingStatusHandler(
       // Auntie was elsewhere, and refusing on absence would strand the honest
       // ones. It is recorded on the audit entry below instead, so a visit that
       // completed unverified is findable rather than indistinguishable.
+    }
+  }
+
+  // #1145: APPROVE is the one transition that puts a visit on the calendar, and
+  // a session made on the admin side has no household request behind it, so
+  // `approveBookingSeriesCore` never looked at it. Same three checks, same flags
+  // and same semantics as `rescheduleBooking`: the closed day cannot be
+  // overridden, the busy block and the other visit can. A session with no
+  // readable start has no window to check and is approved as before.
+  if (decision.to === 'SCHEDULED') {
+    try {
+      await guardApprovalWindow({ uid, sessionId: args.sessionId, session: prev ?? {}, args });
+    } catch (err) {
+      const details = (err as { details?: { code?: unknown } }).details;
+      if (err instanceof HttpsError && err.code === 'failed-precondition') {
+        await auditRefusal({
+          uid,
+          sessionId: args.sessionId,
+          action: args.action,
+          code: typeof details?.code === 'string' ? details.code : 'schedule_conflict',
+          from: decision.from,
+          description: `${args.action} refused: ${err.message}`,
+        });
+      }
+      throw err;
     }
   }
   const patch: Record<string, unknown> = {

@@ -698,7 +698,7 @@ internal object JvmFirestoreRest {
     suspend fun callable(name: String, payloadJson: String): WriteResult<String> =
         when (val reply = callableReply(name, payloadJson)) {
             is CallableReply.Ok -> WriteResult.Ok(reply.resultJson)
-            is CallableReply.Refused -> WriteResult.Err(reply.message)
+            is CallableReply.Refused -> WriteResult.Err(reply.message, reply.code)
             is CallableReply.NotSent -> WriteResult.Err(reply.message)
         }
 
@@ -725,7 +725,9 @@ internal object JvmFirestoreRest {
                 val msg = runCatchingCancellable { error?.get("message")?.jsonPrimitive?.content }.getOrNull()
                     ?: "callable ${resp.status.value}"
                 val status = runCatchingCancellable { error?.get("status")?.jsonPrimitive?.content }.getOrNull()
-                CallableReply.Refused(status, msg)
+                // #1145: the callable's machine code (`details.code`), kept so a caller can branch on it.
+                val code = runCatchingCancellable { error?.get("details")?.jsonObject?.get("code")?.jsonPrimitive?.content }.getOrNull()
+                CallableReply.Refused(status, msg, code)
             } else {
                 val result = codec.parseToJsonElement(text).jsonObject["result"]
                 CallableReply.Ok(result?.toString() ?: "{}")
@@ -743,7 +745,7 @@ internal sealed class CallableReply {
     /** 2xx: the `result` object as JSON text. */
     data class Ok(val resultJson: String) : CallableReply()
     /** The server answered with an error. [status] is the callable code, e.g. `RESOURCE_EXHAUSTED`. */
-    data class Refused(val status: String?, val message: String) : CallableReply()
+    data class Refused(val status: String?, val message: String, val code: String? = null) : CallableReply()
     /** No answer: not signed in, a timeout or a network failure. */
     data class NotSent(val message: String) : CallableReply()
 }

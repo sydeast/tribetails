@@ -75,6 +75,22 @@ describe('approveBooking', () => {
     });
     expectNoDirectWrite();
   });
+
+  it('sends an override flag only when the operator chose it (#1145)', async () => {
+    call.mockResolvedValue({ ok: true, sessionId: 'ses1', action: 'APPROVE', from: 'PENDING', status: 'SCHEDULED', changed: true });
+    await approveBooking('ses1', { busy: true });
+    expect(call).toHaveBeenLastCalledWith('transitionBookingStatus', {
+      sessionId: 'ses1',
+      action: 'APPROVE',
+      overrideBusyConflict: true,
+    });
+    await approveBooking('ses1', { visit: true });
+    expect(call).toHaveBeenLastCalledWith('transitionBookingStatus', {
+      sessionId: 'ses1',
+      action: 'APPROVE',
+      overrideVisitConflict: true,
+    });
+  });
 });
 
 describe('rejectBooking (a request that was never approved)', () => {

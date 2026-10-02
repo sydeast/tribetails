@@ -10,6 +10,7 @@ import {
 import { bookingState, bookingStateInfo, bookingWhen, type BookingState } from '../lib/bookingFormat';
 import { Dialog } from '../components/Dialog';
 import { Banner } from '../components/Banner';
+import { overridableScheduleRefusal, overrideHint } from '../api/scheduleWrite';
 import { DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { useToast } from '../components/Toast';
@@ -69,8 +70,10 @@ interface ActionDef {
    * sentence once, on the button they just pressed.
    */
   confirmedToast: (displayName: string) => string;
-  run: (bookingId: string) => Promise<void>;
+  run: (bookingId: string, overrides?: ApproveOverride) => Promise<void>;
 }
+/** What an Approve refusal lets the operator go past (#1145). A closed day is never in this. */
+type ApproveOverride = { visit?: boolean; busy?: boolean };
 
 /**
  * CONFIRM COPY IS WRITTEN IN THE FUTURE TENSE, AND THE CONFIRM BUTTON NEVER
@@ -97,7 +100,7 @@ const APPROVE: ActionDef = {
   confirmBody: (name) => `${name}'s request will move to Scheduled and appear on the calendar.`,
   confirmLabel: 'Yes, approve it',
   confirmedToast: (name) => `${name}'s request is now Scheduled.`,
-  run: approveBooking,
+  run: (id, overrides) => (overrides ? approveBooking(id, overrides) : approveBooking(id)),
 };
 
 const REJECT: ActionDef = {
@@ -119,7 +122,7 @@ const CANCEL: ActionDef = {
   confirmBody: (name) => `${name}'s visit will be cancelled. This cannot be undone.`,
   confirmLabel: 'Yes, cancel the visit',
   confirmedToast: (name) => `${name}'s visit is cancelled.`,
-  run: cancelBooking,
+  run: (id) => cancelBooking(id),
 };
 
 const COMPLETE: ActionDef = {
@@ -438,15 +441,20 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // #1145: the override an Approve refusal offers, or null. Cleared once taken,
+  // so the same losing move is never offered twice.
+  const [retry, setRetry] = useState<'visit' | 'busy' | null>(null);
   const kinfolkName = entry.kinfolkName ?? '';
   const displayName = kinfolkName.trim() !== '' ? kinfolkName : 'Unnamed Kinfolk';
 
-  async function run(action: ActionDef) {
+  async function run(action: ActionDef, override: 'visit' | 'busy' | null = null) {
     if (busy) return;
     setBusy(true);
     setError(null);
+    setRetry(null);
     try {
-      await action.run(entry._id);
+      if (override === null) await action.run(entry._id);
+      else await action.run(entry._id, { [override]: true });
       setBusy(false);
       showToast(action.confirmedToast(displayName));
       onDone();
@@ -456,6 +464,7 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
       // buttons that gives no clue which one they just pressed.
       setBusy(false);
       setError(`${action.kind} failed: ${err instanceof Error ? err.message : 'Write failed'}`);
+      if (action.kind === 'approve') setRetry(overridableScheduleRefusal(err, override !== null));
     }
   }
 
@@ -523,7 +532,13 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
 
       {error !== null && (
         <Banner tone="error" title="That change did not go through">
-          {error}
+          <p>{error}</p>
+          {retry !== null && confirming !== null && (
+            <>
+              <p>{overrideHint(retry)}</p>
+              <GhostButton label="Approve anyway" onClick={() => void run(confirming, retry)} disabled={busy} />
+            </>
+          )}
         </Banner>
       )}
     </DenPanel>

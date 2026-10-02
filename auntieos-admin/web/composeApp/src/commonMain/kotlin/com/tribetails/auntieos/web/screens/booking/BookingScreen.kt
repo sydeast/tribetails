@@ -199,6 +199,13 @@ private fun BookingListScreen(
             if (vm.errorMessage == null) actionNotice = bookingActionNotice(BookingActionOutcome.APPROVED, booking)
         }
     }
+    // #1145: the refused approval, sent again over the busy block or visit the server named.
+    fun runApproveAnyway() {
+        scope.launch {
+            vm.approveAnyway()
+            if (vm.errorMessage == null) actionNotice = "Approved over the schedule conflict. The request is now Scheduled."
+        }
+    }
     fun runReject(booking: KinCareSession) {
         scope.launch {
             vm.rejectBooking(booking._id, singleVisitId(booking))
@@ -288,6 +295,10 @@ private fun BookingListScreen(
                 title    = "Something went wrong",
                 icon     = Lucide.Ban,
                 onDismiss = { vm.clearError() },
+                // #1145: the server's own sentence stays; a busy block or another visit can be approved over.
+                trailing = vm.approveConflict?.let {
+                    { GhostButton(label = "Approve anyway", onClick = { runApproveAnyway() }) }
+                },
             ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim) }
             Spacer(Modifier.height(16.dp))
         }
@@ -1379,6 +1390,8 @@ private class FirestoreClientBookingDataSource(
         client.saveBusinessSettings(settings)
 
     override suspend fun approveBooking(bookingId: String, visitId: String?) = client.approveBooking(bookingId, visitId)
+    override suspend fun approveBookingOverriding(bookingId: String, visitId: String?, override: com.tribetails.auntieos.web.data.ScheduleOverride) =
+        client.approveBooking(bookingId, visitId, override)
     override suspend fun rejectBooking(bookingId: String, visitId: String?)  = client.rejectBooking(bookingId, visitId)
     override suspend fun cancelBooking(bookingId: String, visitId: String?)  = client.cancelBooking(bookingId, visitId)
     override suspend fun createBooking(booking: KinCareSession): com.tribetails.auntieos.web.data.WriteResult<String> =

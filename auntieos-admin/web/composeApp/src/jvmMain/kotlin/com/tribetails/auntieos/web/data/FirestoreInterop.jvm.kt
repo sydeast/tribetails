@@ -55,6 +55,8 @@ object JvmFirestoreFixtures {
     var callableResponses: Map<String, String> = emptyMap()
     /** #867 review, #890: callables that answer with this Err message, so a test can show a screen a failed call. */
     var callableErrors: Map<String, String> = emptyMap()
+    /** #1145: the `details.code` a [callableErrors] refusal carries, by callable name. */
+    var callableErrorCodes: Map<String, String> = emptyMap()
     /** #867 re-review: the admin's `broadcasts` rows, flat JSON with `_id`, for [platformBroadcastRowsForCurrentAdmin]. */
     var broadcastRows: List<JsonObject>? = null
     var incomingKinCares: List<KinCareVisit>? = null
@@ -113,7 +115,7 @@ object JvmFirestoreFixtures {
         provideUserProfile = false; userProfile = null
         voicemails = null; calls = null; sms = null; emails = null
         activity = null; trainingDocs = null; dynamicFields = null; businessSettings = null
-        callableResponses = emptyMap(); callableErrors = emptyMap(); broadcastRows = null; incomingKinCares = null
+        callableResponses = emptyMap(); callableErrors = emptyMap(); callableErrorCodes = emptyMap(); broadcastRows = null; incomingKinCares = null
         kinCareAssignments = emptyMap()
         lastCallableName = null; lastCallablePayloadJson = null; callablePayloads.clear()
         lastWrite = null
@@ -778,7 +780,7 @@ private suspend fun rawInvokeCallable(name: String, payloadJson: String): WriteR
     JvmFirestoreFixtures.lastCallableName = name
     JvmFirestoreFixtures.lastCallablePayloadJson = payloadJson
     JvmFirestoreFixtures.callablePayloads += name to payloadJson
-    JvmFirestoreFixtures.callableErrors[name]?.let { return WriteResult.Err(it) }
+    JvmFirestoreFixtures.callableErrors[name]?.let { return WriteResult.Err(it, JvmFirestoreFixtures.callableErrorCodes[name]) }
     return JvmFirestoreFixtures.callableResponses[name]?.let { WriteResult.Ok(it) }
         ?: JvmFirestoreRest.callable(name, payloadJson)
 }

@@ -28,6 +28,8 @@ class FirestoreAuntieDataSource(
     override fun businessSettingsStream(): Flow<FirestoreResult<BusinessSettings>> = client.businessSettingsStream()
     override suspend fun saveBusinessSettings(settings: BusinessSettings): WriteResult<Unit> = client.saveBusinessSettings(settings)
     override suspend fun approveBooking(bookingId: String, visitId: String?): WriteResult<Unit> = client.approveBooking(bookingId, visitId)
+    override suspend fun approveBookingOverriding(bookingId: String, visitId: String?, override: ScheduleOverride): WriteResult<Unit> =
+        client.approveBooking(bookingId, visitId, override)
     override suspend fun rejectBooking(bookingId: String, visitId: String?): WriteResult<Unit> = client.rejectBooking(bookingId, visitId)
     override suspend fun cancelBooking(bookingId: String, visitId: String?): WriteResult<Unit> = client.cancelBooking(bookingId, visitId)
     override suspend fun createBooking(booking: KinCareSession): WriteResult<String> = client.createBookingRequest(booking)

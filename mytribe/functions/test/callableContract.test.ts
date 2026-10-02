@@ -386,7 +386,7 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   // cannot see, so the action set gets its own freeze below.
   transitionBookingStatus: {
     schema: TransitionBookingStatusArgs,
-    keys: ['action', 'completedAt', 'reason', 'sessionId'],
+    keys: ['action', 'completedAt', 'overrideBusyConflict', 'overrideVisitConflict', 'reason', 'sessionId'],
   },
 };
 

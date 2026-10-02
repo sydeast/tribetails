@@ -478,3 +478,60 @@ describe('BookingStatusActions (the panel composed into the detail sheet)', () =
     expect(screen.getByRole('button', { name: 'Mark Completed' })).toBeInTheDocument();
   });
 });
+
+/**
+ * #1145: an admin-created session is approved straight onto the calendar, so the
+ * server now checks it. A busy block or another visit can be approved over; a
+ * closed day cannot.
+ */
+describe('BookingStatusActions: Approve anyway (#1145)', () => {
+  function refusal(code: string, message: string) {
+    return Object.assign(new Error(message), { details: { code } });
+  }
+  async function pressApprove() {
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await userEvent.click(screen.getByRole('button', { name: /yes, approve it/i }));
+  }
+  it('shows the server message and approves again with the visit override', async () => {
+    approveBooking.mockRejectedValueOnce(refusal('visit_overlap_conflict', 'That time overlaps the Ames visit.'));
+    approveBooking.mockResolvedValueOnce(undefined);
+    const onDone = vi.fn();
+    render(<BookingStatusActions entry={entry({ _id: 'ses-7', status: 'PENDING' })} onDone={onDone} />);
+    await pressApprove();
+    expect(await screen.findByText(/That time overlaps the Ames visit/)).toBeInTheDocument();
+    expect(onDone).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Approve anyway' }));
+    expect(approveBooking).toHaveBeenLastCalledWith('ses-7', { visit: true });
+    await vi.waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+  });
+  it('offers the busy override for a Google busy block', async () => {
+    approveBooking.mockRejectedValueOnce(refusal('booking_busy_conflict', 'That time is busy on your calendar.'));
+    approveBooking.mockResolvedValueOnce(undefined);
+    render(<BookingStatusActions entry={entry({ _id: 'ses-7', status: 'DRAFT' })} onDone={vi.fn()} />);
+    await pressApprove();
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve anyway' }));
+    expect(approveBooking).toHaveBeenLastCalledWith('ses-7', { busy: true });
+  });
+  it('shows a closed day with no way past it', async () => {
+    approveBooking.mockRejectedValueOnce(refusal('company_holiday_conflict', 'The office is closed that day.'));
+    render(<BookingStatusActions entry={entry({ status: 'PENDING' })} onDone={vi.fn()} />);
+    await pressApprove();
+    expect(await screen.findByText(/The office is closed that day/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve anyway' })).toBeNull();
+  });
+  it('does not offer the same override twice', async () => {
+    approveBooking.mockRejectedValue(refusal('visit_overlap_conflict', 'Overlaps.'));
+    render(<BookingStatusActions entry={entry({ status: 'PENDING' })} onDone={vi.fn()} />);
+    await pressApprove();
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve anyway' }));
+    await vi.waitFor(() => expect(approveBooking).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole('button', { name: 'Approve anyway' })).toBeNull();
+  });
+  it('a plain failure offers no override', async () => {
+    approveBooking.mockRejectedValueOnce(new Error('permission-denied'));
+    render(<BookingStatusActions entry={entry({ status: 'PENDING' })} onDone={vi.fn()} />);
+    await pressApprove();
+    expect(await screen.findByText(/approve failed: permission-denied/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve anyway' })).toBeNull();
+  });
+});
