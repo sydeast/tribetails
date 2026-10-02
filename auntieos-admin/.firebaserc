@@ -10,9 +10,6 @@
         ],
         "sotu": [
           "auntieos"
-        ],
-        "legacy-wasm": [
-          "auntieos-admin"
         ]
       }
     }

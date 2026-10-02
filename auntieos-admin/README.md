@@ -125,7 +125,6 @@ five sites live on one project, `auntieos-ttpc`:
 |---|---|---|
 | `auntieos` | `sotu` | the SOTU status page, NOT this app |
 | `auntieos-ttpc` | `app` | the AuntieOS admin, this app |
-| `auntieos-admin` | `legacy-wasm` | nothing current. It served the wasm build deleted in #481; nothing builds it, so do not deploy it |
 | `kinfolk-portal` | `kinfolk_portal` | MyTribe |
 | `mytribe-kinfolk-beta` | `mytribe_beta` | a second MyTribe site for beta builds. Same project and same production backend, so not a staging environment |
 
