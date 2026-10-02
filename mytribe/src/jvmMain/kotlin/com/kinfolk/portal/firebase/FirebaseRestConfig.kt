@@ -28,6 +28,14 @@ internal open class RestEndpoints(
 ) {
     val API_KEY = "AIzaSyBnR7D4gORVehTr_-WB42_NyFeNO7acDTo"
     val DATABASE_ID = "(default)"
+    /**
+     * #1110: the Referer every REST call sends. The browser API key above is
+     * restricted by HTTP referrer in the GCP console, and a JVM client sends none
+     * of its own, so it names the portal's production domain (the `kinfolk-portal`
+     * hosting site's custom domain), which is on that key's allowed list.
+     * Change it only together with that list.
+     */
+    val REFERER = "https://kinfolk.tribetails.com/"
     private val PROD_PROJECT_ID = "auntieos-ttpc"
 
     private class HostCheck(val host: String?, val rejected: Boolean)

@@ -8,6 +8,8 @@ import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.api.Send
 import io.ktor.client.plugins.api.createClientPlugin
+import io.ktor.client.request.header
+import io.ktor.http.HttpHeaders
 
 /**
  * #867: a request the test runtime refused to send.
@@ -145,11 +147,33 @@ private val AuntieTransport = createClientPlugin("AuntieTransport") {
     }
 }
 
+/**
+ * #1110: the Referer every request from this console sends. The Firebase browser
+ * API key is restricted by HTTP referrer in the GCP console, and a JVM client
+ * sends none of its own, so sign-in, token refresh and the Firestore REST calls
+ * would all be refused. This is the console's production domain (the `app`
+ * hosting site's custom domain), which is on that key's allowed list. Change it
+ * only together with that list.
+ */
+internal const val FIREBASE_REFERER = "https://auntie.tribetails.com/"
+/**
+ * Stamps [FIREBASE_REFERER] on every request that does not already carry a
+ * Referer, in the Send pipeline so each redirect hop gets it too. Every Firebase
+ * REST call in this module is built from [auntieHttpClient], so this one place
+ * covers them all.
+ */
+private val AuntieReferer = createClientPlugin("AuntieReferer") {
+    on(Send) { request ->
+        if (!request.headers.contains(HttpHeaders.Referrer)) request.header(HttpHeaders.Referrer, FIREBASE_REFERER)
+        proceed(request)
+    }
+}
 internal actual fun auntieHttpClient(
     requestTimeoutMs: Long,
     block: HttpClientConfig<*>.() -> Unit,
 ): HttpClient = HttpClient(Java) {
     install(AuntieTransport)
+    install(AuntieReferer)
     install(HttpTimeout) {
         connectTimeoutMillis = AUNTIE_CONNECT_TIMEOUT_MS
         requestTimeoutMillis = requestTimeoutMs

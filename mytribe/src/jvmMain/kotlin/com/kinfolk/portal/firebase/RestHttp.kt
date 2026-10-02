@@ -7,7 +7,9 @@ import io.ktor.client.engine.HttpClientEngineFactory
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpSend
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.plugins.plugin
+import io.ktor.http.HttpHeaders
 import io.ktor.http.Url
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
@@ -76,6 +78,10 @@ internal object RestHttp {
                 json(this@RestHttp.json)
             }
             expectSuccess = false
+            // #1110: the Firebase browser key is restricted by HTTP referrer, and a
+            // desktop client sends none. Every request this client makes, including
+            // each redirect hop, names the portal's own origin so the key accepts it.
+            defaultRequest { headers.append(HttpHeaders.Referrer, FirebaseRestConfig.REFERER) }
             configure()
         }
         if (guardRequests) {
