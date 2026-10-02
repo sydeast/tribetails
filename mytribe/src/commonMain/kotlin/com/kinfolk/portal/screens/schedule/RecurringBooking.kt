@@ -263,6 +263,7 @@ fun buildWeeklyVisits(
             for (slot in ordered) {
                 if (out.size >= MAX_RECURRING_VISITS) break
                 val visit = slotVisitOn(d, slot, services, tz, timing)
+                    ?.let { anchorOpenBlockVisit(it, timing.blocks, nowMs, tz) }
                 if (visit != null && visit.startTimeMs > nowMs) out.add(visit)
             }
         }
@@ -292,6 +293,64 @@ fun buildVisits(
     }
     return out.sortedWith(compareBy({ it.startTimeMs }, { it.serviceId }))
 }
+
+/**
+ * How far ahead of "now" a visit joining an already-open block is placed, so
+ * the office has some notice and the request still reads as future when it
+ * reaches `requestBooking` a little later.
+ */
+const val OPEN_BLOCK_LEAD_MINUTES = 15
+
+/** Anchored starts land on a 5-minute boundary, so the plan does not shift on every recompute. */
+private const val OPEN_BLOCK_STEP_MS = 5 * 60_000L
+
+/** The instant [block] closes on calendar day [d], or null when its end is unreadable. "24:00" is next midnight. */
+private fun blockEndMs(d: LocalDate, block: TimeBlock, tz: TimeZone): Long? {
+    if (block.endTime.trim() == "24:00") {
+        return LocalDateTime(d.plus(1, DateTimeUnit.DAY), LocalTime(0, 0)).toInstant(tz).toEpochMilliseconds()
+    }
+    val end = parseHourMinuteOrNull(block.endTime) ?: return null
+    return LocalDateTime(d, end).toInstant(tz).toEpochMilliseconds()
+}
+
+/**
+ * A block-mode visit whose window has ALREADY OPENED but not yet closed starts
+ * a little after [nowMs] instead of at the window's first minute.
+ *
+ * A window offers no clock, so its visit is sent at the block's first minute
+ * ([slotStartHHmm]). On today's date that minute is in the past from the moment
+ * the window opens, and `requestBooking` refuses a past start — which used to
+ * leave a household unable to book Midday at 12:30 even though the Auntie
+ * still has hours of Midday left. The window is what the household chose; the
+ * start is only the instant it is carried on, and `requestBooking` accepts any
+ * start inside the window (`visitMatchesBlock`), so moving it later inside the
+ * same window changes nothing the office reads.
+ *
+ * Touches only visits that have already started, so a plan whose anchored
+ * start is still ahead stays byte-identical when this runs again at submit
+ * (the #644 idempotency key is keyed on the payload). A window too close to
+ * closing to fit [OPEN_BLOCK_LEAD_MINUTES] is left alone, and
+ * [pastPlannedVisits] still flags it. Pure ([nowMs] injected).
+ */
+fun anchorOpenBlockVisit(visit: BookingVisit, blocks: List<TimeBlock>, nowMs: Long, tz: TimeZone): BookingVisit {
+    if (visit.startTimeMs > nowMs) return visit
+    val block = findTimeBlock(blocks, visit.timeBlockId) ?: return visit
+    val day = Instant.fromEpochMilliseconds(visit.startTimeMs).toLocalDateTime(tz).date
+    val endMs = blockEndMs(day, block, tz) ?: return visit
+    val earliest = nowMs + OPEN_BLOCK_LEAD_MINUTES * 60_000L
+    val anchored = ((earliest + OPEN_BLOCK_STEP_MS - 1) / OPEN_BLOCK_STEP_MS) * OPEN_BLOCK_STEP_MS
+    return if (anchored < endMs) visit.copy(startTimeMs = anchored) else visit
+}
+
+/** [anchorOpenBlockVisit] over a whole plan, re-sorted by start. */
+fun anchorOpenBlockVisits(
+    visits: List<BookingVisit>,
+    blocks: List<TimeBlock>,
+    nowMs: Long,
+    tz: TimeZone = TimeZone.currentSystemDefault(),
+): List<BookingVisit> =
+    visits.map { anchorOpenBlockVisit(it, blocks, nowMs, tz) }
+        .sortedWith(compareBy({ it.startTimeMs }, { it.serviceId }))
 
 /**
  * Visits in the plan whose start has ALREADY PASSED.

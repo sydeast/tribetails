@@ -1003,25 +1003,52 @@ describe('BookingWizard: time-block booking', () => {
   });
 
   /**
-   * A block offers ONE start time, so once today's window has opened there is
-   * no control left for the household to nudge — the wizard has to say so
-   * rather than let the whole request come back refused.
+   * A block offers no clock, so its visit is carried on the window's first
+   * minute — which on today's date is past the moment the window opens. While
+   * the window is still open the household can still book it: the visit starts
+   * a little after now, inside the same window. Only `Date` is faked, so the
+   * clock is pinned without stalling the user-event timers.
    */
-  it('blocks a plan whose visit has already started, and says which control to use', async () => {
-    getBookingPolicy.mockResolvedValue({
+  describe('today, inside an open window', () => {
+    const MIDDAY_ONLY: GetBookingPolicyResult = {
       ...BLOCK_ONLY_POLICY,
-      // A window that opened at the very start of today, so this holds at any
-      // hour the suite runs at.
-      timeBlocks: [{ id: 'early', label: 'Early', startTime: '00:00', endTime: '23:59', durationMinutes: 1439 }],
+      timeBlocks: [{ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', durationMinutes: 240 }],
+    };
+    afterEach(() => {
+      vi.useRealTimers();
     });
-    const user = userEvent.setup();
-    renderWizard();
-    await selectServiceAndGoToStep3(user, 'Daily Visit');
-    await pickDay(user, TODAY);
 
-    expect(await screen.findByText(/has\s+already\s+started/)).toBeInTheDocument();
-    expect(screen.getByText(/Pick a later block/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+    it('books the open window, starting the visit from now', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate(), 12, 30));
+      getBookingPolicy.mockResolvedValue(MIDDAY_ONLY);
+      const user = userEvent.setup();
+      renderWizard();
+      await selectServiceAndGoToStep3(user, 'Daily Visit');
+      await pickDay(user, TODAY);
+
+      expect(screen.queryByText(/Pick a later block/)).not.toBeInTheDocument();
+      await goToReview(user);
+      await user.click(screen.getByRole('button', { name: 'Create Booking' }));
+      await vi.waitFor(() => expect(requestBooking).toHaveBeenCalledTimes(1));
+      const req = requestBooking.mock.calls[0]![0];
+      expect(req.visits![0]!.timeBlockId).toBe('midday');
+      expect(req.visits![0]!.startTimeMs).toBe(visitMs(TODAY, 12, 45));
+    });
+
+    it('refuses a window that has already closed, and says which control to use', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate(), 15, 30));
+      getBookingPolicy.mockResolvedValue(MIDDAY_ONLY);
+      const user = userEvent.setup();
+      renderWizard();
+      await selectServiceAndGoToStep3(user, 'Daily Visit');
+      await pickDay(user, TODAY);
+
+      expect(await screen.findByText(/ended or closes too soon/)).toBeInTheDocument();
+      expect(screen.getByText(/Pick a later block/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+    });
   });
 });
 

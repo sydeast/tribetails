@@ -28,6 +28,7 @@ import {
   formatEstimate,
   initialBookingMode,
   MAX_RECURRING_VISITS,
+  anchorOpenBlockVisits,
   pastPlannedVisits,
   plannedVisitLine,
   priceLabel,
@@ -313,7 +314,9 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
     if (pattern === 'weekly') {
       return buildWeeklyVisits({ nowMs: Date.now(), weeklyDays, weeks: weekCount, slots, services, timing });
     }
-    return buildVisits([...selectedDates.values()], slots, services, timing);
+    // A block already open today starts a little after now rather than at its
+    // first minute; see `anchorOpenBlockVisit`.
+    return anchorOpenBlockVisits(buildVisits([...selectedDates.values()], slots, services, timing), timing.blocks, Date.now());
   }, [pattern, weeklyDays, weekCount, slots, selectedDates, services, timing]);
 
   /** #546: the running estimate, derived from the plan above and from nothing else. */
@@ -419,8 +422,11 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
   const submit = usePortalMutation({
     mutationFn: async () => {
       if (slots.length === 0) throw new Error('Choose a KinCare Duration first.');
-      // The SAME array the rail, step 3 and Review have been showing.
-      const visits = plannedVisits;
+      // The SAME array the rail, step 3 and Review have been showing,
+      // re-anchored against the clock NOW: a household that sat on Review past
+      // an anchored start would otherwise send a start the server calls past.
+      // Visits still ahead are untouched, so the submission key holds.
+      const visits = anchorOpenBlockVisits(plannedVisits, timing.blocks, Date.now());
       if (visits.length === 0) throw new Error('No visits to book. Check the days and weeks.');
       const args = {
         ...(kinfolkId !== undefined ? { kinfolkId } : {}),
@@ -478,7 +484,12 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
       </div>
     );
   }
-  if (kinView.kind !== 'data' || servicesView.kind !== 'data') {
+  // The booking policy is held for too, while it is actually fetching: drawing
+  // CLOCK_ONLY meanwhile showed a clock field to a business that books only in
+  // blocks, and a KinCare added in that moment landed with no block chosen. A
+  // failed or paused read still falls through to CLOCK_ONLY, as above.
+  const policyFetching = policyQuery.isPending && policyQuery.fetchStatus === 'fetching';
+  if (kinView.kind !== 'data' || servicesView.kind !== 'data' || policyFetching) {
     return (
       <div className="wrap">
         <LoadingLine
@@ -487,6 +498,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
           retry={() => {
             void kinQuery.refetch();
             void servicesQuery.refetch();
+            void policyQuery.refetch();
           }}
         >
           Loading the booking wizard…
@@ -1112,11 +1124,9 @@ function Step3ScheduleDates(props: {
 
       {pastVisitCount > 0 && (
         <p className="wiz-warn">
-          {pastVisitCount === 1 ? '1 visit in this plan has' : `${pastVisitCount} visits in this plan have`} already
-          started.{' '}
           {mode === 'TIME_BLOCK'
-            ? 'Pick a later block, or drop today from the dates.'
-            : 'Pick a later time, or drop today from the dates.'}
+            ? `${pastVisitCount === 1 ? '1 visit in this plan is in a block' : `${pastVisitCount} visits in this plan are in blocks`} that ${pastVisitCount === 1 ? 'has' : 'have'} ended or ${pastVisitCount === 1 ? 'closes' : 'close'} too soon to book today. Pick a later block, or drop today from the dates.`
+            : `${pastVisitCount === 1 ? '1 visit in this plan has' : `${pastVisitCount} visits in this plan have`} already started. Pick a later time, or drop today from the dates.`}
         </p>
       )}
     </>

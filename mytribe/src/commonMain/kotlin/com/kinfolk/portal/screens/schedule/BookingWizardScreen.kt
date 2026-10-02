@@ -126,6 +126,13 @@ fun BookingWizardScreen(
      * opens, and the server refuses whatever it will not accept regardless.
      */
     var policy by remember { mutableStateOf(BookingPolicy.CLOCK_ONLY) }
+    /**
+     * False until the policy read has settled either way. The wizard holds its
+     * spinner until then: rendering CLOCK_ONLY meanwhile showed a clock field to
+     * a business that books only in blocks, and a KinCare added in that moment
+     * landed with no block chosen.
+     */
+    var policyLoaded by remember { mutableStateOf(false) }
     /** null means "whatever this business opens on"; set once the household uses the toggle. */
     var modeChoice by remember { mutableStateOf<BookingMode?>(null) }
     /**
@@ -160,6 +167,7 @@ fun BookingWizardScreen(
         } catch (_: Throwable) {
             policy = BookingPolicy.CLOCK_ONLY
         }
+        policyLoaded = true
     }
 
     /**
@@ -208,7 +216,13 @@ fun BookingWizardScreen(
                 timing = timing,
             )
         } else {
-            buildVisits(selectedDates, slots, catalog, timing = timing)
+            // A block already open today starts a little after now rather than
+            // at its first minute; see [anchorOpenBlockVisit].
+            anchorOpenBlockVisits(
+                buildVisits(selectedDates, slots, catalog, timing = timing),
+                timing.blocks,
+                Clock.System.now().toEpochMilliseconds(),
+            )
         }
     }
     /**
@@ -274,7 +288,7 @@ fun BookingWizardScreen(
             )
             return@Column
         }
-        if (kin == null || services == null) {
+        if (kin == null || services == null || !policyLoaded) {
             Box(modifier = Modifier.fillMaxWidth().padding(KinfolkSpacing.xl), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = KinfolkBrand.KinfolkOrange)
             }
@@ -387,7 +401,16 @@ fun BookingWizardScreen(
                                 try {
                                     if (slots.isEmpty()) error("Choose a KinCare Duration first.")
                                     // The SAME array step 3 and Review have been showing.
-                                    val visits = plannedVisits
+                                    // Re-anchored against the clock NOW: a household
+                                    // that sat on Review past an anchored start would
+                                    // otherwise send a start the server calls past.
+                                    // Visits still ahead are untouched, so the key
+                                    // below holds across retries.
+                                    val visits = anchorOpenBlockVisits(
+                                        plannedVisits,
+                                        timing.blocks,
+                                        Clock.System.now().toEpochMilliseconds(),
+                                    )
                                     if (visits.isEmpty()) error("No visits to book. Check the days and weeks.")
                                     // The wizard groups its visits into one envelope; the
                                     // returned batchId is not used for nav, so just reload.
@@ -864,10 +887,21 @@ private fun Step3ScheduleDates(
         // there is no control left for the household to nudge. Say so here
         // rather than let the whole request come back refused.
         if (pastVisitCount > 0) {
-            val howMany = if (pastVisitCount == 1) "1 visit in this plan has" else "$pastVisitCount visits in this plan have"
-            val fix = if (mode == BookingMode.TimeBlock) "Pick a later block" else "Pick a later time"
+            // In block mode an open window is booked from now (see
+            // [anchorOpenBlockVisit]), so what is left here is a window that
+            // has ended or closes too soon to fit.
+            val message = if (mode == BookingMode.TimeBlock) {
+                if (pastVisitCount == 1) {
+                    "1 visit in this plan is in a block that has ended or closes too soon to book today."
+                } else {
+                    "$pastVisitCount visits in this plan are in blocks that have ended or close too soon to book today."
+                } + " Pick a later block, or drop today from the dates."
+            } else {
+                (if (pastVisitCount == 1) "1 visit in this plan has" else "$pastVisitCount visits in this plan have") +
+                    " already started. Pick a later time, or drop today from the dates."
+            }
             Text(
-                "$howMany already started. $fix, or drop today from the dates.",
+                message,
                 style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral),
             )
         }

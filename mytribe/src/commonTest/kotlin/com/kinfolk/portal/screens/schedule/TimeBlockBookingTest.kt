@@ -228,7 +228,7 @@ class TimeBlockBookingTest {
     }
 
     @Test
-    fun `still drops a weekly occurrence whose window has already opened today`() {
+    fun `keeps the weekly occurrence while its window is still open, starting it from now`() {
         val visits = buildWeeklyVisits(
             nowMs = msAt(2026, 9, 4, 14),
             weeklyDays = setOf(5),
@@ -238,8 +238,74 @@ class TimeBlockBookingTest {
             tz = utc,
             timing = blockTiming,
         )
+        assertEquals(2, visits.size)
+        assertEquals(msAt(2026, 9, 4, 14, 15), visits[0].startTimeMs)
+        assertEquals("midday", visits[0].timeBlockId)
+        assertEquals(msAt(2026, 9, 11, 11), visits[1].startTimeMs)
+    }
+
+    @Test
+    fun `drops the weekly occurrence once its window is too close to closing`() {
+        val visits = buildWeeklyVisits(
+            nowMs = msAt(2026, 9, 4, 14, 50),
+            weeklyDays = setOf(5),
+            weeks = 2,
+            slots = listOf(blockSlot("30Minute", "midday")),
+            services = catalog,
+            tz = utc,
+            timing = blockTiming,
+        )
         assertEquals(1, visits.size)
         assertEquals(msAt(2026, 9, 11, 11), visits[0].startTimeMs)
+    }
+
+    // ── joining a window that is already open ────────────────────────────────
+
+    private fun middayOn4th() =
+        buildVisits(listOf(LocalDate(2026, 9, 4)), listOf(blockSlot("30Minute", "midday")), catalog, utc, blockTiming).single()
+
+    @Test
+    fun `leaves a visit whose window has not opened yet exactly as built`() {
+        val v = middayOn4th()
+        assertEquals(v, anchorOpenBlockVisit(v, blockTiming.blocks, msAt(2026, 9, 4, 8), utc))
+    }
+
+    @Test
+    fun `starts an open window a lead time after now, on a 5-minute boundary`() {
+        val now = msAt(2026, 9, 4, 12, 32)
+        val anchored = anchorOpenBlockVisit(middayOn4th(), blockTiming.blocks, now, utc)
+        assertEquals(msAt(2026, 9, 4, 12, 50), anchored.startTimeMs)
+        assertEquals("midday", anchored.timeBlockId)
+        assertTrue(pastPlannedVisits(listOf(anchored), now).isEmpty())
+    }
+
+    @Test
+    fun `is stable when run again before the anchored start arrives`() {
+        val first = anchorOpenBlockVisit(middayOn4th(), blockTiming.blocks, msAt(2026, 9, 4, 12, 32), utc)
+        assertEquals(first, anchorOpenBlockVisit(first, blockTiming.blocks, msAt(2026, 9, 4, 12, 40), utc))
+    }
+
+    @Test
+    fun `leaves a window that has ended, or closes too soon, for the past-visit gate`() {
+        for (now in listOf(msAt(2026, 9, 4, 14, 50), msAt(2026, 9, 4, 16))) {
+            val v = middayOn4th()
+            val out = anchorOpenBlockVisit(v, blockTiming.blocks, now, utc)
+            assertEquals(v, out)
+            assertEquals(1, pastPlannedVisits(listOf(out), now).size)
+        }
+    }
+
+    @Test
+    fun `reads a 24 00 end as midnight`() {
+        val late = TimeBlock("late", "Late", "20:00", "24:00", 240)
+        val v = buildVisits(
+            listOf(LocalDate(2026, 9, 4)),
+            listOf(blockSlot("30Minute", "late")),
+            catalog,
+            utc,
+            BookingTiming(BookingMode.TimeBlock, listOf(late)),
+        ).single()
+        assertEquals(msAt(2026, 9, 4, 23, 15), anchorOpenBlockVisit(v, listOf(late), msAt(2026, 9, 4, 23), utc).startTimeMs)
     }
 
     // ── the past-visit gate ──────────────────────────────────────────────────

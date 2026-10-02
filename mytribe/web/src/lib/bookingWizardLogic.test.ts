@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   BOOKING_HORIZON_DAYS,
   MAX_RECURRING_VISITS,
+  anchorOpenBlockVisit,
+  anchorOpenBlockVisits,
   bookingHorizonEnd,
   buildVisits,
   buildWeeklyVisits,
@@ -675,9 +677,26 @@ describe('buildWeeklyVisits in block mode', () => {
     expect(visits.every((v) => new Date(v.startTimeMs).getHours() === 11)).toBe(true);
   });
 
-  it('still drops an occurrence whose window has already opened today', () => {
-    // 14:00 on the Friday: today's Midday visit is in the past, next week's is not.
+  it('keeps today\'s occurrence while its window is still open, starting it from now', () => {
+    // 14:00 on the Friday: Midday opened at 11:00 but runs to 15:00.
     const nowMs = new Date(2026, 8, 4, 14, 0).getTime();
+    const visits = buildWeeklyVisits({
+      nowMs,
+      weeklyDays: new Set([5]),
+      weeks: 2,
+      slots: [blockSlot('30Minute', 'midday')],
+      services: CATALOG,
+      timing: BLOCK_TIMING,
+    });
+    expect(visits).toHaveLength(2);
+    expect(visits[0]!.startTimeMs).toBe(new Date(2026, 8, 4, 14, 15).getTime());
+    expect(visits[0]!.timeBlockId).toBe('midday');
+    expect(dateKey(new Date(visits[1]!.startTimeMs))).toBe('2026-09-11');
+  });
+
+  it('drops today\'s occurrence once its window is too close to closing', () => {
+    // 14:50: the earliest start with notice would be 15:05, past Midday's end.
+    const nowMs = new Date(2026, 8, 4, 14, 50).getTime();
     const visits = buildWeeklyVisits({
       nowMs,
       weeklyDays: new Set([5]),
@@ -688,6 +707,51 @@ describe('buildWeeklyVisits in block mode', () => {
     });
     expect(visits).toHaveLength(1);
     expect(dateKey(new Date(visits[0]!.startTimeMs))).toBe('2026-09-11');
+  });
+});
+
+describe('anchorOpenBlockVisit', () => {
+  const [midday] = buildVisits([new Date(2026, 8, 4)], [blockSlot('30Minute', 'midday')], CATALOG, BLOCK_TIMING);
+
+  it('leaves a visit whose window has not opened yet exactly as built', () => {
+    const nowMs = new Date(2026, 8, 4, 8, 0).getTime();
+    expect(anchorOpenBlockVisit(midday!, BLOCK_TIMING.blocks, nowMs)).toBe(midday);
+  });
+
+  it('starts an open window a lead time after now, on a 5-minute boundary, inside the window', () => {
+    const nowMs = new Date(2026, 8, 4, 12, 32).getTime();
+    const anchored = anchorOpenBlockVisit(midday!, BLOCK_TIMING.blocks, nowMs);
+    // 12:32 + 15 = 12:47, rounded up to 12:50.
+    expect(anchored.startTimeMs).toBe(new Date(2026, 8, 4, 12, 50).getTime());
+    expect(anchored.timeBlockId).toBe('midday');
+    expect(pastPlannedVisits([anchored], nowMs)).toEqual([]);
+  });
+
+  it('is stable when run again before the anchored start arrives', () => {
+    const first = anchorOpenBlockVisit(midday!, BLOCK_TIMING.blocks, new Date(2026, 8, 4, 12, 32).getTime());
+    const again = anchorOpenBlockVisit(first, BLOCK_TIMING.blocks, new Date(2026, 8, 4, 12, 40).getTime());
+    expect(again).toBe(first);
+  });
+
+  it('leaves a window that has ended, or closes too soon, for pastPlannedVisits to flag', () => {
+    for (const [h, m] of [[14, 50], [16, 0]] as const) {
+      const nowMs = new Date(2026, 8, 4, h, m).getTime();
+      const out = anchorOpenBlockVisit(midday!, BLOCK_TIMING.blocks, nowMs);
+      expect(out).toBe(midday);
+      expect(pastPlannedVisits([out], nowMs)).toHaveLength(1);
+    }
+  });
+
+  it('reads a 24:00 end as midnight', () => {
+    const late: TimeBlockDto = { id: 'late', label: 'Late', startTime: '20:00', endTime: '24:00', durationMinutes: 240 };
+    const [visit] = buildVisits([new Date(2026, 8, 4)], [blockSlot('30Minute', 'late')], CATALOG, { mode: 'TIME_BLOCK', blocks: [late] });
+    const nowMs = new Date(2026, 8, 4, 23, 0).getTime();
+    expect(anchorOpenBlockVisit(visit!, [late], nowMs).startTimeMs).toBe(new Date(2026, 8, 4, 23, 15).getTime());
+  });
+
+  it('never touches a clock-booked visit', () => {
+    const [clock] = buildVisits([new Date(2026, 8, 4)], [slot('30Minute', '09:00')], CATALOG);
+    expect(anchorOpenBlockVisits([clock!], BLOCK_TIMING.blocks, new Date(2026, 8, 4, 12, 0).getTime())).toEqual([clock]);
   });
 });
 
