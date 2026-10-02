@@ -1,0 +1,108 @@
+name: E2E real services
+
+# THE ADMIN CYPRESS SUITE AGAINST REAL FUNCTIONS AND REAL OUTSIDE SERVICES
+# (#1089, operator ruling D3, 2026-10-01). Gated on releases, not on pull
+# requests: a public repo's PR runs cannot read secrets, and this run needs them.
+#
+# What runs: `npm run e2e:real` in auntieos-admin, which builds mytribe/functions,
+# writes its emulator secrets file from the environment below (refusing a live
+# Stripe key, a business or private phone number, or a spec that could press
+# Google Calendar Disconnect), boots auth + Firestore + functions under a demo-
+# project id, and runs `cypress.real.config.ts`. See
+# auntieos-admin/docs/runbooks/e2e.md, "The real-services run".
+#
+# SECRETS live in the GitHub environment `e2e-real`, whose deployment branch
+# policy is `main` only. A vendor whose secrets are not stored yet is not a
+# failure: its specs skip with the missing variable named in the log.
+#
+# VERDICT (D3-e). A red run means our integration broke and the release stops.
+# The vendor-outage exception (a 5xx or timeout while the vendor's status page
+# shows an incident only warns) is not classified automatically yet; until it
+# is, a red run is read by a person before a release is forced past it.
+
+on:
+  workflow_dispatch:
+  # The release calls this for the commit it is about to ship. Not wired yet
+  # (#1089 phase 1); the PR that added this file says exactly how.
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-real-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  admin-real:
+    name: Admin Cypress, real services
+    # Main only, matching the environment's branch policy, so a dispatch from
+    # any other branch skips here instead of failing at the environment gate.
+    if: github.ref == 'refs/heads/main'
+    environment: e2e-real
+    runs-on: ubuntu-latest
+    # Functions build plus three emulators plus real vendor round trips. Local
+    # runs are a few minutes; this is headroom, and a cap the deploy guard needs.
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: auntieos-admin
+    env:
+      STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+      STRIPE_TEST_PUBLISHABLE_KEY: ${{ secrets.STRIPE_TEST_PUBLISHABLE_KEY }}
+      TWILIO_TEST_ACCOUNT_SID: ${{ secrets.TWILIO_TEST_ACCOUNT_SID }}
+      TWILIO_TEST_AUTH_TOKEN: ${{ secrets.TWILIO_TEST_AUTH_TOKEN }}
+      E2E_SMTP2GO_API_KEY: ${{ secrets.E2E_SMTP2GO_API_KEY }}
+      E2E_EMAIL_FROM: ${{ secrets.E2E_EMAIL_FROM }}
+      E2E_CLOUDINARY_CLOUD_NAME: ${{ secrets.E2E_CLOUDINARY_CLOUD_NAME }}
+      E2E_CLOUDINARY_API_KEY: ${{ secrets.E2E_CLOUDINARY_API_KEY }}
+      E2E_CLOUDINARY_API_SECRET: ${{ secrets.E2E_CLOUDINARY_API_SECRET }}
+      E2E_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.E2E_GOOGLE_OAUTH_CLIENT_ID }}
+      E2E_GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.E2E_GOOGLE_OAUTH_CLIENT_SECRET }}
+      E2E_GOOGLE_CALENDAR_REFRESH_TOKEN: ${{ secrets.E2E_GOOGLE_CALENDAR_REFRESH_TOKEN }}
+      E2E_GOOGLE_CALENDAR_ID: ${{ secrets.E2E_GOOGLE_CALENDAR_ID }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            mytribe/functions/package-lock.json
+      # The Firestore emulator is a JAR. 21 to match ci.yml's emulator jobs.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Cache Cypress binary
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/Cypress
+          key: cypress-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+        working-directory: .
+      # The functions emulator serves mytribe/functions/lib, so it needs its
+      # own install; run.sh builds it.
+      - run: npm ci
+        working-directory: mytribe/functions
+      # Pinned to the same version as ci.yml's emulator jobs.
+      - name: Install firebase-tools
+        run: npm install -g firebase-tools@15.18.0
+      # No Google credentials in this job, deliberately: with no ADC and a demo-
+      # project id, the functions emulator has no Secret Manager to reach.
+      - name: Cypress, real services
+        run: npm run e2e:real
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-real-artifacts
+          # The emulator log carries function output, which is where a vendor
+          # refusal shows; screenshots exist only for failures. The secrets file
+          # is never here: run.sh deletes it and it lives under mytribe/.
+          path: |
+            auntieos-admin/cypress/.artifacts/real/
+            auntieos-admin/cypress/.real/emulators.log
+          retention-days: 7
+          if-no-files-found: ignore

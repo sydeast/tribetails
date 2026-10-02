@@ -24,12 +24,17 @@ vi.mock('firebase/functions', () => ({ httpsCallable }));
 
 /** `emulatorHost` is reassigned per test; the mock reads it at call time. */
 let emulatorHost = '';
+/** True for the real-services run (#1089), where a functions emulator answers. */
+let functionsServed = false;
 vi.mock('./firebase', () => ({
   functions: {},
   get E2E_EMULATOR_HOST() {
     return emulatorHost;
   },
   E2E_FUNCTIONS_PORT: 5399,
+  get E2E_FUNCTIONS_SERVED() {
+    return functionsServed;
+  },
 }));
 
 /**
@@ -55,6 +60,7 @@ function rejectWith(code: string): void {
 
 beforeEach(() => {
   emulatorHost = '';
+  functionsServed = false;
   httpsCallable.mockReset();
   noteSessionAlive.mockClear();
   reactToCallableError.mockClear();
@@ -93,6 +99,18 @@ describe('call', () => {
     expect((err as Error).message).toContain('listSupplies');
     expect((err as Error).message).toContain('127.0.0.1:5399');
     expect((err as Error).message).toContain('never reach production callables');
+  });
+
+  it('#1089 leaves functions/internal alone when a functions emulator really answers', async () => {
+    // The real-services run serves mytribe/functions, so `internal` there is a
+    // function that failed, and calling it "not stubbed" would send the reader
+    // to the harness instead of to the bug.
+    emulatorHost = '127.0.0.1';
+    functionsServed = true;
+    rejectWith('functions/internal');
+    const err = await call('listSupplies', {}).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(FirebaseError);
+    expect(err).not.toBeInstanceOf(CallableNotStubbedError);
   });
 
   it('does not swallow other callable errors in emulator mode', async () => {

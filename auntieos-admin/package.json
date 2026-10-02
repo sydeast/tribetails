@@ -21,7 +21,10 @@
     "e2e:cy:tsc": "tsc -p cypress",
     "e2e:cy:run": "start-server-and-test e2e:cy:server http://127.0.0.1:5174 \"cypress run\"",
     "e2e:cy:open": "npm run e2e:cy:tsc && firebase emulators:exec --project auntieos-ttpc --only auth,firestore --config e2e.firebase.json \"start-server-and-test e2e:cy:server http://127.0.0.1:5174 'cypress open --e2e --browser chrome'\"",
-    "e2e:cy:server": "VITE_E2E_EMULATOR=127.0.0.1 vite --port 5174 --strictPort --host 127.0.0.1"
+    "e2e:cy:server": "VITE_E2E_EMULATOR=127.0.0.1 vite --port 5174 --strictPort --host 127.0.0.1",
+    "e2e:real": "bash scripts/e2e-real/run.sh",
+    "e2e:real:run": "start-server-and-test e2e:real:server http://127.0.0.1:5174 \"cypress run --config-file cypress.real.config.ts\"",
+    "e2e:real:server": "VITE_E2E_EMULATOR=127.0.0.1 VITE_E2E_PROJECT_ID=$E2E_PROJECT_ID VITE_E2E_FUNCTIONS_PORT=$E2E_FUNCTIONS_PORT vite --port 5174 --strictPort --host 127.0.0.1"
   },
   "dependencies": {
     "@fontsource-variable/fraunces": "^5.3.0",
