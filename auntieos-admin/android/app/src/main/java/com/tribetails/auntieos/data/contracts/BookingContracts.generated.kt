@@ -840,6 +840,10 @@ data class ResolveBookingRescheduleRequestArgs(
     val decision: String,
     /** Optional: omitted from the payload when null. */
     val note: String? = null,
+    /** Optional: omitted from the payload when null. */
+    val overrideBusyConflict: Boolean? = null,
+    /** Optional: omitted from the payload when null. */
+    val overrideVisitConflict: Boolean? = null,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -851,6 +855,8 @@ data class ResolveBookingRescheduleRequestArgs(
         put("visitId", visitId)
         put("decision", decision)
         if (note != null) put("note", note)
+        if (overrideBusyConflict != null) put("overrideBusyConflict", overrideBusyConflict)
+        if (overrideVisitConflict != null) put("overrideVisitConflict", overrideVisitConflict)
     }
 }
 

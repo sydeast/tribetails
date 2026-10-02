@@ -534,12 +534,27 @@ fun ScheduleViewScreen(
             //    says so plainly when both queues come back empty.
             state.visitRequestsError?.let { msg ->
                 item {
-                    AuntieBanner(
-                        tone = AuntieBannerTone.Error,
-                        title = "Change requests",
-                        icon = Lucide.CircleAlert,
-                        onDismiss = { viewModel.clearVisitRequestsError() },
-                    ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.error) }
+                    if (state.visitRequestOverride != null) {
+                        // #1100: a busy or visit clash on the household's new
+                        // time. Same banner and same override rule as a refused
+                        // move, with the accept's own button.
+                        ScheduleWriteBanner(
+                            message = msg,
+                            override = state.visitRequestOverride,
+                            busy = state.visitRequestKey != null,
+                            title = "Change requests",
+                            overrideLabel = "Accept anyway",
+                            onOverride = { viewModel.retryVisitRequestWithOverride() },
+                            onDismiss = { viewModel.clearVisitRequestsError() },
+                        )
+                    } else {
+                        AuntieBanner(
+                            tone = AuntieBannerTone.Error,
+                            title = "Change requests",
+                            icon = Lucide.CircleAlert,
+                            onDismiss = { viewModel.clearVisitRequestsError() },
+                        ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.error) }
+                    }
                 }
             }
             state.visitRequestMessage?.let { msg ->

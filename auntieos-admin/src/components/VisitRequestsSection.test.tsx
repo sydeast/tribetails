@@ -347,6 +347,82 @@ describe('VisitRequestsSection', () => {
     await waitFor(() => expect(screen.queryByText('Morning drop-in')).toBeNull());
   });
 
+  describe('accepting a reschedule onto a clash (#1100)', () => {
+    const MOVED = { ok: true, visitId: 'v1', decision: 'accept', startTimeMs: PROPOSED_MS, sessionUpdated: true };
+    function clash(message: string, code?: string): Error {
+      return Object.assign(new Error(message), {
+        code: 'functions/failed-precondition',
+        ...(code !== undefined && { details: { code } }),
+      });
+    }
+    async function openMoveDialog() {
+      listRescheduleRequests.mockResolvedValue({ requests: [reschedule()] });
+      render(<VisitRequestsSection />);
+      await openQueue();
+      await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
+      await userEvent.click(await screen.findByRole('button', { name: 'Move it' }));
+    }
+    it('on a busy clash shows the server message and "Accept anyway" resends with the busy override', async () => {
+      resolveBookingRescheduleRequest
+        .mockRejectedValueOnce(clash('That time clashes with a Google Calendar busy block.', 'booking_busy_conflict'))
+        .mockResolvedValueOnce(MOVED);
+      await openMoveDialog();
+      expect(await screen.findByText('That time clashes with a Google Calendar busy block.')).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'Accept anyway' }));
+      await waitFor(() =>
+        expect(resolveBookingRescheduleRequest).toHaveBeenLastCalledWith('fam-1', 'b1', 'v1', 'accept', '', {
+          overrideBusyConflict: true,
+        }),
+      );
+      await waitFor(() => expect(screen.queryByText('Morning drop-in')).toBeNull());
+    });
+    it('on a visit clash offers "Accept anyway" with the visit override', async () => {
+      resolveBookingRescheduleRequest
+        .mockRejectedValueOnce(clash('That time is already taken.', 'visit_overlap_conflict'))
+        .mockResolvedValueOnce(MOVED);
+      await openMoveDialog();
+      await userEvent.click(await screen.findByRole('button', { name: 'Accept anyway' }));
+      await waitFor(() =>
+        expect(resolveBookingRescheduleRequest).toHaveBeenLastCalledWith('fam-1', 'b1', 'v1', 'accept', '', {
+          overrideVisitConflict: true,
+        }),
+      );
+    });
+    it('a visit clash after a busy override resends with both overrides', async () => {
+      resolveBookingRescheduleRequest
+        .mockRejectedValueOnce(clash('Busy block.', 'booking_busy_conflict'))
+        .mockRejectedValueOnce(clash('Another visit is booked then.', 'visit_overlap_conflict'))
+        .mockResolvedValueOnce(MOVED);
+      await openMoveDialog();
+      await userEvent.click(await screen.findByRole('button', { name: 'Accept anyway' }));
+      expect(await screen.findByText('Another visit is booked then.')).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'Accept anyway' }));
+      await waitFor(() =>
+        expect(resolveBookingRescheduleRequest).toHaveBeenLastCalledWith('fam-1', 'b1', 'v1', 'accept', '', {
+          overrideBusyConflict: true,
+          overrideVisitConflict: true,
+        }),
+      );
+    });
+    it('a company closure shows its message and offers no override', async () => {
+      resolveBookingRescheduleRequest.mockRejectedValue(
+        clash('Tribe Tails is closed that day.', 'company_holiday_conflict'),
+      );
+      await openMoveDialog();
+      expect(await screen.findByText('Tribe Tails is closed that day.')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Accept anyway' })).toBeNull();
+    });
+    it('a decline never offers an override', async () => {
+      listRescheduleRequests.mockResolvedValue({ requests: [reschedule()] });
+      resolveBookingRescheduleRequest.mockRejectedValue(clash('Busy block.', 'booking_busy_conflict'));
+      render(<VisitRequestsSection />);
+      await openQueue();
+      await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
+      await userEvent.click(await screen.findByRole('button', { name: 'Send the decline' }));
+      expect(await screen.findByText('Busy block.')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Accept anyway' })).toBeNull();
+    });
+  });
   it('submits a reschedule decline with no note, since the office does not owe a reason (#700)', async () => {
     listRescheduleRequests.mockResolvedValue({ requests: [reschedule()] });
     resolveBookingRescheduleRequest.mockResolvedValue({

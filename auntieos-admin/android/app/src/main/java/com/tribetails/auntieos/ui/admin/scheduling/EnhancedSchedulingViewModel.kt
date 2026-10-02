@@ -131,6 +131,12 @@ data class SchedulingState(
      * block and move writes.
      */
     val incomingOverride: ScheduleOverrideKind? = null,
+    /**
+     * #1100: the override the last refused ACCEPT of a reschedule ask offers
+     * ("Accept anyway"), or null. Its own slot, so it cannot be mistaken for the
+     * incoming-series approval's.
+     */
+    val visitRequestOverride: ScheduleOverrideKind? = null,
     // 1025: [approveBooking]/[cancelBooking] below (the single native
     // enhanced_bookings row, not a whole incoming series) used to report
     // nothing on success -- the row just moved sections on the next load,
@@ -739,13 +745,42 @@ class EnhancedSchedulingViewModel(
      * The resolved row is dropped locally the moment the server confirms,
      * never re-fetched and never assumed.
      */
-    fun resolveVisitRequest(row: VisitRequestRow, decision: String, note: String? = null) {
+    fun resolveVisitRequest(row: VisitRequestRow, decision: String, note: String? = null) =
+        runVisitRequest(row, decision, note?.trim()?.takeIf { it.isNotEmpty() }, SeriesOverrides())
+    /** The refused reschedule accept an "Accept anyway" press re-sends. */
+    private data class PendingVisitRequestRetry(
+        val row: VisitRequestRow,
+        val note: String?,
+        val granted: SeriesOverrides,
+    )
+    private var pendingVisitRequestRetry: PendingVisitRequestRetry? = null
+    /**
+     * #1100: re-send the last refused reschedule accept with the override it
+     * offered, keeping any override already granted so a busy override is not
+     * lost when the retry meets a visit clash. A no-op when nothing is offered.
+     */
+    fun retryVisitRequestWithOverride() {
+        val kind = _state.value.visitRequestOverride ?: return
+        val pending = pendingVisitRequestRetry ?: return
+        val granted = when (kind) {
+            ScheduleOverrideKind.BUSY -> pending.granted.copy(busy = true)
+            ScheduleOverrideKind.VISIT -> pending.granted.copy(visit = true)
+        }
+        runVisitRequest(pending.row, "accept", pending.note, granted)
+    }
+    private fun runVisitRequest(
+        row: VisitRequestRow,
+        decision: String,
+        trimmed: String?,
+        granted: SeriesOverrides,
+    ) {
         if (_state.value.visitRequestKey != null) return
-        val trimmed = note?.trim()?.takeIf { it.isNotEmpty() }
+        pendingVisitRequestRetry = null
         _state.value = _state.value.copy(
             visitRequestKey = row.key,
             visitRequestMessage = null,
             visitRequestsError = null,
+            visitRequestOverride = null,
         )
         viewModelScope.launch {
             val outcome = when (row) {
@@ -762,6 +797,8 @@ class EnhancedSchedulingViewModel(
                     visitId = row.visitId,
                     decision = decision,
                     note = trimmed,
+                    overrideBusyConflict = granted.busy,
+                    overrideVisitConflict = granted.visit,
                 ).map { res -> rescheduleOutcomeMessage(decision, res.sessionUpdated) }
             }
             outcome
@@ -775,14 +812,25 @@ class EnhancedSchedulingViewModel(
                 .onFailure { e ->
                     // The row STAYS. A refused decision leaves the household
                     // still waiting, and dropping the row would hide that.
+                    //
+                    // #1100: a busy or visit clash on accepting a new time can be
+                    // knowingly overridden; a closure cannot, and a decline moves
+                    // nothing, so neither offers anything.
+                    val offer = if (row is VisitRequestRow.Reschedule && decision == "accept") {
+                        approveOverrideFor(e, granted)
+                    } else {
+                        null
+                    }
+                    pendingVisitRequestRetry =
+                        if (offer != null) PendingVisitRequestRetry(row, trimmed, granted) else null
                     _state.value = _state.value.copy(
                         visitRequestKey = null,
                         visitRequestsError = e.message ?: "That did not go through. Try again.",
+                        visitRequestOverride = offer,
                     )
                 }
         }
     }
-
     private fun cancelOutcomeMessage(decision: String, sessionUpdated: Boolean): String = when {
         decision == "decline" -> "Declined. The visit stays on the schedule and the household gets your answer."
         sessionUpdated -> "Cancelled. It is off the schedule and off the household's portal."
@@ -796,7 +844,10 @@ class EnhancedSchedulingViewModel(
     }
 
     fun clearVisitRequestMessage() { _state.value = _state.value.copy(visitRequestMessage = null) }
-    fun clearVisitRequestsError() { _state.value = _state.value.copy(visitRequestsError = null) }
+    fun clearVisitRequestsError() {
+        pendingVisitRequestRetry = null
+        _state.value = _state.value.copy(visitRequestsError = null, visitRequestOverride = null)
+    }
 
     /**
      * Live booking_time_slots subscription (replaces the one-shot getTimeSlots .get()).
