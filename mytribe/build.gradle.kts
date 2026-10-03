@@ -230,11 +230,11 @@ kotlin {
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.11.0")
             implementation("androidx.activity:activity-compose:1.13.0")
             implementation("androidx.biometric:biometric:1.1.0")
-            implementation("androidx.core:core-ktx:1.19.0")
+            implementation("androidx.core:core-ktx:1.19.1")
             implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.3")
             // Sentry — crash reporting. Init gated in KinfolkPortalApplication
             // on a non-blank DSN + non-robolectric fingerprint.
-            implementation("io.sentry:sentry-android:8.57.0")
+            implementation("io.sentry:sentry-android:8.58.0")
             // Mapbox Maps SDK, android only. It is what puts streets and
             // landmarks under the KinCare route instead of the bare polyline a
             // kinfolk sees today (issue #520). Same 11.10.0 as
