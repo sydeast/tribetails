@@ -27,7 +27,7 @@ describe('initSentry', () => {
     info.mockRestore();
   });
 
-  it('initializes Sentry with the DSN and sendDefaultPii:false when a DSN is set', () => {
+  it('initializes Sentry with the DSN and all PII collection off when a DSN is set', () => {
     vi.stubEnv('VITE_SENTRY_DSN', 'https://public@o1.ingest.us.sentry.io/2');
 
     initSentry();
@@ -36,7 +36,7 @@ describe('initSentry', () => {
     expect(Sentry.init).toHaveBeenCalledWith(
       expect.objectContaining({
         dsn: 'https://public@o1.ingest.us.sentry.io/2',
-        sendDefaultPii: false,
+        dataCollection: { userInfo: false, cookies: false, httpBodies: [] },
         tracesSampleRate: 0.1,
         beforeSend: dropRecaptchaNoise,
       }),
