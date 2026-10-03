@@ -31,6 +31,17 @@ export function initSentry(): void {
     environment: process.env.SENTRY_ENVIRONMENT ?? 'unknown',
     tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? '0.1'),
     release: process.env.SENTRY_RELEASE,
+    // v11 defaults dataCollection to collecting user info, cookies, HTTP bodies
+    // and local variables. v10 collected none of that (sendDefaultPii unset), so
+    // pin it all off to keep the same posture.
+    dataCollection: {
+      userInfo: false,
+      cookies: false,
+      httpBodies: [],
+      stackFrameVariables: false,
+      databaseQueryData: false,
+      queues: false,
+    },
   });
 }
 

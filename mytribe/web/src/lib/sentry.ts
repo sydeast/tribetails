@@ -42,7 +42,10 @@ export function initSentry(): void {
       tracesSampleRate: 0.1,
       // Kinfolk PII lives here (names, Kin, invoices, contacts). Do NOT let
       // Sentry attach request bodies / IPs / user context by default.
-      sendDefaultPii: false,
+      // v11 removed sendDefaultPii; dataCollection replaces it and defaults to
+      // collecting MORE (user info, cookies, bodies). Pin every PII category off
+      // so the posture matches the v10 sendDefaultPii:false behaviour.
+      dataCollection: { userInfo: false, cookies: false, httpBodies: [] },
       // Google's reCAPTCHA script throws on its own for some visitors (#1140).
       // Drop events with no first-party frame; keep everything else.
       beforeSend: dropRecaptchaNoise,
