@@ -136,16 +136,17 @@ month of work.
 
 For the case where the operator does not want to drive, narrate or write
 anything up. Prompt 2 produces prose that still has to be read and ruled on in
-chat. This one produces rows, and each row is answered with Yes, No, Later or a
-pick between two to four ways we could do it.
+chat. This one produces questions with pictures. Each question shows what Precise,
+Scritches and Scout do beside what tribetails does today, and lists every
+vendor's features as pills the operator taps to want or rule out.
 
 The ballot is one artifact that every walk adds to:
 https://claude.ai/artifact/J2cS5wYarJRJ1K1NcNxcNv
 
 Run it from the root of the main checkout, where the gitignored
 `docs/vendor-research/` folder lives, so "do we have it" is checked against the
-code and the ledger is there to read. Sign
-in to the vendor in Chrome first. One walk covers one vendor on one side, admin
+code and the ledger is there to read. Claude opens its own Chrome window (the chrome-devtools one, which can save
+pictures to disk); sign in to the vendor there. One walk covers one vendor on one side, admin
 or client portal.
 
 ```
@@ -176,51 +177,71 @@ Before walking:
 - List the vendor's top-level navigation and the areas you will walk, in order,
   then start. Do not wait for me.
 
-For each screen, one row per feature, component or element that does a job for
-the user:
+A question on the ballot is a topic (payment terms, surcharges, tips), not a
+single control. For each topic write one row:
   id        kebab-case, area first, stable: schedule-drag-to-reschedule
   area      reuse an area already on the ballot when one fits. Otherwise our
             word for it: Schedule, Households, Kin, Visits, KinTales, Messages,
             Booking, Settings
-  title     what it is, under ten words
-  what      one sentence: the job it does and the default it picks
-  seenAt    [<vendor>]
+  title     the topic, under eight words
+  what      one sentence on what the topic covers
+  vendors   {Precise, Scritches, Scout}: "has", "lacks" or "unseen" for each.
+            All three must be filled in before the question is asked. "unseen"
+            needs a reason in vendorNotes (no data in the account, a screen that
+            only opens by saving something).
+  images    one picture per vendor that has it, plus one of tribetails today,
+            each with a one-sentence caption saying where to look
+  features  every distinct thing a vendor does under this topic, as short pill
+            labels, each tagged with the vendors that have it:
+            {key, label, from: [vendors]}. A feature no vendor has but the
+            topic plainly needs gets from: []. I tap once for want, twice for
+            do not want. Never a value for my own settings: no hours, prices,
+            names or day counts.
   have      yes | partial | no | unknown, from searching this repo across admin
             web, admin Android, portal web, portal Android and functions
   haveNote  one sentence: what exists, what is absent, which client lacks it
   evidence  up to three real paths. If none was found, leave it empty. Never
             guess a path.
-  options   two to four ways tribetails could do it, when there is a real fork.
-            Each is a short label of behaviour. Empty when the only question is
-            yes or no. Never a value for my own settings: no hours, prices,
-            names or day counts.
-  scale     only when it needs something one business does not have (a provider
-            marketplace, a review corpus, years of history). Say what.
-  bucket    ask | built | ruled
+  scale     only when it needs something one business does not have. Say what.
+  bucket    ask | built | ruled | merged
+  checkedAt the time the three vendors were last checked. An answer older than
+            this is asked again.
+
+Pictures:
+- Save them under docs/vendor-research/images/, crop to the feature, and look
+  at a small copy of every one before it is uploaded.
+- For invoice and client screens open only my test clients, "house (Dre)" and
+  "no pets (lead)". Blur every other name, email, address, phone number,
+  amount and payment handle before the picture is taken. Crop out any banner
+  that names a client.
+- Upload to the ballot's asset store and put the returned url on the row.
+- If a topic cannot be pictured, say why in noPicture. Never draw a vendor's
+  screen from notes.
 
 Sorting rows:
-- Same job as a row already on the ballot: add this vendor to that row's
-  seenAt. Do not add a second row, even when the screens look different.
+- Same topic as a row already on the ballot: add this vendor's picture,
+  features and status to that row. Do not add a second row.
 - Contradicts a ruling in rulings.json or in memory: bucket "ruled", with the
   ruling and its date in a "ruled" field. It is not asked again.
 - We have it on every client: bucket "built".
+- Folded into another topic: bucket "merged".
 - Everything else: bucket "ask".
 
 When the walk is done:
 - Write the rows to docs/vendor-research/walks/<vendor>-<side>.json.
 - Add them to the ballot's "rows" collection. Never write to "answers".
-- Tell me in under ten lines: rows added, rows merged, screens not opened and
-  why. Link the ballot.
+- Tell me in under ten lines: topics added, topics merged, what could not be
+  seen and why. Link the ballot.
 ```
 
 Once rows are answered, this turns the answers into work:
 
 ```
 Read the vendor ballot answers. Append each one to
-docs/vendor-research/rulings.json with the row id, the answer, the option
-picked, my note and today's date. Show me the Yes rows as a list. When I say
-go, file one issue per Yes row covering web and Android, read the numbers back
-from GitHub, and write them into the ledger.
+docs/vendor-research/rulings.json with the row id, each feature I wanted or
+ruled out, my note and today's date. Show me the wanted features as a list,
+grouped by topic. When I say go, file one issue per topic covering web and
+Android, read the numbers back from GitHub, and write them into the ledger.
 ```
 
 The ledger is what stops a question being asked twice. A No is as much worth
