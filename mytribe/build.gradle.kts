@@ -5,10 +5,10 @@ import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
-    kotlin("multiplatform") version "2.4.20"
+    kotlin("multiplatform") version "2.4.21"
     id("org.jetbrains.compose") version "1.12.1"
-    id("org.jetbrains.kotlin.plugin.compose") version "2.4.20"
-    id("org.jetbrains.kotlin.plugin.serialization") version "2.4.20"
+    id("org.jetbrains.kotlin.plugin.compose") version "2.4.21"
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.4.21"
     // 9.3.1, up from 8.7.2, because androidx.core 1.19.0 declares "requires
     // Android Gradle plugin 9.1.0 or higher" in its AAR metadata and
     // checkReleaseAarMetadata FAILS the build on it rather than warning. That
@@ -234,7 +234,7 @@ kotlin {
             implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.3")
             // Sentry — crash reporting. Init gated in KinfolkPortalApplication
             // on a non-blank DSN + non-robolectric fingerprint.
-            implementation("io.sentry:sentry-android:8.58.0")
+            implementation("io.sentry:sentry-android:8.60.0")
             // Mapbox Maps SDK, android only. It is what puts streets and
             // landmarks under the KinCare route instead of the bare polyline a
             // kinfolk sees today (issue #520). Same 11.10.0 as
