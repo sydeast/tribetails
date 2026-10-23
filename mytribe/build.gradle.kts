@@ -5,10 +5,10 @@ import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
-    kotlin("multiplatform") version "2.4.20"
-    id("org.jetbrains.compose") version "1.12.1"
-    id("org.jetbrains.kotlin.plugin.compose") version "2.4.20"
-    id("org.jetbrains.kotlin.plugin.serialization") version "2.4.20"
+    kotlin("multiplatform") version "2.4.21"
+    id("org.jetbrains.compose") version "1.12.2"
+    id("org.jetbrains.kotlin.plugin.compose") version "2.4.21"
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.4.21"
     // 9.3.1, up from 8.7.2, because androidx.core 1.19.0 declares "requires
     // Android Gradle plugin 9.1.0 or higher" in its AAR metadata and
     // checkReleaseAarMetadata FAILS the build on it rather than warning. That
@@ -132,9 +132,9 @@ kotlin {
             // Bricolage Grotesque, DM Mono) from commonMain/composeResources/font
             // so all three targets render identical typography. See theme/Theme.kt.
             implementation(compose.components.resources)
-            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.12.0")
             implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.8.0")
-            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.12.0")
             // Coil 3 multiplatform image loader for AsyncImage on Account avatar + KinTale media.
             // Per-platform network engines wired below (okhttp for android, ktor3 for js).
             implementation("io.coil-kt.coil3:coil-compose:3.6.3")
@@ -146,7 +146,7 @@ kotlin {
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
-            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.12.0")
         }
         // composeUiTest = the tests that need a running Compose host, kept OUT of
         // commonTest so the Android unit-test variant never collects them.
@@ -227,14 +227,14 @@ kotlin {
             // read the state it fed. Sign-in plus the callables' own rate
             // limits are what actually guard this app.
             // Task.await() for native Functions call() result.
-            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.11.0")
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.12.0")
             implementation("androidx.activity:activity-compose:1.13.0")
             implementation("androidx.biometric:biometric:1.1.0")
             implementation("androidx.core:core-ktx:1.19.1")
             implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.3")
             // Sentry — crash reporting. Init gated in KinfolkPortalApplication
             // on a non-blank DSN + non-robolectric fingerprint.
-            implementation("io.sentry:sentry-android:8.58.0")
+            implementation("io.sentry:sentry-android:8.61.0")
             // Mapbox Maps SDK, android only. It is what puts streets and
             // landmarks under the KinCare route instead of the bare polyline a
             // kinfolk sees today (issue #520). Same 11.10.0 as
