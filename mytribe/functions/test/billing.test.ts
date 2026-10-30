@@ -231,6 +231,11 @@ describe('createBillingSetupSessionHandler', () => {
 
     const session = mocks.stripeMock.checkout.sessions.create.mock.calls[0][0];
     expect(session.mode).toBe('setup');
+    // #1192: setup mode needs a currency once the old method-types list is
+    // gone, and the old parameter must not come back.
+    expect(session.currency).toBe('usd');
+    expect(session.allowed_payment_method_types).toEqual(['card']);
+    expect(session).not.toHaveProperty('payment_method_types');
     expect(session.customer).toBe('cus_new');
     expect(session.metadata['purpose']).toBe('save-card');
     expect(session.metadata['uid']).toBe('u1');

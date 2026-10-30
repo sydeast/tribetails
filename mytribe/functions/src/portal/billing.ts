@@ -252,6 +252,10 @@ export async function createBillingSetupSessionHandler(
     mode: 'setup',
     customer: customerId,
     allowed_payment_method_types: ['card'],
+    // Required in setup mode once `payment_method_types` is not set, which it
+    // cannot be since stripe@23 (API endive). Without it Stripe refuses the
+    // session and no household can save a card (#1192).
+    currency: 'usd',
     success_url: args.successUrl,
     cancel_url: args.cancelUrl,
     // `stripeWebhook` reads `purpose` to tell this session apart from an
