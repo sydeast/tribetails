@@ -420,6 +420,30 @@ In CI the same names are secrets in the GitHub environment `e2e-real`
 `.github/workflows/e2e-real.yml`. That workflow runs on `workflow_dispatch`
 from main and as a `workflow_call` from a release.
 
+**How a release reads it (#1193).** The nightly release
+(`nightly-release.yml`) calls `e2e-real.yml` for the commit it is about to
+ship, before its release job, and that job refuses unless the call came back
+green. A called workflow gets no run of its own: its jobs show inside the
+nightly's run as `E2E real services / <job>`. `scripts/release.sh` step 0b
+then reads the verdict again for the commit, hosted and local alike: the newest
+run of `e2e-real.yml` or of a nightly that called it, keeping only the jobs
+whose name carries `real services`. Red, still running, skipped, or no run at
+all each refuse, with the run and the command to fix it. A vendor with no
+secrets stored is not red: its specs skip and the job still passes. The release
+also downloads that run's `e2e-real*` artifacts and reads every `verdict.json`
+in them (written by the classifier, "The verdict" below): `warn` is printed in
+yellow and the release goes on, `stop` refuses even under a green job, and a
+run with no file is judged by its jobs alone. For a release by hand, run the
+suite on main first and wait for it:
+
+```sh
+gh workflow run e2e-real.yml --ref main
+gh run watch "$(gh run list --workflow e2e-real.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+```
+
+`RELEASE_SKIP_CI_GATE=1` skips this read along with CI's, and is for a gate
+that cannot be asked, never for one that says no.
+
 ### What the specs may and may not do
 
 - Drive and assert from the UI, as in the PR-time suite. Fixtures go in
