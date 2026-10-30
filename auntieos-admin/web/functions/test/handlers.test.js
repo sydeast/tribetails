@@ -280,6 +280,40 @@ describe('signCloudinaryUpload handler (onRequest)', () => {
     assert.strictEqual(out.signature, crypto.createHash('sha1').update(base).digest('hex'));
   });
 
+  it('#1202: under demo-auntieos-e2e the signed folder is prefixed e2e/ and the signature covers it', async () => {
+    const prev = process.env.GCLOUD_PROJECT;
+    process.env.GCLOUD_PROJECT = 'demo-auntieos-e2e';
+    try {
+      configureCloudinary();
+      installAdmin({ auth: authReturning({ uid: 'admin-1', admin: true }) });
+      const res = makeRes();
+      const body = { folder: 'tribetails/kinfolk/kf_1', entityType: 'kinfolk', entityId: 'kf_1' };
+      await idx.signCloudinaryUpload(makeReq({ headers: ADMIN_BEARER, body }), res);
+      assert.strictEqual(res.statusCode, 200);
+      const out = res.jsonBody;
+      assert.strictEqual(out.folder, 'e2e/tribetails/kinfolk/kf_1');
+      const base = `folder=${out.folder}&timestamp=${out.timestamp}&transformation=fl_force_strip` + 'demo-secret';
+      assert.strictEqual(out.signature, crypto.createHash('sha1').update(base).digest('hex'));
+    } finally {
+      if (prev === undefined) delete process.env.GCLOUD_PROJECT;
+      else process.env.GCLOUD_PROJECT = prev;
+    }
+  });
+  it('#1202: the traversal and namespace checks still run on the requested folder under the e2e project', async () => {
+    const prev = process.env.GCLOUD_PROJECT;
+    process.env.GCLOUD_PROJECT = 'demo-auntieos-e2e';
+    try {
+      configureCloudinary();
+      installAdmin({ auth: authReturning({ uid: 'admin-1', admin: true }) });
+      const res = makeRes();
+      const body = { folder: 'elsewhere/kinfolk/kf_1', entityType: 'kinfolk', entityId: 'kf_1' };
+      await idx.signCloudinaryUpload(makeReq({ headers: ADMIN_BEARER, body }), res);
+      assert.strictEqual(res.statusCode, 400);
+    } finally {
+      if (prev === undefined) delete process.env.GCLOUD_PROJECT;
+      else process.env.GCLOUD_PROJECT = prev;
+    }
+  });
   it('403 test_scope_denied when a test-admin signs an upload OUTSIDE its tribe', async () => {
     configureCloudinary();
     installAdmin({ auth: authReturning({ uid: 'test-1', testTribeId: 'kf_test' }) });
