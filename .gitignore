@@ -69,6 +69,7 @@ packages/issue-recorder/dist/
 
 # Recorded walks and their drafts (walk exports are tens of MB)
 .walks/
+docs/vendor-research/
 
 # Isolated Gradle homes. Issue #588: three self-hosted runners and every local
 # build share this machine, and they corrupt each other inside one ~/.gradle, so
