@@ -284,7 +284,7 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   const createSession = (paymentMethodTypes: string[], keySuffix: string) =>
     stripe.checkout.sessions.create({
       mode: 'payment',
-      payment_method_types: paymentMethodTypes as Stripe.Checkout.SessionCreateParams.PaymentMethodType[],
+      allowed_payment_method_types: paymentMethodTypes as Stripe.Checkout.SessionCreateParams.AllowedPaymentMethodType[],
       line_items: [
         {
           quantity: 1,
@@ -503,17 +503,25 @@ async function findReusableSession(
  * activated that payment method type"?
  *
  * Matched on the error TYPE plus the parameter Stripe names, not on the
- * message text: `invalid_request_error` on `payment_method_types` is the
+ * message text: `invalid_request_error` on the method-types parameter is the
  * shape Stripe returns for an unactivated or unavailable rail, and matching
  * on prose would break the moment Stripe rewords it. Anything else is a real
  * failure and is rethrown by the caller.
+ *
+ * BOTH PARAMETER NAMES. Stripe API `2026-09-30.endive` (stripe-node 23)
+ * replaced `payment_method_types` with `allowed_payment_method_types`, which
+ * FILTERS the dynamically eligible set instead of listing it. An unactivated
+ * rail should now be dropped silently, so this refusal and the card-only
+ * retry may never fire again. Both are kept: the retry costs nothing when it
+ * is idle, and the old name still matches if the API version is ever pinned
+ * back.
  */
 function isUnsupportedMethodTypeError(err: unknown): boolean {
   if (typeof err !== 'object' || err === null) return false;
   const e = err as { type?: unknown; param?: unknown; raw?: { param?: unknown } };
   if (e.type !== 'StripeInvalidRequestError' && e.type !== 'invalid_request_error') return false;
   const param = typeof e.param === 'string' ? e.param : typeof e.raw?.param === 'string' ? e.raw.param : '';
-  return param.startsWith('payment_method_types');
+  return param.startsWith('allowed_payment_method_types') || param.startsWith('payment_method_types');
 }
 
 /**

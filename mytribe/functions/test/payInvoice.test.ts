@@ -390,12 +390,13 @@ describe('payInvoiceHandler', () => {
 /**
  * ISSUE #409: which rails the Checkout Session accepts.
  *
- * `payment_method_types` was the literal `['card']`. Klarna and Affirm are
+ * `payment_method_types` was the literal `['card']` (renamed
+ * `allowed_payment_method_types` in Stripe API endive). Klarna and Affirm are
  * Stripe payment method types rather than separate integrations, so the whole
  * of "offer Klarna" is one more string in that array, derived from the
  * options the operator has switched on.
  */
-describe('payInvoice payment_method_types (issue #409)', () => {
+describe('payInvoice allowed_payment_method_types (issue #409)', () => {
   const invoiceDocs = {
     'clients/u1': { kinfolkIds: ['3'] },
     'families/3/members/u1': PRIMARY_MEMBER,
@@ -411,7 +412,7 @@ describe('payInvoice payment_method_types (issue #409)', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     const { payInvoiceHandler } = await import('../src/portal/payInvoice');
     await payInvoiceHandler({ data: payData, auth: { uid: 'u1' } } as any);
-    expect(mocks.stripeMock.checkout.sessions.create.mock.calls[0][0].payment_method_types).toEqual([
+    expect(mocks.stripeMock.checkout.sessions.create.mock.calls[0][0].allowed_payment_method_types).toEqual([
       'card',
     ]);
   });
@@ -429,7 +430,7 @@ describe('payInvoice payment_method_types (issue #409)', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     const { payInvoiceHandler } = await import('../src/portal/payInvoice');
     await payInvoiceHandler({ data: payData, auth: { uid: 'u1' } } as any);
-    expect(mocks.stripeMock.checkout.sessions.create.mock.calls[0][0].payment_method_types).toEqual([
+    expect(mocks.stripeMock.checkout.sessions.create.mock.calls[0][0].allowed_payment_method_types).toEqual([
       'card',
       'klarna',
       'affirm',
@@ -456,43 +457,48 @@ describe('payInvoice payment_method_types (issue #409)', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     const { payInvoiceHandler } = await import('../src/portal/payInvoice');
     await payInvoiceHandler({ data: payData, auth: { uid: 'u1' } } as any);
-    expect(mocks.stripeMock.checkout.sessions.create.mock.calls[0][0].payment_method_types).toEqual([
+    expect(mocks.stripeMock.checkout.sessions.create.mock.calls[0][0].allowed_payment_method_types).toEqual([
       'card',
       'klarna',
     ]);
   });
 
-  it('retries card-only when Stripe refuses a type the account has not activated', async () => {
-    // The toggle lives here; the activation lives in the operator's Stripe
-    // dashboard, and nothing makes them agree. When they disagree, the
-    // household still gets to pay their bill.
-    const ctx = buildDbMock({
-      docs: {
-        ...invoiceDocs,
-        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
-        'business_settings/business_settings': { paymentOptions: { klarna: { enabled: true } } },
-      },
-    });
-    mocks.dbFn.mockReturnValue(ctx.db);
-    mocks.stripeMock.checkout.sessions.create.mockImplementationOnce(async () => {
-      const err: any = new Error('The payment method type provided is invalid.');
-      err.type = 'StripeInvalidRequestError';
-      err.param = 'payment_method_types[1]';
-      throw err;
-    });
-    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
-    const res = await payInvoiceHandler({ data: payData, auth: { uid: 'u1' } } as any);
+  // Both names: endive renamed the parameter, and the matcher keeps the old
+  // one in case the API version is ever pinned back.
+  it.each(['allowed_payment_method_types[1]', 'payment_method_types[1]'])(
+    'retries card-only when Stripe refuses a type the account has not activated (%s)',
+    async (param) => {
+      // The toggle lives here; the activation lives in the operator's Stripe
+      // dashboard, and nothing makes them agree. When they disagree, the
+      // household still gets to pay their bill.
+      const ctx = buildDbMock({
+        docs: {
+          ...invoiceDocs,
+          'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+          'business_settings/business_settings': { paymentOptions: { klarna: { enabled: true } } },
+        },
+      });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.stripeMock.checkout.sessions.create.mockImplementationOnce(async () => {
+        const err: any = new Error('The payment method type provided is invalid.');
+        err.type = 'StripeInvalidRequestError';
+        err.param = param;
+        throw err;
+      });
+      const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+      const res = await payInvoiceHandler({ data: payData, auth: { uid: 'u1' } } as any);
 
-    expect(mocks.stripeMock.checkout.sessions.create).toHaveBeenCalledTimes(2);
-    expect(mocks.stripeMock.checkout.sessions.create.mock.calls[0][0].payment_method_types).toEqual([
-      'card',
-      'klarna',
-    ]);
-    expect(mocks.stripeMock.checkout.sessions.create.mock.calls[1][0].payment_method_types).toEqual([
-      'card',
-    ]);
-    expect(res.checkoutUrl).toBe('https://checkout.stripe.com/test');
-  });
+      expect(mocks.stripeMock.checkout.sessions.create).toHaveBeenCalledTimes(2);
+      expect(mocks.stripeMock.checkout.sessions.create.mock.calls[0][0].allowed_payment_method_types).toEqual([
+        'card',
+        'klarna',
+      ]);
+      expect(mocks.stripeMock.checkout.sessions.create.mock.calls[1][0].allowed_payment_method_types).toEqual([
+        'card',
+      ]);
+      expect(res.checkoutUrl).toBe('https://checkout.stripe.com/test');
+    },
+  );
 
   it('lets any OTHER Stripe failure surface instead of retrying it card-only', async () => {
     // A bad key or an unreachable Stripe would fail identically on the
@@ -622,7 +628,7 @@ describe('payInvoice Stripe idempotency key (#825) against the #826 reuse', () =
     mocks.stripeMock.checkout.sessions.create.mockImplementationOnce(async () => {
       const err: any = new Error('The payment method type provided is invalid.');
       err.type = 'StripeInvalidRequestError';
-      err.param = 'payment_method_types[1]';
+      err.param = 'allowed_payment_method_types[1]';
       throw err;
     });
     const { payInvoiceHandler } = await import('../src/portal/payInvoice');

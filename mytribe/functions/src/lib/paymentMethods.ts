@@ -142,7 +142,7 @@ export interface MethodSpec {
    */
   readonly defaultEnabled: boolean;
   /**
-   * The Stripe `payment_method_types` value this method contributes to a
+   * The Stripe `allowed_payment_method_types` value this method contributes to a
    * Checkout Session, or `null` when it does not ride Stripe. Klarna and
    * Affirm are Stripe payment method types, not separate integrations: no new
    * secret, no new webhook, one more string in an array
@@ -352,7 +352,7 @@ export function resolveHomePayMethods(settings: OperatorSettings, invoice: Invoi
 }
 
 /**
- * The `payment_method_types` a Stripe Checkout Session should offer, derived
+ * The `allowed_payment_method_types` a Stripe Checkout Session should offer, derived
  * from which checkout methods the operator has enabled.
  *
  * ALWAYS INCLUDES 'card', and always first. Two reasons, both load-bearing:

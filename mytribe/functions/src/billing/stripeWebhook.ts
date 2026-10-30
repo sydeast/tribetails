@@ -413,7 +413,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   // A Checkout Session can complete WITHOUT the money having been collected —
   // `payment_status: 'unpaid'` is how a delayed/async method reports "session
   // finished, funds pending". Unreachable while `payInvoice` hardcodes
-  // `payment_method_types: ['card']`, and this is the guard that keeps it
+  // `allowed_payment_method_types: ['card']`, and this is the guard that keeps it
   // unreachable rather than trusting that line never changes. Marking an
   // invoice paid for money that has not arrived is the one failure worse than
   // the one being fixed here. Scoped to the Session event: no other event type

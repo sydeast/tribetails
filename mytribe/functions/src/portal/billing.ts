@@ -251,7 +251,7 @@ export async function createBillingSetupSessionHandler(
   const session = await stripe.checkout.sessions.create({
     mode: 'setup',
     customer: customerId,
-    payment_method_types: ['card'],
+    allowed_payment_method_types: ['card'],
     success_url: args.successUrl,
     cancel_url: args.cancelUrl,
     // `stripeWebhook` reads `purpose` to tell this session apart from an
