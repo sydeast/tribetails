@@ -19,5 +19,5 @@
     "noEmit": true,
     "types": ["cypress", "node", "vite/client"]
   },
-  "include": [".", "../cypress.config.ts"]
+  "include": [".", "../cypress.config.ts", "../cypress.real.config.ts"]
 }

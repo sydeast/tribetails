@@ -14,7 +14,9 @@ export default defineConfig({
     // Account.test.tsx) rather than flipping the default here, so every
     // existing plain-logic *.test.ts file keeps running under the cheaper
     // 'node' environment.
-    include: ['src/**/*.test.{ts,tsx}'],
+    // `scripts/e2e-real/` holds the real-services run's preflight (#1194),
+    // whose refusals keep that run off production and so are tested.
+    include: ['src/**/*.test.{ts,tsx}', 'scripts/e2e-real/**/*.test.mjs'],
     setupFiles: ['./test-setup.ts'],
     // #842: pinned explicitly rather than left to Vitest's own default so a
     // future major version can't silently flip it. This is what clears a
