@@ -207,16 +207,18 @@ class PortalApiTest {
                 add(inv("text-yes", JsonPrimitive("Yes")))
                 add(inv("explicit-null", JsonNull))
                 add(inv("absent", null))
+                add(inv("object", buildJsonObject { put("v", true) }))
+                add(inv("array", buildJsonArray { add(true) }))
             })
             put("paid", buildJsonArray {})
             put("credits", buildJsonArray {})
         })
         val res = PortalApi(fake).getMyInvoices("3")
         assertEquals(
-            listOf("bool-true", "bool-false", "text-yes", "explicit-null", "absent"),
+            listOf("bool-true", "bool-false", "text-yes", "explicit-null", "absent", "object", "array"),
             res.open.map { it.id },
         )
-        assertEquals(listOf(true, false, false, false, false), res.open.map { it.viewed })
+        assertEquals(listOf(true, false, false, false, false, false, false), res.open.map { it.viewed })
     }
     @Test
     fun `redeemCredit forwards target and decodes refund result`() = runTest {
