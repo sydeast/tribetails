@@ -81,27 +81,6 @@ import kotlinx.coroutines.launch
  * real invoice-detail screen. Results surface via fail-loud banners.
  */
 
-/** Den filter tabs. Mirrors the mockup's All / Unpaid / Paid / Overdue / Drafts row. */
-private enum class InvoiceFilter(val label: String) {
-    All     ("All"),
-    Unpaid  ("Unpaid"),
-    Paid    ("Paid"),
-    Overdue ("Overdue"),
-    Drafts  ("Drafts"),
-    Quotes  ("Quotes"),
-}
-
-private fun matchesFilter(i: Invoice, filter: InvoiceFilter, todayIso: String): Boolean = when (filter) {
-    InvoiceFilter.All     -> true
-    // A quote is not a payable invoice, so it never appears in the payable
-    // buckets (Unpaid / Paid / Overdue / Drafts); it shows only in All + Quotes.
-    InvoiceFilter.Unpaid  -> !invoiceIsQuote(i) && invoiceIsOutstanding(i) && !invoiceIsDraft(i)
-    InvoiceFilter.Paid    -> !invoiceIsQuote(i) && invoiceIsPaid(i)
-    InvoiceFilter.Overdue -> !invoiceIsQuote(i) && invoiceIsOverdue(i, todayIso)
-    InvoiceFilter.Drafts  -> !invoiceIsQuote(i) && invoiceIsDraft(i)
-    InvoiceFilter.Quotes  -> invoiceIsQuote(i)
-}
-
 private fun matchesQuery(i: Invoice, query: String): Boolean {
     if (query.isBlank()) return true
     val q = query.trim().lowercase()
@@ -348,7 +327,7 @@ fun InvoicesScreen(
                         isoDatePrefixOrNull(it.date) ?: isoDatePrefixOrNull(it.dueDate) ?: ""
                     }
                     val visible = sorted.filter {
-                        matchesFilter(it, filter, todayIso) &&
+                        invoiceMatchesFilter(it, filter, todayIso) &&
                             matchesQuery(it, query) &&
                             matchesHouseholdFacet(it, household)
                     }

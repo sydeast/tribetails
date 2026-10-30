@@ -175,3 +175,35 @@ fun formatMoney(amount: Double): String {
     val sign    = if (amount < 0) "-" else ""
     return "$sign\$$whole.$fracStr"
 }
+
+/**
+ * Den filter tabs. The same seven tabs, labels and order as the admin web
+ * (`FILTERS` in src/screens/Invoices.tsx) and Android.
+ */
+enum class InvoiceFilter(val label: String) {
+    All("All"),
+    Open("Open"),
+    Overdue("Overdue"),
+    Paid("Paid"),
+    Draft("Draft"),
+    Quote("Quote"),
+    Credit("Credit"),
+}
+/**
+ * Tab membership, each a POSITIVE test against the STORED state stamp (or the
+ * derived overdue flag), exactly as web's `FILTERS`. An unstamped doc matches
+ * only All. Credit also takes `redeemed`. These do not use [invoiceIsOutstanding]
+ * or [invoiceIsPaid], which read `amountDue` and stay for the detail screen.
+ */
+fun invoiceMatchesFilter(invoice: Invoice, filter: InvoiceFilter, todayIso: String): Boolean {
+    val state = invoiceStateOrNull(invoice)
+    return when (filter) {
+        InvoiceFilter.All -> true
+        InvoiceFilter.Open -> state == InvoiceState.OPEN
+        InvoiceFilter.Overdue -> invoiceIsOverdue(invoice, todayIso)
+        InvoiceFilter.Paid -> state == InvoiceState.PAID
+        InvoiceFilter.Draft -> state == InvoiceState.DRAFT
+        InvoiceFilter.Quote -> state == InvoiceState.QUOTE
+        InvoiceFilter.Credit -> state == InvoiceState.CREDIT || state == InvoiceState.REDEEMED
+    }
+}
