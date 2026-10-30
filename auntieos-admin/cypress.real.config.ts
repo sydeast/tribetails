@@ -1,5 +1,5 @@
 import { defineConfig } from 'cypress';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import seed, { upsert, remove } from './e2e/seed';
 
 /**
@@ -27,6 +27,33 @@ const PORT = 5174;
 /** Written by `run.sh`. Absent when someone ran `cypress open` by hand: every vendor then reads as not configured. */
 const REAL_DIR = 'cypress/.real';
 const VENDORS_FILE = `${REAL_DIR}/vendors.json`;
+/** Read by `scripts/e2e-real/classify-run.mjs` for the D3-e verdict (#1196). */
+const RESULTS_FILE = `${REAL_DIR}/results.json`;
+
+/**
+ * The run's results, trimmed to what the classifier reads. The full object
+ * carries the resolved config, which has no business in an artifact.
+ */
+function writeRunResults(results: CypressCommandLine.CypressRunResult | CypressCommandLine.CypressFailedRunResult): void {
+  mkdirSync(REAL_DIR, { recursive: true });
+  const trimmed =
+    'status' in results && results.status === 'failed'
+      ? { status: 'failed', message: results.message }
+      : {
+          totalTests: (results as CypressCommandLine.CypressRunResult).totalTests,
+          totalPassed: (results as CypressCommandLine.CypressRunResult).totalPassed,
+          totalFailed: (results as CypressCommandLine.CypressRunResult).totalFailed,
+          totalPending: (results as CypressCommandLine.CypressRunResult).totalPending,
+          totalSkipped: (results as CypressCommandLine.CypressRunResult).totalSkipped,
+          runs: (results as CypressCommandLine.CypressRunResult).runs.map((run) => ({
+            spec: { relative: run.spec.relative },
+            error: run.error,
+            stats: run.stats,
+            tests: run.tests.map((t) => ({ title: t.title, state: t.state, displayError: t.displayError })),
+          })),
+        };
+  writeFileSync(RESULTS_FILE, JSON.stringify(trimmed, null, 2));
+}
 
 /**
  * Which vendors have credentials in this run, as booleans only, never a value.
@@ -80,6 +107,9 @@ export default defineConfig({
     // the PR-time stubs never had to wait for.
     defaultCommandTimeout: 15_000,
     setupNodeEvents(on) {
+      on('after:run', (results) => {
+        writeRunResults(results);
+      });
       on('task', {
         /** Seeds the emulator once per run (`e2e/seed.ts`, `E2E_PROJECT_ID` from run.sh). */
         async seedOnce() {
