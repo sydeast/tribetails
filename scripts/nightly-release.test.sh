@@ -22,6 +22,10 @@
 #     project number written into the file.
 #   - the Python the workflow installs is the runtime firebase.json deploys the
 #     reconcile codebase on. A mismatch is the 2026-08-05 release failure.
+#   - the real-services suite (e2e-real.yml) runs before the release job, only
+#     when the run ships something, and a release refuses unless it came back
+#     green (#1193). The release job still runs when it was skipped, so an off
+#     night writes its summary.
 #   - every secret and variable the workflow reads has a `gh secret set` or
 #     `gh variable set` line in the runbook, and none of the operator's commands
 #     there contains a `!`, which interactive zsh turns into history expansion.
@@ -185,7 +189,7 @@ while IFS="$(printf '\t')" read -r idx label cond; do
     continue
   fi
   case "$cond" in
-    *"steps.decide.outputs.mode != 'off'"*|*"steps.decide.outputs.mode == 'preflight'"*|*"steps.decide.outputs.mode == 'full'"*) ;;
+    *"decide.outputs.mode != 'off'"*|*"decide.outputs.mode == 'preflight'"*|*"decide.outputs.mode == 'full'"*) ;;
     *) UNGATED_BAD="$UNGATED_BAD
     step $idx '$label' (if: ${cond:-none})" ;;
   esac
@@ -546,6 +550,109 @@ fi
 [ "$(newness v0.3.9@A v0.3.10@B)" = "false" ] &&
   ok "v0.3.10 sorts after v0.3.9" ||
   bad "v0.3.9 was taken as newer than v0.3.10"
+
+echo
+echo "--- the real-services suite runs first, and a release needs it green (#1193)"
+# job_block <job>: the job's own lines, from its two-space key to the next.
+job_block() {
+  awk -v want="  $1:" '
+    $0 == want { on = 1; print; next }
+    on && /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { exit }
+    on && /^[^[:space:]#]/ { exit }
+    on { print }
+  ' "$WF"
+}
+E2E_JOB="$(job_block e2e-real)"
+RELEASE_JOB="$(job_block release)"
+DECIDE_JOB="$(job_block decide)"
+if printf '%s\n' "$E2E_JOB" | grep -qx '    uses: ./.github/workflows/e2e-real.yml'; then
+  ok "an e2e-real job calls ./.github/workflows/e2e-real.yml"
+else
+  bad "no job calls ./.github/workflows/e2e-real.yml"
+fi
+if printf '%s\n' "$E2E_JOB" | grep -qx '    secrets: inherit'; then
+  ok "it passes the repository's secrets on (the vendor ones come from its environment)"
+else
+  bad "the e2e-real job does not pass secrets: inherit"
+fi
+if printf '%s\n' "$E2E_JOB" | grep -qx "    if: needs.decide.outputs.mode != 'off' && needs.decide.outputs.new == 'true'"; then
+  ok "it runs only when the run ships something, so an off night sends no test email"
+else
+  bad "the e2e-real job is not gated on mode != off and new == true"
+fi
+if printf '%s\n' "$RELEASE_JOB" | grep -qx '    needs: \[decide, e2e-real\]'; then
+  ok "the release job needs decide and e2e-real"
+else
+  bad "the release job does not need [decide, e2e-real]"
+fi
+REL_IF="$(printf '%s\n' "$RELEASE_JOB" | sed -n 's/^    if: //p')"
+case "$REL_IF" in
+  *'!cancelled()'*"needs.decide.result == 'success'"*)
+    ok "the release job runs when e2e-real skipped, never when decide failed" ;;
+  *)
+    bad "the release job's if is '${REL_IF:-none}': a skipped e2e-real would skip the summary and cleanup, or a failed decide would run it with no mode" ;;
+esac
+if printf '%s\n' "$DECIDE_JOB" | grep -qF 'mode: ${{ steps.decide.outputs.mode }}' &&
+   printf '%s\n' "$DECIDE_JOB" | grep -qF 'new: ${{ steps.newness.outputs.new }}'; then
+  ok "decide hands mode and newness to the other jobs"
+else
+  bad "the decide job does not output mode and new"
+fi
+if printf '%s\n' "$RELEASE_JOB" | grep -q 'steps\.decide\.outputs\|steps\.newness\.outputs'; then
+  bad "the release job still reads steps.decide/steps.newness, which no longer exist in it"
+else
+  ok "the release job reads mode and newness from needs.decide"
+fi
+GATE="$(step_index 'Refuse unless the real-services suite is green')"
+FIRST_INSTALL="$(step_index 'actions/setup-node@')"
+GATE_BODY="$(step_run_body 'Refuse unless the real-services suite is green')"
+if [ -n "$GATE" ] && [ -n "$FIRST_INSTALL" ] && [ "$GATE" -lt "$FIRST_INSTALL" ]; then
+  ok "the real-services check ($GATE) comes before the installs ($FIRST_INSTALL)"
+else
+  bad "the real-services check (${GATE:-missing}) is not before the installs (${FIRST_INSTALL:-missing})"
+fi
+# The check's own body, run with each result GitHub can hand it.
+gate() {
+  ( cd "$ROOT" && MODE="$1" E2E_REAL_RESULT="$2" bash -c "$GATE_BODY" ) >/dev/null 2>&1
+  echo $?
+}
+if [ -n "$GATE_BODY" ]; then
+  [ "$(gate full success)" = "0" ] && ok "a green suite lets a full release through" || bad "a green suite stopped a full release"
+  [ "$(gate full failure)" = "1" ] && ok "a red suite stops a full release" || bad "a red suite did not stop a full release"
+  [ "$(gate full skipped)" = "1" ] && ok "a skipped suite stops a full release" || bad "a skipped suite did not stop a full release"
+  [ "$(gate full cancelled)" = "1" ] && ok "a cancelled suite stops a full release" || bad "a cancelled suite did not stop a full release"
+  [ "$(gate preflight failure)" = "0" ] && ok "a preflight reports a red suite and goes on" || bad "a preflight stopped on a red suite"
+else
+  bad "could not extract the real-services check's script"
+fi
+
+# The called side. release.sh downloads the run's `e2e-real*` artifacts and
+# reads verdict.json from them (#1196), so the admin job has to upload it under
+# a name that pattern matches, and the suite jobs have to keep "real services"
+# in their names, which is how release.sh finds them inside a nightly run.
+REAL_WF="$ROOT/.github/workflows/e2e-real.yml"
+if grep -qx '            auntieos-admin/cypress/.real/verdict.json' "$REAL_WF"; then
+  ok "e2e-real.yml uploads the admin suite's verdict.json"
+else
+  bad "e2e-real.yml does not upload auntieos-admin/cypress/.real/verdict.json, so release.sh never sees a warning"
+fi
+BAD_ART="$(sed -n 's/^          name: //p' "$REAL_WF" | grep -v '^e2e-real' || true)"
+if [ -z "$BAD_ART" ]; then
+  ok "every artifact e2e-real.yml uploads matches release.sh's 'e2e-real*' download"
+else
+  bad "e2e-real.yml uploads artifact(s) release.sh's download misses: $BAD_ART"
+fi
+BAD_JOB="$(sed -n 's/^    name: //p' "$REAL_WF" | grep -vi 'real services' || true)"
+if [ -n "$(sed -n 's/^    name: //p' "$REAL_WF")" ] && [ -z "$BAD_JOB" ]; then
+  ok "every e2e-real.yml job name carries 'real services', so release.sh finds it in a nightly run"
+else
+  bad "e2e-real.yml job(s) without 'real services' in the name, invisible to release.sh: ${BAD_JOB:-no job names found}"
+fi
+if grep -q "^E2E_REAL_MATCH='real services'$" "$ROOT/scripts/release.sh"; then
+  ok "release.sh matches suite jobs by 'real services'"
+else
+  bad "release.sh's E2E_REAL_MATCH is no longer 'real services'; the checks above test the wrong name"
+fi
 
 echo
 echo "nightly release tests: $PASS passed, $FAIL failed"

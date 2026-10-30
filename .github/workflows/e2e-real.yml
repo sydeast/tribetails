@@ -16,14 +16,25 @@ name: E2E real services
 # failure: its specs skip with the missing variable named in the log.
 #
 # VERDICT (D3-e). A red run means our integration broke and the release stops.
-# The vendor-outage exception (a 5xx or timeout while the vendor's status page
-# shows an incident only warns) is not classified automatically yet; until it
-# is, a red run is read by a person before a release is forced past it.
+# A vendor outage (a 5xx or timeout while the vendor's status page shows an
+# incident) only warns. run.sh classifies the run into
+# cypress/.real/verdict.json (`stop`, `warn` or `pass`, #1196) and exits 1 only
+# on `stop`, so a warning is a green job; the file is uploaded below so the
+# release can say so. A run from before the classifier has no file, and its
+# red is read by a person before a release is forced past it.
+#
+# WHO READS IT (#1193). nightly-release.yml calls this workflow for the commit
+# it ships, before its release job, and that job refuses unless it came back
+# green. scripts/release.sh step 0b reads the verdict again for the commit,
+# hosted and local alike: the newest run of this file or of a nightly that
+# called it, then the verdict files in that run's artifacts.
 
 on:
   workflow_dispatch:
-  # The release calls this for the commit it is about to ship. Not wired yet
-  # (#1089 phase 1); the PR that added this file says exactly how.
+  # The nightly release calls this for the commit it is about to ship (#1193).
+  # A called workflow gets no run of its own: its jobs run inside the
+  # nightly's run, named "E2E real services / <job>", and release.sh looks
+  # for them there.
   workflow_call:
 
 permissions:
@@ -99,10 +110,19 @@ jobs:
         with:
           name: e2e-real-artifacts
           # The emulator log carries function output, which is where a vendor
-          # refusal shows; screenshots exist only for failures. The secrets file
-          # is never here: run.sh deletes it and it lives under mytribe/.
+          # refusal shows; screenshots exist only for failures. verdict.json is
+          # the run's classification (#1196), which release.sh downloads by
+          # this artifact's name (#1193); a run before the classifier has none,
+          # and if-no-files-found below keeps that quiet. The secrets file is
+          # never here: run.sh deletes it and it lives under mytribe/.
+          #
+          # Hidden directories: upload-artifact skips a hidden file only when
+          # its glob walk reaches one below the path it was given. Each path
+          # here names its hidden component outright, so include-hidden-files
+          # is not needed.
           path: |
             auntieos-admin/cypress/.artifacts/real/
             auntieos-admin/cypress/.real/emulators.log
+            auntieos-admin/cypress/.real/verdict.json
           retention-days: 7
           if-no-files-found: ignore
