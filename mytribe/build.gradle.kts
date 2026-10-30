@@ -132,7 +132,7 @@ kotlin {
             // Bricolage Grotesque, DM Mono) from commonMain/composeResources/font
             // so all three targets render identical typography. See theme/Theme.kt.
             implementation(compose.components.resources)
-            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.12.0")
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
             implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.8.0")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.12.0")
             // Coil 3 multiplatform image loader for AsyncImage on Account avatar + KinTale media.
@@ -146,7 +146,7 @@ kotlin {
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
-            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.12.0")
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
         }
         // composeUiTest = the tests that need a running Compose host, kept OUT of
         // commonTest so the Android unit-test variant never collects them.
@@ -227,7 +227,7 @@ kotlin {
             // read the state it fed. Sign-in plus the callables' own rate
             // limits are what actually guard this app.
             // Task.await() for native Functions call() result.
-            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.12.0")
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.11.0")
             implementation("androidx.activity:activity-compose:1.13.0")
             implementation("androidx.biometric:biometric:1.1.0")
             implementation("androidx.core:core-ktx:1.19.1")
