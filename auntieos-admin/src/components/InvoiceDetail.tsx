@@ -28,6 +28,7 @@ import {
   markInvoicePaid,
   sendInvoiceReminder,
   generateReceipt,
+  generateInvoicePdf,
   getInvoiceLedger,
   recordPayment,
   resendQuote,
@@ -575,6 +576,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // re-open the confirm step the moment the operator cancelled out of it.
   const [pending, setPending] = useState<PendingAction | null>(initialAction ?? null);
   const [busy, setBusy] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   /**
@@ -1002,6 +1004,33 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       setBusy(false);
       setActionError(
         `retryInvoiceCheckoutClose failed: ${caught instanceof Error ? caught.message : 'Retry failed'}`,
+      );
+    }
+  }
+  async function downloadPdf() {
+    if (busy || pdfBusy) return;
+    setPdfBusy(true);
+    setActionError(null);
+    try {
+      const pdfUrl = await generateInvoicePdf(invoice._id);
+      // The URL is a Cloud Storage download link on another origin, so the
+      // browser opens the file rather than saving it under `download`; the
+      // attribute still names the file where the browser honours it.
+      const a = document.createElement('a');
+      a.href = pdfUrl;
+      a.download = `invoice-${invoice.invoiceNumber || invoice._id}.pdf`;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setPdfBusy(false);
+      setNoticeIncomplete(false);
+      setNotice('Invoice PDF opened.');
+    } catch (caught) {
+      setPdfBusy(false);
+      setActionError(
+        `generateInvoicePdf failed: ${caught instanceof Error ? caught.message : 'PDF failed'}`,
       );
     }
   }
@@ -1751,6 +1780,11 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                 enforcement; a refusal that gets through comes back with a code
                 and a sentence, and is shown verbatim above. */}
             {canEdit && <GhostButton label="Edit" onClick={startEditing} />}
+            <GhostButton
+              label={pdfBusy ? 'Making PDF…' : 'Download PDF'}
+              onClick={() => void downloadPdf()}
+              disabled={busy || pdfBusy}
+            />
             {/* THE WAY OUT OF A DECLINE (issue #448). Offered only when the
                 household has actually said no: one still waiting for an answer
                 has nothing to revive (a reminder is the action for that), and an
