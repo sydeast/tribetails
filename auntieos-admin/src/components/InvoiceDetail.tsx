@@ -577,6 +577,8 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   const [pending, setPending] = useState<PendingAction | null>(initialAction ?? null);
   const [busy, setBusy] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
+  /** Download link shown when the browser would not open the PDF tab itself. */
+  const [pdfLink, setPdfLink] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   /**
@@ -1011,23 +1013,35 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     if (busy || pdfBusy) return;
     setPdfBusy(true);
     setActionError(null);
+    setPdfLink(null);
+    // Open the tab NOW, inside the tap. Safari drops the click's user
+    // activation at the first await and Chrome keeps it about 5 s, and a cold
+    // render plus Storage upload can outlast both, so a tab opened after the
+    // await is silently blocked. A null handle means the browser blocked even
+    // this; the visible link below is then the way in.
+    const win = window.open('', '_blank');
+    if (win) {
+      try {
+        win.opener = null;
+      } catch {
+        // Cross-origin hardening is best effort.
+      }
+    }
     try {
       const pdfUrl = await generateInvoicePdf(invoice._id);
-      // The URL is a Cloud Storage download link on another origin, so the
-      // browser opens the file rather than saving it under `download`; the
-      // attribute still names the file where the browser honours it.
-      const a = document.createElement('a');
-      a.href = pdfUrl;
-      a.download = `invoice-${invoice.invoiceNumber || invoice._id}.pdf`;
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
       setPdfBusy(false);
       setNoticeIncomplete(false);
-      setNotice('Invoice PDF opened.');
+      if (win && !win.closed) {
+        win.location.href = pdfUrl;
+        setPdfLink(null);
+        setNotice('Invoice PDF opened in a new tab.');
+      } else {
+        // Blocked, or the operator closed the tab: never claim it opened.
+        setPdfLink(pdfUrl);
+        setNotice('Invoice PDF is ready. Your browser did not open it, so use the link below.');
+      }
     } catch (caught) {
+      if (win && !win.closed) win.close();
       setPdfBusy(false);
       setActionError(
         `generateInvoicePdf failed: ${caught instanceof Error ? caught.message : 'PDF failed'}`,
@@ -1417,6 +1431,19 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             title={noticeIncomplete ? 'Done, but not all of it' : 'Done'}
           >
             {notice}
+            {pdfLink && (
+              <>
+                {' '}
+                <a
+                  href={pdfLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  download={`invoice-${invoice.invoiceNumber || invoice._id}.pdf`}
+                >
+                  Open PDF
+                </a>
+              </>
+            )}
           </Banner>
         )}
         {actionError && (
