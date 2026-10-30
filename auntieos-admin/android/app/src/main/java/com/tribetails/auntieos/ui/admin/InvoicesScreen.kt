@@ -704,7 +704,7 @@ private fun InvoiceRow(
             InvoiceState.CREDIT -> "Credit" to AuntieStatusTone.Teal
             InvoiceState.REDEEMED -> "Redeemed" to AuntieStatusTone.Muted
             InvoiceState.ZERO -> "Zero" to AuntieStatusTone.Muted
-            InvoiceState.OPEN -> "Unpaid" to AuntieStatusTone.Orange
+            InvoiceState.OPEN -> "Open" to AuntieStatusTone.Orange
             InvoiceState.PAID -> "Paid" to AuntieStatusTone.Success
             null -> invoice.status.trim().ifBlank { "No status" } to AuntieStatusTone.Muted
         }

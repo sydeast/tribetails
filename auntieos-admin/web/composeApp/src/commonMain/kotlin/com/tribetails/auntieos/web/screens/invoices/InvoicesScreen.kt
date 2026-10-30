@@ -599,12 +599,14 @@ private fun InvoiceRow(
     // #871: the reminder button follows the server's rule, a stored open bill.
     val remindable = invoiceIsRemindable(invoice)
 
-    val (statusLabel, statusTone) = when {
-        quote   -> "Quote"   to AuntieStatusTone.Purple
-        draft   -> "Draft"   to AuntieStatusTone.Muted
-        overdue -> "Overdue" to AuntieStatusTone.Error
-        unpaid  -> "Unpaid"  to AuntieStatusTone.Orange
-        else    -> "Paid"    to AuntieStatusTone.Success
+    val statusLabel = invoiceChipLabel(invoice, todayIso)
+    val statusTone = when (statusLabel) {
+        "Overdue" -> AuntieStatusTone.Error
+        "Quote" -> AuntieStatusTone.Purple
+        "Open" -> AuntieStatusTone.Orange
+        "Paid" -> AuntieStatusTone.Success
+        "Credit" -> AuntieStatusTone.Teal
+        else -> AuntieStatusTone.Muted
     }
     val amountColor = statusTone.color(c)
 

@@ -8,7 +8,7 @@ import org.junit.Test
 /**
  * The invoice capsule on the household profile's Invoices panel (#755).
  *
- * The mock draws a two-value Paid/Unpaid pill. The app's invoices carry eight
+ * The mock draws a two-value Paid/Open pill. The app's invoices carry eight
  * stamped states, and collapsing them to two would print "Paid" on a
  * cancelled bill and on a quote nobody has answered, so the capsule carries
  * the state the server stamped, in the tone the web feed's `invoicePillTone`
@@ -19,9 +19,9 @@ import org.junit.Test
 class KinfolkProfileInvoicePillTest {
 
     @Test
-    fun `a paid invoice is a teal Paid capsule and an open one an orange Unpaid`() {
+    fun `a paid invoice is a teal Paid capsule and an open one an orange Open`() {
         assertEquals("Paid" to AuntieStatusTone.Teal, invoiceFeedPill(Invoice(status = "paid")))
-        assertEquals("Unpaid" to AuntieStatusTone.Orange, invoiceFeedPill(Invoice(status = "open", amountDue = 40.0)))
+        assertEquals("Open" to AuntieStatusTone.Orange, invoiceFeedPill(Invoice(status = "open", amountDue = 40.0)))
     }
 
     @Test

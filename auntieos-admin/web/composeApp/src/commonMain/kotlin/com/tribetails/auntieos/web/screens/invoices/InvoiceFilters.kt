@@ -207,3 +207,25 @@ fun invoiceMatchesFilter(invoice: Invoice, filter: InvoiceFilter, todayIso: Stri
         InvoiceFilter.Credit -> state == InvoiceState.CREDIT || state == InvoiceState.REDEEMED
     }
 }
+
+/**
+ * Row chip label, driven by the stored state stamp exactly as Android's row and
+ * web's `invoiceStateInfo` do: Overdue first, then the stamp's own name, and the
+ * raw stored string for an unstamped doc. Never derived from amountDue, so a
+ * credit, a cancelled invoice or a zero-balance open bill is not called Paid.
+ * (The desktop Invoice carries no quote decision, so a declined quote reads Quote.)
+ */
+fun invoiceChipLabel(invoice: Invoice, todayIso: String): String {
+    if (invoiceIsOverdue(invoice, todayIso)) return "Overdue"
+    return when (invoiceStateOrNull(invoice)) {
+        InvoiceState.QUOTE -> "Quote"
+        InvoiceState.DRAFT -> "Draft"
+        InvoiceState.CANCELLED -> "Cancelled"
+        InvoiceState.CREDIT -> "Credit"
+        InvoiceState.REDEEMED -> "Redeemed"
+        InvoiceState.ZERO -> "Zero"
+        InvoiceState.OPEN -> "Open"
+        InvoiceState.PAID -> "Paid"
+        null -> invoice.status.trim().ifBlank { "No status" }
+    }
+}

@@ -63,4 +63,21 @@ class InvoiceFilterTest {
         assertFalse(invoiceMatchesFilter(paidWithBalance, InvoiceFilter.Open, today))
         assertTrue(invoiceMatchesFilter(paidWithBalance, InvoiceFilter.Paid, today))
     }
+
+    @Test
+    fun `row chip follows the stored state, never amountDue`() {
+        fun chip(status: String, due: Double = 0.0, dueDate: String = future) =
+            invoiceChipLabel(Invoice(status = status, amountDue = due, dueDate = dueDate), today)
+        assertEquals("Credit", chip("credit", due = 25.0))
+        assertEquals("Redeemed", chip("redeemed"))
+        assertEquals("Cancelled", chip("cancelled"))
+        assertEquals("Open", chip("open", due = 0.0))
+        assertEquals("Open", chip("open", due = 40.0))
+        assertEquals("Overdue", chip("open", due = 40.0, dueDate = past))
+        assertEquals("Cancelled", chip("cancelled", due = 40.0, dueDate = past))
+        assertEquals("Paid", chip("paid"))
+        assertEquals("Zero", chip("zero"))
+        assertEquals("Sent", chip("Sent"))
+        assertEquals("No status", chip("  "))
+    }
 }
