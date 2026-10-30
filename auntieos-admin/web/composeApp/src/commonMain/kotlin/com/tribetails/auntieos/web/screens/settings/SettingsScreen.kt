@@ -43,6 +43,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import com.composables.icons.lucide.Archive
 import com.composables.icons.lucide.Bell
 import com.composables.icons.lucide.Building2
@@ -83,6 +85,14 @@ import com.tribetails.auntieos.web.ui.components.AuntiePasswordField
 import com.tribetails.auntieos.web.data.VetClinic
 import com.tribetails.auntieos.web.data.AuthUser
 import com.tribetails.auntieos.web.data.BusinessSettings
+import com.tribetails.auntieos.web.data.MAX_PAYMENT_INSTRUCTIONS_LENGTH
+import com.tribetails.auntieos.web.data.PAYMENT_METHOD_CATALOGUE
+import com.tribetails.auntieos.web.data.PaymentMethodKind
+import com.tribetails.auntieos.web.data.PaymentOptionDraft
+import com.tribetails.auntieos.web.data.paymentBlankWarning
+import com.tribetails.auntieos.web.data.paymentDraftOf
+import com.tribetails.auntieos.web.data.paymentRowCaption
+import com.tribetails.auntieos.web.data.withPaymentDraft
 import com.tribetails.auntieos.web.branding.DEFAULT_BRAND_TAGLINE
 import com.tribetails.auntieos.web.branding.DEFAULT_BRAND_WORDMARK
 import com.tribetails.auntieos.web.branding.DEFAULT_HOME_ACCENT_TAIL
@@ -1153,9 +1163,21 @@ private fun BusinessProfilePanel(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Payment Options (operator-entered Venmo / PayPal / Cash App handles)
+// Payment options (#1177: a switch per method, parity with web #409)
 // ─────────────────────────────────────────────────────────────────────────────
-
+/**
+ * ISSUE #1177: the same editor the React admin has (`PaymentOptionsSection`,
+ * `auntieos-admin/src/screens/settings/sections.tsx`). One row per method in
+ * [PAYMENT_METHOD_CATALOGUE]: a switch, then the handle box (link methods) or the
+ * "What kinfolk should do" box (instruction methods) while the switch is on. Card,
+ * Klarna and Affirm are a switch alone.
+ *
+ * ONE SAVE BUTTON, not a save per flip: a switch and the handle beside it are one
+ * decision ("offer Venmo, at this handle"), so the switch does not persist before
+ * the operator has typed where the money goes. Turning a method off hides its box
+ * and keeps its value. The save goes through [withPaymentDraft], which writes the
+ * shape the web writes and carries forward every stored key this panel does not show.
+ */
 @Composable
 private fun PaymentOptionsPanel(
     authUser: AuthUser,
@@ -1169,55 +1191,114 @@ private fun PaymentOptionsPanel(
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     DenPanel(
-        title = "Payment Options",
-        subtitle = "How kinfolk pay you. Each handle you enter prints on every invoice; leave one blank to hide it.",
+        title = "Payment options",
+        // No explanatory copy under the title (2026-09-11 ruling): the panel's
+        // explanation is a tooltip, same words as the web panel's.
+        trailing = {
+            AuntieInfoTip(
+                "Turn on the ways kinfolk can pay you. What is on here shows up on new invoices and " +
+                    "prints on the PDF. Invoices already sent keep the options they were sent with.",
+            )
+        },
     ) {
         when (uiState.settingsResult) {
             is FirestoreResult.Loading -> EmptyHintLine("Loading settings", c.textDim)
             is FirestoreResult.Error ->
                 EmptyHintLine("Error: ${(uiState.settingsResult as FirestoreResult.Error).message}", c.error)
             else -> {
-                // Seeded from the loaded doc; re-seed if the stream delivers fresh values.
-                var venmo by remember(settingsData?.venmoHandle) { mutableStateOf(settingsData?.venmoHandle.orEmpty()) }
-                var paypal by remember(settingsData?.paypalHandle) { mutableStateOf(settingsData?.paypalHandle.orEmpty()) }
-                var cashapp by remember(settingsData?.cashappHandle) { mutableStateOf(settingsData?.cashappHandle.orEmpty()) }
+                val base = settingsData ?: BusinessSettings()
+                val saved = paymentDraftOf(base).normalized()
+                // Re-seeded only when the SAVED values change (a poll bringing new
+                // data, or this panel's own save landing), never mid-edit otherwise.
+                var draft by remember(saved) { mutableStateOf(saved) }
+                val dirty = draft.normalized() != saved
+                // The wait between the tap and the write landing: a spinner on the
+                // button and every control held still, as the web panel does.
+                var saving by remember { mutableStateOf(false) }
+                val editable = settingsLoaded && !saving
                 Column(verticalArrangement = Arrangement.spacedBy(dims.space3)) {
-                    BottomBorderField(
-                        value = venmo, onValueChange = { venmo = it },
-                        label = "Venmo handle", placeholder = "@tribetails",
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    BottomBorderField(
-                        value = paypal, onValueChange = { paypal = it },
-                        label = "PayPal", placeholder = "you@email.com or paypal.me/tribetails",
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    BottomBorderField(
-                        value = cashapp, onValueChange = { cashapp = it },
-                        label = "Cash App", placeholder = "\$tribetails",
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    PAYMENT_METHOD_CATALOGUE.forEachIndexed { index, method ->
+                        val option = draft.options[method.id] ?: PaymentOptionDraft(method.defaultEnabled, "")
+                        val handle = method.handleField?.let { draft.handles[it] }.orEmpty()
+                        AuntieSettingRow(
+                            title = method.label,
+                            description = paymentRowCaption(method),
+                            showDivider = false,
+                            trailing = {
+                                AuntieToggle(
+                                    checked = option.enabled,
+                                    onCheckedChange = { next ->
+                                        draft = draft.copy(options = draft.options + (method.id to option.copy(enabled = next)))
+                                    },
+                                    enabled = editable,
+                                    modifier = Modifier.semantics { contentDescription = "Offer ${method.label}" },
+                                )
+                            },
+                        )
+                        val field = method.handleField
+                        if (option.enabled && method.kind == PaymentMethodKind.LINK && field != null) {
+                            BottomBorderField(
+                                value = handle,
+                                onValueChange = { draft = draft.copy(handles = draft.handles + (field to it)) },
+                                label = "${method.label} handle",
+                                placeholder = field.placeholder,
+                                enabled = editable,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        if (option.enabled && method.kind == PaymentMethodKind.INSTRUCTIONS) {
+                            BottomBorderField(
+                                value = option.instructions,
+                                onValueChange = { next ->
+                                    draft = draft.copy(
+                                        options = draft.options +
+                                            (method.id to option.copy(instructions = next.take(MAX_PAYMENT_INSTRUCTIONS_LENGTH))),
+                                    )
+                                },
+                                label = "What kinfolk should do",
+                                placeholder = method.instructionsPlaceholder,
+                                enabled = editable,
+                                singleLine = false,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        paymentBlankWarning(method, option, handle)?.let {
+                            Text(it, style = AuntieTheme.typography.bodySmall, color = c.warning)
+                        }
+                        if (index < PAYMENT_METHOD_CATALOGUE.lastIndex) {
+                            Box(Modifier.fillMaxWidth().height(1.dp).background(c.border))
+                        }
+                    }
                     Spacer(Modifier.height(dims.space1))
                     PrimaryButton(
-                        label   = if (settingsLoaded) "Save" else "Loading settings…",
-                        enabled = settingsLoaded,
+                        // `loading` turns the button into a spinner for the write.
+                        label   = if (settingsLoaded) "Save payment options" else "Loading settings…",
+                        enabled = editable && dirty,
+                        loading = saving,
                         onClick = {
-                            scope.launch {
-                                val updated = (settingsData ?: BusinessSettings()).copy(
-                                    venmoHandle   = venmo.trim(),
-                                    paypalHandle  = paypal.trim(),
-                                    cashappHandle = cashapp.trim(),
-                                )
-                                vm.saveSettings(updated)
-                                AuditLog.fire(
-                                    scope            = scope,
-                                    client           = client,
-                                    actorId          = authUser.uid,
-                                    actionType       = "UPDATE_SETTINGS",
-                                    description      = "Updated payment options",
-                                    targetId         = updated._id,
-                                    targetCollection = "business_settings",
-                                )
+                            if (!saving && dirty) {
+                                saving = true
+                                scope.launch {
+                                    val updated = base.withPaymentDraft(draft)
+                                    try {
+                                        vm.saveSettings(updated)
+                                    } finally {
+                                        saving = false
+                                    }
+                                    // Logged only when the write landed; a failed save
+                                    // already shows its error and changed nothing.
+                                    if (vm.uiState.value.saveError == null) {
+                                        AuditLog.fire(
+                                            scope            = scope,
+                                            client           = client,
+                                            actorId          = authUser.uid,
+                                            actionType       = "UPDATE_SETTINGS",
+                                            description      = "Updated payment options",
+                                            targetId         = updated._id,
+                                            targetCollection = "business_settings",
+                                        )
+                                    }
+                                }
                             }
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -1227,7 +1308,6 @@ private fun PaymentOptionsPanel(
         }
     }
 }
-
 /**
  * A8 W16/W17: the weather widgets' coverage area. A place NAME (city / metro / ZIP), not
  * a street address: the operator sets the area they serve (e.g. "Austin, TX") and never

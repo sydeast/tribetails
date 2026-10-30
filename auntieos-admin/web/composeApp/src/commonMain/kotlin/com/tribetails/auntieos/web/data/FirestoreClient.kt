@@ -3858,10 +3858,25 @@ data class BusinessSettings(
     // Business hours: day → "HH:MM-HH:MM" or "" (closed)
     val businessHours: Map<String, String> = emptyMap(),
 
-    // ---- Payment options (operator-entered handles printed on invoices) ----
+    // ---- Payment options (handles printed on invoices; switches since #409, here #1177) ----
+    // Whether a method is OFFERED is its switch in [paymentOptions], not whether
+    // its handle is blank.
     val venmoHandle: String = "",
     val paypalHandle: String = "",
     val cashappHandle: String = "",
+    // Method id -> `{ enabled, instructions }`, SPARSE: an absent entry resolves to
+    // the method's default (PaymentMethods.kt). Held RAW so a malformed entry the
+    // web or the phone wrote can never fail this whole settings read, and so a save
+    // carries forward every key this console does not model.
+    //
+    // NEVER ENCODED WHILE NULL. The no-baseline fallback in
+    // `platformSaveBusinessSettings` merges every encoded key under an update
+    // mask, and `jsonOut` encodes defaults: a `null` here would go out as an
+    // explicit null and delete the web's switches. Omitted, it is not in the mask
+    // and the stored map is left alone.
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val paymentOptions: JsonElement? = null,
 
     // ---- Weather (W16/W17) ----
     // Service-AREA place name (city / metro / ZIP) the Home weather widgets forecast for.
