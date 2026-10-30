@@ -99,6 +99,16 @@ import com.composables.icons.lucide.Stethoscope
 import com.composables.icons.lucide.Tag
 import com.composables.icons.lucide.Webhook
 import com.tribetails.auntieos.data.model.TrackingAccuracy
+import com.tribetails.auntieos.data.model.MAX_PAYMENT_INSTRUCTIONS_LENGTH
+import com.tribetails.auntieos.data.model.PAYMENT_METHOD_CATALOGUE
+import com.tribetails.auntieos.data.model.PaymentMethodKind
+import com.tribetails.auntieos.data.model.PaymentMethodRow
+import com.tribetails.auntieos.data.model.PaymentOptionDraft
+import com.tribetails.auntieos.data.model.formatFeeSchedule
+import com.tribetails.auntieos.data.model.paymentDraftOf
+import com.tribetails.auntieos.data.model.withPaymentDraft
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import com.tribetails.auntieos.data.model.PortalHomeSection
 import com.tribetails.auntieos.ui.NavigationSettingsPanel
 import com.tribetails.auntieos.ui.branding.brandingDirty
@@ -562,10 +572,11 @@ fun AdminSettingsScreen(
                             )
                         }
 
-                        // A8 Payments: the peer-to-peer handles clients pay through;
-                        // they render on the invoice "How to pay" section + the PDF.
+                        // A8 Payments: a switch per method, the handles and the
+                        // written instructions (#1177, parity with web #409).
                         SettingsSection.Payments -> PaymentOptionsPanel(
                             settings = uiState.businessSettings,
+                            saving = uiState.settingsSaving,
                             onSettingsChange = { viewModel.updateBusinessSettings(it) },
                         )
 
@@ -1007,39 +1018,126 @@ private fun BusinessHoursPanel(
 // Notifications
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * ISSUE #1177: Payment options, the same editor the React admin has
+ * (`PaymentOptionsSection`, `auntieos-admin/src/screens/settings/sections.tsx`).
+ * One row per method in [PAYMENT_METHOD_CATALOGUE]: a switch, then the handle box
+ * (link methods) or the "What kinfolk should do" box (instruction methods) while
+ * the switch is on. Card, Klarna and Affirm are a switch alone.
+ *
+ * ONE SAVE BUTTON, not a save per flip: a switch and the handle beside it are
+ * one decision ("offer Venmo, at this handle"), so the switch does not persist
+ * before the operator has typed where the money goes.
+ *
+ * Turning a method off hides its box and keeps its value, so it comes back with
+ * the switch. The save goes through [withPaymentDraft], which writes the shape
+ * the web writes and carries forward every stored key this panel does not show.
+ */
 @Composable
-private fun PaymentOptionsPanel(
+internal fun PaymentOptionsPanel(
     settings: com.tribetails.auntieos.data.model.BusinessSettings,
+    saving: Boolean,
     onSettingsChange: (com.tribetails.auntieos.data.model.BusinessSettings) -> Unit,
 ) {
-    var venmo by remember(settings.venmoHandle) { mutableStateOf(settings.venmoHandle) }
-    var paypal by remember(settings.paypalHandle) { mutableStateOf(settings.paypalHandle) }
-    var cashapp by remember(settings.cashappHandle) { mutableStateOf(settings.cashappHandle) }
+    val c = AuntieTheme.colors
+    val saved = paymentDraftOf(settings).normalized()
+    // Re-seeded only when the SAVED values change (a load, or this panel's own
+    // save landing), never by an unrelated recomposition mid-edit.
+    var draft by remember(saved) { mutableStateOf(saved) }
+    val dirty = draft.normalized() != saved
     DenPanel(
         title = "Payment options",
-        subtitle = "Handles clients pay you through. Shown on invoices and the invoice PDF. Leave a field blank to hide that method.",
+        subtitle = "Turn on the ways kinfolk can pay you. What is on here shows up on new invoices and prints on the PDF. Invoices already sent keep the options they were sent with.",
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            AuntieField(value = venmo, onValueChange = { venmo = it }, label = "Venmo handle", placeholder = "@your-venmo")
-            AuntieField(value = paypal, onValueChange = { paypal = it }, label = "PayPal handle or email", placeholder = "you@example.com")
-            AuntieField(value = cashapp, onValueChange = { cashapp = it }, label = "Cash App \$cashtag", placeholder = "\$yourcashtag")
-            PrimaryButton(
-                label = "Save payment handles",
-                onClick = {
-                    onSettingsChange(
-                        settings.copy(
-                            venmoHandle = venmo.trim(),
-                            paypalHandle = paypal.trim(),
-                            cashappHandle = cashapp.trim(),
-                        )
+            PAYMENT_METHOD_CATALOGUE.forEachIndexed { index, method ->
+                val option = draft.options[method.id] ?: PaymentOptionDraft(method.defaultEnabled, "")
+                val handle = method.handleField?.let { draft.handles[it] }.orEmpty()
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AuntieSettingRow(
+                        title = method.label,
+                        description = paymentRowCaption(method),
+                        showDivider = false,
+                        trailing = {
+                            AuntieToggle(
+                                checked = option.enabled,
+                                onCheckedChange = { next ->
+                                    draft = draft.copy(options = draft.options + (method.id to option.copy(enabled = next)))
+                                },
+                                enabled = !saving,
+                                modifier = Modifier.semantics { contentDescription = "Offer ${method.label}" },
+                            )
+                        },
                     )
-                },
+                    val field = method.handleField
+                    if (option.enabled && method.kind == PaymentMethodKind.LINK && field != null) {
+                        AuntieField(
+                            value = handle,
+                            onValueChange = { draft = draft.copy(handles = draft.handles + (field to it)) },
+                            label = "${method.label} handle",
+                            placeholder = field.placeholder,
+                            enabled = !saving,
+                        )
+                    }
+                    if (option.enabled && method.kind == PaymentMethodKind.INSTRUCTIONS) {
+                        AuntieField(
+                            value = option.instructions,
+                            onValueChange = { next ->
+                                draft = draft.copy(
+                                    options = draft.options +
+                                        (method.id to option.copy(instructions = next.take(MAX_PAYMENT_INSTRUCTIONS_LENGTH))),
+                                )
+                            },
+                            label = "What kinfolk should do",
+                            placeholder = method.instructionsPlaceholder,
+                            singleLine = false,
+                            minLines = 2,
+                            enabled = !saving,
+                        )
+                    }
+                    val blankWarning = paymentBlankWarning(method, option, handle)
+                    if (blankWarning != null) {
+                        Text(blankWarning, style = AuntieTheme.typography.bodySmall, color = c.warning)
+                    }
+                }
+                if (index < PAYMENT_METHOD_CATALOGUE.lastIndex) {
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(c.border))
+                }
+            }
+            PrimaryButton(
+                label = "Save payment options",
+                // The button turns into a spinner for the wait (PrimaryButton `loading`).
+                onClick = { if (dirty && !saving) onSettingsChange(settings.withPaymentDraft(draft)) },
                 modifier = Modifier.fillMaxWidth(),
+                enabled = dirty && !saving,
+                loading = saving,
             )
         }
     }
 }
-
+/** The note and fee line under a method's name, as the web shows them. Null when a method has neither. */
+internal fun paymentRowCaption(method: PaymentMethodRow): String? {
+    val fee = method.fee?.let { "${method.label} charges about ${formatFeeSchedule(it)} per payment." }
+    return listOfNotNull(method.note, fee).joinToString(" ").ifBlank { null }
+}
+/**
+ * The warning under a method that is on but has nothing typed. The portal
+ * omits a method it cannot render rather than showing a dead button, so
+ * without this the operator turns Zelle on, types nothing, and sees no sign
+ * that it never reached an invoice. Same words as the web.
+ */
+internal fun paymentBlankWarning(method: PaymentMethodRow, option: PaymentOptionDraft, handle: String): String? {
+    if (!option.enabled) return null
+    return when (method.kind) {
+        PaymentMethodKind.LINK -> if (handle.isBlank()) {
+            "Add your ${method.label} handle. Until then this stays off invoices, because a button with no handle behind it opens nothing."
+        } else null
+        PaymentMethodKind.INSTRUCTIONS -> if (option.instructions.isBlank()) {
+            "Write what kinfolk should do. Until then this stays off invoices, because a heading with nothing under it tells them nothing."
+        } else null
+        PaymentMethodKind.CHECKOUT -> null
+    }
+}
 @Composable
 private fun WeatherAreaPanel(
     settings: com.tribetails.auntieos.data.model.BusinessSettings,
