@@ -1322,25 +1322,25 @@ class FirestoreClient {
          * meant to behave exactly as it did before #825.
          */
         idempotencyKey: String? = null,
+        /**
+         * #1178: the structured terms code, the itemized lines and the
+         * whole-invoice discount, as web and Android send them. All three are
+         * omitted from the payload when null; see [createInvoicePayload].
+         */
+        termsCode: String? = null,
+        lineItems: List<InvoiceLineItem>? = null,
+        invoiceDiscountCents: Long? = null,
     ): WriteResult<String> {
         // Test admin: force the scoped kinfolkId so the create passes the rule.
         val scopedKinfolkId = enforceWriteKinfolkId(testMode, invoice.kinfolkId)
-        val payload = buildJsonObject {
-            put("familyId", JsonPrimitive(scopedKinfolkId))
-            idempotencyKey?.let { put("idempotencyKey", JsonPrimitive(it)) }
-            put("kinfolkName", JsonPrimitive(invoice.kinfolkName))
-            put("invoiceNumber", JsonPrimitive(invoice.invoiceNumber))
-            put("client", JsonPrimitive(invoice.client))
-            put("address", JsonPrimitive(invoice.address))
-            put("date", JsonPrimitive(invoice.date))
-            put("terms", JsonPrimitive(invoice.terms))
-            put("dueDate", JsonPrimitive(invoice.dueDate))
-            put("discount", JsonPrimitive(invoice.discount))
-            put("total", JsonPrimitive(invoice.total))
-            put("amountDue", JsonPrimitive(invoice.amountDue))
-            put("status", JsonPrimitive(invoice.status))
-            put("sessionIds", buildJsonArray { invoice.sessionIds.forEach { add(JsonPrimitive(it)) } })
-        }
+        val payload = createInvoicePayload(
+            invoice,
+            familyId = scopedKinfolkId,
+            termsCode = termsCode,
+            lineItems = lineItems,
+            invoiceDiscountCents = invoiceDiscountCents,
+            idempotencyKey = idempotencyKey,
+        )
         return when (val r = platformInvokeCallable("createInvoice", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
             is WriteResult.Ok -> runCatchingCancellable {
@@ -1524,30 +1524,66 @@ class FirestoreClient {
          * toggle must mint a new key, or the send it just asked for is skipped.
          */
         idempotencyKey: String? = null,
+        /** #1178: as [createInvoice]'s. */
+        termsCode: String? = null,
+        lineItems: List<InvoiceLineItem>? = null,
+        invoiceDiscountCents: Long? = null,
     ): WriteResult<String> {
         val scopedKinfolkId = enforceWriteKinfolkId(testMode, invoice.kinfolkId)
-        val payload = buildJsonObject {
-            put("familyId", JsonPrimitive(scopedKinfolkId))
-            idempotencyKey?.let { put("idempotencyKey", JsonPrimitive(it)) }
-            put("kinfolkName", JsonPrimitive(invoice.kinfolkName))
-            put("invoiceNumber", JsonPrimitive(invoice.invoiceNumber))
-            put("client", JsonPrimitive(invoice.client))
-            put("address", JsonPrimitive(invoice.address))
-            put("date", JsonPrimitive(invoice.date))
-            put("terms", JsonPrimitive(invoice.terms))
-            put("dueDate", JsonPrimitive(invoice.dueDate))
-            put("discount", JsonPrimitive(invoice.discount))
-            put("total", JsonPrimitive(invoice.total))
-            put("amountDue", JsonPrimitive(invoice.amountDue))
-            put("status", JsonPrimitive(invoice.status))
-            put("sessionIds", buildJsonArray { invoice.sessionIds.forEach { add(JsonPrimitive(it)) } })
-            put("sendToKinfolk", JsonPrimitive(sendToKinfolk))
-        }
+        val payload = createQuotePayload(
+            invoice,
+            familyId = scopedKinfolkId,
+            sendToKinfolk = sendToKinfolk,
+            termsCode = termsCode,
+            lineItems = lineItems,
+            invoiceDiscountCents = invoiceDiscountCents,
+            idempotencyKey = idempotencyKey,
+        )
         return when (val r = platformInvokeCallable("createQuote", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
             is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(callableJson.parseToJsonElement(r.value).jsonObject["invoiceId"]?.jsonPrimitive?.contentOrNull.orEmpty())
             }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+    /**
+     * #1178: a household's completed visits that no invoice bills for yet, via
+     * `listUninvoicedSessions`. Pass [from] and [to] only to narrow a result the
+     * server said it truncated. Scoped for test mode as [createInvoice] is, so a
+     * sandbox session cannot read a real household's work. A failure is an Err,
+     * never an empty list: an empty list reads as "nothing outstanding".
+     */
+    suspend fun listUninvoicedSessions(
+        kinfolkId: String,
+        from: String? = null,
+        to: String? = null,
+    ): WriteResult<UninvoicedSessionsResult> {
+        val payload = runCatchingCancellable {
+            listUninvoicedSessionsPayload(enforceWriteKinfolkId(testMode, kinfolkId), from, to)
+        }.getOrElse { return WriteResult.Err(it.message ?: "bad request") }
+        return when (val r = platformInvokeCallable("listUninvoicedSessions", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeUninvoicedSessionsResult(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+    /**
+     * #1178: marks visits do not invoice, or puts them back, via
+     * `setSessionDoNotInvoice`. A state on the visit, not a deletion. The server
+     * refuses a visit an invoice already bills for, and refuses the whole batch.
+     */
+    suspend fun setSessionDoNotInvoice(
+        sessionIds: List<String>,
+        doNotInvoice: Boolean,
+        reason: String = "",
+    ): WriteResult<DoNotInvoiceResult> {
+        val payload = runCatchingCancellable {
+            setSessionDoNotInvoicePayload(sessionIds, doNotInvoice, reason)
+        }.getOrElse { return WriteResult.Err(it.message ?: "bad request") }
+        return when (val r = platformInvokeCallable("setSessionDoNotInvoice", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeDoNotInvoiceResult(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
     }
 

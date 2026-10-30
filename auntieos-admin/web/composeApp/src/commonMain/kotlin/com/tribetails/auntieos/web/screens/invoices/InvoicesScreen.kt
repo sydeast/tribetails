@@ -183,22 +183,22 @@ fun InvoicesScreen(
      * #825: the submission each key was minted for, and the key. ONE KEY PER
      * SUBMISSION, NOT PER PRESS.
      *
-     * Both composers CLOSE on confirm, so a retry here is not a second press on
-     * a still-open dialog -- it is the operator reopening "New invoice" and
-     * typing the same invoice again, because the first attempt reported an error
-     * this console cannot classify (see MoneyIdempotency.kt). Holding the key
-     * against the submission rather than against the dialog is what makes that
-     * second attempt land on the first attempt's invoice. It also stops the
-     * retry spending a second value from `counters/invoiceNumber`, which is the
-     * half of #825 that cannot be repaired afterwards: a consumed sequence value
-     * cannot be handed back.
+     * #1178: the composer stays open after a refusal, so a retry is usually a
+     * second press on the same composed request. It can also be the operator
+     * closing, reopening and composing the same invoice again, because the
+     * first attempt reported an error this console cannot classify (see
+     * MoneyIdempotency.kt). Holding the key against the submission rather than
+     * against the dialog makes either retry land on the first attempt's
+     * invoice. It also stops the retry spending a second value from
+     * `counters/invoiceNumber`, which is the half of #825 that cannot be
+     * repaired afterwards: a consumed sequence value cannot be handed back.
      *
-     * The signature is the draft `Invoice` itself (plus `sendToKinfolk` for a
-     * quote, which is part of the submission, not a modifier on it: a replay
-     * answers with what the FIRST attempt did, and the first attempt is what
-     * decided whether the household was notified). `NewInvoiceDialog` builds the
-     * draft purely from what was typed -- no clock, no counter -- so re-entering
-     * the same invoice rebuilds an equal one and the held key survives.
+     * The signature is the whole [NewInvoiceRequest]: the draft `Invoice`, the
+     * lines, the terms code, the discount, and `sendToKinfolk` for a quote (part
+     * of the submission, not a modifier on it: a replay answers with what the
+     * FIRST attempt did). The request is built from what was ticked and typed
+     * plus today's date, so composing the same invoice on the same day rebuilds
+     * an equal one and the held key survives.
      */
     var invoiceSubmission by remember { mutableStateOf<Pair<String, String>?>(null) }
     var quoteSubmission by remember { mutableStateOf<Pair<String, String>?>(null) }
@@ -381,58 +381,87 @@ fun InvoicesScreen(
         }
     }
 
+    /**
+     * #1178: one create path for both composers. The dialog stays open while the
+     * call is in flight and after a refusal, so a retry is a second press on the
+     * same composed request, which the held #825 key turns into a replay of the
+     * first attempt rather than a second invoice. The dialog closes on success.
+     */
+    var composerSubmitting by remember { mutableStateOf(false) }
+    var composerError by remember { mutableStateOf<String?>(null) }
+    val closeComposers: () -> Unit = {
+        showComposer = false
+        showQuoteComposer = false
+        quoteSeedKinfolkId = ""
+        composerError = null
+    }
+    val onComposed: (NewInvoiceRequest) -> Unit = onComposed@{ request ->
+        if (composerSubmitting) return@onComposed
+        composerSubmitting = true
+        composerError = null
+        // The whole request is the signature: the lines, terms and discount are
+        // part of what was composed, and the send flag is part of a quote.
+        val signature = request.toString()
+        scope.launch {
+            val r = if (request.isQuote) {
+                client.createQuote(
+                    request.invoice,
+                    request.sendToKinfolk,
+                    idempotencyKey = quoteKeyFor(signature),
+                    termsCode = request.termsCode,
+                    lineItems = request.lineItems,
+                    invoiceDiscountCents = request.invoiceDiscountCents,
+                )
+            } else {
+                client.createInvoice(
+                    request.invoice,
+                    idempotencyKey = invoiceKeyFor(signature),
+                    termsCode = request.termsCode,
+                    lineItems = request.lineItems,
+                    invoiceDiscountCents = request.invoiceDiscountCents,
+                )
+            }
+            composerSubmitting = false
+            when (r) {
+                is WriteResult.Err -> composerError = r.message
+                is WriteResult.Ok -> {
+                    // #825: the held key goes once the document exists, so a
+                    // deliberate second invoice with identical fields is not a replay.
+                    if (request.isQuote) quoteSubmission = null else invoiceSubmission = null
+                    actionError = null
+                    actionNotice = when {
+                        !request.isQuote -> "Draft invoice created."
+                        request.sendToKinfolk -> "Quote created and sent."
+                        else -> "Quote created."
+                    }
+                    closeComposers()
+                }
+            }
+        }
+    }
     if (showComposer) {
         NewInvoiceDialog(
             visible = showComposer,
             client = client,
-            onDismiss = { showComposer = false },
-            onConfirm = { invoice ->
-                showComposer = false
-                val key = invoiceKeyFor(invoice.toString())
-                scope.launch {
-                    when (val r = client.createInvoice(invoice, idempotencyKey = key)) {
-                        is WriteResult.Err -> actionError = r.message
-                        is WriteResult.Ok -> {
-                            actionError = null
-                            // #825: the held key goes once the invoice exists.
-                            // Keeping it would mean a deliberate second invoice
-                            // with identical fields silently replayed the first.
-                            invoiceSubmission = null
-                            actionNotice = "Invoice created."
-                        }
-                    }
-                }
-            },
+            onDismiss = closeComposers,
+            onConfirm = onComposed,
+            submitting = composerSubmitting,
+            submitError = composerError,
         )
     }
-
     if (showQuoteComposer) {
         NewInvoiceDialog(
             visible = showQuoteComposer,
             client = client,
             quoteMode = true,
             initialKinfolkId = quoteSeedKinfolkId,
-            onDismiss = { showQuoteComposer = false; quoteSeedKinfolkId = "" },
-            // Unused in quote mode, but the param is non-null.
-            onConfirm = { showQuoteComposer = false },
-            onConfirmQuote = { invoice, sendToKinfolk ->
-                showQuoteComposer = false
-                val key = quoteKeyFor(listOf(invoice, sendToKinfolk).toString())
-                scope.launch {
-                    when (val r = client.createQuote(invoice, sendToKinfolk, idempotencyKey = key)) {
-                        is WriteResult.Err -> actionError = r.message
-                        is WriteResult.Ok -> {
-                            actionError = null
-                            quoteSubmission = null
-                            actionNotice = if (sendToKinfolk) "Quote created and sent." else "Quote created."
-                        }
-                    }
-                }
-            },
+            onDismiss = closeComposers,
+            onConfirm = onComposed,
+            submitting = composerSubmitting,
+            submitError = composerError,
         )
     }
 }
-
 /**
  * Header CTA. Slice 2 wires the "New invoice" button to the createInvoice
  * callable behind flags.invoicesCreate (now on). When the flag is off (e.g. a
