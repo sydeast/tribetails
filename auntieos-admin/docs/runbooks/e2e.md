@@ -348,7 +348,8 @@ allowlisted.
 ## The real-services run (added 2026-10-02, #1089)
 
 Operator ruling D3 (2026-10-01): the admin Cypress suite also runs against the
-real `mytribe/functions` and the real outside services, on releases and not on
+real `mytribe/functions`, the admin's own `web/functions`, and the real outside
+services, on releases and not on
 pull requests. This is a SECOND harness beside the PR-time one. Nothing above
 changes: `npm run e2e:cy` still serves no functions and still pins callables at
 the dead port 5399.
@@ -356,23 +357,33 @@ the dead port 5399.
 ```bash
 npm ci                                   # repo root, once
 npm ci --prefix mytribe/functions        # once; the emulator serves its build
+npm ci --prefix auntieos-admin/web/functions   # once; not a root workspace (#1201)
 cd auntieos-admin
 npm run e2e:real
 ```
 
 `npm run e2e:real` runs `scripts/e2e-real/run.sh`, which:
 
-1. builds `mytribe/functions` (the emulator serves `lib/`, not `src/`);
-2. runs `scripts/e2e-real/preflight.mjs`, which writes
-   `mytribe/functions/.secret.local` and refuses to start if a Stripe value is
+1. builds `mytribe/functions` (the emulator serves `lib/`, not `src/`), and
+   refuses by name if `web/functions` has no `node_modules`;
+2. runs `scripts/e2e-real/preflight.mjs`, which writes a `.secret.local` into
+   each served codebase (`mytribe/functions` and `web/functions`) and refuses
+   to start, writing neither, if a Stripe value is
    not a test-mode key (`sk_test_`, `rk_test_`, `pk_test_`, `whsec_`), if any
    Twilio value names a number in the business line's or the private line's
    area code, or if a spec under `cypress/e2e-real/` names Google Calendar
    Disconnect;
 3. starts auth (9399), Firestore (8385) and functions (5398) under the project
    id `demo-auntieos-e2e` (`e2e.real.firebase.json`), and runs
-   `cypress.real.config.ts` against a dev server pointed at all three;
-4. deletes `.secret.local` whatever happened. The file is in `.gitignore` too,
+   `cypress.real.config.ts` against a dev server pointed at all three. The
+   functions emulator serves two codebases, as production does: `mytribe` and
+   the admin's `default` (`signCloudinaryUpload`, `generateAuntieCopy`). The
+   dev server stands in for `firebase.json`'s two `/api/*` hosting rewrites by
+   proxying `/api/cloudinary/sign-upload` and `/api/generate` to those
+   functions on 5398 (`scripts/e2e-real/api-proxy.mjs`, #1201). `/api/generate`
+   is proxied but no spec calls it: its voice files are gitignored and absent
+   from a checkout, so it would answer 500;
+4. deletes both `.secret.local` files whatever happened. The file is in `.gitignore` too,
    in case a killed run leaves it behind. The next run replaces a file it wrote
    and refuses to replace one it did not.
 
@@ -391,9 +402,11 @@ that is missing or empty there, it fetches from Secret Manager under the
 emulator's project id (firebase-tools 15.18.0, `resolveSecretEnvs`). With the
 production id and a developer's ADC, that is a production secret handed to a
 test. So the project id is a `demo-` id that names no real project, and the
-preflight writes every secret the built functions declare (read from their
-`__endpoint` metadata, 22 on 2026-10-02) with a non-empty value, so no lookup
-happens at all. Either one is enough.
+preflight writes every secret each codebase declares (read from their
+`__endpoint` metadata: 22 in `mytribe/functions` on 2026-10-02, 5 in
+`web/functions` on 2026-10-30) with a non-empty value, so no lookup happens at
+all. Either one is enough. The file is per codebase: the emulator reads the one
+in the function's own source directory, so each codebase gets a complete one.
 
 Credentials are not hidden from the emulator, and on a developer machine it
 warns that it found them. Hiding them does not help: with no Application
@@ -404,7 +417,7 @@ account instead. CI has neither.
 
 | Vendor | Variables | Without them |
 |---|---|---|
-| Stripe (test mode) | `STRIPE_TEST_SECRET_KEY`, `STRIPE_TEST_PUBLISHABLE_KEY` | Stripe specs skip |
+| Stripe (test mode) | `STRIPE_TEST_SECRET_KEY`, `STRIPE_TEST_PUBLISHABLE_KEY`; the portal's pay spec also needs the `stripe` CLI on `PATH` | Stripe specs skip |
 | Twilio (test credentials) | `TWILIO_TEST_ACCOUNT_SID`, `TWILIO_TEST_AUTH_TOKEN`, optional `TWILIO_TEST_FROM_NUMBER` (default: Twilio's test sender `+15005550006`) | Twilio specs skip |
 | Email (smtp2go) | `E2E_SMTP2GO_API_KEY`, `E2E_EMAIL_FROM` | Email specs skip |
 | Cloudinary | `E2E_CLOUDINARY_CLOUD_NAME`, `E2E_CLOUDINARY_API_KEY`, `E2E_CLOUDINARY_API_SECRET` | Cloudinary specs skip |
@@ -419,6 +432,30 @@ In CI the same names are secrets in the GitHub environment `e2e-real`
 (deployment branch policy: `main` only), read by
 `.github/workflows/e2e-real.yml`. That workflow runs on `workflow_dispatch`
 from main and as a `workflow_call` from a release.
+
+**How a release reads it (#1193).** The nightly release
+(`nightly-release.yml`) calls `e2e-real.yml` for the commit it is about to
+ship, before its release job, and that job refuses unless the call came back
+green. A called workflow gets no run of its own: its jobs show inside the
+nightly's run as `E2E real services / <job>`. `scripts/release.sh` step 0b
+then reads the verdict again for the commit, hosted and local alike: the newest
+run of `e2e-real.yml` or of a nightly that called it, keeping only the jobs
+whose name carries `real services`. Red, still running, skipped, or no run at
+all each refuse, with the run and the command to fix it. A vendor with no
+secrets stored is not red: its specs skip and the job still passes. The release
+also downloads that run's `e2e-real*` artifacts and reads every `verdict.json`
+in them (written by the classifier, "The verdict" below): `warn` is printed in
+yellow and the release goes on, `stop` refuses even under a green job, and a
+run with no file is judged by its jobs alone. For a release by hand, run the
+suite on main first and wait for it:
+
+```sh
+gh workflow run e2e-real.yml --ref main
+gh run watch "$(gh run list --workflow e2e-real.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+```
+
+`RELEASE_SKIP_CI_GATE=1` skips this read along with CI's, and is for a gate
+that cannot be asked, never for one that says no.
 
 ### What the specs may and may not do
 
@@ -438,21 +475,43 @@ from main and as a `workflow_call` from a release.
 - Twilio runs on the test credentials only. Nothing is sent, and no number in
   the business or private line's area code may appear anywhere.
 - Cloudinary uploads go to an `e2e/` folder emptied after each run, and emails
-  go only to the three real test inboxes. Neither has a spec yet, and the
-  functions do not yet sign uploads into `e2e/` (#1202); that has to land
-  before the first Cloudinary spec.
+  go only to the three real test inboxes (`account.cy.ts` sends the reset
+  email to e2e-admin@tribetails.com; `account-photo.cy.ts` uploads under
+  `e2e/tribetails/user/<uid>/`, the folder the real signer prefixes under the
+  `demo-` id (#1202), and destroys what it uploaded).
 
 ### Specs today
 
-| Spec | What it proves |
-|---|---|
-| `settings-tags.cy.ts` | `removeBusinessTag` really cascades: the server's count on screen, and after a reload the tag is gone from the Tags list and from the Directory filter |
-| `invoice-paid-stripe.cy.ts` | Record payment settles an invoice through `markInvoicePaid` while a real Stripe test checkout is open on it, and the invoice reads paid after a reload. Skips without Stripe keys |
+Every PR-time spec that answers a callable with `cy.intercept` has a
+counterpart here (#1195). Each one drives the real handler and its triggers
+and asserts the outcome from the UI, almost always after a reload.
 
-Every other spec stays on the PR-time harness until it is rewritten for this
-one. The Stripe spec does not assert that Stripe expired the session: no admin
-screen shows it yet. #1113 adds that to the invoice screen, and the assertion
-moves into the spec then.
+| Spec | Counterpart of | What it proves | Vendor |
+|---|---|---|---|
+| `account.cy.ts` | `account.cy.ts` | The three channel switches come from the functions' catalog; a channel switched on is still on after a reload and on My Notifications; "Sole admin" comes from the real roster; Send reset email really sends | Email, reset test only |
+| `account-photo.cy.ts` | `account-photo.cy.ts` | A picked image really uploads to Cloudinary, is written to `users/{uid}.photoUrl`, and loads from Cloudinary after a reload. The signature comes from the admin's real `signCloudinaryUpload` (#1201), proven by the `e2e/` prefix only that signer adds | Cloudinary |
+| `bookings.cy.ts` | `bookings.cy.ts` | A real requested envelope is declined with an empty reason (#700) or booked through `manageBookingSeries`; after a reload it has left the queue, and a booking adds one to the Scheduled count; the block settles on its empty line (#698) | none |
+| `email-editor.cy.ts` | `email-editor.cy.ts` | A visual template with bold text and a button comes back from `listTemplates` after a reload; the preview is the server's render; Convert (with the server's dropped-image warning) then Save makes a template visual for good, Convert then Leave keeps it old | none |
+| `form-schemas.cy.ts` | `form-schemas.cy.ts` | The table sorts the server's rows (#717); an edit through `saveFormSchema` comes back with the version bumped, the time stamped and the editor named | none |
+| `gallery.cy.ts` | `gallery.cy.ts` | Delete through `deleteMediaFile` removes the `media_files` row: gone after a reload, counts one lower; Cancel sends nothing | none |
+| `household-members.cy.ts` | `household-members.cy.ts` | The #684/#829 layout over the real reads; a secondary kinfolk added through `saveSecondaryKinfolk` is listed after a reload with no portal access, and Remove takes it off | none |
+| `invoice-paid-stripe.cy.ts` | (D3 phase 1) | Record payment settles an invoice through `markInvoicePaid` while a real Stripe test checkout is open on it; after a reload it reads paid and says its open payment link was closed | Stripe |
+| `kin-view.cy.ts` | `kin-view.cy.ts` | A pet tag survives the `kin/{id}` triggers: on the pet after a full reload, gone after removal | none |
+| `kinfolk-profile.cy.ts` | `kinfolk-profile.cy.ts` | The right column order with the real credit reads (#678/#682); a credit given through `giveAccountCredit` is listed after a reload and the balance rose by its amount; an emergency contact saved through the Edit form is on the profile after a reload | none |
+| `my-notifications.cy.ts` | `my-notifications.cy.ts` | A channel switched on, or a default-on channel switched off, is stored and read back after a reload; Discard stores nothing; a catalog-required channel is drawn forced | none |
+| `settings-integrations.cy.ts` | `settings.cy.ts` (Integrations, #714/#715) | The cards are the server's integration list and a secret the run set reads as set; the Calendar panels open in place and the real connection read settles on Connect. Nothing on the Calendar panel is pressed | none (no network call) |
+| `settings-tags.cy.ts` | `settings.cy.ts` (Tags, #713) | `removeBusinessTag` really cascades: the server's count on screen, and after a reload the tag is gone from the Tags list and from the Directory filter | none |
+| `templates.cy.ts` | `templates.cy.ts` | The #716 frame over a real list; the stored subject on the card and in the editor; an edit through `saveTemplate` comes back from `listTemplates` after a reload | none |
+
+A vendor spec skips, naming the missing variables in the log, when the run has
+no credentials for it. No spec of the twelve sends a text, so none needs
+Twilio, and none needs Google Calendar credentials: the Integrations spec reads
+the stored connection only.
+
+Four PR-time tests have no counterpart, because each needs a server that can be
+told to stall or fail on command: #698's held loading state, #714's held
+spinner, My Notifications' refused save, and the account photo's refused
+upload. They stay in the PR-time suite only.
 
 ### The verdict (D3-e)
 
@@ -493,6 +552,77 @@ credentials: assets by the `e2e/` public-id prefix, assets whose asset folder
 is under `e2e`, then the folders. It touches nothing outside `e2e/`. Without
 the credentials it prints one `skipped` line. A failed delete is printed and
 leaves the exit code as it was.
+
+## The portal's real-services run (added 2026-10-30, #1194)
+
+D3 puts paying an invoice in the portal suite, because kinfolk pay there. The
+portal has its own copy of the harness above, in `mytribe/web`:
+
+```bash
+npm ci                                   # repo root, once
+npm ci --prefix mytribe/functions        # once
+cd mytribe/web
+npm run e2e:real
+```
+
+| Piece | Admin | Portal |
+|---|---|---|
+| Script | `auntieos-admin/scripts/e2e-real/run.sh` | `mytribe/web/scripts/e2e-real/run.sh` |
+| Preflight | `scripts/e2e-real/preflight.mjs` | `scripts/e2e-real/preflight.mjs`, which imports the admin's rules |
+| Emulator config | `auntieos-admin/e2e.real.firebase.json` | `mytribe/e2e.real.firebase.json` |
+| Project id | `demo-auntieos-e2e` | `demo-mytribe-e2e` |
+| Ports (auth, Firestore, functions) | 9399, 8385, 5398 | 9499, 8485, 5498 |
+| Specs | `auntieos-admin/cypress/e2e-real/` | `mytribe/web/cypress/e2e-real/` |
+| CI job | `admin-real` | `portal-real` |
+
+The portal preflight does not keep its own list of secrets or refusals. It
+imports `plan`, `disconnectRisks` and `declaredSecrets` from the admin
+preflight, so a refusal added there applies to both runs. Its tests
+(`mytribe/web/scripts/e2e-real/preflight.test.mjs`, run by the portal's
+`vitest`) check the three refusals through the portal's entry point.
+
+Run one real-services run at a time on a machine. The portal run cannot overlap
+`npm run e2e:cy` in `mytribe/web` (they share 9499 and 8485), and the Cloud
+Tasks emulator that firebase-tools starts alongside the functions emulator
+asks for 9499 by default, so an admin real run can take the portal's auth port.
+In CI the two jobs are on separate runners.
+
+### The Stripe webhook forwarder
+
+`payInvoice` only opens a Checkout Session. The invoice turns paid when
+`stripeWebhook` receives `checkout.session.completed` or
+`payment_intent.succeeded`, and Stripe cannot reach `127.0.0.1`. So when
+`STRIPE_TEST_SECRET_KEY` is set and the `stripe` CLI is on `PATH`, `run.sh`:
+
+1. starts `stripe listen --forward-to
+   http://127.0.0.1:5498/demo-mytribe-e2e/us-central1/stripeWebhook`, with the
+   key in the environment rather than on the command line;
+2. reads the `whsec_` signing secret from its output, and exports it as
+   `STRIPE_TEST_WEBHOOK_SECRET` before the preflight, which writes it to
+   `.secret.local` as `STRIPE_WEBHOOK_SECRET`;
+3. stops the forwarder when the run ends. Its output is
+   `cypress/.real/stripe-listen.log`.
+
+A key that is not a test key is refused before the CLI ever sees it. The
+preflight then reports one more flag, `stripeWebhook`, which is true only with
+test keys and a `whsec_` secret both present. The pay spec skips without it
+and names the missing piece. CI installs Stripe CLI 1.55.1, checksum-pinned.
+
+### Portal specs today
+
+| Spec | What it proves |
+|---|---|
+| `invoice-open.cy.ts` | The seeded kinfolk signs in through the real access chain (`getMyAccess`, `getMyHome`, `setActiveTribe`), and the real `getMyInvoices` shows a spec-written invoice as PENDING with its amount due and the card checkout button. Needs no vendor keys, so it runs every time |
+| `pay-invoice-stripe.cy.ts` | The kinfolk presses Pay with Credit Card, the real `payInvoice` opens a Stripe test Checkout, the spec pays with `4242 4242 4242 4242` on Stripe's page (`cy.origin`), and after the redirect the invoice reads PAID with no amount due and no pay button, once the forwarded webhook lands. Reloads every 3s for up to 60s. Skips without Stripe keys or the CLI |
+
+The portal seed also writes the household's PRIMARY `members` row, the shape
+`acceptInvite` writes, so the real billing gates see a member and not the
+legacy fallback. The `clients/{uid}` write is a field-masked merge, because the
+real `onAuthUserCreate` writes that document too and may get there first.
+
+On 2026-10-30 a local run with no vendor keys went: `invoice-open` passed, and
+the pay spec was pending (skipped, no keys). The pay spec has not run against
+Stripe yet. Its first real run is a dispatch of `e2e-real.yml` from main.
 
 ## Pointing a Cypress run at a deployed host (added 2026-08-30)
 

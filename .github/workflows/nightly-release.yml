@@ -25,6 +25,25 @@ name: Nightly release
 # CI verdict for the commit, still runs the secret preflight, still refuses when
 # the Android builds have no audience. `RELEASE_YES=1` suppresses the
 # interactive prompts and nothing else; the script's own header says so.
+#
+# THE REAL-SERVICES SUITE RUNS FIRST (#1193, operator ruling D3). The `e2e-real`
+# job calls .github/workflows/e2e-real.yml for the commit this run ships: the
+# admin Cypress suite against the real functions and the real outside services
+# (Stripe test mode, Twilio test credentials, the three test inboxes, the e2e/
+# Cloudinary folder, the test calendar). The release job refuses unless it came
+# back green, and release.sh step 0b reads the same verdict again from GitHub,
+# so a local release of this commit is held to it too. A vendor whose secrets
+# are not stored yet skips its own specs; that is a green run, not a red one.
+#
+# Three jobs, because a `uses:` job cannot have steps and so cannot read the
+# mode and newness the release job used to work out for itself:
+#
+#   decide     the mode switch and the "anything merged?" check, nothing else.
+#   e2e-real   only when decide says this run ships (preflight or full, and
+#              something merged). With NIGHTLY_RELEASE off it is skipped, so
+#              an off night sends no test email and opens no Stripe session.
+#   release    as before, after both. `!cancelled()` keeps it running when
+#              e2e-real is skipped, so an off night still writes its summary.
 
 on:
   schedule:
@@ -60,45 +79,23 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Release main to production
+  # What this run does, worked out once and handed to the other two jobs. The
+  # two steps are the ones the release job used to run first; their bodies are
+  # unchanged.
+  decide:
+    name: Decide what this run does
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    # A full release on this runner is: installs and `npm run check` (~15
-    # minutes), two cold Gradle release builds (~20), and the functions deploy.
-    # The runner is new every night, so it has no .release-state and deploys
-    # the whole fleet (~280 functions in batches of 25 with a 30 second settle,
-    # roughly an hour). Three hours leaves room for a slow functions deploy
-    # without letting a wedged one hold the runner all day.
-    timeout-minutes: 180
-    # What the run touches on GitHub, and nothing else:
-    #   contents: write        release.sh step 9 pushes the release tag and
-    #                          prunes merged branches.
-    #   id-token: write        the OIDC token Workload Identity exchanges for
-    #                          Google Cloud access. Without it the auth step
-    #                          cannot ask for one.
-    #   actions: read          step 0b reads ci.yml's run for the commit and
-    #                          that run's jobs (the #838/#856 query).
-    #   checks: read           listed in #851. Step 0b no longer reads check
-    #                          runs directly, but the old query is one revert
-    #                          away and read access costs nothing.
-    #   pull-requests: read    the branch prune skips branches with an open PR.
+    # Checkout with history and two shell steps.
+    timeout-minutes: 5
     permissions:
-      contents: write
-      id-token: write
-      actions: read
-      checks: read
-      pull-requests: read
-    # AT JOB LEVEL, not on the release step (#850 review). The credential check
-    # below reads GH_TOKEN too, and a token that exists only inside the release
-    # step's env is invisible to it, so the check would refuse a run that has
-    # one. release.sh step 0b asks `gh auth status --hostname github.com`.
-    env:
-      GH_TOKEN: ${{ github.token }}
+      contents: read
+    outputs:
+      mode: ${{ steps.decide.outputs.mode }}
+      new: ${{ steps.newness.outputs.new }}
     steps:
       - uses: actions/checkout@v7
         with:
-          # release.sh tags the released commit and prunes merged branches, so
-          # it needs history and a token that can push.
+          # The newness check reads the release tags.
           fetch-depth: 0
 
       # THE SWITCH, AND IT IS OFF UNTIL YOU TURN IT ON.
@@ -138,6 +135,146 @@ jobs:
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "Mode: $mode"
 
+      # Nothing merged since the last release means nothing to ship. Releasing
+      # an unchanged commit would still take an hour, still churn ~280 Cloud Run
+      # revisions, and still notify every Android tester about a build identical
+      # to the one they have.
+      - name: Skip when nothing has merged since the last release
+        id: newness
+        if: steps.decide.outputs.mode != 'off'
+        run: |
+          # Releases are tagged vX.Y.Z from v0.3.0 (#1061). The newest by
+          # version, not by date; a major of four digits (v2026.07.31, a
+          # revert baseline) is a date, not a release. Before the first v tag,
+          # the last release/<date>-<sha> tag still counts.
+          last_tag="$(git tag --list 'v*' --sort=-v:refname | { grep -E '^v[0-9]{1,3}\.[0-9]+\.[0-9]+$' || true; } | head -1)"
+          if [ -z "$last_tag" ]; then
+            last_tag="$(git tag --list 'release/*' --sort=-creatordate | head -1)"
+          fi
+          if [ -z "$last_tag" ]; then
+            echo "new=true" >> "$GITHUB_OUTPUT"
+            echo "No release tag found; treating as new."
+            exit 0
+          fi
+          last_sha="$(git rev-list -n1 "$last_tag")"
+          head_sha="$(git rev-parse HEAD)"
+          echo "last release: $last_tag ($(git rev-parse --short "$last_sha"))"
+          echo "main head:    $(git rev-parse --short "$head_sha")"
+          if [ "$last_sha" = "$head_sha" ]; then
+            echo "new=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing merged since the last release."
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+            echo "$(git rev-list --count "$last_sha".."$head_sha") commit(s) to ship."
+          fi
+
+  # THE REAL-SERVICES SUITE, for the commit this run ships (#1193). A called
+  # workflow runs inside THIS run: its job shows here as "E2E real services /
+  # Admin Cypress, real services", and GitHub records no separate run of
+  # e2e-real.yml. release.sh step 0b knows that and reads this run's jobs.
+  #
+  # Both jobs check out github.sha, so the suite tests the commit the release
+  # job ships. e2e-real.yml's job runs only on refs/heads/main, which a
+  # scheduled run and a dispatch from main both are; its environment
+  # `e2e-real` holds the vendor secrets and allows main only.
+  #
+  # No timeout-minutes here: a `uses:` job cannot take one. The called
+  # workflow's own jobs carry their caps, and workflow-budget.test.sh checks
+  # them there.
+  e2e-real:
+    name: E2E real services
+    needs: decide
+    if: needs.decide.outputs.mode != 'off' && needs.decide.outputs.new == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/e2e-real.yml
+    secrets: inherit
+
+  release:
+    name: Release main to production
+    needs: [decide, e2e-real]
+    # Runs when e2e-real was skipped (mode off, or nothing merged), so the
+    # summary and the cleanup still run. Never when decide failed: its outputs
+    # would be empty, and an empty mode is not `off` to the conditions below.
+    # A red e2e-real does not skip this job; the first step after checkout
+    # refuses, by name.
+    if: ${{ !cancelled() && needs.decide.result == 'success' }}
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    # A full release on this runner is: installs and `npm run check` (~15
+    # minutes), two cold Gradle release builds (~20), and the functions deploy.
+    # The runner is new every night, so it has no .release-state and deploys
+    # the whole fleet (~280 functions in batches of 25 with a 30 second settle,
+    # roughly an hour). Three hours leaves room for a slow functions deploy
+    # without letting a wedged one hold the runner all day.
+    timeout-minutes: 180
+    # What the run touches on GitHub, and nothing else:
+    #   contents: write        release.sh step 9 pushes the release tag and
+    #                          prunes merged branches.
+    #   id-token: write        the OIDC token Workload Identity exchanges for
+    #                          Google Cloud access. Without it the auth step
+    #                          cannot ask for one.
+    #   actions: read          step 0b reads ci.yml's run for the commit and
+    #                          that run's jobs (the #838/#856 query), and the
+    #                          real-services jobs of this run (#1193).
+    #   checks: read           listed in #851. Step 0b no longer reads check
+    #                          runs directly, but the old query is one revert
+    #                          away and read access costs nothing.
+    #   pull-requests: read    the branch prune skips branches with an open PR.
+    permissions:
+      contents: write
+      id-token: write
+      actions: read
+      checks: read
+      pull-requests: read
+    # AT JOB LEVEL, not on the release step (#850 review). The credential check
+    # below reads GH_TOKEN too, and a token that exists only inside the release
+    # step's env is invisible to it, so the check would refuse a run that has
+    # one. release.sh step 0b asks `gh auth status --hostname github.com`.
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # release.sh tags the released commit and prunes merged branches, so
+          # it needs history and a token that can push.
+          fetch-depth: 0
+
+      # THE REAL-SERVICES VERDICT, before anything is installed or signed in.
+      # This job runs when e2e-real was skipped too (see the job's `if`), so
+      # the check is here rather than in `needs`: when this run ships
+      # anything, e2e-real must have run and come back green. `failure`,
+      # `cancelled` and `skipped` all refuse a full release. A preflight
+      # warns and goes on, the way release.sh's preflight reports a gate it
+      # would refuse at and continues, so the rest of the setup still gets
+      # proven. release.sh step 0b reads the same verdict again from GitHub;
+      # this step only makes a red one stop the run before an hour of
+      # installs and builds instead of after.
+      - name: Refuse unless the real-services suite is green
+        if: needs.decide.outputs.mode != 'off' && needs.decide.outputs.new == 'true'
+        env:
+          MODE: ${{ needs.decide.outputs.mode }}
+          E2E_REAL_RESULT: ${{ needs.e2e-real.result }}
+        run: |
+          short="$(git rev-parse --short HEAD)"
+          if [ "$E2E_REAL_RESULT" = "success" ]; then
+            echo "E2E real services: green for $short"
+            exit 0
+          fi
+          if [ "$MODE" = "preflight" ]; then
+            echo "::warning title=Real-services suite is not green::E2E real services: $E2E_REAL_RESULT. A full release would refuse here."
+            echo "preflight: a full release would REFUSE here. The real-services suite is '$E2E_REAL_RESULT' for $short."
+            exit 0
+          fi
+          echo "::error title=Real-services suite is not green::E2E real services: $E2E_REAL_RESULT"
+          echo "REFUSED: the real-services suite (E2E real services) is '$E2E_REAL_RESULT' for $short."
+          echo
+          echo "Its job is above in this run. The emulator log and the screenshots are"
+          echo "in its e2e-real-artifacts artifact. A vendor whose secrets are not stored"
+          echo "skips its specs and does not make the suite red, so a red run is a"
+          echo "failing spec. auntieos-admin/docs/runbooks/e2e.md, 'The verdict', says"
+          echo "how to read it."
+          exit 1
+
       # The Workload Identity provider and the service account live in
       # repository variables, not in this file, so a renamed pool or account is
       # a settings change rather than a workflow edit. The runbook section
@@ -150,7 +287,7 @@ jobs:
       # Checked here, before the auth step, because the auth action's own
       # error for an empty provider says nothing about where the value lives.
       - name: Check the release variables are set
-        if: steps.decide.outputs.mode != 'off'
+        if: needs.decide.outputs.mode != 'off'
         env:
           WIF_PROVIDER: ${{ vars.NIGHTLY_WIF_PROVIDER }}
           RELEASE_SA: ${{ vars.NIGHTLY_SERVICE_ACCOUNT }}
@@ -180,7 +317,7 @@ jobs:
       # a working tree with anything untracked in it. The action's post step
       # deletes the file, and so does the cleanup step below.
       - name: Authenticate to Google Cloud (Workload Identity)
-        if: steps.decide.outputs.mode != 'off'
+        if: needs.decide.outputs.mode != 'off'
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.NIGHTLY_WIF_PROVIDER }}
@@ -190,7 +327,7 @@ jobs:
       # gcloud for Secret Manager (steps 0c and 1b) and Cloud Run (step 8). It
       # picks up the credentials file the step above wrote.
       - name: Set up gcloud
-        if: steps.decide.outputs.mode != 'off'
+        if: needs.decide.outputs.mode != 'off'
         uses: google-github-actions/setup-gcloud@v3
 
       # FAIL FAST WITHOUT CREDENTIALS (#850). On 2026-09-12, 13 and 14 the
@@ -200,7 +337,7 @@ jobs:
       # This step adds no credentials and no permissions; it only says plainly
       # that they are absent, before the installs spend minutes.
       - name: Check the runner can authenticate
-        if: steps.decide.outputs.mode != 'off'
+        if: needs.decide.outputs.mode != 'off'
         run: |
           missing=""
           google=""
@@ -242,45 +379,12 @@ jobs:
             exit 1
           fi
 
-      # Nothing merged since the last release means nothing to ship. Releasing
-      # an unchanged commit would still take an hour, still churn ~280 Cloud Run
-      # revisions, and still notify every Android tester about a build identical
-      # to the one they have.
-      - name: Skip when nothing has merged since the last release
-        id: newness
-        if: steps.decide.outputs.mode != 'off'
-        run: |
-          # Releases are tagged vX.Y.Z from v0.3.0 (#1061). The newest by
-          # version, not by date; a major of four digits (v2026.07.31, a
-          # revert baseline) is a date, not a release. Before the first v tag,
-          # the last release/<date>-<sha> tag still counts.
-          last_tag="$(git tag --list 'v*' --sort=-v:refname | { grep -E '^v[0-9]{1,3}\.[0-9]+\.[0-9]+$' || true; } | head -1)"
-          if [ -z "$last_tag" ]; then
-            last_tag="$(git tag --list 'release/*' --sort=-creatordate | head -1)"
-          fi
-          if [ -z "$last_tag" ]; then
-            echo "new=true" >> "$GITHUB_OUTPUT"
-            echo "No release tag found; treating as new."
-            exit 0
-          fi
-          last_sha="$(git rev-list -n1 "$last_tag")"
-          head_sha="$(git rev-parse HEAD)"
-          echo "last release: $last_tag ($(git rev-parse --short "$last_sha"))"
-          echo "main head:    $(git rev-parse --short "$head_sha")"
-          if [ "$last_sha" = "$head_sha" ]; then
-            echo "new=false" >> "$GITHUB_OUTPUT"
-            echo "Nothing merged since the last release."
-          else
-            echo "new=true" >> "$GITHUB_OUTPUT"
-            echo "$(git rev-list --count "$last_sha".."$head_sha") commit(s) to ship."
-          fi
-
       # ------------------------------------------------------------------
       # THE TOOLCHAIN the operator Mac has and this runner does not. Each one
       # is something release.sh assumes is already on the machine.
       # ------------------------------------------------------------------
       - uses: actions/setup-node@v7
-        if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
+        if: needs.decide.outputs.mode != 'off' && needs.decide.outputs.new == 'true'
         with:
           node-version: 22
           cache: npm
@@ -293,7 +397,7 @@ jobs:
       # missing one ended a release 25 minutes in. scripts/nightly-release.test.sh
       # fails if this version and firebase.json's runtime disagree.
       - uses: actions/setup-python@v7
-        if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
+        if: needs.decide.outputs.mode != 'off' && needs.decide.outputs.new == 'true'
         with:
           python-version: '3.13'
 
@@ -302,7 +406,7 @@ jobs:
       # toolchain resolver, so 21 has to be here. The last one listed is the
       # default JAVA_HOME. keytool below comes from it too.
       - uses: actions/setup-java@v6
-        if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
+        if: needs.decide.outputs.mode != 'off' && needs.decide.outputs.new == 'true'
         with:
           distribution: temurin
           java-version: |
@@ -318,11 +422,11 @@ jobs:
       # gradle.properties. Both steps now also refuse unless they are on a
       # GitHub Actions runner, and the restore step refuses unless this is set.
       - name: Pin the Gradle home to this run
-        if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
+        if: needs.decide.outputs.mode != 'off' && needs.decide.outputs.new == 'true'
         run: echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-home" >> "$GITHUB_ENV"
 
       - uses: gradle/actions/setup-gradle@v6
-        if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
+        if: needs.decide.outputs.mode != 'off' && needs.decide.outputs.new == 'true'
 
       # Every npm root release.sh builds, tests or deploys. Step 0a checks all
       # three against their lockfiles and nothing in the release installs them;
@@ -333,7 +437,7 @@ jobs:
       # firebase-tools is in no package.json; release.sh and safe-deploy.sh call
       # a global `firebase`. Pinned to the version ci.yml's jobs use.
       - name: Install
-        if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
+        if: needs.decide.outputs.mode != 'off' && needs.decide.outputs.new == 'true'
         run: |
           npm ci
           npm ci --prefix mytribe/functions
@@ -341,7 +445,7 @@ jobs:
           npm install -g firebase-tools@15.18.0
 
       - name: Build the reconcile codebase's venv
-        if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
+        if: needs.decide.outputs.mode != 'off' && needs.decide.outputs.new == 'true'
         working-directory: auntieos-admin/web/functions-python
         run: |
           python3.13 -m venv venv
@@ -353,7 +457,7 @@ jobs:
       # not a stop, so the release would succeed untagged, the newness check
       # above would never see it, and the next night would ship it all again.
       - name: Name the release tagger
-        if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
+        if: needs.decide.outputs.mode != 'off' && needs.decide.outputs.new == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -395,7 +499,7 @@ jobs:
       # which is the failure step 0c refuses for the web bundles.
       # ------------------------------------------------------------------
       - name: Restore the Android signing material
-        if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
+        if: needs.decide.outputs.mode != 'off' && needs.decide.outputs.new == 'true'
         env:
           AUNTIEOS_KEYSTORE_B64: ${{ secrets.AUNTIEOS_KEYSTORE_B64 }}
           AUNTIEOS_KEYSTORE_PASSWORD: ${{ secrets.AUNTIEOS_KEYSTORE_PASSWORD }}
@@ -475,7 +579,7 @@ jobs:
       # is the only proof that testers can take the update. The runbook has the
       # command that prints the Mac's.
       - name: Verify the signing material opens
-        if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
+        if: needs.decide.outputs.mode != 'off' && needs.decide.outputs.new == 'true'
         env:
           KS_PASS: ${{ secrets.AUNTIEOS_KEYSTORE_PASSWORD }}
           KS_ALIAS: ${{ secrets.AUNTIEOS_KEY_ALIAS }}
@@ -544,7 +648,7 @@ jobs:
       # checked". Building mytribe/functions first lets 1b compare the declared
       # secrets against Secret Manager for real.
       - name: Preflight only
-        if: steps.decide.outputs.mode == 'preflight' && steps.newness.outputs.new == 'true'
+        if: needs.decide.outputs.mode == 'preflight' && needs.decide.outputs.new == 'true'
         env:
           RELEASE_YES: '1'
           RELEASE_PREFLIGHT_ONLY: '1'
@@ -554,7 +658,7 @@ jobs:
           npm run deploy
 
       - name: Release to production
-        if: steps.decide.outputs.mode == 'full' && steps.newness.outputs.new == 'true'
+        if: needs.decide.outputs.mode == 'full' && needs.decide.outputs.new == 'true'
         env:
           RELEASE_YES: '1'
           RELEASE_INCLUDE_ADMIN_FUNCTIONS: '1'
@@ -591,8 +695,9 @@ jobs:
       - name: Summary
         if: always()
         env:
-          MODE: ${{ steps.decide.outputs.mode }}
-          NEW: ${{ steps.newness.outputs.new }}
+          MODE: ${{ needs.decide.outputs.mode }}
+          NEW: ${{ needs.decide.outputs.new }}
+          E2E_REAL_RESULT: ${{ needs.e2e-real.result }}
         run: |
           {
             echo "## Nightly release"
@@ -601,6 +706,7 @@ jobs:
             echo "| --- | --- |"
             echo "| Mode | \`${MODE:-off}\` |"
             echo "| Anything to ship | \`${NEW:-n/a}\` |"
+            echo "| Real-services suite | \`${E2E_REAL_RESULT:-n/a}\` |"
             echo "| Commit | \`$(git rev-parse --short HEAD)\` |"
             echo
             if [ "${MODE:-off}" = "off" ]; then
