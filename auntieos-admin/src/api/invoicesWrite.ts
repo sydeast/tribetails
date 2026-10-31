@@ -7,6 +7,8 @@ import type {
   CreateInvoiceResult,
   CreateQuoteArgs,
   CreateQuoteResult,
+  GenerateInvoicePdfArgs,
+  GenerateInvoicePdfResult,
   GenerateReceiptArgs,
   GenerateReceiptResult,
   GetInvoiceLedgerArgs,
@@ -390,6 +392,19 @@ export async function updateInvoice(
 ): Promise<UpdateInvoiceResultTotals> {
   const res = await call<UpdateInvoiceArgs, UpdateInvoiceResult>('updateInvoice', { invoiceId, patch });
   return res.totals;
+}
+
+/**
+ * generateInvoicePdf (admin): renders the invoice as a PDF on the server and
+ * returns the download-token URL of the stored file. Admin Android and the
+ * desktop console call the same callable. Throws `not-found` for a wrong id and
+ * `failed-precondition` (`invoice_pdf_render_failed`) when the render or the
+ * store fails.
+ */
+export async function generateInvoicePdf(invoiceId: string): Promise<string> {
+  const res = await call<GenerateInvoicePdfArgs, GenerateInvoicePdfResult>('generateInvoicePdf', { invoiceId });
+  if (!res.pdfUrl) throw new Error('generateInvoicePdf: server returned no pdfUrl');
+  return res.pdfUrl;
 }
 
 /**
