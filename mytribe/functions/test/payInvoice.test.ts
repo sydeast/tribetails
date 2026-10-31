@@ -523,6 +523,175 @@ describe('payInvoice allowed_payment_method_types (issue #409)', () => {
     );
     expect(mocks.stripeMock.checkout.sessions.create).toHaveBeenCalledTimes(1);
   });
+
+  it('never sends the payment_method_types param stripe@23 removed (issue #1192)', async () => {
+    const ctx = buildDbMock({
+      docs: { ...invoiceDocs, 'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    await payInvoiceHandler({ data: payData, auth: { uid: 'u1' } } as any);
+    const params = mocks.stripeMock.checkout.sessions.create.mock.calls[0][0];
+    expect(params).not.toHaveProperty('payment_method_types');
+    expect(params.mode).toBe('payment');
+  });
+
+  const filteredLines = () =>
+    (logEvent as any).mock.calls
+      .map((c: any[]) => c[0])
+      .filter((e: any) => e.event === 'portal.invoice.checkout.methodtype.filtered');
+
+  it('warns when Stripe leaves an enabled type out of the session it created (issue #1192)', async () => {
+    // Under allowed_payment_method_types an unactivated Klarna is filtered out
+    // rather than refused. The household still pays by card; the operator
+    // gets a line naming what was dropped (runbook section 4a).
+    const ctx = buildDbMock({
+      docs: {
+        ...invoiceDocs,
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+        'business_settings/business_settings': {
+          paymentOptions: { klarna: { enabled: true }, affirm: { enabled: true } },
+        },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.stripeMock.checkout.sessions.create.mockImplementationOnce(async () => ({
+      id: 'cs_test_1',
+      url: 'https://checkout.stripe.com/test',
+      client_secret: null,
+      payment_method_types: ['card', 'affirm'],
+    }));
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    const res = await payInvoiceHandler({ data: payData, auth: { uid: 'u1' } } as any);
+
+    expect(res.checkoutUrl).toBe('https://checkout.stripe.com/test');
+    expect(mocks.stripeMock.checkout.sessions.create).toHaveBeenCalledTimes(1);
+    const lines = filteredLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      severity: 'warn',
+      function: 'payInvoice',
+      uid: 'u1',
+      extra: { invoiceId: 'inv-1', filteredTypes: ['klarna'], sessionId: 'cs_test_1' },
+    });
+  });
+
+  it('logs no filtered line when Stripe offers every requested type (issue #1192)', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        ...invoiceDocs,
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+        'business_settings/business_settings': { paymentOptions: { klarna: { enabled: true } } },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.stripeMock.checkout.sessions.create.mockImplementationOnce(async () => ({
+      id: 'cs_test_1',
+      url: 'https://checkout.stripe.com/test',
+      client_secret: null,
+      payment_method_types: ['klarna', 'card'],
+    }));
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    await payInvoiceHandler({ data: payData, auth: { uid: 'u1' } } as any);
+    const events = (logEvent as any).mock.calls.map((c: any[]) => c[0].event);
+    expect(events).toContain('portal.invoice.checkout.created');
+    expect(filteredLines()).toHaveLength(0);
+  });
+
+  it('does not repeat the rejected types as filtered after the card-only retry (issue #1192)', async () => {
+    // The retry session is card-only by request, so Klarna missing from it is
+    // not Stripe filtering anything; the `rejected` line already named it.
+    const ctx = buildDbMock({
+      docs: {
+        ...invoiceDocs,
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+        'business_settings/business_settings': { paymentOptions: { klarna: { enabled: true } } },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.stripeMock.checkout.sessions.create
+      .mockImplementationOnce(async () => {
+        const err: any = new Error('The payment method type provided is invalid.');
+        err.type = 'StripeInvalidRequestError';
+        err.param = 'allowed_payment_method_types[1]';
+        throw err;
+      })
+      .mockImplementationOnce(async () => ({
+        id: 'cs_test_2',
+        url: 'https://checkout.stripe.com/test',
+        client_secret: null,
+        payment_method_types: ['card'],
+      }));
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    await payInvoiceHandler({ data: payData, auth: { uid: 'u1' } } as any);
+    const events = (logEvent as any).mock.calls.map((c: any[]) => c[0].event);
+    expect(events).toContain('portal.invoice.checkout.methodtype.rejected');
+    expect(filteredLines()).toHaveLength(0);
+  });
+});
+/**
+ * Issue #1192: the refusal classifier and the dropped-type comparison, as
+ * pure functions. The handler tests above prove the wiring; these pin each
+ * shape Stripe can hand back.
+ */
+describe('isUnsupportedMethodTypeError (issue #1192)', () => {
+  const stripeErr = (type: string, param?: string, raw?: { param?: string }) =>
+    Object.assign(new Error('refused'), { type, param, raw });
+  it('matches an invalid-request refusal on allowed_payment_method_types', async () => {
+    const { isUnsupportedMethodTypeError } = await import('../src/portal/payInvoice');
+    expect(isUnsupportedMethodTypeError(stripeErr('StripeInvalidRequestError', 'allowed_payment_method_types[1]'))).toBe(
+      true,
+    );
+    expect(isUnsupportedMethodTypeError(stripeErr('invalid_request_error', 'allowed_payment_method_types'))).toBe(true);
+  });
+  it('still matches the pre-23 payment_method_types param', async () => {
+    const { isUnsupportedMethodTypeError } = await import('../src/portal/payInvoice');
+    expect(isUnsupportedMethodTypeError(stripeErr('StripeInvalidRequestError', 'payment_method_types[2]'))).toBe(true);
+  });
+  it('reads the param off raw when the top-level field is absent', async () => {
+    const { isUnsupportedMethodTypeError } = await import('../src/portal/payInvoice');
+    expect(
+      isUnsupportedMethodTypeError(
+        stripeErr('StripeInvalidRequestError', undefined, { param: 'allowed_payment_method_types[0]' }),
+      ),
+    ).toBe(true);
+  });
+  it('rejects an invalid request on any other param', async () => {
+    const { isUnsupportedMethodTypeError } = await import('../src/portal/payInvoice');
+    expect(
+      isUnsupportedMethodTypeError(stripeErr('StripeInvalidRequestError', 'line_items[0][price_data][unit_amount]')),
+    ).toBe(false);
+    expect(isUnsupportedMethodTypeError(stripeErr('StripeInvalidRequestError', 'excluded_payment_method_types[0]'))).toBe(
+      false,
+    );
+  });
+  it('rejects other error types even when they name the param', async () => {
+    const { isUnsupportedMethodTypeError } = await import('../src/portal/payInvoice');
+    expect(isUnsupportedMethodTypeError(stripeErr('StripeAuthenticationError', 'allowed_payment_method_types'))).toBe(
+      false,
+    );
+    expect(isUnsupportedMethodTypeError(stripeErr('StripeConnectionError'))).toBe(false);
+    expect(isUnsupportedMethodTypeError(null)).toBe(false);
+    expect(isUnsupportedMethodTypeError('allowed_payment_method_types')).toBe(false);
+  });
+});
+describe('methodTypesDroppedBy (issue #1192)', () => {
+  it('names the requested types the session does not offer', async () => {
+    const { methodTypesDroppedBy } = await import('../src/portal/payInvoice');
+    expect(methodTypesDroppedBy(['card', 'klarna', 'affirm'], { payment_method_types: ['card'] })).toEqual([
+      'klarna',
+      'affirm',
+    ]);
+  });
+  it('is empty when every requested type is offered', async () => {
+    const { methodTypesDroppedBy } = await import('../src/portal/payInvoice');
+    expect(methodTypesDroppedBy(['card', 'klarna'], { payment_method_types: ['klarna', 'card'] })).toEqual([]);
+  });
+  it('is empty, not everything, when the session carries no list to compare', async () => {
+    const { methodTypesDroppedBy } = await import('../src/portal/payInvoice');
+    expect(methodTypesDroppedBy(['card', 'klarna'], {})).toEqual([]);
+    expect(methodTypesDroppedBy(['card', 'klarna'], { payment_method_types: null })).toEqual([]);
+  });
 });
 /**
  * ISSUE #826: the settlement round, and reusing a session instead of minting a

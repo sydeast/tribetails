@@ -3,7 +3,9 @@ package com.kinfolk.portal.portal
 import com.kinfolk.portal.firebase.FakeFunctionsClient
 import com.kinfolk.portal.screens.invoices.payMethodsFor
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
@@ -184,6 +186,40 @@ class PortalApiTest {
         assertTrue(res.paid[0].isPaid)
     }
 
+    @Test
+    fun `getMyInvoices keeps every invoice whatever shape the legacy viewed flag has`() = runTest {
+        // #1180: `viewed` is the old system's flag. The server sends a boolean, but a
+        // wrong-typed value must never drop the invoice from the list.
+        fun inv(id: String, viewed: JsonElement?) = buildJsonObject {
+            put("id", id)
+            put("kinfolkId", "3")
+            put("total", 10.0)
+            put("amountDue", 10.0)
+            put("status", "open")
+            if (viewed != null) put("viewed", viewed)
+        }
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyInvoices", buildJsonObject {
+            put("accountBalanceCents", 0L)
+            put("open", buildJsonArray {
+                add(inv("bool-true", JsonPrimitive(true)))
+                add(inv("bool-false", JsonPrimitive(false)))
+                add(inv("text-yes", JsonPrimitive("Yes")))
+                add(inv("explicit-null", JsonNull))
+                add(inv("absent", null))
+                add(inv("object", buildJsonObject { put("v", true) }))
+                add(inv("array", buildJsonArray { add(true) }))
+            })
+            put("paid", buildJsonArray {})
+            put("credits", buildJsonArray {})
+        })
+        val res = PortalApi(fake).getMyInvoices("3")
+        assertEquals(
+            listOf("bool-true", "bool-false", "text-yes", "explicit-null", "absent", "object", "array"),
+            res.open.map { it.id },
+        )
+        assertEquals(listOf(true, false, false, false, false, false, false), res.open.map { it.viewed })
+    }
     @Test
     fun `redeemCredit forwards target and decodes refund result`() = runTest {
         val fake = FakeFunctionsClient()

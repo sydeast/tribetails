@@ -223,7 +223,7 @@ fun SchedulingOptionsScreen(
                         }
 
                         Text("Special hours source: Business Hours profile", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textPrimary)
-                        Text("Surcharges available for holiday use: ${serviceState.surcharges.count { it.isActive }}", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.kinfolkOrange)
+                        Text(activeSurchargesLabel(serviceState.surcharges.count { it.isActive }), style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.kinfolkOrange)
 
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             GhostButton(label = "Create New Surcharge", onClick = onNavigateToServiceManagement)
@@ -768,3 +768,9 @@ private fun ConnectedGoogleCalendarBody(
         )
     }
 }
+/**
+ * The surcharge count line on Scheduling Options. States the count and nothing more:
+ * no invoice code reads surcharges yet, so the line must not say they are applied
+ * to holidays or invoices (#1179; ballot rows inv-surcharge-lines, bill-surcharge-stacking).
+ */
+internal fun activeSurchargesLabel(activeCount: Int): String = "Active surcharges: $activeCount"
