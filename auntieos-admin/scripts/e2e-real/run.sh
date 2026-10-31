@@ -7,8 +7,10 @@
 #   1. build mytribe/functions, because the emulator serves lib/, not src/,
 #      and check the admin's own codebase (web/functions, plain JS, no build)
 #      is installed: the emulator serves both (#1201);
-#   2. preflight: write a .secret.local into EACH codebase from the
-#      environment, or refuse (non-test Stripe key, a business or private
+#   2. preflight: fill any unset Cloudinary, smtp2go or Google OAuth E2E_*
+#      variable from Secret Manager by allowlisted name (secret-manager.mjs,
+#      #1264; the only Secret Manager read in the run), then write a
+#      .secret.local into EACH codebase from the environment, or refuse (non-test Stripe key, a business or private
 #      phone number, a spec that could press Google Calendar Disconnect);
 #   3. boot auth + Firestore + functions under a demo- project id, so no
 #      secret lookup can reach production Secret Manager;
@@ -48,7 +50,9 @@ export E2E_FUNCTIONS_PORT="5398"
 # getCredentialsEnvironment, firebase-tools 15.18.0). Checked 2026-10-02. What
 # keeps production out is the demo- id (no real project to address) and a
 # secrets file with every declared key in it (no Secret Manager lookup at all).
-# CI has neither ADC nor a login.
+# CI authenticates through Workload Identity only for the explicit read in
+# secret-manager.mjs (#1264), and drops those credentials before this script
+# runs, so its emulator has neither ADC nor a login.
 
 # Runs on every exit, early refusals included, and keeps the exit code it was
 # handed: a failed cleanup is printed, never turned into the run's verdict.
@@ -104,6 +108,17 @@ if [ ! -d "$ADMIN_FUNCTIONS_DIR/node_modules" ]; then
   echo "$ADMIN_FUNCTIONS_DIR/node_modules does not exist. Install it first: npm ci --prefix web/functions" >&2
   exit 1
 fi
+
+# #1264: the Cloudinary, smtp2go and Google OAuth values from Secret Manager
+# (auntieos-ttpc), by allowlisted name, for any E2E_* variable still unset. On
+# this machine that is gcloud's own login. No gcloud, no login or a refused
+# read leaves the variable unset and the vendor skips. Nothing is written to
+# disk: the script prints `export` lines and they are evaluated here. In CI the
+# workflow has already read them and set E2E_SECRET_MANAGER=done.
+echo "== e2e-real: vendor values from Secret Manager"
+sm_exports="$(node "$SCRIPT_DIR/secret-manager.mjs" --shell)"
+eval "$sm_exports"
+unset sm_exports
 
 echo "== e2e-real: preflight"
 node scripts/e2e-real/preflight.mjs "$ADMIN_DIR/cypress/e2e-real" "$REAL_DIR/vendors.json" "$FUNCTIONS_DIR" "$ADMIN_FUNCTIONS_DIR"

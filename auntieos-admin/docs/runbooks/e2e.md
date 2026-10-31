@@ -366,7 +366,10 @@ npm run e2e:real
 
 1. builds `mytribe/functions` (the emulator serves `lib/`, not `src/`), and
    refuses by name if `web/functions` has no `node_modules`;
-2. runs `scripts/e2e-real/preflight.mjs`, which writes a `.secret.local` into
+2. fills any unset Cloudinary, smtp2go or Google OAuth variable from Secret
+   Manager by allowlisted name (`scripts/e2e-real/secret-manager.mjs`, #1264;
+   "Where each value comes from" below), then runs
+   `scripts/e2e-real/preflight.mjs`, which writes a `.secret.local` into
    each served codebase (`mytribe/functions` and `web/functions`) and refuses
    to start, writing neither, if a Stripe value is
    not a test-mode key (`sk_test_`, `rk_test_`, `pk_test_`, `whsec_`), if any
@@ -411,27 +414,71 @@ in the function's own source directory, so each codebase gets a complete one.
 Credentials are not hidden from the emulator, and on a developer machine it
 warns that it found them. Hiding them does not help: with no Application
 Default Credentials, firebase-tools hands the emulator the `firebase login`
-account instead. CI has neither.
+account instead. In CI the job authenticates through Workload Identity for the
+explicit read in `secret-manager.mjs` only, then revokes gcloud's login,
+deletes the credentials file and blanks the variables the auth step set, all
+before the emulator boots. That read is the only Secret Manager read in the
+run; the two locks above are what keep the emulator from making another.
 
-### Credentials, and what happens without them
+### Where each value comes from (#1264)
 
-| Vendor | Variables | Without them |
+Operator ruling 2026-10-31. D3 already runs Cloudinary, smtp2go and Google
+against the production accounts (uploads under `e2e/`, sends to the three test
+inboxes only, a separate test calendar), so the run reads those values from
+Secret Manager in `auntieos-ttpc`, by explicit name. Stripe and Twilio stay
+test-only and are never read from there.
+
+| Variable the run reads | Comes from | Without it |
 |---|---|---|
-| Stripe (test mode) | `STRIPE_TEST_SECRET_KEY`, `STRIPE_TEST_PUBLISHABLE_KEY`; the portal's pay spec also needs the `stripe` CLI on `PATH` | Stripe specs skip |
-| Twilio (test credentials) | `TWILIO_TEST_ACCOUNT_SID`, `TWILIO_TEST_AUTH_TOKEN`, optional `TWILIO_TEST_FROM_NUMBER` (default: Twilio's test sender `+15005550006`) | Twilio specs skip |
-| Email (smtp2go) | `E2E_SMTP2GO_API_KEY`, `E2E_EMAIL_FROM` | Email specs skip |
-| Cloudinary | `E2E_CLOUDINARY_CLOUD_NAME`, `E2E_CLOUDINARY_API_KEY`, `E2E_CLOUDINARY_API_SECRET` | Cloudinary specs skip |
-| Google Calendar | `E2E_GOOGLE_OAUTH_CLIENT_ID`, `E2E_GOOGLE_OAUTH_CLIENT_SECRET`, `E2E_GOOGLE_CALENDAR_REFRESH_TOKEN`, `E2E_GOOGLE_CALENDAR_ID` | Calendar specs skip |
+| `E2E_CLOUDINARY_CLOUD_NAME`, `E2E_CLOUDINARY_API_KEY`, `E2E_CLOUDINARY_API_SECRET` | Secret Manager: `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | Cloudinary specs skip |
+| `E2E_SMTP2GO_API_KEY`, `E2E_EMAIL_FROM` | Secret Manager: `SMTP2GO_API_KEY`, `EMAIL_FROM` (the sender the production functions use) | Email specs skip |
+| `E2E_GOOGLE_OAUTH_CLIENT_ID`, `E2E_GOOGLE_OAUTH_CLIENT_SECRET` | Secret Manager: `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` | Calendar specs skip |
+| `E2E_GOOGLE_CALENDAR_ID`, `E2E_GOOGLE_CALENDAR_REFRESH_TOKEN` | GitHub environment `e2e-real` (operator stores) | Calendar specs skip |
+| `TWILIO_TEST_ACCOUNT_SID`, `TWILIO_TEST_AUTH_TOKEN` | GitHub environment `e2e-real` (operator stores); optional `TWILIO_TEST_FROM_NUMBER`, default Twilio's test sender `+15005550006` | Twilio specs skip |
+| `STRIPE_TEST_SECRET_KEY`, `STRIPE_TEST_PUBLISHABLE_KEY` | GitHub environment `e2e-real` (stored 2026-10-02); the portal's pay spec also needs the `stripe` CLI on `PATH` | Stripe specs skip |
 
-To run a vendor's specs locally, export its variables in the shell before
-`npm run e2e:real`. A missing vendor is a skip with the variables named in the
-log, never a pass and never a red run. The preflight prints which vendors it
-found.
+**The four values the operator stores**, once, in the `e2e-real` environment
+(Settings, Environments, `e2e-real`, Environment secrets):
 
-In CI the same names are secrets in the GitHub environment `e2e-real`
-(deployment branch policy: `main` only), read by
-`.github/workflows/e2e-real.yml`. That workflow runs on `workflow_dispatch`
-from main and as a `workflow_call` from a release.
+1. `TWILIO_TEST_ACCOUNT_SID`
+2. `TWILIO_TEST_AUTH_TOKEN`
+3. `E2E_GOOGLE_CALENDAR_ID`
+4. `E2E_GOOGLE_CALENDAR_REFRESH_TOKEN`
+
+The preflight's refusals are unchanged: a Stripe value that is not `sk_test_`,
+`rk_test_`, `pk_test_` or `whsec_`, and any Twilio value naming a number in
+the 805 or 989 area code, stop the run before anything is written.
+
+**The allowlist** is the `email`, `cloudinary` and `googleCalendar` rows of
+`VENDOR_SECRETS` in `scripts/e2e-real/preflight.mjs` (`SECRET_MANAGER_VENDORS`),
+read by `scripts/e2e-real/secret-manager.mjs`. Both runs, the workflow and the
+two `run.sh` files use that one script. It refuses any other name before gcloud
+starts, and its tests fail if a `STRIPE_` or `TWILIO_` name is ever added.
+
+**An E2E_* variable already set wins.** Exported in the shell, or stored in
+`e2e-real` under one of the E2E_* names in the first three rows, it is used as
+it is and its secret is not read. That is how to point one vendor elsewhere.
+
+**Locally**, `run.sh` reads the unset ones with gcloud's own login
+(`gcloud auth login` as an account that can read those secrets). The values are
+printed as `export` lines and evaluated by `run.sh`, never written to disk
+except into the run's own `.secret.local`. No gcloud, no login, a refused read
+or an empty answer leaves the variable unset with the reason printed, and that
+vendor skips. `E2E_SECRET_MANAGER=off` skips the read entirely.
+
+**In CI** (`.github/workflows/e2e-real.yml`, both jobs) the job authenticates
+through the nightly's Workload Identity (`vars.NIGHTLY_WIF_PROVIDER`,
+`vars.NIGHTLY_SERVICE_ACCOUNT`; the provider admits this repository on
+`refs/heads/main` only), runs `secret-manager.mjs --github`, which prints
+`::add-mask::` for every value before it writes anything else and then exports
+them through `GITHUB_ENV`, and drops the credentials before the emulator boots.
+Each job, and the nightly's `e2e-real` caller job, holds `id-token: write` for
+this. A read that fails prints a warning annotation; the vendor skips and the
+job stays green. A Workload Identity failure fails the job. The workflow runs on
+`workflow_dispatch` from main and as a `workflow_call` from a release.
+
+A missing vendor is a skip with the variables named in the log, never a pass
+and never a red run. The preflight prints which vendors it found.
 
 **How a release reads it (#1193).** The nightly release
 (`nightly-release.yml`) calls `e2e-real.yml` for the commit it is about to

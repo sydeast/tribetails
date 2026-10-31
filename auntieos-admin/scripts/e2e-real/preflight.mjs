@@ -57,8 +57,10 @@ export const MARKER = '# written by auntieos-admin/scripts/e2e-real/preflight.mj
 /**
  * Where each functions secret's value comes from, by vendor.
  *
- * `env` is the variable the run reads (the name it has in the GitHub
- * environment `e2e-real`). `placeholder` is what goes in the file when the
+ * `env` is the variable the run reads. Stripe's and Twilio's come from the
+ * GitHub environment `e2e-real` (or the shell); the vendors in
+ * `SECRET_MANAGER_VENDORS` below are filled from Secret Manager by
+ * `secret-manager.mjs` under the `secret` name when unset (#1264). `placeholder` is what goes in the file when the
  * variable is unset: shaped like the real thing where a guard below checks the
  * shape, and unable to authenticate anywhere.
  */
@@ -91,6 +93,19 @@ export const VENDOR_SECRETS = {
     { secret: 'GOOGLE_OAUTH_CLIENT_SECRET', env: 'E2E_GOOGLE_OAUTH_CLIENT_SECRET', placeholder: 'e2e-not-configured' },
   ],
 };
+
+/**
+ * The vendors whose values the run may read from production Secret Manager
+ * (operator ruling on #1264, 2026-10-31). D3 already uses the production
+ * accounts for these three: Cloudinary uploads under `e2e/`, smtp2go sends to
+ * the three test inboxes only, and Google uses the same OAuth client with a
+ * separate test calendar. Stripe and Twilio are NOT here and never may be:
+ * they stay test-only, from the GitHub environment `e2e-real`.
+ *
+ * `secret-manager.mjs` derives its allowlist from these rows, so the secret
+ * names it reads and the variables it fills cannot drift from this table.
+ */
+export const SECRET_MANAGER_VENDORS = Object.freeze(['email', 'cloudinary', 'googleCalendar']);
 
 /**
  * Variables a vendor needs that are NOT functions secrets, so they never go in
