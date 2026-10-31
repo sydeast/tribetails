@@ -184,6 +184,16 @@ class AdminSettingsViewModel(
             )
             return
         }
+        // One write at a time (#1214). A second save built while the first is in
+        // flight starts from the copy the first has not updated yet, so for a
+        // list field it would replace the server's list and drop the first edit.
+        // Refused loudly rather than dropped: the caller's draft is untouched.
+        if (_uiState.value.settingsSaving) {
+            _uiState.value = _uiState.value.copy(
+                error = "Still saving the last change. Try again in a moment.",
+            )
+            return
+        }
         val changes = businessSettingsFieldChanges(baseline, settings)
         if (changes.isEmpty()) {
             _uiState.value = _uiState.value.copy(
@@ -209,9 +219,18 @@ class AdminSettingsViewModel(
                     // The baseline moves to what the server now holds. Without
                     // this a second save re-sends the first save's fields, which
                     // is the same clobber one step later.
-                    settingsBaseline = settings
+                    //
+                    // Only the fields this save wrote move, in the baseline and in
+                    // the on-screen copy. Replacing either wholesale also dragged
+                    // in whatever else the caller's snapshot held, so an earlier
+                    // toggle the server had already taken showed its old value.
+                    settingsBaseline = revertBusinessSettingsFields(
+                        settingsBaseline ?: baseline, settings, changes.keys,
+                    )
                     _uiState.value = _uiState.value.copy(
-                        businessSettings = settings,
+                        businessSettings = revertBusinessSettingsFields(
+                            _uiState.value.businessSettings, settings, changes.keys,
+                        ),
                         stagedLogoUrl = if (clearStagedLogo) null else _uiState.value.stagedLogoUrl,
                         saveSuccess = true,
                         settingsSaving = false,
