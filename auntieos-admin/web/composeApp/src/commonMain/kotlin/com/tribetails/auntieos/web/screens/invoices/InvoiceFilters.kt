@@ -175,3 +175,57 @@ fun formatMoney(amount: Double): String {
     val sign    = if (amount < 0) "-" else ""
     return "$sign\$$whole.$fracStr"
 }
+
+/**
+ * Den filter tabs. The same seven tabs, labels and order as the admin web
+ * (`FILTERS` in src/screens/Invoices.tsx) and Android.
+ */
+enum class InvoiceFilter(val label: String) {
+    All("All"),
+    Open("Open"),
+    Overdue("Overdue"),
+    Paid("Paid"),
+    Draft("Draft"),
+    Quote("Quote"),
+    Credit("Credit"),
+}
+/**
+ * Tab membership, each a POSITIVE test against the STORED state stamp (or the
+ * derived overdue flag), exactly as web's `FILTERS`. An unstamped doc matches
+ * only All. Credit also takes `redeemed`. These do not use [invoiceIsOutstanding]
+ * or [invoiceIsPaid], which read `amountDue` and stay for the detail screen.
+ */
+fun invoiceMatchesFilter(invoice: Invoice, filter: InvoiceFilter, todayIso: String): Boolean {
+    val state = invoiceStateOrNull(invoice)
+    return when (filter) {
+        InvoiceFilter.All -> true
+        InvoiceFilter.Open -> state == InvoiceState.OPEN
+        InvoiceFilter.Overdue -> invoiceIsOverdue(invoice, todayIso)
+        InvoiceFilter.Paid -> state == InvoiceState.PAID
+        InvoiceFilter.Draft -> state == InvoiceState.DRAFT
+        InvoiceFilter.Quote -> state == InvoiceState.QUOTE
+        InvoiceFilter.Credit -> state == InvoiceState.CREDIT || state == InvoiceState.REDEEMED
+    }
+}
+
+/**
+ * Row chip label, driven by the stored state stamp exactly as Android's row and
+ * web's `invoiceStateInfo` do: Overdue first, then the stamp's own name, and the
+ * raw stored string for an unstamped doc. Never derived from amountDue, so a
+ * credit, a cancelled invoice or a zero-balance open bill is not called Paid.
+ * (The desktop Invoice carries no quote decision, so a declined quote reads Quote.)
+ */
+fun invoiceChipLabel(invoice: Invoice, todayIso: String): String {
+    if (invoiceIsOverdue(invoice, todayIso)) return "Overdue"
+    return when (invoiceStateOrNull(invoice)) {
+        InvoiceState.QUOTE -> "Quote"
+        InvoiceState.DRAFT -> "Draft"
+        InvoiceState.CANCELLED -> "Cancelled"
+        InvoiceState.CREDIT -> "Credit"
+        InvoiceState.REDEEMED -> "Redeemed"
+        InvoiceState.ZERO -> "Zero"
+        InvoiceState.OPEN -> "Open"
+        InvoiceState.PAID -> "Paid"
+        null -> invoice.status.trim().ifBlank { "No status" }
+    }
+}

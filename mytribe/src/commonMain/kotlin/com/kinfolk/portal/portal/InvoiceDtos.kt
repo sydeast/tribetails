@@ -74,6 +74,7 @@ data class Invoice(
     val terms: String?,
     val paymentsHistory: String?,
     val address: String?,
+    /** LEGACY (#1180): the old system's Viewed flag, normalised by the server. Not a household receipt; nothing writes it and no screen reads it. */
     val viewed: Boolean,
     val creditAmountCents: Long?,
     val creditTarget: CreditTarget?,
