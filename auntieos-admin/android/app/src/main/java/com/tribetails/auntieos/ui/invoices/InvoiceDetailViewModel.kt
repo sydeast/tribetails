@@ -33,6 +33,12 @@ data class InvoiceDetailUiState(
     val sessionsLoading: Boolean = false,
     val editMode: Boolean = false,
     val pendingSessionIds: Set<String> = emptySet(),
+    /**
+     * #1254: the server's refusal of the last link save, VERBATIM, shown inside
+     * the Link Sessions dialog (the screen toast sits behind the modal). Null
+     * when the dialog opens and once the operator changes a pick.
+     */
+    val linkError: String? = null,
     val saveLoading: Boolean = false,
     val toastMessage: String = "",
     val toastVisible: Boolean = false,
@@ -479,17 +485,31 @@ class InvoiceDetailViewModel(
 
     fun openEditMode() {
         val current = _uiState.value.invoice?.sessionIds?.toSet() ?: emptySet()
-        _uiState.value = _uiState.value.copy(editMode = true, pendingSessionIds = current)
+        _uiState.value = _uiState.value.copy(editMode = true, pendingSessionIds = current, linkError = null)
     }
 
     fun closeEditMode() {
-        _uiState.value = _uiState.value.copy(editMode = false)
+        _uiState.value = _uiState.value.copy(editMode = false, linkError = null)
     }
 
     fun toggleSessionInPending(sessionId: String) {
-        val pending = _uiState.value.pendingSessionIds.toMutableSet()
-        if (sessionId in pending) pending.remove(sessionId) else pending.add(sessionId)
-        _uiState.value = _uiState.value.copy(pendingSessionIds = pending)
+        val state = _uiState.value
+        val pending = state.pendingSessionIds.toMutableSet()
+        if (sessionId in pending) {
+            pending.remove(sessionId)
+        } else {
+            // #1254: a visit another invoice bills cannot be ticked. The chip is
+            // already disabled; this keeps the rule true for any other caller.
+            val session = state.availableSessions.firstOrNull { it.id == sessionId }
+            val invoice = state.invoice
+            if (session != null && invoice != null &&
+                linkPickerOnOtherInvoice(session, invoice.id, invoice.sessionIds)
+            ) {
+                return
+            }
+            pending.add(sessionId)
+        }
+        _uiState.value = state.copy(pendingSessionIds = pending, linkError = null)
     }
 
     fun saveLinks() {
@@ -510,6 +530,9 @@ class InvoiceDetailViewModel(
                 AuntieLog.e("Failed to link sessions for invoice $invoiceId", linkResult.exceptionOrNull())
                 _uiState.value = _uiState.value.copy(
                     saveLoading  = false,
+                    // Verbatim: the server's refusal names the other invoice.
+                    linkError    = linkResult.exceptionOrNull()?.message?.takeIf { it.isNotBlank() }
+                        ?: "Save failed.",
                     toastMessage = "Save failed: ${linkResult.exceptionOrNull()?.message}",
                     toastVisible = true,
                     toastIsError = true,
@@ -995,6 +1018,27 @@ internal fun isDraftInvoice(invoice: Invoice): Boolean =
  * removed — so the answer to "we need this list on another screen" is another
  * callable field, not these.
  */
+
+/**
+ * #1254: true when this visit's own back-link names an invoice OTHER than
+ * [invoiceId] and the visit is not already in [storedIds], the invoice's saved
+ * set. The Link Sessions picker shows such a visit but will not tick it, and
+ * the `linkInvoiceSessions` callable refuses it with `session_on_other_invoice`.
+ *
+ * Blank and whitespace back-links are unclaimed, the rule
+ * `listUninvoicedSessions` uses. A visit already in the stored set stays
+ * togglable whatever its back-link says, so a half-link can be undone. Same
+ * rule as admin web's `onOtherInvoice` in InvoiceLinkVisitsEditor. Pure; tested.
+ */
+internal fun linkPickerOnOtherInvoice(
+    session: KinCareSession,
+    invoiceId: String,
+    storedIds: Collection<String>,
+): Boolean {
+    if (session.id in storedIds) return false
+    val claimed = session.invoiceId.trim()
+    return claimed.isNotEmpty() && claimed != invoiceId
+}
 
 /** Payments confidently linked to an invoice via the populated Payment.invoiceId. Pure; tested. */
 internal fun paymentsForInvoice(payments: List<Payment>, invoiceId: String): List<Payment> {

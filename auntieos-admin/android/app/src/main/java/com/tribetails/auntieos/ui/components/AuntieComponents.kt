@@ -402,6 +402,8 @@ fun AuntieChip(
     modifier: Modifier = Modifier,
     selectedContainerColor: Color = AuntieTheme.colors.kinfolkOrange,
     selectedLabelColor: Color = AuntieTheme.colors.background,
+    /** False: shown dimmed and not clickable (Compose tests see it as disabled). */
+    enabled: Boolean = true,
 ) {
     Box(
         modifier = modifier
@@ -412,14 +414,15 @@ fun AuntieChip(
                 if (selected) selectedContainerColor else AuntieTheme.colors.border,
                 RoundedCornerShape(999.dp),
             )
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 7.dp),
         contentAlignment = Alignment.Center,
     ) {
+        val labelColor = if (selected) selectedLabelColor else AuntieTheme.colors.textDim
         Text(
             text  = label,
             style = AuntieTheme.typography.labelMedium,
-            color = if (selected) selectedLabelColor else AuntieTheme.colors.textDim,
+            color = if (enabled) labelColor else labelColor.copy(alpha = 0.35f),
         )
     }
 }
