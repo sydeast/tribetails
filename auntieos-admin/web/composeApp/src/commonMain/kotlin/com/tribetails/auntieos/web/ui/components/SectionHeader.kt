@@ -28,6 +28,8 @@ fun SectionHeader(
     icon: ImageVector? = null,
     subtitle: String? = null,
     onBack: (() -> Unit)? = null,
+    /** False holds the back arrow (shown dimmed) while the screen has a write in flight. */
+    backEnabled: Boolean = true,
     breadcrumbs: List<String> = emptyList(),
     trailing: (@Composable () -> Unit)? = null,
 ) {
@@ -66,13 +68,13 @@ fun SectionHeader(
                         modifier = Modifier
                             .size(28.dp)
                             .clip(CircleShape)
-                            .clickable(onClick = onBack),
+                            .clickable(enabled = backEnabled, onClick = onBack),
                         contentAlignment = Alignment.Center,
                     ) {
                         androidx.compose.material3.Icon(
                             imageVector = Lucide.ArrowLeft,
                             contentDescription = "Back",
-                            tint = c.textDim,
+                            tint = if (backEnabled) c.textDim else c.textFaint,
                             modifier = Modifier.size(18.dp),
                         )
                     }

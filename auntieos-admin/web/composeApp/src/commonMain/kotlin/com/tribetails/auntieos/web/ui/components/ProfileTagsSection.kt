@@ -10,8 +10,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import com.tribetails.auntieos.web.data.BusinessSettings
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
@@ -19,10 +23,14 @@ import com.tribetails.auntieos.web.data.TagDef
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.DEFAULT_TAG_COLOR
 import com.tribetails.auntieos.web.data.addTag
+import com.tribetails.auntieos.web.observability.errorSink
 import com.tribetails.auntieos.web.observability.rememberReportingScope
+import com.tribetails.auntieos.web.observability.rethrowIfCancellation
 import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import com.tribetails.auntieos.web.theme.AuntieTheme
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * ProfileTagsSection: the "Tags" panel shared by the kinfolk profile (household
@@ -195,8 +203,13 @@ private fun vocabFor(scope: TagScope, settings: BusinessSettings): List<TagDef> 
  * @param client      used to stream the vocabulary and to persist an inline promotion.
  * @param onSaveTags  persists the next name list to the profile doc. Supply
  *                    `client.updateKinfolkTags(loaded, it)` or
- *                    `client.updateKinTags(loaded, it)`, passing the record you
- *                    LOADED; both diff against it and merge only `tags`.
+ *                    `client.updateKinTags(loaded, it)`. The record supplies only
+ *                    the doc id: the whole tag list is always sent as a tags-only
+ *                    merge (#1271), so a removal is never lost to a diff against
+ *                    a stale read.
+ * @param onSavingChange told `true` when a tag save starts and `false` when it
+ *                    settles, however it settles (#1271). A host holds its leave
+ *                    controls (Back, Edit) while it is `true`.
  */
 @Composable
 fun ProfileTagsSection(
@@ -205,6 +218,7 @@ fun ProfileTagsSection(
     client: FirestoreClient,
     onSaveTags: suspend (List<String>) -> WriteResult<Unit>,
     modifier: Modifier = Modifier,
+    onSavingChange: (Boolean) -> Unit = {},
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
@@ -215,6 +229,7 @@ fun ProfileTagsSection(
     val coroutineScope = rememberReportingScope("ui:ProfileTagsSection")
 
     var state by remember(scope) { mutableStateOf(ProfileTagsState(tags = initialTags)) }
+    val savingChanged by rememberUpdatedState(onSavingChange)
 
     val settingsState by remember { client.businessSettingsStream() }
         .collectAsState(initial = FirestoreResult.Loading)
@@ -238,10 +253,29 @@ fun ProfileTagsSection(
 
     fun saveTags(next: List<String>) {
         state = state.beginSave(next)
+        savingChanged(true)
         coroutineScope.launch {
-            state = when (val r = onSaveTags(next)) {
-                is WriteResult.Ok -> state.saveSucceeded()
-                is WriteResult.Err -> state.saveFailed(r.message)
+            try {
+                // #1271: this scope is cancelled the moment the screen leaves
+                // composition, and the PATCH under onSaveTags is cancellable, so
+                // leaving right after a removal could drop the write and the tag
+                // came back on the next read. The write runs to its answer
+                // whatever happens to the screen; hosts also hold Back meanwhile.
+                val r = withContext(NonCancellable) { onSaveTags(next) }
+                state = when (r) {
+                    is WriteResult.Ok -> state.saveSucceeded()
+                    is WriteResult.Err -> state.saveFailed(r.message)
+                }
+            } catch (t: Throwable) {
+                t.rethrowIfCancellation()
+                // A throw (not an Err) is reported (#898) and then handled like
+                // an Err: revert with a message. Rethrowing it used to fail this
+                // scope's job, which took the composition down with it, so the
+                // panel froze with neither the revert nor the message showing.
+                errorSink(t, "ui:ProfileTagsSection")
+                state = state.saveFailed(t.message)
+            } finally {
+                savingChanged(false)
             }
         }
     }
@@ -293,6 +327,16 @@ fun ProfileTagsSection(
                 ) {
                     Text(error, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                 }
+            }
+            if (state.saving) {
+                // Every wait shows a cue: the field is disabled while a save is
+                // out, and this says why.
+                Text(
+                    "Saving…",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.textDim,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                )
             }
             TagAssignField(
                 value = state.tags,
