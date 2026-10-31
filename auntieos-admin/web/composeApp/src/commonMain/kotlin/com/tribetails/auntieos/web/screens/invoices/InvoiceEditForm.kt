@@ -79,7 +79,7 @@ fun invoiceEditLinesOf(invoice: Invoice): List<InvoiceEditLineItem>? {
 fun invoiceDiscountCentsOf(invoice: Invoice): Long =
     (invoice.invoiceDiscountCents as? JsonPrimitive)?.numberAsLong() ?: 0L
 
-private fun JsonPrimitive.numberAsLong(): Long? {
+internal fun JsonPrimitive.numberAsLong(): Long? {
     if (isString) return null
     longOrNull?.let { return it }
     return doubleOrNull?.takeIf { it.isFinite() }?.roundToLong()
