@@ -94,9 +94,68 @@ fun invoiceStateOrNull(invoice: Invoice): InvoiceState? = when (invoice.status.t
  * web and Android `invoiceActionsFor` already follow. A cancelled invoice, a
  * draft, a credit or a quote with a balance on it used to be offered the button
  * here because this screen read `amountDue` instead of the state.
+ *
+ * #1238: now read off [invoiceActionsFor], so the reminder, payment and receipt
+ * buttons share one table.
  */
 fun invoiceIsRemindable(invoice: Invoice): Boolean =
-    invoiceStateOrNull(invoice) == InvoiceState.OPEN
+    InvoiceAction.SEND_REMINDER in invoiceActionsFor(invoiceStateOrNull(invoice))
+
+/**
+ * #1238: the actions an invoice may be offered. RECORD_PAYMENT is web's
+ * "Mark paid", the same transition through the `recordPayment` callable.
+ */
+enum class InvoiceAction { SEND_REMINDER, RECORD_PAYMENT, GENERATE_RECEIPT, REVIEW_AND_SEND }
+
+/**
+ * #1238: which actions an invoice whose stored stamp reads [state] may be
+ * offered. The same table as web `lib/invoiceFormat.ts#invoiceActionsFor` and
+ * Android `domain/InvoiceActions.kt#invoiceActionsFor`. Before this the detail
+ * screen offered "Record payment" and "Generate receipt" on every invoice, so
+ * a paid, cancelled or quoted invoice offered to take a payment (operator
+ * ruling 2026-09-27: paid invoices take no payment) and an unpaid bill offered
+ * a receipt.
+ *
+ * TOTAL AND NON-OVERLAPPING: the `when` is exhaustive over the enum plus null
+ * with no `else`, so a ninth state is a compile error, and the argument is the
+ * single decoded state, so an invoice cannot land in two buckets.
+ *
+ * Overdue and part paid are display refinements of OPEN, never states, so an
+ * overdue or part-paid invoice gets exactly the OPEN set: Record payment stays
+ * for collecting the rest. NULL, an unstamped or unknown doc, offers nothing.
+ */
+fun invoiceActionsFor(state: InvoiceState?): List<InvoiceAction> = when (state) {
+    // A real, unpaid balance: collect it.
+    InvoiceState.OPEN -> listOf(InvoiceAction.SEND_REMINDER, InvoiceAction.RECORD_PAYMENT)
+    // Settled. A receipt is all that is left; collecting again is the defect.
+    InvoiceState.PAID -> listOf(InvoiceAction.GENERATE_RECEIPT)
+    // Not sent yet, so nothing to remind about and nothing to collect.
+    InvoiceState.DRAFT -> listOf(InvoiceAction.REVIEW_AND_SEND)
+    // A quote is not a bill; it gains payment actions only once converted.
+    InvoiceState.QUOTE -> emptyList()
+    // Withdrawn: acting on it would contradict the withdrawal.
+    InvoiceState.CANCELLED -> emptyList()
+    // Money owed TO the household; redemption is its own flow.
+    InvoiceState.CREDIT -> emptyList()
+    // Already drawn down. Nothing to collect, remind about or receipt.
+    InvoiceState.REDEEMED -> emptyList()
+    // Nothing was ever billed: no bill to collect and no payment to receipt.
+    InvoiceState.ZERO -> emptyList()
+    // No recognisable stamp: no affordance is invented for a doc this build
+    // does not understand.
+    null -> emptyList()
+}
+
+/**
+ * #1238: the Payments panel's line when nothing is recorded. It points at
+ * Record payment only when the button is there, as Android's does.
+ */
+fun invoicePaymentsEmptyCopy(actions: List<InvoiceAction>): String =
+    if (InvoiceAction.RECORD_PAYMENT in actions) {
+        "No payment recorded against this invoice yet. Use Record payment to log one."
+    } else {
+        "No payment recorded against this invoice."
+    }
 
 /**
  * True only when the STORED state is `open` AND the dueDate parses to an ISO
