@@ -81,6 +81,15 @@ export interface InvoiceEntry {
   kinfolkId: string;
   kinfolkName: string;
   client: string;
+  /** The billing address printed on the invoice. Absent on invoices created without one. */
+  address?: string;
+  /**
+   * The LEGACY free-text discount ("10% loyalty"). Display-only, never
+   * arithmetic: the money is `invoiceDiscountCents`. Absent on most invoices.
+   */
+  discount?: string;
+  /** The payment terms in words. Absent on invoices created without any. */
+  terms?: string;
   invoiceNumber: string;
   date: string;
   dueDate: string;
