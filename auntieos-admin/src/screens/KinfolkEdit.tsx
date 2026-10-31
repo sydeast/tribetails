@@ -325,6 +325,12 @@ export function KinfolkEdit({
 
   const errors: KinfolkEditErrors = form ? validateKinfolkEdit(form) : {};
   const busy = saving || archiving;
+  // #1271: a household tag add or remove saves on its own, apart from this
+  // form's Save. Until the server acknowledges it, every control that leaves
+  // the screen (Cancel, Save, Archive, Restore) is held and Save reads
+  // "Saving…", so the screen cannot be left with the tag write in flight.
+  const [tagsSaving, setTagsSaving] = useState(false);
+  const leaveHeld = busy || tagsSaving;
   // #858: the household fields, specifically - not the contact editor, not Save
   // itself, which is what retries. See `contactRetryPending`'s own comment.
   const householdFieldsLocked = busy || contactRetryPending;
@@ -494,7 +500,7 @@ export function KinfolkEdit({
         kicker="The Den · Directory"
         title={`Edit ${kinfolkName || kinfolkId}`}
         subtitle="Contact, access, and vet details for this household."
-        trailing={<GhostButton label="Cancel" onClick={onCancel} disabled={busy} />}
+        trailing={<GhostButton label="Cancel" onClick={onCancel} disabled={leaveHeld} />}
       />
 
       {error !== null && (
@@ -606,6 +612,7 @@ export function KinfolkEdit({
                 scope="household"
                 initialTags={loaded.status === 'ready' ? loaded.data.tags : []}
                 onSaveTags={(next) => updateKinfolkTags(kinfolkId, next)}
+                onSavingChange={setTagsSaving}
               />
 
               <DenPanel title="Home & access" subtitle="Gate codes, parking, and how to get in the door.">
@@ -704,10 +711,10 @@ export function KinfolkEdit({
                   <GhostButton
                     label={archiving ? 'Restoring…' : 'Restore'}
                     onClick={() => void handleUnarchive()}
-                    disabled={busy}
+                    disabled={leaveHeld}
                   />
                 ) : (
-                  <GhostButton label="Archive" onClick={() => setAskArchive(true)} disabled={busy} />
+                  <GhostButton label="Archive" onClick={() => setAskArchive(true)} disabled={leaveHeld} />
                 )}
                 <div className="kfedit__actions-right">
                   {dirty && (
@@ -715,12 +722,12 @@ export function KinfolkEdit({
                       Unsaved changes
                     </span>
                   )}
-                  <GhostButton label="Cancel" onClick={onCancel} disabled={busy} />
+                  <GhostButton label="Cancel" onClick={onCancel} disabled={leaveHeld} />
                   <PrimaryButton
-                    label={saving ? 'Saving…' : 'Save changes'}
+                    label={saving || tagsSaving ? 'Saving…' : 'Save changes'}
                     onClick={() => void handleSave()}
-                    disabled={busy}
-                    busy={saving}
+                    disabled={leaveHeld}
+                    busy={saving || tagsSaving}
                   />
                 </div>
               </div>
