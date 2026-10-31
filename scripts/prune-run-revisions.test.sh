@@ -94,17 +94,17 @@ case "$args" in
     fi
     # Fails with nothing on stderr at all. gcloud does this, and a reason of ""
     # groups every silent failure into one indistinguishable blank line.
-    if [ -n "${DELETE_FAIL_SILENT:-}" ] && printf '%s\n' "$DELETE_FAIL_SILENT" | grep -qx "$name"; then
+    if [ -n "${DELETE_FAIL_SILENT:-}" ] && printf '%s\n' "$DELETE_FAIL_SILENT" | grep >/dev/null -cx "$name"; then
       exit 1
     fi
     # A second, different cause in the same run, so the summary has to group
     # rather than report the first thing it saw.
-    if [ -n "${DELETE_FAIL_ALT:-}" ] && printf '%s\n' "$DELETE_FAIL_ALT" | grep -qx "$name"; then
+    if [ -n "${DELETE_FAIL_ALT:-}" ] && printf '%s\n' "$DELETE_FAIL_ALT" | grep >/dev/null -cx "$name"; then
       echo "Some context line gcloud printed first" >&2
       echo "ERROR: (gcloud.run.revisions.delete) NOT_FOUND: revision $name already gone" >&2
       exit 1
     fi
-    if [ -n "${DELETE_FAIL:-}" ] && printf '%s\n' "$DELETE_FAIL" | grep -qx "$name"; then
+    if [ -n "${DELETE_FAIL:-}" ] && printf '%s\n' "$DELETE_FAIL" | grep >/dev/null -cx "$name"; then
       echo "ERROR: (gcloud.run.revisions.delete) FAILED_PRECONDITION: stub refuses this one" >&2
       exit 1
     fi
@@ -134,7 +134,7 @@ run_prune() {
 }
 
 # has <output> <string>: substring match, so a test reads as one line.
-has() { printf '%s' "$1" | grep -qF "$2"; }
+has() { printf '%s' "$1" | grep >/dev/null -cF "$2"; }
 
 # ---------------------------------------------------------------------------
 # 1. The reported count is what was deleted, not a listing minus a listing.
@@ -143,7 +143,7 @@ D1="$(make_env)"
 OUT1="$(run_prune "$D1" 1)"
 RC1=$?
 
-if printf '%s' "$OUT1" | grep -q "deleted: 10"; then
+if printf '%s' "$OUT1" | grep >/dev/null -c "deleted: 10"; then
   ok "reports the 10 deletions it made"
 else
   bad "wrong deleted count"; printf '%s\n' "$OUT1"
@@ -151,7 +151,7 @@ fi
 
 # The bug in one assertion: 12 is the opening inventory, and the empty listing
 # after the deletions makes "before minus after" equal exactly that.
-if printf '%s' "$OUT1" | grep -qE "deleted: 12|removed: 12|12 revisions removed"; then
+if printf '%s' "$OUT1" | grep >/dev/null -cE "deleted: 12|removed: 12|12 revisions removed"; then
   bad "reported the whole inventory as removed; the recount inflated the count again"
 else
   ok "an empty listing after the deletions does not inflate the count"
@@ -177,7 +177,7 @@ else
   bad "listed the region $(grep -c revisions-list "$D1/calls.log") times"
 fi
 
-if printf '%s' "$OUT1" | grep -q "remaining (derived): 2"; then
+if printf '%s' "$OUT1" | grep >/dev/null -c "remaining (derived): 2"; then
   ok "remaining is derived from the deletions and labelled as derived"
 else
   bad "remaining not reported as derived"; printf '%s\n' "$OUT1"
@@ -191,13 +191,13 @@ if [ "$RC1" -eq 0 ]; then ok "a clean prune exits 0"; else bad "clean prune exit
 D2="$(make_env)"
 OUT2="$(DELETE_FAIL="$(printf 'alpha-001\nalpha-002\nbeta-001\n')" run_prune "$D2" 1)"
 
-if printf '%s' "$OUT2" | grep -q "deleted: 7" && printf '%s' "$OUT2" | grep -q "failed: 3"; then
+if printf '%s' "$OUT2" | grep >/dev/null -c "deleted: 7" && printf '%s' "$OUT2" | grep >/dev/null -c "failed: 3"; then
   ok "three refusals report as 7 deleted, 3 failed"
 else
   bad "partial failure miscounted"; printf '%s\n' "$OUT2"
 fi
 
-if printf '%s' "$OUT2" | grep -q "recorded neither success nor failure"; then
+if printf '%s' "$OUT2" | grep >/dev/null -c "recorded neither success nor failure"; then
   bad "counts that add up were reported as unaccounted for"
 else
   ok "counts that add up raise nothing"
@@ -266,13 +266,13 @@ else
   bad "a prune that deleted nothing exited 0"
 fi
 
-if printf '%s' "$OUT3" | grep -q "NOTHING WAS DELETED"; then
+if printf '%s' "$OUT3" | grep >/dev/null -c "NOTHING WAS DELETED"; then
   ok "a prune that deleted nothing says so"
 else
   bad "silent no-op prune"; printf '%s\n' "$OUT3"
 fi
 
-if printf '%s' "$OUT3" | grep -q "revisions removed"; then
+if printf '%s' "$OUT3" | grep >/dev/null -c "revisions removed"; then
   bad "still printed a success line after deleting nothing"
 else
   ok "prints no success line after deleting nothing"
@@ -287,7 +287,7 @@ D4="$(make_env)"
 OUT4="$(run_prune "$D4" 10)"
 RC4=$?
 
-if [ "$RC4" -eq 0 ] && printf '%s' "$OUT4" | grep -q "nothing to prune"; then
+if [ "$RC4" -eq 0 ] && printf '%s' "$OUT4" | grep >/dev/null -c "nothing to prune"; then
   ok "a keep above the inventory exits clean with nothing to prune"
 else
   bad "keep-10 did not exit clean; rc=$RC4"; printf '%s\n' "$OUT4"

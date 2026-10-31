@@ -265,7 +265,7 @@ fi
 echo
 echo "--- pushes to main are never cancelled by another push to main"
 GROUP="$(grep -E '^  group:' "$WORKFLOWS/ci.yml" | head -1)"
-if printf '%s' "$GROUP" | grep -q 'github.run_id'; then
+if printf '%s' "$GROUP" | grep >/dev/null -c 'github.run_id'; then
   ok "ci.yml: non-pull-request runs are keyed by run_id, so each gets its own group"
 else
   bad "ci.yml: the concurrency group no longer keys pushes by github.run_id"
@@ -275,7 +275,7 @@ else
 fi
 
 CANCEL="$(grep -E '^  cancel-in-progress:' "$WORKFLOWS/ci.yml" | head -1)"
-if printf '%s' "$CANCEL" | grep -q "github.event_name == 'pull_request'"; then
+if printf '%s' "$CANCEL" | grep >/dev/null -c "github.event_name == 'pull_request'"; then
   ok "ci.yml: cancel-in-progress is limited to pull requests"
 else
   bad "ci.yml: cancel-in-progress is no longer limited to pull requests"
@@ -300,8 +300,8 @@ if [ -z "$SCRIPTS_FILTER" ]; then
 else
   for f in "$WORKFLOWS"/*.yml; do
     rel=".github/workflows/$(basename "$f")"
-    if printf '%s\n' "$SCRIPTS_FILTER" | grep -qxF "$rel" ||
-       printf '%s\n' "$SCRIPTS_FILTER" | grep -qxF '.github/workflows/**'; then
+    if printf '%s\n' "$SCRIPTS_FILTER" | grep >/dev/null -cxF "$rel" ||
+       printf '%s\n' "$SCRIPTS_FILTER" | grep >/dev/null -cxF '.github/workflows/**'; then
       ok "ci.yml: the scripts filter covers $rel"
     else
       bad "ci.yml: the scripts filter does not list $rel, so a PR changing only it skips this test"

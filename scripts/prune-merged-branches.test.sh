@@ -69,7 +69,7 @@ run_prune() {
   bash "$SCRIPT" >"$WORK/out.txt" 2>&1
 }
 
-remote_has() { git ls-remote --heads origin "$1" | grep -q "$1"; }
+remote_has() { git ls-remote --heads origin "$1" | grep >/dev/null -c "$1"; }
 
 # ---------------------------------------------------------------- merged, old
 setup_repo
