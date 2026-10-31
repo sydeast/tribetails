@@ -808,7 +808,3 @@ internal actual suspend fun platformBroadcastRowsForCurrentAdmin(): WriteResult<
 internal actual suspend fun platformInvokeCallable(name: String, payloadJson: String): WriteResult<String> =
     revocationAwareCallables.invoke(name, payloadJson)
 
-internal actual suspend fun platformUpdateInvoiceSessionIds(invoiceId: String, sessionIds: List<String>): WriteResult<Unit> =
-    transportWrite("update failed") { JvmFirestoreRest.patchFields("invoices", invoiceId, mapOf("sessionIds" to kotlinx.serialization.json.JsonArray(sessionIds.map { JsonPrimitive(it) }))) }
-internal actual suspend fun platformUpdateSessionInvoiceId(sessionId: String, invoiceId: String): WriteResult<Unit> =
-    transportWrite("update failed") { JvmFirestoreRest.patchFields("kin_care_sessions", sessionId, mapOf("invoiceId" to JsonPrimitive(invoiceId))) }
