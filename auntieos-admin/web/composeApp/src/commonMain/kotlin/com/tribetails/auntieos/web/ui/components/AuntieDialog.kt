@@ -160,8 +160,13 @@ fun AuntieDialog(
 
                     // Scrollable body. heightIn lets short dialogs hug their
                     // content while tall ones scroll within the capped card.
+                    // #1216: weight(fill = false) measures the body AFTER the
+                    // footer, so a tall body scrolls instead of pushing the
+                    // footer below the card's clip, where its buttons could
+                    // be neither seen nor pressed.
                     Column(
                         modifier = Modifier
+                            .weight(1f, fill = false)
                             .fillMaxWidth()
                             .heightIn(min = 0.dp)
                             .verticalScroll(rememberScrollState())

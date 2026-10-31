@@ -561,3 +561,22 @@ describe('uploadTagsFor (#593 pending-video-strip tag)', () => {
     }
   });
 });
+
+describe('scopeUploadFolder (#1202)', () => {
+  const { scopeUploadFolder } = require('../index.js');
+  it('prefixes e2e/ under demo-auntieos-e2e, once', () => {
+    assert.strictEqual(scopeUploadFolder('tribetails/a/b', { GCLOUD_PROJECT: 'demo-auntieos-e2e' }), 'e2e/tribetails/a/b');
+    assert.strictEqual(scopeUploadFolder('e2e/tribetails/a/b', { GCLOUD_PROJECT: 'demo-auntieos-e2e' }), 'e2e/tribetails/a/b');
+  });
+  it('reads FIREBASE_CONFIG when GCLOUD_PROJECT is absent', () => {
+    assert.strictEqual(
+      scopeUploadFolder('tribetails/a/b', { FIREBASE_CONFIG: JSON.stringify({ projectId: 'demo-auntieos-e2e' }) }),
+      'e2e/tribetails/a/b',
+    );
+  });
+  it('leaves the folder alone under any other project, or none, or a bad config', () => {
+    assert.strictEqual(scopeUploadFolder('tribetails/a/b', { GCLOUD_PROJECT: 'tribetails-prod' }), 'tribetails/a/b');
+    assert.strictEqual(scopeUploadFolder('tribetails/a/b', {}), 'tribetails/a/b');
+    assert.strictEqual(scopeUploadFolder('tribetails/a/b', { FIREBASE_CONFIG: '{nope' }), 'tribetails/a/b');
+  });
+});

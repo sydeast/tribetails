@@ -1,5 +1,36 @@
 import * as crypto from 'crypto';
 
+/** The Firebase project id the real-services Cypress run (#1089) starts the
+ *  emulators under. A `demo-` id names no real project. */
+export const E2E_PROJECT_ID = 'demo-auntieos-e2e';
+/** #1202. Folder prefix every signed upload gets under the e2e project, so the
+ *  cleanup (#1196) that empties `e2e/` on exit sees everything a spec uploaded. */
+export const E2E_FOLDER_PREFIX = 'e2e/';
+/** The project id this process runs under, or '' when it cannot be told.
+ *  `GCLOUD_PROJECT` is set by the emulator and by Cloud Functions;
+ *  `FIREBASE_CONFIG` is the fallback the Admin SDK itself reads. */
+function runningProjectId(env: NodeJS.ProcessEnv): string {
+  const direct = env['GCLOUD_PROJECT'] || env['GOOGLE_CLOUD_PROJECT'];
+  if (direct) return direct;
+  try {
+    const cfg = JSON.parse(env['FIREBASE_CONFIG'] ?? '') as { projectId?: unknown };
+    return typeof cfg.projectId === 'string' ? cfg.projectId : '';
+  } catch {
+    return '';
+  }
+}
+/**
+ * Under the e2e-real project id, prefix a Cloudinary folder with `e2e/`;
+ * anywhere else, return it unchanged. Idempotent, so a folder already scoped is
+ * never prefixed twice. EVERY signer must pass its folder through this, and
+ * every `assertCloudinaryUrlInFolder` caller must check the same scoped value
+ * the signer signed, or a confirm would reject its own upload.
+ */
+export function scopeCloudinaryFolder(folder: string, env: NodeJS.ProcessEnv = process.env): string {
+  if (runningProjectId(env) !== E2E_PROJECT_ID) return folder;
+  const bare = folder.replace(/^\/+/, '');
+  return bare.startsWith(E2E_FOLDER_PREFIX) ? bare : `${E2E_FOLDER_PREFIX}${bare}`;
+}
 export interface CloudinarySignedUpload {
   cloudName: string;
   apiKey: string;
@@ -73,10 +104,11 @@ export function signCloudinaryFolderUpload(params: {
   folder: string;
 }): CloudinarySignedUpload {
   const timestamp = Math.floor(Date.now() / 1000);
+  const folder = scopeCloudinaryFolder(params.folder);
   // Alphabetical by param name, per Cloudinary's signature recipe:
   // allowed_formats < folder < timestamp < transformation.
   const signatureBase =
-    `allowed_formats=${ALLOWED_IMAGE_FORMATS}&folder=${params.folder}&timestamp=${timestamp}` +
+    `allowed_formats=${ALLOWED_IMAGE_FORMATS}&folder=${folder}&timestamp=${timestamp}` +
     `&transformation=${STRIP_METADATA_TRANSFORMATION}${params.apiSecret}`;
   const signature = crypto.createHash('sha1').update(signatureBase).digest('hex');
   return {
@@ -84,7 +116,7 @@ export function signCloudinaryFolderUpload(params: {
     apiKey: params.apiKey,
     timestamp,
     signature,
-    folder: params.folder,
+    folder,
     allowedFormats: ALLOWED_IMAGE_FORMATS,
     transformation: STRIP_METADATA_TRANSFORMATION,
   };
@@ -123,7 +155,7 @@ export function assertCloudinaryUrlInFolder(secureUrl: string, cloudName: string
   if (!parsed.pathname.startsWith(`/${cloudName}/image/upload/`)) {
     throw new Error('secureUrl is not an image asset.');
   }
-  const folderMarker = `/${folder.replace(/^\/+|\/+$/g, '')}/`;
+  const folderMarker = `/${scopeCloudinaryFolder(folder).replace(/^\/+|\/+$/g, '')}/`;
   if (!parsed.pathname.includes(folderMarker)) {
     throw new Error('secureUrl is outside the signed folder.');
   }

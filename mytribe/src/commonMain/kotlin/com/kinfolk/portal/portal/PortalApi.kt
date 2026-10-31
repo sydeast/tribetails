@@ -1858,7 +1858,7 @@ class PortalApi(private val fns: FunctionsClient) {
             terms = o["terms"]?.jsonPrimitive?.contentOrNull,
             paymentsHistory = o["paymentsHistory"]?.jsonPrimitive?.contentOrNull,
             address = o["address"]?.jsonPrimitive?.contentOrNull,
-            viewed = o["viewed"]?.jsonPrimitive?.booleanOrNull ?: false,
+            viewed = (o["viewed"] as? JsonPrimitive)?.booleanOrNull ?: false,
             creditAmountCents = o["creditAmountCents"]?.jsonPrimitive?.longOrNull,
             creditTarget = when (o["creditTarget"]?.jsonPrimitive?.contentOrNull) {
                 "accountBalance" -> CreditTarget.AccountBalance
