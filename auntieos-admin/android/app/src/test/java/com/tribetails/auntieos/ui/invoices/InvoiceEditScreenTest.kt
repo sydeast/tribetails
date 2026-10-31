@@ -5,6 +5,11 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.performScrollToNode
 import com.tribetails.auntieos.TestFixtures
 import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.Invoice
@@ -73,6 +78,20 @@ class InvoiceEditScreenTest {
         rule.waitForIdle()
     }
 
+    /**
+     * Scrolls the edit dialog's body to [text] and asserts it is on screen. The
+     * body is the scroll container holding the "INVOICE NUMBER" field; the
+     * header fields (#1198 added four) push the lines below its first view.
+     */
+    private fun scrollDialogTo(text: String) {
+        // Unmerged: a field's label is merged into the field's own node, so it
+        // is only matchable as text in the unmerged tree.
+        // Matched inside the dialog body only: the detail screen behind it has
+        // its own CLIENT and ADDRESS rows.
+        val body = hasScrollAction() and hasAnyDescendant(hasText("INVOICE NUMBER"))
+        rule.onNode(body, useUnmergedTree = true).performScrollToNode(hasText(text))
+        rule.onNode(hasText(text) and hasAnyAncestor(body), useUnmergedTree = true).assertIsDisplayed()
+    }
     @Test
     fun `scope none offers no Edit`() {
         mount("none")
@@ -85,8 +104,9 @@ class InvoiceEditScreenTest {
         rule.onNodeWithText("Edit").performClick()
         rule.waitForIdle()
         rule.onNodeWithText("Edit invoice").assertIsDisplayed()
-        rule.onNodeWithText("LINE 1 DESCRIPTION").assertIsDisplayed()
-        rule.onNodeWithText("Add line").assertIsDisplayed()
+        // Below the header fields (#1198 added four), so scrolled to, not assumed on screen.
+        scrollDialogTo("LINE 1 DESCRIPTION")
+        scrollDialogTo("Add line")
         assertEquals(0, rule.onAllNodesWithText("Money is locked").fetchSemanticsNodes().size)
     }
 
@@ -97,6 +117,10 @@ class InvoiceEditScreenTest {
         rule.waitForIdle()
         rule.onNodeWithText("Money is locked").assertIsDisplayed()
         rule.onNodeWithText("INVOICE NUMBER").assertIsDisplayed()
+        // #1198: the four descriptive fields stay editable with the money locked.
+        for (label in listOf("HOUSEHOLD", "CLIENT", "ADDRESS", "DISCOUNT NOTE")) {
+            scrollDialogTo(label)
+        }
         // The line is on screen as text inside the dialog, with no field to type into.
         assertEquals(2, rule.onAllNodesWithText("Overnight stay").fetchSemanticsNodes().size)
         assertEquals(0, rule.onAllNodesWithText("LINE 1 DESCRIPTION").fetchSemanticsNodes().size)

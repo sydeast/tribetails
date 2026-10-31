@@ -49,11 +49,11 @@ internal fun invoiceEditLineSummary(line: InvoiceEditLine): String {
 
 /**
  * The invoice editor (#1174), the web edit form on Android: number, date, due
- * date, terms, line items and the whole-invoice discount, saved through
- * `updateInvoice`.
+ * date, terms, household, client, address, the legacy discount note (#1198),
+ * line items and the whole-invoice discount, saved through `updateInvoice`.
  *
  * Under a `metadataOnly` scope the money is SHOWN, read-only, under the same
- * "Money is locked" banner web shows; the four metadata fields stay editable.
+ * "Money is locked" banner web shows; every non-money field stays editable.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -91,7 +91,8 @@ internal fun InvoiceEditDialog(
             AuntieBanner(tone = AuntieBannerTone.Warning, title = "Money is locked") {
                 Text(
                     "A payment has already been recorded against this invoice, so its line items and " +
-                        "discounts cannot change. The number, dates and terms can still be corrected.",
+                        "discounts cannot change. The number, dates, terms, household, client, address and " +
+                        "discount note can still be corrected.",
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textDim,
                 )
@@ -127,6 +128,37 @@ internal fun InvoiceEditDialog(
             value = draft.terms,
             onValueChange = { onChange(draft.copy(terms = it)) },
             label = "Terms",
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        AuntieField(
+            value = draft.kinfolkName,
+            onValueChange = { onChange(draft.copy(kinfolkName = it)) },
+            label = "Household",
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        AuntieField(
+            value = draft.client,
+            onValueChange = { onChange(draft.copy(client = it)) },
+            label = "Client",
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        AuntieField(
+            value = draft.address,
+            onValueChange = { onChange(draft.copy(address = it)) },
+            label = "Address",
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        // The LEGACY free-text discount, printed as typed and never part of
+        // the total. Named a note so it cannot be mistaken for the money
+        // discount under the line items.
+        AuntieField(
+            value = draft.discount,
+            onValueChange = { onChange(draft.copy(discount = it)) },
+            label = "Discount note",
             enabled = enabled,
             modifier = Modifier.fillMaxWidth(),
         )
