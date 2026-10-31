@@ -1,0 +1,88 @@
+/**
+ * The invoice detail's Link visits editor (#1245). Imported directly by
+ * InvoiceLinkVisitsEditor.tsx. Rows follow the un-invoiced-visits picker so the
+ * two visit lists read the same. Tokens only; `src/styles/tokenUsage.test.ts`
+ * fails the build on an undeclared reference or a literal fallback.
+ */
+
+.link-visits {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.link-visits__heading {
+  margin: 0;
+  font-family: var(--type-title-sm-family);
+  font-size: var(--type-title-sm-size);
+  font-weight: var(--type-title-sm-weight);
+  color: var(--color-text-primary);
+}
+
+.link-visits__empty {
+  margin: 0;
+  color: var(--color-text-dim);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+}
+
+.link-visits__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 18rem;
+  overflow-y: auto;
+}
+
+.link-visits__row {
+  border: var(--border-hairline) solid var(--color-border-soft);
+  border-radius: var(--radius-tight);
+  background: var(--color-surface-2);
+}
+
+.link-visits__row--elsewhere {
+  background: var(--color-surface);
+}
+
+.link-visits__row-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  cursor: pointer;
+}
+
+.link-visits__row--elsewhere .link-visits__row-label {
+  cursor: default;
+}
+
+.link-visits__row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.link-visits__row-service {
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.link-visits__row-meta {
+  font-family: var(--type-label-sm-family);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+}
+
+.link-visits__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}

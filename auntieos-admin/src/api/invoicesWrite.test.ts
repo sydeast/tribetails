@@ -11,6 +11,7 @@ import {
   markInvoicePaid,
   recordPayment,
   reviewAndSendDraftInvoice,
+  linkInvoiceSessions,
 } from './invoicesWrite';
 import type { CreateInvoiceArgs } from '../contracts/invoiceContracts.generated';
 
@@ -210,5 +211,47 @@ describe('reviewAndSendDraftInvoice', () => {
     call.mockReset();
     call.mockRejectedValue(new Error('failed-precondition'));
     await expect(reviewAndSendDraftInvoice('inv-6')).rejects.toThrow('failed-precondition');
+  });
+});
+describe('linkInvoiceSessions (#1245)', () => {
+  const answer = {
+    ok: true,
+    invoiceId: 'inv-7',
+    sessionIds: ['s1', 's2'],
+    added: ['s2'],
+    removed: ['s9'],
+    status: 'open',
+    editScope: 'all',
+  };
+  it('sends the FULL set under the exact callable name, with no retry claimed', async () => {
+    call.mockReset();
+    call.mockResolvedValue(answer);
+    await linkInvoiceSessions('inv-7', ['s1', 's2']);
+    // Exactly two arguments: no CallOptions, so no automatic retry. A retry
+    // after a lost answer could land against a set someone else changed.
+    expect(call).toHaveBeenCalledWith('linkInvoiceSessions', { invoiceId: 'inv-7', sessionIds: ['s1', 's2'] });
+    expect(call.mock.calls[0]).toHaveLength(2);
+  });
+  it('collapses duplicates, keeping first-seen order', async () => {
+    call.mockReset();
+    call.mockResolvedValue(answer);
+    await linkInvoiceSessions('inv-7', ['s2', 's1', 's2']);
+    expect(call).toHaveBeenCalledWith('linkInvoiceSessions', { invoiceId: 'inv-7', sessionIds: ['s2', 's1'] });
+  });
+  it('sends an empty array to unlink everything, never omitting the key', async () => {
+    call.mockReset();
+    call.mockResolvedValue({ ...answer, sessionIds: [], added: [], removed: ['s1'] });
+    await linkInvoiceSessions('inv-7', []);
+    expect(call).toHaveBeenCalledWith('linkInvoiceSessions', { invoiceId: 'inv-7', sessionIds: [] });
+  });
+  it("returns the server's answer whole, including the delta it derived", async () => {
+    call.mockReset();
+    call.mockResolvedValue(answer);
+    await expect(linkInvoiceSessions('inv-7', ['s1', 's2'])).resolves.toEqual(answer);
+  });
+  it('propagates a refusal (fail loud, never swallowed)', async () => {
+    call.mockReset();
+    call.mockRejectedValue(new Error('Session(s) not found: s2.'));
+    await expect(linkInvoiceSessions('inv-7', ['s2'])).rejects.toThrow('Session(s) not found: s2.');
   });
 });

@@ -13,6 +13,8 @@ import type {
   GenerateReceiptResult,
   GetInvoiceLedgerArgs,
   GetInvoiceLedgerResult,
+  LinkInvoiceSessionsArgs,
+  LinkInvoiceSessionsResult,
   ListUninvoicedSessionsArgs,
   ListUninvoicedSessionsResult,
   MarkInvoicePaidArgs,
@@ -392,6 +394,34 @@ export async function updateInvoice(
 ): Promise<UpdateInvoiceResultTotals> {
   const res = await call<UpdateInvoiceArgs, UpdateInvoiceResult>('updateInvoice', { invoiceId, patch });
   return res.totals;
+}
+
+/**
+ * linkInvoiceSessions (admin, #1245): sets which visits this invoice bills.
+ *
+ * `sessionIds` IS THE FULL NEW SET, never a delta. The server derives what was
+ * added and removed against the STORED set inside one transaction, and writes
+ * the invoice's `sessionIds` and every touched visit's `invoiceId` together or
+ * not at all. An empty array unlinks everything. Admin Android
+ * (`InvoiceDetailViewModel.saveLinks`) and the desktop console (#1197) call the
+ * same callable with the same payload.
+ *
+ * So the caller must send every id it means to keep, including linked ids its
+ * own visit list never loaded: an id left out is an unlink.
+ *
+ * Throws `not-found` for a wrong invoice id and `failed-precondition`
+ * (`session_not_found`) when a named visit does not exist; nothing is written
+ * in either case. Not marked idempotent: a retry after a lost answer could
+ * land against a set someone else has since changed.
+ */
+export async function linkInvoiceSessions(
+  invoiceId: string,
+  sessionIds: readonly string[],
+): Promise<LinkInvoiceSessionsResult> {
+  return call<LinkInvoiceSessionsArgs, LinkInvoiceSessionsResult>('linkInvoiceSessions', {
+    invoiceId,
+    sessionIds: Array.from(new Set(sessionIds)),
+  });
 }
 
 /**
