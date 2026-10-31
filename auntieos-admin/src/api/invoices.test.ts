@@ -17,7 +17,9 @@ import {
   normalizeInvoice,
   type InvoiceEntry,
   invoiceCheckoutClosure,
+  invoiceLineItems,
 } from './invoices';
+import { draftFromLineItem, parseDraftLines } from '../components/InvoiceLineItems';
 
 describe('INVOICES_QUERY', () => {
   it('streams the flat top-level invoices collection', () => {
@@ -705,5 +707,30 @@ describe('invoiceCheckoutClosure (#1113)', () => {
       closedCount: 1,
       failed: [{ sessionId: 'c', reason: 'Stripe refused the request.' }],
     });
+  });
+});
+
+describe('invoiceLineItems keeps the visit binding (#1213)', () => {
+  const stored = {
+    lineItems: [
+      { description: 'Dog walk', qty: 1, unitCents: 2500, sessionId: 'vis_1' },
+      { description: 'Key pickup', qty: 1, unitCents: 1000 },
+      { description: 'Blank id', qty: 1, unitCents: 500, sessionId: '' },
+      { description: 'Bad id', qty: 1, unitCents: 500, sessionId: 7 },
+    ],
+  } as unknown as Pick<InvoiceEntry, 'lineItems'>;
+  it('copies a non-empty sessionId and leaves other lines unbound', () => {
+    const lines = invoiceLineItems(stored)!;
+    expect(lines[0]!.sessionId).toBe('vis_1');
+    expect(lines[1]).not.toHaveProperty('sessionId');
+    expect(lines[2]).not.toHaveProperty('sessionId');
+    expect(lines[3]).not.toHaveProperty('sessionId');
+  });
+  it('round-trips through the editor draft and the patch without unbinding', () => {
+    const lines = invoiceLineItems(stored)!;
+    const parsed = parseDraftLines(lines.map(draftFromLineItem), '');
+    expect(parsed.error).toBeNull();
+    expect(parsed.lines![0]!.sessionId).toBe('vis_1');
+    expect(parsed.lines![1]).not.toHaveProperty('sessionId');
   });
 });
