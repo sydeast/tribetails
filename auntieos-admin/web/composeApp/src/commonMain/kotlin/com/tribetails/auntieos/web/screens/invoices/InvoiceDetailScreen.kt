@@ -438,7 +438,7 @@ private fun InvoiceDetailBody(
                 modifier = Modifier.weight(1f),
             )
             StatCard(
-                label   = "Amount due",
+                label   = invoiceAmountDueLabelFor(badge),
                 value   = formatMoney(invoice.amountDue),
                 trend   = badge.amountTrend,
                 tone    = statusTone,
@@ -563,8 +563,18 @@ private fun InvoiceDetailBody(
                     style     = KeyValueStyle.Total,
                     valueMono = false,
                 )
+                // #1240: a part-paid invoice names the payment already taken,
+                // as web's "Paid so far" fact does, beside what is still owed.
+                badge.partPaid?.let { part ->
+                    DetailRow(
+                        "Paid so far",
+                        formatEditCents(part.paidCents),
+                        style     = KeyValueStyle.AccentSuccess,
+                        valueMono = true,
+                    )
+                }
                 DetailRow(
-                    "Amount due",
+                    invoiceAmountDueLabelFor(badge),
                     formatMoney(invoice.amountDue),
                     style     = amountTone,
                     valueMono = true,

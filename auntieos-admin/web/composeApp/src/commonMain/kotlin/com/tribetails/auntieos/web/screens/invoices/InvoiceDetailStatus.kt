@@ -2,6 +2,11 @@ package com.tribetails.auntieos.web.screens.invoices
 
 import com.tribetails.auntieos.web.data.Invoice
 import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.longOrNull
+import kotlin.math.floor
+import kotlin.math.roundToLong
 
 /**
  * #1199: what the invoice detail screen says the invoice IS, and what it billed.
@@ -25,19 +30,89 @@ data class InvoiceDetailBadge(
     val tone: AuntieStatusTone,
     /** The line under the Amount due card. */
     val amountTrend: String,
+    /**
+     * #1240: what has been collected and what is left, when the invoice is
+     * part paid. Another display refinement of OPEN, never its own state. The
+     * screen relabels the Amount due card "Still owed" when this is set.
+     */
+    val partPaid: InvoicePartPayment? = null,
 )
 
 /**
- * Overdue outranks the stamp's own pill, as on web and Android. A doc with no
- * recognisable stamp shows its own stored word, uppercased, and never a state
- * guessed from the money fields.
+ * #1240: what has been collected against an invoice, and what is left, in
+ * integer cents.
+ *
+ * PART PAID IS A DISPLAY REFINEMENT OF [InvoiceState.OPEN], NOT A NINTH
+ * STATE, exactly like overdue: it changes the pill and the copy and never the
+ * actions offered, so a part-paid invoice keeps Record payment for collecting
+ * the rest. The same rule as web `lib/invoiceFormat.ts#invoicePartialPayment`
+ * and Android `domain/InvoiceActions.kt#invoicePartPaid`.
+ *
+ * READS [Invoice.paidCents], NEVER `total - amountDue`. Those are float
+ * dollars, and on every invoice the pre-2026-07-25 write touched `amountDue`
+ * reads 0 while a real balance is owed, so the subtraction would report the
+ * whole total as collected on exactly the rows that are wrong. An invoice with
+ * no readable `paidCents` is not claimed to be part paid.
+ */
+data class InvoicePartPayment(val paidCents: Long, val remainingCents: Long)
+
+/**
+ * The stored `paidCents` when it is a whole number, else null. Strict on
+ * purpose, as web's `Number.isInteger`: a string, a fraction, a non-finite
+ * number or an explicit null is not a record of a payment, and rounding 12.5
+ * up to 13 would make a claim the doc does not.
+ */
+fun invoicePaidCentsOf(invoice: Invoice): Long? {
+    val p = invoice.paidCents as? JsonPrimitive ?: return null
+    if (p.isString) return null
+    p.longOrNull?.let { return it }
+    val d = p.doubleOrNull ?: return null
+    if (!d.isFinite() || d != floor(d)) return null
+    return d.toLong()
+}
+
+fun invoicePartPaidOf(invoice: Invoice): InvoicePartPayment? {
+    if (invoiceStateOrNull(invoice) != InvoiceState.OPEN) return null
+    val paidCents = invoicePaidCentsOf(invoice) ?: return null
+    if (paidCents <= 0L) return null
+    val amountDue = invoice.amountDue.takeIf { it.isFinite() } ?: 0.0
+    val remainingCents = (amountDue * 100.0).roundToLong()
+    if (remainingCents <= 0L) return null
+    return InvoicePartPayment(paidCents = paidCents, remainingCents = remainingCents)
+}
+
+/** The balance card's and row's label: "Still owed" on a part-paid invoice, as on web and Android. */
+fun invoiceAmountDueLabelFor(badge: InvoiceDetailBadge): String =
+    if (badge.partPaid != null) "Still owed" else "Amount due"
+
+/** "$20.00 of $40.00 paid": names both figures, as Android's card does. */
+fun invoicePartPaidTrend(invoice: Invoice, part: InvoicePartPayment): String =
+    "${formatEditCents(part.paidCents)} of ${formatMoney(invoice.total)} paid"
+
+/**
+ * Overdue outranks the stamp's own pill, as on web and Android. PART PAID
+ * ranks below overdue and above the stamp's own pill: an overdue invoice that
+ * is also part paid is, first, overdue. A doc with no recognisable stamp shows
+ * its own stored word, uppercased, and never a state guessed from the money
+ * fields.
+ *
+ * The trend line under the card names the payment already collected whenever
+ * the invoice is part paid, overdue or not, as Android's does: showing only
+ * what is left would hide the money already taken.
  */
 fun invoiceDetailBadgeFor(invoice: Invoice, todayKey: String): InvoiceDetailBadge {
     val state = invoiceStateOrNull(invoice)
     val overdue = invoiceIsOverdue(invoice, todayKey)
+    val partPaid = invoicePartPaidOf(invoice)
     val due = invoice.dueDate.trim().take(10)
     if (overdue) {
-        return InvoiceDetailBadge(state, true, "OVERDUE", AuntieStatusTone.Error, "past due $due")
+        val trend = partPaid?.let { invoicePartPaidTrend(invoice, it) } ?: "past due $due"
+        return InvoiceDetailBadge(state, true, "OVERDUE", AuntieStatusTone.Error, trend, partPaid)
+    }
+    if (partPaid != null) {
+        return InvoiceDetailBadge(
+            state, false, "PART PAID", AuntieStatusTone.Purple, invoicePartPaidTrend(invoice, partPaid), partPaid,
+        )
     }
     fun badge(label: String, tone: AuntieStatusTone, trend: String) =
         InvoiceDetailBadge(state, false, label, tone, trend)

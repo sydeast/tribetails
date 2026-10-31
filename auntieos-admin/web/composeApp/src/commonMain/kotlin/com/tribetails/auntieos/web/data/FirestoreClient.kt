@@ -3674,6 +3674,16 @@ data class Invoice(
      * by this console.
      */
     val payMethodSettingsSnapshot: JsonElement? = null,
+    /**
+     * #1240: what has been collected against this invoice, in integer cents,
+     * kept by the payment callables (`recordPayment`, `markInvoicePaid`,
+     * `payInvoice`) in the same write that moves `amountDue`. Read through
+     * `screens.invoices.invoicePartPaidOf`. RAW, like [lineItems]: staff can
+     * write this collection directly, and a typed `Long?` would make a
+     * hand-written string throw and drop the whole invoice from the list.
+     * Absent on every invoice no payment has touched.
+     */
+    val paidCents: JsonElement? = null,
 )
 
 /**
