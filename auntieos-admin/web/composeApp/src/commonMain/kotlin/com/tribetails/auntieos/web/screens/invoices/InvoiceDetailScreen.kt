@@ -55,6 +55,7 @@ import com.tribetails.auntieos.web.data.PaymentSubmissionKeys
 import com.tribetails.auntieos.web.data.recordPaymentOutcomeMessage
 import com.tribetails.auntieos.web.data.recordPaymentRefusalText
 import com.tribetails.auntieos.web.data.submitInvoicePayment
+import com.tribetails.auntieos.web.data.invoiceSessionLinksSavedText
 import com.tribetails.auntieos.web.util.openUrl
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
@@ -253,36 +254,33 @@ private fun InvoiceDetailBody(
         toastMsg = msg; toastIsError = isError; toastVisible = true
     }
 
+    // #1197: the server's refusal, shown inside the Link Sessions dialog, which
+    // stays open with the operator's picks intact so they can correct and retry.
+    var linkSessionsError by remember(invoice._id) { mutableStateOf<String?>(null) }
+
+    /**
+     * #1197: ONE callable, `linkInvoiceSessions`, owns both directions (the
+     * invoice's `sessionIds` and each touched visit's `invoiceId`) in one server
+     * transaction, as on Android. The console sends the full set it holds; the
+     * server derives what was added and removed against the STORED set. Until
+     * #1197 this PATCHed the invoice over REST, which firestore.rules refuses.
+     */
     fun saveLinks() {
-        val newIds  = pendingIds.toList()
-        val oldIds  = invoice.sessionIds.toSet()
-        val added   = pendingIds - oldIds
-        val removed = oldIds - pendingIds
+        if (saveLoading) return
+        val newIds = pendingIds.toList()
         saveLoading = true
+        linkSessionsError = null
         scope.launch {
-            when (val r = client.updateInvoiceSessionIds(invoice._id, newIds)) {
+            when (val r = client.linkInvoiceSessions(invoice._id, newIds)) {
                 is WriteResult.Err -> {
                     saveLoading = false
-                    showToast("Save failed: ${r.message}", true)
-                    return@launch
+                    linkSessionsError = "linkInvoiceSessions failed: ${r.message}"
                 }
-                is WriteResult.Ok  -> Unit
-            }
-            // Bidirectional sync of the session -> invoice back-reference.
-            // WARNING-40: collect each WriteResult; surface partial failures fail-loud.
-            var failCount = 0
-            val addResults   = added.map   { sid -> client.updateSessionInvoiceId(sid, invoice._id) }
-            val removeResults = removed.map { sid -> client.updateSessionInvoiceId(sid, "") }
-            for (r in addResults + removeResults) {
-                if (r is WriteResult.Err) failCount++
-            }
-            saveLoading = false
-            if (failCount > 0) {
-                showToast("Saved invoice links but $failCount session back-reference(s) failed to update. Retry to fix.", true)
-                // Stay in edit mode so the operator can retry; the invoice sessionIds ARE saved.
-            } else {
-                editMode = false
-                showToast("Sessions linked.", false)
+                is WriteResult.Ok -> {
+                    saveLoading = false
+                    editMode = false
+                    showToast(invoiceSessionLinksSavedText(r.value), false)
+                }
             }
         }
     }
@@ -340,10 +338,17 @@ private fun InvoiceDetailBody(
         sessionsState = sessionsState,
         pendingIds    = pendingIds,
         saveLoading   = saveLoading,
+        error         = linkSessionsError,
         onToggle      = { sid ->
-            pendingIds = if (sid in pendingIds) pendingIds - sid else pendingIds + sid
+            if (!saveLoading) pendingIds = if (sid in pendingIds) pendingIds - sid else pendingIds + sid
         },
-        onCancel      = { editMode = false },
+        // Not while the call is in flight: its answer has to land somewhere.
+        onCancel      = {
+            if (!saveLoading) {
+                editMode = false
+                linkSessionsError = null
+            }
+        },
         onSave        = { saveLinks() },
     )
 
@@ -635,7 +640,7 @@ private fun InvoiceDetailBody(
             invoice         = invoice,
             linkedSessions  = linkedSessions,
             sessionsState   = sessionsState,
-            onOpenEdit      = { pendingIds = invoice.sessionIds.toSet(); editMode = true },
+            onOpenEdit      = { pendingIds = invoice.sessionIds.toSet(); linkSessionsError = null; editMode = true },
         )
 
         // How-to-pay: operator-entered Venmo/PayPal/Cash App handles (Payment Options
@@ -861,6 +866,7 @@ private fun LinkSessionsDialog(
     sessionsState: FirestoreResult<List<KinCareSession>>,
     pendingIds: Set<String>,
     saveLoading: Boolean,
+    error: String?,
     onToggle: (String) -> Unit,
     onCancel: () -> Unit,
     onSave: () -> Unit,
@@ -873,10 +879,16 @@ private fun LinkSessionsDialog(
         maxWidth  = 440.dp,
         closeIcon = Lucide.X,
         footer    = {
-            GhostButton(label = "Cancel", onClick = onCancel)
+            GhostButton(label = "Cancel", onClick = onCancel, enabled = !saveLoading)
             PrimaryButton(label = "Save", onClick = onSave, loading = saveLoading)
         },
     ) {
+        // #1197: the server's refusal, verbatim, above the picks it refused.
+        if (error != null) {
+            AuntieBanner(tone = AuntieBannerTone.Error, title = "Can't save") {
+                Text(error, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
+        }
         when (val s = sessionsState) {
             FirestoreResult.Loading -> repeat(3) { ShimmerCard(height = 40.dp) }
             is FirestoreResult.Error -> Text(
