@@ -554,6 +554,24 @@ private fun InvoiceDetailBody(
             }
         }
 
+        // #1239: the stored total disagrees with the lines above. Names both
+        // figures and reconciles neither, as web and Android do: picking a
+        // winner, or quietly showing the derived figure, would hide the drift
+        // from the only person who can resolve it.
+        invoiceTotalDisagreementOf(invoice)?.let { drift ->
+            AuntieBanner(
+                tone  = AuntieBannerTone.Error,
+                title = INVOICE_TOTAL_DISAGREEMENT_TITLE,
+                body  = {
+                    Text(
+                        invoiceTotalDisagreementText(drift),
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
+                },
+            )
+        }
+
         // ── Amounts panel ──────────────────────────────────────────────────────
         DenPanel(title = "Amounts") {
             Column {

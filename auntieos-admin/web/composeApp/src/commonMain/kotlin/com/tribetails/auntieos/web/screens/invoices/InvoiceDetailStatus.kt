@@ -199,3 +199,69 @@ fun invoiceDetailLinesPanelOf(invoice: Invoice): InvoiceDetailLinesPanel {
     val discount = invoiceDiscountCentsOf(invoice)
     return InvoiceDetailLinesPanel.Lines(rows, subtotal, discount, subtotal - discount)
 }
+
+/**
+ * #1239: the stored total and the lines beside it, when they disagree.
+ *
+ * REACHABLE, NOT DEFENSIVE THEATRE. `firestore.rules` lets any staff
+ * credential update the invoices collection directly, and `postInvoiceEvent`
+ * merges an arbitrary payload; both bypass every callable that keeps the
+ * stored total in step with the lines.
+ *
+ * NAME BOTH FIGURES, RECONCILE NEITHER. Nothing here picks a winner, shows
+ * the derived figure in place of the stored one, or writes a correction: the
+ * operator is the only one who knows which number is true. The same rule as
+ * web `lib/invoiceReconcile.ts#checkInvoiceTotal` and Android
+ * `domain/InvoiceLineItems.kt#invoiceTotalDisagreement`.
+ */
+data class InvoiceTotalDisagreement(
+    /** What the lines add up to, less the whole-invoice discount. */
+    val derivedCents: Long,
+    /** What the doc claims. */
+    val storedCents: Long,
+    /** Which field [storedCents] came from, so the banner can say. */
+    val storedFrom: InvoiceStoredTotalField,
+)
+
+enum class InvoiceStoredTotalField { TOTAL_CENTS, TOTAL }
+
+/**
+ * Null when there is nothing to compare or nothing differs. An un-itemized
+ * invoice has no lines to disagree with. An itemized-as-empty one is still
+ * compared: its lines come to nothing less the discount.
+ *
+ * `totalCents` is preferred over the dollar `total` whenever it is readable,
+ * because it is the exact integer the server wrote. This follows web, which
+ * keys on the field's PRESENCE; Android keys on `totalCents != 0` only because
+ * its model cannot tell absent from zero, and this one can. The dollar
+ * fallback is rounded to cents, so a float artifact never reads as drift.
+ *
+ * One limit, shared with Android: [Invoice.total] decodes an absent field as
+ * 0.0, so an itemized invoice with neither total field reads as claiming $0.
+ */
+fun invoiceTotalDisagreementOf(invoice: Invoice): InvoiceTotalDisagreement? {
+    val lines = invoiceEditLinesOf(invoice) ?: return null
+    val derived = lines.sumOf { lineAmountCents(it) } - invoiceDiscountCentsOf(invoice)
+    val exact = (invoice.totalCents as? JsonPrimitive)?.numberAsLong()
+    val (stored, from) = if (exact != null) {
+        exact to InvoiceStoredTotalField.TOTAL_CENTS
+    } else {
+        val dollars = invoice.total.takeIf { it.isFinite() } ?: 0.0
+        (dollars * 100.0).roundToLong() to InvoiceStoredTotalField.TOTAL
+    }
+    return if (stored == derived) null else InvoiceTotalDisagreement(derived, stored, from)
+}
+
+const val INVOICE_TOTAL_DISAGREEMENT_TITLE: String = "This invoice disagrees with itself"
+
+/** The banner body: both figures, where the stored one lives, and what fixes it. Web's and Android's copy. */
+fun invoiceTotalDisagreementText(d: InvoiceTotalDisagreement): String {
+    val source = when (d.storedFrom) {
+        InvoiceStoredTotalField.TOTAL_CENTS -> "the total stored on the invoice"
+        InvoiceStoredTotalField.TOTAL -> "the total stored on the invoice (its legacy dollar field)"
+    }
+    return "The line items add up to ${formatEditCents(d.derivedCents)}, but $source says " +
+        "${formatEditCents(d.storedCents)}. Nothing has been changed to make them match, and nothing will be. " +
+        "The household is billed the stored figure. Re-saving the line items through Edit will recompute " +
+        "the stored total from them, if the lines are the version you want to keep."
+}

@@ -3684,6 +3684,13 @@ data class Invoice(
      * Absent on every invoice no payment has touched.
      */
     val paidCents: JsonElement? = null,
+    /**
+     * #1239: the exact integer total the invoice callables write beside the
+     * dollar [total]. Read through `screens.invoices.invoiceTotalDisagreementOf`,
+     * which prefers it over [total]. Raw for the same reason as [paidCents].
+     * Absent on every legacy invoice.
+     */
+    val totalCents: JsonElement? = null,
 )
 
 /**
