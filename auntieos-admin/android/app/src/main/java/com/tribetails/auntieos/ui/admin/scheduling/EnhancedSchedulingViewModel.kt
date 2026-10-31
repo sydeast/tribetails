@@ -496,6 +496,15 @@ class EnhancedSchedulingViewModel(
     }
 
     /**
+     * [shown] with the fields [attempted] changed against [settingsBaseline] put
+     * back to the baseline. The baseline only moves on a landed write, so after a
+     * failure it is still what the server holds.
+     */
+    private fun revertUnsavedSettings(shown: BusinessSettings, attempted: BusinessSettings): BusinessSettings {
+        val baseline = settingsBaseline ?: return shown
+        return revertBusinessSettingsFields(shown, baseline, businessSettingsFieldChanges(baseline, attempted).keys)
+    }
+    /**
      * Stage 3 / 16.5: live incoming MyTribe booking requests, grouped into
      * per-envelope series (one row per batchId). Fail-loud: a stream error sets
      * [SchedulingState.incomingError]. No-op until kinfolk requests exist.
@@ -1002,7 +1011,12 @@ class EnhancedSchedulingViewModel(
             saveSettingsDiff(updatedSettings)
                 .onSuccess { _state.value = _state.value.copy(businessSettings = updatedSettings) }
                 .onFailure { e ->
+                    // The write failed, so the screen goes back to the mode the
+                    // server still holds instead of showing the pick as saved.
+                    val reverted = revertUnsavedSettings(_state.value.businessSettings, updatedSettings)
                     _state.value = _state.value.copy(
+                        businessSettings = reverted,
+                        bookingMode = reverted.defaultBookingModeEnum,
                         errorMessage = "Failed to save the booking mode: ${e.message}"
                     )
                 }
@@ -2765,7 +2779,10 @@ class EnhancedSchedulingViewModel(
         _state.value = _state.value.copy(businessSettings = newSettings)
         viewModelScope.launch {
             saveSettingsDiff(newSettings).onFailure { e ->
+                // #1214: a rejected write must not leave the edit on screen as
+                // saved. Only the fields this save changed go back.
                 _state.value = _state.value.copy(
+                    businessSettings = revertUnsavedSettings(_state.value.businessSettings, newSettings),
                     errorMessage = "Failed to save settings: ${e.message}"
                 )
             }

@@ -12,9 +12,10 @@ import seed, { upsert, remove } from './e2e/seed';
  * WHAT IS DIFFERENT FROM `cypress.config.ts`. That config is the PR-time suite:
  * auth and Firestore emulators only, callables pinned at a dead port and
  * answered by `cy.intercept`. Here the functions emulator serves the real
- * `mytribe/functions` build, so a callable runs its real handler and its real
- * triggers, and a vendor call (Stripe test mode and the rest) really leaves
- * the machine. Specs live in `cypress/e2e-real/`, so neither suite collects the
+ * `mytribe/functions` build and the admin's own `web/functions` (whose
+ * `/api/cloudinary/sign-upload` and `/api/generate` the dev server proxies to
+ * it, #1201), so a callable runs its real handler and its real triggers, and a
+ * vendor call (Stripe test mode and the rest) really leaves the machine. Specs live in `cypress/e2e-real/`, so neither suite collects the
  * other's files.
  *
  * TESTS STILL DRIVE AND ASSERT FROM THE UI (2026-09-01 ruling, restated for
@@ -93,9 +94,9 @@ const AUTH_EMULATOR = 'http://127.0.0.1:9399';
 
 /**
  * Cloudinary credentials for this run, or a refusal. Read from the same
- * variables the preflight writes into the functions secrets file, so a spec
- * and the functions it drives talk to the same account. Only called by a spec
- * that has already checked `vendorConfigured('cloudinary')`.
+ * variables the preflight writes into the functions secrets files, so a spec's
+ * cleanup and the signer it drove talk to the same account. Only called by a
+ * spec that has already checked `vendorConfigured('cloudinary')`.
  */
 function cloudinaryCredentials(): { cloudName: string; apiKey: string; apiSecret: string } {
   const cloudName = process.env.E2E_CLOUDINARY_CLOUD_NAME ?? '';
@@ -112,7 +113,7 @@ function cloudinaryCredentials(): { cloudName: string; apiKey: string; apiSecret
 /** Every Cloudinary upload this suite makes lands under this folder (D3, Cloudinary row). */
 const CLOUDINARY_E2E_FOLDER = 'e2e';
 
-/** Cloudinary's signature recipe: sha1 of the params sorted by name, joined with `&`, then the secret. */
+/** Cloudinary's signature recipe: sha1 of the params sorted by name, joined with `&`, then the secret. Used by `cloudinaryDestroy`. */
 function cloudinarySignature(params: Record<string, string>, apiSecret: string): string {
   const base = Object.keys(params)
     .sort()
@@ -190,28 +191,6 @@ export default defineConfig({
           const uid = json.users?.[0]?.localId;
           if (!res.ok || !uid) throw new Error(`authUid: no auth-emulator account for ${email}`);
           return uid;
-        },
-        /**
-         * Signs one Cloudinary upload into the suite's `e2e/` folder.
-         *
-         * WHY A TASK SIGNS IT. The admin signs through `/api/cloudinary/sign-upload`,
-         * a hosting rewrite to `signCloudinaryUpload` in the admin's own
-         * functions codebase (`auntieos-admin/web/functions`). This run serves
-         * `mytribe/functions` only, and vite has no such rewrite, so nothing
-         * would answer it (#1201 tracks serving it). The spec answers that one
-         * request with this signature; the upload itself, the Firestore writes
-         * that follow and the image the screen loads are all real. The params
-         * signed are exactly the ones `uploadToCloudinary` posts (folder,
-         * timestamp, transformation), so Cloudinary verifies the signature the
-         * way it would verify the real signer's.
-         */
-        cloudinarySignUpload({ subfolder }: { subfolder: string }) {
-          const { cloudName, apiKey, apiSecret } = cloudinaryCredentials();
-          const folder = `${CLOUDINARY_E2E_FOLDER}/${subfolder}`;
-          const timestamp = String(Math.floor(Date.now() / 1000));
-          const transformation = 'fl_force_strip';
-          const signature = cloudinarySignature({ folder, timestamp, transformation }, apiSecret);
-          return { cloudName, apiKey, timestamp: Number(timestamp), signature, folder, transformation };
         },
         /**
          * Destroys one asset this suite uploaded. Refuses anything outside the

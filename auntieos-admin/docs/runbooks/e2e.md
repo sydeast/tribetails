@@ -348,7 +348,8 @@ allowlisted.
 ## The real-services run (added 2026-10-02, #1089)
 
 Operator ruling D3 (2026-10-01): the admin Cypress suite also runs against the
-real `mytribe/functions` and the real outside services, on releases and not on
+real `mytribe/functions`, the admin's own `web/functions`, and the real outside
+services, on releases and not on
 pull requests. This is a SECOND harness beside the PR-time one. Nothing above
 changes: `npm run e2e:cy` still serves no functions and still pins callables at
 the dead port 5399.
@@ -356,23 +357,33 @@ the dead port 5399.
 ```bash
 npm ci                                   # repo root, once
 npm ci --prefix mytribe/functions        # once; the emulator serves its build
+npm ci --prefix auntieos-admin/web/functions   # once; not a root workspace (#1201)
 cd auntieos-admin
 npm run e2e:real
 ```
 
 `npm run e2e:real` runs `scripts/e2e-real/run.sh`, which:
 
-1. builds `mytribe/functions` (the emulator serves `lib/`, not `src/`);
-2. runs `scripts/e2e-real/preflight.mjs`, which writes
-   `mytribe/functions/.secret.local` and refuses to start if a Stripe value is
+1. builds `mytribe/functions` (the emulator serves `lib/`, not `src/`), and
+   refuses by name if `web/functions` has no `node_modules`;
+2. runs `scripts/e2e-real/preflight.mjs`, which writes a `.secret.local` into
+   each served codebase (`mytribe/functions` and `web/functions`) and refuses
+   to start, writing neither, if a Stripe value is
    not a test-mode key (`sk_test_`, `rk_test_`, `pk_test_`, `whsec_`), if any
    Twilio value names a number in the business line's or the private line's
    area code, or if a spec under `cypress/e2e-real/` names Google Calendar
    Disconnect;
 3. starts auth (9399), Firestore (8385) and functions (5398) under the project
    id `demo-auntieos-e2e` (`e2e.real.firebase.json`), and runs
-   `cypress.real.config.ts` against a dev server pointed at all three;
-4. deletes `.secret.local` whatever happened. The file is in `.gitignore` too,
+   `cypress.real.config.ts` against a dev server pointed at all three. The
+   functions emulator serves two codebases, as production does: `mytribe` and
+   the admin's `default` (`signCloudinaryUpload`, `generateAuntieCopy`). The
+   dev server stands in for `firebase.json`'s two `/api/*` hosting rewrites by
+   proxying `/api/cloudinary/sign-upload` and `/api/generate` to those
+   functions on 5398 (`scripts/e2e-real/api-proxy.mjs`, #1201). `/api/generate`
+   is proxied but no spec calls it: its voice files are gitignored and absent
+   from a checkout, so it would answer 500;
+4. deletes both `.secret.local` files whatever happened. The file is in `.gitignore` too,
    in case a killed run leaves it behind. The next run replaces a file it wrote
    and refuses to replace one it did not.
 
@@ -391,9 +402,11 @@ that is missing or empty there, it fetches from Secret Manager under the
 emulator's project id (firebase-tools 15.18.0, `resolveSecretEnvs`). With the
 production id and a developer's ADC, that is a production secret handed to a
 test. So the project id is a `demo-` id that names no real project, and the
-preflight writes every secret the built functions declare (read from their
-`__endpoint` metadata, 22 on 2026-10-02) with a non-empty value, so no lookup
-happens at all. Either one is enough.
+preflight writes every secret each codebase declares (read from their
+`__endpoint` metadata: 22 in `mytribe/functions` on 2026-10-02, 5 in
+`web/functions` on 2026-10-30) with a non-empty value, so no lookup happens at
+all. Either one is enough. The file is per codebase: the emulator reads the one
+in the function's own source directory, so each codebase gets a complete one.
 
 Credentials are not hidden from the emulator, and on a developer machine it
 warns that it found them. Hiding them does not help: with no Application
@@ -420,6 +433,30 @@ In CI the same names are secrets in the GitHub environment `e2e-real`
 `.github/workflows/e2e-real.yml`. That workflow runs on `workflow_dispatch`
 from main and as a `workflow_call` from a release.
 
+**How a release reads it (#1193).** The nightly release
+(`nightly-release.yml`) calls `e2e-real.yml` for the commit it is about to
+ship, before its release job, and that job refuses unless the call came back
+green. A called workflow gets no run of its own: its jobs show inside the
+nightly's run as `E2E real services / <job>`. `scripts/release.sh` step 0b
+then reads the verdict again for the commit, hosted and local alike: the newest
+run of `e2e-real.yml` or of a nightly that called it, keeping only the jobs
+whose name carries `real services`. Red, still running, skipped, or no run at
+all each refuse, with the run and the command to fix it. A vendor with no
+secrets stored is not red: its specs skip and the job still passes. The release
+also downloads that run's `e2e-real*` artifacts and reads every `verdict.json`
+in them (written by the classifier, "The verdict" below): `warn` is printed in
+yellow and the release goes on, `stop` refuses even under a green job, and a
+run with no file is judged by its jobs alone. For a release by hand, run the
+suite on main first and wait for it:
+
+```sh
+gh workflow run e2e-real.yml --ref main
+gh run watch "$(gh run list --workflow e2e-real.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+```
+
+`RELEASE_SKIP_CI_GATE=1` skips this read along with CI's, and is for a gate
+that cannot be asked, never for one that says no.
+
 ### What the specs may and may not do
 
 - Drive and assert from the UI, as in the PR-time suite. Fixtures go in
@@ -440,7 +477,8 @@ from main and as a `workflow_call` from a release.
 - Cloudinary uploads go to an `e2e/` folder emptied after each run, and emails
   go only to the three real test inboxes (`account.cy.ts` sends the reset
   email to e2e-admin@tribetails.com; `account-photo.cy.ts` uploads under
-  `e2e/account-photo/` and destroys what it uploaded).
+  `e2e/tribetails/user/<uid>/`, the folder the real signer prefixes under the
+  `demo-` id (#1202), and destroys what it uploaded).
 
 ### Specs today
 
@@ -451,7 +489,7 @@ and asserts the outcome from the UI, almost always after a reload.
 | Spec | Counterpart of | What it proves | Vendor |
 |---|---|---|---|
 | `account.cy.ts` | `account.cy.ts` | The three channel switches come from the functions' catalog; a channel switched on is still on after a reload and on My Notifications; "Sole admin" comes from the real roster; Send reset email really sends | Email, reset test only |
-| `account-photo.cy.ts` | `account-photo.cy.ts` | A picked image really uploads to Cloudinary, is written to `users/{uid}.photoUrl`, and loads from Cloudinary after a reload. The signer request is still answered by the `cloudinarySignUpload` task until #1201 serves the admin's own functions | Cloudinary |
+| `account-photo.cy.ts` | `account-photo.cy.ts` | A picked image really uploads to Cloudinary, is written to `users/{uid}.photoUrl`, and loads from Cloudinary after a reload. The signature comes from the admin's real `signCloudinaryUpload` (#1201), proven by the `e2e/` prefix only that signer adds | Cloudinary |
 | `bookings.cy.ts` | `bookings.cy.ts` | A real requested envelope is declined with an empty reason (#700) or booked through `manageBookingSeries`; after a reload it has left the queue, and a booking adds one to the Scheduled count; the block settles on its empty line (#698) | none |
 | `email-editor.cy.ts` | `email-editor.cy.ts` | A visual template with bold text and a button comes back from `listTemplates` after a reload; the preview is the server's render; Convert (with the server's dropped-image warning) then Save makes a template visual for good, Convert then Leave keeps it old | none |
 | `form-schemas.cy.ts` | `form-schemas.cy.ts` | The table sorts the server's rows (#717); an edit through `saveFormSchema` comes back with the version bumped, the time stamped and the editor named | none |

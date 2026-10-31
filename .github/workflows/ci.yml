@@ -132,6 +132,15 @@ jobs:
               # hand-fixed the count. Without this line the same gap reopens on
               # the next seed the corpus gets.
               - 'mytribe/seeds/**'
+              # #1248: vitest.config.ts includes scripts/e2e-real/**/*.test.mjs,
+              # the real-services run's preflight refusals (no live Stripe key,
+              # no business or private phone line, no Calendar Disconnect) and
+              # its /api proxy (#1201). That proxy test also reads the three
+              # files below it, so a change to any of them must run the suite.
+              - 'auntieos-admin/scripts/e2e-real/**'
+              - 'auntieos-admin/e2e.real.firebase.json'
+              - 'auntieos-admin/web/firebase.json'
+              - 'auntieos-admin/web/functions/index.js'
             # Its own filter rather than a step inside `admin`, because this job
             # downloads Chromium and boots two emulators and so costs minutes
             # where the unit suite costs seconds. It still watches src/** and

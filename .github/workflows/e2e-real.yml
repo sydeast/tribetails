@@ -5,8 +5,9 @@ name: E2E real services
 # requests: a public repo's PR runs cannot read secrets, and this run needs them.
 #
 # What runs: `npm run e2e:real` in auntieos-admin (job admin-real) and in
-# mytribe/web (job portal-real, #1194). Each builds mytribe/functions, writes
-# its emulator secrets file from the environment below (refusing a live Stripe
+# mytribe/web (job portal-real, #1194). Each builds mytribe/functions (the
+# admin job also serves the admin's own web/functions beside it, #1201), writes
+# its emulator secrets files from the environment below (refusing a live Stripe
 # key, a business or private phone number, or a spec that could press Google
 # Calendar Disconnect), boots auth + Firestore + functions under a demo- project
 # id, and runs its own `cypress.real.config.ts`. The portal job also installs
@@ -21,14 +22,25 @@ name: E2E real services
 # failure: its specs skip with the missing variable named in the log.
 #
 # VERDICT (D3-e). A red run means our integration broke and the release stops.
-# The vendor-outage exception (a 5xx or timeout while the vendor's status page
-# shows an incident only warns) is not classified automatically yet; until it
-# is, a red run is read by a person before a release is forced past it.
+# A vendor outage (a 5xx or timeout while the vendor's status page shows an
+# incident) only warns. run.sh classifies the run into
+# cypress/.real/verdict.json (`stop`, `warn` or `pass`, #1196) and exits 1 only
+# on `stop`, so a warning is a green job; the file is uploaded below so the
+# release can say so. A run from before the classifier has no file, and its
+# red is read by a person before a release is forced past it.
+#
+# WHO READS IT (#1193). nightly-release.yml calls this workflow for the commit
+# it ships, before its release job, and that job refuses unless it came back
+# green. scripts/release.sh step 0b reads the verdict again for the commit,
+# hosted and local alike: the newest run of this file or of a nightly that
+# called it, then the verdict files in that run's artifacts.
 
 on:
   workflow_dispatch:
-  # The release calls this for the commit it is about to ship. Not wired yet
-  # (#1089 phase 1); the PR that added this file says exactly how.
+  # The nightly release calls this for the commit it is about to ship (#1193).
+  # A called workflow gets no run of its own: its jobs run inside the
+  # nightly's run, named "E2E real services / <job>", and release.sh looks
+  # for them there.
   workflow_call:
 
 permissions:
@@ -75,6 +87,7 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             mytribe/functions/package-lock.json
+            auntieos-admin/web/functions/package-lock.json
       # The Firestore emulator is a JAR. 21 to match ci.yml's emulator jobs.
       - uses: actions/setup-java@v6
         with:
@@ -91,6 +104,11 @@ jobs:
       # own install; run.sh builds it.
       - run: npm ci
         working-directory: mytribe/functions
+      # The admin's own codebase (signCloudinaryUpload, generateAuntieCopy) is
+      # served too (#1201). Plain JS, no build, and not a root workspace, so
+      # the root install does not cover it; run.sh refuses without it.
+      - run: npm ci
+        working-directory: auntieos-admin/web/functions
       # Pinned to the same version as ci.yml's emulator jobs.
       - name: Install firebase-tools
         run: npm install -g firebase-tools@15.18.0
@@ -104,11 +122,20 @@ jobs:
         with:
           name: e2e-real-artifacts
           # The emulator log carries function output, which is where a vendor
-          # refusal shows; screenshots exist only for failures. The secrets file
-          # is never here: run.sh deletes it and it lives under mytribe/.
+          # refusal shows; screenshots exist only for failures. verdict.json is
+          # the run's classification (#1196), which release.sh downloads by
+          # this artifact's name (#1193); a run before the classifier has none,
+          # and if-no-files-found below keeps that quiet. The secrets files
+          # are never here: run.sh deletes both, and neither path is listed.
+          #
+          # Hidden directories: upload-artifact skips a hidden file only when
+          # its glob walk reaches one below the path it was given. Each path
+          # here names its hidden component outright, so include-hidden-files
+          # is not needed.
           path: |
             auntieos-admin/cypress/.artifacts/real/
             auntieos-admin/cypress/.real/emulators.log
+            auntieos-admin/cypress/.real/verdict.json
           retention-days: 7
           if-no-files-found: ignore
 

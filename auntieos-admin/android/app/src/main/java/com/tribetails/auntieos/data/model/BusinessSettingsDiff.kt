@@ -243,3 +243,32 @@ internal fun businessSettingsFieldChanges(
     }
     return changes
 }
+/**
+ * [current] with exactly the [fields] put back to their [baseline] values.
+ *
+ * Used when a write for those fields failed after the screen had already shown
+ * them (#1214): an edit the server never took must not sit in the on-screen copy
+ * as if it had landed, but a field this save never touched (another panel's
+ * unsaved draft) must keep whatever it holds, so only the named ones go back.
+ *
+ * [fields] are Firestore field names, the keys [businessSettingsFieldChanges]
+ * returns. Each is also the property name, because the model's property names ARE
+ * the wire names (see the header of [BusinessSettings]); `BusinessSettingsDiffTest`
+ * pins that for every key. Reflection rather than a second hand-written table:
+ * the class is `@Keep`, and a second table would be one more list a new field has
+ * to be added to.
+ */
+internal fun revertBusinessSettingsFields(
+    current: BusinessSettings,
+    baseline: BusinessSettings,
+    fields: Collection<String>,
+): BusinessSettings {
+    if (fields.isEmpty()) return current
+    val reverted = current.copy()
+    for (name in fields) {
+        val field = BusinessSettings::class.java.getDeclaredField(name)
+        field.isAccessible = true
+        field.set(reverted, field.get(baseline))
+    }
+    return reverted
+}

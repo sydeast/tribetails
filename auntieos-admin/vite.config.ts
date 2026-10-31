@@ -1,6 +1,7 @@
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
+import { realServicesApiProxy } from './scripts/e2e-real/api-proxy.mjs';
 
 // AuntieOS admin (React). Replaces the Compose/wasm admin at auntieos-ttpc.
 //
@@ -76,7 +77,12 @@ export default defineConfig({
       },
     }),
   ],
-  server: { port: 5174 }, // 5173 is MyTribe/web; both run side by side during the port
+  server: {
+    port: 5174, // 5173 is MyTribe/web; both run side by side during the port
+    // Empty except in the real-services Cypress run, where it stands in for
+    // firebase.json's /api/* hosting rewrites (#1201). See api-proxy.mjs.
+    proxy: realServicesApiProxy(process.env),
+  },
   build: {
     // Firebase in a chunk of its own, copied from `mytribe/web/vite.config.ts`
     // for the same reason it exists there. The SDK is 580 KB of the bundle and

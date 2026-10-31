@@ -24,7 +24,14 @@
 #  0b. ci verdict    - ask GitHub whether CI is green for THIS commit. Step 1
 #                       does not run e2e and never did, so until this existed a
 #                       red e2e job could not stop a release. One didn't, on
-#                       2026-08-01.
+#                       2026-08-01. Then the same question for the
+#                       real-services suite (#1193, ruling D3): is the "E2E
+#                       real services" run for THIS commit green? That run is
+#                       a hand dispatch of e2e-real.yml or the nightly release
+#                       that called it; both are read. Red stops. Its
+#                       verdict.json (#1196), when the run uploaded one, is
+#                       read too: a vendor-outage `warn` is printed and the
+#                       release goes on, a `stop` refuses.
 #  0c. client config - fill each web app's VITE_* build config from Google
 #                       Secret Manager, BEFORE step 1 builds them. `vite build`
 #                       compiles these values INTO the bundle, so after the
@@ -73,7 +80,8 @@
 #                                       run none, WRITE NOTHING, claim nothing
 #
 #   RELEASE_SKIP_CHECK=1                skip step 1 (only when you just ran it)
-#   RELEASE_SKIP_CI_GATE=1              release without CI's verdict for HEAD.
+#   RELEASE_SKIP_CI_GATE=1              release without CI's verdict for HEAD,
+#                                       and without the real-services verdict.
 #                                       For when the gate is genuinely
 #                                       unavailable (no gh, no network, GitHub
 #                                       down), not for when it says no.
@@ -1500,6 +1508,180 @@ ci_e2e_conclusion() {
   printf '%s' "$line" | awk -F'\t' '{ if ($2 != "completed") print "pending"; else print $3 }'
 }
 
+# THE REAL-SERVICES VERDICT (#1193, operator ruling D3, issue #1089).
+#
+# .github/workflows/e2e-real.yml runs the Cypress suites against the real
+# functions and the real outside services (Stripe test mode, Twilio test
+# credentials, the test inboxes, Cloudinary's e2e/ folder, the test calendar).
+# It needs environment secrets a pull request cannot read, so it is gated on
+# releases rather than on pull requests, and this is where a release reads it.
+#
+# WHERE ITS RUN LIVES is the part that is easy to get wrong. A run of it comes
+# from one of two places:
+#
+#   - a hand dispatch (`gh workflow run e2e-real.yml --ref main`). GitHub
+#     records that as a run OF e2e-real.yml, and every job in it is the suite.
+#   - nightly-release.yml, which calls it with `uses:` before its release job.
+#     A called workflow does NOT get a run of its own: its jobs run inside the
+#     caller's run, named "E2E real services / <job>". Asking only for runs of
+#     e2e-real.yml would find nothing for a hosted release and refuse every
+#     one. So the nightly's runs for the commit are read too, keeping only the
+#     jobs whose name carries E2E_REAL_MATCH.
+#
+# The newest run with a real verdict wins, the same "latest wins" rule the CI
+# lookup uses. A run whose suite jobs all SKIPPED (a nightly with the switch
+# off, or a dispatch from a branch, where the job's main-only `if` skips it) is
+# not a verdict; an older run's verdict is looked for, and if there is none the
+# gate says the suite was skipped, which is not the same as saying it never ran.
+#
+# NO LOOKBACK, unlike the CI e2e job. That job is path-filtered, so a skip on
+# HEAD can be inherited from the last commit it ran on. This suite has no path
+# filter: the release runs it for the commit it ships, so the verdict has to be
+# for THIS commit.
+#
+# A VENDOR WITH NO SECRETS IS NOT RED. Its specs skip (pending in Cypress) and
+# the job still concludes `success`. A red job is a failing spec.
+#
+# THE VERDICT FILE (#1196). Once the classifier is in, each suite job writes
+# cypress/.real/verdict.json (`stop`, `warn` or `pass`, with its reasons) and
+# uploads it in the run's artifacts. The job's exit already follows it (1 on
+# stop, 0 on warn and pass), so the conclusion read above stays the gate; the
+# file is what lets a release SAY that a green run was only a vendor-outage
+# warning, and print the reasons for a red one. A run with no verdict file
+# (from before the classifier, or an artifact GitHub would not hand over) is
+# judged by its conclusion alone, and the release says it had no file.
+E2E_REAL_WORKFLOW='e2e-real.yml'
+E2E_REAL_CALLER='nightly-release.yml'
+E2E_REAL_MATCH='real services'
+
+# e2e_real_runs <sha>: "created_at<TAB>run_id<TAB>workflow file" per run of
+# either workflow for that commit, newest first. 3 with gh's error on stderr if
+# a lookup failed; nothing and 0 if neither workflow has a run for it.
+e2e_real_runs() {
+  local sha="$1" wf out all="" rc
+  for wf in "$E2E_REAL_WORKFLOW" "$E2E_REAL_CALLER"; do
+    rc=0
+    out="$(gh api "repos/{owner}/{repo}/actions/workflows/$wf/runs?head_sha=$sha&per_page=20" \
+      --jq ".workflow_runs[] | [.created_at, (.id | tostring), \"$wf\"] | @tsv" 2>&1 </dev/null)" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      printf '%s\n' "$out" | head -3 >&2
+      return 3
+    fi
+    [ -n "$out" ] && all="$all$out
+"
+  done
+  [ -n "$all" ] || return 0
+  # ISO-8601 timestamps sort as text.
+  printf '%s' "$all" | grep -v '^$' | sort -r
+  return 0
+}
+
+# e2e_real_verdict <sha>: one tab-separated line, or nothing.
+#
+#   green<TAB><run id><TAB><workflow>
+#   red<TAB><run id><TAB><workflow><TAB><job (conclusion); ...>
+#   pending<TAB><run id><TAB><workflow><TAB><job (status); ...>
+#   skipped<TAB><run id><TAB><workflow>     every run's suite jobs skipped
+#   (nothing)                               no run of the suite for this commit
+#
+# Returns 3 with gh's error on stderr when a lookup failed, so "could not ask"
+# never reads as "no run". Every gh call here takes stdin from /dev/null: the
+# loop below reads the run list on stdin and gh must not eat it.
+e2e_real_verdict() {
+  local sha="$1" runs rc=0 created run_id wf jobs skipped_at=""
+  local name status concl failed pending passed
+  runs="$(e2e_real_runs "$sha")" || return 3
+  [ -n "$runs" ] || return 0
+  while IFS=$'\t' read -r created run_id wf; do
+    [ -n "$run_id" ] || continue
+    rc=0
+    jobs="$(gh api "repos/{owner}/{repo}/actions/runs/$run_id/jobs?per_page=100" \
+      --jq '.jobs[] | [.name, .status, (.conclusion // "")] | @tsv' 2>&1 </dev/null)" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      printf '%s\n' "$jobs" | head -3 >&2
+      return 3
+    fi
+    if [ "$wf" = "$E2E_REAL_CALLER" ]; then
+      jobs="$(printf '%s\n' "$jobs" | grep -i "$E2E_REAL_MATCH" || true)"
+    fi
+    [ -n "$jobs" ] || continue
+    failed=""; pending=""; passed=0
+    while IFS=$'\t' read -r name status concl; do
+      [ -n "$name" ] || continue
+      if [ "$status" != "completed" ]; then
+        pending="$pending${pending:+; }$name ($status)"
+        continue
+      fi
+      case "$concl" in
+        success)        passed=1 ;;
+        skipped|neutral) ;;
+        *)              failed="$failed${failed:+; }$name (${concl:-no conclusion})" ;;
+      esac
+    done <<< "$jobs"
+    if [ -n "$failed" ]; then
+      printf 'red\t%s\t%s\t%s\n' "$run_id" "$wf" "$failed"; return 0
+    elif [ -n "$pending" ]; then
+      printf 'pending\t%s\t%s\t%s\n' "$run_id" "$wf" "$pending"; return 0
+    elif [ "$passed" = "1" ]; then
+      printf 'green\t%s\t%s\n' "$run_id" "$wf"; return 0
+    fi
+    # Every suite job in this run skipped: not a verdict. Remember the newest
+    # such run and keep looking for an older one that did judge this commit.
+    [ -n "$skipped_at" ] || skipped_at="$run_id"$'\t'"$wf"
+  done <<< "$runs"
+  [ -z "$skipped_at" ] || printf 'skipped\t%s\n' "$skipped_at"
+  return 0
+}
+
+# e2e_real_verdict_files <run id>: one line per verdict.json in that run's
+# real-services artifacts (#1196), "<where><TAB><verdict><TAB><reasons>", the
+# reasons joined with " | ". Nothing when the run has none. Returns 3 with the
+# reason on stderr when the artifacts could not be fetched; the caller treats
+# that like "no file", never like a verdict. A file that is not JSON, or names
+# a verdict other than stop/warn/pass, reads as `stop`: an unreadable
+# classifier output proves nothing, the same rule the classifier applies.
+#
+# The hosted release asks this of its OWN run, still in progress. Artifacts
+# (upload-artifact v4 and later) are listed as soon as the job that uploaded
+# them finished, so the download is expected to work there, but no scheduled
+# run has proven it yet. If it does not, the download fails, the release says
+# "its verdict file could not be fetched", and the job conclusions still gate.
+e2e_real_verdict_files() {
+  local run_id="$1" dir out rc=0 f where
+  dir="$(mktemp -d)"
+  out="$(gh run download "$run_id" --pattern 'e2e-real*' --dir "$dir" 2>&1 </dev/null)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    rm -rf "$dir"
+    case "$out" in
+      # gh's words for a run with no artifact matching the pattern: a run
+      # from before the classifier uploaded one. Not a failure to ask.
+      *"no valid artifacts"*|*"no artifact matches"*|*"no artifacts"*) return 0 ;;
+    esac
+    printf '%s\n' "$out" | head -3 >&2
+    return 3
+  fi
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    where="${f#"$dir"/}"
+    node -e '
+      const fs = require("fs");
+      let v = "stop", r = [];
+      try {
+        const j = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+        if (["stop", "warn", "pass"].includes(j.verdict)) v = j.verdict;
+        else r.push("verdict.json names no stop/warn/pass verdict");
+        if (Array.isArray(j.reasons)) r = r.concat(j.reasons.map(String));
+      } catch (e) {
+        r.push("verdict.json is not readable JSON: " + e.message);
+      }
+      const clean = s => s.replace(/[\t\n\r]+/g, " ");
+      process.stdout.write(v + "\t" + clean(r.join(" | ")) + "\n");
+    ' "$f" | while IFS= read -r line; do printf '%s\t%s\n' "$where" "$line"; done
+  done <<< "$(find "$dir" -type f -name verdict.json | sort)"
+  rm -rf "$dir"
+  return 0
+}
+
 # ci_refuse <headline> [lines...]: refuse, naming the override.
 # Under RELEASE_PREFLIGHT_ONLY it reports what a real release WOULD have done
 # and continues, because preflight ships nothing and is normally run from a
@@ -1531,11 +1713,14 @@ HEAD_SHORT="$RELEASE_SHORT"
 # instead of listing the steps it walked past. Same rule as the release tag,
 # which names a skipped functions deploy rather than claiming everything shipped.
 CI_GATE_READ=0
+E2E_REAL_READ=0
+E2E_REAL_WARNED=0
 CHECK_RAN=0
 
 if [ "${RELEASE_SKIP_CI_GATE:-0}" = "1" ]; then
   ylw "SKIPPED (RELEASE_SKIP_CI_GATE=1). Nothing has checked whether CI is green"
-  ylw "  for $HEAD_SHORT, e2e included. That judgement is yours now."
+  ylw "  for $HEAD_SHORT, e2e included, or whether the real-services suite is."
+  ylw "  That judgement is yours now."
 elif ! command -v gh >/dev/null 2>&1; then
   ci_refuse "gh is not installed, so CI's verdict for $HEAD_SHORT cannot be read." \
     "Install it and sign in:  brew install gh && gh auth login"
@@ -1668,6 +1853,117 @@ else
       grn "     changed a path the suite watches."
     fi
     CI_GATE_READ=1
+  fi
+
+  # THE REAL-SERVICES SUITE for this commit (#1193). Asked even when the CI
+  # read above refused, because under RELEASE_PREFLIGHT_ONLY a refusal only
+  # reports and carries on, and a preflight should report both. In a real
+  # release a CI refusal has already exited. Every message here says "the
+  # real-services suite", never "CI" or "the e2e suite", so a refusal names
+  # which verdict stopped the release.
+  STEP="reading the real-services verdict"
+  E2E_REAL_RC=0
+  E2E_REAL_ERR="$(mktemp)"
+  E2E_REAL="$(e2e_real_verdict "$HEAD_SHA" 2>"$E2E_REAL_ERR")" || E2E_REAL_RC=$?
+  E2E_REAL_MSG="$(cat "$E2E_REAL_ERR" 2>/dev/null || true)"
+  rm -f "$E2E_REAL_ERR"
+  IFS=$'\t' read -r E2E_REAL_STATE E2E_REAL_RUN E2E_REAL_WF E2E_REAL_JOBS <<< "${E2E_REAL:-}" || true
+  E2E_REAL_FROM="run $E2E_REAL_RUN of $E2E_REAL_WF"
+
+  if [ "$E2E_REAL_RC" -ne 0 ]; then
+    ci_refuse "gh could not ask GitHub for the real-services suite's verdict on $HEAD_SHORT: the lookup failed." \
+      "This says nothing about the suite. Nothing was answered. gh said:" \
+      "    ${E2E_REAL_MSG:-<no output>}" \
+      "" \
+      "Check: gh auth status, and whether api.github.com is reachable, then re-run."
+  elif [ -z "$E2E_REAL" ]; then
+    ci_refuse "the real-services suite (E2E real services) has no run for $HEAD_SHORT." \
+      "Neither a run of $E2E_REAL_WORKFLOW nor a $E2E_REAL_CALLER run that called it" \
+      "has judged this commit. The scheduled release runs it before it ships." \
+      "For a release by hand, run it on main and wait for it to finish:" \
+      "    gh workflow run $E2E_REAL_WORKFLOW --ref main" \
+      "It tests main's tip, so it judges $HEAD_SHORT only while that is main's tip."
+  elif [ "$E2E_REAL_STATE" = "skipped" ]; then
+    ci_refuse "the real-services suite (E2E real services) was SKIPPED for $HEAD_SHORT, which is not a verdict." \
+      "Newest skipped: $E2E_REAL_FROM. Its jobs run only from main" \
+      "(the e2e-real environment allows main only), so a dispatch from any other" \
+      "branch skips them. Run it on main and wait for it to finish:" \
+      "    gh workflow run $E2E_REAL_WORKFLOW --ref main"
+  elif [ "$E2E_REAL_STATE" = "pending" ]; then
+    ci_refuse "the real-services suite (E2E real services) has not finished for $HEAD_SHORT." \
+      "Still running in $E2E_REAL_FROM:" \
+      "    $E2E_REAL_JOBS" \
+      "" \
+      "Wait for it:  gh run watch $E2E_REAL_RUN"
+  else
+    # Red or green, the run's verdict files say why (#1196). Read for both:
+    # a red run prints its reasons, a green one may be a warning.
+    E2E_REAL_FILES_RC=0
+    E2E_REAL_ERR="$(mktemp)"
+    E2E_REAL_FILES="$(e2e_real_verdict_files "$E2E_REAL_RUN" 2>"$E2E_REAL_ERR")" || E2E_REAL_FILES_RC=$?
+    E2E_REAL_FILES_MSG="$(cat "$E2E_REAL_ERR" 2>/dev/null || true)"
+    rm -f "$E2E_REAL_ERR"
+    E2E_REAL_FILE_LINES=()
+    E2E_REAL_FILE_STOP=""
+    E2E_REAL_FILE_WARN=""
+    while IFS=$'\t' read -r vf_where vf_verdict vf_reasons; do
+      [ -n "$vf_where" ] || continue
+      E2E_REAL_FILE_LINES+=("    $vf_verdict  $vf_where: ${vf_reasons:-no reasons given}")
+      case "$vf_verdict" in
+        stop) E2E_REAL_FILE_STOP=1 ;;
+        warn) E2E_REAL_FILE_WARN=1 ;;
+      esac
+    done <<< "${E2E_REAL_FILES:-}"
+
+    if [ "$E2E_REAL_STATE" = "red" ]; then
+      if [ "${#E2E_REAL_FILE_LINES[@]}" -gt 0 ]; then
+        E2E_REAL_WHY=("The run's verdict file(s) say:" "${E2E_REAL_FILE_LINES[@]}"
+          "A proven vendor outage concludes green with a warning, so this is our"
+          "integration, not the vendor's.")
+      else
+        E2E_REAL_WHY=("The run wrote no verdict file, so nothing classified it. A vendor"
+          "outage (a 5xx or timeout while the vendor's status page shows an"
+          "incident) is a person's call then: auntieos-admin/docs/runbooks/e2e.md,"
+          "'The verdict'.")
+      fi
+      ci_refuse "the real-services suite (E2E real services) is RED for $HEAD_SHORT." \
+        "These jobs did not pass, in $E2E_REAL_FROM:" \
+        "    $E2E_REAL_JOBS" \
+        "" \
+        "${E2E_REAL_WHY[@]}" \
+        "" \
+        "A vendor whose secrets are not stored skips its specs and is not red." \
+        "Read it:  gh run view $E2E_REAL_RUN --log-failed" \
+        "The emulator log and verdict.json are in that run's e2e-real-artifacts."
+    elif [ -n "$E2E_REAL_FILE_STOP" ]; then
+      # The job concluded success but its own classifier said stop. The file
+      # is the stricter word, and a disagreement is not a pass.
+      ci_refuse "the real-services suite (E2E real services) passed its jobs for $HEAD_SHORT, but its verdict file says STOP." \
+        "In $E2E_REAL_FROM:" \
+        "${E2E_REAL_FILE_LINES[@]}" \
+        "" \
+        "The job should have failed with this verdict. Read the run before trusting it:" \
+        "    gh run view $E2E_REAL_RUN --log"
+    else
+      grn "real services: green for $HEAD_SHORT ($E2E_REAL_FROM)"
+      E2E_REAL_READ=1
+      if [ -n "$E2E_REAL_FILE_WARN" ]; then
+        # Operator ruling D3: a proven vendor outage warns and the release
+        # goes on. Said in yellow so the warning is in the release log.
+        E2E_REAL_WARNED=1
+        ylw "  WARNING: the run passed on a vendor-outage warning, not a clean pass:"
+        for l in "${E2E_REAL_FILE_LINES[@]}"; do ylw "$l"; done
+        ylw "  The failing specs were not re-proven. Re-run the suite once the vendor"
+        ylw "  recovers:  gh workflow run $E2E_REAL_WORKFLOW --ref main"
+      elif [ "$E2E_REAL_FILES_RC" -ne 0 ]; then
+        ylw "  (its verdict file could not be fetched, so the job conclusions are the"
+        ylw "   verdict. gh said: ${E2E_REAL_FILES_MSG:-<no output>})"
+      elif [ "${#E2E_REAL_FILE_LINES[@]}" -eq 0 ]; then
+        ylw "  (no verdict file in that run, so the job conclusions are the verdict)"
+      else
+        for l in "${E2E_REAL_FILE_LINES[@]}"; do grn "$l"; done
+      fi
+    fi
   fi
 fi
 
@@ -3042,6 +3338,14 @@ if [ "$DRY_RUN" = "1" ]; then
     ylw "  - CI's verdict for this commit was read and nothing was red"
   else
     ylw "  - NOT CI's verdict: the gate did not run in this rehearsal"
+  fi
+  if [ "$E2E_REAL_READ" = "1" ]; then
+    ylw "  - the real-services suite's verdict for this commit was read and it was green"
+    if [ "$E2E_REAL_WARNED" = "1" ]; then
+      ylw "    (on a vendor-outage WARNING, not a clean pass; see above)"
+    fi
+  else
+    ylw "  - NOT the real-services suite: its verdict was not read as green in this rehearsal"
   fi
   if [ "$CHECK_RAN" = "1" ]; then
     ylw "  - npm run check passed"

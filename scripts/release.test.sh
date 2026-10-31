@@ -251,6 +251,15 @@ write_stubs() {
   # with that file's FIRST line, the same as the real `.workflow_runs[0].id`,
   # and each run id names its own jobs fixture (`$GH_FIXTURES/<run-id>`).
   #
+  # The real-services lookup (#1193) asks two more workflow-scoped run lists,
+  # e2e-real.yml's and nightly-release.yml's, answered from
+  # `$GH_FIXTURES/<sha>.e2e-real-runs` and `<sha>.nightly-runs` ("created<TAB>
+  # run id" per line, any order). It then downloads the chosen run's artifacts
+  # (`gh run download <id>`): `$GH_FIXTURES/<run-id>.verdict` becomes that
+  # run's e2e-real-artifacts/.real/verdict.json, `<run-id>.portal-verdict` a
+  # second one under e2e-real-portal-artifacts. No fixture is a run with no
+  # artifact, in gh's own words. GH_DOWNLOAD_FAIL=1 fails the download.
+  #
   # `commits/<sha>/check-runs` is the OLD, unscoped endpoint ci_check_runs
   # used to read, which counted every check run on a commit regardless of
   # which workflow made it. It is POISONED here on purpose, printing a
@@ -265,6 +274,8 @@ write_stubs() {
 # fails. GH_API_FAIL=1 leaves auth fine but fails every `gh api` call, which is
 # a signed-in gh that cannot reach the API. GH_API_FAIL=jobs fails only the
 # second hop (a run's jobs), after the run itself was found.
+# GH_API_FAIL=real fails only the real-services run lists (#1193), after CI's
+# own lookup has answered.
 if [ "${1:-} ${2:-}" = "auth status" ]; then
   if [ "${GH_AUTH_FAIL:-0}" = "1" ]; then
     echo "You are not logged into any GitHub hosts. To log in, run: gh auth login" >&2
@@ -276,6 +287,38 @@ fi
 if [ "${1:-}" = "api" ] && [ "${GH_API_FAIL:-0}" = "1" ]; then
   echo "error connecting to api.github.com" >&2
   exit 1
+fi
+if [ "${1:-}" = "api" ] && [ "${GH_API_FAIL:-0}" = "real" ]; then
+  case "${2:-}" in
+    *e2e-real.yml/runs*|*nightly-release.yml/runs*) echo "HTTP 502: Bad Gateway (real)" >&2; exit 1 ;;
+  esac
+fi
+if [ "${1:-} ${2:-}" = "run download" ]; then
+  run_id="${3:-}"; out_dir=""
+  shift 3
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --dir|-D) out_dir="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  if [ "${GH_DOWNLOAD_FAIL:-0}" = "1" ]; then
+    echo "HTTP 500: artifact service unavailable (download)" >&2
+    exit 1
+  fi
+  if [ ! -f "$GH_FIXTURES/$run_id.verdict" ] && [ ! -f "$GH_FIXTURES/$run_id.portal-verdict" ]; then
+    echo "no valid artifacts found to download" >&2
+    exit 1
+  fi
+  if [ -f "$GH_FIXTURES/$run_id.verdict" ]; then
+    mkdir -p "$out_dir/e2e-real-artifacts/.real"
+    cp "$GH_FIXTURES/$run_id.verdict" "$out_dir/e2e-real-artifacts/.real/verdict.json"
+  fi
+  if [ -f "$GH_FIXTURES/$run_id.portal-verdict" ]; then
+    mkdir -p "$out_dir/e2e-real-portal-artifacts/.real"
+    cp "$GH_FIXTURES/$run_id.portal-verdict" "$out_dir/e2e-real-portal-artifacts/.real/verdict.json"
+  fi
+  exit 0
 fi
 if [ "${1:-}" = "api" ] && [ "${GH_API_FAIL:-0}" = "jobs" ]; then
   case "${2:-}" in
@@ -290,6 +333,19 @@ for a in "$@"; do
         head -n1 "$GH_FIXTURES/$sha.runs" | tr -d '\n'
       elif [ -f "$GH_FIXTURES/$sha" ]; then
         printf '%s' "$sha"
+      fi
+      exit 0
+      ;;
+    *actions/workflows/e2e-real.yml/runs*head_sha=*|*actions/workflows/nightly-release.yml/runs*head_sha=*)
+      sha="${a#*head_sha=}"; sha="${sha%%&*}"
+      case "$a" in
+        *e2e-real.yml*) wf=e2e-real.yml; f="$GH_FIXTURES/$sha.e2e-real-runs" ;;
+        *)              wf=nightly-release.yml; f="$GH_FIXTURES/$sha.nightly-runs" ;;
+      esac
+      if [ -f "$f" ]; then
+        while IFS="$(printf '\t')" read -r created run_id; do
+          [ -n "$run_id" ] && printf '%s\t%s\t%s\n' "$created" "$run_id" "$wf"
+        done < "$f"
       fi
       exit 0
       ;;
@@ -543,9 +599,19 @@ run_release() {
   printf '%s' "$rc"
 }
 
+# stripped <file>: the output without colour codes.
+stripped() { sed 's/\x1b\[[0-9;]*m//g' "$1"; }
+
 # Green everything, for cases that are not about CI.
 fixture_all_green() {
   printf 'React admin\tcompleted\tsuccess\nReact admin e2e\tcompleted\tsuccess\nMyTribe functions\tcompleted\tsuccess\n' > "$1"
+  fixture_real_green "$1"
+}
+fixture_real_green() {
+  local dir sha
+  dir="$(dirname "$1")"; sha="$(basename "$1")"
+  printf '2026-10-01T00:00:00Z\treal-%s\n' "$sha" > "$1.e2e-real-runs"
+  printf 'Admin Cypress, real services\tcompleted\tsuccess\n' > "$dir/real-$sha"
 }
 
 # ---------------------------------------------------------------------------
@@ -669,6 +735,8 @@ fi
 # ---------------------------------------------------------------------------
 D3="$(make_repo)"; write_stubs "$D3"
 HEAD3="$(cd "$D3/repo" && git rev-parse HEAD)"
+# These cases are about CI's verdict; the real-services suite is green.
+fixture_real_green "$D3/fixtures/$HEAD3"
 PARENT3="$(cd "$D3/repo" && git rev-parse HEAD~1)"
 
 printf 'React admin\tcompleted\tsuccess\nReact admin e2e\tcompleted\tfailure\n' > "$D3/fixtures/$HEAD3"
@@ -892,6 +960,8 @@ fi
 # ---------------------------------------------------------------------------
 D10="$(make_repo)"; write_stubs "$D10"
 HEAD10="$(cd "$D10/repo" && git rev-parse HEAD)"
+# These cases are about CI's verdict; the real-services suite is green.
+fixture_real_green "$D10/fixtures/$HEAD10"
 
 printf 'run-newer\nrun-older\n' > "$D10/fixtures/$HEAD10.runs"
 printf 'React admin e2e\tcompleted\tcancelled\n' > "$D10/fixtures/run-older"
@@ -913,6 +983,309 @@ if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "React admin e2e"; then
   ok "a red NEWER run still refuses even though an older run for the same sha was green: the gate reads [0]"
 else
   bad "a red newer run did not refuse past a green older one"; echo "$OUT" | tail -20
+fi
+
+# ---------------------------------------------------------------------------
+# 10b. The real-services suite (#1193, ruling D3). CI is green in every case
+#      here, so whatever stops the release is the real-services verdict, and
+#      the refusal has to say so rather than blame CI.
+#
+#      Its run lives in one of two places: a hand dispatch of e2e-real.yml (a
+#      run of its own), or the nightly release that called it (no run of its
+#      own; its jobs sit inside the nightly's run as "E2E real services / ...").
+# ---------------------------------------------------------------------------
+echo "--- 10b. the real-services verdict"
+DR="$(make_repo)"; write_stubs "$DR"
+HEADR="$(cd "$DR/repo" && git rev-parse HEAD)"
+FR="$DR/fixtures"
+# real_reset: CI green, and no run of the suite at all for HEAD.
+real_reset() {
+  fixture_all_green "$FR/$HEADR"
+  rm -f "$FR/$HEADR.e2e-real-runs" "$FR/$HEADR.nightly-runs"
+}
+not_blaming_ci() {
+  if printf '%s' "$1" | grep -q "CI is not green\|the e2e suite is"; then
+    bad "$2: the refusal blames CI or the CI e2e job"; return
+  fi
+  ok "$2: the refusal does not blame CI"
+}
+
+real_reset
+printf '2026-10-02T01:00:00Z\tdispatch-red\n' > "$FR/$HEADR.e2e-real-runs"
+printf 'Admin Cypress, real services\tcompleted\tfailure\n' > "$FR/dispatch-red"
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "real-services suite (E2E real services) is RED" &&
+   printf '%s' "$OUT" | grep -q "Admin Cypress, real services (failure)" &&
+   printf '%s' "$OUT" | grep -q "RELEASE_SKIP_CI_GATE=1"; then
+  ok "a red real-services run refuses, names the suite and the job, and names the override"
+else
+  bad "a red real-services run did not refuse by name (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+not_blaming_ci "$OUT" "red real-services"
+
+real_reset
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "real-services suite (E2E real services) has no run" &&
+   printf '%s' "$OUT" | grep -q "gh workflow run e2e-real.yml --ref main"; then
+  ok "no run of the suite for HEAD refuses and says how to dispatch it"
+else
+  bad "no run of the suite did not refuse with the dispatch command (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+if printf '%s' "$OUT" | grep -q "could not ask"; then
+  bad "a genuine no-run was reported as gh being unable to ask"
+else
+  ok "a genuine no-run is not reported as gh being unable to ask"
+fi
+
+# The hosted path: no dispatch run, only the nightly run that called it. The
+# nightly's own release job is in progress in that run (it is the one asking)
+# and must not count as the suite still running.
+real_reset
+printf '2026-10-02T01:00:00Z\tnightly-1\n' > "$FR/$HEADR.nightly-runs"
+printf 'Decide what this run does\tcompleted\tsuccess\nE2E real services / Admin Cypress, real services\tcompleted\tsuccess\nRelease main to production\tin_progress\t\n' > "$FR/nightly-1"
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "real services: green for .*nightly-release.yml"; then
+  ok "a nightly run that called the suite is read: its suite job is the verdict, its release job is not"
+else
+  bad "the suite's jobs inside a nightly run were not read as its verdict (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+if printf '%s' "$OUT" | grep -q "the real-services suite's verdict for this commit was read and it was green"; then
+  ok "the dry-run summary credits the real-services read"
+else
+  bad "the dry-run summary does not say the real-services verdict was read"
+fi
+
+real_reset
+printf '2026-10-02T01:00:00Z\tnightly-red\n' > "$FR/$HEADR.nightly-runs"
+printf 'E2E real services / Admin Cypress, real services\tcompleted\tfailure\nRelease main to production\tin_progress\t\n' > "$FR/nightly-red"
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "is RED" && printf '%s' "$OUT" | grep -q "nightly-release.yml"; then
+  ok "a red suite inside a nightly run refuses and names that run"
+else
+  bad "a red suite inside a nightly run did not refuse (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+
+# A nightly with the switch off skips the caller job: GitHub lists it once,
+# under the caller's name, concluded skipped. That is not a verdict.
+real_reset
+printf '2026-10-02T01:00:00Z\tnightly-off\n' > "$FR/$HEADR.nightly-runs"
+printf 'Decide what this run does\tcompleted\tsuccess\nE2E real services\tcompleted\tskipped\nRelease main to production\tcompleted\tsuccess\n' > "$FR/nightly-off"
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "was SKIPPED for .*which is not a verdict"; then
+  ok "a skipped suite refuses as skipped, not as green and not as no run"
+else
+  bad "a skipped suite was not refused as skipped (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+not_blaming_ci "$OUT" "skipped real-services"
+
+# ...but an older run that did judge this commit still stands behind it.
+printf '2026-10-01T09:00:00Z\tdispatch-green\n' > "$FR/$HEADR.e2e-real-runs"
+printf 'Admin Cypress, real services\tcompleted\tsuccess\n' > "$FR/dispatch-green"
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "real services: green for .*run dispatch-green of e2e-real.yml"; then
+  ok "a newer skipped run falls back to the older run that judged the commit"
+else
+  bad "a newer skipped run hid an older green verdict (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+
+# Newest wins across the two sources, both ways round.
+real_reset
+printf '2026-10-01T09:00:00Z\tdispatch-red\n' > "$FR/$HEADR.e2e-real-runs"
+printf '2026-10-02T01:00:00Z\tnightly-1\n' > "$FR/$HEADR.nightly-runs"
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "run nightly-1 of nightly-release.yml"; then
+  ok "a newer green nightly run stands over an older red dispatch"
+else
+  bad "the newer green nightly run did not win over an older red dispatch (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+printf '2026-10-03T09:00:00Z\tdispatch-red\n' > "$FR/$HEADR.e2e-real-runs"
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "is RED" && printf '%s' "$OUT" | grep -q "dispatch-red"; then
+  ok "a newer red dispatch refuses even though an older nightly run was green"
+else
+  bad "an older green nightly run hid a newer red dispatch (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+
+real_reset
+printf '2026-10-02T01:00:00Z\tdispatch-running\n' > "$FR/$HEADR.e2e-real-runs"
+printf 'Admin Cypress, real services\tin_progress\t\n' > "$FR/dispatch-running"
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "real-services suite (E2E real services) has not finished" &&
+   printf '%s' "$OUT" | grep -q "gh run watch dispatch-running"; then
+  ok "a suite still running refuses as not finished"
+else
+  bad "a suite still running did not refuse as not finished (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+
+# One job green and another skipped (a second suite job with nothing to run)
+# is green. A vendor with no secrets is green too: its specs are pending in
+# Cypress and the job still concludes success, so nothing here sees it.
+real_reset
+printf '2026-10-02T01:00:00Z\tdispatch-mixed\n' > "$FR/$HEADR.e2e-real-runs"
+printf 'Admin Cypress, real services\tcompleted\tsuccess\nPortal Cypress, real services\tcompleted\tskipped\n' > "$FR/dispatch-mixed"
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "real services: green"; then
+  ok "a green job beside a skipped one is green"
+else
+  bad "a green job beside a skipped one did not pass (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+
+real_reset
+printf '2026-10-02T01:00:00Z\tdispatch-red\n' > "$FR/$HEADR.e2e-real-runs"
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1 GH_API_FAIL=real)"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "could not ask GitHub for the real-services suite's verdict" &&
+   printf '%s' "$OUT" | grep -q "HTTP 502: Bad Gateway (real)"; then
+  ok "a failed real-services lookup refuses as could-not-ask, with gh's error"
+else
+  bad "a failed real-services lookup was not refused as could-not-ask (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+if printf '%s' "$OUT" | grep -q "has no run"; then
+  bad "a failed real-services lookup was reported as the suite having no run"
+else
+  ok "a failed real-services lookup is never reported as no run"
+fi
+
+# The override skips this read too, and the skip says so.
+real_reset
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1 RELEASE_SKIP_CI_GATE=1 GH_CALL_LOG="$DR/gh-calls.log")"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "or whether the real-services suite is" &&
+   ! grep -q "e2e-real.yml\|nightly-release.yml" "$DR/gh-calls.log" 2>/dev/null; then
+  ok "RELEASE_SKIP_CI_GATE=1 skips the real-services read and says it did"
+else
+  bad "RELEASE_SKIP_CI_GATE=1 did not skip the real-services read cleanly (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+
+# A preflight reports a red suite and goes on, like every other gate refusal.
+real_reset
+printf '2026-10-02T01:00:00Z\tdispatch-red\n' > "$FR/$HEADR.e2e-real-runs"
+printf 'Admin Cypress, real services\tcompleted\tfailure\n' > "$FR/dispatch-red"
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1 RELEASE_PREFLIGHT_ONLY=1)"; OUT="$(stripped "$DR/out")"
+if printf '%s' "$OUT" | grep -q "a real release would REFUSE here" &&
+   printf '%s' "$OUT" | grep -q "real-services suite (E2E real services) is RED"; then
+  ok "a preflight reports the red suite as a refusal a real release would make"
+else
+  bad "a preflight did not report the red suite (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+if printf '%s' "$OUT" | grep -q "^REFUSED: the real-services"; then
+  bad "a preflight refused on the red suite instead of reporting it"
+else
+  ok "a preflight does not stop on the red suite"
+fi
+
+# ---------------------------------------------------------------------------
+# 10c. The verdict file (#1196) inside the chosen run's artifacts. The job's
+#      conclusion stays the gate; the file says why, and turns a green run
+#      that only passed on a vendor-outage warning into a visible warning.
+# ---------------------------------------------------------------------------
+echo "--- 10c. the real-services verdict file"
+# green_dispatch <run id>: CI green and one green dispatch run of the suite.
+green_dispatch() {
+  real_reset
+  printf '2026-10-02T01:00:00Z\t%s\n' "$1" > "$FR/$HEADR.e2e-real-runs"
+  printf 'Admin Cypress, real services\tcompleted\tsuccess\n' > "$FR/$1"
+  rm -f "$FR/$1.verdict" "$FR/$1.portal-verdict"
+}
+
+green_dispatch dispatch-warn
+printf '{"verdict":"warn","reasons":["stripe: 503 during incident \\"Elevated API errors\\""]}\n' > "$FR/dispatch-warn.verdict"
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "real services: green" &&
+   printf '%s' "$OUT" | grep -q "WARNING: the run passed on a vendor-outage warning" &&
+   printf '%s' "$OUT" | grep -q 'warn  e2e-real-artifacts/.real/verdict.json: stripe: 503 during incident'; then
+  ok "a warn verdict lets the release through and prints the warning with its reason"
+else
+  bad "a warn verdict was not let through with its warning (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+if printf '%s' "$OUT" | grep -q "on a vendor-outage WARNING, not a clean pass"; then
+  ok "the dry-run summary says the green read was a warning"
+else
+  bad "the dry-run summary hides that the green read was a warning"
+fi
+
+green_dispatch dispatch-pass
+printf '{"verdict":"pass","reasons":["pass: 12 passed, 3 pending, none failed"]}\n' > "$FR/dispatch-pass.verdict"
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "pass  e2e-real-artifacts/.real/verdict.json: pass: 12 passed, 3 pending" &&
+   ! printf '%s' "$OUT" | grep -q "WARNING: the run passed"; then
+  ok "a pass verdict is green and prints its counts, pending (secret-less vendors) included, with no warning"
+else
+  bad "a pass verdict was not read as a clean green (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+
+# Two suites in one run (the portal job, #1194): one warning is enough to warn.
+green_dispatch dispatch-two
+printf '{"verdict":"pass","reasons":["pass"]}\n' > "$FR/dispatch-two.verdict"
+printf '{"verdict":"warn","reasons":["twilio: timeout during incident"]}\n' > "$FR/dispatch-two.portal-verdict"
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "WARNING: the run passed on a vendor-outage warning" &&
+   printf '%s' "$OUT" | grep -q "e2e-real-portal-artifacts/.real/verdict.json: twilio: timeout"; then
+  ok "a warning from either suite's verdict file is printed"
+else
+  bad "a second suite's warning was missed (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+
+green_dispatch dispatch-disagree
+printf '{"verdict":"stop","reasons":["admin-invoice.cy.ts: 400 from api.stripe.com"]}\n' > "$FR/dispatch-disagree.verdict"
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "passed its jobs for .*but its verdict file says STOP" &&
+   printf '%s' "$OUT" | grep -q "400 from api.stripe.com"; then
+  ok "a green job whose verdict file says stop refuses, with the file's reason"
+else
+  bad "a stop verdict file under a green job did not refuse (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+
+green_dispatch dispatch-garbled
+printf 'not json at all\n' > "$FR/dispatch-garbled.verdict"
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "verdict.json is not readable JSON"; then
+  ok "an unreadable verdict file reads as stop, never as pass"
+else
+  bad "an unreadable verdict file did not refuse (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+
+green_dispatch dispatch-nofile
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "no verdict file in that run, so the job conclusions are the verdict"; then
+  ok "a run with no verdict file (before #1196) is judged by its jobs and says so"
+else
+  bad "a run with no verdict file was not judged by its jobs (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+
+green_dispatch dispatch-dlfail
+printf '{"verdict":"warn","reasons":["x"]}\n' > "$FR/dispatch-dlfail.verdict"
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1 GH_DOWNLOAD_FAIL=1)"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "its verdict file could not be fetched" &&
+   printf '%s' "$OUT" | grep -q "artifact service unavailable"; then
+  ok "a failed artifact download falls back to the job conclusions and says why"
+else
+  bad "a failed artifact download was not reported as such (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+
+# A red run prints its file's reasons and says it is ours, not the vendor's.
+real_reset
+printf '2026-10-02T01:00:00Z\tdispatch-redfile\n' > "$FR/$HEADR.e2e-real-runs"
+printf 'Admin Cypress, real services\tcompleted\tfailure\n' > "$FR/dispatch-redfile"
+printf '{"verdict":"stop","reasons":["clients.cy.ts: no vendor error attributed"]}\n' > "$FR/dispatch-redfile.verdict"
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "is RED" &&
+   printf '%s' "$OUT" | grep -q "stop  e2e-real-artifacts/.real/verdict.json: clients.cy.ts: no vendor error attributed" &&
+   printf '%s' "$OUT" | grep -q "this is our"; then
+  ok "a red run prints its verdict file's reasons"
+else
+  bad "a red run did not print its verdict file's reasons (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+
+# The hosted path: the verdict file comes from the nightly run's own artifacts.
+real_reset
+printf '2026-10-02T01:00:00Z\tnightly-warn\n' > "$FR/$HEADR.nightly-runs"
+printf 'E2E real services / Admin Cypress, real services\tcompleted\tsuccess\nRelease main to production\tin_progress\t\n' > "$FR/nightly-warn"
+printf '{"verdict":"warn","reasons":["cloudinary: 502 during incident"]}\n' > "$FR/nightly-warn.verdict"
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1 GH_CALL_LOG="$DR/gh-calls-hosted.log")"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "cloudinary: 502 during incident" &&
+   grep -q "^run download nightly-warn" "$DR/gh-calls-hosted.log"; then
+  ok "a hosted release reads the verdict file from its own nightly run"
+else
+  bad "a hosted release did not read its own run's verdict file (rc $RC)"; printf '%s\n' "$OUT" | tail -20
 fi
 
 # ---------------------------------------------------------------------------
@@ -2094,8 +2467,6 @@ fi
 # run.
 # ---------------------------------------------------------------------------
 
-# stripped <file>: the output without colour codes.
-stripped() { sed 's/\x1b\[[0-9;]*m//g' "$1"; }
 # short <sha>
 short7() { printf '%s' "$1" | cut -c1-7; }
 

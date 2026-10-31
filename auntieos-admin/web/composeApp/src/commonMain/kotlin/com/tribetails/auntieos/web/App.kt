@@ -192,6 +192,9 @@ private fun SignedInApp(
     // N1: a notification "Create quote" lands on Invoices with the quote composer
     // pre-seeded for this kinfolk; consumed once the composer opens.
     var composeQuoteForKinfolkId by remember { mutableStateOf<String?>(null) }
+    // #1199: the visit an invoice's bound line opened in Auntie Time; dropped on leaving it.
+    var invoiceLineVisitId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(current) { if (current != Destination.Sessions) invoiceLineVisitId = null }
     var reportSessionId by remember { mutableStateOf(if (initialRoute.dest == Destination.KinTales) initialRoute.detailId else null) }
     var mediaEntityId by remember { mutableStateOf(if (initialRoute.dest == Destination.MediaGallery) initialRoute.detailId else null) }
     var mediaEntityType by remember { mutableStateOf(if (initialRoute.dest == Destination.MediaGallery) initialRoute.detailType else null) }
@@ -424,7 +427,7 @@ private fun SignedInApp(
                 }
             }
             Destination.Bookings    -> BookingScreen()
-            Destination.Sessions    -> KinCareSessionsScreen()
+            Destination.Sessions    -> KinCareSessionsScreen(initialKinCareId = invoiceLineVisitId)
             Destination.Schedule    -> ScheduleScreen()
             Destination.Invoices    -> {
                 val selId = selectedInvoiceId
@@ -432,6 +435,7 @@ private fun SignedInApp(
                     InvoiceDetailScreen(
                         invoiceId = selId,
                         onBack    = { selectedInvoiceId = null },
+                        onOpenVisit = { visitId -> invoiceLineVisitId = visitId; current = Destination.Sessions },
                     )
                 } else {
                     InvoicesScreen(
