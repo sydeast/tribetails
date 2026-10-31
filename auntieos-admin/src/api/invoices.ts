@@ -307,11 +307,16 @@ export function invoiceLineItems(row: Pick<InvoiceEntry, 'lineItems'>): InvoiceL
     if (typeof qty !== 'number' || !Number.isFinite(qty)) continue;
     if (typeof unitCents !== 'number' || !Number.isFinite(unitCents)) continue;
     const discountCents = li['discountCents'];
+    // The visit this line bills for (#408). Dropping it here unbinds the line on
+    // the next wholesale `updateInvoice`, and hides the visit link and the
+    // bound-row lock in the editor.
+    const sessionId = li['sessionId'];
     out.push({
       description: typeof li['description'] === 'string' ? li['description'] : '',
       qty,
       unitCents,
       ...(typeof discountCents === 'number' && Number.isFinite(discountCents) ? { discountCents } : {}),
+      ...(typeof sessionId === 'string' && sessionId !== '' ? { sessionId } : {}),
     });
   }
   return out;

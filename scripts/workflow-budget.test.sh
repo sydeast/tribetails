@@ -81,8 +81,10 @@ job_ceiling() {
 }
 
 # ---------------------------------------------------------------------------
-# job_timeouts <file>: one "job<TAB>timeout" line per job, timeout empty if the
-# job declares none.
+# job_timeouts <file>: one "job<TAB>timeout<TAB>uses" line per job. timeout is
+# `-` if the job declares none; uses is `-` unless the job calls a reusable
+# workflow (`uses:` at job level, #1193). `-` rather than empty because `read`
+# collapses two tabs into one and would shift the third field into the second.
 #
 # Job keys are the two-space-indented mapping keys under a top-level `jobs:`,
 # and a job's own settings are the four-space-indented keys beneath it. Lines
@@ -99,14 +101,19 @@ job_timeouts() {
       job = $1
       sub(/:$/, "", job)
       t = ""
+      u = ""
       next
     }
     /^    timeout-minutes:[[:space:]]/ {
       if (job != "") { t = $2 }
       next
     }
+    /^    uses:[[:space:]]/ {
+      if (job != "") { u = $2 }
+      next
+    }
     END { flush() }
-    function flush() { if (job != "") { printf "%s\t%s\n", job, t; job = "" } }
+    function flush() { if (job != "") { printf "%s\t%s\t%s\n", job, (t == "" ? "-" : t), (u == "" ? "-" : u); job = "" } }
   ' "$1"
 }
 
@@ -114,10 +121,36 @@ echo "--- every job carries a timeout-minutes"
 for f in "$WORKFLOWS"/*.yml; do
   name="$(basename "$f")"
   found=0
-  while IFS="$(printf '\t')" read -r job t; do
+  while IFS="$(printf '\t')" read -r job t uses; do
     [ -n "$job" ] || continue
+    [ "$t" = "-" ] && t=""
+    [ "$uses" = "-" ] && uses=""
     found=$((found+1))
-    if [ -z "$t" ]; then
+    if [ -z "$t" ] && [ -n "$uses" ]; then
+      # A job that calls a reusable workflow cannot take timeout-minutes
+      # (GitHub rejects the key there). Its cap is the called workflow's own
+      # jobs, so it passes only when it calls a file in this directory whose
+      # every job is capped. A workflow from another repository is capped by
+      # nothing this test can read.
+      case "$uses" in
+        ./.github/workflows/*.yml)
+          called="$ROOT/${uses#./}"
+          if [ ! -f "$called" ]; then
+            bad "$name: job '$job' calls $uses, which does not exist"
+          else
+            uncapped="$(job_timeouts "$called" | awk -F'\t' '$2 == "-" { print $1 }')"
+            if [ -n "$uncapped" ]; then
+              bad "$name: job '$job' calls $uses, whose job(s) $(printf '%s' "$uncapped" | tr '\n' ' ')have no timeout-minutes"
+            else
+              ok "$name: $job calls $uses, and every job in it is capped there"
+            fi
+          fi
+          ;;
+        *)
+          bad "$name: job '$job' calls $uses, outside this repository, with no cap this test can read"
+          ;;
+      esac
+    elif [ -z "$t" ]; then
       bad "$name: job '$job' has no timeout-minutes, so it inherits GitHub's 360"
     elif ! printf '%s' "$t" | grep -Eq '^[0-9]+$'; then
       bad "$name: job '$job' has a non-numeric timeout-minutes '$t'"

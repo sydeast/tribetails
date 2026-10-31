@@ -225,10 +225,7 @@ fun SchedulingOptionsScreen(
                         Text("Special hours source: Business Hours profile", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textPrimary)
                         Text(activeSurchargesLabel(serviceState.surcharges.count { it.isActive }), style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.kinfolkOrange)
 
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            GhostButton(label = "Create New Surcharge", onClick = onNavigateToServiceManagement)
-                            GhostButton(label = "Link Existing Surcharge", onClick = onNavigateToServiceManagement)
-                        }
+                        GhostButton(label = MANAGE_SURCHARGES_LABEL, onClick = onNavigateToServiceManagement)
                     }
                 }
             }
@@ -774,3 +771,9 @@ private fun ConnectedGoogleCalendarBody(
  * to holidays or invoices (#1179; ballot rows inv-surcharge-lines, bill-surcharge-stacking).
  */
 internal fun activeSurchargesLabel(activeCount: Int): String = "Active surcharges: $activeCount"
+/**
+ * The one surcharge button on Scheduling Options. It opens Service Management, where
+ * surcharges are created and edited, so it is named for that. Nothing links a surcharge to a
+ * holiday or to special hours (#1219; ballot rows inv-surcharge-lines, bill-surcharge-stacking).
+ */
+internal const val MANAGE_SURCHARGES_LABEL: String = "Manage Surcharges"

@@ -10,10 +10,30 @@ import { reportError } from './sentry';
  * (src/jsMain/kotlin/com/kinfolk/portal/Main.kt, FirebaseOptions).
  * These are public client identifiers, not secrets.
  */
+/**
+ * The project id the REAL-SERVICES e2e run (#1194, `npm run e2e:real`) swaps
+ * in, or `''` everywhere else. Same rule as the admin's (`auntieos-admin/src/
+ * lib/firebase.ts`, #1089).
+ *
+ * That run serves `mytribe/functions` under the functions emulator, which
+ * answers callables at `/<projectId>/us-central1/<name>`, so the client has to
+ * name the project the emulators were started with. It is a `demo-` id on
+ * purpose: Firebase treats `demo-*` as a project that does not exist, so
+ * nothing the emulator resolves under it (a `defineSecret` lookup above all)
+ * can reach production.
+ *
+ * Nothing in the deploy path sets it, so a hosting build substitutes
+ * `undefined` and keeps the literal production id. A value that is not a
+ * `demo-` id is refused rather than used.
+ */
+const E2E_PROJECT_ID = (import.meta.env.VITE_E2E_PROJECT_ID as string | undefined) ?? '';
+if (E2E_PROJECT_ID !== '' && !E2E_PROJECT_ID.startsWith('demo-')) {
+  throw new Error(`VITE_E2E_PROJECT_ID must be a demo- project id, got "${E2E_PROJECT_ID}"`);
+}
 export const firebaseConfig = {
   apiKey: 'AIzaSyBnR7D4gORVehTr_-WB42_NyFeNO7acDTo',
   authDomain: 'auntieos-ttpc.firebaseapp.com',
-  projectId: 'auntieos-ttpc',
+  projectId: E2E_PROJECT_ID !== '' ? E2E_PROJECT_ID : 'auntieos-ttpc',
   storageBucket: 'auntieos-ttpc.firebasestorage.app',
   messagingSenderId: '153396971788',
   appId: '1:153396971788:web:23eab70f9dfe37447f2129',
@@ -212,8 +232,34 @@ export const functions = getFunctions(app, FUNCTIONS_REGION);
  * container without this file learning about CI.
  */
 export const E2E_EMULATOR_HOST = (import.meta.env.VITE_E2E_EMULATOR as string | undefined) ?? '';
-/** The functions port, dialled below, with nothing serving it. */
-export const E2E_FUNCTIONS_PORT = 5499;
+/** The PR-time suite's functions port, dialled below, with nothing serving it. */
+export const E2E_DEAD_FUNCTIONS_PORT = 5499;
+/**
+ * The port callables are dialled on in this e2e run.
+ *
+ * `E2E_DEAD_FUNCTIONS_PORT` for every run but one. The real-services run
+ * (#1194, `npm run e2e:real`) serves `mytribe/functions` on a port of its own
+ * (`mytribe/e2e.real.firebase.json`) and names it in `VITE_E2E_FUNCTIONS_PORT`.
+ * 5499 itself is never handed to anything, so the PR-time suite's dead-port
+ * guarantee holds whatever the other run does.
+ *
+ * Compared as a string, not through `Number()`, so a hosting build can fold
+ * it: the admin found a `Number(undefined || 0)` form surviving minification
+ * and leaving the port in the bundle (#1089).
+ */
+const E2E_SERVED_FUNCTIONS_PORT = (import.meta.env.VITE_E2E_FUNCTIONS_PORT as string | undefined) ?? '';
+export const E2E_FUNCTIONS_PORT =
+  E2E_SERVED_FUNCTIONS_PORT !== '' ? Number(E2E_SERVED_FUNCTIONS_PORT) : E2E_DEAD_FUNCTIONS_PORT;
+// A typo here would dial NaN or the dead port and read as "every callable is
+// down", nowhere near the cause. Refused instead, like the project id above.
+if (
+  E2E_SERVED_FUNCTIONS_PORT !== '' &&
+  (!Number.isInteger(E2E_FUNCTIONS_PORT) || E2E_FUNCTIONS_PORT <= 0 || E2E_FUNCTIONS_PORT === E2E_DEAD_FUNCTIONS_PORT)
+) {
+  throw new Error(
+    `VITE_E2E_FUNCTIONS_PORT must be a served port other than ${E2E_DEAD_FUNCTIONS_PORT}, got "${E2E_SERVED_FUNCTIONS_PORT}"`,
+  );
+}
 if (E2E_EMULATOR_HOST !== '') {
   // eslint-disable-next-line no-console
   console.warn(
