@@ -141,6 +141,11 @@ jobs:
               - 'auntieos-admin/e2e.real.firebase.json'
               - 'auntieos-admin/web/firebase.json'
               - 'auntieos-admin/web/functions/index.js'
+              # #1264: secret-manager.test.mjs checks the order of the steps in
+              # e2e-real.yml and that the portal's run.sh reads Secret Manager
+              # before its preflight.
+              - '.github/workflows/e2e-real.yml'
+              - 'mytribe/web/scripts/e2e-real/run.sh'
             # Its own filter rather than a step inside `admin`, because this job
             # downloads Chromium and boots two emulators and so costs minutes
             # where the unit suite costs seconds. It still watches src/** and
@@ -307,6 +312,10 @@ jobs:
               - '.github/workflows/ci.yml'
             portal:
               - 'mytribe/web/**'
+              # #1265: scripts/e2e-real/preflight.test.mjs imports the admin
+              # preflight and secret-manager.mjs (#1194, #1264), so a change
+              # there alone must run the portal's copy of those assertions.
+              - 'auntieos-admin/scripts/e2e-real/**'
               # Same reason as `auntieos-admin/firebase.json` on the `admin`
               # filter: preview.yml's `portal` filter watches it, preview.yml no
               # longer runs the portal unit suite, so this job has to be the one

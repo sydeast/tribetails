@@ -181,12 +181,18 @@ jobs:
   # No timeout-minutes here: a `uses:` job cannot take one. The called
   # workflow's own jobs carry their caps, and workflow-budget.test.sh checks
   # them there.
+  #
+  # id-token: write because the called jobs read the Cloudinary, smtp2go and
+  # Google OAuth values from Secret Manager through Workload Identity (#1264).
+  # A called workflow cannot hold more than its caller grants, so without it
+  # the nightly path fails at the auth step while a dispatch passes.
   e2e-real:
     name: E2E real services
     needs: decide
     if: needs.decide.outputs.mode != 'off' && needs.decide.outputs.new == 'true'
     permissions:
       contents: read
+      id-token: write
     uses: ./.github/workflows/e2e-real.yml
     secrets: inherit
 
