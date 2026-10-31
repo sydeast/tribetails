@@ -86,6 +86,24 @@ Everything else that used to live here moved to `docs/runbooks/` on
    `report:legacy-amount-due`, which must run before the first release that
    carries #902.
 
+7. **Run the real-services suite on this commit and wait for it** (#1193).
+   Step 0b refuses unless the Cypress run against the real functions and the
+   real outside services (Stripe test mode, Twilio test credentials, the test
+   inboxes, Cloudinary `e2e/`, the test calendar) is green for this exact
+   commit. The scheduled release runs it for itself; a release by hand needs
+   one dispatched from `main`:
+
+   ```bash
+   gh workflow run e2e-real.yml --ref main
+   gh run watch "$(gh run list --workflow e2e-real.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+   ```
+
+   It tests main's tip, so it counts only while that is the commit you
+   release. A vendor whose secrets are not stored skips its specs and is not
+   red. A green run that passed only on a vendor-outage warning lets the
+   release go on and prints the warning in yellow. What each answer means:
+   `auntieos-admin/docs/runbooks/e2e.md`, "How a release reads it".
+
 ---
 
 ## Run it
@@ -123,7 +141,7 @@ What it does, in order. It stops at the first failure and names the step:
 |---|---|
 | 0 | Clean tree, on `main`, in sync with origin |
 | 0a | Installed dependencies match every lockfile |
-| 0b | CI is green for this exact commit, e2e included |
+| 0b | CI is green for this exact commit, e2e included, and so is the real-services suite (`e2e-real.yml`) |
 | 0c | Web build config (`VITE_*`) fetched from Secret Manager |
 | 1 | `npm run check`: typecheck, lint, contracts, seeds, tests, build |
 | 1b | Every secret the functions declare exists |
@@ -183,6 +201,13 @@ The `NIGHTLY_RELEASE` repository variable picks what a scheduled run does:
 `off` (nothing), `preflight` (sign in, check secrets and CI, open the
 keystores, deploy nothing) or `on` (a full release). Releases by hand from the
 Mac work the same with any setting.
+
+When a run has something to ship, it first calls `e2e-real.yml` on the commit
+(#1193); the job shows in the run as **E2E real services**. The release job
+refuses unless that came back green, and `release.sh` reads the same verdict
+again at step 0b. A `preflight` run reports a red suite and goes on. With the
+switch `off`, or nothing merged, the suite does not run, so no test email or
+Stripe test session goes out.
 
 The one-time Google Cloud setup and the signing secrets exist (#851, done
 2026-09-30); a manual preflight passed that day. The commands, if it ever has

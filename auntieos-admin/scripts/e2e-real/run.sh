@@ -4,17 +4,19 @@
 # "The real-services run".
 #
 # Order matters and each step is a lock:
-#   1. build mytribe/functions, because the emulator serves lib/, not src/;
-#   2. preflight: write mytribe/functions/.secret.local from the environment,
-#      or refuse (non-test Stripe key, a business or private phone number, a
-#      spec that could press Google Calendar Disconnect);
+#   1. build mytribe/functions, because the emulator serves lib/, not src/,
+#      and check the admin's own codebase (web/functions, plain JS, no build)
+#      is installed: the emulator serves both (#1201);
+#   2. preflight: write a .secret.local into EACH codebase from the
+#      environment, or refuse (non-test Stripe key, a business or private
+#      phone number, a spec that could press Google Calendar Disconnect);
 #   3. boot auth + Firestore + functions under a demo- project id, so no
 #      secret lookup can reach production Secret Manager;
 #   4. run cypress.real.config.ts against a dev server pointed at all three;
 #   5. classify the run (classify-run.mjs, D3-e): cypress/.real/verdict.json
 #      says stop, warn or pass, and this script exits 1 on stop, 0 otherwise;
 #   6. whatever happened: empty the Cloudinary e2e/ folder
-#      (cloudinary-cleanup.mjs) and delete the secrets file. Neither can
+#      (cloudinary-cleanup.mjs) and delete both secrets files. Neither can
 #      change the exit code the run already has.
 set -euo pipefail
 
@@ -22,7 +24,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ADMIN_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$ADMIN_DIR" || exit 1
 FUNCTIONS_DIR="$(cd "$ADMIN_DIR/../mytribe/functions" && pwd)"
-SECRETS_FILE="$FUNCTIONS_DIR/.secret.local"
+# The admin's own codebase: signCloudinaryUpload and generateAuntieCopy, the
+# targets of /api/cloudinary/sign-upload and /api/generate (#1201).
+ADMIN_FUNCTIONS_DIR="$ADMIN_DIR/web/functions"
+# One per codebase: the emulator reads the file in each function's own source
+# directory, so a key in one does nothing for the other.
+SECRETS_FILES=("$FUNCTIONS_DIR/.secret.local" "$ADMIN_FUNCTIONS_DIR/.secret.local")
 REAL_DIR="$ADMIN_DIR/cypress/.real"
 LOG="$REAL_DIR/emulators.log"
 RESULTS="$REAL_DIR/results.json"
@@ -58,9 +65,12 @@ on_exit() {
     echo "== e2e-real: Cloudinary cleanup FAILED, e2e/ may still hold this run's uploads. Exit code unchanged ($status)." >&2
   fi
   # Only a file this run wrote. preflight.mjs refuses to replace any other.
-  if [ -f "$SECRETS_FILE" ] && head -1 "$SECRETS_FILE" | grep -q 'scripts/e2e-real/preflight.mjs'; then
-    rm -f "$SECRETS_FILE"
-  fi
+  local secrets_file
+  for secrets_file in "${SECRETS_FILES[@]}"; do
+    if [ -f "$secrets_file" ] && head -1 "$secrets_file" | grep -q 'scripts/e2e-real/preflight.mjs'; then
+      rm -f "$secrets_file"
+    fi
+  done
   exit "$status"
 }
 
@@ -87,13 +97,21 @@ export E2E_SEED_TIMEOUT_MS="${E2E_SEED_TIMEOUT_MS:-60000}"
 echo "== e2e-real: building mytribe/functions"
 npm --prefix "$FUNCTIONS_DIR" run build
 
+# Not a root workspace, so the root `npm ci` does not install it. Refused here
+# by name rather than left to the emulator, which would report every function
+# in the codebase as failing to load.
+if [ ! -d "$ADMIN_FUNCTIONS_DIR/node_modules" ]; then
+  echo "$ADMIN_FUNCTIONS_DIR/node_modules does not exist. Install it first: npm ci --prefix web/functions" >&2
+  exit 1
+fi
+
 echo "== e2e-real: preflight"
-node scripts/e2e-real/preflight.mjs "$FUNCTIONS_DIR" "$ADMIN_DIR/cypress/e2e-real" "$REAL_DIR/vendors.json"
+node scripts/e2e-real/preflight.mjs "$ADMIN_DIR/cypress/e2e-real" "$REAL_DIR/vendors.json" "$FUNCTIONS_DIR" "$ADMIN_FUNCTIONS_DIR"
 
 echo "== e2e-real: type-checking specs"
 npm run e2e:cy:tsc
 
-echo "== e2e-real: emulators (auth, firestore, functions) under $E2E_PROJECT_ID"
+echo "== e2e-real: emulators (auth, firestore, functions: mytribe + default) under $E2E_PROJECT_ID"
 # Output is teed into $LOG because the Cypress tasks read it: a trigger that
 # fails after the screen has its answer is only visible there. bash's own
 # PIPESTATUS, so the verdict is firebase's exit code and not tee's.

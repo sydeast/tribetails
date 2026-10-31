@@ -563,6 +563,7 @@ fun AdminSettingsScreen(
                             BusinessOperationsPanel(
                                 settings = uiState.businessSettings,
                                 isLoading = uiState.isLoading,
+                                saving = uiState.settingsSaving,
                                 onSettingsChange = { viewModel.updateBusinessSettings(it) },
                             )
                             VisitRecordsPanel(
@@ -600,6 +601,7 @@ fun AdminSettingsScreen(
 
                         SettingsSection.TimeOff -> TimeOffPanel(
                             settings = uiState.businessSettings,
+                            saving = uiState.settingsSaving,
                             onSettingsChange = { updated ->
                                 viewModel.updateBusinessSettings(
                                     uiState.businessSettings.copy(
@@ -640,6 +642,7 @@ fun AdminSettingsScreen(
                         SettingsSection.EmailFrame -> EmailFramePanel()
                         SettingsSection.BookingBehavior -> BookingBehaviorPanel(
                             settings = uiState.businessSettings,
+                            saving = uiState.settingsSaving,
                             onSettingsChange = { viewModel.updateBusinessSettings(it) },
                         )
 
@@ -823,6 +826,7 @@ private fun BrandingPanel(
 private fun BusinessOperationsPanel(
     settings: com.tribetails.auntieos.data.model.BusinessSettings,
     isLoading: Boolean,
+    saving: Boolean,
     onSettingsChange: (com.tribetails.auntieos.data.model.BusinessSettings) -> Unit,
 ) {
     val c = AuntieTheme.colors
@@ -832,6 +836,11 @@ private fun BusinessOperationsPanel(
         subtitle = "GPS tracking, liability protection, and visit defaults.",
     ) {
         Column {
+            // These controls save the moment they change and have no draft, so a
+            // second change built while one write is in flight would start from
+            // the not-yet-updated copy (#1214). They wait for the answer, and
+            // say so.
+            SettingsSavingCue(saving)
             AuntieSettingRow(
                 title = "Enable GPS Tracking for All Visits",
                 description = "Your operational standard for liability protection and client transparency.",
@@ -844,6 +853,7 @@ private fun BusinessOperationsPanel(
                         onCheckedChange = { enabled ->
                             onSettingsChange(settings.copy(enableGPSTrackingForAllVisits = enabled))
                         },
+                        enabled = !saving,
                     )
                 },
             )
@@ -859,7 +869,7 @@ private fun BusinessOperationsPanel(
                         onCheckedChange = { enabled ->
                             onSettingsChange(settings.copy(autoStartTrackingOnVisitStart = enabled))
                         },
-                        enabled = settings.enableGPSTrackingForAllVisits,
+                        enabled = settings.enableGPSTrackingForAllVisits && !saving,
                     )
                 },
             )
@@ -878,7 +888,7 @@ private fun BusinessOperationsPanel(
                     AuntieRadio(
                         selected = settings.trackingAccuracy == accuracy,
                         onClick = { onSettingsChange(settings.copy(trackingAccuracy = accuracy)) },
-                        enabled = settings.enableGPSTrackingForAllVisits,
+                        enabled = settings.enableGPSTrackingForAllVisits && !saving,
                     )
                     Text(text = accuracy.name, modifier = Modifier.padding(start = dims.space2))
                 }
@@ -899,6 +909,7 @@ private fun BusinessOperationsPanel(
                 onSelect = { mins -> onSettingsChange(settings.copy(defaultEtaMinutes = mins)) },
                 displayText = { "$it min" },
                 modifier = Modifier.fillMaxWidth(),
+                enabled = !saving,
             )
 
             Spacer(Modifier.height(dims.space4))
@@ -924,15 +935,17 @@ private fun BusinessOperationsPanel(
                 onSelect = { days -> onSettingsChange(settings.copy(draftRetentionDays = days)) },
                 displayText = { "$it days" },
                 modifier = Modifier.fillMaxWidth(),
+                enabled = !saving,
             )
 
             Spacer(Modifier.height(dims.space4))
 
             PrimaryButton(
                 label = "Save Business Settings",
-                onClick = { onSettingsChange(settings) },
+                onClick = { if (!saving) onSettingsChange(settings) },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !isLoading,
+                enabled = !isLoading && !saving,
+                loading = saving,
             )
         }
     }
@@ -1823,6 +1836,7 @@ private fun NotifCell(
 @Composable
 private fun BookingBehaviorPanel(
     settings: com.tribetails.auntieos.data.model.BusinessSettings,
+    saving: Boolean,
     onSettingsChange: (com.tribetails.auntieos.data.model.BusinessSettings) -> Unit,
 ) {
     // The settings mock's "Scheduling" panel (issue #755 pass): its `.trow`
@@ -1836,7 +1850,10 @@ private fun BookingBehaviorPanel(
     ) {
         // #9 (2026-06-08): real persisted toggles (parity with web). Each flip merges
         // the change onto the business_settings doc via updateBusinessSettings.
+        // A switch waits for the server's answer (#1214): a second flip built
+        // while one is in flight would start from the not-yet-updated copy.
         Column {
+            SettingsSavingCue(saving)
             // #517: parity with web. Writes enableConflictDetection, the field
             // EnhancedSchedulingViewModel already gates its availability check on
             // and that guardBookingBusyConflict now reads server-side before every
@@ -1849,6 +1866,7 @@ private fun BookingBehaviorPanel(
                     AuntieToggle(
                         checked = settings.enableConflictDetection,
                         onCheckedChange = { next -> onSettingsChange(settings.copy(enableConflictDetection = next)) },
+                        enabled = !saving,
                     )
                 },
             )
@@ -1860,6 +1878,7 @@ private fun BookingBehaviorPanel(
                     AuntieToggle(
                         checked = settings.snapRescheduleTo15Min,
                         onCheckedChange = { next -> onSettingsChange(settings.copy(snapRescheduleTo15Min = next)) },
+                        enabled = !saving,
                     )
                 },
             )
@@ -1871,6 +1890,7 @@ private fun BookingBehaviorPanel(
                     AuntieToggle(
                         checked = settings.autoConfirmRepeatKinfolk,
                         onCheckedChange = { next -> onSettingsChange(settings.copy(autoConfirmRepeatKinfolk = next)) },
+                        enabled = !saving,
                     )
                 },
             )
@@ -2427,10 +2447,22 @@ private val CLOSURE_RECURRENCE_OPTIONS = listOf(
     RecurrenceOption(ClosureRecurrenceKind.YEARLY_LAST_WEEKDAY, "Every year, last weekday of the month (e.g. last Monday)"),
 )
 
+/** The loading cue for an instant-apply panel while its write is in flight (#1214). */
+@Composable
+private fun SettingsSavingCue(saving: Boolean) {
+    if (!saving) return
+    Text(
+        "Saving…",
+        style = AuntieTheme.typography.bodySmall,
+        color = AuntieTheme.colors.textDim,
+        modifier = Modifier.padding(bottom = AuntieTheme.dims.space2),
+    )
+}
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TimeOffPanel(
     settings: com.tribetails.auntieos.data.model.BusinessSettings,
+    saving: Boolean,
     onSettingsChange: (com.tribetails.auntieos.data.model.BusinessSettings) -> Unit,
 ) {
     val c = AuntieTheme.colors
@@ -2470,6 +2502,10 @@ private fun TimeOffPanel(
         initiallyExpanded = false,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(dims.space4)) {
+            // Instant-apply lists: a second edit built while one write is in
+            // flight would replace the list on the server and drop the first
+            // edit (#1214), so the controls wait for the answer.
+            SettingsSavingCue(saving)
             AuntieFieldLabel(text = "US Holidays Observed")
             Column {
                 US_HOLIDAYS.forEachIndexed { idx, (id, name) ->
@@ -2483,6 +2519,7 @@ private fun TimeOffPanel(
                                     val next = if (on) observed + id else observed - id
                                     onSettingsChange(settings.copy(observedUsHolidays = next.toList()))
                                 },
+                                enabled = !saving,
                             )
                         },
                     )
@@ -2509,6 +2546,7 @@ private fun TimeOffPanel(
                     }
                     GhostButton(
                         label = "Remove",
+                        enabled = !saving,
                         onClick = {
                             onSettingsChange(
                                 settings.copy(
@@ -2531,7 +2569,7 @@ private fun TimeOffPanel(
                     GhostButton(
                         label = preset.name,
                         onClick = { onSettingsChange(settings.copy(companyHolidays = settings.companyHolidays + wire)) },
-                        enabled = wire !in settings.companyHolidays,
+                        enabled = wire !in settings.companyHolidays && !saving,
                     )
                 }
             }
@@ -2610,7 +2648,7 @@ private fun TimeOffPanel(
             PrimaryButton(
                 label = "Add Company Holiday",
                 onClick = {
-                    if (holidayAddEnabled) {
+                    if (holidayAddEnabled && !saving) {
                         val wire = formatClosureEntry(
                             ClosureEntry(
                                 recurrence = newHolidayRecurrence,
@@ -2632,7 +2670,8 @@ private fun TimeOffPanel(
                         newHolidayNth = null
                     }
                 },
-                enabled = holidayAddEnabled,
+                enabled = holidayAddEnabled && !saving,
+                loading = saving,
                 modifier = Modifier.fillMaxWidth(),
             )
 
@@ -2656,6 +2695,7 @@ private fun TimeOffPanel(
                     }
                     GhostButton(
                         label = "Remove",
+                        enabled = !saving,
                         onClick = {
                             onSettingsChange(
                                 settings.copy(specialHours = settings.specialHours.filterIndexed { i, _ -> i != idx })
@@ -2670,11 +2710,13 @@ private fun TimeOffPanel(
                 hours = newSpecialHours,
                 onHours = { newSpecialHours = it },
                 onAdd = {
-                    onSettingsChange(
-                        settings.copy(specialHours = settings.specialHours + "$newSpecialDate|$newSpecialHours")
-                    )
-                    newSpecialDate = ""
-                    newSpecialHours = ""
+                    if (!saving) {
+                        onSettingsChange(
+                            settings.copy(specialHours = settings.specialHours + "$newSpecialDate|$newSpecialHours")
+                        )
+                        newSpecialDate = ""
+                        newSpecialHours = ""
+                    }
                 },
             )
         }
