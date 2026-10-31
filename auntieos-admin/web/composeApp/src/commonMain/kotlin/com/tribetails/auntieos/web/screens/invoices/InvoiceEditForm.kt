@@ -86,26 +86,10 @@ private fun JsonPrimitive.numberAsLong(): Long? {
 
 // ── Money text, mirroring auntieos-admin/src/lib/invoiceMoneyInput.ts ─────────
 
-private val MONEY_RE = Regex("""^\d+(\.\d{1,2})?$""")
+// parseDollarsToCents and parseQty live in InvoiceComposer.kt (same package),
+// which the new-invoice composer and this editor share (#1235).
+
 private val ISO_DAY_RE = Regex("""^\d{4}-\d{2}-\d{2}$""")
-
-/** "12.50" (or "$1,250.00") to cents; null for anything that is not a readable, non-negative amount. */
-fun parseDollarsToCents(raw: String): Long? {
-    val s = raw.trim().removePrefix("$").replace(",", "")
-    if (s.isEmpty() || !MONEY_RE.matches(s)) return null
-    val dollars = s.toDoubleOrNull() ?: return null
-    if (!dollars.isFinite()) return null
-    return (dollars * 100).roundToLong()
-}
-
-/** "2.5" to 2.5; null for anything that is not a readable quantity above zero. */
-fun parseQty(raw: String): Double? {
-    val s = raw.trim()
-    if (s.isEmpty() || !MONEY_RE.matches(s)) return null
-    val qty = s.toDoubleOrNull() ?: return null
-    if (!qty.isFinite() || qty <= 0.0) return null
-    return qty
-}
 
 /** 1250 to "12.50", for seeding an input. Always two decimals. */
 fun centsToInputDollars(cents: Long): String {
