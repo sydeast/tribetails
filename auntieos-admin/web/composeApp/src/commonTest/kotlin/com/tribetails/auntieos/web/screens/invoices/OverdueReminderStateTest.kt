@@ -43,11 +43,7 @@ class OverdueReminderStateTest {
             val open = state == InvoiceState.OPEN
             assertEquals(open, invoiceIsOverdue(i, today), "overdue for $state")
             assertEquals(open, invoiceIsRemindable(i), "remindable for $state")
-            assertEquals(
-                if (open) InvoiceStatus.OVERDUE else InvoiceStatus.OUTSTANDING,
-                invoiceStatusFor(i, today),
-                "detail status for $state",
-            )
+            assertEquals(open, invoiceDetailBadgeFor(i, today).overdue, "detail overdue for $state")
         }
     }
 
@@ -73,12 +69,12 @@ class OverdueReminderStateTest {
         assertFalse(invoiceIsOverdue(inv("open", dueDate = today), today))
         assertTrue(invoiceIsOverdue(inv("open", dueDate = "2026-09-13"), today))
         assertEquals(13, daysOverdue(inv("open"), today))
-        assertEquals(InvoiceStatus.OUTSTANDING, invoiceStatusFor(inv("open", dueDate = today), today))
+        assertEquals("OUTSTANDING", invoiceDetailBadgeFor(inv("open", dueDate = today), today).label)
     }
 
     @Test
     fun aPaidInvoiceStillReadsPaidOnTheDetailBadge() {
-        assertEquals(InvoiceStatus.PAID, invoiceStatusFor(inv("paid", amountDue = 0.0), today))
+        assertEquals("PAID", invoiceDetailBadgeFor(inv("paid", amountDue = 0.0), today).label)
         assertFalse(invoiceIsRemindable(inv("paid", amountDue = 0.0)))
     }
 }

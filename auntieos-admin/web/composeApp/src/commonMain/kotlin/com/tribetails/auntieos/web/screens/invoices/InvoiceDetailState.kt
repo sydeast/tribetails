@@ -24,29 +24,9 @@ fun invoiceDetailStateFor(
     }
 }
 
-/**
- * Unified billing status for an invoice. The list/detail screens previously
- * only knew PAID vs OUTSTANDING (amountDue <= 0). This folds in OVERDUE so a
- * still-owed invoice whose [Invoice.dueDate] is in the past reads distinctly.
- */
-enum class InvoiceStatus { PAID, OVERDUE, OUTSTANDING }
-
-/**
- * Pure status resolver. [todayKey] is an ISO date prefix (YYYY-MM-DD) for
- * "today" so the comparison stays testable and clock-free.
- *
- * - amountDue <= 0  -> PAID
- * - [invoiceIsOverdue]: stored state `open` AND dueDate strictly before today -> OVERDUE
- * - otherwise -> OUTSTANDING
- *
- * #871: OVERDUE comes from the shared [invoiceIsOverdue], so the detail badge,
- * the list pill and the server's overdue notice agree. It used to call any
- * still-owed invoice with a past date overdue, cancelled and quotes included.
- */
-fun invoiceStatusFor(invoice: Invoice, todayKey: String): InvoiceStatus {
-    if (invoice.amountDue <= 0.0) return InvoiceStatus.PAID
-    return if (invoiceIsOverdue(invoice, todayKey)) InvoiceStatus.OVERDUE else InvoiceStatus.OUTSTANDING
-}
+// #1199: the detail badge used to come from an `invoiceStatusFor` here that
+// returned PAID whenever `amountDue <= 0`. It now reads the stored stamp, in
+// InvoiceDetailStatus.kt (`invoiceDetailBadgeFor`).
 
 /** True only when both look like YYYY-MM-DD and [a] is strictly before [b]. */
 fun isIsoDateBefore(a: String, b: String): Boolean {
