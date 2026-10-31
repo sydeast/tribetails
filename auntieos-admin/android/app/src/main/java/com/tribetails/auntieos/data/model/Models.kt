@@ -547,7 +547,16 @@ data class Invoice(
      * view models only ever `copy` it forward from the server's answer.
      */
     var reminderNotifiedAtMs: Long? = null,
-    var viewed: String = "",
+    /**
+     * LEGACY (#1180): the old system's Viewed flag on migrated invoices. Nothing
+     * in this system writes it and no screen reads it, so it is NOT a "viewed by
+     * the household" receipt. `Any?` on purpose: migrated documents hold text
+     * ("Yes") and the server contract says boolean, and a typed `String` here
+     * made Firestore throw on a boolean, which in a batched `toObjects()` blanks
+     * the whole invoice query (Class B, see `paymentsHistory`). Never read it as
+     * a typed value; the server's `getMyInvoices` is the normaliser.
+     */
+    var viewed: Any? = null,
     // Attribution fields written by backfill_structural_links.py
     var sessionIds: List<String> = emptyList(),
     @get:PropertyName("_attribution") @set:PropertyName("_attribution") var attribution: String = "",

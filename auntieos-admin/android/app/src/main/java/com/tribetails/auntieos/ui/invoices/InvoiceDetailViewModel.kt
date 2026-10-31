@@ -106,6 +106,16 @@ data class InvoiceDetailUiState(
     val archiving: Boolean = false,
     // #1113: the open-payment-links "Try again" is in flight.
     val retryingCheckout: Boolean = false,
+    /**
+     * #1174: the invoice editor, open when non-null. Built from the STORED
+     * editScope by [invoiceEditDraftOf]; null for an invoice whose scope is
+     * `none`, so the form cannot be opened on one the server will refuse.
+     * Its own state, not [editMode], which is the linked-sessions picker.
+     */
+    val invoiceEdit: InvoiceEditDraft? = null,
+    /** The editor's own error, shown inside the form: a parse problem or the server's refusal, verbatim. */
+    val invoiceEditError: String? = null,
+    val savingInvoiceEdit: Boolean = false,
 )
 
 /**
@@ -884,6 +894,68 @@ class InvoiceDetailViewModel(
         }
     }
 
+    /**
+     * #1174: opens the invoice editor, offered per the STORED editScope only.
+     * A `none` scope opens nothing; the button is not offered for it either.
+     */
+    fun openInvoiceEdit() {
+        val invoice = _uiState.value.invoice ?: return
+        val draft = invoiceEditDraftOf(invoice) ?: return
+        _uiState.value = _uiState.value.copy(invoiceEdit = draft, invoiceEditError = null)
+    }
+    /** The form, as the operator has typed it so far. Ignored while a save is in flight. */
+    fun updateInvoiceEdit(draft: InvoiceEditDraft) {
+        if (_uiState.value.savingInvoiceEdit || _uiState.value.invoiceEdit == null) return
+        _uiState.value = _uiState.value.copy(invoiceEdit = draft)
+    }
+    fun closeInvoiceEdit() {
+        if (_uiState.value.savingInvoiceEdit) return
+        _uiState.value = _uiState.value.copy(invoiceEdit = null, invoiceEditError = null)
+    }
+    /**
+     * #1174: saves the editor through `updateInvoice`.
+     *
+     * The patch is built against the invoice the form was opened on and carries
+     * only what the form controls and the operator changed
+     * ([invoiceEditPatchOf]); nothing is rebuilt from form state and written
+     * whole. A refusal stays in the form, verbatim, with every field as typed.
+     * On success the invoice and its ledger reload, because a line edit
+     * recomputes the balance server-side.
+     */
+    fun saveInvoiceEdit() {
+        val state = _uiState.value
+        val invoice = state.invoice ?: return
+        val draft = state.invoiceEdit ?: return
+        if (state.savingInvoiceEdit) return
+        val outcome = invoiceEditPatchOf(invoice, draft)
+        val patch = outcome.patch
+        if (patch == null) {
+            _uiState.value = state.copy(invoiceEditError = outcome.error)
+            return
+        }
+        _uiState.value = state.copy(savingInvoiceEdit = true, invoiceEditError = null)
+        viewModelScope.launch {
+            invoiceRepository.updateInvoice(invoice.id, patch)
+                .onSuccess {
+                    _uiState.value = _uiState.value.copy(
+                        savingInvoiceEdit = false,
+                        invoiceEdit = null,
+                        invoiceEditError = null,
+                        toastMessage = "Invoice updated.",
+                        toastVisible = true,
+                        toastIsError = false,
+                    )
+                    reloadInvoiceQuietly(invoice.id)
+                    loadPaymentsForInvoice(invoice.id)
+                }
+                .onFailure { err ->
+                    _uiState.value = _uiState.value.copy(
+                        savingInvoiceEdit = false,
+                        invoiceEditError = "updateInvoice failed: ${err.message ?: "Save failed"}",
+                    )
+                }
+        }
+    }
     /** Re-fetch the invoice into state without flipping the loading shimmer. */
     private fun reloadInvoiceQuietly(invoiceId: String) {
         viewModelScope.launch {

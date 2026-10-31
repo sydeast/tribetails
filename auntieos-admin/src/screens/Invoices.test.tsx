@@ -809,6 +809,47 @@ describe('Invoices screen: status tabs, search and the window all compose', () =
   });
 });
 
+describe('Invoices screen: the seven status tabs (same fixture and expectations as Android and desktop)', () => {
+  const fixture = [
+    entry({ _id: 'q', invoiceNumber: 'Q', status: 'quote', dueDate: '2000-01-01' }),
+    entry({ _id: 'd', invoiceNumber: 'D', status: 'draft', dueDate: '2000-01-01' }),
+    entry({ _id: 'x', invoiceNumber: 'X', status: 'cancelled', dueDate: '2000-01-01' }),
+    entry({ _id: 'cr', invoiceNumber: 'CR', status: 'credit' }),
+    entry({ _id: 'rd', invoiceNumber: 'RD', status: 'redeemed' }),
+    entry({ _id: 'p', invoiceNumber: 'P', status: 'paid', dueDate: '2000-01-01' }),
+    entry({ _id: 'z', invoiceNumber: 'Z', status: 'zero' }),
+    entry({ _id: 'o', invoiceNumber: 'O', status: 'open', dueDate: '2999-01-01' }),
+    entry({ _id: 'od', invoiceNumber: 'OD', status: 'open', dueDate: '2000-01-01' }),
+    entry({ _id: 'u', invoiceNumber: 'U', status: 'sent' as unknown as InvoiceEntry['status'] }),
+  ];
+  const expected: Record<string, string[]> = {
+    All: ['Q', 'D', 'X', 'CR', 'RD', 'P', 'Z', 'O', 'OD', 'U'],
+    Open: ['O', 'OD'],
+    Overdue: ['OD'],
+    Paid: ['P'],
+    Draft: ['D'],
+    Quote: ['Q'],
+    Credit: ['CR', 'RD'],
+  };
+  it('offers exactly All, Open, Overdue, Paid, Draft, Quote, Credit in that order', () => {
+    usePagedCollection.mockReturnValue(paged(fixture));
+    render(<Invoices />);
+    const names = screen
+      .getAllByRole('tab')
+      .map((t) => t.textContent ?? '')
+      .filter((n) => Object.keys(expected).includes(n));
+    expect(names).toEqual(Object.keys(expected));
+  });
+  it.each(Object.entries(expected))('the %s tab shows exactly its members', async (tab, members) => {
+    usePagedCollection.mockReturnValue(paged(fixture));
+    render(<Invoices />);
+    await userEvent.click(screen.getByRole('tab', { name: tab }));
+    const shown = fixture
+      .map((e) => e.invoiceNumber)
+      .filter((n) => screen.queryByText(`#${n}`) !== null);
+    expect(shown).toEqual(members);
+  });
+});
 describe('Invoices screen: the totals say what they cover', () => {
   it('totals outstanding amountDue only across open invoices', () => {
     usePagedCollection.mockReturnValue(

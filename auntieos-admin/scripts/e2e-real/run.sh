@@ -11,25 +11,27 @@
 #   3. boot auth + Firestore + functions under a demo- project id, so no
 #      secret lookup can reach production Secret Manager;
 #   4. run cypress.real.config.ts against a dev server pointed at all three;
-#   5. delete the secrets file whatever happened.
+#   5. classify the run (classify-run.mjs, D3-e): cypress/.real/verdict.json
+#      says stop, warn or pass, and this script exits 1 on stop, 0 otherwise;
+#   6. whatever happened: empty the Cloudinary e2e/ folder
+#      (cloudinary-cleanup.mjs) and delete the secrets file. Neither can
+#      change the exit code the run already has.
 set -euo pipefail
 
-ADMIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ADMIN_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$ADMIN_DIR" || exit 1
 FUNCTIONS_DIR="$(cd "$ADMIN_DIR/../mytribe/functions" && pwd)"
 SECRETS_FILE="$FUNCTIONS_DIR/.secret.local"
 REAL_DIR="$ADMIN_DIR/cypress/.real"
 LOG="$REAL_DIR/emulators.log"
+RESULTS="$REAL_DIR/results.json"
+VERDICT="$REAL_DIR/verdict.json"
 
 # One place for both. A demo- id is the lock; the port is the one
 # e2e.real.firebase.json serves functions on, checked below so they cannot drift.
 export E2E_PROJECT_ID="demo-auntieos-e2e"
 export E2E_FUNCTIONS_PORT="5398"
-CONFIG_PORT="$(node -p "require('./e2e.real.firebase.json').emulators.functions.port")"
-if [ "$CONFIG_PORT" != "$E2E_FUNCTIONS_PORT" ]; then
-  echo "e2e.real.firebase.json serves functions on $CONFIG_PORT, run.sh expects $E2E_FUNCTIONS_PORT" >&2
-  exit 1
-fi
 
 # CREDENTIALS ARE NOT HIDDEN, and that is why the two locks above carry the
 # weight. On a developer machine firebase-tools finds Application Default
@@ -41,15 +43,39 @@ fi
 # secrets file with every declared key in it (no Secret Manager lookup at all).
 # CI has neither ADC nor a login.
 
-cleanup() {
+# Runs on every exit, early refusals included, and keeps the exit code it was
+# handed: a failed cleanup is printed, never turned into the run's verdict.
+on_exit() {
+  local status=$?
+  set +e
+  # A run that stopped before Cypress still leaves a verdict for the release
+  # to read. No results file classifies as `stop`.
+  if [ -d "$REAL_DIR" ] && [ ! -f "$VERDICT" ]; then
+    node "$SCRIPT_DIR/classify-run.mjs" --results "$RESULTS" --log "$LOG" --out "$VERDICT" --cypress-exit "$status" >/dev/null
+  fi
+  # Uploads from this run (D3: "an e2e/ folder, emptied at the end of each run").
+  if ! node "$SCRIPT_DIR/cloudinary-cleanup.mjs"; then
+    echo "== e2e-real: Cloudinary cleanup FAILED, e2e/ may still hold this run's uploads. Exit code unchanged ($status)." >&2
+  fi
   # Only a file this run wrote. preflight.mjs refuses to replace any other.
   if [ -f "$SECRETS_FILE" ] && head -1 "$SECRETS_FILE" | grep -q 'scripts/e2e-real/preflight.mjs'; then
     rm -f "$SECRETS_FILE"
   fi
+  exit "$status"
 }
-trap cleanup EXIT
 
 mkdir -p "$REAL_DIR"
+# A results or verdict file from an earlier run must never be read as this one's.
+rm -f "$RESULTS" "$VERDICT"
+trap on_exit EXIT
+
+# After the trap, so this refusal also leaves a `stop` verdict behind.
+CONFIG_PORT="$(node -p "require('./e2e.real.firebase.json').emulators.functions.port")"
+if [ "$CONFIG_PORT" != "$E2E_FUNCTIONS_PORT" ]; then
+  echo "e2e.real.firebase.json serves functions on $CONFIG_PORT, run.sh expects $E2E_FUNCTIONS_PORT" >&2
+  exit 1
+fi
+
 : > "$LOG"
 export E2E_SERVER_LOG="$LOG"
 # The seed's per-call deadline (e2e/seed.ts). 10s is right for bare emulators;
@@ -79,5 +105,15 @@ firebase emulators:exec \
   "npm run e2e:real:run" 2>&1 | tee -a "$LOG"
 status=${PIPESTATUS[0]}
 set -e
-echo "== e2e-real: exit $status"
-exit "$status"
+echo "== e2e-real: Cypress exit $status"
+
+# D3-e. Our integration failing stops the release; a vendor outage (a 5xx or
+# timeout while its status page lists an incident) only warns. The classifier
+# writes $VERDICT and exits 1 on stop, 0 on warn (after a WARNING block) and
+# on pass. Its exit code is this run's.
+echo "== e2e-real: classifying the run"
+set +e
+node "$SCRIPT_DIR/classify-run.mjs" --results "$RESULTS" --log "$LOG" --out "$VERDICT" --cypress-exit "$status"
+verdict_status=$?
+set -e
+exit "$verdict_status"

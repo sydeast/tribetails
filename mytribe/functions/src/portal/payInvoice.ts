@@ -380,6 +380,10 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
     });
   }
 
+  // The list the session that came back was actually created with. After the
+  // card-only retry that is `['card']`, so the filtered check below never
+  // re-reports types the `rejected` line already named.
+  let requestedTypes: readonly string[] = methodTypes;
   let session;
   try {
     session = await createSession(methodTypes, '');
@@ -394,7 +398,25 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
       errorMessage: (err as Error)?.message,
       extra: { invoiceId: args.invoiceId, rejectedTypes: extraTypes, retriedWith: ['card'] },
     });
+    requestedTypes = ['card'];
     session = await createSession(['card'], '_card');
+  }
+
+  // WHAT STRIPE ACTUALLY OFFERS (issue #1192). Under
+  // `allowed_payment_method_types` an unactivated Klarna or Affirm no longer
+  // fails the create: Stripe leaves it out of the session's
+  // `payment_method_types`. The household can still pay by card, the same
+  // outcome the card-only retry above gives, so this is a warn line for the
+  // operator, never a refusal. Runbook: docs/runbooks/stripe.md section 4a.
+  const filteredTypes = methodTypesDroppedBy(requestedTypes, session);
+  if (filteredTypes.length > 0) {
+    logEvent({
+      severity: 'warn',
+      function: 'payInvoice',
+      event: 'portal.invoice.checkout.methodtype.filtered',
+      uid,
+      extra: { invoiceId: args.invoiceId, filteredTypes, sessionId: session.id },
+    });
   }
 
   // `pendingCheckoutSessionId` is the ONE session the reuse above can hand
@@ -516,12 +538,26 @@ async function findReusableSession(
  * is idle, and the old name still matches if the API version is ever pinned
  * back.
  */
-function isUnsupportedMethodTypeError(err: unknown): boolean {
+export function isUnsupportedMethodTypeError(err: unknown): boolean {
   if (typeof err !== 'object' || err === null) return false;
   const e = err as { type?: unknown; param?: unknown; raw?: { param?: unknown } };
   if (e.type !== 'StripeInvalidRequestError' && e.type !== 'invalid_request_error') return false;
   const param = typeof e.param === 'string' ? e.param : typeof e.raw?.param === 'string' ? e.raw.param : '';
   return param.startsWith('allowed_payment_method_types') || param.startsWith('payment_method_types');
+}
+
+/**
+ * The method types this server asked for that the created session does not
+ * offer (issue #1192). Empty when Stripe returned no `payment_method_types`
+ * to compare, so a missing field never reads as "everything was dropped".
+ */
+export function methodTypesDroppedBy(
+  requested: readonly string[],
+  session: { payment_method_types?: unknown },
+): string[] {
+  const offered = session.payment_method_types;
+  if (!Array.isArray(offered)) return [];
+  return requested.filter((t) => !offered.includes(t));
 }
 
 /**
