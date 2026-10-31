@@ -3557,7 +3557,10 @@ data class Invoice(
     val paymentsHistory: String = "",
     val amountDue: Double = 0.0,
     val status: String = "",         // free-text on Android; UI groups by paid vs outstanding via amountDue
-    val viewed: String = "",
+    // LEGACY (#1180): the old system's Viewed flag on migrated invoices, text or
+    // boolean. Nothing here writes it and no screen reads it. Nullable so an
+    // explicit null cannot make the list decode drop the whole invoice.
+    val viewed: String? = null,
     // Attribution fields written by backfill_structural_links.py
     val sessionIds: List<String> = emptyList(),
     @SerialName("_attribution") val attribution: String = "",
