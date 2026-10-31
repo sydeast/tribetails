@@ -3648,6 +3648,16 @@ data class Invoice(
      * Absent reads as `none`.
      */
     val editScope: String? = null,
+    /**
+     * #1200: the payment settings live when this invoice was issued, copied on
+     * by `createInvoice`, `createQuote` and `reviewAndSendDraftInvoice` (#409).
+     * The portal offers the household what this says before live settings, so
+     * the "How to pay" panel reads it first too (`howToPayRowsForInvoice`).
+     * Raw, like [lineItems]: a hand-edited value must not drop the invoice
+     * from the list. Absent on every invoice issued before #409. Never written
+     * by this console.
+     */
+    val payMethodSettingsSnapshot: JsonElement? = null,
 )
 
 /**

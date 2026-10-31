@@ -216,3 +216,101 @@ fun formatFeeSchedule(fee: PaymentFee): String {
     val cents = (fee.feeFixedCents % 100).toString().padStart(2, '0')
     return "$pct% + \$$dollars.$cents"
 }
+
+// ── ISSUE #1200: the invoice "How to pay" panel ─────────────────────────────
+
+/**
+ * The payment settings one invoice is resolved against, in the shape the
+ * resolver below reads: the three handles and the decoded switches.
+ */
+data class InvoicePaySettings(
+    val handles: Map<PaymentHandleField, String>,
+    val options: Map<String, PaymentOptionSetting>,
+)
+
+/**
+ * One row of the "How to pay" panel. [label] is the catalogue name ("Venmo",
+ * "Zelle"), [detail] is what the household is told: the handle, the
+ * operator's instructions, or that a checkout method is paid in the portal.
+ */
+data class HowToPayRow(val methodId: String, val label: String, val detail: String)
+
+/** What a card, Klarna or Affirm row says. They are a checkout button on the portal invoice, nothing to copy down. */
+const val HOW_TO_PAY_CHECKOUT_DETAIL = "In the portal"
+
+/** A handle the server will not turn into a link: `paypal.me/` cannot resolve an email. */
+private val HOW_TO_PAY_EMAIL = Regex("""^[^\s@]+@[^\s@]+\.[^\s@]+$""")
+
+/**
+ * The settings [invoice] is offered under, the way the server's
+ * `settingsForInvoice` decides it: the snapshot the invoice was issued with
+ * when it carries one, the live [settings] when it does not, or when the
+ * snapshot is not a map (hand-edited, half-written). Same read as
+ * `payMethodSettingsFrom`: a non-string handle reads as absent, and
+ * instructions longer than [MAX_PAYMENT_INSTRUCTIONS_LENGTH] are dropped,
+ * because the server refuses them rather than truncate payment details.
+ */
+fun invoicePaySettingsOf(invoice: Invoice, settings: BusinessSettings?): InvoicePaySettings {
+    val snapshot = invoice.payMethodSettingsSnapshot as? Map<*, *>
+    val handles: Map<PaymentHandleField, String>
+    val options: Map<String, PaymentOptionSetting>
+    if (snapshot != null) {
+        handles = PaymentHandleField.values().associateWith { (snapshot[it.wireName] as? String).orEmpty() }
+        options = decodePaymentOptions(snapshot["paymentOptions"])
+    } else {
+        handles = PaymentHandleField.values().associateWith { settings?.paymentHandle(it).orEmpty() }
+        options = decodePaymentOptions(settings?.paymentOptions)
+    }
+    return InvoicePaySettings(
+        handles = handles,
+        options = options.mapValues { (_, o) ->
+            o.copy(instructions = o.instructions?.takeIf { it.length <= MAX_PAYMENT_INSTRUCTIONS_LENGTH })
+        },
+    )
+}
+
+/**
+ * Would the server build a working link from [raw]? Mirrors
+ * `normalizeHandle`: blank is no, a URL is yes, an email is no (the server
+ * omits it rather than glue it onto `paypal.me/`), and a handle that is only
+ * the stripped `@` is no. Cash App keeps its `$`, so nothing is stripped there.
+ */
+private fun howToPayHandleResolves(raw: String, field: PaymentHandleField): Boolean {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return false
+    if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) return true
+    if (HOW_TO_PAY_EMAIL.matches(trimmed)) return false
+    val rest = if (field != PaymentHandleField.CASHAPP) trimmed.removePrefix("@") else trimmed
+    return rest.isNotEmpty()
+}
+
+/**
+ * Stored states that owe nothing. The portal offers no way to pay on these
+ * (`resolvePayMethods` answers `[]` for nothing owed, a paid invoice offers
+ * nothing per the 2026-09-27 ruling, and a cancelled one is in no portal
+ * bucket), so neither does this panel. Read off the stored `status` stamp.
+ */
+private val HOW_TO_PAY_SETTLED_STATES = setOf("paid", "zero", "credit", "redeemed", "cancelled")
+
+/**
+ * The "How to pay" rows for [invoice], resolved the way the server resolves
+ * what the household is offered (`resolvePayMethods`): the switch first, then
+ * the handle or the instructions, against the invoice's own snapshot before
+ * live [settings], in the portal's order. A method that is off, or on with
+ * nothing behind it, is left out, exactly as the portal leaves it out.
+ */
+fun howToPayRowsForInvoice(invoice: Invoice, settings: BusinessSettings?): List<HowToPayRow> {
+    if (invoice.status.trim().lowercase() in HOW_TO_PAY_SETTLED_STATES) return emptyList()
+    val resolved = invoicePaySettingsOf(invoice, settings)
+    return PAYMENT_METHOD_CATALOGUE.mapNotNull { method ->
+        if (!isPaymentMethodEnabled(resolved.options, method)) return@mapNotNull null
+        val detail = when (method.kind) {
+            PaymentMethodKind.CHECKOUT -> HOW_TO_PAY_CHECKOUT_DETAIL
+            PaymentMethodKind.INSTRUCTIONS -> resolved.options[method.id]?.instructions?.trim()?.takeIf { it.isNotEmpty() }
+            PaymentMethodKind.LINK -> method.handleField?.let { field ->
+                resolved.handles[field].orEmpty().trim().takeIf { howToPayHandleResolves(it, field) }
+            }
+        } ?: return@mapNotNull null
+        HowToPayRow(method.id, method.label, detail)
+    }
+}

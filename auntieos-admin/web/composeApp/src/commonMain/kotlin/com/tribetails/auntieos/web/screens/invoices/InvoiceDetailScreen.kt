@@ -45,6 +45,7 @@ import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Invoice
 import com.tribetails.auntieos.web.data.BusinessSettings
+import com.tribetails.auntieos.web.data.howToPayRowsForInvoice
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.Payment
 import com.tribetails.auntieos.web.data.WriteResult
@@ -602,31 +603,40 @@ private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
             onOpenEdit      = { pendingIds = invoice.sessionIds.toSet(); editMode = true },
         )
 
-        // How-to-pay: operator-entered Venmo/PayPal/Cash App handles (Payment Options
-        // settings). Hidden entirely when none are configured.
-        HowToPayPanel(settings = businessSettings)
+        // How-to-pay (#1200): the methods the household is offered on this invoice,
+        // resolved as the server resolves them. Hidden when none is offered.
+        HowToPayPanel(invoice = invoice, settings = businessSettings)
     }
 }
 
 @Composable
-private fun HowToPayPanel(settings: BusinessSettings?) {
-    val methods = buildList {
-        settings?.venmoHandle?.takeIf { it.isNotBlank() }?.let { add("Venmo" to it) }
-        settings?.paypalHandle?.takeIf { it.isNotBlank() }?.let { add("PayPal" to it) }
-        settings?.cashappHandle?.takeIf { it.isNotBlank() }?.let { add("Cash App" to it) }
-    }
+internal fun HowToPayPanel(invoice: Invoice, settings: BusinessSettings?) {
+    val methods = howToPayRowsForInvoice(invoice, settings)
     if (methods.isEmpty()) return
     val c = AuntieTheme.colors
-    DenPanel(title = "How to pay", subtitle = "Send payment to any of these.") {
+    DenPanel(title = "How to pay") {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            methods.forEach { (label, handle) ->
+            methods.forEach { row ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
+                    verticalAlignment = Alignment.Top,
                 ) {
-                    Text(label, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
-                    Text(handle, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                    Text(
+                        row.label,
+                        style = AuntieTheme.typography.bodyMedium,
+                        color = c.textDim,
+                        modifier = Modifier.padding(end = 16.dp),
+                    )
+                    // Instructions run to 500 characters, so the detail takes the
+                    // remaining width and wraps instead of squeezing the label.
+                    Text(
+                        row.detail,
+                        style = AuntieTheme.typography.bodyMedium,
+                        color = c.textPrimary,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                        modifier = Modifier.weight(1f),
+                    )
                 }
             }
         }
