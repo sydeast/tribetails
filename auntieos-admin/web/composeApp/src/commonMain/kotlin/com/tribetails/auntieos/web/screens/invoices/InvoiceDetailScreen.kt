@@ -91,7 +91,12 @@ import kotlinx.coroutines.launch
 // operator is never misled into thinking those belong to THIS invoice.
 
 @Composable
-fun InvoiceDetailScreen(invoiceId: String, onBack: () -> Unit = {}) {
+fun InvoiceDetailScreen(
+    invoiceId: String,
+    onBack: () -> Unit = {},
+    /** #1199: opens the visit a bound line bills for. Null hides the button. */
+    onOpenVisit: ((String) -> Unit)? = null,
+) {
     val client = remember { FirestoreClient() }
     // P0-FLICKER: hoist Flow construction via remember so the same Flow survives recomposition.
     val streamState by remember { client.invoicesStream() }.collectAsState(initial = FirestoreResult.Loading)
@@ -150,26 +155,40 @@ fun InvoiceDetailScreen(invoiceId: String, onBack: () -> Unit = {}) {
                 )
 
             is InvoiceDetailState.Loaded -> InvoiceDetailBody(
-                invoice = state.invoice,
-                client  = client,
+                invoice     = state.invoice,
+                client      = client,
+                onOpenVisit = onOpenVisit,
             )
         }
     }
 }
 
 @Composable
-private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
+private fun InvoiceDetailBody(
+    invoice: Invoice,
+    client: FirestoreClient,
+    onOpenVisit: ((String) -> Unit)?,
+) {
     val c = AuntieTheme.colors
     val todayKey = nowIso().take(10)
-    val status   = invoiceStatusFor(invoice, todayKey)
-
-    val (statusTone, statusText, statusIcon) = when (status) {
-        InvoiceStatus.PAID        -> Triple(AuntieStatusTone.Success, "PAID", Lucide.CircleCheckBig)
-        InvoiceStatus.OVERDUE     -> Triple(AuntieStatusTone.Error, "OVERDUE", Lucide.CircleAlert)
-        InvoiceStatus.OUTSTANDING -> Triple(AuntieStatusTone.Warning, "OUTSTANDING", Lucide.Clock)
+    // #1199: the STORED stamp (ADR-0002), as web and Android read it. Never
+    // amountDue: a credit is not paid and a draft is not outstanding.
+    val badge = invoiceDetailBadgeFor(invoice, todayKey)
+    val statusTone = badge.tone
+    val statusText = badge.label
+    val statusIcon = when {
+        badge.overdue -> Lucide.CircleAlert
+        else -> when (badge.state) {
+            InvoiceState.PAID, InvoiceState.REDEEMED -> Lucide.CircleCheckBig
+            InvoiceState.OPEN, InvoiceState.DRAFT -> Lucide.Clock
+            InvoiceState.QUOTE, InvoiceState.ZERO -> Lucide.FileText
+            InvoiceState.CANCELLED -> Lucide.X
+            InvoiceState.CREDIT, null -> Lucide.CircleAlert
+        }
     }
     val accent     = statusTone.colorOf()
-    val amountTone = if (status == InvoiceStatus.PAID) KeyValueStyle.AccentSuccess else KeyValueStyle.AccentError
+    val amountTone = if (badge.state == InvoiceState.PAID) KeyValueStyle.AccentSuccess else KeyValueStyle.AccentError
+    val linesPanel = invoiceDetailLinesPanelOf(invoice)
 
     // Sessions for this kinfolk (for the link editor + linked-session rows).
     // P0-FLICKER: remember keyed on kinfolkId so a re-render keeps the same Flow.
@@ -415,11 +434,7 @@ private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
             StatCard(
                 label   = "Amount due",
                 value   = formatMoney(invoice.amountDue),
-                trend   = when (status) {
-                    InvoiceStatus.PAID        -> "paid in full"
-                    InvoiceStatus.OVERDUE     -> "past due ${invoice.dueDate.trim().take(10)}"
-                    InvoiceStatus.OUTSTANDING -> "due ${invoice.dueDate.trim().take(10).ifBlank { "soon" }}"
-                },
+                trend   = badge.amountTrend,
                 tone    = statusTone,
                 feature = true,
                 modifier = Modifier.weight(1f),
@@ -509,6 +524,27 @@ private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
                 DetailRow("Last reminder", lastReminderLabel(lastReminderAtMs))
                 if (invoice.terms.isNotBlank()) DetailRow("Terms", invoice.terms)
                 if (invoice.address.isNotBlank()) DetailRow("Address", invoice.address)
+            }
+        }
+
+        // ── Line items (#1199) ─────────────────────────────────────────────────
+        // Read-only here; typed lines change through Edit (#1174). A bound line
+        // (#408) got its money from the visit, so it says so and offers the visit.
+        DenPanel(title = "Line items") {
+            Column {
+                when (val panel = linesPanel) {
+                    is InvoiceDetailLinesPanel.Lines -> {
+                        panel.rows.forEachIndexed { idx, row ->
+                            InvoiceDetailLineItemRow(row, showDivider = idx > 0, onOpenVisit = onOpenVisit)
+                        }
+                        DetailRow("Subtotal", formatEditCents(panel.subtotalCents))
+                        if (panel.invoiceDiscountCents > 0) {
+                            DetailRow("Invoice discount", "-" + formatEditCents(panel.invoiceDiscountCents))
+                        }
+                        DetailRow("Total from these lines", formatEditCents(panel.totalCents), style = KeyValueStyle.Total)
+                    }
+                    else -> EmptyHint(invoiceDetailLinesEmptyCopy(panel).orEmpty())
+                }
             }
         }
 
@@ -636,6 +672,60 @@ private fun HowToPayPanel(settings: BusinessSettings?) {
 /** Resolve a tone to its brand color via the shared AuntieStatusTone.color extension. */
 @Composable
 private fun AuntieStatusTone.colorOf() = this.color(AuntieTheme.colors)
+
+/** One stored line (#1199), with the #408 note and the route to its visit when it is bound. */
+@Composable
+private fun InvoiceDetailLineItemRow(
+    row: InvoiceDetailLineRow,
+    showDivider: Boolean,
+    onOpenVisit: ((String) -> Unit)?,
+) {
+    val c = AuntieTheme.colors
+    val hairline = AuntieTheme.dims.borderHairline
+    val ruleColor = c.borderSoft
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .drawBehind {
+                    if (showDivider) {
+                        val h = hairline.toPx()
+                        drawLine(
+                            color       = ruleColor,
+                            start       = Offset(0f, h / 2f),
+                            end         = Offset(size.width, h / 2f),
+                            strokeWidth = h,
+                        )
+                    }
+                }
+                .padding(vertical = 9.dp),
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    row.description,
+                    style = AuntieTheme.typography.bodySmall,
+                    color = if (row.descriptionMissing) c.textDim else c.textPrimary,
+                )
+                Text(row.detail, style = AuntieTheme.typography.labelSmall, color = c.textDim)
+            }
+            Text(formatEditCents(row.amountCents), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+        }
+        val sessionId = row.boundSessionId
+        if (sessionId != null) {
+            Column(
+                modifier = Modifier.padding(bottom = 9.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(INVOICE_DETAIL_BOUND_LINE_NOTE, style = AuntieTheme.typography.labelSmall, color = c.textDim)
+                if (onOpenVisit != null) {
+                    GhostButton(label = "Open this visit", onClick = { onOpenVisit(sessionId) })
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun PaymentRow(payment: Payment, showDivider: Boolean) {
