@@ -438,21 +438,42 @@ from main and as a `workflow_call` from a release.
 - Twilio runs on the test credentials only. Nothing is sent, and no number in
   the business or private line's area code may appear anywhere.
 - Cloudinary uploads go to an `e2e/` folder emptied after each run, and emails
-  go only to the three real test inboxes. Neither has a spec yet, and the
-  functions do not yet sign uploads into `e2e/` (#1202); that has to land
-  before the first Cloudinary spec.
+  go only to the three real test inboxes (`account.cy.ts` sends the reset
+  email to e2e-admin@tribetails.com; `account-photo.cy.ts` uploads under
+  `e2e/account-photo/` and destroys what it uploaded).
 
 ### Specs today
 
-| Spec | What it proves |
-|---|---|
-| `settings-tags.cy.ts` | `removeBusinessTag` really cascades: the server's count on screen, and after a reload the tag is gone from the Tags list and from the Directory filter |
-| `invoice-paid-stripe.cy.ts` | Record payment settles an invoice through `markInvoicePaid` while a real Stripe test checkout is open on it, and the invoice reads paid after a reload. Skips without Stripe keys |
+Every PR-time spec that answers a callable with `cy.intercept` has a
+counterpart here (#1195). Each one drives the real handler and its triggers
+and asserts the outcome from the UI, almost always after a reload.
 
-Every other spec stays on the PR-time harness until it is rewritten for this
-one. The Stripe spec does not assert that Stripe expired the session: no admin
-screen shows it yet. #1113 adds that to the invoice screen, and the assertion
-moves into the spec then.
+| Spec | Counterpart of | What it proves | Vendor |
+|---|---|---|---|
+| `account.cy.ts` | `account.cy.ts` | The three channel switches come from the functions' catalog; a channel switched on is still on after a reload and on My Notifications; "Sole admin" comes from the real roster; Send reset email really sends | Email, reset test only |
+| `account-photo.cy.ts` | `account-photo.cy.ts` | A picked image really uploads to Cloudinary, is written to `users/{uid}.photoUrl`, and loads from Cloudinary after a reload. The signer request is still answered by the `cloudinarySignUpload` task until #1201 serves the admin's own functions | Cloudinary |
+| `bookings.cy.ts` | `bookings.cy.ts` | A real requested envelope is declined with an empty reason (#700) or booked through `manageBookingSeries`; after a reload it has left the queue, and a booking adds one to the Scheduled count; the block settles on its empty line (#698) | none |
+| `email-editor.cy.ts` | `email-editor.cy.ts` | A visual template with bold text and a button comes back from `listTemplates` after a reload; the preview is the server's render; Convert (with the server's dropped-image warning) then Save makes a template visual for good, Convert then Leave keeps it old | none |
+| `form-schemas.cy.ts` | `form-schemas.cy.ts` | The table sorts the server's rows (#717); an edit through `saveFormSchema` comes back with the version bumped, the time stamped and the editor named | none |
+| `gallery.cy.ts` | `gallery.cy.ts` | Delete through `deleteMediaFile` removes the `media_files` row: gone after a reload, counts one lower; Cancel sends nothing | none |
+| `household-members.cy.ts` | `household-members.cy.ts` | The #684/#829 layout over the real reads; a secondary kinfolk added through `saveSecondaryKinfolk` is listed after a reload with no portal access, and Remove takes it off | none |
+| `invoice-paid-stripe.cy.ts` | (D3 phase 1) | Record payment settles an invoice through `markInvoicePaid` while a real Stripe test checkout is open on it; after a reload it reads paid and says its open payment link was closed | Stripe |
+| `kin-view.cy.ts` | `kin-view.cy.ts` | A pet tag survives the `kin/{id}` triggers: on the pet after a full reload, gone after removal | none |
+| `kinfolk-profile.cy.ts` | `kinfolk-profile.cy.ts` | The right column order with the real credit reads (#678/#682); a credit given through `giveAccountCredit` is listed after a reload and the balance rose by its amount; an emergency contact saved through the Edit form is on the profile after a reload | none |
+| `my-notifications.cy.ts` | `my-notifications.cy.ts` | A channel switched on, or a default-on channel switched off, is stored and read back after a reload; Discard stores nothing; a catalog-required channel is drawn forced | none |
+| `settings-integrations.cy.ts` | `settings.cy.ts` (Integrations, #714/#715) | The cards are the server's integration list and a secret the run set reads as set; the Calendar panels open in place and the real connection read settles on Connect. Nothing on the Calendar panel is pressed | none (no network call) |
+| `settings-tags.cy.ts` | `settings.cy.ts` (Tags, #713) | `removeBusinessTag` really cascades: the server's count on screen, and after a reload the tag is gone from the Tags list and from the Directory filter | none |
+| `templates.cy.ts` | `templates.cy.ts` | The #716 frame over a real list; the stored subject on the card and in the editor; an edit through `saveTemplate` comes back from `listTemplates` after a reload | none |
+
+A vendor spec skips, naming the missing variables in the log, when the run has
+no credentials for it. No spec of the twelve sends a text, so none needs
+Twilio, and none needs Google Calendar credentials: the Integrations spec reads
+the stored connection only.
+
+Four PR-time tests have no counterpart, because each needs a server that can be
+told to stall or fail on command: #698's held loading state, #714's held
+spinner, My Notifications' refused save, and the account photo's refused
+upload. They stay in the PR-time suite only.
 
 ### The verdict (D3-e)
 
