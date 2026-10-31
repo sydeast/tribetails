@@ -1,4 +1,5 @@
 import { defineConfig } from 'cypress';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import seed, { upsert, remove } from './e2e/seed';
 
@@ -11,9 +12,10 @@ import seed, { upsert, remove } from './e2e/seed';
  * WHAT IS DIFFERENT FROM `cypress.config.ts`. That config is the PR-time suite:
  * auth and Firestore emulators only, callables pinned at a dead port and
  * answered by `cy.intercept`. Here the functions emulator serves the real
- * `mytribe/functions` build, so a callable runs its real handler and its real
- * triggers, and a vendor call (Stripe test mode and the rest) really leaves
- * the machine. Specs live in `cypress/e2e-real/`, so neither suite collects the
+ * `mytribe/functions` build and the admin's own `web/functions` (whose
+ * `/api/cloudinary/sign-upload` and `/api/generate` the dev server proxies to
+ * it, #1201), so a callable runs its real handler and its real triggers, and a
+ * vendor call (Stripe test mode and the rest) really leaves the machine. Specs live in `cypress/e2e-real/`, so neither suite collects the
  * other's files.
  *
  * TESTS STILL DRIVE AND ASSERT FROM THE UI (2026-09-01 ruling, restated for
@@ -87,6 +89,39 @@ function structuredErrors(text: string): string[] {
 
 let seeded: Promise<void> | null = null;
 
+/** The auth emulator `run.sh` boots (same port as `e2e/seed.ts`). */
+const AUTH_EMULATOR = 'http://127.0.0.1:9399';
+
+/**
+ * Cloudinary credentials for this run, or a refusal. Read from the same
+ * variables the preflight writes into the functions secrets files, so a spec's
+ * cleanup and the signer it drove talk to the same account. Only called by a
+ * spec that has already checked `vendorConfigured('cloudinary')`.
+ */
+function cloudinaryCredentials(): { cloudName: string; apiKey: string; apiSecret: string } {
+  const cloudName = process.env.E2E_CLOUDINARY_CLOUD_NAME ?? '';
+  const apiKey = process.env.E2E_CLOUDINARY_API_KEY ?? '';
+  const apiSecret = process.env.E2E_CLOUDINARY_API_SECRET ?? '';
+  if (cloudName === '' || apiKey === '' || apiSecret === '') {
+    throw new Error(
+      'E2E_CLOUDINARY_CLOUD_NAME, E2E_CLOUDINARY_API_KEY and E2E_CLOUDINARY_API_SECRET must all be set; refusing to call Cloudinary',
+    );
+  }
+  return { cloudName, apiKey, apiSecret };
+}
+
+/** Every Cloudinary upload this suite makes lands under this folder (D3, Cloudinary row). */
+const CLOUDINARY_E2E_FOLDER = 'e2e';
+
+/** Cloudinary's signature recipe: sha1 of the params sorted by name, joined with `&`, then the secret. Used by `cloudinaryDestroy`. */
+function cloudinarySignature(params: Record<string, string>, apiSecret: string): string {
+  const base = Object.keys(params)
+    .sort()
+    .map((k) => `${k}=${params[k]}`)
+    .join('&');
+  return createHash('sha1').update(`${base}${apiSecret}`).digest('hex');
+}
+
 export default defineConfig({
   projectId: '2khvut',
   expose: { E2E_VENDORS: vendorAvailability() },
@@ -139,6 +174,46 @@ export default defineConfig({
         async deleteDoc({ collection, id }: { collection: string; id: string }) {
           await remove(collection, id);
           return null;
+        },
+        /**
+         * The auth emulator's uid for [email]. The seed creates the fixture
+         * admin with a uid the emulator picks, and a spec that has to clean up
+         * a document keyed by it (`staff/{uid}`) needs that uid. Owner bearer,
+         * the same surface `e2e/seed.ts`'s `setPassword` uses.
+         */
+        async authUid({ email }: { email: string }) {
+          const res = await fetch(`${AUTH_EMULATOR}/identitytoolkit.googleapis.com/v1/accounts:lookup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer owner' },
+            body: JSON.stringify({ email: [email] }),
+          });
+          const json = (await res.json()) as { users?: Array<{ localId?: string }> };
+          const uid = json.users?.[0]?.localId;
+          if (!res.ok || !uid) throw new Error(`authUid: no auth-emulator account for ${email}`);
+          return uid;
+        },
+        /**
+         * Destroys one asset this suite uploaded. Refuses anything outside the
+         * `e2e/` folder, so a wrong id can never reach the operator's library.
+         */
+        async cloudinaryDestroy({ publicId }: { publicId: string }) {
+          if (!publicId.startsWith(`${CLOUDINARY_E2E_FOLDER}/`)) {
+            throw new Error(`cloudinaryDestroy: refusing ${publicId}, which is outside ${CLOUDINARY_E2E_FOLDER}/`);
+          }
+          const { cloudName, apiKey, apiSecret } = cloudinaryCredentials();
+          const timestamp = String(Math.floor(Date.now() / 1000));
+          const signature = cloudinarySignature({ public_id: publicId, timestamp }, apiSecret);
+          const body = new URLSearchParams({ public_id: publicId, timestamp, api_key: apiKey, signature });
+          const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/destroy`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body,
+          });
+          const json = (await res.json().catch(() => ({}))) as { result?: string };
+          if (!res.ok || (json.result !== 'ok' && json.result !== 'not found')) {
+            throw new Error(`cloudinaryDestroy: ${res.status} ${JSON.stringify(json)}`);
+          }
+          return json.result;
         },
         /** Byte offset of the emulator log now, so a test reads only its own lines. */
         serverLogOffset() {
