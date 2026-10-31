@@ -477,10 +477,43 @@ upload. They stay in the PR-time suite only.
 
 ### The verdict (D3-e)
 
-A red run means our integration broke, and the release stops. A vendor outage
-(a 5xx or timeout while the vendor's status page shows an incident) should only
-warn. That classification is not automated yet, so a person reads a red run
-before a release is forced past it.
+A failure caused by our integration stops the release. A vendor outage only
+warns. After Cypress, `run.sh` runs `scripts/e2e-real/classify-run.mjs`, which
+reads the run's results (`cypress/.real/results.json`, written by the
+`after:run` hook in `cypress.real.config.ts`) and the emulator log, and writes
+`cypress/.real/verdict.json`:
+
+```json
+{ "verdict": "stop" | "warn" | "pass", "reasons": ["..."], "checkedAt": "...",
+  "cypressExit": 0, "failures": [...], "statusPages": {...} }
+```
+
+A failure counts as an outage only when every vendor error found for it (in
+the test's error text, and in our functions' log lines during its spec) is a
+5xx or a timeout, and that vendor's status page lists an incident covering
+that moment. Everything else stops: a 4xx, an auth error, a vendor error with
+no readable status, a failure with no vendor error at all, a spec that did not
+load, no results file, or a status page that did not answer. `run.sh` exits 1
+on `stop`, and 0 on `warn` and `pass`; on `warn` it prints a WARNING block
+naming each failure and its incident. A run that stops before Cypress (port
+check, build, preflight) still writes a `stop` verdict. The hosted job does
+not upload `verdict.json` yet; uploading it and reading it in the release is
+#1193.
+
+Status pages, checked 2026-10-23: Stripe `www.stripestatus.com` (the old
+`status.stripe.com` JSON is frozen in 2024), Twilio `status.twilio.com`,
+Cloudinary `status.cloudinary.com`, smtp2go `smtp2gostatus.com`, all
+Statuspage `/api/v2/incidents.json`; Google Calendar from Google Workspace's
+`appsstatus/dashboard/incidents.json`, Calendar incidents only. Any listed
+incident counts, even one on a product we do not call: the rule reads the
+status page, not our judgement of it.
+
+On exit, whatever the verdict, `scripts/e2e-real/cloudinary-cleanup.mjs`
+empties the Cloudinary `e2e/` folder with the `E2E_CLOUDINARY_*` test
+credentials: assets by the `e2e/` public-id prefix, assets whose asset folder
+is under `e2e`, then the folders. It touches nothing outside `e2e/`. Without
+the credentials it prints one `skipped` line. A failed delete is printed and
+leaves the exit code as it was.
 
 ## Pointing a Cypress run at a deployed host (added 2026-08-30)
 

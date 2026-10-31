@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { useState } from 'react';
+import { StrictMode, useState } from 'react';
 import { render, screen, act, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -104,6 +104,53 @@ describe('AddressAutofillField', () => {
     await typeAndSettle('nue');
     expect(suggestMock).toHaveBeenCalledTimes(1);
     expect(suggestMock.mock.calls[0]?.[0]).toBe('123 Bark Avenue');
+  });
+
+  // #1226: StrictMode runs the debounce effect twice on mount, as every dev and
+  // emulator build of the admin does (main.tsx). A guard keyed on "first run"
+  // let the second run look the loaded address up.
+  it('does NOT look up the loaded address under StrictMode either', async () => {
+    vi.useFakeTimers();
+    render(
+      <StrictMode>
+        <Host initial="123 Bark Ave" />
+      </StrictMode>,
+    );
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(suggestMock).not.toHaveBeenCalled();
+  });
+
+  it('under StrictMode, an edit to a loaded address is looked up exactly once', async () => {
+    vi.useFakeTimers();
+    render(
+      <StrictMode>
+        <Host initial="123 Bark Ave" />
+      </StrictMode>,
+    );
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+    await typeAndSettle('nue');
+    expect(suggestMock).toHaveBeenCalledTimes(1);
+    expect(suggestMock.mock.calls[0]?.[0]).toBe('123 Bark Avenue');
+  });
+
+  it('looks up an address typed back to the loaded one once it has been edited', async () => {
+    vi.useFakeTimers();
+    render(<Host initial="123 Bark Ave" />);
+    await act(async () => {
+      fireEvent.change(field(), { target: { value: '123 Bark Av' } });
+    });
+    await act(async () => {
+      fireEvent.change(field(), { target: { value: '123 Bark Ave' } });
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(suggestMock).toHaveBeenCalledTimes(1);
+    expect(suggestMock.mock.calls[0]?.[0]).toBe('123 Bark Ave');
   });
 
   it('does NOT look up under 3 characters', async () => {
