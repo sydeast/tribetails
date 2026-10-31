@@ -22,7 +22,7 @@ expect_refuse() {
   if [ "$rc" -eq 0 ]; then
     echo "FAIL: $desc -> expected refusal (non-zero), got exit 0"; FAIL=$((FAIL+1)); return
   fi
-  if ! printf '%s' "$out" | grep -qi "$needle"; then
+  if ! printf '%s' "$out" | grep >/dev/null -ci "$needle"; then
     echo "FAIL: $desc -> refused (rc=$rc) but reason missing '$needle'"; echo "  got: $out"; FAIL=$((FAIL+1)); return
   fi
   echo "ok: $desc"; PASS=$((PASS+1))
@@ -37,7 +37,7 @@ expect_allow() {
   if [ "$rc" -ne 0 ]; then
     echo "FAIL: $desc -> expected allow (DRY_RUN exit 0), got rc=$rc"; echo "  got: $out"; FAIL=$((FAIL+1)); return
   fi
-  if ! printf '%s' "$out" | grep -q "$needle"; then
+  if ! printf '%s' "$out" | grep >/dev/null -c "$needle"; then
     echo "FAIL: $desc -> allowed but final command missing '$needle'"; echo "  got: $out"; FAIL=$((FAIL+1)); return
   fi
   echo "ok: $desc"; PASS=$((PASS+1))

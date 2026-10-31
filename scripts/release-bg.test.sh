@@ -29,7 +29,7 @@ FAIL=0
 ok()  { echo "ok: $1"; PASS=$((PASS+1)); }
 bad() { echo "FAIL: $1"; FAIL=$((FAIL+1)); }
 
-has() { printf '%s' "$1" | grep -qF "$2"; }
+has() { printf '%s' "$1" | grep >/dev/null -cF "$2"; }
 
 # ---------------------------------------------------------------------------
 # make_repo: a throwaway repo holding the real wrapper and a fake release.

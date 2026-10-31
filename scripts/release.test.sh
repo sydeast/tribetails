@@ -645,22 +645,22 @@ else
   bad "dry run MUTATED .release-state (sum $BEFORE_SUM -> $AFTER_SUM, mtime $BEFORE_MTIME -> $AFTER_MTIME)"
 fi
 
-if printf '%s' "$OUT" | grep -q "is live and verified"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "is live and verified"; then
   bad "dry run claims the commit is live and verified"
 else
   ok "dry run does not claim the commit is live"
 fi
-if printf '%s' "$OUT" | grep -qi "^Tagged\|pushed it to origin"; then
+if printf '%s' "$OUT" | grep >/dev/null -ci "^Tagged\|pushed it to origin"; then
   bad "dry run claims it tagged and pushed"
 else
   ok "dry run does not claim it tagged anything"
 fi
-if printf '%s' "$OUT" | grep -q "NOTHING SHIPPED"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "NOTHING SHIPPED"; then
   ok "dry run says plainly that nothing shipped"
 else
   bad "dry run does not say that nothing shipped"
 fi
-if (cd "$D/repo" && git tag -l | grep -q .); then
+if (cd "$D/repo" && git tag -l | grep >/dev/null -c .); then
   bad "dry run created a git tag"
 else
   ok "dry run created no git tag"
@@ -699,8 +699,8 @@ fi
 # :assembleRelease is not what auntieos-admin/android needs, so a dry run that
 # prints one task twice is printing a command a real run would not issue.
 OUT="$(cat "$D/out")"
-if printf '%s' "$OUT" | grep -q "gradlew :app:assembleRelease" &&
-   printf '%s' "$OUT" | grep -q "gradlew :assembleRelease"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "gradlew :app:assembleRelease" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "gradlew :assembleRelease"; then
   ok "dry run names both Android builds, each with its own gradle task"
 else
   bad "dry run does not rehearse both Android builds"
@@ -724,7 +724,7 @@ elif [ "$(cat "$D2/repo/.release-state" 2>/dev/null)" = "$HEAD2" ]; then
 else
   bad "a real run did not record the released commit"
 fi
-if printf '%s' "$OUT" | grep -q "is live and verified"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "is live and verified"; then
   ok "a real run does report the release"
 else
   bad "a real run does not report the release"
@@ -744,7 +744,7 @@ RC="$(run_release "$D3" DRY_RUN=1 RELEASE_YES=1)"
 OUT="$(cat "$D3/out")"
 if [ "$RC" -eq 0 ]; then
   bad "a red e2e on HEAD does not stop the release"
-elif printf '%s' "$OUT" | grep -q "React admin e2e" && printf '%s' "$OUT" | grep -q "RELEASE_SKIP_CI_GATE=1"; then
+elif printf '%s' "$OUT" | grep >/dev/null -c "React admin e2e" && printf '%s' "$OUT" | grep >/dev/null -c "RELEASE_SKIP_CI_GATE=1"; then
   ok "a red e2e on HEAD refuses, names the job, and names the override"
 else
   bad "refused but did not name the job or the override"; echo "$OUT" | tail -20
@@ -762,7 +762,7 @@ RC="$(run_release "$D3" DRY_RUN=1 RELEASE_YES=1)"
 OUT="$(cat "$D3/out")"
 if [ "$RC" -eq 0 ]; then
   bad "an inherited red e2e (skipped on HEAD) does not stop the release"
-elif printf '%s' "$OUT" | grep -qi "e2e suite is 'failure'"; then
+elif printf '%s' "$OUT" | grep >/dev/null -ci "e2e suite is 'failure'"; then
   ok "an e2e red on an earlier commit still refuses, and says which commit"
 else
   bad "did not refuse on the inherited red e2e"; echo "$OUT" | tail -20
@@ -776,7 +776,7 @@ fi
 printf 'React admin e2e\tcompleted\tsuccess\n' > "$D3/fixtures/$PARENT3"
 RC="$(run_release "$D3" DRY_RUN=1 RELEASE_YES=1)"
 OUT="$(cat "$D3/out")"
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "e2e: green as of"; then
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "e2e: green as of"; then
   ok "a skipped e2e inherits the last real verdict and passes on green"
 else
   bad "a green inherited e2e did not pass"; echo "$OUT" | tail -20
@@ -788,7 +788,7 @@ fi
 printf 'React admin e2e\tin_progress\t\n' > "$D3/fixtures/$HEAD3"
 RC="$(run_release "$D3" DRY_RUN=1 RELEASE_YES=1)"
 OUT="$(cat "$D3/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "has not finished"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "has not finished"; then
   ok "a run still in flight refuses"
 else
   bad "an unfinished CI run did not refuse"; echo "$OUT" | tail -20
@@ -802,12 +802,12 @@ fi
 rm -f "$D3/fixtures/$HEAD3" "$D3/fixtures/$PARENT3"
 RC="$(run_release "$D3" DRY_RUN=1 RELEASE_YES=1 GH_UNAVAILABLE=1)"
 OUT="$(cat "$D3/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "gh could not ask GitHub"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "gh could not ask GitHub"; then
   ok "a gate that cannot answer refuses, saying gh could not ask"
 else
   bad "an unavailable gate did not refuse as could-not-ask"; echo "$OUT" | tail -20
 fi
-if printf '%s' "$OUT" | grep -q "no check runs"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "no check runs"; then
   bad "an unavailable gh was reported as CI having no check runs (#850)"; echo "$OUT" | tail -20
 else
   ok "an unavailable gh is never reported as CI having no check runs"
@@ -815,7 +815,7 @@ fi
 
 RC="$(run_release "$D3" DRY_RUN=1 RELEASE_YES=1 GH_UNAVAILABLE=1 RELEASE_SKIP_CI_GATE=1)"
 OUT="$(cat "$D3/out")"
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "RELEASE_SKIP_CI_GATE=1"; then
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "RELEASE_SKIP_CI_GATE=1"; then
   ok "RELEASE_SKIP_CI_GATE=1 releases past an unavailable gate, and says so"
 else
   bad "the override did not get past an unavailable gate"; echo "$OUT" | tail -20
@@ -861,12 +861,12 @@ HEAD9="$(cd "$D9/repo" && git rev-parse HEAD)"
 # Deliberately no fixture written for $HEAD9: ci.yml has never run for it.
 RC="$(run_release "$D9" DRY_RUN=1 RELEASE_YES=1)"
 OUT="$(cat "$D9/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "no check runs at all"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "no check runs at all"; then
   ok "a commit ci.yml never ran for refuses, with gh answering fine"
 else
   bad "a missing ci.yml run did not refuse cleanly"; echo "$OUT" | tail -20
 fi
-if printf '%s' "$OUT" | grep -q "gh could not ask GitHub"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "gh could not ask GitHub"; then
   bad "a genuine no-run was reported as gh being unable to ask"; echo "$OUT" | tail -20
 else
   ok "a genuine no-run is not reported as gh being unable to ask"
@@ -883,18 +883,18 @@ HEAD8F="$(cd "$D8F/repo" && git rev-parse HEAD)"
 fixture_all_green "$D8F/fixtures/$HEAD8F"
 RC="$(run_release "$D8F" DRY_RUN=1 RELEASE_YES=1 GH_AUTH_FAIL=1 GH_CALL_LOG="$D8F/gh-calls.log")"
 OUT="$(cat "$D8F/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "gh could not ask GitHub.*not authenticated"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "gh could not ask GitHub.*not authenticated"; then
   ok "an unauthenticated gh refuses as could-not-ask, even for a green commit"
 else
   bad "an unauthenticated gh did not refuse as could-not-ask (rc $RC)"; echo "$OUT" | tail -20
 fi
-if printf '%s' "$OUT" | grep -q "You are not logged into any GitHub hosts" &&
-   printf '%s' "$OUT" | grep -q "gh auth login"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "You are not logged into any GitHub hosts" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "gh auth login"; then
   ok "the refusal prints gh's own error and the sign-in fix"
 else
   bad "the refusal swallowed gh's error or the fix"; echo "$OUT" | tail -20
 fi
-if printf '%s' "$OUT" | grep -q "no check runs"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "no check runs"; then
   bad "an unauthenticated gh still printed 'no check runs' (#850)"
 else
   ok "an unauthenticated gh never prints 'no check runs'"
@@ -918,13 +918,13 @@ fi
 # ---------------------------------------------------------------------------
 RC="$(run_release "$D8F" DRY_RUN=1 RELEASE_YES=1 GH_API_FAIL=1)"
 OUT="$(cat "$D8F/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "the lookup failed" &&
-   printf '%s' "$OUT" | grep -q "error connecting to api.github.com"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "the lookup failed" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "error connecting to api.github.com"; then
   ok "a failed CI lookup refuses as could-not-ask and prints gh's error"
 else
   bad "a failed CI lookup was not reported as could-not-ask (rc $RC)"; echo "$OUT" | tail -20
 fi
-if printf '%s' "$OUT" | grep -q "no check runs"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "no check runs"; then
   bad "a failed CI lookup printed 'no check runs' (#850)"
 else
   ok "a failed CI lookup never prints 'no check runs'"
@@ -933,9 +933,9 @@ fi
 # 8g2. The run is found but its JOBS call fails. Same could-not-ask refusal.
 RC="$(run_release "$D8F" DRY_RUN=1 RELEASE_YES=1 GH_API_FAIL=jobs)"
 OUT="$(cat "$D8F/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "the lookup failed" &&
-   printf '%s' "$OUT" | grep -q "Bad Gateway (jobs)" &&
-   ! printf '%s' "$OUT" | grep -q "no check runs"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "the lookup failed" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "Bad Gateway (jobs)" &&
+   ! printf '%s' "$OUT" | grep >/dev/null -c "no check runs"; then
   ok "a failed jobs lookup refuses as could-not-ask, with gh's error, never 'no check runs'"
 else
   bad "a failed jobs lookup was not reported as could-not-ask (rc $RC)"; echo "$OUT" | tail -20
@@ -944,9 +944,9 @@ fi
 # 8h. Preflight reports the auth refusal and carries on, like every ci_refuse.
 RC="$(run_release "$D8F" DRY_RUN=1 RELEASE_YES=1 RELEASE_PREFLIGHT_ONLY=1 GH_AUTH_FAIL=1)"
 OUT="$(cat "$D8F/out")"
-if printf '%s' "$OUT" | grep -q "a real release would REFUSE here" &&
-   printf '%s' "$OUT" | grep -q "gh could not ask GitHub" &&
-   ! printf '%s' "$OUT" | grep -q "no check runs"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "a real release would REFUSE here" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "gh could not ask GitHub" &&
+   ! printf '%s' "$OUT" | grep >/dev/null -c "no check runs"; then
   ok "preflight names the auth refusal a real release would hit, and not 'no check runs'"
 else
   bad "preflight did not report the auth refusal cleanly (rc $RC)"; echo "$OUT" | tail -20
@@ -979,7 +979,7 @@ fixture_all_green "$D10/fixtures/run-older"
 printf 'React admin e2e\tcompleted\tfailure\n' > "$D10/fixtures/run-newer"
 RC="$(run_release "$D10" DRY_RUN=1 RELEASE_YES=1)"
 OUT="$(cat "$D10/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "React admin e2e"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "React admin e2e"; then
   ok "a red NEWER run still refuses even though an older run for the same sha was green: the gate reads [0]"
 else
   bad "a red newer run did not refuse past a green older one"; echo "$OUT" | tail -20
@@ -1004,7 +1004,7 @@ real_reset() {
   rm -f "$FR/$HEADR.e2e-real-runs" "$FR/$HEADR.nightly-runs"
 }
 not_blaming_ci() {
-  if printf '%s' "$1" | grep -q "CI is not green\|the e2e suite is"; then
+  if printf '%s' "$1" | grep >/dev/null -c "CI is not green\|the e2e suite is"; then
     bad "$2: the refusal blames CI or the CI e2e job"; return
   fi
   ok "$2: the refusal does not blame CI"
@@ -1014,9 +1014,9 @@ real_reset
 printf '2026-10-02T01:00:00Z\tdispatch-red\n' > "$FR/$HEADR.e2e-real-runs"
 printf 'Admin Cypress, real services\tcompleted\tfailure\n' > "$FR/dispatch-red"
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "real-services suite (E2E real services) is RED" &&
-   printf '%s' "$OUT" | grep -q "Admin Cypress, real services (failure)" &&
-   printf '%s' "$OUT" | grep -q "RELEASE_SKIP_CI_GATE=1"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "real-services suite (E2E real services) is RED" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "Admin Cypress, real services (failure)" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "RELEASE_SKIP_CI_GATE=1"; then
   ok "a red real-services run refuses, names the suite and the job, and names the override"
 else
   bad "a red real-services run did not refuse by name (rc $RC)"; printf '%s\n' "$OUT" | tail -20
@@ -1025,13 +1025,13 @@ not_blaming_ci "$OUT" "red real-services"
 
 real_reset
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "real-services suite (E2E real services) has no run" &&
-   printf '%s' "$OUT" | grep -q "gh workflow run e2e-real.yml --ref main"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "real-services suite (E2E real services) has no run" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "gh workflow run e2e-real.yml --ref main"; then
   ok "no run of the suite for HEAD refuses and says how to dispatch it"
 else
   bad "no run of the suite did not refuse with the dispatch command (rc $RC)"; printf '%s\n' "$OUT" | tail -20
 fi
-if printf '%s' "$OUT" | grep -q "could not ask"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "could not ask"; then
   bad "a genuine no-run was reported as gh being unable to ask"
 else
   ok "a genuine no-run is not reported as gh being unable to ask"
@@ -1044,12 +1044,12 @@ real_reset
 printf '2026-10-02T01:00:00Z\tnightly-1\n' > "$FR/$HEADR.nightly-runs"
 printf 'Decide what this run does\tcompleted\tsuccess\nE2E real services / Admin Cypress, real services\tcompleted\tsuccess\nRelease main to production\tin_progress\t\n' > "$FR/nightly-1"
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "real services: green for .*nightly-release.yml"; then
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "real services: green for .*nightly-release.yml"; then
   ok "a nightly run that called the suite is read: its suite job is the verdict, its release job is not"
 else
   bad "the suite's jobs inside a nightly run were not read as its verdict (rc $RC)"; printf '%s\n' "$OUT" | tail -20
 fi
-if printf '%s' "$OUT" | grep -q "the real-services suite's verdict for this commit was read and it was green"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "the real-services suite's verdict for this commit was read and it was green"; then
   ok "the dry-run summary credits the real-services read"
 else
   bad "the dry-run summary does not say the real-services verdict was read"
@@ -1059,7 +1059,7 @@ real_reset
 printf '2026-10-02T01:00:00Z\tnightly-red\n' > "$FR/$HEADR.nightly-runs"
 printf 'E2E real services / Admin Cypress, real services\tcompleted\tfailure\nRelease main to production\tin_progress\t\n' > "$FR/nightly-red"
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "is RED" && printf '%s' "$OUT" | grep -q "nightly-release.yml"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "is RED" && printf '%s' "$OUT" | grep >/dev/null -c "nightly-release.yml"; then
   ok "a red suite inside a nightly run refuses and names that run"
 else
   bad "a red suite inside a nightly run did not refuse (rc $RC)"; printf '%s\n' "$OUT" | tail -20
@@ -1071,7 +1071,7 @@ real_reset
 printf '2026-10-02T01:00:00Z\tnightly-off\n' > "$FR/$HEADR.nightly-runs"
 printf 'Decide what this run does\tcompleted\tsuccess\nE2E real services\tcompleted\tskipped\nRelease main to production\tcompleted\tsuccess\n' > "$FR/nightly-off"
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "was SKIPPED for .*which is not a verdict"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "was SKIPPED for .*which is not a verdict"; then
   ok "a skipped suite refuses as skipped, not as green and not as no run"
 else
   bad "a skipped suite was not refused as skipped (rc $RC)"; printf '%s\n' "$OUT" | tail -20
@@ -1082,7 +1082,7 @@ not_blaming_ci "$OUT" "skipped real-services"
 printf '2026-10-01T09:00:00Z\tdispatch-green\n' > "$FR/$HEADR.e2e-real-runs"
 printf 'Admin Cypress, real services\tcompleted\tsuccess\n' > "$FR/dispatch-green"
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "real services: green for .*run dispatch-green of e2e-real.yml"; then
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "real services: green for .*run dispatch-green of e2e-real.yml"; then
   ok "a newer skipped run falls back to the older run that judged the commit"
 else
   bad "a newer skipped run hid an older green verdict (rc $RC)"; printf '%s\n' "$OUT" | tail -20
@@ -1093,14 +1093,14 @@ real_reset
 printf '2026-10-01T09:00:00Z\tdispatch-red\n' > "$FR/$HEADR.e2e-real-runs"
 printf '2026-10-02T01:00:00Z\tnightly-1\n' > "$FR/$HEADR.nightly-runs"
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "run nightly-1 of nightly-release.yml"; then
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "run nightly-1 of nightly-release.yml"; then
   ok "a newer green nightly run stands over an older red dispatch"
 else
   bad "the newer green nightly run did not win over an older red dispatch (rc $RC)"; printf '%s\n' "$OUT" | tail -20
 fi
 printf '2026-10-03T09:00:00Z\tdispatch-red\n' > "$FR/$HEADR.e2e-real-runs"
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "is RED" && printf '%s' "$OUT" | grep -q "dispatch-red"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "is RED" && printf '%s' "$OUT" | grep >/dev/null -c "dispatch-red"; then
   ok "a newer red dispatch refuses even though an older nightly run was green"
 else
   bad "an older green nightly run hid a newer red dispatch (rc $RC)"; printf '%s\n' "$OUT" | tail -20
@@ -1110,8 +1110,8 @@ real_reset
 printf '2026-10-02T01:00:00Z\tdispatch-running\n' > "$FR/$HEADR.e2e-real-runs"
 printf 'Admin Cypress, real services\tin_progress\t\n' > "$FR/dispatch-running"
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "real-services suite (E2E real services) has not finished" &&
-   printf '%s' "$OUT" | grep -q "gh run watch dispatch-running"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "real-services suite (E2E real services) has not finished" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "gh run watch dispatch-running"; then
   ok "a suite still running refuses as not finished"
 else
   bad "a suite still running did not refuse as not finished (rc $RC)"; printf '%s\n' "$OUT" | tail -20
@@ -1124,7 +1124,7 @@ real_reset
 printf '2026-10-02T01:00:00Z\tdispatch-mixed\n' > "$FR/$HEADR.e2e-real-runs"
 printf 'Admin Cypress, real services\tcompleted\tsuccess\nPortal Cypress, real services\tcompleted\tskipped\n' > "$FR/dispatch-mixed"
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "real services: green"; then
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "real services: green"; then
   ok "a green job beside a skipped one is green"
 else
   bad "a green job beside a skipped one did not pass (rc $RC)"; printf '%s\n' "$OUT" | tail -20
@@ -1133,13 +1133,13 @@ fi
 real_reset
 printf '2026-10-02T01:00:00Z\tdispatch-red\n' > "$FR/$HEADR.e2e-real-runs"
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1 GH_API_FAIL=real)"; OUT="$(stripped "$DR/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "could not ask GitHub for the real-services suite's verdict" &&
-   printf '%s' "$OUT" | grep -q "HTTP 502: Bad Gateway (real)"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "could not ask GitHub for the real-services suite's verdict" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "HTTP 502: Bad Gateway (real)"; then
   ok "a failed real-services lookup refuses as could-not-ask, with gh's error"
 else
   bad "a failed real-services lookup was not refused as could-not-ask (rc $RC)"; printf '%s\n' "$OUT" | tail -20
 fi
-if printf '%s' "$OUT" | grep -q "has no run"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "has no run"; then
   bad "a failed real-services lookup was reported as the suite having no run"
 else
   ok "a failed real-services lookup is never reported as no run"
@@ -1148,7 +1148,7 @@ fi
 # The override skips this read too, and the skip says so.
 real_reset
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1 RELEASE_SKIP_CI_GATE=1 GH_CALL_LOG="$DR/gh-calls.log")"; OUT="$(stripped "$DR/out")"
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "or whether the real-services suite is" &&
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "or whether the real-services suite is" &&
    ! grep -q "e2e-real.yml\|nightly-release.yml" "$DR/gh-calls.log" 2>/dev/null; then
   ok "RELEASE_SKIP_CI_GATE=1 skips the real-services read and says it did"
 else
@@ -1160,13 +1160,13 @@ real_reset
 printf '2026-10-02T01:00:00Z\tdispatch-red\n' > "$FR/$HEADR.e2e-real-runs"
 printf 'Admin Cypress, real services\tcompleted\tfailure\n' > "$FR/dispatch-red"
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1 RELEASE_PREFLIGHT_ONLY=1)"; OUT="$(stripped "$DR/out")"
-if printf '%s' "$OUT" | grep -q "a real release would REFUSE here" &&
-   printf '%s' "$OUT" | grep -q "real-services suite (E2E real services) is RED"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "a real release would REFUSE here" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "real-services suite (E2E real services) is RED"; then
   ok "a preflight reports the red suite as a refusal a real release would make"
 else
   bad "a preflight did not report the red suite (rc $RC)"; printf '%s\n' "$OUT" | tail -20
 fi
-if printf '%s' "$OUT" | grep -q "^REFUSED: the real-services"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "^REFUSED: the real-services"; then
   bad "a preflight refused on the red suite instead of reporting it"
 else
   ok "a preflight does not stop on the red suite"
@@ -1189,14 +1189,14 @@ green_dispatch() {
 green_dispatch dispatch-warn
 printf '{"verdict":"warn","reasons":["stripe: 503 during incident \\"Elevated API errors\\""]}\n' > "$FR/dispatch-warn.verdict"
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "real services: green" &&
-   printf '%s' "$OUT" | grep -q "WARNING: the run passed on a vendor-outage warning" &&
-   printf '%s' "$OUT" | grep -q 'warn  e2e-real-artifacts/.real/verdict.json: stripe: 503 during incident'; then
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "real services: green" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "WARNING: the run passed on a vendor-outage warning" &&
+   printf '%s' "$OUT" | grep >/dev/null -c 'warn  e2e-real-artifacts/.real/verdict.json: stripe: 503 during incident'; then
   ok "a warn verdict lets the release through and prints the warning with its reason"
 else
   bad "a warn verdict was not let through with its warning (rc $RC)"; printf '%s\n' "$OUT" | tail -20
 fi
-if printf '%s' "$OUT" | grep -q "on a vendor-outage WARNING, not a clean pass"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "on a vendor-outage WARNING, not a clean pass"; then
   ok "the dry-run summary says the green read was a warning"
 else
   bad "the dry-run summary hides that the green read was a warning"
@@ -1205,8 +1205,8 @@ fi
 green_dispatch dispatch-pass
 printf '{"verdict":"pass","reasons":["pass: 12 passed, 3 pending, none failed"]}\n' > "$FR/dispatch-pass.verdict"
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "pass  e2e-real-artifacts/.real/verdict.json: pass: 12 passed, 3 pending" &&
-   ! printf '%s' "$OUT" | grep -q "WARNING: the run passed"; then
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "pass  e2e-real-artifacts/.real/verdict.json: pass: 12 passed, 3 pending" &&
+   ! printf '%s' "$OUT" | grep >/dev/null -c "WARNING: the run passed"; then
   ok "a pass verdict is green and prints its counts, pending (secret-less vendors) included, with no warning"
 else
   bad "a pass verdict was not read as a clean green (rc $RC)"; printf '%s\n' "$OUT" | tail -20
@@ -1217,8 +1217,8 @@ green_dispatch dispatch-two
 printf '{"verdict":"pass","reasons":["pass"]}\n' > "$FR/dispatch-two.verdict"
 printf '{"verdict":"warn","reasons":["twilio: timeout during incident"]}\n' > "$FR/dispatch-two.portal-verdict"
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "WARNING: the run passed on a vendor-outage warning" &&
-   printf '%s' "$OUT" | grep -q "e2e-real-portal-artifacts/.real/verdict.json: twilio: timeout"; then
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "WARNING: the run passed on a vendor-outage warning" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "e2e-real-portal-artifacts/.real/verdict.json: twilio: timeout"; then
   ok "a warning from either suite's verdict file is printed"
 else
   bad "a second suite's warning was missed (rc $RC)"; printf '%s\n' "$OUT" | tail -20
@@ -1227,8 +1227,8 @@ fi
 green_dispatch dispatch-disagree
 printf '{"verdict":"stop","reasons":["admin-invoice.cy.ts: 400 from api.stripe.com"]}\n' > "$FR/dispatch-disagree.verdict"
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "passed its jobs for .*but its verdict file says STOP" &&
-   printf '%s' "$OUT" | grep -q "400 from api.stripe.com"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "passed its jobs for .*but its verdict file says STOP" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "400 from api.stripe.com"; then
   ok "a green job whose verdict file says stop refuses, with the file's reason"
 else
   bad "a stop verdict file under a green job did not refuse (rc $RC)"; printf '%s\n' "$OUT" | tail -20
@@ -1237,7 +1237,7 @@ fi
 green_dispatch dispatch-garbled
 printf 'not json at all\n' > "$FR/dispatch-garbled.verdict"
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "verdict.json is not readable JSON"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "verdict.json is not readable JSON"; then
   ok "an unreadable verdict file reads as stop, never as pass"
 else
   bad "an unreadable verdict file did not refuse (rc $RC)"; printf '%s\n' "$OUT" | tail -20
@@ -1245,7 +1245,7 @@ fi
 
 green_dispatch dispatch-nofile
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "no verdict file in that run, so the job conclusions are the verdict"; then
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "no verdict file in that run, so the job conclusions are the verdict"; then
   ok "a run with no verdict file (before #1196) is judged by its jobs and says so"
 else
   bad "a run with no verdict file was not judged by its jobs (rc $RC)"; printf '%s\n' "$OUT" | tail -20
@@ -1254,8 +1254,8 @@ fi
 green_dispatch dispatch-dlfail
 printf '{"verdict":"warn","reasons":["x"]}\n' > "$FR/dispatch-dlfail.verdict"
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1 GH_DOWNLOAD_FAIL=1)"; OUT="$(stripped "$DR/out")"
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "its verdict file could not be fetched" &&
-   printf '%s' "$OUT" | grep -q "artifact service unavailable"; then
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "its verdict file could not be fetched" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "artifact service unavailable"; then
   ok "a failed artifact download falls back to the job conclusions and says why"
 else
   bad "a failed artifact download was not reported as such (rc $RC)"; printf '%s\n' "$OUT" | tail -20
@@ -1267,9 +1267,9 @@ printf '2026-10-02T01:00:00Z\tdispatch-redfile\n' > "$FR/$HEADR.e2e-real-runs"
 printf 'Admin Cypress, real services\tcompleted\tfailure\n' > "$FR/dispatch-redfile"
 printf '{"verdict":"stop","reasons":["clients.cy.ts: no vendor error attributed"]}\n' > "$FR/dispatch-redfile.verdict"
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "is RED" &&
-   printf '%s' "$OUT" | grep -q "stop  e2e-real-artifacts/.real/verdict.json: clients.cy.ts: no vendor error attributed" &&
-   printf '%s' "$OUT" | grep -q "this is our"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "is RED" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "stop  e2e-real-artifacts/.real/verdict.json: clients.cy.ts: no vendor error attributed" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "this is our"; then
   ok "a red run prints its verdict file's reasons"
 else
   bad "a red run did not print its verdict file's reasons (rc $RC)"; printf '%s\n' "$OUT" | tail -20
@@ -1281,7 +1281,7 @@ printf '2026-10-02T01:00:00Z\tnightly-warn\n' > "$FR/$HEADR.nightly-runs"
 printf 'E2E real services / Admin Cypress, real services\tcompleted\tsuccess\nRelease main to production\tin_progress\t\n' > "$FR/nightly-warn"
 printf '{"verdict":"warn","reasons":["cloudinary: 502 during incident"]}\n' > "$FR/nightly-warn.verdict"
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1 GH_CALL_LOG="$DR/gh-calls-hosted.log")"; OUT="$(stripped "$DR/out")"
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "cloudinary: 502 during incident" &&
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "cloudinary: 502 during incident" &&
    grep -q "^run download nightly-warn" "$DR/gh-calls-hosted.log"; then
   ok "a hosted release reads the verdict file from its own nightly run"
 else
@@ -1388,7 +1388,7 @@ if [ "$RC" -eq 0 ]; then
 else
   bad "a partial quota refusal failed the release (rc=$RC)"; echo "$OUT" | tail -25
 fi
-if printf '%s' "$OUT" | grep -q "round 2 of 3"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "round 2 of 3"; then
   ok "the casualties are retried in a second, smaller round"
 else
   bad "no retry round ran after the quota refusal"; echo "$OUT" | tail -25
@@ -1399,7 +1399,7 @@ if [ "$RETRIED" = "gamma,zeta" ]; then
 else
   bad "the retry batch was '$RETRIED', not the two casualties"; fn_deploys "$D5/calls"
 fi
-if printf '%s' "$OUT" | grep -q "is live and verified"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "is live and verified"; then
   ok "a release that recovered from the quota still reports the release"
 else
   bad "the recovered release did not report success"; echo "$OUT" | tail -25
@@ -1424,7 +1424,7 @@ fi
 MISSING=0
 for f in alpha beta gamma delta epsilon zeta; do
   # The list prints in red, so the line ends in an escape, not in the name.
-  printf '%s' "$OUT" | grep -q "    $f" || MISSING=1
+  printf '%s' "$OUT" | grep >/dev/null -c "    $f" || MISSING=1
 done
 if [ "$MISSING" -eq 0 ]; then
   ok "the refusal names every function that is stale"
@@ -1490,7 +1490,7 @@ RC="$(run_release "$D9" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
 GOT="$(fn_deploys "$D9/calls" | tr ',' '\n' | sort -u | grep -c . || true)"
 OUT="$(cat "$D9/out")"
 if [ "$RC" -eq 0 ] && [ "$GOT" = "6" ] &&
-   printf '%s' "$OUT" | grep -q "falling back to the whole fleet"; then
+   printf '%s' "$OUT" | grep >/dev/null -c "falling back to the whole fleet"; then
   ok "an unattributable change deploys the whole fleet and says why"
 else
   bad "an index.ts change deployed $GOT function(s) (rc=$RC) without the fallback"
@@ -1512,7 +1512,7 @@ RC="$(run_release "$D10" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
   RELEASE_FUNCTIONS_SETTLE=0 FIREBASE_CALL_LOG="$D10/calls")"
 OUT="$(cat "$D10/out")"
 if [ "$RC" -eq 0 ] && [ -z "$(fn_deploys "$D10/calls")" ] &&
-   printf '%s' "$OUT" | grep -q "nothing to deploy"; then
+   printf '%s' "$OUT" | grep >/dev/null -c "nothing to deploy"; then
   ok "a test-only change deploys no functions at all, and says so"
 else
   bad "a test-only change deployed '$(fn_deploys "$D10/calls")' (rc=$RC)"; echo "$OUT" | tail -25
@@ -1546,7 +1546,7 @@ rm -f "$D12/repo/mytribe/functions/lib/index.js"
 arm_ci "$D12"
 RC="$(run_release "$D12" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$D12/calls")"
 OUT="$(cat "$D12/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "build:functions"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "build:functions"; then
   ok "an unenumerable fleet refuses and names the build that fixes it"
 else
   bad "an unenumerable fleet did not refuse (rc=$RC)"; echo "$OUT" | tail -20
@@ -1567,7 +1567,7 @@ printf 'alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\nomega\n' > "$D13/repo/.release
 RC="$(run_release "$D13" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
   RELEASE_FUNCTIONS_SETTLE=0 FIREBASE_CALL_LOG="$D13/calls")"
 OUT="$(cat "$D13/out")"
-if printf '%s' "$OUT" | grep -q "functions:delete omega"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "functions:delete omega"; then
   ok "a function that left the code is reported with the command that removes it"
 else
   bad "an orphaned deployed function was not reported"; echo "$OUT" | tail -25
@@ -1633,8 +1633,8 @@ else
   bad "step 1c did not assemble both APKs"
   printf '%s' "$OUT" | grep -i "android" | head -20
 fi
-if printf '%s' "$CALLS" | grep -q "appdistribution:distribute.*$AUNTIEOS_APP_ID" &&
-   printf '%s' "$CALLS" | grep -q "appdistribution:distribute.*$MYTRIBE_APP_ID"; then
+if printf '%s' "$CALLS" | grep >/dev/null -c "appdistribution:distribute.*$AUNTIEOS_APP_ID" &&
+   printf '%s' "$CALLS" | grep >/dev/null -c "appdistribution:distribute.*$MYTRIBE_APP_ID"; then
   ok "step 6b uploads both APKs, each to its own Firebase app id"
 else
   bad "step 6b did not upload both APKs to their own app ids"
@@ -1643,16 +1643,16 @@ fi
 # The APK argument has to match the app id it went out under. Crossing them
 # would upload the operator app to the portal's Firebase entry, and every check
 # above would still pass.
-if printf '%s' "$CALLS" | grep "app-release.apk" | grep -q -- "$AUNTIEOS_APP_ID" &&
-   printf '%s' "$CALLS" | grep "kinfolk-portal-release.apk" | grep -q -- "$MYTRIBE_APP_ID"; then
+if printf '%s' "$CALLS" | grep "app-release.apk" | grep >/dev/null -c -- "$AUNTIEOS_APP_ID" &&
+   printf '%s' "$CALLS" | grep "kinfolk-portal-release.apk" | grep >/dev/null -c -- "$MYTRIBE_APP_ID"; then
   ok "each APK goes to the app id that belongs to it"
 else
   bad "an APK was uploaded under the other app's id"
   printf '%s' "$CALLS" | grep appdistribution
 fi
 TAGMSG="$(cd "$D15/repo" && git tag -l 'v*' --format='%(contents)')"
-if printf '%s' "$TAGMSG" | grep -q "android (auntieos): distributed" &&
-   printf '%s' "$TAGMSG" | grep -q "android (mytribe): distributed"; then
+if printf '%s' "$TAGMSG" | grep >/dev/null -c "android (auntieos): distributed" &&
+   printf '%s' "$TAGMSG" | grep >/dev/null -c "android (mytribe): distributed"; then
   ok "the tag reports each Android app separately"
 else
   bad "the tag does not report both Android apps"
@@ -1673,15 +1673,15 @@ RC="$(run_release "$D16" RELEASE_YES=1 RELEASE_ANDROID_TESTERS=a@b.test \
 CALLS="$(cat "$D16/calls" 2>/dev/null || true)"
 TAGMSG="$(cd "$D16/repo" && git tag -l 'v*' --format='%(contents)')"
 if [ "$RC" -eq 0 ] &&
-   printf '%s' "$CALLS" | grep -q "appdistribution:distribute.*$AUNTIEOS_APP_ID" &&
-   ! printf '%s' "$CALLS" | grep -q "$MYTRIBE_APP_ID"; then
+   printf '%s' "$CALLS" | grep >/dev/null -c "appdistribution:distribute.*$AUNTIEOS_APP_ID" &&
+   ! printf '%s' "$CALLS" | grep >/dev/null -c "$MYTRIBE_APP_ID"; then
   ok "a per-app skip still ships the other Android app"
 else
   bad "a per-app skip did not ship the other Android app (rc $RC)"
   printf '%s' "$CALLS" | grep appdistribution || echo "  (no distribute call at all)"
 fi
-if printf '%s' "$TAGMSG" | grep -q "android (auntieos): distributed" &&
-   printf '%s' "$TAGMSG" | grep -q "android (mytribe): skipped"; then
+if printf '%s' "$TAGMSG" | grep >/dev/null -c "android (auntieos): distributed" &&
+   printf '%s' "$TAGMSG" | grep >/dev/null -c "android (mytribe): skipped"; then
   ok "the tag names the skipped Android app rather than claiming both shipped"
 else
   bad "the tag hides the skipped Android app"
@@ -1704,14 +1704,14 @@ OUT="$(cat "$D17/out")"
 CALLS="$(cat "$D17/calls" 2>/dev/null || true)"
 if [ "$RC" -eq 0 ]; then
   bad "a failed mytribe Android build did not stop the release"
-elif printf '%s' "$OUT" | grep -q "REFUSED: the mytribe Android release APK did not build" &&
-     printf '%s' "$OUT" | grep -q "RELEASE_SKIP_ANDROID_MYTRIBE=1"; then
+elif printf '%s' "$OUT" | grep >/dev/null -c "REFUSED: the mytribe Android release APK did not build" &&
+     printf '%s' "$OUT" | grep >/dev/null -c "RELEASE_SKIP_ANDROID_MYTRIBE=1"; then
   ok "a failed mytribe Android build refuses, names the app, and names its skip"
 else
   bad "the refusal does not name the app that failed or how to skip it"
   printf '%s' "$OUT" | tail -20
 fi
-if printf '%s' "$CALLS" | grep -q "deploy"; then
+if printf '%s' "$CALLS" | grep >/dev/null -c "deploy"; then
   bad "a failed Android build refused only AFTER deploying something"
   printf '%s\n' "$CALLS" | head
 else
@@ -1887,33 +1887,33 @@ if [ "$RC" -eq 0 ]; then
 else
   bad "a stored-complete release failed (rc $RC)"; echo "$OUT" | tail -25
 fi
-if printf '%s' "$OUT" | grep -q "every declared VITE_\* value resolved"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "every declared VITE_\* value resolved"; then
   ok "step 0c says it resolved the client config"
 else
   bad "step 0c never reported resolving the client config"
 fi
-if printf '%s' "$SEEN" | grep -q "auntieos-admin/.env.production.local VITE_SENTRY_DSN='https://examplepublickey@o0.ingest.us.sentry.io/0'"; then
+if printf '%s' "$SEEN" | grep >/dev/null -c "auntieos-admin/.env.production.local VITE_SENTRY_DSN='https://examplepublickey@o0.ingest.us.sentry.io/0'"; then
   ok "the admin build sees the admin DSN, from the store"
 else
   bad "the admin build did not see the admin DSN"; printf '%s\n' "$SEEN"
 fi
-if printf '%s' "$SEEN" | grep -q "mytribe/web/.env.production.local VITE_MAPBOX_PUBLIC_TOKEN='pk.example-not-a-real-token'"; then
+if printf '%s' "$SEEN" | grep >/dev/null -c "mytribe/web/.env.production.local VITE_MAPBOX_PUBLIC_TOKEN='pk.example-not-a-real-token'"; then
   ok "the portal build sees the Mapbox token, from the store"
 else
   bad "the portal build did not see the Mapbox token"; printf '%s\n' "$SEEN"
 fi
-if printf '%s' "$SEEN" | grep -q "auntieos-admin/.env.production.local VITE_MAPBOX_PUBLIC_TOKEN='pk.example-not-a-real-token-admin'"; then
+if printf '%s' "$SEEN" | grep >/dev/null -c "auntieos-admin/.env.production.local VITE_MAPBOX_PUBLIC_TOKEN='pk.example-not-a-real-token-admin'"; then
   ok "the admin build sees its OWN Mapbox token, not the portal's"
 else
   bad "the admin build did not see its own Mapbox token"; printf '%s\n' "$SEEN"
 fi
 # The one that a single exported environment could not have got right.
-if printf '%s' "$SEEN" | grep -q "mytribe/web/.env.production.local VITE_SENTRY_DSN='https://examplepublickey@o0.ingest.us.sentry.io/1'"; then
+if printf '%s' "$SEEN" | grep >/dev/null -c "mytribe/web/.env.production.local VITE_SENTRY_DSN='https://examplepublickey@o0.ingest.us.sentry.io/1'"; then
   ok "each app gets its OWN VITE_SENTRY_DSN, not one shared value"
 else
   bad "the portal did not get its own DSN"; printf '%s\n' "$SEEN"
 fi
-if printf '%s' "$SEEN" | grep -q "VITE_SENTRY_RELEASE='$(cd "$D/repo" && git rev-parse --short HEAD)'"; then
+if printf '%s' "$SEEN" | grep >/dev/null -c "VITE_SENTRY_RELEASE='$(cd "$D/repo" && git rev-parse --short HEAD)'"; then
   ok "VITE_SENTRY_RELEASE is the commit being released, derived not stored"
 else
   bad "VITE_SENTRY_RELEASE did not name the released commit"; printf '%s\n' "$SEEN"
@@ -1924,7 +1924,7 @@ if [ -f "$D/repo/auntieos-admin/.env.production.local" ] ||
 else
   ok "the generated client config does not outlive the release"
 fi
-if printf '%s' "$SEEN" | grep -q "APPCHECK_DEBUG"; then
+if printf '%s' "$SEEN" | grep >/dev/null -c "APPCHECK_DEBUG"; then
   bad "the App Check debug token reached a release build"
 else
   ok "the App Check debug token never reaches a release build"
@@ -1947,17 +1947,17 @@ if [ "$RC" -ne 0 ]; then
 else
   bad "a missing required client secret did NOT fail the release"
 fi
-if printf '%s' "$OUT" | grep -q "VITE_MAPBOX_PUBLIC_TOKEN"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "VITE_MAPBOX_PUBLIC_TOKEN"; then
   ok "the refusal names the variable that has no value"
 else
   bad "the refusal never named VITE_MAPBOX_PUBLIC_TOKEN"; echo "$OUT" | tail -25
 fi
-if printf '%s' "$OUT" | grep -q "PORTAL_WEB_MAPBOX_PUBLIC_TOKEN"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "PORTAL_WEB_MAPBOX_PUBLIC_TOKEN"; then
   ok "the refusal names the Secret Manager secret to create"
 else
   bad "the refusal never named the secret"; echo "$OUT" | tail -25
 fi
-if printf '%s' "$OUT" | grep -q "gcloud secrets create PORTAL_WEB_MAPBOX_PUBLIC_TOKEN"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "gcloud secrets create PORTAL_WEB_MAPBOX_PUBLIC_TOKEN"; then
   ok "the refusal prints the command that fixes it"
 else
   bad "the refusal printed no fix command"; echo "$OUT" | tail -25
@@ -1986,7 +1986,7 @@ if [ "$RC" -ne 0 ]; then
 else
   bad "an EMPTY client secret shipped"
 fi
-if printf '%s' "$OUT" | grep -q "VITE_MAPBOX_PUBLIC_TOKEN (portal).*is empty"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "VITE_MAPBOX_PUBLIC_TOKEN (portal).*is empty"; then
   ok "the refusal says empty, not missing, and names the app"
 else
   bad "the refusal did not distinguish empty from missing"; echo "$OUT" | tail -25
@@ -2010,7 +2010,7 @@ if [ "$RC" -ne 0 ]; then
 else
   bad "a missing admin App Check site key did NOT fail the release"; echo "$OUT" | tail -25
 fi
-if printf '%s' "$OUT" | grep -q "VITE_ADMIN_APPCHECK_SITE_KEY (admin) <- ADMIN_WEB_APPCHECK_SITE_KEY"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "VITE_ADMIN_APPCHECK_SITE_KEY (admin) <- ADMIN_WEB_APPCHECK_SITE_KEY"; then
   ok "the refusal names the build variable AND the secret behind it"
 else
   bad "the refusal did not name both names"; echo "$OUT" | tail -25
@@ -2019,7 +2019,7 @@ fi
 # refusal that told them to create a secret called VITE_... would have them
 # store a value nothing ever fetches, which is the mistake that was already
 # made once by hand.
-if printf '%s' "$OUT" | grep -q "gcloud secrets create VITE_"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "gcloud secrets create VITE_"; then
   bad "the refusal told the operator to create a VITE_-prefixed secret"
 else
   ok "the refusal never names a VITE_-prefixed secret to create"
@@ -2047,7 +2047,7 @@ if [ "$(printf '%s' "$OUT" | grep -c "WARNING: VITE_SENTRY_DSN")" = "2" ]; then
 else
   bad "the missing DSNs were not both named"; echo "$OUT" | tail -25
 fi
-if printf '%s' "$OUT" | grep -q "WARNING: VITE_SENTRY_DSN.*never been"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "WARNING: VITE_SENTRY_DSN.*never been"; then
   ok "the warning says web Sentry has never been configured, not that it broke"
 else
   bad "the warning does not say this is an accepted state"; echo "$OUT" | tail -25
@@ -2066,7 +2066,7 @@ if [ "$RC" -eq 0 ]; then
 else
   bad "RELEASE_SKIP_CLIENT_SECRETS=1 did not skip the refusal (rc $RC)"; echo "$OUT" | tail -25
 fi
-if printf '%s' "$OUT" | grep -q "SKIPPED (RELEASE_SKIP_CLIENT_SECRETS=1)"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "SKIPPED (RELEASE_SKIP_CLIENT_SECRETS=1)"; then
   ok "the skipped step says it was skipped"
 else
   bad "the skip was silent"; echo "$OUT" | tail -25
@@ -2087,12 +2087,12 @@ if [ "$RC" -eq 0 ]; then
 else
   bad "an unreadable store failed the release (rc $RC)"; echo "$OUT" | tail -25
 fi
-if printf '%s' "$OUT" | grep -q "client config: NOT CHECKED"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "client config: NOT CHECKED"; then
   ok "an unreadable store says the client config was NOT CHECKED"
 else
   bad "an unreadable store did not say it could not look"; echo "$OUT" | tail -25
 fi
-if printf '%s' "$OUT" | grep -q "every declared VITE_\* value resolved"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "every declared VITE_\* value resolved"; then
   bad "an unreadable store reported the client config as resolved"
 else
   ok "an unreadable store never claims the client config resolved"
@@ -2266,7 +2266,7 @@ if grep -q "firebase functions:delete retiredFn" "$DB/out" &&
 else
   bad "the resumed step 5 did not report the removed function"; grep -n "retiredFn\|functions:delete" "$DB/out" "$DB/calls2"
 fi
-if grep -q 'firestore:indexes\|firestore:rules' "$DB/calls2" || grep -q -- '--only storage ' "$DB/calls2" 2>/dev/null; then
+if grep -q 'firestore:indexes\|firestore:rules' "$DB/calls2" || grep >/dev/null -c -- '--only storage ' "$DB/calls2" 2>/dev/null; then
   bad "the rerun redeployed indexes, firestore rules or storage rules it had already shipped"
 else
   ok "the rerun skips indexes, firestore rules and storage rules it had already shipped"
@@ -2337,9 +2337,9 @@ fi
 LIVE_E="$(sed 's/\x1b\[[0-9;]*m//g' "$DE/out" | awk '/^Completed and LIVE for /{f=1; next} /^[^ ]/{f=0} f')"
 UNVER_E="$(sed 's/\x1b\[[0-9;]*m//g' "$DE/out" | awk '/^Deployed, NOT verified, for /{f=1; next} /^[^ ]/{f=0} f')"
 if grep -q " functions-mytribe-unverified$" "$DE/repo/.release-progress" 2>/dev/null &&
-   printf '%s' "$UNVER_E" | grep -q "functions:mytribe, deployed, not verified" &&
-   ! printf '%s' "$LIVE_E" | grep -q "not verified" &&
-   printf '%s' "$LIVE_E" | grep -q "firestore rules" &&
+   printf '%s' "$UNVER_E" | grep >/dev/null -c "functions:mytribe, deployed, not verified" &&
+   ! printf '%s' "$LIVE_E" | grep >/dev/null -c "not verified" &&
+   printf '%s' "$LIVE_E" | grep >/dev/null -c "firestore rules" &&
    ! grep -q "functions:mytribe, fleet verified" "$DE/out"; then
   ok "the stop message lists the unverified functions under their own heading, not under LIVE"
 else
@@ -2369,7 +2369,7 @@ else
   bad "precondition failed: HEAD did not move"
 fi
 if [ "$RCF" != "0" ] && grep -q "REFUSED: HEAD moved during the release" "$DF/out" &&
-   sed 's/\x1b\[[0-9;]*m//g' "$DF/out" | grep -q "Caught after deploying firestore:rules\."; then
+   sed 's/\x1b\[[0-9;]*m//g' "$DF/out" | grep >/dev/null -c "Caught after deploying firestore:rules\."; then
   ok "HEAD moving during the rules deploy is caught right after it"
 else
   bad "the move during the rules deploy was not caught after it (rc=$RCF)"; tail -20 "$DF/out"
@@ -2383,7 +2383,7 @@ if grep -qxF "$HEAD_F indexes" "$DF/repo/.release-progress" 2>/dev/null &&
 else
   bad "the rules record survived, or a record names the moved commit"; cat "$DF/repo/.release-progress" 2>/dev/null
 fi
-if sed 's/\x1b\[[0-9;]*m//g' "$DF/out" | grep -q "firestore:rules may be PARTLY from $MOVED_F" &&
+if sed 's/\x1b\[[0-9;]*m//g' "$DF/out" | grep >/dev/null -c "firestore:rules may be PARTLY from $MOVED_F" &&
    ! grep -q "Every deploy so far passed a check" "$DF/out"; then
   ok "the refusal names the rules deploy as possibly from the other commit, not everything as clean"
 else
@@ -2451,8 +2451,8 @@ fi
 RCI2="$(run_release "$DI" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DI/calls2")"
 TAG_I="$(cd "$DI/repo" && git for-each-ref refs/tags --format='%(contents)')"
 if [ "$RCI2" = "0" ] && grep -q "found nothing to deploy" "$DI/out" &&
-   printf '%s' "$TAG_I" | grep -q "resumed: nothing to deploy" &&
-   ! printf '%s' "$TAG_I" | grep -q "fleet-verified"; then
+   printf '%s' "$TAG_I" | grep >/dev/null -c "resumed: nothing to deploy" &&
+   ! printf '%s' "$TAG_I" | grep >/dev/null -c "fleet-verified"; then
   ok "the resume and the tag message say nothing to deploy, not deployed and verified"
 else
   bad "the resume or tag misdescribed an empty step 5 (rc=$RCI2)"; printf '%s\n' "$TAG_I"; grep -n "RESUMED" "$DI/out"
@@ -2515,7 +2515,7 @@ RCJ="$(run_release "$DJ" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=1 \
 MOVED_J="$(cd "$DJ/repo" && git rev-parse HEAD)"
 OUT_J="$(stripped "$DJ/out")"
 if [ -n "$FIRST_J" ] && [ "$RCJ" != "0" ] && [ "$(fn_deploys "$DJ/calls" | wc -l | tr -d ' ')" = "1" ] &&
-   printf '%s' "$OUT_J" | grep -q "Caught after a functions batch"; then
+   printf '%s' "$OUT_J" | grep >/dev/null -c "Caught after a functions batch"; then
   ok "HEAD moving during a functions batch stops before the next batch, caught after the batch"
 else
   bad "a later batch deployed after HEAD moved, or the post-batch check did not catch it (rc=$RCJ)"; fn_deploys "$DJ/calls"; printf '%s\n' "$OUT_J" | grep -n "Caught\|REFUSED"
@@ -2525,8 +2525,8 @@ if ! grep -q " functions-mytribe" "$DJ/repo/.release-progress" 2>/dev/null; then
 else
   bad "step 5 was recorded after HEAD moved mid-batch"; cat "$DJ/repo/.release-progress"
 fi
-if printf '%s' "$OUT_J" | grep -q "functions:mytribe may be PARTLY from $MOVED_J" &&
-   printf '%s' "$OUT_J" | grep -q "not from $(short7 "$HEAD_J") ($HEAD_J)"; then
+if printf '%s' "$OUT_J" | grep >/dev/null -c "functions:mytribe may be PARTLY from $MOVED_J" &&
+   printf '%s' "$OUT_J" | grep >/dev/null -c "not from $(short7 "$HEAD_J") ($HEAD_J)"; then
   ok "the stop message says the functions may be partly from the other commit, naming both shas"
 else
   bad "the stop message did not name the mixed functions and both shas"; printf '%s\n' "$OUT_J" | tail -15
@@ -2539,7 +2539,7 @@ RCK="$(run_release "$DK" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 RELEASE_FUNCTIONS_
   RELEASE_FUNCTIONS_BATCH=6 RELEASE_RETRY_KEEP=2 FIREBASE_QUOTA_MAX=0 \
   GCLOUD_MOVE_HEAD_REPO="$DK/repo" FIREBASE_CALL_LOG="$DK/calls")"
 if [ "$RCK" != "0" ] && [ "$(fn_deploys "$DK/calls" | wc -l | tr -d ' ')" = "1" ] &&
-   stripped "$DK/out" | grep -q "Caught before a functions batch"; then
+   stripped "$DK/out" | grep >/dev/null -c "Caught before a functions batch"; then
   ok "HEAD moving between batches is caught before the next batch deploys"
 else
   bad "the retry batch deployed after HEAD moved (rc=$RCK)"; fn_deploys "$DK/calls"; stripped "$DK/out" | grep -n "Caught\|REFUSED"
@@ -2550,7 +2550,7 @@ fi
 DL="$(verified_repo)"
 stub_npx_fleet_move_head "$DL"
 RCL="$(run_release "$DL" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 FIREBASE_CALL_LOG="$DL/calls")"
-if [ "$RCL" != "0" ] && stripped "$DL/out" | grep -q "Caught before recording step 5\." &&
+if [ "$RCL" != "0" ] && stripped "$DL/out" | grep >/dev/null -c "Caught before recording step 5\." &&
    ! grep -q " functions-mytribe" "$DL/repo/.release-progress" 2>/dev/null; then
   ok "HEAD moving before step 5 is recorded is caught there, and nothing is recorded"
 else
@@ -2567,7 +2567,7 @@ commit_change "$DM" "mytribe/functions/test/alpha.test.ts" 'it("also works", () 
 arm_ci "$DM"
 stub_node_move_head "$DM" "--changed-from"
 RCM="$(run_release "$DM" "${FN_ENV[@]}")"
-if [ "$RCM" != "0" ] && stripped "$DM/out" | grep -q "Caught before recording step 5 (nothing to deploy)" &&
+if [ "$RCM" != "0" ] && stripped "$DM/out" | grep >/dev/null -c "Caught before recording step 5 (nothing to deploy)" &&
    ! grep -q " functions-mytribe-none" "$DM/repo/.release-progress" 2>/dev/null; then
   ok "HEAD moving before an empty step 5 is recorded is caught there, and nothing is recorded"
 else
@@ -2583,7 +2583,7 @@ stub_node_move_head "$DN" "function-targets.js"
 RCN="$(run_release "$DN" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DN/calls2")"
 # The rerun resumes indexes, rules and step 5, so it may call firebase not at
 # all and leave no call log; "no functions:default deploy" holds either way.
-if [ "$RCN" != "0" ] && stripped "$DN/out" | grep -q "Caught before the admin codebases\." &&
+if [ "$RCN" != "0" ] && stripped "$DN/out" | grep >/dev/null -c "Caught before the admin codebases\." &&
    ! grep -qF -- "--only functions:default " "$DN/calls2" 2>/dev/null; then
   ok "HEAD moving during a resumed step 5 is caught before the admin codebases"
 else
@@ -2597,7 +2597,7 @@ RCO="$(run_release "$DO" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DO/calls" \
   FIREBASE_MOVE_HEAD_ON=functions:default FIREBASE_ADMIN_FAIL_TEXT="$INCIDENT_TEXT" \
   FIREBASE_ADMIN_FAIL_TIMES=1 FIREBASE_ADMIN_FAIL_COUNTER="$DO/admin-fails")"
 if [ "$RCO" != "0" ] && [ "$(admin_calls "$DO/calls" functions:default)" = "1" ] &&
-   stripped "$DO/out" | grep -q "Caught before functions:default attempt 2\."; then
+   stripped "$DO/out" | grep >/dev/null -c "Caught before functions:default attempt 2\."; then
   ok "HEAD moving during a failed admin attempt stops the retry before it deploys"
 else
   bad "the admin retry deployed after HEAD moved (rc=$RCO, attempts $(admin_calls "$DO/calls" functions:default))"; stripped "$DO/out" | grep -n "Caught"
@@ -2609,10 +2609,10 @@ DP="$(admin_repo)"
 HEAD_P="$(cd "$DP/repo" && git rev-parse HEAD)"
 RCP="$(run_release "$DP" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DP/calls" \
   FIREBASE_MOVE_HEAD_ON=functions:default)"
-if [ "$RCP" != "0" ] && stripped "$DP/out" | grep -q "Caught after deploying functions:default\." &&
+if [ "$RCP" != "0" ] && stripped "$DP/out" | grep >/dev/null -c "Caught after deploying functions:default\." &&
    ! grep -q " functions-admin-default$" "$DP/repo/.release-progress" 2>/dev/null &&
    [ "$(admin_calls "$DP/calls" functions:reconcile)" = "0" ] &&
-   stripped "$DP/out" | grep -q "functions:default may be PARTLY from"; then
+   stripped "$DP/out" | grep >/dev/null -c "functions:default may be PARTLY from"; then
   ok "an admin deploy from a moved checkout is not recorded, and the stop message names it"
 else
   bad "an admin deploy from a moved checkout was recorded or not reported (rc=$RCP)"; cat "$DP/repo/.release-progress" 2>/dev/null; stripped "$DP/out" | tail -12
@@ -2628,7 +2628,7 @@ fi
 DQ="$(verified_repo)"
 RCQ="$(run_release "$DQ" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 \
   GCLOUD_MOVE_HEAD_REPO="$DQ/repo" FIREBASE_CALL_LOG="$DQ/calls")"
-if [ "$RCQ" != "0" ] && stripped "$DQ/out" | grep -q "Caught before recording .release-state\." &&
+if [ "$RCQ" != "0" ] && stripped "$DQ/out" | grep >/dev/null -c "Caught before recording .release-state\." &&
    [ ! -e "$DQ/repo/.release-state" ] && [ -z "$(cd "$DQ/repo" && git tag -l)" ]; then
   ok "HEAD moving during the prune stops the release before .release-state is written"
 else
@@ -2639,15 +2639,15 @@ fi
 DR="$(verified_repo)"
 RCR="$(run_release "$DR" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 \
   FIREBASE_EDIT_TREE_ON=firestore:rules FIREBASE_CALL_LOG="$DR/calls")"
-if [ "$RCR" != "0" ] && stripped "$DR/out" | grep -q "REFUSED: the working tree changed during the release" &&
-   stripped "$DR/out" | grep -q "note.txt" && [ -z "$(fn_deploys "$DR/calls")" ]; then
+if [ "$RCR" != "0" ] && stripped "$DR/out" | grep >/dev/null -c "REFUSED: the working tree changed during the release" &&
+   stripped "$DR/out" | grep >/dev/null -c "note.txt" && [ -z "$(fn_deploys "$DR/calls")" ]; then
   ok "a working-tree edit during the release is refused before the next deploy"
 else
   bad "a working-tree edit did not stop the release (rc=$RCR)"; stripped "$DR/out" | grep -n "REFUSED\|Caught"
 fi
-if stripped "$DR/out" | grep -q "git status --short when the release started deploying:" &&
-   stripped "$DR/out" | grep -q "git status --short now:" &&
-   stripped "$DR/out" | grep -A1 "git status --short now:" | grep -q "note.txt"; then
+if stripped "$DR/out" | grep >/dev/null -c "git status --short when the release started deploying:" &&
+   stripped "$DR/out" | grep >/dev/null -c "git status --short now:" &&
+   stripped "$DR/out" | grep -A1 "git status --short now:" | grep >/dev/null -c "note.txt"; then
   ok "a working-tree refusal prints git status from the baseline and from now"
 else
   bad "the refusal did not print both git statuses"; stripped "$DR/out" | grep -n -A2 "git status"
@@ -2662,8 +2662,8 @@ fi
 DS="$(verified_repo)"
 RCS="$(run_release "$DS" "${FN_ENV[@]}" FIREBASE_MOVE_HEAD_ON=firestore:indexes FIREBASE_CALL_LOG="$DS/calls")"
 MOVED_S="$(cd "$DS/repo" && git rev-parse HEAD)"
-if [ "$RCS" != "0" ] && stripped "$DS/out" | grep -q "Caught at the start of step: 3\. Wait for indexes to finish building\." &&
-   stripped "$DS/out" | grep -q "firestore:indexes may be PARTLY from $MOVED_S" &&
+if [ "$RCS" != "0" ] && stripped "$DS/out" | grep >/dev/null -c "Caught at the start of step: 3\. Wait for indexes to finish building\." &&
+   stripped "$DS/out" | grep >/dev/null -c "firestore:indexes may be PARTLY from $MOVED_S" &&
    ! grep -q "Every deploy so far passed a check" "$DS/out" &&
    ! grep -q " indexes$" "$DS/repo/.release-progress" 2>/dev/null &&
    ! grep -q 'firestore:rules' "$DS/calls" 2>/dev/null; then
@@ -2769,17 +2769,17 @@ stub_git_status_fails "$DY" 99
 RCY="$(run_release "$DY" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 \
   FIREBASE_ARM_FILE_ON=firestore:rules FIREBASE_ARM_FILE="$DY/git-armed" FIREBASE_CALL_LOG="$DY/calls")"
 if [ "$RCY" != "0" ] &&
-   stripped "$DY/out" | grep -q "REFUSED: git could not read the working tree" &&
-   ! stripped "$DY/out" | grep -q "the working tree changed" &&
-   stripped "$DY/out" | grep -q "Caught after deploying firestore:rules\." &&
+   stripped "$DY/out" | grep >/dev/null -c "REFUSED: git could not read the working tree" &&
+   ! stripped "$DY/out" | grep >/dev/null -c "the working tree changed" &&
+   stripped "$DY/out" | grep >/dev/null -c "Caught after deploying firestore:rules\." &&
    ! grep -q " rules$" "$DY/repo/.release-progress" 2>/dev/null &&
    [ -z "$(fn_deploys "$DY/calls")" ]; then
   ok "git failing persistently refuses as unreadable, not as a changed tree, and records nothing"
 else
   bad "a persistent git failure was misreported (rc=$RCY)"; stripped "$DY/out" | grep -n "REFUSED\|Caught\|changed" | head
 fi
-if stripped "$DY/out" | grep -q "git status --porcelain  (exit 128)" &&
-   stripped "$DY/out" | grep -q "fatal: bad object HEAD (stubbed failure)" &&
+if stripped "$DY/out" | grep >/dev/null -c "git status --porcelain  (exit 128)" &&
+   stripped "$DY/out" | grep >/dev/null -c "fatal: bad object HEAD (stubbed failure)" &&
    ! grep -q "index.lock" "$DY/out"; then
   ok "the git-read refusal prints the failing command and git's own message, and does not blame index.lock"
 else
@@ -2800,8 +2800,8 @@ STUB
 chmod +x "$DZ/stubs/node"
 RCZ="$(run_release "$DZ" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 \
   FIREBASE_EDIT_UNTRACKED_ON=firestore:rules FIREBASE_CALL_LOG="$DZ/calls")"
-if [ "$RCZ" != "0" ] && stripped "$DZ/out" | grep -q "REFUSED: the working tree changed during the release" &&
-   stripped "$DZ/out" | grep -q "Caught after deploying firestore:rules\." &&
+if [ "$RCZ" != "0" ] && stripped "$DZ/out" | grep >/dev/null -c "REFUSED: the working tree changed during the release" &&
+   stripped "$DZ/out" | grep >/dev/null -c "Caught after deploying firestore:rules\." &&
    [ -z "$(fn_deploys "$DZ/calls")" ]; then
   ok "a change to an untracked file's contents is caught, not only its appearance"
 else
@@ -2836,7 +2836,7 @@ stub_node_awkward_untracked "$DA2"
 RCA2="$(run_release "$DA2" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 FIREBASE_CALL_LOG="$DA2/calls")"
 if [ -L "$DA2/repo/dangle" ] && [ -e "$DA2/repo/locked.txt" ] && [ -d "$DA2/repo/sub/.git" ] &&
    [ "$RCA2" = "0" ] && grep -q "is live and verified" "$DA2/out" &&
-   ! stripped "$DA2/out" | grep -q "REFUSED"; then
+   ! stripped "$DA2/out" | grep >/dev/null -c "REFUSED"; then
   ok "a dangling symlink, an unreadable file and a nested repo do not stop the release"
 else
   bad "an awkward untracked entry refused the release (rc=$RCA2)"; stripped "$DA2/out" | grep -n -A6 "REFUSED" | head -20
@@ -2846,8 +2846,8 @@ DB2="$(verified_repo)"
 stub_node_awkward_untracked "$DB2"
 RCB2X="$(run_release "$DB2" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 \
   FIREBASE_RELINK_ON=firestore:rules FIREBASE_CALL_LOG="$DB2/calls")"
-if [ "$RCB2X" != "0" ] && stripped "$DB2/out" | grep -q "REFUSED: the working tree changed during the release" &&
-   stripped "$DB2/out" | grep -q "Caught after deploying firestore:rules\." &&
+if [ "$RCB2X" != "0" ] && stripped "$DB2/out" | grep >/dev/null -c "REFUSED: the working tree changed during the release" &&
+   stripped "$DB2/out" | grep >/dev/null -c "Caught after deploying firestore:rules\." &&
    [ -z "$(fn_deploys "$DB2/calls")" ]; then
   ok "retargeting an untracked dangling symlink is caught"
 else
@@ -2862,8 +2862,8 @@ else
   stub_node_awkward_untracked "$DC2"
   RCC2="$(run_release "$DC2" "${FN_ENV[@]}" RELEASE_FUNCTIONS_BATCH=6 \
     FIREBASE_CHMOD_ON=firestore:rules FIREBASE_CALL_LOG="$DC2/calls")"
-  if [ "$RCC2" != "0" ] && stripped "$DC2/out" | grep -q "REFUSED: the working tree changed during the release" &&
-     stripped "$DC2/out" | grep -q "Caught after deploying firestore:rules\." &&
+  if [ "$RCC2" != "0" ] && stripped "$DC2/out" | grep >/dev/null -c "REFUSED: the working tree changed during the release" &&
+     stripped "$DC2/out" | grep >/dev/null -c "Caught after deploying firestore:rules\." &&
      [ -z "$(fn_deploys "$DC2/calls")" ]; then
     ok "changing the mode of an unreadable untracked file is caught"
   else
@@ -2922,17 +2922,17 @@ if [ "$RC" -ne 0 ]; then
 else
   bad "dependency drift did not refuse the release"; echo "$OUT" | tail -25
 fi
-if printf '%s' "$OUT" | grep -q "mytribe/functions" && printf '%s' "$OUT" | grep -q "stripe"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "mytribe/functions" && printf '%s' "$OUT" | grep >/dev/null -c "stripe"; then
   ok "the refusal names the drifted directory and package"
 else
   bad "the refusal did not name mytribe/functions or stripe"; echo "$OUT" | tail -25
 fi
-if printf '%s' "$OUT" | grep -q "npm ci --prefix mytribe/functions"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "npm ci --prefix mytribe/functions"; then
   ok "the refusal prints the exact npm ci command that fixes it"
 else
   bad "the refusal did not print the fix command"; echo "$OUT" | tail -25
 fi
-if printf '%s' "$OUT" | grep -qi "1\. Check"; then
+if printf '%s' "$OUT" | grep >/dev/null -ci "1\. Check"; then
   bad "step 1 ran despite the dependency drift refusal"
 else
   ok "step 1 never ran; the release stopped at step 0a, before anything built"
@@ -2946,7 +2946,7 @@ fi
 # operator who says yes is not then told no. RELEASE_YES=1 prints "continuing
 # without prompting" the moment confirm() runs; its total absence here proves
 # confirm never ran at all, i.e. the refusal really did land before it.
-if printf '%s' "$OUT" | grep -q "continuing without prompting"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "continuing without prompting"; then
   bad "the release prompted for confirmation before refusing on dependency drift"
 else
   ok "the release never reaches the confirm prompt when drift refuses it"
@@ -2984,7 +2984,7 @@ install_pkg "$D21/repo" vitest 4.1.11
 arm_ci "$D21"
 RC="$(run_release "$D21" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$D21/calls")"
 OUT="$(cat "$D21/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "vitest"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "vitest"; then
   ok "workspace root drift refuses the release and names the package"
 else
   bad "workspace root drift did not refuse (rc $RC)"; echo "$OUT" | tail -25
@@ -2993,7 +2993,7 @@ fi
 # printed line in an escape prefix/suffix, so `^...$` never matches the raw
 # text otherwise.
 PLAIN="$(printf '%s' "$OUT" | sed -E $'s/\x1b\\[[0-9;]*m//g')"
-if printf '%s' "$PLAIN" | grep -qE '^ *npm ci *$'; then
+if printf '%s' "$PLAIN" | grep >/dev/null -cE '^ *npm ci *$'; then
   ok "the workspace refusal prints the plain 'npm ci' fix, not a --prefix'd one"
 else
   bad "the workspace refusal did not print bare 'npm ci'"; echo "$OUT" | tail -25
@@ -3005,7 +3005,7 @@ fi
 # (nonexistent) lockfile, which is not the same tree `npm ci` at the root
 # produces. So the fix this step prints must never suggest running npm
 # inside mytribe/web, auntieos-admin, or packages/geo, only at the root.
-if printf '%s' "$OUT" | grep -qE -- '--prefix (mytribe/web|auntieos-admin|packages/geo)\b'; then
+if printf '%s' "$OUT" | grep >/dev/null -cE -- '--prefix (mytribe/web|auntieos-admin|packages/geo)\b'; then
   bad "the workspace refusal named npm ci --prefix inside a workspace MEMBER"
   echo "$OUT" | tail -25
 else
@@ -3029,12 +3029,12 @@ commit_all "$D21B"
 arm_ci "$D21B"
 RC="$(run_release "$D21B" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$D21B/calls")"
 OUT="$(cat "$D21B/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qi "cannot be checked\|not valid JSON"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -ci "cannot be checked\|not valid JSON"; then
   ok "an unreadable (garbage) lockfile refuses the release rather than reporting clean"
 else
   bad "a garbage lockfile did not refuse the release; rc=$RC"; echo "$OUT" | tail -25
 fi
-if printf '%s' "$OUT" | grep -q "mytribe/functions matches its lockfile"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "mytribe/functions matches its lockfile"; then
   bad "a garbage lockfile was reported as matching (clean)"
 else
   ok "a garbage lockfile is never reported as matching"
@@ -3073,8 +3073,8 @@ arm_ci "$D22"
 RC="$(run_release "$D22" DRY_RUN=1 RELEASE_YES=1)"
 OUT="$(cat "$D22/out")"
 if [ "$RC" -eq 0 ] &&
-   printf '%s' "$OUT" | grep -q "mytribe/functions matches its lockfile" &&
-   printf '%s' "$OUT" | grep -q "workspace root (every npm workspace member) matches its lockfile"; then
+   printf '%s' "$OUT" | grep >/dev/null -c "mytribe/functions matches its lockfile" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "workspace root (every npm workspace member) matches its lockfile"; then
   ok "a clean, fully-installed tree reports matching both units and does not block the release"
 else
   bad "a clean install did not report as matching"; echo "$OUT" | tail -25
@@ -3103,7 +3103,7 @@ install_pkg "$D23/repo/auntieos-admin/web/functions" "@anthropic-ai/sdk" 0.100.0
 arm_ci "$D23"
 RC="$(run_release "$D23" DRY_RUN=1 RELEASE_YES=1)"
 OUT="$(cat "$D23/out")"
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "NOT CHECKED"; then
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "NOT CHECKED"; then
   ok "admin-functions drift is not checked when RELEASE_INCLUDE_ADMIN_FUNCTIONS is off"
 else
   bad "an unchecked admin-functions codebase blocked (or stopped saying so); rc=$RC"
@@ -3112,8 +3112,8 @@ fi
 
 RC="$(run_release "$D23" DRY_RUN=1 RELEASE_YES=1 RELEASE_INCLUDE_ADMIN_FUNCTIONS=1)"
 OUT="$(cat "$D23/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "auntieos-admin/web/functions" &&
-   printf '%s' "$OUT" | grep -q "npm ci --prefix auntieos-admin/web/functions"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "auntieos-admin/web/functions" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "npm ci --prefix auntieos-admin/web/functions"; then
   ok "the same drift refuses once RELEASE_INCLUDE_ADMIN_FUNCTIONS=1 actually ships it"
 else
   bad "RELEASE_INCLUDE_ADMIN_FUNCTIONS=1 did not catch the admin-functions drift"
@@ -3145,7 +3145,7 @@ LOCK
 arm_ci "$D24C"
 RC="$(run_release "$D24C" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$D24C/calls")"
 OUT="$(cat "$D24C/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "nested-thing (1.0.0, lockfile says 2.0.0)"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "nested-thing (1.0.0, lockfile says 2.0.0)"; then
   ok "a transitive-only bump refuses the release even though the direct dependency matches"
 else
   bad "a transitive-only bump did not refuse the release; rc=$RC"; echo "$OUT" | tail -25
@@ -3180,7 +3180,7 @@ commit_all "$D24D"
 arm_ci "$D24D"
 RC="$(run_release "$D24D" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$D24D/calls")"
 OUT="$(cat "$D24D/out")"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "ghost-pkg (declared, but not in package-lock.json)"; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "ghost-pkg (declared, but not in package-lock.json)"; then
   ok "a declared dependency with no lockfile entry refuses the release"
 else
   bad "an unlocked declared dependency did not refuse the release; rc=$RC"; echo "$OUT" | tail -25
@@ -3209,23 +3209,23 @@ if [ "$RC" -ne 0 ]; then
 else
   bad "a LIST timeout shipped a release (rc $RC)"; echo "$OUT" | tail -25
 fi
-if printf '%s' "$OUT" | grep -q "Secret Manager could not be read for a required secret" &&
-   printf '%s' "$OUT" | grep -q "did not answer for these REQUIRED secrets in time"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "Secret Manager could not be read for a required secret" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "did not answer for these REQUIRED secrets in time"; then
   ok "a LIST timeout gets its own refusal wording, not \"has no value\""
 else
   bad "a LIST timeout printed the wrong refusal wording"; echo "$OUT" | tail -25
 fi
-if printf '%s' "$OUT" | grep -q "the web apps declare client build config that has no value"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "the web apps declare client build config that has no value"; then
   bad "a LIST timeout printed the missing-value refusal, which claims the store answered"
 else
   ok "a LIST timeout never prints the missing-value refusal"
 fi
-if printf '%s' "$OUT" | grep -q "gcloud secrets create"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "gcloud secrets create"; then
   bad "a LIST timeout advised creating a secret that may already exist"; echo "$OUT" | tail -25
 else
   ok "a LIST timeout never advises \`gcloud secrets create\`"
 fi
-if printf '%s' "$OUT" | grep -q "curl -4" && printf '%s' "$OUT" | grep -q "curl -6"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "curl -4" && printf '%s' "$OUT" | grep >/dev/null -c "curl -6"; then
   ok "a LIST timeout prints the IPv4/IPv6 check"
 else
   bad "a LIST timeout never printed the network check"; echo "$OUT" | tail -25
@@ -3270,7 +3270,7 @@ else
   bad "a completed release did not record itself correctly"; cat "$DSR/repo/.release-progress" 2>/dev/null
 fi
 TAGMSG_SR="$(cd "$DSR/repo" && git tag -l 'v*' --format='%(contents)')"
-if printf '%s' "$TAGMSG_SR" | grep -q "storage: rules (mytribe)"; then
+if printf '%s' "$TAGMSG_SR" | grep >/dev/null -c "storage: rules (mytribe)"; then
   ok "the tag names storage rules as shipped, alongside firestore"
 else
   bad "the tag does not name storage rules as shipped"; printf '%s\n' "$TAGMSG_SR"
@@ -3286,7 +3286,7 @@ RC="$(run_release "$DST" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
   RELEASE_FUNCTIONS_SETTLE=0 FIREBASE_CALL_LOG="$DST/calls")"
 OUT="$(cat "$DST/out")"
 if [ "$RC" = "0" ] && ! grep -q -- '--only storage ' "$DST/calls" 2>/dev/null &&
-   printf '%s' "$OUT" | grep -q "RESUMED: an earlier run of .* deployed the storage rules"; then
+   printf '%s' "$OUT" | grep >/dev/null -c "RESUMED: an earlier run of .* deployed the storage rules"; then
   ok "a rerun with storage-rules already recorded skips the deploy and says RESUMED"
 else
   bad "a pre-recorded storage-rules step was not resumed"; echo "$OUT" | tail -25; cat "$DST/calls" 2>/dev/null
@@ -3365,7 +3365,7 @@ next_release() {
 DV1="$(make_repo)"; write_stubs "$DV1"; arm_ci "$DV1"
 tag_origin "$DV1" "release/2026.09.29-d4b2ee3"
 RCV1="$(run_release "$DV1" "${VER_ENV[@]}")"
-if [ "$RCV1" = "0" ] && origin_tags "$DV1" | grep -qx 'v0.3.0'; then
+if [ "$RCV1" = "0" ] && origin_tags "$DV1" | grep >/dev/null -cx 'v0.3.0'; then
   ok "the first versioned release is tagged v0.3.0 on origin"
 else
   bad "the first versioned release was not tagged v0.3.0 (rc=$RCV1)"; origin_tags "$DV1"; stripped "$DV1/out" | tail -15
@@ -3375,13 +3375,13 @@ if stripped "$DV1/out" | awk '/This release will be v0\.3\.0/ { seen = 1 } /0a\.
 else
   bad "'This release will be v0.3.0' was not printed before step 0a"
 fi
-if ! origin_tags "$DV1" | grep -q '^release/2026\.09\.30'; then
+if ! origin_tags "$DV1" | grep >/dev/null -c '^release/2026\.09\.30'; then
   ok "no new release/<date>-<sha> tag is made"
 else
   bad "a release/<date>-<sha> tag was still made"; origin_tags "$DV1"
 fi
 TAGMSG_V1="$(git -C "$DV1/repo" tag -l 'v0.3.0' --format='%(contents)')"
-if printf '%s' "$TAGMSG_V1" | grep -q '^Shipped:' &&
+if printf '%s' "$TAGMSG_V1" | grep >/dev/null -c '^Shipped:' &&
    [ "$(git -C "$DV1/repo" cat-file -t v0.3.0 2>/dev/null)" = "tag" ]; then
   ok "v0.3.0 is an annotated tag whose message lists what shipped"
 else
@@ -3412,7 +3412,7 @@ DV3="$(make_repo)"; write_stubs "$DV3"; arm_ci "$DV3"
 tag_origin "$DV3" v0.3.9
 tag_origin "$DV3" v0.3.10
 RCV3="$(run_release "$DV3" "${VER_ENV[@]}")"
-if [ "$RCV3" = "0" ] && origin_tags "$DV3" | grep -qx 'v0.3.11'; then
+if [ "$RCV3" = "0" ] && origin_tags "$DV3" | grep >/dev/null -cx 'v0.3.11'; then
   ok "after v0.3.10 (held only by origin) comes v0.3.11, not v0.3.10 again"
 else
   bad "v0.3.9 and v0.3.10 on origin did not lead to v0.3.11 (rc=$RCV3)"; origin_tags "$DV3"
@@ -3422,7 +3422,7 @@ fi
 DV4="$(make_repo)"; write_stubs "$DV4"; arm_ci "$DV4"
 RCV4="$(run_release "$DV4" "${VER_ENV[@]}" RELEASE_BUMP=huge FIREBASE_CALL_LOG="$DV4/calls")"
 if [ "$RCV4" != "0" ] && grep -q "RELEASE_BUMP" "$DV4/out" && [ ! -s "$DV4/calls" ] &&
-   ! stripped "$DV4/out" | grep -q "0a\. Dependency drift"; then
+   ! stripped "$DV4/out" | grep >/dev/null -c "0a\. Dependency drift"; then
   ok "RELEASE_BUMP=huge refuses at step 0 and deploys nothing"
 else
   bad "RELEASE_BUMP=huge did not refuse at step 0 (rc=$RCV4)"; stripped "$DV4/out" | tail -10
@@ -3437,7 +3437,7 @@ RCV5A="$(run_release "$DV5" "${VER_ENV[@]}" RELEASE_SKIP_ANDROID=1 \
   RELEASE_FUNCTIONS_BATCH=6 RELEASE_RETRY_KEEP=0 FIREBASE_QUOTA_MAX=0)"
 RCV5B="$(run_release "$DV5" "${VER_ENV[@]}" RELEASE_SKIP_ANDROID=1 RELEASE_BUMP=minor)"
 if [ "$RCV5A" != "0" ] && [ "$RCV5B" = "0" ] &&
-   origin_tags "$DV5" | grep -qx 'v0.3.1' && ! origin_tags "$DV5" | grep -qx 'v0.4.0'; then
+   origin_tags "$DV5" | grep >/dev/null -cx 'v0.3.1' && ! origin_tags "$DV5" | grep >/dev/null -cx 'v0.4.0'; then
   ok "a rerun of a stopped release keeps the v0.3.1 it announced"
 else
   bad "the rerun did not keep v0.3.1 (rc $RCV5A then $RCV5B)"; origin_tags "$DV5"
@@ -3465,7 +3465,7 @@ fi
 DV8="$(make_repo)"; write_stubs "$DV8"; arm_ci "$DV8"
 tag_origin "$DV8" v2026.07.31
 RCV8="$(run_release "$DV8" "${VER_ENV[@]}" RELEASE_SKIP_ANDROID=1)"
-if [ "$RCV8" = "0" ] && origin_tags "$DV8" | grep -qx 'v0.3.0' && ! origin_tags "$DV8" | grep -q '^v2026\.7'; then
+if [ "$RCV8" = "0" ] && origin_tags "$DV8" | grep >/dev/null -cx 'v0.3.0' && ! origin_tags "$DV8" | grep >/dev/null -c '^v2026\.7'; then
   ok "v2026.07.31 is ignored: the first release is still v0.3.0"
 else
   bad "the date tag v2026.07.31 was read as a version (rc=$RCV8)"; origin_tags "$DV8"
