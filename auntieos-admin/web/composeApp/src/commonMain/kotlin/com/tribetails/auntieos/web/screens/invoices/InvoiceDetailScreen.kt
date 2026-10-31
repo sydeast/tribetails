@@ -85,8 +85,9 @@ import com.tribetails.auntieos.web.ui.components.ToastKind
 import com.tribetails.auntieos.web.util.nowIso
 import kotlinx.coroutines.launch
 
-// The header Receipt / Send-reminder actions are always on (real generateReceipt /
-// sendInvoiceReminder callables). The Payments panel renders the REAL per-invoice
+// The header Receipt / Send-reminder actions and the Payments panel's Record
+// payment (real generateReceipt / sendInvoiceReminder / recordPayment callables)
+// are offered per invoiceActionsFor on the stored stamp (#871, #1238). The Payments panel renders the REAL per-invoice
 // join first (paymentsForInvoice via the populated Payment.invoiceId); when no
 // payment is linked yet it falls back to the BROADER, kinfolk-level "payments for
 // this client" list under a clearly-labeled "NOT INVOICE-LINKED" banner so the
@@ -191,6 +192,9 @@ private fun InvoiceDetailBody(
     val accent     = statusTone.colorOf()
     val amountTone = if (badge.state == InvoiceState.PAID) KeyValueStyle.AccentSuccess else KeyValueStyle.AccentError
     val linesPanel = invoiceDetailLinesPanelOf(invoice)
+    // #1238: what this invoice may be offered, from the same stored stamp as
+    // the badge. Overdue and part paid do not change it.
+    val actions = invoiceActionsFor(badge.state)
 
     // Sessions for this kinfolk (for the link editor + linked-session rows).
     // P0-FLICKER: remember keyed on kinfolkId so a re-render keeps the same Flow.
@@ -448,7 +452,8 @@ private fun InvoiceDetailBody(
         }
 
         // Header actions: Generate receipt (generateReceipt callable) and Send
-        // reminder (sendInvoiceReminder callable). Both real, fail-loud via toast.
+        // reminder (sendInvoiceReminder callable). Both real, fail-loud via toast,
+        // and each offered only where invoiceActionsFor allows it (#1238).
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (canEditInvoice) GhostButton(
                 label   = "Edit",
@@ -458,7 +463,9 @@ private fun InvoiceDetailBody(
                 },
                 leading = { Icon(Lucide.Pencil, contentDescription = null, modifier = Modifier.size(14.dp)) },
             )
-            GhostButton(
+            // #1238: a receipt claims a payment, so only a stored paid invoice
+            // offers one, as on web and Android.
+            if (InvoiceAction.GENERATE_RECEIPT in actions) GhostButton(
                 label   = if (receiptLoading) "Generating..." else "Generate receipt",
                 onClick = {
                     if (receiptLoading || reminderLoading) return@GhostButton
@@ -476,7 +483,7 @@ private fun InvoiceDetailBody(
             )
             // #871: offered only for a stored open bill, the rule the server
             // enforces, so a cancelled invoice or a quote never shows the button.
-            if (invoiceIsRemindable(invoice)) GhostButton(
+            if (InvoiceAction.SEND_REMINDER in actions) GhostButton(
                 label   = if (reminderLoading) "Sending..." else "Send reminder",
                 onClick = {
                     if (receiptLoading || reminderLoading) return@GhostButton
@@ -608,61 +615,14 @@ private fun InvoiceDetailBody(
         // item 5). Record-payment (item 6) writes that link so the list grows. The
         // raw paymentsHistory text is kept as a secondary record; the kinfolk-level
         // heuristic survives only as a disclosed, flag-gated extra.
-        DenPanel(
-            title = "Payments",
-            trailing = {
-                GhostButton(label = "Record payment", onClick = { showRecordPayment = true })
-            },
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (invoice.paymentsHistory.isNotBlank()) {
-                    Text(
-                        invoice.paymentsHistory,
-                        style = AuntieTheme.typography.bodySmall,
-                        color = c.textDim,
-                    )
-                }
-
-                when {
-                    paymentsState is FirestoreResult.Loading ->
-                        repeat(2) { ShimmerCard(height = 40.dp) }
-                    paymentsState is FirestoreResult.Error ->
-                        EmptyHint(
-                            "Couldn't load payments: ${(paymentsState as FirestoreResult.Error).message}",
-                            error = true,
-                        )
-                    linkedPayments.isNotEmpty() ->
-                        Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                            linkedPayments.forEachIndexed { idx, p ->
-                                PaymentRow(p, showDivider = idx > 0)
-                            }
-                        }
-                    // No invoice-linked payment yet. Show the disclosed kinfolk-level
-                    // payment match as a clearly-labeled fallback (always on now);
-                    // otherwise fail loud below.
-                    clientPayments.isNotEmpty() -> {
-                        AuntieBanner(
-                            tone      = AuntieBannerTone.Warning,
-                            pillLabel = "NOT INVOICE-LINKED",
-                            body      = {
-                                Text(
-                                    "No payment is linked to this invoice yet. The rows below are matched by client only.",
-                                    style = AuntieTheme.typography.bodySmall,
-                                    color = c.textDim,
-                                )
-                            },
-                        )
-                        Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                            clientPayments.forEachIndexed { idx, p ->
-                                PaymentRow(p, showDivider = idx > 0)
-                            }
-                        }
-                    }
-                    invoice.paymentsHistory.isBlank() ->
-                        EmptyHint("No payment recorded against this invoice yet. Use Record payment to log one.")
-                }
-            }
-        }
+        InvoicePaymentsPanel(
+            invoice         = invoice,
+            actions         = actions,
+            paymentsState   = paymentsState,
+            linkedPayments  = linkedPayments,
+            clientPayments  = clientPayments,
+            onRecordPayment = { showRecordPayment = true },
+        )
 
         // ── Linked Sessions section ───────────────────────────────────────────
         LinkedSessionsSection(
@@ -675,6 +635,84 @@ private fun InvoiceDetailBody(
         // How-to-pay (#1200): the methods the household is offered on this invoice,
         // resolved as the server resolves them. Hidden when none is offered.
         HowToPayPanel(invoice = invoice, settings = businessSettings)
+    }
+}
+
+/**
+ * The Payments panel. #1238: pulled out of the detail body so jvmTest can render
+ * it. Record payment follows [actions]; what is already recorded (the linked
+ * rows, the disclosed client-level rows and the legacy paymentsHistory text)
+ * renders in every state, paid and cancelled included.
+ */
+@Composable
+internal fun InvoicePaymentsPanel(
+    invoice: Invoice,
+    actions: List<InvoiceAction>,
+    paymentsState: FirestoreResult<List<Payment>>,
+    linkedPayments: List<Payment>,
+    clientPayments: List<Payment>,
+    onRecordPayment: () -> Unit,
+) {
+    val c = AuntieTheme.colors
+    DenPanel(
+        title = "Payments",
+        // #1238: gated to the states that can take a payment, so a paid,
+        // cancelled, quoted, draft or credit invoice cannot collect twice or
+        // collect early. Recorded payments below render in every state.
+        trailing = {
+            if (InvoiceAction.RECORD_PAYMENT in actions) {
+                GhostButton(label = "Record payment", onClick = onRecordPayment)
+            }
+        },
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (invoice.paymentsHistory.isNotBlank()) {
+                Text(
+                    invoice.paymentsHistory,
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.textDim,
+                )
+            }
+
+            when {
+                paymentsState is FirestoreResult.Loading ->
+                    repeat(2) { ShimmerCard(height = 40.dp) }
+                paymentsState is FirestoreResult.Error ->
+                    EmptyHint(
+                        "Couldn't load payments: ${paymentsState.message}",
+                        error = true,
+                    )
+                linkedPayments.isNotEmpty() ->
+                    Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                        linkedPayments.forEachIndexed { idx, p ->
+                            PaymentRow(p, showDivider = idx > 0)
+                        }
+                    }
+                // No invoice-linked payment yet. Show the disclosed kinfolk-level
+                // payment match as a clearly-labeled fallback (always on now);
+                // otherwise fail loud below.
+                clientPayments.isNotEmpty() -> {
+                    AuntieBanner(
+                        tone      = AuntieBannerTone.Warning,
+                        pillLabel = "NOT INVOICE-LINKED",
+                        body      = {
+                            Text(
+                                "No payment is linked to this invoice yet. The rows below are matched by client only.",
+                                style = AuntieTheme.typography.bodySmall,
+                                color = c.textDim,
+                            )
+                        },
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                        clientPayments.forEachIndexed { idx, p ->
+                            PaymentRow(p, showDivider = idx > 0)
+                        }
+                    }
+                }
+                invoice.paymentsHistory.isBlank() ->
+                    EmptyHint(invoicePaymentsEmptyCopy(actions))
+            }
+        }
     }
 }
 
