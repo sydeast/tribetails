@@ -404,7 +404,7 @@ account instead. CI has neither.
 
 | Vendor | Variables | Without them |
 |---|---|---|
-| Stripe (test mode) | `STRIPE_TEST_SECRET_KEY`, `STRIPE_TEST_PUBLISHABLE_KEY` | Stripe specs skip |
+| Stripe (test mode) | `STRIPE_TEST_SECRET_KEY`, `STRIPE_TEST_PUBLISHABLE_KEY`; the portal's pay spec also needs the `stripe` CLI on `PATH` | Stripe specs skip |
 | Twilio (test credentials) | `TWILIO_TEST_ACCOUNT_SID`, `TWILIO_TEST_AUTH_TOKEN`, optional `TWILIO_TEST_FROM_NUMBER` (default: Twilio's test sender `+15005550006`) | Twilio specs skip |
 | Email (smtp2go) | `E2E_SMTP2GO_API_KEY`, `E2E_EMAIL_FROM` | Email specs skip |
 | Cloudinary | `E2E_CLOUDINARY_CLOUD_NAME`, `E2E_CLOUDINARY_API_KEY`, `E2E_CLOUDINARY_API_SECRET` | Cloudinary specs skip |
@@ -514,6 +514,77 @@ credentials: assets by the `e2e/` public-id prefix, assets whose asset folder
 is under `e2e`, then the folders. It touches nothing outside `e2e/`. Without
 the credentials it prints one `skipped` line. A failed delete is printed and
 leaves the exit code as it was.
+
+## The portal's real-services run (added 2026-10-30, #1194)
+
+D3 puts paying an invoice in the portal suite, because kinfolk pay there. The
+portal has its own copy of the harness above, in `mytribe/web`:
+
+```bash
+npm ci                                   # repo root, once
+npm ci --prefix mytribe/functions        # once
+cd mytribe/web
+npm run e2e:real
+```
+
+| Piece | Admin | Portal |
+|---|---|---|
+| Script | `auntieos-admin/scripts/e2e-real/run.sh` | `mytribe/web/scripts/e2e-real/run.sh` |
+| Preflight | `scripts/e2e-real/preflight.mjs` | `scripts/e2e-real/preflight.mjs`, which imports the admin's rules |
+| Emulator config | `auntieos-admin/e2e.real.firebase.json` | `mytribe/e2e.real.firebase.json` |
+| Project id | `demo-auntieos-e2e` | `demo-mytribe-e2e` |
+| Ports (auth, Firestore, functions) | 9399, 8385, 5398 | 9499, 8485, 5498 |
+| Specs | `auntieos-admin/cypress/e2e-real/` | `mytribe/web/cypress/e2e-real/` |
+| CI job | `admin-real` | `portal-real` |
+
+The portal preflight does not keep its own list of secrets or refusals. It
+imports `plan`, `disconnectRisks` and `declaredSecrets` from the admin
+preflight, so a refusal added there applies to both runs. Its tests
+(`mytribe/web/scripts/e2e-real/preflight.test.mjs`, run by the portal's
+`vitest`) check the three refusals through the portal's entry point.
+
+Run one real-services run at a time on a machine. The portal run cannot overlap
+`npm run e2e:cy` in `mytribe/web` (they share 9499 and 8485), and the Cloud
+Tasks emulator that firebase-tools starts alongside the functions emulator
+asks for 9499 by default, so an admin real run can take the portal's auth port.
+In CI the two jobs are on separate runners.
+
+### The Stripe webhook forwarder
+
+`payInvoice` only opens a Checkout Session. The invoice turns paid when
+`stripeWebhook` receives `checkout.session.completed` or
+`payment_intent.succeeded`, and Stripe cannot reach `127.0.0.1`. So when
+`STRIPE_TEST_SECRET_KEY` is set and the `stripe` CLI is on `PATH`, `run.sh`:
+
+1. starts `stripe listen --forward-to
+   http://127.0.0.1:5498/demo-mytribe-e2e/us-central1/stripeWebhook`, with the
+   key in the environment rather than on the command line;
+2. reads the `whsec_` signing secret from its output, and exports it as
+   `STRIPE_TEST_WEBHOOK_SECRET` before the preflight, which writes it to
+   `.secret.local` as `STRIPE_WEBHOOK_SECRET`;
+3. stops the forwarder when the run ends. Its output is
+   `cypress/.real/stripe-listen.log`.
+
+A key that is not a test key is refused before the CLI ever sees it. The
+preflight then reports one more flag, `stripeWebhook`, which is true only with
+test keys and a `whsec_` secret both present. The pay spec skips without it
+and names the missing piece. CI installs Stripe CLI 1.55.1, checksum-pinned.
+
+### Portal specs today
+
+| Spec | What it proves |
+|---|---|
+| `invoice-open.cy.ts` | The seeded kinfolk signs in through the real access chain (`getMyAccess`, `getMyHome`, `setActiveTribe`), and the real `getMyInvoices` shows a spec-written invoice as PENDING with its amount due and the card checkout button. Needs no vendor keys, so it runs every time |
+| `pay-invoice-stripe.cy.ts` | The kinfolk presses Pay with Credit Card, the real `payInvoice` opens a Stripe test Checkout, the spec pays with `4242 4242 4242 4242` on Stripe's page (`cy.origin`), and after the redirect the invoice reads PAID with no amount due and no pay button, once the forwarded webhook lands. Reloads every 3s for up to 60s. Skips without Stripe keys or the CLI |
+
+The portal seed also writes the household's PRIMARY `members` row, the shape
+`acceptInvite` writes, so the real billing gates see a member and not the
+legacy fallback. The `clients/{uid}` write is a field-masked merge, because the
+real `onAuthUserCreate` writes that document too and may get there first.
+
+On 2026-10-30 a local run with no vendor keys went: `invoice-open` passed, and
+the pay spec was pending (skipped, no keys). The pay spec has not run against
+Stripe yet. Its first real run is a dispatch of `e2e-real.yml` from main.
 
 ## Pointing a Cypress run at a deployed host (added 2026-08-30)
 

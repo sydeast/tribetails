@@ -1,15 +1,20 @@
 name: E2E real services
 
-# THE ADMIN CYPRESS SUITE AGAINST REAL FUNCTIONS AND REAL OUTSIDE SERVICES
+# THE ADMIN AND PORTAL CYPRESS SUITES AGAINST REAL FUNCTIONS AND REAL OUTSIDE
 # (#1089, operator ruling D3, 2026-10-01). Gated on releases, not on pull
 # requests: a public repo's PR runs cannot read secrets, and this run needs them.
 #
-# What runs: `npm run e2e:real` in auntieos-admin, which builds mytribe/functions,
-# writes its emulator secrets file from the environment below (refusing a live
-# Stripe key, a business or private phone number, or a spec that could press
-# Google Calendar Disconnect), boots auth + Firestore + functions under a demo-
-# project id, and runs `cypress.real.config.ts`. See
-# auntieos-admin/docs/runbooks/e2e.md, "The real-services run".
+# What runs: `npm run e2e:real` in auntieos-admin (job admin-real) and in
+# mytribe/web (job portal-real, #1194). Each builds mytribe/functions, writes
+# its emulator secrets file from the environment below (refusing a live Stripe
+# key, a business or private phone number, or a spec that could press Google
+# Calendar Disconnect), boots auth + Firestore + functions under a demo- project
+# id, and runs its own `cypress.real.config.ts`. The portal job also installs
+# the Stripe CLI: paying an invoice is settled by `stripeWebhook`, and
+# `stripe listen` is what delivers that event to the emulator. The jobs run on
+# separate runners, so the emulator ports they share never meet. See
+# auntieos-admin/docs/runbooks/e2e.md, "The real-services run" and "The
+# portal's real-services run".
 #
 # SECRETS live in the GitHub environment `e2e-real`, whose deployment branch
 # policy is `main` only. A vendor whose secrets are not stored yet is not a
@@ -104,5 +109,79 @@ jobs:
           path: |
             auntieos-admin/cypress/.artifacts/real/
             auntieos-admin/cypress/.real/emulators.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  portal-real:
+    name: Portal Cypress, real services
+    if: github.ref == 'refs/heads/main'
+    environment: e2e-real
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: mytribe/web
+    env:
+      STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+      STRIPE_TEST_PUBLISHABLE_KEY: ${{ secrets.STRIPE_TEST_PUBLISHABLE_KEY }}
+      TWILIO_TEST_ACCOUNT_SID: ${{ secrets.TWILIO_TEST_ACCOUNT_SID }}
+      TWILIO_TEST_AUTH_TOKEN: ${{ secrets.TWILIO_TEST_AUTH_TOKEN }}
+      E2E_SMTP2GO_API_KEY: ${{ secrets.E2E_SMTP2GO_API_KEY }}
+      E2E_EMAIL_FROM: ${{ secrets.E2E_EMAIL_FROM }}
+      E2E_CLOUDINARY_CLOUD_NAME: ${{ secrets.E2E_CLOUDINARY_CLOUD_NAME }}
+      E2E_CLOUDINARY_API_KEY: ${{ secrets.E2E_CLOUDINARY_API_KEY }}
+      E2E_CLOUDINARY_API_SECRET: ${{ secrets.E2E_CLOUDINARY_API_SECRET }}
+      E2E_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.E2E_GOOGLE_OAUTH_CLIENT_ID }}
+      E2E_GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.E2E_GOOGLE_OAUTH_CLIENT_SECRET }}
+      E2E_GOOGLE_CALENDAR_REFRESH_TOKEN: ${{ secrets.E2E_GOOGLE_CALENDAR_REFRESH_TOKEN }}
+      E2E_GOOGLE_CALENDAR_ID: ${{ secrets.E2E_GOOGLE_CALENDAR_ID }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            mytribe/functions/package-lock.json
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Cache Cypress binary
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/Cypress
+          key: cypress-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+        working-directory: .
+      - run: npm ci
+        working-directory: mytribe/functions
+      - name: Install firebase-tools
+        run: npm install -g firebase-tools@15.18.0
+      - name: Install Stripe CLI
+        working-directory: .
+        env:
+          STRIPE_CLI_VERSION: 1.55.1
+          STRIPE_CLI_SHA256: c7a1eb723ecd29aaa3c7ec3d16139d6f01126ea9df91bb6a161b9616ad8fba68
+        run: |
+          tarball="stripe_${STRIPE_CLI_VERSION}_linux_x86_64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/stripe/stripe-cli/releases/download/v${STRIPE_CLI_VERSION}/$tarball"
+          echo "$STRIPE_CLI_SHA256  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/stripe-cli"
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP/stripe-cli" stripe
+          echo "$RUNNER_TEMP/stripe-cli" >> "$GITHUB_PATH"
+      - name: Cypress, real services
+        run: npm run e2e:real
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-real-portal-artifacts
+          path: |
+            mytribe/web/cypress/.artifacts/real/
+            mytribe/web/cypress/.real/emulators.log
+            mytribe/web/cypress/.real/stripe-listen.log
           retention-days: 7
           if-no-files-found: ignore
