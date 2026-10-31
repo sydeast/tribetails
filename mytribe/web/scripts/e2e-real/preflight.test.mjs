@@ -1,8 +1,10 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { disconnectRisks } from '../../../../auntieos-admin/scripts/e2e-real/preflight.mjs';
+import { SECRET_MANAGER_ALLOWLIST } from '../../../../auntieos-admin/scripts/e2e-real/secret-manager.mjs';
 import { portalPlan } from './preflight.mjs';
 
 /**
@@ -72,5 +74,38 @@ describe('portalPlan stripeWebhook availability', () => {
     expect(refusals).toEqual([]);
     expect(available.stripeWebhook).toBe(true);
     expect(values.STRIPE_WEBHOOK_SECRET).toBe('whsec_abc');
+  });
+});
+
+describe('Secret Manager values in the portal run (#1264)', () => {
+  const HERE = dirname(fileURLToPath(import.meta.url));
+  it('run.sh reads them through the admin allowlist, before the preflight', () => {
+    const src = readFileSync(join(HERE, 'run.sh'), 'utf8');
+    const read = src.indexOf('auntieos-admin/scripts/e2e-real/secret-manager.mjs" --shell');
+    expect(read).toBeGreaterThan(0);
+    expect(read).toBeLessThan(src.indexOf('node scripts/e2e-real/preflight.mjs'));
+    // The path run.sh builds ($MYTRIBE_DIR/../auntieos-admin/...) exists.
+    expect(existsSync(join(HERE, '../../../../auntieos-admin/scripts/e2e-real/secret-manager.mjs'))).toBe(true);
+  });
+  it('a value read from Secret Manager reaches the portal secrets file, and the vendor counts as configured', () => {
+    const env = {
+      E2E_SMTP2GO_API_KEY: 'api-smtp',
+      E2E_EMAIL_FROM: 'from-value',
+      E2E_CLOUDINARY_CLOUD_NAME: 'cloud',
+      E2E_CLOUDINARY_API_KEY: '1234',
+      E2E_CLOUDINARY_API_SECRET: 'cl-secret',
+    };
+    const { values, available, refusals } = portalPlan(['SMTP2GO_API_KEY', 'EMAIL_FROM', 'CLOUDINARY_API_SECRET'], env);
+    expect(refusals).toEqual([]);
+    expect(values.SMTP2GO_API_KEY).toBe('api-smtp');
+    expect(values.EMAIL_FROM).toBe('from-value');
+    expect(values.CLOUDINARY_API_SECRET).toBe('cl-secret');
+    expect(available.email).toBe(true);
+    expect(available.cloudinary).toBe(true);
+  });
+  it('never reads a Stripe or Twilio secret: the shared allowlist has none', () => {
+    const names = SECRET_MANAGER_ALLOWLIST.map((r) => r.secret);
+    expect(names.length).toBeGreaterThan(0);
+    for (const n of names) expect(n).not.toMatch(/^(STRIPE_|TWILIO_)/);
   });
 });

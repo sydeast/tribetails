@@ -8,7 +8,9 @@
 #   2. start the Stripe webhook forwarder, when the Stripe CLI and test keys are
 #      present, because its signing secret has to be in the secrets file before
 #      the emulator boots;
-#   3. preflight: write mytribe/functions/.secret.local from the environment,
+#   3. preflight: fill unset Cloudinary, smtp2go and Google OAuth E2E_*
+#      variables from Secret Manager by the admin's allowlist (#1264), then
+#      write mytribe/functions/.secret.local from the environment,
 #      or refuse (non-test Stripe key, a business or private phone number, a
 #      spec that could press Google Calendar Disconnect);
 #   4. boot auth + Firestore + functions under a demo- project id, so no
@@ -41,7 +43,9 @@ WEBHOOK_URL="http://127.0.0.1:$E2E_FUNCTIONS_PORT/$E2E_PROJECT_ID/us-central1/st
 # CREDENTIALS ARE NOT HIDDEN. Same reasoning as the admin run.sh: with no ADC,
 # firebase-tools hands the emulator the `firebase login` account instead, so
 # hiding them protects nothing. The demo- id and a secrets file with every
-# declared key in it are what keep production out. CI has neither.
+# declared key in it are what keep production out. CI authenticates only for
+# the explicit Secret Manager read (#1264) and drops the credentials before
+# this script runs.
 
 STRIPE_PID=""
 cleanup() {
@@ -116,6 +120,16 @@ else
   export STRIPE_TEST_WEBHOOK_SECRET="$secret"
   echo "== e2e-real (portal): webhook forwarder up (signing secret read from stripe listen)"
 fi
+
+# #1264: the Cloudinary, smtp2go and Google OAuth values from Secret Manager,
+# by the admin's allowlist (one list for both runs), for any E2E_* variable
+# still unset. Same failure rule: no gcloud or a refused read leaves it unset
+# and the vendor skips. Printed as `export` lines and evaluated, never written
+# to disk. In CI the workflow has already read them.
+echo "== e2e-real (portal): vendor values from Secret Manager"
+sm_exports="$(node "$MYTRIBE_DIR/../auntieos-admin/scripts/e2e-real/secret-manager.mjs" --shell)"
+eval "$sm_exports"
+unset sm_exports
 
 echo "== e2e-real (portal): preflight"
 node scripts/e2e-real/preflight.mjs "$FUNCTIONS_DIR" "$WEB_DIR/cypress/e2e-real" "$REAL_DIR/vendors.json"

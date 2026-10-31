@@ -994,7 +994,10 @@ steps of its own:
   first one).
 - **E2E real services** calls `.github/workflows/e2e-real.yml` on the commit
   being shipped, only when the mode is `preflight` or `on` and something
-  merged. Its environment `e2e-real` holds the vendor test secrets.
+  merged. Its environment `e2e-real` holds the Stripe and Twilio test secrets
+  and the test calendar's; the Cloudinary, smtp2go and Google OAuth values it
+  reads from Secret Manager through Workload Identity, which is why the job
+  grants `id-token: write` (#1264).
 - **Release main to production** runs after both, and also when the suite was
   skipped, so an `off` night still writes its summary.
 

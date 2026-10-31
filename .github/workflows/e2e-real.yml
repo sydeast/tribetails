@@ -17,9 +17,19 @@ name: E2E real services
 # auntieos-admin/docs/runbooks/e2e.md, "The real-services run" and "The
 # portal's real-services run".
 #
-# SECRETS live in the GitHub environment `e2e-real`, whose deployment branch
-# policy is `main` only. A vendor whose secrets are not stored yet is not a
-# failure: its specs skip with the missing variable named in the log.
+# SECRETS come from two places (#1264, operator ruling 2026-10-31):
+#   - Stripe and Twilio, test-only, and the test calendar's id and refresh
+#     token: the GitHub environment `e2e-real`, whose deployment branch policy
+#     is `main` only;
+#   - Cloudinary, smtp2go (with EMAIL_FROM) and the Google OAuth client: Secret
+#     Manager in auntieos-ttpc, read by explicit allowlisted name through the
+#     nightly's Workload Identity (auntieos-admin/scripts/e2e-real/
+#     secret-manager.mjs). An E2E_* secret stored in `e2e-real` under the same
+#     name wins over Secret Manager. Each value is masked before anything else
+#     is written about it, and the Google credentials are dropped before the
+#     emulator boots, so the explicit read is the only Secret Manager read.
+# A vendor whose values are not available is not a failure: its specs skip
+# with the missing variable named in the log.
 #
 # VERDICT (D3-e). A red run means our integration broke and the release stops.
 # A vendor outage (a 5xx or timeout while the vendor's status page shows an
@@ -57,6 +67,11 @@ jobs:
     # any other branch skips here instead of failing at the environment gate.
     if: github.ref == 'refs/heads/main'
     environment: e2e-real
+    # id-token: the OIDC token Workload Identity exchanges for the read-only
+    # Secret Manager access below (#1264).
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     # Functions build plus three emulators plus real vendor round trips. Local
     # runs are a few minutes; this is headroom, and a cap the deploy guard needs.
@@ -69,13 +84,6 @@ jobs:
       STRIPE_TEST_PUBLISHABLE_KEY: ${{ secrets.STRIPE_TEST_PUBLISHABLE_KEY }}
       TWILIO_TEST_ACCOUNT_SID: ${{ secrets.TWILIO_TEST_ACCOUNT_SID }}
       TWILIO_TEST_AUTH_TOKEN: ${{ secrets.TWILIO_TEST_AUTH_TOKEN }}
-      E2E_SMTP2GO_API_KEY: ${{ secrets.E2E_SMTP2GO_API_KEY }}
-      E2E_EMAIL_FROM: ${{ secrets.E2E_EMAIL_FROM }}
-      E2E_CLOUDINARY_CLOUD_NAME: ${{ secrets.E2E_CLOUDINARY_CLOUD_NAME }}
-      E2E_CLOUDINARY_API_KEY: ${{ secrets.E2E_CLOUDINARY_API_KEY }}
-      E2E_CLOUDINARY_API_SECRET: ${{ secrets.E2E_CLOUDINARY_API_SECRET }}
-      E2E_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.E2E_GOOGLE_OAUTH_CLIENT_ID }}
-      E2E_GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.E2E_GOOGLE_OAUTH_CLIENT_SECRET }}
       E2E_GOOGLE_CALENDAR_REFRESH_TOKEN: ${{ secrets.E2E_GOOGLE_CALENDAR_REFRESH_TOKEN }}
       E2E_GOOGLE_CALENDAR_ID: ${{ secrets.E2E_GOOGLE_CALENDAR_ID }}
     steps:
@@ -112,8 +120,49 @@ jobs:
       # Pinned to the same version as ci.yml's emulator jobs.
       - name: Install firebase-tools
         run: npm install -g firebase-tools@15.18.0
-      # No Google credentials in this job, deliberately: with no ADC and a demo-
-      # project id, the functions emulator has no Secret Manager to reach.
+      # #1264. Workload Identity for the explicit Secret Manager read only.
+      # Same provider and account as nightly-release.yml; the provider admits
+      # this repository on refs/heads/main, which the job's `if` already
+      # requires.
+      - name: Authenticate to Google Cloud (Workload Identity)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.NIGHTLY_WIF_PROVIDER }}
+          service_account: ${{ vars.NIGHTLY_SERVICE_ACCOUNT }}
+          project_id: auntieos-ttpc
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+      # Reads ONLY the allowlisted names (Cloudinary, smtp2go, EMAIL_FROM,
+      # Google OAuth), never Stripe or Twilio. Masks every value before it
+      # writes anything else, then exports them through GITHUB_ENV. A secret
+      # stored in `e2e-real` under one of the E2E_* names below is used
+      # instead of Secret Manager, so the operator can override one.
+      - name: Vendor values from Secret Manager
+        working-directory: .
+        env:
+          E2E_SMTP2GO_API_KEY: ${{ secrets.E2E_SMTP2GO_API_KEY }}
+          E2E_EMAIL_FROM: ${{ secrets.E2E_EMAIL_FROM }}
+          E2E_CLOUDINARY_CLOUD_NAME: ${{ secrets.E2E_CLOUDINARY_CLOUD_NAME }}
+          E2E_CLOUDINARY_API_KEY: ${{ secrets.E2E_CLOUDINARY_API_KEY }}
+          E2E_CLOUDINARY_API_SECRET: ${{ secrets.E2E_CLOUDINARY_API_SECRET }}
+          E2E_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.E2E_GOOGLE_OAUTH_CLIENT_ID }}
+          E2E_GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.E2E_GOOGLE_OAUTH_CLIENT_SECRET }}
+        run: node auntieos-admin/scripts/e2e-real/secret-manager.mjs --github
+      # The emulator must have no Google credentials (#1089): with none and a
+      # demo- project id there is no Secret Manager for it to reach. Revoke
+      # gcloud's login, delete the credentials file and blank every variable
+      # the auth step exported, before anything else runs.
+      - name: Drop Google credentials
+        if: always()
+        working-directory: .
+        run: |
+          gcloud auth revoke --all --quiet >/dev/null 2>&1 || true
+          for f in "${GOOGLE_GHA_CREDS_PATH:-}" "${GOOGLE_APPLICATION_CREDENTIALS:-}"; do
+            if [ -n "$f" ]; then rm -f "$f"; fi
+          done
+          for v in GOOGLE_APPLICATION_CREDENTIALS GOOGLE_GHA_CREDS_PATH CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT; do
+            echo "$v=" >> "$GITHUB_ENV"
+          done
       - name: Cypress, real services
         run: npm run e2e:real
       - name: Upload artifacts
@@ -143,6 +192,11 @@ jobs:
     name: Portal Cypress, real services
     if: github.ref == 'refs/heads/main'
     environment: e2e-real
+    # id-token: the OIDC token Workload Identity exchanges for the read-only
+    # Secret Manager access below (#1264).
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -153,13 +207,6 @@ jobs:
       STRIPE_TEST_PUBLISHABLE_KEY: ${{ secrets.STRIPE_TEST_PUBLISHABLE_KEY }}
       TWILIO_TEST_ACCOUNT_SID: ${{ secrets.TWILIO_TEST_ACCOUNT_SID }}
       TWILIO_TEST_AUTH_TOKEN: ${{ secrets.TWILIO_TEST_AUTH_TOKEN }}
-      E2E_SMTP2GO_API_KEY: ${{ secrets.E2E_SMTP2GO_API_KEY }}
-      E2E_EMAIL_FROM: ${{ secrets.E2E_EMAIL_FROM }}
-      E2E_CLOUDINARY_CLOUD_NAME: ${{ secrets.E2E_CLOUDINARY_CLOUD_NAME }}
-      E2E_CLOUDINARY_API_KEY: ${{ secrets.E2E_CLOUDINARY_API_KEY }}
-      E2E_CLOUDINARY_API_SECRET: ${{ secrets.E2E_CLOUDINARY_API_SECRET }}
-      E2E_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.E2E_GOOGLE_OAUTH_CLIENT_ID }}
-      E2E_GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.E2E_GOOGLE_OAUTH_CLIENT_SECRET }}
       E2E_GOOGLE_CALENDAR_REFRESH_TOKEN: ${{ secrets.E2E_GOOGLE_CALENDAR_REFRESH_TOKEN }}
       E2E_GOOGLE_CALENDAR_ID: ${{ secrets.E2E_GOOGLE_CALENDAR_ID }}
     steps:
@@ -199,6 +246,49 @@ jobs:
           mkdir -p "$RUNNER_TEMP/stripe-cli"
           tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP/stripe-cli" stripe
           echo "$RUNNER_TEMP/stripe-cli" >> "$GITHUB_PATH"
+      # #1264. Workload Identity for the explicit Secret Manager read only.
+      # Same provider and account as nightly-release.yml; the provider admits
+      # this repository on refs/heads/main, which the job's `if` already
+      # requires.
+      - name: Authenticate to Google Cloud (Workload Identity)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.NIGHTLY_WIF_PROVIDER }}
+          service_account: ${{ vars.NIGHTLY_SERVICE_ACCOUNT }}
+          project_id: auntieos-ttpc
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+      # Reads ONLY the allowlisted names (Cloudinary, smtp2go, EMAIL_FROM,
+      # Google OAuth), never Stripe or Twilio. Masks every value before it
+      # writes anything else, then exports them through GITHUB_ENV. A secret
+      # stored in `e2e-real` under one of the E2E_* names below is used
+      # instead of Secret Manager, so the operator can override one.
+      - name: Vendor values from Secret Manager
+        working-directory: .
+        env:
+          E2E_SMTP2GO_API_KEY: ${{ secrets.E2E_SMTP2GO_API_KEY }}
+          E2E_EMAIL_FROM: ${{ secrets.E2E_EMAIL_FROM }}
+          E2E_CLOUDINARY_CLOUD_NAME: ${{ secrets.E2E_CLOUDINARY_CLOUD_NAME }}
+          E2E_CLOUDINARY_API_KEY: ${{ secrets.E2E_CLOUDINARY_API_KEY }}
+          E2E_CLOUDINARY_API_SECRET: ${{ secrets.E2E_CLOUDINARY_API_SECRET }}
+          E2E_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.E2E_GOOGLE_OAUTH_CLIENT_ID }}
+          E2E_GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.E2E_GOOGLE_OAUTH_CLIENT_SECRET }}
+        run: node auntieos-admin/scripts/e2e-real/secret-manager.mjs --github
+      # The emulator must have no Google credentials (#1089): with none and a
+      # demo- project id there is no Secret Manager for it to reach. Revoke
+      # gcloud's login, delete the credentials file and blank every variable
+      # the auth step exported, before anything else runs.
+      - name: Drop Google credentials
+        if: always()
+        working-directory: .
+        run: |
+          gcloud auth revoke --all --quiet >/dev/null 2>&1 || true
+          for f in "${GOOGLE_GHA_CREDS_PATH:-}" "${GOOGLE_APPLICATION_CREDENTIALS:-}"; do
+            if [ -n "$f" ]; then rm -f "$f"; fi
+          done
+          for v in GOOGLE_APPLICATION_CREDENTIALS GOOGLE_GHA_CREDS_PATH CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT; do
+            echo "$v=" >> "$GITHUB_ENV"
+          done
       - name: Cypress, real services
         run: npm run e2e:real
       - name: Upload artifacts
