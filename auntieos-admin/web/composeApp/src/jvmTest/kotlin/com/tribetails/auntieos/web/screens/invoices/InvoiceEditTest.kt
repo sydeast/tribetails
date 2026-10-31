@@ -184,6 +184,77 @@ class InvoiceEditTest {
         assertEquals("The invoice number cannot be empty.", invoiceEditPatchOf(inv, base.copy(invoiceNumber = " ")).error)
     }
 
+    // ── #1198: household, client, address and the legacy discount text ────────
+    private fun stringsOf(patch: JsonObject): Map<String, String> = patch.mapValues { it.value.jsonPrimitive.content }
+    @Test
+    fun theDraftOpensWithTheStoredHouseholdClientAddressAndDiscountText() {
+        val draft = invoiceEditDraftOf(itemized())!!
+        assertEquals("Wanda Thorne", draft.kinfolkName)
+        assertEquals("Wanda Thorne", draft.client)
+        assertEquals("12 Elm Row", draft.address)
+        assertEquals("10%", draft.discount)
+    }
+    @Test
+    fun anUntouchedDraftSendsNoneOfTheFour() {
+        val inv = itemized(scope = "metadataOnly")
+        val patch = patchOf(inv, invoiceEditDraftOf(inv)!!.copy(terms = "Net 30"))
+        assertEquals(mapOf("terms" to "Net 30"), stringsOf(patch))
+    }
+    @Test
+    fun onlyTheChangedOneOfTheFourIsSent() {
+        val inv = itemized(scope = "metadataOnly")
+        val patch = patchOf(inv, invoiceEditDraftOf(inv)!!.copy(address = "14 Elm Row"))
+        assertEquals(mapOf("address" to "14 Elm Row"), stringsOf(patch))
+    }
+    @Test
+    fun allFourAreSentAsTypedWhenAllFourChange() {
+        // An un-itemized doc with none of the four stored: the draft seeds ""
+        // from the decoder's defaults, so only the typed values go.
+        val inv = unitemized()
+        val draft = invoiceEditDraftOf(inv)!!.copy(
+            kinfolkName = "The Riveras",
+            client = "Ana Rivera",
+            address = "12 Elm St",
+            discount = "10% loyalty",
+        )
+        assertEquals(
+            mapOf(
+                "kinfolkName" to "The Riveras",
+                "client" to "Ana Rivera",
+                "address" to "12 Elm St",
+                "discount" to "10% loyalty",
+            ),
+            stringsOf(patchOf(inv, draft)),
+        )
+    }
+    @Test
+    fun clearingAWrongAddressSendsAnEmptyString() {
+        val inv = itemized(scope = "metadataOnly")
+        val patch = patchOf(inv, invoiceEditDraftOf(inv)!!.copy(address = ""))
+        assertEquals(mapOf("address" to ""), stringsOf(patch))
+    }
+    @Test
+    fun anAddressLongerThanTheServerAllowsIsRefusedBeforeTheRoundTrip() {
+        val inv = itemized()
+        val outcome = invoiceEditPatchOf(inv, invoiceEditDraftOf(inv)!!.copy(address = "x".repeat(501)))
+        assertNull(outcome.patch)
+        assertEquals("Address cannot be more than 500 characters.", outcome.error)
+    }
+    @Test
+    fun theFourReachTheCallableUnderTheirServerNames() = runBlocking {
+        JvmFirestoreFixtures.callableResponses = mapOf(
+            "updateInvoice" to """{"ok":true,"invoiceId":"inv1","totals":{"subtotalCents":0,"totalCents":0,"paidCents":0,"amountDueCents":0}}""",
+        )
+        val inv = itemized(scope = "metadataOnly")
+        val patch = patchOf(inv, invoiceEditDraftOf(inv)!!.copy(client = "Ana Rivera", discount = "waived"))
+        val r = FirestoreClient().updateInvoice(inv._id, patch)
+        assertTrue(r is WriteResult.Ok, "$r")
+        val sent = Json.parseToJsonElement(JvmFirestoreFixtures.callablePayloads.single().second).jsonObject
+        assertEquals(
+            mapOf("client" to "Ana Rivera", "discount" to "waived"),
+            sent["patch"]!!.jsonObject.mapValues { it.value.jsonPrimitive.content },
+        )
+    }
     // ── The callable ───────────────────────────────────────────────────────────
 
     @Test
@@ -200,7 +271,7 @@ class InvoiceEditTest {
         val sent = Json.parseToJsonElement(body).jsonObject
         assertEquals(setOf("invoiceId", "patch"), sent.keys)
         assertEquals("inv1", sent["invoiceId"]!!.jsonPrimitive.content)
-        // No client, address, kinfolkName, total or status: nothing the form does not control.
+        // Only the one changed field: no unchanged client/address/kinfolkName echoed, no total or status.
         assertEquals(mapOf("terms" to "Net 30"), sent["patch"]!!.jsonObject.mapValues { it.value.jsonPrimitive.content })
         assertNull(JvmFirestoreFixtures.lastWrite, "no direct REST write may happen")
     }
