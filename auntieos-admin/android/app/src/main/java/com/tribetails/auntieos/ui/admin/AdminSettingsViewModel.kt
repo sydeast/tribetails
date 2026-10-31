@@ -9,6 +9,7 @@ import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.model.BusinessHours
 import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.businessSettingsFieldChanges
+import com.tribetails.auntieos.data.model.revertBusinessSettingsFields
 import com.tribetails.auntieos.data.model.MediaEntityType
 import com.tribetails.auntieos.data.model.TagScope
 import com.tribetails.auntieos.data.model.UserProfile
@@ -183,6 +184,16 @@ class AdminSettingsViewModel(
             )
             return
         }
+        // One write at a time (#1214). A second save built while the first is in
+        // flight starts from the copy the first has not updated yet, so for a
+        // list field it would replace the server's list and drop the first edit.
+        // Refused loudly rather than dropped: the caller's draft is untouched.
+        if (_uiState.value.settingsSaving) {
+            _uiState.value = _uiState.value.copy(
+                error = "Still saving the last change. Try again in a moment.",
+            )
+            return
+        }
         val changes = businessSettingsFieldChanges(baseline, settings)
         if (changes.isEmpty()) {
             _uiState.value = _uiState.value.copy(
@@ -194,16 +205,32 @@ class AdminSettingsViewModel(
             return
         }
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(businessSettings = settings, saveSuccess = false, settingsSaving = true)
+            // businessSettings is deliberately NOT moved to [settings] yet (#1214).
+            // Every panel seeds its draft from it, so moving it before the server
+            // answered made a failed save look saved: the panel's saved copy
+            // equalled its draft, Save went dead, and only the banner said
+            // otherwise. It moves on success only; on failure it still holds the
+            // baseline values, so the edit stays in the panel's draft as unsaved
+            // and Save stays live for the retry.
+            _uiState.value = _uiState.value.copy(saveSuccess = false, settingsSaving = true)
 
             repository.updateBusinessSettingsFields(changes, "admin").fold(
                 onSuccess = {
                     // The baseline moves to what the server now holds. Without
                     // this a second save re-sends the first save's fields, which
                     // is the same clobber one step later.
-                    settingsBaseline = settings
+                    //
+                    // Only the fields this save wrote move, in the baseline and in
+                    // the on-screen copy. Replacing either wholesale also dragged
+                    // in whatever else the caller's snapshot held, so an earlier
+                    // toggle the server had already taken showed its old value.
+                    settingsBaseline = revertBusinessSettingsFields(
+                        settingsBaseline ?: baseline, settings, changes.keys,
+                    )
                     _uiState.value = _uiState.value.copy(
-                        businessSettings = settings,
+                        businessSettings = revertBusinessSettingsFields(
+                            _uiState.value.businessSettings, settings, changes.keys,
+                        ),
                         stagedLogoUrl = if (clearStagedLogo) null else _uiState.value.stagedLogoUrl,
                         saveSuccess = true,
                         settingsSaving = false,
@@ -211,7 +238,12 @@ class AdminSettingsViewModel(
                     )
                 },
                 onFailure = { error ->
+                    // Belt and braces for the same rule: put back anything this
+                    // save's fields hold that is not the baseline, leaving other
+                    // panels' fields alone.
+                    val shown = _uiState.value.businessSettings
                     _uiState.value = _uiState.value.copy(
+                        businessSettings = revertBusinessSettingsFields(shown, baseline, changes.keys),
                         error = "$failureLabel: ${error.message}",
                         saveSuccess = false,
                         settingsSaving = false,

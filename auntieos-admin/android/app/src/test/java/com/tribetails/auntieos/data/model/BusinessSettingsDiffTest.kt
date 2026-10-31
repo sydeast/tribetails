@@ -464,4 +464,20 @@ class BusinessSettingsDiffTest {
         assertFalse(businessSettingsReplacesWholeFields(businessSettingsFieldChanges(loaded, edited)))
         assertFalse(businessSettingsReplacesWholeFields(emptyMap()))
     }
+
+    /** #1214: only the named fields go back to the baseline; the rest keep their on-screen values. */
+    @Test
+    fun `reverting named fields leaves the others alone`() {
+        val shown = loaded.copy(venmoHandle = "@draft", weatherLocation = "Dallas, TX")
+        val reverted = revertBusinessSettingsFields(shown, loaded, listOf("venmoHandle"))
+        assertEquals("@old-venmo", reverted.venmoHandle)
+        assertEquals("Dallas, TX", reverted.weatherLocation)
+    }
+    /** Every key the differ can return must be revertible, or a new field would crash a failed save. */
+    @Test
+    fun `every diff field name can be reverted`() {
+        val edited = BusinessSettings(businessName = "x")
+        val reverted = revertBusinessSettingsFields(edited, loaded, BUSINESS_SETTINGS_DIFF_FIELDS.keys)
+        assertEquals(emptyMap<String, Any?>(), businessSettingsFieldChanges(loaded, reverted))
+    }
 }

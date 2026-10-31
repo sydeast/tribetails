@@ -59,6 +59,26 @@ class SettingsViewModelTest {
         assertNull(vm.uiState.value.saveError, "saveError must be null after successful save")
     }
 
+    /**
+     * #1214 (the Android settings screen showed a failed save as saved). The console
+     * holds no optimistic copy: its panels keep their own draft and reseed from the
+     * settings read. This pins that: a rejected save leaves the loaded settings at the
+     * stored values, reports the error, and never raises saveSuccess, so the draft the
+     * panel still holds stays unsaved against the loaded copy.
+     */
+    @Test
+    fun `a failed save leaves the loaded settings alone and never reports success`() = runTest {
+        val ds = FakeAuntieDataSource(saveShouldFail = true, saveFailMessage = "permission denied")
+        val vm = buildViewModel(ds)
+        val loaded = BusinessSettings(_id = "business_settings", businessName = "TribeTails", venmoHandle = "@old")
+        ds.emitBusinessSettings(FirestoreResult.Data(loaded))
+        vm.saveSettings(loaded.copy(venmoHandle = "@new"))
+        val state = vm.uiState.value
+        assertFalse(state.saveSuccess, "a rejected save must not read as saved")
+        assertEquals("Save failed: permission denied", state.saveError)
+        assertEquals(loaded, (state.settingsResult as FirestoreResult.Data<BusinessSettings>).value)
+        assertNull(ds.lastSavedBusinessSettings, "nothing reached the store")
+    }
     @Test
     fun `save settings carries calendarSyncId through to the data source`() = runTest {
         // Editing the Google Calendar id in Settings persists onto BusinessSettings;
