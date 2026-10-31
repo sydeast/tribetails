@@ -353,7 +353,8 @@ export function ipRateLimitKey(ip: string): string {
  * handing each forged address a fresh bucket. Zero entries log
  * `clientIp.noForwardedFor` at error and fall back to `rawRequest.ip`, which is
  * then the socket address, and then to 'unknown'. Production always carries
- * the header; the emulator does not.
+ * the header; the Functions emulator (FUNCTIONS_EMULATOR=true) does not, and
+ * there the same event is logged at info, not error (#1270).
  *
  * The address comes back canonical: an IPv4-mapped IPv6 entry as its IPv4
  * address, any other IPv6 entry in RFC 5952 form without brackets, port or
@@ -368,11 +369,15 @@ export function clientIpOf(rawRequest: RawRequestLike, trustedHops: number = TRU
     .filter((e) => e !== '');
   const hops = Number.isInteger(trustedHops) && trustedHops >= 1 ? trustedHops : TRUSTED_PROXY_HOPS;
   if (entries.length === 0) {
+    // The Functions emulator sets FUNCTIONS_EMULATOR=true and sends no
+    // X-Forwarded-For, so an absent header there is expected, not a misroute.
+    // Deployed code never has that variable, so production keeps the error (#1270).
+    const inEmulator = process.env.FUNCTIONS_EMULATOR === 'true';
     logEvent({
-      severity: 'error',
+      severity: inEmulator ? 'info' : 'error',
       function: 'clientIpOf',
       event: 'clientIp.noForwardedFor',
-      extra: { trustedHops: hops, hasSocketIp: typeof rawRequest?.ip === 'string' && rawRequest.ip.trim() !== '' },
+      extra: { trustedHops: hops, emulator: inEmulator, hasSocketIp: typeof rawRequest?.ip === 'string' && rawRequest.ip.trim() !== '' },
     });
     const socketIp = typeof rawRequest?.ip === 'string' ? normalizeIp(rawRequest.ip) : '';
     return socketIp || 'unknown';
