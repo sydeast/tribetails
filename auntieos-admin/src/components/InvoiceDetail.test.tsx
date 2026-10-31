@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { type ReactNode } from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Timestamp } from 'firebase/firestore';
@@ -50,6 +50,7 @@ const {
   sendInvoiceReminder,
   markInvoicePaid,
   generateReceipt,
+  generateInvoicePdf,
   getInvoiceLedger,
   recordPayment,
   resendQuote,
@@ -62,6 +63,7 @@ const {
   sendInvoiceReminder: vi.fn(),
   markInvoicePaid: vi.fn(),
   generateReceipt: vi.fn(),
+  generateInvoicePdf: vi.fn(),
   getInvoiceLedger: vi.fn(),
   recordPayment: vi.fn(),
   resendQuote: vi.fn(),
@@ -76,6 +78,7 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   sendInvoiceReminder,
   markInvoicePaid,
   generateReceipt,
+  generateInvoicePdf,
   getInvoiceLedger,
   recordPayment,
   resendQuote,
@@ -244,6 +247,7 @@ beforeEach(() => {
   sendInvoiceReminder.mockReset();
   markInvoicePaid.mockReset();
   generateReceipt.mockReset();
+  generateInvoicePdf.mockReset();
   reviewAndSendDraftInvoice.mockReset();
   resendQuote.mockReset().mockResolvedValue('quote');
   updateInvoice.mockReset().mockResolvedValue({
@@ -2654,5 +2658,75 @@ describe('InvoiceDetail open payment links (#1113)', () => {
     );
     await userEvent.click(screen.getByRole('button', { name: /try again/i }));
     expect(await screen.findByText(/Admin claim required/)).toBeInTheDocument();
+  });
+});
+
+describe('InvoiceDetail Download PDF', () => {
+  const PDF_URL = 'https://firebasestorage.googleapis.com/v0/b/bucket/o/invoice_pdfs%2Finv1.pdf?alt=media&token=t';
+  function fakeWindow() {
+    return { location: { href: '' }, closed: false, close: vi.fn(), opener: {} } as unknown as Window & {
+      location: { href: string };
+      close: ReturnType<typeof vi.fn>;
+    };
+  }
+  afterEach(() => vi.restoreAllMocks());
+  it('opens the tab inside the tap, then points it at the returned file', async () => {
+    const user = userEvent.setup();
+    let resolve!: (url: string) => void;
+    generateInvoicePdf.mockReturnValue(new Promise<string>((r) => { resolve = r; }));
+    const win = fakeWindow();
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(win);
+    render(<InvoiceDetail invoice={entry({ status: 'open' })} onClose={vi.fn()} />);
+    expect(generateInvoicePdf).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Download PDF' }));
+    // The window exists before the callable has answered.
+    expect(openSpy).toHaveBeenCalledWith('', '_blank');
+    await waitFor(() => expect(generateInvoicePdf).toHaveBeenCalledWith('inv1'));
+    expect(win.location.href).toBe('');
+    resolve(PDF_URL);
+    expect(await screen.findByText(/Invoice PDF opened in a new tab/)).toBeInTheDocument();
+    expect(win.location.href).toBe(PDF_URL);
+    expect(win.close).not.toHaveBeenCalled();
+    expect(screen.queryByRole('link', { name: 'Open PDF' })).not.toBeInTheDocument();
+  });
+  it('disables the button and says it is working while the callable runs', async () => {
+    const user = userEvent.setup();
+    let resolve!: (url: string) => void;
+    generateInvoicePdf.mockReturnValue(new Promise<string>((r) => { resolve = r; }));
+    vi.spyOn(window, 'open').mockReturnValue(fakeWindow());
+    render(<InvoiceDetail invoice={entry({ status: 'open' })} onClose={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Download PDF' }));
+    const working = await screen.findByRole('button', { name: 'Making PDF…' });
+    expect(working).toBeDisabled();
+    resolve(PDF_URL);
+    expect(await screen.findByRole('button', { name: 'Download PDF' })).toBeEnabled();
+    expect(generateInvoicePdf).toHaveBeenCalledTimes(1);
+  });
+  it('shows the failure inline and closes the pre-opened tab', async () => {
+    const user = userEvent.setup();
+    generateInvoicePdf.mockRejectedValue(new Error('invoice_pdf_render_failed'));
+    const win = fakeWindow();
+    vi.spyOn(window, 'open').mockReturnValue(win);
+    render(<InvoiceDetail invoice={entry({ status: 'open' })} onClose={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Download PDF' }));
+    expect(await screen.findByText(/generateInvoicePdf failed: invoice_pdf_render_failed/)).toBeInTheDocument();
+    expect(win.close).toHaveBeenCalledTimes(1);
+    expect(win.location.href).toBe('');
+    expect(screen.getByRole('button', { name: 'Download PDF' })).toBeEnabled();
+  });
+  it('never claims the PDF opened when the browser blocks the tab, and offers a real link', async () => {
+    const user = userEvent.setup();
+    generateInvoicePdf.mockResolvedValue(PDF_URL);
+    vi.spyOn(window, 'open').mockReturnValue(null);
+    const inv = entry({ status: 'open' });
+    render(<InvoiceDetail invoice={inv} onClose={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Download PDF' }));
+    expect(await screen.findByText(/did not open it/)).toBeInTheDocument();
+    expect(screen.queryByText(/Invoice PDF opened/)).not.toBeInTheDocument();
+    const link = screen.getByRole('link', { name: 'Open PDF' });
+    expect(link).toHaveAttribute('href', PDF_URL);
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(link).toHaveAttribute('download', `invoice-${inv.invoiceNumber}.pdf`);
   });
 });

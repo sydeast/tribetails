@@ -927,7 +927,7 @@ private fun InvoiceLine(inv: Invoice, last: Boolean) {
 internal fun invoiceFeedPill(inv: Invoice): Pair<String, AuntieStatusTone> = when (invoiceStateOrNull(inv)) {
     InvoiceState.PAID -> "Paid" to AuntieStatusTone.Teal
     InvoiceState.ZERO -> "Zero" to AuntieStatusTone.Teal
-    InvoiceState.OPEN -> "Unpaid" to AuntieStatusTone.Orange
+    InvoiceState.OPEN -> "Open" to AuntieStatusTone.Orange
     InvoiceState.QUOTE -> "Quote" to AuntieStatusTone.Purple
     InvoiceState.DRAFT -> "Draft" to AuntieStatusTone.Muted
     InvoiceState.CANCELLED -> "Cancelled" to AuntieStatusTone.Muted

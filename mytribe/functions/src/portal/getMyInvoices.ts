@@ -175,6 +175,13 @@ export const InvoiceDtoSchema = z
     terms: z.string().nullable(),
     paymentsHistory: z.string().nullable(),
     address: z.string().nullable(),
+    /**
+     * LEGACY. Carries the old system's Viewed flag on migrated invoices. Nothing
+     * in this system writes it, so it reads false on every invoice created here
+     * and is NOT a "viewed by the household" receipt. Whether it becomes one is
+     * the vendor ballot row `list-viewed-receipt` (#1180). Migrated documents
+     * may hold a string ("Yes") or a boolean; see `legacyFlagFrom`.
+     */
     viewed: z.boolean(),
     /**
      * What the household said when they were shown this quote, or null when
@@ -452,7 +459,8 @@ export async function getMyInvoicesHandler(
       terms: stringOrNull(data['terms']),
       paymentsHistory: stringOrNull(data['paymentsHistory']),
       address: stringOrNull(data['address']),
-      viewed: boolFrom(data['viewed']),
+      // Legacy migrated flag, never written here (#1180). Not a receipt.
+      viewed: legacyFlagFrom(data['viewed']),
       quoteDecision: quoteDecisionOf(data['quoteDecision']),
       quoteDecidedAtMs: tsMillis(data['quoteDecidedAt']),
       quoteDecidedByUid: stringOrNull(data['quoteDecidedByUid']),
@@ -779,9 +787,17 @@ function stringOrNull(v: unknown): string | null {
   return typeof v === 'string' && v.length > 0 ? v : null;
 }
 
-function boolFrom(v: unknown): boolean {
+/**
+ * Normalises a flag imported from the old system, which may be a boolean or
+ * text ("Yes", "true", "1"), to a boolean. Anything else, including absent,
+ * is false. Used for `viewed` (#1180).
+ */
+export function legacyFlagFrom(v: unknown): boolean {
   if (typeof v === 'boolean') return v;
-  if (typeof v === 'string') return v.toLowerCase() === 'yes' || v.toLowerCase() === 'true';
+  if (typeof v === 'string') {
+    const t = v.trim().toLowerCase();
+    return t === 'yes' || t === 'true' || t === '1';
+  }
   return false;
 }
 

@@ -315,6 +315,30 @@ merges the content fields and leaves the rest alone.
 The import steps are under "Templates to import after a release" in
 `docs/runbooks/after-release.md`.
 
+### 4a. Turn the payment methods on in the Stripe dashboard
+
+Since `stripe@23` (API version `2026-09-30.endive`, issue #1192) a Checkout
+Session no longer takes a fixed `payment_method_types` list. `payInvoice` and
+`createBillingSetupSession` send `allowed_payment_method_types`, which Stripe
+treats as a filter: a session offers only the methods that are both on that
+list AND turned on under Stripe Dashboard → Settings → Payment methods.
+
+- **Card** must be on there, or no checkout opens.
+- **Klarna and Affirm** need two switches: the toggle in the admin Payment
+  Options AND the method turned on in that dashboard page. With only the admin
+  toggle on, the household is offered card alone and the logs carry a `warn`
+  line, `portal.invoice.checkout.methodtype.filtered`, whose `filteredTypes`
+  names the dropped method. That line, not a failed payment, is the sign the
+  two settings disagree. Turn the method on in the dashboard (or the toggle off
+  in the admin) and the line stops.
+- `portal.invoice.checkout.methodtype.rejected` is the older form of the same
+  disagreement: Stripe refused the create outright and `payInvoice` retried
+  card-only. Under endive it should not fire, and the fix is the same.
+
+The fee on every Stripe payment, whatever the method, is read off the charge
+that settled (`balance_transaction.fee` in `stripeWebhook`), so a Klarna
+payment records Klarna's fee, not the card rate.
+
 ### 5. Prove it is connected
 
 **Do not skip this.** Every prior signal in this section can be green on a broken

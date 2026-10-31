@@ -28,6 +28,7 @@ import {
   markInvoicePaid,
   sendInvoiceReminder,
   generateReceipt,
+  generateInvoicePdf,
   getInvoiceLedger,
   recordPayment,
   resendQuote,
@@ -575,6 +576,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // re-open the confirm step the moment the operator cancelled out of it.
   const [pending, setPending] = useState<PendingAction | null>(initialAction ?? null);
   const [busy, setBusy] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  /** Download link shown when the browser would not open the PDF tab itself. */
+  const [pdfLink, setPdfLink] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   /**
@@ -1005,6 +1009,45 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       );
     }
   }
+  async function downloadPdf() {
+    if (busy || pdfBusy) return;
+    setPdfBusy(true);
+    setActionError(null);
+    setPdfLink(null);
+    // Open the tab NOW, inside the tap. Safari drops the click's user
+    // activation at the first await and Chrome keeps it about 5 s, and a cold
+    // render plus Storage upload can outlast both, so a tab opened after the
+    // await is silently blocked. A null handle means the browser blocked even
+    // this; the visible link below is then the way in.
+    const win = window.open('', '_blank');
+    if (win) {
+      try {
+        win.opener = null;
+      } catch {
+        // Cross-origin hardening is best effort.
+      }
+    }
+    try {
+      const pdfUrl = await generateInvoicePdf(invoice._id);
+      setPdfBusy(false);
+      setNoticeIncomplete(false);
+      if (win && !win.closed) {
+        win.location.href = pdfUrl;
+        setPdfLink(null);
+        setNotice('Invoice PDF opened in a new tab.');
+      } else {
+        // Blocked, or the operator closed the tab: never claim it opened.
+        setPdfLink(pdfUrl);
+        setNotice('Invoice PDF is ready. Your browser did not open it, so use the link below.');
+      }
+    } catch (caught) {
+      if (win && !win.closed) win.close();
+      setPdfBusy(false);
+      setActionError(
+        `generateInvoicePdf failed: ${caught instanceof Error ? caught.message : 'PDF failed'}`,
+      );
+    }
+  }
   async function confirmResend() {
     if (busy) return;
     setBusy(true);
@@ -1388,6 +1431,19 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             title={noticeIncomplete ? 'Done, but not all of it' : 'Done'}
           >
             {notice}
+            {pdfLink && (
+              <>
+                {' '}
+                <a
+                  href={pdfLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  download={`invoice-${invoice.invoiceNumber || invoice._id}.pdf`}
+                >
+                  Open PDF
+                </a>
+              </>
+            )}
           </Banner>
         )}
         {actionError && (
@@ -1751,6 +1807,11 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                 enforcement; a refusal that gets through comes back with a code
                 and a sentence, and is shown verbatim above. */}
             {canEdit && <GhostButton label="Edit" onClick={startEditing} />}
+            <GhostButton
+              label={pdfBusy ? 'Making PDF…' : 'Download PDF'}
+              onClick={() => void downloadPdf()}
+              disabled={busy || pdfBusy}
+            />
             {/* THE WAY OUT OF A DECLINE (issue #448). Offered only when the
                 household has actually said no: one still waiting for an answer
                 has nothing to revive (a reminder is the action for that), and an

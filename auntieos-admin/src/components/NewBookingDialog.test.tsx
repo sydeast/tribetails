@@ -901,6 +901,9 @@ describe('NewBookingDialog steps 4 and 5: invoice options and review', () => {
     await toReview();
     expect(screen.getByText('$50.00')).toBeInTheDocument();
     expect(screen.getByText('2 visits across 2 days')).toBeInTheDocument();
+    // Nothing adds surcharges or taxes to an invoice, so Review must not say it does (#1179).
+    expect(screen.queryByText(/surcharge/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\btax/i)).not.toBeInTheDocument();
   });
 
   it('NAMES an unpriced service instead of counting it as zero', async () => {
