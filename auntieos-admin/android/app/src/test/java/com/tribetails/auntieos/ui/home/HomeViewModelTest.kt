@@ -624,7 +624,13 @@ class HomeViewModelTest {
                 com.tribetails.auntieos.data.model.Invoice(id = "i3", status = "paid", total = 99.0, amountDue = 0.0, date = "2026-06-02"),
             ),
         )
-        val lastVisit = java.time.LocalDate.now().minusDays(15).toString()
+        // The business's today, not the JVM's: HomeViewModel counts from the
+        // business day (#1158), and on a UTC runner the two differ until
+        // midnight in the business zone (#1233).
+        val businessToday = com.tribetails.auntieos.ui.admin.scheduling.businessToday(
+            com.tribetails.auntieos.data.model.businessZone(TestFixtures.businessSettings.timeZone),
+        )
+        val lastVisit = businessToday.minusDays(15).toString()
         coEvery { mockKinCareRepo.getKinCareSessions() } returns Result.success(
             listOf(
                 KinCareSession(kinfolkId = "f1", kinfolkName = "the Bs", startTime = lastVisit, status = "COMPLETED"),
