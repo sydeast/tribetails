@@ -9,6 +9,7 @@ import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.model.BusinessHours
 import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.businessSettingsFieldChanges
+import com.tribetails.auntieos.data.model.revertBusinessSettingsFields
 import com.tribetails.auntieos.data.model.MediaEntityType
 import com.tribetails.auntieos.data.model.TagScope
 import com.tribetails.auntieos.data.model.UserProfile
@@ -194,7 +195,14 @@ class AdminSettingsViewModel(
             return
         }
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(businessSettings = settings, saveSuccess = false, settingsSaving = true)
+            // businessSettings is deliberately NOT moved to [settings] yet (#1214).
+            // Every panel seeds its draft from it, so moving it before the server
+            // answered made a failed save look saved: the panel's saved copy
+            // equalled its draft, Save went dead, and only the banner said
+            // otherwise. It moves on success only; on failure it still holds the
+            // baseline values, so the edit stays in the panel's draft as unsaved
+            // and Save stays live for the retry.
+            _uiState.value = _uiState.value.copy(saveSuccess = false, settingsSaving = true)
 
             repository.updateBusinessSettingsFields(changes, "admin").fold(
                 onSuccess = {
@@ -211,7 +219,12 @@ class AdminSettingsViewModel(
                     )
                 },
                 onFailure = { error ->
+                    // Belt and braces for the same rule: put back anything this
+                    // save's fields hold that is not the baseline, leaving other
+                    // panels' fields alone.
+                    val shown = _uiState.value.businessSettings
                     _uiState.value = _uiState.value.copy(
+                        businessSettings = revertBusinessSettingsFields(shown, baseline, changes.keys),
                         error = "$failureLabel: ${error.message}",
                         saveSuccess = false,
                         settingsSaving = false,

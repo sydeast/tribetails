@@ -258,12 +258,64 @@ class AdminSettingsBusinessSettingsSaveTest {
         advanceUntilIdle()
         assertNotNull(vm.uiState.value.error)
 
+        // The retry is the panel's still-unsaved draft sent again (#1214: the
+        // on-screen copy no longer pretends the edit landed, so the retry comes
+        // from the draft, not from uiState).
         val changes = captureChanges()
-        vm.updateBusinessSettings(vm.uiState.value.businessSettings)
+        vm.updateBusinessSettings(vm.uiState.value.businessSettings.copy(venmoHandle = "@new-venmo"))
         advanceUntilIdle()
         assertEquals(mapOf<String, Any?>("venmoHandle" to "@new-venmo"), changes.captured)
+        assertEquals("@new-venmo", vm.uiState.value.businessSettings.venmoHandle)
     }
 
+    /**
+     * #1214: a failed save must not leave the edit on screen as saved.
+     *
+     * Every panel seeds its draft from `uiState.businessSettings`. The VM used to
+     * move that copy to the draft before the write, so after a rejection the
+     * panel's saved copy equalled its draft: Save went dead and only the banner
+     * admitted anything was wrong.
+     */
+    @Test
+    fun `a failed save leaves the on-screen settings at the saved values and reports the error`() =
+        runTest(testDispatcher) {
+            coEvery { repo.updateBusinessSettingsFields(any(), any()) } returns
+                Result.failure(RuntimeException("permission denied"))
+            val vm = loadedViewModel()
+            vm.updateBusinessSettings(vm.uiState.value.businessSettings.copy(venmoHandle = "@new-venmo"))
+            advanceUntilIdle()
+            val ui = vm.uiState.value
+            assertEquals("@old-venmo", ui.businessSettings.venmoHandle)
+            assertFalse(ui.saveSuccess)
+            assertFalse(ui.settingsSaving)
+            assertTrue(ui.error!!.contains("permission denied"))
+        }
+    /** Only the failed save's fields go back; another panel's untouched fields stay as they are. */
+    @Test
+    fun `a failed save does not touch other fields on the screen`() = runTest(testDispatcher) {
+        coEvery { repo.updateBusinessSettingsFields(any(), any()) } returns
+            Result.failure(RuntimeException("offline"))
+        val vm = loadedViewModel()
+        vm.updateBusinessSettings(
+            vm.uiState.value.businessSettings.copy(venmoHandle = "@new-venmo", weatherLocation = "Dallas, TX"),
+        )
+        advanceUntilIdle()
+        assertEquals("@old-venmo", vm.uiState.value.businessSettings.venmoHandle)
+        assertEquals("Austin, TX", vm.uiState.value.businessSettings.weatherLocation)
+        assertEquals("Tribe Tails", vm.uiState.value.businessSettings.businessName)
+    }
+    /** Branding goes through the same path and keeps its staged logo on failure. */
+    @Test
+    fun `a failed branding save leaves the wordmark at its saved value`() = runTest(testDispatcher) {
+        coEvery { repo.updateBusinessSettingsFields(any(), any()) } returns
+            Result.failure(RuntimeException("offline"))
+        val vm = loadedViewModel()
+        vm.saveBranding("New Wordmark", "", "", "")
+        advanceUntilIdle()
+        assertEquals("AuntieOS", vm.uiState.value.businessSettings.brandWordmark)
+        assertFalse(vm.uiState.value.saveSuccess)
+        assertNotNull(vm.uiState.value.error)
+    }
     /**
      * A save before a successful load has no baseline to diff against, and the
      * screen starts on `BusinessSettings()` - all defaults. Writing that model
@@ -503,6 +555,32 @@ class SchedulingSettingsSaveTest {
             assertEquals(mapOf<String, Any?>("travelBufferMinutes" to 45), changes.captured)
         }
 
+    /** #1214: a rejected in-place update must not leave the edit on screen as saved. */
+    @Test
+    fun `a failed in-place settings update puts the edited field back`() = runTest(testDispatcher) {
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        coEvery { auntieRepo.updateBusinessSettingsFields(any(), any()) } returns
+            Result.failure(RuntimeException("permission denied"))
+        vm.updateBusinessSettings { it.copy(travelBufferMinutes = 45) }
+        advanceUntilIdle()
+        assertEquals(30, vm.state.value.businessSettings.travelBufferMinutes)
+        assertNotNull(vm.state.value.errorMessage)
+    }
+    /** #1214: and a failed booking-mode save returns the picker to the stored mode. */
+    @Test
+    fun `a failed booking mode save returns to the stored mode`() = runTest(testDispatcher) {
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        val before = vm.state.value.bookingMode
+        coEvery { auntieRepo.updateBusinessSettingsFields(any(), any()) } returns
+            Result.failure(RuntimeException("offline"))
+        vm.changeBookingMode(com.tribetails.auntieos.data.model.BookingMode.TIME_BLOCK)
+        advanceUntilIdle()
+        assertEquals(before, vm.state.value.bookingMode)
+        assertEquals(stored.defaultBookingMode, vm.state.value.businessSettings.defaultBookingMode)
+        assertNotNull(vm.state.value.errorMessage)
+    }
     /**
      * This screen falls back to `BusinessSettings()` when the settings read fails,
      * so before the fix a save after a failed load wrote a near-DEFAULT document
