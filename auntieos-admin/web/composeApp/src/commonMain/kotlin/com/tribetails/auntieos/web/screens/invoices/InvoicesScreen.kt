@@ -610,8 +610,46 @@ private fun InvoiceList(
     }
 }
 
+/**
+ * #1256: the one action a list row offers, or null. Read off the STORED state
+ * through [invoiceActionsFor], the same table the detail screen uses, with the
+ * precedence web's `rowActionFor` and Android's `RowAction` use: review and
+ * send, then reminder, then receipt. RECORD_PAYMENT is never a row action; it
+ * needs the amount, method and reference dialog on the detail screen.
+ *
+ * Before this the row branched on `amountDue`, so a cancelled, credit,
+ * redeemed or zero invoice with nothing owing, or a stamped `open` bill whose
+ * `amountDue` reads 0 (the pre-2026-07-25 write), got a Receipt button, and a
+ * receipt claims a payment.
+ */
+internal fun invoiceRowActionOrNull(invoice: Invoice): InvoiceAction? {
+    val actions = invoiceActionsFor(invoiceStateOrNull(invoice))
+    return listOf(InvoiceAction.REVIEW_AND_SEND, InvoiceAction.SEND_REMINDER, InvoiceAction.GENERATE_RECEIPT)
+        .firstOrNull { it in actions }
+}
+
+/**
+ * #1258 (desktop half): the row's date line, read off the STORED state like
+ * the web list's. "paid <date>" only for a PAID invoice; any other dated row
+ * reads "dated <date>", and "due" belongs to an open bill.
+ */
+internal fun invoiceRowDateLine(invoice: Invoice, todayIso: String): String {
+    val state = invoiceStateOrNull(invoice)
+    val days = daysOverdue(invoice, todayIso)
+    return when {
+        state == InvoiceState.QUOTE -> "quote"
+        state == InvoiceState.DRAFT -> "draft"
+        days != null -> "$days day${if (days == 1) "" else "s"} overdue"
+        state == InvoiceState.OPEN && invoice.dueDate.isNotBlank() -> "due ${humanizeDate(invoice.dueDate)}"
+        invoice.date.isNotBlank() ->
+            "${if (state == InvoiceState.PAID) "paid" else "dated"} ${humanizeDate(invoice.date)}"
+        invoice.dueDate.isNotBlank() -> "due ${humanizeDate(invoice.dueDate)}"
+        else -> "no date"
+    }
+}
+
 @Composable
-private fun InvoiceRow(
+internal fun InvoiceRow(
     invoice: Invoice,
     todayIso: String,
     onInvoiceClick: ((String) -> Unit)?,
@@ -621,11 +659,10 @@ private fun InvoiceRow(
     reminding: Boolean = false,
 ) {
     val c = AuntieTheme.colors
-    val quote   = invoiceIsQuote(invoice)
-    val draft   = invoiceIsDraft(invoice)
     val overdue = invoiceIsOverdue(invoice, todayIso)
-    val unpaid  = invoiceIsOutstanding(invoice)
-    // #871: the reminder button follows the server's rule, a stored open bill.
+    // #1256: every row affordance reads the stored stamp through the shared table.
+    val action = invoiceRowActionOrNull(invoice)
+    // #871/#1238: the reminder line follows the same table as the button.
     val remindable = invoiceIsRemindable(invoice)
 
     val statusLabel = invoiceChipLabel(invoice, todayIso)
@@ -701,16 +738,7 @@ private fun InvoiceRow(
             modifier = Modifier.weight(1.1f),
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
-            val days = daysOverdue(invoice, todayIso)
-            val line1 = when {
-                quote                                  -> "quote"
-                draft                                  -> "draft"
-                overdue && days != null                -> "$days days overdue"
-                invoice.dueDate.isNotBlank() && unpaid -> "due ${humanizeDate(invoice.dueDate)}"
-                invoice.date.isNotBlank()              -> "paid ${humanizeDate(invoice.date)}"
-                invoice.dueDate.isNotBlank()           -> "due ${humanizeDate(invoice.dueDate)}"
-                else                                   -> "no date"
-            }
+            val line1 = invoiceRowDateLine(invoice, todayIso)
             Text(
                 line1,
                 style = AuntieTheme.typography.mono.copy(fontSize = 11.sp),
@@ -718,7 +746,7 @@ private fun InvoiceRow(
             )
             // #832: when the household was last chased about this bill, so the
             // operator can see it before pressing Send reminder, not after.
-            if (unpaid && !quote && !draft) {
+            if (remindable) {
                 Text(
                     text  = "reminded ${lastReminderLabel(invoice.reminderNotifiedAtMs)}",
                     style = AuntieTheme.typography.mono.copy(fontSize = 11.sp),
@@ -747,10 +775,7 @@ private fun InvoiceRow(
             )
             AuntieStatusPill(label = statusLabel, tone = statusTone, mono = true)
             RowAction(
-                quote = quote,
-                draft = draft,
-                unpaid = unpaid,
-                remindable = remindable,
+                action = action,
                 onReceipt = { onReceipt(invoice._id) },
                 onSendReminder = { onSendReminder(invoice._id) },
                 onReviewSend = { onReviewSend(invoice) },
@@ -761,20 +786,19 @@ private fun InvoiceRow(
 }
 
 /**
- * Per-row action button. All variants are wired to real callables:
- *   - draft  -> reviewAndSendDraftInvoice (postInvoiceEvent status=sent)
- *   - unpaid AND a stored open bill -> sendInvoiceReminder (#871)
- *   - unpaid but not an open bill (cancelled, credit, unstamped) -> no action
- *   - paid   -> generateReceipt
+ * Per-row action button for the [action] [invoiceRowActionOrNull] picked. All
+ * variants are wired to real callables:
+ *   - REVIEW_AND_SEND (draft) -> reviewAndSendDraftInvoice (postInvoiceEvent status=sent)
+ *   - SEND_REMINDER (open)    -> sendInvoiceReminder (#871)
+ *   - GENERATE_RECEIPT (paid) -> generateReceipt
+ *   - null (quote, cancelled, credit, redeemed, zero, unstamped) -> no button;
+ *     the row still opens the detail screen.
  * The generate-receipt variant remains behind flags.invoicesGenerateReceipt
  * (default on) as a kill-switch.
  */
 @Composable
 private fun RowAction(
-    quote: Boolean,
-    draft: Boolean,
-    unpaid: Boolean,
-    remindable: Boolean,
+    action: InvoiceAction?,
     onReceipt: () -> Unit,
     onSendReminder: () -> Unit,
     onReviewSend: () -> Unit,
@@ -782,15 +806,9 @@ private fun RowAction(
 ) {
     val c = AuntieTheme.colors
     val flags = LocalFeatureFlags.current
-    when {
-        // A quote's accept/deny lives on the kinfolk side; there is no admin-side
-        // payable action (no reminder/receipt), so the row carries no action button.
-        quote -> { /* status pill alone conveys the quote state */ }
-        draft -> PrimaryButton(label = "Review & send", onClick = onReviewSend)
-        // #871: a balance on a cancelled invoice, a credit or an unstamped doc is
-        // not a bill to chase, and a receipt would claim a payment. No action.
-        unpaid && !remindable -> { /* nothing to remind about, nothing to receipt */ }
-        unpaid -> PrimaryButton(
+    when (action) {
+        InvoiceAction.REVIEW_AND_SEND -> PrimaryButton(label = "Review & send", onClick = onReviewSend)
+        InvoiceAction.SEND_REMINDER -> PrimaryButton(
             label = if (reminding) "Sending..." else "Send reminder",
             onClick = { if (!reminding) onSendReminder() },
             enabled = !reminding,
@@ -802,11 +820,13 @@ private fun RowAction(
                 modifier = Modifier.height(14.dp),
             )
         })
-        else -> if (flags.invoicesGenerateReceipt) {
+        InvoiceAction.GENERATE_RECEIPT -> if (flags.invoicesGenerateReceipt) {
             GhostButton(label = "Receipt", onClick = onReceipt)
         } else {
             DisabledPill("receipt")
         }
+        // Never a row action: recording a payment needs the detail screen's dialog.
+        InvoiceAction.RECORD_PAYMENT, null -> { /* nothing to offer from a list row */ }
     }
 }
 
