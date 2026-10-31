@@ -148,6 +148,43 @@ describe('linkInvoiceSessions unlink', () => {
     expect(writeAt(ctx, 'kin_care_sessions/s1')?.data._attribution).toBe('manual_unlink');
     expect(writeAt(ctx, 'kin_care_sessions/s2')?.data._attribution).toBe('manual_unlink');
   });
+
+  it('#1259: a dropped visit whose back-link names ANOTHER invoice keeps that back-link', async () => {
+    const ctx = seed({
+      invoice: { kinfolkId: 'fam1', status: 'open', amountDue: 40, total: 40, sessionIds: ['s1', 's2'] },
+      sessions: {
+        s1: session('fam1', { invoiceId: ' invB ' }),
+        s2: session('fam1', { invoiceId: 'inv1' }),
+      },
+      otherInvoices: { invB: { kinfolkId: 'fam1', sessionIds: ['s1'] } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await linkInvoiceSessionsHandler(req({ invoiceId: 'inv1', sessionIds: [] }));
+    // The invoice side drops both; the delta stays this invoice's set delta.
+    expect(res.removed).toEqual(['s1', 's2']);
+    expect(writeAt(ctx, 'invoices/inv1')?.data.sessionIds).toEqual([]);
+    // s1 names invB: its session doc and invB are untouched.
+    expect(writeAt(ctx, 'kin_care_sessions/s1')).toBeUndefined();
+    expect(writeAt(ctx, 'invoices/invB')).toBeUndefined();
+    // s2 names this invoice: cleared as before.
+    expect(writeAt(ctx, 'kin_care_sessions/s2')?.data.invoiceId).toBe('');
+  });
+
+  it('#1259: a dropped visit with an absent, empty or whitespace back-link is cleared', async () => {
+    const ctx = seed({
+      invoice: { kinfolkId: 'fam1', status: 'open', amountDue: 40, total: 40, sessionIds: ['s1', 's2', 's3'] },
+      sessions: {
+        s1: session('fam1'),
+        s2: session('fam1', { invoiceId: '' }),
+        s3: session('fam1', { invoiceId: '   ' }),
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await linkInvoiceSessionsHandler(req({ invoiceId: 'inv1', sessionIds: [] }));
+    for (const sid of ['s1', 's2', 's3']) {
+      expect(writeAt(ctx, `kin_care_sessions/${sid}`)?.data.invoiceId).toBe('');
+    }
+  });
 });
 
 describe('linkInvoiceSessions atomicity', () => {
