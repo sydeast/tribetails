@@ -13,14 +13,14 @@ import { vendorConfigured } from '../support/e2e-real';
  * the reload proves the screen reads that write back and the image loads from
  * Cloudinary's CDN.
  *
- * ONE REQUEST IS STILL ANSWERED HERE, and only one: the signature. The admin
- * signs through `/api/cloudinary/sign-upload`, a hosting rewrite to the admin's
- * own functions codebase (`auntieos-admin/web/functions`), which this run does
- * not serve (#1201). The `cloudinarySignUpload` task signs the same params that
- * function signs, with the run's test credentials, into the suite's `e2e/`
- * folder, so Cloudinary verifies it the way it verifies the real signer's. The
- * upload, the Firestore writes and the image load are all real. When #1201
- * serves the signer, this intercept goes.
+ * NOTHING IS ANSWERED HERE. The sign request goes to the admin's real
+ * `signCloudinaryUpload` (#1201): the dev server proxies
+ * `/api/cloudinary/sign-upload` to the admin functions codebase, which this run
+ * serves beside `mytribe/functions`. Under the run's `demo-` project id that
+ * signer prefixes the folder it validated with `e2e/` (#1202), so the upload
+ * lands in `e2e/tribetails/user/<uid>/`. A URL under that folder is itself the
+ * proof the real signer answered: the client asks for `tribetails/user/<uid>`
+ * and only the signer adds the prefix.
  *
  * The refused-upload case (a 500 from Cloudinary) needs a vendor that can be
  * told to fail, so it stays in the PR-time spec only.
@@ -33,12 +33,12 @@ import { vendorConfigured } from '../support/e2e-real';
 const PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
-/** UPLOAD covers sign, a real Cloudinary upload and two Firestore writes. */
+/** UPLOAD covers a real sign (cold start included), a real Cloudinary upload and two Firestore writes. */
 const BUDGET_MS = { RENDER: 15_000, UPLOAD: 30_000 } as const;
 
 const AVATAR_IMG = '.account__hero .den-heading-leading img';
 
-/** `https://res.cloudinary.com/<cloud>/image/upload/v123/e2e/account-photo/abc.png` -> `e2e/account-photo/abc`. */
+/** `https://res.cloudinary.com/<cloud>/image/upload/v123/e2e/tribetails/user/<uid>/abc.png` -> `e2e/tribetails/user/<uid>/abc`. */
 function publicIdOf(url: string): string {
   const match = /\/upload\/(?:v\d+\/)?(e2e\/.+?)(?:\.[a-z0-9]+)?$/i.exec(url);
   if (!match) throw new Error(`not an e2e/ Cloudinary URL: ${url}`);
@@ -67,17 +67,6 @@ describe('account photo (real Cloudinary upload)', () => {
   });
 
   it('uploads a picked image to Cloudinary, shows it, and it loads from Cloudinary after a reload', () => {
-    cy.task<Record<string, unknown>>('cloudinarySignUpload', { subfolder: 'account-photo' }).then((signed) => {
-      cy.intercept('POST', '**/api/cloudinary/sign-upload', (req) => {
-        // The contract with the real signer still holds: the operator's own
-        // uid as the entity, under the USER folder, the same as Android sends.
-        const body = req.body as { entityType: string; entityId: string; folder: string };
-        expect(body.entityType).to.eq('USER');
-        expect(body.folder).to.eq(`tribetails/user/${body.entityId}`);
-        req.reply({ statusCode: 200, body: { ...signed, entityType: body.entityType, entityId: body.entityId } });
-      });
-    });
-
     cy.signIn();
     cy.visit('/account');
     cy.get('.account__fields', { timeout: BUDGET_MS.RENDER }).should('exist');
@@ -94,7 +83,7 @@ describe('account photo (real Cloudinary upload)', () => {
 
     cy.get(AVATAR_IMG, { timeout: BUDGET_MS.UPLOAD })
       .should('have.attr', 'src')
-      .and('match', /^https:\/\/res\.cloudinary\.com\/.+\/e2e\/account-photo\//);
+      .and('match', /^https:\/\/res\.cloudinary\.com\/.+\/e2e\/tribetails\/user\/[^/]+\//);
     cy.then(() => {
       expect(Date.now() - t0, 'ms from picking the file to the avatar showing the upload').to.be.lessThan(
         BUDGET_MS.UPLOAD,
@@ -113,7 +102,7 @@ describe('account photo (real Cloudinary upload)', () => {
     cy.get('.account__fields', { timeout: BUDGET_MS.RENDER }).should('exist');
     cy.get(AVATAR_IMG, { timeout: BUDGET_MS.RENDER })
       .should('have.attr', 'src')
-      .and('match', /\/e2e\/account-photo\//);
+      .and('match', /\/e2e\/tribetails\/user\/[^/]+\//);
     cy.get(AVATAR_IMG).should(($img) => {
       expect(($img[0] as HTMLImageElement).naturalWidth, 'the image loaded from Cloudinary').to.be.greaterThan(0);
     });
