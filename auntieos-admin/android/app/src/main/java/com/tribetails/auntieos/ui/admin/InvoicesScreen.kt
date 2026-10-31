@@ -212,6 +212,27 @@ private fun daysOverdue(i: Invoice, todayIso: String): Int? {
     }.getOrNull()
 }
 
+/**
+ * #1258: the list row's date line, read off the STORED state like the web
+ * list's (`src/screens/Invoices.tsx`). "paid <date>" only for a PAID invoice;
+ * a cancelled, credit, redeemed or zero row with a date reads "dated <date>",
+ * because "paid" claims a payment. The old fallback printed "paid" under every
+ * row that was not an open bill.
+ */
+internal fun invoiceRowDateLine(invoice: Invoice, todayIso: String): String {
+    val state = invoiceStateOrNull(invoice)
+    val days = if (invoiceIsOverdue(invoice, todayIso)) daysOverdue(invoice, todayIso) else null
+    return when {
+        state == InvoiceState.QUOTE -> "quote"
+        state == InvoiceState.DRAFT -> "draft"
+        days != null -> "$days day${if (days == 1) "" else "s"} overdue"
+        state == InvoiceState.OPEN && invoice.dueDate.isNotBlank() -> "due ${humanizeDate(invoice.dueDate)}"
+        invoice.date.isNotBlank() ->
+            "${if (state == InvoiceState.PAID) "paid" else "dated"} ${humanizeDate(invoice.date)}"
+        invoice.dueDate.isNotBlank() -> "due ${humanizeDate(invoice.dueDate)}"
+        else -> "no date"
+    }
+}
 /** Compact USD formatting from a Double total. */
 private fun formatMoney(amount: Double): String {
     val rounded = (amount * 100.0).let { kotlin.math.round(it) } / 100.0
@@ -676,10 +697,7 @@ private fun InvoiceRow(
 ) {
     val c = AuntieTheme.colors
     val state = invoiceStateOrNull(invoice)
-    val quote = state == InvoiceState.QUOTE
-    val draft = state == InvoiceState.DRAFT
     val overdue = invoiceIsOverdue(invoice, todayIso)
-    val unpaid = state == InvoiceState.OPEN
 
     // Every chip is a positive read of the STORED state. The old `else ->
     // "Paid"` fallback labelled a credit, a cancelled invoice, and a $0 row as
@@ -766,16 +784,7 @@ private fun InvoiceRow(
         }
 
         // Meta: humanized due / paid line (+ days overdue) + linked visits.
-        val days = daysOverdue(invoice, todayIso)
-        val line1 = when {
-            quote -> "quote"
-            draft -> "draft"
-            overdue && days != null -> "$days days overdue"
-            invoice.dueDate.isNotBlank() && unpaid -> "due ${humanizeDate(invoice.dueDate)}"
-            invoice.date.isNotBlank() -> "paid ${humanizeDate(invoice.date)}"
-            invoice.dueDate.isNotBlank() -> "due ${humanizeDate(invoice.dueDate)}"
-            else -> "no date"
-        }
+        val line1 = invoiceRowDateLine(invoice, todayIso)
         Text(
             line1,
             style = AuntieTheme.typography.mono.copy(fontSize = 11.sp),
