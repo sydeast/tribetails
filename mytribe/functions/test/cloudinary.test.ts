@@ -1,6 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as crypto from 'crypto';
-import { signCloudinaryFolderUpload, assertCloudinaryUrlInFolder } from '../src/lib/cloudinary';
+import {
+  signCloudinaryFolderUpload,
+  assertCloudinaryUrlInFolder,
+  scopeCloudinaryFolder,
+  E2E_PROJECT_ID,
+} from '../src/lib/cloudinary';
 
 describe('signCloudinaryFolderUpload', () => {
   it('produces a deterministic sha1 signature matching the Cloudinary recipe', () => {
@@ -164,5 +169,88 @@ describe('assertCloudinaryUrlInFolder', () => {
         folder,
       ),
     ).toThrow(/not a Cloudinary asset/);
+  });
+});
+
+// #1202. Under the real-services Cypress project id every signed folder gains an
+// `e2e/` prefix so the #1196 cleanup sees what a spec uploaded. Anywhere else
+// nothing changes.
+describe('#1202 e2e/ folder scoping', () => {
+  const saved = {
+    g: process.env['GCLOUD_PROJECT'],
+    c: process.env['GOOGLE_CLOUD_PROJECT'],
+    f: process.env['FIREBASE_CONFIG'],
+  };
+  const restore = (k: string, v: string | undefined) => {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  };
+  beforeEach(() => {
+    delete process.env['GCLOUD_PROJECT'];
+    delete process.env['GOOGLE_CLOUD_PROJECT'];
+    delete process.env['FIREBASE_CONFIG'];
+  });
+  afterEach(() => {
+    restore('GCLOUD_PROJECT', saved.g);
+    restore('GOOGLE_CLOUD_PROJECT', saved.c);
+    restore('FIREBASE_CONFIG', saved.f);
+  });
+  const base = { cloudName: 'demo', apiKey: 'key123', apiSecret: 'secret456', folder: 'tribetails/kinfolks/u1/avatars' };
+  const sigFor = (folder: string, ts: number) =>
+    crypto
+      .createHash('sha1')
+      .update(`allowed_formats=jpg,png,webp,gif&folder=${folder}&timestamp=${ts}&transformation=fl_force_strip` + 'secret456')
+      .digest('hex');
+  it('the e2e project id is the one the real-services run starts the emulators under', () => {
+    expect(E2E_PROJECT_ID).toBe('demo-auntieos-e2e');
+  });
+  it('leaves the folder alone under any other project', () => {
+    process.env['GCLOUD_PROJECT'] = 'mytribe-prod';
+    const r = signCloudinaryFolderUpload(base);
+    expect(r.folder).toBe(base.folder);
+    expect(r.signature).toBe(sigFor(base.folder, r.timestamp));
+  });
+  it('leaves the folder alone when no project id is set', () => {
+    expect(signCloudinaryFolderUpload(base).folder).toBe(base.folder);
+  });
+  it('prefixes e2e/ under demo-auntieos-e2e, and signs the prefixed folder', () => {
+    process.env['GCLOUD_PROJECT'] = E2E_PROJECT_ID;
+    const r = signCloudinaryFolderUpload(base);
+    expect(r.folder).toBe(`e2e/${base.folder}`);
+    expect(r.signature).toBe(sigFor(`e2e/${base.folder}`, r.timestamp));
+    expect(r.signature).not.toBe(sigFor(base.folder, r.timestamp));
+  });
+  it('reads the project id from FIREBASE_CONFIG when GCLOUD_PROJECT is absent', () => {
+    process.env['FIREBASE_CONFIG'] = JSON.stringify({ projectId: E2E_PROJECT_ID });
+    expect(signCloudinaryFolderUpload(base).folder).toBe(`e2e/${base.folder}`);
+  });
+  it('ignores a malformed FIREBASE_CONFIG', () => {
+    process.env['FIREBASE_CONFIG'] = '{not json';
+    expect(signCloudinaryFolderUpload(base).folder).toBe(base.folder);
+  });
+  it('never double-prefixes', () => {
+    expect(scopeCloudinaryFolder('e2e/a/b', { GCLOUD_PROJECT: E2E_PROJECT_ID })).toBe('e2e/a/b');
+    expect(scopeCloudinaryFolder('a/b', { GCLOUD_PROJECT: E2E_PROJECT_ID })).toBe('e2e/a/b');
+    expect(scopeCloudinaryFolder('a/b', { GCLOUD_PROJECT: 'x' })).toBe('a/b');
+  });
+  describe('assertCloudinaryUrlInFolder under the e2e project', () => {
+    const folder = 'tribetails/kinfolks/kf1/kin/dog1';
+    beforeEach(() => {
+      process.env['GCLOUD_PROJECT'] = E2E_PROJECT_ID;
+    });
+    it('accepts a URL inside the prefixed folder', () => {
+      const url = `https://res.cloudinary.com/demo/image/upload/v1/e2e/${folder}/p.jpg`;
+      expect(() => assertCloudinaryUrlInFolder(url, 'demo', folder)).not.toThrow();
+    });
+    it('refuses a URL in the unprefixed folder, so a stray upload cannot be confirmed', () => {
+      const url = `https://res.cloudinary.com/demo/image/upload/v1/${folder}/p.jpg`;
+      expect(() => assertCloudinaryUrlInFolder(url, 'demo', folder)).toThrow(/outside the signed folder/);
+    });
+  });
+  it('outside the e2e project a prefixed URL is still checked against the bare folder', () => {
+    process.env['GCLOUD_PROJECT'] = 'mytribe-prod';
+    const folder = 'tribetails/kinfolks/kf1/kin/dog1';
+    const url = `https://res.cloudinary.com/demo/image/upload/v1/${folder}/p.jpg`;
+    expect(() => assertCloudinaryUrlInFolder(url, 'demo', folder)).not.toThrow();
   });
 });

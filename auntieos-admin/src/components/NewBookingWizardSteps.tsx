@@ -796,9 +796,6 @@ export function ReviewStep({
             {total.unpriced.length === 1 ? 'it' : 'them'} in Settings, under KinCare types.
           </p>
         )}
-        <p className="new-booking__hint">
-          Surcharges and taxes are applied on the invoice, after the visits are done.
-        </p>
       </section>
 
       <section className="nbw__panel">

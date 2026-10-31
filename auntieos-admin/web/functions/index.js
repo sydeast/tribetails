@@ -505,6 +505,30 @@ function validateUploadFolder(folder, entityType, entityId) {
   return folder;
 }
 
+// #1202. The real-services Cypress run (#1089) starts the emulators under this
+// project id, and its Cloudinary cleanup (#1196) empties the `e2e/` folder on
+// exit. Under that id every signed folder is prefixed with `e2e/` so a spec's
+// uploads land where the cleanup looks. Anywhere else the folder is untouched.
+// Applied AFTER validateUploadFolder, so the tribetails/ boundary and the
+// entityId pin are still checked on the folder the client asked for.
+// Mirrors scopeCloudinaryFolder in mytribe/functions/src/lib/cloudinary.ts;
+// the two trees are separate packages, so the rule is restated, not imported.
+const E2E_PROJECT_ID = 'demo-auntieos-e2e';
+const E2E_FOLDER_PREFIX = 'e2e/';
+function runningProjectId(env) {
+  const direct = env.GCLOUD_PROJECT || env.GOOGLE_CLOUD_PROJECT;
+  if (direct) return direct;
+  try {
+    const cfg = JSON.parse(env.FIREBASE_CONFIG || '');
+    return cfg && typeof cfg.projectId === 'string' ? cfg.projectId : '';
+  } catch {
+    return '';
+  }
+}
+function scopeUploadFolder(folder, env = process.env) {
+  if (runningProjectId(env) !== E2E_PROJECT_ID) return folder;
+  return folder.startsWith(E2E_FOLDER_PREFIX) ? folder : `${E2E_FOLDER_PREFIX}${folder}`;
+}
 // ── #583: photo location metadata is stripped at upload ─────────────────────
 //
 // Photos never pass through these functions; a client posts the bytes straight
@@ -693,7 +717,7 @@ exports.signCloudinaryUpload = onRequest(
     // tested hermetically and enforced consistently.
     let signFolder;
     try {
-      signFolder = validateUploadFolder(folder, entityType, entityId);
+      signFolder = scopeUploadFolder(validateUploadFolder(folder, entityType, entityId));
     } catch (e) {
       res.status(400).json({ error: e.message });
       return;
@@ -1053,6 +1077,7 @@ module.exports.resolveAnthropicModel = resolveAnthropicModel;
 module.exports.ALLOWED_ANTHROPIC_MODELS = ALLOWED_ANTHROPIC_MODELS;
 module.exports.ANTHROPIC_MODEL_DEFAULT = ANTHROPIC_MODEL_DEFAULT;
 module.exports.validateUploadFolder = validateUploadFolder;
+module.exports.scopeUploadFolder = scopeUploadFolder;
 module.exports.uploadTransformationFor = uploadTransformationFor;
 module.exports.STRIP_METADATA_TRANSFORMATION = STRIP_METADATA_TRANSFORMATION;
 module.exports.uploadTagsFor = uploadTagsFor;
