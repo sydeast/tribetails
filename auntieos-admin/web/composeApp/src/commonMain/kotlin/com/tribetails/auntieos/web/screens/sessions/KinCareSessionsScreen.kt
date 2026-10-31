@@ -97,8 +97,13 @@ private sealed interface AuntieTimeRoute {
 }
 
 @Composable
-fun KinCareSessionsScreen() {
-    var route by remember { mutableStateOf<AuntieTimeRoute>(AuntieTimeRoute.List) }
+fun KinCareSessionsScreen(
+    /** #1199: a visit to open straight away, from an invoice's bound line. */
+    initialKinCareId: String? = null,
+) {
+    var route by remember(initialKinCareId) {
+        mutableStateOf<AuntieTimeRoute>(initialKinCareId?.let { AuntieTimeRoute.Detail(it) } ?: AuntieTimeRoute.List)
+    }
     when (val r = route) {
         AuntieTimeRoute.List      -> AuntieTimeListScreen(
             onOpenDetail   = { route = AuntieTimeRoute.Detail(it) },

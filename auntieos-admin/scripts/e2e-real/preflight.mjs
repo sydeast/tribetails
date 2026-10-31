@@ -1,9 +1,16 @@
 /**
  * Preflight for the real-services Cypress run (#1089, `npm run e2e:real`).
  *
- * WHAT IT DOES. Writes `mytribe/functions/.secret.local` from environment
- * variables before the functions emulator boots, and refuses to write it, so the
- * run never starts, when a value could reach something real that it must not.
+ * WHAT IT DOES. Writes a `.secret.local` into EACH functions codebase the run
+ * serves (`mytribe/functions` and the admin's own `auntieos-admin/web/functions`,
+ * #1201) from environment variables before the functions emulator boots, and
+ * refuses to write any of them, so the run never starts, when a value could
+ * reach something real that it must not.
+ *
+ * ONE FILE PER CODEBASE. The emulator reads a function's secrets from the
+ * `.secret.local` in THAT function's source directory. A key written into
+ * mytribe's file does nothing for `signCloudinaryUpload`, which lives in the
+ * admin codebase, so each codebase gets its own complete file.
  *
  * WHY THE FILE HAS TO EXIST AND BE COMPLETE. The functions emulator resolves a
  * function's secrets from `.secret.local` first. Any key missing from that file,
@@ -16,7 +23,9 @@
  *      project, so a lookup has nothing to find.
  *   2. This file writes EVERY secret any deployed function declares, with a
  *      non-empty value, so the emulator never asks Secret Manager at all.
- * The list is read from the BUILT functions (`lib/index.js`), from the same
+ * The list is read from each codebase's entry point (its package.json `main`:
+ * `lib/index.js` for the built mytribe functions, `index.js` for the admin's
+ * plain-JS ones), from the same
  * `__endpoint.secretEnvironmentVariables` the emulator itself reads, rather
  * than by grepping source, so a secret added in a multi-line `secrets: [...]`
  * array or through a spread constant cannot be missed.
@@ -151,14 +160,33 @@ export function disconnectRisks(specDir) {
 }
 
 /**
- * The secret names every function in the built codebase declares, read from
+ * The file the emulator loads for the codebase in [functionsDir]: its
+ * package.json `main`, as firebase-tools resolves it, or `index.js` when the
+ * field is absent (Node's own default).
+ */
+export function functionsEntry(functionsDir) {
+  const pkgPath = join(functionsDir, 'package.json');
+  if (!existsSync(pkgPath)) throw new Error(`${pkgPath} does not exist; ${functionsDir} is not a functions codebase`);
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+  const main = typeof pkg.main === 'string' && pkg.main !== '' ? pkg.main : 'index.js';
+  return resolve(functionsDir, main);
+}
+/** The secrets file the emulator reads for the codebase in [functionsDir]. */
+export function secretsFileFor(functionsDir) {
+  return join(functionsDir, '.secret.local');
+}
+/**
+ * The secret names every function in one codebase declares, read from
  * the same endpoint metadata the emulator reads. Runs in a child process so the
  * functions' module-scope code cannot touch this one.
  */
 export function declaredSecrets(functionsDir) {
-  const entry = resolve(functionsDir, 'lib', 'index.js');
+  const entry = functionsEntry(functionsDir);
   if (!existsSync(entry)) {
     throw new Error(`${entry} does not exist. Build the functions first (npm --prefix mytribe/functions run build).`);
+  }
+  if (!existsSync(join(functionsDir, 'node_modules'))) {
+    throw new Error(`${functionsDir}/node_modules does not exist. Install it first (npm ci --prefix ${functionsDir}).`);
   }
   const script = `
     const m = require(${JSON.stringify(entry)});
@@ -244,34 +272,46 @@ export function render(values) {
   return `${MARKER}\n${lines.join('\n')}\n`;
 }
 
-/** CLI: `node preflight.mjs <functionsDir> <realSpecDir> <availabilityJsonOut>` */
+/**
+ * CLI: `node preflight.mjs <realSpecDir> <availabilityJsonOut> <functionsDir> [<functionsDir>...]`
+ *
+ * One `functionsDir` per codebase `e2e.real.firebase.json` serves. Every file
+ * is planned and checked before ANY is written, so a refusal in one codebase
+ * leaves no secrets file behind in another.
+ */
 async function main() {
-  const [functionsDir, specDir, availabilityOut] = process.argv.slice(2);
-  if (!functionsDir || !specDir || !availabilityOut) {
-    console.error('usage: preflight.mjs <functionsDir> <realSpecDir> <availabilityJsonOut>');
+  const [specDir, availabilityOut, ...functionsDirs] = process.argv.slice(2);
+  if (!specDir || !availabilityOut || functionsDirs.length === 0) {
+    console.error('usage: preflight.mjs <realSpecDir> <availabilityJsonOut> <functionsDir> [<functionsDir>...]');
     process.exit(2);
   }
-  const target = join(functionsDir, '.secret.local');
-  if (existsSync(target) && !readFileSync(target, 'utf8').startsWith(MARKER)) {
-    console.error(`REFUSED: ${target} exists and this script did not write it. Move it aside; it is not overwritten.`);
-    process.exit(1);
+  for (const dir of functionsDirs) {
+    const target = secretsFileFor(dir);
+    if (existsSync(target) && !readFileSync(target, 'utf8').startsWith(MARKER)) {
+      console.error(`REFUSED: ${target} exists and this script did not write it. Move it aside; it is not overwritten.`);
+      process.exit(1);
+    }
   }
   const refusals = disconnectRisks(specDir);
-  const { values, refusals: valueRefusals, available } = plan(declaredSecrets(functionsDir), process.env);
-  refusals.push(...valueRefusals);
+  const planned = functionsDirs.map((dir) => ({ dir, ...plan(declaredSecrets(dir), process.env) }));
+  for (const p of planned) refusals.push(...p.refusals);
   if (refusals.length > 0) {
     console.error('REFUSED to start the real-services run:');
-    for (const r of refusals) console.error(`  - ${r}`);
+    for (const r of [...new Set(refusals)]) console.error(`  - ${r}`);
     process.exit(1);
   }
-  writeFileSync(target, render(values), { mode: 0o600 });
+  for (const p of planned) writeFileSync(secretsFileFor(p.dir), render(p.values), { mode: 0o600 });
+  // Availability reads the environment only, so every codebase's plan agrees.
+  const available = planned[0].available;
   writeFileSync(availabilityOut, JSON.stringify(available));
   const named = Object.entries(available)
     .map(([vendor, ok]) => `${vendor}=${ok ? 'configured' : 'not configured, its specs skip'}`)
     .join(', ');
-  console.log(`preflight: wrote ${Object.keys(values).length} secrets to ${target}; ${named}`);
+  for (const p of planned) {
+    console.log(`preflight: wrote ${Object.keys(p.values).length} secrets to ${secretsFileFor(p.dir)}`);
+  }
+  console.log(`preflight: ${named}`);
 }
-
 if (import.meta.url === `file://${process.argv[1]}`) {
   await main();
 }

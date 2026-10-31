@@ -46,6 +46,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerResultLedgerPayment
 import com.tribetails.auntieos.data.model.Invoice
+import com.tribetails.auntieos.data.model.howToPayRowsForInvoice
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Payment
 import com.tribetails.auntieos.domain.InvoiceAction
@@ -872,15 +873,16 @@ private fun invoiceDetailBody(
     }
 
     // ── How to pay (A8 Payments) ─────────────────────────────────────────────────
-    // Only when the operator has entered at least one handle (else nothing renders —
-    // no fake methods).
-    val payLines = paymentMethodLines(businessSettings)
-    if (payLines.isNotEmpty()) {
+    // #1200: the methods the household is offered on this invoice, resolved as the
+    // server resolves them (switch, then handle or instructions, snapshot before
+    // live settings). Nothing renders when none is offered, or nothing is owed.
+    val payRows = howToPayRowsForInvoice(invoice, businessSettings)
+    if (payRows.isNotEmpty()) {
         item {
             DenPanel(title = "How to pay") {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    payLines.forEach { (method, handle) ->
-                        AuntieKeyValueRow(label = method, value = handle)
+                    payRows.forEach { row ->
+                        AuntieKeyValueRow(label = row.label, value = row.detail)
                     }
                 }
             }
@@ -895,16 +897,6 @@ private fun invoiceDetailBody(
             sessionsLoading = sessionsLoading,
             onOpenEdit      = onOpenEdit,
         )
-    }
-}
-
-/** A8: non-blank payment handles as (method, handle) rows for the "How to pay" panel. */
-private fun paymentMethodLines(bs: com.tribetails.auntieos.data.model.BusinessSettings?): List<Pair<String, String>> {
-    bs ?: return emptyList()
-    return buildList {
-        if (bs.venmoHandle.isNotBlank())   add("Venmo"   to bs.venmoHandle.trim())
-        if (bs.paypalHandle.isNotBlank())  add("PayPal"  to bs.paypalHandle.trim())
-        if (bs.cashappHandle.isNotBlank()) add("Cash App" to bs.cashappHandle.trim())
     }
 }
 

@@ -557,6 +557,17 @@ data class Invoice(
      * a typed value; the server's `getMyInvoices` is the normaliser.
      */
     var viewed: Any? = null,
+    /**
+     * The payment settings live when this invoice was issued, copied on by
+     * `createInvoice`, `createQuote` and `reviewAndSendDraftInvoice` (#409).
+     * The portal offers the household what this says, before live settings,
+     * so the "How to pay" panel reads it first too (#1200, through
+     * `howToPayRowsForInvoice`). `Any?` and nullable per the Class B rule
+     * above: absent on every invoice issued before #409, and a typed map would
+     * make one hand-edited doc blank the whole invoice query. Never written
+     * by this app.
+     */
+    var payMethodSettingsSnapshot: Any? = null,
     // Attribution fields written by backfill_structural_links.py
     var sessionIds: List<String> = emptyList(),
     @get:PropertyName("_attribution") @set:PropertyName("_attribution") var attribution: String = "",

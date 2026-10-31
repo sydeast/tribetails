@@ -15,4 +15,10 @@ class SchedulingOptionsLabelTest {
         assertFalse(label.contains("invoice"))
         assertFalse(label.contains("applied"))
     }
+
+    @Test
+    fun surchargeButtonIsNamedForWhatItDoes() {
+        assertEquals("Manage Surcharges", MANAGE_SURCHARGES_LABEL)
+        assertFalse(MANAGE_SURCHARGES_LABEL.contains("Link"))
+    }
 }

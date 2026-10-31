@@ -45,6 +45,7 @@ import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Invoice
 import com.tribetails.auntieos.web.data.BusinessSettings
+import com.tribetails.auntieos.web.data.howToPayRowsForInvoice
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.Payment
 import com.tribetails.auntieos.web.data.WriteResult
@@ -55,6 +56,7 @@ import com.tribetails.auntieos.web.data.PaymentSubmissionKeys
 import com.tribetails.auntieos.web.data.recordPaymentOutcomeMessage
 import com.tribetails.auntieos.web.data.recordPaymentRefusalText
 import com.tribetails.auntieos.web.data.submitInvoicePayment
+import com.tribetails.auntieos.web.data.invoiceSessionLinksSavedText
 import com.tribetails.auntieos.web.util.openUrl
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
@@ -91,7 +93,12 @@ import kotlinx.coroutines.launch
 // operator is never misled into thinking those belong to THIS invoice.
 
 @Composable
-fun InvoiceDetailScreen(invoiceId: String, onBack: () -> Unit = {}) {
+fun InvoiceDetailScreen(
+    invoiceId: String,
+    onBack: () -> Unit = {},
+    /** #1199: opens the visit a bound line bills for. Null hides the button. */
+    onOpenVisit: ((String) -> Unit)? = null,
+) {
     val client = remember { FirestoreClient() }
     // P0-FLICKER: hoist Flow construction via remember so the same Flow survives recomposition.
     val streamState by remember { client.invoicesStream() }.collectAsState(initial = FirestoreResult.Loading)
@@ -150,26 +157,40 @@ fun InvoiceDetailScreen(invoiceId: String, onBack: () -> Unit = {}) {
                 )
 
             is InvoiceDetailState.Loaded -> InvoiceDetailBody(
-                invoice = state.invoice,
-                client  = client,
+                invoice     = state.invoice,
+                client      = client,
+                onOpenVisit = onOpenVisit,
             )
         }
     }
 }
 
 @Composable
-private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
+private fun InvoiceDetailBody(
+    invoice: Invoice,
+    client: FirestoreClient,
+    onOpenVisit: ((String) -> Unit)?,
+) {
     val c = AuntieTheme.colors
     val todayKey = nowIso().take(10)
-    val status   = invoiceStatusFor(invoice, todayKey)
-
-    val (statusTone, statusText, statusIcon) = when (status) {
-        InvoiceStatus.PAID        -> Triple(AuntieStatusTone.Success, "PAID", Lucide.CircleCheckBig)
-        InvoiceStatus.OVERDUE     -> Triple(AuntieStatusTone.Error, "OVERDUE", Lucide.CircleAlert)
-        InvoiceStatus.OUTSTANDING -> Triple(AuntieStatusTone.Warning, "OUTSTANDING", Lucide.Clock)
+    // #1199: the STORED stamp (ADR-0002), as web and Android read it. Never
+    // amountDue: a credit is not paid and a draft is not outstanding.
+    val badge = invoiceDetailBadgeFor(invoice, todayKey)
+    val statusTone = badge.tone
+    val statusText = badge.label
+    val statusIcon = when {
+        badge.overdue -> Lucide.CircleAlert
+        else -> when (badge.state) {
+            InvoiceState.PAID, InvoiceState.REDEEMED -> Lucide.CircleCheckBig
+            InvoiceState.OPEN, InvoiceState.DRAFT -> Lucide.Clock
+            InvoiceState.QUOTE, InvoiceState.ZERO -> Lucide.FileText
+            InvoiceState.CANCELLED -> Lucide.X
+            InvoiceState.CREDIT, null -> Lucide.CircleAlert
+        }
     }
     val accent     = statusTone.colorOf()
-    val amountTone = if (status == InvoiceStatus.PAID) KeyValueStyle.AccentSuccess else KeyValueStyle.AccentError
+    val amountTone = if (badge.state == InvoiceState.PAID) KeyValueStyle.AccentSuccess else KeyValueStyle.AccentError
+    val linesPanel = invoiceDetailLinesPanelOf(invoice)
 
     // Sessions for this kinfolk (for the link editor + linked-session rows).
     // P0-FLICKER: remember keyed on kinfolkId so a re-render keeps the same Flow.
@@ -234,36 +255,33 @@ private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
         toastMsg = msg; toastIsError = isError; toastVisible = true
     }
 
+    // #1197: the server's refusal, shown inside the Link Sessions dialog, which
+    // stays open with the operator's picks intact so they can correct and retry.
+    var linkSessionsError by remember(invoice._id) { mutableStateOf<String?>(null) }
+
+    /**
+     * #1197: ONE callable, `linkInvoiceSessions`, owns both directions (the
+     * invoice's `sessionIds` and each touched visit's `invoiceId`) in one server
+     * transaction, as on Android. The console sends the full set it holds; the
+     * server derives what was added and removed against the STORED set. Until
+     * #1197 this PATCHed the invoice over REST, which firestore.rules refuses.
+     */
     fun saveLinks() {
-        val newIds  = pendingIds.toList()
-        val oldIds  = invoice.sessionIds.toSet()
-        val added   = pendingIds - oldIds
-        val removed = oldIds - pendingIds
+        if (saveLoading) return
+        val newIds = pendingIds.toList()
         saveLoading = true
+        linkSessionsError = null
         scope.launch {
-            when (val r = client.updateInvoiceSessionIds(invoice._id, newIds)) {
+            when (val r = client.linkInvoiceSessions(invoice._id, newIds)) {
                 is WriteResult.Err -> {
                     saveLoading = false
-                    showToast("Save failed: ${r.message}", true)
-                    return@launch
+                    linkSessionsError = "linkInvoiceSessions failed: ${r.message}"
                 }
-                is WriteResult.Ok  -> Unit
-            }
-            // Bidirectional sync of the session -> invoice back-reference.
-            // WARNING-40: collect each WriteResult; surface partial failures fail-loud.
-            var failCount = 0
-            val addResults   = added.map   { sid -> client.updateSessionInvoiceId(sid, invoice._id) }
-            val removeResults = removed.map { sid -> client.updateSessionInvoiceId(sid, "") }
-            for (r in addResults + removeResults) {
-                if (r is WriteResult.Err) failCount++
-            }
-            saveLoading = false
-            if (failCount > 0) {
-                showToast("Saved invoice links but $failCount session back-reference(s) failed to update. Retry to fix.", true)
-                // Stay in edit mode so the operator can retry; the invoice sessionIds ARE saved.
-            } else {
-                editMode = false
-                showToast("Sessions linked.", false)
+                is WriteResult.Ok -> {
+                    saveLoading = false
+                    editMode = false
+                    showToast(invoiceSessionLinksSavedText(r.value), false)
+                }
             }
         }
     }
@@ -321,10 +339,17 @@ private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
         sessionsState = sessionsState,
         pendingIds    = pendingIds,
         saveLoading   = saveLoading,
+        error         = linkSessionsError,
         onToggle      = { sid ->
-            pendingIds = if (sid in pendingIds) pendingIds - sid else pendingIds + sid
+            if (!saveLoading) pendingIds = if (sid in pendingIds) pendingIds - sid else pendingIds + sid
         },
-        onCancel      = { editMode = false },
+        // Not while the call is in flight: its answer has to land somewhere.
+        onCancel      = {
+            if (!saveLoading) {
+                editMode = false
+                linkSessionsError = null
+            }
+        },
         onSave        = { saveLinks() },
     )
 
@@ -415,11 +440,7 @@ private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
             StatCard(
                 label   = "Amount due",
                 value   = formatMoney(invoice.amountDue),
-                trend   = when (status) {
-                    InvoiceStatus.PAID        -> "paid in full"
-                    InvoiceStatus.OVERDUE     -> "past due ${invoice.dueDate.trim().take(10)}"
-                    InvoiceStatus.OUTSTANDING -> "due ${invoice.dueDate.trim().take(10).ifBlank { "soon" }}"
-                },
+                trend   = badge.amountTrend,
                 tone    = statusTone,
                 feature = true,
                 modifier = Modifier.weight(1f),
@@ -512,6 +533,27 @@ private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
             }
         }
 
+        // ── Line items (#1199) ─────────────────────────────────────────────────
+        // Read-only here; typed lines change through Edit (#1174). A bound line
+        // (#408) got its money from the visit, so it says so and offers the visit.
+        DenPanel(title = "Line items") {
+            Column {
+                when (val panel = linesPanel) {
+                    is InvoiceDetailLinesPanel.Lines -> {
+                        panel.rows.forEachIndexed { idx, row ->
+                            InvoiceDetailLineItemRow(row, showDivider = idx > 0, onOpenVisit = onOpenVisit)
+                        }
+                        DetailRow("Subtotal", formatEditCents(panel.subtotalCents))
+                        if (panel.invoiceDiscountCents > 0) {
+                            DetailRow("Invoice discount", "-" + formatEditCents(panel.invoiceDiscountCents))
+                        }
+                        DetailRow("Total from these lines", formatEditCents(panel.totalCents), style = KeyValueStyle.Total)
+                    }
+                    else -> EmptyHint(invoiceDetailLinesEmptyCopy(panel).orEmpty())
+                }
+            }
+        }
+
         // ── Amounts panel ──────────────────────────────────────────────────────
         DenPanel(title = "Amounts") {
             Column {
@@ -599,34 +641,43 @@ private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
             invoice         = invoice,
             linkedSessions  = linkedSessions,
             sessionsState   = sessionsState,
-            onOpenEdit      = { pendingIds = invoice.sessionIds.toSet(); editMode = true },
+            onOpenEdit      = { pendingIds = invoice.sessionIds.toSet(); linkSessionsError = null; editMode = true },
         )
 
-        // How-to-pay: operator-entered Venmo/PayPal/Cash App handles (Payment Options
-        // settings). Hidden entirely when none are configured.
-        HowToPayPanel(settings = businessSettings)
+        // How-to-pay (#1200): the methods the household is offered on this invoice,
+        // resolved as the server resolves them. Hidden when none is offered.
+        HowToPayPanel(invoice = invoice, settings = businessSettings)
     }
 }
 
 @Composable
-private fun HowToPayPanel(settings: BusinessSettings?) {
-    val methods = buildList {
-        settings?.venmoHandle?.takeIf { it.isNotBlank() }?.let { add("Venmo" to it) }
-        settings?.paypalHandle?.takeIf { it.isNotBlank() }?.let { add("PayPal" to it) }
-        settings?.cashappHandle?.takeIf { it.isNotBlank() }?.let { add("Cash App" to it) }
-    }
+internal fun HowToPayPanel(invoice: Invoice, settings: BusinessSettings?) {
+    val methods = howToPayRowsForInvoice(invoice, settings)
     if (methods.isEmpty()) return
     val c = AuntieTheme.colors
-    DenPanel(title = "How to pay", subtitle = "Send payment to any of these.") {
+    DenPanel(title = "How to pay") {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            methods.forEach { (label, handle) ->
+            methods.forEach { row ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
+                    verticalAlignment = Alignment.Top,
                 ) {
-                    Text(label, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
-                    Text(handle, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                    Text(
+                        row.label,
+                        style = AuntieTheme.typography.bodyMedium,
+                        color = c.textDim,
+                        modifier = Modifier.padding(end = 16.dp),
+                    )
+                    // Instructions run to 500 characters, so the detail takes the
+                    // remaining width and wraps instead of squeezing the label.
+                    Text(
+                        row.detail,
+                        style = AuntieTheme.typography.bodyMedium,
+                        color = c.textPrimary,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                        modifier = Modifier.weight(1f),
+                    )
                 }
             }
         }
@@ -636,6 +687,60 @@ private fun HowToPayPanel(settings: BusinessSettings?) {
 /** Resolve a tone to its brand color via the shared AuntieStatusTone.color extension. */
 @Composable
 private fun AuntieStatusTone.colorOf() = this.color(AuntieTheme.colors)
+
+/** One stored line (#1199), with the #408 note and the route to its visit when it is bound. */
+@Composable
+private fun InvoiceDetailLineItemRow(
+    row: InvoiceDetailLineRow,
+    showDivider: Boolean,
+    onOpenVisit: ((String) -> Unit)?,
+) {
+    val c = AuntieTheme.colors
+    val hairline = AuntieTheme.dims.borderHairline
+    val ruleColor = c.borderSoft
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .drawBehind {
+                    if (showDivider) {
+                        val h = hairline.toPx()
+                        drawLine(
+                            color       = ruleColor,
+                            start       = Offset(0f, h / 2f),
+                            end         = Offset(size.width, h / 2f),
+                            strokeWidth = h,
+                        )
+                    }
+                }
+                .padding(vertical = 9.dp),
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    row.description,
+                    style = AuntieTheme.typography.bodySmall,
+                    color = if (row.descriptionMissing) c.textDim else c.textPrimary,
+                )
+                Text(row.detail, style = AuntieTheme.typography.labelSmall, color = c.textDim)
+            }
+            Text(formatEditCents(row.amountCents), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+        }
+        val sessionId = row.boundSessionId
+        if (sessionId != null) {
+            Column(
+                modifier = Modifier.padding(bottom = 9.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(INVOICE_DETAIL_BOUND_LINE_NOTE, style = AuntieTheme.typography.labelSmall, color = c.textDim)
+                if (onOpenVisit != null) {
+                    GhostButton(label = "Open this visit", onClick = { onOpenVisit(sessionId) })
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun PaymentRow(payment: Payment, showDivider: Boolean) {
@@ -771,6 +876,7 @@ private fun LinkSessionsDialog(
     sessionsState: FirestoreResult<List<KinCareSession>>,
     pendingIds: Set<String>,
     saveLoading: Boolean,
+    error: String?,
     onToggle: (String) -> Unit,
     onCancel: () -> Unit,
     onSave: () -> Unit,
@@ -783,10 +889,16 @@ private fun LinkSessionsDialog(
         maxWidth  = 440.dp,
         closeIcon = Lucide.X,
         footer    = {
-            GhostButton(label = "Cancel", onClick = onCancel)
+            GhostButton(label = "Cancel", onClick = onCancel, enabled = !saveLoading)
             PrimaryButton(label = "Save", onClick = onSave, loading = saveLoading)
         },
     ) {
+        // #1197: the server's refusal, verbatim, above the picks it refused.
+        if (error != null) {
+            AuntieBanner(tone = AuntieBannerTone.Error, title = "Can't save") {
+                Text(error, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
+        }
         when (val s = sessionsState) {
             FirestoreResult.Loading -> repeat(3) { ShimmerCard(height = 40.dp) }
             is FirestoreResult.Error -> Text(
