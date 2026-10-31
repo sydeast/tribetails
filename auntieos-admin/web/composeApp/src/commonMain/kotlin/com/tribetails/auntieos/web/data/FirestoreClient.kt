@@ -803,28 +803,32 @@ class FirestoreClient {
     // (api/directoryWrite.ts:237-255). Semantics kept identical: a whole-list
     // replace of tag NAMES, so clearing the last tag genuinely empties the field.
     //
-    // TRANSPORT: React patches only `{ tags, updatedAt }`. Both desktop paths now
-    // diff against the record you LOADED and merge only `tags`: kinfolk through
-    // [updateKinfolk] (#829 review), kin through [updateKin] (#895). Fail-loud: a
-    // rejected write propagates to the caller as WriteResult.Err.
+    // TRANSPORT: React patches only `{ tags, updatedAt }`. Both desktop paths
+    // merge only `tags` (#829 review, #895), so a concurrent change to any other
+    // field survives a tag save. Fail-loud: a rejected write propagates to the
+    // caller as WriteResult.Err.
+    //
+    // #1271: the list is ALWAYS sent, never diffed. These used to go through
+    // updateKin/updateKinfolk, which compare against the record the screen
+    // loaded. The tags panel saves on every add and remove while that record
+    // can still be the one first read, so "add X, then remove X" diffed []
+    // against [] and wrote nothing: the removal was dropped, X stayed on the
+    // pet, and the panel showed it gone.
 
-    /** Replaces a pet's tag NAME list. [kin] must be the loaded record, not a fresh one. */
+    /** Replaces a pet's tag NAME list. Writes `tags` whatever [kin] held when it was read. */
     suspend fun updateKinTags(kin: Kin, tags: List<String>): WriteResult<Unit> {
         require(kin._id.isNotBlank()) { "updateKinTags requires a kin id" }
-        return when (val r = updateKin(kin, kin.copy(tags = tags))) {
-            is WriteResult.Ok  -> WriteResult.Ok(Unit)
-            is WriteResult.Err -> WriteResult.Err(r.message)
-        }
+        return platformUpdateKinFields(kin._id, listOf(tagsChange(tags)))
     }
 
-    /** Replaces a household's tag NAME list. [kinfolk] must be the loaded record. */
+    /** Replaces a household's tag NAME list. Writes `tags` whatever [kinfolk] held when it was read. */
     suspend fun updateKinfolkTags(kinfolk: Kinfolk, tags: List<String>): WriteResult<Unit> {
         require(kinfolk._id.isNotBlank()) { "updateKinfolkTags requires a kinfolk id" }
-        return when (val r = updateKinfolk(kinfolk, kinfolk.copy(tags = tags))) {
-            is WriteResult.Ok  -> WriteResult.Ok(Unit)
-            is WriteResult.Err -> WriteResult.Err(r.message)
-        }
+        return platformUpdateKinfolkFields(kinfolk._id, listOf(tagsChange(tags)))
     }
+
+    private fun tagsChange(tags: List<String>): FieldChange =
+        FieldChange(listOf("tags"), JsonArray(tags.map { JsonPrimitive(it) }))
 
     /**
      * Patches a single Kin Care session document with the given string-valued

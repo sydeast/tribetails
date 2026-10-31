@@ -323,6 +323,57 @@ describe('KinView: hero', () => {
     await userEvent.type(await screen.findByLabelText(/add a pet tag/i), 'On meds{Enter}');
     await waitFor(() => expect(updateKinTags).toHaveBeenCalledWith('p1', ['Reactive', 'On meds']));
   });
+
+  /**
+   * #1271: Done closed the panel while the removal was still unacknowledged, so
+   * the operator could leave and reload with the write in flight, and the tag
+   * came back. Done is held as "Saving…" until the server answers.
+   */
+  it('holds Done as Saving… while a tag removal is unacknowledged, then repaints the pills from the saved list', async () => {
+    let ack: () => void = () => undefined;
+    updateKinTags.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          ack = resolve;
+        }),
+    );
+    mount({ tags: ['Reactive', 'On meds'] });
+    await screen.findByText('On meds');
+    await userEvent.click(screen.getByRole('button', { name: /edit tags/i }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove On meds tag' }));
+    expect(updateKinTags).toHaveBeenCalledWith('p1', ['Reactive']);
+
+    const held = screen.getByRole('button', { name: 'Saving…' });
+    expect(held).toBeDisabled();
+    expect(held).toHaveAttribute('aria-busy', 'true');
+    expect(screen.queryByRole('button', { name: 'Done' })).toBeNull();
+    await userEvent.click(held);
+    expect(screen.getByLabelText(/add a pet tag/i)).toBeInTheDocument(); // the panel did not close
+
+    ack();
+    const done = await screen.findByRole('button', { name: 'Done' });
+    expect(done).toBeEnabled();
+    await userEvent.click(done);
+    expect(screen.queryByLabelText(/add a pet tag/i)).toBeNull();
+    // The band's pills are the saved list, not the one first read.
+    const band = document.querySelector('.den-heading-badges') as HTMLElement;
+    expect(within(band).queryByText('On meds')).toBeNull();
+    expect(within(band).getByText('Reactive')).toHaveClass('den-statuspill');
+    expect(getKin).toHaveBeenCalledTimes(1); // repainted from the save, not a re-read
+  });
+
+  it('releases Done after a refused save, keeps the pills as read, and leaves the error in the open panel', async () => {
+    updateKinTags.mockRejectedValue(new Error('permission-denied'));
+    mount({ tags: ['Reactive'] });
+    await screen.findByText('Reactive');
+    await userEvent.click(screen.getByRole('button', { name: /edit tags/i }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove Reactive tag' }));
+
+    expect(await screen.findByText(/Couldn't save tags: permission-denied/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Done' })).toBeEnabled();
+    const band = document.querySelector('.den-heading-badges') as HTMLElement;
+    expect(within(band).getByText('Reactive')).toHaveClass('den-statuspill');
+  });
 });
 
 /**

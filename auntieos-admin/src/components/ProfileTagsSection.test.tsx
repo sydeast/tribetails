@@ -77,6 +77,54 @@ describe('ProfileTagsSection', () => {
     await waitFor(() => expect(screen.queryByText('Slow pay')).toBeNull());
   });
 
+  // #1271: the host holds its close control on these, so a save cannot be
+  // walked away from before the server has it.
+  it('reports a save in flight until it settles, and the saved list only once the server accepts it', async () => {
+    let ack: () => void = () => undefined;
+    const onSaveTags = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          ack = resolve;
+        }),
+    );
+    const onSavingChange = vi.fn();
+    const onSaved = vi.fn();
+    render(
+      <ProfileTagsSection
+        scope="pet"
+        initialTags={['Reactive']}
+        onSaveTags={onSaveTags}
+        onSavingChange={onSavingChange}
+        onSaved={onSaved}
+      />,
+    );
+    await userEvent.click(await screen.findByRole('button', { name: /remove reactive tag/i }));
+    expect(onSavingChange.mock.calls).toEqual([[true]]);
+    expect(onSaved).not.toHaveBeenCalled();
+
+    ack();
+    await waitFor(() => expect(onSavingChange.mock.calls).toEqual([[true], [false]]));
+    expect(onSaved).toHaveBeenCalledExactlyOnceWith([]);
+  });
+
+  it('settles the in-flight report on a refused save without reporting a saved list', async () => {
+    const onSavingChange = vi.fn();
+    const onSaved = vi.fn();
+    render(
+      <ProfileTagsSection
+        scope="pet"
+        initialTags={['Reactive']}
+        onSaveTags={vi.fn().mockRejectedValue(new Error('permission-denied'))}
+        onSavingChange={onSavingChange}
+        onSaved={onSaved}
+      />,
+    );
+    await userEvent.click(await screen.findByRole('button', { name: /remove reactive tag/i }));
+    expect(await screen.findByText(/couldn't save tags.*permission-denied/i)).toBeInTheDocument();
+    expect(onSavingChange.mock.calls).toEqual([[true], [false]]);
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+
   it('warns fail-loud if the vocabulary suggestions cannot be loaded, without blocking edits', async () => {
     getBusinessSettings.mockRejectedValue(new Error('offline'));
     const onSaveTags = vi.fn().mockResolvedValue(undefined);
