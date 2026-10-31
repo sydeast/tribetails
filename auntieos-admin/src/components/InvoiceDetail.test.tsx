@@ -59,6 +59,8 @@ const {
   archiveInvoice,
   unarchiveInvoice,
   retryInvoiceCheckoutClose,
+  linkInvoiceSessions,
+  useCollection,
 } = vi.hoisted(() => ({
   sendInvoiceReminder: vi.fn(),
   markInvoicePaid: vi.fn(),
@@ -72,6 +74,13 @@ const {
   archiveInvoice: vi.fn(),
   unarchiveInvoice: vi.fn(),
   retryInvoiceCheckoutClose: vi.fn(),
+  linkInvoiceSessions: vi.fn(),
+  useCollection: vi.fn(),
+}));
+// The Link visits editor (#1245) streams the household's visits.
+vi.mock('../lib/firestore', async (orig) => ({
+  ...(await orig<typeof import('../lib/firestore')>()),
+  useCollection: (spec: unknown) => useCollection(spec),
 }));
 vi.mock('../api/invoicesWrite', async (orig) => ({
   ...(await orig<typeof import('../api/invoicesWrite')>()),
@@ -87,6 +96,7 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   archiveInvoice,
   unarchiveInvoice,
   retryInvoiceCheckoutClose,
+  linkInvoiceSessions,
 }));
 
 import { InvoiceDetail, paymentSplit } from './InvoiceDetail';
@@ -257,6 +267,8 @@ beforeEach(() => {
   unarchiveInvoice.mockReset().mockResolvedValue(undefined);
   retryInvoiceCheckoutClose.mockReset().mockResolvedValue({ ok: true, invoiceId: 'inv1', closedCount: 1, failedCount: 0 });
   getInvoiceLedger.mockReset().mockResolvedValue(ledgerResult());
+  linkInvoiceSessions.mockReset();
+  useCollection.mockReset().mockReturnValue({ status: 'ready', data: [] });
   recordPayment.mockReset().mockResolvedValue({
     ok: true,
     paymentId: 'led1',
@@ -2803,5 +2815,68 @@ describe('InvoiceDetail Download PDF', () => {
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
     expect(link).toHaveAttribute('download', `invoice-${inv.invoiceNumber}.pdf`);
+  });
+});
+describe('Link visits (#1245)', () => {
+  const visits = [
+    { _id: 's1', kinfolkId: 'kf1', serviceType: 'Walk one', startTime: '2026-07-10T15:00:00Z', status: 'COMPLETED', invoiceId: 'inv1' },
+    { _id: 's2', kinfolkId: 'kf1', serviceType: 'Walk two', startTime: '2026-07-11T15:00:00Z', status: 'COMPLETED' },
+  ];
+  it('is offered in every state, including a paid invoice with nothing editable', () => {
+    render(
+      <InvoiceDetail
+        invoice={entry({ status: 'paid', editScope: 'none', amountDue: 0 })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Link visits' })).toBeInTheDocument();
+  });
+  it('opens inline in place of the ledger, saves the set, reports the delta and reloads the ledger', async () => {
+    const user = userEvent.setup();
+    useCollection.mockReturnValue({ status: 'ready', data: visits });
+    linkInvoiceSessions.mockResolvedValue({
+      ok: true, invoiceId: 'inv1', sessionIds: ['s1', 's2'], added: ['s2'], removed: [], status: 'open', editScope: 'all',
+    });
+    render(<InvoiceDetail invoice={entry({ sessionIds: ['s1'] })} onClose={vi.fn()} />);
+    await waitFor(() => expect(getInvoiceLedger).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole('button', { name: 'Link visits' }));
+    const editor = screen.getByRole('region', { name: 'Link visits' });
+    // The ledger panels are swapped out, not stacked under a second dialog.
+    expect(screen.queryByRole('heading', { name: 'Linked visits' })).toBeNull();
+    expect((within(editor).getByRole('checkbox', { name: /Walk one/ }) as HTMLInputElement).checked).toBe(true);
+    await user.click(within(editor).getByRole('checkbox', { name: /Walk two/ }));
+    await user.click(within(editor).getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Visits saved: 1 linked.')).toBeInTheDocument();
+    expect(linkInvoiceSessions).toHaveBeenCalledWith('inv1', ['s1', 's2']);
+    expect(screen.queryByRole('region', { name: 'Link visits' })).toBeNull();
+    await waitFor(() => expect(getInvoiceLedger).toHaveBeenCalledTimes(2));
+  });
+  it('keeps the editor open with the refusal inside it', async () => {
+    const user = userEvent.setup();
+    useCollection.mockReturnValue({ status: 'ready', data: visits });
+    linkInvoiceSessions.mockRejectedValue(new Error('This invoice is outside your test sandbox.'));
+    render(<InvoiceDetail invoice={entry({ sessionIds: ['s1'] })} onClose={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Link visits' }));
+    const editor = screen.getByRole('region', { name: 'Link visits' });
+    await user.click(within(editor).getByRole('checkbox', { name: /Walk two/ }));
+    await user.click(within(editor).getByRole('button', { name: 'Save' }));
+    expect(
+      await within(editor).findByText('linkInvoiceSessions failed: This invoice is outside your test sandbox.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Link visits' })).toBeInTheDocument();
+    expect(getInvoiceLedger).toHaveBeenCalledTimes(1);
+  });
+  it('cannot be closed while the save is in flight', async () => {
+    const user = userEvent.setup();
+    useCollection.mockReturnValue({ status: 'ready', data: visits });
+    linkInvoiceSessions.mockReturnValue(new Promise(() => {}));
+    const onClose = vi.fn();
+    render(<InvoiceDetail invoice={entry({ sessionIds: ['s1'] })} onClose={onClose} />);
+    await user.click(screen.getByRole('button', { name: 'Link visits' }));
+    const editor = screen.getByRole('region', { name: 'Link visits' });
+    await user.click(within(editor).getByRole('checkbox', { name: /Walk two/ }));
+    await user.click(within(editor).getByRole('button', { name: /Saving…|Save/ }));
+    await user.keyboard('{Escape}');
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

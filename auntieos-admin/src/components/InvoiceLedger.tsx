@@ -371,7 +371,7 @@ function SessionsPanel({ ledger }: { ledger: GetInvoiceLedgerResult }) {
       {sessions.length === 0 ? (
         <p className="invoice-ledger__empty">
           No visit is linked to this invoice. Its total is not attributed to any recorded work.
-          Visits are linked when the invoice is composed, from the uninvoiced-visits picker.
+          Use Link visits below to attach the work it bills.
         </p>
       ) : (
         <table className="invoice-ledger__table">

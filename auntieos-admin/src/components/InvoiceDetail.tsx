@@ -43,6 +43,7 @@ import type {
   UpdateInvoiceArgsPatch,
 } from '../contracts/invoiceContracts.generated';
 import { InvoiceLedgerPanels } from './InvoiceLedger';
+import { InvoiceLinkVisitsEditor, linkVisitsSavedText } from './InvoiceLinkVisitsEditor';
 import {
   InvoiceLineItemsTable,
   InvoiceLineItemsEditor,
@@ -695,6 +696,11 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // held in sync with it: the live listener would otherwise overwrite what the
   // operator is typing every time the doc changed underneath them.
   const [editing, setEditing] = useState<EditDraft | null>(null);
+  /**
+   * #1245: the Link visits editor is open. Inline, in the same slot as the
+   * edit form, so the overlay never stacks a second Dialog.
+   */
+  const [linking, setLinking] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   // Archive/restore confirm. Separate from `pending` because the ACTIONS array
   // is the state-driven action matrix and archiving is orthogonal to state: an
@@ -877,6 +883,12 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     setPending(null);
   }
 
+  function startLinking() {
+    setActionError(null);
+    setNoticeIncomplete(false);
+    setNotice(null);
+    setLinking(true);
+  }
   function startEditing() {
     setActionError(null);
     setNoticeIncomplete(false);
@@ -1487,7 +1499,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             billed", which is a different and much worse claim than "nobody has
             broken this invoice down". Every invoice created before Task 5.1 is
             in that state, so this is the common branch, not the edge case. */}
-        {editing === null && (
+        {editing === null && !linking && (
           storedLines === null ? (
             <p className="invoice-detail__no-lines">
               This invoice has no itemized breakdown. Its total was entered directly. Edit it to add
@@ -1512,7 +1524,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             reason Android orders them that way: what was billed, then what came
             in, then the work behind it. Hidden mid-edit, like the itemization
             directly above, so the edit form is the only thing on screen. */}
-        {editing === null && (
+        {editing === null && !linking && (
           <InvoiceLedgerPanels
             ledger={ledger}
             loading={ledgerLoading}
@@ -1658,6 +1670,23 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
               />
             </div>
           </div>
+        ) : linking ? (
+          <InvoiceLinkVisitsEditor
+            invoiceId={invoice._id}
+            kinfolkId={invoice.kinfolkId}
+            linkedIds={invoice.sessionIds}
+            // Held in the overlay's own busy flag, so the overlay cannot be
+            // closed while the save is in flight.
+            onBusyChange={setBusy}
+            onCancel={() => setLinking(false)}
+            onSaved={(result) => {
+              setLinking(false);
+              setNotice(linkVisitsSavedText(result));
+              // The visits panel is a one-shot fetch; the list's linked count
+              // refreshes itself through the live invoices listener.
+              reloadLedger();
+            }}
+          />
         ) : resendPrompt ? (
           <div className="invoice-detail__confirm">
             <p className="invoice-detail__confirm-copy">
@@ -1885,6 +1914,10 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                 enforcement; a refusal that gets through comes back with a code
                 and a sentence, and is shown verbatim above. */}
             {canEdit && <GhostButton label="Edit" onClick={startEditing} />}
+            {/* Offered in every state, as on Android and desktop: the callable
+                does not gate linking on editScope, since attributing work to a
+                bill moves no money. */}
+            <GhostButton label="Link visits" onClick={startLinking} />
             <GhostButton
               label={pdfBusy ? 'Making PDF…' : 'Download PDF'}
               onClick={() => void downloadPdf()}
