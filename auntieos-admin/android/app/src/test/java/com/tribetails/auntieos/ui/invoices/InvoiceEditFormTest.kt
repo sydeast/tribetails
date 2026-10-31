@@ -250,6 +250,73 @@ class InvoiceEditFormTest {
         assertEquals("Invoice discount ($100.00) is larger than the subtotal ($60.00).", outcome.error)
     }
 
+    // ── #1198: household, client, address and the legacy discount text ────────
+    @Test
+    fun `the draft opens with the stored household, client, address and discount text`() {
+        val draft = invoiceEditDraftOf(itemized())!!
+        assertEquals("Wanda Thorne", draft.kinfolkName)
+        assertEquals("Wanda Thorne", draft.client)
+        assertEquals("12 Elm Row", draft.address)
+        assertEquals("10%", draft.discount)
+    }
+    @Test
+    fun `an untouched draft sends none of the four, so a metadata save cannot blank them`() {
+        val invoice = itemized()
+        val draft = invoiceEditDraftOf(invoice)!!.copy(terms = "Net 30")
+        val patch = wire(invoice, draft)
+        for (key in listOf("kinfolkName", "client", "address", "discount")) {
+            assertFalse("$key was sent unchanged", patch.containsKey(key))
+        }
+    }
+    @Test
+    fun `only the changed one of the four is sent`() {
+        val invoice = itemized()
+        val draft = invoiceEditDraftOf(invoice)!!.copy(address = "14 Elm Row")
+        val patch = wire(invoice, draft)
+        assertEquals("14 Elm Row", patch["address"])
+        assertFalse(patch.containsKey("client"))
+        assertFalse(patch.containsKey("kinfolkName"))
+        assertFalse(patch.containsKey("discount"))
+    }
+    @Test
+    fun `all four are sent as typed when all four change`() {
+        val invoice = unitemized()
+        val draft = invoiceEditDraftOf(invoice)!!.copy(
+            kinfolkName = "The Riveras",
+            client = "Ana Rivera",
+            address = "12 Elm St",
+            discount = "10% loyalty",
+        )
+        assertEquals(
+            mapOf(
+                "kinfolkName" to "The Riveras",
+                "client" to "Ana Rivera",
+                "address" to "12 Elm St",
+                "discount" to "10% loyalty",
+            ),
+            wire(invoice, draft),
+        )
+    }
+    @Test
+    fun `clearing a wrong address sends it as an empty string`() {
+        val invoice = itemized(scope = "metadataOnly")
+        val draft = invoiceEditDraftOf(invoice)!!.copy(address = "")
+        assertEquals(mapOf("address" to ""), wire(invoice, draft))
+    }
+    @Test
+    fun `the four stay editable when the money is locked, and no money key rides along`() {
+        val invoice = itemized(scope = "metadataOnly")
+        val draft = invoiceEditDraftOf(invoice)!!.copy(client = "Ana Rivera", discount = "waived")
+        assertEquals(mapOf("client" to "Ana Rivera", "discount" to "waived"), wire(invoice, draft))
+    }
+    @Test
+    fun `an address longer than the server allows is refused before the round trip`() {
+        val invoice = itemized()
+        val draft = invoiceEditDraftOf(invoice)!!.copy(address = "x".repeat(501))
+        val outcome = invoiceEditPatchOf(invoice, draft)
+        assertNull(outcome.patch)
+        assertEquals("Address cannot be more than 500 characters.", outcome.error)
+    }
     // ── Editor helpers ─────────────────────────────────────────────────────────
 
     @Test

@@ -29,8 +29,9 @@ import com.tribetails.auntieos.ui.admin.validateComposerMoney
  * `.strict()` patch, and this file only ever puts into it the fields the form
  * controls AND the operator changed. Nothing is read back out of the form into
  * an [Invoice] and written whole, so a field this form has no control for
- * (client, address, kinfolkName, the legacy `discount` text, termsCode,
- * sessionIds, the money the server derives) cannot be wiped by a save.
+ * (termsCode, sessionIds, the money the server derives) cannot be wiped by a
+ * save. The household name, client, address and legacy `discount` text are
+ * controlled since #1198, and go in only when changed, like the rest.
  */
 
 /** One row mid-edit. Text, because a half-typed field is not a number. */
@@ -72,6 +73,16 @@ data class InvoiceEditDraft(
     val wasItemized: Boolean,
     /** The STORED editScope when the form opened. Never re-derived from the money. */
     val scope: InvoiceEditScope,
+    /**
+     * The household name, client, billing address and legacy discount text
+     * (#1198). No defaults: a draft that did not seed them from the invoice
+     * would read every one as changed and blank it on save.
+     */
+    val kinfolkName: String,
+    val client: String,
+    val address: String,
+    /** The LEGACY free-text discount ("10% loyalty"): display-only, never money. */
+    val discount: String,
 ) {
     /** Lines and discounts are editable only under `all`; `metadataOnly` shows them read-only. */
     val moneyEditable: Boolean get() = scope == InvoiceEditScope.ALL
@@ -108,8 +119,23 @@ fun invoiceEditDraftOf(invoice: Invoice): InvoiceEditDraft? {
         invoiceDiscountText = if (invoice.invoiceDiscountCents > 0L) centsToInputDollars(invoice.invoiceDiscountCents) else "",
         wasItemized = stored != null,
         scope = scope,
+        kinfolkName = invoice.kinfolkName,
+        client = invoice.client,
+        address = invoice.address,
+        discount = invoice.discount,
     )
 }
+/**
+ * `updateInvoice`'s zod `.max()` for the four descriptive fields (#1198), with
+ * the label the dialog shows. Checked before the round trip so an over-long
+ * address gets a sentence naming the field instead of a generic refusal.
+ */
+internal val INVOICE_EDIT_HEADER_TEXT_MAX: Map<String, Pair<String, Int>> = mapOf(
+    "kinfolkName" to ("Household" to 200),
+    "client" to ("Client" to 200),
+    "address" to ("Address" to 500),
+    "discount" to ("Discount note" to 200),
+)
 
 /** What [invoiceEditLinesParse] made of the rows. [lines] is null when any row could not be read. */
 data class InvoiceEditLinesParse(
@@ -208,6 +234,21 @@ fun invoiceEditPatchOf(invoice: Invoice, draft: InvoiceEditDraft): InvoiceEditPa
         dueDate = trimmed
     }
     if (draft.terms != invoice.terms) terms = draft.terms
+    // #1198: sent as typed, like `terms`, and only when changed. An emptied
+    // field is a real edit (a wrong address cleared) and goes as "".
+    val header = linkedMapOf<String, String>()
+    for ((key, pair) in listOf(
+        "kinfolkName" to (draft.kinfolkName to invoice.kinfolkName),
+        "client" to (draft.client to invoice.client),
+        "address" to (draft.address to invoice.address),
+        "discount" to (draft.discount to invoice.discount),
+    )) {
+        val (typed, stored) = pair
+        if (typed == stored) continue
+        val (label, max) = INVOICE_EDIT_HEADER_TEXT_MAX.getValue(key)
+        if (typed.length > max) return InvoiceEditPatchOutcome(null, "$label cannot be more than $max characters.")
+        header[key] = typed
+    }
 
     var lineItems: List<UpdateInvoiceArgsPatchLineItem>? = null
     var invoiceDiscountCents: Long? = null
@@ -226,6 +267,10 @@ fun invoiceEditPatchOf(invoice: Invoice, draft: InvoiceEditDraft): InvoiceEditPa
         date = date,
         dueDate = dueDate,
         terms = terms,
+        kinfolkName = header["kinfolkName"],
+        client = header["client"],
+        address = header["address"],
+        discount = header["discount"],
         lineItems = lineItems,
         invoiceDiscountCents = invoiceDiscountCents,
     )

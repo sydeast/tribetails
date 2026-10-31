@@ -876,6 +876,81 @@ describe('InvoiceDetail editing', () => {
     expect(await screen.findByText(/line items and discounts are locked/i)).toBeInTheDocument();
   });
 });
+describe('InvoiceDetail editing the household, client, address and discount note (#1198)', () => {
+  it('opens the four fields seeded from the stored invoice', async () => {
+    render(
+      <InvoiceDetail
+        invoice={entry({ client: 'Ana Rivera', address: '12 Elm St', discount: '10% loyalty' })}
+        onClose={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    expect(screen.getByLabelText('Invoice household name')).toHaveValue('The Whitfields');
+    expect(screen.getByLabelText('Invoice client')).toHaveValue('Ana Rivera');
+    expect(screen.getByLabelText('Invoice address')).toHaveValue('12 Elm St');
+    expect(screen.getByLabelText('Invoice discount note')).toHaveValue('10% loyalty');
+  });
+  it('sends all four when all four change, and nothing else', async () => {
+    render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    await userEvent.clear(screen.getByLabelText('Invoice household name'));
+    await userEvent.type(screen.getByLabelText('Invoice household name'), 'The Riveras');
+    await userEvent.type(screen.getByLabelText('Invoice client'), 'Ana Rivera');
+    await userEvent.type(screen.getByLabelText('Invoice address'), '12 Elm St');
+    await userEvent.type(screen.getByLabelText('Invoice discount note'), '10% loyalty');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateInvoice).toHaveBeenCalled());
+    expect(updateInvoice).toHaveBeenCalledWith('inv1', {
+      kinfolkName: 'The Riveras',
+      client: 'Ana Rivera',
+      address: '12 Elm St',
+      discount: '10% loyalty',
+    });
+  });
+  it('sends ONLY the address when only the address changed, even on a doc with no address or discount at all', async () => {
+    // `entry()` has no `address` and no `discount` keys. An untouched empty
+    // field must compare equal to an ABSENT stored one, or every save would
+    // carry `discount: ''` and stamp an edit nobody made.
+    render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    await userEvent.type(screen.getByLabelText('Invoice address'), '12 Elm St');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateInvoice).toHaveBeenCalled());
+    expect(updateInvoice).toHaveBeenCalledWith('inv1', { address: '12 Elm St' });
+  });
+  it('sends an emptied field as an empty string: clearing a wrong address is an edit', async () => {
+    render(<InvoiceDetail invoice={entry({ address: '12 Elm St' })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    await userEvent.clear(screen.getByLabelText('Invoice address'));
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateInvoice).toHaveBeenCalled());
+    expect(updateInvoice).toHaveBeenCalledWith('inv1', { address: '' });
+  });
+  it('keeps the four editable when the money is locked, and sends no money keys', async () => {
+    render(
+      <InvoiceDetail
+        invoice={entry({ editScope: 'metadataOnly', client: 'Ana', paidCents: 1000 })}
+        onClose={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    expect(screen.getByText(/client, address and\s+discount note can still be corrected/i)).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText('Invoice client'));
+    await userEvent.type(screen.getByLabelText('Invoice client'), 'Ana Rivera');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateInvoice).toHaveBeenCalled());
+    expect(updateInvoice).toHaveBeenCalledWith('inv1', { client: 'Ana Rivera' });
+  });
+  it("refuses an address longer than the server's 500 characters before the round trip", async () => {
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    await userEvent.click(screen.getByLabelText('Invoice address'));
+    await userEvent.paste('x'.repeat(501));
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    expect(await screen.findByText('Address cannot be more than 500 characters.')).toBeInTheDocument();
+    expect(updateInvoice).not.toHaveBeenCalled();
+  });
+});
 describe('InvoiceDetail archive and restore', () => {
   it('offers Archive in every state, because archiving is orthogonal to the money', () => {
     // Each stamp pairs the state with the editScope the server actually writes

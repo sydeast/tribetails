@@ -21,10 +21,11 @@ import kotlin.math.roundToLong
  *
  * THE SAVE IS A PATCH, NEVER A REBUILT INVOICE. Only the fields the form
  * controls AND the operator changed go into it, so a field this form has no
- * control for (client, address, kinfolkName, the legacy `discount` text,
- * termsCode, sessionIds, every money figure the server derives) cannot be wiped
- * by a save. The server's patch schema is `.strict()`, so the keys built here
- * are exactly the ones it names.
+ * control for (termsCode, sessionIds, every money figure the server derives)
+ * cannot be wiped by a save. The household name, client, address and legacy
+ * `discount` text are controlled since #1198 and go in only when changed. The
+ * server's patch schema is `.strict()`, so the keys built here are exactly the
+ * ones it names.
  */
 
 /** The server's bounds, from `updateInvoice`'s zod schema. */
@@ -171,6 +172,16 @@ data class InvoiceEditDraft(
      */
     val wasItemized: Boolean,
     val scope: InvoiceEditScope,
+    /**
+     * The household name, client, billing address and legacy discount text
+     * (#1198). No defaults: a draft that did not seed them from the invoice
+     * would read every one as changed and blank it on save.
+     */
+    val kinfolkName: String,
+    val client: String,
+    val address: String,
+    /** The LEGACY free-text discount ("10% loyalty"): display-only, never money. */
+    val discount: String,
 ) {
     val moneyEditable: Boolean get() = scope == InvoiceEditScope.ALL
 }
@@ -198,8 +209,23 @@ fun invoiceEditDraftOf(invoice: Invoice): InvoiceEditDraft? {
         invoiceDiscountText = if (discount > 0L) centsToInputDollars(discount) else "",
         wasItemized = stored != null,
         scope = scope,
+        kinfolkName = invoice.kinfolkName,
+        client = invoice.client,
+        address = invoice.address,
+        discount = invoice.discount,
     )
 }
+/**
+ * `updateInvoice`'s zod `.max()` for the four descriptive fields (#1198), with
+ * the label the dialog shows. Checked before the round trip so an over-long
+ * address gets a sentence naming the field instead of a generic refusal.
+ */
+internal val INVOICE_EDIT_HEADER_TEXT_MAX: Map<String, Pair<String, Int>> = mapOf(
+    "kinfolkName" to ("Household" to 200),
+    "client" to ("Client" to 200),
+    "address" to ("Address" to 500),
+    "discount" to ("Discount note" to 200),
+)
 
 data class InvoiceEditLinesParse(
     val lines: List<InvoiceEditLineItem>?,
@@ -284,6 +310,20 @@ fun invoiceEditPatchOf(invoice: Invoice, draft: InvoiceEditDraft): InvoiceEditPa
         fields["dueDate"] = JsonPrimitive(trimmed)
     }
     if (draft.terms != invoice.terms) fields["terms"] = JsonPrimitive(draft.terms)
+    // #1198: sent as typed, like `terms`, and only when changed. An emptied
+    // field is a real edit (a wrong address cleared) and goes as "".
+    for ((key, pair) in listOf(
+        "kinfolkName" to (draft.kinfolkName to invoice.kinfolkName),
+        "client" to (draft.client to invoice.client),
+        "address" to (draft.address to invoice.address),
+        "discount" to (draft.discount to invoice.discount),
+    )) {
+        val (typed, stored) = pair
+        if (typed == stored) continue
+        val (label, max) = INVOICE_EDIT_HEADER_TEXT_MAX.getValue(key)
+        if (typed.length > max) return InvoiceEditPatchOutcome(null, "$label cannot be more than $max characters.")
+        fields[key] = JsonPrimitive(typed)
+    }
 
     if (draft.moneyEditable) {
         val parsed = invoiceEditLinesParse(draft.lines, draft.invoiceDiscountText)

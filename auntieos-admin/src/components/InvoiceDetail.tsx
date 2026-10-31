@@ -523,12 +523,29 @@ interface InvoiceDetailProps {
   onClose: () => void;
 }
 
+/**
+ * The four descriptive fields' labels and `updateInvoice`'s zod `.max()` for
+ * each (#1198). Checked before the round trip so an over-long address gets a
+ * sentence naming the field instead of the server's generic validation error.
+ */
+const INVOICE_HEADER_TEXT_LIMITS = {
+  kinfolkName: { label: 'Household', max: 200 },
+  client: { label: 'Client', max: 200 },
+  address: { label: 'Address', max: 500 },
+  discount: { label: 'Discount note', max: 200 },
+} as const;
+
 /** The metadata and money fields, mid-edit. Text, because a half-typed field is not a number. */
 interface EditDraft {
   invoiceNumber: string;
   date: string;
   dueDate: string;
   terms: string;
+  /** The household name, the client, the billing address and the legacy discount text (#1198). */
+  kinfolkName: string;
+  client: string;
+  address: string;
+  discount: string;
   lines: DraftLine[];
   invoiceDiscountText: string;
   /**
@@ -869,7 +886,11 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       invoiceNumber: invoice.invoiceNumber,
       date: invoice.date,
       dueDate: invoice.dueDate,
-      terms: (invoice as { terms?: string }).terms ?? '',
+      terms: invoice.terms ?? '',
+      kinfolkName: invoice.kinfolkName ?? '',
+      client: invoice.client ?? '',
+      address: invoice.address ?? '',
+      discount: invoice.discount ?? '',
       lines: (storedLines ?? []).map(draftFromLineItem),
       invoiceDiscountText:
         typeof invoice.invoiceDiscountCents === 'number' && invoice.invoiceDiscountCents > 0
@@ -883,11 +904,6 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   async function saveEdit() {
     if (!editing || busy) return;
 
-    // The patch type is the contract's (ADR-0001), which accepts FOUR fields
-    // this panel does not offer: `kinfolkName`, `client`, `address` and
-    // `discount`. That is not an oversight to fix in passing here, it is a
-    // capability the edit form never grew; surfacing it is a UI change and its
-    // own concern.
     const patch: UpdateInvoiceArgsPatch = {};
     // Only CHANGED fields go in the patch. Echoing an unchanged value back would
     // still stamp `updatedAt` and write an audit entry describing an edit that
@@ -895,7 +911,20 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     if (editing.invoiceNumber !== invoice.invoiceNumber) patch.invoiceNumber = editing.invoiceNumber.trim();
     if (editing.date !== invoice.date) patch.date = editing.date.trim();
     if (editing.dueDate !== invoice.dueDate) patch.dueDate = editing.dueDate.trim();
-    if (editing.terms !== ((invoice as { terms?: string }).terms ?? '')) patch.terms = editing.terms;
+    if (editing.terms !== (invoice.terms ?? '')) patch.terms = editing.terms;
+    // #1198: the four descriptive fields, compared against the SAME `?? ''`
+    // baseline the form was seeded from, so a field the doc never had does not
+    // read as changed when the operator left it empty. Sent as typed, like
+    // `terms`; an emptied field is a real edit and is sent as ''.
+    for (const key of ['kinfolkName', 'client', 'address', 'discount'] as const) {
+      if (editing[key] === (invoice[key] ?? '')) continue;
+      const limit = INVOICE_HEADER_TEXT_LIMITS[key];
+      if (editing[key].length > limit.max) {
+        setEditError(`${limit.label} cannot be more than ${limit.max} characters.`);
+        return;
+      }
+      patch[key] = editing[key];
+    }
 
     if (editing.moneyEditable) {
       const parsed = parseDraftLines(editing.lines, editing.invoiceDiscountText);
@@ -1506,7 +1535,8 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             {!editing.moneyEditable && (
               <Banner tone="warning" title="Money is locked">
                 A payment has already been recorded against this invoice, so its line items and
-                discounts cannot change. The number, dates and terms can still be corrected.
+                discounts cannot change. The number, dates, terms, household, client, address and
+                discount note can still be corrected.
               </Banner>
             )}
 
@@ -1554,6 +1584,54 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                   onChange={(e) => setEditing({ ...editing, terms: e.target.value })}
                   disabled={busy}
                   aria-label="Invoice terms"
+                />
+              </label>
+              <label className="invoice-detail__field">
+                <span className="invoice-detail__field-label">Household</span>
+                <input
+                  className="invoice-detail__field-input"
+                  value={editing.kinfolkName}
+                  onChange={(e) => setEditing({ ...editing, kinfolkName: e.target.value })}
+                  disabled={busy}
+                  aria-label="Invoice household name"
+                />
+              </label>
+              <label className="invoice-detail__field">
+                <span className="invoice-detail__field-label">Client</span>
+                <input
+                  className="invoice-detail__field-input"
+                  value={editing.client}
+                  onChange={(e) => setEditing({ ...editing, client: e.target.value })}
+                  disabled={busy}
+                  aria-label="Invoice client"
+                />
+              </label>
+              <label className="invoice-detail__field">
+                <span className="invoice-detail__field-label">Address</span>
+                <input
+                  className="invoice-detail__field-input"
+                  value={editing.address}
+                  onChange={(e) => setEditing({ ...editing, address: e.target.value })}
+                  disabled={busy}
+                  aria-label="Invoice address"
+                />
+              </label>
+              <label className="invoice-detail__field">
+                {/* The LEGACY free-text discount, display-only. The money
+                    discount is the "Invoice discount" field in the line-items
+                    editor, so this one is named a note, never an amount. */}
+                <span
+                  className="invoice-detail__field-label"
+                  title="Printed on the invoice as typed. It does not change the total."
+                >
+                  Discount note
+                </span>
+                <input
+                  className="invoice-detail__field-input"
+                  value={editing.discount}
+                  onChange={(e) => setEditing({ ...editing, discount: e.target.value })}
+                  disabled={busy}
+                  aria-label="Invoice discount note"
                 />
               </label>
             </div>

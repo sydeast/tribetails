@@ -19,9 +19,10 @@ import com.tribetails.auntieos.web.ui.components.PrimaryButton
 
 /**
  * The invoice editor (#1174) on the desktop console: number, date, due date,
- * terms, line items and the whole-invoice discount, saved through
- * `updateInvoice`. Under a `metadataOnly` scope the money is SHOWN read-only
- * under the "Money is locked" banner web shows; the metadata stays editable.
+ * terms, household, client, address, the legacy discount note (#1198), line
+ * items and the whole-invoice discount, saved through `updateInvoice`. Under a
+ * `metadataOnly` scope the money is SHOWN read-only under the "Money is locked"
+ * banner web shows; every non-money field stays editable.
  */
 @Composable
 internal fun InvoiceEditDialog(
@@ -59,7 +60,8 @@ internal fun InvoiceEditDialog(
                 AuntieBanner(tone = AuntieBannerTone.Warning, title = "Money is locked") {
                     Text(
                         "A payment has already been recorded against this invoice, so its line items and " +
-                            "discounts cannot change. The number, dates and terms can still be corrected.",
+                            "discounts cannot change. The number, dates, terms, household, client, address and " +
+                            "discount note can still be corrected.",
                         style = AuntieTheme.typography.bodySmall,
                         color = c.textDim,
                     )
@@ -94,6 +96,37 @@ internal fun InvoiceEditDialog(
                 value = draft.terms,
                 onValueChange = { onChange(draft.copy(terms = it)) },
                 label = "Terms",
+                enabled = enabled,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            BottomBorderField(
+                value = draft.kinfolkName,
+                onValueChange = { onChange(draft.copy(kinfolkName = it)) },
+                label = "Household",
+                enabled = enabled,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            BottomBorderField(
+                value = draft.client,
+                onValueChange = { onChange(draft.copy(client = it)) },
+                label = "Client",
+                enabled = enabled,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            BottomBorderField(
+                value = draft.address,
+                onValueChange = { onChange(draft.copy(address = it)) },
+                label = "Address",
+                enabled = enabled,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            // The LEGACY free-text discount, printed as typed and never part
+            // of the total. Named a note so it cannot be mistaken for the
+            // money discount under the line items.
+            BottomBorderField(
+                value = draft.discount,
+                onValueChange = { onChange(draft.copy(discount = it)) },
+                label = "Discount note",
                 enabled = enabled,
                 modifier = Modifier.fillMaxWidth(),
             )
