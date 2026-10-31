@@ -1241,7 +1241,7 @@ test('every VITE_ variable either app reads is declared here', () => {
   // Build-tooling flags, not build CONFIG: neither is a value anyone stores,
   // and both are set by the command that wants them (package.json's dev:record,
   // the e2e config), so they have no source to resolve from. The two #1089
-  // ones are set only by the admin's `e2e:real:server` script.
+  // ones are set only by the `e2e:real:server` scripts (admin #1089, portal #1194).
   const toolingFlags = new Set([
     'VITE_ISSUE_RECORDER',
     'VITE_E2E_EMULATOR',

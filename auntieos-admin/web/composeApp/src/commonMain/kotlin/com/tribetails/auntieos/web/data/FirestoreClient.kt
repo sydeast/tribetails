@@ -120,10 +120,28 @@ class FirestoreClient {
         return if (scope != null) platformInvoicesForKinfolkStream(scope).scopeKinfolk(testMode) { it.kinfolkId }
         else platformInvoicesStream()
     }
-    suspend fun updateInvoiceSessionIds(invoiceId: String, sessionIds: List<String>): WriteResult<Unit> =
-        platformUpdateInvoiceSessionIds(invoiceId, sessionIds)
-    suspend fun updateSessionInvoiceId(sessionId: String, invoiceId: String): WriteResult<Unit> =
-        platformUpdateSessionInvoiceId(sessionId, invoiceId)
+    /**
+     * #1197: sets the invoice's linked visits through the `linkInvoiceSessions`
+     * callable, the one Android's `InvoiceRepository.linkInvoiceSessions` calls.
+     * It updates the invoice's `sessionIds` and every touched visit's
+     * `invoiceId` in one server transaction and stamps the attribution
+     * (`manual` / `manual_unlink`), so either everything changes or nothing does.
+     *
+     * Until #1197 the console PATCHed `invoices/{id}.sessionIds` over REST and
+     * then looped a per-visit write. firestore.rules refuses every client write
+     * to `/invoices` (ADR-0002), so the first write was refused and the save
+     * could never succeed.
+     *
+     * [sessionIds] is the FULL new set, not a delta; `[]` unlinks everything.
+     * The server's refusal comes back verbatim.
+     */
+    suspend fun linkInvoiceSessions(invoiceId: String, sessionIds: Collection<String>): WriteResult<InvoiceSessionLinkOutcome> {
+        val payload = linkInvoiceSessionsPayloadOf(invoiceId, sessionIds)
+        return when (val r = platformInvokeCallable("linkInvoiceSessions", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> WriteResult.Ok(decodeInvoiceSessionLinkOutcome(r.value, invoiceId, sessionIds))
+        }
+    }
     fun activityStream():   Flow<FirestoreResult<List<ActivityLogEntry>>> = platformActivityStream()
     fun notificationsStream(): Flow<FirestoreResult<List<NotificationEntry>>> = platformNotificationsStream()
 
@@ -2498,8 +2516,6 @@ internal expect fun platformCallsStream():      Flow<FirestoreResult<List<CallLo
 internal expect fun platformSmsStream():        Flow<FirestoreResult<List<SmsMessage>>>
 internal expect fun platformEmailsStream():     Flow<FirestoreResult<List<EmailMessage>>>
 internal expect fun platformInvoicesStream():   Flow<FirestoreResult<List<Invoice>>>
-internal expect suspend fun platformUpdateInvoiceSessionIds(invoiceId: String, sessionIds: List<String>): WriteResult<Unit>
-internal expect suspend fun platformUpdateSessionInvoiceId(sessionId: String, invoiceId: String): WriteResult<Unit>
 internal expect fun platformActivityStream():   Flow<FirestoreResult<List<ActivityLogEntry>>>
 internal expect fun platformNotificationsStream(): Flow<FirestoreResult<List<NotificationEntry>>>
 internal expect fun platformDossierStream(kinfolkId: String): Flow<FirestoreResult<Dossier?>>

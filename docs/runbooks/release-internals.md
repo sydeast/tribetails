@@ -380,6 +380,20 @@ commit that has one, uses it, and names which commit it came from. If there is
 no verdict at all within that window it says so loudly and continues, because a
 repo can legitimately go that long without touching the admin.
 
+**The real-services suite is read at the same step (#1193).** After CI's
+verdict, step 0b asks for the newest run of `e2e-real.yml` for this commit, or
+of a `nightly-release.yml` run that called it. A called workflow gets no run of
+its own, so for a nightly run only its jobs named `... real services` count;
+the release job asking is in that same run and is not one of them. Red, still
+running, every suite job skipped, or no run at all each refuse. There is no
+lookback like the CI e2e job's: the suite has no path filter and the release
+runs it for the commit it ships. Then the run's `e2e-real*` artifacts are
+downloaded and each `verdict.json` the classifier wrote (#1196) is read: `warn`
+(a proven vendor outage) prints in yellow and goes on, `stop` refuses even
+under a green job, an unreadable file counts as `stop`, and a run with no file
+is judged by its jobs and says so. A vendor with no secrets stored skips its
+specs and is green, by ruling D3.
+
 **When the gate cannot answer** (no `gh`, not authenticated, GitHub unreachable)
 it refuses, and the refusal names `RELEASE_SKIP_CI_GATE=1`, which releases
 without it. An unreachable GitHub must not become an inability to ship a fix.
@@ -972,8 +986,22 @@ GitHub-hosted ubuntu runner (#851) every Monday and Thursday at 01:00 UTC
 
 ### What the workflow does
 
-In order, and only when the mode is `preflight` or `on`:
+Three jobs since #1193, because a job that calls another workflow cannot have
+steps of its own:
 
+- **Decide what this run does** reads the mode and works out whether
+  anything has merged since the last release tag (`vX.Y.Z`, or `release/*` before the
+  first one).
+- **E2E real services** calls `.github/workflows/e2e-real.yml` on the commit
+  being shipped, only when the mode is `preflight` or `on` and something
+  merged. Its environment `e2e-real` holds the vendor test secrets.
+- **Release main to production** runs after both, and also when the suite was
+  skipped, so an `off` night still writes its summary.
+
+The release job, in order, and only when the mode is `preflight` or `on`:
+
+0. Refuses unless the real-services suite came back green, before anything is
+   installed. A `preflight` reports a red suite as a warning and goes on.
 1. Refuses if `NIGHTLY_WIF_PROVIDER` or `NIGHTLY_SERVICE_ACCOUNT` is unset.
 2. Signs in to Google Cloud through Workload Identity as `github-release`. No
    key file exists anywhere; GitHub's OIDC token is exchanged for a
@@ -981,8 +1009,7 @@ In order, and only when the mode is `preflight` or `on`:
 3. Sets up `gcloud`, then runs the credential check from #850. `GH_TOKEN` is
    the job's own token, set on the job so that check can see it, and
    `gh auth status --hostname github.com` must pass.
-4. Stops if nothing has merged since the last release tag (`vX.Y.Z`, or
-   `release/*` before the first one).
+4. Skips everything below when the first job found nothing merged.
 5. Installs what the Mac already has: Node 22, `npm ci` in all three roots
    step 0a checks, `firebase-tools` 15.18.0, Python 3.13 and the `reconcile`
    venv, JDK 17 and 21, Gradle with its home pinned to
