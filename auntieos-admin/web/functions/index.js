@@ -1,5 +1,7 @@
 const { onCall, HttpsError, onRequest } = require('firebase-functions/v2/https');
 const admin = require('firebase-admin');
+// Services through the modular API (#1247); `admin` is only initializeApp now.
+const sdk = require('./firebaseServices');
 const crypto = require('crypto');
 const Anthropic = require('@anthropic-ai/sdk');
 const { runGenerate } = require('./generate');
@@ -142,7 +144,7 @@ exports.setAdminClaim = onCall(async (req) => {
     throw new HttpsError('invalid-argument', 'isAdmin (boolean) is required.');
   }
 
-  const db = admin.firestore();
+  const db = sdk.firestore();
 
   // NOTE-51: lockout guards. Delegate to the exported pure helper so the same
   // rules are tested hermetically. We only fetch the admin count when actually
@@ -155,16 +157,16 @@ exports.setAdminClaim = onCall(async (req) => {
 
   // Read-modify-write: preserve portal (role/kinfolkId) and sandbox
   // (testTribeId) claims. setCustomUserClaims replaces the whole object.
-  const target = await admin.auth().getUser(uid);
+  const target = await sdk.auth().getUser(uid);
   // #944: refuse before the write, with the target's existing claims in hand.
   assertAdminGrantAllowed(uid, isAdmin, target.customClaims); // throws on a staff-role target
-  await admin.auth().setCustomUserClaims(uid, mergeAdminClaim(target.customClaims, isAdmin));
+  await sdk.auth().setCustomUserClaims(uid, mergeAdminClaim(target.customClaims, isAdmin));
 
   if (isAdmin) {
     await db.collection('admins').doc(uid).set({
       uid,
       grantedBy: callerUid,
-      grantedAt: admin.firestore.FieldValue.serverTimestamp(),
+      grantedAt: sdk.serverTimestamp(),
     });
   } else {
     await db.collection('admins').doc(uid).delete();
@@ -190,7 +192,7 @@ exports.listAdmins = onCall(async (req) => {
   if (!isOwnerClaim(req.auth?.token)) {
     throw new HttpsError('permission-denied', 'Admin only.');
   }
-  const snap = await admin.firestore().collection('admins').get();
+  const snap = await sdk.firestore().collection('admins').get();
   return { admins: snap.docs.map((d) => ({ uid: d.id, ...d.data() })) };
 });
 
@@ -260,7 +262,7 @@ async function requireAdminWithDraftBudget(req, res, scope) {
   if (!staff) return null;
   const decoded = staff.token;
   try {
-    await enforceWindowedRateLimit(admin.firestore(), {
+    await enforceWindowedRateLimit(sdk.firestore(), {
       collection: DRAFT_RATE_COLLECTION,
       uid: decoded.uid,
       nowMs: Date.now(),
@@ -315,7 +317,7 @@ async function requireStaffToken(req, res, scope, { allowTestAdmin = false } = {
 
   let decodedToken;
   try {
-    decodedToken = await admin.auth().verifyIdToken(authHeader.slice('Bearer '.length).trim(), true);
+    decodedToken = await sdk.auth().verifyIdToken(authHeader.slice('Bearer '.length).trim(), true);
   } catch (err) {
     console.error('%s: verifyIdToken failed', scope, err);
     res.status(401).json({ error: 'invalid_bearer_token' });
@@ -362,10 +364,10 @@ exports.writeDraft = onRequest({ cors: false }, async (req, res) => {
     return;
   }
   try {
-    const col = admin.firestore().collection('generated_drafts');
+    const col = sdk.firestore().collection('generated_drafts');
     const ref = docId ? col.doc(docId) : col.doc();
     await ref.set(
-      { ...draft, _writtenAt: admin.firestore.FieldValue.serverTimestamp() },
+      { ...draft, _writtenAt: sdk.serverTimestamp() },
       { merge: true }
     );
     res.status(200).json({ ok: true, id: ref.id });
@@ -420,7 +422,7 @@ exports.getTrainingDoc = onRequest({ cors: false }, async (req, res) => {
     return;
   }
   try {
-    const snap = await admin.firestore().collection('training_documents').doc(id).get();
+    const snap = await sdk.firestore().collection('training_documents').doc(id).get();
     if (!snap.exists) {
       res.status(404).json({ error: `training_documents/${id} not found` });
       return;
@@ -442,7 +444,7 @@ exports.getDraft = onRequest({ cors: false }, async (req, res) => {
     return;
   }
   try {
-    const snap = await admin.firestore().collection('generated_drafts').doc(id).get();
+    const snap = await sdk.firestore().collection('generated_drafts').doc(id).get();
     if (!snap.exists) {
       res.status(404).json({ error: `generated_drafts/${id} not found` });
       return;
@@ -1041,7 +1043,7 @@ exports.generateAuntieCopy = onRequest({ secrets: [ANTHROPIC_API_KEY], cors: fal
   // already admin-gated endpoint — a runaway client loop or a leaked admin token
   // could otherwise drive unbounded Anthropic cost). Over the cap → explicit 429.
   try {
-    await enforceGenerateRateLimit(admin.firestore(), decodedToken.uid, Date.now());
+    await enforceGenerateRateLimit(sdk.firestore(), decodedToken.uid, Date.now());
   } catch (rlErr) {
     if (rlErr && rlErr.status === 429) {
       res.status(429).json({ generated_copy: '', communication_type: commType, error: 'generate_rate_limit_exceeded' });
@@ -1056,7 +1058,7 @@ exports.generateAuntieCopy = onRequest({ secrets: [ANTHROPIC_API_KEY], cors: fal
   const anthropic = new Anthropic({ apiKey });
 
   try {
-    const result = await runGenerate({ db: admin.firestore(), anthropic, model }, req.body || {});
+    const result = await runGenerate({ db: sdk.firestore(), anthropic, model }, req.body || {});
     res.status(200).json(result);
   } catch (err) {
     // Byte-compatible error shape: always returns a full GenerateResponse so both
