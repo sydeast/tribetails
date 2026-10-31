@@ -25,9 +25,10 @@ import './InvoiceLinkVisitsEditor.css';
  * or different `kinfolkId` on a legacy row, or past the list's cap) still gets
  * a row of its own below, still checked, and still sent.
  *
- * A VISIT ON ANOTHER INVOICE IS SHOWN, NOT HIDDEN, AND CANNOT BE TICKED. The
- * server does not refuse it today (#1254), and taking it would leave the other
- * invoice still claiming the same work. Absent, empty and whitespace
+ * A VISIT ON ANOTHER INVOICE IS SHOWN, NOT HIDDEN, AND CANNOT BE TICKED.
+ * Taking it would leave the other invoice still claiming the same work, and
+ * since #1254 the server refuses it (`session_on_other_invoice`, shown in the
+ * error banner verbatim), so this is the early, visible form of that rule. Absent, empty and whitespace
  * `invoiceId` are all "unclaimed", the rule `listUninvoicedSessions` uses.
  * Beyond that one rule the editor adds no eligibility of its own: the callable
  * gates on neither status nor editScope, and Android and desktop offer every

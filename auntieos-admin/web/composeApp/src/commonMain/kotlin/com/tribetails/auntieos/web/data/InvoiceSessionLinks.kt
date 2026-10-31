@@ -75,3 +75,42 @@ internal fun invoiceSessionLinksSavedText(outcome: InvoiceSessionLinkOutcome): S
     }
     return "Visits saved: ${parts.joinToString(", ")}."
 }
+
+/**
+ * #1254: true when this visit's own back-link names an invoice OTHER than
+ * [invoiceId] and the visit is not already in [storedIds], the invoice's saved
+ * set. The Link Sessions picker shows such a visit but will not tick it, and
+ * the `linkInvoiceSessions` callable refuses it with `session_on_other_invoice`.
+ *
+ * Blank and whitespace back-links are unclaimed, the rule
+ * `listUninvoicedSessions` uses. A visit already in the stored set stays
+ * togglable whatever its back-link says, so a half-link can be undone. Same
+ * rule as admin web's `onOtherInvoice` and admin Android's
+ * `linkPickerOnOtherInvoice`.
+ */
+internal fun linkPickerOnOtherInvoice(
+    session: KinCareSession,
+    invoiceId: String,
+    storedIds: Collection<String>,
+): Boolean {
+    if (session._id in storedIds) return false
+    val claimed = session.invoiceId.trim()
+    return claimed.isNotEmpty() && claimed != invoiceId
+}
+
+/**
+ * #1254: the picker's toggle. Unticks anything; refuses to tick a visit
+ * [linkPickerOnOtherInvoice] marks, so the rule holds whatever calls it.
+ */
+internal fun toggleLinkPick(
+    pending: Set<String>,
+    sessionId: String,
+    sessions: List<KinCareSession>,
+    invoiceId: String,
+    storedIds: Collection<String>,
+): Set<String> {
+    if (sessionId in pending) return pending - sessionId
+    val session = sessions.firstOrNull { it._id == sessionId }
+    if (session != null && linkPickerOnOtherInvoice(session, invoiceId, storedIds)) return pending
+    return pending + sessionId
+}
