@@ -268,6 +268,53 @@ private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
         }
     }
 
+    // ── #1174: the invoice editor (updateInvoice) ─────────────────────────────
+    // Offered per the STORED editScope, as on web; the server enforces and its
+    // refusal stays in the form, verbatim, with every field as typed.
+    var invoiceEdit       by remember(invoice._id) { mutableStateOf<InvoiceEditDraft?>(null) }
+    var invoiceEditError  by remember(invoice._id) { mutableStateOf<String?>(null) }
+    var savingInvoiceEdit by remember(invoice._id) { mutableStateOf(false) }
+    val canEditInvoice = invoiceEditScopeOf(invoice) != InvoiceEditScope.NONE
+    fun saveInvoiceEdit() {
+        val draft = invoiceEdit ?: return
+        if (savingInvoiceEdit) return
+        // A patch of what the form controls and the operator changed, built
+        // against the invoice as it now stands. Never a rebuilt invoice.
+        val outcome = invoiceEditPatchOf(invoice, draft)
+        val patch = outcome.patch
+        if (patch == null) {
+            invoiceEditError = outcome.error
+            return
+        }
+        savingInvoiceEdit = true
+        invoiceEditError = null
+        scope.launch {
+            when (val r = client.updateInvoice(invoice._id, patch)) {
+                is WriteResult.Ok -> {
+                    savingInvoiceEdit = false
+                    invoiceEdit = null
+                    showToast("Invoice updated.", false)
+                }
+                is WriteResult.Err -> {
+                    savingInvoiceEdit = false
+                    invoiceEditError = "updateInvoice failed: ${r.message}"
+                }
+            }
+        }
+    }
+    InvoiceEditDialog(
+        draft     = invoiceEdit,
+        error     = invoiceEditError,
+        saving    = savingInvoiceEdit,
+        onChange  = { if (!savingInvoiceEdit) invoiceEdit = it },
+        onSave    = { saveInvoiceEdit() },
+        onDismiss = {
+            if (!savingInvoiceEdit) {
+                invoiceEdit = null
+                invoiceEditError = null
+            }
+        },
+    )
     // ── Edit dialog: "Link Sessions" ──────────────────────────────────────────
     LinkSessionsDialog(
         visible       = editMode,
@@ -382,6 +429,14 @@ private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
         // Header actions: Generate receipt (generateReceipt callable) and Send
         // reminder (sendInvoiceReminder callable). Both real, fail-loud via toast.
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (canEditInvoice) GhostButton(
+                label   = "Edit",
+                onClick = {
+                    invoiceEditError = null
+                    invoiceEdit = invoiceEditDraftOf(invoice)
+                },
+                leading = { Icon(Lucide.Pencil, contentDescription = null, modifier = Modifier.size(14.dp)) },
+            )
             GhostButton(
                 label   = if (receiptLoading) "Generating..." else "Generate receipt",
                 onClick = {

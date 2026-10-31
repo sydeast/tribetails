@@ -1349,6 +1349,28 @@ class FirestoreClient {
         }
     }
 
+    /**
+     * #1174: edits an invoice's number, dates, terms, line items and discount
+     * through the `updateInvoice` callable, the one the web editor calls.
+     *
+     * [patch] is the request's `patch` object as built by
+     * `screens.invoices.invoiceEditPatchOf`: only the fields the form controls
+     * and the operator changed. The server recomputes every money figure, so no
+     * total goes on the wire. Fail-loud: the server's refusal (money locked by a
+     * recorded payment, an accepted quote, a discount larger than its line) is
+     * returned verbatim.
+     */
+    suspend fun updateInvoice(invoiceId: String, patch: JsonObject): WriteResult<Unit> {
+        val payload = buildJsonObject {
+            put("invoiceId", JsonPrimitive(invoiceId))
+            put("patch", patch)
+        }
+        return when (val r = platformInvokeCallable("updateInvoice", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+        }
+    }
+
     /** Slice 2: marks an invoice receipted (generateReceipt callable + invoice.receipt notify). */
     suspend fun generateReceipt(invoiceId: String): WriteResult<Unit> {
         val payload = buildJsonObject { put("invoiceId", JsonPrimitive(invoiceId)) }
@@ -3572,6 +3594,24 @@ data class Invoice(
      * send released its claim (#832). Read through [lastReminderLabel].
      */
     val reminderNotifiedAtMs: Long? = null,
+    /**
+     * #1174: the itemization, held RAW and read through
+     * `screens.invoices.invoiceEditLinesOf`. Raw for the reason Android's model
+     * gives: staff can write this collection directly, so the field can hold
+     * something that is not a list of lines, and a typed list here would make
+     * the decode throw and drop the whole invoice from the list. ABSENT IS NOT
+     * EMPTY: null means never itemized, which `updateInvoice` treats differently
+     * from an empty list.
+     */
+    val lineItems: JsonElement? = null,
+    /** Whole-invoice discount in integer cents, raw for the same reason. Read through `invoiceDiscountCentsOf`. */
+    val invoiceDiscountCents: JsonElement? = null,
+    /**
+     * The server's stored edit-scope stamp (ADR-0002): `all`, `metadataOnly`
+     * or `none`. Decides whether the editor is OFFERED; the server enforces.
+     * Absent reads as `none`.
+     */
+    val editScope: String? = null,
 )
 
 /**
