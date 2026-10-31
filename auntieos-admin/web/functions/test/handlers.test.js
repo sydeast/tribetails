@@ -12,10 +12,11 @@
 //   - onRequest handlers by calling `handler(req, res)` directly with express-like
 //     mocks. The v2 onRequest+cors wrapper resolves on the response `finish` event, so
 //     `res` is a real EventEmitter that emits `finish` from .json()/.end().
-// Dependencies are mocked by shadowing `admin.auth` / `admin.firestore` with own data
-// properties (the inherited getters otherwise call the live SDK), by swapping
-// `global.fetch`, and by setting the secret-backed env vars the handlers read via
-// defineSecret(...).value().
+// Dependencies are mocked by swapping the service accessors on `firebaseServices.js`
+// (#1247: the handlers reach the Admin SDK only through that module), by
+// swapping `global.fetch`, and by setting the secret-backed env vars the
+// handlers read via defineSecret(...).value(). `test/firebaseServices.test.js` checks
+// the real accessors, which these doubles stand in for.
 //
 // Run: cd web/functions && npm test   (=> node --test)
 
@@ -23,7 +24,7 @@ const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert');
 const { EventEmitter } = require('events');
 const crypto = require('crypto');
-const admin = require('firebase-admin');
+const sdk = require('../firebaseServices');
 const idx = require('../index.js'); // side effect: initializeApp() + registers handlers
 
 // ---------------------------------------------------------------------------
@@ -57,21 +58,20 @@ function makeReq({ method = 'POST', headers = {}, body = {}, query = {}, ip = '2
 // ---------------------------------------------------------------------------
 // dependency mocking: admin SDK, fetch, secret env vars
 // ---------------------------------------------------------------------------
+const REAL_SDK = { ...sdk };
+
 function installAdmin({ auth, firestore } = {}) {
-  if (auth) {
-    Object.defineProperty(admin, 'auth', { value: auth, configurable: true, writable: true });
-  }
+  if (auth) sdk.auth = auth;
   if (firestore) {
-    // setAdminClaim reaches for admin.firestore.FieldValue.serverTimestamp(); keep it.
-    firestore.FieldValue = { serverTimestamp: () => 'MOCK_SERVER_TS' };
-    Object.defineProperty(admin, 'firestore', { value: firestore, configurable: true, writable: true });
+    sdk.firestore = firestore;
+    // setAdminClaim and writeDraft stamp sdk.serverTimestamp(); keep it inert.
+    sdk.serverTimestamp = () => 'MOCK_SERVER_TS';
   }
 }
 
-// Deleting the own data property restores the inherited SDK getter.
+// Puts the real accessors back.
 function restoreAdmin() {
-  delete admin.auth;
-  delete admin.firestore;
+  Object.assign(sdk, REAL_SDK);
 }
 
 const origFetch = global.fetch;

@@ -1,8 +1,19 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { disconnectRisks, isForbiddenNumber, MARKER, plan, render } from './preflight.mjs';
+import {
+  declaredSecrets,
+  disconnectRisks,
+  functionsEntry,
+  isForbiddenNumber,
+  MARKER,
+  plan,
+  render,
+  secretsFileFor,
+} from './preflight.mjs';
 
 /**
  * The refusals are the safety property of the real-services run (#1089): if
@@ -98,5 +109,95 @@ describe('disconnectRisks', () => {
 
   it('passes a clean spec directory', () => {
     expect(disconnectRisks(specDir({ 'c.cy.ts': "cy.contains('button', 'Connect')" }))).toEqual([]);
+  });
+});
+
+/**
+ * #1201: the run serves two codebases, and the emulator reads each one's
+ * secrets from ITS OWN `.secret.local`. A codebase without a complete file
+ * falls through to Secret Manager, so every codebase gets one, or none does.
+ */
+describe('one secrets file per codebase', () => {
+  const PREFLIGHT = join(dirname(fileURLToPath(import.meta.url)), 'preflight.mjs');
+  /** A codebase shaped like the real ones: a package.json main, node_modules, endpoint metadata. */
+  function codebase({ main, entry = main ?? 'index.js', secrets, installed = true }) {
+    const dir = mkdtempSync(join(tmpdir(), 'e2e-real-fns-'));
+    writeFileSync(join(dir, 'package.json'), JSON.stringify(main === undefined ? {} : { main }));
+    if (installed) mkdirSync(join(dir, 'node_modules'));
+    mkdirSync(dirname(join(dir, entry)), { recursive: true });
+    const endpoints = Object.fromEntries(
+      secrets.map((key, i) => [`fn${i}`, { __endpoint: { secretEnvironmentVariables: [{ key }] } }]),
+    );
+    writeFileSync(join(dir, entry), `module.exports = ${JSON.stringify(endpoints)};`);
+    return dir;
+  }
+  function emptySpecDir() {
+    return mkdtempSync(join(tmpdir(), 'e2e-real-specs-'));
+  }
+  function runPreflight(args, env = {}) {
+    try {
+      const stdout = execFileSync(process.execPath, [PREFLIGHT, ...args], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { PATH: process.env.PATH, ...env },
+      });
+      return { status: 0, stdout, stderr: '' };
+    } catch (e) {
+      return { status: e.status, stdout: String(e.stdout), stderr: String(e.stderr) };
+    }
+  }
+  it("resolves each codebase's entry from package.json main, as the emulator does", () => {
+    const built = codebase({ main: 'lib/index.js', secrets: ['A'] });
+    const plain = codebase({ secrets: ['B'] });
+    expect(functionsEntry(built)).toBe(join(built, 'lib', 'index.js'));
+    expect(functionsEntry(plain)).toBe(join(plain, 'index.js'));
+    expect(secretsFileFor(plain)).toBe(join(plain, '.secret.local'));
+  });
+  it('reads declared secrets from a plain-JS codebase with no lib/', () => {
+    expect(declaredSecrets(codebase({ secrets: ['CLOUDINARY_API_SECRET', 'ANTHROPIC_API_KEY'] }))).toEqual([
+      'ANTHROPIC_API_KEY',
+      'CLOUDINARY_API_SECRET',
+    ]);
+  });
+  it('refuses, by name, a codebase that is not installed', () => {
+    expect(() => declaredSecrets(codebase({ secrets: ['A'], installed: false }))).toThrow(/node_modules does not exist/);
+  });
+  it('writes a complete, marked file into every codebase it is given', () => {
+    const mytribe = codebase({ main: 'lib/index.js', secrets: ['SENTRY_DSN', 'STRIPE_SECRET_KEY'] });
+    const admin = codebase({ secrets: ['CLOUDINARY_CLOUD_NAME', 'MAPBOX_ACCESS_TOKEN'] });
+    const out = join(mkdtempSync(join(tmpdir(), 'e2e-real-out-')), 'vendors.json');
+    const run = runPreflight([emptySpecDir(), out, mytribe, admin], { E2E_CLOUDINARY_CLOUD_NAME: 'e2e-cloud' });
+    expect(run.status, run.stderr).toBe(0);
+    for (const [dir, declared] of [
+      [mytribe, ['SENTRY_DSN', 'STRIPE_SECRET_KEY']],
+      [admin, ['CLOUDINARY_CLOUD_NAME', 'MAPBOX_ACCESS_TOKEN']],
+    ]) {
+      const body = readFileSync(secretsFileFor(dir), 'utf8');
+      expect(body.split('\n')[0]).toBe(MARKER);
+      for (const name of declared) expect(body, `${name} in ${dir}`).toMatch(new RegExp(`^${name}=".+"$`, 'm'));
+    }
+    expect(readFileSync(secretsFileFor(admin), 'utf8')).toMatch(/^CLOUDINARY_CLOUD_NAME="e2e-cloud"$/m);
+    expect(JSON.parse(readFileSync(out, 'utf8')).cloudinary).toBe(false);
+  });
+  it('writes no file anywhere when any value is refused', () => {
+    const mytribe = codebase({ main: 'lib/index.js', secrets: ['SENTRY_DSN'] });
+    const admin = codebase({ secrets: ['CLOUDINARY_CLOUD_NAME'] });
+    const out = join(mkdtempSync(join(tmpdir(), 'e2e-real-out-')), 'vendors.json');
+    const run = runPreflight([emptySpecDir(), out, mytribe, admin], { STRIPE_TEST_SECRET_KEY: 'sk_live_abc' });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toMatch(/REFUSED to start the real-services run/);
+    expect(existsSync(secretsFileFor(mytribe))).toBe(false);
+    expect(existsSync(secretsFileFor(admin))).toBe(false);
+  });
+  it("refuses to replace a secrets file it did not write, in either codebase", () => {
+    const mytribe = codebase({ main: 'lib/index.js', secrets: ['SENTRY_DSN'] });
+    const admin = codebase({ secrets: ['CLOUDINARY_CLOUD_NAME'] });
+    writeFileSync(secretsFileFor(admin), 'CLOUDINARY_CLOUD_NAME="a human wrote this"\n');
+    const out = join(mkdtempSync(join(tmpdir(), 'e2e-real-out-')), 'vendors.json');
+    const run = runPreflight([emptySpecDir(), out, mytribe, admin]);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toMatch(/exists and this script did not write it/);
+    expect(readFileSync(secretsFileFor(admin), 'utf8')).toMatch(/a human wrote this/);
+    expect(existsSync(secretsFileFor(mytribe))).toBe(false);
   });
 });
