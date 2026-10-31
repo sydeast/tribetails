@@ -1,5 +1,6 @@
 import { ADMIN, KINFOLK, SEEDED_BOOKINGS } from './fixtures/accounts';
 import { seedDenseRows } from './seed.rows';
+import { e2eBusinessNoonIso } from './fixtures/businessClock';
 
 /**
  * Emulator seed, run once per `playwright test` invocation (globalSetup).
@@ -354,15 +355,17 @@ export default async function seed(): Promise<void> {
   });
 
   const { today, scheduled, completed, cancelled } = SEEDED_BOOKINGS;
-  // Midday, so it lands on the same calendar day in every timezone a run might
-  // use. `isoDaysFromNow(0)` alone is "now", which near midnight is yesterday
-  // or tomorrow depending on the machine, and Schedule groups by LOCAL day.
+  // Noon on the BUSINESS's today (#1231). Schedule groups by the business
+  // calendar since #1158, not the machine's. The UTC date at 12:00Z was
+  // tomorrow in Chicago from midnight UTC until 05:00 or 06:00 every night, so
+  // the agenda had nothing on today in that window. `isoDaysFromNow(0)` alone is "now", which
+  // near midnight can sit on either side of the business day.
   await put('kin_care_sessions', today.id, {
     kinfolkId: 'e2e-kf-1',
     kinfolkName: today.kinfolkName,
     serviceType: today.serviceType,
     status: 'SCHEDULED',
-    startTime: new Date(seedNow()).toISOString().slice(0, 10) + 'T12:00:00.000Z',
+    startTime: e2eBusinessNoonIso(seedNow()),
     createdAt: new Date('2026-07-21T10:00:00Z'),
   });
   await put('kin_care_sessions', scheduled.id, {

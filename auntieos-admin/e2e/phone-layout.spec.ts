@@ -83,6 +83,11 @@ async function measure(p: Page): Promise<Measurement> {
  * screen's heading is on the page until the next one mounts.
  */
 async function openScreen(p: Page, slug: string, kicker: string): Promise<void> {
+  // A run with `E2E_SEED_NOW` pinned puts the browser on the same instant the
+  // seed wrote from, or "today" means two different days (#1231). Only `Date`
+  // is fixed; timers keep running, so the Firestore listeners still deliver.
+  const pinned = process.env.E2E_SEED_NOW;
+  if (pinned !== undefined && pinned !== '') await p.clock.setFixedTime(new Date(pinned));
   await p.goto(`/${slug}`);
   // Same cold-boot budget as `mobile-nav.spec.ts`, for the same reason: `goto`
   // reboots the app, and nothing renders until `requireAdmin`
