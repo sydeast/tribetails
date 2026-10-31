@@ -404,7 +404,7 @@ account instead. CI has neither.
 
 | Vendor | Variables | Without them |
 |---|---|---|
-| Stripe (test mode) | `STRIPE_TEST_SECRET_KEY`, `STRIPE_TEST_PUBLISHABLE_KEY` | Stripe specs skip |
+| Stripe (test mode) | `STRIPE_TEST_SECRET_KEY`, `STRIPE_TEST_PUBLISHABLE_KEY`; the portal's pay spec also needs the `stripe` CLI on `PATH` | Stripe specs skip |
 | Twilio (test credentials) | `TWILIO_TEST_ACCOUNT_SID`, `TWILIO_TEST_AUTH_TOKEN`, optional `TWILIO_TEST_FROM_NUMBER` (default: Twilio's test sender `+15005550006`) | Twilio specs skip |
 | Email (smtp2go) | `E2E_SMTP2GO_API_KEY`, `E2E_EMAIL_FROM` | Email specs skip |
 | Cloudinary | `E2E_CLOUDINARY_CLOUD_NAME`, `E2E_CLOUDINARY_API_KEY`, `E2E_CLOUDINARY_API_SECRET` | Cloudinary specs skip |
@@ -462,26 +462,153 @@ that cannot be asked, never for one that says no.
 - Twilio runs on the test credentials only. Nothing is sent, and no number in
   the business or private line's area code may appear anywhere.
 - Cloudinary uploads go to an `e2e/` folder emptied after each run, and emails
-  go only to the three real test inboxes. Neither has a spec yet.
+  go only to the three real test inboxes (`account.cy.ts` sends the reset
+  email to e2e-admin@tribetails.com; `account-photo.cy.ts` uploads under
+  `e2e/account-photo/` and destroys what it uploaded).
 
 ### Specs today
 
-| Spec | What it proves |
-|---|---|
-| `settings-tags.cy.ts` | `removeBusinessTag` really cascades: the server's count on screen, and after a reload the tag is gone from the Tags list and from the Directory filter |
-| `invoice-paid-stripe.cy.ts` | Record payment settles an invoice through `markInvoicePaid` while a real Stripe test checkout is open on it, and the invoice reads paid after a reload. Skips without Stripe keys |
+Every PR-time spec that answers a callable with `cy.intercept` has a
+counterpart here (#1195). Each one drives the real handler and its triggers
+and asserts the outcome from the UI, almost always after a reload.
 
-Every other spec stays on the PR-time harness until it is rewritten for this
-one. The Stripe spec does not assert that Stripe expired the session: no admin
-screen shows it yet. #1113 adds that to the invoice screen, and the assertion
-moves into the spec then.
+| Spec | Counterpart of | What it proves | Vendor |
+|---|---|---|---|
+| `account.cy.ts` | `account.cy.ts` | The three channel switches come from the functions' catalog; a channel switched on is still on after a reload and on My Notifications; "Sole admin" comes from the real roster; Send reset email really sends | Email, reset test only |
+| `account-photo.cy.ts` | `account-photo.cy.ts` | A picked image really uploads to Cloudinary, is written to `users/{uid}.photoUrl`, and loads from Cloudinary after a reload. The signer request is still answered by the `cloudinarySignUpload` task until #1201 serves the admin's own functions | Cloudinary |
+| `bookings.cy.ts` | `bookings.cy.ts` | A real requested envelope is declined with an empty reason (#700) or booked through `manageBookingSeries`; after a reload it has left the queue, and a booking adds one to the Scheduled count; the block settles on its empty line (#698) | none |
+| `email-editor.cy.ts` | `email-editor.cy.ts` | A visual template with bold text and a button comes back from `listTemplates` after a reload; the preview is the server's render; Convert (with the server's dropped-image warning) then Save makes a template visual for good, Convert then Leave keeps it old | none |
+| `form-schemas.cy.ts` | `form-schemas.cy.ts` | The table sorts the server's rows (#717); an edit through `saveFormSchema` comes back with the version bumped, the time stamped and the editor named | none |
+| `gallery.cy.ts` | `gallery.cy.ts` | Delete through `deleteMediaFile` removes the `media_files` row: gone after a reload, counts one lower; Cancel sends nothing | none |
+| `household-members.cy.ts` | `household-members.cy.ts` | The #684/#829 layout over the real reads; a secondary kinfolk added through `saveSecondaryKinfolk` is listed after a reload with no portal access, and Remove takes it off | none |
+| `invoice-paid-stripe.cy.ts` | (D3 phase 1) | Record payment settles an invoice through `markInvoicePaid` while a real Stripe test checkout is open on it; after a reload it reads paid and says its open payment link was closed | Stripe |
+| `kin-view.cy.ts` | `kin-view.cy.ts` | A pet tag survives the `kin/{id}` triggers: on the pet after a full reload, gone after removal | none |
+| `kinfolk-profile.cy.ts` | `kinfolk-profile.cy.ts` | The right column order with the real credit reads (#678/#682); a credit given through `giveAccountCredit` is listed after a reload and the balance rose by its amount; an emergency contact saved through the Edit form is on the profile after a reload | none |
+| `my-notifications.cy.ts` | `my-notifications.cy.ts` | A channel switched on, or a default-on channel switched off, is stored and read back after a reload; Discard stores nothing; a catalog-required channel is drawn forced | none |
+| `settings-integrations.cy.ts` | `settings.cy.ts` (Integrations, #714/#715) | The cards are the server's integration list and a secret the run set reads as set; the Calendar panels open in place and the real connection read settles on Connect. Nothing on the Calendar panel is pressed | none (no network call) |
+| `settings-tags.cy.ts` | `settings.cy.ts` (Tags, #713) | `removeBusinessTag` really cascades: the server's count on screen, and after a reload the tag is gone from the Tags list and from the Directory filter | none |
+| `templates.cy.ts` | `templates.cy.ts` | The #716 frame over a real list; the stored subject on the card and in the editor; an edit through `saveTemplate` comes back from `listTemplates` after a reload | none |
+
+A vendor spec skips, naming the missing variables in the log, when the run has
+no credentials for it. No spec of the twelve sends a text, so none needs
+Twilio, and none needs Google Calendar credentials: the Integrations spec reads
+the stored connection only.
+
+Four PR-time tests have no counterpart, because each needs a server that can be
+told to stall or fail on command: #698's held loading state, #714's held
+spinner, My Notifications' refused save, and the account photo's refused
+upload. They stay in the PR-time suite only.
 
 ### The verdict (D3-e)
 
-A red run means our integration broke, and the release stops. A vendor outage
-(a 5xx or timeout while the vendor's status page shows an incident) should only
-warn. That classification is not automated yet, so a person reads a red run
-before a release is forced past it.
+A failure caused by our integration stops the release. A vendor outage only
+warns. After Cypress, `run.sh` runs `scripts/e2e-real/classify-run.mjs`, which
+reads the run's results (`cypress/.real/results.json`, written by the
+`after:run` hook in `cypress.real.config.ts`) and the emulator log, and writes
+`cypress/.real/verdict.json`:
+
+```json
+{ "verdict": "stop" | "warn" | "pass", "reasons": ["..."], "checkedAt": "...",
+  "cypressExit": 0, "failures": [...], "statusPages": {...} }
+```
+
+A failure counts as an outage only when every vendor error found for it (in
+the test's error text, and in our functions' log lines during its spec) is a
+5xx or a timeout, and that vendor's status page lists an incident covering
+that moment. Everything else stops: a 4xx, an auth error, a vendor error with
+no readable status, a failure with no vendor error at all, a spec that did not
+load, no results file, or a status page that did not answer. `run.sh` exits 1
+on `stop`, and 0 on `warn` and `pass`; on `warn` it prints a WARNING block
+naming each failure and its incident. A run that stops before Cypress (port
+check, build, preflight) still writes a `stop` verdict. The hosted job does
+not upload `verdict.json` yet; uploading it and reading it in the release is
+#1193.
+
+Status pages, checked 2026-10-23: Stripe `www.stripestatus.com` (the old
+`status.stripe.com` JSON is frozen in 2024), Twilio `status.twilio.com`,
+Cloudinary `status.cloudinary.com`, smtp2go `smtp2gostatus.com`, all
+Statuspage `/api/v2/incidents.json`; Google Calendar from Google Workspace's
+`appsstatus/dashboard/incidents.json`, Calendar incidents only. Any listed
+incident counts, even one on a product we do not call: the rule reads the
+status page, not our judgement of it.
+
+On exit, whatever the verdict, `scripts/e2e-real/cloudinary-cleanup.mjs`
+empties the Cloudinary `e2e/` folder with the `E2E_CLOUDINARY_*` test
+credentials: assets by the `e2e/` public-id prefix, assets whose asset folder
+is under `e2e`, then the folders. It touches nothing outside `e2e/`. Without
+the credentials it prints one `skipped` line. A failed delete is printed and
+leaves the exit code as it was.
+
+## The portal's real-services run (added 2026-10-30, #1194)
+
+D3 puts paying an invoice in the portal suite, because kinfolk pay there. The
+portal has its own copy of the harness above, in `mytribe/web`:
+
+```bash
+npm ci                                   # repo root, once
+npm ci --prefix mytribe/functions        # once
+cd mytribe/web
+npm run e2e:real
+```
+
+| Piece | Admin | Portal |
+|---|---|---|
+| Script | `auntieos-admin/scripts/e2e-real/run.sh` | `mytribe/web/scripts/e2e-real/run.sh` |
+| Preflight | `scripts/e2e-real/preflight.mjs` | `scripts/e2e-real/preflight.mjs`, which imports the admin's rules |
+| Emulator config | `auntieos-admin/e2e.real.firebase.json` | `mytribe/e2e.real.firebase.json` |
+| Project id | `demo-auntieos-e2e` | `demo-mytribe-e2e` |
+| Ports (auth, Firestore, functions) | 9399, 8385, 5398 | 9499, 8485, 5498 |
+| Specs | `auntieos-admin/cypress/e2e-real/` | `mytribe/web/cypress/e2e-real/` |
+| CI job | `admin-real` | `portal-real` |
+
+The portal preflight does not keep its own list of secrets or refusals. It
+imports `plan`, `disconnectRisks` and `declaredSecrets` from the admin
+preflight, so a refusal added there applies to both runs. Its tests
+(`mytribe/web/scripts/e2e-real/preflight.test.mjs`, run by the portal's
+`vitest`) check the three refusals through the portal's entry point.
+
+Run one real-services run at a time on a machine. The portal run cannot overlap
+`npm run e2e:cy` in `mytribe/web` (they share 9499 and 8485), and the Cloud
+Tasks emulator that firebase-tools starts alongside the functions emulator
+asks for 9499 by default, so an admin real run can take the portal's auth port.
+In CI the two jobs are on separate runners.
+
+### The Stripe webhook forwarder
+
+`payInvoice` only opens a Checkout Session. The invoice turns paid when
+`stripeWebhook` receives `checkout.session.completed` or
+`payment_intent.succeeded`, and Stripe cannot reach `127.0.0.1`. So when
+`STRIPE_TEST_SECRET_KEY` is set and the `stripe` CLI is on `PATH`, `run.sh`:
+
+1. starts `stripe listen --forward-to
+   http://127.0.0.1:5498/demo-mytribe-e2e/us-central1/stripeWebhook`, with the
+   key in the environment rather than on the command line;
+2. reads the `whsec_` signing secret from its output, and exports it as
+   `STRIPE_TEST_WEBHOOK_SECRET` before the preflight, which writes it to
+   `.secret.local` as `STRIPE_WEBHOOK_SECRET`;
+3. stops the forwarder when the run ends. Its output is
+   `cypress/.real/stripe-listen.log`.
+
+A key that is not a test key is refused before the CLI ever sees it. The
+preflight then reports one more flag, `stripeWebhook`, which is true only with
+test keys and a `whsec_` secret both present. The pay spec skips without it
+and names the missing piece. CI installs Stripe CLI 1.55.1, checksum-pinned.
+
+### Portal specs today
+
+| Spec | What it proves |
+|---|---|
+| `invoice-open.cy.ts` | The seeded kinfolk signs in through the real access chain (`getMyAccess`, `getMyHome`, `setActiveTribe`), and the real `getMyInvoices` shows a spec-written invoice as PENDING with its amount due and the card checkout button. Needs no vendor keys, so it runs every time |
+| `pay-invoice-stripe.cy.ts` | The kinfolk presses Pay with Credit Card, the real `payInvoice` opens a Stripe test Checkout, the spec pays with `4242 4242 4242 4242` on Stripe's page (`cy.origin`), and after the redirect the invoice reads PAID with no amount due and no pay button, once the forwarded webhook lands. Reloads every 3s for up to 60s. Skips without Stripe keys or the CLI |
+
+The portal seed also writes the household's PRIMARY `members` row, the shape
+`acceptInvite` writes, so the real billing gates see a member and not the
+legacy fallback. The `clients/{uid}` write is a field-masked merge, because the
+real `onAuthUserCreate` writes that document too and may get there first.
+
+On 2026-10-30 a local run with no vendor keys went: `invoice-open` passed, and
+the pay spec was pending (skipped, no keys). The pay spec has not run against
+Stripe yet. Its first real run is a dispatch of `e2e-real.yml` from main.
 
 ## Pointing a Cypress run at a deployed host (added 2026-08-30)
 

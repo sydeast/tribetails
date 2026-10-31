@@ -114,13 +114,12 @@ enum class InvoiceEditScope {
  * client-side re-derivation ADR-0002 retires, and offering `ALL` on a shrug
  * would invite an edit the server will refuse anyway.
  *
- * NO ANDROID SURFACE CONSUMES THIS YET, a fact about the app rather than an
- * omission here: the admin's only invoice-field editor (`updateInvoice`) was
- * deleted as dead code in the W2-2 re-point, and the linked-sessions editor
- * is deliberately NOT gated on editScope, mirroring the server's own ruling
- * in `admin/linkInvoiceSessions.ts` (attributing which sessions a bill
- * covers is not an edit of what the household was asked for). This decode
- * pins the contract the first real edit surface will read.
+ * READ BY THE INVOICE EDITOR (#1174, `ui/invoices/InvoiceEditForm.kt`):
+ * `none` offers no Edit, `metadataOnly` opens the form with the money shown
+ * read-only, `all` opens all of it. The linked-sessions editor is
+ * deliberately NOT gated on editScope, mirroring the server's own ruling in
+ * `admin/linkInvoiceSessions.ts` (attributing which sessions a bill covers is
+ * not an edit of what the household was asked for).
  */
 fun invoiceEditScopeOf(invoice: Invoice): InvoiceEditScope = when (invoice.editScope?.trim()?.lowercase()) {
     "all" -> InvoiceEditScope.ALL

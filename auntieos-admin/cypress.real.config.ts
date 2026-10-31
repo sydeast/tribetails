@@ -1,5 +1,6 @@
 import { defineConfig } from 'cypress';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import seed, { upsert, remove } from './e2e/seed';
 
 /**
@@ -27,6 +28,33 @@ const PORT = 5174;
 /** Written by `run.sh`. Absent when someone ran `cypress open` by hand: every vendor then reads as not configured. */
 const REAL_DIR = 'cypress/.real';
 const VENDORS_FILE = `${REAL_DIR}/vendors.json`;
+/** Read by `scripts/e2e-real/classify-run.mjs` for the D3-e verdict (#1196). */
+const RESULTS_FILE = `${REAL_DIR}/results.json`;
+
+/**
+ * The run's results, trimmed to what the classifier reads. The full object
+ * carries the resolved config, which has no business in an artifact.
+ */
+function writeRunResults(results: CypressCommandLine.CypressRunResult | CypressCommandLine.CypressFailedRunResult): void {
+  mkdirSync(REAL_DIR, { recursive: true });
+  const trimmed =
+    'status' in results && results.status === 'failed'
+      ? { status: 'failed', message: results.message }
+      : {
+          totalTests: (results as CypressCommandLine.CypressRunResult).totalTests,
+          totalPassed: (results as CypressCommandLine.CypressRunResult).totalPassed,
+          totalFailed: (results as CypressCommandLine.CypressRunResult).totalFailed,
+          totalPending: (results as CypressCommandLine.CypressRunResult).totalPending,
+          totalSkipped: (results as CypressCommandLine.CypressRunResult).totalSkipped,
+          runs: (results as CypressCommandLine.CypressRunResult).runs.map((run) => ({
+            spec: { relative: run.spec.relative },
+            error: run.error,
+            stats: run.stats,
+            tests: run.tests.map((t) => ({ title: t.title, state: t.state, displayError: t.displayError })),
+          })),
+        };
+  writeFileSync(RESULTS_FILE, JSON.stringify(trimmed, null, 2));
+}
 
 /**
  * Which vendors have credentials in this run, as booleans only, never a value.
@@ -60,6 +88,39 @@ function structuredErrors(text: string): string[] {
 
 let seeded: Promise<void> | null = null;
 
+/** The auth emulator `run.sh` boots (same port as `e2e/seed.ts`). */
+const AUTH_EMULATOR = 'http://127.0.0.1:9399';
+
+/**
+ * Cloudinary credentials for this run, or a refusal. Read from the same
+ * variables the preflight writes into the functions secrets file, so a spec
+ * and the functions it drives talk to the same account. Only called by a spec
+ * that has already checked `vendorConfigured('cloudinary')`.
+ */
+function cloudinaryCredentials(): { cloudName: string; apiKey: string; apiSecret: string } {
+  const cloudName = process.env.E2E_CLOUDINARY_CLOUD_NAME ?? '';
+  const apiKey = process.env.E2E_CLOUDINARY_API_KEY ?? '';
+  const apiSecret = process.env.E2E_CLOUDINARY_API_SECRET ?? '';
+  if (cloudName === '' || apiKey === '' || apiSecret === '') {
+    throw new Error(
+      'E2E_CLOUDINARY_CLOUD_NAME, E2E_CLOUDINARY_API_KEY and E2E_CLOUDINARY_API_SECRET must all be set; refusing to call Cloudinary',
+    );
+  }
+  return { cloudName, apiKey, apiSecret };
+}
+
+/** Every Cloudinary upload this suite makes lands under this folder (D3, Cloudinary row). */
+const CLOUDINARY_E2E_FOLDER = 'e2e';
+
+/** Cloudinary's signature recipe: sha1 of the params sorted by name, joined with `&`, then the secret. */
+function cloudinarySignature(params: Record<string, string>, apiSecret: string): string {
+  const base = Object.keys(params)
+    .sort()
+    .map((k) => `${k}=${params[k]}`)
+    .join('&');
+  return createHash('sha1').update(`${base}${apiSecret}`).digest('hex');
+}
+
 export default defineConfig({
   projectId: '2khvut',
   expose: { E2E_VENDORS: vendorAvailability() },
@@ -80,6 +141,9 @@ export default defineConfig({
     // the PR-time stubs never had to wait for.
     defaultCommandTimeout: 15_000,
     setupNodeEvents(on) {
+      on('after:run', (results) => {
+        writeRunResults(results);
+      });
       on('task', {
         /** Seeds the emulator once per run (`e2e/seed.ts`, `E2E_PROJECT_ID` from run.sh). */
         async seedOnce() {
@@ -109,6 +173,68 @@ export default defineConfig({
         async deleteDoc({ collection, id }: { collection: string; id: string }) {
           await remove(collection, id);
           return null;
+        },
+        /**
+         * The auth emulator's uid for [email]. The seed creates the fixture
+         * admin with a uid the emulator picks, and a spec that has to clean up
+         * a document keyed by it (`staff/{uid}`) needs that uid. Owner bearer,
+         * the same surface `e2e/seed.ts`'s `setPassword` uses.
+         */
+        async authUid({ email }: { email: string }) {
+          const res = await fetch(`${AUTH_EMULATOR}/identitytoolkit.googleapis.com/v1/accounts:lookup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer owner' },
+            body: JSON.stringify({ email: [email] }),
+          });
+          const json = (await res.json()) as { users?: Array<{ localId?: string }> };
+          const uid = json.users?.[0]?.localId;
+          if (!res.ok || !uid) throw new Error(`authUid: no auth-emulator account for ${email}`);
+          return uid;
+        },
+        /**
+         * Signs one Cloudinary upload into the suite's `e2e/` folder.
+         *
+         * WHY A TASK SIGNS IT. The admin signs through `/api/cloudinary/sign-upload`,
+         * a hosting rewrite to `signCloudinaryUpload` in the admin's own
+         * functions codebase (`auntieos-admin/web/functions`). This run serves
+         * `mytribe/functions` only, and vite has no such rewrite, so nothing
+         * would answer it (#1201 tracks serving it). The spec answers that one
+         * request with this signature; the upload itself, the Firestore writes
+         * that follow and the image the screen loads are all real. The params
+         * signed are exactly the ones `uploadToCloudinary` posts (folder,
+         * timestamp, transformation), so Cloudinary verifies the signature the
+         * way it would verify the real signer's.
+         */
+        cloudinarySignUpload({ subfolder }: { subfolder: string }) {
+          const { cloudName, apiKey, apiSecret } = cloudinaryCredentials();
+          const folder = `${CLOUDINARY_E2E_FOLDER}/${subfolder}`;
+          const timestamp = String(Math.floor(Date.now() / 1000));
+          const transformation = 'fl_force_strip';
+          const signature = cloudinarySignature({ folder, timestamp, transformation }, apiSecret);
+          return { cloudName, apiKey, timestamp: Number(timestamp), signature, folder, transformation };
+        },
+        /**
+         * Destroys one asset this suite uploaded. Refuses anything outside the
+         * `e2e/` folder, so a wrong id can never reach the operator's library.
+         */
+        async cloudinaryDestroy({ publicId }: { publicId: string }) {
+          if (!publicId.startsWith(`${CLOUDINARY_E2E_FOLDER}/`)) {
+            throw new Error(`cloudinaryDestroy: refusing ${publicId}, which is outside ${CLOUDINARY_E2E_FOLDER}/`);
+          }
+          const { cloudName, apiKey, apiSecret } = cloudinaryCredentials();
+          const timestamp = String(Math.floor(Date.now() / 1000));
+          const signature = cloudinarySignature({ public_id: publicId, timestamp }, apiSecret);
+          const body = new URLSearchParams({ public_id: publicId, timestamp, api_key: apiKey, signature });
+          const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/destroy`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body,
+          });
+          const json = (await res.json().catch(() => ({}))) as { result?: string };
+          if (!res.ok || (json.result !== 'ok' && json.result !== 'not found')) {
+            throw new Error(`cloudinaryDestroy: ${res.status} ${JSON.stringify(json)}`);
+          }
+          return json.result;
         },
         /** Byte offset of the emulator log now, so a test reads only its own lines. */
         serverLogOffset() {

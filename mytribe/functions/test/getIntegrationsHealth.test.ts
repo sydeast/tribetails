@@ -260,6 +260,17 @@ describe('getIntegrationsHealth, the free probes', () => {
     expect(cloudinary.status).toBe('working');
   });
 
+  it('#1202: the Cloudinary probe still passes under demo-auntieos-e2e, where the throwaway folder is prefixed', async () => {
+    const prev = process.env['GCLOUD_PROJECT'];
+    process.env['GCLOUD_PROJECT'] = 'demo-auntieos-e2e';
+    try {
+      const cloudinary = row(await run(), 'cloudinary');
+      expect(cloudinary.liveness.outcome).toBe('pass');
+    } finally {
+      if (prev === undefined) delete process.env['GCLOUD_PROJECT'];
+      else process.env['GCLOUD_PROJECT'] = prev;
+    }
+  });
   it('reports Sentry as working only when it actually initialised', async () => {
     expect(row(await run(), 'sentry').status).toBe('configured');
     mocks.sentryOn.mockReturnValue(true);

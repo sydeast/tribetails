@@ -1322,30 +1322,52 @@ class FirestoreClient {
          * meant to behave exactly as it did before #825.
          */
         idempotencyKey: String? = null,
+        /**
+         * #1178: the structured terms code, the itemized lines and the
+         * whole-invoice discount, as web and Android send them. All three are
+         * omitted from the payload when null; see [createInvoicePayload].
+         */
+        termsCode: String? = null,
+        lineItems: List<InvoiceLineItem>? = null,
+        invoiceDiscountCents: Long? = null,
     ): WriteResult<String> {
         // Test admin: force the scoped kinfolkId so the create passes the rule.
         val scopedKinfolkId = enforceWriteKinfolkId(testMode, invoice.kinfolkId)
-        val payload = buildJsonObject {
-            put("familyId", JsonPrimitive(scopedKinfolkId))
-            idempotencyKey?.let { put("idempotencyKey", JsonPrimitive(it)) }
-            put("kinfolkName", JsonPrimitive(invoice.kinfolkName))
-            put("invoiceNumber", JsonPrimitive(invoice.invoiceNumber))
-            put("client", JsonPrimitive(invoice.client))
-            put("address", JsonPrimitive(invoice.address))
-            put("date", JsonPrimitive(invoice.date))
-            put("terms", JsonPrimitive(invoice.terms))
-            put("dueDate", JsonPrimitive(invoice.dueDate))
-            put("discount", JsonPrimitive(invoice.discount))
-            put("total", JsonPrimitive(invoice.total))
-            put("amountDue", JsonPrimitive(invoice.amountDue))
-            put("status", JsonPrimitive(invoice.status))
-            put("sessionIds", buildJsonArray { invoice.sessionIds.forEach { add(JsonPrimitive(it)) } })
-        }
+        val payload = createInvoicePayload(
+            invoice,
+            familyId = scopedKinfolkId,
+            termsCode = termsCode,
+            lineItems = lineItems,
+            invoiceDiscountCents = invoiceDiscountCents,
+            idempotencyKey = idempotencyKey,
+        )
         return when (val r = platformInvokeCallable("createInvoice", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
             is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(callableJson.parseToJsonElement(r.value).jsonObject["invoiceId"]?.jsonPrimitive?.contentOrNull.orEmpty())
             }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+
+    /**
+     * #1174: edits an invoice's number, dates, terms, line items and discount
+     * through the `updateInvoice` callable, the one the web editor calls.
+     *
+     * [patch] is the request's `patch` object as built by
+     * `screens.invoices.invoiceEditPatchOf`: only the fields the form controls
+     * and the operator changed. The server recomputes every money figure, so no
+     * total goes on the wire. Fail-loud: the server's refusal (money locked by a
+     * recorded payment, an accepted quote, a discount larger than its line) is
+     * returned verbatim.
+     */
+    suspend fun updateInvoice(invoiceId: String, patch: JsonObject): WriteResult<Unit> {
+        val payload = buildJsonObject {
+            put("invoiceId", JsonPrimitive(invoiceId))
+            put("patch", patch)
+        }
+        return when (val r = platformInvokeCallable("updateInvoice", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
         }
     }
 
@@ -1524,30 +1546,66 @@ class FirestoreClient {
          * toggle must mint a new key, or the send it just asked for is skipped.
          */
         idempotencyKey: String? = null,
+        /** #1178: as [createInvoice]'s. */
+        termsCode: String? = null,
+        lineItems: List<InvoiceLineItem>? = null,
+        invoiceDiscountCents: Long? = null,
     ): WriteResult<String> {
         val scopedKinfolkId = enforceWriteKinfolkId(testMode, invoice.kinfolkId)
-        val payload = buildJsonObject {
-            put("familyId", JsonPrimitive(scopedKinfolkId))
-            idempotencyKey?.let { put("idempotencyKey", JsonPrimitive(it)) }
-            put("kinfolkName", JsonPrimitive(invoice.kinfolkName))
-            put("invoiceNumber", JsonPrimitive(invoice.invoiceNumber))
-            put("client", JsonPrimitive(invoice.client))
-            put("address", JsonPrimitive(invoice.address))
-            put("date", JsonPrimitive(invoice.date))
-            put("terms", JsonPrimitive(invoice.terms))
-            put("dueDate", JsonPrimitive(invoice.dueDate))
-            put("discount", JsonPrimitive(invoice.discount))
-            put("total", JsonPrimitive(invoice.total))
-            put("amountDue", JsonPrimitive(invoice.amountDue))
-            put("status", JsonPrimitive(invoice.status))
-            put("sessionIds", buildJsonArray { invoice.sessionIds.forEach { add(JsonPrimitive(it)) } })
-            put("sendToKinfolk", JsonPrimitive(sendToKinfolk))
-        }
+        val payload = createQuotePayload(
+            invoice,
+            familyId = scopedKinfolkId,
+            sendToKinfolk = sendToKinfolk,
+            termsCode = termsCode,
+            lineItems = lineItems,
+            invoiceDiscountCents = invoiceDiscountCents,
+            idempotencyKey = idempotencyKey,
+        )
         return when (val r = platformInvokeCallable("createQuote", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
             is WriteResult.Ok -> runCatchingCancellable {
                 WriteResult.Ok(callableJson.parseToJsonElement(r.value).jsonObject["invoiceId"]?.jsonPrimitive?.contentOrNull.orEmpty())
             }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+    /**
+     * #1178: a household's completed visits that no invoice bills for yet, via
+     * `listUninvoicedSessions`. Pass [from] and [to] only to narrow a result the
+     * server said it truncated. Scoped for test mode as [createInvoice] is, so a
+     * sandbox session cannot read a real household's work. A failure is an Err,
+     * never an empty list: an empty list reads as "nothing outstanding".
+     */
+    suspend fun listUninvoicedSessions(
+        kinfolkId: String,
+        from: String? = null,
+        to: String? = null,
+    ): WriteResult<UninvoicedSessionsResult> {
+        val payload = runCatchingCancellable {
+            listUninvoicedSessionsPayload(enforceWriteKinfolkId(testMode, kinfolkId), from, to)
+        }.getOrElse { return WriteResult.Err(it.message ?: "bad request") }
+        return when (val r = platformInvokeCallable("listUninvoicedSessions", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeUninvoicedSessionsResult(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+    /**
+     * #1178: marks visits do not invoice, or puts them back, via
+     * `setSessionDoNotInvoice`. A state on the visit, not a deletion. The server
+     * refuses a visit an invoice already bills for, and refuses the whole batch.
+     */
+    suspend fun setSessionDoNotInvoice(
+        sessionIds: List<String>,
+        doNotInvoice: Boolean,
+        reason: String = "",
+    ): WriteResult<DoNotInvoiceResult> {
+        val payload = runCatchingCancellable {
+            setSessionDoNotInvoicePayload(sessionIds, doNotInvoice, reason)
+        }.getOrElse { return WriteResult.Err(it.message ?: "bad request") }
+        return when (val r = platformInvokeCallable("setSessionDoNotInvoice", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeDoNotInvoiceResult(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
     }
 
@@ -3557,7 +3615,10 @@ data class Invoice(
     val paymentsHistory: String = "",
     val amountDue: Double = 0.0,
     val status: String = "",         // free-text on Android; UI groups by paid vs outstanding via amountDue
-    val viewed: String = "",
+    // LEGACY (#1180): the old system's Viewed flag on migrated invoices, text or
+    // boolean. Nothing here writes it and no screen reads it. Nullable so an
+    // explicit null cannot make the list decode drop the whole invoice.
+    val viewed: String? = null,
     // Attribution fields written by backfill_structural_links.py
     val sessionIds: List<String> = emptyList(),
     @SerialName("_attribution") val attribution: String = "",
@@ -3569,6 +3630,24 @@ data class Invoice(
      * send released its claim (#832). Read through [lastReminderLabel].
      */
     val reminderNotifiedAtMs: Long? = null,
+    /**
+     * #1174: the itemization, held RAW and read through
+     * `screens.invoices.invoiceEditLinesOf`. Raw for the reason Android's model
+     * gives: staff can write this collection directly, so the field can hold
+     * something that is not a list of lines, and a typed list here would make
+     * the decode throw and drop the whole invoice from the list. ABSENT IS NOT
+     * EMPTY: null means never itemized, which `updateInvoice` treats differently
+     * from an empty list.
+     */
+    val lineItems: JsonElement? = null,
+    /** Whole-invoice discount in integer cents, raw for the same reason. Read through `invoiceDiscountCentsOf`. */
+    val invoiceDiscountCents: JsonElement? = null,
+    /**
+     * The server's stored edit-scope stamp (ADR-0002): `all`, `metadataOnly`
+     * or `none`. Decides whether the editor is OFFERED; the server enforces.
+     * Absent reads as `none`.
+     */
+    val editScope: String? = null,
 )
 
 /**
@@ -3858,10 +3937,25 @@ data class BusinessSettings(
     // Business hours: day → "HH:MM-HH:MM" or "" (closed)
     val businessHours: Map<String, String> = emptyMap(),
 
-    // ---- Payment options (operator-entered handles printed on invoices) ----
+    // ---- Payment options (handles printed on invoices; switches since #409, here #1177) ----
+    // Whether a method is OFFERED is its switch in [paymentOptions], not whether
+    // its handle is blank.
     val venmoHandle: String = "",
     val paypalHandle: String = "",
     val cashappHandle: String = "",
+    // Method id -> `{ enabled, instructions }`, SPARSE: an absent entry resolves to
+    // the method's default (PaymentMethods.kt). Held RAW so a malformed entry the
+    // web or the phone wrote can never fail this whole settings read, and so a save
+    // carries forward every key this console does not model.
+    //
+    // NEVER ENCODED WHILE NULL. The no-baseline fallback in
+    // `platformSaveBusinessSettings` merges every encoded key under an update
+    // mask, and `jsonOut` encodes defaults: a `null` here would go out as an
+    // explicit null and delete the web's switches. Omitted, it is not in the mask
+    // and the stored map is left alone.
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val paymentOptions: JsonElement? = null,
 
     // ---- Weather (W16/W17) ----
     // Service-AREA place name (city / metro / ZIP) the Home weather widgets forecast for.

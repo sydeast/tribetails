@@ -25,17 +25,60 @@ import { KINFOLK, RESET_KINFOLK, STAFF } from './fixtures/accounts';
  * only `mytribe/e2e.firebase.json` opens.
  */
 
-const PROJECT = 'auntieos-ttpc';
+/**
+ * The emulators' project id. `auntieos-ttpc` for the PR-time suite, which runs
+ * auth and Firestore only. The real-services run (#1194) starts all three
+ * emulators under a `demo-` id so the functions emulator cannot resolve a
+ * production secret, and names it in `E2E_PROJECT_ID`; anything else there is
+ * refused, because seeding wipes the project it is pointed at. Same rule as
+ * `auntieos-admin/e2e/seed.ts`.
+ */
+const PROJECT = (() => {
+  const id = process.env.E2E_PROJECT_ID ?? '';
+  if (id === '') return 'auntieos-ttpc';
+  if (!id.startsWith('demo-')) throw new Error(`E2E_PROJECT_ID must be a demo- project id, got "${id}"`);
+  return id;
+})();
 const AUTH = 'http://127.0.0.1:9499';
 const FIRESTORE = 'http://127.0.0.1:8485';
 const OWNER = { Authorization: 'Bearer owner' };
+/**
+ * How long one seed call may take. 10s by default, which bare emulators beat by
+ * orders of magnitude. The real-services run raises it (`E2E_SEED_TIMEOUT_MS`
+ * in `scripts/e2e-real/run.sh`) because every `signUp` there runs the real
+ * `beforeSignIn` and `onAuthUserCreate`, and their cold starts take seconds.
+ * A malformed value is fatal rather than quietly reverting to the default.
+ */
+function seedTimeoutMs(): number {
+  const raw = process.env.E2E_SEED_TIMEOUT_MS;
+  if (raw === undefined || raw === '') return 10_000;
+  const ms = Number(raw);
+  if (!Number.isFinite(ms) || ms <= 0) {
+    throw new Error(`E2E_SEED_TIMEOUT_MS is not a positive number of ms: "${raw}"`);
+  }
+  return ms;
+}
 
 /**
  * Every call goes through this. A seeder that swallows a failure hands the
  * specs an empty database and lets them fail somewhere else entirely, with a
  * message about a missing row instead of about the write that never happened.
+ *
+ * It also carries the deadline, so an emulator that accepts the connection and
+ * never answers fails here, naming the call, instead of parking the run.
  */
-async function must(res: Response, what: string): Promise<Record<string, unknown>> {
+async function must(url: string, init: RequestInit, what: string): Promise<Record<string, unknown>> {
+  const budget = seedTimeoutMs();
+  let res: Response;
+  try {
+    res = await fetch(url, { ...init, signal: AbortSignal.timeout(budget) });
+  } catch (cause) {
+    const failed =
+      (cause as { name?: string } | undefined)?.name === 'TimeoutError'
+        ? `timed out after ${budget}ms at ${what}. Raise E2E_SEED_TIMEOUT_MS if this machine is genuinely that slow`
+        : `could not reach the emulator at ${what}. Are the emulators up?`;
+    throw new Error(`portal e2e seed ${failed}`, { cause });
+  }
   if (!res.ok) {
     throw new Error(`portal e2e seed failed at ${what}: ${res.status} ${await res.text()}`);
   }
@@ -43,15 +86,10 @@ async function must(res: Response, what: string): Promise<Record<string, unknown
 }
 
 async function wipe(): Promise<void> {
+  await must(`${AUTH}/emulator/v1/projects/${PROJECT}/accounts`, { method: 'DELETE', headers: OWNER }, 'wipe auth');
   await must(
-    await fetch(`${AUTH}/emulator/v1/projects/${PROJECT}/accounts`, { method: 'DELETE', headers: OWNER }),
-    'wipe auth',
-  );
-  await must(
-    await fetch(`${FIRESTORE}/emulator/v1/projects/${PROJECT}/databases/(default)/documents`, {
-      method: 'DELETE',
-      headers: OWNER,
-    }),
+    `${FIRESTORE}/emulator/v1/projects/${PROJECT}/databases/(default)/documents`,
+    { method: 'DELETE', headers: OWNER },
     'wipe firestore',
   );
 }
@@ -63,11 +101,12 @@ async function createUser(
   claims: Record<string, unknown>,
 ): Promise<string> {
   const signUp = await must(
-    await fetch(`${AUTH}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake`, {
+    `${AUTH}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake`,
+    {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password, returnSecureToken: true }),
-    }),
+    },
     `signUp ${email}`,
   );
   const localId = signUp.localId as string;
@@ -76,11 +115,12 @@ async function createUser(
   // claims at all, and here that would deny every rules-gated Firestore read
   // with no error anywhere near the cause.
   await must(
-    await fetch(`${AUTH}/identitytoolkit.googleapis.com/v1/accounts:update`, {
+    `${AUTH}/identitytoolkit.googleapis.com/v1/accounts:update`,
+    {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...OWNER },
       body: JSON.stringify({ localId, customAttributes: JSON.stringify(claims) }),
-    }),
+    },
     `claims ${email}`,
   );
   return localId;
@@ -103,17 +143,54 @@ function enc(v: unknown): Record<string, unknown> {
   throw new Error(`portal e2e seed cannot encode ${typeof v}`);
 }
 
+function fieldsOf(doc: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(doc).map(([k, v]) => [k, enc(v)]));
+}
+
 /** `path` is a full document path, so subcollections are written the same way. */
 async function put(path: string, id: string, doc: Record<string, unknown>): Promise<void> {
-  const url = `${FIRESTORE}/v1/projects/${PROJECT}/databases/(default)/documents/${path}?documentId=${id}`;
-  const fields = Object.fromEntries(Object.entries(doc).map(([k, v]) => [k, enc(v)]));
   await must(
-    await fetch(url, {
+    `${FIRESTORE}/v1/projects/${PROJECT}/databases/(default)/documents/${path}?documentId=${id}`,
+    {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...OWNER },
-      body: JSON.stringify({ fields }),
-    }),
+      body: JSON.stringify({ fields: fieldsOf(doc) }),
+    },
     `${path}/${id}`,
+  );
+}
+
+/**
+ * Merges the given fields into one document, creating it when absent.
+ *
+ * `updateMask` is what makes it a merge: only the named fields are written, so
+ * a field another writer put there survives. That matters for `clients/{uid}`
+ * in the real-services run, where `onAuthUserCreate` writes the same document
+ * (email, displayName, timestamps, never `kinfolkIds`) at a moment the seed
+ * does not control. A plain `put` there answers 409 when the trigger got in
+ * first. Exported for the real-services config's `upsertDoc` task.
+ */
+export async function upsert(path: string, id: string, doc: Record<string, unknown>): Promise<void> {
+  const mask = Object.keys(doc)
+    .map((k) => `updateMask.fieldPaths=${encodeURIComponent(k)}`)
+    .join('&');
+  await must(
+    `${FIRESTORE}/v1/projects/${PROJECT}/databases/(default)/documents/${path}/${id}?${mask}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...OWNER },
+      body: JSON.stringify({ fields: fieldsOf(doc) }),
+    },
+    `${path}/${id} (upsert)`,
+  );
+}
+
+/** Deletes one document, for a spec's own `after`. */
+export async function remove(path: string, id: string): Promise<void> {
+  await must(
+    `${FIRESTORE}/v1/projects/${PROJECT}/databases/(default)/documents/${path}/${id}`,
+    { method: 'DELETE', headers: OWNER },
+    `delete ${path}/${id}`,
   );
 }
 
@@ -131,10 +208,33 @@ export default async function seed(): Promise<void> {
   // this harness, so nothing in a spec depends on this document. It is written
   // so the emulator database is a shape the real callable could have produced,
   // rather than one that only makes sense next to the stub.
-  await put('clients', uid, {
+  //
+  // An UPSERT, not a put: under the real-services run `onAuthUserCreate` writes
+  // this same document after the signUp above, and may land first.
+  await upsert('clients', uid, {
     email: KINFOLK.email,
     kinfolkIds: [KINFOLK.kinfolkId],
     createdAt: new Date('2026-07-01T10:00:00Z'),
+  });
+  // The household's PRIMARY member row, the shape `acceptInvite` writes. The
+  // billing gates (`requireBillingAccess`, `requireBillingActor`) let a missing
+  // row through as a legacy primary, with a `portal.member.missing` warning on
+  // every call; this row is the production shape instead of that fallback.
+  await put(`families/${KINFOLK.kinfolkId}/members`, uid, {
+    uid,
+    displayName: KINFOLK.displayName,
+    email: KINFOLK.email,
+    role: 'PRIMARY',
+    status: 'ACTIVE',
+    permissions: {
+      billing_full: true,
+      messaging_direct: true,
+      messaging_group: true,
+      kin_edit: true,
+      kintales_only: true,
+      home_access: true,
+    },
+    updatedAt: new Date('2026-07-01T10:00:00Z'),
   });
 
   await put('kinfolk', KINFOLK.kinfolkId, {

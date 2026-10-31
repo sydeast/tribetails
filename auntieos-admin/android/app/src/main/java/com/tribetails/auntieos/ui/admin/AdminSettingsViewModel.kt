@@ -44,6 +44,12 @@ data class AdminSettingsUiState(
     val credentialMessage: String? = null,
     val error: String? = null,
     val saveSuccess: Boolean = false,
+    /**
+     * #1177: a business settings write is in flight. The Payment options panel
+     * shows a spinner on Save and holds its controls still for the wait, the same busy
+     * state the web panel has.
+     */
+    val settingsSaving: Boolean = false,
     val profileSaveSuccess: Boolean = false,
     /**
      * #897: true once the users/{uid} read has answered (a missing document
@@ -188,7 +194,7 @@ class AdminSettingsViewModel(
             return
         }
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(businessSettings = settings, saveSuccess = false)
+            _uiState.value = _uiState.value.copy(businessSettings = settings, saveSuccess = false, settingsSaving = true)
 
             repository.updateBusinessSettingsFields(changes, "admin").fold(
                 onSuccess = {
@@ -200,13 +206,15 @@ class AdminSettingsViewModel(
                         businessSettings = settings,
                         stagedLogoUrl = if (clearStagedLogo) null else _uiState.value.stagedLogoUrl,
                         saveSuccess = true,
+                        settingsSaving = false,
                         error = null
                     )
                 },
                 onFailure = { error ->
                     _uiState.value = _uiState.value.copy(
                         error = "$failureLabel: ${error.message}",
-                        saveSuccess = false
+                        saveSuccess = false,
+                        settingsSaving = false,
                     )
                 }
             )

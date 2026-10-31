@@ -26,7 +26,7 @@ package com.tribetails.auntieos.data.model
  *    Google Calendar id), and the inline tag promotion on a profile.
  *
  * So the phone reverting the web is not hypothetical here: `calendarSyncId`, the
- * venmo/paypal/cashapp handles and the two tag vocabularies all sit on this doc
+ * venmo/paypal/cashapp handles, the payment switches and the two tag vocabularies all sit on this doc
  * and are all editable from both sides.
  *
  * NOT ON THIS MODEL, and staying off it: the four calendar-sync receipt fields
@@ -141,6 +141,16 @@ internal val BUSINESS_SETTINGS_DIFF_FIELDS: Map<String, SettingsDiffField> = lin
     "venmoHandle" to SettingsDiffField({ it.venmoHandle }),
     "paypalHandle" to SettingsDiffField({ it.paypalHandle }),
     "cashappHandle" to SettingsDiffField({ it.cashappHandle }),
+    // The per-method switches and instructions (#409 on web, #1177 here).
+    // COMPARED DECODED, WRITTEN RAW, like the tag vocabularies below: a save from
+    // any other panel hands back the raw map it read and is not a change, while
+    // the Payment options panel writes the raw map [withPaymentDraft] built,
+    // which carries every key it does not model forward untouched. Merged key by
+    // key under `SetOptions.merge()`, the same as the web's `merge: true`.
+    "paymentOptions" to SettingsDiffField(
+        write = { it.paymentOptions },
+        compare = { decodePaymentOptions(it.paymentOptions) },
+    ),
     // --- Weather area ---
     "weatherLocation" to SettingsDiffField({ it.weatherLocation }),
     // --- Tag vocabularies ---
