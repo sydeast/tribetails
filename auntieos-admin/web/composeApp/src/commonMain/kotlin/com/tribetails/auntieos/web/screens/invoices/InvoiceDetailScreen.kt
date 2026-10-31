@@ -50,6 +50,8 @@ import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.Payment
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.lastReminderLabel
+import com.tribetails.auntieos.web.data.linkPickerOnOtherInvoice
+import com.tribetails.auntieos.web.data.toggleLinkPick
 import com.tribetails.auntieos.web.data.reminderOutcomeMessage
 import com.tribetails.auntieos.web.data.InvoicePaymentEntry
 import com.tribetails.auntieos.web.data.PaymentSubmissionKeys
@@ -344,8 +346,13 @@ private fun InvoiceDetailBody(
         pendingIds    = pendingIds,
         saveLoading   = saveLoading,
         error         = linkSessionsError,
+        invoiceId     = invoice._id,
+        storedIds     = invoice.sessionIds,
         onToggle      = { sid ->
-            if (!saveLoading) pendingIds = if (sid in pendingIds) pendingIds - sid else pendingIds + sid
+            // #1254: a visit another invoice bills cannot be ticked.
+            if (!saveLoading) {
+                pendingIds = toggleLinkPick(pendingIds, sid, allSessions, invoice._id, invoice.sessionIds)
+            }
         },
         // Not while the call is in flight: its answer has to land somewhere.
         onCancel      = {
@@ -943,6 +950,8 @@ private fun LinkSessionsDialog(
     pendingIds: Set<String>,
     saveLoading: Boolean,
     error: String?,
+    invoiceId: String,
+    storedIds: List<String>,
     onToggle: (String) -> Unit,
     onCancel: () -> Unit,
     onSave: () -> Unit,
@@ -989,12 +998,17 @@ private fun LinkSessionsDialog(
                             val dateLabel = session.completedAt.take(10)
                                 .ifBlank { session.startTime.take(10) }
                                 .ifBlank { "-" }
-                            val chipLabel = "${session.serviceType.ifBlank { "Session" }} · $dateLabel"
+                            // #1254: shown, not hidden, and not tickable:
+                            // another invoice already bills it.
+                            val elsewhere = linkPickerOnOtherInvoice(session, invoiceId, storedIds)
+                            val chipLabel = "${session.serviceType.ifBlank { "Session" }} · $dateLabel" +
+                                if (elsewhere) " · on another invoice" else ""
                             AuntieChip(
                                 label    = chipLabel,
                                 selected = session._id in pendingIds,
                                 tone     = AuntieChipTone.Orange,
                                 onClick  = { onToggle(session._id) },
+                                enabled  = !elsewhere && !saveLoading,
                             )
                         }
                     }

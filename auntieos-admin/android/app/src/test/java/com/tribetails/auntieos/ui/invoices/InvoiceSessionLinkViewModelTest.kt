@@ -339,4 +339,88 @@ class InvoiceSessionLinkViewModelTest {
         coVerify(exactly = 1) { mockInvoiceRepo.linkInvoiceSessions("inv1", capture(sent)) }
         assertEquals(setOf("ses1", "ses2"), sent.captured.toSet())
     }
+
+    // ── #1254: visits another invoice already bills ──────────────────────────
+
+    @Test
+    fun `linkPickerOnOtherInvoice marks only a visit claimed by a different invoice and not in the stored set`() {
+        val stored = listOf("ses1")
+        assertTrue(linkPickerOnOtherInvoice(session3.copy(invoiceId = "invA"), "inv1", stored))
+        assertTrue(linkPickerOnOtherInvoice(session3.copy(invoiceId = "  invA "), "inv1", stored))
+        // Unclaimed: empty and whitespace are one state.
+        assertFalse(linkPickerOnOtherInvoice(session3.copy(invoiceId = ""), "inv1", stored))
+        assertFalse(linkPickerOnOtherInvoice(session3.copy(invoiceId = "   "), "inv1", stored))
+        // A back-link to THIS invoice is a half-link, not another invoice.
+        assertFalse(linkPickerOnOtherInvoice(session3.copy(invoiceId = " inv1 "), "inv1", stored))
+        // Already in the stored set: stays togglable whatever its back-link says.
+        assertFalse(linkPickerOnOtherInvoice(session1.copy(invoiceId = "invA"), "inv1", stored))
+    }
+
+    @Test
+    fun `toggleSessionInPending will not tick a visit on another invoice`() = runTest(testDispatcher) {
+        val elsewhere = session3.copy(invoiceId = "invA")
+        coEvery { mockInvoiceRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
+        coEvery { mockKinCareRepo.getKinCareSessionsForKinfolk("kf1") } returns Result.success(
+            listOf(session1, session2, elsewhere)
+        )
+
+        val vm = buildViewModel()
+        vm.loadInvoice("inv1")
+        advanceUntilIdle()
+        vm.openEditMode()
+        vm.toggleSessionInPending("ses3")
+
+        assertEquals(setOf("ses1", "ses2"), vm.uiState.value.pendingSessionIds)
+    }
+
+    @Test
+    fun `toggleSessionInPending still unticks a stored visit whose back-link names another invoice`() = runTest(testDispatcher) {
+        coEvery { mockInvoiceRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
+        coEvery { mockKinCareRepo.getKinCareSessionsForKinfolk("kf1") } returns Result.success(
+            listOf(session1.copy(invoiceId = "invA"), session2)
+        )
+
+        val vm = buildViewModel()
+        vm.loadInvoice("inv1")
+        advanceUntilIdle()
+        vm.openEditMode()
+        vm.toggleSessionInPending("ses1")
+        assertEquals(setOf("ses2"), vm.uiState.value.pendingSessionIds)
+        vm.toggleSessionInPending("ses1")
+        assertEquals(setOf("ses1", "ses2"), vm.uiState.value.pendingSessionIds)
+    }
+
+    @Test
+    fun `saveLinks shows the server refusal verbatim inside the dialog and keeps it open`() = runTest(testDispatcher) {
+        val refusal = "Already billed on another invoice: visit ses3 is on invoice INV-7. Unlink it there first."
+        coEvery { mockInvoiceRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
+        coEvery { mockKinCareRepo.getKinCareSessionsForKinfolk("kf1") } returns Result.success(
+            listOf(session1, session2, session3)
+        )
+        coEvery { mockInvoiceRepo.linkInvoiceSessions("inv1", any()) } returns
+            Result.failure(RuntimeException(refusal))
+
+        val vm = buildViewModel()
+        vm.loadInvoice("inv1")
+        advanceUntilIdle()
+        vm.openEditMode()
+        vm.toggleSessionInPending("ses3")
+        vm.saveLinks()
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertTrue(state.editMode)
+        assertEquals(refusal, state.linkError)
+        assertEquals(setOf("ses1", "ses2", "ses3"), state.pendingSessionIds)
+
+        // A new pick clears it; reopening starts clean.
+        vm.toggleSessionInPending("ses3")
+        assertNull(vm.uiState.value.linkError)
+        vm.saveLinks()
+        advanceUntilIdle()
+        assertEquals(refusal, vm.uiState.value.linkError)
+        vm.closeEditMode()
+        vm.openEditMode()
+        assertNull(vm.uiState.value.linkError)
+    }
 }

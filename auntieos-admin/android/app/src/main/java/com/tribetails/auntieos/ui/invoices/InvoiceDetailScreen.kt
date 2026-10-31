@@ -168,6 +168,9 @@ fun InvoiceDetailScreen(
         LinkSessionsDialog(
             available   = uiState.availableSessions,
             selectedIds = uiState.pendingSessionIds,
+            invoiceId   = uiState.invoice?.id.orEmpty(),
+            storedIds   = uiState.invoice?.sessionIds.orEmpty(),
+            error       = uiState.linkError,
             onToggle    = { viewModel.toggleSessionInPending(it) },
             onSave      = { viewModel.saveLinks() },
             onDismiss   = { viewModel.closeEditMode() },
@@ -1792,6 +1795,9 @@ internal fun recordPaymentBalanceCopy(unappliedCents: Long?, autoApply: Boolean)
 private fun LinkSessionsDialog(
     available: List<KinCareSession>,
     selectedIds: Set<String>,
+    invoiceId: String,
+    storedIds: List<String>,
+    error: String?,
     onToggle: (String) -> Unit,
     onSave: () -> Unit,
     onDismiss: () -> Unit,
@@ -1808,6 +1814,15 @@ private fun LinkSessionsDialog(
             GhostButton(label = "Cancel", onClick = onDismiss)
         },
     ) {
+        // #1254: the server's refusal, verbatim, where the operator is looking.
+        if (error != null) {
+            Text(
+                text     = error,
+                style    = AuntieTheme.typography.bodySmall,
+                color    = c.error,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+        }
         if (available.isEmpty()) {
             Text(
                 text  = "No sessions found for this kinfolk.",
@@ -1824,11 +1839,16 @@ private fun LinkSessionsDialog(
                     val dateLabel = session.completedAt.orEmpty().take(10)
                         .ifBlank { session.startTime.take(10) }
                         .ifBlank { "-" }
-                    val chipLabel = "${session.serviceType.ifBlank { "Session" }} · $dateLabel"
+                    // #1254: shown, not hidden, and not tickable: another
+                    // invoice already bills it.
+                    val elsewhere = linkPickerOnOtherInvoice(session, invoiceId, storedIds)
+                    val chipLabel = "${session.serviceType.ifBlank { "Session" }} · $dateLabel" +
+                        if (elsewhere) " · on another invoice" else ""
                     AuntieChip(
                         label    = chipLabel,
                         selected = session.id in selectedIds,
                         onClick  = { onToggle(session.id) },
+                        enabled  = !elsewhere && !saveLoading,
                     )
                 }
             }
