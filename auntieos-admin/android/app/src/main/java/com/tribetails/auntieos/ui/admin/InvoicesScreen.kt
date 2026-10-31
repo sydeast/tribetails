@@ -4,6 +4,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -86,7 +88,6 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  * and confirms (or fails) loudly.
  */
 
-/** Den filter tabs. Mirrors the web spec's All / Unpaid / Paid / Overdue / Drafts row. */
 /**
  * The archive facet's three states.
  *
@@ -127,12 +128,20 @@ internal fun invoiceListSubtitle(visible: Int, inScope: Int, archivedHidden: Int
     val plural = if (archivedHidden == 1) "" else "s"
     return "$base $archivedHidden archived invoice$plural hidden, counted within the invoices loaded here."
 }
-private enum class InvoiceFilter(val label: String) {
+/**
+ * Den filter tabs. The same seven tabs, labels and order as the admin web
+ * (`FILTERS` in src/screens/Invoices.tsx) and the desktop console; the three
+ * clients' predicates are pinned against one fixture set by
+ * `InvoiceFilterTest`, `InvoiceFilterTest` (desktop) and `Invoices.test.tsx`.
+ */
+internal enum class InvoiceFilter(val label: String) {
     All("All"),
-    Unpaid("Unpaid"),
-    Paid("Paid"),
+    Open("Open"),
     Overdue("Overdue"),
-    Drafts("Drafts"),
+    Paid("Paid"),
+    Draft("Draft"),
+    Quote("Quote"),
+    Credit("Credit"),
 }
 
 // ── invoice facets, all reads of the STORED state stamp (ADR-0002) ───────────
@@ -142,14 +151,14 @@ private enum class InvoiceFilter(val label: String) {
 // equality test against the decoded state, and an unstamped doc (null) simply
 // matches none of them rather than being guessed into a bucket.
 
-private fun invoiceIsDraft(i: Invoice): Boolean = invoiceStateOrNull(i) == InvoiceState.DRAFT
+internal fun invoiceIsDraft(i: Invoice): Boolean = invoiceStateOrNull(i) == InvoiceState.DRAFT
 
 /** A quote is an invoice whose stored state reads QUOTE (PART B). Pure; unit-tested. */
 internal fun invoiceIsQuote(i: Invoice): Boolean = invoiceStateOrNull(i) == InvoiceState.QUOTE
 
-private fun invoiceIsPaid(i: Invoice): Boolean = invoiceStateOrNull(i) == InvoiceState.PAID
+internal fun invoiceIsPaid(i: Invoice): Boolean = invoiceStateOrNull(i) == InvoiceState.PAID
 
-private fun invoiceIsOutstanding(i: Invoice): Boolean = invoiceStateOrNull(i) == InvoiceState.OPEN
+internal fun invoiceIsOutstanding(i: Invoice): Boolean = invoiceStateOrNull(i) == InvoiceState.OPEN
 
 /**
  * The day this invoice is FILED UNDER, as an epoch day, or null when neither of
@@ -224,16 +233,16 @@ private fun humanizeDate(date: String): String {
 private fun nowDateIso(): String =
     runCatching { java.time.LocalDate.now().toString() }.getOrDefault("9999-12-31")
 
-private fun matchesFilter(i: Invoice, filter: InvoiceFilter, todayIso: String): Boolean = when (filter) {
+internal fun matchesFilter(i: Invoice, filter: InvoiceFilter, todayIso: String): Boolean = when (filter) {
     InvoiceFilter.All -> true
-    // OPEN already excludes drafts and quotes, so the old `&& !invoiceIsDraft(i)`
-    // guard is gone: it was compensating for the negation-based helper.
-    InvoiceFilter.Unpaid -> invoiceIsOutstanding(i)
-    InvoiceFilter.Paid -> invoiceIsPaid(i)
+    InvoiceFilter.Open -> invoiceIsOutstanding(i)
     InvoiceFilter.Overdue -> invoiceIsOverdue(i, todayIso)
-    InvoiceFilter.Drafts -> invoiceIsDraft(i)
+    InvoiceFilter.Paid -> invoiceIsPaid(i)
+    InvoiceFilter.Draft -> invoiceIsDraft(i)
+    InvoiceFilter.Quote -> invoiceIsQuote(i)
+    // Credit also takes `redeemed`, as on web.
+    InvoiceFilter.Credit -> invoiceStateOrNull(i).let { it == InvoiceState.CREDIT || it == InvoiceState.REDEEMED }
 }
-
 private fun matchesQuery(i: Invoice, query: String): Boolean {
     if (query.isBlank()) return true
     val q = query.trim().lowercase()
@@ -575,7 +584,11 @@ private fun FilterRow(
 ) {
     // Stacked vertically for phone width: chips, then household facet, then search.
     Column(verticalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space3)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space2)) {
+        // Seven tabs do not fit a phone row, so the row scrolls sideways.
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space2),
+        ) {
             InvoiceFilter.entries.forEach { f ->
                 AuntieChip(
                     selected = selected == f,
@@ -691,7 +704,7 @@ private fun InvoiceRow(
             InvoiceState.CREDIT -> "Credit" to AuntieStatusTone.Teal
             InvoiceState.REDEEMED -> "Redeemed" to AuntieStatusTone.Muted
             InvoiceState.ZERO -> "Zero" to AuntieStatusTone.Muted
-            InvoiceState.OPEN -> "Unpaid" to AuntieStatusTone.Orange
+            InvoiceState.OPEN -> "Open" to AuntieStatusTone.Orange
             InvoiceState.PAID -> "Paid" to AuntieStatusTone.Success
             null -> invoice.status.trim().ifBlank { "No status" } to AuntieStatusTone.Muted
         }
