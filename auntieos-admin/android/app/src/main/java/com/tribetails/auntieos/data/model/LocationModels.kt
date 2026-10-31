@@ -287,13 +287,20 @@ data class BusinessSettings(
     var brandTagline: String = "",   // tagline; blank -> "Tribe Tails Care"
     var homeGreeting: String = "",   // Home heading salutation; blank -> time-aware greetingForHour()
     var homeAccentTail: String = "", // Home heading accent word; blank -> "Auntie."
-    // --- Payment handles (A8 Payments) ---
+    // --- Payment options (A8 Payments, switches since #409, Android editor #1177) ---
     // Operator-entered handles for the peer-to-peer apps clients pay through; rendered
-    // in the invoice "How to pay" section and on the invoice PDF. Blank -> that method
-    // is omitted. Same merge write (write if isAuntie()), no backend. Parity with web.
+    // in the invoice "How to pay" section and on the invoice PDF. Whether a method is
+    // OFFERED is its switch in [paymentOptions], not whether its handle is blank.
     var venmoHandle: String = "",
     var paypalHandle: String = "",
     var cashappHandle: String = "",
+    // Method id -> `{ enabled, instructions }`, SPARSE (an absent entry resolves to
+    // the method's default). Held raw (Class A, same posture as [mytribePortal]) so a
+    // malformed entry the web or the console wrote can never fail the whole settings
+    // read, and so a save carries forward any key this client does not model. Read
+    // through [decodePaymentOptions] / [paymentDraftOf], write through
+    // [withPaymentDraft] (PaymentMethods.kt).
+    var paymentOptions: Any? = null,
     // --- Weather area (W16/W17) ---
     // Service-AREA place name (city / metro / ZIP) the Home weather widgets forecast for.
     // NOT the street address: operator picks coverage area (e.g. "Austin, TX"). Blank ->

@@ -41,6 +41,10 @@ import com.tribetails.auntieos.data.contracts.SendInvoiceReminderArgs
 import com.tribetails.auntieos.data.contracts.SetSessionDoNotInvoiceArgs
 import com.tribetails.auntieos.data.contracts.SetSessionDoNotInvoiceResult
 import com.tribetails.auntieos.data.contracts.UnarchiveInvoiceArgs
+import com.tribetails.auntieos.data.contracts.UpdateInvoiceArgs
+import com.tribetails.auntieos.data.contracts.UpdateInvoiceArgsPatch
+import com.tribetails.auntieos.data.contracts.UpdateInvoiceResult
+import com.tribetails.auntieos.data.contracts.decodeUpdateInvoiceResult
 import com.tribetails.auntieos.data.contracts.decodeCreateInvoiceResult
 import com.tribetails.auntieos.data.contracts.decodeCreateQuoteResult
 import com.tribetails.auntieos.data.contracts.decodeGenerateInvoicePdfResult
@@ -568,6 +572,30 @@ class InvoiceRepository(
             AuntieLog.i("Linked ${it.sessionIds.size} session(s) to invoice $invoiceId (+${it.added.size}/-${it.removed.size})")
         }
     }.onFailure { AuntieLog.e("linkInvoiceSessions failed for $invoiceId", it) }
+
+    /**
+     * #1174: edits an invoice's number, dates, terms, line items and discount
+     * through the `updateInvoice` callable, the same one the web editor calls.
+     *
+     * [patch] is a PATCH: only the keys it carries are written, and the server
+     * recomputes every money figure from the stored lines and the recorded
+     * payments. Build it with `ui.invoices.invoiceEditPatchOf`, which sends only
+     * what the form controls and the operator changed.
+     *
+     * Fail-loud: the server's refusals (money locked by a recorded payment, an
+     * accepted quote, a discount larger than its line) carry a sentence written
+     * for the operator and surface verbatim.
+     */
+    suspend fun updateInvoice(invoiceId: String, patch: UpdateInvoiceArgsPatch): Result<UpdateInvoiceResult> =
+        runCatchingCancellable {
+            authGate.ensureAuthenticated()
+            require(invoiceId.isNotBlank()) { "updateInvoice requires an invoice id" }
+            @Suppress("UNCHECKED_CAST")
+            val raw = functions.getHttpsCallable("updateInvoice")
+                .call(UpdateInvoiceArgs(invoiceId = invoiceId, patch = patch).toPayload())
+                .awaitCallable().data as? Map<String, Any?>
+            decodeUpdateInvoiceResult(raw)
+        }.onFailure { AuntieLog.e("updateInvoice failed for $invoiceId", it) }
 
     // --- Payments ---
 

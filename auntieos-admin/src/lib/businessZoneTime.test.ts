@@ -63,6 +63,19 @@ describe('businessWallClock (#1150)', () => {
     // 03:00 UTC Aug 4 is still Aug 3 in Chicago.
     expect(businessTodayIso('America/Chicago', Date.UTC(2026, 7, 4, 3, 0))).toBe('2026-08-03');
   });
+
+  it('names the business day across the 2026-10-31 month end, weekend and DST change (#1231)', () => {
+    // The CI run that went red: Saturday the 31st in UTC, Friday the 30th here.
+    expect(businessTodayIso('', Date.parse('2026-10-31T00:19:00Z'))).toBe('2026-10-30');
+    // Last minute of CDT's Friday, first of its Saturday.
+    expect(businessTodayIso('', Date.parse('2026-10-31T04:59:00Z'))).toBe('2026-10-30');
+    expect(businessTodayIso('', Date.parse('2026-10-31T05:00:00Z'))).toBe('2026-10-31');
+    // Sunday the 1st in UTC, still Saturday the 31st here.
+    expect(businessTodayIso('', Date.parse('2026-11-01T04:30:00Z'))).toBe('2026-10-31');
+    // Daylight time ends at 07:00Z on Nov 1; from then the split runs to 06:00Z.
+    expect(businessTodayIso('', Date.parse('2026-11-02T05:30:00Z'))).toBe('2026-11-01');
+    expect(businessTodayIso('', Date.parse('2026-11-02T06:00:00Z'))).toBe('2026-11-02');
+  });
 });
 
 describe('sessionsByBusinessDay (#1150)', () => {

@@ -49,6 +49,8 @@ import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Payment
 import com.tribetails.auntieos.domain.InvoiceAction
+import com.tribetails.auntieos.domain.InvoiceEditScope
+import com.tribetails.auntieos.domain.invoiceEditScopeOf
 import com.tribetails.auntieos.domain.InvoiceState
 import com.tribetails.auntieos.domain.QuoteDecision
 import com.tribetails.auntieos.domain.invoiceQuoteDecision
@@ -148,6 +150,18 @@ fun InvoiceDetailScreen(
         }
     }
 
+    // #1174: the invoice editor, the web edit form on Android.
+    uiState.invoiceEdit?.let { draft ->
+        InvoiceEditDialog(
+            draft       = draft,
+            error       = uiState.invoiceEditError,
+            saving      = uiState.savingInvoiceEdit,
+            onChange    = { viewModel.updateInvoiceEdit(it) },
+            onSave      = { viewModel.saveInvoiceEdit() },
+            onDismiss   = { viewModel.closeInvoiceEdit() },
+            onOpenVisit = onOpenVisit,
+        )
+    }
     // Session-link edit dialog
     if (uiState.editMode) {
         LinkSessionsDialog(
@@ -252,6 +266,7 @@ fun InvoiceDetailScreen(
                         retryingCheckout  = uiState.retryingCheckout,
                         onOpenVisit       = onOpenVisit,
                         onOpenEdit        = { viewModel.openEditMode() },
+                        onEditInvoice     = { viewModel.openInvoiceEdit() },
                         onRecordPayment   = { viewModel.openRecordPayment() },
                         onRetryPayments   = { viewModel.retryPayments() },
                         onGenerateReceipt = { viewModel.generateReceipt() },
@@ -333,6 +348,7 @@ fun InvoiceDetailScreen(
  * web spec's InvoiceDetailBody: header status bar, amount stat row, billing /
  * amounts / payments / linked-sessions panels, with the same fail-loud gating.
  */
+@OptIn(ExperimentalLayoutApi::class)
 private fun invoiceDetailBody(
     scope: androidx.compose.foundation.lazy.LazyListScope,
     invoice: Invoice,
@@ -351,6 +367,7 @@ private fun invoiceDetailBody(
     archiving: Boolean,
     retryingCheckout: Boolean,
     onOpenEdit: () -> Unit,
+    onEditInvoice: () -> Unit,
     onRecordPayment: () -> Unit,
     onRetryPayments: () -> Unit,
     onGenerateReceipt: () -> Unit,
@@ -377,6 +394,10 @@ private fun invoiceDetailBody(
     // what keeps "Record payment" available for collecting the rest.
     val partPaid = invoicePartPaid(invoice)
     val actions  = invoiceActionsFor(state)
+    // #1174: Edit is OFFERED per the STORED editScope, as on web: `none`
+    // offers nothing, `metadataOnly` and `all` open the editor. The server is
+    // the enforcement and its refusal is shown verbatim in the form.
+    val canEditInvoice = invoiceEditScopeOf(invoice) != InvoiceEditScope.NONE
 
     // ── Header status bar (accent-tinted full-width) ────────────────────────────
     item {
@@ -487,10 +508,20 @@ private fun invoiceDetailBody(
     // Download PDF is deliberately UNGATED: it reads the invoice, it does not act on
     // it or reach the household, so every state can produce one.
     item {
-        Row(
+        FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            if (canEditInvoice) {
+                GhostButton(
+                    label   = "Edit",
+                    onClick = onEditInvoice,
+                    leading = {
+                        Icon(Lucide.Pencil, contentDescription = null, modifier = Modifier.size(14.dp))
+                    },
+                )
+            }
             if (InvoiceAction.GENERATE_RECEIPT in actions) {
                 GhostButton(
                     label   = if (generatingReceipt) "Generating…" else "Generate receipt",
@@ -649,11 +680,11 @@ private fun invoiceDetailBody(
     }
 
     // ── Line items ──────────────────────────────────────────────────────────────
-    // READ-ONLY, AND A BOUND LINE IS READ-ONLY ON PURPOSE (#408). A line carrying
-    // a session id got its money from the rate card by way of that visit, so the
-    // route to change it is the visit, and this line follows. Every bound row
-    // says so and offers that route. Lines nobody bound are the web editor's to
-    // change; Android composes invoices but does not re-itemize them afterwards.
+    // READ-ONLY HERE, AND A BOUND LINE IS READ-ONLY ON PURPOSE (#408). A line
+    // carrying a session id got its money from the rate card by way of that
+    // visit, so the route to change it is the visit, and this line follows.
+    // Every bound row says so and offers that route. Typed lines are changed
+    // through Edit (#1174), the same `updateInvoice` editor web has.
     item {
         val lines = com.tribetails.auntieos.domain.invoiceLineItems(invoice)
         DenPanel(title = "Line items") {
@@ -695,7 +726,7 @@ private fun invoiceDetailBody(
                     text = "The line items add up to ${com.tribetails.auntieos.domain.formatCents(drift.derivedCents)}, " +
                         "but the total stored on the invoice says ${com.tribetails.auntieos.domain.formatCents(drift.storedCents)}. " +
                         "Nothing has been changed to make them match, and nothing will be. The household is " +
-                        "billed the stored figure. Re-saving the line items in the web admin will recompute " +
+                        "billed the stored figure. Re-saving the line items through Edit will recompute " +
                         "the stored total from them, if the lines are the version you want to keep.",
                     style = AuntieTheme.typography.bodySmall,
                     color = AuntieTheme.colors.textDim,

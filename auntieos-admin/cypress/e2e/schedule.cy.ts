@@ -16,42 +16,48 @@
  * shares `kin_care_sessions` with Sessions.tsx and the bookings spec, and that
  * row exists precisely so a day with something on it is never three days out
  * of view.
+ *
+ * EVERY DATE HERE IS ON THE BUSINESS CALENDAR (#1231), the one the screen
+ * draws on since #1158. See `e2e/fixtures/businessClock.ts`. The boundary
+ * nights are pinned in `Schedule.test.tsx` and, with `E2E_SEED_NOW`, in the
+ * Playwright phone-layout case, not here: `cy.clock` freezes `Date`, and the
+ * Firestore listeners never deliver under a frozen clock.
  */
 
-// A module, not a global script: this file's top-level constants must not
+// The import makes this file a module, so its top-level constants do not
 // collide with the same-named ones `gallery.cy.ts` and `packages.cy.ts`
 // declare for their own Firestore REST setup.
-export {};
+import { e2eBusinessTodayIso } from '../../e2e/fixtures/businessClock';
 
 const FIRESTORE = 'http://127.0.0.1:8385';
 const PROJECT = 'auntieos-ttpc';
 const OWNER = { Authorization: 'Bearer owner' };
 
-/** Local `YYYY-MM-DD`, the same construction `lib/scheduleFormat.ts#localDateIso` and `lib/coveragePackage.ts#todayIso` use. */
-function localIso(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+/**
+ * A day in `todayIso`'s month that is not today, so a click that selects it is
+ * provably a move rather than a no-op. The 5th and 6th always exist and always
+ * fall inside the anchor month `MonthGrid` renders, whichever day of the month
+ * "today" is.
+ *
+ * `todayIso` is the BUSINESS's today, the day the screen selects on load. It
+ * used to be the browser's own date, which on a UTC runner is a day ahead of
+ * Chicago from midnight UTC until 05:00 or 06:00, so the "today is selected"
+ * precondition below failed every night in that window.
+ */
+function busyDayFor(todayIso: string): string {
+  return `${todayIso.slice(0, 8)}${todayIso.slice(8) === '05' ? '06' : '05'}`;
 }
 
-const TODAY_ISO = localIso(new Date());
-/**
- * A day in the CURRENT local month that is not today, so a click that
- * selects it is provably a move rather than a no-op. The 5th and 6th always
- * exist and always fall inside the anchor month `MonthGrid` renders,
- * regardless of which day of the month "today" happens to be.
- */
-const busyDayNum = new Date().getDate() === 5 ? 6 : 5;
-const BUSY_DAY_ISO = localIso(new Date(new Date().getFullYear(), new Date().getMonth(), busyDayNum));
+const TODAY_ISO = e2eBusinessTodayIso(Date.now());
+const BUSY_DAY_ISO = busyDayFor(TODAY_ISO);
 
 const STAMP = Date.now().toString(36);
 const BUSY_ID = `e2e-busy-${STAMP}`;
 
 /** Writes one `booking_time_slots` doc straight past `firestore.rules` with the emulator's owner bearer, mirroring `e2e/seed.ts#put`. */
-function seedBusySlot(): void {
+function seedBusySlot(id: string, date: string): void {
   const fields = {
-    date: BUSY_DAY_ISO,
+    date,
     startTime: '10:00',
     endTime: '11:00',
     slotType: 'BLOCKED',
@@ -60,27 +66,47 @@ function seedBusySlot(): void {
   const encoded = Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, { stringValue: v }]));
   cy.request({
     method: 'POST',
-    url: `${FIRESTORE}/v1/projects/${PROJECT}/databases/(default)/documents/booking_time_slots?documentId=${BUSY_ID}`,
+    url: `${FIRESTORE}/v1/projects/${PROJECT}/databases/(default)/documents/booking_time_slots?documentId=${id}`,
     headers: { ...OWNER, 'Content-Type': 'application/json' },
     body: { fields: encoded },
   });
 }
 
-function cleanupBusySlot(): void {
+function cleanupBusySlot(id: string): void {
   cy.request({
     method: 'DELETE',
-    url: `${FIRESTORE}/v1/projects/${PROJECT}/databases/(default)/documents/booking_time_slots/${BUSY_ID}`,
+    url: `${FIRESTORE}/v1/projects/${PROJECT}/databases/(default)/documents/booking_time_slots/${id}`,
     headers: OWNER,
     failOnStatusCode: false,
   });
+}
+
+/**
+ * The #697 walk: month view opens on today, and the Busy blocks card moves the
+ * selection to the busy day.
+ */
+function busyCardMovesSelection(todayIso: string, busyDayIso: string): void {
+  cy.visit('/schedule');
+  cy.contains('[role="tab"]', 'Month').click();
+  cy.get('.schedule__month[role="group"]').should('exist');
+
+  // Today is selected by default, and it is not the seeded busy day.
+  cy.get(`.schedule__day-cell[data-day="${todayIso}"]`).should('have.class', 'schedule__day-cell--selected');
+
+  cy.contains('.den-stat', 'Busy blocks').as('busyCard');
+  cy.get('@busyCard').invoke('prop', 'tagName').should('eq', 'BUTTON');
+  cy.get('@busyCard').click();
+
+  cy.get(`.schedule__day-cell[data-day="${busyDayIso}"]`).should('have.class', 'schedule__day-cell--selected');
+  cy.get(`.schedule__day-cell[data-day="${todayIso}"]`).should('not.have.class', 'schedule__day-cell--selected');
 }
 
 describe('schedule', () => {
   // The support file's global afterEach reads and asserts on `console.error`
   // for every test in every spec; nothing extra is needed here.
 
-  before(() => seedBusySlot());
-  after(() => cleanupBusySlot());
+  before(() => seedBusySlot(BUSY_ID, BUSY_DAY_ISO));
+  after(() => cleanupBusySlot(BUSY_ID));
 
   it('#695 the Today agenda panel renders above the calendar grid, in week view and in month view', () => {
     cy.signIn();
@@ -98,19 +124,7 @@ describe('schedule', () => {
 
   it('#697 the Busy blocks stat card is a button, and clicking it highlights a busy day', () => {
     cy.signIn();
-    cy.visit('/schedule');
-    cy.contains('[role="tab"]', 'Month').click();
-    cy.get('.schedule__month[role="group"]').should('exist');
-
-    // Today is selected by default, and it is not the seeded busy day.
-    cy.get(`.schedule__day-cell[data-day="${TODAY_ISO}"]`).should('have.class', 'schedule__day-cell--selected');
-
-    cy.contains('.den-stat', 'Busy blocks').as('busyCard');
-    cy.get('@busyCard').invoke('prop', 'tagName').should('eq', 'BUTTON');
-    cy.get('@busyCard').click();
-
-    cy.get(`.schedule__day-cell[data-day="${BUSY_DAY_ISO}"]`).should('have.class', 'schedule__day-cell--selected');
-    cy.get(`.schedule__day-cell[data-day="${TODAY_ISO}"]`).should('not.have.class', 'schedule__day-cell--selected');
+    busyCardMovesSelection(TODAY_ISO, BUSY_DAY_ISO);
   });
 
   it('#696 in month view a seeded visit renders as a block inside its day cell, and the legend is present', () => {
@@ -119,15 +133,12 @@ describe('schedule', () => {
     cy.contains('[role="tab"]', 'Month').click();
     cy.get('.schedule__month[role="group"]').should('exist');
 
-    // The fixture's `today` session (kin_care_sessions/e2e-sess-today),
-    // scoped by household name rather than by date: its `startTime` is a UTC
-    // instant and the cell it lands in is keyed by the LOCAL day, which can
-    // diverge from a naive UTC date string on a run near midnight.
+    // The fixture's `today` session (kin_care_sessions/e2e-sess-today) sits at
+    // noon on the business's today, so its block is in today's cell.
     cy.contains('.schedule__month-block--visit', 'Constance Fairweather-Okonkwo')
       .should('have.attr', 'data-tone', 'purple')
       .closest('.schedule__day-cell')
-      .invoke('attr', 'data-day')
-      .should('have.length.greaterThan', 0);
+      .should('have.attr', 'data-day', TODAY_ISO);
 
     cy.get('.schedule__legend[aria-label="Service type legend"]').should('exist');
     cy.get('.schedule__legend').contains('.schedule__legend-item', 'Busy').should('exist');

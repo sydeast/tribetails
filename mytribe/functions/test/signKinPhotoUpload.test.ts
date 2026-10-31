@@ -114,6 +114,22 @@ describe('signKinPhotoUploadHandler', () => {
     expect(res.transformation).toBe('fl_force_strip');
   });
 
+  it('#1202: under demo-auntieos-e2e the signed folder gains the e2e/ prefix', async () => {
+    const prev = process.env['GCLOUD_PROJECT'];
+    process.env['GCLOUD_PROJECT'] = 'demo-auntieos-e2e';
+    try {
+      mocks.dbFn.mockReturnValue(ctxWithKin().db);
+      const { signKinPhotoUploadHandler } = await import('../src/portal/signKinPhotoUpload');
+      const res = await signKinPhotoUploadHandler({
+        data: { kinfolkId: '3', kinId: 'k1' },
+        auth: { uid: 'u1' },
+      } as any);
+      expect(res.folder).toBe('e2e/tribetails/kinfolks/3/kin/k1');
+    } finally {
+      if (prev === undefined) delete process.env['GCLOUD_PROJECT'];
+      else process.env['GCLOUD_PROJECT'] = prev;
+    }
+  });
   it('MULTIPLE linked households, kinfolkId omitted -> refuses to guess (PR28b)', async () => {
     const ctx = buildDbMock({
       docs: {
@@ -247,6 +263,30 @@ describe('confirmKinPhotoUploadHandler', () => {
     expect(w!.data.updatedByUid).toBe('u1');
   });
 
+  it('#1202: under demo-auntieos-e2e confirm accepts the e2e/ folder and refuses the bare one', async () => {
+    const prev = process.env['GCLOUD_PROJECT'];
+    process.env['GCLOUD_PROJECT'] = 'demo-auntieos-e2e';
+    try {
+      const ctx = ctxWithKin();
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const { confirmKinPhotoUploadHandler } = await import('../src/portal/signKinPhotoUpload');
+      const prefixed = goodUrl.replace('/tribetails/', '/e2e/tribetails/');
+      const res = await confirmKinPhotoUploadHandler({
+        data: { kinfolkId: '3', kinId: 'k1', secureUrl: prefixed },
+        auth: { uid: 'u1' },
+      } as any);
+      expect(res.photoUrl).toBe(prefixed);
+      await expect(
+        confirmKinPhotoUploadHandler({
+          data: { kinfolkId: '3', kinId: 'k1', secureUrl: goodUrl },
+          auth: { uid: 'u1' },
+        } as any),
+      ).rejects.toMatchObject({ code: 'invalid-argument' });
+    } finally {
+      if (prev === undefined) delete process.env['GCLOUD_PROJECT'];
+      else process.env['GCLOUD_PROJECT'] = prev;
+    }
+  });
   it('MULTIPLE linked households, kinfolkId omitted -> refuses to guess and writes nothing (PR28b)', async () => {
     const ctx = buildDbMock({
       docs: {

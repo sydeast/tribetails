@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from 'vitest';
 import { render, screen, within, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type Async } from '../lib/async';
@@ -1409,5 +1409,91 @@ describe('Schedule on the business clock, device in another zone (#1158)', () =>
     fireEvent(el, new MouseEvent('pointerup', { bubbles: true, clientX: 40, clientY: 40 + HOUR_HEIGHT_PX }));
     await waitFor(() => expect(rescheduleBooking).toHaveBeenCalledTimes(1));
     expect(rescheduleBooking).toHaveBeenCalledWith('sess-42', bizToday('15:00'), bizToday('16:00'), {});
+  });
+});
+
+/**
+ * #1231: the nights the device calendar and the business calendar disagree.
+ *
+ * CI runs in UTC and the business defaults to America/Chicago, so from midnight
+ * UTC until 05:00 (06:00 in winter) the device is a day ahead. The screen is
+ * right to open on the business's today; these pin that, with literal dates,
+ * at the instant main went red and at the month-end, Saturday and Sunday
+ * boundaries around it. Only `Date` is faked, so React and the click run on
+ * real timers.
+ */
+describe('Schedule at the UTC and business day split (#1231)', () => {
+  let outerTz: string | undefined;
+  beforeAll(() => {
+    outerTz = process.env.TZ;
+    process.env.TZ = 'UTC';
+  });
+  afterAll(() => {
+    if (outerTz === undefined) delete process.env.TZ;
+    else process.env.TZ = outerTz;
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const cases = [
+    // The CI run: Saturday the 31st in UTC, Friday the 30th in Chicago.
+    { instant: '2026-10-31T00:19:00Z', today: '2026-10-30', busyDay: '2026-10-05' },
+    // Saturday, the last day of the month, on both calendars.
+    { instant: '2026-10-31T18:00:00Z', today: '2026-10-31', busyDay: '2026-10-05' },
+    // Sunday the 1st in UTC, still Saturday the 31st in Chicago.
+    { instant: '2026-11-01T04:30:00Z', today: '2026-10-31', busyDay: '2026-10-05' },
+    // Sunday the 1st on both, the day daylight time ends.
+    { instant: '2026-11-01T18:00:00Z', today: '2026-11-01', busyDay: '2026-11-05' },
+  ];
+
+  for (const c of cases) {
+    it(`at ${c.instant} month view opens on ${c.today}, and Busy blocks moves to ${c.busyDay}`, async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(c.instant));
+      mockCollections({ busy: { status: 'ready', data: [busySlot({ date: c.busyDay })] } });
+      render(<Schedule />);
+      await act(async () => {});
+
+      fireEvent.click(screen.getByRole('tab', { name: 'Month' }));
+      expect(monthCell(c.today)).toHaveClass('schedule__day-cell--selected');
+      expect(screen.getByRole('heading', { name: 'Today', level: 2 })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: /busy blocks/i }));
+      expect(monthCell(c.busyDay)).toHaveClass('schedule__day-cell--selected');
+      expect(monthCell(c.today)).not.toHaveClass('schedule__day-cell--selected');
+    });
+  }
+
+  it("at 2026-10-31T00:19Z today's agenda holds noon Chicago on the 30th, not 12:00Z on the 31st", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-31T00:19:00Z'));
+    mockCollections({
+      sessions: {
+        status: 'ready',
+        data: [
+          // Noon CDT on the business's today: what the e2e seed writes now.
+          sessionEntry({
+            _id: 'biz-noon',
+            kinfolkName: 'The Whitfields',
+            startTime: '2026-10-30T17:00:00.000Z',
+            endTime: '2026-10-30T18:00:00.000Z',
+          }),
+          // 12:00Z on the UTC date: what the seed wrote before, 07:00 tomorrow in Chicago.
+          sessionEntry({
+            _id: 'utc-noon',
+            kinfolkName: 'The Okonkwos',
+            startTime: '2026-10-31T12:00:00.000Z',
+            endTime: '2026-10-31T13:00:00.000Z',
+          }),
+        ],
+      },
+    });
+    render(<Schedule />);
+    await act(async () => {});
+
+    expect(within(agenda()).getByText('The Whitfields')).toBeInTheDocument();
+    expect(within(agenda()).getByText('12:00 to 13:00')).toBeInTheDocument();
+    expect(within(agenda()).queryByText('The Okonkwos')).toBeNull();
   });
 });

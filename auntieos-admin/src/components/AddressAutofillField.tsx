@@ -71,12 +71,19 @@ export function AddressAutofillField({
    */
   const selfWritten = useRef<string | null>(null);
   /**
-   * The first effect pass carries whatever the form LOADED with, not something
+   * The value the field mounted with is whatever the form LOADED, not something
    * anyone typed. Looking that up would open a dropdown over an address the
    * operator already has, and spend a billed Mapbox session on every visit to
    * an existing household's edit screen.
+   *
+   * Keyed on the value, not on "first effect run" (#1226): React may run an
+   * effect twice on mount (StrictMode does, in every dev and emulator build),
+   * and a run-count flag let the second run look the loaded address up. Once
+   * the value has moved off the loaded one it is the operator's for good, so
+   * typing it back to the original still looks up.
    */
-  const initialPass = useRef(true);
+  const loadedValue = useRef(value);
+  const edited = useRef(false);
 
   function cancelBlurClose() {
     if (blurTimer.current !== undefined) {
@@ -90,9 +97,9 @@ export function AddressAutofillField({
   // of a fresh one for "123 Mill".
   useEffect(() => {
     const trimmed = value.trim();
-    if (initialPass.current) {
-      initialPass.current = false;
-      return;
+    if (!edited.current) {
+      if (value === loadedValue.current) return;
+      edited.current = true;
     }
     if (selfWritten.current !== null && selfWritten.current === value) {
       selfWritten.current = null;

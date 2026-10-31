@@ -987,6 +987,40 @@ describe('stripeWebhook', () => {
     expect(warn?.[0]?.severity).toBe('warn');
   });
 
+  /**
+   * Issue #1192: stripe@23 sends `allowed_payment_method_types`, a filter, so
+   * the session does not say up front which rail the household will use. The
+   * fee therefore comes from the charge that actually settled, never from the
+   * session or from the registry's fee schedule. The `session-completed`
+   * fixture carries no method list at all, and the two fees below are not what
+   * any rate table would produce from 13750 cents, so a fee computed from the
+   * method instead of read off the charge fails here.
+   */
+  it.each([
+    { method: 'card', fee: 429 },
+    { method: 'klarna', fee: 853 },
+  ])('records the fee Stripe charged on the $method charge that settled', async ({ method, fee }) => {
+    docState['invoices/i9'] = { exists: true, data: { kinfolkId: 'f9', amountDue: 137.5, total: 137.5 } };
+    stripeMock.paymentIntentsRetrieve.mockResolvedValue({
+      payment_method_types: [method],
+      latest_charge: { payment_method_details: { type: method }, balance_transaction: { fee } },
+    });
+    const { stripeWebhookHandler } = await import('../src/billing/stripeWebhook');
+    const status = vi.fn().mockReturnThis();
+    await (stripeWebhookHandler as any)(
+      { method: 'POST', headers: { 'stripe-signature': 'session-completed' }, rawBody: Buffer.from('{}') },
+      { status, json: vi.fn(), end: vi.fn() },
+    );
+    expect(status).toHaveBeenCalledWith(200);
+    expect(stripeMock.paymentIntentsRetrieve).toHaveBeenCalledWith('pi_9', {
+      expand: ['latest_charge.balance_transaction'],
+    });
+    const paymentWrite = writes.find((w) => w.path === 'payments/evt_9');
+    // Gross stays the gross the household paid; the fee is the processor's own
+    // figure for this charge, stored beside it (D-2026-08-04-GROSS-TIP-AND-FEE).
+    expect(paymentWrite!.data).toMatchObject({ amountCents: 13750, feeCents: fee, feeResolved: true });
+  });
+
   it('marks the invoice paid from checkout.session.completed, end to end', async () => {
     docState['invoices/i9'] = { exists: true, data: { kinfolkId: 'f9', amountDue: 137.5, total: 137.5 } };
     stripeMock.paymentIntentsRetrieve.mockResolvedValue({

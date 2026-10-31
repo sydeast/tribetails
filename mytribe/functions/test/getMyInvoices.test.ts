@@ -792,3 +792,32 @@ describe('getMyInvoices per-invoice payMethods (issue #409)', () => {
     expect(JSON.stringify(res)).not.toMatch(/feeBps|feeFixedCents/);
   });
 });
+describe('legacy viewed flag (#1180)', () => {
+  it('normalises string, boolean and absent to a boolean', async () => {
+    const { legacyFlagFrom } = await import('../src/portal/getMyInvoices');
+    for (const yes of ['Yes', 'yes', ' YES ', 'true', 'True', '1', true]) {
+      expect(legacyFlagFrom(yes)).toBe(true);
+    }
+    for (const no of ['No', 'false', '0', '', false, undefined, null, 0, 1, {}]) {
+      expect(legacyFlagFrom(no)).toBe(false);
+    }
+  });
+  it('returns a boolean on the wire whatever the document holds', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['3'] } },
+      queryDocs: {
+        invoices: [
+          { id: 'a', data: { kinfolkId: '3', invoiceStatus: 'open', amountDue: 5, total: 5, viewed: 'Yes' } },
+          { id: 'b', data: { kinfolkId: '3', invoiceStatus: 'open', amountDue: 5, total: 5, viewed: true } },
+          { id: 'c', data: { kinfolkId: '3', invoiceStatus: 'open', amountDue: 5, total: 5, viewed: false } },
+          { id: 'd', data: { kinfolkId: '3', invoiceStatus: 'open', amountDue: 5, total: 5 } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyInvoicesHandler } = await import('../src/portal/getMyInvoices');
+    const res: any = await getMyInvoicesHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    const byId = Object.fromEntries(res.open.map((i: any) => [i.id, i.viewed]));
+    expect(byId).toEqual({ a: true, b: true, c: false, d: false });
+  });
+});
