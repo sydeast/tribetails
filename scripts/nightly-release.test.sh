@@ -236,7 +236,7 @@ CLEAN_BODY="$(awk '
 ' "$WF")"
 for path in 'auntieos-release.keystore' 'auntieos-admin/android/local.properties' \
             'mytribe/local.properties' '.android/debug.keystore' 'gradle.properties' 'gha-creds-'; do
-  if printf '%s' "$CLEAN_BODY" | grep -qF "$path"; then
+  if printf '%s' "$CLEAN_BODY" | grep >/dev/null -cF "$path"; then
     ok "cleanup removes $path"
   else
     bad "cleanup does not remove $path"
@@ -250,13 +250,13 @@ RESTORE_BODY="$(awk '
 ' "$WF")"
 for path in 'auntieos-release.keystore' 'auntieos-admin/android/local.properties' \
             'mytribe/local.properties' '.android/debug.keystore' 'gradle.properties'; do
-  if printf '%s' "$RESTORE_BODY" | grep -qF "$path"; then
+  if printf '%s' "$RESTORE_BODY" | grep >/dev/null -cF "$path"; then
     ok "the restore step writes $path (and cleanup removes it)"
   else
     bad "the restore step no longer writes $path, so this test and the cleanup are out of date"
   fi
 done
-if printf '%s' "$RESTORE_BODY" | grep -q 'RUNNER_TEMP/auntieos-release.keystore'; then
+if printf '%s' "$RESTORE_BODY" | grep >/dev/null -c 'RUNNER_TEMP/auntieos-release.keystore'; then
   ok "the release keystore is written to RUNNER_TEMP, outside the checkout"
 else
   bad "the release keystore is not written under RUNNER_TEMP"
@@ -276,8 +276,8 @@ PIN_BODY="$(awk '
   on && /^      - / { on = 0 }
   on { print }
 ' "$WF")"
-if [ -n "$PIN" ] && printf '%s' "$PIN_BODY" | grep -qF 'GRADLE_USER_HOME=$RUNNER_TEMP/' &&
-   printf '%s' "$PIN_BODY" | grep -qF '>> "$GITHUB_ENV"'; then
+if [ -n "$PIN" ] && printf '%s' "$PIN_BODY" | grep >/dev/null -cF 'GRADLE_USER_HOME=$RUNNER_TEMP/' &&
+   printf '%s' "$PIN_BODY" | grep >/dev/null -cF '>> "$GITHUB_ENV"'; then
   ok "a step writes GRADLE_USER_HOME=\$RUNNER_TEMP/... to GITHUB_ENV"
 else
   bad "no step pins GRADLE_USER_HOME under RUNNER_TEMP through GITHUB_ENV"
@@ -309,19 +309,19 @@ for pair in "restore:$RESTORE_BODY" "cleanup:$CLEAN_BODY"; do
   else
     bad "$why"
   fi
-  if printf '%s' "$body" | grep -v '^[[:space:]]*#' | grep -qF '$HOME/.gradle'; then
+  if printf '%s' "$body" | grep -v '^[[:space:]]*#' | grep >/dev/null -cF '$HOME/.gradle'; then
     bad "the $label step still falls back to \$HOME/.gradle"
   else
     ok "the $label step never names \$HOME/.gradle"
   fi
 done
-if printf '%s' "$RESTORE_BODY" | grep -qF '"$RUNNER_TEMP"/*) ;;' &&
-   printf '%s' "$RESTORE_BODY" | grep -qF '> "$GRADLE_USER_HOME/gradle.properties"'; then
+if printf '%s' "$RESTORE_BODY" | grep >/dev/null -cF '"$RUNNER_TEMP"/*) ;;' &&
+   printf '%s' "$RESTORE_BODY" | grep >/dev/null -cF '> "$GRADLE_USER_HOME/gradle.properties"'; then
   ok "the restore step writes gradle.properties only into a GRADLE_USER_HOME under RUNNER_TEMP"
 else
   bad "the restore step does not require GRADLE_USER_HOME under RUNNER_TEMP before writing gradle.properties"
 fi
-if printf '%s' "$CLEAN_BODY" | grep -qF '"$RUNNER_TEMP"/*) rm -f "$GRADLE_USER_HOME/gradle.properties"'; then
+if printf '%s' "$CLEAN_BODY" | grep >/dev/null -cF '"$RUNNER_TEMP"/*) rm -f "$GRADLE_USER_HOME/gradle.properties"'; then
   ok "cleanup deletes gradle.properties only from a GRADLE_USER_HOME under RUNNER_TEMP"
 else
   bad "cleanup can delete gradle.properties outside RUNNER_TEMP"
@@ -433,7 +433,7 @@ else
   bad "docs/runbooks/release-internals.md has no '## Hosted nightly release' section"
 fi
 for s in $(grep -o 'secrets\.[A-Z0-9_]*' "$WF" | sed 's/secrets\.//' | sort -u); do
-  if printf '%s' "$SECTION" | grep -q "gh secret set $s "; then
+  if printf '%s' "$SECTION" | grep >/dev/null -c "gh secret set $s "; then
     ok "the runbook sets secret $s"
   else
     bad "the workflow reads secrets.$s but the runbook has no 'gh secret set $s'"
@@ -443,7 +443,7 @@ for v in $(grep -o 'vars\.[A-Z0-9_]*' "$WF" | sed 's/vars\.//' | sort -u); do
   # CI_RUNNER is the repo-wide runner override, deleted by ruling
   # D-2026-09-11-NO-SELF-HOSTED-RUNNERS and deliberately never set.
   [ "$v" = "CI_RUNNER" ] && continue
-  if printf '%s' "$SECTION" | grep -q "gh variable set $v "; then
+  if printf '%s' "$SECTION" | grep >/dev/null -c "gh variable set $v "; then
     ok "the runbook sets variable $v"
   else
     bad "the workflow reads vars.$v but the runbook has no 'gh variable set $v'"
@@ -467,7 +467,7 @@ if grep -qx '### The scheduled release' "$RUNBOOK" &&
 else
   bad "the RUNBOOK heading or the workflow's link to it changed"
 fi
-if grep -A25 -x '### The scheduled release' "$RUNBOOK" | grep -q 'Hosted nightly release'; then
+if grep -A25 -x '### The scheduled release' "$RUNBOOK" | grep >/dev/null -c 'Hosted nightly release'; then
   ok "that RUNBOOK section points at 'Hosted nightly release'"
 else
   bad "the RUNBOOK section does not point at the 'Hosted nightly release' setup"
@@ -479,13 +479,13 @@ echo "--- the schedule is Monday and Thursday (#1062)"
 # cron line, so a second schedule cannot slip back in beside it.
 CRONS="$(grep -E "^[[:space:]]*- cron:" "$WF")"
 if [ "$(printf '%s\n' "$CRONS" | grep -c .)" = "1" ] &&
-   printf '%s' "$CRONS" | grep -q "cron: '0 1 \* \* 1,4'"; then
+   printf '%s' "$CRONS" | grep >/dev/null -c "cron: '0 1 \* \* 1,4'"; then
   ok "one schedule, 01:00 UTC Monday and Thursday"
 else
   bad "the schedule is not the single '0 1 * * 1,4' cron:"
   printf '    %s\n' "$CRONS"
 fi
-if grep -A25 -x '### The scheduled release' "$RUNBOOK" | grep -q 'Monday and Thursday'; then
+if grep -A25 -x '### The scheduled release' "$RUNBOOK" | grep >/dev/null -c 'Monday and Thursday'; then
   ok "the RUNBOOK names the same days"
 else
   bad "the RUNBOOK section does not say Monday and Thursday"
@@ -565,22 +565,22 @@ job_block() {
 E2E_JOB="$(job_block e2e-real)"
 RELEASE_JOB="$(job_block release)"
 DECIDE_JOB="$(job_block decide)"
-if printf '%s\n' "$E2E_JOB" | grep -qx '    uses: ./.github/workflows/e2e-real.yml'; then
+if printf '%s\n' "$E2E_JOB" | grep >/dev/null -cx '    uses: ./.github/workflows/e2e-real.yml'; then
   ok "an e2e-real job calls ./.github/workflows/e2e-real.yml"
 else
   bad "no job calls ./.github/workflows/e2e-real.yml"
 fi
-if printf '%s\n' "$E2E_JOB" | grep -qx '    secrets: inherit'; then
+if printf '%s\n' "$E2E_JOB" | grep >/dev/null -cx '    secrets: inherit'; then
   ok "it passes the repository's secrets on (the vendor ones come from its environment)"
 else
   bad "the e2e-real job does not pass secrets: inherit"
 fi
-if printf '%s\n' "$E2E_JOB" | grep -qx "    if: needs.decide.outputs.mode != 'off' && needs.decide.outputs.new == 'true'"; then
+if printf '%s\n' "$E2E_JOB" | grep >/dev/null -cx "    if: needs.decide.outputs.mode != 'off' && needs.decide.outputs.new == 'true'"; then
   ok "it runs only when the run ships something, so an off night sends no test email"
 else
   bad "the e2e-real job is not gated on mode != off and new == true"
 fi
-if printf '%s\n' "$RELEASE_JOB" | grep -qx '    needs: \[decide, e2e-real\]'; then
+if printf '%s\n' "$RELEASE_JOB" | grep >/dev/null -cx '    needs: \[decide, e2e-real\]'; then
   ok "the release job needs decide and e2e-real"
 else
   bad "the release job does not need [decide, e2e-real]"
@@ -592,13 +592,13 @@ case "$REL_IF" in
   *)
     bad "the release job's if is '${REL_IF:-none}': a skipped e2e-real would skip the summary and cleanup, or a failed decide would run it with no mode" ;;
 esac
-if printf '%s\n' "$DECIDE_JOB" | grep -qF 'mode: ${{ steps.decide.outputs.mode }}' &&
-   printf '%s\n' "$DECIDE_JOB" | grep -qF 'new: ${{ steps.newness.outputs.new }}'; then
+if printf '%s\n' "$DECIDE_JOB" | grep >/dev/null -cF 'mode: ${{ steps.decide.outputs.mode }}' &&
+   printf '%s\n' "$DECIDE_JOB" | grep >/dev/null -cF 'new: ${{ steps.newness.outputs.new }}'; then
   ok "decide hands mode and newness to the other jobs"
 else
   bad "the decide job does not output mode and new"
 fi
-if printf '%s\n' "$RELEASE_JOB" | grep -q 'steps\.decide\.outputs\|steps\.newness\.outputs'; then
+if printf '%s\n' "$RELEASE_JOB" | grep >/dev/null -c 'steps\.decide\.outputs\|steps\.newness\.outputs'; then
   bad "the release job still reads steps.decide/steps.newness, which no longer exist in it"
 else
   ok "the release job reads mode and newness from needs.decide"

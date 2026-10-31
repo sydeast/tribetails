@@ -779,7 +779,7 @@ install_matching "$D7"
 add_python_codebase "$D7"
 fake_venv "$D7" "3.11"
 RC="$(run_preflight "$D7")"
-if [ "$RC" = "0" ] && { ! command -v python3.13 >/dev/null 2>&1 || grep -q "not built with python3.13" "$D7/out"; }; then
+if [ "$RC" = "0" ] && { ! command -v python3.13 >/dev/null 2>&1 || grep >/dev/null -c "not built with python3.13" "$D7/out"; }; then
   ok "a venv from a different interpreter is caught, and still does not fail"
 else
   bad "a mismatched venv was not caught; got rc=$RC"

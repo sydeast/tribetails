@@ -219,7 +219,7 @@ else
   bad "bootstrap did not complete past drift-only preflight; rc=$RC"
   tail -30 "$D1/out"
 fi
-if printf '%s' "$OUT" | grep -q "the only failure above is dependency drift"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "the only failure above is dependency drift"; then
   ok "bootstrap explains why it is continuing rather than refusing"
 else
   bad "bootstrap did not explain the drift-only continuation"; tail -30 "$D1/out"
@@ -229,7 +229,7 @@ if grep -q "^STUB npm ci .*(cwd=.*/mytribe/functions)$" "$D1/npm-calls" 2>/dev/n
 else
   bad "bootstrap never ran npm ci in mytribe/functions"; cat "$D1/npm-calls" 2>/dev/null
 fi
-if printf '%s' "$OUT" | grep -q "preflight: clean now"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "preflight: clean now"; then
   ok "bootstrap re-checks preflight after installing and reports it clean"
 else
   bad "bootstrap did not report a clean re-check"; tail -30 "$D1/out"
@@ -255,12 +255,12 @@ if [ "$RC" -ne 0 ]; then
 else
   bad "bootstrap proceeded despite a hard preflight failure"; tail -30 "$D2/out"
 fi
-if printf '%s' "$OUT" | grep -q "Not setting anything up until the required tools are installed"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "Not setting anything up until the required tools are installed"; then
   ok "bootstrap prints the refusal, not the drift-only continuation message"
 else
   bad "bootstrap did not print the hard-failure refusal"; tail -30 "$D2/out"
 fi
-if printf '%s' "$OUT" | grep -q "the only failure above is dependency drift"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "the only failure above is dependency drift"; then
   bad "bootstrap claimed a hard failure was drift-only"
 else
   ok "bootstrap did not misclassify the hard failure as drift-only"
@@ -278,7 +278,7 @@ fi
 D3="$(make_repo)"; write_npm_stub "$D3"
 RC="$(run_bootstrap "$D3" NPM_CALL_LOG="$D3/npm-calls")"
 OUT="$(cat "$D3/out")"
-if [ "$RC" -eq 0 ] && ! printf '%s' "$OUT" | grep -q "dependency drift"; then
+if [ "$RC" -eq 0 ] && ! printf '%s' "$OUT" | grep >/dev/null -c "dependency drift"; then
   ok "a clean tree (nothing installed yet, nothing broken) proceeds with no drift messaging"
 else
   bad "a clean tree either failed or wrongly reported drift; rc=$RC"
@@ -389,7 +389,7 @@ if [ "$RC" -eq 0 ]; then
 else
   bad "bootstrap did not complete; rc=$RC"; tail -30 "$D6/out"
 fi
-if printf '%s' "$OUT" | grep -qi "optional-linux-thing"; then
+if printf '%s' "$OUT" | grep >/dev/null -ci "optional-linux-thing"; then
   bad "bootstrap complained about an optional platform package this machine will never install"
   tail -30 "$D6/out"
 else
@@ -428,12 +428,12 @@ if [ "$RC" -ne 0 ]; then
 else
   bad "bootstrap proceeded despite a hard failure alongside drift"; tail -30 "$D7/out"
 fi
-if printf '%s' "$OUT" | grep -q "Not setting anything up until the required tools are installed"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "Not setting anything up until the required tools are installed"; then
   ok "bootstrap prints the hard-failure refusal, not the drift-only continuation"
 else
   bad "bootstrap did not print the hard-failure refusal"; tail -30 "$D7/out"
 fi
-if printf '%s' "$OUT" | grep -q "the only failure above is dependency drift"; then
+if printf '%s' "$OUT" | grep >/dev/null -c "the only failure above is dependency drift"; then
   bad "bootstrap treated a drift-plus-hard-failure preflight as drift-only"
 else
   ok "bootstrap did not misclassify drift-plus-hard-failure as drift-only"

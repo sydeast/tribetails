@@ -224,7 +224,7 @@ run_npm "$D1" ci >/dev/null 2>&1
 # 2e. `npm ci` run INSIDE each member: must refuse (nonzero exit), and must
 #     name the fix.
 OUT="$(run_npm "$D1/admin" ci 2>&1)"; RC=$?
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'To restore dependencies: `npm ci` at the repo root'; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c 'To restore dependencies: `npm ci` at the repo root'; then
   ok "npm ci INSIDE admin (depth 1) refuses and names the repo-root fix"
 else
   bad "npm ci INSIDE admin did not refuse as expected (rc=$RC)"; printf '%s\n' "$OUT"
@@ -232,7 +232,7 @@ fi
 run_npm "$D1" ci >/dev/null 2>&1   # restore: npm ci clears root node_modules even when refused
 
 OUT="$(run_npm "$D1/apps/web" ci 2>&1)"; RC=$?
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'To restore dependencies: `npm ci` at the repo root'; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c 'To restore dependencies: `npm ci` at the repo root'; then
   ok "npm ci INSIDE apps/web (depth 2) refuses and names the repo-root fix"
 else
   bad "npm ci INSIDE apps/web did not refuse as expected (rc=$RC)"; printf '%s\n' "$OUT"
@@ -259,7 +259,7 @@ OUT="$(run_npm "$D1/admin" install file:../local-pkg 2>&1)"; RC=$?
 ADMIN_PJ_AFTER="$(cat "$D1/admin/package.json")"
 LOCK_AFTER="$(cat "$D1/package-lock.json")"
 MARKER_AFTER="$(cat "$D1/node_modules/.package-lock.json" 2>/dev/null)"
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'To restore dependencies: `npm ci` at the repo root'; then
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c 'To restore dependencies: `npm ci` at the repo root'; then
   ok "npm install file:../local-pkg INSIDE admin refuses and names the repo-root fix"
 else
   bad "npm install file:../local-pkg INSIDE admin did not refuse as expected (rc=$RC)"; printf '%s\n' "$OUT"
