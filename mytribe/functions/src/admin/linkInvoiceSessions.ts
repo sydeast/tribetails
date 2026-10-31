@@ -17,6 +17,7 @@ import {
 } from '../lib/invoiceEditPolicy';
 import { paidCentsFromPayments, invoiceTotalCentsOf, type PaymentAmount } from '../lib/invoiceMath';
 import { validateResponse } from '../lib/callableResponse';
+import { isSessionClaimed } from '../lib/sessionInvoicing';
 import {
   InvoiceEditScopeSchema,
   InvoiceStateSchema,
@@ -186,15 +187,27 @@ export async function linkInvoiceSessionsHandler(
     const sessionRefs = touched.map((id) => db().collection('kin_care_sessions').doc(id));
     const sessionSnaps = await Promise.all(sessionRefs.map((ref) => tx.get(ref)));
     const missing: string[] = [];
+    const addedSet = new Set(added);
+    const elsewhere: Array<{ sessionId: string; invoiceId: string }> = [];
     sessionSnaps.forEach((snap, i) => {
       const sid = touched[i];
       if (!snap.exists) {
         missing.push(sid);
         return;
       }
-      const sData = snap.data() as { kinfolkId?: string } | undefined;
+      const sData = snap.data() as { kinfolkId?: string; invoiceId?: unknown } | undefined;
       if (!testOwnsDoc(actor.testMode, sData?.kinfolkId ?? '')) {
         throw new HttpsError('permission-denied', `Session '${sid}' is outside your test sandbox.`);
+      }
+      // #1254: an ADDED session already billed by another invoice is refused.
+      // Taking it would leave that invoice's `sessionIds` still claiming the
+      // same visit. Absent, empty and whitespace are unclaimed (the rule
+      // `listUninvoicedSessions` uses), and a back-link to THIS invoice is a
+      // half-link being completed, not a theft. A session already in the
+      // stored set is not an add, so it never reaches this check.
+      if (addedSet.has(sid) && isSessionClaimed(sData?.invoiceId)) {
+        const claimedBy = String(sData?.invoiceId).trim();
+        if (claimedBy !== args.invoiceId) elsewhere.push({ sessionId: sid, invoiceId: claimedBy });
       }
     });
     if (missing.length > 0) {
@@ -205,6 +218,33 @@ export async function linkInvoiceSessionsHandler(
         'failed-precondition',
         `Session(s) not found: ${missing.join(', ')}.`,
         { code: 'session_not_found', missing },
+      );
+    }
+    if (elsewhere.length > 0) {
+      // Still before any write. The other invoice is read only to name it by
+      // its number in the message the clients show verbatim; a missing or
+      // number-less invoice falls back to its id.
+      const otherIds = Array.from(new Set(elsewhere.map((e) => e.invoiceId)));
+      const otherSnaps = await Promise.all(
+        otherIds.map((id) => tx.get(db().collection('invoices').doc(id))),
+      );
+      const numberOf = new Map<string, string>();
+      otherSnaps.forEach((snap, i) => {
+        const n = snap.exists ? (snap.data() as InvoiceDoc | undefined)?.invoiceNumber : undefined;
+        numberOf.set(otherIds[i], typeof n === 'string' && n.trim() !== '' ? n.trim() : otherIds[i]);
+      });
+      const conflicts = elsewhere.map((e) => ({
+        sessionId: e.sessionId,
+        invoiceId: e.invoiceId,
+        invoiceNumber: numberOf.get(e.invoiceId) ?? e.invoiceId,
+      }));
+      const named = conflicts
+        .map((c) => `visit ${c.sessionId} is on invoice ${c.invoiceNumber}`)
+        .join('; ');
+      throw new HttpsError(
+        'failed-precondition',
+        `Already billed on another invoice: ${named}. Unlink it there first.`,
+        { code: 'session_on_other_invoice', conflicts },
       );
     }
 

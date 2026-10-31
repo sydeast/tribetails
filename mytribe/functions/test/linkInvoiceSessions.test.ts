@@ -39,12 +39,17 @@ function seed(opts: {
   invoice?: Record<string, unknown> | null;
   sessions?: Record<string, Record<string, unknown> | null>;
   payments?: Array<{ id: string; data: Record<string, unknown> }>;
+  /** Other invoices, keyed by id (#1254: the invoice that already bills a visit). */
+  otherInvoices?: Record<string, Record<string, unknown>>;
 } = {}) {
   const invoice =
     opts.invoice === undefined
       ? { kinfolkId: 'fam1', invoiceNumber: 'INV-9', status: 'open', amountDue: 40, total: 40, sessionIds: [] }
       : opts.invoice;
   const docs: Record<string, Record<string, unknown> | null> = { 'invoices/inv1': invoice };
+  for (const [iid, data] of Object.entries(opts.otherInvoices ?? {})) {
+    docs[`invoices/${iid}`] = data;
+  }
   for (const [sid, data] of Object.entries(opts.sessions ?? {})) {
     docs[`kin_care_sessions/${sid}`] = data;
   }
@@ -153,6 +158,85 @@ describe('linkInvoiceSessions atomicity', () => {
       linkInvoiceSessionsHandler(req({ invoiceId: 'inv1', sessionIds: ['s1', 's2'] })),
     ).rejects.toMatchObject({ code: 'failed-precondition', details: { code: 'session_not_found', missing: ['s2'] } });
     expect(ctx.writes).toEqual([]);
+  });
+
+  it('#1254: an added visit another invoice bills is refused, naming that invoice, and nothing is written', async () => {
+    const ctx = seed({
+      sessions: { s1: session('fam1', { invoiceId: 'invA' }), s2: session() },
+      otherInvoices: { invA: { kinfolkId: 'fam1', invoiceNumber: 'INV-7', sessionIds: ['s1'] } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const err = await linkInvoiceSessionsHandler(
+      req({ invoiceId: 'inv1', sessionIds: ['s1', 's2'] }),
+    ).catch((e: unknown) => e);
+    expect(err).toMatchObject({
+      code: 'failed-precondition',
+      details: {
+        code: 'session_on_other_invoice',
+        conflicts: [{ sessionId: 's1', invoiceId: 'invA', invoiceNumber: 'INV-7' }],
+      },
+    });
+    expect((err as Error).message).toBe(
+      'Already billed on another invoice: visit s1 is on invoice INV-7. Unlink it there first.',
+    );
+    // Neither the invoice, nor s2 (which was fine), nor s1, nor invA changed.
+    expect(ctx.writes).toEqual([]);
+  });
+
+  it('#1254: the other invoice is named by its trimmed id when its doc is missing', async () => {
+    const ctx = seed({ sessions: { s1: session('fam1', { invoiceId: '  gone  ' }) } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      linkInvoiceSessionsHandler(req({ invoiceId: 'inv1', sessionIds: ['s1'] })),
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'Already billed on another invoice: visit s1 is on invoice gone. Unlink it there first.',
+      details: {
+        code: 'session_on_other_invoice',
+        conflicts: [{ sessionId: 's1', invoiceId: 'gone', invoiceNumber: 'gone' }],
+      },
+    });
+    expect(ctx.writes).toEqual([]);
+  });
+
+  it('#1254: absent, empty, whitespace and null invoiceId are unclaimed and link normally', async () => {
+    const ctx = seed({
+      sessions: {
+        s1: session('fam1'),
+        s2: session('fam1', { invoiceId: '' }),
+        s3: session('fam1', { invoiceId: '   ' }),
+        s4: session('fam1', { invoiceId: null }),
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await linkInvoiceSessionsHandler(
+      req({ invoiceId: 'inv1', sessionIds: ['s1', 's2', 's3', 's4'] }),
+    );
+    expect(res.added).toEqual(['s1', 's2', 's3', 's4']);
+    for (const sid of ['s1', 's2', 's3', 's4']) {
+      expect(writeAt(ctx, `kin_care_sessions/${sid}`)?.data.invoiceId).toBe('inv1');
+    }
+  });
+
+  it('#1254: a visit whose back-link already names THIS invoice completes the half-link', async () => {
+    const ctx = seed({ sessions: { s1: session('fam1', { invoiceId: ' inv1 ' }) } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await linkInvoiceSessionsHandler(req({ invoiceId: 'inv1', sessionIds: ['s1'] }));
+    expect(res.added).toEqual(['s1']);
+    expect(writeAt(ctx, 'invoices/inv1')?.data.sessionIds).toEqual(['s1']);
+  });
+
+  it('#1254: a visit already in the stored set is not an add, so its stray back-link is not refused', async () => {
+    // A half-link left by the old behaviour: inv1 lists s1 while s1 points at
+    // invA. Re-saving inv1 with s1 still ticked and s2 added must go through.
+    const ctx = seed({
+      invoice: { kinfolkId: 'fam1', status: 'open', amountDue: 40, total: 40, sessionIds: ['s1'] },
+      sessions: { s1: session('fam1', { invoiceId: 'invA' }), s2: session() },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await linkInvoiceSessionsHandler(req({ invoiceId: 'inv1', sessionIds: ['s1', 's2'] }));
+    expect(res.added).toEqual(['s2']);
+    expect(writeAt(ctx, 'kin_care_sessions/s1')).toBeUndefined();
   });
 
   it('an unknown invoice is not-found, and nothing is written', async () => {
