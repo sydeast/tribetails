@@ -45,7 +45,10 @@ import {
  * the stored set, inside the transaction, so two concurrent saves cannot both
  * compute against the same stale snapshot. Link and unlink are the same
  * operation: sessions newly in the set gain `invoiceId`, sessions dropped from
- * it are cleared. An empty array unlinks everything.
+ * it are cleared. An empty array unlinks everything. A dropped session whose
+ * back-link names a DIFFERENT invoice (#1259) keeps that back-link: it leaves
+ * this invoice's set, and `removed` still lists it, but the other invoice
+ * still bills it.
  *
  * THE ATTRIBUTION STAMPS ARE ANDROID'S, byte for byte. The invoice gets
  * `_attribution: 'manual'` (the operator curated this set by hand, true for
@@ -189,6 +192,9 @@ export async function linkInvoiceSessionsHandler(
     const missing: string[] = [];
     const addedSet = new Set(added);
     const elsewhere: Array<{ sessionId: string; invoiceId: string }> = [];
+    // #1259: removed sessions whose back-link names ANOTHER invoice. They drop
+    // out of this invoice's set but their `invoiceId` is left alone.
+    const claimedElsewhere = new Set<string>();
     sessionSnaps.forEach((snap, i) => {
       const sid = touched[i];
       if (!snap.exists) {
@@ -208,6 +214,12 @@ export async function linkInvoiceSessionsHandler(
       if (addedSet.has(sid) && isSessionClaimed(sData?.invoiceId)) {
         const claimedBy = String(sData?.invoiceId).trim();
         if (claimedBy !== args.invoiceId) elsewhere.push({ sessionId: sid, invoiceId: claimedBy });
+      }
+      // #1259: a removed session whose back-link names another invoice is a
+      // half-link left by the old behaviour. That invoice still bills it, so
+      // clearing the back-link would offer it to the composer again.
+      if (!addedSet.has(sid) && isSessionClaimed(sData?.invoiceId)) {
+        if (String(sData?.invoiceId).trim() !== args.invoiceId) claimedElsewhere.add(sid);
       }
     });
     if (missing.length > 0) {
@@ -285,6 +297,7 @@ export async function linkInvoiceSessionsHandler(
       );
     });
     removed.forEach((sid) => {
+      if (claimedElsewhere.has(sid)) return;
       tx.set(
         db().collection('kin_care_sessions').doc(sid),
         {
