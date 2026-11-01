@@ -404,6 +404,9 @@ data class GetMyBookingsResultLiveVisit(
     val rescheduleRequestedEndTimeMs: Long?,
     val rescheduleRequestReason: String?,
     val rescheduleResponseNote: String?,
+    val address: String?,
+    val kinTaleId: String?,
+    val invoiceId: String?,
 )
 
 /**
@@ -446,6 +449,9 @@ internal fun decodeGetMyBookingsResultLiveVisit(raw: Map<String, Any?>?): GetMyB
         rescheduleRequestedEndTimeMs = (raw?.get("rescheduleRequestedEndTimeMs") as? Number)?.toLong(),
         rescheduleRequestReason = raw?.get("rescheduleRequestReason") as? String,
         rescheduleResponseNote = raw?.get("rescheduleResponseNote") as? String,
+        address = raw?.get("address") as? String,
+        kinTaleId = raw?.get("kinTaleId") as? String,
+        invoiceId = raw?.get("invoiceId") as? String,
     )
 
 /** Nested in the `getMyBookings` contract. */

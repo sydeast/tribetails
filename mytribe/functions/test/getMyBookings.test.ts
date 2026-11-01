@@ -325,6 +325,78 @@ describe('getMyBookingsHandler: visits awaiting a start time (#1098)', () => {
     expect(res.upcoming).toEqual([]);
   });
 });
+describe('getMyBookingsHandler: what a completed visit points at (#1303)', () => {
+  const past = () => Date.now() - 86400_000;
+  function fixture(extraDocs: Record<string, Record<string, unknown>> = {}) {
+    return buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'families/3': { serviceAddress: '12 Elm St, Austin TX' },
+        ...extraDocs,
+      },
+      queryDocs: {
+        kin_care_reports: [
+          { id: 'tale-1', data: { kinfolkId: '3', sessionId: 'sess-done', sentAt: '2026-07-02T20:00:00Z' } },
+          { id: 'tale-draft', data: { kinfolkId: '3', sessionId: 'sess-other' } },
+          { id: 'tale-else', data: { kinfolkId: '9', sessionId: 'sess-done', sentAt: '2026-07-02T20:00:00Z' } },
+        ],
+        invoices: [
+          { id: 'inv-1', data: { kinfolkId: '3', sessionIds: ['sess-done'] } },
+          { id: 'inv-2', data: { kinfolkId: '3', lineItems: [{ sessionId: 'sess-lined' }] } },
+          { id: 'inv-else', data: { kinfolkId: '9', sessionIds: ['sess-done'] } },
+        ],
+      },
+      collectionGroupDocs: {
+        kinCares: [
+          visit('env-b', 'done', { status: 'completed', startTime: Timestamp.fromMillis(past()), sessionId: 'sess-done' }),
+          visit('env-b', 'lined', { status: 'completed', startTime: Timestamp.fromMillis(past()), sessionId: 'sess-lined' }),
+          visit('env-b', 'bare', { status: 'completed', startTime: Timestamp.fromMillis(past()) }),
+          visit('env-b', 'draft', { status: 'completed', startTime: Timestamp.fromMillis(past()), sessionId: 'sess-other' }),
+          visit('env-b', 'up', { status: 'confirmed', startTime: Timestamp.fromMillis(Date.now() + 86400_000), sessionId: 'sess-done' }),
+        ],
+      },
+    });
+  }
+  async function run(ctx: ReturnType<typeof fixture>) {
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyBookingsHandler } = await import('../src/portal/getMyBookings');
+    const res = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    const byId = new Map([...res.recent, ...res.upcoming].map((b) => [b.id, b]));
+    return { res, byId };
+  }
+  it('links a completed visit to its sent KinTale and its invoice, and carries the household address', async () => {
+    const { byId } = await run(fixture());
+    expect(byId.get('done')).toMatchObject({ kinTaleId: 'tale-1', invoiceId: 'inv-1', address: '12 Elm St, Austin TX' });
+  });
+  it('finds the invoice through a stored line bound to the visit', async () => {
+    const { byId } = await run(fixture());
+    expect(byId.get('lined')).toMatchObject({ invoiceId: 'inv-2', kinTaleId: null });
+  });
+  it('never links a draft report, another household, or a visit with no session', async () => {
+    const { byId } = await run(fixture());
+    expect(byId.get('draft')).toMatchObject({ kinTaleId: null, invoiceId: null });
+    expect(byId.get('bare')).toMatchObject({ kinTaleId: null, invoiceId: null });
+  });
+  it('does not link anything on a visit that is not completed, but still gives its address', async () => {
+    const { byId } = await run(fixture());
+    expect(byId.get('up')).toMatchObject({ kinTaleId: null, invoiceId: null, address: '12 Elm St, Austin TX' });
+  });
+  it('withholds the invoice id from a member without billing access, and keeps the KinTale', async () => {
+    const { byId } = await run(
+      fixture({ 'families/3/members/u1': { role: 'SECONDARY', status: 'ACTIVE', permissions: { billing_full: false } } }),
+    );
+    expect(byId.get('done')).toMatchObject({ kinTaleId: 'tale-1', invoiceId: null });
+  });
+  it('has a null address when the household has none on file', async () => {
+    const { byId } = await run(
+      buildDbMock({
+        docs: { 'clients/u1': { kinfolkIds: ['3'] }, 'families/3': {} },
+        collectionGroupDocs: { kinCares: [visit('env-b', 'done', { status: 'completed', startTime: Timestamp.fromMillis(past()) })] },
+      }) as unknown as ReturnType<typeof fixture>,
+    );
+    expect(byId.get('done')?.address).toBeNull();
+  });
+});
 
 describe('getMyBookingsHandler: block-booked visits (#1301)', () => {
   it('carries the window label and its current hours, null for a clock visit and for a removed window', async () => {

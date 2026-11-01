@@ -15,6 +15,7 @@ import type {
 
 const mocks = vi.hoisted(() => ({
   getMyBookings: vi.fn<() => Promise<GetMyBookingsResult>>(),
+  getMyVisits: vi.fn(),
   addBookingNote: vi.fn<(kinfolkId: string, batchId: string, visitId: string, body: string) => Promise<AddBookingNoteResult>>(),
   requestBookingCancellation: vi.fn<
     (kinfolkId: string, batchId: string, visitId: string, reason?: string) => Promise<RequestBookingCancellationResult>
@@ -32,7 +33,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../api/portal', () => ({
   getMyBookings: () => mocks.getMyBookings(),
+  getMyVisits: (...args: unknown[]) => mocks.getMyVisits(...args),
 }));
+vi.mock('../components/RouteMap', () => ({ RouteMap: () => <div data-testid="route-map" /> }));
 vi.mock('../api/bookingApi', () => ({
   addBookingNote: (kinfolkId: string, batchId: string, visitId: string, body: string) =>
     mocks.addBookingNote(kinfolkId, batchId, visitId, body),
@@ -51,8 +54,8 @@ vi.mock('../lib/auth', () => ({ useSignOut: () => ({ signOut: vi.fn(), signingOu
 vi.mock('../components/PortalNav', () => ({ PortalNav: () => null }));
 vi.mock('@tanstack/react-router', () => ({
   useParams: () => ({ visitId: 'v1' }),
-  Link: ({ children, search }: { children?: ReactNode; search?: unknown }) => (
-    <a href="#" data-search={JSON.stringify(search ?? null)}>
+  Link: ({ children, to, search, params }: { children?: ReactNode; to?: string; search?: unknown; params?: unknown }) => (
+    <a href="#" data-to={to} data-search={JSON.stringify(search ?? null)} data-params={JSON.stringify(params ?? null)}>
       {children}
     </a>
   ),
@@ -88,6 +91,9 @@ function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBo
     rescheduleRequestedEndTimeMs: null,
     rescheduleRequestReason: null,
     rescheduleResponseNote: null,
+    address: null,
+    kinTaleId: null,
+    invoiceId: null,
     startTimePending: false,
     requestedDate: null,
     timeBlockLabel: null,
@@ -112,6 +118,7 @@ function renderScreen() {
 
 beforeEach(() => {
   mocks.getMyBookings.mockReset();
+  mocks.getMyVisits.mockReset();
   mocks.addBookingNote.mockReset();
   mocks.requestBookingCancellation.mockReset();
   mocks.requestBookingReschedule.mockReset();
@@ -622,6 +629,99 @@ describe('BookingDetail: #1281 the ask shows the moment it resolves', () => {
   });
 });
 
+describe('BookingDetail: a visit that is over (#1285, #1303)', () => {
+  const done = (overrides: Partial<GetMyBookingsResultLiveVisit> = {}) =>
+    booking({
+      status: 'completed',
+      sessionId: 'sess-1',
+      address: '12 Elm St, Austin TX',
+      kinTaleId: 'tale-9',
+      invoiceId: 'inv-3',
+      ...overrides,
+    });
+  it('#1285: has no before-the-visit note box on a completed visit', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ recent: [done()] }));
+    mocks.getMyVisits.mockResolvedValue({ visits: [] });
+    renderScreen();
+    await screen.findByText('COMPLETED', { selector: '.chip' });
+    expect(screen.queryByText(/Leave a note for/)).toBeNull();
+    expect(screen.queryByText(/before this visit/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /save note/i })).toBeNull();
+  });
+  it('#1285: or on a cancelled one', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ recent: [done({ status: 'cancelled' })] }));
+    renderScreen();
+    await screen.findByText('CANCELLED', { selector: '.chip' });
+    expect(screen.queryByText(/Leave a note for/)).toBeNull();
+    expect(screen.queryByTestId('after-visit')).toBeNull();
+  });
+  it('#1285: still offers the note box on an upcoming visit', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    renderScreen();
+    expect(await screen.findByText(/Leave a note for/)).toBeInTheDocument();
+  });
+  it('#1303: every step of a completed visit is a check, including the last, and none is a number', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ recent: [done()] }));
+    mocks.getMyVisits.mockResolvedValue({ visits: [] });
+    const { container } = renderScreen();
+    await screen.findByText('COMPLETED', { selector: '.chip' });
+    const dots = [...container.querySelectorAll('.tl-dot')].map((d) => d.textContent);
+    expect(dots).toEqual(['✓', '✓', '✓', '✓', '✓']);
+  });
+  it('#1303: a confirmed visit still counts its upcoming steps', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    const { container } = renderScreen();
+    await screen.findByText('CONFIRMED');
+    expect([...container.querySelectorAll('.tl-dot')].map((d) => d.textContent)).toEqual(['✓', '2', '3', '4', '5']);
+  });
+  it('#1303: shows the address under When and where', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ recent: [done()] }));
+    mocks.getMyVisits.mockResolvedValue({ visits: [] });
+    renderScreen();
+    expect((await screen.findByTestId('visit-address')).textContent).toContain('12 Elm St, Austin TX');
+  });
+  it('#1303: says nothing about an address that is not on file', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ recent: [done({ address: null })] }));
+    mocks.getMyVisits.mockResolvedValue({ visits: [] });
+    renderScreen();
+    await screen.findByText('COMPLETED', { selector: '.chip' });
+    expect(screen.queryByTestId('visit-address')).toBeNull();
+  });
+  it('#1303: links to the KinTale and the invoice', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ recent: [done()] }));
+    mocks.getMyVisits.mockResolvedValue({ visits: [] });
+    renderScreen();
+    const tale = await screen.findByRole('link', { name: /Read the KinTale/ });
+    expect(tale).toHaveAttribute('data-to', '/kintales');
+    expect(tale).toHaveAttribute('data-search', JSON.stringify({ tale: 'tale-9' }));
+    const invoice = screen.getByRole('link', { name: /See the invoice/ });
+    expect(invoice).toHaveAttribute('data-to', '/invoices/$invoiceId');
+    expect(invoice).toHaveAttribute('data-params', JSON.stringify({ invoiceId: 'inv-3' }));
+  });
+  it('#1303: offers no link to a record that does not exist', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ recent: [done({ kinTaleId: null, invoiceId: null })] }));
+    mocks.getMyVisits.mockResolvedValue({ visits: [] });
+    renderScreen();
+    expect(await screen.findByText(/Nothing has been sent for this visit yet/)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /KinTale|invoice/ })).toBeNull();
+  });
+  it('#1303: shows the visit replay when the session recorded a route', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ recent: [done()] }));
+    mocks.getMyVisits.mockResolvedValue({
+      visits: [{ id: 'sess-1', status: 'COMPLETED', gpsSummary: { route: [{ lat: 1, lng: 2 }], distanceMeters: 900, durationSeconds: 600 } }],
+    });
+    renderScreen();
+    expect(await screen.findByTestId('route-map')).toBeInTheDocument();
+    expect(screen.getByText('Visit Replay')).toBeInTheDocument();
+  });
+  it('#1303: a replay lookup that fails drops the replay and nothing else', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ recent: [done()] }));
+    mocks.getMyVisits.mockRejectedValue(new Error('nope'));
+    renderScreen();
+    expect(await screen.findByRole('link', { name: /Read the KinTale/ })).toBeInTheDocument();
+    expect(screen.queryByTestId('route-map')).toBeNull();
+  });
+});
 describe('BookingDetail: back to the tab the visit lives in (#1304)', () => {
   it('names Past Visits from a completed visit and the default tab from an upcoming one', async () => {
     mocks.getMyBookings.mockResolvedValue(bookingsResult({ recent: [booking({ status: 'completed' })] }));

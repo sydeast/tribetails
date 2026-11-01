@@ -15,6 +15,7 @@
 import { Timestamp } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
 import { z } from 'zod';
+import { NO_EXTRAS, readHouseholdAddress, type VisitExtras } from './portalVisitLinks';
 import { resolveBookingPolicy } from './bookingTimeBlocks';
 export const BookingDtoSchema = z
   .object({
@@ -99,9 +100,24 @@ export const BookingDtoSchema = z
     rescheduleRequestReason: z.string().nullable(),
     /** What the office said when it accepted or declined. */
     rescheduleResponseNote: z.string().nullable(),
+    /**
+     * #1303: the household's address, which is where every visit happens (a
+     * visit carries none of its own). Null when none is on file.
+     */
+    address: z.string().nullable(),
+    /**
+     * #1303: the sent KinTale for this visit, set only on a completed visit
+     * that has one. Null otherwise.
+     */
+    kinTaleId: z.string().nullable(),
+    /**
+     * #1303: the invoice billing this visit, set only on a completed visit
+     * that has one AND only for a member with billing access. Null otherwise,
+     * so a member without billing access never learns an invoice exists.
+     */
+    invoiceId: z.string().nullable(),
   })
   .strict();
-
 export type BookingDto = z.infer<typeof BookingDtoSchema>;
 
 export const EnvelopeDtoSchema = z
@@ -166,14 +182,18 @@ export function kinCareToDto(
   data: Record<string, unknown>,
   batchId: string | null,
   kinfolkId: string,
+  extras: VisitExtras = NO_EXTRAS,
   blocksById: Map<string, BlockBounds> = new Map(),
 ): BookingDto {
   const cancelStatus = cancelRequestStatusOf(data);
+  const status = (data['status'] as BookingDto['status']) ?? 'requested';
+  const sessionId = stringOrNull(data['sessionId']);
+  const completedSession = status === 'completed' && sessionId !== null ? sessionId : null;
   return {
     id,
     batchId,
     kinfolkId,
-    status: (data['status'] as BookingDto['status']) ?? 'requested',
+    status,
     serviceType: stringOrNull(data['serviceType']) ?? stringOrNull(data['serviceName']),
     title: stringOrNull(data['title']),
     startTimeMs: tsMillis(data['startTime']),
@@ -191,7 +211,7 @@ export function kinCareToDto(
     updatedAtMs: tsMillis(data['updatedAt']),
     visitProgress: (data['visitProgress'] as BookingDto['visitProgress']) ?? null,
     sourceBookingId: stringOrNull(data['sourceBookingId']),
-    sessionId: stringOrNull(data['sessionId']),
+    sessionId,
     cancelRequested: cancelStatus === 'pending',
     cancelRequestStatus: cancelStatus,
     cancelRequestReason: stringOrNull(data['cancelRequestReason']),
@@ -201,6 +221,9 @@ export function kinCareToDto(
     rescheduleRequestedEndTimeMs: tsMillis(data['rescheduleRequestedEndTime']),
     rescheduleRequestReason: stringOrNull(data['rescheduleRequestReason']),
     rescheduleResponseNote: stringOrNull(data['rescheduleResponseNote']),
+    address: extras.address,
+    kinTaleId: completedSession !== null ? (extras.kinTaleBySession.get(completedSession) ?? null) : null,
+    invoiceId: completedSession !== null ? (extras.invoiceBySession.get(completedSession) ?? null) : null,
   };
 }
 /** One `bookings/{batchId}` envelope with its visits, as the portal reads it. */
@@ -247,8 +270,12 @@ export async function readEnvelopeDto(
     ]);
     if (!parentSnap.exists) return null;
     const env = (parentSnap.data() ?? {}) as Record<string, unknown>;
+    // A written envelope's visits are upcoming ones: the address rides along so
+    // the cache entry it replaces does not lose it, and there are no completed
+    // visits to link.
+    const extras: VisitExtras = { ...NO_EXTRAS, address: await readHouseholdAddress(firestore, kinfolkId) };
     const visits = visitsSnap.docs.map((d) =>
-      kinCareToDto(d.id, d.data() as Record<string, unknown>, stringOrNull((d.data() as Record<string, unknown>)['batchId']) ?? batchId, kinfolkId, blocksById),
+      kinCareToDto(d.id, d.data() as Record<string, unknown>, stringOrNull((d.data() as Record<string, unknown>)['batchId']) ?? batchId, kinfolkId, extras, blocksById),
     );
     return EnvelopeDtoSchema.parse(envelopeToDto(batchId, env, visits));
   } catch {
@@ -269,7 +296,8 @@ export async function readVisitDto(
     ]);
     if (!snap.exists) return null;
     const data = (snap.data() ?? {}) as Record<string, unknown>;
-    return BookingDtoSchema.parse(kinCareToDto(visitId, data, stringOrNull(data['batchId']) ?? batchId, kinfolkId, blocksById));
+    const extras: VisitExtras = { ...NO_EXTRAS, address: await readHouseholdAddress(firestore, kinfolkId) };
+    return BookingDtoSchema.parse(kinCareToDto(visitId, data, stringOrNull(data['batchId']) ?? batchId, kinfolkId, extras, blocksById));
   } catch {
     return null;
   }
