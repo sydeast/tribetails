@@ -67,6 +67,8 @@ visual-WRONGKILL/
 # BUILD OUTPUT, not source. It is rebuilt from packages/issue-recorder on every
 # app build, and a committed copy would go stale against the source beside it.
 **/public/__recorder.js
+# Share-page fonts, copied from @fontsource by mytribe/web/scripts/copy-share-fonts.mjs (#1278).
+mytribe/web/public/share-assets/
 packages/issue-recorder/dist/
 
 # Recorded walks and their drafts (walk exports are tens of MB)

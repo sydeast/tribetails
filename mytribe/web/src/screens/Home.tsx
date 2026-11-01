@@ -13,6 +13,7 @@ import { viewOfQuery } from '../lib/queryState';
 import { billingAccessOf } from '../lib/billingAccess';
 import { usePortalIdentity } from '../lib/identity';
 import {
+  auntieName,
   bookingChip,
   bookingSubtitle,
   elapsedMinutes,
@@ -151,7 +152,7 @@ export function Home() {
                 <span className="tag">LIVE NOW</span>
               </div>
               <h2>
-                {liveVisit.auntieDisplayName ? `Auntie ${liveVisit.auntieDisplayName}` : 'Your Auntie'} is with{' '}
+                {auntieName(liveVisit.auntieDisplayName) ?? 'Your Auntie'} is with{' '}
                 {liveVisit.kinNames.join(', ') || 'your kin'}
               </h2>
               <p>
@@ -235,7 +236,7 @@ export function Home() {
                       <b>{t.title || t.body.slice(0, 60)}</b>
                       <p>{t.body}</p>
                       <div className="meta">
-                        {`FROM AUNTIE ${t.authorDisplayName.toUpperCase()}${t.sentAtMs !== null ? ` · ${relativeDay(t.sentAtMs).toUpperCase()}` : ''}`}
+                        {`FROM ${(auntieName(t.authorDisplayName) ?? 'Your Auntie').toUpperCase()}${t.sentAtMs !== null ? ` · ${relativeDay(t.sentAtMs).toUpperCase()}` : ''}`}
                       </div>
                     </div>
                   </div>

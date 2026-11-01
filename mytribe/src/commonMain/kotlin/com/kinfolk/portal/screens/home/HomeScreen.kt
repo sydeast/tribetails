@@ -1,5 +1,6 @@
 package com.kinfolk.portal.screens.home
 
+import com.kinfolk.portal.util.auntieName
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -51,6 +52,9 @@ import com.kinfolk.portal.portal.KinTale
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.PortalHomeSection
 import com.kinfolk.portal.portal.VisitProgress
+import com.kinfolk.portal.screens.schedule.SAVE_NOTICE_MS
+import com.kinfolk.portal.screens.schedule.SaveNoticeRow
+import com.kinfolk.portal.screens.schedule.ScheduleHandoff
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkGradients
 import com.kinfolk.portal.theme.KinfolkShapes
@@ -58,6 +62,7 @@ import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.bookingWhenLabel
 import com.kinfolk.portal.util.relativeTime
+import kotlinx.coroutines.delay
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
@@ -82,9 +87,15 @@ fun HomeScreen(
     onBookVisit: () -> Unit = {},
     /** #1005: null for a member without billing access, and "View invoices" is not drawn. */
     onOpenInvoices: (() -> Unit)? = {},
+    /** #1345: what the booking wizard leaves when it returns here. Taken once, then [onHandoffTaken] clears it. */
+    handoff: ScheduleHandoff? = null,
+    onHandoffTaken: () -> Unit = {},
 ) {
     val type = LocalKinfolkTypography.current
-    var data by remember { mutableStateOf<BookingsResult?>(null) }
+    // #1345: seeded from the wizard's handoff, so Home shows the new booking
+    // and the confirmation at once; its own read still runs behind it.
+    var data by remember { mutableStateOf(handoff?.bookings) }
+    var notice by remember { mutableStateOf(handoff?.notice) }
     var error by remember { mutableStateOf<String?>(null) }
     var roster by remember { mutableStateOf<List<Kin>?>(null) }
     var rosterFailed by remember { mutableStateOf(false) }
@@ -116,6 +127,19 @@ fun HomeScreen(
             throw c
         } catch (t: Throwable) {
             error = t.message ?: "Could not load home"
+        }
+    }
+    LaunchedEffect(handoff) {
+        if (handoff != null) {
+            handoff.bookings?.let { data = it }
+            notice = handoff.notice
+            onHandoffTaken()
+        }
+    }
+    LaunchedEffect(notice) {
+        if (notice != null) {
+            delay(SAVE_NOTICE_MS)
+            notice = null
         }
     }
     // Roster + tales load independently and fail soft: a broken aside never
@@ -227,6 +251,7 @@ fun HomeScreen(
                 title = "Your tribe is in good hands.",
                 kicker = "Welcome home",
             )
+            notice?.let { text -> SaveNoticeRow(text = text, onDismiss = { notice = null }) }
 
             if (custom) {
                 // Operator order: liveVisit spans full width, everything else
@@ -432,7 +457,7 @@ private fun TaleRow(tale: KinTale) {
         Spacer(Modifier.height(KinfolkSpacing.xs))
         val meta = buildString {
             append("FROM ")
-            append((tale.authorDisplayName ?: "YOUR AUNTIE").uppercase())
+            append((auntieName(tale.authorDisplayName) ?: "YOUR AUNTIE").uppercase())
             tale.sentAtMs?.let {
                 append(" · ")
                 append(relativeTime(it).uppercase())
@@ -588,7 +613,7 @@ private fun LiveVisitCard(b: Booking) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column {
-                    Text(b.auntieDisplayName ?: "Auntie", style = type.heritageTitle.copy(color = Color.White))
+                    Text(auntieName(b.auntieDisplayName) ?: "Auntie", style = type.heritageTitle.copy(color = Color.White))
                     Text(b.serviceType ?: "Visit", style = type.sansLabel.copy(color = Color.White.copy(alpha = 0.88f)))
                 }
                 LivePill(onGradient = true)
