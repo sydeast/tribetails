@@ -641,11 +641,20 @@ tool exists to force before anyone touches the fleet again.
 npm --prefix mytribe/functions run runtime-options:expected
 ```
 
-Prints the resolved expected shape for all ~285 functions as JSON. Useful on
+Prints the resolved expected shape for all ~296 functions as JSON. Useful on
 its own, since it's "what does source currently declare, exactly" with inheritance
 already resolved, and it fails loudly (nonzero exit, every unresolved export
 named) if a future function's options object uses a shape the extractor
 hasn't been taught, rather than silently skipping it.
+
+A `...NAME` spread inside an options object resolves the way JS scoping
+does (#1388): a top-level `const NAME = { ... }` in the same file is
+inlined; a name imported from `lib/runtimeOptions.ts` is one of the named
+constants; a name imported from any other relative module (`HOURLY_TICK`
+from `lib/notificationSchedule.ts`) is followed to that module's const.
+A const whose initializer is not an object literal, a spread imported from
+a package, or a spread cycle is reported against that one function with its
+file and line; the other functions still print, and the exit is nonzero.
 
 **Then get the deployed shape.** Three ways, in order of preference:
 
@@ -748,7 +757,9 @@ Unit tests for the resolver and the diff live beside the code:
 `scripts/runtimeOptions/model.test.ts` (fixtures: inheriting the global, one
 per named constant, a deployed shape disagreeing on every field at once) and
 `scripts/runtimeOptions/extractSource.test.ts` (fixtures for every call shape
-the extractor recognizes). Both run under `npm --prefix mytribe/functions
+the extractor recognizes, plus a run of `extractAll()` and `resolveAll()` over
+the real `src/index.ts` that must finish with zero errors, so a new options
+shape fails CI before it fails this check mid-release). Both run under `npm --prefix mytribe/functions
 test`.
 
 ### Every release is tagged
