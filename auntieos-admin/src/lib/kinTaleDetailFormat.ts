@@ -50,12 +50,13 @@ export function commentMachineTime(ms: number | null): string | undefined {
 // sessionFormat.ts#SessionState convention) ─────────────────────────────────
 
 /**
- * Every author role a comment can honestly report. Mirrors the two literal
- * values `addKinTaleCommentHandler` ever writes (`isStaffCaller ? 'admin' :
- * 'kinfolk'`, see `api/kinTaleDetail.ts`'s file header), plus `'unknown'` for
- * any other text, an honest bucket rather than a guessed side.
+ * Every author role a comment can honestly report. Mirrors the literal values
+ * the backend writes: `addKinTaleCommentHandler`'s `isStaffCaller ? 'admin' :
+ * 'kinfolk'`, and `addGuestKinTaleCommentHandler`'s `'guest'` for a note left
+ * on a public share link (#1333). `'unknown'` is for any other text, an honest
+ * bucket rather than a guessed side.
  */
-export type CommentAuthorRole = 'admin' | 'kinfolk' | 'unknown';
+export type CommentAuthorRole = 'admin' | 'kinfolk' | 'guest' | 'unknown';
 
 export function commentAuthorRole(authorRole: string): CommentAuthorRole {
   switch ((authorRole ?? '').trim().toLowerCase()) {
@@ -63,6 +64,8 @@ export function commentAuthorRole(authorRole: string): CommentAuthorRole {
       return 'admin';
     case 'kinfolk':
       return 'kinfolk';
+    case 'guest':
+      return 'guest';
     default:
       return 'unknown';
   }
@@ -71,7 +74,8 @@ export function commentAuthorRole(authorRole: string): CommentAuthorRole {
 /**
  * Friendly author label for a comment row. `'Auntie'` for staff (the same
  * fallback `api/kinTalesWrite.ts#saveKinTaleDraft` uses for a nameless admin
- * account), the real `guestName` or `'Kinfolk'` for a household reply, and
+ * account), the real `guestName` or `'Kinfolk'` for a household reply, the
+ * guest's own name or `'Guest'` for a share-link note, and
  * `'Someone'` for an unrecognized role, never a fabricated identity.
  */
 export function commentAuthorLabel(comment: Pick<KinTaleComment, 'authorRole' | 'guestName'>): string {
@@ -80,6 +84,10 @@ export function commentAuthorLabel(comment: Pick<KinTaleComment, 'authorRole' | 
       return 'Auntie';
     case 'kinfolk':
       return (comment.guestName ?? '').trim() || 'Kinfolk';
+    // #1333: a note from a share-link guest carries the name they typed. Same
+    // label and fallback as admin Android and the desktop console.
+    case 'guest':
+      return (comment.guestName ?? '').trim() || 'Guest';
     case 'unknown':
       return 'Someone';
   }

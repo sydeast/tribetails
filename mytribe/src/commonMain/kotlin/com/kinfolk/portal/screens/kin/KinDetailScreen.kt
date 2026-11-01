@@ -208,6 +208,10 @@ private fun AboutCard(kin: Kin) {
                     kin.species?.takeIf { it.isNotBlank() }?.let { "SPECIES" to it },
                     kin.breed?.takeIf { it.isNotBlank() }?.let { "BREED" to it },
                     kin.ageYears?.let { "AGE" to kinAgeLabel(it) },
+                    kin.sex?.takeIf { it.isNotBlank() }?.let { "SEX" to it },
+                    kin.weight?.takeIf { it.isNotBlank() }?.let { "WEIGHT" to it },
+                    kin.colorMarkings?.takeIf { it.isNotBlank() }?.let { "MARKINGS" to it },
+                    if (kin.spayedNeutered) "FIXED" to "Spayed / neutered" else null,
                 ),
             )
         }
@@ -222,6 +226,7 @@ private fun CareCard(kin: Kin) {
         kin.walkingInstructions?.takeIf { it.isNotBlank() }?.let { "WALKING" to it },
         kin.medications?.takeIf { it.isNotBlank() }?.let { "MEDICATIONS" to it },
         kin.allergies?.takeIf { it.isNotBlank() }?.let { "ALLERGIES" to it },
+        kin.vetInfo?.takeIf { it.isNotBlank() }?.let { "VET" to it },
     )
     if (facts.isEmpty()) return
     GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(KinfolkSpacing.l)) {

@@ -28,7 +28,30 @@ describe('onFamilyKinWrite: exports', () => {
   });
 });
 
-describe('buildFlatMirrorPayload: projects ONLY parent-owned fields', () => {
+describe('buildFlatMirrorPayload: projects parent-owned and household-shared fields only', () => {
+  it('copies the household-shared descriptive fields (#1310) and nothing else staff keeps', () => {
+    const payload = buildFlatMirrorPayload({
+      name: 'Rex',
+      sex: 'Male',
+      weight: '68 lbs',
+      colorMarkings: 'Yellow',
+      spayedNeutered: true,
+      vetInfo: 'Riverside Animal Hospital',
+      // staff-only, mirrored onto the family doc by the reverse trigger; must not bounce back:
+      officeNotes: 'bites',
+      reactive: true,
+      routine: 'morning walk',
+      vaccinations: 'Rabies 2027',
+    } as any);
+    expect(payload).toEqual({
+      name: 'Rex',
+      sex: 'Male',
+      weight: '68 lbs',
+      colorMarkings: 'Yellow',
+      spayedNeutered: true,
+      vetInfo: 'Riverside Animal Hospital',
+    });
+  });
   it('copies name/species/breed/photoUrl + care instructions, drops staff fields', () => {
     const payload = buildFlatMirrorPayload({
       name: 'Rex',
@@ -38,7 +61,7 @@ describe('buildFlatMirrorPayload: projects ONLY parent-owned fields', () => {
       feedingInstructions: 'twice daily',
       // staff-owned / non-projected fields must NOT appear:
       routine: 'morning walk',
-      vetInfo: 'Dr Smith',
+      officeNotes: 'staff only',
       status: 'active',
     } as any);
     expect(payload).toEqual({
@@ -49,7 +72,7 @@ describe('buildFlatMirrorPayload: projects ONLY parent-owned fields', () => {
       feedingInstructions: 'twice daily',
     });
     expect(payload).not.toHaveProperty('routine');
-    expect(payload).not.toHaveProperty('vetInfo');
+    expect(payload).not.toHaveProperty('officeNotes');
     expect(payload).not.toHaveProperty('status');
   });
 });

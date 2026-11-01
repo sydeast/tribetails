@@ -4,6 +4,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
 import { BookingWizardBody } from './BookingWizard';
+import { clearSaveNotice } from '../lib/saveNotice';
 import type {
   GetBookingPolicyResult,
   GetBusinessClosuresRequest,
@@ -12,7 +13,13 @@ import type {
   ServiceDto,
   TimeBlockDto,
 } from '../api/bookingApi';
-import type { RequestBookingArgs, RequestBookingResult } from '../contracts/bookingContracts.generated';
+import type {
+  GetMyBookingsResult,
+  GetMyBookingsResultEnvelope,
+  GetMyBookingsResultLiveVisit,
+  RequestBookingArgs,
+  RequestBookingResult,
+} from '../contracts/bookingContracts.generated';
 import type { GetMyKinResult, KinDto } from '../api/types';
 import { dateKey, MAX_RECURRING_VISITS, startOfDay } from '../lib/bookingWizardLogic';
 
@@ -125,8 +132,10 @@ const requestBooking = vi.fn<(req: RequestBookingArgs) => Promise<RequestBooking
 const getBusinessClosures = vi.fn<(req: GetBusinessClosuresRequest) => Promise<GetBusinessClosuresResult>>();
 const getBookingPolicy = vi.fn<() => Promise<GetBookingPolicyResult>>();
 
+const getMyBookings = vi.fn<(kinfolkId?: string) => Promise<GetMyBookingsResult>>();
 vi.mock('../api/portal', () => ({
   getMyKin: () => getMyKin(),
+  getMyBookings: (kinfolkId?: string) => getMyBookings(kinfolkId),
 }));
 vi.mock('../api/bookingApi', async () => {
   const actual = await vi.importActual<typeof import('../api/bookingApi')>('../api/bookingApi');
@@ -157,6 +166,11 @@ function kin(overrides: Partial<KinDto>): KinDto {
     allergies: null,
     emergencyNotes: null,
     sitterNotes: null,
+    sex: null,
+    weight: null,
+    colorMarkings: null,
+    spayedNeutered: false,
+    vetInfo: null,
     ...overrides,
   };
 }
@@ -186,8 +200,7 @@ const SERVICE_B = {
   iconKey: 'moon',
 };
 
-function renderWizard(onComplete = vi.fn()) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderWizard(onComplete = vi.fn(), queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   const onClose = vi.fn();
   const onSignOut = vi.fn();
   const utils = render(
@@ -195,7 +208,7 @@ function renderWizard(onComplete = vi.fn()) {
       <BookingWizardBody onClose={onClose} onComplete={onComplete} onSignOut={onSignOut} />
     </QueryClientProvider>,
   );
-  return { ...utils, onClose, onSignOut };
+  return { ...utils, onClose, onSignOut, queryClient };
 }
 
 async function goToStep2(user: ReturnType<typeof userEvent.setup>) {
@@ -241,6 +254,9 @@ async function goToReview(user: ReturnType<typeof userEvent.setup>) {
 }
 
 beforeEach(() => {
+  clearSaveNotice();
+  getMyBookings.mockReset();
+  getMyBookings.mockResolvedValue({ liveVisit: null, upcoming: [], recent: [], envelopes: [] });
   getMyKin.mockReset();
   getServiceCatalog.mockReset();
   requestBooking.mockReset();
@@ -251,7 +267,7 @@ beforeEach(() => {
   getBookingPolicy.mockResolvedValue(CLOCK_ONLY_POLICY);
   getMyKin.mockResolvedValue({ kin: [kin({ id: 'k1', name: 'Buddy' }), kin({ id: 'k2', name: 'Willow', species: 'cat' })] });
   getServiceCatalog.mockResolvedValue({ services: [SERVICE_A, SERVICE_B] });
-  requestBooking.mockResolvedValue({ batchId: 'batch-1', bookingIds: ['batch-1'], bookingId: 'batch-1' });
+  requestBooking.mockResolvedValue({ batchId: 'batch-1', bookingIds: ['batch-1'], bookingId: 'batch-1', envelope: null });
   // Default: nothing closed, so every pre-existing test's dates stay pickable
   // exactly as before C1. Tests that care about a closure set their own fixture.
   getBusinessClosures.mockResolvedValue({ closures: [] });
@@ -500,21 +516,21 @@ describe('BookingWizard: #546/#547 the estimate follows the plan', () => {
     const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(TOMORROW);
     const date = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(TOMORROW);
     expect(screen.getByText(`${weekday}, ${date} at 9:00 AM`)).toBeInTheDocument();
-    expect(screen.getByText('$42.00')).toBeInTheDocument();
+    expect(screen.getAllByText('$42.00').length).toBeGreaterThan(0); // Review and, since #1300, the rail
   });
 
   /**
    * #547's third complaint: Review & Confirm and the Booking Summary rail were
    * on screen together, saying the same things twice.
    */
-  it('stands the summary rail down on Review, and shows it on every earlier step', async () => {
+  it('keeps the summary rail on every step including Review (#1300)', async () => {
     const user = userEvent.setup();
     renderWizard();
     await selectServiceAndGoToStep3(user, 'Daily Visit');
     expect(screen.getByText('Booking summary')).toBeInTheDocument();
     await pickDay(user, TOMORROW);
     await goToReview(user);
-    expect(screen.queryByText('Booking summary')).not.toBeInTheDocument();
+    expect(screen.getByText('Booking summary')).toBeInTheDocument();
   });
 });
 
@@ -866,8 +882,8 @@ describe('BookingWizard: time-block booking', () => {
 
     const select = (await screen.findByLabelText('1. Daily Visit')) as HTMLSelectElement;
     expect([...select.options].map((o) => o.textContent)).toEqual([
-      'Midday (11:00-15:00)',
-      'Evening (17:00-21:00)',
+      'Midday (11 AM to 3 PM)',
+      'Evening (5 PM to 9 PM)',
     ]);
     // A fresh KinCare lands in the first window rather than on "choose one".
     expect(select.value).toBe('midday');
@@ -902,7 +918,7 @@ describe('BookingWizard: time-block booking', () => {
     await pickDay(user, TOMORROW);
     await goToReview(user);
 
-    expect(screen.getByText(/, Midday \(11:00-15:00\)/)).toBeInTheDocument();
+    expect(screen.getByText(/, Midday \(11 AM to 3 PM\)/)).toBeInTheDocument();
   });
 
   it('two KinCares in one block are two visits, not a duplicate', async () => {
@@ -1109,7 +1125,7 @@ describe('BookingWizard: a night-only KinCare (#1098)', () => {
     await pickDay(user, TOMORROW);
     expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
     await goToReview(user);
-    expect(screen.getByText(/, Midday \(11:00-15:00\)/)).toBeInTheDocument();
+    expect(screen.getByText(/, Midday \(11 AM to 3 PM\)/)).toBeInTheDocument();
     expect(screen.getByText(/, start time set by your Auntie$/)).toBeInTheDocument();
     expect(screen.queryByText(/ at \d/)).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Create Booking' }));
@@ -1217,7 +1233,7 @@ describe('BookingWizard: #1037 visit prices are billing information', () => {
     assertNoMoney();
     await goToReview(user);
     assertNoMoney();
-    expect(screen.getByText('KinCare')).toBeInTheDocument();
+    expect(screen.getAllByText('KinCare').length).toBeGreaterThan(0);
   });
   it('a member without billing access still books, sending a null price the server ignores', async () => {
     getServiceCatalog.mockResolvedValue({ services: [strip(SERVICE_A)], pricesVisible: false });
@@ -1244,5 +1260,146 @@ describe('BookingWizard: #1037 visit prices are billing information', () => {
     await pickDay(user, TOMORROW);
     expect(await screen.findByText('$42.00')).toBeInTheDocument();
     expect(screen.getByText('Estimated Price')).toBeInTheDocument();
+  });
+});
+
+describe('BookingWizard: #1300 / #1302 step behaviour', () => {
+  it('scrolls the stepper into view on each step change, not on open', async () => {
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    const user = userEvent.setup();
+    renderWizard();
+    await screen.findByText('Select Kin');
+    expect(scroll).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByText('Choose KinCare Duration');
+    expect(scroll).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    expect(scroll).toHaveBeenCalledTimes(2);
+  });
+  it('names the chosen Kin in the summary instead of counting them', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await screen.findByText('Select Kin');
+    await user.click(screen.getByRole('button', { name: /Choose specific Kin/ }));
+    await user.click(screen.getByText('Buddy'));
+    await user.click(screen.getByText('Willow'));
+    const rail = screen.getByText('Booking summary').closest('section')!;
+    expect(rail).toHaveTextContent('Buddy, Willow');
+    expect(rail).not.toHaveTextContent('2 chosen');
+  });
+  it('styles the note helper as a neutral hint, not an error', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+    await pickDay(user, TOMORROW);
+    await setKinCareTime(user, 1, 'Daily Visit', '09:00');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    const hint = await screen.findByText('This note will be highlighted for Auntie during the visit.');
+    expect(hint).toHaveClass('hint');
+    expect(hint.getAttribute('style') ?? '').not.toMatch(/coral|red/);
+  });
+});
+
+/**
+ * #1281: Create Booking landed on a Schedule that said "No upcoming bookings"
+ * for about five seconds, and a second press really booked twice because the
+ * wizard reset its key on success. The booking now goes into the Schedule
+ * cache before the move, from the record the server returns, and a booking
+ * that went through is not a button to press again.
+ */
+describe('BookingWizard: #1281 after a successful Create Booking', () => {
+  function visitDto(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBookingsResultLiveVisit {
+    return {
+      id: 'v-new', batchId: 'batch-1', kinfolkId: 'fam1', status: 'requested', serviceType: 'Daily Visit', serviceId: null,
+      title: 'Daily Visit', startTimeMs: visitMs(TOMORROW, 9, 0), endTimeMs: null, startTimePending: false,
+      requestedDate: null, timeBlockLabel: null, timeBlockStartTime: null, timeBlockEndTime: null,
+      kinIds: ['k1'], kinNames: ['Buddy'], auntieDisplayName: null, auntieAvatarUrl: null,
+      notes: null, requestedByUid: 'u1', createdAtMs: null, updatedAtMs: null, visitProgress: null,
+      sourceBookingId: null, sessionId: null, cancelRequested: false, cancelRequestStatus: null,
+      cancelRequestReason: null, cancelResponseNote: null, rescheduleRequestStatus: null,
+      rescheduleRequestedStartTimeMs: null, rescheduleRequestedEndTimeMs: null, rescheduleRequestReason: null,
+      rescheduleResponseNote: null, address: null, kinTaleId: null, invoiceId: null, ...overrides,
+    };
+  }
+  function envelopeDto(): GetMyBookingsResultEnvelope {
+    return {
+      batchId: 'batch-1', envelopeStatus: 'requested', pattern: 'individual', serviceName: 'Daily Visit',
+      kinIds: ['k1'], kinNames: ['Buddy'], notes: null, visitCount: 1, confirmedCount: 0, completedCount: 0,
+      firstStartTimeMs: visitMs(TOMORROW, 9, 0), lastStartTimeMs: visitMs(TOMORROW, 9, 0), kinCares: [visitDto()],
+    };
+  }
+  const EMPTY: GetMyBookingsResult = { liveVisit: null, upcoming: [], recent: [], envelopes: [] };
+  async function fillToReview(user: ReturnType<typeof userEvent.setup>) {
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+    await pickDay(user, TOMORROW);
+    await goToReview(user);
+  }
+  it('the new booking is in the Schedule cache when onComplete fires, with no refetch', async () => {
+    requestBooking.mockResolvedValue({ batchId: 'batch-1', bookingIds: ['batch-1'], bookingId: 'batch-1', envelope: envelopeDto() });
+    // The refetch never answers: what Schedule shows must not depend on it.
+    getMyBookings.mockReturnValue(new Promise(() => {}));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(['myBookings', 'fam1'], EMPTY);
+    let seenAtComplete: GetMyBookingsResult | undefined;
+    const onComplete = vi.fn(() => {
+      seenAtComplete = queryClient.getQueryData<GetMyBookingsResult>(['myBookings', 'fam1']);
+    });
+    const user = userEvent.setup();
+    renderWizard(onComplete, queryClient);
+    await fillToReview(user);
+    await user.click(screen.getByRole('button', { name: 'Create Booking' }));
+    await vi.waitFor(() => expect(onComplete).toHaveBeenCalledTimes(1));
+    expect(seenAtComplete?.upcoming.map((v) => v.id)).toEqual(['v-new']);
+    expect(seenAtComplete?.envelopes.map((e) => e.batchId)).toEqual(['batch-1']);
+    expect(await screen.findByText('Booking requested', { selector: '.savenotice .tt, button' })).toBeInTheDocument();
+  });
+  it('a double click makes ONE call, and the button stays shut after success', async () => {
+    requestBooking.mockResolvedValue({ batchId: 'batch-1', bookingIds: ['batch-1'], bookingId: 'batch-1', envelope: envelopeDto() });
+    getMyBookings.mockResolvedValue(EMPTY);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(['myBookings', 'fam1'], EMPTY);
+    // onComplete does NOT unmount the wizard here, so the button is still
+    // there to press again: the case a slow navigation produced.
+    const user = userEvent.setup();
+    renderWizard(vi.fn(), queryClient);
+    await fillToReview(user);
+    await user.dblClick(screen.getByRole('button', { name: 'Create Booking' }));
+    const done = await screen.findByRole('button', { name: 'Booking requested' });
+    expect(done).toBeDisabled();
+    await user.click(done);
+    expect(requestBooking).toHaveBeenCalledTimes(1);
+  });
+  it('keeps its key after an error, so the retry names the same booking', async () => {
+    requestBooking.mockRejectedValueOnce(new Error('Could not create booking. Try again.'));
+    requestBooking.mockResolvedValue({ batchId: 'batch-1', bookingIds: ['batch-1'], bookingId: 'batch-1', envelope: envelopeDto() });
+    getMyBookings.mockResolvedValue(EMPTY);
+    const user = userEvent.setup();
+    renderWizard();
+    await fillToReview(user);
+    await user.click(screen.getByRole('button', { name: 'Create Booking' }));
+    await screen.findByText('Could not create booking. Try again.');
+    await user.click(screen.getByRole('button', { name: 'Create Booking' }));
+    await vi.waitFor(() => expect(requestBooking).toHaveBeenCalledTimes(2));
+    const [first, second] = requestBooking.mock.calls.map((c) => c[0].idempotencyKey);
+    expect(first).toBeTruthy();
+    expect(second).toBe(first);
+  });
+  it('with no record from the server, waits for a fresh list before moving on', async () => {
+    requestBooking.mockResolvedValue({ batchId: 'batch-1', bookingIds: ['batch-1'], bookingId: 'batch-1', envelope: null });
+    let answer!: (r: GetMyBookingsResult) => void;
+    getMyBookings.mockReturnValue(new Promise((r) => { answer = r; }));
+    const onComplete = vi.fn();
+    const user = userEvent.setup();
+    const { queryClient } = renderWizard(onComplete);
+    await fillToReview(user);
+    await user.click(screen.getByRole('button', { name: 'Create Booking' }));
+    await vi.waitFor(() => expect(getMyBookings).toHaveBeenCalled());
+    // Still pending, with its busy label, while the list loads.
+    expect(screen.getByRole('button', { name: /Creating/ })).toBeDisabled();
+    expect(onComplete).not.toHaveBeenCalled();
+    answer({ ...EMPTY, upcoming: [visitDto()], envelopes: [envelopeDto()] });
+    await vi.waitFor(() => expect(onComplete).toHaveBeenCalledTimes(1));
+    expect(queryClient.getQueryData<GetMyBookingsResult>(['myBookings', 'fam1'])?.upcoming.map((v) => v.id)).toEqual(['v-new']);
   });
 });

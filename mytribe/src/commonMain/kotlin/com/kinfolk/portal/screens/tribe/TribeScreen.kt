@@ -73,6 +73,7 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.kinfolk.portal.util.formatPhone
 
 /**
  * Tribe Profile settings, per ui-ideas/mytribe-tribe-2026-05-31.html: a
@@ -366,7 +367,7 @@ fun TribeScreen(
                 portalApi = portalApi,
                 clinics = vetClinics,
                 name = vetName, phone = vetPhone, address = vetAddress,
-                onPick = { c -> vetName = c.name; vetPhone = c.phone; vetAddress = c.address },
+                onPick = { c -> vetName = c.name; vetPhone = formatPhone(c.phone); vetAddress = c.address },
                 onName = { vetName = it },
                 onPhone = { vetPhone = it },
                 onAddress = { vetAddress = it },

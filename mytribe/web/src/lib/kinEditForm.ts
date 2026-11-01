@@ -24,7 +24,35 @@ export interface KinEditForm {
   allergies: string;
   emergencyNotes: string;
   sitterNotes: string;
+  /** The five facts shared with the admin (#1310). Text ones are '' when unset. */
+  sex: string;
+  weight: string;
+  colorMarkings: string;
+  vetInfo: string;
+  spayedNeutered: boolean;
 }
+
+/**
+ * Species the portal offers in the picker. Same seven as the admin's
+ * `NEW_KIN_SPECIES_OPTIONS` (auntieos-admin/src/api/directoryWrite.ts), so a
+ * pet created on either side lands on a value the avatar icon table knows.
+ * `Other` is a picker entry, never a stored value: it reveals a free-text box
+ * and the typed text is what is saved.
+ */
+export const KIN_SPECIES_OPTIONS = ['Dog', 'Cat', 'Bird', 'Rabbit', 'Reptile', 'Small mammal'] as const;
+export const SPECIES_OTHER = 'Other';
+/** The picker entry a stored species belongs to: a listed species (any case), else Other, else '' for unset. */
+export function speciesChoice(species: string): string {
+  const trimmed = species.trim();
+  if (trimmed === '') return '';
+  const listed = KIN_SPECIES_OPTIONS.find((o) => o.toLowerCase() === trimmed.toLowerCase());
+  return listed ?? SPECIES_OTHER;
+}
+/** The form fields backed by a text box (everything but the spayed / neutered checkbox). */
+export type KinTextKey = Exclude<keyof KinEditForm, 'spayedNeutered'>;
+
+/** Options for the Sex picker; same three the admin offers (KinEditScreen GENDER_OPTIONS). */
+export const KIN_SEX_OPTIONS = ['Male', 'Female', 'Unknown'] as const;
 
 /** Max lengths transcribed from the KinPayload zod schema. */
 export const KIN_MAX = {
@@ -32,6 +60,9 @@ export const KIN_MAX = {
   species: 40,
   breed: 80,
   longText: 2000,
+  sex: 40,
+  weight: 40,
+  colorMarkings: 200,
 } as const;
 
 /** The six free-text care/notes fields that share the 2000-char cap. */
@@ -43,6 +74,12 @@ const LONG_TEXT_FIELDS = [
   'emergencyNotes',
   'sitterNotes',
 ] as const;
+
+/**
+ * The shared text facts. Unlike the six above they are never sent as null: the
+ * server takes '' to clear (kinWrites.ts), so the diff compares against '' too.
+ */
+const SHARED_TEXT_FIELDS = ['sex', 'weight', 'colorMarkings', 'vetInfo'] as const;
 
 /** A blank form for the Add New Kin screen (KinAdd.tsx) — every field starts empty. */
 export function emptyKinForm(): KinEditForm {
@@ -58,6 +95,11 @@ export function emptyKinForm(): KinEditForm {
     allergies: '',
     emergencyNotes: '',
     sitterNotes: '',
+    sex: '',
+    weight: '',
+    colorMarkings: '',
+    vetInfo: '',
+    spayedNeutered: false,
   };
 }
 
@@ -75,6 +117,11 @@ export function kinFormFromDto(kin: KinDto): KinEditForm {
     allergies: kin.allergies ?? '',
     emergencyNotes: kin.emergencyNotes ?? '',
     sitterNotes: kin.sitterNotes ?? '',
+    sex: kin.sex ?? '',
+    weight: kin.weight ?? '',
+    colorMarkings: kin.colorMarkings ?? '',
+    vetInfo: kin.vetInfo ?? '',
+    spayedNeutered: kin.spayedNeutered === true,
   };
 }
 
@@ -124,6 +171,11 @@ export function validateKinForm(form: KinEditForm): KinFormErrors {
     if (form[key].trim().length > KIN_MAX.longText) errors[key] = `Keep this to ${KIN_MAX.longText} characters or fewer.`;
   }
 
+  if (form.sex.trim().length > KIN_MAX.sex) errors.sex = `Sex must be ${KIN_MAX.sex} characters or fewer.`;
+  if (form.weight.trim().length > KIN_MAX.weight) errors.weight = `Weight must be ${KIN_MAX.weight} characters or fewer.`;
+  if (form.colorMarkings.trim().length > KIN_MAX.colorMarkings) errors.colorMarkings = `Keep this to ${KIN_MAX.colorMarkings} characters or fewer.`;
+  if (form.vetInfo.trim().length > KIN_MAX.longText) errors.vetInfo = `Keep this to ${KIN_MAX.longText} characters or fewer.`;
+
   return errors;
 }
 
@@ -162,6 +214,12 @@ export function buildKinChanges(kin: KinDto, form: KinEditForm): KinPayloadParti
     if (next !== kin[key]) changes[key] = next;
   }
 
+  for (const key of SHARED_TEXT_FIELDS) {
+    const next = form[key].trim();
+    if (next !== (kin[key] ?? '')) changes[key] = next;
+  }
+  if (form.spayedNeutered !== (kin.spayedNeutered === true)) changes.spayedNeutered = form.spayedNeutered;
+
   return changes;
 }
 
@@ -185,5 +243,12 @@ export function buildNewKinPayload(form: KinEditForm): AddKinRequest['kin'] {
     allergies: form.allergies.trim() || null,
     emergencyNotes: form.emergencyNotes.trim() || null,
     sitterNotes: form.sitterNotes.trim() || null,
+    // Shared facts: omitted when blank (a new pet has nothing to clear), and the
+    // flag only when set, so an untouched Add form writes no empty strings.
+    ...(form.sex.trim() ? { sex: form.sex.trim() } : {}),
+    ...(form.weight.trim() ? { weight: form.weight.trim() } : {}),
+    ...(form.colorMarkings.trim() ? { colorMarkings: form.colorMarkings.trim() } : {}),
+    ...(form.vetInfo.trim() ? { vetInfo: form.vetInfo.trim() } : {}),
+    ...(form.spayedNeutered ? { spayedNeutered: true } : {}),
   };
 }

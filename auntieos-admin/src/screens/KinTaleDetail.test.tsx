@@ -327,6 +327,23 @@ describe('KinTaleDetail: comment thread', () => {
     expect(screen.getByText('Kinfolk')).toBeInTheDocument();
   });
 
+  it("names a share-link guest's note by the name they typed, never \"Someone\" (#1333)", async () => {
+    getKinTaleComments.mockResolvedValue([
+      {
+        id: 'g1',
+        authorRole: 'guest',
+        authorUid: null,
+        guestName: 'Ann',
+        body: 'What a good boy.',
+        parentCommentId: null,
+        createdAtMs: Date.parse('2026-11-01T15:00:00.000Z'),
+      },
+    ]);
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByText('What a good boy.')).toBeInTheDocument();
+    expect(screen.getByText('Ann')).toBeInTheDocument();
+    expect(screen.queryByText('Someone')).not.toBeInTheDocument();
+  });
   it('shows a proven-empty hint when there are no comments yet', async () => {
     getKinTaleComments.mockResolvedValue([]);
     render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);

@@ -237,9 +237,20 @@ const noTribesRoute = createRoute({
   component: lazyRouteComponent(() => import('./screens/NoTribes'), 'NoTribes'),
 });
 
+/**
+ * #1304: which Schedule tab is open lives in the URL, so opening a past visit
+ * and pressing back lands on Past Visits, not on the default tab. Upcoming is
+ * the default and is the absence of the key, which keeps `/schedule` the clean
+ * address every other link already uses. Anything but `past` reads as that
+ * default, and no other key is passed through. Exported for router.test.ts.
+ */
+export function scheduleSearch(search: Record<string, unknown>): { tab?: 'past' } {
+  return search['tab'] === 'past' ? { tab: 'past' } : {};
+}
 const scheduleRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/schedule',
+  validateSearch: scheduleSearch,
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/Schedule'), 'Schedule'),
 });
@@ -325,9 +336,15 @@ const kinEditRoute = createRoute({
   component: lazyRouteComponent(() => import('./screens/KinEdit'), 'KinEdit'),
 });
 
+/** #1303: `/kintales?tale=<id>` is how a completed visit points at its KinTale. */
+export function kinTalesSearch(search: Record<string, unknown>): { tale?: string } {
+  const tale = search['tale'];
+  return typeof tale === 'string' && tale.length > 0 ? { tale } : {};
+}
 const kinTalesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/kintales',
+  validateSearch: kinTalesSearch,
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/KinTales'), 'KinTales'),
 });

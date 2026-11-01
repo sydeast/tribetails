@@ -27,6 +27,8 @@ import {
   slotsBlocker,
   summariseSlots,
   timeBlockLabel,
+  formatClock12,
+  formatClockRange12,
   weeklyPotentialCount,
   weeklyVisitsBlocker,
 } from './bookingWizardLogic';
@@ -564,7 +566,7 @@ describe('findTimeBlock / timeBlockLabel', () => {
     expect(findTimeBlock([MIDDAY, EVENING], 'evening')).toBe(EVENING);
     expect(findTimeBlock([MIDDAY, EVENING], 'brunch')).toBeNull();
     expect(findTimeBlock([MIDDAY, EVENING], null)).toBeNull();
-    expect(timeBlockLabel(MIDDAY)).toBe('Midday (11:00-15:00)');
+    expect(timeBlockLabel(MIDDAY)).toBe('Midday (11 AM to 3 PM)');
   });
 });
 
@@ -784,8 +786,8 @@ describe('renderPlannedVisits with blocks', () => {
   it('names the window instead of reporting a precision the household never gave', () => {
     const visits = buildVisits([new Date(2026, 8, 4)], [blockSlot('30Minute', 'midday')], CATALOG, BLOCK_TIMING);
     const rendered = renderPlannedVisits(visits, [MIDDAY, EVENING]);
-    expect(rendered[0]!.timeBlockLabel).toBe('Midday (11:00-15:00)');
-    expect(plannedVisitLine(rendered[0]!)).toBe('Fri, Sep 4, Midday (11:00-15:00)');
+    expect(rendered[0]!.timeBlockLabel).toBe('Midday (11 AM to 3 PM)');
+    expect(plannedVisitLine(rendered[0]!)).toBe('Fri, Sep 4, Midday (11 AM to 3 PM)');
   });
 
   it('still spells a clock-booked visit the way the spec does', () => {
@@ -954,7 +956,7 @@ describe('night-only KinCares (#1098)', () => {
     );
     const rendered = renderPlannedVisits(visits, [MIDDAY, EVENING]);
     expect(rendered.map(plannedVisitLine)).toEqual([
-      'Fri, Oct 9, Midday (11:00-15:00)',
+      'Fri, Oct 9, Midday (11 AM to 3 PM)',
       'Fri, Oct 9, start time set by your Auntie',
     ]);
     expect(rendered[1]!.serviceName).toBe('Overnight');
@@ -970,5 +972,20 @@ describe('night-only KinCares (#1098)', () => {
     const build = () =>
       JSON.stringify(buildVisits([new Date(2026, 8, 4)], [overnightSlot()], CATALOG_WITH_OVERNIGHT, TIMING));
     expect(build()).toBe(build());
+  });
+});
+
+describe('formatClock12 (#1301)', () => {
+  it('reads a 12-hour clock and drops :00', () => {
+    expect(formatClock12('11:00')).toBe('11 AM');
+    expect(formatClock12('15:30')).toBe('3:30 PM');
+    expect(formatClock12('00:00')).toBe('12 AM');
+    expect(formatClock12('12:00')).toBe('12 PM');
+    expect(formatClock12('24:00')).toBe('12 AM');
+    expect(formatClockRange12('11:00', '15:00')).toBe('11 AM to 3 PM');
+  });
+  it('hands back what it cannot read', () => {
+    expect(formatClock12('soon')).toBe('soon');
+    expect(formatClock12('25:00')).toBe('25:00');
   });
 });

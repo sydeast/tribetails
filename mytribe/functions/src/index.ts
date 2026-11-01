@@ -299,6 +299,7 @@ export {
   bulkUnarchiveNotifications,
 } from './portal/archiveNotification';
 export { addBookingNote } from './portal/addBookingNote';
+export { getBookingNotes } from './portal/getBookingNotes';
 export { submitRating } from './portal/submitRating';
 
 // admin-callables
