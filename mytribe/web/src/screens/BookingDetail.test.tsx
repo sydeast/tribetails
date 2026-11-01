@@ -5,8 +5,10 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BookingDetail } from './BookingDetail';
+import type { GetBookingPolicyResult, GetBusinessClosuresResult } from '../api/bookingApi';
 import type {
   AddBookingNoteResult,
+  GetBookingNotesResult,
   GetMyBookingsResult,
   GetMyBookingsResultLiveVisit,
   RequestBookingCancellationResult,
@@ -15,6 +17,9 @@ import type {
 
 const mocks = vi.hoisted(() => ({
   getMyBookings: vi.fn<() => Promise<GetMyBookingsResult>>(),
+  getBookingNotes: vi.fn<(kinfolkId: string, batchId: string, visitId: string) => Promise<GetBookingNotesResult>>(),
+  getBookingPolicy: vi.fn<() => Promise<GetBookingPolicyResult>>(),
+  getBusinessClosures: vi.fn<() => Promise<GetBusinessClosuresResult>>(),
   getMyVisits: vi.fn(),
   addBookingNote: vi.fn<(kinfolkId: string, batchId: string, visitId: string, body: string) => Promise<AddBookingNoteResult>>(),
   requestBookingCancellation: vi.fn<
@@ -27,6 +32,7 @@ const mocks = vi.hoisted(() => ({
       visitId: string,
       proposedStartTimeMs: number,
       reason?: string,
+      timeBlockId?: string | null,
     ) => Promise<RequestBookingRescheduleResult>
   >(),
 }));
@@ -37,6 +43,9 @@ vi.mock('../api/portal', () => ({
 }));
 vi.mock('../components/RouteMap', () => ({ RouteMap: () => <div data-testid="route-map" /> }));
 vi.mock('../api/bookingApi', () => ({
+  getBookingNotes: (kinfolkId: string, batchId: string, visitId: string) => mocks.getBookingNotes(kinfolkId, batchId, visitId),
+  getBookingPolicy: () => mocks.getBookingPolicy(),
+  getBusinessClosures: () => mocks.getBusinessClosures(),
   addBookingNote: (kinfolkId: string, batchId: string, visitId: string, body: string) =>
     mocks.addBookingNote(kinfolkId, batchId, visitId, body),
   requestBookingCancellation: (kinfolkId: string, batchId: string, visitId: string, reason?: string) =>
@@ -47,7 +56,8 @@ vi.mock('../api/bookingApi', () => ({
     visitId: string,
     proposedStartTimeMs: number,
     reason?: string,
-  ) => mocks.requestBookingReschedule(kinfolkId, batchId, visitId, proposedStartTimeMs, reason),
+    timeBlockId?: string | null,
+  ) => mocks.requestBookingReschedule(kinfolkId, batchId, visitId, proposedStartTimeMs, reason, timeBlockId),
 }));
 vi.mock('../lib/activeTribe', () => ({ getActiveKinfolkId: () => 'fam1' }));
 vi.mock('../lib/auth', () => ({ useSignOut: () => ({ signOut: vi.fn(), signingOut: false }) }));
@@ -68,6 +78,7 @@ function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBo
     kinfolkId: 'fam1',
     status: 'confirmed',
     serviceType: 'Drop-in Visit',
+    serviceId: null,
     title: null,
     startTimeMs: new Date(2026, 5, 2, 8, 0).getTime(),
     endTimeMs: null,
@@ -116,13 +127,61 @@ function renderScreen() {
   );
 }
 
+const CLOCK_ONLY: GetBookingPolicyResult = {
+  allowTimeBlockBooking: false,
+  allowSpecificTimeBooking: true,
+  defaultBookingMode: 'SPECIFIC_TIME',
+  timeBlocks: [],
+};
+const NO_CLOSURES: GetBusinessClosuresResult = { closures: [], weeklyHours: [], timeZone: 'America/Chicago' };
 beforeEach(() => {
+  mocks.getBookingNotes.mockReset();
+  mocks.getBookingNotes.mockResolvedValue({ bookingNote: null, notes: [] });
+  mocks.getBookingPolicy.mockReset();
+  mocks.getBookingPolicy.mockResolvedValue(CLOCK_ONLY);
+  mocks.getBusinessClosures.mockReset();
+  mocks.getBusinessClosures.mockResolvedValue(NO_CLOSURES);
   mocks.getMyBookings.mockReset();
   mocks.getMyVisits.mockReset();
   mocks.addBookingNote.mockReset();
   mocks.requestBookingCancellation.mockReset();
   mocks.requestBookingReschedule.mockReset();
 });
+
+
+/**
+ * The instant at which the Chicago wall clock reads `hhmm` on `dayKey`, found
+ * by search rather than by the code under test, so the assertion has its own
+ * oracle for the zone arithmetic.
+ */
+function chicagoMs(dayKey: string, hhmm: string): number {
+  const [y, m, d] = dayKey.split('-').map(Number);
+  const base = Date.UTC(y!, m! - 1, d!);
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  for (let t = base - 14 * 3600_000; t <= base + 38 * 3600_000; t += 15 * 60_000) {
+    const parts = fmt.formatToParts(new Date(t));
+    const g = (k: string) => parts.find((p) => p.type === k)?.value;
+    if (`${g('year')}-${g('month')}-${g('day')}` === dayKey && `${g('hour')}:${g('minute')}` === hhmm) return t;
+  }
+  throw new Error('no instant');
+}
+/** Clicks the month grid's cell for a day `daysAhead` out, paging forward when it is in the next month. */
+async function pickDay(user: ReturnType<typeof userEvent.setup>, within_: HTMLElement, daysAhead = 3): Promise<string> {
+  const target = new Date();
+  target.setHours(0, 0, 0, 0);
+  target.setDate(target.getDate() + daysAhead);
+  if (target.getMonth() !== new Date().getMonth()) {
+    await user.click(within(within_).getByRole('button', { name: /next month/i }));
+  }
+  await user.click(within(within_).getByRole('button', { name: String(target.getDate()) }));
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())}`;
+}
+async function setTime(user: ReturnType<typeof userEvent.setup>, form: HTMLElement, hhmm: string) {
+  const input = await within(form).findByLabelText(/^time$/i);
+  await user.clear(input);
+  await user.type(input, hhmm);
+}
 
 describe('BookingDetail: lookup', () => {
   it('shows a not-found state for an unknown visitId', async () => {
@@ -210,6 +269,56 @@ describe('BookingDetail: add a note', () => {
   });
 });
 
+describe('BookingDetail: the notes you already wrote (#1283)', () => {
+  it('shows the booking note and each saved note with the time it was written', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    mocks.getBookingNotes.mockResolvedValue({
+      bookingNote: 'QA walk test booking - please cancel.',
+      notes: [
+        { id: 'n1', body: 'Back door is easier.', createdAtMs: new Date(2026, 10, 1, 15, 5).getTime() },
+        { id: 'n2', body: 'Second note', createdAtMs: null },
+      ],
+    });
+    renderScreen();
+    const card = await screen.findByTestId('saved-notes');
+    expect(await within(card).findByText('QA walk test booking - please cancel.')).toBeInTheDocument();
+    expect(within(card).getByText('Back door is easier.')).toBeInTheDocument();
+    expect(within(card).getByText('Nov 1, 3:05 PM')).toBeInTheDocument();
+    expect(within(card).getByText('Second note')).toBeInTheDocument();
+    expect(mocks.getBookingNotes).toHaveBeenCalledWith('fam1', 'b1', 'v1');
+  });
+  it('says so when there is nothing yet', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    renderScreen();
+    expect(await within(await screen.findByTestId('saved-notes')).findByText('Nothing yet.')).toBeInTheDocument();
+  });
+  it('lists a note right after it is saved, instead of clearing to the placeholder', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    mocks.addBookingNote.mockResolvedValue({ noteId: 'n9' });
+    mocks.getBookingNotes
+      .mockResolvedValueOnce({ bookingNote: null, notes: [] })
+      .mockResolvedValue({ bookingNote: null, notes: [{ id: 'n9', body: 'Please use the back door.', createdAtMs: Date.now() }] });
+    const user = userEvent.setup();
+    renderScreen();
+    await user.type(await screen.findByPlaceholderText(/vet check/i), 'Please use the back door.');
+    await user.click(screen.getByRole('button', { name: /Save Note/i }));
+    const card = await screen.findByTestId('saved-notes');
+    expect(await within(card).findByText('Please use the back door.')).toBeInTheDocument();
+  });
+  it('offers a retry when the notes cannot be loaded', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    mocks.getBookingNotes.mockRejectedValue(new Error('down'));
+    renderScreen();
+    expect(await within(await screen.findByTestId('saved-notes')).findByRole('button', { name: /try again/i })).toBeInTheDocument();
+  });
+  it('asks for nothing on a visit with no booking envelope', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking({ batchId: null })] }));
+    renderScreen();
+    await screen.findByText(/linked to a booking yet/i);
+    expect(screen.queryByTestId('saved-notes')).toBeNull();
+    expect(mocks.getBookingNotes).not.toHaveBeenCalled();
+  });
+});
 describe('BookingDetail: request cancellation', () => {
   it('happy path: confirms, sends the request, and invalidates the bookings cache', async () => {
     mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking({ status: 'requested' })] }));
@@ -397,21 +506,32 @@ describe('BookingDetail: status timeline', () => {
  * than moves, and that every state of the answer is rendered.
  */
 describe('BookingDetail: reschedule request', () => {
-  /** A local datetime-local value a few days out, in the form the input emits. */
-  function futureInputValue(daysAhead = 3): { value: string; ms: number } {
-    const d = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000);
-    d.setSeconds(0, 0);
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    return { value, ms: new Date(value).getTime() };
-  }
   it('offers a real button, not the inert span it replaced', async () => {
     mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
     renderScreen();
     const button = await screen.findByRole('button', { name: /reschedule visit/i });
     expect(button).toBeEnabled();
   });
-  it('sends the chosen time and the reason, and never touches the visit itself', async () => {
+  it('uses the booking wizard\'s day grid, not a raw date-time input (#1284)', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    const user = userEvent.setup();
+    renderScreen();
+    await user.click(await screen.findByRole('button', { name: /reschedule visit/i }));
+    const form = await screen.findByTestId('reschedule-form');
+    expect(await within(form).findByRole('button', { name: /previous month/i })).toBeInTheDocument();
+    expect(form.querySelector('input[type="datetime-local"]')).toBeNull();
+    // Nothing to send until a day is picked.
+    expect(within(form).getByRole('button', { name: /send this time to tribe tails/i })).toBeDisabled();
+  });
+  it('shows a loading cue while the days and times load', async () => {
+    mocks.getBusinessClosures.mockReturnValue(new Promise(() => {}));
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    const user = userEvent.setup();
+    renderScreen();
+    await user.click(await screen.findByRole('button', { name: /reschedule visit/i }));
+    expect(await screen.findByText(/loading the days and times you can pick/i)).toBeInTheDocument();
+  });
+  it('sends the chosen day and time on the Chicago clock, with the reason, and never touches the visit itself', async () => {
     mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
     mocks.requestBookingReschedule.mockResolvedValue({
       ok: true,
@@ -420,37 +540,91 @@ describe('BookingDetail: reschedule request', () => {
       proposedEndTimeMs: null,
       visit: null,
     });
+    const user = userEvent.setup();
     renderScreen();
-    await userEvent.click(await screen.findByRole('button', { name: /reschedule visit/i }));
+    await user.click(await screen.findByRole('button', { name: /reschedule visit/i }));
     const form = await screen.findByTestId('reschedule-form');
-    const { value, ms } = futureInputValue();
-    await userEvent.type(within(form).getByLabelText(/new date and time/i), value);
-    await userEvent.type(within(form).getByPlaceholderText(/why the change/i), 'Flight moved');
-    await userEvent.click(within(form).getByRole('button', { name: /send this time to tribe tails/i }));
+    const day = await pickDay(user, form);
+    await setTime(user, form, '1030');
+    await user.type(within(form).getByPlaceholderText(/why the change/i), 'Flight moved');
+    await user.click(within(form).getByRole('button', { name: /send this time to tribe tails/i }));
     await waitFor(() =>
-      expect(mocks.requestBookingReschedule).toHaveBeenCalledWith('fam1', 'b1', 'v1', ms, 'Flight moved'),
+      expect(mocks.requestBookingReschedule).toHaveBeenCalledWith('fam1', 'b1', 'v1', chicagoMs(day, '10:30'), 'Flight moved', null),
     );
   });
-  it('refuses a past time in the browser, before the callable is reached', async () => {
+  it('greys out a closed weekday and a company closure in the day grid', async () => {
+    const closed = new Date();
+    closed.setDate(closed.getDate() + 2);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const closedKey = `${closed.getFullYear()}-${pad(closed.getMonth() + 1)}-${pad(closed.getDate())}`;
+    mocks.getBusinessClosures.mockResolvedValue({
+      closures: [{ date: closedKey, name: 'Owner away' }],
+      weeklyHours: [0, 1, 2, 3, 4, 5, 6].map((weekday) => ({ weekday, open: weekday !== 0, startTime: weekday !== 0 ? '09:00' : null, endTime: weekday !== 0 ? '17:00' : null })),
+      timeZone: 'America/Chicago',
+    });
     mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    const user = userEvent.setup();
     renderScreen();
-    await userEvent.click(await screen.findByRole('button', { name: /reschedule visit/i }));
+    await user.click(await screen.findByRole('button', { name: /reschedule visit/i }));
     const form = await screen.findByTestId('reschedule-form');
-    await userEvent.type(within(form).getByLabelText(/new date and time/i), '2020-01-01T09:00');
-    await userEvent.click(within(form).getByRole('button', { name: /send this time to tribe tails/i }));
-    expect(await screen.findByText(/pick a time in the future/i)).toBeInTheDocument();
+    await within(form).findByRole('button', { name: /previous month/i });
+    const closedButtons = form.querySelectorAll('.mp-day.is-closed');
+    const titles = Array.from(closedButtons).map((b) => b.getAttribute('title') ?? '');
+    expect(titles).toContain('Closed: Owner away');
+    expect(titles.some((t) => t.includes('Closed: Sundays'))).toBe(true);
+  });
+  it('refuses a clock time outside that weekday\'s hours, before the callable is reached', async () => {
+    mocks.getBusinessClosures.mockResolvedValue({
+      closures: [],
+      weeklyHours: [0, 1, 2, 3, 4, 5, 6].map((weekday) => ({ weekday, open: true, startTime: '09:00', endTime: '17:00' })),
+      timeZone: 'America/Chicago',
+    });
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    const user = userEvent.setup();
+    renderScreen();
+    await user.click(await screen.findByRole('button', { name: /reschedule visit/i }));
+    const form = await screen.findByTestId('reschedule-form');
+    await pickDay(user, form);
+    await setTime(user, form, '0200');
+    expect(await within(form).findByText(/we are open 09:00 to 17:00/i)).toBeInTheDocument();
+    expect(within(form).getByRole('button', { name: /send this time to tribe tails/i })).toBeDisabled();
     expect(mocks.requestBookingReschedule).not.toHaveBeenCalled();
+  });
+  it('offers the business\'s time blocks when it books by block, and sends the block id', async () => {
+    mocks.getBookingPolicy.mockResolvedValue({
+      allowTimeBlockBooking: true,
+      allowSpecificTimeBooking: false,
+      defaultBookingMode: 'TIME_BLOCK',
+      timeBlocks: [
+        { id: 'morning', label: 'Morning', startTime: '08:00', endTime: '12:00', durationMinutes: 240 },
+        { id: 'afternoon', label: 'Afternoon', startTime: '12:00', endTime: '17:00', durationMinutes: 300 },
+      ],
+    });
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    mocks.requestBookingReschedule.mockResolvedValue({ ok: true, visitId: 'v1', proposedStartTimeMs: 0, proposedEndTimeMs: null, visit: null });
+    const user = userEvent.setup();
+    renderScreen();
+    await user.click(await screen.findByRole('button', { name: /reschedule visit/i }));
+    const form = await screen.findByTestId('reschedule-form');
+    const day = await pickDay(user, form);
+    expect(within(form).queryByLabelText(/^time$/i)).toBeNull();
+    await user.selectOptions(await within(form).findByLabelText(/time block/i), 'afternoon');
+    await user.click(within(form).getByRole('button', { name: /send this time to tribe tails/i }));
+    await waitFor(() =>
+      expect(mocks.requestBookingReschedule).toHaveBeenCalledWith('fam1', 'b1', 'v1', chicagoMs(day, '12:00'), '', 'afternoon'),
+    );
   });
   it("shows the server's own words when the request is refused", async () => {
     mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
     mocks.requestBookingReschedule.mockRejectedValue(
       new Error('Only a requested or confirmed visit can ask for a new time.'),
     );
+    const user = userEvent.setup();
     renderScreen();
-    await userEvent.click(await screen.findByRole('button', { name: /reschedule visit/i }));
+    await user.click(await screen.findByRole('button', { name: /reschedule visit/i }));
     const form = await screen.findByTestId('reschedule-form');
-    await userEvent.type(within(form).getByLabelText(/new date and time/i), futureInputValue().value);
-    await userEvent.click(within(form).getByRole('button', { name: /send this time to tribe tails/i }));
+    await pickDay(user, form);
+    await user.click(within(form).getByRole('button', { name: /send this time to tribe tails/i }));
     expect(
       await screen.findByText(/only a requested or confirmed visit can ask for a new time/i),
     ).toBeInTheDocument();
@@ -568,15 +742,8 @@ describe('BookingDetail: a visit whose start time the Auntie sets (#1098)', () =
  * and it is on screen the moment the call resolves, refetch or no refetch.
  */
 describe('BookingDetail: #1281 the ask shows the moment it resolves', () => {
-  function futureValue(): { value: string; ms: number } {
-    const d = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
-    d.setSeconds(0, 0);
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    return { value, ms: new Date(value).getTime() };
-  }
   it('reschedule: "New time requested" is drawn from the returned visit, with the refetch still out', async () => {
-    const { value, ms } = futureValue();
+    const ms = Date.now() + 3 * 24 * 60 * 60 * 1000;
     mocks.getMyBookings.mockResolvedValueOnce(bookingsResult({ upcoming: [booking()] }));
     // Every later read hangs, so only the cache write can explain the banner.
     mocks.getMyBookings.mockReturnValue(new Promise(() => {}));
@@ -591,7 +758,7 @@ describe('BookingDetail: #1281 the ask shows the moment it resolves', () => {
     renderScreen();
     await user.click(await screen.findByRole('button', { name: /reschedule visit/i }));
     const form = await screen.findByTestId('reschedule-form');
-    await user.type(within(form).getByLabelText(/new date and time/i), value);
+    await pickDay(user, form);
     await user.click(within(form).getByRole('button', { name: /send this time to tribe tails/i }));
     expect(await screen.findByText(/New time requested/)).toBeInTheDocument();
     expect(screen.queryByTestId('reschedule-form')).not.toBeInTheDocument();

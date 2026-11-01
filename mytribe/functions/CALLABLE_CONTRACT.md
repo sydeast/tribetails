@@ -1725,7 +1725,11 @@ closure so the operator can act on them manually.
 ### getBusinessClosures
 - req `{ fromDate: string (YYYY-MM-DD), toDate: string (YYYY-MM-DD) }`, range
   capped at 120 days, `toDate >= fromDate`.
-- res `{ closures: Array<{ date: string, name: string }> }`, sorted by date.
+- res `{ closures: Array<{ date: string, name: string }>, weeklyHours:
+  Array<{ weekday: number /* 0 = Sunday */, open: boolean, startTime: string | null,
+  endTime: string | null }>, timeZone: string }`, closures sorted by date.
+  `weeklyHours` is seven entries (Sunday first) or `[]` when the business has no
+  readable weekly hours; `[]` means "no restriction known" (#1284).
 - The kinfolk portal's ONE way to learn which dates are closed:
   `business_settings` is admin-only in `firestore.rules`
   (`allow read: if isAuntie() || isTestAdmin();`), so `mytribe/web` cannot read
@@ -2494,7 +2498,15 @@ instead of hand mirrors.
 - writes `.../kinCares/{visitId}/notes`, `authorRole` stamped from the CALLER
   (`'admin'` or `'kinfolk'`), never sent by the client
 
-### addInternalBookingNote
+### getBookingNotes
+- req `{ kinfolkId?: string, batchId: string, visitId: string }`
+- res `{ bookingNote: string | null, notes: Array<{ id: string, body: string, createdAtMs: number | null }> }`
+- `bookingNote` is the booking wizard's Extra Love & Context text off the parent
+  booking; `notes` are the household's own rows from `.../kinCares/{visitId}/notes`
+  (`authorRole === 'kinfolk'` only), oldest first, at most 200
+- NEVER returns staff rows (`authorRole: 'admin'`), `internalNotes`, dossier or
+  411 text; the filter runs on the server (#1283)
+- an Auntie is refused (household callable, `householdStaffFlag`)
 - req: identical to `addBookingNote`
 - res `{ noteId: string }`
 - writes `.../kinCares/{visitId}/internalNotes`, `authorRole` always `'admin'`

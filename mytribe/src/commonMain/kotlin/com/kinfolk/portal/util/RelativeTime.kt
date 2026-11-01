@@ -95,6 +95,23 @@ fun weekdayTime(epochMillis: Long?, timeZone: TimeZone = TimeZone.currentSystemD
 }
 
 /**
+ * "Nov 1, 3:05 PM": when a note was written (#1283), with the date because
+ * notes outlive the day. Empty string on a null timestamp. Mirrors
+ * `noteWrittenAt` in mytribe/web/src/lib/portalFormat.ts.
+ */
+fun noteWrittenAt(epochMillis: Long?, timeZone: TimeZone = TimeZone.currentSystemDefault()): String {
+    if (epochMillis == null) return ""
+    val local = Instant.fromEpochMilliseconds(epochMillis).toLocalDateTime(timeZone)
+    val hour12 = when (val h = local.hour % 12) {
+        0 -> 12
+        else -> h
+    }
+    val minute = local.minute.toString().padStart(2, '0')
+    val amPm = if (local.hour >= 12) "PM" else "AM"
+    return "${MONTH_ABBREV[local.month.ordinal]} ${local.day}, $hour12:$minute $amPm"
+}
+
+/**
  * "Today" / "Yesterday" / "3 days ago", falling back to "Mar 14" past a week.
  * Empty string on a null timestamp.
  *

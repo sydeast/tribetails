@@ -87,6 +87,31 @@ describe('getBusinessClosures', () => {
     expect(res.closures).toEqual([]);
   });
 });
+/** #1284: the reschedule picker greys out a closed weekday and bounds the clock, from this one read. */
+describe('getBusinessClosures: weekly hours (#1284)', () => {
+  const HOURS = {
+    Monday: '09:00-17:00', Tuesday: '09:00-17:00', Wednesday: '09:00-17:00', Thursday: '09:00-17:00',
+    Friday: '9:00-17:00', Saturday: '10:00-14:00', Sunday: '',
+  };
+  it('returns seven days, Sunday first, closed days as open:false', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: { 'business_settings/business_settings': { businessHours: HOURS, timeZone: 'America/Chicago' } } }).db);
+    const res = await getBusinessClosuresHandler(req({ fromDate: '2026-09-01', toDate: '2026-09-30' }));
+    expect(res.timeZone).toBe('America/Chicago');
+    expect(res.weeklyHours).toHaveLength(7);
+    expect(res.weeklyHours[0]).toEqual({ weekday: 0, open: false, startTime: null, endTime: null });
+    expect(res.weeklyHours[1]).toEqual({ weekday: 1, open: true, startTime: '09:00', endTime: '17:00' });
+    // "9:00" is padded, as the phone line reads it.
+    expect(res.weeklyHours[5]).toEqual({ weekday: 5, open: true, startTime: '09:00', endTime: '17:00' });
+  });
+  it('returns [] when no hours are configured or one day cannot be read, and the Chicago default zone', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock({}).db);
+    expect((await getBusinessClosuresHandler(req({ fromDate: '2026-09-01', toDate: '2026-09-30' }))).weeklyHours).toEqual([]);
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: { 'business_settings/business_settings': { businessHours: { ...HOURS, Monday: 'by appointment' } } } }).db);
+    const res = await getBusinessClosuresHandler(req({ fromDate: '2026-09-01', toDate: '2026-09-30' }));
+    expect(res.weeklyHours).toEqual([]);
+    expect(res.timeZone).toBe('America/Chicago');
+  });
+});
 
 /** #1301: days the operator leaves with no hours are closed days too, read off the same settings doc. */
 describe('getBusinessClosures: weekly days off (#1301)', () => {

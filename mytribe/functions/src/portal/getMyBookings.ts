@@ -138,6 +138,7 @@ export async function getMyBookingsHandler(
       kinfolkId,
       status,
       serviceType: stringOrNull(s['serviceType']),
+      serviceId: null,
       title: stringOrNull(s['serviceType']),
       startTimeMs,
       endTimeMs: isoMillis(s['endTime']),
