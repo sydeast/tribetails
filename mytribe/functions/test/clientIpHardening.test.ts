@@ -152,6 +152,32 @@ describe('#908 an untrusted entry at the trusted hop fails closed, logged by cla
     expect(JSON.stringify(logged)).not.toContain('10.9.9.9');
   });
 
+  it('logs the missing header at info, not error, under the Functions emulator (#1270)', () => {
+    vi.stubEnv('FUNCTIONS_EMULATOR', 'true');
+    try {
+      expect(clientIpOf(raw(undefined, '10.9.9.9'))).toBe('10.9.9.9');
+      expect(clientIpOf(raw(' , '))).toBe('unknown');
+      expect(errorEvents('clientIp.noForwardedFor')).toHaveLength(0);
+      const info = mocks.logEvent.mock.calls
+        .map(([f]) => f)
+        .filter((f) => f.event === 'clientIp.noForwardedFor' && f.severity === 'info');
+      expect(info).toHaveLength(2);
+      // A present but untrusted entry is still an error in the emulator.
+      expect(clientIpOf(raw('192.0.2.1, 10.0.0.9'))).toBe(UNTRUSTED_CLIENT_IP);
+      expect(errorEvents('clientIp.untrustedRightmost')).toHaveLength(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+  it('keeps the missing header an error when FUNCTIONS_EMULATOR is unset or not "true"', () => {
+    vi.stubEnv('FUNCTIONS_EMULATOR', 'false');
+    try {
+      clientIpOf(raw(undefined));
+      expect(errorEvents('clientIp.noForwardedFor')).toHaveLength(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
   it('takes the trusted hop count as a parameter, defaulting to 1', () => {
     expect(clientIpOf(raw('192.0.2.1, 203.0.113.9, 198.51.100.77'))).toBe('198.51.100.77');
     expect(clientIpOf(raw('192.0.2.1, 203.0.113.9, 198.51.100.77'), 2)).toBe('203.0.113.9');
