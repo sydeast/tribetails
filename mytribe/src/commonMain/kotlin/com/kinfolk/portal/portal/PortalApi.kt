@@ -655,6 +655,11 @@ class PortalApi(private val fns: FunctionsClient) {
                 allergies = o["allergies"]?.jsonPrimitive?.contentOrNull,
                 emergencyNotes = o["emergencyNotes"]?.jsonPrimitive?.contentOrNull,
                 sitterNotes = o["sitterNotes"]?.jsonPrimitive?.contentOrNull,
+                sex = o["sex"]?.jsonPrimitive?.contentOrNull,
+                weight = o["weight"]?.jsonPrimitive?.contentOrNull,
+                colorMarkings = o["colorMarkings"]?.jsonPrimitive?.contentOrNull,
+                spayedNeutered = o["spayedNeutered"]?.jsonPrimitive?.booleanOrNull ?: false,
+                vetInfo = o["vetInfo"]?.jsonPrimitive?.contentOrNull,
             )
         }.orEmpty()
         return KinResult(kin = list)
@@ -1143,6 +1148,11 @@ class PortalApi(private val fns: FunctionsClient) {
         p.emergencyNotes?.let { put("emergencyNotes", it) }
         p.sitterNotes?.let { put("sitterNotes", it) }
         p.legacyKinId?.let { put("legacyKinId", it) }
+        p.sex?.let { put("sex", it) }
+        p.weight?.let { put("weight", it) }
+        p.colorMarkings?.let { put("colorMarkings", it) }
+        p.spayedNeutered?.let { put("spayedNeutered", it) }
+        p.vetInfo?.let { put("vetInfo", it) }
     }
 
     // -- Invite a secondary kinfolk to the portal (the primary only) --
@@ -1425,6 +1435,7 @@ class PortalApi(private val fns: FunctionsClient) {
             ok = raw["ok"]?.jsonPrimitive?.booleanOrNull ?: false,
             visitId = raw["visitId"]?.jsonPrimitive?.contentOrNull ?: visitId,
             alreadyPending = raw["alreadyPending"]?.jsonPrimitive?.booleanOrNull ?: false,
+            visit = (raw["visit"] as? JsonObject)?.let(::decodeBooking),
         )
     }
 
@@ -1463,6 +1474,7 @@ class PortalApi(private val fns: FunctionsClient) {
             visitId = raw["visitId"]?.jsonPrimitive?.contentOrNull ?: visitId,
             proposedStartTimeMs = raw["proposedStartTimeMs"]?.jsonPrimitive?.longOrNull ?: proposedStartTimeMs,
             proposedEndTimeMs = raw["proposedEndTimeMs"]?.jsonPrimitive?.longOrNull,
+            visit = (raw["visit"] as? JsonObject)?.let(::decodeBooking),
         )
     }
 
@@ -1779,6 +1791,14 @@ class PortalApi(private val fns: FunctionsClient) {
         // #1098: absent on an older server, which reads as a timed visit.
         startTimePending = o["startTimePending"]?.jsonPrimitive?.booleanOrNull ?: false,
         requestedDate = o["requestedDate"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+        // #1303: absent on an older server, which reads as nothing to link to.
+        address = o["address"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+        kinTaleId = o["kinTaleId"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+        invoiceId = o["invoiceId"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+        // #1301: absent on an older server, which reads as a by-the-clock visit.
+        timeBlockLabel = o["timeBlockLabel"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+        timeBlockStartTime = o["timeBlockStartTime"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+        timeBlockEndTime = o["timeBlockEndTime"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
     )
 
     /**

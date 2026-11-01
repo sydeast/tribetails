@@ -1,6 +1,7 @@
 package com.kinfolk.portal.screens.schedule
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
@@ -53,6 +55,7 @@ import com.kinfolk.portal.portal.BookingVisit
 import com.kinfolk.portal.portal.TimeBlock
 import com.kinfolk.portal.screens.schedule.util.ReviewRow
 import com.kinfolk.portal.portal.Kin
+import com.kinfolk.portal.portal.BookingsResult
 import com.kinfolk.portal.portal.mintBookingIdempotencyKey
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.Service
@@ -78,12 +81,22 @@ fun BookingWizardScreen(
     kinfolkId: String,
     portalApi: PortalApi,
     onClose: () -> Unit,
-    onComplete: () -> Unit,
+    /**
+     * #1281: called once the booking is in, with a fresh bookings list read
+     * after it (null when that read failed). The host hands the list to
+     * Schedule so it opens on the new booking instead of on a load.
+     */
+    onComplete: (BookingsResult?) -> Unit,
     startWeekly: Boolean = false,
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
     var step by remember { mutableStateOf(1) }
+    // #1300: each step change lands back at the top. The whole wizard is one
+    // scrolling column, so a long step left the next one opened mid-page with
+    // the step indicator out of sight.
+    val pageScroll = rememberScrollState()
+    LaunchedEffect(step) { pageScroll.animateScrollTo(0) }
     var kin by remember { mutableStateOf<List<Kin>?>(null) }
     var services by remember { mutableStateOf<List<Service>?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
@@ -114,6 +127,8 @@ fun BookingWizardScreen(
     var weekCount by remember { mutableStateOf(4) }
     var notes by remember { mutableStateOf("") }
     var submitting by remember { mutableStateOf(false) }
+    /** #1281: the booking went through; the button stays shut. */
+    var submitted by remember { mutableStateOf(false) }
     /** #644: the submission signature this key was minted for, and the key. */
     var submissionKey by remember { mutableStateOf<Pair<String, String>?>(null) }
     var submitError by remember { mutableStateOf<String?>(null) }
@@ -286,7 +301,7 @@ fun BookingWizardScreen(
         else -> true
     }
 
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(pageScroll)) {
         ScreenHeader(title = "New Booking")
         WizardStepIndicator(current = step)
 
@@ -406,8 +421,16 @@ fun BookingWizardScreen(
                     )
                 } else {
                     KinButton(
-                        label = if (submitting) "Creating…" else "Create Booking",
+                        label = when {
+                            submitted -> "Booking requested"
+                            submitting -> "Creating…"
+                            else -> "Create Booking"
+                        },
                         onClick = {
+                            // #1281: one tap, one call. `enabled` lands a frame
+                            // late, and a booking that went through is not a
+                            // button to press again.
+                            if (submitting || submitted) return@KinButton
                             submitting = true
                             submitError = null
                             scope.launch {
@@ -450,18 +473,34 @@ fun BookingWizardScreen(
                                         notes = notes.ifBlank { null },
                                         idempotencyKey = submissionKey?.second,
                                     )
-                                    submissionKey = null
-                                    onComplete()
+                                    // #1281: the key is NOT cleared. Clearing it
+                                    // here let a second tap, landing before the
+                                    // screen closed, mint a new key and book
+                                    // twice. Held, it replays the first booking.
+                                    //
+                                    // Still "Creating…" while the fresh list
+                                    // loads, so Schedule opens on the booking.
+                                    // A failed read does not fail a booking
+                                    // that went through; Schedule loads its own.
+                                    val fresh = try {
+                                        portalApi.getMyBookings(kinfolkId)
+                                    } catch (c: CancellationException) {
+                                        throw c
+                                    } catch (_: Throwable) {
+                                        null
+                                    }
+                                    submitted = true
+                                    submitting = false
+                                    onComplete(fresh)
                                 } catch (c: CancellationException) {
                                     throw c
                                 } catch (t: Throwable) {
                                     submitError = t.message ?: "Could not create booking"
-                                } finally {
                                     submitting = false
                                 }
                             }
                         },
-                        enabled = !submitting && slots.isNotEmpty() && plannedVisits.isNotEmpty() && scheduleReady,
+                        enabled = !submitting && !submitted && slots.isNotEmpty() && plannedVisits.isNotEmpty() && scheduleReady,
                     )
                 }
             }
@@ -970,7 +1009,8 @@ private fun Step4ExtraLoveAndContext(notes: String, onNotesChange: (String) -> U
         )
         Text(
             "This note will be highlighted for Auntie during the visit.",
-            style = type.sansLabel.copy(color = KinfolkBrand.SnuggleCoral),
+            // #1302: a helper line, not an error. Coral is the error colour here.
+            style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted),
         )
     }
 }
@@ -1127,9 +1167,16 @@ private fun SimpleMonthPicker(
                     val sel = selectedDates.contains(d)
                     val closed = closedDates.containsKey(bookingDateKey(d))
                     val pickable = !closed && isBookableDay(d, today, horizonEnd)
+                    val isToday = d == today
                     Box(
                         modifier = Modifier
                             .size(40.dp)
+                            // #1301: today carries a ring, selected or not.
+                            .then(if (isToday) Modifier.border(2.dp, KinfolkBrand.KinTeal, CircleShape) else Modifier)
+                            .semantics {
+                                if (isToday) stateDescription = "Today"
+                                if (closed) stateDescription = "Closed: ${closedDates[bookingDateKey(d)]}"
+                            }
                             .background(
                                 color = if (sel) KinfolkBrand.KinTeal else KinfolkBrand.GlassSurfaceDim,
                                 shape = CircleShape,

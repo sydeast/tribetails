@@ -39,6 +39,7 @@ import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinField
 import com.kinfolk.portal.components.KinGhostButton
 import com.kinfolk.portal.portal.Booking
+import com.kinfolk.portal.portal.label
 import com.kinfolk.portal.portal.CancelRequestStatus
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.RescheduleRequestStatus
@@ -46,6 +47,7 @@ import com.kinfolk.portal.portal.canRequestCancellation
 import com.kinfolk.portal.portal.awaitingStartTime
 import com.kinfolk.portal.portal.canRequestReschedule
 import com.kinfolk.portal.portal.isAwaitingVisit
+import com.kinfolk.portal.portal.isFinished
 import com.kinfolk.portal.screens.schedule.util.RESCHEDULE_REASON_MAX
 import com.kinfolk.portal.screens.schedule.util.ReviewRow
 import com.kinfolk.portal.screens.schedule.util.proposedStartMillis
@@ -79,6 +81,10 @@ fun KinCareDetailScreen(
     portalApi: PortalApi,
     onBack: () -> Unit,
     nowMs: () -> Long = { Clock.System.now().toEpochMilliseconds() },
+    /** #1303: a completed visit's KinTale lives on the KinTales tab. */
+    onOpenKinTales: () -> Unit = {},
+    /** #1303: and its bill on the invoice screen. */
+    onOpenInvoice: (invoiceId: String) -> Unit = {},
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
@@ -114,6 +120,26 @@ fun KinCareDetailScreen(
     }
 
     LaunchedEffect(kinCareId, kinfolkId) { reload() }
+    // #1303: the replay of a completed visit comes from the same getMyVisits row
+    // the Schedule screen's Visit Replays reads (GPS lives on the AuntieOS
+    // session, not the booking). Best effort: a failure only drops the replay.
+    val replaySessionId = kinCare?.takeIf { it.status == com.kinfolk.portal.portal.BookingStatus.Completed }?.sessionId
+    var replayVisit by remember { mutableStateOf<com.kinfolk.portal.portal.Visit?>(null) }
+    var replayLoading by remember { mutableStateOf(false) }
+    LaunchedEffect(replaySessionId, kinfolkId) {
+        replayVisit = null
+        if (replaySessionId == null) return@LaunchedEffect
+        replayLoading = true
+        try {
+            replayVisit = portalApi.getMyVisits(kinfolkId, 20).visits.firstOrNull { it.id == replaySessionId }
+        } catch (c: CancellationException) {
+            throw c
+        } catch (_: Throwable) {
+            replayVisit = null
+        } finally {
+            replayLoading = false
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         // Header w/ back button
@@ -148,6 +174,10 @@ fun KinCareDetailScreen(
             }
             else -> {
                 KinCareDetailBody(
+                    replayVisit = replayVisit,
+                    replayLoading = replayLoading,
+                    onOpenKinTales = onOpenKinTales,
+                    onOpenInvoice = onOpenInvoice,
                     kinCare = b,
                     noteInput = noteInput,
                     onNoteInputChange = { noteInput = it },
@@ -196,7 +226,7 @@ fun KinCareDetailScreen(
                             rescheduleSending = true
                             rescheduleError = null
                             try {
-                                portalApi.requestBookingReschedule(
+                                val res = portalApi.requestBookingReschedule(
                                     batchId = batchId,
                                     visitId = b.id,
                                     proposedStartTimeMs = proposedStartMs,
@@ -204,7 +234,11 @@ fun KinCareDetailScreen(
                                     kinfolkId = kinfolkId,
                                 )
                                 reschedulePendingLocal = true
-                                reload()
+                                // #1281: the server's own copy of the visit,
+                                // shown at once. Without it, "Sending..." stays
+                                // up through a fresh read instead.
+                                val stored = res.visit
+                                if (stored != null) kinCare = stored else reload()
                             } catch (c: CancellationException) {
                                 throw c
                             } catch (t: Throwable) {
@@ -228,14 +262,16 @@ fun KinCareDetailScreen(
                             try {
                                 // alreadyPending=true is still success: the ask
                                 // is on file either way, so render pending.
-                                portalApi.requestBookingCancellation(
+                                val res = portalApi.requestBookingCancellation(
                                     batchId = b.batchId ?: b.id,
                                     visitId = b.id,
                                     reason = reason,
                                     kinfolkId = kinfolkId,
                                 )
                                 cancelPendingLocal = true
-                                reload()
+                                // #1281: same as the reschedule ask above.
+                                val stored = res.visit
+                                if (stored != null) kinCare = stored else reload()
                             } catch (c: CancellationException) {
                                 throw c
                             } catch (t: Throwable) {
@@ -254,6 +290,10 @@ fun KinCareDetailScreen(
 
 @Composable
 private fun KinCareDetailBody(
+    replayVisit: com.kinfolk.portal.portal.Visit?,
+    replayLoading: Boolean,
+    onOpenKinTales: () -> Unit,
+    onOpenInvoice: (invoiceId: String) -> Unit,
     kinCare: Booking,
     noteInput: String,
     onNoteInputChange: (String) -> Unit,
@@ -293,6 +333,8 @@ private fun KinCareDetailBody(
                     kinCare.kinNames.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "TBD",
                 )
                 ReviewRow("Status", statusLabel(kinCare))
+                // #1303: where the visit happens, when the household has one on file.
+                kinCare.address?.let { ReviewRow("Address", it) }
             }
         }
 
@@ -309,44 +351,79 @@ private fun KinCareDetailBody(
             }
         }
 
-        // Editable Additional Information
-        GlassCard(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(KinfolkSpacing.l),
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
-                Text("Additional Information", style = type.heritageSection)
-                Text(
-                    "Anything Auntie should know? Editable until 3 hours before the visit starts.",
-                    style = type.sansMeta,
-                )
-                KinField(
-                    value = noteInput,
-                    onValueChange = onNoteInputChange,
-                    label = "e.g., gate code changed to 1248; please use side door",
-                    singleLine = false,
-                    enabled = !locked,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                if (locked) {
+        // #1285: a note is for the Auntie to read before the visit. Once the visit is
+        // completed or cancelled there is nobody to read it, so the card is gone.
+        if (!kinCare.isFinished()) {
+            // Editable Additional Information
+            GlassCard(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(KinfolkSpacing.l),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+                    Text("Additional Information", style = type.heritageSection)
                     Text(
-                        "Notes locked (visit starts in under 3hr).",
+                        "Anything Auntie should know? Editable until 3 hours before the visit starts.",
                         style = type.sansMeta,
-                        color = KinfolkBrand.SnuggleCoral,
+                    )
+                    KinField(
+                        value = noteInput,
+                        onValueChange = onNoteInputChange,
+                        label = "e.g., gate code changed to 1248; please use side door",
+                        singleLine = false,
+                        enabled = !locked,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (locked) {
+                        Text(
+                            "Notes locked (visit starts in under 3hr).",
+                            style = type.sansMeta,
+                            color = KinfolkBrand.SnuggleCoral,
+                        )
+                    }
+                    if (saveError != null) {
+                        Text(saveError, style = type.sansMeta, color = KinfolkBrand.SnuggleCoral)
+                    }
+                    KinButton(
+                        label = if (saving) "Saving..." else "Save Note",
+                        onClick = onSaveNote,
+                        enabled = !locked && !saving && noteInput.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                if (saveError != null) {
-                    Text(saveError, style = type.sansMeta, color = KinfolkBrand.SnuggleCoral)
-                }
-                KinButton(
-                    label = if (saving) "Saving..." else "Save Note",
-                    onClick = onSaveNote,
-                    enabled = !locked && !saving && noteInput.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth(),
-                )
             }
         }
 
+        // #1303: what a completed visit leaves behind: its KinTale, its bill and
+        // its replay, each only when the record exists.
+        if (kinCare.status == com.kinfolk.portal.portal.BookingStatus.Completed) {
+            GlassCard(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(KinfolkSpacing.l),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+                    Text("After the visit", style = type.heritageSection)
+                    if (kinCare.kinTaleId != null) {
+                        KinGhostButton(label = "Read the KinTale", onClick = onOpenKinTales, modifier = Modifier.fillMaxWidth())
+                    }
+                    kinCare.invoiceId?.let { invoiceId ->
+                        KinGhostButton(label = "See the invoice", onClick = { onOpenInvoice(invoiceId) }, modifier = Modifier.fillMaxWidth())
+                    }
+                    when {
+                        replayLoading -> com.kinfolk.portal.components.KinLoading(text = "Looking for the visit replay\u2026")
+                        replayVisit != null && replayVisit.gpsRoute.isNotEmpty() -> {
+                            Text("Visit Replay", style = type.sansLabel)
+                            com.kinfolk.portal.components.RouteMap(
+                                route = replayVisit.gpsRoute,
+                                distanceMeters = replayVisit.gpsDistanceMeters,
+                                durationSeconds = replayVisit.gpsDurationSeconds,
+                            )
+                        }
+                        kinCare.kinTaleId == null && kinCare.invoiceId == null ->
+                            Text("Nothing has been sent for this visit yet.", style = type.sansMeta)
+                    }
+                }
+            }
+        }
         // Reschedule ask. The card also carries the office's answer, so an
         // accepted or declined ask stays readable after the window to make a
         // new one has closed.
@@ -355,6 +432,9 @@ private fun KinCareDetailBody(
         if (kinCare.rescheduleRequestStatus != null || kinCare.canRequestReschedule() || kinCare.awaitingStartTime()) {
             RescheduleRequestSection(
                 kinCare = kinCare,
+                // #1299: a cancellation ask in flight holds the new-time form,
+                // including the moment before the refreshed visit arrives.
+                heldByCancellation = cancelPending,
                 pendingLocal = reschedulePendingLocal,
                 sending = rescheduleSending,
                 error = rescheduleError,
@@ -371,7 +451,10 @@ private fun KinCareDetailBody(
             CancelRequestSection(
                 kinCare = kinCare,
                 pending = cancelPending,
-                canAsk = kinCare.canRequestCancellation(),
+                // #1299: a new time waiting on the office holds the ask, on the
+                // server and for the moment before the refreshed visit arrives.
+                heldByReschedule = reschedulePendingLocal || kinCare.rescheduleRequestStatus == RescheduleRequestStatus.Pending,
+                canAsk = kinCare.canRequestCancellation() && !reschedulePendingLocal,
                 sending = cancelSending,
                 error = cancelError,
                 onSend = onSendCancelRequest,
@@ -395,6 +478,7 @@ private fun KinCareDetailBody(
 @Composable
 private fun RescheduleRequestSection(
     kinCare: Booking,
+    heldByCancellation: Boolean,
     pendingLocal: Boolean,
     sending: Boolean,
     error: String?,
@@ -450,7 +534,7 @@ private fun RescheduleRequestSection(
                     color = KinfolkBrand.NavyMuted,
                 )
             }
-            if (kinCare.canRequestReschedule() && !pending) {
+            if (kinCare.canRequestReschedule() && !pending && !heldByCancellation) {
                 RescheduleProposalForm(
                     sending = sending,
                     error = error,
@@ -608,6 +692,7 @@ private fun UpcomingDayPicker(
 private fun CancelRequestSection(
     kinCare: Booking,
     pending: Boolean,
+    heldByReschedule: Boolean,
     canAsk: Boolean,
     sending: Boolean,
     error: String?,
@@ -643,6 +728,14 @@ private fun CancelRequestSection(
                 )
             }
 
+            if (heldByReschedule && !pending && kinCare.isAwaitingVisit()) {
+                // #1299: say why the button is not here.
+                Text(
+                    "You can ask to cancel once Tribe Tails answers your new time.",
+                    style = type.sansMeta,
+                    color = KinfolkBrand.NavyMuted,
+                )
+            }
             if (canAsk && !pending) {
                 var showConfirm by remember { mutableStateOf(false) }
                 var reason by remember { mutableStateOf("") }
@@ -690,11 +783,6 @@ private fun CancelRequestSection(
     }
 }
 
-private fun statusLabel(b: Booking): String = when (b.status) {
-    com.kinfolk.portal.portal.BookingStatus.Requested -> "Requested"
-    com.kinfolk.portal.portal.BookingStatus.Confirmed -> "Confirmed"
-    com.kinfolk.portal.portal.BookingStatus.EnRoute -> "Auntie en route"
-    com.kinfolk.portal.portal.BookingStatus.Active -> "In progress"
-    com.kinfolk.portal.portal.BookingStatus.Completed -> "Completed"
-    com.kinfolk.portal.portal.BookingStatus.Cancelled -> "Cancelled"
-}
+/** #1298: the status row says the same word as the list and Home pills, in sentence case. */
+private fun statusLabel(b: Booking): String =
+    b.status.label().lowercase().replaceFirstChar { it.uppercase() }

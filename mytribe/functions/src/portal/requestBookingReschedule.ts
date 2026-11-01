@@ -11,6 +11,7 @@ import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { validateResponse } from '../lib/callableResponse';
+import { BookingDtoSchema, cancelRequestStatusOf, readVisitDto } from '../lib/portalBookingDto';
 
 /**
  * A kinfolk PROPOSES a new time for a visit (issue #399, item 2).
@@ -61,6 +62,14 @@ export const Result = z
     /** Echoes what was recorded, so no client has to trust its own arithmetic. */
     proposedStartTimeMs: z.number().int(),
     proposedEndTimeMs: z.number().int().nullable(),
+    /**
+     * #1281: the visit as stored after this call, in exactly the shape
+     * `getMyBookings` lists it, so a client can write it into its bookings
+     * cache the moment this resolves rather than showing the pre-save visit
+     * until a refetch lands. Null when the read-back failed; the request still
+     * committed, and the client falls back to refetching.
+     */
+    visit: BookingDtoSchema.nullable(),
   })
   .strict();
 
@@ -114,6 +123,8 @@ export async function requestBookingRescheduleHandler(
   const data = snap.data() as {
     status?: string;
     rescheduleRequestStatus?: string;
+    cancelRequestStatus?: unknown;
+    cancelRequestedAt?: unknown;
     startTime?: { toMillis?: () => number } | null;
     endTime?: { toMillis?: () => number } | null;
     startTimePending?: unknown;
@@ -142,6 +153,16 @@ export async function requestBookingRescheduleHandler(
     );
   }
 
+  // #1299: one change at a time, in both directions. A cancellation ask that
+  // nobody has ruled on makes a new time meaningless, and answering the two in
+  // either order leaves the visit in a state neither answer describes.
+  // `cancelRequestStatusOf` also reads a pre-#438 bare stamp as pending.
+  if (cancelRequestStatusOf(data as Record<string, unknown>) === 'pending') {
+    throw new HttpsError(
+      'failed-precondition',
+      'A cancellation is already waiting on Tribe Tails for this visit. Wait for their answer before asking for a new time.',
+    );
+  }
   // Omitted end: keep the visit's current length. A visit with no end time on
   // record gets none on the proposal either, rather than a guessed duration.
   const currentStartMs = millisOf(data.startTime);
@@ -208,6 +229,7 @@ export async function requestBookingRescheduleHandler(
     visitId: args.visitId,
     proposedStartTimeMs: args.proposedStartTimeMs,
     proposedEndTimeMs: proposedEndMs,
+    visit: await readVisitDto(db(), kinfolkId, args.batchId, args.visitId),
   });
 }
 

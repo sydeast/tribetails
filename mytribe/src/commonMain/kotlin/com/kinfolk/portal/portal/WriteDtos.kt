@@ -13,6 +13,14 @@ data class KinPayload(
     val emergencyNotes: String? = null,
     val sitterNotes: String? = null,
     val legacyKinId: String? = null,
+    // The five facts shared with the admin (#1310). Text: null leaves the stored
+    // value alone, "" clears it (the server rejects null; the admin Android model
+    // decodes these as non-null). Flag: null leaves it alone.
+    val sex: String? = null,
+    val weight: String? = null,
+    val colorMarkings: String? = null,
+    val spayedNeutered: Boolean? = null,
+    val vetInfo: String? = null,
 )
 
 data class PayInvoiceResult(

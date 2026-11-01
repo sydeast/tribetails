@@ -27,6 +27,7 @@ import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { usePortalMutation } from '../lib/mutationState';
+import { refreshAfterSave } from '../lib/refreshAfterSave';
 import '../styles/notifications.css';
 
 /**
@@ -237,8 +238,9 @@ export function NotificationSettings() {
       };
       return saveMyNotificationPrefs(toSave);
     },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['myNotificationPrefs'] });
+    // #1281: "Saved" shows once the reloaded preferences are on screen.
+    onSuccess: async () => {
+      await refreshAfterSave(queryClient, ['myNotificationPrefs']);
       setShowSaved(true);
       setTimeout(() => setShowSaved(false), 4000);
     },

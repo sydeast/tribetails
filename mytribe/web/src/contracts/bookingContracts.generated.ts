@@ -193,6 +193,9 @@ export interface GetMyBookingsResultLiveVisit {
   endTimeMs: number | null;
   startTimePending: boolean;
   requestedDate: string | null;
+  timeBlockLabel: string | null;
+  timeBlockStartTime: string | null;
+  timeBlockEndTime: string | null;
   kinIds: string[];
   kinNames: string[];
   auntieDisplayName: string | null;
@@ -213,6 +216,9 @@ export interface GetMyBookingsResultLiveVisit {
   rescheduleRequestedEndTimeMs: number | null;
   rescheduleRequestReason: string | null;
   rescheduleResponseNote: string | null;
+  address: string | null;
+  kinTaleId: string | null;
+  invoiceId: string | null;
 }
 
 /**
@@ -329,6 +335,7 @@ export interface RequestBookingResult {
   batchId: string;
   bookingIds: string[];
   bookingId: string;
+  envelope: GetMyBookingsResultEnvelope | null;
 }
 
 // ---------- requestBookingCancellation ----------
@@ -350,6 +357,7 @@ export interface RequestBookingCancellationResult {
   ok: true;
   visitId: string;
   alreadyPending: boolean;
+  visit: GetMyBookingsResultLiveVisit | null;
 }
 
 // ---------- requestBookingReschedule ----------
@@ -374,6 +382,7 @@ export interface RequestBookingRescheduleResult {
   visitId: string;
   proposedStartTimeMs: number;
   proposedEndTimeMs: number | null;
+  visit: GetMyBookingsResultLiveVisit | null;
 }
 
 // ---------- rescheduleBooking ----------

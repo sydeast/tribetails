@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyKinTales } from '../api/portal';
 import type { KinTaleDto } from '../api/types';
@@ -23,7 +23,7 @@ import {
 } from '../api/kinTalesApi';
 import { useAuth, useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
-import { isoTime } from '../lib/portalFormat';
+import { auntieName, isoTime } from '../lib/portalFormat';
 import { PortalNav } from '../components/PortalNav';
 import { ShareKinTaleDialog } from '../components/ShareKinTaleDialog';
 import { FallbackImage, PHOTO_UNAVAILABLE_GLYPH } from '../components/FallbackImage';
@@ -96,7 +96,16 @@ export function KinTales() {
   }, { policy: 'hold', what: 'this page of KinTales' });
 
   const { signOut, signingOut } = useSignOut();
-
+  // #1303: a completed visit links here as `/kintales?tale=<id>`. Once that tale
+  // is on screen it is scrolled into view; if it is on a page not loaded yet the
+  // household simply lands on the list. Read off the address bar rather than the
+  // router so the screen keeps rendering without a router context.
+  const wantedTale = new URLSearchParams(window.location.search).get('tale');
+  const wantedTaleLoaded = wantedTale !== null && (firstPage.data?.tales ?? []).some((t) => t.id === wantedTale);
+  useEffect(() => {
+    if (!wantedTale || !wantedTaleLoaded) return;
+    document.getElementById(`tale-${wantedTale}`)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+  }, [wantedTale, wantedTaleLoaded]);
   if (firstPage.isError) {
     return (
       <LaunchError
@@ -330,7 +339,7 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
     // have), or unchanged (today's paw glyph) when the tale has no photo.
     const featuredPhoto = thumbs.find((t) => isImageThumb(t.contentType));
     return (
-      <section className="glass feature">
+      <section className="glass feature" id={`tale-${tale.id}`}>
         <div className="banner">
           <div className="kick">Featured KinTale</div>
           <h2>{headline}</h2>
@@ -348,7 +357,7 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
               )}
             </div>
             <div>
-              <b>From Auntie {tale.authorDisplayName}</b>
+              <b>From {auntieName(tale.authorDisplayName) ?? 'your Auntie'}</b>
               {meta && <small>{meta}</small>}
             </div>
           </div>
@@ -371,7 +380,7 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
             className="btn ghost"
             onClick={() => focusCommentBox(tale.id)}
           >
-            {'\u{1F4AC}'} Reply to Auntie {tale.authorDisplayName}
+            {'\u{1F4AC}'} Reply to {auntieName(tale.authorDisplayName) ?? 'your Auntie'}
           </button>
           <TaleReaction taleId={tale.id} kinfolkId={kinfolkId} />
         </div>
@@ -382,12 +391,12 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
   }
 
   return (
-    <section className={`glass talecard t${(index % 2) + 1}`}>
+    <section className={`glass talecard t${(index % 2) + 1}`} id={`tale-${tale.id}`}>
       <div className="tchead">
         <div className="tcphoto">{'\u{1F43E}'}</div>
         <div style={{ flex: 1 }}>
           <h3 className="title">{headline}</h3>
-          <div className="meta">{`FROM AUNTIE ${tale.authorDisplayName.toUpperCase()}${meta ? ` · ${meta}` : ''}`}</div>
+          <div className="meta">{`FROM ${(auntieName(tale.authorDisplayName) ?? 'Your Auntie').toUpperCase()}${meta ? ` · ${meta}` : ''}`}</div>
         </div>
       </div>
       <div className="tcbody">{tale.body}</div>

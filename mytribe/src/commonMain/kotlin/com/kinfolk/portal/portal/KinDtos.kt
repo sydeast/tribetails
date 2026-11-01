@@ -18,6 +18,12 @@ data class Kin(
     val allergies: String?,
     val emergencyNotes: String?,
     val sitterNotes: String?,
+    // The five descriptive facts shared with the admin (getMyKin.ts, #1310).
+    val sex: String? = null,
+    val weight: String? = null,
+    val colorMarkings: String? = null,
+    val spayedNeutered: Boolean = false,
+    val vetInfo: String? = null,
 )
 
 data class KinResult(val kin: List<Kin>)

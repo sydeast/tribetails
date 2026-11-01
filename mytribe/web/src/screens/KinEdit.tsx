@@ -8,16 +8,19 @@ import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { breedCatalogForSpecies, speciesWantsBreedBank } from '../lib/breedSearch';
 import { BreedField } from '../components/BreedField';
+import { SpeciesField } from '../components/SpeciesField';
 import { PortalNav } from '../components/PortalNav';
+import { FixedField, SexField } from '../components/KinFactsFields';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
-import { buildKinChanges, hasErrors, kinFormFromDto, validateKinForm, type KinEditForm } from '../lib/kinEditForm';
+import { buildKinChanges, hasErrors, kinFormFromDto, validateKinForm, type KinEditForm, type KinTextKey } from '../lib/kinEditForm';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { useIsMounted, usePortalMutation } from '../lib/mutationState';
 import { SignedImageUpload } from '../components/SignedImageUpload';
 import { BusyLabel } from '../components/Loading';
 import { confirmKinPhotoUpload, signKinPhotoUpload, validateKinPhotoFile } from '../api/kinPhotoApi';
+import { refreshAfterSave } from '../lib/refreshAfterSave';
 
 /**
  * Kin edit form (open item O-17): the React counterpart to Compose's
@@ -74,8 +77,10 @@ export function KinEdit() {
   const isMounted = useIsMounted();
   const save = usePortalMutation({
     mutationFn: (changes: KinPayloadPartial) => updateKin(kinId, changes, kinfolkId),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['myKin', kinfolkId] });
+    // #1281: the profile this navigates to reads the kin list, so the refresh
+    // is waited for first; otherwise it opens on the pre-save values.
+    onSuccess: async () => {
+      await refreshAfterSave(queryClient, ['myKin', kinfolkId]);
       // Guarded because this write is HELD: a queued save resumes on
       // reconnect whether or not this screen is still open, and navigating
       // from a dead screen drops the household onto a Kin profile they did
@@ -154,14 +159,14 @@ export function KinEdit() {
   const nothingToSave = Object.keys(changes).length === 0;
   const canSave = !hasErrors(errors) && !nothingToSave && !save.isPending;
 
-  const set = (key: keyof KinEditForm, value: string) => setForm((f) => (f ? { ...f, [key]: value } : f));
+  const set = (key: KinTextKey, value: string) => setForm((f) => (f ? { ...f, [key]: value } : f));
 
   const submit = () => {
     if (!canSave) return;
     save.mutate(changes);
   };
 
-  const textField = (key: keyof KinEditForm, label: string, opts?: { full?: boolean; area?: boolean; required?: boolean; type?: string }) => (
+  const textField = (key: KinTextKey, label: string, opts?: { full?: boolean; area?: boolean; required?: boolean; type?: string }) => (
     <div className={opts?.full ? 'field full' : 'field'}>
       <label htmlFor={`kin-${key}`}>
         {label}
@@ -201,12 +206,11 @@ export function KinEdit() {
               <div className="ic orange">{'\u{1F43E}'}</div>
               <div className="htxt">
                 <h3 className="title">About</h3>
-                <p className="sub">The basics your Aunties see first.</p>
               </div>
             </div>
             <div className="grid2">
               {textField('name', 'Name', { full: true, required: true })}
-              {textField('species', 'Species')}
+              <SpeciesField id="kin-species" value={current.species} onChange={(v) => set('species', v)} error={errors.species} />
               {/* Beside Species on purpose: Species is what picks the bank. */}
               <BreedField
                 value={current.breed}
@@ -231,6 +235,10 @@ export function KinEdit() {
                 }
               />
               {textField('ageYears', 'Age (years)', { type: 'text' })}
+              <SexField id="kin-sex" value={current.sex} onChange={(v) => set('sex', v)} error={errors.sex} />
+              {textField('weight', 'Weight')}
+              {textField('colorMarkings', 'Color / markings')}
+              <FixedField id="kin-spayedNeutered" checked={current.spayedNeutered} onChange={(v) => setForm((f) => (f ? { ...f, spayedNeutered: v } : f))} />
               <div className="field full">
                 <label id="kin-photo-label">Photo</label>
                 <SignedImageUpload
@@ -281,7 +289,6 @@ export function KinEdit() {
               <div className="ic teal">{'\u{1F37D}'}</div>
               <div className="htxt">
                 <h3 className="title">Care</h3>
-                <p className="sub">Daily routine and needs.</p>
               </div>
             </div>
             <div className="grid2">
@@ -289,6 +296,7 @@ export function KinEdit() {
               {textField('walkingInstructions', 'Walking Instructions', { full: true, area: true })}
               {textField('medications', 'Medications', { full: true, area: true })}
               {textField('allergies', 'Allergies', { full: true, area: true })}
+              {textField('vetInfo', 'Vet', { full: true, area: true })}
             </div>
           </section>
 
@@ -298,7 +306,6 @@ export function KinEdit() {
               <div className="ic purple">{'\u{1F4DD}'}</div>
               <div className="htxt">
                 <h3 className="title">Notes</h3>
-                <p className="sub">Good-to-know details and emergencies.</p>
               </div>
             </div>
             <div className="grid2">

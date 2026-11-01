@@ -26,6 +26,8 @@ import { LoadingLine } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { errorLine, usePortalMutation, type MutationPhase } from '../lib/mutationState';
+import { refreshAfterSave } from '../lib/refreshAfterSave';
+import { announceSaved } from '../lib/saveNotice';
 import '../styles/invoices.css';
 
 /**
@@ -67,8 +69,13 @@ export function Invoices() {
   // refused. It cannot credit an account twice.
   const redeem = usePortalMutation({
     mutationFn: (vars: { invoiceId: string }) => redeemCredit(vars.invoiceId, kinfolkId),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['myInvoices', kinfolkId] });
+    // #1281: the button used to fall back to "Save to Account Balance" while
+    // the list still showed the old balance, which read as a failure and drew
+    // a second press. It now stays on its busy label until the reloaded list
+    // shows the credit applied, and then says so in words.
+    onSuccess: async () => {
+      await refreshAfterSave(queryClient, ['myInvoices', kinfolkId], ['accountCreditHistory', kinfolkId]);
+      announceSaved('Credit saved');
     },
   }, { policy: 'hold', what: 'this credit' });
 

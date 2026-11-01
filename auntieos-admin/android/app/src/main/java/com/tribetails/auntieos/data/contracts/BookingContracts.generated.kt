@@ -378,6 +378,9 @@ data class GetMyBookingsResultLiveVisit(
     val endTimeMs: Long?,
     val startTimePending: Boolean,
     val requestedDate: String?,
+    val timeBlockLabel: String?,
+    val timeBlockStartTime: String?,
+    val timeBlockEndTime: String?,
     val kinIds: List<String>,
     val kinNames: List<String>,
     val auntieDisplayName: String?,
@@ -401,6 +404,9 @@ data class GetMyBookingsResultLiveVisit(
     val rescheduleRequestedEndTimeMs: Long?,
     val rescheduleRequestReason: String?,
     val rescheduleResponseNote: String?,
+    val address: String?,
+    val kinTaleId: String?,
+    val invoiceId: String?,
 )
 
 /**
@@ -420,6 +426,9 @@ internal fun decodeGetMyBookingsResultLiveVisit(raw: Map<String, Any?>?): GetMyB
         endTimeMs = (raw?.get("endTimeMs") as? Number)?.toLong(),
         startTimePending = raw?.get("startTimePending") as? Boolean ?: false,
         requestedDate = raw?.get("requestedDate") as? String,
+        timeBlockLabel = raw?.get("timeBlockLabel") as? String,
+        timeBlockStartTime = raw?.get("timeBlockStartTime") as? String,
+        timeBlockEndTime = raw?.get("timeBlockEndTime") as? String,
         kinIds = (raw?.get("kinIds") as? List<*>).orEmpty().mapNotNull { it as? String },
         kinNames = (raw?.get("kinNames") as? List<*>).orEmpty().mapNotNull { it as? String },
         auntieDisplayName = raw?.get("auntieDisplayName") as? String,
@@ -440,6 +449,9 @@ internal fun decodeGetMyBookingsResultLiveVisit(raw: Map<String, Any?>?): GetMyB
         rescheduleRequestedEndTimeMs = (raw?.get("rescheduleRequestedEndTimeMs") as? Number)?.toLong(),
         rescheduleRequestReason = raw?.get("rescheduleRequestReason") as? String,
         rescheduleResponseNote = raw?.get("rescheduleResponseNote") as? String,
+        address = raw?.get("address") as? String,
+        kinTaleId = raw?.get("kinTaleId") as? String,
+        invoiceId = raw?.get("invoiceId") as? String,
     )
 
 /** Nested in the `getMyBookings` contract. */
@@ -682,6 +694,7 @@ data class RequestBookingResult(
     val batchId: String,
     val bookingIds: List<String>,
     val bookingId: String,
+    val envelope: GetMyBookingsResultEnvelope?,
 )
 
 /**
@@ -694,6 +707,7 @@ internal fun decodeRequestBookingResult(raw: Map<String, Any?>?): RequestBooking
         batchId = (raw?.get("batchId") as? String).orEmpty(),
         bookingIds = (raw?.get("bookingIds") as? List<*>).orEmpty().mapNotNull { it as? String },
         bookingId = (raw?.get("bookingId") as? String).orEmpty(),
+        envelope = contractRawMap(raw?.get("envelope"))?.let { nested -> decodeGetMyBookingsResultEnvelope(nested) },
     )
 
 // ---------- requestBookingCancellation ----------
@@ -724,6 +738,7 @@ data class RequestBookingCancellationResult(
     val ok: Boolean,
     val visitId: String,
     val alreadyPending: Boolean,
+    val visit: GetMyBookingsResultLiveVisit?,
 )
 
 /**
@@ -736,6 +751,7 @@ internal fun decodeRequestBookingCancellationResult(raw: Map<String, Any?>?): Re
         ok = raw?.get("ok") as? Boolean ?: false,
         visitId = (raw?.get("visitId") as? String).orEmpty(),
         alreadyPending = raw?.get("alreadyPending") as? Boolean ?: false,
+        visit = contractRawMap(raw?.get("visit"))?.let { nested -> decodeGetMyBookingsResultLiveVisit(nested) },
     )
 
 // ---------- requestBookingReschedule ----------
@@ -772,6 +788,7 @@ data class RequestBookingRescheduleResult(
     val visitId: String,
     val proposedStartTimeMs: Long,
     val proposedEndTimeMs: Long?,
+    val visit: GetMyBookingsResultLiveVisit?,
 )
 
 /**
@@ -785,6 +802,7 @@ internal fun decodeRequestBookingRescheduleResult(raw: Map<String, Any?>?): Requ
         visitId = (raw?.get("visitId") as? String).orEmpty(),
         proposedStartTimeMs = (raw?.get("proposedStartTimeMs") as? Number)?.toLong() ?: 0L,
         proposedEndTimeMs = (raw?.get("proposedEndTimeMs") as? Number)?.toLong(),
+        visit = contractRawMap(raw?.get("visit"))?.let { nested -> decodeGetMyBookingsResultLiveVisit(nested) },
     )
 
 // ---------- rescheduleBooking ----------

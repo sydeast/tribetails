@@ -29,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -50,6 +51,8 @@ import com.kinfolk.portal.portal.BookingStatus
 import com.kinfolk.portal.portal.BookingsResult
 import com.kinfolk.portal.portal.CancelRequestStatus
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.portal.label
+import com.kinfolk.portal.portal.pendingChangeLabel
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
@@ -58,6 +61,7 @@ import com.kinfolk.portal.util.bookingCalendarBadge
 import com.kinfolk.portal.util.bookingSortMs
 import com.kinfolk.portal.util.bookingWhenLabel
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.time.Clock
 
@@ -74,6 +78,13 @@ import kotlin.time.Clock
  * re-fetches via [reloadSignal] (the host bumps it from the back-stack dirty
  * flag), mirroring the old "reload on back" semantics.
  */
+/**
+ * #1281, #1345: what the booking wizard leaves for the screen it returns to
+ * (Schedule or Home). [bookings] is the list
+ * read right after the booking went in (null when that read failed), and
+ * [notice] is the confirmation to show in words.
+ */
+data class ScheduleHandoff(val bookings: BookingsResult?, val notice: String)
 @Composable
 fun ScheduleScreen(
     familyName: String,
@@ -86,10 +97,16 @@ fun ScheduleScreen(
     onOpenMessageAuntie: () -> Unit = {},
     onOpenRecurring: () -> Unit = {},
     reloadSignal: Int = 0,
+    /** #1281: see [ScheduleHandoff]. Taken once, then [onHandoffTaken] clears it. */
+    handoff: ScheduleHandoff? = null,
+    onHandoffTaken: () -> Unit = {},
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
-    var data by remember { mutableStateOf<BookingsResult?>(null) }
+    // #1281: seeded from the wizard's handoff, so Schedule opens on the new
+    // booking rather than on a load. The reload below still runs, behind it.
+    var data by remember { mutableStateOf(handoff?.bookings) }
+    var notice by remember { mutableStateOf(handoff?.notice) }
     var visits by remember { mutableStateOf<com.kinfolk.portal.portal.VisitsResult?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var showRequest by remember { mutableStateOf(false) }
@@ -116,6 +133,19 @@ fun ScheduleScreen(
     // bumps reloadSignal off the back-stack dirty flag), reproducing the old
     // reload-on-back behavior after a saved note or new booking.
     LaunchedEffect(kinfolkId, reloadSignal) { reload() }
+    LaunchedEffect(handoff) {
+        if (handoff != null) {
+            handoff.bookings?.let { data = it }
+            notice = handoff.notice
+            onHandoffTaken()
+        }
+    }
+    LaunchedEffect(notice) {
+        if (notice != null) {
+            delay(SAVE_NOTICE_MS)
+            notice = null
+        }
+    }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val wide = isWideShell(maxWidth.value)
@@ -142,6 +172,7 @@ fun ScheduleScreen(
                 }
                 KinButton(label = "Request a Booking", onClick = onOpenWizard)
             }
+            notice?.let { text -> SaveNoticeRow(text = text, onDismiss = { notice = null }) }
 
             val mainColumn: @Composable () -> Unit = {
                 UpcomingCard(
@@ -384,9 +415,11 @@ private fun VisitRow(b: Booking, index: Int, onClick: (() -> Unit)? = null) {
             // pending state, so a declined ask clears it and needs its own
             // line. Otherwise the row goes quiet and the household never
             // learns from this screen that the visit is still on.
-            if (b.cancelRequested) {
+            val pendingChange = b.pendingChangeLabel()
+            if (pendingChange != null) {
+                // #1299: the cancellation or the new time, whichever is open.
                 Text(
-                    "Cancellation requested",
+                    pendingChange,
                     style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted),
                 )
             } else if (b.cancelRequestStatus == CancelRequestStatus.Declined) {
@@ -428,15 +461,16 @@ private fun EnvelopeRow(kinCares: List<Booking>, index: Int, onClick: () -> Unit
 
 @Composable
 private fun StatusChip(status: BookingStatus) {
-    val (label, color) = when (status) {
-        BookingStatus.Requested -> "REQUESTED" to KinfolkBrand.KinfolkOrange
-        BookingStatus.Confirmed -> "CONFIRMED" to KinfolkBrand.KinfolkOrange
-        BookingStatus.EnRoute -> "EN ROUTE" to KinfolkBrand.PackPink
-        BookingStatus.Active -> "ACTIVE" to KinfolkBrand.SnuggleCoral
-        BookingStatus.Completed -> "COMPLETED" to KinfolkBrand.FamilyPurple
-        BookingStatus.Cancelled -> "CANCELLED" to KinfolkBrand.NavyMuted
+    // #1298: the words come from BookingStatus.label(); only the colour is this screen's.
+    val color = when (status) {
+        BookingStatus.Requested -> KinfolkBrand.KinfolkOrange
+        BookingStatus.Confirmed -> KinfolkBrand.KinfolkOrange
+        BookingStatus.EnRoute -> KinfolkBrand.PackPink
+        BookingStatus.Active -> KinfolkBrand.SnuggleCoral
+        BookingStatus.Completed -> KinfolkBrand.FamilyPurple
+        BookingStatus.Cancelled -> KinfolkBrand.NavyMuted
     }
-    KinTintPill(label, color)
+    KinTintPill(status.label(), color)
 }
 
 // ---- Shared bits ----
@@ -549,3 +583,24 @@ private fun LiveVisitCard(
         }
     }
 }
+/** #1281: test tag on Schedule's post-save confirmation line. */
+/** The confirmation line a save leaves behind. Schedule and Home both draw it (#1345). */
+@Composable
+fun SaveNoticeRow(text: String, onDismiss: () -> Unit) {
+    val type = LocalKinfolkTypography.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = KinfolkSpacing.l)
+            .testTag(SAVE_NOTICE_TAG),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
+    ) {
+        Text("\u2713", style = type.sansBody.copy(color = KinfolkBrand.KinfolkOrange, fontWeight = FontWeight.Bold))
+        Text(text, style = type.sansBody.copy(fontWeight = FontWeight.SemiBold), modifier = Modifier.weight(1f))
+        TextButton(onClick = onDismiss) { Text("Dismiss") }
+    }
+}
+const val SAVE_NOTICE_TAG = "schedule-save-notice"
+/** #1281: how long the post-save confirmation stays up. Matches the web portal. */
+const val SAVE_NOTICE_MS = 8_000L

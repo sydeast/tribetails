@@ -299,7 +299,7 @@ export const onFamilyKinWrite = onDocumentWritten(
     }
 
     // WARNING-27: do NOT spam the kinfolk with `pets.updated` when the write is
-    // the echo of a STAFF edit on the flat doc (officeNotes/vetInfo etc. flow
+    // the echo of a STAFF edit on the flat doc (sex/weight/vetInfo etc. flow
     // flat -> family carrying `_mirrorOrigin = flat`), nor when nothing the
     // parent can actually see changed. Only a real change to a parent-visible
     // field should notify the kinfolk.

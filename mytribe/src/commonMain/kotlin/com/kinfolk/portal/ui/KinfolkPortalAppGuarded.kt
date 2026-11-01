@@ -69,6 +69,7 @@ fun KinfolkPortalAppGuarded() {
     var pickedFromDirectory by remember { mutableStateOf(false) }
     var home by remember { mutableStateOf<MyHomeResult?>(null) }
     var homeError by remember { mutableStateOf<String?>(null) }
+    var personName by remember { mutableStateOf("") }
     var claimInviteId by remember { mutableStateOf<String?>(readInitialClaimInviteId()) }
     val initialShareToken = remember { readInitialShareToken() }
     val initialSecureResetParams = remember { readInitialSecureResetParams() }
@@ -94,6 +95,18 @@ fun KinfolkPortalAppGuarded() {
         }
     }
 
+    // #1290: the header avatar is the signed-in person, not the household. A
+    // failed read leaves it blank and the shell falls back to the household name.
+    LaunchedEffect(resolvedKinfolkId) {
+        personName = ""
+        if (resolvedKinfolkId == null) return@LaunchedEffect
+        try {
+            val a = portalApi.getMyAccount()
+            personName = com.kinfolk.portal.nav.resolveShellPersonName(a.displayName, a.email, home?.displayName.orEmpty())
+        } catch (c: CancellationException) {
+            throw c
+        } catch (_: Throwable) { /* avatar keeps the household fallback */ }
+    }
     // Resolve feature flags once the kinfolk is signed in (the callable needs
     // auth). On any failure we keep the compile-time defaults: that is the
     // authoritative shipped baseline, not fake data, so silence here is correct
@@ -147,6 +160,8 @@ fun KinfolkPortalAppGuarded() {
                             notificationCatalog = notificationCatalog,
                             shellKinfolkId = resolvedKinfolkId,
                             shellFamilyName = home?.displayName ?: "",
+                            shellPersonName = personName,
+                            onPersonNameChanged = { personName = it },
                             shellLogoUrl = home?.businessLogoUrl ?: "",
                             shellBanner = home?.portal?.banner ?: com.kinfolk.portal.portal.PortalBanner(),
                             shellBannerDismissedByUser = home?.bannerDismissedByUser ?: false,

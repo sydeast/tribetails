@@ -1,6 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
-import { Timestamp } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
@@ -10,6 +9,20 @@ import { householdStaffFlag } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { FULL_CPU } from '../lib/runtimeOptions';
+import { hasBillingAccess } from '../lib/memberGate';
+import { loadVisitExtras, NO_EXTRAS, type VisitExtras } from '../lib/portalVisitLinks';
+import {
+  BookingDtoSchema,
+  EnvelopeDtoSchema,
+  envelopeToDto,
+  kinCareToDto,
+  loadBlocksById,
+  stringOrNull,
+  visitSortMs,
+  resolveBatchId,
+  type BookingDto,
+  type EnvelopeDto,
+} from '../lib/portalBookingDto';
 
 interface GetMyBookingsRequest { kinfolkId?: string }
 
@@ -18,112 +31,6 @@ interface GetMyBookingsRequest { kinfolkId?: string }
  * off `req.data`, the same situation `getMyInvoices` is in (see the
  * registry's header). `args: null` there is the precedent this follows.
  */
-
-const BookingDtoSchema = z
-  .object({
-    /** kinCare (per-visit) document id. */
-    id: z.string().min(1),
-    /** Envelope id this visit belongs to. */
-    batchId: z.string().min(1).nullable(),
-    kinfolkId: z.string().min(1),
-    status: z.enum(['requested', 'confirmed', 'enRoute', 'active', 'completed', 'cancelled']),
-    serviceType: z.string().nullable(),
-    title: z.string().nullable(),
-    startTimeMs: z.number().int().nullable(),
-    endTimeMs: z.number().int().nullable(),
-    /**
-     * #1098: true while Tribe Tails has not set this visit's start time. An
-     * Overnight is requested as a night and the operator sets its start when
-     * approving, so until then `startTimeMs` / `endTimeMs` are null and
-     * `requestedDate` names the night. False on every other visit, and on any
-     * visit written before #1098.
-     */
-    startTimePending: z.boolean(),
-    /** #1098: the night asked for (business-local `YYYY-MM-DD`) while `startTimePending`; null otherwise. */
-    requestedDate: z.string().nullable(),
-    kinIds: z.array(z.string()),
-    kinNames: z.array(z.string()),
-    auntieDisplayName: z.string().nullable(),
-    auntieAvatarUrl: z.string().nullable(),
-    notes: z.string().nullable(),
-    requestedByUid: z.string().nullable(),
-    createdAtMs: z.number().int().nullable(),
-    updatedAtMs: z.number().int().nullable(),
-    /** Active visit progress hint, only on status=active. */
-    visitProgress: z.enum(['confirmed', 'enRoute', 'active', 'ended']).nullable(),
-    /** AuntieOS back-references (null until AuntieOS writes them). */
-    sourceBookingId: z.string().nullable(),
-    sessionId: z.string().nullable(),
-    /**
-     * Vendor-parity (2026-07-02): a cancellation ask is PENDING on this visit.
-     *
-     * Pending, not "was ever asked for". Every client uses this flag to hide
-     * the ask button and show the waiting banner, which is what pending means;
-     * reading it as "ever asked" would leave a household that was declined
-     * staring at a waiting banner it can never leave. A declined ask flips this
-     * back to false so they can ask again, with `cancelRequestStatus` carrying
-     * what happened.
-     */
-    cancelRequested: z.boolean(),
-    /**
-     * The cancellation ask (#438), or null when this visit has never had one.
-     * `pending` while the office has not ruled; `accepted` once the visit has
-     * been cancelled; `declined` when the office is keeping it on the schedule.
-     *
-     * A request written before #438 landed carries no status field at all --
-     * those are the July backlog the issue is about -- so an old
-     * `cancelRequestedAt` with nothing else reads as `pending` here.
-     */
-    cancelRequestStatus: z.enum(['pending', 'accepted', 'declined']).nullable(),
-    /** Why the household asked. */
-    cancelRequestReason: z.string().nullable(),
-    /** What the office said when it accepted or declined. */
-    cancelResponseNote: z.string().nullable(),
-    /**
-     * The kinfolk reschedule ask (#399 item 2), or null when this visit has
-     * never had one. `pending` while the office has not ruled; `accepted` once
-     * the visit has been moved to the proposed time; `declined` when it has
-     * not. The proposed window and the operator's note survive the decision on
-     * purpose, so the screen can say what was asked for and what came back
-     * rather than just "declined".
-     */
-    rescheduleRequestStatus: z.enum(['pending', 'accepted', 'declined']).nullable(),
-    rescheduleRequestedStartTimeMs: z.number().int().nullable(),
-    rescheduleRequestedEndTimeMs: z.number().int().nullable(),
-    rescheduleRequestReason: z.string().nullable(),
-    /** What the office said when it accepted or declined. */
-    rescheduleResponseNote: z.string().nullable(),
-  })
-  .strict();
-
-type BookingDto = z.infer<typeof BookingDtoSchema>;
-
-const EnvelopeDtoSchema = z
-  .object({
-    batchId: z.string().min(1),
-    envelopeStatus: z.enum([
-      'requested',
-      'partiallyConfirmed',
-      'confirmed',
-      'inProgress',
-      'completed',
-      'cancelled',
-    ]),
-    pattern: z.enum(['individual', 'weekly']),
-    serviceName: z.string().nullable(),
-    kinIds: z.array(z.string()),
-    kinNames: z.array(z.string()),
-    notes: z.string().nullable(),
-    visitCount: z.number().int().nonnegative(),
-    confirmedCount: z.number().int().nonnegative(),
-    completedCount: z.number().int().nonnegative(),
-    firstStartTimeMs: z.number().int().nullable(),
-    lastStartTimeMs: z.number().int().nullable(),
-    kinCares: z.array(BookingDtoSchema),
-  })
-  .strict();
-
-type EnvelopeDto = z.infer<typeof EnvelopeDtoSchema>;
 
 export const Result = z
   .object({
@@ -155,45 +62,31 @@ export async function getMyBookingsHandler(
     .where('familyId', '==', kinfolkId)
     .get();
 
+  // #1303: the address, and for completed visits the KinTale and invoice they
+  // point at. Billing access is asked after the household is resolved, as the
+  // helper requires, and only when a completed visit could use the answer.
+  const completedSessions = snap.docs.filter((d) => {
+    const data = d.data() as Record<string, unknown>;
+    return data['status'] === 'completed' && stringOrNull(data['sessionId']) !== null;
+  });
+  let extras: VisitExtras = NO_EXTRAS;
+  try {
+    const billingAccess =
+      completedSessions.length > 0
+        ? await hasBillingAccess(uid, kinfolkId, req.auth?.token?.admin === true, 'getMyBookings')
+        : false;
+    extras = await loadVisitExtras(firestore, kinfolkId, { wantLinks: completedSessions.length > 0, billingAccess });
+  } catch {
+    extras = NO_EXTRAS;
+  }
+  const blocksById = await loadBlocksById(firestore);
   const nowMs = Date.now();
   // batchId -> kinCare dtos, preserving the parent envelope id per visit.
   const byBatch = new Map<string, BookingDto[]>();
   const all: BookingDto[] = snap.docs.map((d) => {
     const data = d.data() as Record<string, unknown>;
     const batchId = resolveBatchId(d, data);
-    const cancelStatus = cancelRequestStatusOf(data);
-    const dto: BookingDto = {
-      id: d.id,
-      batchId,
-      kinfolkId,
-      status: (data['status'] as BookingDto['status']) ?? 'requested',
-      serviceType: stringOrNull(data['serviceType']) ?? stringOrNull(data['serviceName']),
-      title: stringOrNull(data['title']),
-      startTimeMs: tsMillis(data['startTime']),
-      endTimeMs: tsMillis(data['endTime']),
-      startTimePending: data['startTimePending'] === true,
-      requestedDate: data['startTimePending'] === true ? stringOrNull(data['requestedDate']) : null,
-      kinIds: Array.isArray(data['kinIds']) ? (data['kinIds'] as string[]) : [],
-      kinNames: Array.isArray(data['kinNames']) ? (data['kinNames'] as string[]) : [],
-      auntieDisplayName: stringOrNull(data['auntieDisplayName']),
-      auntieAvatarUrl: stringOrNull(data['auntieAvatarUrl']),
-      notes: stringOrNull(data['notes']),
-      requestedByUid: stringOrNull(data['requestedByUid']),
-      createdAtMs: tsMillis(data['createdAt']),
-      updatedAtMs: tsMillis(data['updatedAt']),
-      visitProgress: (data['visitProgress'] as BookingDto['visitProgress']) ?? null,
-      sourceBookingId: stringOrNull(data['sourceBookingId']),
-      sessionId: stringOrNull(data['sessionId']),
-      cancelRequested: cancelStatus === 'pending',
-      cancelRequestStatus: cancelStatus,
-      cancelRequestReason: stringOrNull(data['cancelRequestReason']),
-      cancelResponseNote: stringOrNull(data['cancelResponseNote']),
-      rescheduleRequestStatus: rescheduleStatusOf(data['rescheduleRequestStatus']),
-      rescheduleRequestedStartTimeMs: tsMillis(data['rescheduleRequestedStartTime']),
-      rescheduleRequestedEndTimeMs: tsMillis(data['rescheduleRequestedEndTime']),
-      rescheduleRequestReason: stringOrNull(data['rescheduleRequestReason']),
-      rescheduleResponseNote: stringOrNull(data['rescheduleResponseNote']),
-    };
+    const dto = kinCareToDto(d.id, data, batchId, kinfolkId, extras, blocksById);
     if (batchId) {
       const bucket = byBatch.get(batchId) ?? [];
       bucket.push(dto);
@@ -251,6 +144,9 @@ export async function getMyBookingsHandler(
       // A session always has its time; only a kinCares visit can await one.
       startTimePending: false,
       requestedDate: null,
+      timeBlockLabel: null,
+      timeBlockStartTime: null,
+      timeBlockEndTime: null,
       kinIds: Array.isArray(s['kinIds']) ? (s['kinIds'] as string[]) : [],
       kinNames: [],
       auntieDisplayName: null,
@@ -274,6 +170,9 @@ export async function getMyBookingsHandler(
       rescheduleRequestedEndTimeMs: null,
       rescheduleRequestReason: null,
       rescheduleResponseNote: null,
+      address: extras.address,
+      kinTaleId: null,
+      invoiceId: null,
     };
     if (status === 'active' || status === 'enRoute') {
       if (!liveVisit) liveVisit = dto;
@@ -293,21 +192,7 @@ export async function getMyBookingsHandler(
       .doc(`families/${kinfolkId}/bookings/${batchId}`)
       .get();
     const env = (parentSnap.data() ?? {}) as Record<string, unknown>;
-    envelopes.push({
-      batchId,
-      envelopeStatus: (env['envelopeStatus'] as EnvelopeDto['envelopeStatus']) ?? 'requested',
-      pattern: (env['pattern'] as EnvelopeDto['pattern']) ?? 'individual',
-      serviceName: stringOrNull(env['serviceName']),
-      kinIds: Array.isArray(env['kinIds']) ? (env['kinIds'] as string[]) : [],
-      kinNames: Array.isArray(env['kinNames']) ? (env['kinNames'] as string[]) : [],
-      notes: stringOrNull(env['notes']),
-      visitCount: numberOr(env['visitCount'], kinCares.length),
-      confirmedCount: numberOr(env['confirmedCount'], 0),
-      completedCount: numberOr(env['completedCount'], 0),
-      firstStartTimeMs: tsMillis(env['firstStartTime']),
-      lastStartTimeMs: tsMillis(env['lastStartTime']),
-      kinCares,
-    });
+    envelopes.push(envelopeToDto(batchId, env, kinCares));
   }
 
   // #1098: an envelope of nights alone has a null `firstStartTimeMs` until the
@@ -316,23 +201,6 @@ export async function getMyBookingsHandler(
 
   logEvent({ severity: 'info', function: 'getMyBookings', event: 'portal.bookings.resolved', uid, extra: { kinfolkId, total: all.length, sessions: sessionSnap.size, envelopes: envelopes.length } });
   return validateResponse('getMyBookings', Result, { liveVisit, upcoming, recent, envelopes });
-}
-
-/**
- * #1098: where a visit sits in time for ordering. Its start when it has one; a
- * night awaiting its start time sorts at the END of its requested date in UTC,
- * after that day's timed visits (an overnight starts in the evening). This
- * callable reads no business zone, so the placement is approximate across a
- * day boundary; it only decides order, never which bucket a visit is in beyond
- * `isUpcoming` below. A visit with neither sorts as 0, as it always has.
- */
-function visitSortMs(b: BookingDto): number {
-  if (b.startTimeMs != null) return b.startTimeMs;
-  if (b.requestedDate) {
-    const ms = Date.parse(`${b.requestedDate}T23:59:59.999Z`);
-    if (Number.isFinite(ms)) return ms;
-  }
-  return 0;
 }
 
 /**
@@ -381,47 +249,6 @@ function isoMillis(v: unknown): number | null {
   if (typeof v !== 'string' || v.length === 0) return null;
   const ms = Date.parse(v);
   return Number.isNaN(ms) ? null : ms;
-}
-
-/**
- * The stored reschedule state, or null for anything this contract does not
- * publish. An unrecognised string is null rather than passed through: the DTO
- * is `.strict()` and three clients switch on these three values.
- */
-function rescheduleStatusOf(v: unknown): 'pending' | 'accepted' | 'declined' | null {
-  return v === 'pending' || v === 'accepted' || v === 'declined' ? v : null;
-}
-/**
- * The cancellation ask's state, healing the requests written before #438.
- *
- * `requestBookingCancellation` only ever stamped `cancelRequestedAt`; the
- * status field arrives with #438. A doc carrying the stamp and no status is a
- * request nobody has ruled on, so it reads as `pending` -- which is the whole
- * point of the issue, since those are the asks that have been sitting in
- * Firestore since July.
- */
-function cancelRequestStatusOf(data: Record<string, unknown>): 'pending' | 'accepted' | 'declined' | null {
-  const explicit = data['cancelRequestStatus'];
-  if (explicit === 'pending' || explicit === 'accepted' || explicit === 'declined') return explicit;
-  return data['cancelRequestedAt'] ? 'pending' : null;
-}
-/** Prefers the doc's own `batchId` field; falls back to the parent doc id. */
-function resolveBatchId(
-  doc: { ref?: { parent?: { parent?: { id?: string } | null } } },
-  data: Record<string, unknown>,
-): string | null {
-  const fromField = stringOrNull(data['batchId']);
-  if (fromField) return fromField;
-  const fromParent = doc.ref?.parent?.parent?.id;
-  return typeof fromParent === 'string' && fromParent.length > 0 ? fromParent : null;
-}
-
-function stringOrNull(v: unknown): string | null { return typeof v === 'string' && v.length > 0 ? v : null; }
-function numberOr(v: unknown, fallback: number): number { return typeof v === 'number' ? v : fallback; }
-function tsMillis(v: unknown): number | null {
-  if (v instanceof Timestamp) return v.toMillis();
-  if (typeof v === 'number') return v;
-  return null;
 }
 
 export const getMyBookings = onCall(

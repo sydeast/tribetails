@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link, useParams } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getMyBookings } from '../api/portal';
+import { getMyBookings, getMyVisits } from '../api/portal';
+import { RouteMap } from '../components/RouteMap';
 import { addBookingNote, requestBookingCancellation, requestBookingReschedule } from '../api/bookingApi';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
@@ -11,10 +12,13 @@ import { OfflineNotice } from '../components/OfflineNotice';
 import { LoadingLine } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { isOfflineError, usePortalMutation } from '../lib/mutationState';
+import { applyBookingWrite } from '../lib/bookingsCache';
 import { viewOfQuery } from '../lib/queryState';
 import {
+  auntieName,
   BOOKING_TIMELINE_STEPS,
   bookingStatusChip,
+  bookingStatusIcon,
   bookingTimelineIndex,
   bookingSubtitle,
   findBookingById,
@@ -64,6 +68,20 @@ export function BookingDetail() {
   const [rescheduleProblem, setRescheduleProblem] = useState<string | null>(null);
 
   const found = findBookingById(bookings.data, visitId);
+  const finished = found?.status === 'completed' || found?.status === 'cancelled';
+  // #1303: the replay of a completed visit comes from the same getMyVisits row
+  // the Schedule list's Past Visits replay reads (GPS lives on the AuntieOS
+  // session, not the booking). Best effort, like there: a failure only drops
+  // the replay, never the page. Asked only when there is a session to look up.
+  const sessionId = found?.status === 'completed' ? found.sessionId : null;
+  const visits = useQuery({
+    queryKey: ['myVisits', kinfolkId],
+    queryFn: () => getMyVisits(kinfolkId, 20),
+    retry: false,
+    enabled: sessionId !== null,
+  });
+  const replay = sessionId !== null ? visits.data?.visits.find((v) => v.id === sessionId) : undefined;
+  const replayRoute = replay?.gpsSummary?.route ?? [];
 
   // ABANDON. `addBookingNote` is a bare `.add()` on the visit's notes
   // subcollection with no dedupe key, and its only precondition (a 3-hour
@@ -87,8 +105,13 @@ export function BookingDetail() {
       if (!found?.batchId) throw new Error('This visit is not linked to a booking yet, so it cannot be cancelled here.');
       return requestBookingCancellation(found.kinfolkId, found.batchId, found.id, reason);
     },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['myBookings', kinfolkId] });
+    // #1281: the panel used to close here while the visit underneath still
+    // showed its pre-ask state for 10s+. The server's copy of the visit goes
+    // into the cache first (or, without one, a fresh list is awaited), so
+    // "Cancellation requested" is on screen when the panel closes and the
+    // button stays on its busy label until then.
+    onSuccess: async (res) => {
+      await applyBookingWrite(queryClient, kinfolkId, { visit: res.visit ?? null });
       setConfirmingCancel(false);
       setCancelReason('');
     },
@@ -103,8 +126,10 @@ export function BookingDetail() {
       if (!found?.batchId) throw new Error('This visit is not linked to a booking yet, so it cannot be moved here.');
       return requestBookingReschedule(found.kinfolkId, found.batchId, found.id, proposedStartTimeMs, rescheduleReason);
     },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['myBookings', kinfolkId] });
+    // #1281: same as the cancellation ask above. "New time requested for …"
+    // is drawn from the cached visit, so it shows the moment the panel closes.
+    onSuccess: async (res) => {
+      await applyBookingWrite(queryClient, kinfolkId, { visit: res.visit ?? null });
       setProposingReschedule(false);
       setProposedAt('');
       setRescheduleReason('');
@@ -182,11 +207,20 @@ export function BookingDetail() {
 
   const chip = bookingStatusChip(found.status);
   const timelineIndex = bookingTimelineIndex(found.status);
+  // #1303: Completed is the last step and nothing comes after it, so on a
+  // completed visit it is done too. It used to stay "current" and draw a 5.
+  const stepDone = (i: number) => timelineIndex !== null && (i < timelineIndex || found.status === 'completed');
   const canAct = found.batchId !== null;
   // `cancelRequested` means an ask is PENDING, not "was ever asked". A declined
   // ask therefore reopens the button, which is the point: the household can ask
   // again with new information rather than being stuck behind a banner.
-  const canRequestCancel = canAct && !found.cancelRequested && (found.status === 'requested' || found.status === 'confirmed');
+  const canRequestCancel =
+    canAct &&
+    !found.cancelRequested &&
+    // #1299: the server refuses a cancellation while a new time is waiting
+    // (and the reverse), so the control is not offered to fail.
+    found.rescheduleRequestStatus !== 'pending' &&
+    (found.status === 'requested' || found.status === 'confirmed');
   // Same window as a cancellation ask, and for the same reason: a visit that is
   // under way or finished is not moved by asking. A pending ask is handled
   // above this flag, by the branch that renders the waiting state instead.
@@ -199,12 +233,13 @@ export function BookingDetail() {
     canAct &&
     !awaitingStartTime &&
     found.rescheduleRequestStatus !== 'pending' &&
+    found.cancelRequestStatus !== 'pending' &&
     (found.status === 'requested' || found.status === 'confirmed');
   const proposedLabel =
     found.rescheduleRequestedStartTimeMs !== null
       ? weekdayTime(found.rescheduleRequestedStartTimeMs)
       : '';
-  const auntieLabel = found.auntieDisplayName ? `Auntie ${found.auntieDisplayName}` : 'your Auntie';
+  const auntieLabel = auntieName(found.auntieDisplayName) ?? 'your Auntie';
   const submitReschedule = () => {
     const ms = parseLocalDateTime(proposedAt);
     if (ms === null) {
@@ -231,7 +266,9 @@ export function BookingDetail() {
 
       <div className="wrap">
         <div className="crumbrow">
-          <Link className="backlink" to="/schedule">
+          {/* #1304: back lands on the tab this visit lives in, so a past visit
+              returns to Past Visits and not to the default tab. */}
+          <Link className="backlink" to="/schedule" search={found.status === 'completed' || found.status === 'cancelled' ? { tab: 'past' } : {}}>
             {'←'} Back to Schedule
           </Link>
         </div>
@@ -255,8 +292,8 @@ export function BookingDetail() {
                 <i style={{ width: `${(timelineIndex / (BOOKING_TIMELINE_STEPS.length - 1)) * 100}%` }} />
               </span>
               {BOOKING_TIMELINE_STEPS.map((step, i) => (
-                <div key={step.id} className={`tl-step ${i < timelineIndex ? 'done' : i === timelineIndex ? 'now' : ''}`}>
-                  <div className="tl-dot">{i < timelineIndex ? '✓' : i + 1}</div>
+                <div key={step.id} className={`tl-step ${stepDone(i) ? 'done' : i === timelineIndex ? 'now' : ''}`}>
+                  <div className="tl-dot">{stepDone(i) ? '✓' : i + 1}</div>
                   <div className="lbl">{step.label}</div>
                 </div>
               ))}
@@ -296,7 +333,7 @@ export function BookingDetail() {
                   </div>
                 </div>
                 <div className="bk-field f4">
-                  <div className="ic">{'✅'}</div>
+                  <div className="ic">{bookingStatusIcon(found.status)}</div>
                   <div>
                     <div className="lab">Status</div>
                     <div className="val">{chip.label.charAt(0) + chip.label.slice(1).toLowerCase()}</div>
@@ -312,55 +349,96 @@ export function BookingDetail() {
               </section>
             )}
 
-            <section className="glass card d4">
-              <div className="sectlabel">Add a note</div>
-              {canAct ? (
-                <>
-                  <h3 className="title">Leave a note for {auntieLabel}</h3>
-                  <p className="sub" style={{ marginBottom: 14 }}>
-                    Anything you want them to know before this visit.
-                  </p>
-                  <textarea
-                    className={`note-ta${addNote.isError ? ' err' : ''}`}
-                    placeholder="For example, a vet check this week, please keep an eye on their appetite."
-                    value={noteBody}
-                    onChange={(e) => {
-                      setNoteBody(e.target.value);
-                      setNoteSaved(false);
-                    }}
-                    disabled={addNote.isPending}
-                  />
-                  <OfflineMutationNotice phase={addNote.phase} what="your note" check="the notes above" />
-                  {addNote.phase === 'failed' && (
-                    <div className="note-err">
-                      {`⚠ ${addNote.error instanceof Error ? addNote.error.message : 'Could not save your note. Try again.'}`}
-                    </div>
-                  )}
-                  <div className="note-foot">
-                    <button
-                      className="btn grad"
-                      type="button"
-                      onClick={submitNote}
-                      disabled={addNote.isPending || noteBody.trim().length === 0}
-                    >
-                      {'\u{1F4DD}'}{' '}
-                      <MutationLabel mutation={addNote} busy="Saving…">
-                        Save Note
-                      </MutationLabel>
-                    </button>
-                    {noteSaved && !addNote.isError ? (
-                      <span className="note-ok">{'✓'} Note saved</span>
-                    ) : (
-                      <span className="sub" style={{ margin: 0 }}>
-                        Saved notes go straight to {auntieLabel}.
-                      </span>
+            {/* #1285: a note is for the Auntie to read before the visit. Once the visit is
+                completed or cancelled there is nobody to read it, so the box is gone. */}
+            {!finished && (
+              <section className="glass card d4">
+                <div className="sectlabel">Add a note</div>
+                {canAct ? (
+                  <>
+                    <h3 className="title">Leave a note for {auntieLabel}</h3>
+                    <p className="sub" style={{ marginBottom: 14 }}>
+                      Anything you want them to know before this visit.
+                    </p>
+                    <textarea
+                      className={`note-ta${addNote.isError ? ' err' : ''}`}
+                      placeholder="For example, a vet check this week, please keep an eye on their appetite."
+                      value={noteBody}
+                      onChange={(e) => {
+                        setNoteBody(e.target.value);
+                        setNoteSaved(false);
+                      }}
+                      disabled={addNote.isPending}
+                    />
+                    <OfflineMutationNotice phase={addNote.phase} what="your note" check="the notes above" />
+                    {addNote.phase === 'failed' && (
+                      <div className="note-err">
+                        {`⚠ ${addNote.error instanceof Error ? addNote.error.message : 'Could not save your note. Try again.'}`}
+                      </div>
                     )}
+                    <div className="note-foot">
+                      <button
+                        className="btn grad"
+                        type="button"
+                        onClick={submitNote}
+                        disabled={addNote.isPending || noteBody.trim().length === 0}
+                      >
+                        {'\u{1F4DD}'}{' '}
+                        <MutationLabel mutation={addNote} busy="Saving…">
+                          Save Note
+                        </MutationLabel>
+                      </button>
+                      {noteSaved && !addNote.isError ? (
+                        <span className="note-ok">{'✓'} Note saved</span>
+                      ) : (
+                        <span className="sub" style={{ margin: 0 }}>
+                          Saved notes go straight to {auntieLabel}.
+                        </span>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <p className="sub">This visit isn&rsquo;t linked to a booking yet, so notes aren&rsquo;t available here.</p>
+                )}
+              </section>
+            )}
+            {found.status === 'completed' && (
+              <section className="glass card d4" aria-label="After the visit" data-testid="after-visit">
+                <div className="sectlabel">After the visit</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+                  {found.kinTaleId && (
+                    <Link className="btn ghost block" to="/kintales" search={{ tale: found.kinTaleId }}>
+                      {'\u{1F4DD}'} Read the KinTale
+                    </Link>
+                  )}
+                  {found.invoiceId && (
+                    <Link className="btn ghost block" to="/invoices/$invoiceId" params={{ invoiceId: found.invoiceId }}>
+                      {'\u{1F9FE}'} See the invoice
+                    </Link>
+                  )}
+                  {!found.kinTaleId && !found.invoiceId && replayRoute.length === 0 && visits.isLoading === false && (
+                    <p className="sub" style={{ margin: 0 }}>
+                      Nothing has been sent for this visit yet.
+                    </p>
+                  )}
+                  {sessionId !== null && visits.isLoading && (
+                    <LoadingLine what="the visit replay" retry={() => void visits.refetch()}>
+                      Looking for the visit replay&hellip;
+                    </LoadingLine>
+                  )}
+                </div>
+                {replayRoute.length > 0 && (
+                  <div className="visit-replay-panel" data-testid="visit-replay">
+                    <div className="sectlabel">Visit Replay</div>
+                    <RouteMap
+                      route={replayRoute}
+                      distanceMeters={replay?.gpsSummary?.distanceMeters}
+                      durationSeconds={replay?.gpsSummary?.durationSeconds}
+                    />
                   </div>
-                </>
-              ) : (
-                <p className="sub">This visit isn&rsquo;t linked to a booking yet, so notes aren&rsquo;t available here.</p>
-              )}
-            </section>
+                )}
+              </section>
+            )}
           </div>
 
           <div className="stack">
@@ -374,6 +452,11 @@ export function BookingDetail() {
                 <div className="info">
                   <b>{found.title ?? found.serviceType ?? 'Visit'}</b>
                   <small>{bookingSubtitle(found)}</small>
+                  {found.address && (
+                    <small className="bk-address" data-testid="visit-address">
+                      {'\u{1F4CD}'} {found.address}
+                    </small>
+                  )}
                 </div>
                 <div className="pet">{speciesEmoji(null)}</div>
               </div>
@@ -540,6 +623,10 @@ export function BookingDetail() {
                         {'✕'} {found.cancelRequestStatus === 'declined' ? 'Ask again' : 'Request cancellation'}
                       </button>
                     )
+                  ) : found.rescheduleRequestStatus === 'pending' && canAct ? (
+                    <p className="sub" style={{ margin: 0 }} data-testid="cancel-held">
+                      You can ask to cancel once Tribe Tails answers your new time.
+                    </p>
                   ) : null}
                   </>
                 )}

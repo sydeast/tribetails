@@ -39,6 +39,7 @@ import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.openExternalUrl
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import com.kinfolk.portal.util.formatPhone
 
 /**
  * `EMERGENCY_CONTACTS_MAX` and the field limits in `mytribe/functions/src/lib/emergencyContacts.ts`.
@@ -79,7 +80,7 @@ const val EMERGENCY_CONTACT_WHO_GETS_CALLED = "Called only when no kinfolk can b
 private val EMPTY_DRAFT = EmergencyContactInput("", "", "")
 
 private fun toDrafts(contacts: List<EmergencyContactDto>): List<EmergencyContactInput> =
-    contacts.map { EmergencyContactInput(it.name, it.phone, it.relationship.orEmpty()) }.ifEmpty { listOf(EMPTY_DRAFT) }
+    contacts.map { EmergencyContactInput(it.name, formatPhone(it.phone), it.relationship.orEmpty()) }.ifEmpty { listOf(EMPTY_DRAFT) }
 
 
 /**
@@ -243,7 +244,7 @@ fun EmergencyContactsCard(
                                 Text(c.name, style = type.sansBody)
                                 c.relationship?.let { Text(it, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted)) }
                                 Text(
-                                    c.phone,
+                                    formatPhone(c.phone),
                                     style = type.sansBody.copy(color = KinfolkBrand.KinTeal),
                                     modifier = Modifier.clickable { openUrl("tel:${c.phone}") },
                                 )

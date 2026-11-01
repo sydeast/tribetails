@@ -135,9 +135,26 @@ fun Booking.requestedNight(): LocalDate? =
  * by your Auntie". Mirrors `visitWhenLine` in mytribe/web/src/lib/portalFormat.ts.
  */
 fun bookingWhenLabel(b: Booking, nowMillis: Long = Clock.System.now().toEpochMilliseconds()): String {
-    if (!b.startTimePending) return relativeTime(b.startTimeMs, nowMillis)
+    if (!b.startTimePending) {
+        val base = relativeTime(b.startTimeMs, nowMillis)
+        // #1301: a block visit's stored start is only the window's anchor, so
+        // the row names the window rather than implying a booked time.
+        val block = bookingBlockText(b) ?: return base
+        return if (base.isEmpty()) block else "$base · $block"
+    }
     val night = b.requestedNight() ?: return AUNTIE_SETS_START_TIME
     return "${NightWeekdays[night.dayOfWeek.ordinal]} night · $AUNTIE_SETS_START_TIME"
+}
+/**
+ * #1301: "Midday (11 AM to 3 PM)" for a visit booked into a window, "Midday"
+ * when the window has since been removed, null for a by-the-clock visit.
+ * Mirrors `visitBlockText` in mytribe/web/src/lib/portalFormat.ts.
+ */
+fun bookingBlockText(b: Booking): String? {
+    val label = b.timeBlockLabel ?: return null
+    val start = b.timeBlockStartTime
+    val end = b.timeBlockEndTime
+    return if (start != null && end != null) "$label (${com.kinfolk.portal.screens.schedule.formatClockRange12(start, end)})" else label
 }
 /**
  * The instant a booked visit sorts at: its start, or for a night still waiting

@@ -35,7 +35,6 @@ export function Kin() {
         <div className="titlerow">
           <div>
             <h2>The Kin</h2>
-            <div className="sub">Everyone who shares your home. Tap a card to open the full profile.</div>
           </div>
           <Link className="btn grad" to="/kin/new">
             + Add New
