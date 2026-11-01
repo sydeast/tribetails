@@ -12,6 +12,7 @@ import { viewOfQuery } from '../lib/queryState';
 import { speciesEmoji } from '../lib/portalFormat';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { usePortalMutation } from '../lib/mutationState';
+import { refreshAfterSave } from '../lib/refreshAfterSave';
 
 const FALLBACK = 'Not set';
 
@@ -34,8 +35,9 @@ export function KinDetail() {
   // 'noLongerWithUs') onto a known doc id, so a replay writes the same value.
   const archive = usePortalMutation({
     mutationFn: (reason: 'noLongerWithUs' | 'restore') => archiveKin(kinId, reason, kinfolkId),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['myKin', kinfolkId] });
+    // #1281: pending until the kin list shows the change.
+    onSuccess: async () => {
+      await refreshAfterSave(queryClient, ['myKin', kinfolkId]);
       setConfirmingArchive(false);
     },
   }, { policy: 'hold', what: 'this change' });

@@ -32,7 +32,7 @@ describe('requestBookingCancellationHandler', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     const { requestBookingCancellationHandler } = await import('../src/portal/requestBookingCancellation');
     const res = await requestBookingCancellationHandler(CALLER);
-    expect(res).toEqual({ ok: true, visitId: 'v1', alreadyPending: false });
+    expect(res).toMatchObject({ ok: true, visitId: 'v1', alreadyPending: false });
     const write = ctx.writes.find((w) => w.path === VISIT);
     expect(write?.data?.cancelRequestedAt).toBe('__SERVER_TS__');
     expect(write?.data?.cancelRequestedByUid).toBe('u1');

@@ -1420,6 +1420,7 @@ class PortalApi(private val fns: FunctionsClient) {
             ok = raw["ok"]?.jsonPrimitive?.booleanOrNull ?: false,
             visitId = raw["visitId"]?.jsonPrimitive?.contentOrNull ?: visitId,
             alreadyPending = raw["alreadyPending"]?.jsonPrimitive?.booleanOrNull ?: false,
+            visit = (raw["visit"] as? JsonObject)?.let(::decodeBooking),
         )
     }
 
@@ -1458,6 +1459,7 @@ class PortalApi(private val fns: FunctionsClient) {
             visitId = raw["visitId"]?.jsonPrimitive?.contentOrNull ?: visitId,
             proposedStartTimeMs = raw["proposedStartTimeMs"]?.jsonPrimitive?.longOrNull ?: proposedStartTimeMs,
             proposedEndTimeMs = raw["proposedEndTimeMs"]?.jsonPrimitive?.longOrNull,
+            visit = (raw["visit"] as? JsonObject)?.let(::decodeBooking),
         )
     }
 

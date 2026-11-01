@@ -26,6 +26,15 @@ body {
 .nav { position: sticky; top: 0; z-index: 20; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
   background: rgba(251, 251, 249, .72); border-bottom: 1px solid var(--hairline); }
 .nav .in { max-width: var(--maxw); margin: 0 auto; padding: 14px 24px; display: flex; align-items: center; gap: 20px; }
+/* #1281: the confirmation a save leaves behind, drawn under the nav (components/SaveNotice.tsx). */
+.savenotice { position: sticky; top: 62px; z-index: 19; padding: 10px 24px 0; }
+.savenotice .in { max-width: var(--maxw); margin: 0 auto; display: flex; align-items: center; gap: 11px; padding: 11px 14px;
+  border-radius: 16px; background: rgba(10, 133, 149, .1); border: 1px solid rgba(10, 133, 149, .22); }
+.savenotice .ico { flex: 0 0 auto; width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center;
+  background: rgba(10, 133, 149, .16); color: var(--teal); font-weight: 700; }
+.savenotice .tt { font-size: 13.5px; font-weight: 600; color: var(--navy); }
+.savenotice .x { margin-left: auto; border: 0; background: none; font-size: 18px; color: var(--navy-muted); cursor: pointer; padding: 0 4px; }
+@media (max-width: 640px) { .savenotice { padding: 8px 16px 0; } }
 .wordmark { font-family: var(--serif); font-size: 23px; letter-spacing: -.01em; line-height: 1; white-space: nowrap; }
 /* Operator-supplied logo, left of the wordmark. Every dimension here is a CEILING,
    because the file is uploaded by an operator and this header is client-facing:
