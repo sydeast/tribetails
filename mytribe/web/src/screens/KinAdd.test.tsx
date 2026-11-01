@@ -37,10 +37,46 @@ beforeEach(() => {
 });
 
 describe('KinAdd', () => {
-  it('starts with every field blank and Save disabled (name required)', () => {
+  it('starts with every field blank and no error showing before the user has typed anything (#1312)', () => {
     renderScreen();
     expect((screen.getByLabelText(/^Name/i) as HTMLInputElement).value).toBe('');
-    expect(screen.getByRole('button', { name: /Add Kin/i })).toBeDisabled();
+    expect(screen.queryByText('Name is required.')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Fix the highlighted fields/i)).not.toBeInTheDocument();
+  });
+  it('shows the name error after the field is left empty, and on an Add tap, without calling addKin (#1312)', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await user.click(screen.getByLabelText(/^Name/i));
+    await user.tab();
+    expect(await screen.findByText('Name is required.')).toBeInTheDocument();
+    expect(mocks.addKin).not.toHaveBeenCalled();
+  });
+  it('an Add tap on the untouched form reveals the error instead of doing nothing (#1312)', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await user.click(screen.getByRole('button', { name: /Add Kin/i }));
+    expect(await screen.findByText('Name is required.')).toBeInTheDocument();
+    expect(mocks.addKin).not.toHaveBeenCalled();
+  });
+  it('species is a picker, and Other opens a free-text box whose text is what is saved (#1313)', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await user.type(screen.getByLabelText(/^Name/i), 'Moss');
+    const picker = screen.getByLabelText(/^Species/i) as HTMLSelectElement;
+    expect(picker.tagName).toBe('SELECT');
+    expect(Array.from(picker.options).map((o) => o.text)).toEqual([
+      'Choose a species', 'Dog', 'Cat', 'Bird', 'Rabbit', 'Reptile', 'Small mammal', 'Other',
+    ]);
+    expect(screen.queryByLabelText('Other species')).not.toBeInTheDocument();
+    await user.selectOptions(picker, 'Other');
+    await user.type(screen.getByLabelText('Other species'), 'Ferret');
+    await user.click(screen.getByRole('button', { name: /Add Kin/i }));
+    await waitFor(() => expect(mocks.addKin).toHaveBeenCalledTimes(1));
+    expect(mocks.addKin).toHaveBeenCalledWith(expect.objectContaining({ name: 'Moss', species: 'Ferret' }), 'fam1');
+  });
+  it('does not render the card-head explanatory copy', () => {
+    renderScreen();
+    expect(screen.queryByText(/The basics your Aunties see first/i)).not.toBeInTheDocument();
   });
 
   it('happy path: submits the full payload and navigates to the new profile', async () => {
@@ -48,7 +84,7 @@ describe('KinAdd', () => {
     renderScreen();
 
     await user.type(screen.getByLabelText(/^Name/i), 'Rex');
-    await user.type(screen.getByLabelText(/^Species/i), 'Dog');
+    await user.selectOptions(screen.getByLabelText(/^Species/i), 'Dog');
     await user.click(screen.getByRole('button', { name: /Add Kin/i }));
 
     await waitFor(() => expect(mocks.addKin).toHaveBeenCalledTimes(1));
@@ -65,7 +101,7 @@ describe('KinAdd', () => {
 
     await user.type(screen.getByLabelText(/^Name/i), '   ');
     expect(await screen.findByText('Name is required.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Add Kin/i })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: /Add Kin/i }));
     expect(mocks.addKin).not.toHaveBeenCalled();
   });
 
@@ -77,7 +113,7 @@ describe('KinAdd', () => {
     await user.type(screen.getByLabelText(/Photo URL/i), 'javascript:alert(1)');
 
     expect(await screen.findByText(/must start with http/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Add Kin/i })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: /Add Kin/i }));
     expect(mocks.addKin).not.toHaveBeenCalled();
   });
 

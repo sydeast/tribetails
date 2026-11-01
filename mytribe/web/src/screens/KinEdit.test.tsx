@@ -75,11 +75,33 @@ beforeEach(() => {
 });
 
 describe('KinEdit', () => {
+  it('opens a stored species the picker does not list on Other with its text intact (#1313)', async () => {
+    mocks.getMyKin.mockResolvedValue({ kin: [kin({ species: 'Ferret' })] });
+    renderScreen();
+    const picker = (await screen.findByLabelText(/^Species/i)) as HTMLSelectElement;
+    expect(picker.value).toBe('Other');
+    expect((screen.getByLabelText('Other species') as HTMLInputElement).value).toBe('Ferret');
+  });
+  it('matches a stored species case-insensitively without rewriting it (#1313)', async () => {
+    mocks.getMyKin.mockResolvedValue({ kin: [kin({ species: 'cat' })] });
+    renderScreen();
+    const picker = (await screen.findByLabelText(/^Species/i)) as HTMLSelectElement;
+    expect(picker.value).toBe('Cat');
+    expect(screen.getByRole('button', { name: /Save/i })).toBeDisabled();
+  });
+  it('changing species through the picker sends only species', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await user.selectOptions(await screen.findByLabelText(/^Species/i), 'Cat');
+    await user.click(screen.getByRole('button', { name: /Save/i }));
+    await waitFor(() => expect(mocks.updateKin).toHaveBeenCalledTimes(1));
+    expect(mocks.updateKin).toHaveBeenCalledWith('k1', { species: 'Cat' }, 'fam1');
+  });
   it('prefills the form from the existing kin', async () => {
     renderScreen();
     const nameInput = (await screen.findByLabelText(/Name/i)) as HTMLInputElement;
     expect(nameInput.value).toBe('Buddy');
-    expect((screen.getByLabelText(/Species/i) as HTMLInputElement).value).toBe('Dog');
+    expect((screen.getByLabelText(/Species/i) as HTMLSelectElement).value).toBe('Dog');
     expect((screen.getByLabelText(/Age/i) as HTMLInputElement).value).toBe('3');
   });
 

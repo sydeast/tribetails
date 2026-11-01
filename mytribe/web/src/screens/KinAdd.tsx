@@ -4,7 +4,8 @@ import { useState } from 'react';
 import { addKin } from '../api/portal';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
-import { buildNewKinPayload, emptyKinForm, hasErrors, validateKinForm, type KinEditForm } from '../lib/kinEditForm';
+import { SpeciesField } from '../components/SpeciesField';
+import { buildNewKinPayload, emptyKinForm, hasErrors, validateKinForm, type KinEditForm, type KinFormErrors } from '../lib/kinEditForm';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { usePortalMutation } from '../lib/mutationState';
 
@@ -35,13 +36,30 @@ export function KinAdd() {
     },
   }, { policy: 'abandon', what: 'this Kin' });
 
-  const errors = validateKinForm(form);
-  const canSave = !hasErrors(errors) && !save.isPending;
+  const allErrors = validateKinForm(form);
 
-  const set = (key: keyof KinEditForm, value: string) => setForm((f) => ({ ...f, [key]: value }));
+  // An error shows once its field has been touched (changed or left) or a save
+  // has been attempted, never on first paint: a blank form is not wrong yet.
+  // The Add button stays live so a tap on an incomplete form explains itself
+  // instead of doing nothing.
+  const [touched, setTouched] = useState<Partial<Record<keyof KinEditForm, boolean>>>({});
+  const [attempted, setAttempted] = useState(false);
+  const errors: KinFormErrors = attempted
+    ? allErrors
+    : Object.fromEntries(Object.entries(allErrors).filter(([k]) => touched[k as keyof KinEditForm]));
+  const touch = (key: keyof KinEditForm) => setTouched((t) => (t[key] ? t : { ...t, [key]: true }));
+
+  const set = (key: keyof KinEditForm, value: string) => {
+    touch(key);
+    setForm((f) => ({ ...f, [key]: value }));
+  };
 
   const submit = () => {
-    if (!canSave) return;
+    if (save.isPending) return;
+    if (hasErrors(allErrors)) {
+      setAttempted(true);
+      return;
+    }
     save.mutate();
   };
 
@@ -52,9 +70,9 @@ export function KinAdd() {
         {opts?.required ? ' *' : ''}
       </label>
       {opts?.area ? (
-        <textarea id={`kin-new-${key}`} className="inp" value={form[key]} onChange={(e) => set(key, e.target.value)} />
+        <textarea id={`kin-new-${key}`} className="inp" value={form[key]} onChange={(e) => set(key, e.target.value)} onBlur={() => touch(key)} />
       ) : (
-        <input id={`kin-new-${key}`} className="inp" type={opts?.type ?? 'text'} value={form[key]} onChange={(e) => set(key, e.target.value)} />
+        <input id={`kin-new-${key}`} className="inp" type={opts?.type ?? 'text'} value={form[key]} onChange={(e) => set(key, e.target.value)} onBlur={() => touch(key)} />
       )}
       {errors[key] && (
         <span className="hint" style={{ color: 'var(--coral)' }}>
@@ -85,12 +103,11 @@ export function KinAdd() {
               <div className="ic orange">{'\u{1F43E}'}</div>
               <div className="htxt">
                 <h3 className="title">About</h3>
-                <p className="sub">The basics your Aunties see first.</p>
               </div>
             </div>
             <div className="grid2">
               {textField('name', 'Name', { full: true, required: true })}
-              {textField('species', 'Species')}
+              <SpeciesField id="kin-new-species" value={form.species} onChange={(v) => set('species', v)} error={errors.species} />
               {textField('breed', 'Breed')}
               {textField('ageYears', 'Age (years)', { type: 'text' })}
               {textField('photoUrl', 'Photo URL', { full: true, type: 'url' })}
@@ -103,7 +120,6 @@ export function KinAdd() {
               <div className="ic teal">{'\u{1F37D}'}</div>
               <div className="htxt">
                 <h3 className="title">Care</h3>
-                <p className="sub">Daily routine and needs.</p>
               </div>
             </div>
             <div className="grid2">
@@ -120,7 +136,6 @@ export function KinAdd() {
               <div className="ic purple">{'\u{1F4DD}'}</div>
               <div className="htxt">
                 <h3 className="title">Notes</h3>
-                <p className="sub">Good-to-know details and emergencies.</p>
               </div>
             </div>
             <div className="grid2">
@@ -132,7 +147,7 @@ export function KinAdd() {
           {/* SAVE BAR */}
           <section style={{ marginTop: 6 }}>
             <div className="savebar">
-              <button className="btn grad" type="button" onClick={submit} disabled={!canSave}>
+              <button className="btn grad" type="button" onClick={submit} disabled={save.isPending}>
                 {'\u{1F43E}'}{' '}
                 <MutationLabel mutation={save} busy="Adding…">
                   Add Kin

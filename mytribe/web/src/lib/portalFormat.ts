@@ -102,12 +102,15 @@ const SPECIES_EMOJI: Record<string, string> = {
   fish: '\u{1F41F}',
   reptile: '\u{1F98E}',
   small_mammal: '\u{1F439}',
+  small_animal: '\u{1F439}',
+  turtle: '\u{1F422}',
 };
 
 /** Best-effort emoji for a kin's species; falls back to a paw print. */
 export function speciesEmoji(species: string | null): string {
   if (!species) return '\u{1F43E}';
-  return SPECIES_EMOJI[species.toLowerCase()] ?? '\u{1F43E}';
+  // "Small mammal" (the picker's spelling) and small_mammal are the same key.
+  return SPECIES_EMOJI[species.trim().toLowerCase().replace(/[\s-]+/g, '_')] ?? '\u{1F43E}';
 }
 
 export interface ChipInfo {

@@ -26,6 +26,22 @@ export interface KinEditForm {
   sitterNotes: string;
 }
 
+/**
+ * Species the portal offers in the picker. Same seven as the admin's
+ * `NEW_KIN_SPECIES_OPTIONS` (auntieos-admin/src/api/directoryWrite.ts), so a
+ * pet created on either side lands on a value the avatar icon table knows.
+ * `Other` is a picker entry, never a stored value: it reveals a free-text box
+ * and the typed text is what is saved.
+ */
+export const KIN_SPECIES_OPTIONS = ['Dog', 'Cat', 'Bird', 'Rabbit', 'Reptile', 'Small mammal'] as const;
+export const SPECIES_OTHER = 'Other';
+/** The picker entry a stored species belongs to: a listed species (any case), else Other, else '' for unset. */
+export function speciesChoice(species: string): string {
+  const trimmed = species.trim();
+  if (trimmed === '') return '';
+  const listed = KIN_SPECIES_OPTIONS.find((o) => o.toLowerCase() === trimmed.toLowerCase());
+  return listed ?? SPECIES_OTHER;
+}
 /** Max lengths transcribed from the KinPayload zod schema. */
 export const KIN_MAX = {
   name: 80,
