@@ -9,11 +9,14 @@ import { householdStaffFlag } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { FULL_CPU } from '../lib/runtimeOptions';
+import { hasBillingAccess } from '../lib/memberGate';
+import { loadVisitExtras, NO_EXTRAS, type VisitExtras } from '../lib/portalVisitLinks';
 import {
   BookingDtoSchema,
   EnvelopeDtoSchema,
   envelopeToDto,
   kinCareToDto,
+  loadBlocksById,
   stringOrNull,
   visitSortMs,
   resolveBatchId,
@@ -59,13 +62,31 @@ export async function getMyBookingsHandler(
     .where('familyId', '==', kinfolkId)
     .get();
 
+  // #1303: the address, and for completed visits the KinTale and invoice they
+  // point at. Billing access is asked after the household is resolved, as the
+  // helper requires, and only when a completed visit could use the answer.
+  const completedSessions = snap.docs.filter((d) => {
+    const data = d.data() as Record<string, unknown>;
+    return data['status'] === 'completed' && stringOrNull(data['sessionId']) !== null;
+  });
+  let extras: VisitExtras = NO_EXTRAS;
+  try {
+    const billingAccess =
+      completedSessions.length > 0
+        ? await hasBillingAccess(uid, kinfolkId, req.auth?.token?.admin === true, 'getMyBookings')
+        : false;
+    extras = await loadVisitExtras(firestore, kinfolkId, { wantLinks: completedSessions.length > 0, billingAccess });
+  } catch {
+    extras = NO_EXTRAS;
+  }
+  const blocksById = await loadBlocksById(firestore);
   const nowMs = Date.now();
   // batchId -> kinCare dtos, preserving the parent envelope id per visit.
   const byBatch = new Map<string, BookingDto[]>();
   const all: BookingDto[] = snap.docs.map((d) => {
     const data = d.data() as Record<string, unknown>;
     const batchId = resolveBatchId(d, data);
-    const dto = kinCareToDto(d.id, data, batchId, kinfolkId);
+    const dto = kinCareToDto(d.id, data, batchId, kinfolkId, extras, blocksById);
     if (batchId) {
       const bucket = byBatch.get(batchId) ?? [];
       bucket.push(dto);
@@ -117,12 +138,16 @@ export async function getMyBookingsHandler(
       kinfolkId,
       status,
       serviceType: stringOrNull(s['serviceType']),
+      serviceId: null,
       title: stringOrNull(s['serviceType']),
       startTimeMs,
       endTimeMs: isoMillis(s['endTime']),
       // A session always has its time; only a kinCares visit can await one.
       startTimePending: false,
       requestedDate: null,
+      timeBlockLabel: null,
+      timeBlockStartTime: null,
+      timeBlockEndTime: null,
       kinIds: Array.isArray(s['kinIds']) ? (s['kinIds'] as string[]) : [],
       kinNames: [],
       auntieDisplayName: null,
@@ -146,6 +171,9 @@ export async function getMyBookingsHandler(
       rescheduleRequestedEndTimeMs: null,
       rescheduleRequestReason: null,
       rescheduleResponseNote: null,
+      address: extras.address,
+      kinTaleId: null,
+      invoiceId: null,
     };
     if (status === 'active' || status === 'enRoute') {
       if (!liveVisit) liveVisit = dto;

@@ -102,9 +102,13 @@ export function BookingMonthPicker(props: {
           const closedName = closedDates.get(key);
           const closed = closedName !== undefined;
           const bookable = isBookableDay(d, today, horizonEnd);
+          // #1301: today carries a ring and `aria-current`, selected or not, so the grid says where "now" is.
+          const isToday = key === dateKey(today);
           const title = closed
             ? `Closed: ${closedName}`
-            : bookable
+            : isToday && bookable
+              ? 'Today'
+              : bookable
               ? undefined
               : d < today
                 ? 'Already past'
@@ -113,8 +117,9 @@ export function BookingMonthPicker(props: {
             <button
               key={key}
               type="button"
-              className={`mp-day ${selected ? 'is-on' : ''} ${closed ? 'is-closed' : ''} ${bookable ? '' : 'is-unavailable'}`}
+              className={`mp-day ${selected ? 'is-on' : ''} ${closed ? 'is-closed' : ''} ${bookable ? '' : 'is-unavailable'} ${isToday ? 'is-today' : ''}`}
               aria-pressed={selected}
+              aria-current={isToday ? 'date' : undefined}
               disabled={closed || !bookable}
               title={title}
               onClick={() => props.onToggle(key, d)}

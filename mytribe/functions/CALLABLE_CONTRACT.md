@@ -1754,7 +1754,11 @@ closure so the operator can act on them manually.
 ### getBusinessClosures
 - req `{ fromDate: string (YYYY-MM-DD), toDate: string (YYYY-MM-DD) }`, range
   capped at 120 days, `toDate >= fromDate`.
-- res `{ closures: Array<{ date: string, name: string }> }`, sorted by date.
+- res `{ closures: Array<{ date: string, name: string }>, weeklyHours:
+  Array<{ weekday: number /* 0 = Sunday */, open: boolean, startTime: string | null,
+  endTime: string | null }>, timeZone: string }`, closures sorted by date.
+  `weeklyHours` is seven entries (Sunday first) or `[]` when the business has no
+  readable weekly hours; `[]` means "no restriction known" (#1284).
 - The kinfolk portal's ONE way to learn which dates are closed:
   `business_settings` is admin-only in `firestore.rules`
   (`allow read: if isAuntie() || isTestAdmin();`), so `mytribe/web` cannot read
@@ -2220,6 +2224,9 @@ the handler.
   asks that sat unread from 2026-07-02 until #438 built the queue.
 - Only `requested`/`confirmed` visits are cancelable; anything else is
   `failed-precondition`.
+- #1299: refused with `failed-precondition` while a reschedule ask is pending
+  on the visit. A visit carries at most one open ask; `requestBookingReschedule`
+  refuses the other way round. Clients hide the second action.
 - kinfolk portal only.
 
 - req `{ kinfolkId?: string, batchId: string, visitId: string, proposedStartTimeMs: number, proposedEndTimeMs?: number, reason?: string }`
@@ -2240,6 +2247,9 @@ the handler.
 - A second proposal while one is pending is `already-exists`, not a silent
   overwrite: the office may already be acting on the time it was shown. A fresh
   proposal after a decline IS allowed, and clears the previous answer.
+- #1299: refused with `failed-precondition` while a cancellation ask is
+  pending (a pre-#438 bare `cancelRequestedAt` counts as pending), the mirror of
+  the rule on `requestBookingCancellation`.
 - Only `requested`/`confirmed` visits qualify; anything else is
   `failed-precondition`.
 - `onBookingsWrite` fires `kincare.reschedule.requested` to the business on the
@@ -2517,7 +2527,15 @@ instead of hand mirrors.
 - writes `.../kinCares/{visitId}/notes`, `authorRole` stamped from the CALLER
   (`'admin'` or `'kinfolk'`), never sent by the client
 
-### addInternalBookingNote
+### getBookingNotes
+- req `{ kinfolkId?: string, batchId: string, visitId: string }`
+- res `{ bookingNote: string | null, notes: Array<{ id: string, body: string, createdAtMs: number | null }> }`
+- `bookingNote` is the booking wizard's Extra Love & Context text off the parent
+  booking; `notes` are the household's own rows from `.../kinCares/{visitId}/notes`
+  (`authorRole === 'kinfolk'` only), oldest first, at most 200
+- NEVER returns staff rows (`authorRole: 'admin'`), `internalNotes`, dossier or
+  411 text; the filter runs on the server (#1283)
+- an Auntie is refused (household callable, `householdStaffFlag`)
 - req: identical to `addBookingNote`
 - res `{ noteId: string }`
 - writes `.../kinCares/{visitId}/internalNotes`, `authorRole` always `'admin'`

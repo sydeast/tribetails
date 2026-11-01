@@ -15,6 +15,8 @@
 import { Timestamp } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
 import { z } from 'zod';
+import { NO_EXTRAS, readHouseholdAddress, type VisitExtras } from './portalVisitLinks';
+import { resolveBookingPolicy } from './bookingTimeBlocks';
 export const BookingDtoSchema = z
   .object({
     /** kinCare (per-visit) document id. */
@@ -24,6 +26,13 @@ export const BookingDtoSchema = z
     kinfolkId: z.string().min(1),
     status: z.enum(['requested', 'confirmed', 'enRoute', 'active', 'completed', 'cancelled']),
     serviceType: z.string().nullable(),
+    /**
+     * #1284: the catalog service this visit was booked as, so the reschedule
+     * picker can tell a start-time KinCare (an overnight, booked by the clock
+     * whatever the block switches say) from one that rides a time block. Null
+     * on a visit that carries none (a session with no booking, an older doc).
+     */
+    serviceId: z.string().nullable(),
     title: z.string().nullable(),
     startTimeMs: z.number().int().nullable(),
     endTimeMs: z.number().int().nullable(),
@@ -37,6 +46,15 @@ export const BookingDtoSchema = z
     startTimePending: z.boolean(),
     /** #1098: the night asked for (business-local `YYYY-MM-DD`) while `startTimePending`; null otherwise. */
     requestedDate: z.string().nullable(),
+    /**
+     * #1301: the named window the household booked this visit into ("Midday"),
+     * or null for a by-the-clock visit. A block visit has a start time that is
+     * only the window's anchor, so clients show the window, never the clock.
+     */
+    timeBlockLabel: z.string().nullable(),
+    /** #1301: that window's `HH:MM` bounds in the business's zone, null when the block has since been removed. */
+    timeBlockStartTime: z.string().nullable(),
+    timeBlockEndTime: z.string().nullable(),
     kinIds: z.array(z.string()),
     kinNames: z.array(z.string()),
     auntieDisplayName: z.string().nullable(),
@@ -89,9 +107,24 @@ export const BookingDtoSchema = z
     rescheduleRequestReason: z.string().nullable(),
     /** What the office said when it accepted or declined. */
     rescheduleResponseNote: z.string().nullable(),
+    /**
+     * #1303: the household's address, which is where every visit happens (a
+     * visit carries none of its own). Null when none is on file.
+     */
+    address: z.string().nullable(),
+    /**
+     * #1303: the sent KinTale for this visit, set only on a completed visit
+     * that has one. Null otherwise.
+     */
+    kinTaleId: z.string().nullable(),
+    /**
+     * #1303: the invoice billing this visit, set only on a completed visit
+     * that has one AND only for a member with billing access. Null otherwise,
+     * so a member without billing access never learns an invoice exists.
+     */
+    invoiceId: z.string().nullable(),
   })
   .strict();
-
 export type BookingDto = z.infer<typeof BookingDtoSchema>;
 
 export const EnvelopeDtoSchema = z
@@ -120,25 +153,62 @@ export const EnvelopeDtoSchema = z
   .strict();
 
 export type EnvelopeDto = z.infer<typeof EnvelopeDtoSchema>;
-/** One `kinCares/{id}` document as the portal reads it. */
+export type BlockBounds = { startTime: string; endTime: string };
+/**
+ * #1301: the business's current windows by id, so a block visit can be shown as
+ * its window. Read through the same resolver `getBookingPolicy` and
+ * `requestBooking` use. A failed read degrades to an empty map: the visit still
+ * carries its stored label, it just has no hours to print.
+ */
+export async function loadBlocksById(firestore: Firestore): Promise<Map<string, BlockBounds>> {
+  try {
+    const snap = await firestore.collection('business_settings').doc('business_settings').get();
+    const { policy } = resolveBookingPolicy(snap.data() ?? {});
+    return new Map(policy.timeBlocks.map((b) => [b.id, { startTime: b.startTime, endTime: b.endTime }]));
+  } catch {
+    return new Map();
+  }
+}
+function blockFieldsOf(data: Record<string, unknown>, blocksById: Map<string, BlockBounds>) {
+  const label = stringOrNull(data['timeBlockLabel']);
+  const id = stringOrNull(data['timeBlockId']);
+  const bounds = id === null ? undefined : blocksById.get(id);
+  return {
+    timeBlockLabel: label,
+    timeBlockStartTime: label === null ? null : (bounds?.startTime ?? null),
+    timeBlockEndTime: label === null ? null : (bounds?.endTime ?? null),
+  };
+}
+/**
+ * One `kinCares/{id}` document as the portal reads it. `blocksById` (#1301)
+ * supplies a block visit's window hours; without it the stored label still
+ * shows, with no hours.
+ */
 export function kinCareToDto(
   id: string,
   data: Record<string, unknown>,
   batchId: string | null,
   kinfolkId: string,
+  extras: VisitExtras = NO_EXTRAS,
+  blocksById: Map<string, BlockBounds> = new Map(),
 ): BookingDto {
   const cancelStatus = cancelRequestStatusOf(data);
+  const status = (data['status'] as BookingDto['status']) ?? 'requested';
+  const sessionId = stringOrNull(data['sessionId']);
+  const completedSession = status === 'completed' && sessionId !== null ? sessionId : null;
   return {
     id,
     batchId,
     kinfolkId,
-    status: (data['status'] as BookingDto['status']) ?? 'requested',
+    status,
     serviceType: stringOrNull(data['serviceType']) ?? stringOrNull(data['serviceName']),
+    serviceId: stringOrNull(data['serviceId']),
     title: stringOrNull(data['title']),
     startTimeMs: tsMillis(data['startTime']),
     endTimeMs: tsMillis(data['endTime']),
     startTimePending: data['startTimePending'] === true,
     requestedDate: data['startTimePending'] === true ? stringOrNull(data['requestedDate']) : null,
+    ...blockFieldsOf(data, blocksById),
     kinIds: Array.isArray(data['kinIds']) ? (data['kinIds'] as string[]) : [],
     kinNames: Array.isArray(data['kinNames']) ? (data['kinNames'] as string[]) : [],
     auntieDisplayName: stringOrNull(data['auntieDisplayName']),
@@ -149,7 +219,7 @@ export function kinCareToDto(
     updatedAtMs: tsMillis(data['updatedAt']),
     visitProgress: (data['visitProgress'] as BookingDto['visitProgress']) ?? null,
     sourceBookingId: stringOrNull(data['sourceBookingId']),
-    sessionId: stringOrNull(data['sessionId']),
+    sessionId,
     cancelRequested: cancelStatus === 'pending',
     cancelRequestStatus: cancelStatus,
     cancelRequestReason: stringOrNull(data['cancelRequestReason']),
@@ -159,6 +229,9 @@ export function kinCareToDto(
     rescheduleRequestedEndTimeMs: tsMillis(data['rescheduleRequestedEndTime']),
     rescheduleRequestReason: stringOrNull(data['rescheduleRequestReason']),
     rescheduleResponseNote: stringOrNull(data['rescheduleResponseNote']),
+    address: extras.address,
+    kinTaleId: completedSession !== null ? (extras.kinTaleBySession.get(completedSession) ?? null) : null,
+    invoiceId: completedSession !== null ? (extras.invoiceBySession.get(completedSession) ?? null) : null,
   };
 }
 /** One `bookings/{batchId}` envelope with its visits, as the portal reads it. */
@@ -198,11 +271,19 @@ export async function readEnvelopeDto(
 ): Promise<EnvelopeDto | null> {
   try {
     const parentRef = firestore.doc(`families/${kinfolkId}/bookings/${batchId}`);
-    const [parentSnap, visitsSnap] = await Promise.all([parentRef.get(), parentRef.collection('kinCares').get()]);
+    const [parentSnap, visitsSnap, blocksById] = await Promise.all([
+      parentRef.get(),
+      parentRef.collection('kinCares').get(),
+      loadBlocksById(firestore),
+    ]);
     if (!parentSnap.exists) return null;
     const env = (parentSnap.data() ?? {}) as Record<string, unknown>;
+    // A written envelope's visits are upcoming ones: the address rides along so
+    // the cache entry it replaces does not lose it, and there are no completed
+    // visits to link.
+    const extras: VisitExtras = { ...NO_EXTRAS, address: await readHouseholdAddress(firestore, kinfolkId) };
     const visits = visitsSnap.docs.map((d) =>
-      kinCareToDto(d.id, d.data() as Record<string, unknown>, stringOrNull((d.data() as Record<string, unknown>)['batchId']) ?? batchId, kinfolkId),
+      kinCareToDto(d.id, d.data() as Record<string, unknown>, stringOrNull((d.data() as Record<string, unknown>)['batchId']) ?? batchId, kinfolkId, extras, blocksById),
     );
     return EnvelopeDtoSchema.parse(envelopeToDto(batchId, env, visits));
   } catch {
@@ -217,10 +298,14 @@ export async function readVisitDto(
   visitId: string,
 ): Promise<BookingDto | null> {
   try {
-    const snap = await firestore.doc(`families/${kinfolkId}/bookings/${batchId}/kinCares/${visitId}`).get();
+    const [snap, blocksById] = await Promise.all([
+      firestore.doc(`families/${kinfolkId}/bookings/${batchId}/kinCares/${visitId}`).get(),
+      loadBlocksById(firestore),
+    ]);
     if (!snap.exists) return null;
     const data = (snap.data() ?? {}) as Record<string, unknown>;
-    return BookingDtoSchema.parse(kinCareToDto(visitId, data, stringOrNull(data['batchId']) ?? batchId, kinfolkId));
+    const extras: VisitExtras = { ...NO_EXTRAS, address: await readHouseholdAddress(firestore, kinfolkId) };
+    return BookingDtoSchema.parse(kinCareToDto(visitId, data, stringOrNull(data['batchId']) ?? batchId, kinfolkId, extras, blocksById));
   } catch {
     return null;
   }

@@ -140,9 +140,10 @@ class BookingDetailsScreenTest {
 
     @Test
     fun enRouteBooking_showsAuntieEnRouteDistinctFromInProgress() = runComposeUiTest {
-        // Pins BookingStatus.EnRoute to its own label ("Auntie en route") so a
-        // future edit can't quietly collapse it back onto Active's "In
-        // progress" the way the web timeline once did (PR22).
+        // Pins BookingStatus.EnRoute to its own label ("En route", the word the
+        // list and Home pills say in capitals, #1298) so a future edit can't
+        // quietly collapse it back onto Active's "In progress" the way the
+        // web timeline once did (PR22).
         val fake = FakeFunctionsClient()
         stubBooking(fake, "b1", fixedNow + tenHoursMs, status = "enRoute")
 
@@ -157,7 +158,7 @@ class BookingDetailsScreenTest {
         }
         waitForIdle()
 
-        onNodeWithText("Auntie en route").assertIsDisplayed()
+        onNodeWithText("En route").assertIsDisplayed()
     }
 
     @Test

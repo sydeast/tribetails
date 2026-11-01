@@ -134,3 +134,96 @@ describe('saveMyNotificationPrefsHandler', () => {
     expect(w!.merge).toBe(false);
   });
 });
+describe('saveMyNotificationPrefsHandler, single-preference patch (#1292)', () => {
+  const EXISTING = {
+    byCategory: { visit: { email: true, sms: false, push: true }, invoice: { email: true } },
+    byKey: { 'kintale.published': { email: false, push: true }, 'invoice.posted': { sms: true } },
+    marketingOptIn: { newsletter: true },
+  };
+  async function patchWith(patch: unknown, existing: unknown = EXISTING) {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { notificationPrefs: existing } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { saveMyNotificationPrefsHandler } = await import('../src/portal/notificationPrefs');
+    const res = await saveMyNotificationPrefsHandler({ data: { patch }, auth: { uid: 'u1' } } as any);
+    const w = ctx.writes.find((x) => x.path === 'clients/u1');
+    return { res, w, np: w?.data.notificationPrefs as any, ctx };
+  }
+  it('changes one channel and leaves every other preference exactly as stored', async () => {
+    const { res, np, w } = await patchWith({ byCategory: { visit: { sms: true } } });
+    expect(res).toEqual({ ok: true });
+    expect(np.byCategory.visit).toEqual({ email: true, sms: true, push: true });
+    expect(np.byCategory.invoice).toEqual({ email: true });
+    expect(np.byKey).toEqual(EXISTING.byKey);
+    expect(np.marketingOptIn).toEqual({ newsletter: true });
+    expect(w!.options).toEqual({ mergeFields: ['notificationPrefs', 'notificationPrefsUpdatedAt'] });
+  });
+  it('a patch against a household with no stored prefs creates the subtree from just that choice', async () => {
+    const ctx = buildDbMock();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { saveMyNotificationPrefsHandler } = await import('../src/portal/notificationPrefs');
+    await saveMyNotificationPrefsHandler({
+      data: { patch: { byCategory: { visit: { sms: true } } } },
+      auth: { uid: 'u1' },
+    } as any);
+    const np = ctx.writes.find((x) => x.path === 'clients/u1')!.data.notificationPrefs as any;
+    expect(np).toEqual({ byCategory: { visit: { sms: true } }, byKey: {}, marketingOptIn: {} });
+  });
+  it('sets a per-key override without touching the category', async () => {
+    const { np } = await patchWith({ byKey: { 'invoice.posted': { email: false } } });
+    expect(np.byKey['invoice.posted']).toEqual({ sms: true, email: false });
+    expect(np.byCategory).toEqual(EXISTING.byCategory);
+  });
+  it('null clears one per-key channel, and the last channel removes the entry', async () => {
+    const { np } = await patchWith({ byKey: { 'invoice.posted': { sms: null } } });
+    expect(np.byKey['invoice.posted']).toBeUndefined();
+    expect(np.byKey['kintale.published']).toEqual({ email: false, push: true });
+  });
+  it('null on a key clears every override on that key', async () => {
+    const { np } = await patchWith({ byKey: { 'kintale.published': null } });
+    expect(np.byKey['kintale.published']).toBeUndefined();
+    expect(np.byKey['invoice.posted']).toEqual({ sms: true });
+  });
+  it('merges marketingOptIn per category', async () => {
+    const { np } = await patchWith({ marketingOptIn: { survey: true } });
+    expect(np.marketingOptIn).toEqual({ newsletter: true, survey: true });
+  });
+  it('applies a whole-category master change (several channels) in one patch', async () => {
+    const { np } = await patchWith({ byCategory: { visit: { email: false, sms: false, push: false } } });
+    expect(np.byCategory.visit).toEqual({ email: false, sms: false, push: false });
+    expect(np.byCategory.invoice).toEqual({ email: true });
+  });
+  it('rejects sending both prefs and patch', async () => {
+    const ctx = buildDbMock();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { saveMyNotificationPrefsHandler } = await import('../src/portal/notificationPrefs');
+    await expect(
+      saveMyNotificationPrefsHandler({ data: { prefs: {}, patch: {} }, auth: { uid: 'u1' } } as any),
+    ).rejects.toThrow();
+    expect(ctx.writes).toHaveLength(0);
+  });
+  it('rejects neither prefs nor patch', async () => {
+    const ctx = buildDbMock();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { saveMyNotificationPrefsHandler } = await import('../src/portal/notificationPrefs');
+    await expect(saveMyNotificationPrefsHandler({ data: {}, auth: { uid: 'u1' } } as any)).rejects.toThrow();
+  });
+  it('rejects an unknown channel or category in a patch and writes nothing', async () => {
+    const ctx = buildDbMock();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { saveMyNotificationPrefsHandler } = await import('../src/portal/notificationPrefs');
+    await expect(
+      saveMyNotificationPrefsHandler({ data: { patch: { byCategory: { visit: { fax: true } } } }, auth: { uid: 'u1' } } as any),
+    ).rejects.toThrow();
+    await expect(
+      saveMyNotificationPrefsHandler({ data: { patch: { byCategory: { nope: { email: true } } } }, auth: { uid: 'u1' } } as any),
+    ).rejects.toThrow();
+    expect(ctx.writes).toHaveLength(0);
+  });
+  it('rejects unauthenticated patches', async () => {
+    const { saveMyNotificationPrefsHandler } = await import('../src/portal/notificationPrefs');
+    await expect(
+      saveMyNotificationPrefsHandler({ data: { patch: {} }, auth: undefined } as any),
+    ).rejects.toMatchObject({ code: 'unauthenticated' });
+  });
+});
+

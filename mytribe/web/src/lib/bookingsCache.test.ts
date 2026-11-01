@@ -8,12 +8,13 @@ import type {
 /** #1281: the cache write a booking callable's reply goes through. */
 function visit(id: string, startTimeMs: number, overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBookingsResultLiveVisit {
   return {
-    id, batchId: 'b-new', kinfolkId: 'fam1', status: 'requested', serviceType: 'Walk', title: 'Walk', startTimeMs,
-    endTimeMs: null, startTimePending: false, requestedDate: null, kinIds: [], kinNames: [], auntieDisplayName: null,
+    id, batchId: 'b-new', kinfolkId: 'fam1', status: 'requested', serviceType: 'Walk', serviceId: null, title: 'Walk', startTimeMs,
+    endTimeMs: null, startTimePending: false, requestedDate: null, timeBlockLabel: null, timeBlockStartTime: null,
+    timeBlockEndTime: null, kinIds: [], kinNames: [], auntieDisplayName: null,
     auntieAvatarUrl: null, notes: null, requestedByUid: null, createdAtMs: null, updatedAtMs: null, visitProgress: null,
     sourceBookingId: null, sessionId: null, cancelRequested: false, cancelRequestStatus: null, cancelRequestReason: null,
     cancelResponseNote: null, rescheduleRequestStatus: null, rescheduleRequestedStartTimeMs: null,
-    rescheduleRequestedEndTimeMs: null, rescheduleRequestReason: null, rescheduleResponseNote: null, ...overrides,
+    rescheduleRequestedEndTimeMs: null, rescheduleRequestReason: null, rescheduleResponseNote: null, address: null, kinTaleId: null, invoiceId: null, ...overrides,
   };
 }
 function envelope(batchId: string, kinCares: GetMyBookingsResultLiveVisit[]): GetMyBookingsResultEnvelope {

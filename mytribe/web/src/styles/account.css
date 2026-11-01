@@ -69,11 +69,13 @@
 .acct .billing-manage { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; padding: 16px;
   border-radius: 16px; background: rgba(255, 255, 255, .34); border: 1px solid var(--glass-border); }
 .acct .billing-manage .sub { margin: 0; }
-/* sticky save bar */
-.acct .savebar { position: sticky; bottom: 18px; margin-top: 28px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+/* save bar: in flow (#1307). It used to be position: sticky and covered fields. */
+.acct .savebar { margin-top: 28px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
   padding: 16px 20px; border-radius: 20px; background: rgba(255, 255, 255, .78); border: 1px solid var(--glass-border);
-  box-shadow: var(--shadow-lift); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-  animation: rise .6s var(--ease) .38s both; }
+  box-shadow: var(--shadow-card); animation: rise .6s var(--ease) .38s both; }
+/* sign out: its own row below Save (#1308) */
+.acct .signout { margin-top: 16px; display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.acct .signout__choices { display: flex; gap: 10px; flex-wrap: wrap; }
 .acct .savebar .grow { flex: 1; min-width: 120px; }
 .acct .btn.coral { background: transparent; color: var(--coral); border: 1px solid rgba(213, 83, 90, .4); box-shadow: none; }
 .acct .btn.coral:hover { background: rgba(213, 83, 90, .10); }

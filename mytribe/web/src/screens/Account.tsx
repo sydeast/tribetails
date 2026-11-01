@@ -646,7 +646,9 @@ export function Account() {
           </div>
         </div>
 
-        {/* sticky save bar */}
+        {/* #1307: in flow, not sticky. The fixed bar sat on Backup Email and Send
+            Invite at default scroll on desktop, and on a phone stacked over the
+            bottom tab bar. The page already pads its bottom for the tab bar. */}
         <div className="savebar">
           {status && (
             <span className={`note${status.tone === 'err' ? ' err' : ''}`}>
@@ -655,32 +657,42 @@ export function Account() {
             </span>
           )}
           <span className="grow" />
-          {confirmingSignOut ? (
-            <>
-              <span className="sub">Sign out of MyTribe?</span>
-              <button className="btn ghost" type="button" onClick={() => setConfirmingSignOut(false)}>
-                Cancel
-              </button>
-              <button className="btn coral" type="button" onClick={signOut} disabled={signingOut}>
-                {signingOut ? <BusyLabel>Signing out…</BusyLabel> : 'Yes, Sign Out'}
-              </button>
-            </>
-          ) : (
-            <button className="btn coral" type="button" onClick={() => setConfirmingSignOut(true)}>
-              Sign Out
-            </button>
-          )}
           {!readOnly && (
-            <button className="btn grad" type="button" onClick={() => save.mutate()} disabled={save.isPending || !nameValid || !!phoneError || !!backupPhoneError}>
+            <button
+              className="btn grad"
+              type="button"
+              onClick={() => save.mutate()}
+              disabled={save.isPending || !nameValid || !!phoneError || !!backupPhoneError}
+            >
               <MutationLabel mutation={save} busy="Saving…">
                 {'✓'} Save Changes
               </MutationLabel>
             </button>
           )}
         </div>
-
         <OfflineMutationNotice phase={save.phase} what="this update" check="your details" />
 
+        {/* #1308: Sign Out is its own row, away from Save Changes, and its
+            confirmation keeps Cancel and the confirm button together. */}
+        <section className="signout" aria-label="Sign out">
+          {confirmingSignOut ? (
+            <>
+              <span className="sub">Sign out of MyTribe?</span>
+              <div className="signout__choices">
+                <button className="btn ghost" type="button" onClick={() => setConfirmingSignOut(false)}>
+                  Cancel
+                </button>
+                <button className="btn coral" type="button" onClick={signOut} disabled={signingOut}>
+                  {signingOut ? <BusyLabel>Signing out…</BusyLabel> : 'Yes, Sign Out'}
+                </button>
+              </div>
+            </>
+          ) : (
+            <button className="btn coral" type="button" onClick={() => setConfirmingSignOut(true)}>
+              Sign Out
+            </button>
+          )}
+        </section>
         <p className="footnote">
           Cared for by <b>{businessName}</b>
         </p>
