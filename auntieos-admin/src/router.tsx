@@ -231,6 +231,15 @@ const invitesRoute = createRoute({
   component: lazyRouteComponent(() => import('./screens/Invites'), 'Invites'),
 });
 
+// One invite (#1339). The `invite.auntie-notify` email links here as
+// `${AUNTIE_OS_REVIEW_BASE_URL}/invites/<inviteId>`; the admin layout is
+// path-less, so that base URL is the bare admin origin.
+const inviteDetailRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'invites/$inviteId',
+  component: lazyRouteComponent(() => import('./routes/InviteDetailView'), 'InviteDetailView'),
+});
+
 const directoryProfileRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'directory/$kinfolkId',
@@ -429,7 +438,7 @@ const mediaRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, invitesRoute, directoryProfileRoute, householdMembersRoute, bookingsRoute, sessionsRoute, sessionDetailRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, marketingBlastsRoute, accountRoute, myNotificationsRoute, notificationGateRoute, vetClinicsRoute, mediaRoute]),
+  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, invitesRoute, inviteDetailRoute, directoryProfileRoute, householdMembersRoute, bookingsRoute, sessionsRoute, sessionDetailRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, marketingBlastsRoute, accountRoute, myNotificationsRoute, notificationGateRoute, vetClinicsRoute, mediaRoute]),
 ]);
 
 export const router = createRouter({

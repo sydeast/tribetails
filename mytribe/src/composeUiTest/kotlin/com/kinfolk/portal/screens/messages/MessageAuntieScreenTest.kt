@@ -4,8 +4,10 @@ package com.kinfolk.portal.screens.messages
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.runComposeUiTest
 import com.kinfolk.portal.firebase.FakeFunctionsClient
 import com.kinfolk.portal.portal.PortalApi
@@ -148,5 +150,56 @@ class MessageAuntieScreenTest {
         // Warm copy, not the raw server error; the thread stays visible.
         onNodeWithText("The writing helper isn't available right now. Please try again in a moment.").assertIsDisplayed()
         onNodeWithText("Hello!").assertIsDisplayed()
+    }
+
+    @Test
+    fun assist_suggestDisabledWithReason_whenHouseholdSpokeLast() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyConversation", buildJsonObject {
+            put("kinfolkId", "3")
+            put("messages", buildJsonArray {
+                add(buildJsonObject { put("id", "m1"); put("senderRole", "auntie"); put("senderUid", "a"); put("body", "Rex was great"); put("createdAtMs", 1L) })
+                add(buildJsonObject { put("id", "m2"); put("senderRole", "kinfolk"); put("senderUid", "u"); put("body", "Thanks Auntie"); put("createdAtMs", 2L) })
+            })
+        })
+        setThemedContent { MessageAuntieScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Suggest").assertIsNotEnabled()
+        onNodeWithText("Nothing new to reply to").assertIsDisplayed()
+    }
+    @Test
+    fun assist_undoRestoresDraftAfterSuggest() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyConversation", buildJsonObject {
+            put("kinfolkId", "3")
+            put("messages", buildJsonArray {
+                add(buildJsonObject { put("id", "m1"); put("senderRole", "auntie"); put("senderUid", "a"); put("body", "How is Rex?"); put("createdAtMs", 1L) })
+            })
+        })
+        fake.stub("generate", buildJsonObject {
+            put("ok", true); put("mode", "suggest_reply"); put("html", "<p>Great</p>"); put("text", "Great, thanks!")
+        })
+        setThemedContent { MessageAuntieScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onAllNodes(hasSetTextAction())[0].performTextInput("my own words")
+        onNodeWithText("Suggest").performClick()
+        waitForIdle()
+        onNodeWithText("Great, thanks!").assertIsDisplayed()
+        onNodeWithText("Undo").performClick()
+        waitForIdle()
+        onNodeWithText("my own words").assertIsDisplayed()
+    }
+    @Test
+    fun thread_showsDaySeparator() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyConversation", buildJsonObject {
+            put("kinfolkId", "3")
+            put("messages", buildJsonArray {
+                add(buildJsonObject { put("id", "m1"); put("senderRole", "auntie"); put("senderUid", "a"); put("body", "Old news"); put("createdAtMs", 1_578_340_800_000L) })
+            })
+        })
+        setThemedContent { MessageAuntieScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("January 6, 2020").assertIsDisplayed()
     }
 }

@@ -10,6 +10,8 @@ import {
   assertAllScoped,
   type PlannedWrite,
 } from '../seed_test_sandbox';
+import { computeInvoiceTotals, centsToDollars } from '../../functions/src/lib/invoiceMath';
+import { invoiceStateStampOf } from '../../functions/src/lib/invoiceStateStamp';
 
 // Fixed anchor so relative times (tomorrow / +3d / -7d / -14d / -21d) are
 // deterministic under test.
@@ -185,11 +187,12 @@ describe('seed_test_sandbox: buildSandboxPayload', () => {
     it('one per getMyInvoices bucket with the spec amounts', () => {
       const byStatus = Object.fromEntries(p.invoices.map((i) => [i.status, i]));
       expect(Object.keys(byStatus).sort()).toEqual(['credit', 'open', 'paid']);
-      expect(byStatus.open.amountDue).toBe(4500);
-      expect(byStatus.paid.total).toBe(6000);
+      // DOLLARS, not cents (#1368): a $45 visit is 45, never 4500.
+      expect(byStatus.open.amountDue).toBe(45);
+      expect(byStatus.paid.total).toBe(60);
       expect(byStatus.paid.amountDue).toBe(0);
       expect(byStatus.paid.paymentsHistory).toBeTruthy();
-      expect(byStatus.credit.amountDue).toBe(-2000);
+      expect(byStatus.credit.amountDue).toBe(-20);
       expect(byStatus.credit.creditTarget).toBe('accountBalance');
     });
 
@@ -218,9 +221,38 @@ describe('seed_test_sandbox: buildSandboxPayload', () => {
       }
     });
 
+    it('no line uses the old {label, amount} shape', () => {
+      for (const inv of p.invoices) {
+        for (const li of inv.lineItems as unknown as Array<Record<string, unknown>>) {
+          expect(li, inv._id).not.toHaveProperty('label');
+          expect(li, inv._id).not.toHaveProperty('amount');
+          expect(Number.isInteger(li['unitCents']), `${inv._id} unitCents`).toBe(true);
+        }
+      }
+    });
+    it('dollar fields are the cents fields divided by 100 and agree with invoiceMath', () => {
+      for (const inv of p.invoices) {
+        if (inv.lineItems.length > 0) {
+          const t = computeInvoiceTotals(inv.lineItems, inv.invoiceDiscountCents, inv.paidCents);
+          expect(inv.subtotalCents, inv._id).toBe(t.subtotalCents);
+          expect(inv.totalCents, inv._id).toBe(t.totalCents);
+          expect(inv.amountDueCents, inv._id).toBe(t.amountDueCents);
+        }
+        expect(inv.total, inv._id).toBe(centsToDollars(inv.totalCents));
+        expect(inv.amountDue, inv._id).toBe(centsToDollars(inv.amountDueCents));
+      }
+    });
+    it('the state stamp agrees with the seeded status and edit scope', () => {
+      for (const inv of p.invoices) {
+        const stamp = invoiceStateStampOf(inv, inv.paidCents);
+        expect(stamp.status, inv._id).toBe(inv.status);
+        expect(stamp.editScope, inv._id).toBe(inv.editScope);
+      }
+    });
     it('payment doc links to the paid invoice', () => {
       expect(p.payment.invoiceId).toBe(`${TEST_TRIBE_ID}-invoice-paid`);
-      expect(p.payment.amount).toBe(6000);
+      expect(p.payment.amount).toBe(60);
+      expect(p.payment.amountCents).toBe(6000);
       expect(p.payment.kinfolkId).toBe(TEST_TRIBE_ID);
       expect(p.payment.isTestData).toBe(true);
     });

@@ -59,6 +59,57 @@ VALUE or whether the DEPLOYED function carries the declaration; both live in the
 project. For those: `gcloud secrets list` and
 `gcloud functions describe <name> --gen2 --region us-central1`.
 
+### Plain functions config (`mytribe/functions/.env`)
+
+Non-secret values the functions read straight off `process.env` (link base URLs
+such as `CLAIM_LINK_BASE_URL`, `SHARE_LINK_BASE_URL` and
+`AUNTIE_OS_REVIEW_BASE_URL`, plus `AUNTIE_NOTIFY_EMAIL`,
+`TWILIO_STATUS_CALLBACK_URL`, `BIGQUERY_*` and the non-secret `SENTRY_*`) come
+from the gitignored `mytribe/functions/.env` in the main checkout on the release
+Mac. The repo holds no copy. What a deploy does with that file is decided by
+firebase-tools (15.18.0, `lib/deploy/functions/prepare.js`,
+`inferDetailsFromExisting`), checked on 2026-11-01 (#1339):
+
+- **Deployed from a tree that has the file** (the main checkout): each deployed
+  function's environment is REPLACED by the file's contents. A value set any
+  other way, for example `gcloud run services update --update-env-vars`, is
+  dropped. A key that is present but empty deploys as empty.
+- **Deployed from a tree without it** (the hosted release on the GitHub runner,
+  any worktree): the function's existing environment is kept and merged. This
+  is why `CLAIM_LINK_BASE_URL` survives every hosted release.
+- **A function the hosted release creates for the first time** has no existing
+  environment to keep, so it starts with none of these values until a deploy
+  from the main checkout.
+
+To set or change one of these values: edit the line in the main checkout's
+`mytribe/functions/.env`, then deploy the functions that read it from the main
+checkout. For `AUNTIE_OS_REVIEW_BASE_URL` the readers are
+`mintInviteFromPrimary` and `addSecondaryContact`, and the value is the bare
+admin web origin with no path, because the notice links to
+`<value>/invites/<inviteId>` and the admin router serves that path at its root
+(a trailing slash is stripped):
+
+```bash
+# mytribe/functions/.env, the existing line:
+#   AUNTIE_OS_REVIEW_BASE_URL=<admin web origin>
+scripts/safe-deploy.sh mytribe -- firebase deploy \
+  --only "functions:mytribe:mintInviteFromPrimary,functions:mytribe:addSecondaryContact"
+```
+
+Then read it back off the deployed functions:
+
+```bash
+firebase functions:list --json --project auntieos-ttpc \
+  | jq -r '.result[] | select(.id=="mintInviteFromPrimary" or .id=="addSecondaryContact")
+           | "\(.id) \(.environmentVariables.AUNTIE_OS_REVIEW_BASE_URL)"'
+```
+
+A `gcloud run services update` alone is not durable. The next deploy from the
+main checkout replaces it with whatever the `.env` line says, empty included.
+A hosted release keeps the environment that Cloud Functions has on record for
+the function, and whether that record picks up a change made on the Cloud Run
+service directly is not established. Always change the file.
+
 ### Client build config (`VITE_*`) comes from the store too
 
 `VITE_*` is different by mechanism, not by policy. Vite inlines

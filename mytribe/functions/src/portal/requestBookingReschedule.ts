@@ -11,7 +11,8 @@ import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { validateResponse } from '../lib/callableResponse';
-import { BookingDtoSchema, readVisitDto } from '../lib/portalBookingDto';
+import { BookingDtoSchema, cancelRequestStatusOf, readVisitDto } from '../lib/portalBookingDto';
+import { assertRescheduleTimeAllowed } from '../lib/rescheduleTimeRules';
 
 /**
  * A kinfolk PROPOSES a new time for a visit (issue #399, item 2).
@@ -52,6 +53,12 @@ export const Args = z.object({
    * `.nullable().optional()` on a request outright.
    */
   proposedEndTimeMs: z.number().int().positive().optional(),
+  /**
+   * #1284: the named window (`getBookingPolicy().timeBlocks[].id`) the new time
+   * sits in, exactly as `requestBooking`'s visits carry it. Required by the
+   * server when the business books by block only; absent for a clock time.
+   */
+  timeBlockId: z.string().min(1).max(80).optional(),
   reason: z.string().trim().max(500).optional(),
 });
 
@@ -123,9 +130,12 @@ export async function requestBookingRescheduleHandler(
   const data = snap.data() as {
     status?: string;
     rescheduleRequestStatus?: string;
+    cancelRequestStatus?: unknown;
+    cancelRequestedAt?: unknown;
     startTime?: { toMillis?: () => number } | null;
     endTime?: { toMillis?: () => number } | null;
     startTimePending?: unknown;
+    serviceId?: unknown;
   };
 
   // #1098: an Overnight is requested as a night and Tribe Tails sets its start
@@ -151,6 +161,16 @@ export async function requestBookingRescheduleHandler(
     );
   }
 
+  // #1299: one change at a time, in both directions. A cancellation ask that
+  // nobody has ruled on makes a new time meaningless, and answering the two in
+  // either order leaves the visit in a state neither answer describes.
+  // `cancelRequestStatusOf` also reads a pre-#438 bare stamp as pending.
+  if (cancelRequestStatusOf(data as Record<string, unknown>) === 'pending') {
+    throw new HttpsError(
+      'failed-precondition',
+      'A cancellation is already waiting on Tribe Tails for this visit. Wait for their answer before asking for a new time.',
+    );
+  }
   // Omitted end: keep the visit's current length. A visit with no end time on
   // record gets none on the proposal either, rather than a guessed duration.
   const currentStartMs = millisOf(data.startTime);
@@ -161,6 +181,16 @@ export async function requestBookingRescheduleHandler(
       ? args.proposedStartTimeMs + (currentEndMs - currentStartMs)
       : null);
 
+  // #1284: the same rules the booking path applies to a time: booking mode and
+  // block, company closures, weekly business hours. Judged on the window that
+  // will be stored, so a long visit is checked end to end where the guards
+  // look at it.
+  const resolvedBlock = await assertRescheduleTimeAllowed(db(), {
+    startTimeMs: args.proposedStartTimeMs,
+    endTimeMs: proposedEndMs,
+    timeBlockId: args.timeBlockId,
+    serviceId: typeof data.serviceId === 'string' && data.serviceId !== '' ? data.serviceId : undefined,
+  });
   await visitRef.set(
     {
       rescheduleRequestedAt: FieldValue.serverTimestamp(),
@@ -168,6 +198,10 @@ export async function requestBookingRescheduleHandler(
       rescheduleRequestReason: args.reason?.trim() || null,
       rescheduleRequestedStartTime: Timestamp.fromMillis(args.proposedStartTimeMs),
       rescheduleRequestedEndTime: proposedEndMs !== null ? Timestamp.fromMillis(proposedEndMs) : null,
+      // #1284: the window the household picked, so the office reads the answer
+      // instead of inferring it from a clock. Always written, null for a clock time.
+      rescheduleRequestedTimeBlockId: resolvedBlock.timeBlockId,
+      rescheduleRequestedTimeBlockLabel: resolvedBlock.timeBlockLabel,
       rescheduleRequestStatus: 'pending',
       // Cleared so a decline followed by a fresh proposal does not still show
       // the previous answer beside the new ask.
@@ -193,6 +227,7 @@ export async function requestBookingRescheduleHandler(
       visitId: args.visitId,
       proposedStartTimeMs: args.proposedStartTimeMs,
       proposedEndTimeMs: proposedEndMs,
+      timeBlockId: resolvedBlock.timeBlockId,
       reason: args.reason ?? null,
     },
   }).catch((err) => {

@@ -5,7 +5,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import type { UserNotificationPrefs } from '../notifications/types';
-import { prefsSetOptions, SaveArgs } from '../notifications/prefsSchema';
+import { applyPrefsPatch, prefsSetOptions, PortalSaveArgs } from '../notifications/prefsSchema';
 import { withAliasedChoicesResolved } from '../notifications/prefs';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { refuseAuntie } from '../lib/staffGate';
@@ -61,8 +61,29 @@ export async function saveMyNotificationPrefsHandler(
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
 
-  const args = SaveArgs.parse(req.data);
+  const args = PortalSaveArgs.parse(req.data);
   const firestore = db();
+  if (args.patch) {
+    // #1292: one toggle, one patch. Read-merge-write in a transaction so two
+    // taps (or two devices) cannot overwrite each other's choice, and so the
+    // write never rebuilds the subtree from one screen's partial state.
+    const patch = args.patch;
+    const ref = firestore.collection('clients').doc(uid);
+    await firestore.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const existing = (snap.data()?.['notificationPrefs'] as UserNotificationPrefs | undefined) ?? undefined;
+      tx.set(
+        ref,
+        {
+          notificationPrefs: applyPrefsPatch(existing, patch),
+          notificationPrefsUpdatedAt: FieldValue.serverTimestamp(),
+        },
+        prefsSetOptions(),
+      );
+    });
+    logEvent({ severity: 'info', function: 'saveMyNotificationPrefs', event: 'portal.prefs.patched', uid });
+    return { ok: true };
+  }
   // prefsSetOptions(), not { merge: true }: the client sends the whole prefs
   // object, and clearing a per-key override means the entry is ABSENT from it.
   // A merge set would leave the stale entry on the server. See prefsSchema.ts.

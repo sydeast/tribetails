@@ -129,6 +129,18 @@ describe('Invites', () => {
     );
   });
 
+  it('#1339: links each address to that invite’s own detail screen', async () => {
+    api.listAllInvites.mockResolvedValue([
+      invite({ inviteId: 'rq_detail1', invitedEmail: 'jane@example.com' }),
+    ]);
+
+    render(<Invites />);
+
+    expect(await screen.findByRole('link', { name: 'jane@example.com' })).toHaveAttribute(
+      'href',
+      '/invites/rq_detail1',
+    );
+  });
   it('shows sent and expiry dates, and says so when the server had no date', async () => {
     api.listAllInvites.mockResolvedValue([
       invite({

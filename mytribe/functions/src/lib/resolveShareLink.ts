@@ -56,6 +56,14 @@ export type ShareLinkResolution =
        * let the caller in.
        */
       unlockToken: string | null;
+      /**
+       * #1332. The token that proves this caller unlocked the share: the one
+       * just minted, or the presented one that verified. Null for a share with
+       * no passcode. The share page forwards it to
+       * `addGuestKinTaleCommentHandler`, which refuses a note on a protected
+       * share without proof.
+       */
+      proofToken: string | null;
     }
   | {
       ok: false;
@@ -75,7 +83,7 @@ export async function resolveShareLink(
   /**
    * #1280. Unlock tokens the caller already holds (the share page's
    * `__session` cookie values). Any one that verifies stands in for the
-   * passcode. `getShareLink` passes none, so its behavior is unchanged.
+   * passcode. `getShareLink` passes the one a POST body carries (#1331).
    */
   unlockTokens: string[] = [],
 ): Promise<ShareLinkResolution> {
@@ -100,6 +108,7 @@ export async function resolveShareLink(
     return { ok: false, status: 410, error: 'expired' };
   }
   let unlockToken: string | null = null;
+  let proofToken: string | null = null;
   if (data.passcodeHash) {
     const hash = data.passcodeHash;
     const supplied = passcode ?? '';
@@ -110,8 +119,10 @@ export async function resolveShareLink(
         return { ok: false, status: 401, error: 'passcode-required' };
       }
       unlockToken = mintShareUnlock(shareId, hash);
-    } else if (!unlockTokens.some((t) => verifyShareUnlock(t, shareId, hash))) {
-      return { ok: false, status: 401, error: 'passcode-required' };
+      proofToken = unlockToken;
+    } else {
+      proofToken = unlockTokens.find((t) => verifyShareUnlock(t, shareId, hash)) ?? null;
+      if (!proofToken) return { ok: false, status: 401, error: 'passcode-required' };
     }
   }
   const sourceKinTaleId = data.sourceKinTaleId ?? null;
@@ -127,5 +138,6 @@ export async function resolveShareLink(
     // not drift, or the page draws a form the callable will refuse.
     allowGuestComments: data.allowGuestComments !== false,
     unlockToken,
+    proofToken,
   };
 }
