@@ -95,10 +95,6 @@ fun KinScreen(
             ) {
                 Column(modifier = Modifier.weight(1f).padding(end = KinfolkSpacing.m)) {
                     Text(text = "The Kin", style = type.heritageTitle)
-                    Text(
-                        text = "Everyone who shares your home. Tap a card to open the full profile.",
-                        style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted),
-                    )
                 }
                 KinButton(label = "Add New", onClick = { addNew = true })
             }
@@ -186,7 +182,8 @@ fun KinScreen(
             dogBreeds = controller.breeds.dogBreeds,
             catBreeds = controller.breeds.catBreeds,
             onClose = { addNew = false },
-            onSubmit = { payload, photo -> controller.addAndReload(payload, photo) },
+            onSubmit = { payload, photo -> controller.addAndReload(payload, (photo as? KinPhotoChange.Upload)?.image) },
+            photoUploading = controller.photoUploading,
         )
     }
 }
@@ -212,8 +209,13 @@ fun KinAddEditScreen(
         catBreeds = controller.breeds.catBreeds,
         onClose = onClose,
         onSubmit = { payload, photo ->
-            if (kinId != null) controller.updateAndReload(kinId, payload, photo) else controller.addAndReload(payload, photo)
+            if (kinId != null) {
+                controller.updateAndReload(kinId, payload, photo)
+            } else {
+                controller.addAndReload(payload, (photo as? KinPhotoChange.Upload)?.image)
+            }
         },
+        photoUploading = controller.photoUploading,
     )
 }
 

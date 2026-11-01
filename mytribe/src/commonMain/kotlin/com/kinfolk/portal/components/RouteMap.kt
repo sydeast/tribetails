@@ -104,6 +104,25 @@ fun RouteMap(
  * [RouteMap], and only one of them is acceptable.
  */
 internal const val ROUTE_CANVAS_TAG = "route-canvas"
+/** Shown over the polyline when a basemap was expected and did not arrive (#1287). Matches the web portal's wording. */
+internal const val MAP_UNAVAILABLE_MESSAGE = "Street map unavailable. Showing the route only."
+/** Marks [MAP_UNAVAILABLE_MESSAGE] so a test can find it. */
+internal const val MAP_UNAVAILABLE_TAG = "map-unavailable"
+/** The notice itself, bottom-left of the map rectangle. */
+@Composable
+internal fun MapUnavailableNote(modifier: Modifier = Modifier) {
+    val type = LocalKinfolkTypography.current
+    Box(modifier = modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.BottomStart) {
+        Text(
+            MAP_UNAVAILABLE_MESSAGE,
+            style = type.sansLabel,
+            color = KinfolkBrand.NavyMuted,
+            modifier = Modifier
+                .padding(8.dp)
+                .testTag(MAP_UNAVAILABLE_TAG),
+        )
+    }
+}
 
 /**
  * What fills the map rectangle inside [RouteMap], per target.

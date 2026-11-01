@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, waitFor } from '@testing-library/react';
@@ -301,6 +303,19 @@ describe('Account: secondary invite confirmation (#1018 item 3)', () => {
     expect(await findByText(/Invite failed.*already invited/)).toBeInTheDocument();
     expect(queryByText(/Invite sent/)).not.toBeInTheDocument();
   });
+
+  // #1277: Account › Recovery Contacts › Send Invite showed
+  // "AUNTIE_OS_REVIEW_BASE_URL is not configured [400]" to the household.
+  it('never shows a backend setting name: a config refusal reads as a plain line', async () => {
+    const user = userEvent.setup();
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.addSecondaryContact).mockRejectedValue(new Error('CLAIM_LINK_BASE_URL is not configured [400]'));
+    const { getByLabelText, getByRole, findByText, queryByText } = await renderAccount();
+    await user.type(getByLabelText('Backup Email'), 'catch@hanasamku.com');
+    await user.click(getByRole('button', { name: /Send Invite/ }));
+    expect(await findByText("Invites can't be sent right now. It's been reported to Auntie.")).toBeInTheDocument();
+    expect(queryByText(/CLAIM_LINK_BASE_URL|is not configured/)).not.toBeInTheDocument();
+  });
 });
 
 // #1326: Account › Secondary Kinfolk with "bad-email" typed gave no reason.
@@ -465,7 +480,29 @@ describe('Account billing management', () => {
  * trade rather than a regression: Sign Out has to still be reachable, and
  * still work, from the screen the avatar now points at.
  */
-describe('Account: Sign Out', () => {
+describe('Account: Sign Out (#1307, #1308)', () => {
+  it('keeps Cancel and the confirm button together, and not in the Save Changes row', async () => {
+    const { getByRole, container } = await renderAccount();
+    await userEvent.click(getByRole('button', { name: 'Sign Out' }));
+    const confirm = getByRole('button', { name: 'Yes, Sign Out' });
+    const cancel = getByRole('button', { name: 'Cancel' });
+    const save = getByRole('button', { name: /Save Changes/ });
+    expect(confirm.parentElement).toBe(cancel.parentElement);
+    expect(confirm.closest('.savebar')).toBeNull();
+    expect(save.closest('.signout')).toBeNull();
+    // Sign out sits below the Save row, so the primary action is never beside it.
+    const bar = container.querySelector('.savebar')!;
+    const out = container.querySelector('.signout')!;
+    expect(bar.compareDocumentPosition(out) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+  it('puts the Save row in the page flow, not in a fixed or sticky bar (#1307)', async () => {
+    const { container } = await renderAccount();
+    const css = readFileSync(resolve(process.cwd(), 'src/styles/account.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(container.querySelector('.savebar')).not.toBeNull();
+    const rule = css.split('}').find((r) => r.includes('.acct .savebar {'))!;
+    expect(rule).not.toMatch(/position:\s*(sticky|fixed)/);
+  });
+
   it('offers Sign Out on the save bar', async () => {
     const { getByRole } = await renderAccount();
     expect(getByRole('button', { name: 'Sign Out' })).toBeTruthy();
@@ -524,5 +561,74 @@ describe('Account billing, member without billing access (#1005)', () => {
     const result = await renderAccountWithBilling();
     expect(vi.mocked(portalApi.getMyHome)).toHaveBeenCalled();
     expect(result.getByText('Billing Details')).toBeTruthy();
+  });
+});
+/**
+ * #1289 / #1306: a bad phone is caught on the field in plain words, and a saved
+ * one comes back the way a person writes it, never as E.164.
+ */
+describe('Account: phone (#1289, #1306)', () => {
+  async function renderWith(account: Partial<AccountDto>) {
+    const accountApi = await import('../api/accountApi');
+    const portalApi = await import('../api/portal');
+    vi.mocked(accountApi.getMyAccount).mockResolvedValue({ ...ACCOUNT, ...account });
+    vi.mocked(portalApi.getMyHome).mockResolvedValue(HOME);
+    vi.mocked(portalApi.getMyKin).mockResolvedValue(KIN);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const result = render(
+      <QueryClientProvider client={queryClient}>
+        <Account />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect((result.getByLabelText('Display Name') as HTMLInputElement).value).toBe('Riley Kinfolk'));
+    return result;
+  }
+  it('shows a stored E.164 number as (512) 555-0142', async () => {
+    const { getByLabelText } = await renderWith({ phone: '+15125550142', backupPhone: '5125667512' });
+    expect((getByLabelText('Phone') as HTMLInputElement).value).toBe('(512) 555-0142');
+    expect((getByLabelText('Backup Phone') as HTMLInputElement).value).toBe('(512) 566-7512');
+  });
+  it('says what is wrong with abc123 on the field, and does not offer Save', async () => {
+    const user = userEvent.setup();
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.saveMyAccount).mockClear();
+    const { getByLabelText, getByRole, findByRole } = await renderWith({});
+    await user.type(getByLabelText('Phone'), 'abc123');
+    const alert = await findByRole('alert');
+    expect(alert.textContent).toBe('Enter a 10-digit phone number.');
+    expect(getByLabelText('Phone')).toHaveAttribute('aria-invalid', 'true');
+    expect(getByRole('button', { name: /Save Changes/ })).toBeDisabled();
+    expect(accountApi.saveMyAccount).not.toHaveBeenCalled();
+  });
+  it('names the backup phone separately', async () => {
+    const user = userEvent.setup();
+    const { getByLabelText, findByRole, getByRole } = await renderWith({});
+    await user.type(getByLabelText('Backup Phone'), '12345');
+    expect((await findByRole('alert')).textContent).toBe('Enter a 10-digit phone number.');
+    expect(getByRole('button', { name: /Save Changes/ })).toBeDisabled();
+  });
+  it('formats what was typed on blur, and the save reply comes back formatted', async () => {
+    const user = userEvent.setup();
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.saveMyAccount).mockResolvedValue({ ok: true });
+    const { getByLabelText, getByRole, findByText } = await renderWith({});
+    await user.type(getByLabelText('Phone'), '512-555-0142');
+    await user.tab();
+    expect((getByLabelText('Phone') as HTMLInputElement).value).toBe('(512) 555-0142');
+    vi.mocked(accountApi.getMyAccount).mockResolvedValue({ ...ACCOUNT, phone: '+15125550142' });
+    await user.click(getByRole('button', { name: /Save Changes/ }));
+    expect(await findByText('Saved.')).toBeInTheDocument();
+    expect((getByLabelText('Phone') as HTMLInputElement).value).toBe('(512) 555-0142');
+  });
+  it('shows the server sentence, not machinery, if the server refuses a number the form let through', async () => {
+    const user = userEvent.setup();
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.saveMyAccount).mockRejectedValue(new Error('Enter a 10-digit phone number.'));
+    const { getByLabelText, getByRole, findByText } = await renderWith({});
+    await user.type(getByLabelText('Phone'), '123-456-7890');
+    await user.click(getByRole('button', { name: /Save Changes/ }));
+    const note = await findByText(/Save failed/);
+    expect(note.textContent).toBe('Save failed: Enter a 10-digit phone number.');
+    expect(note.textContent).not.toMatch(/phoneNormalize|\[\d{3}\]/);
   });
 });

@@ -111,6 +111,11 @@ export async function getMyKinHandler(
         allergies: stringOrNull(data['allergies']),
         emergencyNotes: stringOrNull(data['emergencyNotes']),
         sitterNotes: stringOrNull(data['sitterNotes']),
+        sex: stringOrNull(data['sex']),
+        weight: stringOrNull(data['weight']),
+        colorMarkings: stringOrNull(data['colorMarkings']),
+        spayedNeutered: data['spayedNeutered'] === true,
+        vetInfo: stringOrNull(data['vetInfo']),
       };
     }),
   );

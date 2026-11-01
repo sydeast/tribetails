@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from '@tanstack/react-router';
+import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyKin, updateKin } from '../api/portal';
 import { BREEDS_QUERY, EMPTY_BREED_BANKS } from '../api/breeds';
@@ -8,13 +8,19 @@ import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { breedCatalogForSpecies, speciesWantsBreedBank } from '../lib/breedSearch';
 import { BreedField } from '../components/BreedField';
+import { SpeciesField } from '../components/SpeciesField';
 import { PortalNav } from '../components/PortalNav';
+import { FixedField, SexField } from '../components/KinFactsFields';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
-import { buildKinChanges, hasErrors, kinFormFromDto, validateKinForm, type KinEditForm } from '../lib/kinEditForm';
+import { buildKinChanges, hasErrors, kinFormFromDto, validateKinForm, type KinEditForm, type KinTextKey } from '../lib/kinEditForm';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { useIsMounted, usePortalMutation } from '../lib/mutationState';
+import { SignedImageUpload } from '../components/SignedImageUpload';
+import { BusyLabel } from '../components/Loading';
+import { confirmKinPhotoUpload, signKinPhotoUpload, validateKinPhotoFile } from '../api/kinPhotoApi';
+import { refreshAfterSave } from '../lib/refreshAfterSave';
 
 /**
  * Kin edit form (open item O-17): the React counterpart to Compose's
@@ -23,11 +29,18 @@ import { useIsMounted, usePortalMutation } from '../lib/mutationState';
  * seeds an editable copy. Save sends only the changed fields to updateKin
  * (kin_edit enforced server-side) and returns to the detail on success.
  * Validation mirrors the KinPayload server schema so the form fails loud
- * before the call (see lib/kinEditForm.ts). Photo is a URL field here rather
- * than a picker: the signed-upload flow (kinPhotoApi.ts) is a separate piece.
+ * before the call (see lib/kinEditForm.ts).
+ *
+ * #1291: the photo is a real upload, not a URL box. Picking a file runs
+ * signKinPhotoUpload -> direct Cloudinary POST (metadata stripped by the
+ * signed `fl_force_strip`) -> confirmKinPhotoUpload, which writes photoUrl
+ * on the kin doc. Remove sends `photoUrl: null` through updateKin. Both take
+ * effect immediately, independent of Save, and the text form never carries
+ * photoUrl, so Save can not undo either one.
  */
 export function KinEdit() {
   const { kinId } = useParams({ from: '/kin/$kinId/edit' });
+  const { photo: photoFlag } = useSearch({ from: '/kin/$kinId/edit' });
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const kinfolkId = getActiveKinfolkId();
@@ -44,10 +57,17 @@ export function KinEdit() {
   // Seed the editable copy once, the first time this kin resolves, so a
   // background refetch of the list query can't clobber in-progress edits.
   const [form, setForm] = useState<KinEditForm | null>(null);
+  // The photo lives beside the form, not in it (see kinEditForm.ts): an
+  // upload or a removal is already saved when it finishes.
+  const [photoUrl, setPhotoUrl] = useState('');
+  // Set by KinAdd when the Kin was created but its photo upload failed.
+  // Cleared by the first photo action here, successful or not.
+  const [photoCarryover, setPhotoCarryover] = useState(photoFlag === 'failed');
   const seededId = useRef<string | null>(null);
   useEffect(() => {
     if (found && seededId.current !== found.id) {
       setForm(kinFormFromDto(found));
+      setPhotoUrl(found.photoUrl ?? '');
       seededId.current = found.id;
     }
   }, [found]);
@@ -57,8 +77,10 @@ export function KinEdit() {
   const isMounted = useIsMounted();
   const save = usePortalMutation({
     mutationFn: (changes: KinPayloadPartial) => updateKin(kinId, changes, kinfolkId),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['myKin', kinfolkId] });
+    // #1281: the profile this navigates to reads the kin list, so the refresh
+    // is waited for first; otherwise it opens on the pre-save values.
+    onSuccess: async () => {
+      await refreshAfterSave(queryClient, ['myKin', kinfolkId]);
       // Guarded because this write is HELD: a queued save resumes on
       // reconnect whether or not this screen is still open, and navigating
       // from a dead screen drops the household onto a Kin profile they did
@@ -67,6 +89,16 @@ export function KinEdit() {
       if (isMounted()) void navigate({ to: '/kin/$kinId', params: { kinId } });
     },
   }, { policy: 'hold', what: 'this update' });
+
+  // ABANDON, matching the upload half: a photo change is a deliberate tap the
+  // household watches finish, not something to replay behind their back.
+  const removePhoto = usePortalMutation({
+    mutationFn: () => updateKin(kinId, { photoUrl: null }, kinfolkId),
+    onSuccess: () => {
+      setPhotoUrl('');
+      void queryClient.invalidateQueries({ queryKey: ['myKin', kinfolkId] });
+    },
+  }, { policy: 'abandon', what: 'this photo change' });
 
   const { signOut, signingOut } = useSignOut();
 
@@ -127,14 +159,14 @@ export function KinEdit() {
   const nothingToSave = Object.keys(changes).length === 0;
   const canSave = !hasErrors(errors) && !nothingToSave && !save.isPending;
 
-  const set = (key: keyof KinEditForm, value: string) => setForm((f) => (f ? { ...f, [key]: value } : f));
+  const set = (key: KinTextKey, value: string) => setForm((f) => (f ? { ...f, [key]: value } : f));
 
   const submit = () => {
     if (!canSave) return;
     save.mutate(changes);
   };
 
-  const textField = (key: keyof KinEditForm, label: string, opts?: { full?: boolean; area?: boolean; required?: boolean; type?: string }) => (
+  const textField = (key: KinTextKey, label: string, opts?: { full?: boolean; area?: boolean; required?: boolean; type?: string }) => (
     <div className={opts?.full ? 'field full' : 'field'}>
       <label htmlFor={`kin-${key}`}>
         {label}
@@ -174,12 +206,11 @@ export function KinEdit() {
               <div className="ic orange">{'\u{1F43E}'}</div>
               <div className="htxt">
                 <h3 className="title">About</h3>
-                <p className="sub">The basics your Aunties see first.</p>
               </div>
             </div>
             <div className="grid2">
               {textField('name', 'Name', { full: true, required: true })}
-              {textField('species', 'Species')}
+              <SpeciesField id="kin-species" value={current.species} onChange={(v) => set('species', v)} error={errors.species} />
               {/* Beside Species on purpose: Species is what picks the bank. */}
               <BreedField
                 value={current.breed}
@@ -204,7 +235,51 @@ export function KinEdit() {
                 }
               />
               {textField('ageYears', 'Age (years)', { type: 'text' })}
-              {textField('photoUrl', 'Photo URL', { full: true, type: 'url' })}
+              <SexField id="kin-sex" value={current.sex} onChange={(v) => set('sex', v)} error={errors.sex} />
+              {textField('weight', 'Weight')}
+              {textField('colorMarkings', 'Color / markings')}
+              <FixedField id="kin-spayedNeutered" checked={current.spayedNeutered} onChange={(v) => setForm((f) => (f ? { ...f, spayedNeutered: v } : f))} />
+              <div className="field full">
+                <label id="kin-photo-label">Photo</label>
+                <SignedImageUpload
+                  sign={() => signKinPhotoUpload(kinId, kinfolkId)}
+                  confirm={async (secureUrl) => (await confirmKinPhotoUpload(kinId, secureUrl, kinfolkId)).photoUrl}
+                  validate={validateKinPhotoFile}
+                  onUploaded={(url) => {
+                    setPhotoUrl(url);
+                    setPhotoCarryover(false);
+                    removePhoto.reset();
+                    void queryClient.invalidateQueries({ queryKey: ['myKin', kinfolkId] });
+                  }}
+                  onError={() => setPhotoCarryover(false)}
+                  imageUrl={photoUrl}
+                  onClear={() => {
+                    setPhotoCarryover(false);
+                    removePhoto.mutate();
+                  }}
+                  fallback={'\u{1F43E}'}
+                  pickLabel="Add Photo"
+                  replaceLabel="Replace Photo"
+                  clearLabel="Remove Photo"
+                  disabled={removePhoto.isPending}
+                />
+                {removePhoto.isPending && (
+                  <span className="sub" role="status">
+                    <BusyLabel>Removing photo…</BusyLabel>
+                  </span>
+                )}
+                {removePhoto.phase === 'failed' && (
+                  <span className="hint" role="alert" style={{ color: 'var(--coral)' }}>
+                    {removePhoto.error instanceof Error ? removePhoto.error.message : 'Could not remove the photo. Try again.'}
+                  </span>
+                )}
+                <OfflineMutationNotice phase={removePhoto.phase} what="this photo change" check="this Kin" />
+                {photoCarryover && (
+                  <span className="hint" role="alert" style={{ color: 'var(--coral)' }}>
+                    {kinDoc.name ?? 'This Kin'} was added, but the photo did not upload. Pick it again here.
+                  </span>
+                )}
+              </div>
             </div>
           </section>
 
@@ -214,7 +289,6 @@ export function KinEdit() {
               <div className="ic teal">{'\u{1F37D}'}</div>
               <div className="htxt">
                 <h3 className="title">Care</h3>
-                <p className="sub">Daily routine and needs.</p>
               </div>
             </div>
             <div className="grid2">
@@ -222,6 +296,7 @@ export function KinEdit() {
               {textField('walkingInstructions', 'Walking Instructions', { full: true, area: true })}
               {textField('medications', 'Medications', { full: true, area: true })}
               {textField('allergies', 'Allergies', { full: true, area: true })}
+              {textField('vetInfo', 'Vet', { full: true, area: true })}
             </div>
           </section>
 
@@ -231,7 +306,6 @@ export function KinEdit() {
               <div className="ic purple">{'\u{1F4DD}'}</div>
               <div className="htxt">
                 <h3 className="title">Notes</h3>
-                <p className="sub">Good-to-know details and emergencies.</p>
               </div>
             </div>
             <div className="grid2">

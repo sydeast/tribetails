@@ -34,6 +34,8 @@ import { LoadingLine } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { errorLine, usePortalMutation } from '../lib/mutationState';
+import { refreshAfterSave } from '../lib/refreshAfterSave';
+import { announceSaved } from '../lib/saveNotice';
 import { mintCheckoutIdempotencyKey } from '../lib/moneyIdempotency';
 import '../styles/invoices.css';
 
@@ -153,8 +155,11 @@ export function InvoiceDetail() {
   // committed stamp and is refused. It cannot double-credit.
   const redeem = usePortalMutation({
     mutationFn: () => redeemCredit(invoiceId, kinfolkId),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['myInvoices', kinfolkId] });
+    // #1281: see the same mutation on Invoices.tsx. Pending until the reloaded
+    // invoice shows the credit applied, then confirmed in words.
+    onSuccess: async () => {
+      await refreshAfterSave(queryClient, ['myInvoices', kinfolkId], ['accountCreditHistory', kinfolkId]);
+      announceSaved('Credit saved');
     },
   }, { policy: 'hold', what: 'this credit' });
 
@@ -173,9 +178,8 @@ export function InvoiceDetail() {
   const decideQuote = usePortalMutation({
     mutationFn: (decision: 'accept' | 'decline') =>
       decision === 'accept' ? acceptQuote(invoiceId, kinfolkId) : denyQuote(invoiceId, kinfolkId),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['myInvoices', kinfolkId] });
-    },
+    // #1281: pending until the reloaded invoice shows the answer.
+    onSuccess: () => refreshAfterSave(queryClient, ['myInvoices', kinfolkId]),
   }, { policy: 'hold', what: 'your answer' });
 
   // These three used to fail silently — a rejected mutation just stopped the

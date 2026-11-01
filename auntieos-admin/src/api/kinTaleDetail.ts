@@ -68,9 +68,9 @@ import { call } from '../lib/fns';
  * 'kinfolk'`), classify it through `lib/kinTaleDetailFormat.ts#commentAuthorRole`
  * (positive enumeration, never negation), not by reading this field raw.
  * `guestName` is always `null` on every comment this port's own
- * `addKinTaleComment` ever writes (the handler never sets it); the field
- * exists on the wire shape for an unauthenticated/guest-reply path this repo
- * has not built, so it is modeled here rather than silently dropped.
+ * `addKinTaleComment` ever writes (the handler never sets it). It is set on
+ * notes from the public share page (`addGuestKinTaleComment`, `authorRole:
+ * 'guest'`), which this screen labels with that name (#1333).
  */
 export interface KinTaleComment {
   id: string;

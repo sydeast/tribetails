@@ -59,6 +59,7 @@ import com.kinfolk.portal.portal.FormSchema
 import com.kinfolk.portal.portal.HomeAccess
 import com.kinfolk.portal.portal.inviteEmailProblem
 import com.kinfolk.portal.portal.isInvitableEmail
+import com.kinfolk.portal.portal.inviteFailureLine
 import com.kinfolk.portal.portal.MapboxSuggestion
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.TribeProfileResult
@@ -74,6 +75,7 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.kinfolk.portal.util.formatPhone
 
 /**
  * Tribe Profile settings, per ui-ideas/mytribe-tribe-2026-05-31.html: a
@@ -367,7 +369,7 @@ fun TribeScreen(
                 portalApi = portalApi,
                 clinics = vetClinics,
                 name = vetName, phone = vetPhone, address = vetAddress,
-                onPick = { c -> vetName = c.name; vetPhone = c.phone; vetAddress = c.address },
+                onPick = { c -> vetName = c.name; vetPhone = formatPhone(c.phone); vetAddress = c.address },
                 onName = { vetName = it },
                 onPhone = { vetPhone = it },
                 onAddress = { vetAddress = it },
@@ -1475,7 +1477,8 @@ private fun SecondaryInviteCard(
                         } catch (c: CancellationException) {
                             throw c
                         } catch (t: Throwable) {
-                            msg = "Invite failed: ${t.message ?: t}"
+                            // #1277: a missing backend setting never shows its name.
+                            msg = inviteFailureLine(t)
                         } finally {
                             inviting = false
                         }

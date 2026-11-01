@@ -843,7 +843,7 @@ const CATALOG_LIST: NotificationDef[] = [
     // #905: sent by the reset trigger itself, never through the dispatcher, so
     // no household switch or business override can stop a reset.
     external: true,
-    description: 'Password reset link, generated server-side and sent directly through smtp2go.',
+    description: 'The link you ask for when you reset your password.',
   },
   {
     // The household's copy only. Business admins get

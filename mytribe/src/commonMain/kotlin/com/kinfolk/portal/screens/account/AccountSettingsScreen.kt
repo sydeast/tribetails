@@ -30,6 +30,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.kinfolk.portal.auth.AuthRepository
+import com.kinfolk.portal.util.formatPhone
+import com.kinfolk.portal.util.phoneProblem
 import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinField
@@ -41,6 +43,7 @@ import com.kinfolk.portal.portal.Account
 import com.kinfolk.portal.portal.FormSchema
 import com.kinfolk.portal.portal.inviteEmailProblem
 import com.kinfolk.portal.portal.isInvitableEmail
+import com.kinfolk.portal.portal.inviteFailureLine
 import com.kinfolk.portal.portal.PaymentMethodState
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.theme.KinfolkBrand
@@ -69,6 +72,8 @@ fun AccountSettingsScreen(
      * card is not drawn and the card on file is never asked for.
      */
     billingAccess: Boolean = true,
+    /** Fires with the account the server returned after a save, so the header avatar can follow a renamed person (#1290). */
+    onAccountSaved: (Account) -> Unit = {},
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
@@ -103,6 +108,11 @@ fun AccountSettingsScreen(
     var accountSchema by remember { mutableStateOf<FormSchema?>(null) }
     var accountValues by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
 
+    // #1289: caught on the field in plain words; the server repeats the same
+    // sentence for a number that slips past this floor. The schema-driven form
+    // keeps its values in a map, so it is checked the same way.
+    val phoneError = phoneProblem(if (accountSchema != null) accountValues["phone"].orEmpty() else phone)
+    val backupPhoneError = phoneProblem(if (accountSchema != null) accountValues["backupPhone"].orEmpty() else backupPhone)
     LaunchedEffect(Unit) {
         try {
             val a = portalApi.getMyAccount()
@@ -111,10 +121,10 @@ fun AccountSettingsScreen(
             // never pre-fill the name field with the email — start blank so the
             // "First & Last Name" label acts as the prompt.
             displayName = a.displayName?.takeIf { it != a.email }.orEmpty()
-            phone = a.phone.orEmpty()
+            phone = formatPhone(a.phone)
             photoUrl = a.photoUrl.orEmpty()
             backupEmail = a.backupEmail.orEmpty()
-            backupPhone = a.backupPhone.orEmpty()
+            backupPhone = formatPhone(a.backupPhone)
             error = null
         } catch (c: CancellationException) {
             throw c
@@ -233,7 +243,8 @@ fun AccountSettingsScreen(
                         } catch (c: CancellationException) {
                             throw c
                         } catch (t: Throwable) {
-                            status = "Invite failed: ${t.message ?: t}"
+                            // #1277: a missing backend setting never shows its name.
+                            status = inviteFailureLine(t)
                         } finally {
                             inviting = false
                         }
@@ -275,8 +286,13 @@ fun AccountSettingsScreen(
                         value = phone,
                         onValueChange = { phone = it },
                         label = "Phone",
+                        fieldTestTag = "account-phone",
+                        isError = phoneError != null,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    phoneError?.let {
+                        Text(it, style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral))
+                    }
                     AvatarPickerRow(
                         portalApi = portalApi,
                         photoUrl = photoUrl,
@@ -305,8 +321,13 @@ fun AccountSettingsScreen(
                         value = backupPhone,
                         onValueChange = { backupPhone = it },
                         label = "Backup Phone",
+                        fieldTestTag = "account-backup-phone",
+                        isError = backupPhoneError != null,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    backupPhoneError?.let {
+                        Text(it, style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral))
+                    }
                 }
             }
         }
@@ -470,6 +491,11 @@ fun AccountSettingsScreen(
             }
         }
 
+        if (accountSchema != null) {
+            (phoneError ?: backupPhoneError)?.let {
+                Text(it, style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral), modifier = Modifier.padding(horizontal = KinfolkSpacing.l))
+            }
+        }
         if (status != null) {
             Text(status!!, style = type.sansLabel.copy(color = KinfolkBrand.KinTeal), modifier = Modifier.padding(horizontal = KinfolkSpacing.l))
         }
@@ -504,12 +530,13 @@ fun AccountSettingsScreen(
                         // silent write failure surfaces instead of a false "Saved."
                         val fresh = portalApi.getMyAccount()
                         loaded = fresh
+                        onAccountSaved(fresh)
                         val freshName = fresh.displayName?.takeIf { it != fresh.email }.orEmpty()
                         displayName = freshName
-                        phone = fresh.phone.orEmpty()
+                        phone = formatPhone(fresh.phone)
                         photoUrl = fresh.photoUrl.orEmpty()
                         backupEmail = fresh.backupEmail.orEmpty()
-                        backupPhone = fresh.backupPhone.orEmpty()
+                        backupPhone = formatPhone(fresh.backupPhone)
                         if (accountSchema != null) {
                             accountValues = accountValues + mapOf(
                                 "displayName" to freshName,
@@ -530,7 +557,8 @@ fun AccountSettingsScreen(
             },
             modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l, vertical = KinfolkSpacing.s),
             // "First & Last Name" is required: block save when it's blank.
-            enabled = !saving && (if (accountSchema != null) accountValues["displayName"].orEmpty() else displayName).isNotBlank(),
+            enabled = !saving && phoneError == null && backupPhoneError == null &&
+                (if (accountSchema != null) accountValues["displayName"].orEmpty() else displayName).isNotBlank(),
         )
 
         KinGhostButton(

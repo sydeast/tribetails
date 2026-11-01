@@ -231,4 +231,18 @@ class ShellNavTest {
         assertEquals("T", avatarInitial("   "))
         assertEquals("T", avatarInitial("!!!"))
     }
+
+    @Test
+    fun shellPersonName_prefersTheSavedName_thenEmail_thenHousehold() {
+        assertEquals("Casey QA", resolveShellPersonName("Casey QA", "casey@x.com", "TEST SANDBOX"))
+        assertEquals("casey@x.com", resolveShellPersonName("", "casey@x.com", "TEST SANDBOX"))
+        assertEquals("casey@x.com", resolveShellPersonName(null, "casey@x.com", "TEST SANDBOX"))
+        assertEquals("casey@x.com", resolveShellPersonName("Casey@X.com", "casey@x.com", "TEST SANDBOX"))
+        assertEquals("TEST SANDBOX", resolveShellPersonName(null, null, "TEST SANDBOX"))
+    }
+    @Test
+    fun shellPersonName_givesTheSameAvatarLetterAsTheWeb() {
+        assertEquals("C", avatarInitial(resolveShellPersonName("Casey QA", "jordan@x.com", "TEST SANDBOX")))
+        assertEquals("J", avatarInitial(resolveShellPersonName("", "jordan@x.com", "TEST SANDBOX")))
+    }
 }

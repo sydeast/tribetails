@@ -29,7 +29,10 @@ import { BusyLabel } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { isOfflineError, usePortalMutation } from '../lib/mutationState';
 import { inviteEmailProblem, isInvitableEmail } from '../lib/inviteEmail';
+import { INVITES_UNAVAILABLE_MESSAGE, isConfigGapError } from '../lib/inviteFailure';
 import { billingAccessOf } from '../lib/billingAccess';
+import { resolveIdentity } from '../lib/identity';
+import { formatPhone, phoneProblem } from '../lib/phone';
 
 type Status = { text: string; tone: 'ok' | 'err' };
 
@@ -128,10 +131,10 @@ export function Account() {
     if (hydrated || !account.data) return;
     const a = account.data;
     setDisplayName(a.displayName && a.displayName !== a.email ? a.displayName : '');
-    setPhone(a.phone ?? '');
+    setPhone(formatPhone(a.phone));
     setPhotoUrl(a.photoUrl ?? '');
     setBackupEmail(a.backupEmail ?? '');
-    setBackupPhone(a.backupPhone ?? '');
+    setBackupPhone(formatPhone(a.backupPhone));
     setHydrated(true);
   }, [account.data, hydrated]);
 
@@ -153,10 +156,10 @@ export function Account() {
       const fresh = await queryClient.fetchQuery({ queryKey: ['myAccount', kinfolkId], queryFn: () => getMyAccount(kinfolkId) });
       queryClient.setQueryData(['myAccount', kinfolkId], fresh);
       setDisplayName(fresh.displayName && fresh.displayName !== fresh.email ? fresh.displayName : '');
-      setPhone(fresh.phone ?? '');
+      setPhone(formatPhone(fresh.phone));
       setPhotoUrl(fresh.photoUrl ?? '');
       setBackupEmail(fresh.backupEmail ?? '');
-      setBackupPhone(fresh.backupPhone ?? '');
+      setBackupPhone(formatPhone(fresh.backupPhone));
     },
     onError: (err: unknown) => {
       // #807: NOT "Save failed" for an offline failure. This write is HELD, so
@@ -181,7 +184,11 @@ export function Account() {
     onSuccess: () => setInviteStatus({ text: `Invite sent to ${backupEmail.trim().toLowerCase()}.`, tone: 'ok' }),
     onError: (err: unknown) => {
       if (isOfflineError(err)) return;
-      setInviteStatus({ text: `Invite failed: ${err instanceof Error ? err.message : 'try again'}`, tone: 'err' });
+      // #1277: a missing backend setting is the operator's to fix; never show its name.
+      const text = isConfigGapError(err)
+        ? INVITES_UNAVAILABLE_MESSAGE
+        : `Invite failed: ${err instanceof Error ? err.message : 'try again'}`;
+      setInviteStatus({ text, tone: 'err' });
     },
   }, { policy: 'hold', what: 'this invite' });
 
@@ -307,10 +314,16 @@ export function Account() {
   // account, not theirs: the profile becomes a read-only view of that household.
   const readOnly = data.impersonated;
   const householdName = home.data?.displayName || data.displayName || 'this tribe';
-  const initial = (data.displayName || data.email || householdName || 'M').charAt(0).toUpperCase();
+  // The same answer the header avatar gives (lib/identity.ts), so the photo
+  // placeholder here cannot disagree with it (#1290).
+  const { initial } = resolveIdentity({ account: data, signInEmail: null, householdName });
   const roster = (kin.data?.kin ?? []).filter((k) => k.status === 'active').slice(0, 4);
   const businessName = home.data?.businessName || 'Tribe Tails Pet Care';
   const nameValid = displayName.trim().length > 0;
+  // #1289: caught on the field, in plain words, before Save is ever offered. The
+  // server repeats the same sentence if a number slips past this floor.
+  const phoneError = phoneProblem(phone);
+  const backupPhoneError = phoneProblem(backupPhone);
 
   // The card query is the authority once it has answered; the account DTO's
   // boolean covers the moment before that, and the operator view where the card
@@ -328,7 +341,7 @@ export function Account() {
 
   return (
     <>
-      <PortalNav active="account" displayName={(readOnly ? householdName : data.displayName) ?? ''} />
+      <PortalNav active="account" />
 
       <div className="wrap acct">
         <header className="hero-greet">
@@ -387,7 +400,23 @@ export function Account() {
                 </div>
                 <div className="field">
                   <label htmlFor="phone">Phone</label>
-                  <input className="input" id="phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(555) 014 2298" disabled={readOnly} />
+                  <input
+                    className="input"
+                    id="phone"
+                    type="tel"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    onBlur={() => !phoneError && setPhone(formatPhone(phone))}
+                    placeholder="(555) 014-2298"
+                    disabled={readOnly}
+                    aria-invalid={phoneError ? true : undefined}
+                    aria-describedby={phoneError ? 'phone-err' : undefined}
+                  />
+                  {phoneError && !readOnly && (
+                    <p className="sub field-err" id="phone-err" role="alert">
+                      {phoneError}
+                    </p>
+                  )}
                 </div>
               </div>
             </section>
@@ -429,9 +458,17 @@ export function Account() {
                       type="tel"
                       value={backupPhone}
                       onChange={(e) => setBackupPhone(e.target.value)}
-                      placeholder="(555) 000 0000"
+                      onBlur={() => !backupPhoneError && setBackupPhone(formatPhone(backupPhone))}
+                      placeholder="(555) 000-0000"
                       disabled={readOnly}
+                      aria-invalid={backupPhoneError ? true : undefined}
+                      aria-describedby={backupPhoneError ? 'bphone-err' : undefined}
                     />
+                    {backupPhoneError && !readOnly && (
+                      <p className="sub field-err" id="bphone-err" role="alert">
+                        {backupPhoneError}
+                      </p>
+                    )}
                   </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', marginTop: 4 }}>
@@ -624,7 +661,9 @@ export function Account() {
           </div>
         </div>
 
-        {/* sticky save bar */}
+        {/* #1307: in flow, not sticky. The fixed bar sat on Backup Email and Send
+            Invite at default scroll on desktop, and on a phone stacked over the
+            bottom tab bar. The page already pads its bottom for the tab bar. */}
         <div className="savebar">
           {status && (
             <span className={`note${status.tone === 'err' ? ' err' : ''}`}>
@@ -633,32 +672,42 @@ export function Account() {
             </span>
           )}
           <span className="grow" />
-          {confirmingSignOut ? (
-            <>
-              <span className="sub">Sign out of MyTribe?</span>
-              <button className="btn ghost" type="button" onClick={() => setConfirmingSignOut(false)}>
-                Cancel
-              </button>
-              <button className="btn coral" type="button" onClick={signOut} disabled={signingOut}>
-                {signingOut ? <BusyLabel>Signing out…</BusyLabel> : 'Yes, Sign Out'}
-              </button>
-            </>
-          ) : (
-            <button className="btn coral" type="button" onClick={() => setConfirmingSignOut(true)}>
-              Sign Out
-            </button>
-          )}
           {!readOnly && (
-            <button className="btn grad" type="button" onClick={() => save.mutate()} disabled={save.isPending || !nameValid}>
+            <button
+              className="btn grad"
+              type="button"
+              onClick={() => save.mutate()}
+              disabled={save.isPending || !nameValid || !!phoneError || !!backupPhoneError}
+            >
               <MutationLabel mutation={save} busy="Saving…">
                 {'✓'} Save Changes
               </MutationLabel>
             </button>
           )}
         </div>
-
         <OfflineMutationNotice phase={save.phase} what="this update" check="your details" />
 
+        {/* #1308: Sign Out is its own row, away from Save Changes, and its
+            confirmation keeps Cancel and the confirm button together. */}
+        <section className="signout" aria-label="Sign out">
+          {confirmingSignOut ? (
+            <>
+              <span className="sub">Sign out of MyTribe?</span>
+              <div className="signout__choices">
+                <button className="btn ghost" type="button" onClick={() => setConfirmingSignOut(false)}>
+                  Cancel
+                </button>
+                <button className="btn coral" type="button" onClick={signOut} disabled={signingOut}>
+                  {signingOut ? <BusyLabel>Signing out…</BusyLabel> : 'Yes, Sign Out'}
+                </button>
+              </div>
+            </>
+          ) : (
+            <button className="btn coral" type="button" onClick={() => setConfirmingSignOut(true)}>
+              Sign Out
+            </button>
+          )}
+        </section>
         <p className="footnote">
           Cared for by <b>{businessName}</b>
         </p>

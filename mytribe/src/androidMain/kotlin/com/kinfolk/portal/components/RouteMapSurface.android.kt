@@ -1,6 +1,8 @@
 package com.kinfolk.portal.components
 
 import android.util.Log
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -67,6 +69,8 @@ internal fun routeSurfaceFor(
     else -> RouteSurface.Canvas
 }
 
+/** The notice accompanies the polyline whenever it stands in for a basemap. */
+internal fun routeSurfaceShowsNote(surface: RouteSurface): Boolean = surface == RouteSurface.Canvas
 /**
  * Whether a map-loading error means no basemap arrived.
  *
@@ -103,7 +107,11 @@ internal actual fun RouteMapSurface(
     var tilesFailed by remember { mutableStateOf(false) }
 
     when (routeSurfaceFor(MapboxPortalConfig.startupTokenApplication, tilesFailed)) {
-        RouteSurface.Canvas -> RouteCanvas(route = route, modifier = modifier)
+        RouteSurface.Canvas -> Box(modifier = modifier) {
+            RouteCanvas(route = route, modifier = Modifier.fillMaxSize())
+            // A route on a blank card reads as a bug (#1287): say why.
+            if (routeSurfaceShowsNote(RouteSurface.Canvas)) MapUnavailableNote()
+        }
         RouteSurface.Basemap -> MapboxRouteSurface(
             route = route,
             modifier = modifier,

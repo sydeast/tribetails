@@ -16,6 +16,7 @@ import { materializeKinRoster } from '../lib/kinRoster';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { validateResponse } from '../lib/callableResponse';
+import { EnvelopeDtoSchema, readEnvelopeDto } from '../lib/portalBookingDto';
 import {
   IdempotencyKeyArg,
   assertSameCaller,
@@ -329,8 +330,28 @@ export const Result = z
     bookingIds: z.array(z.string().min(1)).min(1),
     /** Legacy single-id alias, always `batchId` today. */
     bookingId: z.string().min(1),
+    /**
+     * #1281: the envelope as stored, read back after the write (or, on a
+     * replayed key, as the first attempt stored it), in exactly the shape
+     * `getMyBookings` lists it. A client writes it into its bookings cache so
+     * the household sees the booking the moment Create Booking resolves,
+     * instead of a pre-save "No upcoming bookings" until a refetch lands.
+     * Null when the read-back failed: the booking still committed, and the
+     * client falls back to refetching the list.
+     */
+    envelope: EnvelopeDtoSchema.nullable(),
   })
   .strict();
+/**
+ * #1281: every reply this callable sends, the first attempt and every replay
+ * of its key alike. Reading back AFTER `maybeAutoConfirm` is deliberate: an
+ * auto-confirmed booking is returned confirmed, which is what the list will
+ * say on its next read.
+ */
+async function replyWith(kinfolkId: string, batchId: string): Promise<z.infer<typeof Result>> {
+  const envelope = await readEnvelopeDto(db(), kinfolkId, batchId);
+  return validateResponse('requestBooking', Result, { batchId, bookingIds: [batchId], bookingId: batchId, envelope });
+}
 
 /** Normalized per-visit input the envelope writer consumes. */
 export interface NormalizedVisit {
@@ -1058,11 +1079,7 @@ export async function requestBookingHandler(
         event: 'portal.booking.requested.deduped', uid,
         extra: { kinfolkId, batchId: replayed.batchId, count: replayed.visitCount },
       });
-      return validateResponse('requestBooking', Result, {
-        batchId: replayed.batchId,
-        bookingIds: [replayed.batchId],
-        bookingId: replayed.batchId,
-      });
+      return replyWith(kinfolkId, replayed.batchId);
     }
 
     const now = Date.now();
@@ -1195,7 +1212,7 @@ export async function requestBookingHandler(
         event: 'portal.booking.requested.deduped', uid,
         extra: { kinfolkId, batchId, count: written.visitIds.length, race: true },
       });
-      return validateResponse('requestBooking', Result, { batchId, bookingIds: [batchId], bookingId: batchId });
+      return replyWith(kinfolkId, batchId);
     }
 
     logEvent({
@@ -1227,7 +1244,7 @@ export async function requestBookingHandler(
       });
     });
     await maybeAutoConfirm(kinfolkId, batchId, uid, normalized.filter((v) => v.startTimeMs == null).length);
-    return validateResponse('requestBooking', Result, { batchId, bookingIds: [batchId], bookingId: batchId });
+    return replyWith(kinfolkId, batchId);
   }
 
   // Legacy single-visit path, stored as a 1-visit envelope.
@@ -1245,11 +1262,7 @@ export async function requestBookingHandler(
       event: 'portal.booking.requested.deduped', uid,
       extra: { kinfolkId, batchId: replayedLegacy.batchId, legacy: true },
     });
-    return validateResponse('requestBooking', Result, {
-      batchId: replayedLegacy.batchId,
-      bookingIds: [replayedLegacy.batchId],
-      bookingId: replayedLegacy.batchId,
-    });
+    return replyWith(kinfolkId, replayedLegacy.batchId);
   }
 
   if (args.endTimeMs && args.endTimeMs <= args.startTimeMs) {
@@ -1315,7 +1328,7 @@ export async function requestBookingHandler(
       event: 'portal.booking.requested.deduped', uid,
       extra: { kinfolkId, batchId, legacy: true, race: true },
     });
-    return validateResponse('requestBooking', Result, { batchId, bookingIds: [batchId], bookingId: batchId });
+    return replyWith(kinfolkId, batchId);
   }
 
   logEvent({ severity: 'info', function: 'requestBooking', event: 'portal.booking.requested', uid, extra: { kinfolkId, batchId } });
@@ -1336,7 +1349,7 @@ export async function requestBookingHandler(
     });
   });
   await maybeAutoConfirm(kinfolkId, batchId, uid);
-  return validateResponse('requestBooking', Result, { batchId, bookingIds: [batchId], bookingId: batchId });
+  return replyWith(kinfolkId, batchId);
 }
 
 export const requestBooking = onCall(

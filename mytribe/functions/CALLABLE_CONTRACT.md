@@ -1587,7 +1587,8 @@ Operator ruling 2026-09-27 (Q3): "A Secondary kinfolk can be added to the househ
 - `removeSecondaryKinfolk` req `{ kinfolkId?: string, personId: string }` (strict) res `{ ok: true }`. Deletes a NONE or INVITED record. ACTIVE is refused with `failed-precondition` "This secondary kinfolk has portal access. Remove them from the portal first." (an INVITED record is deletable so a revoked or expired invite never strands it).
 - PORTAL ACCESS: `addSecondaryContact` takes an optional `personId`. The invite carries it and the record moves to `INVITED` with `inviteId`; a deduped live invite is stamped with it too. Refused: `not-found` for a missing record, `failed-precondition` "This secondary kinfolk already has portal access." `acceptInvite` then sets the record to `ACTIVE` with `memberUid` in the same transaction (skipped if the record was deleted).
 - `addSecondaryContact` now refuses every staff caller (owner claim or `AUNTIE_OPERATOR_UIDS`) with `permission-denied` "Only the primary kinfolk can invite a secondary kinfolk to the portal." No admin client called it.
-- #1018 item 3: `addSecondaryContact` used to send no email of its own (`onInviteRequestCreate` is a no-op), which made the portal's "Invite sent." false. `mintInviteFromPrimary` had always sent three real emails through `sendFromTemplate` (`invite.secondary`, `invite.auntie-notify`, `invite.primary-receipt`) that `addSecondaryContact` never gained. It now sends the identical set, with identical template data, through the shared `lib/inviteEmails.ts` helper (`resolveInviteEmailConfig` / `sendPrimaryInviteEmails`) both callables use. A send failure throws out of the handler exactly as it always has out of `mintInviteFromPrimary`: never swallowed, and the invite doc is left `PENDING` (not `EMAIL_SENT`) so its real state stays visible. A resend of a still-live deduped invite (S7-BLOCKER-2) re-sends the email too. Requires `CLAIM_LINK_BASE_URL` (fail-loud, before any write, same guard `mintInviteFromPrimary` uses) and, when `AUNTIE_NOTIFY_EMAIL` is set, `AUNTIE_OS_REVIEW_BASE_URL`.
+- #1018 item 3: `addSecondaryContact` used to send no email of its own (`onInviteRequestCreate` is a no-op), which made the portal's "Invite sent." false. `mintInviteFromPrimary` had always sent three real emails through `sendFromTemplate` (`invite.secondary`, `invite.auntie-notify`, `invite.primary-receipt`) that `addSecondaryContact` never gained. It now sends the identical set, with identical template data, through the shared `lib/inviteEmails.ts` helper (`resolveInviteEmailConfig` / `sendPrimaryInviteEmails`) both callables use. A send failure throws out of the handler exactly as it always has out of `mintInviteFromPrimary`: never swallowed, and the invite doc is left `PENDING` (not `EMAIL_SENT`) so its real state stays visible. A resend of a still-live deduped invite (S7-BLOCKER-2) re-sends the email too. Requires `CLAIM_LINK_BASE_URL` (fail-loud `failed-precondition` "CLAIM_LINK_BASE_URL is not configured", before any write, same guard `mintInviteFromPrimary` uses).
+- #1277: `AUNTIE_OS_REVIEW_BASE_URL` no longer refuses the invite, in either callable. It only builds the link in `invite.auntie-notify`, the business's own copy. When `AUNTIE_NOTIFY_EMAIL` is set and it is not, the invite is minted and the invitee and receipt emails go out as normal; the notice is skipped, `auntieNotifiedAt` is not stamped (it is now stamped only when the notice was sent), and the gap is recorded: an error log line `invite.auntieNotify.skipped` and a FAILURE `activity_log` row `MEMBERSHIP_INVITE_AUNTIE_NOTICE_SKIPPED` (payload `{ function, inviteId, missingVar }`) that the daily error digest lists. Portal web and the portal Android app map any `failed-precondition` "<VAR> is not configured" refusal to "Invites can't be sent right now. It's been reported to Auntie." and never show the variable name.
 - `removeMember` on an ACTIVE secondary returns their person record to `NONE` (memberUid and inviteId cleared); see `removeMember` above (#1018).
 - NEVER a recipient: nothing that sends reads this collection. NEVER logged: name, phone or email.
 ### saveTribeProfile / saveHomeAccess: `customFields` merge by key (#873)
@@ -1725,7 +1726,11 @@ closure so the operator can act on them manually.
 ### getBusinessClosures
 - req `{ fromDate: string (YYYY-MM-DD), toDate: string (YYYY-MM-DD) }`, range
   capped at 120 days, `toDate >= fromDate`.
-- res `{ closures: Array<{ date: string, name: string }> }`, sorted by date.
+- res `{ closures: Array<{ date: string, name: string }>, weeklyHours:
+  Array<{ weekday: number /* 0 = Sunday */, open: boolean, startTime: string | null,
+  endTime: string | null }>, timeZone: string }`, closures sorted by date.
+  `weeklyHours` is seven entries (Sunday first) or `[]` when the business has no
+  readable weekly hours; `[]` means "no restriction known" (#1284).
 - The kinfolk portal's ONE way to learn which dates are closed:
   `business_settings` is admin-only in `firestore.rules`
   (`allow read: if isAuntie() || isTestAdmin();`), so `mytribe/web` cannot read
@@ -2152,9 +2157,16 @@ the handler.
   it; addresses come from the household doc and are read live from it. Neither
   parsing schema is `.strict()`, so a cached client still sending the key has
   it stripped rather than being refused.
-- res `{ batchId: string, bookingIds: string[], bookingId: string }`. Both
-  write paths return this identical shape; `bookingId` is always `batchId`
-  (kept as a legacy alias, no caller has ever seen it absent).
+- res `{ batchId: string, bookingIds: string[], bookingId: string, envelope: EnvelopeDto | null }`.
+  Both write paths return this identical shape; `bookingId` is always
+  `batchId` (kept as a legacy alias, no caller has ever seen it absent).
+- `envelope` (#1281) is the envelope and its visits read back after the write
+  (after auto-confirm, so a confirmed booking comes back confirmed), in the
+  exact shape `getMyBookings` lists it (`lib/portalBookingDto.ts`). A replayed
+  idempotency key returns what the first attempt stored. Clients write it into
+  their bookings cache so the new booking shows the moment the call resolves.
+  Null when the read-back failed; the booking still committed and the client
+  refetches instead.
 - Writes ONE parent `families/{kinfolkId}/bookings/{batchId}` envelope plus
   one `kinCares/{visitId}` per visit, in a transaction. `priceCents` and
   `serviceName` in the response's underlying doc are resolved SERVER-SIDE
@@ -2167,7 +2179,9 @@ the handler.
 
 ### requestBookingCancellation
 - req `{ kinfolkId?: string, batchId: string, visitId: string, reason?: string }`
-- res `{ ok: true, visitId: string, alreadyPending: boolean }`
+- res `{ ok: true, visitId: string, alreadyPending: boolean, visit: BookingDto | null }`.
+  `visit` (#1281) is the visit read back after the write, in the `getMyBookings`
+  shape, for the client to write into its cache; null if the read-back failed.
 - Vendor-parity (2026-07-02): NOT a status change. Stamps
   `cancelRequestedAt`/`cancelRequestReason`/`cancelRequestedByUid` plus (since
   #438) `cancelRequestStatus: 'pending'` on the visit; only the business
@@ -2182,11 +2196,15 @@ the handler.
   asks that sat unread from 2026-07-02 until #438 built the queue.
 - Only `requested`/`confirmed` visits are cancelable; anything else is
   `failed-precondition`.
+- #1299: refused with `failed-precondition` while a reschedule ask is pending
+  on the visit. A visit carries at most one open ask; `requestBookingReschedule`
+  refuses the other way round. Clients hide the second action.
 - kinfolk portal only.
 
 - req `{ kinfolkId?: string, batchId: string, visitId: string, proposedStartTimeMs: number, proposedEndTimeMs?: number, reason?: string }`
   (`proposedStartTimeMs` is an integer epoch-ms in the future and at most a year out)
-- res `{ ok: true, visitId: string, proposedStartTimeMs: number, proposedEndTimeMs: number | null }`
+- res `{ ok: true, visitId: string, proposedStartTimeMs: number, proposedEndTimeMs: number | null, visit: BookingDto | null }`.
+  `visit` (#1281): same read-back as `requestBookingCancellation`.
 - #399 item 2, and the same kind of thing as the cancellation ask above: a
   PROPOSAL, not a move. Stamps `rescheduleRequestedAt` /
   `rescheduleRequestedByUid` / `rescheduleRequestReason` /
@@ -2201,6 +2219,9 @@ the handler.
 - A second proposal while one is pending is `already-exists`, not a silent
   overwrite: the office may already be acting on the time it was shown. A fresh
   proposal after a decline IS allowed, and clears the previous answer.
+- #1299: refused with `failed-precondition` while a cancellation ask is
+  pending (a pre-#438 bare `cancelRequestedAt` counts as pending), the mirror of
+  the rule on `requestBookingCancellation`.
 - Only `requested`/`confirmed` visits qualify; anything else is
   `failed-precondition`.
 - `onBookingsWrite` fires `kincare.reschedule.requested` to the business on the
@@ -2478,7 +2499,15 @@ instead of hand mirrors.
 - writes `.../kinCares/{visitId}/notes`, `authorRole` stamped from the CALLER
   (`'admin'` or `'kinfolk'`), never sent by the client
 
-### addInternalBookingNote
+### getBookingNotes
+- req `{ kinfolkId?: string, batchId: string, visitId: string }`
+- res `{ bookingNote: string | null, notes: Array<{ id: string, body: string, createdAtMs: number | null }> }`
+- `bookingNote` is the booking wizard's Extra Love & Context text off the parent
+  booking; `notes` are the household's own rows from `.../kinCares/{visitId}/notes`
+  (`authorRole === 'kinfolk'` only), oldest first, at most 200
+- NEVER returns staff rows (`authorRole: 'admin'`), `internalNotes`, dossier or
+  411 text; the filter runs on the server (#1283)
+- an Auntie is refused (household callable, `householdStaffFlag`)
 - req: identical to `addBookingNote`
 - res `{ noteId: string }`
 - writes `.../kinCares/{visitId}/internalNotes`, `authorRole` always `'admin'`

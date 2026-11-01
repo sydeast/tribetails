@@ -26,6 +26,11 @@ function kin(overrides: Partial<KinDto> = {}): KinDto {
     allergies: null,
     emergencyNotes: null,
     sitterNotes: null,
+    sex: null,
+    weight: null,
+    colorMarkings: null,
+    spayedNeutered: false,
+    vetInfo: null,
     ...overrides,
   };
 }
@@ -81,12 +86,15 @@ describe('validateKinForm', () => {
     expect(validateKinForm(formFor({ name: 'x'.repeat(80) })).name).toBeUndefined();
   });
 
-  it('requires photoUrl to be an http(s) URL', () => {
-    expect(validateKinForm(formFor({ photoUrl: 'javascript:alert(1)' })).photoUrl).toMatch(/http/);
-    expect(validateKinForm(formFor({ photoUrl: 'ftp://example.com/a.png' })).photoUrl).toMatch(/http/);
-    expect(validateKinForm(formFor({ photoUrl: 'not a url' })).photoUrl).toMatch(/http/);
-    expect(validateKinForm(formFor({ photoUrl: 'https://example.com/a.png' })).photoUrl).toBeUndefined();
-    expect(validateKinForm(formFor({ photoUrl: '' })).photoUrl).toBeUndefined();
+  it('#1291: the text form never carries photoUrl, so a Save can not overwrite an uploaded photo', () => {
+    const k = kin({ photoUrl: 'https://res.cloudinary.com/demo/image/upload/v1/old.jpg' });
+    const form = kinFormFromDto(k);
+    expect(form).not.toHaveProperty('photoUrl');
+    // The photo was replaced by an upload since the form was seeded: the
+    // cached kin now holds the new URL and the diff still leaves it alone.
+    const after = { ...k, photoUrl: 'https://res.cloudinary.com/demo/image/upload/v2/new.jpg' };
+    expect(buildKinChanges(after, { ...form, name: 'Buddy 2' })).toEqual({ name: 'Buddy 2' });
+    expect(buildNewKinPayload({ ...emptyKinForm(), name: 'Rex' })).not.toHaveProperty('photoUrl');
   });
 
   it('enforces the species / breed / long-text length caps', () => {
@@ -136,10 +144,45 @@ describe('buildKinChanges', () => {
   });
 });
 
+describe('shared facts (#1310)', () => {
+  it('seeds the form from the kin, null becoming empty', () => {
+    expect(kinFormFromDto(kin())).toMatchObject({ sex: '', weight: '', colorMarkings: '', vetInfo: '', spayedNeutered: false });
+    expect(
+      kinFormFromDto(kin({ sex: 'Female', weight: '52 lbs', colorMarkings: 'Black', vetInfo: 'Dr A', spayedNeutered: true })),
+    ).toMatchObject({ sex: 'Female', weight: '52 lbs', colorMarkings: 'Black', vetInfo: 'Dr A', spayedNeutered: true });
+  });
+
+  it('sends only what changed, a cleared text as an empty string (never null), and the flag as a boolean', () => {
+    const k = kin({ sex: 'Male', weight: '50 lbs', colorMarkings: 'Black', vetInfo: 'Dr A', spayedNeutered: false });
+    expect(buildKinChanges(k, formFor({ sex: 'Male', weight: '50 lbs', colorMarkings: 'Black', vetInfo: 'Dr A' }))).toEqual({});
+    expect(buildKinChanges(k, formFor({ sex: 'Male', weight: '', colorMarkings: 'Black', vetInfo: 'Dr A' }))).toEqual({ weight: '' });
+    expect(buildKinChanges(k, formFor({ sex: 'Female', weight: '50 lbs', colorMarkings: 'Black', vetInfo: 'Dr B', spayedNeutered: true }))).toEqual({
+      sex: 'Female',
+      vetInfo: 'Dr B',
+      spayedNeutered: true,
+    });
+    expect(buildKinChanges(kin({ spayedNeutered: true }), formFor({ spayedNeutered: false }))).toEqual({ spayedNeutered: false });
+  });
+
+  it('treats an unset value and an empty form field as the same (no phantom change)', () => {
+    expect(buildKinChanges(kin({ sex: null, weight: null, vetInfo: null }), formFor())).toEqual({});
+  });
+
+  it('enforces the server caps', () => {
+    expect(validateKinForm(formFor({ sex: 'x'.repeat(41) })).sex).toMatch(/40/);
+    expect(validateKinForm(formFor({ weight: 'x'.repeat(41) })).weight).toMatch(/40/);
+    expect(validateKinForm(formFor({ colorMarkings: 'x'.repeat(201) })).colorMarkings).toMatch(/200/);
+    expect(validateKinForm(formFor({ vetInfo: 'x'.repeat(2001) })).vetInfo).toMatch(/2000/);
+    expect(hasErrors(validateKinForm(formFor({ sex: 'x'.repeat(40), colorMarkings: 'x'.repeat(200) })))).toBe(false);
+  });
+});
+
 describe('emptyKinForm', () => {
   it('every field starts blank, and it validates as incomplete (name required)', () => {
     const form = emptyKinForm();
-    expect(Object.values(form).every((v) => v === '')).toBe(true);
+    const { spayedNeutered, ...text } = form;
+    expect(Object.values(text).every((v) => v === '')).toBe(true);
+    expect(spayedNeutered).toBe(false);
     expect(validateKinForm(form).name).toBe('Name is required.');
   });
 });
@@ -152,7 +195,6 @@ describe('buildNewKinPayload', () => {
       species: 'Dog',
       breed: null,
       ageYears: null,
-      photoUrl: null,
       feedingInstructions: null,
       walkingInstructions: null,
       medications: null,
@@ -160,6 +202,27 @@ describe('buildNewKinPayload', () => {
       emergencyNotes: null,
       sitterNotes: null,
     });
+  });
+
+  it('adds the shared facts (#1310) only when they have a value', () => {
+    const form: KinEditForm = {
+      ...emptyKinForm(),
+      name: 'Rex',
+      sex: 'Male',
+      weight: ' 52 lbs ',
+      colorMarkings: 'Black',
+      vetInfo: 'Riverside Animal Hospital',
+      spayedNeutered: true,
+    };
+    expect(buildNewKinPayload(form)).toMatchObject({
+      sex: 'Male',
+      weight: '52 lbs',
+      colorMarkings: 'Black',
+      vetInfo: 'Riverside Animal Hospital',
+      spayedNeutered: true,
+    });
+    const blank = buildNewKinPayload({ ...emptyKinForm(), name: 'Rex' });
+    for (const k of ['sex', 'weight', 'colorMarkings', 'vetInfo', 'spayedNeutered']) expect(blank).not.toHaveProperty(k);
   });
 
   it('parses a valid age and trims every text field', () => {
