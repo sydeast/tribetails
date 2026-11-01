@@ -402,6 +402,31 @@ class NotificationLockDisplayTest {
         assertEquals("Sent by an older server.", keyDescriptionLine(k("Sent by an older server.", "  ")))
     }
     @Test
+    fun keyTitle_prefersTheHouseholdTitleAndFallsBack() {
+        fun k(title: String, household: String?) = NotificationKey(
+            key = "quote.accepted",
+            title = title,
+            description = "Quote accepted confirmation.",
+            householdTitle = household,
+            allowedChannels = setOf(NotificationChannel.EMAIL),
+        )
+        assertEquals("You accepted a quote", keyTitle(k("Kinfolk accepted a quote", "You accepted a quote")))
+        assertEquals("Kinfolk accepted a quote", keyTitle(k("Kinfolk accepted a quote", null)))
+        assertEquals("Kinfolk accepted a quote", keyTitle(k("Kinfolk accepted a quote", "  ")))
+    }
+    @Test
+    fun keyDescriptionLine_dedupesAgainstTheHouseholdTitle() {
+        val key = NotificationKey(
+            key = "quote.accepted",
+            title = "Kinfolk accepted a quote",
+            description = "Quote accepted confirmation.",
+            householdDescription = "You accepted a quote.",
+            householdTitle = "You accepted a quote",
+            allowedChannels = setOf(NotificationChannel.EMAIL),
+        )
+        assertEquals(null, keyDescriptionLine(key))
+    }
+    @Test
     fun staticFallback_neverShowsAHouseholdPlumbingOrOperatorWording() {
         val banned = Regex("debounce|digest|trailing|\\bdefault\\b|\\d+\\s*-?\\s*(min|minutes|hours?)\\b|\\bkinfolk\\b|footer", RegexOption.IGNORE_CASE)
         val keys = com.kinfolk.portal.notifications.KINFOLK_CATEGORIES.flatMap { it.keys }

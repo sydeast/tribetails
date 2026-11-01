@@ -137,6 +137,13 @@ export interface NotificationDef {
    * enforces it); the admin matrix keeps reading `description`.
    */
   householdDescription?: string;
+  /**
+   * The row's title addressed to the household (#1372): "You accepted a quote",
+   * not "Kinfolk accepted a quote". Sent beside `label`; the portal prefers it and
+   * the admin matrix keeps `label`. Required for every `audiences.kinfolk` key
+   * (notificationCatalogHouseholdCopy.test.ts).
+   */
+  householdTitle?: string;
 }
 
 /** Effective per-channel resolution returned by the prefs merger. */

@@ -55,6 +55,12 @@ describe('getNotificationCatalogHandler', () => {
     for (const k of all) {
       expect(k.householdDescription.length).toBeGreaterThan(0);
     }
+    for (const k of all) expect(k.householdTitle.length).toBeGreaterThan(0);
+    const accepted = all.find((k) => k.key === 'quote.accepted');
+    if (accepted) {
+      expect(accepted.title).toBe('Kinfolk accepted a quote');
+      expect(accepted.householdTitle).toBe('You accepted a quote');
+    }
     const changed = all.find((k) => k.key === 'kincare.changed')!;
     expect(changed.description).toBe('Kinfolk/Auntie updated, deleted, or requested changes to KinCare.');
     expect(changed.householdDescription).not.toBe(changed.description);
@@ -64,10 +70,15 @@ describe('getNotificationCatalogHandler', () => {
     h.overrideData = { businessName: 'Test Business' };
     const result = await getNotificationCatalogHandler({ data: {}, auth: SIGNED_IN } as never);
     const all = result.categories.flatMap((c) => c.keys);
-    const texts = [...all.map((k) => k.householdDescription), ...result.categories.map((c) => c.description)];
+    const texts = [
+      ...all.map((k) => k.householdDescription),
+      ...all.map((k) => k.householdTitle),
+      ...result.categories.map((c) => c.description),
+    ];
     expect(texts.join('\n')).not.toMatch(/\{[Bb]usiness|Tribe Tails/);
     const newsletter = all.find((k) => k.key === 'newsletter.announcement')!;
     expect(newsletter.householdDescription).toBe('News and announcements from Test Business, if you opt in.');
+    expect(all.find((k) => k.key === 'broadcast.message')!.householdTitle).toBe('Announcements from Test Business');
     expect(result.categories.find((c) => c.id === 'messages')!.description).toBe(
       'Messages and announcements from Test Business.',
     );
@@ -78,7 +89,11 @@ describe('getNotificationCatalogHandler', () => {
     const all = result.categories.flatMap((c) => c.keys);
     const newsletter = all.find((k) => k.key === 'newsletter.announcement')!;
     expect(newsletter.householdDescription).toBe('News and announcements from your Auntie, if you opt in.');
-    const texts = [...all.map((k) => k.householdDescription), ...result.categories.map((c) => c.description)];
+    const texts = [
+      ...all.map((k) => k.householdDescription),
+      ...all.map((k) => k.householdTitle),
+      ...result.categories.map((c) => c.description),
+    ];
     expect(texts.join('\n')).not.toMatch(/\{[Bb]usiness|Tribe Tails/);
   });
   // Audience revamp 2026-07: alwaysEnabled keys are no longer hidden from the

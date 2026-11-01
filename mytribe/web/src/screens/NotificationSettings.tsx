@@ -13,6 +13,7 @@ import {
   keyChannelOverridden,
   keyLockedChannels,
   keyDescription,
+  keyTitle,
   marketingMasterState,
   saveMyNotificationPrefs,
   type CategoryDto,
@@ -452,7 +453,7 @@ export function NotificationSettings() {
                 {cat.keys.map((k) => (
                   <div className="nf-key" key={k.key}>
                     <div className="nf-key-head">
-                      <b>{k.title}</b>
+                      <b>{keyTitle(k)}</b>
                       {keyDescription(k) && <small>{keyDescription(k)}</small>}
                     </div>
                     <div className="nf-key-chans">
@@ -469,7 +470,7 @@ export function NotificationSettings() {
                               <label className={`sw ${locked ? 'dis' : ''}`}>
                                 <input
                                   type="checkbox"
-                                  aria-label={`${copy.label} for ${k.title}`}
+                                  aria-label={`${copy.label} for ${keyTitle(k)}`}
                                   checked={checked}
                                   disabled={locked || busy}
                                   onChange={() => toggleKeyChannel(cat, k, ch)}

@@ -60,6 +60,7 @@ const CATALOG_LIST: NotificationDef[] = [
     secondaryResolver: 'businessAdmins',
     templates: { email: 'kincare.booking.confirm', sms: 'kincare.booking.confirm', push: 'kincare.booking.confirm' },
     description: 'KinCare booking confirmed.',
+    householdTitle: 'Your booking is confirmed',
     householdDescription: 'When your KinCare booking is confirmed.',
   },
   {
@@ -78,6 +79,7 @@ const CATALOG_LIST: NotificationDef[] = [
     secondaryResolver: 'businessAdmins',
     templates: { email: 'kincare.booking.cancel', sms: 'kincare.booking.cancel', push: 'kincare.booking.cancel' },
     description: 'KinCare booking canceled.',
+    householdTitle: 'A booking of yours was canceled',
     householdDescription: 'When a KinCare booking of yours is canceled.',
   },
   {
@@ -94,6 +96,7 @@ const CATALOG_LIST: NotificationDef[] = [
     recipientResolver: 'kinfolkAcct',
     templates: { email: 'kincare.auntie.on_my_way', sms: 'kincare.auntie.on_my_way', push: 'kincare.auntie.on_my_way' },
     description: 'Auntie en route to KinCare (optional ETA).',
+    householdTitle: 'Your Auntie is on the way',
     householdDescription: 'When your Auntie is on the way to your home, with an arrival estimate when there is one.',
   },
   {
@@ -110,6 +113,7 @@ const CATALOG_LIST: NotificationDef[] = [
     recipientResolver: 'kinfolkAcct',
     templates: { email: 'kincare.auntie.arrived', sms: 'kincare.auntie.arrived', push: 'kincare.auntie.arrived' },
     description: 'Auntie arrived at KinCare.',
+    householdTitle: 'Your Auntie has arrived',
     householdDescription: 'When your Auntie arrives for a KinCare visit.',
   },
   {
@@ -126,6 +130,7 @@ const CATALOG_LIST: NotificationDef[] = [
     recipientResolver: 'kinfolkAcct',
     templates: { email: 'kincare.auntie.departed', sms: 'kincare.auntie.departed', push: 'kincare.auntie.departed' },
     description: 'Auntie departed KinCare.',
+    householdTitle: 'Your Auntie has left',
     householdDescription: 'When your Auntie finishes and leaves your home.',
   },
   // NOTE (2026-07-24): `kincare.report.sent` used to live here, a second row
@@ -145,6 +150,7 @@ const CATALOG_LIST: NotificationDef[] = [
     recipientResolver: 'kinfolkAcct',
     templates: { email: 'kincare.unavailable', sms: 'kincare.unavailable', push: 'kincare.unavailable' },
     description: 'KinCare marked unavailable (typically blocked home access).',
+    householdTitle: "A visit can't go ahead",
     householdDescription: "When a KinCare visit can't go ahead, for example when your Auntie can't get into your home.",
   },
   {
@@ -182,6 +188,7 @@ const CATALOG_LIST: NotificationDef[] = [
     secondaryResolver: 'kinfolkAcct',
     templates: { email: 'kincare.changed', sms: 'kincare.changed', push: 'kincare.changed' },
     description: 'Kinfolk/Auntie updated, deleted, or requested changes to KinCare.',
+    householdTitle: 'A visit on your schedule changed',
     householdDescription: 'When a KinCare visit on your schedule is changed, deleted, or has a change requested.',
   },
   {
@@ -241,6 +248,7 @@ const CATALOG_LIST: NotificationDef[] = [
       push: 'kincare.cancel.declined',
     },
     description: 'Tribe Tails is keeping a visit the household asked to cancel.',
+    householdTitle: 'Your cancellation request was declined',
     householdDescription: 'When {business} keeps a visit you asked to cancel.',
   },
   {
@@ -266,6 +274,7 @@ const CATALOG_LIST: NotificationDef[] = [
       push: 'kincare.request.declined',
     },
     description: 'Tribe Tails could not take a care request the household asked for.',
+    householdTitle: 'Your care request was declined',
     householdDescription: "When {business} can't take a visit you requested.",
   },
   {
@@ -331,6 +340,7 @@ const CATALOG_LIST: NotificationDef[] = [
     recipientResolver: 'kinfolkAcct',
     templates: { email: 'kintale.published', sms: 'kintale.published', push: 'kintale.published' },
     description: 'Your Auntie published a KinTale, the written report from a KinCare visit.',
+    householdTitle: 'Your KinTale is ready',
     householdDescription: 'When your Auntie posts the KinTale from a KinCare visit.',
   },
   {
@@ -353,6 +363,7 @@ const CATALOG_LIST: NotificationDef[] = [
     templates: { email: 'kintale.comment.added', push: 'kintale.comment.added' },
     description:
       'Someone posted in the comment box under a KinTale. Collected into one message every 5 minutes.',
+    householdTitle: 'New comment on your KinTale',
     householdDescription: 'When someone comments on one of your KinTales. New comments arrive together in one message.',
   },
   {
@@ -372,6 +383,7 @@ const CATALOG_LIST: NotificationDef[] = [
     templates: { email: 'kintale.note.added', push: 'kintale.note.added' },
     description:
       'Your Auntie added more words or more photos to a KinTale you already received.',
+    householdTitle: 'Your Auntie added to a KinTale',
     householdDescription: 'When your Auntie adds more words or photos to a KinTale you already received.',
   },
   // ─────────────────────────────────────────────────────────
@@ -393,6 +405,7 @@ const CATALOG_LIST: NotificationDef[] = [
     secondaryResolver: 'businessAdmins',
     templates: { email: 'invoice.new', push: 'invoice.new' },
     description: 'New invoice/quote issued.',
+    householdTitle: 'You have a new invoice or quote',
     householdDescription: 'When you get a new invoice or quote.',
   },
   {
@@ -410,6 +423,7 @@ const CATALOG_LIST: NotificationDef[] = [
     secondaryResolver: 'businessAdmins',
     templates: { email: 'invoice.updated', push: 'invoice.updated' },
     description: 'Invoice/quote updated.',
+    householdTitle: 'Your invoice or quote changed',
     householdDescription: 'When an invoice or quote of yours is changed.',
   },
   {
@@ -428,6 +442,7 @@ const CATALOG_LIST: NotificationDef[] = [
     secondaryResolver: 'businessAdmins',
     templates: { email: 'invoice.receipt', push: 'invoice.receipt' },
     description: 'Receipt issued for an invoice.',
+    householdTitle: 'Your receipt for a paid invoice',
     householdDescription: 'When you get a receipt for a paid invoice.',
   },
   {
@@ -444,6 +459,7 @@ const CATALOG_LIST: NotificationDef[] = [
     recipientResolver: 'kinfolkAcct',
     templates: { email: 'invoice.reminder', sms: 'invoice.reminder', push: 'invoice.reminder' },
     description: 'Invoice payment reminder.',
+    householdTitle: 'Reminder to pay your invoice',
     householdDescription: 'A reminder before an invoice of yours is due.',
   },
   {
@@ -464,6 +480,7 @@ const CATALOG_LIST: NotificationDef[] = [
     recipientResolver: 'kinfolkAcct',
     templates: { email: 'invoice.overdue', sms: 'invoice.overdue', push: 'invoice.overdue' },
     description: 'Invoice overdue notice.',
+    householdTitle: 'Your invoice is overdue',
     householdDescription: 'When an invoice of yours is past its due date.',
   },
   {
@@ -482,6 +499,7 @@ const CATALOG_LIST: NotificationDef[] = [
     secondaryResolver: 'businessAdmins',
     templates: { email: 'invoice.charge.failed', sms: 'invoice.charge.failed', push: 'invoice.charge.failed' },
     description: 'Invoice charge or payment attempt failed.',
+    householdTitle: "Your payment didn't go through",
     householdDescription: "When a payment on your invoice doesn't go through.",
   },
   {
@@ -558,6 +576,7 @@ const CATALOG_LIST: NotificationDef[] = [
     secondaryResolver: 'businessAdmins',
     templates: { email: 'invoice.payment.applied', push: 'invoice.payment.applied' },
     description: 'Payment or credit applied to an invoice.',
+    householdTitle: 'Payment applied to your invoice',
     householdDescription: 'When a payment or credit is applied to your invoice.',
   },
   {
@@ -626,6 +645,7 @@ const CATALOG_LIST: NotificationDef[] = [
     secondaryResolver: 'businessAdmins',
     templates: { email: 'quote.accepted', push: 'quote.accepted' },
     description: 'Quote accepted confirmation.',
+    householdTitle: 'You accepted a quote',
     householdDescription: 'Confirmation that your household accepted a quote.',
   },
   {
@@ -661,6 +681,7 @@ const CATALOG_LIST: NotificationDef[] = [
     recipientResolver: 'kinfolkAcct',
     templates: { email: 'kincare.upcoming.reminder', sms: 'kincare.upcoming.reminder', push: 'kincare.upcoming.reminder' },
     description: 'Upcoming KinCare reminder (default 24-48 hours before).',
+    householdTitle: 'Reminder before your visit',
     householdDescription: 'A reminder before each KinCare visit on your schedule.',
   },
   {
@@ -769,6 +790,7 @@ const CATALOG_LIST: NotificationDef[] = [
     recipientResolver: 'kinfolkAcct',
     templates: { email: 'broadcast.message', sms: 'broadcast.message', push: 'broadcast.message' },
     description: 'One-off announcements the office sends to a group of households.',
+    householdTitle: 'Announcements from {business}',
     householdDescription: 'Announcements {business} sends to many households at once.',
   },
 
@@ -792,6 +814,7 @@ const CATALOG_LIST: NotificationDef[] = [
     secondaryResolver: 'kinfolkAcct',
     templates: { email: 'pets.updated', push: 'pets.updated' },
     description: 'Kinfolk/Auntie updated or added Pets (30-min inactive debounce).',
+    householdTitle: 'Your pets were updated',
     householdDescription: 'When a pet on your household is added or changed.',
   },
   {
@@ -811,6 +834,7 @@ const CATALOG_LIST: NotificationDef[] = [
     secondaryResolver: 'kinfolkAcct',
     templates: { email: 'profile.updated', push: 'profile.updated' },
     description: 'Kinfolk/Auntie updated Profile (30-min inactive debounce).',
+    householdTitle: 'Your profile was updated',
     householdDescription: 'When your household profile is changed.',
   },
 
@@ -831,6 +855,7 @@ const CATALOG_LIST: NotificationDef[] = [
     recipientResolver: 'specificUid',
     templates: { email: 'account.welcome.kinfolk' },
     description: 'Welcome email to kinfolk on account creation (invite redemption).',
+    householdTitle: 'Welcome to MyTribe',
     householdDescription: 'The welcome message you get when your MyTribe account is created.',
   },
   // `account.welcome.business` used to sit here, between the kinfolk welcome and
@@ -869,6 +894,7 @@ const CATALOG_LIST: NotificationDef[] = [
     // no household switch or business override can stop a reset.
     external: true,
     description: 'The link you ask for when you reset your password.',
+    householdTitle: 'Your password reset link',
     householdDescription: 'The link you ask for when you reset your password.',
   },
   {
@@ -890,6 +916,7 @@ const CATALOG_LIST: NotificationDef[] = [
     recipientResolver: 'specificUid',
     templates: { email: 'auth.failedLogin.attempts', sms: 'auth.failedLogin.attempts', push: 'auth.failedLogin.attempts' },
     description: 'Repeated failed login attempts detected (5 in 10 min).',
+    householdTitle: 'Repeated failed sign-ins',
     householdDescription: 'A warning when there are repeated failed sign-in attempts on your account.',
   },
   {
@@ -911,6 +938,7 @@ const CATALOG_LIST: NotificationDef[] = [
     recipientResolver: 'specificUid',
     templates: { email: 'auth.account.locked', sms: 'auth.account.locked', push: 'auth.account.locked' },
     description: 'Account locked after 10 failed login attempts in 20 min.',
+    householdTitle: 'Your account was locked',
     householdDescription: 'When your account is locked after too many failed sign-in attempts.',
   },
 
@@ -1126,6 +1154,7 @@ const CATALOG_LIST: NotificationDef[] = [
     templates: { email: 'newsletter.announcement', push: 'newsletter.announcement' },
     marketingCategory: 'newsletter',
     description: 'Newsletters & announcements.',
+    householdTitle: 'News and announcements',
     householdDescription: 'News and announcements from {business}, if you opt in.',
   },
   {
@@ -1143,6 +1172,7 @@ const CATALOG_LIST: NotificationDef[] = [
     templates: { email: 'survey.event', push: 'survey.event' },
     marketingCategory: 'survey',
     description: 'Surveys & community events.',
+    householdTitle: 'Surveys and community events',
     householdDescription: 'Surveys and community event invitations, if you opt in.',
   },
   {
@@ -1160,6 +1190,7 @@ const CATALOG_LIST: NotificationDef[] = [
     templates: { email: 'marketing.optin' },
     marketingCategory: 'marketing',
     description: 'General marketing opt-in (must include unsubscribe footer).',
+    householdTitle: 'Offers and updates',
     householdDescription: 'General updates and offers from {business}, if you opt in.',
   },
 ];

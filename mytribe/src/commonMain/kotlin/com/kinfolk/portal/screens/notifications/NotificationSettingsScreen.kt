@@ -507,7 +507,7 @@ private fun PerKeyRow(
         modifier = Modifier.fillMaxWidth().padding(top = KinfolkSpacing.s),
         verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs),
     ) {
-        Text(key.title, style = type.sansLabel)
+        Text(keyTitle(key), style = type.sansLabel)
         keyDescriptionLine(key, LocalBusinessName.current)?.let { Text(it, style = type.sansBody) }
         if (marketingGate) {
             Text(

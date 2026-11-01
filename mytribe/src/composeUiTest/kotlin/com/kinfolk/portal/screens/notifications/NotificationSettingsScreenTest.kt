@@ -613,6 +613,7 @@ class NotificationSettingsScreenTest {
                             put("title", "KinCare updated or change requested")
                             put("description", "Kinfolk/Auntie updated, deleted, or requested changes to KinCare.")
                             put("householdDescription", "When a KinCare visit on your schedule is changed.")
+                            put("householdTitle", "A visit on your schedule changed")
                             put("allowedChannels", buildJsonArray { add("email") })
                             put("required", buildJsonArray { })
                             put("lockedChannels", buildJsonArray { })
@@ -629,5 +630,8 @@ class NotificationSettingsScreenTest {
         waitForIdle()
         onNodeWithText("When a KinCare visit on your schedule is changed.").assertExists()
         onNodeWithText("Kinfolk/Auntie updated, deleted, or requested changes to KinCare.").assertDoesNotExist()
+        // #1372: the title is the household's too, not the operator's.
+        onNodeWithText("A visit on your schedule changed").assertExists()
+        onNodeWithText("KinCare updated or change requested").assertDoesNotExist()
     }
 }
