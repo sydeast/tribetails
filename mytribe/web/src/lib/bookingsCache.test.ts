@@ -9,7 +9,8 @@ import type {
 function visit(id: string, startTimeMs: number, overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBookingsResultLiveVisit {
   return {
     id, batchId: 'b-new', kinfolkId: 'fam1', status: 'requested', serviceType: 'Walk', title: 'Walk', startTimeMs,
-    endTimeMs: null, startTimePending: false, requestedDate: null, kinIds: [], kinNames: [], auntieDisplayName: null,
+    endTimeMs: null, startTimePending: false, requestedDate: null, timeBlockLabel: null, timeBlockStartTime: null,
+    timeBlockEndTime: null, kinIds: [], kinNames: [], auntieDisplayName: null,
     auntieAvatarUrl: null, notes: null, requestedByUid: null, createdAtMs: null, updatedAtMs: null, visitProgress: null,
     sourceBookingId: null, sessionId: null, cancelRequested: false, cancelRequestStatus: null, cancelRequestReason: null,
     cancelResponseNote: null, rescheduleRequestStatus: null, rescheduleRequestedStartTimeMs: null,

@@ -54,7 +54,7 @@ function captureRes(): {
 }
 
 async function callHandler(
-  reqShape: { method: string; path: string; query?: Record<string, unknown> },
+  reqShape: import('../src/share/getSharedKinTalePage').MinimalReq,
   res: ReturnType<typeof captureRes>['res'],
 ) {
   const { getSharedKinTalePageHandler } = await import('../src/share/getSharedKinTalePage');
@@ -193,15 +193,17 @@ describe('getSharedKinTalePage', () => {
       await callHandler({ method: 'GET', path: '/share-5' }, res);
 
       const siteKey = '6Leix-ksAAAAAFwAl_Ua0n6ZFyPR8PQCZxc2VRIg';
-      // declared once as a JS var, then reused by reference for both the
-      // enterprise.js render= URL and the execute() call — proves ONE
-      // consistent key drives both, rather than two independently-typed keys.
-      expect(captured.body).toContain(`"${siteKey}"`);
-      expect(captured.body).toContain("recaptcha/enterprise.js?render=' + RECAPTCHA_SITE_KEY");
-      expect(captured.body).toContain('.execute(RECAPTCHA_SITE_KEY');
-      expect(captured.body).toContain('grecaptcha.enterprise');
-      expect(captured.body).toContain('addGuestKinTaleComment');
-      expect(captured.body).toContain('id="guest-comment-form"');
+      // #1278: the key rides on ONE data- attribute, and the external script
+      // reads that one value for both the enterprise.js render= URL and the
+      // execute() call, so the two can never drift apart.
+      expect(captured.body).toContain(`data-recaptcha-site-key="${siteKey}"`);
+      expect(captured.body.split(siteKey)).toHaveLength(2);
+      const { GUEST_COMMENT_SCRIPT } = await import('../src/share/getSharedKinTalePage');
+      expect(GUEST_COMMENT_SCRIPT).toContain("getAttribute('data-recaptcha-site-key')");
+      expect(GUEST_COMMENT_SCRIPT).toContain("enterprise.js?render=' + encodeURIComponent(siteKey)");
+      expect(GUEST_COMMENT_SCRIPT).toContain('.execute(siteKey');
+      expect(captured.body).toContain('<script src="/share/_assets/guest-comment.js" defer></script>');
+      expect(captured.body).toContain('id="guest-comment-form" method="post"');
     });
     it('omits the whole comment section when the share has guest comments off', async () => {
       docGet.mockResolvedValue({
@@ -224,8 +226,8 @@ describe('getSharedKinTalePage', () => {
       expect(captured.status).toBe(200);
       expect(captured.body).not.toContain('id="guest-comment-form"');
       expect(captured.body).not.toContain('Leave a Note for the Family');
-      expect(captured.body).not.toContain('addGuestKinTaleComment');
-      expect(captured.body).not.toContain('grecaptcha');
+      expect(captured.body).not.toContain('guest-comment.js');
+      expect(captured.body).not.toContain('data-recaptcha-site-key');
       // The tale itself still renders in full.
       expect(captured.body).toContain('A KinTale from Auntie');
       expect(captured.body).toContain('hi');
@@ -287,8 +289,9 @@ describe('getSharedKinTalePage', () => {
       });
       const { res, captured } = captureRes();
       await callHandler({ method: 'GET', path: '/share-9' }, res);
-      // An empty heading over nothing reads as a broken page.
-      expect(captured.body).not.toContain('Notes for the Family');
+      // An empty heading over nothing reads as a broken page, so the section is
+      // drawn `hidden` (#1278: the script reveals it when the first note lands).
+      expect(captured.body).toContain('<section class="glass card noteform" id="guest-notes" hidden>');
       expect(captured.body).toContain('Leave a Note for the Family');
     });
     it('says so out loud when the thread cannot be read, and still renders the tale', async () => {
@@ -357,6 +360,39 @@ describe('getSharedKinTalePage', () => {
     });
   });
 
+  describe("the tale's own title (#1322)", () => {
+    function titled(title: unknown) {
+      return {
+        exists: true,
+        ref: { update: docUpdate },
+        data: () => ({
+          revoked: false,
+          expiresAt: futureExpiry,
+          passcodeHash: null,
+          tribeId: 'f1',
+          sourceKinTaleId: 'tale-1',
+          scrubbedPayload: { authorDisplayName: 'TEST SANDBOX Auntie', title, body: 'hi', photos: [] },
+        }),
+      };
+    }
+    it('leads the page, the og:title and the document title with it, and keeps the byline', async () => {
+      docGet.mockResolvedValue(titled('Biscuit <3 the beach'));
+      const { res, captured } = captureRes();
+      await callHandler({ method: 'GET', path: '/share-t1' }, res);
+      expect(captured.body).toContain('<h1>Biscuit &lt;3 the beach</h1>');
+      expect(captured.body).toContain('<meta property="og:title" content="Biscuit &lt;3 the beach">');
+      expect(captured.body).toContain('<title>Biscuit &lt;3 the beach — MyTribe</title>');
+      expect(captured.body).toContain('<div class="kick">A KinTale from TEST SANDBOX Auntie</div>');
+      expect(captured.body).not.toMatch(/Auntie TEST SANDBOX Auntie/);
+    });
+    it.each([[undefined], [''], ['   '], [42]])('falls back to the byline for a share with no usable title (%s)', async (t) => {
+      docGet.mockResolvedValue(titled(t));
+      const { res, captured } = captureRes();
+      await callHandler({ method: 'GET', path: '/share-t2' }, res);
+      expect(captured.body).toContain('<h1>A KinTale from TEST SANDBOX Auntie</h1>');
+      expect(captured.body).toContain('<div class="kick">KinTale Narrative</div>');
+    });
+  });
   describe('PasscodeGate', () => {
     function passcodeDoc() {
       return {
@@ -373,21 +409,23 @@ describe('getSharedKinTalePage', () => {
       };
     }
 
-    it('renders a GET form and preserves 401 with no passcode supplied', async () => {
+    it('renders a POST form and preserves 401 with no passcode supplied', async () => {
       docGet.mockResolvedValue(passcodeDoc());
       const { res, captured } = captureRes();
       await callHandler({ method: 'GET', path: '/share-6', query: {} }, res);
 
       expect(captured.status).toBe(401);
-      expect(captured.body).toContain('<form method="GET">');
+      // #1280: never GET, so the passcode can never land in the URL.
+      expect(captured.body).toContain('<form method="post">');
+      expect(captured.body).not.toMatch(/method="get"/i);
       expect(captured.body).toContain('name="passcode"');
       expect(captured.body).not.toContain("didn't work");
     });
 
-    it('preserves 401 and shows an inline error with a wrong passcode', async () => {
+    it('preserves 401 and shows an inline error with a wrong passcode POSTed', async () => {
       docGet.mockResolvedValue(passcodeDoc());
       const { res, captured } = captureRes();
-      await callHandler({ method: 'GET', path: '/share-6', query: { passcode: 'wrong' } }, res);
+      await callHandler({ method: 'POST', path: '/share/share-6', body: { intent: 'unlock', passcode: 'wrong' } }, res);
 
       expect(captured.status).toBe(401);
       expect(captured.body).toContain("didn't work");

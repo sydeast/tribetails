@@ -5,7 +5,7 @@
  */
 import type { PortalHomeSection } from '../api/types';
 import type { GetMyBookingsResult, GetMyBookingsResultLiveVisit } from '../contracts/bookingContracts.generated';
-import { parseDateKey } from './bookingWizardLogic';
+import { formatClockRange12, parseDateKey } from './bookingWizardLogic';
 
 /**
  * An alias for readability, not a declaration: writing the six-state status
@@ -33,15 +33,52 @@ export function weekdayTime(ms: number): string {
   return `${WEEKDAYS[d.getDay()]}, ${hours}:${minutes} ${ampm}`;
 }
 
-/** "Mon, 8:00 AM with Auntie Maya" / just the weekday-time if no auntie assigned yet. */
-export function visitSubtitle(startTimeMs: number | null, auntieDisplayName: string | null): string {
-  if (startTimeMs === null) return auntieDisplayName ? `With Auntie ${auntieDisplayName}` : 'Time to be confirmed';
-  const base = weekdayTime(startTimeMs);
-  return auntieDisplayName ? `${base} with Auntie ${auntieDisplayName}` : base;
+/** The named window a block-booked visit sits in (#1301); absent on by-the-clock visits and on older servers. */
+type VisitBlock = Partial<Pick<GetMyBookingsResultLiveVisit, 'timeBlockLabel' | 'timeBlockStartTime' | 'timeBlockEndTime'>>;
+/**
+ * #1301: "Midday (11 AM to 3 PM)" for a visit booked into a window, or null for
+ * a by-the-clock visit. A block visit's stored start is only the window's
+ * anchor, so printing it ("Sun, 11:00 AM") claims a precision nobody booked.
+ * When the window has since been removed there are no hours to print, and the
+ * stored label alone is the honest answer.
+ */
+export function visitBlockText(b: VisitBlock): string | null {
+  const label = b.timeBlockLabel ?? null;
+  if (label === null) return null;
+  const start = b.timeBlockStartTime ?? null;
+  const end = b.timeBlockEndTime ?? null;
+  return start !== null && end !== null ? `${label} (${formatClockRange12(start, end)})` : label;
 }
-
+/** "Mon, 8:00 AM" for a clock visit, "Mon, Midday (11 AM to 3 PM)" for a block visit. */
+function weekdayWhen(ms: number, block: VisitBlock): string {
+  const text = visitBlockText(block);
+  if (text === null) return weekdayTime(ms);
+  return `${WEEKDAYS[new Date(ms).getDay()]}, ${text}`;
+}
+/**
+ * #1322. An Auntie's name with the role word in front, said once: "Maya" reads
+ * "Auntie Maya", but a display name that already carries the word ("TEST
+ * SANDBOX Auntie", "Auntie Maya") is left as it is, where every screen used to
+ * print "Auntie TEST SANDBOX Auntie". The name itself is the operator's
+ * setting and is never rewritten, only the prefix is skipped.
+ *
+ * Returns null for a missing or blank name, so each caller keeps its own
+ * fallback ("Your Auntie", "your Auntie").
+ */
+export function auntieName(displayName: string | null | undefined): string | null {
+  const name = (displayName ?? '').trim();
+  if (name === '') return null;
+  return /\bauntie\b/i.test(name) ? name : `Auntie ${name}`;
+}
+/** "Mon, 8:00 AM with Auntie Maya" / just the weekday-time if no auntie assigned yet. */
+export function visitSubtitle(startTimeMs: number | null, auntieDisplayName: string | null, block: VisitBlock = {}): string {
+  const auntie = auntieName(auntieDisplayName);
+  if (startTimeMs === null) return auntie ? `With ${auntie}` : 'Time to be confirmed';
+  const base = weekdayWhen(startTimeMs, block);
+  return auntie ? `${base} with ${auntie}` : base;
+}
 /** The fields that say WHEN a booked visit happens. */
-type VisitWhen = Pick<GetMyBookingsResultLiveVisit, 'startTimeMs' | 'startTimePending' | 'requestedDate'>;
+type VisitWhen = Pick<GetMyBookingsResultLiveVisit, 'startTimeMs' | 'startTimePending' | 'requestedDate'> & VisitBlock;
 /** #1098: what a night-only visit says in place of a clock time until the Auntie sets one. */
 export const AUNTIE_SETS_START_TIME = 'Start time set by your Auntie';
 /**
@@ -72,12 +109,12 @@ export function visitWhenLine(b: VisitWhen): string {
     const night = requestedNight(b);
     return night === null ? AUNTIE_SETS_START_TIME : `${WEEKDAYS[night.getDay()]} night · ${AUNTIE_SETS_START_TIME}`;
   }
-  return b.startTimeMs !== null ? weekdayTime(b.startTimeMs) : 'Time to be confirmed';
+  return b.startTimeMs !== null ? weekdayWhen(b.startTimeMs, b) : 'Time to be confirmed';
 }
 /** {@link visitSubtitle} for a whole booking, so a night waiting on its start (#1098) says so. */
 export function bookingSubtitle(b: VisitWhen & Pick<GetMyBookingsResultLiveVisit, 'auntieDisplayName'>): string {
   if (isStartTimePending(b)) return visitWhenLine(b);
-  return visitSubtitle(b.startTimeMs, b.auntieDisplayName);
+  return visitSubtitle(b.startTimeMs, b.auntieDisplayName, b);
 }
 /** "Today" / "Yesterday" / "3 days ago" / falls back to a short date past a week out. */
 export function relativeDay(ms: number, now: number = Date.now()): string {
@@ -118,22 +155,66 @@ export interface ChipInfo {
   tone: 'warm' | 'go' | 'done';
 }
 
-/** Chip label + color tone for a booking's status, per the mockup's CONFIRMED/PENDING/COMPLETED chips. */
+/**
+ * Chip label + color tone for a booking's status, per the mockup's
+ * CONFIRMED/PENDING/COMPLETED chips. #1298: the LABEL is not chosen here. It
+ * comes from {@link bookingStatusChip}, the same source the detail badge uses,
+ * so one booking cannot read PENDING in a list and REQUESTED on its page. This
+ * function only picks the coarser three-tone colour.
+ */
 export function bookingChip(status: BookingStatus): ChipInfo {
+  const { label } = bookingStatusChip(status);
   switch (status) {
-    case 'confirmed':
-      return { label: 'CONFIRMED', tone: 'warm' };
     case 'requested':
-      return { label: 'PENDING', tone: 'go' };
+      return { label, tone: 'go' };
     case 'completed':
-      return { label: 'COMPLETED', tone: 'done' };
     case 'cancelled':
-      return { label: 'CANCELLED', tone: 'done' };
+      return { label, tone: 'done' };
     default:
-      return { label: status.toUpperCase(), tone: 'warm' };
+      return { label, tone: 'warm' };
   }
 }
-
+/**
+ * A change the household has asked for that the office has not ruled on yet,
+ * for the line under a visit on Home and Schedule (#1299). `requestBooking
+ * Cancellation` and `requestBookingReschedule` now refuse a second ask while
+ * one is open, so a visit carries one at most. A visit written before that
+ * rule can carry both; the cancellation is the one named, because it is the
+ * larger of the two and the one that ends the visit.
+ */
+export type PendingChange = 'cancellation' | 'reschedule';
+type ChangeFields = Pick<GetMyBookingsResultLiveVisit, 'cancelRequestStatus' | 'rescheduleRequestStatus'>;
+export function pendingChangeOf(b: ChangeFields): PendingChange | null {
+  if (b.cancelRequestStatus === 'pending') return 'cancellation';
+  if (b.rescheduleRequestStatus === 'pending') return 'reschedule';
+  return null;
+}
+/** The sentence for {@link pendingChangeOf}, or null. One wording on every screen. */
+export function pendingChangeLabel(b: ChangeFields): string | null {
+  switch (pendingChangeOf(b)) {
+    case 'cancellation':
+      return 'Cancellation requested';
+    case 'reschedule':
+      return 'New time requested';
+    case null:
+      return null;
+  }
+}
+/**
+ * The glyph beside the Status tile on the detail page (#1298). It used to be a
+ * green check for every status, which on REQUESTED read as confirmed. Only a
+ * visit that is confirmed or beyond gets the check.
+ */
+export function bookingStatusIcon(status: BookingStatus): string {
+  switch (status) {
+    case 'requested':
+      return '\u{1F552}';
+    case 'cancelled':
+      return '\u2715';
+    default:
+      return '\u2705';
+  }
+}
 /**
  * Finds one booking by its visit id across the live/upcoming/recent buckets
  * of a getMyBookings result — the drill-in lookup BookingDetail.tsx uses.

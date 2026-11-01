@@ -23,7 +23,7 @@ import {
 } from '../api/kinTalesApi';
 import { useAuth, useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
-import { isoTime } from '../lib/portalFormat';
+import { auntieName, isoTime } from '../lib/portalFormat';
 import { PortalNav } from '../components/PortalNav';
 import { ShareKinTaleDialog } from '../components/ShareKinTaleDialog';
 import { FallbackImage, PHOTO_UNAVAILABLE_GLYPH } from '../components/FallbackImage';
@@ -357,7 +357,7 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
               )}
             </div>
             <div>
-              <b>From Auntie {tale.authorDisplayName}</b>
+              <b>From {auntieName(tale.authorDisplayName) ?? 'your Auntie'}</b>
               {meta && <small>{meta}</small>}
             </div>
           </div>
@@ -380,7 +380,7 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
             className="btn ghost"
             onClick={() => focusCommentBox(tale.id)}
           >
-            {'\u{1F4AC}'} Reply to Auntie {tale.authorDisplayName}
+            {'\u{1F4AC}'} Reply to {auntieName(tale.authorDisplayName) ?? 'your Auntie'}
           </button>
           <TaleReaction taleId={tale.id} kinfolkId={kinfolkId} />
         </div>
@@ -396,7 +396,7 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
         <div className="tcphoto">{'\u{1F43E}'}</div>
         <div style={{ flex: 1 }}>
           <h3 className="title">{headline}</h3>
-          <div className="meta">{`FROM AUNTIE ${tale.authorDisplayName.toUpperCase()}${meta ? ` · ${meta}` : ''}`}</div>
+          <div className="meta">{`FROM ${(auntieName(tale.authorDisplayName) ?? 'Your Auntie').toUpperCase()}${meta ? ` · ${meta}` : ''}`}</div>
         </div>
       </div>
       <div className="tcbody">{tale.body}</div>

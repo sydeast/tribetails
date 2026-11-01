@@ -1780,6 +1780,10 @@ class PortalApi(private val fns: FunctionsClient) {
         address = o["address"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
         kinTaleId = o["kinTaleId"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
         invoiceId = o["invoiceId"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+        // #1301: absent on an older server, which reads as a by-the-clock visit.
+        timeBlockLabel = o["timeBlockLabel"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+        timeBlockStartTime = o["timeBlockStartTime"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+        timeBlockEndTime = o["timeBlockEndTime"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
     )
 
     /**

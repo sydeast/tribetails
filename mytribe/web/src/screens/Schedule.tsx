@@ -11,7 +11,7 @@ import { OfflineNotice } from '../components/OfflineNotice';
 import { LoadingLine } from '../components/Loading';
 import { LaunchError } from './LaunchError';
 import { countLabel, countOfQuery, viewOfQuery } from '../lib/queryState';
-import { bookingChip, bookingSubtitle, fullDateKick, isoTime, speciesEmoji, visitTile, visitVariant } from '../lib/portalFormat';
+import { auntieName, bookingChip, bookingSubtitle, fullDateKick, isoTime, pendingChangeLabel, speciesEmoji, visitTile, visitVariant } from '../lib/portalFormat';
 import type { GetMyBookingsResult, GetMyBookingsResultLiveVisit } from '../contracts/bookingContracts.generated';
 
 type Tab = 'upcoming' | 'past';
@@ -129,7 +129,7 @@ export function Schedule() {
               <span className="tag">VISIT IN PROGRESS</span>
             </div>
             <h2>
-              {liveBooking?.auntieDisplayName ? `Auntie ${liveBooking.auntieDisplayName}` : 'Your Auntie'} is at your place
+              {auntieName(liveBooking?.auntieDisplayName) ?? 'Your Auntie'} is at your place
               {liveBooking?.kinNames.length ? ` with ${liveBooking.kinNames.join(', ')}` : ''}
             </h2>
             <p>
@@ -203,6 +203,9 @@ export function Schedule() {
                             <span className="svc">Service Type &middot; {b.serviceType ?? 'Visit'}</span>
                             <b>{b.title ?? b.serviceType ?? 'Visit'}</b>
                             <small>{bookingSubtitle(b)}</small>
+                            {pendingChangeLabel(b) && (
+                              <small className="pending-change" data-testid="pending-change">{pendingChangeLabel(b)}</small>
+                            )}
                           </div>
                           <div className="pet">{speciesEmoji(null)}</div>
                           <span className={`chip ${chip.tone}`}>{chip.label}</span>
@@ -246,6 +249,9 @@ export function Schedule() {
                             <span className="svc">Service Type &middot; {b.serviceType ?? 'Visit'}</span>
                             <b>{b.title ?? b.serviceType ?? 'Visit'}</b>
                             <small>{bookingSubtitle(b)}</small>
+                            {pendingChangeLabel(b) && (
+                              <small className="pending-change" data-testid="pending-change">{pendingChangeLabel(b)}</small>
+                            )}
                           </div>
                           {route.length > 0 && (
                             <button

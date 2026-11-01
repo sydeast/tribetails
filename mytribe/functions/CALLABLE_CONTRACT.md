@@ -2191,6 +2191,9 @@ the handler.
   asks that sat unread from 2026-07-02 until #438 built the queue.
 - Only `requested`/`confirmed` visits are cancelable; anything else is
   `failed-precondition`.
+- #1299: refused with `failed-precondition` while a reschedule ask is pending
+  on the visit. A visit carries at most one open ask; `requestBookingReschedule`
+  refuses the other way round. Clients hide the second action.
 - kinfolk portal only.
 
 - req `{ kinfolkId?: string, batchId: string, visitId: string, proposedStartTimeMs: number, proposedEndTimeMs?: number, reason?: string }`
@@ -2211,6 +2214,9 @@ the handler.
 - A second proposal while one is pending is `already-exists`, not a silent
   overwrite: the office may already be acting on the time it was shown. A fresh
   proposal after a decline IS allowed, and clears the previous answer.
+- #1299: refused with `failed-precondition` while a cancellation ask is
+  pending (a pre-#438 bare `cancelRequestedAt` counts as pending), the mirror of
+  the rule on `requestBookingCancellation`.
 - Only `requested`/`confirmed` visits qualify; anything else is
   `failed-precondition`.
 - `onBookingsWrite` fires `kincare.reschedule.requested` to the business on the
