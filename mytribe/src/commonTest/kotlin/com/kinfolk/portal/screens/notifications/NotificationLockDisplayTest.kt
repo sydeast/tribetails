@@ -356,4 +356,28 @@ class NotificationLockDisplayTest {
         val locked = key(allowed = setOf(SMS), locked = setOf(SMS))
         assertTrue(channelInheritedChecked(locked, SMS, perCat = false))
     }
+
+    @Test
+    fun keyDescriptionLine_prefersTheHouseholdWordingAndFallsBack() {
+        fun k(description: String, household: String?) = NotificationKey(
+            key = "kincare.changed",
+            title = "Changed",
+            description = description,
+            householdDescription = household,
+            allowedChannels = setOf(NotificationChannel.EMAIL),
+        )
+        assertEquals("When you request a visit.", keyDescriptionLine(k("Kinfolk requested a KinCare visit.", "When you request a visit.")))
+        assertEquals("Sent by an older server.", keyDescriptionLine(k("Sent by an older server.", null)))
+        assertEquals("Sent by an older server.", keyDescriptionLine(k("Sent by an older server.", "  ")))
+    }
+    @Test
+    fun staticFallback_neverShowsAHouseholdPlumbingOrOperatorWording() {
+        val banned = Regex("debounce|digest|trailing|\\bdefault\\b|\\d+\\s*-?\\s*(min|minutes|hours?)\\b|\\bkinfolk\\b|footer", RegexOption.IGNORE_CASE)
+        val keys = com.kinfolk.portal.notifications.KINFOLK_CATEGORIES.flatMap { it.keys }
+        assertTrue(keys.size >= 15)
+        keys.forEach { key ->
+            val line = keyDescriptionLine(key) ?: return@forEach
+            assertFalse(banned.containsMatchIn(line), "${key.key}: $line")
+        }
+    }
 }

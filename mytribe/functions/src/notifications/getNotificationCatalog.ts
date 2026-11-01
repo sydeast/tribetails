@@ -103,7 +103,10 @@ export interface NotificationKeyDto {
   key: string;
   /** Default title, client should overlay locale if/when localisation lands. */
   title: string;
+  /** Operator-voice text. Households read `householdDescription` instead (#1359). */
   description: string;
+  /** What the household reads under the title: addressed to them, never the operator. */
+  householdDescription: string;
   allowedChannels: Channel[];
   required: Channel[];
   /**
@@ -261,6 +264,9 @@ export async function getNotificationCatalogHandler(
       key: def.key,
       title: def.label || titleCaseFromKey(def.key),
       description: def.description,
+      // Fall back to the operator text only for a row with no household copy;
+      // the catalog test fails the build before that can ship.
+      householdDescription: def.householdDescription ?? def.description,
       allowedChannels,
       required,
       lockedChannels,
