@@ -76,6 +76,9 @@ describe('commentAuthorRole (positive enumeration, no negation)', () => {
   it('is case-insensitive and trims whitespace', () => {
     expect(commentAuthorRole(' ADMIN ')).toBe('admin');
   });
+  it("classifies a share-link guest's note as guest (#1333)", () => {
+    expect(commentAuthorRole('guest')).toBe('guest');
+  });
 
   it('buckets any other text as unknown, never guessing a side', () => {
     expect(commentAuthorRole('')).toBe('unknown');
@@ -97,6 +100,11 @@ describe('commentAuthorLabel', () => {
     expect(commentAuthorLabel({ authorRole: 'kinfolk', guestName: '   ' })).toBe('Kinfolk');
   });
 
+  it("labels a share-link guest's note with the name they typed (#1333)", () => {
+    expect(commentAuthorLabel({ authorRole: 'guest', guestName: 'Ann' })).toBe('Ann');
+    expect(commentAuthorLabel({ authorRole: 'guest', guestName: ' ' })).toBe('Guest');
+    expect(commentAuthorLabel({ authorRole: 'guest', guestName: null })).toBe('Guest');
+  });
   it('labels an unrecognized role "Someone", never guessing which side', () => {
     expect(commentAuthorLabel({ authorRole: 'robot', guestName: null })).toBe('Someone');
   });
