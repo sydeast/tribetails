@@ -39,6 +39,8 @@ import com.kinfolk.portal.components.SchemaFormRenderer
 import com.kinfolk.portal.components.ScreenHeader
 import com.kinfolk.portal.portal.Account
 import com.kinfolk.portal.portal.FormSchema
+import com.kinfolk.portal.portal.inviteEmailProblem
+import com.kinfolk.portal.portal.isInvitableEmail
 import com.kinfolk.portal.portal.PaymentMethodState
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.theme.KinfolkBrand
@@ -237,9 +239,17 @@ fun AccountSettingsScreen(
                         }
                     }
                 },
-                enabled = !inviting && accountValues["secondaryEmail"].orEmpty().contains("@"),
+                enabled = !inviting && isInvitableEmail(accountValues["secondaryEmail"].orEmpty()),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
             )
+            // #1326: Send Invite stays disabled on a bad address; say why.
+            inviteEmailProblem(accountValues["secondaryEmail"].orEmpty())?.let {
+                Text(
+                    it,
+                    style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral),
+                    modifier = Modifier.padding(horizontal = KinfolkSpacing.l),
+                )
+            }
         } else {
             GlassCard(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),

@@ -303,6 +303,21 @@ describe('Account: secondary invite confirmation (#1018 item 3)', () => {
   });
 });
 
+// #1326: Account › Secondary Kinfolk with "bad-email" typed gave no reason.
+describe('Account: invite email check (#1326)', () => {
+  it('says why Send Invite is disabled for a bad backup email', async () => {
+    const user = userEvent.setup();
+    const { getByLabelText, getByRole, findByText, queryByText } = await renderAccount();
+    expect(queryByText('Enter a valid email.')).not.toBeInTheDocument();
+    await user.type(getByLabelText('Backup Email'), 'bad-email');
+    expect(await findByText('Enter a valid email.')).toBeInTheDocument();
+    expect(getByRole('button', { name: /Send Invite/ })).toBeDisabled();
+    await user.clear(getByLabelText('Backup Email'));
+    await user.type(getByLabelText('Backup Email'), 'catch@hanasamku.com');
+    expect(queryByText('Enter a valid email.')).not.toBeInTheDocument();
+    expect(getByRole('button', { name: /Send Invite/ })).toBeEnabled();
+  });
+});
 describe('Account: Message your Auntie', () => {
   it('is a real link to /messages, not a coming-soon span', async () => {
     const { getByRole, queryByTitle } = await renderAccount();

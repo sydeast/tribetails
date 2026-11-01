@@ -790,6 +790,30 @@ describe('secondary kinfolk: add now, invite later (Q3)', () => {
     expect(vi.mocked(tribeApi.addSecondaryContact).mock.calls[0]?.[0]).toMatchObject({ invitedEmail: 'sam@example.com', personId: 'p1' });
     await waitFor(() => expect(view.queryByTestId('invite-for-person')).toBeNull());
   });
+  // #1323: the role field asks for a role ("Co-Parent, Sister"); the name is not one.
+  it('Give portal access leaves the role empty', async () => {
+    const view = await renderTribeProfile({ secondaryKinfolk: [sam] });
+    const row = (await view.findByText('Sam Lee')).closest('li') as HTMLElement;
+    fireEvent.click(within(row).getByRole('button', { name: 'Give portal access' }));
+    expect(await view.findByTestId('invite-for-person')).toBeInTheDocument();
+    expect(view.getByLabelText('Their role (e.g. Co-Parent, Sister)')).toHaveValue('');
+  });
+  // #1323: Cancel kept the email, the role and the previous red error.
+  it('Cancel clears the email, the role and the last error', async () => {
+    const tribeApi = await import('../api/tribeApi');
+    vi.mocked(tribeApi.addSecondaryContact).mockRejectedValue(new Error('This secondary kinfolk already has portal access.'));
+    const view = await renderTribeProfile({ secondaryKinfolk: [sam] });
+    const row = (await view.findByText('Sam Lee')).closest('li') as HTMLElement;
+    fireEvent.click(within(row).getByRole('button', { name: 'Give portal access' }));
+    fireEvent.change(view.getByLabelText('Their role (e.g. Co-Parent, Sister)'), { target: { value: 'Sister' } });
+    fireEvent.click(view.getByRole('button', { name: 'Send Invite' }));
+    expect(await view.findByText('This secondary kinfolk already has portal access.')).toBeInTheDocument();
+    fireEvent.click(within(view.getByTestId('invite-for-person')).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(view.queryByTestId('invite-for-person')).toBeNull());
+    expect(view.getByLabelText('Email')).toHaveValue('');
+    expect(view.getByLabelText('Their role (e.g. Co-Parent, Sister)')).toHaveValue('');
+    expect(view.queryByText('This secondary kinfolk already has portal access.')).not.toBeInTheDocument();
+  });
   it('an ordinary invite sends no person id', async () => {
     const tribeApi = await import('../api/tribeApi');
     vi.mocked(tribeApi.addSecondaryContact).mockResolvedValue({ inviteId: 'i2' });
@@ -807,6 +831,27 @@ describe('secondary kinfolk: add now, invite later (Q3)', () => {
  * the confirmation says what happened, names the address, and never shows a
  * claim link (that would tell the primary to deliver it by hand instead).
  */
+// #1326: a bad address left Send Invite disabled with no reason.
+describe('invite email check (#1326)', () => {
+  it('says why Send Invite is disabled for a bad address, and stops saying it once the address is fixed', async () => {
+    const view = await renderTribeProfile({});
+    const field = await view.findByLabelText('Email');
+    expect(view.queryByText('Enter a valid email.')).not.toBeInTheDocument();
+    fireEvent.change(field, { target: { value: 'bad-email' } });
+    expect(view.getByText('Enter a valid email.')).toBeInTheDocument();
+    expect(view.getByRole('button', { name: 'Send Invite' })).toBeDisabled();
+    expect(field).toHaveAttribute('aria-invalid', 'true');
+    fireEvent.change(field, { target: { value: 'catch@hanasamku.com' } });
+    expect(view.queryByText('Enter a valid email.')).not.toBeInTheDocument();
+    expect(view.getByRole('button', { name: 'Send Invite' })).toBeEnabled();
+  });
+  it('a half address with an @ is not sendable either', async () => {
+    const view = await renderTribeProfile({});
+    fireEvent.change(await view.findByLabelText('Email'), { target: { value: 'catch@hanasamku' } });
+    expect(view.getByText('Enter a valid email.')).toBeInTheDocument();
+    expect(view.getByRole('button', { name: 'Send Invite' })).toBeDisabled();
+  });
+});
 describe('invite confirmation (#1018 item 3)', () => {
   it('says the invite was sent, and names the address', async () => {
     const tribeApi = await import('../api/tribeApi');
