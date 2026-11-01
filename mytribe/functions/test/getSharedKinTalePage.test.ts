@@ -360,6 +360,39 @@ describe('getSharedKinTalePage', () => {
     });
   });
 
+  describe("the tale's own title (#1322)", () => {
+    function titled(title: unknown) {
+      return {
+        exists: true,
+        ref: { update: docUpdate },
+        data: () => ({
+          revoked: false,
+          expiresAt: futureExpiry,
+          passcodeHash: null,
+          tribeId: 'f1',
+          sourceKinTaleId: 'tale-1',
+          scrubbedPayload: { authorDisplayName: 'TEST SANDBOX Auntie', title, body: 'hi', photos: [] },
+        }),
+      };
+    }
+    it('leads the page, the og:title and the document title with it, and keeps the byline', async () => {
+      docGet.mockResolvedValue(titled('Biscuit <3 the beach'));
+      const { res, captured } = captureRes();
+      await callHandler({ method: 'GET', path: '/share-t1' }, res);
+      expect(captured.body).toContain('<h1>Biscuit &lt;3 the beach</h1>');
+      expect(captured.body).toContain('<meta property="og:title" content="Biscuit &lt;3 the beach">');
+      expect(captured.body).toContain('<title>Biscuit &lt;3 the beach — MyTribe</title>');
+      expect(captured.body).toContain('<div class="kick">A KinTale from TEST SANDBOX Auntie</div>');
+      expect(captured.body).not.toMatch(/Auntie TEST SANDBOX Auntie/);
+    });
+    it.each([[undefined], [''], ['   '], [42]])('falls back to the byline for a share with no usable title (%s)', async (t) => {
+      docGet.mockResolvedValue(titled(t));
+      const { res, captured } = captureRes();
+      await callHandler({ method: 'GET', path: '/share-t2' }, res);
+      expect(captured.body).toContain('<h1>A KinTale from TEST SANDBOX Auntie</h1>');
+      expect(captured.body).toContain('<div class="kick">KinTale Narrative</div>');
+    });
+  });
   describe('PasscodeGate', () => {
     function passcodeDoc() {
       return {

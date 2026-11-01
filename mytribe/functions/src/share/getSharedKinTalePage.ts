@@ -321,13 +321,18 @@ function renderReadyPage(opts: {
   const authorDisplayName = opts.payload.authorDisplayName?.trim() || 'Auntie';
   const body = opts.payload.body ?? '';
   const photos = safePhotoUrls(opts.payload.photos);
-  const escapedAuthor = escapeHtml(authorDisplayName);
   const description = escapeHtml(truncateForDescription(body));
   const hasImage = photos.length > 0;
+  // #1322: lead with the tale's own title. A share written before the title
+  // was copied into its payload, or a tale with none, keeps the old heading.
+  const byline = `A KinTale from ${authorDisplayName}`;
+  const taleTitle = (typeof opts.payload.title === 'string' ? opts.payload.title.trim() : '') || byline;
+  const escapedTitle = escapeHtml(taleTitle);
+  const kicker = taleTitle === byline ? 'KinTale Narrative' : byline;
 
   const metaTags = [
     '<meta property="og:site_name" content="MyTribe">',
-    `<meta property="og:title" content="A KinTale from ${escapedAuthor}">`,
+    `<meta property="og:title" content="${escapedTitle}">`,
     `<meta property="og:description" content="${description}">`,
     '<meta property="og:type" content="article">',
     ...(hasImage
@@ -421,8 +426,8 @@ ${opts.comments.map(renderComment).join('\n')}
 
     <article class="glass talehero">
       <div class="banner">
-        <div class="kick">KinTale Narrative</div>
-        <h1>A KinTale from ${escapedAuthor}</h1>
+        <div class="kick">${escapeHtml(kicker)}</div>
+        <h1>${escapedTitle}</h1>
       </div>
       <div class="body">
         <div class="narrative">${bodyToHtml(body)}</div>
@@ -433,7 +438,7 @@ ${galleryHtml}
 ${threadHtml}
 ${commentSectionHtml}`;
 
-  return renderDocument({ title: `A KinTale from ${authorDisplayName} — MyTribe`, metaTags, bodyHtml });
+  return renderDocument({ title: `${taleTitle} — MyTribe`, metaTags, bodyHtml });
 }
 
 // ── PasscodeGate ──────────────────────────────────────────────────────────

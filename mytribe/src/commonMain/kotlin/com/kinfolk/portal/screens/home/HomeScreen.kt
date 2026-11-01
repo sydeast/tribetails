@@ -1,5 +1,6 @@
 package com.kinfolk.portal.screens.home
 
+import com.kinfolk.portal.util.auntieName
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -432,7 +433,7 @@ private fun TaleRow(tale: KinTale) {
         Spacer(Modifier.height(KinfolkSpacing.xs))
         val meta = buildString {
             append("FROM ")
-            append((tale.authorDisplayName ?: "YOUR AUNTIE").uppercase())
+            append((auntieName(tale.authorDisplayName) ?: "YOUR AUNTIE").uppercase())
             tale.sentAtMs?.let {
                 append(" · ")
                 append(relativeTime(it).uppercase())
@@ -588,7 +589,7 @@ private fun LiveVisitCard(b: Booking) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column {
-                    Text(b.auntieDisplayName ?: "Auntie", style = type.heritageTitle.copy(color = Color.White))
+                    Text(auntieName(b.auntieDisplayName) ?: "Auntie", style = type.heritageTitle.copy(color = Color.White))
                     Text(b.serviceType ?: "Visit", style = type.sansLabel.copy(color = Color.White.copy(alpha = 0.88f)))
                 }
                 LivePill(onGradient = true)
